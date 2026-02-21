@@ -13,6 +13,7 @@ mod hir;
 mod unify;
 mod interner;
 mod hashmap;
+mod type_intern;
 
 // Import submodules
 mod typeck_types;
@@ -273,11 +274,11 @@ pub struct TypeChecker {
     /// Unifier for generating fresh type variables.
     pub unifier: unify::Unifier,
     /// Current function's return type.
-    pub return_ty: Option<hir_ty::Type>,
+    pub return_ty: Option<type_intern::TyId>,
     /// Whether we're currently in a loop.
     pub in_loop: bool,
     /// Type of the current loop (for break values).
-    pub loop_ty: Option<hir_ty::Type>,
+    pub loop_ty: Option<type_intern::TyId>,
     /// Local variable types by LocalId index.
     pub locals: Vec<typeck_types::LocalInfo>,
     /// Type errors collected during checking.
@@ -337,7 +338,7 @@ pub struct TypeChecker {
     pub trait_impl_hash: hashmap::HashMapU64U32,
     /// Expected type for resume() calls in the current handler op body.
     /// Set before type-checking each handler op body, None when not in a handler op.
-    pub resume_ty: Option<hir_ty::Type>,
+    pub resume_ty: Option<type_intern::TyId>,
     /// Whether the current handler is shallow (single resume allowed).
     pub in_shallow_handler: bool,
     /// Count of resume expressions seen in the current handler op body.
@@ -436,12 +437,12 @@ impl TypeChecker {
     }
 
     /// Generates a fresh inference type variable.
-    pub fn fresh_infer(self: &mut Self) -> hir_ty::Type {
-        self.unifier.fresh_infer()
+    pub fn fresh_infer(self: &mut Self) -> type_intern::TyId {
+        self.unifier.fresh_infer_id()
     }
 
     /// Adds a local variable to the context.
-    pub fn add_local(self: &mut Self, ty: hir_ty::Type, mutable: bool, span: common::Span) -> hir_def::LocalId {
+    pub fn add_local(self: &mut Self, ty: type_intern::TyId, mutable: bool, span: common::Span) -> hir_def::LocalId {
         let id = hir_def::LocalId::new(self.locals.len() as u32);
         let info = typeck_types::LocalInfo::new(ty, mutable, span);
         self.locals.push(info);
@@ -449,10 +450,10 @@ impl TypeChecker {
     }
 
     /// Gets the type of a local variable.
-    pub fn get_local_ty(self: &Self, id: hir_def::LocalId) -> Option<hir_ty::Type> {
+    pub fn get_local_ty(self: &Self, id: hir_def::LocalId) -> Option<type_intern::TyId> {
         let idx = id.index as usize;
         if idx < self.locals.len() {
-            Some(hir_ty::copy_type(&self.locals[idx].ty))
+            Some(type_intern::TyId::new(self.locals[idx].ty.index))
         } else {
             Option::None
         }
@@ -469,7 +470,7 @@ impl TypeChecker {
     }
 
     /// Sets the return type for the current function.
-    pub fn set_return_ty(self: &mut Self, ty: hir_ty::Type) {
+    pub fn set_return_ty(self: &mut Self, ty: type_intern::TyId) {
         self.return_ty = Some(ty);
     }
 
@@ -479,7 +480,7 @@ impl TypeChecker {
     }
 
     /// Enters a loop context.
-    pub fn enter_loop(self: &mut Self, ty: hir_ty::Type) {
+    pub fn enter_loop(self: &mut Self, ty: type_intern::TyId) {
         self.in_loop = true;
         self.loop_ty = Some(ty);
     }
@@ -552,8 +553,8 @@ impl TypeChecker {
     pub fn register_fn_sig_direct(
         self: &mut Self,
         def_id: hir_def::DefId,
-        param_tys: Vec<hir_ty::Type>,
-        return_ty: hir_ty::Type,
+        param_tys: Vec<type_intern::TyId>,
+        return_ty: type_intern::TyId,
         num_generics: u32,
     ) {
         let info = typeck_info::FnSigInfo::new(param_tys, return_ty, num_generics);
@@ -570,8 +571,8 @@ impl TypeChecker {
     /// unify::unify. This is the correct implementation.
     ///
     /// BUG-005 (mutations through &mut field_of_ref) is now fixed in blood-rust.
-    pub fn unify(self: &mut Self, a: &hir_ty::Type, b: &hir_ty::Type, span: common::Span) -> bool {
-        let result = unify::unify(&mut self.subst_table, &mut self.unifier, a, b, span);
+    pub fn unify(self: &mut Self, a: type_intern::TyId, b: type_intern::TyId, span: common::Span) -> bool {
+        let result = unify::unify_id(&mut self.subst_table, &mut self.unifier, a, b, span);
 
         match result {
             unify::UnifyResult::Ok => true,
@@ -591,9 +592,9 @@ impl TypeChecker {
     }
 
     /// Resolves a type by applying current substitutions.
-    pub fn resolve(self: &Self, ty: &hir_ty::Type) -> hir_ty::Type {
+    pub fn resolve(self: &Self, ty: type_intern::TyId) -> type_intern::TyId {
         let table_ref: &unify::SubstTable = &self.subst_table;
-        unify::apply_substs(table_ref, ty)
+        unify::apply_substs_id(table_ref, ty)
     }
 
     /// Clears local variables (for entering a new function body).
@@ -607,11 +608,11 @@ impl TypeChecker {
 
     /// Registers a function signature for later lookup.
     pub fn register_fn_sig(self: &mut Self, def_id: hir_def::DefId, sig: &hir_item::FnSig) {
-        // Extract parameter types
-        let mut param_tys: Vec<hir_ty::Type> = Vec::new();
+        // Extract parameter types (convert at HIR boundary)
+        let mut param_tys: Vec<type_intern::TyId> = Vec::new();
         let mut i: usize = 0;
         while i < sig.params.len() {
-            param_tys.push(hir_ty::copy_type(&sig.params[i].ty));
+            param_tys.push(type_intern::type_to_ty_id(&sig.params[i].ty));
             i = i + 1;
         }
 
@@ -633,7 +634,7 @@ impl TypeChecker {
         // Create the info with actual param IDs, effect row, and where clauses
         let info = typeck_info::FnSigInfo::with_where_clauses(
             param_tys,
-            hir_ty::copy_type(&sig.return_ty),
+            type_intern::type_to_ty_id(&sig.return_ty),
             num_generics,
             type_param_ids,
             effect_def_ids,
@@ -659,7 +660,7 @@ impl TypeChecker {
                 while i < struct_fields.len() {
                     let f = &struct_fields[i];
                     field_names.push(f.name.symbol);
-                    let info = typeck_info::FieldInfo::new(f.name.symbol, hir_ty::copy_type(&f.ty));
+                    let info = typeck_info::FieldInfo::new(f.name.symbol, type_intern::type_to_ty_id(&f.ty));
                     fields.push(info);
                     i = i + 1;
                 }
@@ -698,7 +699,7 @@ impl TypeChecker {
             variant_names.push(v.name.symbol);
 
             // Extract field types and names based on variant kind
-            let mut field_tys: Vec<hir_ty::Type> = Vec::new();
+            let mut field_tys: Vec<type_intern::TyId> = Vec::new();
             let mut field_names: Vec<common::Symbol> = Vec::new();
             match &v.kind {
                 &hir_item::VariantKind::Unit => {
@@ -707,7 +708,7 @@ impl TypeChecker {
                 &hir_item::VariantKind::Tuple(ref types) => {
                     let mut j: usize = 0;
                     while j < types.len() {
-                        field_tys.push(hir_ty::copy_type(&types[j]));
+                        field_tys.push(type_intern::type_to_ty_id(&types[j]));
                         j = j + 1;
                     }
                 }
@@ -716,7 +717,7 @@ impl TypeChecker {
                     let mut j: usize = 0;
                     while j < struct_fields.len() {
                         field_names.push(struct_fields[j].name.symbol);
-                        field_tys.push(hir_ty::copy_type(&struct_fields[j].ty));
+                        field_tys.push(type_intern::type_to_ty_id(&struct_fields[j].ty));
                         j = j + 1;
                     }
                 }
@@ -889,7 +890,7 @@ impl TypeChecker {
                                     enum_def_id: enum_info.def_id,
                                     num_generics: enum_info.num_generics,
                                     variant_index: enum_info.variants[variant_idx].variant_index,
-                                    field_tys: copy_type_vec(&enum_info.variants[variant_idx].field_tys),
+                                    field_tys: copy_ty_id_vec(&enum_info.variants[variant_idx].field_tys),
                                     field_names: fn_vec,
                                 });
                             }
@@ -918,7 +919,7 @@ impl TypeChecker {
                                 enum_def_id: enum_info.def_id,
                                 num_generics: enum_info.num_generics,
                                 variant_index: enum_info.variants[j].variant_index,
-                                field_tys: copy_type_vec(&enum_info.variants[j].field_tys),
+                                field_tys: copy_ty_id_vec(&enum_info.variants[j].field_tys),
                                 field_names: fn_vec,
                             });
                         }
@@ -933,14 +934,14 @@ impl TypeChecker {
     }
 
     /// Gets the field type for a struct field by name.
-    pub fn get_struct_field_ty(self: &Self, def_id: hir_def::DefId, field_name: common::Symbol) -> Option<hir_ty::Type> {
+    pub fn get_struct_field_ty(self: &Self, def_id: hir_def::DefId, field_name: common::Symbol) -> Option<type_intern::TyId> {
         let struct_info = self.get_struct(def_id);
         match struct_info {
             Some(info) => {
                 let mut i: usize = 0;
                 while i < info.fields.len() {
                     if info.fields[i].name.index == field_name.index {
-                        return Some(hir_ty::copy_type(&info.fields[i].ty));
+                        return Some(type_intern::TyId::new(info.fields[i].ty.index));
                     }
                     i = i + 1;
                 }
@@ -952,7 +953,7 @@ impl TypeChecker {
 
     /// Gets a variant's field type by name using the variant's DefId.
     /// Returns the field type if found, None otherwise.
-    pub fn get_variant_field_ty_by_name(self: &Self, variant_def_id: hir_def::DefId, field_name: common::Symbol) -> Option<hir_ty::Type> {
+    pub fn get_variant_field_ty_by_name(self: &Self, variant_def_id: hir_def::DefId, field_name: common::Symbol) -> Option<type_intern::TyId> {
         // O(1) hash lookup for variant location
         match self.variant_hash.get(variant_def_id.index as u64) {
             Option::Some(combined) => {
@@ -967,7 +968,7 @@ impl TypeChecker {
                                 while k < enum_info.variants[variant_idx].field_names.len() {
                                     if enum_info.variants[variant_idx].field_names[k].index == field_name.index {
                                         if k < enum_info.variants[variant_idx].field_tys.len() {
-                                            return Some(hir_ty::copy_type(&enum_info.variants[variant_idx].field_tys[k]));
+                                            return Some(type_intern::TyId::new(enum_info.variants[variant_idx].field_tys[k].index));
                                         }
                                     }
                                     k = k + 1;
@@ -995,7 +996,7 @@ impl TypeChecker {
                                 if enum_info.variants[j].field_names[k].index == field_name.index {
                                     // Return the corresponding field type
                                     if k < enum_info.variants[j].field_tys.len() {
-                                        return Some(hir_ty::copy_type(&enum_info.variants[j].field_tys[k]));
+                                        return Some(type_intern::TyId::new(enum_info.variants[j].field_tys[k].index));
                                     }
                                 }
                                 k = k + 1;
@@ -1037,7 +1038,7 @@ impl TypeChecker {
     }
 
     /// Registers a constant definition for later lookup.
-    pub fn register_const(self: &mut Self, def_id: hir_def::DefId, name: common::Symbol, ty: hir_ty::Type) {
+    pub fn register_const(self: &mut Self, def_id: hir_def::DefId, name: common::Symbol, ty: type_intern::TyId) {
         let info = typeck_info::ConstInfo::new(def_id, name, ty);
         let def_idx = def_id.index as usize;
         while self.consts.len() <= def_idx {
@@ -1047,7 +1048,7 @@ impl TypeChecker {
     }
 
     /// Registers a static definition for later lookup.
-    pub fn register_static(self: &mut Self, def_id: hir_def::DefId, name: common::Symbol, ty: hir_ty::Type, mutable: bool) {
+    pub fn register_static(self: &mut Self, def_id: hir_def::DefId, name: common::Symbol, ty: type_intern::TyId, mutable: bool) {
         let info = typeck_info::StaticInfo::new(def_id, name, ty, mutable);
         let def_idx = def_id.index as usize;
         while self.statics.len() <= def_idx {
@@ -1063,13 +1064,13 @@ impl TypeChecker {
 
     /// Looks up a method on a type by name.
     /// Returns the method info and the impl it belongs to, or None if not found.
-    pub fn lookup_method(self: &Self, ty: &hir_ty::Type, method_name: common::Symbol) -> Option<MethodLookupResult> {
+    pub fn lookup_method(self: &Self, ty: type_intern::TyId, method_name: common::Symbol) -> Option<MethodLookupResult> {
         let mut impl_idx: usize = 0;
         while impl_idx < self.impls.len() {
             let impl_info = &self.impls[impl_idx];
 
             // Check if this impl's self_ty matches the target type
-            if types_match_for_impl(&impl_info.self_ty, ty) {
+            if types_match_for_impl_id(impl_info.self_ty, ty) {
                 // Search methods in this impl
                 let mut method_idx: usize = 0;
                 while method_idx < impl_info.methods.len() {
@@ -1089,12 +1090,12 @@ impl TypeChecker {
     }
 
     /// Counts how many impls provide a method with the given name for the given type.
-    pub fn count_method_matches(self: &Self, ty: &hir_ty::Type, method_name: common::Symbol) -> u32 {
+    pub fn count_method_matches(self: &Self, ty: type_intern::TyId, method_name: common::Symbol) -> u32 {
         let mut count: u32 = 0;
         let mut impl_idx: usize = 0;
         while impl_idx < self.impls.len() {
             let impl_info = &self.impls[impl_idx];
-            if types_match_for_impl(&impl_info.self_ty, ty) {
+            if types_match_for_impl_id(impl_info.self_ty, ty) {
                 let mut method_idx: usize = 0;
                 while method_idx < impl_info.methods.len() {
                     let method = &impl_info.methods[method_idx];
@@ -1205,7 +1206,7 @@ impl TypeChecker {
 
     /// Checks if a type implements a trait.
     /// Returns true if an implementation exists.
-    pub fn type_implements_trait(self: &Self, ty: &hir_ty::Type, trait_ref: &hir_ty::TraitRef) -> bool {
+    pub fn type_implements_trait(self: &Self, ty: type_intern::TyId, trait_ref: &hir_ty::TraitRef) -> bool {
         // Quick O(1) check: if no impl exists for this trait, return false immediately
         match self.trait_impl_hash.get(trait_ref.def_id.index as u64) {
             Option::Some(_) => {}
@@ -1219,7 +1220,7 @@ impl TypeChecker {
             // Check if this impl is for the right trait
             if impl_info.trait_def_id.index == trait_ref.def_id.index {
                 // Check if the self type matches
-                if types_match_for_impl(&impl_info.self_ty, ty) {
+                if types_match_for_impl_id(impl_info.self_ty, ty) {
                     // For now, we don't check where clause predicates
                     // A full implementation would recursively check them
                     return true;
@@ -1240,10 +1241,10 @@ impl TypeChecker {
                 // For now, we check if any impl exists for the trait
                 self.has_impl_for_trait(trait_ref.def_id)
             }
-            &typeck_types::Predicate::TypeEqual { ref left, ref right } => {
+            &typeck_types::Predicate::TypeEqual { left, right } => {
                 // For type equality, types must unify
                 // We can't mutate here, so do a simple structural check
-                types_structurally_equal(left, right)
+                types_structurally_equal_id(left, right)
             }
             &typeck_types::Predicate::WellFormed(_) => {
                 // WF predicates are assumed satisfied for now
@@ -1266,7 +1267,7 @@ impl TypeChecker {
     pub fn check_where_clause_bounds(
         self: &mut Self,
         fn_sig: &typeck_info::FnSigInfo,
-        arg_types: &Vec<hir_ty::Type>,
+        arg_types: &Vec<type_intern::TyId>,
         span: common::Span,
     ) {
         if fn_sig.where_predicates.len() == 0 {
@@ -1282,7 +1283,7 @@ impl TypeChecker {
                     // position uses that Infer ID, then get the resolved arg type.
                     let concrete_ty = self.resolve_where_param_type(ty, fn_sig, arg_types);
                     match &concrete_ty {
-                        &Option::Some(ref resolved_ty) => {
+                        &Option::Some(resolved_ty) => {
                             // Check each trait bound
                             let mut bi: usize = 0;
                             while bi < bounds.len() {
@@ -1311,8 +1312,8 @@ impl TypeChecker {
         self: &Self,
         where_ty: &hir_ty::Type,
         fn_sig: &typeck_info::FnSigInfo,
-        arg_types: &Vec<hir_ty::Type>,
-    ) -> Option<hir_ty::Type> {
+        arg_types: &Vec<type_intern::TyId>,
+    ) -> Option<type_intern::TyId> {
         // Get the param ID from the where clause type
         let param_id: Option<u32> = match &where_ty.kind {
             &hir_ty::TypeKind::Infer(ref var_id) => Option::Some(var_id.index),
@@ -1325,8 +1326,8 @@ impl TypeChecker {
                 // Find which parameter position has this Infer(pid) in the original sig
                 let mut i: usize = 0;
                 while i < fn_sig.param_tys.len() && i < arg_types.len() {
-                    if self.param_type_uses_infer(&fn_sig.param_tys[i], pid) {
-                        return Option::Some(hir_ty::copy_type(&arg_types[i]));
+                    if self.param_type_uses_infer_id(fn_sig.param_tys[i], pid) {
+                        return Option::Some(type_intern::TyId::new(arg_types[i].index));
                     }
                     i = i + 1;
                 }
@@ -1337,11 +1338,14 @@ impl TypeChecker {
     }
 
     /// Checks if a parameter type uses a specific Infer ID at the top level.
-    fn param_type_uses_infer(self: &Self, ty: &hir_ty::Type, target_id: u32) -> bool {
-        match &ty.kind {
-            &hir_ty::TypeKind::Infer(ref var_id) => var_id.index == target_id,
-            &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => {
-                self.param_type_uses_infer(inner.as_ref(), target_id)
+    fn param_type_uses_infer_id(self: &Self, ty: type_intern::TyId, target_id: u32) -> bool {
+        let interner = type_intern::type_interner();
+        let kind = interner.get(ty);
+        match kind {
+            &type_intern::InternedTypeKind::Infer(ref var_id) => var_id.index == target_id,
+            &type_intern::InternedTypeKind::Param(ref var_id) => var_id.index == target_id,
+            &type_intern::InternedTypeKind::Ref { inner, mutable: _ } => {
+                self.param_type_uses_infer_id(type_intern::TyId::new(inner.index), target_id)
             }
             _ => false,
         }
@@ -1377,17 +1381,17 @@ pub struct EnumVariantLookup {
     /// This variant's index within the enum.
     pub variant_index: u32,
     /// The variant's field types.
-    pub field_tys: Vec<hir_ty::Type>,
+    pub field_tys: Vec<type_intern::TyId>,
     /// Field names for record variants (empty for tuple/unit variants).
     pub field_names: Vec<common::Symbol>,
 }
 
-/// Copies a Vec of types.
-fn copy_type_vec(tys: &Vec<hir_ty::Type>) -> Vec<hir_ty::Type> {
-    let mut result: Vec<hir_ty::Type> = Vec::new();
+/// Copies a Vec of TyId values.
+fn copy_ty_id_vec(tys: &Vec<type_intern::TyId>) -> Vec<type_intern::TyId> {
+    let mut result: Vec<type_intern::TyId> = Vec::new();
     let mut i: usize = 0;
     while i < tys.len() {
-        result.push(hir_ty::copy_type(&tys[i]));
+        result.push(type_intern::TyId::new(tys[i].index));
         i = i + 1;
     }
     result
@@ -1429,6 +1433,89 @@ fn types_match_for_impl(impl_ty: &hir_ty::Type, target_ty: &hir_ty::Type) -> boo
             impl_q == target_q && types_match_for_impl(inner.as_ref(), target_inner.as_ref())
         }
         // Other combinations don't match
+        _ => false,
+    }
+}
+
+/// Checks if a type matches an impl's self type for method lookup, using TyId.
+fn types_match_for_impl_id(impl_ty: type_intern::TyId, target_ty: type_intern::TyId) -> bool {
+    let interner = type_intern::type_interner();
+    let impl_kind = interner.get(impl_ty);
+    // Check if impl type is Infer or Param (matches anything)
+    match impl_kind {
+        &type_intern::InternedTypeKind::Infer(_) => { return true; }
+        &type_intern::InternedTypeKind::Param(_) => { return true; }
+        _ => {}
+    }
+    // Check if target type is Infer or Param (matches anything)
+    let target_kind = interner.get(target_ty);
+    match target_kind {
+        &type_intern::InternedTypeKind::Infer(_) => { return true; }
+        &type_intern::InternedTypeKind::Param(_) => { return true; }
+        _ => {}
+    }
+    // Match both types for structural compatibility
+    match impl_kind {
+        &type_intern::InternedTypeKind::Adt { def_id: impl_def, args: _ } => {
+            match target_kind {
+                &type_intern::InternedTypeKind::Adt { def_id: target_def, args: _ } => {
+                    impl_def.index == target_def.index
+                }
+                _ => false,
+            }
+        }
+        &type_intern::InternedTypeKind::Primitive(impl_prim) => {
+            match target_kind {
+                &type_intern::InternedTypeKind::Primitive(target_prim) => {
+                    unify::primitives_equal(impl_prim, target_prim)
+                }
+                _ => false,
+            }
+        }
+        &type_intern::InternedTypeKind::Ref { inner: impl_inner, mutable: impl_mut } => {
+            match target_kind {
+                &type_intern::InternedTypeKind::Ref { inner: target_inner, mutable: target_mut } => {
+                    impl_mut == target_mut && types_match_for_impl_id(
+                        type_intern::TyId::new(impl_inner.index),
+                        type_intern::TyId::new(target_inner.index),
+                    )
+                }
+                _ => false,
+            }
+        }
+        &type_intern::InternedTypeKind::Slice { element: impl_elem } => {
+            match target_kind {
+                &type_intern::InternedTypeKind::Slice { element: target_elem } => {
+                    types_match_for_impl_id(
+                        type_intern::TyId::new(impl_elem.index),
+                        type_intern::TyId::new(target_elem.index),
+                    )
+                }
+                _ => false,
+            }
+        }
+        &type_intern::InternedTypeKind::Array { element: impl_elem, size: impl_size } => {
+            match target_kind {
+                &type_intern::InternedTypeKind::Array { element: target_elem, size: target_size } => {
+                    impl_size == target_size && types_match_for_impl_id(
+                        type_intern::TyId::new(impl_elem.index),
+                        type_intern::TyId::new(target_elem.index),
+                    )
+                }
+                _ => false,
+            }
+        }
+        &type_intern::InternedTypeKind::Ownership { qualifier: impl_q, inner: impl_inner } => {
+            match target_kind {
+                &type_intern::InternedTypeKind::Ownership { qualifier: target_q, inner: target_inner } => {
+                    impl_q == target_q && types_match_for_impl_id(
+                        type_intern::TyId::new(impl_inner.index),
+                        type_intern::TyId::new(target_inner.index),
+                    )
+                }
+                _ => false,
+            }
+        }
         _ => false,
     }
 }
@@ -1492,6 +1579,143 @@ fn types_structurally_equal(a: &hir_ty::Type, b: &hir_ty::Type) -> bool {
         (&hir_ty::TypeKind::Ownership { qualifier: qa, ref inner },
          &hir_ty::TypeKind::Ownership { qualifier: qb, inner: ref inner_b }) => {
             qa == qb && types_structurally_equal(inner.as_ref(), inner_b.as_ref())
+        }
+        _ => false,
+    }
+}
+
+/// Checks if two interned types are structurally equal (for obligation resolution).
+/// TyId version of types_structurally_equal.
+fn types_structurally_equal_id(a: type_intern::TyId, b: type_intern::TyId) -> bool {
+    // Quick check: same TyId index means same interned type
+    if a.index == b.index {
+        return true;
+    }
+    let interner = type_intern::type_interner();
+    let a_kind = interner.get(a);
+    let b_kind = interner.get(b);
+    match a_kind {
+        &type_intern::InternedTypeKind::Never => {
+            match b_kind {
+                &type_intern::InternedTypeKind::Never => true,
+                _ => false,
+            }
+        }
+        &type_intern::InternedTypeKind::Error => {
+            match b_kind {
+                &type_intern::InternedTypeKind::Error => true,
+                _ => false,
+            }
+        }
+        &type_intern::InternedTypeKind::Primitive(pa) => {
+            match b_kind {
+                &type_intern::InternedTypeKind::Primitive(pb) => {
+                    unify::primitives_equal(pa, pb)
+                }
+                _ => false,
+            }
+        }
+        &type_intern::InternedTypeKind::Tuple(list_a) => {
+            match b_kind {
+                &type_intern::InternedTypeKind::Tuple(list_b) => {
+                    let len_a = interner.ty_list_len(list_a);
+                    let len_b = interner.ty_list_len(list_b);
+                    if len_a != len_b {
+                        return false;
+                    }
+                    let mut i: usize = 0;
+                    while i < len_a {
+                        let ea = interner.get_ty_list_element(list_a, i);
+                        let eb = interner.get_ty_list_element(list_b, i);
+                        if !types_structurally_equal_id(ea, eb) {
+                            return false;
+                        }
+                        i = i + 1;
+                    }
+                    true
+                }
+                _ => false,
+            }
+        }
+        &type_intern::InternedTypeKind::Ref { inner: inner_a, mutable: ma } => {
+            match b_kind {
+                &type_intern::InternedTypeKind::Ref { inner: inner_b, mutable: mb } => {
+                    ma == mb && types_structurally_equal_id(
+                        type_intern::TyId::new(inner_a.index),
+                        type_intern::TyId::new(inner_b.index),
+                    )
+                }
+                _ => false,
+            }
+        }
+        &type_intern::InternedTypeKind::Ptr { inner: inner_a, mutable: ma } => {
+            match b_kind {
+                &type_intern::InternedTypeKind::Ptr { inner: inner_b, mutable: mb } => {
+                    ma == mb && types_structurally_equal_id(
+                        type_intern::TyId::new(inner_a.index),
+                        type_intern::TyId::new(inner_b.index),
+                    )
+                }
+                _ => false,
+            }
+        }
+        &type_intern::InternedTypeKind::Array { element: elem_a, size: sa } => {
+            match b_kind {
+                &type_intern::InternedTypeKind::Array { element: elem_b, size: sb } => {
+                    sa == sb && types_structurally_equal_id(
+                        type_intern::TyId::new(elem_a.index),
+                        type_intern::TyId::new(elem_b.index),
+                    )
+                }
+                _ => false,
+            }
+        }
+        &type_intern::InternedTypeKind::Slice { element: elem_a } => {
+            match b_kind {
+                &type_intern::InternedTypeKind::Slice { element: elem_b } => {
+                    types_structurally_equal_id(
+                        type_intern::TyId::new(elem_a.index),
+                        type_intern::TyId::new(elem_b.index),
+                    )
+                }
+                _ => false,
+            }
+        }
+        &type_intern::InternedTypeKind::Adt { def_id: da, args: args_a } => {
+            match b_kind {
+                &type_intern::InternedTypeKind::Adt { def_id: db, args: args_b } => {
+                    if da.index != db.index {
+                        return false;
+                    }
+                    let len_a = interner.ty_list_len(args_a);
+                    let len_b = interner.ty_list_len(args_b);
+                    if len_a != len_b {
+                        return false;
+                    }
+                    let mut i: usize = 0;
+                    while i < len_a {
+                        let ea = interner.get_ty_list_element(args_a, i);
+                        let eb = interner.get_ty_list_element(args_b, i);
+                        if !types_structurally_equal_id(ea, eb) {
+                            return false;
+                        }
+                        i = i + 1;
+                    }
+                    true
+                }
+                _ => false,
+            }
+        }
+        &type_intern::InternedTypeKind::Ownership { qualifier: qa, inner: inner_a } => {
+            match b_kind {
+                &type_intern::InternedTypeKind::Ownership { qualifier: qb, inner: inner_b } => {
+                    qa == qb && types_structurally_equal_id(
+                        type_intern::TyId::new(inner_a.index),
+                        type_intern::TyId::new(inner_b.index),
+                    )
+                }
+                _ => false,
+            }
         }
         _ => false,
     }
@@ -1989,8 +2213,8 @@ fn resolve_single_obligation(
                 Option::None => false,
             }
         }
-        &typeck_types::Predicate::TypeEqual { ref left, ref right } => {
-            let result = unify::unify(
+        &typeck_types::Predicate::TypeEqual { left, right } => {
+            let result = unify::unify_id(
                 &mut checker.subst_table,
                 &mut checker.unifier,
                 left,
@@ -2019,14 +2243,14 @@ fn copy_predicate(pred: &typeck_types::Predicate) -> typeck_types::Predicate {
                 span: tr.span,
             })
         }
-        &typeck_types::Predicate::TypeEqual { ref left, ref right } => {
+        &typeck_types::Predicate::TypeEqual { left, right } => {
             typeck_types::Predicate::TypeEqual {
-                left: hir_ty::copy_type(left),
-                right: hir_ty::copy_type(right),
+                left: type_intern::TyId::new(left.index),
+                right: type_intern::TyId::new(right.index),
             }
         }
-        &typeck_types::Predicate::WellFormed(ref ty) => {
-            typeck_types::Predicate::WellFormed(hir_ty::copy_type(ty))
+        &typeck_types::Predicate::WellFormed(ty) => {
+            typeck_types::Predicate::WellFormed(type_intern::TyId::new(ty.index))
         }
     }
 }

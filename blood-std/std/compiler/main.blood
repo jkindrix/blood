@@ -2080,7 +2080,7 @@ struct CodegenWorkItem {
     /// The DefId of this function.
     def_id: hir_def::DefId,
     /// The function's return type.
-    return_ty: hir_ty::Type,
+    return_ty: type_intern::TyId,
     /// The function's source span.
     span: common::Span,
 }
@@ -2114,8 +2114,8 @@ fn build_codegen_worklist(
         let fn_info = driver::find_fn_for_body(&lower_result.items, body_id);
 
         let return_ty = match &fn_info {
-            &Option::Some(ref info) => hir_ty::copy_type(&info.return_ty),
-            &Option::None => hir_ty::Type::unit(),
+            &Option::Some(ref info) => type_intern::TyId::new(info.return_ty.index),
+            &Option::None => type_intern::CommonTypes::unit(),
         };
         let span = match &fn_info {
             &Option::Some(ref info) => info.span,
@@ -2233,7 +2233,7 @@ fn codegen_thread_worker(arg: u64) -> u64 {
         let body = mir_lower::lower_body(
             work.def_id,
             hir_body,
-            hir_ty::copy_type(&work.return_ty),
+            type_intern::TyId::new(work.return_ty.index),
             work.span,
             &typeck.subst_table,
             &typeck.method_resolutions,
@@ -2325,7 +2325,7 @@ fn codegen_pass2(
         let body = mir_lower::lower_body(
             work.def_id,
             hir_body,
-            hir_ty::copy_type(&work.return_ty),
+            type_intern::TyId::new(work.return_ty.index),
             work.span,
             &typeck_result.subst_table,
             &typeck_result.method_resolutions,
@@ -3080,7 +3080,8 @@ fn dump_type_resolutions(typeck_result: &typeck_driver::TypeCheckResult) {
         line.push_str("  ?");
         push_usize(&mut line, subst.var_id.index as usize);
         line.push_str(" -> ");
-        let type_str = dump_mir::format_type(&subst.ty);
+        let type_ty = type_intern::ty_id_to_type(subst.ty);
+        let type_str = dump_mir::format_type(&type_ty);
         line.push_str(type_str.as_str());
         line.push('\n');
         eprint_str(line.as_str());

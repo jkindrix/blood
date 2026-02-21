@@ -18,6 +18,7 @@ mod mir_lower_util;
 mod mir_lower_pattern;
 mod mir_lower_expr;
 mod unify;
+mod type_intern;
 
 // ============================================================
 // MIR Lowering Driver
@@ -33,14 +34,15 @@ mod unify;
 pub fn lower_body(
     def_id: hir_def::DefId,
     body: &hir_expr::Body,
-    return_ty: hir_ty::Type,
+    return_ty: type_intern::TyId,
     span: common::Span,
     subst_table: &unify::SubstTable,
     method_resolutions: &Vec<common::MethodResEntry>,
     field_resolutions: &Vec<common::FieldResEntry>,
 ) -> mir_body::MirBody {
-    // Resolve the return type through the substitution table
-    let resolved_return = unify::apply_substs(subst_table, &return_ty);
+    // Resolve the return type through the substitution table (TyId → Type bridge)
+    let return_ty_type = type_intern::ty_id_to_type(return_ty);
+    let resolved_return = unify::apply_substs(subst_table, &return_ty_type);
 
     // Borrow the substitution table by address (read-only during MIR lowering)
     let subst_table_addr = subst_table as u64;

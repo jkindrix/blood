@@ -26,6 +26,7 @@ mod unify;
 mod typeck;
 mod typeck_driver;
 mod source;
+mod type_intern;
 
 // ============================================================
 // Compilation Result
@@ -237,8 +238,8 @@ impl Compiler {
 
             // Get return type from function signature, or default to unit
             let return_ty = match &fn_info {
-                &Option::Some(ref info) => hir_ty::copy_type(&info.return_ty),
-                &Option::None => hir_ty::Type::unit(),
+                &Option::Some(ref info) => type_intern::TyId::new(info.return_ty.index),
+                &Option::None => type_intern::CommonTypes::unit(),
             };
 
             // Get span from function item, or use dummy span
@@ -597,7 +598,7 @@ pub struct FnInfo {
     /// The span of the function name (for extracting name from source).
     pub name_span: common::Span,
     /// The return type.
-    pub return_ty: hir_ty::Type,
+    pub return_ty: type_intern::TyId,
     /// The span of the function.
     pub span: common::Span,
 }
@@ -619,7 +620,7 @@ pub fn find_fn_for_body(
                                 def_id: entry.item.def_id,
                                 name: entry.item.name.symbol,
                                 name_span: entry.item.name.span,
-                                return_ty: hir_ty::copy_type(&fn_def.sig.return_ty),
+                                return_ty: type_intern::type_to_ty_id(&fn_def.sig.return_ty),
                                 span: entry.item.span,
                             });
                         }
@@ -640,7 +641,7 @@ pub fn find_fn_for_body(
                                             def_id: assoc_fn.def_id,
                                             name: assoc_fn.name.symbol,
                                             name_span: assoc_fn.name.span,
-                                            return_ty: hir_ty::copy_type(&assoc_fn.sig.return_ty),
+                                            return_ty: type_intern::type_to_ty_id(&assoc_fn.sig.return_ty),
                                             span: assoc_fn.name.span,
                                         });
                                     }
@@ -657,7 +658,7 @@ pub fn find_fn_for_body(
                                             def_id: assoc_const.def_id,
                                             name: assoc_const.name.symbol,
                                             name_span: assoc_const.name.span,
-                                            return_ty: hir_ty::copy_type(&assoc_const.ty),
+                                            return_ty: type_intern::type_to_ty_id(&assoc_const.ty),
                                             span: assoc_const.name.span,
                                         });
                                     }
@@ -679,7 +680,7 @@ pub fn find_fn_for_body(
                         def_id: entry.item.def_id,
                         name: entry.item.name.symbol,
                         name_span: entry.item.name.span,
-                        return_ty: hir_ty::copy_type(&const_def.ty),
+                        return_ty: type_intern::type_to_ty_id(&const_def.ty),
                         span: entry.item.span,
                     });
                 }
@@ -690,7 +691,7 @@ pub fn find_fn_for_body(
                         def_id: entry.item.def_id,
                         name: entry.item.name.symbol,
                         name_span: entry.item.name.span,
-                        return_ty: hir_ty::copy_type(&static_def.ty),
+                        return_ty: type_intern::type_to_ty_id(&static_def.ty),
                         span: entry.item.span,
                     });
                 }
@@ -708,7 +709,7 @@ pub fn find_fn_for_body(
                                             def_id: assoc_fn.def_id,
                                             name: assoc_fn.name.symbol,
                                             name_span: assoc_fn.name.span,
-                                            return_ty: hir_ty::copy_type(&assoc_fn.sig.return_ty),
+                                            return_ty: type_intern::type_to_ty_id(&assoc_fn.sig.return_ty),
                                             span: assoc_fn.name.span,
                                         });
                                     }
@@ -725,7 +726,7 @@ pub fn find_fn_for_body(
                                             def_id: assoc_const.def_id,
                                             name: assoc_const.name.symbol,
                                             name_span: assoc_const.name.span,
-                                            return_ty: hir_ty::copy_type(&assoc_const.ty),
+                                            return_ty: type_intern::type_to_ty_id(&assoc_const.ty),
                                             span: assoc_const.name.span,
                                         });
                                     }
@@ -749,7 +750,7 @@ pub fn find_fn_for_body(
                                 def_id: hir_def::DefId::new(target_body_id.index),
                                 name: ret_clause.param_name.symbol,
                                 name_span: ret_clause.param_name.span,
-                                return_ty: hir_ty::Type::unit(),
+                                return_ty: type_intern::CommonTypes::unit(),
                                 span: ret_clause.param_name.span,
                             });
                         }
@@ -787,7 +788,7 @@ pub fn find_fn_for_body(
 fn find_effect_op_return_ty(
     items: &Vec<hir_lower_ctx::ItemEntry>,
     op_def_id: hir_def::DefId,
-) -> hir_ty::Type {
+) -> type_intern::TyId {
     let mut i: usize = 0;
     while i < items.len() {
         match &items[i].item.kind {
@@ -796,7 +797,7 @@ fn find_effect_op_return_ty(
                 while j < effect_def.operations.len() {
                     let effect_op = &effect_def.operations[j];
                     if effect_op.def_id.index == op_def_id.index {
-                        return hir_ty::copy_type(&effect_op.return_ty);
+                        return type_intern::type_to_ty_id(&effect_op.return_ty);
                     }
                     j = j + 1;
                 }
@@ -806,7 +807,7 @@ fn find_effect_op_return_ty(
         i = i + 1;
     }
     // Fallback: couldn't find the op definition
-    hir_ty::Type::unit()
+    type_intern::CommonTypes::unit()
 }
 
 /// Resolves a Symbol to a String using the interner.

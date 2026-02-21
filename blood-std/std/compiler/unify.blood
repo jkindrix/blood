@@ -12,6 +12,7 @@ mod common;
 mod hir_def;
 mod hir_ty;
 mod hashmap;
+mod type_intern;
 
 // ============================================================
 // Unification Result
@@ -76,17 +77,17 @@ pub enum UnifyErrorKind {
 // Type Variable Substitution
 // ============================================================
 
-/// A substitution entry mapping a type variable to its value.
+/// A substitution entry mapping a type variable to its interned value.
 pub struct TySubst {
     /// The type variable being substituted.
     pub var_id: hir_def::TyVarId,
-    /// The type it maps to.
-    pub ty: hir_ty::Type,
+    /// The interned type it maps to.
+    pub ty: type_intern::TyId,
 }
 
 impl TySubst {
     /// Creates a new type substitution.
-    pub fn new(var_id: hir_def::TyVarId, ty: hir_ty::Type) -> TySubst {
+    pub fn new(var_id: hir_def::TyVarId, ty: type_intern::TyId) -> TySubst {
         TySubst {
             var_id: var_id,
             ty: ty,
@@ -98,13 +99,13 @@ impl TySubst {
 pub struct EffectRowSubst {
     /// The effect row variable being substituted.
     pub var_id: hir_def::EffectRowVarId,
-    /// The effect row it maps to.
-    pub row: hir_ty::EffectRow,
+    /// The interned effect row it maps to.
+    pub row: type_intern::EffectRowId,
 }
 
 impl EffectRowSubst {
     /// Creates a new effect row substitution.
-    pub fn new(var_id: hir_def::EffectRowVarId, row: hir_ty::EffectRow) -> EffectRowSubst {
+    pub fn new(var_id: hir_def::EffectRowVarId, row: type_intern::EffectRowId) -> EffectRowSubst {
         EffectRowSubst {
             var_id: var_id,
             row: row,
@@ -116,8 +117,8 @@ impl EffectRowSubst {
 pub struct RecordRowSubst {
     /// The record row variable being substituted.
     pub var_id: hir_def::RecordRowVarId,
-    /// The record fields it maps to.
-    pub fields: Vec<hir_ty::RecordField>,
+    /// The interned record fields it maps to.
+    pub fields: type_intern::RecordFieldListId,
     /// Optional remaining row variable.
     pub rest: Option<hir_def::RecordRowVarId>,
 }
@@ -126,7 +127,7 @@ impl RecordRowSubst {
     /// Creates a new record row substitution.
     pub fn new(
         var_id: hir_def::RecordRowVarId,
-        fields: Vec<hir_ty::RecordField>,
+        fields: type_intern::RecordFieldListId,
         rest: Option<hir_def::RecordRowVarId>,
     ) -> RecordRowSubst {
         RecordRowSubst {
@@ -141,18 +142,18 @@ impl RecordRowSubst {
 // Type Parameter Substitution (for generics)
 // ============================================================
 
-/// A substitution entry mapping a type parameter index to a concrete type.
+/// A substitution entry mapping a type parameter index to a concrete interned type.
 /// This is used during generic instantiation (e.g., calling Vec::new::<i32>()).
 pub struct TypeParamEntry {
     /// The index of the type parameter (0 for T, 1 for U, etc.)
     pub param_index: u32,
-    /// The concrete type to substitute.
-    pub ty: hir_ty::Type,
+    /// The concrete interned type to substitute.
+    pub ty: type_intern::TyId,
 }
 
 impl TypeParamEntry {
     /// Creates a new type parameter entry.
-    pub fn new(param_index: u32, ty: hir_ty::Type) -> TypeParamEntry {
+    pub fn new(param_index: u32, ty: type_intern::TyId) -> TypeParamEntry {
         TypeParamEntry { param_index, ty }
     }
 }
@@ -181,28 +182,44 @@ impl TypeParamSubst {
         let mut i: usize = 0;
         while i < types.len() {
             let vec_idx = subst.entries.len() as u32;
-            subst.entries.push(TypeParamEntry::new(i as u32, hir_ty::copy_type(&types[i])));
+            subst.entries.push(TypeParamEntry::new(i as u32, type_intern::type_to_ty_id(&types[i])));
             subst.hash_index.insert(i as u64, vec_idx);
             i = i + 1;
         }
         subst
     }
 
-    /// Adds a substitution entry.
+    /// Adds a substitution entry (Type-based, converts to TyId internally).
     pub fn add(self: &mut Self, param_index: u32, ty: hir_ty::Type) {
+        let ty_id = type_intern::type_to_ty_id(&ty);
         let vec_idx = self.entries.len() as u32;
-        self.entries.push(TypeParamEntry::new(param_index, ty));
+        self.entries.push(TypeParamEntry::new(param_index, ty_id));
         self.hash_index.insert(param_index as u64, vec_idx);
     }
 
-    /// Looks up a type parameter by index.
+    /// Adds a substitution entry (TyId-based, zero conversion).
+    pub fn add_id(self: &mut Self, param_index: u32, ty_id: type_intern::TyId) {
+        let vec_idx = self.entries.len() as u32;
+        self.entries.push(TypeParamEntry::new(param_index, ty_id));
+        self.hash_index.insert(param_index as u64, vec_idx);
+    }
+
+    /// Looks up a type parameter by index (returns Type for backward compat).
     pub fn lookup(self: &Self, param_index: u32) -> Option<hir_ty::Type> {
+        match self.lookup_id(param_index) {
+            Option::Some(ty_id) => Option::Some(type_intern::ty_id_to_type(ty_id)),
+            Option::None => Option::None,
+        }
+    }
+
+    /// Looks up a type parameter by index (returns TyId, zero copy).
+    pub fn lookup_id(self: &Self, param_index: u32) -> Option<type_intern::TyId> {
         // O(1) hash lookup
         match self.hash_index.get(param_index as u64) {
             Option::Some(vec_idx) => {
                 let idx = vec_idx as usize;
                 if idx < self.entries.len() {
-                    return Option::Some(hir_ty::copy_type(&self.entries[idx].ty));
+                    return Option::Some(type_intern::TyId::new(self.entries[idx].ty.index));
                 }
             }
             Option::None => {}
@@ -211,7 +228,7 @@ impl TypeParamSubst {
         let mut i: usize = 0;
         while i < self.entries.len() {
             if self.entries[i].param_index == param_index {
-                return Some(hir_ty::copy_type(&self.entries[i].ty));
+                return Some(type_intern::TyId::new(self.entries[i].ty.index));
             }
             i = i + 1;
         }
@@ -226,303 +243,164 @@ impl TypeParamSubst {
 
 /// Substitutes type parameters in a type according to the given substitution.
 /// This is used to instantiate generic types with concrete type arguments.
+/// Wrapper: converts to TyId, delegates to substitute_type_params_id, converts back.
 pub fn substitute_type_params(ty: &hir_ty::Type, subst: &TypeParamSubst) -> hir_ty::Type {
     if subst.is_empty() {
         return hir_ty::copy_type(ty);
     }
+    let ty_id = type_intern::type_to_ty_id(ty);
+    let result_id = substitute_type_params_id(ty_id, subst);
+    type_intern::ty_id_to_type(result_id)
+}
 
-    match &ty.kind {
-        &hir_ty::TypeKind::Param(param_id) => {
-            // Look up the type parameter in the substitution
-            match subst.lookup(param_id.index) {
-                Some(concrete_ty) => concrete_ty,
-                Option::None => hir_ty::copy_type(ty), // Parameter not in substitution, keep as-is
-            }
-        }
-        &hir_ty::TypeKind::Primitive(_) => hir_ty::copy_type(ty),
-        &hir_ty::TypeKind::Never => hir_ty::copy_type(ty),
-        &hir_ty::TypeKind::Error => hir_ty::copy_type(ty),
-        &hir_ty::TypeKind::Infer(_) => hir_ty::copy_type(ty),
-        &hir_ty::TypeKind::Tuple(ref types) => {
-            let mut result: Vec<hir_ty::Type> = Vec::new();
-            let mut i: usize = 0;
-            while i < types.len() {
-                result.push(substitute_type_params(&types[i], subst));
-                i = i + 1;
-            }
-            hir_ty::Type::new(hir_ty::TypeKind::Tuple(result))
-        }
-        &hir_ty::TypeKind::Array { ref element, size } => {
-            hir_ty::Type::new(hir_ty::TypeKind::Array {
-                element: Box::new(substitute_type_params(element.as_ref(), subst)),
-                size: size,
-            })
-        }
-        &hir_ty::TypeKind::Slice { ref element } => {
-            hir_ty::Type::new(hir_ty::TypeKind::Slice {
-                element: Box::new(substitute_type_params(element.as_ref(), subst)),
-            })
-        }
-        &hir_ty::TypeKind::Ref { ref inner, mutable } => {
-            hir_ty::Type::new(hir_ty::TypeKind::Ref {
-                inner: Box::new(substitute_type_params(inner.as_ref(), subst)),
-                mutable: mutable,
-            })
-        }
-        &hir_ty::TypeKind::Ptr { ref inner, mutable } => {
-            hir_ty::Type::new(hir_ty::TypeKind::Ptr {
-                inner: Box::new(substitute_type_params(inner.as_ref(), subst)),
-                mutable: mutable,
-            })
-        }
-        &hir_ty::TypeKind::Adt { def_id, ref args } => {
-            let mut result_args: Vec<hir_ty::Type> = Vec::new();
-            let mut i: usize = 0;
-            while i < args.len() {
-                result_args.push(substitute_type_params(&args[i], subst));
-                i = i + 1;
-            }
-            hir_ty::Type::new(hir_ty::TypeKind::Adt {
-                def_id: def_id,
-                args: result_args,
-            })
-        }
-        &hir_ty::TypeKind::Fn { ref params, ref ret, ref effects } => {
-            let mut result_params: Vec<hir_ty::Type> = Vec::new();
-            let mut i: usize = 0;
-            while i < params.len() {
-                result_params.push(substitute_type_params(&params[i], subst));
-                i = i + 1;
-            }
-            hir_ty::Type::new(hir_ty::TypeKind::Fn {
-                params: result_params,
-                ret: Box::new(substitute_type_params(ret.as_ref(), subst)),
-                effects: substitute_effect_row_params(effects, subst),
-            })
-        }
-        &hir_ty::TypeKind::Closure { def_id, ref params, ref ret } => {
-            let mut result_params: Vec<hir_ty::Type> = Vec::new();
-            let mut i: usize = 0;
-            while i < params.len() {
-                result_params.push(substitute_type_params(&params[i], subst));
-                i = i + 1;
-            }
-            hir_ty::Type::new(hir_ty::TypeKind::Closure {
-                def_id: def_id,
-                params: result_params,
-                ret: Box::new(substitute_type_params(ret.as_ref(), subst)),
-            })
-        }
-        &hir_ty::TypeKind::Record { ref fields, ref row_var } => {
-            let mut result_fields: Vec<hir_ty::RecordField> = Vec::new();
-            let mut i: usize = 0;
-            while i < fields.len() {
-                result_fields.push(hir_ty::RecordField::new(
-                    fields[i].name,
-                    substitute_type_params(&fields[i].ty, subst),
-                ));
-                i = i + 1;
-            }
-            hir_ty::Type::new(hir_ty::TypeKind::Record {
-                fields: result_fields,
-                row_var: *row_var,
-            })
-        }
-        &hir_ty::TypeKind::Forall { ref params, ref body } => {
-            // Substitute in the body, but don't touch the quantified params
-            // (they shadow any outer params with the same var_id)
-            let mut copied_params: Vec<hir_def::TyVarId> = Vec::new();
-            let mut i: usize = 0;
-            while i < params.len() {
-                copied_params.push(params[i]);
-                i = i + 1;
-            }
-            hir_ty::Type::new(hir_ty::TypeKind::Forall {
-                params: copied_params,
-                body: Box::new(substitute_type_params(body.as_ref(), subst)),
-            })
-        }
-        &hir_ty::TypeKind::Ownership { qualifier, ref inner } => {
-            hir_ty::Type::new(hir_ty::TypeKind::Ownership {
-                qualifier: qualifier,
-                inner: Box::new(substitute_type_params(inner.as_ref(), subst)),
-            })
-        }
-        &hir_ty::TypeKind::Range { ref element, inclusive } => {
-            hir_ty::Type::new(hir_ty::TypeKind::Range {
-                element: Box::new(substitute_type_params(element.as_ref(), subst)),
-                inclusive: inclusive,
-            })
-        }
-        &hir_ty::TypeKind::DynTrait { trait_id, ref auto_traits } => {
-            let mut copied_auto: Vec<hir_def::DefId> = Vec::new();
-            let mut i: usize = 0;
-            while i < auto_traits.len() {
-                copied_auto.push(auto_traits[i]);
-                i = i + 1;
-            }
-            hir_ty::Type::new(hir_ty::TypeKind::DynTrait {
-                trait_id: trait_id,
-                auto_traits: copied_auto,
-            })
-        }
-    }
+/// TyId-native: substitutes type parameters in a type.
+pub fn substitute_type_params_id(ty_id: type_intern::TyId, subst: &TypeParamSubst) -> type_intern::TyId {
+    substitute_params_core_id(ty_id, subst, false)
 }
 
 /// Substitutes forall-bound type variables in a type.
-/// Unlike substitute_type_params, this correctly handles variable capture in
-/// nested forall types by filtering out inner-bound params from the substitution.
+/// Wrapper: converts to TyId, delegates to substitute_forall_vars_id, converts back.
 fn substitute_forall_vars(ty: &hir_ty::Type, subst: &TypeParamSubst) -> hir_ty::Type {
     if subst.is_empty() {
         return hir_ty::copy_type(ty);
     }
+    let ty_id = type_intern::type_to_ty_id(ty);
+    let result_id = substitute_forall_vars_id(ty_id, subst);
+    type_intern::ty_id_to_type(result_id)
+}
 
-    match &ty.kind {
-        &hir_ty::TypeKind::Param(param_id) => {
-            match subst.lookup(param_id.index) {
-                Some(concrete_ty) => concrete_ty,
-                Option::None => hir_ty::copy_type(ty),
+/// TyId-native: substitutes forall-bound type variables.
+fn substitute_forall_vars_id(ty_id: type_intern::TyId, subst: &TypeParamSubst) -> type_intern::TyId {
+    substitute_params_core_id(ty_id, subst, true)
+}
+
+/// Shared core for substitute_type_params_id and substitute_forall_vars_id.
+/// If capture_avoid is true, Forall arms filter out inner-bound params.
+fn substitute_params_core_id(ty_id: type_intern::TyId, subst: &TypeParamSubst, capture_avoid: bool) -> type_intern::TyId {
+    if subst.is_empty() {
+        return ty_id;
+    }
+    let interner = type_intern::type_interner();
+    let kind = interner.get(ty_id);
+    match kind {
+        &type_intern::InternedTypeKind::Param(var_id) => {
+            match subst.lookup_id(var_id.index) {
+                Option::Some(concrete_id) => concrete_id,
+                Option::None => ty_id,
             }
         }
-        &hir_ty::TypeKind::Primitive(_) => hir_ty::copy_type(ty),
-        &hir_ty::TypeKind::Never => hir_ty::copy_type(ty),
-        &hir_ty::TypeKind::Error => hir_ty::copy_type(ty),
-        &hir_ty::TypeKind::Infer(_) => hir_ty::copy_type(ty),
-        &hir_ty::TypeKind::Tuple(ref types) => {
-            let mut result: Vec<hir_ty::Type> = Vec::new();
-            let mut i: usize = 0;
-            while i < types.len() {
-                result.push(substitute_forall_vars(&types[i], subst));
-                i = i + 1;
+        &type_intern::InternedTypeKind::Primitive(_) => ty_id,
+        &type_intern::InternedTypeKind::Never => ty_id,
+        &type_intern::InternedTypeKind::Error => ty_id,
+        &type_intern::InternedTypeKind::Infer(var_id) => {
+            // Also substitute Infer variables — Blood HIR uses Infer for type parameters
+            match subst.lookup_id(var_id.index) {
+                Option::Some(concrete_id) => concrete_id,
+                Option::None => ty_id,
             }
-            hir_ty::Type::new(hir_ty::TypeKind::Tuple(result))
         }
-        &hir_ty::TypeKind::Array { ref element, size } => {
-            hir_ty::Type::new(hir_ty::TypeKind::Array {
-                element: Box::new(substitute_forall_vars(element.as_ref(), subst)),
-                size: size,
+        &type_intern::InternedTypeKind::Tuple(list_id) => {
+            let new_list = substitute_ty_list_id(list_id, subst, capture_avoid);
+            type_intern::type_interner().intern(type_intern::InternedTypeKind::Tuple(new_list))
+        }
+        &type_intern::InternedTypeKind::Array { element, size } => {
+            let new_elem = substitute_params_core_id(element, subst, capture_avoid);
+            type_intern::type_interner().mk_array(new_elem, size)
+        }
+        &type_intern::InternedTypeKind::Slice { element } => {
+            let new_elem = substitute_params_core_id(element, subst, capture_avoid);
+            type_intern::type_interner().mk_slice(new_elem)
+        }
+        &type_intern::InternedTypeKind::Ref { inner, mutable } => {
+            let new_inner = substitute_params_core_id(inner, subst, capture_avoid);
+            type_intern::type_interner().mk_ref(new_inner, mutable)
+        }
+        &type_intern::InternedTypeKind::Ptr { inner, mutable } => {
+            let new_inner = substitute_params_core_id(inner, subst, capture_avoid);
+            type_intern::type_interner().mk_ptr(new_inner, mutable)
+        }
+        &type_intern::InternedTypeKind::Adt { def_id, args } => {
+            let new_args = substitute_ty_list_id(args, subst, capture_avoid);
+            type_intern::type_interner().mk_adt(def_id, new_args)
+        }
+        &type_intern::InternedTypeKind::Fn { params, ret, effects } => {
+            let new_params = substitute_ty_list_id(params, subst, capture_avoid);
+            let new_ret = substitute_params_core_id(ret, subst, capture_avoid);
+            let new_effects = substitute_effect_row_core_id(effects, subst, capture_avoid);
+            type_intern::type_interner().mk_fn(new_params, new_ret, new_effects)
+        }
+        &type_intern::InternedTypeKind::Closure { def_id, params, ret } => {
+            let new_params = substitute_ty_list_id(params, subst, capture_avoid);
+            let new_ret = substitute_params_core_id(ret, subst, capture_avoid);
+            type_intern::type_interner().mk_closure(def_id, new_params, new_ret)
+        }
+        &type_intern::InternedTypeKind::Record { fields, ref row_var } => {
+            let rv = *row_var;
+            let new_fields = substitute_record_fields_id(fields, subst, capture_avoid);
+            type_intern::type_interner().intern(type_intern::InternedTypeKind::Record {
+                fields: new_fields,
+                row_var: rv,
             })
         }
-        &hir_ty::TypeKind::Slice { ref element } => {
-            hir_ty::Type::new(hir_ty::TypeKind::Slice {
-                element: Box::new(substitute_forall_vars(element.as_ref(), subst)),
-            })
-        }
-        &hir_ty::TypeKind::Ref { ref inner, mutable } => {
-            hir_ty::Type::new(hir_ty::TypeKind::Ref {
-                inner: Box::new(substitute_forall_vars(inner.as_ref(), subst)),
-                mutable: mutable,
-            })
-        }
-        &hir_ty::TypeKind::Ptr { ref inner, mutable } => {
-            hir_ty::Type::new(hir_ty::TypeKind::Ptr {
-                inner: Box::new(substitute_forall_vars(inner.as_ref(), subst)),
-                mutable: mutable,
-            })
-        }
-        &hir_ty::TypeKind::Adt { def_id, ref args } => {
-            let mut result_args: Vec<hir_ty::Type> = Vec::new();
-            let mut i: usize = 0;
-            while i < args.len() {
-                result_args.push(substitute_forall_vars(&args[i], subst));
-                i = i + 1;
-            }
-            hir_ty::Type::new(hir_ty::TypeKind::Adt {
-                def_id: def_id,
-                args: result_args,
-            })
-        }
-        &hir_ty::TypeKind::Fn { ref params, ref ret, ref effects } => {
-            let mut result_params: Vec<hir_ty::Type> = Vec::new();
-            let mut i: usize = 0;
-            while i < params.len() {
-                result_params.push(substitute_forall_vars(&params[i], subst));
-                i = i + 1;
-            }
-            hir_ty::Type::new(hir_ty::TypeKind::Fn {
-                params: result_params,
-                ret: Box::new(substitute_forall_vars(ret.as_ref(), subst)),
-                effects: substitute_forall_effect_row(effects, subst),
-            })
-        }
-        &hir_ty::TypeKind::Closure { def_id, ref params, ref ret } => {
-            let mut result_params: Vec<hir_ty::Type> = Vec::new();
-            let mut i: usize = 0;
-            while i < params.len() {
-                result_params.push(substitute_forall_vars(&params[i], subst));
-                i = i + 1;
-            }
-            hir_ty::Type::new(hir_ty::TypeKind::Closure {
-                def_id: def_id,
-                params: result_params,
-                ret: Box::new(substitute_forall_vars(ret.as_ref(), subst)),
-            })
-        }
-        &hir_ty::TypeKind::Record { ref fields, ref row_var } => {
-            let mut result_fields: Vec<hir_ty::RecordField> = Vec::new();
-            let mut i: usize = 0;
-            while i < fields.len() {
-                result_fields.push(hir_ty::RecordField::new(
-                    fields[i].name,
-                    substitute_forall_vars(&fields[i].ty, subst),
-                ));
-                i = i + 1;
-            }
-            hir_ty::Type::new(hir_ty::TypeKind::Record {
-                fields: result_fields,
-                row_var: *row_var,
-            })
-        }
-        &hir_ty::TypeKind::Forall { ref params, ref body } => {
-            // Avoid variable capture: filter out inner-bound params from subst
-            let mut filtered = TypeParamSubst::new();
-            let mut i: usize = 0;
-            while i < subst.entries.len() {
-                let entry = &subst.entries[i];
-                let mut is_bound: bool = false;
-                let mut j: usize = 0;
-                while j < params.len() {
-                    if params[j].index == entry.param_index {
-                        is_bound = true;
-                    }
-                    j = j + 1;
-                }
-                if !is_bound {
-                    filtered.add(entry.param_index, hir_ty::copy_type(&entry.ty));
-                }
-                i = i + 1;
-            }
+        &type_intern::InternedTypeKind::Forall { ref params, body } => {
+            // Copy params vec before dropping interner borrow
+            let param_count = params.len();
             let mut copied_params: Vec<hir_def::TyVarId> = Vec::new();
-            let mut k: usize = 0;
-            while k < params.len() {
-                copied_params.push(params[k]);
-                k = k + 1;
+            let mut i: usize = 0;
+            while i < param_count {
+                copied_params.push(params[i]);
+                i = i + 1;
             }
-            hir_ty::Type::new(hir_ty::TypeKind::Forall {
-                params: copied_params,
-                body: Box::new(substitute_forall_vars(body.as_ref(), &filtered)),
-            })
+            if capture_avoid {
+                // Filter out inner-bound params from subst
+                let mut filtered = TypeParamSubst::new();
+                let mut si: usize = 0;
+                while si < subst.entries.len() {
+                    let entry_idx = subst.entries[si].param_index;
+                    let entry_ty = type_intern::TyId::new(subst.entries[si].ty.index);
+                    let mut is_bound: bool = false;
+                    let mut j: usize = 0;
+                    while j < copied_params.len() {
+                        if copied_params[j].index == entry_idx {
+                            is_bound = true;
+                        }
+                        j = j + 1;
+                    }
+                    if !is_bound {
+                        filtered.add_id(entry_idx, entry_ty);
+                    }
+                    si = si + 1;
+                }
+                let new_body = substitute_params_core_id(body, &filtered, capture_avoid);
+                type_intern::type_interner().intern(type_intern::InternedTypeKind::Forall {
+                    params: copied_params,
+                    body: new_body,
+                })
+            } else {
+                let new_body = substitute_params_core_id(body, subst, capture_avoid);
+                type_intern::type_interner().intern(type_intern::InternedTypeKind::Forall {
+                    params: copied_params,
+                    body: new_body,
+                })
+            }
         }
-        &hir_ty::TypeKind::Ownership { qualifier, ref inner } => {
-            hir_ty::Type::new(hir_ty::TypeKind::Ownership {
-                qualifier: qualifier,
-                inner: Box::new(substitute_forall_vars(inner.as_ref(), subst)),
-            })
+        &type_intern::InternedTypeKind::Ownership { qualifier, inner } => {
+            let new_inner = substitute_params_core_id(inner, subst, capture_avoid);
+            type_intern::type_interner().mk_ownership(qualifier, new_inner)
         }
-        &hir_ty::TypeKind::Range { ref element, inclusive } => {
-            hir_ty::Type::new(hir_ty::TypeKind::Range {
-                element: Box::new(substitute_forall_vars(element.as_ref(), subst)),
-                inclusive: inclusive,
-            })
+        &type_intern::InternedTypeKind::Range { element, inclusive } => {
+            let new_elem = substitute_params_core_id(element, subst, capture_avoid);
+            type_intern::type_interner().mk_range(new_elem, inclusive)
         }
-        &hir_ty::TypeKind::DynTrait { trait_id, ref auto_traits } => {
+        &type_intern::InternedTypeKind::DynTrait { trait_id, ref auto_traits } => {
+            let auto_count = auto_traits.len();
             let mut copied_auto: Vec<hir_def::DefId> = Vec::new();
             let mut i: usize = 0;
-            while i < auto_traits.len() {
+            while i < auto_count {
                 copied_auto.push(auto_traits[i]);
                 i = i + 1;
             }
-            hir_ty::Type::new(hir_ty::TypeKind::DynTrait {
+            type_intern::type_interner().intern(type_intern::InternedTypeKind::DynTrait {
                 trait_id: trait_id,
                 auto_traits: copied_auto,
             })
@@ -530,91 +408,134 @@ fn substitute_forall_vars(ty: &hir_ty::Type, subst: &TypeParamSubst) -> hir_ty::
     }
 }
 
-/// Substitutes forall-bound type variables in an effect row.
-fn substitute_forall_effect_row(row: &hir_ty::EffectRow, subst: &TypeParamSubst) -> hir_ty::EffectRow {
-    let mut result_effects: Vec<hir_ty::EffectRef> = Vec::new();
+/// Substitutes params in a type list, returning new TyListId.
+fn substitute_ty_list_id(list_id: type_intern::TyListId, subst: &TypeParamSubst, capture_avoid: bool) -> type_intern::TyListId {
+    let interner = type_intern::type_interner();
+    let len = interner.ty_list_len(list_id);
+    let mut result: Vec<type_intern::TyId> = Vec::new();
     let mut i: usize = 0;
-    while i < row.effects.len() {
-        let eff = &row.effects[i];
-        let mut result_args: Vec<hir_ty::Type> = Vec::new();
-        let mut j: usize = 0;
-        while j < eff.args.len() {
-            result_args.push(substitute_forall_vars(&eff.args[j], subst));
-            j = j + 1;
-        }
-        result_effects.push(hir_ty::EffectRef {
-            def_id: eff.def_id,
-            args: result_args,
-        });
+    while i < len {
+        let elem = type_intern::type_interner().get_ty_list_element(list_id, i);
+        result.push(substitute_params_core_id(elem, subst, capture_avoid));
         i = i + 1;
     }
-    hir_ty::EffectRow {
-        effects: result_effects,
-        row_var: row.row_var,
+    type_intern::type_interner().intern_ty_list(&result)
+}
+
+/// Substitutes params in an effect row (TyId-native).
+fn substitute_effect_row_core_id(eff_id: type_intern::EffectRowId, subst: &TypeParamSubst, capture_avoid: bool) -> type_intern::EffectRowId {
+    let interner = type_intern::type_interner();
+    let row = interner.get_effect_row(eff_id);
+    let eff_count = row.effects.len();
+    let row_var = row.row_var;
+    let mut new_effects: Vec<type_intern::InternedEffectRef> = Vec::new();
+    let mut i: usize = 0;
+    while i < eff_count {
+        let eff = &type_intern::type_interner().get_effect_row(eff_id).effects[i];
+        let def_id = eff.def_id;
+        let args = eff.args;
+        let new_args = substitute_ty_list_id(args, subst, capture_avoid);
+        new_effects.push(type_intern::InternedEffectRef::new(def_id, new_args));
+        i = i + 1;
     }
+    type_intern::type_interner().intern_effect_row(
+        type_intern::InternedEffectRow::new(new_effects, row_var)
+    )
+}
+
+/// Substitutes params in record fields (TyId-native).
+fn substitute_record_fields_id(fields_id: type_intern::RecordFieldListId, subst: &TypeParamSubst, capture_avoid: bool) -> type_intern::RecordFieldListId {
+    let interner = type_intern::type_interner();
+    let list = interner.get_record_field_list(fields_id);
+    let field_count = list.fields.len();
+    let mut new_fields: Vec<type_intern::InternedRecordField> = Vec::new();
+    let mut i: usize = 0;
+    while i < field_count {
+        let f = &type_intern::type_interner().get_record_field_list(fields_id).fields[i];
+        let name = f.name;
+        let ty = f.ty;
+        let new_ty = substitute_params_core_id(ty, subst, capture_avoid);
+        new_fields.push(type_intern::InternedRecordField::new(name, new_ty));
+        i = i + 1;
+    }
+    type_intern::type_interner().intern_record_field_list(
+        type_intern::InternedRecordFieldList::new(new_fields)
+    )
+}
+
+/// Substitutes forall-bound type variables in an effect row.
+/// Wrapper: converts to EffectRowId, delegates, converts back.
+fn substitute_forall_effect_row(row: &hir_ty::EffectRow, subst: &TypeParamSubst) -> hir_ty::EffectRow {
+    let eff_id = effect_row_to_id(row);
+    let result_id = substitute_effect_row_core_id(eff_id, subst, true);
+    effect_row_id_to_row(result_id)
 }
 
 /// Extracts type parameter bindings by matching an impl's self_ty against
-/// the actual receiver type. For example, if self_ty is `Box<Param(0)>` and
-/// receiver is `Box<Expr>`, this produces `{0 → Expr}`.
-///
-/// This is used during method call type inference to constrain the impl's
-/// type parameters to the concrete types from the receiver.
+/// the actual receiver type. Wrapper: converts to TyId and delegates.
 pub fn extract_type_params_from_self_ty(
     self_ty: &hir_ty::Type,
     receiver: &hir_ty::Type,
     subst: &mut TypeParamSubst,
 ) {
-    extract_params_recursive(self_ty, receiver, subst);
+    let self_id = type_intern::type_to_ty_id(self_ty);
+    let recv_id = type_intern::type_to_ty_id(receiver);
+    extract_params_recursive_id(self_id, recv_id, subst);
 }
 
-/// Recursive helper for type parameter extraction.
-fn extract_params_recursive(
-    pattern: &hir_ty::Type,
-    actual: &hir_ty::Type,
+/// TyId-native: recursive type parameter extraction.
+fn extract_params_recursive_id(
+    pattern: type_intern::TyId,
+    actual: type_intern::TyId,
     subst: &mut TypeParamSubst,
 ) {
-    match &pattern.kind {
-        &hir_ty::TypeKind::Param(param_id) => {
-            // Found a type parameter — bind it to the corresponding actual type
-            subst.add(param_id.index, hir_ty::copy_type(actual));
+    let interner = type_intern::type_interner();
+    let kind = interner.get(pattern);
+    match kind {
+        &type_intern::InternedTypeKind::Param(var_id) => {
+            subst.add_id(var_id.index, actual);
         }
-        &hir_ty::TypeKind::Adt { def_id: _, ref args } => {
-            // Match ADT type arguments pairwise
-            extract_params_adt_args(args, actual, subst);
+        &type_intern::InternedTypeKind::Adt { def_id: _, args } => {
+            extract_params_adt_args_id(args, actual, subst);
         }
-        &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => {
-            extract_params_ref_inner(inner.as_ref(), actual, subst);
+        &type_intern::InternedTypeKind::Ref { inner, mutable: _ } => {
+            extract_params_ref_inner_id(inner, actual, subst);
         }
-        &hir_ty::TypeKind::Ptr { ref inner, mutable: _ } => {
-            extract_params_ptr_inner(inner.as_ref(), actual, subst);
+        &type_intern::InternedTypeKind::Ptr { inner, mutable: _ } => {
+            extract_params_ptr_inner_id(inner, actual, subst);
         }
-        &hir_ty::TypeKind::Slice { ref element } => {
-            extract_params_slice_elem(element.as_ref(), actual, subst);
+        &type_intern::InternedTypeKind::Slice { element } => {
+            extract_params_slice_elem_id(element, actual, subst);
         }
-        &hir_ty::TypeKind::Array { ref element, size: _ } => {
-            extract_params_array_elem(element.as_ref(), actual, subst);
+        &type_intern::InternedTypeKind::Array { element, size: _ } => {
+            extract_params_array_elem_id(element, actual, subst);
         }
-        &hir_ty::TypeKind::Tuple(ref elems) => {
-            extract_params_tuple_elems(elems, actual, subst);
+        &type_intern::InternedTypeKind::Tuple(list_id) => {
+            extract_params_tuple_elems_id(list_id, actual, subst);
         }
         // Primitive, Never, Error, Infer, etc. — no type params to extract
         _ => {}
     }
 }
 
-/// Helper: extract params from ADT type arguments.
-fn extract_params_adt_args(
-    pattern_args: &Vec<hir_ty::Type>,
-    actual: &hir_ty::Type,
+/// Helper: extract params from ADT type arguments (TyId-native).
+fn extract_params_adt_args_id(
+    pattern_args: type_intern::TyListId,
+    actual: type_intern::TyId,
     subst: &mut TypeParamSubst,
 ) {
-    match &actual.kind {
-        &hir_ty::TypeKind::Adt { def_id: _, ref args } => {
+    let interner = type_intern::type_interner();
+    let actual_kind = interner.get(actual);
+    match actual_kind {
+        &type_intern::InternedTypeKind::Adt { def_id: _, args } => {
+            let p_len = type_intern::type_interner().ty_list_len(pattern_args);
+            let a_len = type_intern::type_interner().ty_list_len(args);
+            let limit = if p_len < a_len { p_len } else { a_len };
             let mut i: usize = 0;
-            let limit = if pattern_args.len() < args.len() { pattern_args.len() } else { args.len() };
             while i < limit {
-                extract_params_recursive(&pattern_args[i], &args[i], subst);
+                let p_elem = type_intern::type_interner().get_ty_list_element(pattern_args, i);
+                let a_elem = type_intern::type_interner().get_ty_list_element(args, i);
+                extract_params_recursive_id(p_elem, a_elem, subst);
                 i = i + 1;
             }
         }
@@ -622,74 +543,88 @@ fn extract_params_adt_args(
     }
 }
 
-/// Helper: extract params from reference inner type.
-fn extract_params_ref_inner(
-    pattern_inner: &hir_ty::Type,
-    actual: &hir_ty::Type,
+/// Helper: extract params from reference inner type (TyId-native).
+fn extract_params_ref_inner_id(
+    pattern_inner: type_intern::TyId,
+    actual: type_intern::TyId,
     subst: &mut TypeParamSubst,
 ) {
-    match &actual.kind {
-        &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => {
-            extract_params_recursive(pattern_inner, inner.as_ref(), subst);
+    let interner = type_intern::type_interner();
+    let actual_kind = interner.get(actual);
+    match actual_kind {
+        &type_intern::InternedTypeKind::Ref { inner, mutable: _ } => {
+            extract_params_recursive_id(pattern_inner, inner, subst);
         }
         _ => {}
     }
 }
 
-/// Helper: extract params from pointer inner type.
-fn extract_params_ptr_inner(
-    pattern_inner: &hir_ty::Type,
-    actual: &hir_ty::Type,
+/// Helper: extract params from pointer inner type (TyId-native).
+fn extract_params_ptr_inner_id(
+    pattern_inner: type_intern::TyId,
+    actual: type_intern::TyId,
     subst: &mut TypeParamSubst,
 ) {
-    match &actual.kind {
-        &hir_ty::TypeKind::Ptr { ref inner, mutable: _ } => {
-            extract_params_recursive(pattern_inner, inner.as_ref(), subst);
+    let interner = type_intern::type_interner();
+    let actual_kind = interner.get(actual);
+    match actual_kind {
+        &type_intern::InternedTypeKind::Ptr { inner, mutable: _ } => {
+            extract_params_recursive_id(pattern_inner, inner, subst);
         }
         _ => {}
     }
 }
 
-/// Helper: extract params from slice element type.
-fn extract_params_slice_elem(
-    pattern_elem: &hir_ty::Type,
-    actual: &hir_ty::Type,
+/// Helper: extract params from slice element type (TyId-native).
+fn extract_params_slice_elem_id(
+    pattern_elem: type_intern::TyId,
+    actual: type_intern::TyId,
     subst: &mut TypeParamSubst,
 ) {
-    match &actual.kind {
-        &hir_ty::TypeKind::Slice { ref element } => {
-            extract_params_recursive(pattern_elem, element.as_ref(), subst);
+    let interner = type_intern::type_interner();
+    let actual_kind = interner.get(actual);
+    match actual_kind {
+        &type_intern::InternedTypeKind::Slice { element } => {
+            extract_params_recursive_id(pattern_elem, element, subst);
         }
         _ => {}
     }
 }
 
-/// Helper: extract params from array element type.
-fn extract_params_array_elem(
-    pattern_elem: &hir_ty::Type,
-    actual: &hir_ty::Type,
+/// Helper: extract params from array element type (TyId-native).
+fn extract_params_array_elem_id(
+    pattern_elem: type_intern::TyId,
+    actual: type_intern::TyId,
     subst: &mut TypeParamSubst,
 ) {
-    match &actual.kind {
-        &hir_ty::TypeKind::Array { ref element, size: _ } => {
-            extract_params_recursive(pattern_elem, element.as_ref(), subst);
+    let interner = type_intern::type_interner();
+    let actual_kind = interner.get(actual);
+    match actual_kind {
+        &type_intern::InternedTypeKind::Array { element, size: _ } => {
+            extract_params_recursive_id(pattern_elem, element, subst);
         }
         _ => {}
     }
 }
 
-/// Helper: extract params from tuple element types.
-fn extract_params_tuple_elems(
-    pattern_elems: &Vec<hir_ty::Type>,
-    actual: &hir_ty::Type,
+/// Helper: extract params from tuple element types (TyId-native).
+fn extract_params_tuple_elems_id(
+    pattern_list: type_intern::TyListId,
+    actual: type_intern::TyId,
     subst: &mut TypeParamSubst,
 ) {
-    match &actual.kind {
-        &hir_ty::TypeKind::Tuple(ref elems) => {
+    let interner = type_intern::type_interner();
+    let actual_kind = interner.get(actual);
+    match actual_kind {
+        &type_intern::InternedTypeKind::Tuple(actual_list) => {
+            let p_len = type_intern::type_interner().ty_list_len(pattern_list);
+            let a_len = type_intern::type_interner().ty_list_len(actual_list);
+            let limit = if p_len < a_len { p_len } else { a_len };
             let mut i: usize = 0;
-            let limit = if pattern_elems.len() < elems.len() { pattern_elems.len() } else { elems.len() };
             while i < limit {
-                extract_params_recursive(&pattern_elems[i], &elems[i], subst);
+                let p_elem = type_intern::type_interner().get_ty_list_element(pattern_list, i);
+                let a_elem = type_intern::type_interner().get_ty_list_element(actual_list, i);
+                extract_params_recursive_id(p_elem, a_elem, subst);
                 i = i + 1;
             }
         }
@@ -698,27 +633,11 @@ fn extract_params_tuple_elems(
 }
 
 /// Substitutes type parameters in an effect row.
+/// Wrapper: converts to EffectRowId, delegates, converts back.
 fn substitute_effect_row_params(row: &hir_ty::EffectRow, subst: &TypeParamSubst) -> hir_ty::EffectRow {
-    let mut result_effects: Vec<hir_ty::EffectRef> = Vec::new();
-    let mut i: usize = 0;
-    while i < row.effects.len() {
-        let eff = &row.effects[i];
-        let mut result_args: Vec<hir_ty::Type> = Vec::new();
-        let mut j: usize = 0;
-        while j < eff.args.len() {
-            result_args.push(substitute_type_params(&eff.args[j], subst));
-            j = j + 1;
-        }
-        result_effects.push(hir_ty::EffectRef {
-            def_id: eff.def_id,
-            args: result_args,
-        });
-        i = i + 1;
-    }
-    hir_ty::EffectRow {
-        effects: result_effects,
-        row_var: row.row_var,
-    }
+    let eff_id = effect_row_to_id(row);
+    let result_id = substitute_effect_row_core_id(eff_id, subst, false);
+    effect_row_id_to_row(result_id)
 }
 
 // ============================================================
@@ -784,6 +703,12 @@ impl Unifier {
     pub fn fresh_infer(self: &mut Self) -> hir_ty::Type {
         hir_ty::Type::infer(self.fresh_ty_var())
     }
+
+    /// Creates a fresh inference type as TyId (zero allocation).
+    pub fn fresh_infer_id(self: &mut Self) -> type_intern::TyId {
+        let var_id = self.fresh_ty_var();
+        type_intern::type_interner().mk_infer(var_id)
+    }
 }
 
 /// Creates a copy of a Unifier.
@@ -833,57 +758,47 @@ impl SubstTable {
     }
 }
 
-/// Creates a deep clone of a SubstTable.
+/// Creates a clone of a SubstTable.
 ///
-/// This is needed to pass a copy of the substitution table from type checking
-/// to each MIR lowering context, so that inference variables can be resolved
-/// to concrete types during MIR construction.
+/// With TyId storage, this is trivial: all fields are u32 indices, so
+/// cloning is just copying Vec<u32-sized-struct> — zero deep cloning.
 pub fn clone_subst_table(table: &SubstTable) -> SubstTable {
     let mut new_table = SubstTable::new();
 
-    // Clone type substitutions
+    // Clone type substitutions (TyId is u32 — trivial copy)
     let mut i: usize = 0;
     while i < table.ty_substs.len() {
         let vec_idx = new_table.ty_substs.len() as u32;
         let var_id = table.ty_substs[i].var_id;
         new_table.ty_substs.push(TySubst::new(
             var_id,
-            hir_ty::copy_type(&table.ty_substs[i].ty),
+            type_intern::TyId::new(table.ty_substs[i].ty.index),
         ));
         new_table.ty_hash.insert(var_id.index as u64, vec_idx);
         i = i + 1;
     }
 
-    // Clone effect row substitutions
+    // Clone effect row substitutions (EffectRowId is u32 — trivial copy)
     let mut i: usize = 0;
     while i < table.effect_substs.len() {
         let vec_idx = new_table.effect_substs.len() as u32;
         let var_id = table.effect_substs[i].var_id;
         new_table.effect_substs.push(EffectRowSubst::new(
             var_id,
-            hir_ty::copy_effect_row(&table.effect_substs[i].row),
+            type_intern::EffectRowId::new(table.effect_substs[i].row.index),
         ));
         new_table.effect_hash.insert(var_id.index as u64, vec_idx);
         i = i + 1;
     }
 
-    // Clone record row substitutions
+    // Clone record row substitutions (RecordFieldListId is u32 — trivial copy)
     let mut i: usize = 0;
     while i < table.record_substs.len() {
         let vec_idx = new_table.record_substs.len() as u32;
         let var_id = table.record_substs[i].var_id;
-        let mut fields: Vec<hir_ty::RecordField> = Vec::new();
-        let mut j: usize = 0;
-        while j < table.record_substs[i].fields.len() {
-            fields.push(hir_ty::RecordField::new(
-                table.record_substs[i].fields[j].name,
-                hir_ty::copy_type(&table.record_substs[i].fields[j].ty),
-            ));
-            j = j + 1;
-        }
         new_table.record_substs.push(RecordRowSubst::new(
             var_id,
-            fields,
+            type_intern::RecordFieldListId::new(table.record_substs[i].fields.index),
             table.record_substs[i].rest,
         ));
         new_table.record_hash.insert(var_id.index as u64, vec_idx);
@@ -1321,23 +1236,36 @@ impl DeferredConstraint {
 // ============================================================
 
 impl SubstTable {
-    /// Adds a type variable substitution.
+    /// Adds a type variable substitution (Type-based, converts to TyId internally).
     pub fn add_ty_subst(self: &mut Self, var_id: hir_def::TyVarId, ty: hir_ty::Type) {
+        let ty_id = type_intern::type_to_ty_id(&ty);
+        self.add_ty_subst_id(var_id, ty_id);
+    }
+
+    /// Adds a type variable substitution (TyId-based, zero conversion).
+    pub fn add_ty_subst_id(self: &mut Self, var_id: hir_def::TyVarId, ty_id: type_intern::TyId) {
         let vec_idx = self.ty_substs.len() as u32;
-        let subst = TySubst::new(var_id, ty);
+        let subst = TySubst::new(var_id, ty_id);
         self.ty_substs.push(subst);
         self.ty_hash.insert(var_id.index as u64, vec_idx);
     }
 
-    /// Looks up a type variable in the substitution table.
-    /// Returns Some(ty) if the variable is bound, None otherwise.
+    /// Looks up a type variable (returns Type for backward compat).
     pub fn lookup_ty(self: &Self, var_id: hir_def::TyVarId) -> Option<hir_ty::Type> {
+        match self.lookup_ty_id(var_id) {
+            Option::Some(ty_id) => Option::Some(type_intern::ty_id_to_type(ty_id)),
+            Option::None => Option::None,
+        }
+    }
+
+    /// Looks up a type variable (returns TyId, zero copy).
+    pub fn lookup_ty_id(self: &Self, var_id: hir_def::TyVarId) -> Option<type_intern::TyId> {
         // O(1) hash lookup
         match self.ty_hash.get(var_id.index as u64) {
             Option::Some(vec_idx) => {
                 let idx = vec_idx as usize;
                 if idx < self.ty_substs.len() {
-                    return Option::Some(hir_ty::copy_type(&self.ty_substs[idx].ty));
+                    return Option::Some(type_intern::TyId::new(self.ty_substs[idx].ty.index));
                 }
             }
             Option::None => {}
@@ -1346,29 +1274,43 @@ impl SubstTable {
         let mut i: usize = 0;
         while i < self.ty_substs.len() {
             if self.ty_substs[i].var_id.index == var_id.index {
-                return Some(hir_ty::copy_type(&self.ty_substs[i].ty));
+                return Some(type_intern::TyId::new(self.ty_substs[i].ty.index));
             }
             i = i + 1;
         }
         Option::None
     }
 
-    /// Adds an effect row variable substitution.
+    /// Adds an effect row variable substitution (EffectRow-based, converts internally).
     pub fn add_effect_subst(self: &mut Self, var_id: hir_def::EffectRowVarId, row: hir_ty::EffectRow) {
+        let eff_id = effect_row_to_id(&row);
+        self.add_effect_subst_id(var_id, eff_id);
+    }
+
+    /// Adds an effect row variable substitution (EffectRowId-based, zero conversion).
+    pub fn add_effect_subst_id(self: &mut Self, var_id: hir_def::EffectRowVarId, eff_id: type_intern::EffectRowId) {
         let vec_idx = self.effect_substs.len() as u32;
-        let subst = EffectRowSubst::new(var_id, row);
+        let subst = EffectRowSubst::new(var_id, eff_id);
         self.effect_substs.push(subst);
         self.effect_hash.insert(var_id.index as u64, vec_idx);
     }
 
-    /// Looks up an effect row variable.
+    /// Looks up an effect row variable (returns EffectRow for backward compat).
     pub fn lookup_effect(self: &Self, var_id: hir_def::EffectRowVarId) -> Option<hir_ty::EffectRow> {
+        match self.lookup_effect_id(var_id) {
+            Option::Some(eff_id) => Option::Some(effect_row_id_to_row(eff_id)),
+            Option::None => Option::None,
+        }
+    }
+
+    /// Looks up an effect row variable (returns EffectRowId, zero copy).
+    pub fn lookup_effect_id(self: &Self, var_id: hir_def::EffectRowVarId) -> Option<type_intern::EffectRowId> {
         // O(1) hash lookup
         match self.effect_hash.get(var_id.index as u64) {
             Option::Some(vec_idx) => {
                 let idx = vec_idx as usize;
                 if idx < self.effect_substs.len() {
-                    return Option::Some(hir_ty::copy_effect_row(&self.effect_substs[idx].row));
+                    return Option::Some(type_intern::EffectRowId::new(self.effect_substs[idx].row.index));
                 }
             }
             Option::None => {}
@@ -1377,52 +1319,47 @@ impl SubstTable {
         let mut i: usize = 0;
         while i < self.effect_substs.len() {
             if self.effect_substs[i].var_id.index == var_id.index {
-                return Some(hir_ty::copy_effect_row(&self.effect_substs[i].row));
+                return Some(type_intern::EffectRowId::new(self.effect_substs[i].row.index));
             }
             i = i + 1;
         }
         Option::None
     }
 
-    /// Adds a record row variable substitution.
-    ///
-    /// This binds a record row variable to a set of fields and an optional
-    /// rest row variable (for open record types).
+    /// Adds a record row variable substitution (Vec<RecordField>-based, converts internally).
     pub fn add_record_subst(
         self: &mut Self,
         var_id: hir_def::RecordRowVarId,
         fields: Vec<hir_ty::RecordField>,
         rest: Option<hir_def::RecordRowVarId>,
     ) {
+        let fields_id = record_fields_to_id(&fields);
+        self.add_record_subst_id(var_id, fields_id, rest);
+    }
+
+    /// Adds a record row variable substitution (RecordFieldListId-based, zero conversion).
+    pub fn add_record_subst_id(
+        self: &mut Self,
+        var_id: hir_def::RecordRowVarId,
+        fields_id: type_intern::RecordFieldListId,
+        rest: Option<hir_def::RecordRowVarId>,
+    ) {
         let vec_idx = self.record_substs.len() as u32;
-        let subst = RecordRowSubst::new(var_id, fields, rest);
+        let subst = RecordRowSubst::new(var_id, fields_id, rest);
         self.record_substs.push(subst);
         self.record_hash.insert(var_id.index as u64, vec_idx);
     }
 
-    /// Looks up a record row variable.
-    ///
-    /// Returns the fields and optional rest row variable that the given
-    /// row variable is bound to.
+    /// Looks up a record row variable (returns RecordRowSubst with RecordFieldListId).
     pub fn lookup_record(self: &Self, var_id: hir_def::RecordRowVarId) -> Option<RecordRowSubst> {
         // O(1) hash lookup
         match self.record_hash.get(var_id.index as u64) {
             Option::Some(vec_idx) => {
                 let idx = vec_idx as usize;
                 if idx < self.record_substs.len() {
-                    // Return a copy of the substitution
-                    let mut copied_fields: Vec<hir_ty::RecordField> = Vec::new();
-                    let mut j: usize = 0;
-                    while j < self.record_substs[idx].fields.len() {
-                        copied_fields.push(hir_ty::RecordField {
-                            name: self.record_substs[idx].fields[j].name,
-                            ty: hir_ty::copy_type(&self.record_substs[idx].fields[j].ty),
-                        });
-                        j = j + 1;
-                    }
                     return Option::Some(RecordRowSubst {
                         var_id: self.record_substs[idx].var_id,
-                        fields: copied_fields,
+                        fields: type_intern::RecordFieldListId::new(self.record_substs[idx].fields.index),
                         rest: self.record_substs[idx].rest,
                     });
                 }
@@ -1433,19 +1370,9 @@ impl SubstTable {
         let mut i: usize = 0;
         while i < self.record_substs.len() {
             if self.record_substs[i].var_id.index == var_id.index {
-                // Return a copy of the substitution
-                let mut copied_fields: Vec<hir_ty::RecordField> = Vec::new();
-                let mut j: usize = 0;
-                while j < self.record_substs[i].fields.len() {
-                    copied_fields.push(hir_ty::RecordField {
-                        name: self.record_substs[i].fields[j].name,
-                        ty: hir_ty::copy_type(&self.record_substs[i].fields[j].ty),
-                    });
-                    j = j + 1;
-                }
                 return Option::Some(RecordRowSubst {
                     var_id: self.record_substs[i].var_id,
-                    fields: copied_fields,
+                    fields: type_intern::RecordFieldListId::new(self.record_substs[i].fields.index),
                     rest: self.record_substs[i].rest,
                 });
             }
@@ -1456,11 +1383,76 @@ impl SubstTable {
 }
 
 // ============================================================
+// Type/EffectRow Conversion Helpers
+// ============================================================
+
+/// Converts hir_ty::EffectRow to EffectRowId.
+fn effect_row_to_id(row: &hir_ty::EffectRow) -> type_intern::EffectRowId {
+    let mut effects: Vec<type_intern::InternedEffectRef> = Vec::new();
+    let mut i: usize = 0;
+    while i < row.effects.len() {
+        let eff = &row.effects[i];
+        let mut arg_ids: Vec<type_intern::TyId> = Vec::new();
+        let mut j: usize = 0;
+        while j < eff.args.len() {
+            arg_ids.push(type_intern::type_to_ty_id(&eff.args[j]));
+            j = j + 1;
+        }
+        let arg_list = type_intern::type_interner().intern_ty_list(&arg_ids);
+        effects.push(type_intern::InternedEffectRef::new(eff.def_id, arg_list));
+        i = i + 1;
+    }
+    type_intern::type_interner().intern_effect_row(
+        type_intern::InternedEffectRow::new(effects, row.row_var)
+    )
+}
+
+/// Converts EffectRowId back to hir_ty::EffectRow.
+fn effect_row_id_to_row(id: type_intern::EffectRowId) -> hir_ty::EffectRow {
+    let interner = type_intern::type_interner();
+    let row = interner.get_effect_row(id);
+    let eff_count = row.effects.len();
+    let row_var = row.row_var;
+    let mut effects: Vec<hir_ty::EffectRef> = Vec::new();
+    let mut i: usize = 0;
+    while i < eff_count {
+        let eff = &type_intern::type_interner().get_effect_row(id).effects[i];
+        let def_id = eff.def_id;
+        let args_list = eff.args;
+        let arg_len = type_intern::type_interner().ty_list_len(args_list);
+        let mut args: Vec<hir_ty::Type> = Vec::new();
+        let mut j: usize = 0;
+        while j < arg_len {
+            let arg_id = type_intern::type_interner().get_ty_list_element(args_list, j);
+            args.push(type_intern::ty_id_to_type(arg_id));
+            j = j + 1;
+        }
+        effects.push(hir_ty::EffectRef::new(def_id, args));
+        i = i + 1;
+    }
+    hir_ty::EffectRow { effects: effects, row_var: row_var }
+}
+
+/// Converts Vec<RecordField> to RecordFieldListId.
+fn record_fields_to_id(fields: &Vec<hir_ty::RecordField>) -> type_intern::RecordFieldListId {
+    let mut interned: Vec<type_intern::InternedRecordField> = Vec::new();
+    let mut i: usize = 0;
+    while i < fields.len() {
+        let ty_id = type_intern::type_to_ty_id(&fields[i].ty);
+        interned.push(type_intern::InternedRecordField::new(fields[i].name, ty_id));
+        i = i + 1;
+    }
+    type_intern::type_interner().intern_record_field_list(
+        type_intern::InternedRecordFieldList::new(interned)
+    )
+}
+
+// ============================================================
 // Type Resolution (Apply Substitutions)
 // ============================================================
 
 /// Applies substitutions to resolve type variables in a type.
-/// This is also called "zonking" - replacing inference variables with their solutions.
+/// Walks the hir_ty::Type tree directly for correctness.
 pub fn apply_substs(table: &SubstTable, ty: &hir_ty::Type) -> hir_ty::Type {
     match &ty.kind {
         &hir_ty::TypeKind::Infer(var_id) => {
@@ -1566,7 +1558,6 @@ pub fn apply_substs(table: &SubstTable, ty: &hir_ty::Type) -> hir_ty::Type {
             })
         }
         &hir_ty::TypeKind::Forall { ref params, ref body } => {
-            // Apply substitutions to the body
             let mut copied_params: Vec<hir_def::TyVarId> = Vec::new();
             let mut i: usize = 0;
             while i < params.len() {
@@ -1629,6 +1620,178 @@ fn apply_substs_to_effect_row(table: &SubstTable, row: &hir_ty::EffectRow) -> hi
     }
 }
 
+/// TyId-native: applies substitutions to resolve type variables.
+pub fn apply_substs_id(table: &SubstTable, ty_id: type_intern::TyId) -> type_intern::TyId {
+    let interner = type_intern::type_interner();
+
+    // Phase 1: Iteratively chase Infer chains (prevents stack overflow on cycles)
+    let mut current = ty_id;
+    let mut chase: bool = true;
+    let mut depth: i32 = 0;
+    while chase {
+        let k = interner.get(current);
+        match k {
+            &type_intern::InternedTypeKind::Infer(var_id) => {
+                match table.lookup_ty_id(var_id) {
+                    Option::Some(resolved_id) => {
+                        depth = depth + 1;
+                        if depth > 1000 {
+                            chase = false;
+                        } else {
+                            current = resolved_id;
+                        }
+                    }
+                    Option::None => { chase = false; }
+                }
+            }
+            _ => { chase = false; }
+        }
+    }
+
+    // Phase 2: Structural substitution on the resolved type
+    let kind = interner.get(current);
+    match kind {
+        &type_intern::InternedTypeKind::Infer(_) => current,
+        &type_intern::InternedTypeKind::Primitive(_) => current,
+        &type_intern::InternedTypeKind::Never => current,
+        &type_intern::InternedTypeKind::Error => current,
+        &type_intern::InternedTypeKind::Param(_) => current,
+        &type_intern::InternedTypeKind::Tuple(list_id) => {
+            let new_list = apply_substs_ty_list_id(table, list_id);
+            type_intern::type_interner().intern(type_intern::InternedTypeKind::Tuple(new_list))
+        }
+        &type_intern::InternedTypeKind::Array { element, size } => {
+            let new_elem = apply_substs_id(table, element);
+            type_intern::type_interner().mk_array(new_elem, size)
+        }
+        &type_intern::InternedTypeKind::Slice { element } => {
+            let new_elem = apply_substs_id(table, element);
+            type_intern::type_interner().mk_slice(new_elem)
+        }
+        &type_intern::InternedTypeKind::Ref { inner, mutable } => {
+            let new_inner = apply_substs_id(table, inner);
+            type_intern::type_interner().mk_ref(new_inner, mutable)
+        }
+        &type_intern::InternedTypeKind::Ptr { inner, mutable } => {
+            let new_inner = apply_substs_id(table, inner);
+            type_intern::type_interner().mk_ptr(new_inner, mutable)
+        }
+        &type_intern::InternedTypeKind::Adt { def_id, args } => {
+            let new_args = apply_substs_ty_list_id(table, args);
+            type_intern::type_interner().mk_adt(def_id, new_args)
+        }
+        &type_intern::InternedTypeKind::Fn { params, ret, effects } => {
+            let new_params = apply_substs_ty_list_id(table, params);
+            let new_ret = apply_substs_id(table, ret);
+            let new_effects = apply_substs_to_effect_row_id(table, effects);
+            type_intern::type_interner().mk_fn(new_params, new_ret, new_effects)
+        }
+        &type_intern::InternedTypeKind::Closure { def_id, params, ret } => {
+            let new_params = apply_substs_ty_list_id(table, params);
+            let new_ret = apply_substs_id(table, ret);
+            type_intern::type_interner().mk_closure(def_id, new_params, new_ret)
+        }
+        &type_intern::InternedTypeKind::Record { fields, ref row_var } => {
+            let rv = *row_var;
+            let new_fields = apply_substs_record_fields_id(table, fields);
+            type_intern::type_interner().intern(type_intern::InternedTypeKind::Record {
+                fields: new_fields,
+                row_var: rv,
+            })
+        }
+        &type_intern::InternedTypeKind::Forall { ref params, body } => {
+            let param_count = params.len();
+            let mut copied_params: Vec<hir_def::TyVarId> = Vec::new();
+            let mut i: usize = 0;
+            while i < param_count {
+                copied_params.push(params[i]);
+                i = i + 1;
+            }
+            let new_body = apply_substs_id(table, body);
+            type_intern::type_interner().intern(type_intern::InternedTypeKind::Forall {
+                params: copied_params,
+                body: new_body,
+            })
+        }
+        &type_intern::InternedTypeKind::Ownership { qualifier, inner } => {
+            let new_inner = apply_substs_id(table, inner);
+            type_intern::type_interner().mk_ownership(qualifier, new_inner)
+        }
+        &type_intern::InternedTypeKind::Range { element, inclusive } => {
+            let new_elem = apply_substs_id(table, element);
+            type_intern::type_interner().mk_range(new_elem, inclusive)
+        }
+        &type_intern::InternedTypeKind::DynTrait { trait_id, ref auto_traits } => {
+            let auto_count = auto_traits.len();
+            let mut copied_auto: Vec<hir_def::DefId> = Vec::new();
+            let mut i: usize = 0;
+            while i < auto_count {
+                copied_auto.push(auto_traits[i]);
+                i = i + 1;
+            }
+            type_intern::type_interner().intern(type_intern::InternedTypeKind::DynTrait {
+                trait_id: trait_id,
+                auto_traits: copied_auto,
+            })
+        }
+    }
+}
+
+/// Applies substitutions to a type list (TyId-native).
+fn apply_substs_ty_list_id(table: &SubstTable, list_id: type_intern::TyListId) -> type_intern::TyListId {
+    let interner = type_intern::type_interner();
+    let len = interner.ty_list_len(list_id);
+    let mut result: Vec<type_intern::TyId> = Vec::new();
+    let mut i: usize = 0;
+    while i < len {
+        let elem = type_intern::type_interner().get_ty_list_element(list_id, i);
+        result.push(apply_substs_id(table, elem));
+        i = i + 1;
+    }
+    type_intern::type_interner().intern_ty_list(&result)
+}
+
+/// Applies substitutions to an effect row (TyId-native).
+fn apply_substs_to_effect_row_id(table: &SubstTable, eff_id: type_intern::EffectRowId) -> type_intern::EffectRowId {
+    let interner = type_intern::type_interner();
+    let row = interner.get_effect_row(eff_id);
+    let eff_count = row.effects.len();
+    let row_var = row.row_var;
+    let mut new_effects: Vec<type_intern::InternedEffectRef> = Vec::new();
+    let mut i: usize = 0;
+    while i < eff_count {
+        let eff = &type_intern::type_interner().get_effect_row(eff_id).effects[i];
+        let def_id = eff.def_id;
+        let args = eff.args;
+        let new_args = apply_substs_ty_list_id(table, args);
+        new_effects.push(type_intern::InternedEffectRef::new(def_id, new_args));
+        i = i + 1;
+    }
+    type_intern::type_interner().intern_effect_row(
+        type_intern::InternedEffectRow::new(new_effects, row_var)
+    )
+}
+
+/// Applies substitutions to record fields (TyId-native).
+fn apply_substs_record_fields_id(table: &SubstTable, fields_id: type_intern::RecordFieldListId) -> type_intern::RecordFieldListId {
+    let interner = type_intern::type_interner();
+    let list = interner.get_record_field_list(fields_id);
+    let field_count = list.fields.len();
+    let mut new_fields: Vec<type_intern::InternedRecordField> = Vec::new();
+    let mut i: usize = 0;
+    while i < field_count {
+        let f = &type_intern::type_interner().get_record_field_list(fields_id).fields[i];
+        let name = f.name;
+        let ty = f.ty;
+        let new_ty = apply_substs_id(table, ty);
+        new_fields.push(type_intern::InternedRecordField::new(name, new_ty));
+        i = i + 1;
+    }
+    type_intern::type_interner().intern_record_field_list(
+        type_intern::InternedRecordFieldList::new(new_fields)
+    )
+}
+
 // ============================================================
 // Occurs Check
 // ============================================================
@@ -1636,87 +1799,89 @@ fn apply_substs_to_effect_row(table: &SubstTable, row: &hir_ty::EffectRow) -> hi
 /// Checks if a type variable occurs in a type.
 /// Used to prevent infinite types like `T = Option<T>`.
 pub fn occurs_in(var_id: hir_def::TyVarId, ty: &hir_ty::Type) -> bool {
-    match &ty.kind {
-        &hir_ty::TypeKind::Infer(id) => id.index == var_id.index,
-        &hir_ty::TypeKind::Primitive(_) => false,
-        &hir_ty::TypeKind::Never => false,
-        &hir_ty::TypeKind::Error => false,
-        &hir_ty::TypeKind::Param(_) => false,
-        &hir_ty::TypeKind::Tuple(ref types) => {
+    let ty_id = type_intern::type_to_ty_id(ty);
+    occurs_in_id(var_id, ty_id)
+}
+
+fn occurs_in_id(var_id: hir_def::TyVarId, ty_id: type_intern::TyId) -> bool {
+    let interner = type_intern::type_interner();
+    let kind = interner.get(ty_id);
+    match kind {
+        &type_intern::InternedTypeKind::Infer(id) => id.index == var_id.index,
+        &type_intern::InternedTypeKind::Primitive(_) => false,
+        &type_intern::InternedTypeKind::Never => false,
+        &type_intern::InternedTypeKind::Error => false,
+        &type_intern::InternedTypeKind::Param(_) => false,
+        &type_intern::InternedTypeKind::DynTrait { trait_id: _, auto_traits: _ } => false,
+        &type_intern::InternedTypeKind::Tuple(list_id) => {
+            occurs_in_ty_list(var_id, list_id)
+        }
+        &type_intern::InternedTypeKind::Array { element, size: _ } => {
+            occurs_in_id(var_id, element)
+        }
+        &type_intern::InternedTypeKind::Slice { element } => {
+            occurs_in_id(var_id, element)
+        }
+        &type_intern::InternedTypeKind::Ref { inner, mutable: _ } => {
+            occurs_in_id(var_id, inner)
+        }
+        &type_intern::InternedTypeKind::Ptr { inner, mutable: _ } => {
+            occurs_in_id(var_id, inner)
+        }
+        &type_intern::InternedTypeKind::Adt { def_id: _, args } => {
+            occurs_in_ty_list(var_id, args)
+        }
+        &type_intern::InternedTypeKind::Fn { params, ret, effects: _ } => {
+            if occurs_in_ty_list(var_id, params) {
+                return true;
+            }
+            occurs_in_id(var_id, ret)
+        }
+        &type_intern::InternedTypeKind::Closure { def_id: _, params, ret } => {
+            if occurs_in_ty_list(var_id, params) {
+                return true;
+            }
+            occurs_in_id(var_id, ret)
+        }
+        &type_intern::InternedTypeKind::Record { fields, row_var: _ } => {
+            let interner2 = type_intern::type_interner();
+            let field_list = interner2.get_record_field_list(fields);
+            let len = field_list.fields.len();
             let mut i: usize = 0;
-            while i < types.len() {
-                if occurs_in(var_id, &types[i]) {
+            while i < len {
+                let field_ty = field_list.fields[i].ty;
+                if occurs_in_id(var_id, field_ty) {
                     return true;
                 }
                 i = i + 1;
             }
             false
         }
-        &hir_ty::TypeKind::Array { ref element, size: _ } => {
-            occurs_in(var_id, element.as_ref())
+        &type_intern::InternedTypeKind::Forall { ref params, body } => {
+            let _ = params;
+            occurs_in_id(var_id, body)
         }
-        &hir_ty::TypeKind::Slice { ref element } => {
-            occurs_in(var_id, element.as_ref())
+        &type_intern::InternedTypeKind::Ownership { qualifier: _, inner } => {
+            occurs_in_id(var_id, inner)
         }
-        &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => {
-            occurs_in(var_id, inner.as_ref())
-        }
-        &hir_ty::TypeKind::Ptr { ref inner, mutable: _ } => {
-            occurs_in(var_id, inner.as_ref())
-        }
-        &hir_ty::TypeKind::Adt { def_id: _, ref args } => {
-            let mut i: usize = 0;
-            while i < args.len() {
-                if occurs_in(var_id, &args[i]) {
-                    return true;
-                }
-                i = i + 1;
-            }
-            false
-        }
-        &hir_ty::TypeKind::Fn { ref params, ref ret, effects: _ } => {
-            let mut i: usize = 0;
-            while i < params.len() {
-                if occurs_in(var_id, &params[i]) {
-                    return true;
-                }
-                i = i + 1;
-            }
-            occurs_in(var_id, ret.as_ref())
-        }
-        &hir_ty::TypeKind::Closure { def_id: _, ref params, ref ret } => {
-            let mut i: usize = 0;
-            while i < params.len() {
-                if occurs_in(var_id, &params[i]) {
-                    return true;
-                }
-                i = i + 1;
-            }
-            occurs_in(var_id, ret.as_ref())
-        }
-        &hir_ty::TypeKind::Record { ref fields, row_var: _ } => {
-            let mut i: usize = 0;
-            while i < fields.len() {
-                if occurs_in(var_id, &fields[i].ty) {
-                    return true;
-                }
-                i = i + 1;
-            }
-            false
-        }
-        &hir_ty::TypeKind::Forall { params: _, ref body } => {
-            occurs_in(var_id, body.as_ref())
-        }
-        &hir_ty::TypeKind::Ownership { qualifier: _, ref inner } => {
-            occurs_in(var_id, inner.as_ref())
-        }
-        &hir_ty::TypeKind::Range { ref element, inclusive: _ } => {
-            occurs_in(var_id, element.as_ref())
-        }
-        &hir_ty::TypeKind::DynTrait { trait_id: _, auto_traits: _ } => {
-            false
+        &type_intern::InternedTypeKind::Range { element, inclusive: _ } => {
+            occurs_in_id(var_id, element)
         }
     }
+}
+
+fn occurs_in_ty_list(var_id: hir_def::TyVarId, list_id: type_intern::TyListId) -> bool {
+    let interner = type_intern::type_interner();
+    let len = interner.ty_list_len(list_id);
+    let mut i: usize = 0;
+    while i < len {
+        let elem = type_intern::type_interner().get_ty_list_element(list_id, i);
+        if occurs_in_id(var_id, elem) {
+            return true;
+        }
+        i = i + 1;
+    }
+    false
 }
 
 // ============================================================
@@ -1732,245 +1897,437 @@ pub fn unify(
     b: &hir_ty::Type,
     span: common::Span,
 ) -> UnifyResult {
-    // First, apply any existing substitutions (reborrow as shared ref)
-    let table_ref: &SubstTable = &*table;
-    let a_resolved = apply_substs(table_ref, a);
-    let b_resolved = apply_substs(table_ref, b);
-
-    // Now unify the resolved types
-    unify_resolved(table, unifier, &a_resolved, &b_resolved, span)
+    let a_id = type_intern::type_to_ty_id(a);
+    let b_id = type_intern::type_to_ty_id(b);
+    unify_id(table, unifier, a_id, b_id, span)
 }
 
-/// Unifies two types that have already had substitutions applied.
-fn unify_resolved(
+/// TyId-native unification: applies substitutions then unifies.
+pub fn unify_id(
     table: &mut SubstTable,
     unifier: &mut Unifier,
-    a: &hir_ty::Type,
-    b: &hir_ty::Type,
+    a: type_intern::TyId,
+    b: type_intern::TyId,
     span: common::Span,
 ) -> UnifyResult {
-    match (&a.kind, &b.kind) {
-        // Inference variables
-        (&hir_ty::TypeKind::Infer(var_a), &hir_ty::TypeKind::Infer(var_b)) => {
-            if var_a.index == var_b.index {
-                // Same variable, already unified
-                UnifyResult::Ok
-            } else {
-                // Bind one to the other
-                table.add_ty_subst(var_a, hir_ty::copy_type(b));
-                UnifyResult::Ok
+    let table_ref: &SubstTable = &*table;
+    let a_resolved = apply_substs_id(table_ref, a);
+    let b_resolved = apply_substs_id(table_ref, b);
+    unify_resolved_id(table, unifier, a_resolved, b_resolved, span)
+}
+
+/// Helper: extracts TyVarId if this TyId is an Infer type, otherwise None.
+fn extract_infer_var(ty_id: type_intern::TyId) -> Option<hir_def::TyVarId> {
+    let interner = type_intern::type_interner();
+    let kind = interner.get(ty_id);
+    match kind {
+        &type_intern::InternedTypeKind::Infer(var_id) => Option::Some(var_id),
+        _ => Option::None,
+    }
+}
+
+/// Helper: returns true if this TyId is Error.
+fn is_error_id(ty_id: type_intern::TyId) -> bool {
+    let interner = type_intern::type_interner();
+    let kind = interner.get(ty_id);
+    match kind {
+        &type_intern::InternedTypeKind::Error => true,
+        _ => false,
+    }
+}
+
+/// Helper: returns true if this TyId is Never.
+fn is_never_id(ty_id: type_intern::TyId) -> bool {
+    let interner = type_intern::type_interner();
+    let kind = interner.get(ty_id);
+    match kind {
+        &type_intern::InternedTypeKind::Never => true,
+        _ => false,
+    }
+}
+
+/// Helper: extracts Forall params (copied to local Vec) and body TyId.
+fn extract_forall_id(ty_id: type_intern::TyId) -> Option<(Vec<hir_def::TyVarId>, type_intern::TyId)> {
+    let interner = type_intern::type_interner();
+    let kind = interner.get(ty_id);
+    match kind {
+        &type_intern::InternedTypeKind::Forall { ref params, body } => {
+            let mut local_params: Vec<hir_def::TyVarId> = Vec::new();
+            let mut i: usize = 0;
+            while i < params.len() {
+                local_params.push(hir_def::TyVarId { index: params[i].index });
+                i = i + 1;
+            }
+            Option::Some((local_params, body))
+        }
+        _ => Option::None,
+    }
+}
+
+/// TyId-native unification of two already-resolved types.
+fn unify_resolved_id(
+    table: &mut SubstTable,
+    unifier: &mut Unifier,
+    a: type_intern::TyId,
+    b: type_intern::TyId,
+    span: common::Span,
+) -> UnifyResult {
+    // Shortcut: same TyId means same type
+    if a.index == b.index {
+        return UnifyResult::Ok;
+    }
+
+    // Phase 1: Handle inference variables on either side
+    let a_var = extract_infer_var(a);
+    let b_var = extract_infer_var(b);
+
+    match a_var {
+        Option::Some(var_a) => {
+            match b_var {
+                Option::Some(var_b) => {
+                    // (Infer, Infer) — same var already handled by index check above
+                    // Bind one to the other
+                    table.add_ty_subst_id(var_a, b);
+                    return UnifyResult::Ok;
+                }
+                Option::None => {
+                    if occurs_in_id(var_a, b) {
+                        return UnifyResult::Err(UnifyError::occurs(span));
+                    }
+                    table.add_ty_subst_id(var_a, b);
+                    return UnifyResult::Ok;
+                }
             }
         }
-        (&hir_ty::TypeKind::Infer(var_id), _) => {
-            // Occurs check
-            if occurs_in(var_id, b) {
-                return UnifyResult::Err(UnifyError::occurs(span));
+        Option::None => {
+            match b_var {
+                Option::Some(var_b) => {
+                    if occurs_in_id(var_b, a) {
+                        return UnifyResult::Err(UnifyError::occurs(span));
+                    }
+                    table.add_ty_subst_id(var_b, a);
+                    return UnifyResult::Ok;
+                }
+                Option::None => {
+                    // Continue to structural unification
+                }
             }
-            table.add_ty_subst(var_id, hir_ty::copy_type(b));
-            UnifyResult::Ok
         }
-        (_, &hir_ty::TypeKind::Infer(var_id)) => {
-            // Occurs check
-            if occurs_in(var_id, a) {
-                return UnifyResult::Err(UnifyError::occurs(span));
-            }
-            table.add_ty_subst(var_id, hir_ty::copy_type(a));
-            UnifyResult::Ok
-        }
+    }
 
-        // Error types unify with anything (error recovery)
-        (&hir_ty::TypeKind::Error, _) => UnifyResult::Ok,
-        (_, &hir_ty::TypeKind::Error) => UnifyResult::Ok,
+    // Phase 2: Error/Never wildcards
+    if is_error_id(a) || is_error_id(b) {
+        return UnifyResult::Ok;
+    }
+    if is_never_id(a) || is_never_id(b) {
+        return UnifyResult::Ok;
+    }
 
-        // Never type unifies with anything (divergence)
-        (&hir_ty::TypeKind::Never, _) => UnifyResult::Ok,
-        (_, &hir_ty::TypeKind::Never) => UnifyResult::Ok,
-
-        // Forall types: must come before specific type arms so that
-        // (non-Forall, Forall) cases are instantiated rather than rejected.
-        (&hir_ty::TypeKind::Forall { ref params, ref body }, other_kind) => {
-            let params_a = params;
-            let body_a = body;
-            match other_kind {
-                &hir_ty::TypeKind::Forall { ref params, ref body } => {
-                    // Two forall types unify if they have the same number of params
-                    // and their bodies unify under alpha-renaming
-                    if params_a.len() != params.len() {
+    // Phase 3: Forall handling
+    let a_forall = extract_forall_id(a);
+    match a_forall {
+        Option::Some(a_forall_data) => {
+            let (params_a, body_a) = a_forall_data;
+            let b_forall = extract_forall_id(b);
+            match b_forall {
+                Option::Some(b_forall_data) => {
+                    let (params_b, body_b) = b_forall_data;
+                    // Forall-Forall: alpha-rename and unify bodies
+                    if params_a.len() != params_b.len() {
                         return UnifyResult::Err(UnifyError::mismatch(span));
                     }
-                    // Create fresh inference variables for alpha-renaming
-                    let mut fresh_vars: Vec<hir_ty::Type> = Vec::new();
-                    let mut i: usize = 0;
-                    while i < params_a.len() {
-                        fresh_vars.push(unifier.fresh_infer());
-                        i = i + 1;
-                    }
-                    // Build substitution for left forall (params_a -> fresh)
                     let mut subst_a = TypeParamSubst::new();
-                    i = 0;
-                    while i < params_a.len() {
-                        subst_a.add(params_a[i].index, hir_ty::copy_type(&fresh_vars[i]));
-                        i = i + 1;
-                    }
-                    // Build substitution for right forall (params -> fresh)
                     let mut subst_b = TypeParamSubst::new();
-                    i = 0;
-                    while i < params.len() {
-                        subst_b.add(params[i].index, hir_ty::copy_type(&fresh_vars[i]));
-                        i = i + 1;
-                    }
-                    // Instantiate both bodies with the same fresh variables
-                    let body_a_inst = substitute_forall_vars(body_a.as_ref(), &subst_a);
-                    let body_b_inst = substitute_forall_vars(body.as_ref(), &subst_b);
-                    // Unify the instantiated bodies
-                    unify(table, unifier, &body_a_inst, &body_b_inst, span)
-                }
-                _ => {
-                    // Forall on left, non-Forall on right: instantiate forall
-                    let mut fresh_vars: Vec<hir_ty::Type> = Vec::new();
                     let mut i: usize = 0;
                     while i < params_a.len() {
-                        fresh_vars.push(unifier.fresh_infer());
+                        let fresh = unifier.fresh_infer_id();
+                        subst_a.add_id(params_a[i].index, fresh);
+                        subst_b.add_id(params_b[i].index, fresh);
                         i = i + 1;
                     }
+                    let body_a_inst = substitute_forall_vars_id(body_a, &subst_a);
+                    let body_b_inst = substitute_forall_vars_id(body_b, &subst_b);
+                    return unify_id(table, unifier, body_a_inst, body_b_inst, span);
+                }
+                Option::None => {
+                    // Forall-NonForall: instantiate forall
                     let mut subst_a = TypeParamSubst::new();
-                    i = 0;
+                    let mut i: usize = 0;
                     while i < params_a.len() {
-                        subst_a.add(params_a[i].index, hir_ty::copy_type(&fresh_vars[i]));
+                        let fresh = unifier.fresh_infer_id();
+                        subst_a.add_id(params_a[i].index, fresh);
                         i = i + 1;
                     }
-                    let body_inst = substitute_forall_vars(body_a.as_ref(), &subst_a);
-                    unify(table, unifier, &body_inst, b, span)
+                    let body_inst = substitute_forall_vars_id(body_a, &subst_a);
+                    return unify_id(table, unifier, body_inst, b, span);
                 }
             }
         }
-        // Non-Forall on left, Forall on right: instantiate the forall
-        (_, &hir_ty::TypeKind::Forall { ref params, ref body }) => {
-            let mut fresh_vars: Vec<hir_ty::Type> = Vec::new();
-            let mut i: usize = 0;
-            while i < params.len() {
-                fresh_vars.push(unifier.fresh_infer());
-                i = i + 1;
-            }
-            let mut subst_b = TypeParamSubst::new();
-            i = 0;
-            while i < params.len() {
-                subst_b.add(params[i].index, hir_ty::copy_type(&fresh_vars[i]));
-                i = i + 1;
-            }
-            let body_inst = substitute_forall_vars(body.as_ref(), &subst_b);
-            unify(table, unifier, a, &body_inst, span)
-        }
-
-        // Primitives must be equal
-        (&hir_ty::TypeKind::Primitive(prim_a), &hir_ty::TypeKind::Primitive(prim_b)) => {
-            if primitives_equal(prim_a, prim_b) {
-                UnifyResult::Ok
-            } else {
-                UnifyResult::Err(UnifyError::mismatch(span))
-            }
-        }
-
-        // Type parameters must match exactly
-        (&hir_ty::TypeKind::Param(id_a), &hir_ty::TypeKind::Param(id_b)) => {
-            if id_a.index == id_b.index {
-                UnifyResult::Ok
-            } else {
-                UnifyResult::Err(UnifyError::mismatch(span))
-            }
-        }
-
-        // Tuples: same length, unify element-wise
-        (&hir_ty::TypeKind::Tuple(ref types_a), &hir_ty::TypeKind::Tuple(ref types_b)) => {
-            if types_a.len() != types_b.len() {
-                return UnifyResult::Err(UnifyError::arity(span));
-            }
-            let mut i: usize = 0;
-            while i < types_a.len() {
-                match unify(table, unifier, &types_a[i], &types_b[i], span) {
-                    UnifyResult::Err(e) => { return UnifyResult::Err(e); }
-                    UnifyResult::Ok => {}
+        Option::None => {
+            let b_forall = extract_forall_id(b);
+            match b_forall {
+                Option::Some(b_forall_data) => {
+                    let (params_b, body_b) = b_forall_data;
+                    // NonForall-Forall: instantiate forall
+                    let mut subst_b = TypeParamSubst::new();
+                    let mut i: usize = 0;
+                    while i < params_b.len() {
+                        let fresh = unifier.fresh_infer_id();
+                        subst_b.add_id(params_b[i].index, fresh);
+                        i = i + 1;
+                    }
+                    let body_inst = substitute_forall_vars_id(body_b, &subst_b);
+                    return unify_id(table, unifier, a, body_inst, span);
                 }
-                i = i + 1;
+                Option::None => {
+                    // Neither is Forall; continue to structural
+                }
             }
-            UnifyResult::Ok
+        }
+    }
+
+    // Phase 4: Structural unification (neither is Infer/Error/Never/Forall)
+    unify_structural_id(table, unifier, a, b, span)
+}
+
+/// Structurally unifies two TyIds that are known to NOT be Infer/Error/Never/Forall.
+fn unify_structural_id(
+    table: &mut SubstTable,
+    unifier: &mut Unifier,
+    a: type_intern::TyId,
+    b: type_intern::TyId,
+    span: common::Span,
+) -> UnifyResult {
+    let interner = type_intern::type_interner();
+    let kind_a = interner.get(a);
+    match kind_a {
+        &type_intern::InternedTypeKind::Primitive(prim_a) => {
+            let kind_b = type_intern::type_interner().get(b);
+            match kind_b {
+                &type_intern::InternedTypeKind::Primitive(prim_b) => {
+                    if primitives_equal(prim_a, prim_b) {
+                        UnifyResult::Ok
+                    } else {
+                        UnifyResult::Err(UnifyError::mismatch(span))
+                    }
+                }
+                _ => UnifyResult::Err(UnifyError::mismatch(span))
+            }
         }
 
-        // Arrays: same size, unify element types
-        (&hir_ty::TypeKind::Array { ref element, size }, other_kind) => {
+        &type_intern::InternedTypeKind::Param(id_a) => {
+            let kind_b = type_intern::type_interner().get(b);
+            match kind_b {
+                &type_intern::InternedTypeKind::Param(id_b) => {
+                    if id_a.index == id_b.index {
+                        UnifyResult::Ok
+                    } else {
+                        UnifyResult::Err(UnifyError::mismatch(span))
+                    }
+                }
+                _ => UnifyResult::Err(UnifyError::mismatch(span))
+            }
+        }
+
+        &type_intern::InternedTypeKind::Tuple(list_a) => {
+            let kind_b = type_intern::type_interner().get(b);
+            match kind_b {
+                &type_intern::InternedTypeKind::Tuple(list_b) => {
+                    unify_ty_lists_id(table, unifier, list_a, list_b, span)
+                }
+                _ => UnifyResult::Err(UnifyError::mismatch(span))
+            }
+        }
+
+        &type_intern::InternedTypeKind::Array { element, size } => {
             let elem_a = element;
             let size_a = size;
-            match other_kind {
-                &hir_ty::TypeKind::Array { ref element, size } => {
+            let kind_b = type_intern::type_interner().get(b);
+            match kind_b {
+                &type_intern::InternedTypeKind::Array { element, size } => {
                     if size_a != size {
                         return UnifyResult::Err(UnifyError::mismatch(span));
                     }
-                    unify(table, unifier, elem_a.as_ref(), element.as_ref(), span)
+                    unify_id(table, unifier, elem_a, element, span)
                 }
                 _ => UnifyResult::Err(UnifyError::mismatch(span))
             }
         }
 
-        // Slices: unify element types
-        (&hir_ty::TypeKind::Slice { ref element }, other_kind) => {
+        &type_intern::InternedTypeKind::Slice { element } => {
             let elem_a = element;
-            match other_kind {
-                &hir_ty::TypeKind::Slice { ref element } => {
-                    unify(table, unifier, elem_a.as_ref(), element.as_ref(), span)
+            let kind_b = type_intern::type_interner().get(b);
+            match kind_b {
+                &type_intern::InternedTypeKind::Slice { element } => {
+                    unify_id(table, unifier, elem_a, element, span)
                 }
                 _ => UnifyResult::Err(UnifyError::mismatch(span))
             }
         }
 
-        // References: same mutability, unify inner types
-        (&hir_ty::TypeKind::Ref { ref inner, mutable }, other_kind) => {
+        &type_intern::InternedTypeKind::Ref { inner, mutable } => {
             let inner_a = inner;
             let mut_a = mutable;
-            match other_kind {
-                &hir_ty::TypeKind::Ref { ref inner, mutable } => {
+            let kind_b = type_intern::type_interner().get(b);
+            match kind_b {
+                &type_intern::InternedTypeKind::Ref { inner, mutable } => {
                     if mut_a != mutable {
                         return UnifyResult::Err(UnifyError::mismatch(span));
                     }
-                    unify(table, unifier, inner_a.as_ref(), inner.as_ref(), span)
+                    unify_id(table, unifier, inner_a, inner, span)
                 }
                 _ => UnifyResult::Err(UnifyError::mismatch(span))
             }
         }
 
-        // Pointers: same mutability, unify inner types
-        (&hir_ty::TypeKind::Ptr { ref inner, mutable }, other_kind) => {
+        &type_intern::InternedTypeKind::Ptr { inner, mutable } => {
             let inner_a = inner;
             let mut_a = mutable;
-            match other_kind {
-                &hir_ty::TypeKind::Ptr { ref inner, mutable } => {
+            let kind_b = type_intern::type_interner().get(b);
+            match kind_b {
+                &type_intern::InternedTypeKind::Ptr { inner, mutable } => {
                     if mut_a != mutable {
                         return UnifyResult::Err(UnifyError::mismatch(span));
                     }
-                    unify(table, unifier, inner_a.as_ref(), inner.as_ref(), span)
+                    unify_id(table, unifier, inner_a, inner, span)
                 }
                 _ => UnifyResult::Err(UnifyError::mismatch(span))
             }
         }
 
-        // ADTs: same def_id, unify type arguments
-        (&hir_ty::TypeKind::Adt { def_id, ref args }, other_kind) => {
+        &type_intern::InternedTypeKind::Adt { def_id, args } => {
             let def_a = def_id;
             let args_a = args;
-            match other_kind {
-                &hir_ty::TypeKind::Adt { def_id, ref args } => {
+            let kind_b = type_intern::type_interner().get(b);
+            match kind_b {
+                &type_intern::InternedTypeKind::Adt { def_id, args } => {
                     if def_a.index != def_id.index {
                         return UnifyResult::Err(UnifyError::mismatch(span));
                     }
-                    if args_a.len() != args.len() {
-                        return UnifyResult::Err(UnifyError::arity(span));
+                    unify_ty_lists_id(table, unifier, args_a, args, span)
+                }
+                _ => UnifyResult::Err(UnifyError::mismatch(span))
+            }
+        }
+
+        // Function types: unify params and return type.
+        // Effects are NOT unified here — checked at call sites.
+        &type_intern::InternedTypeKind::Fn { params, ret, effects: _ } => {
+            let params_a = params;
+            let ret_a = ret;
+            let kind_b = type_intern::type_interner().get(b);
+            match kind_b {
+                &type_intern::InternedTypeKind::Fn { params, ret, effects: _ } => {
+                    match unify_ty_lists_id(table, unifier, params_a, params, span) {
+                        UnifyResult::Err(e) => { return UnifyResult::Err(e); }
+                        UnifyResult::Ok => {}
                     }
-                    let mut i: usize = 0;
-                    while i < args_a.len() {
-                        match unify(table, unifier, &args_a[i], &args[i], span) {
-                            UnifyResult::Err(e) => { return UnifyResult::Err(e); }
-                            UnifyResult::Ok => {}
+                    unify_id(table, unifier, ret_a, ret, span)
+                }
+                _ => UnifyResult::Err(UnifyError::mismatch(span))
+            }
+        }
+
+        // Closure types: unify with other closures or coerce to Fn
+        &type_intern::InternedTypeKind::Closure { def_id: _, params, ret } => {
+            let params_a = params;
+            let ret_a = ret;
+            let kind_b = type_intern::type_interner().get(b);
+            match kind_b {
+                &type_intern::InternedTypeKind::Closure { def_id: _, params, ret } => {
+                    match unify_ty_lists_id(table, unifier, params_a, params, span) {
+                        UnifyResult::Err(e) => { return UnifyResult::Err(e); }
+                        UnifyResult::Ok => {}
+                    }
+                    unify_id(table, unifier, ret_a, ret, span)
+                }
+                &type_intern::InternedTypeKind::Fn { params, ret, effects: _ } => {
+                    // Closure coerces to Fn type
+                    match unify_ty_lists_id(table, unifier, params_a, params, span) {
+                        UnifyResult::Err(e) => { return UnifyResult::Err(e); }
+                        UnifyResult::Ok => {}
+                    }
+                    unify_id(table, unifier, ret_a, ret, span)
+                }
+                _ => UnifyResult::Err(UnifyError::mismatch(span))
+            }
+        }
+
+        // Record types: convert back to hir_ty for row unification
+        &type_intern::InternedTypeKind::Record { fields, row_var } => {
+            let fields_a_id = fields;
+            let row_var_a = row_var;
+            let kind_b = type_intern::type_interner().get(b);
+            match kind_b {
+                &type_intern::InternedTypeKind::Record { fields, row_var } => {
+                    let fields_b_id = fields;
+                    let row_var_b = row_var;
+                    // Convert interned record fields back to hir_ty for row unification
+                    let fields_a_vec = record_fields_id_to_vec(fields_a_id);
+                    let fields_b_vec = record_fields_id_to_vec(fields_b_id);
+                    unify_record_rows(table, unifier, &fields_a_vec, &row_var_a, &fields_b_vec, &row_var_b, span)
+                }
+                _ => UnifyResult::Err(UnifyError::mismatch(span))
+            }
+        }
+
+        // Ownership types: same qualifier, unify inner types
+        &type_intern::InternedTypeKind::Ownership { qualifier, inner } => {
+            let qualifier_a = qualifier;
+            let inner_a = inner;
+            let kind_b = type_intern::type_interner().get(b);
+            match kind_b {
+                &type_intern::InternedTypeKind::Ownership { qualifier, inner } => {
+                    if !ownership_qualifiers_equal(qualifier_a, qualifier) {
+                        return UnifyResult::Err(UnifyError::mismatch(span));
+                    }
+                    unify_id(table, unifier, inner_a, inner, span)
+                }
+                _ => UnifyResult::Err(UnifyError::mismatch(span))
+            }
+        }
+
+        &type_intern::InternedTypeKind::Range { element, inclusive } => {
+            let elem_a = element;
+            let incl_a = inclusive;
+            let kind_b = type_intern::type_interner().get(b);
+            match kind_b {
+                &type_intern::InternedTypeKind::Range { element, inclusive } => {
+                    if incl_a != inclusive {
+                        return UnifyResult::Err(UnifyError::mismatch(span));
+                    }
+                    unify_id(table, unifier, elem_a, element, span)
+                }
+                _ => UnifyResult::Err(UnifyError::mismatch(span))
+            }
+        }
+
+        &type_intern::InternedTypeKind::DynTrait { trait_id, ref auto_traits } => {
+            let trait_a = trait_id;
+            let auto_a_len = auto_traits.len();
+            // Copy auto_traits to local vec before dropping borrow
+            let mut auto_a: Vec<hir_def::DefId> = Vec::new();
+            let mut i: usize = 0;
+            while i < auto_traits.len() {
+                auto_a.push(hir_def::DefId { index: auto_traits[i].index });
+                i = i + 1;
+            }
+            let kind_b = type_intern::type_interner().get(b);
+            match kind_b {
+                &type_intern::InternedTypeKind::DynTrait { trait_id, ref auto_traits } => {
+                    if trait_a.index != trait_id.index {
+                        return UnifyResult::Err(UnifyError::mismatch(span));
+                    }
+                    if auto_a_len != auto_traits.len() {
+                        return UnifyResult::Err(UnifyError::mismatch(span));
+                    }
+                    // Check all auto traits match
+                    let mut j: usize = 0;
+                    while j < auto_a.len() {
+                        if auto_a[j].index != auto_traits[j].index {
+                            return UnifyResult::Err(UnifyError::mismatch(span));
                         }
-                        i = i + 1;
+                        j = j + 1;
                     }
                     UnifyResult::Ok
                 }
@@ -1978,105 +2335,55 @@ fn unify_resolved(
             }
         }
 
-        // Function types: unify params and return type.
-        // Effects are NOT unified here — they are checked at call sites,
-        // matching blood-rust's behavior where Fn-Fn unification ignores effects.
-        (&hir_ty::TypeKind::Fn { ref params, ref ret, effects: _ }, other_kind) => {
-            let params_a = params;
-            let ret_a = ret;
-            match other_kind {
-                &hir_ty::TypeKind::Fn { ref params, ref ret, effects: _ } => {
-                    if params_a.len() != params.len() {
-                        return UnifyResult::Err(UnifyError::arity(span));
-                    }
-                    let mut i: usize = 0;
-                    while i < params_a.len() {
-                        match unify(table, unifier, &params_a[i], &params[i], span) {
-                            UnifyResult::Err(e) => { return UnifyResult::Err(e); }
-                            UnifyResult::Ok => {}
-                        }
-                        i = i + 1;
-                    }
-                    // Unify return types
-                    unify(table, unifier, ret_a.as_ref(), ret.as_ref(), span)
-                }
-                _ => UnifyResult::Err(UnifyError::mismatch(span))
-            }
-        }
-
-        // Closure types: unify with other closures or coerce to Fn
-        (&hir_ty::TypeKind::Closure { def_id: _, ref params, ref ret }, other_kind) => {
-            let params_a = params;
-            let ret_a = ret;
-            match other_kind {
-                &hir_ty::TypeKind::Closure { def_id: _, ref params, ref ret } => {
-                    if params_a.len() != params.len() {
-                        return UnifyResult::Err(UnifyError::arity(span));
-                    }
-                    let mut i: usize = 0;
-                    while i < params_a.len() {
-                        match unify(table, unifier, &params_a[i], &params[i], span) {
-                            UnifyResult::Err(e) => { return UnifyResult::Err(e); }
-                            UnifyResult::Ok => {}
-                        }
-                        i = i + 1;
-                    }
-                    unify(table, unifier, ret_a.as_ref(), ret.as_ref(), span)
-                }
-                &hir_ty::TypeKind::Fn { ref params, ref ret, effects: _ } => {
-                    // Closure coerces to Fn type
-                    if params_a.len() != params.len() {
-                        return UnifyResult::Err(UnifyError::arity(span));
-                    }
-                    let mut i: usize = 0;
-                    while i < params_a.len() {
-                        match unify(table, unifier, &params_a[i], &params[i], span) {
-                            UnifyResult::Err(e) => { return UnifyResult::Err(e); }
-                            UnifyResult::Ok => {}
-                        }
-                        i = i + 1;
-                    }
-                    unify(table, unifier, ret_a.as_ref(), ret.as_ref(), span)
-                }
-                _ => UnifyResult::Err(UnifyError::mismatch(span))
-            }
-        }
-
-        // Record types: unify with row polymorphism
-        (&hir_ty::TypeKind::Record { ref fields, ref row_var }, other_kind) => {
-            let fields_a = fields;
-            let row_var_a = row_var;
-            match other_kind {
-                &hir_ty::TypeKind::Record { ref fields, ref row_var } => {
-                    let fields_b = fields;
-                    let row_var_b = row_var;
-                    unify_record_rows(table, unifier, fields_a, row_var_a, fields_b, row_var_b, span)
-                }
-                _ => UnifyResult::Err(UnifyError::mismatch(span))
-            }
-        }
-
-        // Ownership types: same qualifier, unify inner types
-        (&hir_ty::TypeKind::Ownership { qualifier, ref inner }, other_kind) => {
-            let qualifier_a = qualifier;
-            let inner_a = inner;
-            match other_kind {
-                &hir_ty::TypeKind::Ownership { qualifier, ref inner } => {
-                    if !ownership_qualifiers_equal(qualifier_a, qualifier) {
-                        return UnifyResult::Err(UnifyError::mismatch(span));
-                    }
-                    unify(table, unifier, inner_a.as_ref(), inner.as_ref(), span)
-                }
-                _ => UnifyResult::Err(UnifyError::mismatch(span))
-            }
-        }
-
         // Catch-all: any other combination is a type mismatch
-        // This handles cases like (Primitive, Adt), (Tuple, Ref), etc.
         _ => {
             UnifyResult::Err(UnifyError::mismatch(span))
         }
     }
+}
+
+/// Helper: unifies two TyListIds element-wise.
+fn unify_ty_lists_id(
+    table: &mut SubstTable,
+    unifier: &mut Unifier,
+    list_a: type_intern::TyListId,
+    list_b: type_intern::TyListId,
+    span: common::Span,
+) -> UnifyResult {
+    let interner = type_intern::type_interner();
+    let len_a = interner.ty_list_len(list_a);
+    let len_b = interner.ty_list_len(list_b);
+    if len_a != len_b {
+        return UnifyResult::Err(UnifyError::arity(span));
+    }
+    let mut i: usize = 0;
+    while i < len_a {
+        let elem_a = type_intern::type_interner().get_ty_list_element(list_a, i);
+        let elem_b = type_intern::type_interner().get_ty_list_element(list_b, i);
+        match unify_id(table, unifier, elem_a, elem_b, span) {
+            UnifyResult::Err(e) => { return UnifyResult::Err(e); }
+            UnifyResult::Ok => {}
+        }
+        i = i + 1;
+    }
+    UnifyResult::Ok
+}
+
+/// Helper: converts interned record fields back to Vec<hir_ty::RecordField>.
+fn record_fields_id_to_vec(fields_id: type_intern::RecordFieldListId) -> Vec<hir_ty::RecordField> {
+    let interner = type_intern::type_interner();
+    let field_list = interner.get_record_field_list(fields_id);
+    let mut result: Vec<hir_ty::RecordField> = Vec::new();
+    let mut i: usize = 0;
+    while i < field_list.fields.len() {
+        let f = &field_list.fields[i];
+        result.push(hir_ty::RecordField {
+            name: f.name,
+            ty: type_intern::ty_id_to_type(f.ty),
+        });
+        i = i + 1;
+    }
+    result
 }
 
 /// Checks if two ownership qualifiers are equal.

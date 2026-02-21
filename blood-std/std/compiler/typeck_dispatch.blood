@@ -9,6 +9,7 @@
 mod common;
 mod hir_def;
 mod hir_ty;
+mod type_intern;
 
 // ============================================================
 // Method Candidates
@@ -21,7 +22,7 @@ pub struct MethodCandidate {
     /// The DefId of the impl block containing this method.
     pub impl_id: hir_def::DefId,
     /// The self type of the impl block.
-    pub self_ty: hir_ty::Type,
+    pub self_ty: type_intern::TyId,
     /// Specificity score (higher = more specific).
     pub specificity: u32,
     /// Whether this is from a trait impl.
@@ -33,7 +34,7 @@ impl MethodCandidate {
     pub fn new(
         def_id: hir_def::DefId,
         impl_id: hir_def::DefId,
-        self_ty: hir_ty::Type,
+        self_ty: type_intern::TyId,
         specificity: u32,
         is_trait_impl: bool,
     ) -> MethodCandidate {
@@ -98,7 +99,7 @@ impl DispatchResolver {
             return DispatchResult::Found(MethodCandidate::new(
                 hir_def::DefId::new(c.def_id.index),
                 hir_def::DefId::new(c.impl_id.index),
-                hir_ty::copy_type(&c.self_ty),
+                type_intern::TyId::new(c.self_ty.index),
                 c.specificity,
                 c.is_trait_impl,
             ));
@@ -131,7 +132,7 @@ impl DispatchResolver {
                     tied.push(MethodCandidate::new(
                         hir_def::DefId::new(c.def_id.index),
                         hir_def::DefId::new(c.impl_id.index),
-                        hir_ty::copy_type(&c.self_ty),
+                        type_intern::TyId::new(c.self_ty.index),
                         c.specificity,
                         c.is_trait_impl,
                     ));
@@ -144,7 +145,7 @@ impl DispatchResolver {
             DispatchResult::Found(MethodCandidate::new(
                 hir_def::DefId::new(c.def_id.index),
                 hir_def::DefId::new(c.impl_id.index),
-                hir_ty::copy_type(&c.self_ty),
+                type_intern::TyId::new(c.self_ty.index),
                 c.specificity,
                 c.is_trait_impl,
             ))
@@ -158,16 +159,18 @@ impl DispatchResolver {
 
 /// Computes specificity score for a type.
 /// Concrete types are more specific than generic ones.
-pub fn compute_specificity(ty: &hir_ty::Type) -> u32 {
-    match &ty.kind {
-        &hir_ty::TypeKind::Primitive(_) => 10,
-        &hir_ty::TypeKind::Adt { def_id: _, ref args } => 8,
-        &hir_ty::TypeKind::Tuple(_) => 7,
-        &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => {
-            compute_specificity(inner.as_ref())
+pub fn compute_specificity(ty: type_intern::TyId) -> u32 {
+    let interner = type_intern::type_interner();
+    let kind = interner.get(ty);
+    match kind {
+        &type_intern::InternedTypeKind::Primitive(_) => 10,
+        &type_intern::InternedTypeKind::Adt { def_id: _, args: _ } => 8,
+        &type_intern::InternedTypeKind::Tuple(_) => 7,
+        &type_intern::InternedTypeKind::Ref { inner, mutable: _ } => {
+            compute_specificity(inner)
         }
-        &hir_ty::TypeKind::Param(_) => 1, // Generic — least specific
-        &hir_ty::TypeKind::Infer(_) => 0, // Unknown
-        _ => 5, // Default
+        &type_intern::InternedTypeKind::Param(_) => 1,
+        &type_intern::InternedTypeKind::Infer(_) => 0,
+        _ => 5,
     }
 }

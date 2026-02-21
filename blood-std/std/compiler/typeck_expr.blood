@@ -16,6 +16,7 @@ mod hir_item;
 mod hir;
 mod unify;
 mod typeck;
+mod type_intern;
 
 // ============================================================
 // Main Entry Points
@@ -23,7 +24,7 @@ mod typeck;
 
 /// Infers the type of an expression.
 /// Returns the inferred type (may contain inference variables).
-pub fn infer_expr(checker: &mut typeck::TypeChecker, expr: &hir_expr::Expr) -> hir_ty::Type {
+pub fn infer_expr(checker: &mut typeck::TypeChecker, expr: &hir_expr::Expr) -> type_intern::TyId {
     let result = match &expr.kind {
         &hir_expr::ExprKind::Literal(ref lit) => infer_literal(checker, lit),
         &hir_expr::ExprKind::Local(id) => infer_local(checker, id, expr.span),
@@ -125,21 +126,22 @@ pub fn infer_expr(checker: &mut typeck::TypeChecker, expr: &hir_expr::Expr) -> h
             }
             match expr {
                 &Some(ref e) => infer_expr(checker, e.as_ref()),
-                &None => hir_ty::Type::unit(),
+                &None => type_intern::CommonTypes::unit(),
             }
         }
         &hir_expr::ExprKind::Default => {
             // Default expression type comes from context; return expression's type variable
-            hir_ty::copy_type(&expr.ty)
+            type_intern::type_to_ty_id(&expr.ty)
         }
-        &hir_expr::ExprKind::Error => hir_ty::Type::error(),
+        &hir_expr::ExprKind::Error => type_intern::CommonTypes::error(),
     };
 
     // Record the mapping from the HIR's type variable to the concrete inferred type.
     // During HIR lowering, every expression gets a fresh Infer(TyVarId) type.
     // We unify the inferred type with the expression's type variable so that
     // MIR lowering can resolve expression types via apply_substs.
-    checker.unify(&result, &expr.ty, expr.span);
+    let expr_ty_id = type_intern::type_to_ty_id(&expr.ty);
+    checker.unify(result, expr_ty_id, expr.span);
 
     result
 }
@@ -150,17 +152,17 @@ pub fn infer_expr(checker: &mut typeck::TypeChecker, expr: &hir_expr::Expr) -> h
 pub fn check_expr(
     checker: &mut typeck::TypeChecker,
     expr: &hir_expr::Expr,
-    expected: &hir_ty::Type,
+    expected: type_intern::TyId,
 ) -> bool {
     let inferred = infer_expr(checker, expr);
 
     // First try direct unification
-    if checker.unify(&inferred, expected, expr.span) {
+    if checker.unify(inferred, expected, expr.span) {
         return true;
     }
 
     // If unification fails, try coercion
-    match try_coerce(checker, &inferred, expected, expr.span) {
+    match try_coerce(checker, inferred, expected, expr.span) {
         typeck::CoercionResult::Ok(_coercion) => true,
         typeck::CoercionResult::Err => false,
     }
@@ -174,38 +176,42 @@ pub fn check_expr(
 /// Returns CoercionResult::Ok with the coercion if successful.
 pub fn try_coerce(
     checker: &mut typeck::TypeChecker,
-    from_ty: &hir_ty::Type,
-    to_ty: &hir_ty::Type,
+    from_ty: type_intern::TyId,
+    to_ty: type_intern::TyId,
     span: common::Span,
 ) -> typeck::CoercionResult {
     // Resolve any inference variables
     let from_resolved = checker.resolve(from_ty);
     let to_resolved = checker.resolve(to_ty);
 
-    // Check for identity coercion (already same type)
-    if types_equal(&from_resolved, &to_resolved) {
+    // Check for identity coercion (same interned type)
+    if from_resolved.index == to_resolved.index {
         return typeck::CoercionResult::Ok(typeck::Coercion::None);
     }
 
     // Check for Never type coercion: ! -> T
-    if is_never_type(&from_resolved) {
+    if is_never_type_id(from_resolved) {
         return typeck::CoercionResult::Ok(typeck::Coercion::NeverToAny);
     }
 
+    // Convert to hir_ty::Type for coercion matching (cold path)
+    let from_hir = type_intern::ty_id_to_type(from_resolved);
+    let to_hir = type_intern::ty_id_to_type(to_resolved);
+
     // Check for reference coercion: &mut T -> &T
-    match try_ref_coerce(checker, &from_resolved, &to_resolved, span) {
+    match try_ref_coerce(checker, &from_hir, &to_hir, span) {
         typeck::CoercionResult::Ok(c) => return typeck::CoercionResult::Ok(c),
         typeck::CoercionResult::Err => {}
     }
 
     // Check for unsizing coercion: [T; N] -> [T]
-    match try_unsize_coerce(checker, &from_resolved, &to_resolved, span) {
+    match try_unsize_coerce(checker, &from_hir, &to_hir, span) {
         typeck::CoercionResult::Ok(c) => return typeck::CoercionResult::Ok(c),
         typeck::CoercionResult::Err => {}
     }
 
     // Check for function pointer coercion
-    match try_fn_pointer_coerce(checker, &from_resolved, &to_resolved, span) {
+    match try_fn_pointer_coerce(checker, &from_hir, &to_hir, span) {
         typeck::CoercionResult::Ok(c) => return typeck::CoercionResult::Ok(c),
         typeck::CoercionResult::Err => {}
     }
@@ -226,14 +232,18 @@ fn try_ref_coerce(
         (&hir_ty::TypeKind::Ref { ref inner, mutable: true },
          &hir_ty::TypeKind::Ref { inner: ref to_inner, mutable: false }) => {
             // The inner types must unify
-            if checker.unify(inner.as_ref(), to_inner.as_ref(), span) {
+            let inner_id = type_intern::type_to_ty_id(inner.as_ref());
+            let to_inner_id = type_intern::type_to_ty_id(to_inner.as_ref());
+            if checker.unify(inner_id, to_inner_id, span) {
                 return typeck::CoercionResult::Ok(typeck::Coercion::RefCoerce);
             }
         }
         // *mut T -> *const T (mutable to immutable pointer)
         (&hir_ty::TypeKind::Ptr { ref inner, mutable: true },
          &hir_ty::TypeKind::Ptr { inner: ref to_inner, mutable: false }) => {
-            if checker.unify(inner.as_ref(), to_inner.as_ref(), span) {
+            let inner_id = type_intern::type_to_ty_id(inner.as_ref());
+            let to_inner_id = type_intern::type_to_ty_id(to_inner.as_ref());
+            if checker.unify(inner_id, to_inner_id, span) {
                 return typeck::CoercionResult::Ok(typeck::Coercion::RefCoerce);
             }
         }
@@ -258,7 +268,9 @@ fn try_unsize_coerce(
                 match (&inner.as_ref().kind, &to_inner.as_ref().kind) {
                     (&hir_ty::TypeKind::Array { ref element, size: _ },
                      &hir_ty::TypeKind::Slice { element: ref slice_elem }) => {
-                        if checker.unify(element.as_ref(), slice_elem.as_ref(), span) {
+                        let elem_id = type_intern::type_to_ty_id(element.as_ref());
+                        let slice_elem_id = type_intern::type_to_ty_id(slice_elem.as_ref());
+                        if checker.unify(elem_id, slice_elem_id, span) {
                             return typeck::CoercionResult::Ok(typeck::Coercion::Unsize);
                         }
                     }
@@ -289,13 +301,17 @@ fn try_fn_pointer_coerce(
             // Verify each parameter type is compatible
             let mut i: usize = 0;
             while i < params.len() {
-                if !checker.unify(&params[i], &to_params[i], span) {
+                let p_id = type_intern::type_to_ty_id(&params[i]);
+                let tp_id = type_intern::type_to_ty_id(&to_params[i]);
+                if !checker.unify(p_id, tp_id, span) {
                     return typeck::CoercionResult::Err;
                 }
                 i = i + 1;
             }
             // Verify return type is compatible
-            if !checker.unify(ret.as_ref(), to_ret.as_ref(), span) {
+            let ret_id = type_intern::type_to_ty_id(ret.as_ref());
+            let to_ret_id = type_intern::type_to_ty_id(to_ret.as_ref());
+            if !checker.unify(ret_id, to_ret_id, span) {
                 return typeck::CoercionResult::Err;
             }
             return typeck::CoercionResult::Ok(typeck::Coercion::FnPointer);
@@ -303,6 +319,11 @@ fn try_fn_pointer_coerce(
         _ => {}
     }
     typeck::CoercionResult::Err
+}
+
+/// Checks if a TyId is the never type (!).
+fn is_never_type_id(ty: type_intern::TyId) -> bool {
+    ty.index == type_intern::CommonTypes::never().index
 }
 
 /// Checks if a type is the never type (!).
@@ -387,8 +408,19 @@ fn primitive_equal(a: &hir_ty::PrimitiveTy, b: &hir_ty::PrimitiveTy) -> bool {
     }
 }
 
-/// Strips reference wrappers from a type for auto-dereference.
-/// &T -> T, &&T -> T, &mut T -> T, T -> T (unchanged).
+/// Strips reference wrappers from a TyId for auto-dereference.
+pub fn strip_refs_id(ty: type_intern::TyId) -> type_intern::TyId {
+    let interner = type_intern::type_interner();
+    let kind = interner.get(ty);
+    match kind {
+        &type_intern::InternedTypeKind::Ref { inner, mutable: _ } => {
+            strip_refs_id(type_intern::TyId::new(inner.index))
+        }
+        _ => ty,
+    }
+}
+
+/// Strips reference wrappers from a type for auto-dereference (legacy hir_ty version).
 pub fn strip_refs(ty: &hir_ty::Type) -> hir_ty::Type {
     match &ty.kind {
         &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => {
@@ -413,7 +445,12 @@ fn is_deref_op(uop: common::UnaryOp) -> bool {
     }
 }
 
-/// Checks if a type is bool.
+/// Checks if a TyId is bool.
+fn is_bool_type_id(ty: type_intern::TyId) -> bool {
+    ty.index == type_intern::CommonTypes::bool_ty().index
+}
+
+/// Checks if a type is bool (legacy hir_ty version).
 fn is_bool_type(ty: &hir_ty::Type) -> bool {
     match &ty.kind {
         &hir_ty::TypeKind::Primitive(ref prim) => {
@@ -484,11 +521,11 @@ fn is_lvalue(expr: &hir_expr::Expr) -> bool {
 // ============================================================
 
 /// Infers the type of a literal.
-fn infer_literal(checker: &mut typeck::TypeChecker, lit: &hir_expr::Literal) -> hir_ty::Type {
+fn infer_literal(checker: &mut typeck::TypeChecker, lit: &hir_expr::Literal) -> type_intern::TyId {
     match &lit.kind {
         &hir_expr::LiteralKind::Int { val: _, ref ty } => {
             match ty {
-                &Some(prim_ty) => hir_ty::Type::new(hir_ty::TypeKind::Primitive(prim_ty)),
+                &Some(prim_ty) => type_intern::type_interner().intern(type_intern::InternedTypeKind::Primitive(prim_ty)),
                 &None => {
                     // Unsuffixed integer literal - create inference variable
                     // Default to i32 if not constrained
@@ -498,7 +535,7 @@ fn infer_literal(checker: &mut typeck::TypeChecker, lit: &hir_expr::Literal) -> 
         }
         &hir_expr::LiteralKind::Float { bits: _, ref ty } => {
             match ty {
-                &Some(prim_ty) => hir_ty::Type::new(hir_ty::TypeKind::Primitive(prim_ty)),
+                &Some(prim_ty) => type_intern::type_interner().intern(type_intern::InternedTypeKind::Primitive(prim_ty)),
                 &None => {
                     // Unsuffixed float literal - create inference variable
                     // Default to f64 if not constrained
@@ -508,26 +545,16 @@ fn infer_literal(checker: &mut typeck::TypeChecker, lit: &hir_expr::Literal) -> 
         }
         &hir_expr::LiteralKind::Str(ref _s) => {
             // String literals have type &str
-            hir_ty::Type::new(hir_ty::TypeKind::Ref {
-                inner: Box::new(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::Str))),
-                mutable: false,
-            })
+            type_intern::type_interner().mk_ref(type_intern::CommonTypes::str_ty(), false)
         }
         &hir_expr::LiteralKind::ByteStr(ref _bytes) => {
             // Byte string literals have type &[u8]
-            hir_ty::Type::new(hir_ty::TypeKind::Ref {
-                inner: Box::new(hir_ty::Type::new(hir_ty::TypeKind::Slice {
-                    element: Box::new(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::U8))),
-                })),
-                mutable: false,
-            })
+            let u8_ty = type_intern::CommonTypes::u8_ty();
+            let slice_ty = type_intern::type_interner().mk_slice(u8_ty);
+            type_intern::type_interner().mk_ref(slice_ty, false)
         }
-        &hir_expr::LiteralKind::Char(_c) => {
-            hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::Char))
-        }
-        &hir_expr::LiteralKind::Bool(_b) => {
-            hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::Bool))
-        }
+        &hir_expr::LiteralKind::Char(_c) => type_intern::CommonTypes::char_ty(),
+        &hir_expr::LiteralKind::Bool(_b) => type_intern::CommonTypes::bool_ty(),
     }
 }
 
@@ -536,18 +563,18 @@ fn infer_literal(checker: &mut typeck::TypeChecker, lit: &hir_expr::Literal) -> 
 // ============================================================
 
 /// Infers the type of a local variable reference.
-fn infer_local(checker: &mut typeck::TypeChecker, id: hir_def::LocalId, span: common::Span) -> hir_ty::Type {
+fn infer_local(checker: &mut typeck::TypeChecker, id: hir_def::LocalId, span: common::Span) -> type_intern::TyId {
     match checker.get_local_ty(id) {
         Some(ty) => ty,
         Option::None => {
             checker.error(typeck::TypeErrorKind::UndefinedVariable, span);
-            hir_ty::Type::error()
+            type_intern::CommonTypes::error()
         }
     }
 }
 
 /// Infers the type of a path reference.
-fn infer_path(checker: &mut typeck::TypeChecker, path: &hir_def::ResolvedPath, span: common::Span) -> hir_ty::Type {
+fn infer_path(checker: &mut typeck::TypeChecker, path: &hir_def::ResolvedPath, span: common::Span) -> type_intern::TyId {
     let def_id = path.def_id;
 
     // Check if it's a function
@@ -560,17 +587,16 @@ fn infer_path(checker: &mut typeck::TypeChecker, path: &hir_def::ResolvedPath, s
             }
 
             // Non-generic function - build the function type directly
-            let mut param_tys: Vec<hir_ty::Type> = Vec::new();
+            let mut param_tys: Vec<type_intern::TyId> = Vec::new();
             let mut i: usize = 0;
             while i < fn_info.param_tys.len() {
-                param_tys.push(hir_ty::copy_type(&fn_info.param_tys[i]));
+                param_tys.push(type_intern::TyId::new(fn_info.param_tys[i].index));
                 i = i + 1;
             }
-            return hir_ty::Type::new(hir_ty::TypeKind::Fn {
-                params: param_tys,
-                ret: Box::new(hir_ty::copy_type(&fn_info.return_ty)),
-                effects: hir_ty::EffectRow::empty(),
-            });
+            let interner = type_intern::type_interner();
+            let params_list = interner.intern_ty_list(&param_tys);
+            let ret_id = type_intern::TyId::new(fn_info.return_ty.index);
+            return interner.mk_fn(params_list, ret_id, type_intern::EffectRowId::new(0));
         }
         Option::None => {}
     }
@@ -578,7 +604,7 @@ fn infer_path(checker: &mut typeck::TypeChecker, path: &hir_def::ResolvedPath, s
     // Check if it's a const
     match checker.get_const(def_id) {
         Some(const_info) => {
-            return hir_ty::copy_type(&const_info.ty);
+            return type_intern::TyId::new(const_info.ty.index);
         }
         Option::None => {}
     }
@@ -586,7 +612,7 @@ fn infer_path(checker: &mut typeck::TypeChecker, path: &hir_def::ResolvedPath, s
     // Check if it's a static
     match checker.get_static(def_id) {
         Some(static_info) => {
-            return hir_ty::copy_type(&static_info.ty);
+            return type_intern::TyId::new(static_info.ty.index);
         }
         Option::None => {}
     }
@@ -595,36 +621,32 @@ fn infer_path(checker: &mut typeck::TypeChecker, path: &hir_def::ResolvedPath, s
     match checker.find_enum_for_variant(def_id) {
         Option::Some(ref lookup) => {
             // Build the ADT type for the parent enum
-            let mut type_args: Vec<hir_ty::Type> = Vec::new();
+            let mut type_args: Vec<type_intern::TyId> = Vec::new();
             let mut subst = unify::TypeParamSubst::new();
             let mut g: u32 = 0;
             while g < lookup.num_generics {
                 let fresh = checker.fresh_infer();
-                type_args.push(hir_ty::copy_type(&fresh));
-                subst.add(g, fresh);
+                type_args.push(type_intern::TyId::new(fresh.index));
+                subst.add_id(g, fresh);
                 g = g + 1;
             }
-            let adt_ty = hir_ty::Type::new(hir_ty::TypeKind::Adt {
-                def_id: lookup.enum_def_id,
-                args: type_args,
-            });
+            let interner = type_intern::type_interner();
+            let args_list = interner.intern_ty_list(&type_args);
+            let adt_ty = interner.mk_adt(lookup.enum_def_id, args_list);
 
             if lookup.field_tys.len() == 0 {
                 // Unit variant - return the enum ADT type directly
                 return adt_ty;
             } else {
                 // Tuple variant - return a function type (field_tys) -> Adt
-                let mut param_tys: Vec<hir_ty::Type> = Vec::new();
+                let mut param_tys: Vec<type_intern::TyId> = Vec::new();
                 let mut fi: usize = 0;
                 while fi < lookup.field_tys.len() {
-                    param_tys.push(unify::substitute_type_params(&lookup.field_tys[fi], &subst));
+                    param_tys.push(unify::substitute_type_params_id(lookup.field_tys[fi], &subst));
                     fi = fi + 1;
                 }
-                return hir_ty::Type::new(hir_ty::TypeKind::Fn {
-                    params: param_tys,
-                    ret: Box::new(adt_ty),
-                    effects: hir_ty::EffectRow::empty(),
-                });
+                let params_list = interner.intern_ty_list(&param_tys);
+                return interner.mk_fn(params_list, adt_ty, type_intern::EffectRowId::new(0));
             }
         }
         Option::None => {}
@@ -633,16 +655,15 @@ fn infer_path(checker: &mut typeck::TypeChecker, path: &hir_def::ResolvedPath, s
     // Check if it's a struct constructor (unit struct)
     match checker.get_struct(def_id) {
         Option::Some(ref struct_info) => {
-            let mut type_args: Vec<hir_ty::Type> = Vec::new();
+            let mut type_args: Vec<type_intern::TyId> = Vec::new();
             let mut g: u32 = 0;
             while g < struct_info.num_generics {
                 type_args.push(checker.fresh_infer());
                 g = g + 1;
             }
-            return hir_ty::Type::new(hir_ty::TypeKind::Adt {
-                def_id: def_id,
-                args: type_args,
-            });
+            let interner = type_intern::type_interner();
+            let args_list = interner.intern_ty_list(&type_args);
+            return interner.mk_adt(def_id, args_list);
         }
         Option::None => {}
     }
@@ -656,7 +677,7 @@ fn infer_path(checker: &mut typeck::TypeChecker, path: &hir_def::ResolvedPath, s
 /// When a generic function is called multiple times with different types, the
 /// Infer variables from the first call get unified with concrete types. We must
 /// replace those Infer variables with FRESH ones for each call site.
-fn instantiate_fn_sig(checker: &mut typeck::TypeChecker, fn_info: &typeck::FnSigInfo) -> hir_ty::Type {
+fn instantiate_fn_sig(checker: &mut typeck::TypeChecker, fn_info: &typeck::FnSigInfo) -> type_intern::TyId {
     // Build a mapping from type-parameter Infer IDs to fresh Infer variables.
     // type_param_ids contains the actual TyVarId indices assigned during HIR lowering.
     let mut subst = unify::TypeParamSubst::new();
@@ -664,119 +685,28 @@ fn instantiate_fn_sig(checker: &mut typeck::TypeChecker, fn_info: &typeck::FnSig
     while i < fn_info.num_generics {
         let fresh_var = checker.fresh_infer();
         if (i as usize) < fn_info.type_param_ids.len() {
-            subst.add(fn_info.type_param_ids[i as usize], fresh_var);
+            subst.add_id(fn_info.type_param_ids[i as usize], fresh_var);
         } else {
-            subst.add(i, fresh_var);
+            subst.add_id(i, fresh_var);
         }
         i = i + 1;
     }
 
     // Substitute Infer(param_id) → fresh Infer in parameter types
-    let mut param_tys: Vec<hir_ty::Type> = Vec::new();
+    // Uses substitute_type_params_id which handles both Infer and Param nodes
+    let mut param_tys: Vec<type_intern::TyId> = Vec::new();
     let mut j: usize = 0;
     while j < fn_info.param_tys.len() {
-        param_tys.push(substitute_infer_params(&fn_info.param_tys[j], &subst));
+        param_tys.push(unify::substitute_type_params_id(fn_info.param_tys[j], &subst));
         j = j + 1;
     }
 
     // Substitute Infer(param_id) → fresh Infer in return type
-    let ret_ty = substitute_infer_params(&fn_info.return_ty, &subst);
+    let ret_ty = unify::substitute_type_params_id(fn_info.return_ty, &subst);
 
-    hir_ty::Type::new(hir_ty::TypeKind::Fn {
-        params: param_tys,
-        ret: Box::new(ret_ty),
-        effects: hir_ty::EffectRow::empty(),
-    })
-}
-
-/// Substitutes Infer(id) variables in a type when the id matches a type parameter.
-/// This is like substitute_type_params but works on Infer nodes instead of Param nodes,
-/// since Blood HIR uses Infer for type parameters (not Param).
-fn substitute_infer_params(ty: &hir_ty::Type, subst: &unify::TypeParamSubst) -> hir_ty::Type {
-    if subst.is_empty() {
-        return hir_ty::copy_type(ty);
-    }
-
-    match &ty.kind {
-        &hir_ty::TypeKind::Infer(var_id) => {
-            // Check if this Infer variable is a type parameter
-            match subst.lookup(var_id.index) {
-                Some(fresh_ty) => fresh_ty,
-                Option::None => hir_ty::copy_type(ty),
-            }
-        }
-        &hir_ty::TypeKind::Param(param_id) => {
-            // Also handle Param types for builtins that use them
-            match subst.lookup(param_id.index) {
-                Some(fresh_ty) => fresh_ty,
-                Option::None => hir_ty::copy_type(ty),
-            }
-        }
-        &hir_ty::TypeKind::Primitive(_) => hir_ty::copy_type(ty),
-        &hir_ty::TypeKind::Never => hir_ty::copy_type(ty),
-        &hir_ty::TypeKind::Error => hir_ty::copy_type(ty),
-        &hir_ty::TypeKind::Tuple(ref types) => {
-            let mut result: Vec<hir_ty::Type> = Vec::new();
-            let mut i: usize = 0;
-            while i < types.len() {
-                result.push(substitute_infer_params(&types[i], subst));
-                i = i + 1;
-            }
-            hir_ty::Type::new(hir_ty::TypeKind::Tuple(result))
-        }
-        &hir_ty::TypeKind::Array { ref element, size } => {
-            hir_ty::Type::new(hir_ty::TypeKind::Array {
-                element: Box::new(substitute_infer_params(element.as_ref(), subst)),
-                size: size,
-            })
-        }
-        &hir_ty::TypeKind::Slice { ref element } => {
-            hir_ty::Type::new(hir_ty::TypeKind::Slice {
-                element: Box::new(substitute_infer_params(element.as_ref(), subst)),
-            })
-        }
-        &hir_ty::TypeKind::Ref { ref inner, mutable } => {
-            hir_ty::Type::new(hir_ty::TypeKind::Ref {
-                inner: Box::new(substitute_infer_params(inner.as_ref(), subst)),
-                mutable: mutable,
-            })
-        }
-        &hir_ty::TypeKind::Ptr { ref inner, mutable } => {
-            hir_ty::Type::new(hir_ty::TypeKind::Ptr {
-                inner: Box::new(substitute_infer_params(inner.as_ref(), subst)),
-                mutable: mutable,
-            })
-        }
-        &hir_ty::TypeKind::Adt { def_id, ref args } => {
-            let mut result_args: Vec<hir_ty::Type> = Vec::new();
-            let mut i: usize = 0;
-            while i < args.len() {
-                result_args.push(substitute_infer_params(&args[i], subst));
-                i = i + 1;
-            }
-            hir_ty::Type::new(hir_ty::TypeKind::Adt {
-                def_id: def_id,
-                args: result_args,
-            })
-        }
-        &hir_ty::TypeKind::Fn { ref params, ref ret, ref effects } => {
-            let mut result_params: Vec<hir_ty::Type> = Vec::new();
-            let mut i: usize = 0;
-            while i < params.len() {
-                result_params.push(substitute_infer_params(&params[i], subst));
-                i = i + 1;
-            }
-            hir_ty::Type::new(hir_ty::TypeKind::Fn {
-                params: result_params,
-                ret: Box::new(substitute_infer_params(ret.as_ref(), subst)),
-                effects: hir_ty::copy_effect_row(effects),
-            })
-        }
-        _ => {
-            // For all other type kinds (Closure, Forall, etc.), just copy
-            hir_ty::copy_type(ty)
-        }
-    }
+    let interner = type_intern::type_interner();
+    let params_list = interner.intern_ty_list(&param_tys);
+    interner.mk_fn(params_list, ret_ty, type_intern::EffectRowId::new(0))
 }
 
 // ============================================================
@@ -803,61 +733,61 @@ fn infer_binary(
     left: &hir_expr::Expr,
     right: &hir_expr::Expr,
     span: common::Span,
-) -> hir_ty::Type {
+) -> type_intern::TyId {
     let left_ty = infer_expr(checker, left);
     let right_ty = infer_expr(checker, right);
 
     // Unify operand types for most operators (except pipe, which has different semantics)
     match bin_op {
         common::BinOp::Pipe => {}
-        _ => { checker.unify(&left_ty, &right_ty, span); }
+        _ => { checker.unify(left_ty, right_ty, span); }
     }
 
     // Determine result type based on operator
     match bin_op {
         // Comparison operators return bool
-        common::BinOp::Eq => hir_ty::Type::bool_ty(),
-        common::BinOp::Ne => hir_ty::Type::bool_ty(),
-        common::BinOp::Lt => hir_ty::Type::bool_ty(),
-        common::BinOp::Le => hir_ty::Type::bool_ty(),
-        common::BinOp::Gt => hir_ty::Type::bool_ty(),
-        common::BinOp::Ge => hir_ty::Type::bool_ty(),
+        common::BinOp::Eq => type_intern::CommonTypes::bool_ty(),
+        common::BinOp::Ne => type_intern::CommonTypes::bool_ty(),
+        common::BinOp::Lt => type_intern::CommonTypes::bool_ty(),
+        common::BinOp::Le => type_intern::CommonTypes::bool_ty(),
+        common::BinOp::Gt => type_intern::CommonTypes::bool_ty(),
+        common::BinOp::Ge => type_intern::CommonTypes::bool_ty(),
         // Logical operators return bool and expect bool operands
         common::BinOp::And => {
-            let bool_ty = hir_ty::Type::bool_ty();
-            checker.unify(&left_ty, &bool_ty, span);
-            hir_ty::Type::bool_ty()
+            let bool_ty = type_intern::CommonTypes::bool_ty();
+            checker.unify(left_ty, bool_ty, span);
+            type_intern::CommonTypes::bool_ty()
         }
         common::BinOp::Or => {
-            let bool_ty = hir_ty::Type::bool_ty();
-            checker.unify(&left_ty, &bool_ty, span);
-            hir_ty::Type::bool_ty()
+            let bool_ty = type_intern::CommonTypes::bool_ty();
+            checker.unify(left_ty, bool_ty, span);
+            type_intern::CommonTypes::bool_ty()
         }
         // Arithmetic operators return the operand type (must be numeric)
         common::BinOp::Add => {
-            let resolved = checker.resolve(&left_ty);
-            if is_bool_type(&resolved) {
+            let resolved = checker.resolve(left_ty);
+            if is_bool_type_id(resolved) {
                 checker.error(typeck::TypeErrorKind::TypeMismatch, span);
             }
             resolved
         }
         common::BinOp::Sub => {
-            let resolved = checker.resolve(&left_ty);
-            if is_bool_type(&resolved) {
+            let resolved = checker.resolve(left_ty);
+            if is_bool_type_id(resolved) {
                 checker.error(typeck::TypeErrorKind::TypeMismatch, span);
             }
             resolved
         }
         common::BinOp::Mul => {
-            let resolved = checker.resolve(&left_ty);
-            if is_bool_type(&resolved) {
+            let resolved = checker.resolve(left_ty);
+            if is_bool_type_id(resolved) {
                 checker.error(typeck::TypeErrorKind::TypeMismatch, span);
             }
             resolved
         }
         common::BinOp::Div => {
-            let resolved = checker.resolve(&left_ty);
-            if is_bool_type(&resolved) {
+            let resolved = checker.resolve(left_ty);
+            if is_bool_type_id(resolved) {
                 checker.error(typeck::TypeErrorKind::TypeMismatch, span);
             }
             if is_literal_zero(right) {
@@ -866,8 +796,8 @@ fn infer_binary(
             resolved
         }
         common::BinOp::Rem => {
-            let resolved = checker.resolve(&left_ty);
-            if is_bool_type(&resolved) {
+            let resolved = checker.resolve(left_ty);
+            if is_bool_type_id(resolved) {
                 checker.error(typeck::TypeErrorKind::TypeMismatch, span);
             }
             if is_literal_zero(right) {
@@ -876,22 +806,24 @@ fn infer_binary(
             resolved
         }
         // Bitwise operators return the operand type
-        common::BinOp::BitAnd => checker.resolve(&left_ty),
-        common::BinOp::BitOr => checker.resolve(&left_ty),
-        common::BinOp::BitXor => checker.resolve(&left_ty),
-        common::BinOp::Shl => checker.resolve(&left_ty),
-        common::BinOp::Shr => checker.resolve(&left_ty),
+        common::BinOp::BitAnd => checker.resolve(left_ty),
+        common::BinOp::BitOr => checker.resolve(left_ty),
+        common::BinOp::BitXor => checker.resolve(left_ty),
+        common::BinOp::Shl => checker.resolve(left_ty),
+        common::BinOp::Shr => checker.resolve(left_ty),
         // Pipe operator: left |> right where right is a function
         common::BinOp::Pipe => {
-            // Resolve right type to get function signature
-            let resolved_right = checker.resolve(&right_ty);
-            match &resolved_right.kind {
+            // Resolve right type to get function signature (use ty_id_to_type for matching)
+            let resolved_right = checker.resolve(right_ty);
+            let resolved_right_hir = type_intern::ty_id_to_type(resolved_right);
+            match &resolved_right_hir.kind {
                 &hir_ty::TypeKind::Fn { ref params, ref ret, effects: _ } => {
                     // Unify left with first parameter type
                     if params.len() > 0 {
-                        checker.unify(&left_ty, &params[0], span);
+                        let first_param_id = type_intern::type_to_ty_id(&params[0]);
+                        checker.unify(left_ty, first_param_id, span);
                     }
-                    hir_ty::copy_type(ret.as_ref())
+                    type_intern::type_to_ty_id(ret.as_ref())
                 }
                 _ => {
                     // Right side isn't a function — return infer and let it fail later
@@ -908,60 +840,58 @@ fn infer_unary(
     un_op: common::UnaryOp,
     operand: &hir_expr::Expr,
     span: common::Span,
-) -> hir_ty::Type {
+) -> type_intern::TyId {
     let operand_ty = infer_expr(checker, operand);
 
     match un_op {
         common::UnaryOp::Neg => {
             // Negation returns the same type (must be numeric)
-            checker.resolve(&operand_ty)
+            checker.resolve(operand_ty)
         }
         common::UnaryOp::Not => {
             // Logical not returns bool for bool, same type for integers (bitwise)
-            checker.resolve(&operand_ty)
+            checker.resolve(operand_ty)
         }
         common::UnaryOp::Deref => {
             // Dereference: *T -> U where T is a reference/pointer type
-            let resolved = checker.resolve(&operand_ty);
-            match &resolved.kind {
-                &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => {
-                    hir_ty::copy_type(inner.as_ref())
+            let resolved = checker.resolve(operand_ty);
+            let interner = type_intern::type_interner();
+            match interner.get(resolved) {
+                &type_intern::InternedTypeKind::Ref { inner, mutable: _ } => {
+                    type_intern::TyId::new(inner.index)
                 }
-                &hir_ty::TypeKind::Ptr { ref inner, mutable: _ } => {
-                    hir_ty::copy_type(inner.as_ref())
+                &type_intern::InternedTypeKind::Ptr { inner, mutable: _ } => {
+                    type_intern::TyId::new(inner.index)
                 }
-                &hir_ty::TypeKind::Adt { def_id, ref args } => {
+                &type_intern::InternedTypeKind::Adt { def_id, args } => {
                     // Box<T> deref: *Box<T> -> T
                     let is_box = match &checker.builtin_box_def {
                         &Some(ref box_def) => box_def.index == def_id.index,
                         &None => false,
                     };
-                    if is_box && args.len() == 1 {
-                        hir_ty::copy_type(&args[0])
+                    let args_len = interner.ty_list_len(args);
+                    if is_box && args_len == 1 {
+                        interner.get_ty_list_element(args, 0)
                     } else {
                         checker.error(typeck::TypeErrorKind::TypeMismatch, span);
-                        hir_ty::Type::error()
+                        type_intern::CommonTypes::error()
                     }
                 }
                 _ => {
                     checker.error(typeck::TypeErrorKind::TypeMismatch, span);
-                    hir_ty::Type::error()
+                    type_intern::CommonTypes::error()
                 }
             }
         }
         common::UnaryOp::Ref => {
             // Reference: &T where T is the operand type
-            hir_ty::Type::new(hir_ty::TypeKind::Ref {
-                inner: Box::new(checker.resolve(&operand_ty)),
-                mutable: false,
-            })
+            let resolved = checker.resolve(operand_ty);
+            type_intern::type_interner().mk_ref(resolved, false)
         }
         common::UnaryOp::RefMut => {
             // Mutable reference: &mut T where T is the operand type
-            hir_ty::Type::new(hir_ty::TypeKind::Ref {
-                inner: Box::new(checker.resolve(&operand_ty)),
-                mutable: true,
-            })
+            let resolved = checker.resolve(operand_ty);
+            type_intern::type_interner().mk_ref(resolved, true)
         }
     }
 }
@@ -983,11 +913,11 @@ fn check_call_trait_bounds(
                 return;
             }
             // Collect resolved argument types
-            let mut resolved_arg_types: Vec<hir_ty::Type> = Vec::new();
+            let mut resolved_arg_types: Vec<type_intern::TyId> = Vec::new();
             let mut ai: usize = 0;
             while ai < args.len() {
                 let arg_ty = infer_expr(checker, &args[ai]);
-                let resolved = checker.resolve(&arg_ty);
+                let resolved = checker.resolve(arg_ty);
                 resolved_arg_types.push(resolved);
                 ai = ai + 1;
             }
@@ -1003,7 +933,7 @@ fn infer_call(
     callee: &hir_expr::Expr,
     args: &Vec<hir_expr::Expr>,
     span: common::Span,
-) -> hir_ty::Type {
+) -> type_intern::TyId {
     // Extract callee DefId for effect row checking (if callee is a path)
     let callee_def_id: Option<u32> = match &callee.kind {
         &hir_expr::ExprKind::Path(ref path) => Option::Some(path.def_id.index),
@@ -1011,20 +941,23 @@ fn infer_call(
     };
 
     let callee_ty = infer_expr(checker, callee);
-    let resolved_callee = checker.resolve(&callee_ty);
+    let resolved_callee = checker.resolve(callee_ty);
+    // Use ty_id_to_type for matching on the resolved callee type structure
+    let resolved_callee_hir = type_intern::ty_id_to_type(resolved_callee);
 
-    match &resolved_callee.kind {
+    match &resolved_callee_hir.kind {
         &hir_ty::TypeKind::Fn { ref params, ref ret, ref effects } => {
             // Check arity
             if params.len() != args.len() {
                 checker.error(typeck::TypeErrorKind::ArityMismatch, span);
-                return hir_ty::Type::error();
+                return type_intern::CommonTypes::error();
             }
 
             // Check each argument against parameter type
             let mut i: usize = 0;
             while i < args.len() {
-                check_expr(checker, &args[i], &params[i]);
+                let param_id = type_intern::type_to_ty_id(&params[i]);
+                check_expr(checker, &args[i], param_id);
                 i = i + 1;
             }
 
@@ -1064,18 +997,18 @@ fn infer_call(
             }
 
             // Return the return type
-            hir_ty::copy_type(ret.as_ref())
+            type_intern::type_to_ty_id(ret.as_ref())
         }
         &hir_ty::TypeKind::Infer(_) => {
             // Callee type not yet known - create fresh return type
             checker.fresh_infer()
         }
         &hir_ty::TypeKind::Error => {
-            hir_ty::Type::error()
+            type_intern::CommonTypes::error()
         }
         _ => {
             checker.error(typeck::TypeErrorKind::NotCallable, span);
-            hir_ty::Type::error()
+            type_intern::CommonTypes::error()
         }
     }
 }
@@ -1089,24 +1022,26 @@ fn infer_method_call(
     type_args: &Vec<hir_ty::Type>,
     args: &Vec<hir_expr::Expr>,
     span: common::Span,
-) -> hir_ty::Type {
+) -> type_intern::TyId {
     let receiver_ty = infer_expr(checker, receiver);
-    let resolved_receiver_raw = checker.resolve(&receiver_ty);
-    let resolved_receiver = strip_refs(&resolved_receiver_raw);
+    let resolved_receiver_raw = checker.resolve(receiver_ty);
+    let resolved_receiver = strip_refs_id(resolved_receiver_raw);
 
     // If receiver type is still an unresolved inference variable, we cannot
     // reliably look up methods because types_match_for_impl would match ANY
     // impl. Infer all arg types and record a pending call for deferred resolution.
-    match &resolved_receiver.kind {
-        &hir_ty::TypeKind::Infer(ref var_id) => {
+    let interner = type_intern::type_interner();
+    match interner.get(resolved_receiver) {
+        &type_intern::InternedTypeKind::Infer(var_id) => {
             let mut i: usize = 0;
             while i < args.len() {
                 infer_expr(checker, &args[i]);
                 i = i + 1;
             }
             let return_ty = checker.fresh_infer();
-            let return_var = match &return_ty.kind {
-                &hir_ty::TypeKind::Infer(ref ret_var) => ret_var.index,
+            // Extract the TyVarId index from the fresh infer
+            let return_var = match type_intern::type_interner().get(return_ty) {
+                &type_intern::InternedTypeKind::Infer(ret_var) => ret_var.index,
                 _ => 0,
             };
             checker.record_pending_method_call(span.start, var_id.index, method.symbol, return_var);
@@ -1116,14 +1051,14 @@ fn infer_method_call(
     }
 
     // Check for ambiguous method dispatch (multiple impls provide same method)
-    let match_count = checker.count_method_matches(&resolved_receiver, method.symbol);
+    let match_count = checker.count_method_matches(resolved_receiver, method.symbol);
     if match_count > 1 {
         checker.error(typeck::TypeErrorKind::NoSuchMethod, method.span);
         return checker.fresh_infer();
     }
 
     // Look up the method on the receiver type
-    match checker.lookup_method(&resolved_receiver, method.symbol) {
+    match checker.lookup_method(resolved_receiver, method.symbol) {
         Some(lookup_result) => {
             // Get method info from the lookup
             let method_info = checker.get_method_from_lookup(&lookup_result);
@@ -1135,19 +1070,22 @@ fn infer_method_call(
             if type_args.len() > 0 {
                 let mut i: usize = 0;
                 while i < type_args.len() {
-                    subst.add(i as u32, hir_ty::copy_type(&type_args[i]));
+                    subst.add_id(i as u32, type_intern::type_to_ty_id(&type_args[i]));
                     i = i + 1;
                 }
             } else if impl_info.num_generics > 0 {
                 // Extract type params by matching impl's self_ty against actual receiver
-                unify::extract_type_params_from_self_ty(&impl_info.self_ty, &resolved_receiver, &mut subst);
+                // Bridge: convert TyId to hir_ty::Type for extract_type_params_from_self_ty
+                let impl_self_hir = type_intern::ty_id_to_type(impl_info.self_ty);
+                let recv_hir = type_intern::ty_id_to_type(resolved_receiver);
+                unify::extract_type_params_from_self_ty(&impl_self_hir, &recv_hir, &mut subst);
                 // Fill in any remaining params with fresh inference variables
                 let mut i: u32 = 0;
                 while i < impl_info.num_generics {
-                    match subst.lookup(i) {
+                    match subst.lookup_id(i) {
                         Option::Some(_) => {}
                         Option::None => {
-                            subst.add(i, checker.fresh_infer());
+                            subst.add_id(i, checker.fresh_infer());
                         }
                     }
                     i = i + 1;
@@ -1157,14 +1095,14 @@ fn infer_method_call(
             // Check arity (excluding self parameter)
             if method_info.param_tys.len() != args.len() {
                 checker.error(typeck::TypeErrorKind::ArityMismatch, span);
-                return hir_ty::Type::error();
+                return type_intern::CommonTypes::error();
             }
 
             // Check each argument against parameter type (after substitution)
             let mut i: usize = 0;
             while i < args.len() {
-                let param_ty = unify::substitute_type_params(&method_info.param_tys[i], &subst);
-                check_expr(checker, &args[i], &param_ty);
+                let param_ty = unify::substitute_type_params_id(method_info.param_tys[i], &subst);
+                check_expr(checker, &args[i], param_ty);
                 i = i + 1;
             }
 
@@ -1172,7 +1110,7 @@ fn infer_method_call(
             checker.record_method_resolution(span.start, method_info.def_id.index);
 
             // Return the return type after substitution
-            unify::substitute_type_params(&method_info.return_ty, &subst)
+            unify::substitute_type_params_id(method_info.return_ty, &subst)
         }
         Option::None => {
             // Method not found - report error
@@ -1185,7 +1123,7 @@ fn infer_method_call(
                 i = i + 1;
             }
 
-            hir_ty::Type::error()
+            type_intern::CommonTypes::error()
         }
     }
 }
@@ -1200,27 +1138,29 @@ fn infer_field(
     base: &hir_expr::Expr,
     field: &hir_expr::FieldAccess,
     span: common::Span,
-) -> hir_ty::Type {
+) -> type_intern::TyId {
     let base_ty = infer_expr(checker, base);
-    let resolved_base_raw = checker.resolve(&base_ty);
-    let resolved_base = strip_refs(&resolved_base_raw);
+    let resolved_base_raw = checker.resolve(base_ty);
+    let resolved_base = strip_refs_id(resolved_base_raw);
+    // Use ty_id_to_type for matching on the resolved base type structure
+    let resolved_base_hir = type_intern::ty_id_to_type(resolved_base);
 
-    match &resolved_base.kind {
+    match &resolved_base_hir.kind {
         &hir_ty::TypeKind::Tuple(ref types) => {
             // Tuple field access by index
             match field {
                 &hir_expr::FieldAccess::Index(idx) => {
                     let idx_usize = idx as usize;
                     if idx_usize < types.len() {
-                        hir_ty::copy_type(&types[idx_usize])
+                        type_intern::type_to_ty_id(&types[idx_usize])
                     } else {
                         checker.error(typeck::TypeErrorKind::NoSuchField, span);
-                        hir_ty::Type::error()
+                        type_intern::CommonTypes::error()
                     }
                 }
                 &hir_expr::FieldAccess::Named { name: _, field_idx: _ } => {
                     checker.error(typeck::TypeErrorKind::NoSuchField, span);
-                    hir_ty::Type::error()
+                    type_intern::CommonTypes::error()
                 }
             }
         }
@@ -1231,16 +1171,16 @@ fn infer_field(
                     let mut i: usize = 0;
                     while i < fields.len() {
                         if fields[i].name.index == name.symbol.index {
-                            return hir_ty::copy_type(&fields[i].ty);
+                            return type_intern::type_to_ty_id(&fields[i].ty);
                         }
                         i = i + 1;
                     }
                     checker.error(typeck::TypeErrorKind::NoSuchField, span);
-                    hir_ty::Type::error()
+                    type_intern::CommonTypes::error()
                 }
                 &hir_expr::FieldAccess::Index(_) => {
                     checker.error(typeck::TypeErrorKind::NoSuchField, span);
-                    hir_ty::Type::error()
+                    type_intern::CommonTypes::error()
                 }
             }
         }
@@ -1252,9 +1192,6 @@ fn infer_field(
                     match checker.get_struct_field_ty(def_id, name.symbol) {
                         Some(field_ty) => {
                             // Record the resolved field index for MIR lowering
-                            // Use the field NAME's span, not the expression span, because
-                            // chained accesses like `self.next.kind` share the same expr.span.start
-                            // but have unique field name positions.
                             match checker.get_struct_field_idx(def_id, name.symbol) {
                                 Option::Some(idx) => {
                                     checker.record_field_resolution(name.span.start, idx);
@@ -1263,15 +1200,20 @@ fn infer_field(
                             }
                             // If the struct has type arguments, substitute them
                             if args.len() > 0 {
-                                let subst = unify::TypeParamSubst::from_types(args);
-                                unify::substitute_type_params(&field_ty, &subst)
+                                let mut subst = unify::TypeParamSubst::new();
+                                let mut ai: usize = 0;
+                                while ai < args.len() {
+                                    subst.add_id(ai as u32, type_intern::type_to_ty_id(&args[ai]));
+                                    ai = ai + 1;
+                                }
+                                unify::substitute_type_params_id(field_ty, &subst)
                             } else {
                                 field_ty
                             }
                         }
                         Option::None => {
                             checker.error(typeck::TypeErrorKind::NoSuchField, span);
-                            hir_ty::Type::error()
+                            type_intern::CommonTypes::error()
                         }
                     }
                 }
@@ -1281,22 +1223,27 @@ fn infer_field(
                         Some(struct_info) => {
                             let idx_usize = idx as usize;
                             if idx_usize < struct_info.fields.len() {
-                                let field_ty = hir_ty::copy_type(&struct_info.fields[idx_usize].ty);
+                                let field_ty = type_intern::TyId::new(struct_info.fields[idx_usize].ty.index);
                                 if args.len() > 0 {
-                                    let subst = unify::TypeParamSubst::from_types(args);
-                                    unify::substitute_type_params(&field_ty, &subst)
+                                    let mut subst = unify::TypeParamSubst::new();
+                                    let mut ai: usize = 0;
+                                    while ai < args.len() {
+                                        subst.add_id(ai as u32, type_intern::type_to_ty_id(&args[ai]));
+                                        ai = ai + 1;
+                                    }
+                                    unify::substitute_type_params_id(field_ty, &subst)
                                 } else {
                                     field_ty
                                 }
                             } else {
                                 checker.error(typeck::TypeErrorKind::NoSuchField, span);
-                                hir_ty::Type::error()
+                                type_intern::CommonTypes::error()
                             }
                         }
                         Option::None => {
                             // Not a struct - might be an enum
                             checker.error(typeck::TypeErrorKind::NoSuchField, span);
-                            hir_ty::Type::error()
+                            type_intern::CommonTypes::error()
                         }
                     }
                 }
@@ -1307,11 +1254,11 @@ fn infer_field(
             checker.fresh_infer()
         }
         &hir_ty::TypeKind::Error => {
-            hir_ty::Type::error()
+            type_intern::CommonTypes::error()
         }
         _ => {
             checker.error(typeck::TypeErrorKind::NoSuchField, span);
-            hir_ty::Type::error()
+            type_intern::CommonTypes::error()
         }
     }
 }
@@ -1322,16 +1269,17 @@ fn infer_index(
     base: &hir_expr::Expr,
     idx: &hir_expr::Expr,
     span: common::Span,
-) -> hir_ty::Type {
+) -> type_intern::TyId {
     let base_ty = infer_expr(checker, base);
     let idx_ty = infer_expr(checker, idx);
-    let resolved_base_raw = checker.resolve(&base_ty);
-    let resolved_base = strip_refs(&resolved_base_raw);
+    let resolved_base_raw = checker.resolve(base_ty);
+    let resolved_base = strip_refs_id(resolved_base_raw);
 
     // Index must be an integer type. Accept any integer (signed or unsigned),
     // matching blood-rust's behavior. Default inference variables to usize.
-    let resolved_idx = checker.resolve(&idx_ty);
-    match &resolved_idx.kind {
+    let resolved_idx = checker.resolve(idx_ty);
+    let resolved_idx_hir = type_intern::ty_id_to_type(resolved_idx);
+    match &resolved_idx_hir.kind {
         &hir_ty::TypeKind::Primitive(prim) => {
             match prim {
                 hir_ty::PrimitiveTy::I8 => {}
@@ -1352,8 +1300,8 @@ fn infer_index(
             }
         }
         &hir_ty::TypeKind::Infer(_) => {
-            let usize_ty = hir_ty::Type::usize_ty();
-            checker.unify(&idx_ty, &usize_ty, idx.span);
+            let usize_ty = type_intern::CommonTypes::usize_ty();
+            checker.unify(idx_ty, usize_ty, idx.span);
         }
         &hir_ty::TypeKind::Error => {}
         _ => {
@@ -1361,12 +1309,13 @@ fn infer_index(
         }
     }
 
-    match &resolved_base.kind {
+    let resolved_base_hir = type_intern::ty_id_to_type(resolved_base);
+    match &resolved_base_hir.kind {
         &hir_ty::TypeKind::Array { ref element, size: _ } => {
-            hir_ty::copy_type(element.as_ref())
+            type_intern::type_to_ty_id(element.as_ref())
         }
         &hir_ty::TypeKind::Slice { ref element } => {
-            hir_ty::copy_type(element.as_ref())
+            type_intern::type_to_ty_id(element.as_ref())
         }
         &hir_ty::TypeKind::Adt { def_id, ref args } => {
             // Vec<T>[usize] -> T
@@ -1375,7 +1324,7 @@ fn infer_index(
                 &Option::None => false,
             };
             if is_vec && args.len() > 0 {
-                hir_ty::copy_type(&args[0])
+                type_intern::type_to_ty_id(&args[0])
             } else {
                 // String[usize] -> u8
                 let is_string = match &checker.builtin_string_def {
@@ -1383,10 +1332,10 @@ fn infer_index(
                     &Option::None => false,
                 };
                 if is_string {
-                    hir_ty::Type::u8_ty()
+                    type_intern::CommonTypes::u8_ty()
                 } else {
                     checker.error(typeck::TypeErrorKind::NotIndexable, span);
-                    hir_ty::Type::error()
+                    type_intern::CommonTypes::error()
                 }
             }
         }
@@ -1394,11 +1343,11 @@ fn infer_index(
             match prim {
                 hir_ty::PrimitiveTy::Str => {
                     // str[usize] -> char
-                    hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::Char))
+                    type_intern::CommonTypes::char_ty()
                 }
                 _ => {
                     checker.error(typeck::TypeErrorKind::NotIndexable, span);
-                    hir_ty::Type::error()
+                    type_intern::CommonTypes::error()
                 }
             }
         }
@@ -1406,11 +1355,11 @@ fn infer_index(
             checker.fresh_infer()
         }
         &hir_ty::TypeKind::Error => {
-            hir_ty::Type::error()
+            type_intern::CommonTypes::error()
         }
         _ => {
             checker.error(typeck::TypeErrorKind::NotIndexable, span);
-            hir_ty::Type::error()
+            type_intern::CommonTypes::error()
         }
     }
 }
@@ -1424,14 +1373,16 @@ fn infer_tuple(
     checker: &mut typeck::TypeChecker,
     exprs: &Vec<hir_expr::Expr>,
     span: common::Span,
-) -> hir_ty::Type {
-    let mut types: Vec<hir_ty::Type> = Vec::new();
+) -> type_intern::TyId {
+    let mut types: Vec<type_intern::TyId> = Vec::new();
     let mut i: usize = 0;
     while i < exprs.len() {
         types.push(infer_expr(checker, &exprs[i]));
         i = i + 1;
     }
-    hir_ty::Type::new(hir_ty::TypeKind::Tuple(types))
+    let interner = type_intern::type_interner();
+    let elems_list = interner.intern_ty_list(&types);
+    interner.mk_tuple(elems_list)
 }
 
 /// Infers the type of an array expression.
@@ -1439,38 +1390,31 @@ fn infer_array(
     checker: &mut typeck::TypeChecker,
     arr: &hir_expr::ArrayExpr,
     span: common::Span,
-) -> hir_ty::Type {
+) -> type_intern::TyId {
     match arr {
         &hir_expr::ArrayExpr::List(ref exprs) => {
             if exprs.len() == 0 {
                 // Empty array - element type is inference variable
                 let elem_ty = checker.fresh_infer();
-                hir_ty::Type::new(hir_ty::TypeKind::Array {
-                    element: Box::new(elem_ty),
-                    size: 0,
-                })
+                type_intern::type_interner().mk_array(elem_ty, 0)
             } else {
                 // Infer element type from first element, unify all others
                 let elem_ty = infer_expr(checker, &exprs[0]);
                 let mut i: usize = 1;
                 while i < exprs.len() {
                     let ty = infer_expr(checker, &exprs[i]);
-                    checker.unify(&ty, &elem_ty, exprs[i].span);
+                    checker.unify(ty, elem_ty, exprs[i].span);
                     i = i + 1;
                 }
-                hir_ty::Type::new(hir_ty::TypeKind::Array {
-                    element: Box::new(checker.resolve(&elem_ty)),
-                    size: exprs.len() as u64,
-                })
+                let resolved_elem = checker.resolve(elem_ty);
+                type_intern::type_interner().mk_array(resolved_elem, exprs.len() as u64)
             }
         }
         &hir_expr::ArrayExpr::Repeat { ref val, count } => {
             let elem_ty = infer_expr(checker, val.as_ref());
             // count is already a u64 (const evaluated at lowering time)
-            hir_ty::Type::new(hir_ty::TypeKind::Array {
-                element: Box::new(checker.resolve(&elem_ty)),
-                size: count,
-            })
+            let resolved_elem = checker.resolve(elem_ty);
+            type_intern::type_interner().mk_array(resolved_elem, count)
         }
     }
 }
@@ -1482,7 +1426,7 @@ fn infer_struct(
     fields: &Vec<hir_expr::FieldExpr>,
     base: &Option<Box<hir_expr::Expr>>,
     span: common::Span,
-) -> hir_ty::Type {
+) -> type_intern::TyId {
     // Check all field expressions and record field resolutions
     let mut i: usize = 0;
     while i < fields.len() {
@@ -1523,43 +1467,34 @@ fn infer_struct(
     match checker.find_enum_for_variant(path.def_id) {
         Option::Some(ref lookup) => {
             // Build ADT type using the parent enum's DefId
-            let mut args: Vec<hir_ty::Type> = Vec::new();
+            let mut args: Vec<type_intern::TyId> = Vec::new();
             let mut g: u32 = 0;
             while g < lookup.num_generics {
                 args.push(checker.fresh_infer());
                 g = g + 1;
             }
-            return hir_ty::Type::new(hir_ty::TypeKind::Adt {
-                def_id: lookup.enum_def_id,
-                args: args,
-            });
+            let interner = type_intern::type_interner();
+            let args_list = interner.intern_ty_list(&args);
+            return interner.mk_adt(lookup.enum_def_id, args_list);
         }
         Option::None => {}
     }
 
     // Regular struct construction
-    // Look up the struct definition's actual number of generics, rather than
-    // relying on explicit type args at the call site (which may be omitted).
-    // This matches blood-rust's behavior of always creating the right number
-    // of fresh inference variables for generic structs.
-    //
-    // Uses has_struct + get_struct_num_generics (value-type returns) instead of
-    // get_struct (Option<&StructInfo>) to avoid blood-rust reference return bugs.
     let num_gen = if checker.has_struct(path.def_id) {
         checker.get_struct_num_generics(path.def_id)
     } else {
         path.type_arg_count
     };
-    let mut args: Vec<hir_ty::Type> = Vec::new();
+    let mut args: Vec<type_intern::TyId> = Vec::new();
     let mut ta: u32 = 0;
     while ta < num_gen {
         args.push(checker.fresh_infer());
         ta = ta + 1;
     }
-    hir_ty::Type::new(hir_ty::TypeKind::Adt {
-        def_id: path.def_id,
-        args: args,
-    })
+    let interner = type_intern::type_interner();
+    let args_list = interner.intern_ty_list(&args);
+    interner.mk_adt(path.def_id, args_list)
 }
 
 /// Infers the type of an anonymous record expression.
@@ -1567,25 +1502,29 @@ fn infer_anon_record(
     checker: &mut typeck::TypeChecker,
     fields: &Vec<hir_expr::AnonRecordField>,
     span: common::Span,
-) -> hir_ty::Type {
+) -> type_intern::TyId {
     // Build the record type from field expressions
+    // Records are not yet interned — use ty_id_to_type bridge to build hir_ty::Type,
+    // then convert back. This is temporary until records are supported in InternedTypeKind.
     let mut record_fields: Vec<hir_ty::RecordField> = Vec::new();
     let mut i: usize = 0;
     while i < fields.len() {
         let field = &fields[i];
-        let field_ty = infer_expr(checker, &field.val);
+        let field_ty_id = infer_expr(checker, &field.val);
+        let field_ty_hir = type_intern::ty_id_to_type(field_ty_id);
         record_fields.push(hir_ty::RecordField::new(
             field.name.symbol,
-            field_ty,
+            field_ty_hir,
         ));
         i = i + 1;
     }
 
-    // Create a closed record type (no row variable)
-    hir_ty::Type::new(hir_ty::TypeKind::Record {
+    // Create a closed record type (no row variable), then intern
+    let record_hir = hir_ty::Type::new(hir_ty::TypeKind::Record {
         fields: record_fields,
         row_var: Option::None,
-    })
+    });
+    type_intern::type_to_ty_id(&record_hir)
 }
 
 /// Infers the type of a range expression.
@@ -1595,14 +1534,14 @@ fn infer_range(
     end_val: &Option<Box<hir_expr::Expr>>,
     inclusive: bool,
     span: common::Span,
-) -> hir_ty::Type {
+) -> type_intern::TyId {
     // Infer bound types and unify them
     let bound_ty = match (start, end_val) {
         (&Some(ref s), &Some(ref e)) => {
             let start_ty = infer_expr(checker, s.as_ref());
             let end_ty = infer_expr(checker, e.as_ref());
-            checker.unify(&start_ty, &end_ty, span);
-            checker.resolve(&start_ty)
+            checker.unify(start_ty, end_ty, span);
+            checker.resolve(start_ty)
         }
         (&Some(ref s), &None) => infer_expr(checker, s.as_ref()),
         (&None, &Some(ref e)) => infer_expr(checker, e.as_ref()),
@@ -1619,19 +1558,22 @@ fn infer_cast(
     expr: &hir_expr::Expr,
     ty: &hir_ty::Type,
     span: common::Span,
-) -> hir_ty::Type {
+) -> type_intern::TyId {
     // Check the source expression
     let src_ty = infer_expr(checker, expr);
-    let resolved_src = checker.resolve(&src_ty);
-    let resolved_dst = checker.resolve(ty);
+    let resolved_src = checker.resolve(src_ty);
+    let resolved_src_hir = type_intern::ty_id_to_type(resolved_src);
+    let dst_ty_id = type_intern::type_to_ty_id(ty);
+    let resolved_dst = checker.resolve(dst_ty_id);
+    let resolved_dst_hir = type_intern::ty_id_to_type(resolved_dst);
 
     // Validate that the cast is valid
-    if !is_valid_cast(&resolved_src, &resolved_dst) {
+    if !is_valid_cast(&resolved_src_hir, &resolved_dst_hir) {
         checker.error(typeck::TypeErrorKind::InvalidCast, span);
     }
 
     // Return the target type
-    hir_ty::copy_type(ty)
+    dst_ty_id
 }
 
 /// Checks if a cast from src_ty to dst_ty is valid.
@@ -1829,12 +1771,12 @@ fn infer_assign(
     target: &hir_expr::Expr,
     val: &hir_expr::Expr,
     span: common::Span,
-) -> hir_ty::Type {
+) -> type_intern::TyId {
     let target_ty = infer_expr(checker, target);
     let val_ty = infer_expr(checker, val);
 
     // Value type must match target type
-    checker.unify(&val_ty, &target_ty, span);
+    checker.unify(val_ty, target_ty, span);
 
     // Check that target is a valid lvalue
     if !is_lvalue(target) {
@@ -1852,7 +1794,7 @@ fn infer_assign(
     }
 
     // Assignment returns unit
-    hir_ty::Type::new(hir_ty::TypeKind::Tuple(Vec::new()))
+    type_intern::CommonTypes::unit()
 }
 
 /// Infers the type of a compound assignment expression.
@@ -1862,12 +1804,12 @@ fn infer_assign_op(
     target: &hir_expr::Expr,
     val: &hir_expr::Expr,
     span: common::Span,
-) -> hir_ty::Type {
+) -> type_intern::TyId {
     let target_ty = infer_expr(checker, target);
     let val_ty = infer_expr(checker, val);
 
     // For most operators, types should match
-    checker.unify(&val_ty, &target_ty, span);
+    checker.unify(val_ty, target_ty, span);
 
     // Check that target is a valid lvalue (mutable check would require borrow checker)
     if !is_lvalue(target) {
@@ -1875,7 +1817,7 @@ fn infer_assign_op(
     }
 
     // Compound assignment returns unit
-    hir_ty::Type::new(hir_ty::TypeKind::Tuple(Vec::new()))
+    type_intern::CommonTypes::unit()
 }
 
 /// Infers the type of an address-of expression.
@@ -1884,12 +1826,10 @@ fn infer_addr_of(
     mutable: bool,
     expr: &hir_expr::Expr,
     span: common::Span,
-) -> hir_ty::Type {
+) -> type_intern::TyId {
     let inner_ty = infer_expr(checker, expr);
-    hir_ty::Type::new(hir_ty::TypeKind::Ref {
-        inner: Box::new(checker.resolve(&inner_ty)),
-        mutable: mutable,
-    })
+    let resolved = checker.resolve(inner_ty);
+    type_intern::type_interner().mk_ref(resolved, mutable)
 }
 
 // ============================================================
@@ -1901,9 +1841,9 @@ fn infer_block(
     checker: &mut typeck::TypeChecker,
     block: &hir_expr::Block,
     span: common::Span,
-) -> hir_ty::Type {
+) -> type_intern::TyId {
     // Process all statements, tracking the last statement's type
-    let mut last_stmt_ty: hir_ty::Type = hir_ty::Type::new(hir_ty::TypeKind::Tuple(Vec::new()));
+    let mut last_stmt_ty: type_intern::TyId = type_intern::CommonTypes::unit();
     let mut i: usize = 0;
     while i < block.stmts.len() {
         last_stmt_ty = infer_stmt(checker, &block.stmts[i]);
@@ -1918,17 +1858,19 @@ fn infer_block(
     match &block.expr {
         &Some(ref e) => infer_expr(checker, e.as_ref()),
         &None => {
-            match &last_stmt_ty.kind {
-                &hir_ty::TypeKind::Never => hir_ty::Type::never(),
-                &hir_ty::TypeKind::Error => hir_ty::Type::error(),
-                _ => hir_ty::Type::new(hir_ty::TypeKind::Tuple(Vec::new())),
+            if is_never_type_id(last_stmt_ty) {
+                type_intern::CommonTypes::never()
+            } else if last_stmt_ty.index == type_intern::CommonTypes::error().index {
+                type_intern::CommonTypes::error()
+            } else {
+                type_intern::CommonTypes::unit()
             }
         }
     }
 }
 
 /// Infers the type of a statement.
-fn infer_stmt(checker: &mut typeck::TypeChecker, stmt: &hir_expr::Stmt) -> hir_ty::Type {
+fn infer_stmt(checker: &mut typeck::TypeChecker, stmt: &hir_expr::Stmt) -> type_intern::TyId {
     match stmt {
         &hir_expr::Stmt::Let { ref pattern, ref ty, ref init, span: _ } => {
             // Check for refutable patterns in let binding (irrefutable position)
@@ -1951,7 +1893,8 @@ fn infer_stmt(checker: &mut typeck::TypeChecker, stmt: &hir_expr::Stmt) -> hir_t
             // Unify with declared type if present
             match ty {
                 &Some(ref declared) => {
-                    checker.unify(&init_ty, declared, pattern.span);
+                    let declared_id = type_intern::type_to_ty_id(declared);
+                    checker.unify(init_ty, declared_id, pattern.span);
                 }
                 &None => {}
             }
@@ -1960,15 +1903,15 @@ fn infer_stmt(checker: &mut typeck::TypeChecker, stmt: &hir_expr::Stmt) -> hir_t
             // This unifies the pattern's type variable with the concrete
             // type AND walks sub-patterns (struct fields, ref bindings, etc.)
             // to ensure all inner inference variables are properly constrained.
-            propagate_pattern_types(checker, pattern, &init_ty);
-            hir_ty::Type::new(hir_ty::TypeKind::Tuple(Vec::new()))
+            propagate_pattern_types(checker, pattern, init_ty);
+            type_intern::CommonTypes::unit()
         }
         &hir_expr::Stmt::Expr { ref expr, has_semi: _ } => {
             infer_expr(checker, expr)
         }
         &hir_expr::Stmt::Item(_def_id) => {
             // Item statements are handled during item collection
-            hir_ty::Type::new(hir_ty::TypeKind::Tuple(Vec::new()))
+            type_intern::CommonTypes::unit()
         }
     }
 }
@@ -1980,11 +1923,11 @@ fn infer_if(
     then_branch: &hir_expr::Expr,
     else_branch: &Option<Box<hir_expr::Expr>>,
     span: common::Span,
-) -> hir_ty::Type {
+) -> type_intern::TyId {
     // Condition must be bool
     let cond_ty = infer_expr(checker, condition);
-    let bool_ty = hir_ty::Type::bool_ty();
-    checker.unify(&cond_ty, &bool_ty, condition.span);
+    let bool_ty = type_intern::CommonTypes::bool_ty();
+    checker.unify(cond_ty, bool_ty, condition.span);
 
     // Infer branch types
     let then_ty = infer_expr(checker, then_branch);
@@ -1994,26 +1937,22 @@ fn infer_if(
             let else_ty = infer_expr(checker, e.as_ref());
             // Handle diverging branches: if one branch is Never,
             // the if-expression's type is the other branch's type.
-            match (&then_ty.kind, &else_ty.kind) {
-                (&hir_ty::TypeKind::Never, _) => {
-                    // Then branch diverges; use else branch type
-                    checker.resolve(&else_ty)
-                }
-                (_, &hir_ty::TypeKind::Never) => {
-                    // Else branch diverges; use then branch type
-                    checker.resolve(&then_ty)
-                }
-                _ => {
-                    // Both branches must have same type
-                    checker.unify(&then_ty, &else_ty, span);
-                    checker.resolve(&then_ty)
-                }
+            if is_never_type_id(then_ty) {
+                // Then branch diverges; use else branch type
+                checker.resolve(else_ty)
+            } else if is_never_type_id(else_ty) {
+                // Else branch diverges; use then branch type
+                checker.resolve(then_ty)
+            } else {
+                // Both branches must have same type
+                checker.unify(then_ty, else_ty, span);
+                checker.resolve(then_ty)
             }
         }
         &None => {
             // No else branch - then branch must be unit, or whole if is unit
-            let unit_ty = hir_ty::Type::new(hir_ty::TypeKind::Tuple(Vec::new()));
-            checker.unify(&then_ty, &unit_ty, then_branch.span);
+            let unit_ty = type_intern::CommonTypes::unit();
+            checker.unify(then_ty, unit_ty, then_branch.span);
             unit_ty
         }
     }
@@ -2025,24 +1964,22 @@ fn infer_match(
     scrutinee: &hir_expr::Expr,
     arms: &Vec<hir_expr::MatchArm>,
     span: common::Span,
-) -> hir_ty::Type {
+) -> type_intern::TyId {
     let scrut_ty_raw = infer_expr(checker, scrutinee);
-    let scrut_ty = strip_refs(&scrut_ty_raw);
+    let scrut_ty = strip_refs_id(scrut_ty_raw);
 
     if arms.len() == 0 {
         // Empty match - type is never (or error)
-        return hir_ty::Type::never();
+        return type_intern::CommonTypes::never();
     }
 
     // Propagate types through each pattern using match ergonomics.
-    // This unifies each pattern's type with the scrutinee type AND
-    // walks sub-patterns (struct fields, ref bindings, etc.) to ensure
-    // all inner inference variables are properly constrained.
-    // The raw scrutinee type (with refs) is passed so match ergonomics
-    // can auto-strip refs for non-Ref patterns.
+    // Bridge: convert TyId to hir_ty::Type for pattern propagation
+    // (pattern functions still take &hir_ty::Type until pattern batch conversion)
+    let scrut_ty_raw_type = type_intern::ty_id_to_type(scrut_ty_raw);
     let mut pat_i: usize = 0;
     while pat_i < arms.len() {
-        propagate_match_pattern_types(checker, &arms[pat_i].pattern, &scrut_ty_raw);
+        propagate_match_pattern_types(checker, &arms[pat_i].pattern, &scrut_ty_raw_type);
         pat_i = pat_i + 1;
     }
 
@@ -2054,21 +1991,20 @@ fn infer_match(
     let mut i: usize = 1;
     while i < arms.len() {
         let arm_ty = infer_expr(checker, &arms[i].body);
-        match &result_ty.kind {
-            &hir_ty::TypeKind::Never => {
-                // Previous result was Never (diverging); adopt this arm's type
-                result_ty = arm_ty;
-            }
-            _ => {
-                checker.unify(&arm_ty, &result_ty, arms[i].body.span);
-            }
+        if is_never_type_id(result_ty) {
+            // Previous result was Never (diverging); adopt this arm's type
+            result_ty = arm_ty;
+        } else {
+            checker.unify(arm_ty, result_ty, arms[i].body.span);
         }
         i = i + 1;
     }
 
     // Check pattern exhaustiveness (resolve inference variables first)
-    let resolved_scrut = checker.resolve(&scrut_ty);
-    let exhaustiveness = typeck::check_exhaustiveness_arms(checker, &resolved_scrut, arms, span);
+    // Bridge: check_exhaustiveness_arms still takes &hir_ty::Type
+    let resolved_scrut = checker.resolve(scrut_ty);
+    let resolved_scrut_type = type_intern::ty_id_to_type(resolved_scrut);
+    let exhaustiveness = typeck::check_exhaustiveness_arms(checker, &resolved_scrut_type, arms, span);
     if !exhaustiveness.is_exhaustive() {
         checker.error(typeck::TypeErrorKind::NonExhaustive, span);
     }
@@ -2082,7 +2018,7 @@ fn infer_match(
         ui = ui + 1;
     }
 
-    checker.resolve(&result_ty)
+    checker.resolve(result_ty)
 }
 
 /// Infers the type of a loop expression.
@@ -2091,14 +2027,14 @@ fn infer_loop(
     _label: &Option<common::Symbol>,
     body: &hir_expr::Expr,
     span: common::Span,
-) -> hir_ty::Type {
+) -> type_intern::TyId {
     // Loop type is determined by break values
     let loop_ty = checker.fresh_infer();
 
     // Enter loop context
     let prev_in_loop = checker.in_loop;
-    let prev_loop_ty = copy_option_type(&checker.loop_ty);
-    checker.enter_loop(hir_ty::copy_type(&loop_ty));
+    let prev_loop_ty = copy_option_ty_id(&checker.loop_ty);
+    checker.enter_loop(loop_ty);
 
     // Check body
     infer_expr(checker, body);
@@ -2109,7 +2045,7 @@ fn infer_loop(
 
     // If no break with value, loop has type !
     // For now, return the inference variable
-    checker.resolve(&loop_ty)
+    checker.resolve(loop_ty)
 }
 
 /// Infers the type of a return expression.
@@ -2117,17 +2053,16 @@ fn infer_return(
     checker: &mut typeck::TypeChecker,
     val: &Option<Box<hir_expr::Expr>>,
     span: common::Span,
-) -> hir_ty::Type {
+) -> type_intern::TyId {
     let val_ty = match val {
         &Some(ref e) => infer_expr(checker, e.as_ref()),
-        &None => hir_ty::Type::new(hir_ty::TypeKind::Tuple(Vec::new())),
+        &None => type_intern::CommonTypes::unit(),
     };
 
     // Unify with function return type
     match &checker.return_ty {
-        &Some(ref ret_ty) => {
-            let ret_copy = hir_ty::copy_type(ret_ty);
-            checker.unify(&val_ty, &ret_copy, span);
+        &Some(ret_ty) => {
+            checker.unify(val_ty, type_intern::TyId::new(ret_ty.index), span);
         }
         &None => {
             checker.error(typeck::TypeErrorKind::InvalidControl, span);
@@ -2135,7 +2070,7 @@ fn infer_return(
     }
 
     // Return expression has type Never
-    hir_ty::Type::never()
+    type_intern::CommonTypes::never()
 }
 
 /// Infers the type of a break expression.
@@ -2144,27 +2079,26 @@ fn infer_break(
     _label: &Option<common::Symbol>,
     val: &Option<Box<hir_expr::Expr>>,
     span: common::Span,
-) -> hir_ty::Type {
+) -> type_intern::TyId {
     if !checker.in_loop {
         checker.error(typeck::TypeErrorKind::InvalidControl, span);
-        return hir_ty::Type::never();
+        return type_intern::CommonTypes::never();
     }
 
     let val_ty = match val {
         &Some(ref e) => infer_expr(checker, e.as_ref()),
-        &None => hir_ty::Type::new(hir_ty::TypeKind::Tuple(Vec::new())),
+        &None => type_intern::CommonTypes::unit(),
     };
 
     // Unify with loop type
     match &checker.loop_ty {
-        &Some(ref loop_ty) => {
-            let loop_copy = hir_ty::copy_type(loop_ty);
-            checker.unify(&val_ty, &loop_copy, span);
+        &Some(loop_ty) => {
+            checker.unify(val_ty, type_intern::TyId::new(loop_ty.index), span);
         }
         &None => {}
     }
 
-    hir_ty::Type::never()
+    type_intern::CommonTypes::never()
 }
 
 /// Infers the type of a continue expression.
@@ -2172,11 +2106,11 @@ fn infer_continue(
     checker: &mut typeck::TypeChecker,
     _label: &Option<common::Symbol>,
     span: common::Span,
-) -> hir_ty::Type {
+) -> type_intern::TyId {
     if !checker.in_loop {
         checker.error(typeck::TypeErrorKind::InvalidControl, span);
     }
-    hir_ty::Type::never()
+    type_intern::CommonTypes::never()
 }
 
 // ============================================================
@@ -2193,31 +2127,35 @@ fn infer_closure(
     body: &hir_expr::Expr,
     _body_id: hir_def::BodyId,
     span: common::Span,
-) -> hir_ty::Type {
-    // Build parameter types
-    let mut param_types: Vec<hir_ty::Type> = Vec::new();
+) -> type_intern::TyId {
+    // Build parameter types as TyIds
+    let mut param_ty_ids: Vec<type_intern::TyId> = Vec::new();
     let mut i: usize = 0;
     while i < params.len() {
-        param_types.push(hir_ty::copy_type(&params[i].ty));
+        param_ty_ids.push(type_intern::type_to_ty_id(&params[i].ty));
         i = i + 1;
     }
 
+    let ret_ty_id = type_intern::type_to_ty_id(return_ty);
+
     // Set up closure context
-    let prev_return = copy_option_type(&checker.return_ty);
-    checker.set_return_ty(hir_ty::copy_type(return_ty));
+    let prev_return = copy_option_ty_id(&checker.return_ty);
+    checker.set_return_ty(ret_ty_id);
 
     // Check body
     let body_ty = infer_expr(checker, body);
-    checker.unify(&body_ty, return_ty, body.span);
+    checker.unify(body_ty, ret_ty_id, body.span);
 
     // Restore context
     checker.return_ty = prev_return;
 
     // Return closure type (captures environment unlike plain Fn)
-    hir_ty::Type::new(hir_ty::TypeKind::Closure {
+    let interner = type_intern::type_interner();
+    let params_list = interner.intern_ty_list(&param_ty_ids);
+    interner.intern(type_intern::InternedTypeKind::Closure {
         def_id: hir_def::DefId::dummy(),
-        params: param_types,
-        ret: Box::new(hir_ty::copy_type(return_ty)),
+        params: params_list,
+        ret: ret_ty_id,
     })
 }
 
@@ -2231,7 +2169,7 @@ fn infer_with_handle(
     handler_expr: &hir_expr::Expr,
     body: &hir_expr::Expr,
     span: common::Span,
-) -> hir_ty::Type {
+) -> type_intern::TyId {
     // Check handler and body
     infer_expr(checker, handler_expr);
     infer_expr(checker, body)
@@ -2245,7 +2183,7 @@ fn infer_perform(
     op_name: common::Symbol,
     args: &Vec<hir_expr::Expr>,
     span: common::Span,
-) -> hir_ty::Type {
+) -> type_intern::TyId {
     // Check that the effect is declared in the current function's effect row
     let mut effect_declared = false;
     let mut ei: usize = 0;
@@ -2260,7 +2198,7 @@ fn infer_perform(
     }
 
     // Infer argument types first
-    let mut arg_tys: Vec<hir_ty::Type> = Vec::new();
+    let mut arg_tys: Vec<type_intern::TyId> = Vec::new();
     let mut i: usize = 0;
     while i < args.len() {
         let arg_ty = infer_expr(checker, &args[i]);
@@ -2301,9 +2239,10 @@ fn infer_perform(
                             checker.error(typeck::TypeErrorKind::ArityMismatch, span);
                         } else if !effect_is_generic {
                             // Only unify when the effect is non-generic
+                            // effect_op.param_tys are already TyId (from typeck_info migration)
                             let mut ai: usize = 0;
                             while ai < arg_tys.len() {
-                                checker.unify(&arg_tys[ai], &effect_op.param_tys[ai], span);
+                                checker.unify(arg_tys[ai], type_intern::TyId::new(effect_op.param_tys[ai].index), span);
                                 ai = ai + 1;
                             }
                         }
@@ -2312,7 +2251,7 @@ fn infer_perform(
                             // use fresh inference variable instead
                             result_ty = checker.fresh_infer();
                         } else {
-                            result_ty = hir_ty::copy_type(&effect_op.return_ty);
+                            result_ty = type_intern::TyId::new(effect_op.return_ty.index);
                         }
                         found = true;
                     }
@@ -2337,7 +2276,7 @@ fn infer_resume(
     checker: &mut typeck::TypeChecker,
     val: &hir_expr::Expr,
     span: common::Span,
-) -> hir_ty::Type {
+) -> type_intern::TyId {
     let val_ty = infer_expr(checker, val);
     // Track resume count for shallow handler validation
     checker.resume_count = checker.resume_count + 1;
@@ -2346,9 +2285,10 @@ fn infer_resume(
         checker.error(typeck_types::TypeErrorKind::InvalidControl, span);
     }
     // Check resume value type matches expected op return type
+    // checker.resume_ty is Option<TyId>
     match &checker.resume_ty {
-        &Option::Some(ref expected) => {
-            let ok = checker.unify(&val_ty, expected, span);
+        &Option::Some(expected) => {
+            let ok = checker.unify(val_ty, type_intern::TyId::new(expected.index), span);
             let _ = ok;
         }
         &Option::None => {}
@@ -2362,8 +2302,9 @@ fn infer_try(
     checker: &mut typeck::TypeChecker,
     inner: &hir_expr::Expr,
     span: common::Span,
-) -> hir_ty::Type {
+) -> type_intern::TyId {
     let inner_ty = infer_expr(checker, inner);
+    let _ = inner_ty;
     // ? operator extracts from Result/Option
     // For now, return inference variable
     checker.fresh_infer()
@@ -2373,10 +2314,10 @@ fn infer_try(
 // Type Copying Helper
 // ============================================================
 
-/// Creates a copy of an Option<Type>.
-fn copy_option_type(opt: &Option<hir_ty::Type>) -> Option<hir_ty::Type> {
+/// Creates a copy of an Option<TyId>. Trivial since TyId is a u32 wrapper.
+fn copy_option_ty_id(opt: &Option<type_intern::TyId>) -> Option<type_intern::TyId> {
     match opt {
-        &Some(ref ty) => Some(hir_ty::copy_type(ty)),
+        &Some(ty) => Some(type_intern::TyId::new(ty.index)),
         &None => Option::None,
     }
 }
@@ -2397,7 +2338,7 @@ fn copy_option_type(opt: &Option<hir_ty::Type>) -> Option<hir_ty::Type> {
 pub fn propagate_pattern_types(
     checker: &mut typeck::TypeChecker,
     pattern: &hir_expr::Pattern,
-    expected_ty: &hir_ty::Type,
+    expected_ty: type_intern::TyId,
 ) {
     propagate_pattern_types_inner(checker, pattern, expected_ty, false);
 }
@@ -2411,7 +2352,8 @@ pub fn propagate_match_pattern_types(
     pattern: &hir_expr::Pattern,
     expected_ty: &hir_ty::Type,
 ) {
-    propagate_pattern_types_inner(checker, pattern, expected_ty, true);
+    let expected_id = type_intern::type_to_ty_id(expected_ty);
+    propagate_pattern_types_inner(checker, pattern, expected_id, true);
 }
 
 /// Propagates types through a match pattern's SUB-patterns only.
@@ -2424,7 +2366,7 @@ pub fn propagate_match_pattern_types(
 fn propagate_match_sub_patterns(
     checker: &mut typeck::TypeChecker,
     pattern: &hir_expr::Pattern,
-    raw_scrutinee: &hir_ty::Type,
+    raw_scrutinee: type_intern::TyId,
 ) {
     // Determine the value type for sub-pattern propagation.
     // For Ref patterns, use the raw type (they strip one layer).
@@ -2435,12 +2377,12 @@ fn propagate_match_sub_patterns(
     };
 
     let value_ty = if is_ref_pattern {
-        hir_ty::copy_type(raw_scrutinee)
+        raw_scrutinee
     } else {
-        strip_refs(raw_scrutinee)
+        strip_refs_id(raw_scrutinee)
     };
 
-    let resolved = checker.resolve(&value_ty);
+    let resolved = checker.resolve(value_ty);
 
     match &pattern.kind {
         &hir_expr::PatternKind::Binding {
@@ -2455,7 +2397,7 @@ fn propagate_match_sub_patterns(
             // Propagate to subpattern if present.
             match subpattern {
                 &Some(ref sub) => {
-                    propagate_pattern_types(checker, sub.as_ref(), &resolved);
+                    propagate_pattern_types(checker, sub.as_ref(), resolved);
                 }
                 &None => {}
             }
@@ -2463,9 +2405,9 @@ fn propagate_match_sub_patterns(
 
         &hir_expr::PatternKind::Ref { mutable: _, ref inner } => {
             // Strip one reference layer and propagate to inner pattern.
-            let deref_ty = strip_one_ref(&resolved);
+            let deref_ty = strip_one_ref_id(resolved);
             match deref_ty {
-                Option::Some(ref dt) => {
+                Option::Some(dt) => {
                     // Inner pattern gets the dereferenced type with full unification.
                     propagate_pattern_types(checker, inner.as_ref(), dt);
                 }
@@ -2480,23 +2422,27 @@ fn propagate_match_sub_patterns(
             ref fields,
             has_rest: _,
         } => {
-            propagate_struct_pattern_fields(checker, &resolved, path, fields);
+            propagate_struct_pattern_fields(checker, resolved, path, fields);
         }
 
         &hir_expr::PatternKind::TupleStruct {
             ref path,
             ref fields,
         } => {
-            propagate_tuple_struct_pattern_fields(checker, &resolved, path, fields);
+            propagate_tuple_struct_pattern_fields(checker, resolved, path, fields);
         }
 
         &hir_expr::PatternKind::Tuple(ref pats) => {
-            match &resolved.kind {
-                &hir_ty::TypeKind::Tuple(ref elem_tys) => {
+            let interner = type_intern::type_interner();
+            let kind = interner.get(resolved);
+            match kind {
+                &type_intern::InternedTypeKind::Tuple(elems_list) => {
+                    let num_elems = interner.ty_list_len(elems_list);
                     let mut i: usize = 0;
-                    let limit = if pats.len() < elem_tys.len() { pats.len() } else { elem_tys.len() };
+                    let limit = if pats.len() < num_elems { pats.len() } else { num_elems };
                     while i < limit {
-                        propagate_pattern_types(checker, &pats[i], &elem_tys[i]);
+                        let elem_ty = interner.get_ty_list_element(elems_list, i);
+                        propagate_pattern_types(checker, &pats[i], elem_ty);
                         i = i + 1;
                     }
                 }
@@ -2511,8 +2457,10 @@ fn propagate_match_sub_patterns(
         } => {
             // Check that slice pattern doesn't have more fixed elements than array size
             let fixed_count = prefix.len() + suffix.len();
-            match &resolved.kind {
-                &hir_ty::TypeKind::Array { element: _, size } => {
+            let interner = type_intern::type_interner();
+            let kind = interner.get(resolved);
+            match kind {
+                &type_intern::InternedTypeKind::Array { element: _, size } => {
                     let arr_size = size as usize;
                     match rest {
                         &Some(_) => {
@@ -2532,9 +2480,9 @@ fn propagate_match_sub_patterns(
                 _ => {}
             }
 
-            let elem_ty = get_element_type(&resolved);
+            let elem_ty = get_element_type_id(resolved);
             match elem_ty {
-                Option::Some(ref et) => {
+                Option::Some(et) => {
                     let mut i: usize = 0;
                     while i < prefix.len() {
                         propagate_pattern_types(checker, &prefix[i], et);
@@ -2542,7 +2490,7 @@ fn propagate_match_sub_patterns(
                     }
                     match rest {
                         &Some(ref r) => {
-                            propagate_pattern_types(checker, r.as_ref(), &resolved);
+                            propagate_pattern_types(checker, r.as_ref(), resolved);
                         }
                         &None => {}
                     }
@@ -2581,7 +2529,7 @@ fn propagate_match_sub_patterns(
 fn propagate_pattern_types_inner(
     checker: &mut typeck::TypeChecker,
     pattern: &hir_expr::Pattern,
-    expected_ty: &hir_ty::Type,
+    expected_ty: type_intern::TyId,
     match_ergonomics: bool,
 ) {
     // Handle match ergonomics: if the expected type is a reference but the
@@ -2596,16 +2544,18 @@ fn propagate_pattern_types_inner(
 
     let effective_ty = if match_ergonomics && !is_ref_pattern {
         // Auto-deref: strip all reference layers for non-ref patterns
-        strip_refs(expected_ty)
+        strip_refs_id(expected_ty)
     } else {
-        hir_ty::copy_type(expected_ty)
+        expected_ty
     };
 
     // Unify this pattern's type with the effective type
-    checker.unify(&pattern.ty, &effective_ty, pattern.span);
+    // pattern.ty is still hir_ty::Type (until A.4), bridge via type_to_ty_id
+    let pattern_ty_id = type_intern::type_to_ty_id(&pattern.ty);
+    checker.unify(pattern_ty_id, effective_ty, pattern.span);
 
     // Resolve to get the concrete type for sub-pattern propagation
-    let resolved = checker.resolve(&effective_ty);
+    let resolved = checker.resolve(effective_ty);
 
     match &pattern.kind {
         &hir_expr::PatternKind::Binding {
@@ -2626,7 +2576,7 @@ fn propagate_pattern_types_inner(
             // Propagate to subpattern if present
             match subpattern {
                 &Some(ref sub) => {
-                    propagate_pattern_types(checker, sub.as_ref(), &resolved);
+                    propagate_pattern_types(checker, sub.as_ref(), resolved);
                 }
                 &None => {}
             }
@@ -2636,9 +2586,9 @@ fn propagate_pattern_types_inner(
             // &pat or &mut pat: strip one reference layer from the expected type
             // (not the resolved type which was auto-stripped).
             // The effective_ty for Ref patterns kept references, so strip one layer.
-            let deref_ty = strip_one_ref(&resolved);
+            let deref_ty = strip_one_ref_id(resolved);
             match deref_ty {
-                Option::Some(ref dt) => {
+                Option::Some(dt) => {
                     // Pass the deref'd type to the inner pattern.
                     // The inner pattern will handle further auto-deref if needed.
                     propagate_pattern_types(checker, inner.as_ref(), dt);
@@ -2654,23 +2604,27 @@ fn propagate_pattern_types_inner(
             ref fields,
             has_rest: _,
         } => {
-            propagate_struct_pattern_fields(checker, &resolved, path, fields);
+            propagate_struct_pattern_fields(checker, resolved, path, fields);
         }
 
         &hir_expr::PatternKind::TupleStruct {
             ref path,
             ref fields,
         } => {
-            propagate_tuple_struct_pattern_fields(checker, &resolved, path, fields);
+            propagate_tuple_struct_pattern_fields(checker, resolved, path, fields);
         }
 
         &hir_expr::PatternKind::Tuple(ref pats) => {
-            match &resolved.kind {
-                &hir_ty::TypeKind::Tuple(ref elem_tys) => {
+            let interner = type_intern::type_interner();
+            let kind = interner.get(resolved);
+            match kind {
+                &type_intern::InternedTypeKind::Tuple(elems_list) => {
+                    let num_elems = interner.ty_list_len(elems_list);
                     let mut i: usize = 0;
-                    let limit = if pats.len() < elem_tys.len() { pats.len() } else { elem_tys.len() };
+                    let limit = if pats.len() < num_elems { pats.len() } else { num_elems };
                     while i < limit {
-                        propagate_pattern_types(checker, &pats[i], &elem_tys[i]);
+                        let elem_ty = interner.get_ty_list_element(elems_list, i);
+                        propagate_pattern_types(checker, &pats[i], elem_ty);
                         i = i + 1;
                     }
                 }
@@ -2685,8 +2639,10 @@ fn propagate_pattern_types_inner(
         } => {
             // Check that slice pattern doesn't exceed array size
             let fixed_count = prefix.len() + suffix.len();
-            match &resolved.kind {
-                &hir_ty::TypeKind::Array { element: _, size } => {
+            let interner = type_intern::type_interner();
+            let kind = interner.get(resolved);
+            match kind {
+                &type_intern::InternedTypeKind::Array { element: _, size } => {
                     let arr_size = size as usize;
                     match rest {
                         &Some(_) => {
@@ -2704,9 +2660,9 @@ fn propagate_pattern_types_inner(
                 _ => {}
             }
 
-            let elem_ty = get_element_type(&resolved);
+            let elem_ty = get_element_type_id(resolved);
             match elem_ty {
-                Option::Some(ref et) => {
+                Option::Some(et) => {
                     let mut i: usize = 0;
                     while i < prefix.len() {
                         propagate_pattern_types(checker, &prefix[i], et);
@@ -2715,7 +2671,7 @@ fn propagate_pattern_types_inner(
                     match rest {
                         &Some(ref r) => {
                             // rest pattern matches the whole slice/array type
-                            propagate_pattern_types(checker, r.as_ref(), &resolved);
+                            propagate_pattern_types(checker, r.as_ref(), resolved);
                         }
                         &None => {}
                     }
@@ -2732,7 +2688,7 @@ fn propagate_pattern_types_inner(
         &hir_expr::PatternKind::Or(ref alternatives) => {
             let mut i: usize = 0;
             while i < alternatives.len() {
-                propagate_pattern_types(checker, &alternatives[i], &resolved);
+                propagate_pattern_types(checker, &alternatives[i], resolved);
                 i = i + 1;
             }
         }
@@ -2750,25 +2706,49 @@ fn propagate_pattern_types_inner(
     }
 }
 
-/// Strips one layer of reference from a type.
+/// Builds a TypeParamSubst from an ADT type's generic args.
+/// If the type is not an Adt, returns an empty substitution.
+fn build_adt_subst(ty: type_intern::TyId) -> unify::TypeParamSubst {
+    let interner = type_intern::type_interner();
+    let kind = interner.get(ty);
+    match kind {
+        &type_intern::InternedTypeKind::Adt { def_id: _, args } => {
+            let mut subst = unify::TypeParamSubst::new();
+            let len = interner.ty_list_len(args);
+            let mut i: usize = 0;
+            while i < len {
+                subst.add_id(i as u32, interner.get_ty_list_element(args, i));
+                i = i + 1;
+            }
+            subst
+        }
+        _ => unify::TypeParamSubst::new(),
+    }
+}
+
+/// Strips one layer of reference from a type (TyId version).
 /// Returns the inner type if the type is a reference, None otherwise.
-fn strip_one_ref(ty: &hir_ty::Type) -> Option<hir_ty::Type> {
-    match &ty.kind {
-        &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => {
-            Some(hir_ty::copy_type(inner.as_ref()))
+fn strip_one_ref_id(ty: type_intern::TyId) -> Option<type_intern::TyId> {
+    let interner = type_intern::type_interner();
+    let kind = interner.get(ty);
+    match kind {
+        &type_intern::InternedTypeKind::Ref { inner, mutable: _ } => {
+            Some(type_intern::TyId::new(inner.index))
         }
         _ => Option::None,
     }
 }
 
-/// Extracts the element type from an array or slice type.
-fn get_element_type(ty: &hir_ty::Type) -> Option<hir_ty::Type> {
-    match &ty.kind {
-        &hir_ty::TypeKind::Array { ref element, size: _ } => {
-            Some(hir_ty::copy_type(element.as_ref()))
+/// Extracts the element type from an array or slice type (TyId version).
+fn get_element_type_id(ty: type_intern::TyId) -> Option<type_intern::TyId> {
+    let interner = type_intern::type_interner();
+    let kind = interner.get(ty);
+    match kind {
+        &type_intern::InternedTypeKind::Array { element, size: _ } => {
+            Some(type_intern::TyId::new(element.index))
         }
-        &hir_ty::TypeKind::Slice { ref element } => {
-            Some(hir_ty::copy_type(element.as_ref()))
+        &type_intern::InternedTypeKind::Slice { element } => {
+            Some(type_intern::TyId::new(element.index))
         }
         _ => Option::None,
     }
@@ -2778,19 +2758,14 @@ fn get_element_type(ty: &hir_ty::Type) -> Option<hir_ty::Type> {
 /// Handles both struct patterns and record enum variant patterns.
 fn propagate_struct_pattern_fields(
     checker: &mut typeck::TypeChecker,
-    resolved_ty: &hir_ty::Type,
+    resolved_ty: type_intern::TyId,
     path: &hir_def::ResolvedPath,
     fields: &Vec<hir_expr::FieldPattern>,
 ) {
     let def_id = path.def_id;
 
     // Build a type parameter substitution from the ADT's type args
-    let subst = match &resolved_ty.kind {
-        &hir_ty::TypeKind::Adt { def_id: _, ref args } => {
-            unify::TypeParamSubst::from_types(args)
-        }
-        _ => unify::TypeParamSubst::new(),
-    };
+    let subst = build_adt_subst(resolved_ty);
 
     // Try as a struct first
     let is_struct = match checker.get_struct(def_id) {
@@ -2800,13 +2775,14 @@ fn propagate_struct_pattern_fields(
 
     if is_struct {
         // Struct pattern — look up field types by name
+        // get_struct_field_ty returns Option<TyId>
         let mut i: usize = 0;
         while i < fields.len() {
             let field_name = fields[i].name.symbol;
             match checker.get_struct_field_ty(def_id, field_name) {
                 Some(raw_ty) => {
-                    let concrete_ty = unify::substitute_type_params(&raw_ty, &subst);
-                    propagate_pattern_types(checker, &fields[i].pattern, &concrete_ty);
+                    let concrete_ty = unify::substitute_type_params_id(raw_ty, &subst);
+                    propagate_pattern_types(checker, &fields[i].pattern, concrete_ty);
                     // Record the field index for MIR lowering (matches expression field access path)
                     match checker.get_struct_field_idx(def_id, field_name) {
                         Option::Some(idx) => {
@@ -2828,15 +2804,11 @@ fn propagate_struct_pattern_fields(
     // Try as an enum variant (record variant)
     match checker.find_enum_for_variant(def_id) {
         Option::Some(ref lookup) => {
-            // Build substitution from the enum's generic args
-            let enum_subst = match &resolved_ty.kind {
-                &hir_ty::TypeKind::Adt { def_id: _, ref args } => {
-                    unify::TypeParamSubst::from_types(args)
-                }
-                _ => unify::TypeParamSubst::new(),
-            };
+            // Build substitution from the enum's generic args (same resolved_ty)
+            let enum_subst = build_adt_subst(resolved_ty);
 
             // Match field patterns by name against variant's field_names
+            // lookup.field_tys is Vec<TyId>
             let mut i: usize = 0;
             while i < fields.len() {
                 let field_name = fields[i].name.symbol;
@@ -2847,9 +2819,9 @@ fn propagate_struct_pattern_fields(
                     if lookup.field_names[k].index == field_name.index {
                         // Found matching field — get its type
                         if k < lookup.field_tys.len() {
-                            let raw_ty = &lookup.field_tys[k];
-                            let concrete_ty = unify::substitute_type_params(raw_ty, &enum_subst);
-                            propagate_pattern_types(checker, &fields[i].pattern, &concrete_ty);
+                            let raw_ty = type_intern::TyId::new(lookup.field_tys[k].index);
+                            let concrete_ty = unify::substitute_type_params_id(raw_ty, &enum_subst);
+                            propagate_pattern_types(checker, &fields[i].pattern, concrete_ty);
                         }
                         // Record the field index for MIR lowering
                         checker.record_field_resolution(fields[i].name.span.start, k as u32);
@@ -2873,29 +2845,25 @@ fn propagate_struct_pattern_fields(
 /// Handles enum variants with tuple payloads.
 fn propagate_tuple_struct_pattern_fields(
     checker: &mut typeck::TypeChecker,
-    resolved_ty: &hir_ty::Type,
+    resolved_ty: type_intern::TyId,
     path: &hir_def::ResolvedPath,
     fields: &Vec<hir_expr::Pattern>,
 ) {
     let def_id = path.def_id;
 
     // Build a type parameter substitution from the ADT's type args
-    let subst = match &resolved_ty.kind {
-        &hir_ty::TypeKind::Adt { def_id: _, ref args } => {
-            unify::TypeParamSubst::from_types(args)
-        }
-        _ => unify::TypeParamSubst::new(),
-    };
+    let subst = build_adt_subst(resolved_ty);
 
     // Look up the variant's field types
+    // lookup.field_tys is Vec<TyId>
     match checker.find_enum_for_variant(def_id) {
         Option::Some(ref lookup) => {
             let limit = if fields.len() < lookup.field_tys.len() { fields.len() } else { lookup.field_tys.len() };
             let mut i: usize = 0;
             while i < limit {
-                let raw_ty = &lookup.field_tys[i];
-                let concrete_ty = unify::substitute_type_params(raw_ty, &subst);
-                propagate_pattern_types(checker, &fields[i], &concrete_ty);
+                let raw_ty = type_intern::TyId::new(lookup.field_tys[i].index);
+                let concrete_ty = unify::substitute_type_params_id(raw_ty, &subst);
+                propagate_pattern_types(checker, &fields[i], concrete_ty);
                 i = i + 1;
             }
         }

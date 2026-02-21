@@ -5,6 +5,7 @@
 
 mod common;
 mod hir_ty;
+mod type_intern;
 
 // ============================================================
 // Type Error
@@ -133,9 +134,9 @@ pub enum CheckMode {
     /// Infer the type (no expectation).
     Infer,
     /// Check against an expected type.
-    Check(hir_ty::Type),
+    Check(type_intern::TyId),
     /// Coerce to an expected type (allows implicit conversions).
-    Coerce(hir_ty::Type),
+    Coerce(type_intern::TyId),
 }
 
 impl CheckMode {
@@ -145,12 +146,12 @@ impl CheckMode {
     }
 
     /// Creates a checking mode with the given expected type.
-    pub fn check(ty: hir_ty::Type) -> CheckMode {
+    pub fn check(ty: type_intern::TyId) -> CheckMode {
         CheckMode::Check(ty)
     }
 
     /// Creates a coercion mode with the given target type.
-    pub fn coerce(ty: hir_ty::Type) -> CheckMode {
+    pub fn coerce(ty: type_intern::TyId) -> CheckMode {
         CheckMode::Coerce(ty)
     }
 }
@@ -258,11 +259,11 @@ pub enum Predicate {
     Trait(hir_ty::TraitRef),
     /// A type equality: T == U
     TypeEqual {
-        left: hir_ty::Type,
-        right: hir_ty::Type,
+        left: type_intern::TyId,
+        right: type_intern::TyId,
     },
     /// A well-formed type: WF(T)
-    WellFormed(hir_ty::Type),
+    WellFormed(type_intern::TyId),
 }
 
 /// The cause of an obligation.
@@ -294,7 +295,7 @@ pub enum ObligationCause {
 /// Information about a local variable for type checking.
 pub struct LocalInfo {
     /// The local variable's type.
-    pub ty: hir_ty::Type,
+    pub ty: type_intern::TyId,
     /// Whether the local is mutable.
     pub mutable: bool,
     /// The span where the local was declared.
@@ -303,7 +304,7 @@ pub struct LocalInfo {
 
 impl LocalInfo {
     /// Creates new local info.
-    pub fn new(ty: hir_ty::Type, mutable: bool, span: common::Span) -> LocalInfo {
+    pub fn new(ty: type_intern::TyId, mutable: bool, span: common::Span) -> LocalInfo {
         LocalInfo {
             ty: ty,
             mutable: mutable,
