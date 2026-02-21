@@ -39,8 +39,7 @@ These patterns are **correct in Blood**, not shortcuts:
 | Explicit match arms for every variant | Required by zero shortcuts principle |
 | `HashMap<u32, Type>` vs newtype keys | Blood's type system differs from Rust |
 
-**Do not "improve" Blood code by adding Rust features that don't exist in Blood.**
-Before assuming ANY syntax, check: `docs/spec/GRAMMAR.md`
+**Before writing any syntax, verify it exists in `docs/spec/GRAMMAR.md`.** Do not add Rust features that don't exist in Blood — use the patterns shown in the table above instead.
 
 ## Zero Shortcuts
 
@@ -48,7 +47,7 @@ Before assuming ANY syntax, check: `docs/spec/GRAMMAR.md`
 
 Shortcuts include: `_ => Ok(())`, `_ => continue`, `Type::error()`, `unwrap_or_default()`, catch-all `_ =>`, dead code, magic numbers, TODO/FIXME without action, silent skips, incomplete error messages.
 
-Audit search terms: `_ =>`, `unwrap_or_default`, `Type::error()`, `TODO`, `FIXME`, `unreachable!()`, `panic!()`, empty function bodies.
+Audit search terms: `_ =>`, `unwrap_or_default`, `unwrap_or_else`, `Type::error()`, `continue` (in match arms), `Ok(())` (suspicious early returns), `TODO`, `FIXME`, `XXX`, `HACK`, `Phase 2`, `not yet`, `later`, `unreachable!()`, `panic!()`, empty function bodies, functions returning hardcoded values.
 
 ## Development Rules
 
@@ -64,15 +63,7 @@ Audit search terms: `_ =>`, `unwrap_or_default`, `Type::error()`, `TODO`, `FIXME
 
 ## Shared Types (common.blood)
 
-| Type | Fields |
-|------|--------|
-| `Span` | `start: usize`, `end: usize`, `line: u32`, `column: u32` |
-| `Symbol` | `index: u32` |
-| `SpannedSymbol` | `symbol: Symbol`, `span: Span` |
-| `SpannedString` | `value: String`, `span: Span` |
-| `OrderedFloat` | `bits: u64` |
-
-Import via `mod common;`, reference as `common::Span`, etc.
+Canonical shared types: `Span`, `Symbol`, `SpannedSymbol`, `SpannedString`, `OrderedFloat`. Check `blood-std/std/compiler/common.blood` for current field definitions before modifying any shared type. Import via `mod common;`, reference as `common::Span`, etc. Update ALL files that use the type when making changes.
 
 ## Active Limitations
 
