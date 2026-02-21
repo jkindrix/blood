@@ -32,8 +32,8 @@ pub fn emit_terminator(
     }
     match &term.kind {
         &mir_term::TerminatorKind::Goto { target } => {
-            let label = ctx.block_label(target);
-            ctx.emit_br(label.as_str());
+            let label = ctx.block_label_cg(target);
+            ctx.emit_br_cg(&label);
         }
         &mir_term::TerminatorKind::SwitchInt { ref discr, ref targets } => {
             emit_switch_int(ctx, discr, targets);
@@ -139,8 +139,8 @@ pub fn emit_terminator(
 
             match target {
                 &Option::Some(t) => {
-                    let label = ctx.block_label(t);
-                    ctx.emit_br(label.as_str());
+                    let label = ctx.block_label_cg(t);
+                    ctx.emit_br_cg(&label);
                 }
                 &Option::None => {
                     ctx.emit_unreachable();
@@ -174,8 +174,8 @@ pub fn emit_terminator(
             // Drop - call destructor if needed, then continue
             let _ptr = codegen_expr::emit_place_addr(ctx, place);
             // For now, just continue to target
-            let label = ctx.block_label(target);
-            ctx.emit_br(label.as_str());
+            let label = ctx.block_label_cg(target);
+            ctx.emit_br_cg(&label);
         }
     }
 }
@@ -223,7 +223,7 @@ fn emit_switch_int(
 fn emit_return(ctx: &mut codegen_ctx::CodegenCtx) {
     // Load return value from _0
     let ret_local = mir_def::MirLocalId::new(0);
-    let ret_name = ctx.local_name(ret_local);
+    let ret_name = ctx.local_cg(ret_local);
     let ret_ty = ctx.get_local_type(ret_local);
 
     // Check if return type is void (unit type)
@@ -233,7 +233,7 @@ fn emit_return(ctx: &mut codegen_ctx::CodegenCtx) {
         ctx.emit_ret("void", Option::None);
     } else {
         let ret_val = ctx.fresh_temp_cg();
-        ctx.emit_load_cg(&ret_val, ret_ty.as_str(), ret_name.as_str());
+        ctx.emit_load_cg2(&ret_val, ret_ty.as_str(), &ret_name);
         ctx.emit_ret_cg(ret_ty.as_str(), &ret_val);
     }
 }
@@ -525,8 +525,8 @@ fn emit_call(
     // Jump to continuation
     match target {
         &Option::Some(t) => {
-            let label = ctx.block_label(t);
-            ctx.emit_br(label.as_str());
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
         }
         &Option::None => {
             ctx.emit_unreachable();
@@ -1245,8 +1245,8 @@ fn emit_vec_new_call(
     // Jump to continuation
     match target {
         &Option::Some(t) => {
-            let label = ctx.block_label(t);
-            ctx.emit_br(label.as_str());
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
         }
         &Option::None => {
             ctx.emit_unreachable();
@@ -1316,8 +1316,8 @@ fn emit_vec_push_call(
     // Jump to continuation
     match target {
         &Option::Some(t) => {
-            let label = ctx.block_label(t);
-            ctx.emit_br(label.as_str());
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
         }
         &Option::None => {
             ctx.emit_unreachable();
@@ -1356,8 +1356,8 @@ fn emit_vec_len_call(
     // Jump to continuation
     match target {
         &Option::Some(t) => {
-            let label = ctx.block_label(t);
-            ctx.emit_br(label.as_str());
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
         }
         &Option::None => {
             ctx.emit_unreachable();
@@ -1450,8 +1450,8 @@ fn emit_vec_pop_call(
     // Jump to continuation
     match target {
         &Option::Some(t) => {
-            let label = ctx.block_label(t);
-            ctx.emit_br(label.as_str());
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
         }
         &Option::None => {
             ctx.emit_unreachable();
@@ -1484,8 +1484,8 @@ fn emit_vec_clear_call(
     // Jump to continuation
     match target {
         &Option::Some(t) => {
-            let label = ctx.block_label(t);
-            ctx.emit_br(label.as_str());
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
         }
         &Option::None => {
             ctx.emit_unreachable();
@@ -1554,8 +1554,8 @@ fn emit_string_new_call(
     // Jump to continuation
     match target {
         &Option::Some(t) => {
-            let label = ctx.block_label(t);
-            ctx.emit_br(label.as_str());
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
         }
         &Option::None => {
             ctx.emit_unreachable();
@@ -1598,8 +1598,8 @@ fn emit_string_push_str_call(
     // Jump to continuation
     match target {
         &Option::Some(t) => {
-            let label = ctx.block_label(t);
-            ctx.emit_br(label.as_str());
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
         }
         &Option::None => {
             ctx.emit_unreachable();
@@ -1637,8 +1637,8 @@ fn emit_string_len_call(
     // Jump to continuation
     match target {
         &Option::Some(t) => {
-            let label = ctx.block_label(t);
-            ctx.emit_br(label.as_str());
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
         }
         &Option::None => {
             ctx.emit_unreachable();
@@ -1687,8 +1687,8 @@ fn emit_string_push_call(
     // Jump to continuation
     match target {
         &Option::Some(t) => {
-            let label = ctx.block_label(t);
-            ctx.emit_br(label.as_str());
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
         }
         &Option::None => {
             ctx.emit_unreachable();
@@ -1726,8 +1726,8 @@ fn emit_string_as_str_call(
     // Jump to continuation
     match target {
         &Option::Some(t) => {
-            let label = ctx.block_label(t);
-            ctx.emit_br(label.as_str());
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
         }
         &Option::None => {
             ctx.emit_unreachable();
@@ -1765,8 +1765,8 @@ fn emit_string_as_bytes_call(
     // Jump to continuation
     match target {
         &Option::Some(t) => {
-            let label = ctx.block_label(t);
-            ctx.emit_br(label.as_str());
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
         }
         &Option::None => {
             ctx.emit_unreachable();
@@ -1849,8 +1849,8 @@ fn emit_str_len_call(
     // Jump to continuation
     match target {
         &Option::Some(t) => {
-            let label = ctx.block_label(t);
-            ctx.emit_br(label.as_str());
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
         }
         &Option::None => {
             ctx.emit_unreachable();
@@ -1889,8 +1889,8 @@ fn emit_str_eq_call(
     // Jump to continuation
     match target {
         &Option::Some(t) => {
-            let label = ctx.block_label(t);
-            ctx.emit_br(label.as_str());
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
         }
         &Option::None => {
             ctx.emit_unreachable();
@@ -1929,8 +1929,8 @@ fn emit_str_concat_call(
     // Jump to continuation
     match target {
         &Option::Some(t) => {
-            let label = ctx.block_label(t);
-            ctx.emit_br(label.as_str());
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
         }
         &Option::None => {
             ctx.emit_unreachable();
@@ -2034,8 +2034,8 @@ fn emit_box_new_call(
     // Jump to continuation
     match target {
         &Option::Some(t) => {
-            let label = ctx.block_label(t);
-            ctx.emit_br(label.as_str());
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
         }
         &Option::None => {
             ctx.emit_unreachable();
@@ -2075,8 +2075,8 @@ fn emit_option_is_some_call(
     // Jump to continuation
     match target {
         &Option::Some(t) => {
-            let label = ctx.block_label(t);
-            ctx.emit_br(label.as_str());
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
         }
         &Option::None => {
             ctx.emit_unreachable();
@@ -2116,8 +2116,8 @@ fn emit_option_is_none_call(
     // Jump to continuation
     match target {
         &Option::Some(t) => {
-            let label = ctx.block_label(t);
-            ctx.emit_br(label.as_str());
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
         }
         &Option::None => {
             ctx.emit_unreachable();
@@ -2163,8 +2163,8 @@ fn emit_option_unwrap_call(
     // Jump to continuation
     match target {
         &Option::Some(t) => {
-            let label = ctx.block_label(t);
-            ctx.emit_br(label.as_str());
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
         }
         &Option::None => {
             ctx.emit_unreachable();
@@ -2214,8 +2214,8 @@ fn emit_option_as_ref_call(
     // Jump to continuation
     match target {
         &Option::Some(t) => {
-            let label = ctx.block_label(t);
-            ctx.emit_br(label.as_str());
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
         }
         &Option::None => {
             ctx.emit_unreachable();
@@ -2234,8 +2234,8 @@ pub fn emit_basic_block(
     block: &mir_body::BasicBlockData,
 ) {
     // Emit label
-    let label = ctx.block_label(block_id);
-    ctx.emit_label(label.as_str());
+    let label = ctx.block_label_cg(block_id);
+    ctx.emit_label_cg(&label);
 
     // Emit statements
     ctx.indent();
