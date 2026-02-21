@@ -1548,6 +1548,41 @@ impl CodegenCtx {
         self.write("\n");
     }
 
+    /// Emits a GEP instruction with CgName result and CgName ptr.
+    pub fn emit_gep_cg(
+        self: &mut CodegenCtx,
+        result: &CgName,
+        base_ty: &str,
+        ptr: &CgName,
+        indices: &Vec<String>,
+    ) {
+        self.write_indent();
+        self.write_cgname(result);
+        self.write(" = getelementptr ");
+        self.write(base_ty);
+        self.write(", ptr ");
+        self.write_cgname(ptr);
+
+        let mut i: usize = 0;
+        while i < indices.len() {
+            if i == 0 {
+                self.write(", i64 ");
+            } else {
+                let ref idx = indices[i];
+                let bytes = idx.as_bytes();
+                if bytes.len() > 0 && bytes[0] == 37 {
+                    self.write(", i64 ");
+                } else {
+                    self.write(", i32 ");
+                }
+            }
+            self.write_string(&indices[i]);
+            i = i + 1;
+        }
+
+        self.write("\n");
+    }
+
     /// Emits a br instruction (unconditional).
     pub fn emit_br(self: &mut CodegenCtx, label: &str) {
         self.write_indent();

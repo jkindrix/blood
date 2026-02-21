@@ -283,10 +283,11 @@ pub fn emit_place_data_ptr(
             || ctx.is_handler_state_ptr(place.local))
     {
         let heap_ptr = ctx.fresh_temp();
-        ctx.emit_load(heap_ptr.as_str(), "ptr", ptr.as_str());
+        let ptr_str = cgname_to_string(&ptr);
+        ctx.emit_load(heap_ptr.as_str(), "ptr", ptr_str.as_str());
         return heap_ptr;
     }
-    ptr
+    cgname_to_string(&ptr)
 }
 
 /// Loads a value from a place, returning (value, llvm_type).
@@ -496,7 +497,7 @@ fn resolve_place_elem_type(
 pub fn emit_place_addr(
     ctx: &mut codegen_ctx::CodegenCtx,
     place: &mir_types::Place,
-) -> String {
+) -> codegen_ctx::CgName {
     // Check if this is a static place - use global variable address directly
     if place.is_static() {
         match place.get_static_def_id() {
@@ -509,22 +510,22 @@ pub fn emit_place_addr(
                         // Convention: names are stored without @, add it here.
                         let mut result = common::make_string("@");
                         result.push_str(name.as_str());
-                        return result;
+                        return codegen_ctx::CgName::Str(result);
                     }
                     Option::None => {
                         // Fallback - shouldn't happen
-                        return common::make_string("null");
+                        return codegen_ctx::CgName::Str(common::make_string("null"));
                     }
                 }
             }
             Option::None => {
                 // Fallback - shouldn't happen
-                return common::make_string("null");
+                return codegen_ctx::CgName::Str(common::make_string("null"));
             }
         }
     }
 
-    let mut current = ctx.local_name(place.local);
+    let mut current = ctx.local_cg(place.local);
 
     // Resolve the local's ADT type for projection lookups.
     // This looks through Ref types to find the inner ADT.
@@ -550,8 +551,8 @@ pub fn emit_place_addr(
     if place.projection.len() > 0
         && (ctx.is_region_allocated(place.local) || ctx.is_persistent_allocated(place.local))
     {
-        let loaded = ctx.fresh_temp();
-        ctx.emit_load(loaded.as_str(), "ptr", current.as_str());
+        let loaded = ctx.fresh_temp_cg();
+        ctx.emit_load_cg2(&loaded, "ptr", &current);
         current = loaded;
     }
 
@@ -565,8 +566,8 @@ pub fn emit_place_addr(
             _ => false,
         };
         if first_is_field {
-            let loaded = ctx.fresh_temp();
-            ctx.emit_load(loaded.as_str(), "ptr", current.as_str());
+            let loaded = ctx.fresh_temp_cg();
+            ctx.emit_load_cg2(&loaded, "ptr", &current);
             current = loaded;
             // Also update HIR type through implicit deref
             current_hir_type = match &current_hir_type {
@@ -581,8 +582,8 @@ pub fn emit_place_addr(
         match proj {
             &mir_types::PlaceElem::Deref => {
                 // Load the pointer value
-                let result = ctx.fresh_temp();
-                ctx.emit_load(result.as_str(), "ptr", current.as_str());
+                let result = ctx.fresh_temp_cg();
+                ctx.emit_load_cg2(&result, "ptr", &current);
                 // Emit generation check if the local has a tracked generation
                 emit_generation_check(ctx, place.local, &result);
                 current = result;
@@ -600,7 +601,7 @@ pub fn emit_place_addr(
                 };
             }
             &mir_types::PlaceElem::Field(idx) => {
-                let result = ctx.fresh_temp();
+                let result = ctx.fresh_temp_cg();
 
                 // Determine the GEP base type from context
                 let gep_type = match &downcast_variant {
@@ -624,13 +625,13 @@ pub fn emit_place_addr(
                     let mut indices: Vec<String> = Vec::new();
                     indices.push(common::make_string("0"));
                     indices.push(codegen_types::format_u64(idx as u64));
-                    ctx.emit_gep(result.as_str(), gep_type.as_str(), current.as_str(), &indices);
+                    ctx.emit_gep_cg(&result, gep_type.as_str(), &current, &indices);
                 } else {
                     // Byte offset: each field is assumed 8 bytes (i64)
                     let byte_offset = (idx as u64) * 8;
                     let mut indices: Vec<String> = Vec::new();
                     indices.push(codegen_types::format_u64(byte_offset));
-                    ctx.emit_gep(result.as_str(), "i8", current.as_str(), &indices);
+                    ctx.emit_gep_cg(&result, "i8", &current, &indices);
                 }
 
                 current = result;
@@ -678,13 +679,13 @@ pub fn emit_place_addr(
                     if i == 0 {
                         let local_llvm_ty = ctx.get_local_type(place.local);
                         if string_eq_str(local_llvm_ty.as_str(), "ptr") {
-                            let vec_ptr = ctx.fresh_temp();
-                            ctx.emit_load(vec_ptr.as_str(), "ptr", current.as_str());
+                            let vec_ptr = ctx.fresh_temp_cg();
+                            ctx.emit_load_cg2(&vec_ptr, "ptr", &current);
                             current = vec_ptr;
                         }
                     }
-                    let data_ptr = ctx.fresh_temp();
-                    ctx.emit_load(data_ptr.as_str(), "ptr", current.as_str());
+                    let data_ptr = ctx.fresh_temp_cg();
+                    ctx.emit_load_cg2(&data_ptr, "ptr", &current);
                     current = data_ptr;
                 }
 
@@ -695,20 +696,21 @@ pub fn emit_place_addr(
                 };
 
                 // Load the index value
-                let idx_val = ctx.local_name(*local);
-                let idx_loaded = ctx.fresh_temp();
-                ctx.emit_load(idx_loaded.as_str(), "i64", idx_val.as_str());
+                let idx_val = ctx.local_cg(*local);
+                let idx_loaded = ctx.fresh_temp_cg();
+                ctx.emit_load_cg2(&idx_loaded, "i64", &idx_val);
 
                 // Calculate byte offset = index * element_size
                 let elem_size_str = codegen_types::format_u64(elem_size);
-                let byte_offset = ctx.fresh_temp();
-                ctx.emit_binop(byte_offset.as_str(), "mul", "i64", idx_loaded.as_str(), elem_size_str.as_str());
+                let byte_offset = ctx.fresh_temp_cg();
+                let idx_loaded_str = cgname_to_string(&idx_loaded);
+                ctx.emit_binop_cg(&byte_offset, "mul", "i64", idx_loaded_str.as_str(), elem_size_str.as_str());
 
                 // Use byte-offset GEP with i8 element type
-                let result = ctx.fresh_temp();
+                let result = ctx.fresh_temp_cg();
                 let mut indices: Vec<String> = Vec::new();
-                indices.push(clone_string(&byte_offset));
-                ctx.emit_gep(result.as_str(), "i8", current.as_str(), &indices);
+                indices.push(cgname_to_string(&byte_offset));
+                ctx.emit_gep_cg(&result, "i8", &current, &indices);
                 current = result;
                 current_adt_def_id = Option::None;
                 downcast_variant = Option::None;
@@ -720,13 +722,13 @@ pub fn emit_place_addr(
                     if i == 0 {
                         let local_llvm_ty = ctx.get_local_type(place.local);
                         if string_eq_str(local_llvm_ty.as_str(), "ptr") {
-                            let vec_ptr = ctx.fresh_temp();
-                            ctx.emit_load(vec_ptr.as_str(), "ptr", current.as_str());
+                            let vec_ptr = ctx.fresh_temp_cg();
+                            ctx.emit_load_cg2(&vec_ptr, "ptr", &current);
                             current = vec_ptr;
                         }
                     }
-                    let data_ptr = ctx.fresh_temp();
-                    ctx.emit_load(data_ptr.as_str(), "ptr", current.as_str());
+                    let data_ptr = ctx.fresh_temp_cg();
+                    ctx.emit_load_cg2(&data_ptr, "ptr", &current);
                     current = data_ptr;
                 }
 
@@ -743,10 +745,10 @@ pub fn emit_place_addr(
                     offset * elem_size
                 };
 
-                let result = ctx.fresh_temp();
+                let result = ctx.fresh_temp_cg();
                 let mut indices: Vec<String> = Vec::new();
                 indices.push(codegen_types::format_u64(byte_offset));
-                ctx.emit_gep(result.as_str(), "i8", current.as_str(), &indices);
+                ctx.emit_gep_cg(&result, "i8", &current, &indices);
                 current = result;
                 current_adt_def_id = Option::None;
                 downcast_variant = Option::None;
@@ -761,10 +763,10 @@ pub fn emit_place_addr(
                 // Calculate byte offset = from * element_size
                 let byte_offset = from * elem_size;
 
-                let result = ctx.fresh_temp();
+                let result = ctx.fresh_temp_cg();
                 let mut indices: Vec<String> = Vec::new();
                 indices.push(codegen_types::format_u64(byte_offset));
-                ctx.emit_gep(result.as_str(), "i8", current.as_str(), &indices);
+                ctx.emit_gep_cg(&result, "i8", &current, &indices);
                 current = result;
                 current_adt_def_id = Option::None;
                 downcast_variant = Option::None;
@@ -775,7 +777,7 @@ pub fn emit_place_addr(
                 ctx.write_string(&codegen_types::format_u64(variant_idx as u64));
                 ctx.write("\n");
 
-                let result = ctx.fresh_temp();
+                let result = ctx.fresh_temp_cg();
 
                 // Only use struct GEP when the type has 2+ fields (discriminant + data).
                 // Fallback types like { i64 } from Deref need byte-offset GEP.
@@ -785,13 +787,13 @@ pub fn emit_place_addr(
                     indices.push(common::make_string("0"));
                     // Skip discriminant at index 0, variant data at index 1
                     indices.push(common::make_string("1"));
-                    ctx.emit_gep(result.as_str(), current_base.as_str(), current.as_str(), &indices);
+                    ctx.emit_gep_cg(&result, current_base.as_str(), &current, &indices);
                 } else {
                     // Scalar or fallback base type: use byte-offset GEP
                     // Discriminant is i8 (1 byte), so variant data starts at offset 1
                     let mut indices: Vec<String> = Vec::new();
                     indices.push(common::make_string("1"));
-                    ctx.emit_gep(result.as_str(), "i8", current.as_str(), &indices);
+                    ctx.emit_gep_cg(&result, "i8", &current, &indices);
                 }
                 current = result;
                 downcast_variant = Option::Some(variant_idx);
@@ -811,7 +813,7 @@ pub fn emit_place_addr(
 fn emit_generation_check(
     ctx: &mut codegen_ctx::CodegenCtx,
     local: mir_def::MirLocalId,
-    ptr_name: &String,
+    ptr_name: &codegen_ctx::CgName,
 ) {
     // Only emit check for locals with tracked generations
     let gen_alloca = match ctx.get_local_generation(local) {
@@ -825,7 +827,8 @@ fn emit_generation_check(
 
     // Convert pointer to i64 address for runtime call
     let ptr_addr = ctx.fresh_temp_cg();
-    ctx.emit_cast_cg(&ptr_addr, "ptrtoint", "ptr", ptr_name.as_str(), "i64");
+    let ptr_str = cgname_to_string(ptr_name);
+    ctx.emit_cast_cg(&ptr_addr, "ptrtoint", "ptr", ptr_str.as_str(), "i64");
 
     // Call blood_validate_generation(address, expected_generation) -> i32
     // Returns 0 if valid, 1 if stale

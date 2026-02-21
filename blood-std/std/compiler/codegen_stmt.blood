@@ -109,7 +109,7 @@ pub fn emit_statement(
                 let ptr = codegen_expr::emit_place_addr(ctx, place);
                 ctx.write("    ; drop (region free)\n");
                 let addr_val = ctx.fresh_temp_cg();
-                ctx.emit_load_cg(&addr_val, "ptr", ptr.as_str());
+                ctx.emit_load_cg2(&addr_val, "ptr", &ptr);
                 let int_val = ctx.fresh_temp_cg();
                 ctx.emit_cast_cg2(&int_val, "ptrtoint", "ptr", &addr_val, "i64");
                 let size_str = codegen_types::format_u64(drop_size);
@@ -244,7 +244,7 @@ pub fn emit_statement(
                 ctx.emit_alloca(shadow.as_str(), "i64");
 
                 let heap_ptr_s = ctx.fresh_temp_cg();
-                ctx.emit_load_cg(&heap_ptr_s, "ptr", state_void_ptr.as_str());
+                ctx.emit_load_cg2(&heap_ptr_s, "ptr", &state_void_ptr);
 
                 let field_ptr = ctx.fresh_temp_cg();
                 ctx.write_indent();
@@ -267,7 +267,7 @@ pub fn emit_statement(
                 ctx.set_handler_state_shadow(handler_id.index, clone_string(&shadow));
                 shadow
             } else {
-                clone_string(&state_void_ptr)
+                cgname_to_string(&state_void_ptr)
             };
 
             ctx.write_indent();
@@ -408,9 +408,15 @@ pub fn emit_statement(
             // Handler ops mutate through the shadow pointer, so it has the correct state.
             let state_ptr = match ctx.get_handler_state_shadow(handler_id.index) {
                 Option::Some(shadow) => clone_string(shadow),
-                Option::None => codegen_expr::emit_place_addr(ctx, state_place),
+                Option::None => {
+                    let addr = codegen_expr::emit_place_addr(ctx, state_place);
+                    cgname_to_string(&addr)
+                }
             };
-            let dest_ptr = codegen_expr::emit_place_addr(ctx, destination);
+            let dest_ptr = {
+                let addr = codegen_expr::emit_place_addr(ctx, destination);
+                cgname_to_string(&addr)
+            };
 
             // Widen body result to i64
             let widened_result = if strs_equal(result_ty.as_str(), "i64") {
@@ -1290,4 +1296,36 @@ fn strs_equal(a: &str, b: &str) -> bool {
         i = i + 1;
     }
     true
+}
+
+fn cgname_to_string(name: &codegen_ctx::CgName) -> String {
+    match name {
+        &codegen_ctx::CgName::Temp(n) => {
+            let mut s = common::make_string("%tmp");
+            let ns = codegen_types::format_u64(n as u64);
+            s.push_str(ns.as_str());
+            s
+        }
+        &codegen_ctx::CgName::Local(n) => {
+            let mut s = common::make_string("%_");
+            let ns = codegen_types::format_u64(n as u64);
+            s.push_str(ns.as_str());
+            s
+        }
+        &codegen_ctx::CgName::Label(n) => {
+            let mut s = common::make_string("label");
+            let ns = codegen_types::format_u64(n as u64);
+            s.push_str(ns.as_str());
+            s
+        }
+        &codegen_ctx::CgName::Block(n) => {
+            let mut s = common::make_string("bb");
+            let ns = codegen_types::format_u64(n as u64);
+            s.push_str(ns.as_str());
+            s
+        }
+        &codegen_ctx::CgName::Str(ref s) => {
+            clone_string(s)
+        }
+    }
 }
