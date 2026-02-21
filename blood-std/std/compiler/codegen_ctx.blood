@@ -30,6 +30,8 @@ pub enum CgName {
     Label(u32),
     /// bbN — MIR basic block label
     Block(u32),
+    /// Arbitrary string value (pass-through SSA names, constants, etc.)
+    Str(String),
 }
 
 // ============================================================
@@ -681,6 +683,43 @@ impl CodegenCtx {
             &CgName::Block(n) => {
                 self.write("bb");
                 self.write_u64(n as u64);
+            }
+            &CgName::Str(ref s) => {
+                self.write(s.as_str());
+            }
+        }
+    }
+
+    /// Converts a CgName to a String representation for use at boundaries
+    /// where String is required (e.g., llvm_args vectors).
+    pub fn cgname_to_string(name: &CgName) -> String {
+        match name {
+            &CgName::Temp(n) => {
+                let mut s = common::make_string("%tmp");
+                let ns = codegen_types::format_u64(n as u64);
+                s.push_str(ns.as_str());
+                s
+            }
+            &CgName::Local(n) => {
+                let mut s = common::make_string("%_");
+                let ns = codegen_types::format_u64(n as u64);
+                s.push_str(ns.as_str());
+                s
+            }
+            &CgName::Label(n) => {
+                let mut s = common::make_string("label");
+                let ns = codegen_types::format_u64(n as u64);
+                s.push_str(ns.as_str());
+                s
+            }
+            &CgName::Block(n) => {
+                let mut s = common::make_string("bb");
+                let ns = codegen_types::format_u64(n as u64);
+                s.push_str(ns.as_str());
+                s
+            }
+            &CgName::Str(ref s) => {
+                clone_string(s)
             }
         }
     }

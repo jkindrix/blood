@@ -1290,15 +1290,15 @@ pub fn emit_rvalue(
             let result = emit_binop_typed(ctx, bin_op, &left_val, &coerced_right, left_ty.as_str(), is_signed);
             // For comparison operations, result is i1 (bool)
             if bin_op.is_comparison() {
-                ctx.emit_store("i1", result.as_str(), dest);
+                ctx.emit_store_cg("i1", &result, dest);
             } else {
-                ctx.emit_store(left_ty.as_str(), result.as_str(), dest);
+                ctx.emit_store_cg(left_ty.as_str(), &result, dest);
             }
         }
         &mir_types::Rvalue::UnaryOp { op: ref un_op, ref operand } => {
             let (val, ty) = emit_operand_typed(ctx, operand);
             let result = emit_unop_typed(ctx, un_op, &val, ty.as_str());
-            ctx.emit_store(ty.as_str(), result.as_str(), dest);
+            ctx.emit_store_cg(ty.as_str(), &result, dest);
         }
         &mir_types::Rvalue::AddressOf { ref place, mutable: _ } => {
             let addr = emit_place_data_ptr(ctx, place);
@@ -1364,7 +1364,7 @@ pub fn emit_rvalue(
                     emit_cast_from_llvm_types(ctx, &val, src_ty.as_str(), tgt_llvm.as_str())
                 }
             };
-            ctx.emit_store(tgt_llvm.as_str(), result.as_str(), dest);
+            ctx.emit_store_cg(tgt_llvm.as_str(), &result, dest);
         }
         &mir_types::Rvalue::Aggregate { ref kind, ref operands } => {
             emit_aggregate(ctx, dest, kind, operands);
@@ -1516,13 +1516,13 @@ fn emit_cast_from_llvm_types(
     val: &String,
     src_ty: &str,
     tgt_ty: &str,
-) -> String {
-    let result = ctx.fresh_temp();
-
+) -> codegen_ctx::CgName {
     // Quick check: if same type, just return value
     if string_eq_str(src_ty, tgt_ty) {
-        return clone_string(val);
+        return codegen_ctx::CgName::Str(clone_string(val));
     }
+
+    let result = ctx.fresh_temp_cg();
 
     let src_is_float = string_starts_with(src_ty, "float") || string_starts_with(src_ty, "double");
     let tgt_is_float = string_starts_with(tgt_ty, "float") || string_starts_with(tgt_ty, "double");
@@ -1536,22 +1536,22 @@ fn emit_cast_from_llvm_types(
         let src_size = if string_starts_with(src_ty, "float") { 4u64 } else { 8u64 };
         let tgt_size = if string_starts_with(tgt_ty, "float") { 4u64 } else { 8u64 };
         if tgt_size < src_size {
-            ctx.emit_cast(result.as_str(), "fptrunc", src_ty, val.as_str(), tgt_ty);
+            ctx.emit_cast_cg(&result, "fptrunc", src_ty, val.as_str(), tgt_ty);
         } else if tgt_size > src_size {
-            ctx.emit_cast(result.as_str(), "fpext", src_ty, val.as_str(), tgt_ty);
+            ctx.emit_cast_cg(&result, "fpext", src_ty, val.as_str(), tgt_ty);
         } else {
-            return clone_string(val);
+            return codegen_ctx::CgName::Str(clone_string(val));
         }
     } else if !src_is_float && tgt_is_float {
         // Int to float (default signed)
-        ctx.emit_cast(result.as_str(), "sitofp", src_ty, val.as_str(), tgt_ty);
+        ctx.emit_cast_cg(&result, "sitofp", src_ty, val.as_str(), tgt_ty);
     } else if src_is_float && !tgt_is_float {
         // Float to int (default signed)
-        ctx.emit_cast(result.as_str(), "fptosi", src_ty, val.as_str(), tgt_ty);
+        ctx.emit_cast_cg(&result, "fptosi", src_ty, val.as_str(), tgt_ty);
     } else if src_is_fat_ptr && tgt_is_ptr {
         // Fat pointer to thin pointer: extract the data pointer (field 0)
         ctx.write_indent();
-        ctx.write_string(&result);
+        ctx.write_cgname(&result);
         ctx.write(" = extractvalue ");
         ctx.write(src_ty);
         ctx.write(" ");
@@ -1559,35 +1559,35 @@ fn emit_cast_from_llvm_types(
         ctx.write(", 0\n");
     } else if src_is_fat_ptr && !tgt_is_ptr {
         // Fat pointer to int: extract ptr, then ptrtoint
-        let extracted = ctx.fresh_temp();
+        let extracted = ctx.fresh_temp_cg();
         ctx.write_indent();
-        ctx.write_string(&extracted);
+        ctx.write_cgname(&extracted);
         ctx.write(" = extractvalue ");
         ctx.write(src_ty);
         ctx.write(" ");
         ctx.write_string(val);
         ctx.write(", 0\n");
-        ctx.emit_cast(result.as_str(), "ptrtoint", "ptr", extracted.as_str(), tgt_ty);
+        ctx.emit_cast_cg2(&result, "ptrtoint", "ptr", &extracted, tgt_ty);
     } else if src_is_ptr && !tgt_is_ptr {
         // Pointer to int
-        ctx.emit_cast(result.as_str(), "ptrtoint", src_ty, val.as_str(), tgt_ty);
+        ctx.emit_cast_cg(&result, "ptrtoint", src_ty, val.as_str(), tgt_ty);
     } else if !src_is_ptr && !src_is_fat_ptr && tgt_is_ptr {
         // Int to pointer (but not fat pointer source)
-        ctx.emit_cast(result.as_str(), "inttoptr", src_ty, val.as_str(), tgt_ty);
+        ctx.emit_cast_cg(&result, "inttoptr", src_ty, val.as_str(), tgt_ty);
     } else if src_is_ptr && tgt_is_ptr {
         // Pointer to pointer - bitcast
-        ctx.emit_cast(result.as_str(), "bitcast", src_ty, val.as_str(), tgt_ty);
+        ctx.emit_cast_cg(&result, "bitcast", src_ty, val.as_str(), tgt_ty);
     } else {
         // Int to int - determine by size
         let src_size = get_int_type_size(src_ty);
         let tgt_size = get_int_type_size(tgt_ty);
         if tgt_size < src_size {
-            ctx.emit_cast(result.as_str(), "trunc", src_ty, val.as_str(), tgt_ty);
+            ctx.emit_cast_cg(&result, "trunc", src_ty, val.as_str(), tgt_ty);
         } else if tgt_size > src_size {
             // Default to sign extend
-            ctx.emit_cast(result.as_str(), "sext", src_ty, val.as_str(), tgt_ty);
+            ctx.emit_cast_cg(&result, "sext", src_ty, val.as_str(), tgt_ty);
         } else {
-            return clone_string(val);
+            return codegen_ctx::CgName::Str(clone_string(val));
         }
     }
 
@@ -1775,7 +1775,7 @@ fn emit_binop(
     bin_op: &mir_types::MirBinOp,
     left: &String,
     right: &String,
-) -> String {
+) -> codegen_ctx::CgName {
     emit_binop_typed(ctx, bin_op, left, right, "i64", true)
 }
 
@@ -1790,36 +1790,37 @@ pub fn emit_binop_typed(
     right: &String,
     llvm_ty: &str,
     signed: bool,
-) -> String {
+) -> codegen_ctx::CgName {
     // If the type is an aggregate (struct), extract the first field for comparison.
     // LLVM icmp/binops don't work on aggregate types.
     let ty_bytes = llvm_ty.as_bytes();
     if ty_bytes.len() > 0 && ty_bytes[0] == 123 {
         // Aggregate type - extract first element and compare as that type
         let inner_ty = extract_first_field_type(llvm_ty);
-        let left_elem = ctx.fresh_temp();
+        let left_elem_cg = ctx.fresh_temp_cg();
         ctx.write_indent();
-        ctx.write_string(&left_elem);
+        ctx.write_cgname(&left_elem_cg);
         ctx.write(" = extractvalue ");
         ctx.write(llvm_ty);
         ctx.write(" ");
         ctx.write_string(left);
         ctx.write(", 0\n");
-        let right_elem = ctx.fresh_temp();
+        let left_elem = cgname_to_string(&left_elem_cg);
+        let right_elem_cg = ctx.fresh_temp_cg();
         ctx.write_indent();
-        ctx.write_string(&right_elem);
+        ctx.write_cgname(&right_elem_cg);
         ctx.write(" = extractvalue ");
         ctx.write(llvm_ty);
         ctx.write(" ");
         ctx.write_string(right);
         ctx.write(", 0\n");
+        let right_elem = cgname_to_string(&right_elem_cg);
         return emit_binop_typed(ctx, bin_op, &left_elem, &right_elem, inner_ty.as_str(), signed);
     }
 
-    let result = ctx.fresh_temp();
+    let result = ctx.fresh_temp_cg();
     let l = left.as_str();
     let r = right.as_str();
-    let res = result.as_str();
 
     // Check if this is a floating-point type
     let is_float = string_starts_with(llvm_ty, "float") || string_starts_with(llvm_ty, "double");
@@ -1827,127 +1828,127 @@ pub fn emit_binop_typed(
     if is_float {
         // Floating-point operations
         match bin_op {
-            &mir_types::MirBinOp::Add => ctx.emit_binop(res, "fadd", llvm_ty, l, r),
-            &mir_types::MirBinOp::Sub => ctx.emit_binop(res, "fsub", llvm_ty, l, r),
-            &mir_types::MirBinOp::Mul => ctx.emit_binop(res, "fmul", llvm_ty, l, r),
-            &mir_types::MirBinOp::Div => ctx.emit_binop(res, "fdiv", llvm_ty, l, r),
-            &mir_types::MirBinOp::Rem => ctx.emit_binop(res, "frem", llvm_ty, l, r),
+            &mir_types::MirBinOp::Add => ctx.emit_binop_cg(&result, "fadd", llvm_ty, l, r),
+            &mir_types::MirBinOp::Sub => ctx.emit_binop_cg(&result, "fsub", llvm_ty, l, r),
+            &mir_types::MirBinOp::Mul => ctx.emit_binop_cg(&result, "fmul", llvm_ty, l, r),
+            &mir_types::MirBinOp::Div => ctx.emit_binop_cg(&result, "fdiv", llvm_ty, l, r),
+            &mir_types::MirBinOp::Rem => ctx.emit_binop_cg(&result, "frem", llvm_ty, l, r),
             // Floating-point comparisons use ordered comparisons (NaN returns false)
-            &mir_types::MirBinOp::Eq => ctx.emit_fcmp(res, "oeq", llvm_ty, l, r),
-            &mir_types::MirBinOp::Ne => ctx.emit_fcmp(res, "one", llvm_ty, l, r),
-            &mir_types::MirBinOp::Lt => ctx.emit_fcmp(res, "olt", llvm_ty, l, r),
-            &mir_types::MirBinOp::Le => ctx.emit_fcmp(res, "ole", llvm_ty, l, r),
-            &mir_types::MirBinOp::Gt => ctx.emit_fcmp(res, "ogt", llvm_ty, l, r),
-            &mir_types::MirBinOp::Ge => ctx.emit_fcmp(res, "oge", llvm_ty, l, r),
+            &mir_types::MirBinOp::Eq => ctx.emit_fcmp_cg(&result, "oeq", llvm_ty, l, r),
+            &mir_types::MirBinOp::Ne => ctx.emit_fcmp_cg(&result, "one", llvm_ty, l, r),
+            &mir_types::MirBinOp::Lt => ctx.emit_fcmp_cg(&result, "olt", llvm_ty, l, r),
+            &mir_types::MirBinOp::Le => ctx.emit_fcmp_cg(&result, "ole", llvm_ty, l, r),
+            &mir_types::MirBinOp::Gt => ctx.emit_fcmp_cg(&result, "ogt", llvm_ty, l, r),
+            &mir_types::MirBinOp::Ge => ctx.emit_fcmp_cg(&result, "oge", llvm_ty, l, r),
             // Bitwise operations don't apply to floats - emit error comment
             &mir_types::MirBinOp::BitAnd => {
                 ctx.write("    ; ERROR: bitwise AND on float\n");
-                ctx.emit_binop(res, "fadd", llvm_ty, l, "0.0");
+                ctx.emit_binop_cg(&result, "fadd", llvm_ty, l, "0.0");
             }
             &mir_types::MirBinOp::BitOr => {
                 ctx.write("    ; ERROR: bitwise OR on float\n");
-                ctx.emit_binop(res, "fadd", llvm_ty, l, "0.0");
+                ctx.emit_binop_cg(&result, "fadd", llvm_ty, l, "0.0");
             }
             &mir_types::MirBinOp::BitXor => {
                 ctx.write("    ; ERROR: bitwise XOR on float\n");
-                ctx.emit_binop(res, "fadd", llvm_ty, l, "0.0");
+                ctx.emit_binop_cg(&result, "fadd", llvm_ty, l, "0.0");
             }
             &mir_types::MirBinOp::Shl => {
                 ctx.write("    ; ERROR: shift left on float\n");
-                ctx.emit_binop(res, "fadd", llvm_ty, l, "0.0");
+                ctx.emit_binop_cg(&result, "fadd", llvm_ty, l, "0.0");
             }
             &mir_types::MirBinOp::Shr => {
                 ctx.write("    ; ERROR: shift right on float\n");
-                ctx.emit_binop(res, "fadd", llvm_ty, l, "0.0");
+                ctx.emit_binop_cg(&result, "fadd", llvm_ty, l, "0.0");
             }
             // Checked operations - floats don't have overflow, treat as unchecked
-            &mir_types::MirBinOp::AddChecked => ctx.emit_binop(res, "fadd", llvm_ty, l, r),
-            &mir_types::MirBinOp::SubChecked => ctx.emit_binop(res, "fsub", llvm_ty, l, r),
-            &mir_types::MirBinOp::MulChecked => ctx.emit_binop(res, "fmul", llvm_ty, l, r),
+            &mir_types::MirBinOp::AddChecked => ctx.emit_binop_cg(&result, "fadd", llvm_ty, l, r),
+            &mir_types::MirBinOp::SubChecked => ctx.emit_binop_cg(&result, "fsub", llvm_ty, l, r),
+            &mir_types::MirBinOp::MulChecked => ctx.emit_binop_cg(&result, "fmul", llvm_ty, l, r),
         }
     } else {
         // Integer operations with correct signedness
         let is_unsigned = !signed;
 
         match bin_op {
-            &mir_types::MirBinOp::Add => ctx.emit_binop(res, "add", llvm_ty, l, r),
-            &mir_types::MirBinOp::Sub => ctx.emit_binop(res, "sub", llvm_ty, l, r),
-            &mir_types::MirBinOp::Mul => ctx.emit_binop(res, "mul", llvm_ty, l, r),
+            &mir_types::MirBinOp::Add => ctx.emit_binop_cg(&result, "add", llvm_ty, l, r),
+            &mir_types::MirBinOp::Sub => ctx.emit_binop_cg(&result, "sub", llvm_ty, l, r),
+            &mir_types::MirBinOp::Mul => ctx.emit_binop_cg(&result, "mul", llvm_ty, l, r),
             &mir_types::MirBinOp::Div => {
                 if is_unsigned {
-                    ctx.emit_binop(res, "udiv", llvm_ty, l, r);
+                    ctx.emit_binop_cg(&result, "udiv", llvm_ty, l, r);
                 } else {
-                    ctx.emit_binop(res, "sdiv", llvm_ty, l, r);
+                    ctx.emit_binop_cg(&result, "sdiv", llvm_ty, l, r);
                 }
             }
             &mir_types::MirBinOp::Rem => {
                 if is_unsigned {
-                    ctx.emit_binop(res, "urem", llvm_ty, l, r);
+                    ctx.emit_binop_cg(&result, "urem", llvm_ty, l, r);
                 } else {
-                    ctx.emit_binop(res, "srem", llvm_ty, l, r);
+                    ctx.emit_binop_cg(&result, "srem", llvm_ty, l, r);
                 }
             }
-            &mir_types::MirBinOp::BitAnd => ctx.emit_binop(res, "and", llvm_ty, l, r),
-            &mir_types::MirBinOp::BitOr => ctx.emit_binop(res, "or", llvm_ty, l, r),
-            &mir_types::MirBinOp::BitXor => ctx.emit_binop(res, "xor", llvm_ty, l, r),
-            &mir_types::MirBinOp::Shl => ctx.emit_binop(res, "shl", llvm_ty, l, r),
+            &mir_types::MirBinOp::BitAnd => ctx.emit_binop_cg(&result, "and", llvm_ty, l, r),
+            &mir_types::MirBinOp::BitOr => ctx.emit_binop_cg(&result, "or", llvm_ty, l, r),
+            &mir_types::MirBinOp::BitXor => ctx.emit_binop_cg(&result, "xor", llvm_ty, l, r),
+            &mir_types::MirBinOp::Shl => ctx.emit_binop_cg(&result, "shl", llvm_ty, l, r),
             &mir_types::MirBinOp::Shr => {
                 if is_unsigned {
-                    ctx.emit_binop(res, "lshr", llvm_ty, l, r);
+                    ctx.emit_binop_cg(&result, "lshr", llvm_ty, l, r);
                 } else {
-                    ctx.emit_binop(res, "ashr", llvm_ty, l, r);
+                    ctx.emit_binop_cg(&result, "ashr", llvm_ty, l, r);
                 }
             }
-            &mir_types::MirBinOp::Eq => ctx.emit_icmp(res, "eq", llvm_ty, l, r),
-            &mir_types::MirBinOp::Ne => ctx.emit_icmp(res, "ne", llvm_ty, l, r),
+            &mir_types::MirBinOp::Eq => ctx.emit_icmp_cg(&result, "eq", llvm_ty, l, r),
+            &mir_types::MirBinOp::Ne => ctx.emit_icmp_cg(&result, "ne", llvm_ty, l, r),
             &mir_types::MirBinOp::Lt => {
                 if is_unsigned {
-                    ctx.emit_icmp(res, "ult", llvm_ty, l, r);
+                    ctx.emit_icmp_cg(&result, "ult", llvm_ty, l, r);
                 } else {
-                    ctx.emit_icmp(res, "slt", llvm_ty, l, r);
+                    ctx.emit_icmp_cg(&result, "slt", llvm_ty, l, r);
                 }
             }
             &mir_types::MirBinOp::Le => {
                 if is_unsigned {
-                    ctx.emit_icmp(res, "ule", llvm_ty, l, r);
+                    ctx.emit_icmp_cg(&result, "ule", llvm_ty, l, r);
                 } else {
-                    ctx.emit_icmp(res, "sle", llvm_ty, l, r);
+                    ctx.emit_icmp_cg(&result, "sle", llvm_ty, l, r);
                 }
             }
             &mir_types::MirBinOp::Gt => {
                 if is_unsigned {
-                    ctx.emit_icmp(res, "ugt", llvm_ty, l, r);
+                    ctx.emit_icmp_cg(&result, "ugt", llvm_ty, l, r);
                 } else {
-                    ctx.emit_icmp(res, "sgt", llvm_ty, l, r);
+                    ctx.emit_icmp_cg(&result, "sgt", llvm_ty, l, r);
                 }
             }
             &mir_types::MirBinOp::Ge => {
                 if is_unsigned {
-                    ctx.emit_icmp(res, "uge", llvm_ty, l, r);
+                    ctx.emit_icmp_cg(&result, "uge", llvm_ty, l, r);
                 } else {
-                    ctx.emit_icmp(res, "sge", llvm_ty, l, r);
+                    ctx.emit_icmp_cg(&result, "sge", llvm_ty, l, r);
                 }
             }
             // Checked operations - use LLVM overflow intrinsics and trap on overflow
             &mir_types::MirBinOp::AddChecked => {
                 if is_unsigned {
-                    emit_checked_binop(ctx, res, "uadd", llvm_ty, l, r);
+                    emit_checked_binop(ctx, &result, "uadd", llvm_ty, l, r);
                 } else {
-                    emit_checked_binop(ctx, res, "sadd", llvm_ty, l, r);
+                    emit_checked_binop(ctx, &result, "sadd", llvm_ty, l, r);
                 }
             }
             &mir_types::MirBinOp::SubChecked => {
                 if is_unsigned {
-                    emit_checked_binop(ctx, res, "usub", llvm_ty, l, r);
+                    emit_checked_binop(ctx, &result, "usub", llvm_ty, l, r);
                 } else {
-                    emit_checked_binop(ctx, res, "ssub", llvm_ty, l, r);
+                    emit_checked_binop(ctx, &result, "ssub", llvm_ty, l, r);
                 }
             }
             &mir_types::MirBinOp::MulChecked => {
                 if is_unsigned {
-                    emit_checked_binop(ctx, res, "umul", llvm_ty, l, r);
+                    emit_checked_binop(ctx, &result, "umul", llvm_ty, l, r);
                 } else {
-                    emit_checked_binop(ctx, res, "smul", llvm_ty, l, r);
+                    emit_checked_binop(ctx, &result, "smul", llvm_ty, l, r);
                 }
             }
         }
@@ -1963,7 +1964,7 @@ pub fn emit_binop_typed(
 /// These return { iN, i1 } where the second element is the overflow flag.
 fn emit_checked_binop(
     ctx: &mut codegen_ctx::CodegenCtx,
-    result: &str,
+    result: &codegen_ctx::CgName,
     intrinsic_base: &str,
     llvm_ty: &str,
     left: &str,
@@ -2000,7 +2001,7 @@ fn emit_checked_binop(
 
     // Extract the result value
     ctx.write_indent();
-    ctx.write(result);
+    ctx.write_cgname(result);
     ctx.write(" = extractvalue ");
     ctx.write_string(&ret_ty);
     ctx.write(" ");
@@ -2075,7 +2076,7 @@ fn emit_unop(
     ctx: &mut codegen_ctx::CodegenCtx,
     un_op: &mir_types::MirUnOp,
     operand: &String,
-) -> String {
+) -> codegen_ctx::CgName {
     emit_unop_typed(ctx, un_op, operand, "i64")
 }
 
@@ -2086,10 +2087,9 @@ fn emit_unop_typed(
     un_op: &mir_types::MirUnOp,
     operand: &String,
     llvm_ty: &str,
-) -> String {
-    let result = ctx.fresh_temp();
+) -> codegen_ctx::CgName {
+    let result = ctx.fresh_temp_cg();
     let v = operand.as_str();
-    let res = result.as_str();
 
     // Check if this is a floating-point type
     let is_float = string_starts_with(llvm_ty, "float") || string_starts_with(llvm_ty, "double");
@@ -2099,23 +2099,23 @@ fn emit_unop_typed(
             if is_float {
                 // fneg is a unary op: %res = fneg <ty> <val>
                 ctx.write_indent();
-                ctx.write(res);
+                ctx.write_cgname(&result);
                 ctx.write(" = fneg ");
                 ctx.write(llvm_ty);
                 ctx.write(" ");
                 ctx.write(v);
                 ctx.write("\n");
             } else {
-                ctx.emit_binop(res, "sub", llvm_ty, "0", v);
+                ctx.emit_binop_cg(&result, "sub", llvm_ty, "0", v);
             }
         }
         &mir_types::MirUnOp::Not => {
             if is_float {
                 // Not doesn't make sense for floats - emit error
                 ctx.write("    ; ERROR: bitwise NOT on float\n");
-                ctx.emit_binop(res, "fadd", llvm_ty, v, "0.0");
+                ctx.emit_binop_cg(&result, "fadd", llvm_ty, v, "0.0");
             } else {
-                ctx.emit_binop(res, "xor", llvm_ty, v, "-1");
+                ctx.emit_binop_cg(&result, "xor", llvm_ty, v, "-1");
             }
         }
     }
@@ -2130,10 +2130,10 @@ fn emit_cast_with_types(
     val: &String,
     source_ty: &hir_ty::Type,
     target_ty: &hir_ty::Type,
-) -> String {
+) -> codegen_ctx::CgName {
     let src_llvm = ctx.type_to_llvm_with_ctx(source_ty);
     let tgt_llvm = ctx.type_to_llvm_with_ctx(target_ty);
-    let result = ctx.fresh_temp();
+    let result = ctx.fresh_temp_cg();
 
     // Determine the cast instruction based on types
     let src_is_int = codegen_types::is_integer(source_ty);
@@ -2150,47 +2150,47 @@ fn emit_cast_with_types(
     if src_is_int && tgt_is_int {
         // Integer to integer cast
         if tgt_size < src_size {
-            ctx.emit_cast(result.as_str(), "trunc", src_llvm.as_str(), val.as_str(), tgt_llvm.as_str());
+            ctx.emit_cast_cg(&result, "trunc", src_llvm.as_str(), val.as_str(), tgt_llvm.as_str());
         } else if tgt_size > src_size {
             if src_is_signed {
-                ctx.emit_cast(result.as_str(), "sext", src_llvm.as_str(), val.as_str(), tgt_llvm.as_str());
+                ctx.emit_cast_cg(&result, "sext", src_llvm.as_str(), val.as_str(), tgt_llvm.as_str());
             } else {
-                ctx.emit_cast(result.as_str(), "zext", src_llvm.as_str(), val.as_str(), tgt_llvm.as_str());
+                ctx.emit_cast_cg(&result, "zext", src_llvm.as_str(), val.as_str(), tgt_llvm.as_str());
             }
         } else {
             // Same size - bitcast or just copy
-            return clone_string(val);
+            return codegen_ctx::CgName::Str(clone_string(val));
         }
     } else if src_is_float && tgt_is_float {
         // Float to float cast
         if tgt_size < src_size {
-            ctx.emit_cast(result.as_str(), "fptrunc", src_llvm.as_str(), val.as_str(), tgt_llvm.as_str());
+            ctx.emit_cast_cg(&result, "fptrunc", src_llvm.as_str(), val.as_str(), tgt_llvm.as_str());
         } else if tgt_size > src_size {
-            ctx.emit_cast(result.as_str(), "fpext", src_llvm.as_str(), val.as_str(), tgt_llvm.as_str());
+            ctx.emit_cast_cg(&result, "fpext", src_llvm.as_str(), val.as_str(), tgt_llvm.as_str());
         } else {
-            return clone_string(val);
+            return codegen_ctx::CgName::Str(clone_string(val));
         }
     } else if src_is_int && tgt_is_float {
         // Integer to float
         if src_is_signed {
-            ctx.emit_cast(result.as_str(), "sitofp", src_llvm.as_str(), val.as_str(), tgt_llvm.as_str());
+            ctx.emit_cast_cg(&result, "sitofp", src_llvm.as_str(), val.as_str(), tgt_llvm.as_str());
         } else {
-            ctx.emit_cast(result.as_str(), "uitofp", src_llvm.as_str(), val.as_str(), tgt_llvm.as_str());
+            ctx.emit_cast_cg(&result, "uitofp", src_llvm.as_str(), val.as_str(), tgt_llvm.as_str());
         }
     } else if src_is_float && tgt_is_int {
         // Float to integer
         let tgt_is_signed = codegen_types::is_signed(target_ty);
         if tgt_is_signed {
-            ctx.emit_cast(result.as_str(), "fptosi", src_llvm.as_str(), val.as_str(), tgt_llvm.as_str());
+            ctx.emit_cast_cg(&result, "fptosi", src_llvm.as_str(), val.as_str(), tgt_llvm.as_str());
         } else {
-            ctx.emit_cast(result.as_str(), "fptoui", src_llvm.as_str(), val.as_str(), tgt_llvm.as_str());
+            ctx.emit_cast_cg(&result, "fptoui", src_llvm.as_str(), val.as_str(), tgt_llvm.as_str());
         }
     } else if src_is_ptr && tgt_is_int {
         // Pointer to integer
-        ctx.emit_cast(result.as_str(), "ptrtoint", src_llvm.as_str(), val.as_str(), tgt_llvm.as_str());
+        ctx.emit_cast_cg(&result, "ptrtoint", src_llvm.as_str(), val.as_str(), tgt_llvm.as_str());
     } else if src_is_int && tgt_is_ptr {
         // Integer to pointer
-        ctx.emit_cast(result.as_str(), "inttoptr", src_llvm.as_str(), val.as_str(), tgt_llvm.as_str());
+        ctx.emit_cast_cg(&result, "inttoptr", src_llvm.as_str(), val.as_str(), tgt_llvm.as_str());
     } else if src_is_ptr && tgt_is_ptr {
         // Pointer to pointer
         // Check if source is a fat pointer (struct) being cast to thin pointer
@@ -2201,7 +2201,7 @@ fn emit_cast_with_types(
         if src_is_fat && tgt_is_thin {
             // Fat pointer to thin pointer: extract the data pointer (field 0)
             ctx.write_indent();
-            ctx.write_string(&result);
+            ctx.write_cgname(&result);
             ctx.write(" = extractvalue ");
             ctx.write_string(&src_llvm);
             ctx.write(" ");
@@ -2209,13 +2209,13 @@ fn emit_cast_with_types(
             ctx.write(", 0\n");
         } else if src_is_fat {
             // Fat pointer to fat pointer: just copy
-            return clone_string(val);
+            return codegen_ctx::CgName::Str(clone_string(val));
         } else {
             // Thin pointer to pointer: bitcast or just copy if same
             if string_eq_str(src_llvm.as_str(), tgt_llvm.as_str()) {
-                return clone_string(val);
+                return codegen_ctx::CgName::Str(clone_string(val));
             } else {
-                ctx.emit_cast(result.as_str(), "bitcast", src_llvm.as_str(), val.as_str(), tgt_llvm.as_str());
+                ctx.emit_cast_cg(&result, "bitcast", src_llvm.as_str(), val.as_str(), tgt_llvm.as_str());
             }
         }
     } else {
@@ -2674,4 +2674,37 @@ fn clone_string(s: &String) -> String {
     let mut result = String::new();
     result.push_str(s.as_str());
     result
+}
+
+/// Converts a CgName to String for use at boundaries where String is required.
+fn cgname_to_string(name: &codegen_ctx::CgName) -> String {
+    match name {
+        &codegen_ctx::CgName::Temp(n) => {
+            let mut s = common::make_string("%tmp");
+            let ns = codegen_types::format_u64(n as u64);
+            s.push_str(ns.as_str());
+            s
+        }
+        &codegen_ctx::CgName::Local(n) => {
+            let mut s = common::make_string("%_");
+            let ns = codegen_types::format_u64(n as u64);
+            s.push_str(ns.as_str());
+            s
+        }
+        &codegen_ctx::CgName::Label(n) => {
+            let mut s = common::make_string("label");
+            let ns = codegen_types::format_u64(n as u64);
+            s.push_str(ns.as_str());
+            s
+        }
+        &codegen_ctx::CgName::Block(n) => {
+            let mut s = common::make_string("bb");
+            let ns = codegen_types::format_u64(n as u64);
+            s.push_str(ns.as_str());
+            s
+        }
+        &codegen_ctx::CgName::Str(ref s) => {
+            clone_string(s)
+        }
+    }
 }

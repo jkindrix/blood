@@ -78,7 +78,7 @@ pub fn emit_terminator(
                         // First element: alloca is already the pointer
                         ctx.write_indent();
                         ctx.write("store i64 ");
-                        ctx.write_string(&widened_val);
+                        ctx.write_cgname(&widened_val);
                         ctx.write(", ptr ");
                         ctx.write_cgname(&args_alloca);
                         ctx.write("\n");
@@ -98,7 +98,7 @@ pub fn emit_terminator(
 
                         ctx.write_indent();
                         ctx.write("store i64 ");
-                        ctx.write_string(&widened_val);
+                        ctx.write_cgname(&widened_val);
                         ctx.write(", ptr ");
                         ctx.write_cgname(&elem_ptr);
                         ctx.write("\n");
@@ -409,8 +409,8 @@ fn emit_call(
                         } else if !string_eq_str(expected_ty.as_str(), arg_ty.as_str()) && is_struct_type(arg_ty.as_str()) && is_struct_type(expected_ty.as_str()) {
                             // Struct type mismatch (generic struct with different field sizes)
                             // Widen field-by-field: { i1, i32 } -> { i64, i64 }
-                            let widened = emit_struct_widening(ctx, &arg_val, arg_ty.as_str(), expected_ty.as_str());
-                            final_val = widened;
+                            let widened_cg = emit_struct_widening(ctx, &arg_val, arg_ty.as_str(), expected_ty.as_str());
+                            final_val = cgname_to_string(&widened_cg);
                             final_ty = expected_ty;
                         } else if !string_eq_str(expected_ty.as_str(), arg_ty.as_str()) {
                             // General type mismatch (e.g., struct { i32, i32 } vs scalar i64)
@@ -501,7 +501,7 @@ fn emit_call(
         } else if !string_eq_str(def_ret_ty.as_str(), call_site_ret_ty.as_str()) && is_struct_type(def_ret_ty.as_str()) && is_struct_type(call_site_ret_ty.as_str()) {
             // Struct return type mismatch: narrow field-by-field
             let narrowed = emit_struct_narrowing(ctx, &result, def_ret_ty.as_str(), call_site_ret_ty.as_str());
-            ctx.emit_store(call_site_ret_ty.as_str(), narrowed.as_str(), dest_ptr.as_str());
+            ctx.emit_store_cg(call_site_ret_ty.as_str(), &narrowed, dest_ptr.as_str());
         } else if !string_eq_str(def_ret_ty.as_str(), call_site_ret_ty.as_str()) {
             // General type mismatch: use memory bitcast
             let cast_alloca = ctx.fresh_temp();
@@ -650,6 +650,39 @@ fn clone_string(s: &String) -> String {
     result
 }
 
+/// Converts a CgName to String for use at boundaries where String is required.
+fn cgname_to_string(name: &codegen_ctx::CgName) -> String {
+    match name {
+        &codegen_ctx::CgName::Temp(n) => {
+            let mut s = common::make_string("%tmp");
+            let ns = codegen_types::format_u64(n as u64);
+            s.push_str(ns.as_str());
+            s
+        }
+        &codegen_ctx::CgName::Local(n) => {
+            let mut s = common::make_string("%_");
+            let ns = codegen_types::format_u64(n as u64);
+            s.push_str(ns.as_str());
+            s
+        }
+        &codegen_ctx::CgName::Label(n) => {
+            let mut s = common::make_string("label");
+            let ns = codegen_types::format_u64(n as u64);
+            s.push_str(ns.as_str());
+            s
+        }
+        &codegen_ctx::CgName::Block(n) => {
+            let mut s = common::make_string("bb");
+            let ns = codegen_types::format_u64(n as u64);
+            s.push_str(ns.as_str());
+            s
+        }
+        &codegen_ctx::CgName::Str(ref s) => {
+            clone_string(s)
+        }
+    }
+}
+
 /// Checks if an LLVM type is void/unit.
 fn is_void_type(llvm_ty: &str) -> bool {
     let bytes = llvm_ty.as_bytes();
@@ -740,21 +773,21 @@ fn emit_struct_widening(
     src_val: &String,
     src_ty: &str,
     dst_ty: &str,
-) -> String {
+) -> codegen_ctx::CgName {
     let src_fields = parse_struct_fields(src_ty);
     let dst_fields = parse_struct_fields(dst_ty);
 
     // Alloca for the destination struct
-    let dst_alloca = ctx.fresh_temp();
-    ctx.emit_alloca(dst_alloca.as_str(), dst_ty);
+    let dst_alloca = ctx.fresh_temp_cg();
+    ctx.emit_alloca_cg(&dst_alloca, dst_ty);
 
     // For each field, extract from source, cast if needed, store into destination
     let mut fi: usize = 0;
     let field_count = if src_fields.len() < dst_fields.len() { src_fields.len() } else { dst_fields.len() };
     while fi < field_count {
-        let extracted = ctx.fresh_temp();
+        let extracted = ctx.fresh_temp_cg();
         ctx.write_indent();
-        ctx.write_string(&extracted);
+        ctx.write_cgname(&extracted);
         ctx.write(" = extractvalue ");
         ctx.write(src_ty);
         ctx.write(" ");
@@ -763,15 +796,15 @@ fn emit_struct_widening(
         ctx.write(codegen_types::format_u64(fi as u64).as_str());
         ctx.write("\n");
 
-        let mut field_val: String;
+        let mut field_val: codegen_ctx::CgName;
         if string_eq_str(src_fields[fi].as_str(), dst_fields[fi].as_str()) {
             // Same type, no conversion needed
             field_val = extracted;
         } else if needs_int_cast(src_fields[fi].as_str(), dst_fields[fi].as_str()) {
             // Scalar to scalar: use sext/zext
-            let extended = ctx.fresh_temp();
+            let extended = ctx.fresh_temp_cg();
             ctx.write_indent();
-            ctx.write_string(&extended);
+            ctx.write_cgname(&extended);
             if is_smaller_int(src_fields[fi].as_str(), dst_fields[fi].as_str()) {
                 ctx.write(" = sext ");
             } else {
@@ -779,7 +812,7 @@ fn emit_struct_widening(
             }
             ctx.write(src_fields[fi].as_str());
             ctx.write(" ");
-            ctx.write_string(&extracted);
+            ctx.write_cgname(&extracted);
             ctx.write(" to ");
             ctx.write(dst_fields[fi].as_str());
             ctx.write("\n");
@@ -787,56 +820,56 @@ fn emit_struct_widening(
         } else {
             // Type mismatch (e.g., struct field { i32 } vs scalar i64):
             // Use memory-based bitcast: alloca dst, zero it, store src, load as dst
-            let cast_alloca = ctx.fresh_temp();
-            ctx.emit_alloca(cast_alloca.as_str(), dst_fields[fi].as_str());
+            let cast_alloca = ctx.fresh_temp_cg();
+            ctx.emit_alloca_cg(&cast_alloca, dst_fields[fi].as_str());
             // Zero-initialize the destination alloca
-            let zero_val = ctx.fresh_temp();
+            let zero_val = ctx.fresh_temp_cg();
             ctx.write_indent();
-            ctx.write_string(&zero_val);
+            ctx.write_cgname(&zero_val);
             ctx.write(" = bitcast ");
             ctx.write(dst_fields[fi].as_str());
             ctx.write(" zeroinitializer to ");
             ctx.write(dst_fields[fi].as_str());
             ctx.write("\n");
-            ctx.emit_store(dst_fields[fi].as_str(), zero_val.as_str(), cast_alloca.as_str());
+            ctx.emit_store_cg2(dst_fields[fi].as_str(), &zero_val, &cast_alloca);
             // Store source value (smaller) into the alloca
-            ctx.emit_store(src_fields[fi].as_str(), extracted.as_str(), cast_alloca.as_str());
+            ctx.emit_store_cg2(src_fields[fi].as_str(), &extracted, &cast_alloca);
             // Load as destination type
-            let cast_result = ctx.fresh_temp();
+            let cast_result = ctx.fresh_temp_cg();
             ctx.write_indent();
-            ctx.write_string(&cast_result);
+            ctx.write_cgname(&cast_result);
             ctx.write(" = load ");
             ctx.write(dst_fields[fi].as_str());
             ctx.write(", ptr ");
-            ctx.write_string(&cast_alloca);
+            ctx.write_cgname(&cast_alloca);
             ctx.write("\n");
             field_val = cast_result;
         }
 
         // Store into destination struct via GEP
-        let gep = ctx.fresh_temp();
+        let gep = ctx.fresh_temp_cg();
         ctx.write_indent();
-        ctx.write_string(&gep);
+        ctx.write_cgname(&gep);
         ctx.write(" = getelementptr ");
         ctx.write(dst_ty);
         ctx.write(", ptr ");
-        ctx.write_string(&dst_alloca);
+        ctx.write_cgname(&dst_alloca);
         ctx.write(", i64 0, i32 ");
         ctx.write(codegen_types::format_u64(fi as u64).as_str());
         ctx.write("\n");
-        ctx.emit_store(dst_fields[fi].as_str(), field_val.as_str(), gep.as_str());
+        ctx.emit_store_cg2(dst_fields[fi].as_str(), &field_val, &gep);
 
         fi = fi + 1;
     }
 
     // Load the complete destination struct
-    let result = ctx.fresh_temp();
+    let result = ctx.fresh_temp_cg();
     ctx.write_indent();
-    ctx.write_string(&result);
+    ctx.write_cgname(&result);
     ctx.write(" = load ");
     ctx.write(dst_ty);
     ctx.write(", ptr ");
-    ctx.write_string(&dst_alloca);
+    ctx.write_cgname(&dst_alloca);
     ctx.write("\n");
     result
 }
@@ -848,20 +881,20 @@ fn emit_struct_narrowing(
     src_val: &String,
     src_ty: &str,
     dst_ty: &str,
-) -> String {
+) -> codegen_ctx::CgName {
     let src_fields = parse_struct_fields(src_ty);
     let dst_fields = parse_struct_fields(dst_ty);
 
     // Alloca for the destination struct
-    let dst_alloca = ctx.fresh_temp();
-    ctx.emit_alloca(dst_alloca.as_str(), dst_ty);
+    let dst_alloca = ctx.fresh_temp_cg();
+    ctx.emit_alloca_cg(&dst_alloca, dst_ty);
 
     let mut fi: usize = 0;
     let field_count = if src_fields.len() < dst_fields.len() { src_fields.len() } else { dst_fields.len() };
     while fi < field_count {
-        let extracted = ctx.fresh_temp();
+        let extracted = ctx.fresh_temp_cg();
         ctx.write_indent();
-        ctx.write_string(&extracted);
+        ctx.write_cgname(&extracted);
         ctx.write(" = extractvalue ");
         ctx.write(src_ty);
         ctx.write(" ");
@@ -870,19 +903,19 @@ fn emit_struct_narrowing(
         ctx.write(codegen_types::format_u64(fi as u64).as_str());
         ctx.write("\n");
 
-        let mut field_val: String;
+        let mut field_val: codegen_ctx::CgName;
         if string_eq_str(src_fields[fi].as_str(), dst_fields[fi].as_str()) {
             // Same type, no conversion needed
             field_val = extracted;
         } else if needs_int_cast(src_fields[fi].as_str(), dst_fields[fi].as_str()) {
             // Scalar to scalar: use trunc
-            let truncated = ctx.fresh_temp();
+            let truncated = ctx.fresh_temp_cg();
             ctx.write_indent();
-            ctx.write_string(&truncated);
+            ctx.write_cgname(&truncated);
             ctx.write(" = trunc ");
             ctx.write(src_fields[fi].as_str());
             ctx.write(" ");
-            ctx.write_string(&extracted);
+            ctx.write_cgname(&extracted);
             ctx.write(" to ");
             ctx.write(dst_fields[fi].as_str());
             ctx.write("\n");
@@ -890,42 +923,42 @@ fn emit_struct_narrowing(
         } else {
             // Type mismatch (e.g., scalar i64 vs struct { i32 }):
             // Use memory-based bitcast: alloca src type, store src, load as dst
-            let cast_alloca = ctx.fresh_temp();
-            ctx.emit_alloca(cast_alloca.as_str(), src_fields[fi].as_str());
-            ctx.emit_store(src_fields[fi].as_str(), extracted.as_str(), cast_alloca.as_str());
-            let cast_result = ctx.fresh_temp();
+            let cast_alloca = ctx.fresh_temp_cg();
+            ctx.emit_alloca_cg(&cast_alloca, src_fields[fi].as_str());
+            ctx.emit_store_cg2(src_fields[fi].as_str(), &extracted, &cast_alloca);
+            let cast_result = ctx.fresh_temp_cg();
             ctx.write_indent();
-            ctx.write_string(&cast_result);
+            ctx.write_cgname(&cast_result);
             ctx.write(" = load ");
             ctx.write(dst_fields[fi].as_str());
             ctx.write(", ptr ");
-            ctx.write_string(&cast_alloca);
+            ctx.write_cgname(&cast_alloca);
             ctx.write("\n");
             field_val = cast_result;
         }
 
-        let gep = ctx.fresh_temp();
+        let gep = ctx.fresh_temp_cg();
         ctx.write_indent();
-        ctx.write_string(&gep);
+        ctx.write_cgname(&gep);
         ctx.write(" = getelementptr ");
         ctx.write(dst_ty);
         ctx.write(", ptr ");
-        ctx.write_string(&dst_alloca);
+        ctx.write_cgname(&dst_alloca);
         ctx.write(", i64 0, i32 ");
         ctx.write(codegen_types::format_u64(fi as u64).as_str());
         ctx.write("\n");
-        ctx.emit_store(dst_fields[fi].as_str(), field_val.as_str(), gep.as_str());
+        ctx.emit_store_cg2(dst_fields[fi].as_str(), &field_val, &gep);
 
         fi = fi + 1;
     }
 
-    let result = ctx.fresh_temp();
+    let result = ctx.fresh_temp_cg();
     ctx.write_indent();
-    ctx.write_string(&result);
+    ctx.write_cgname(&result);
     ctx.write(" = load ");
     ctx.write(dst_ty);
     ctx.write(", ptr ");
-    ctx.write_string(&dst_alloca);
+    ctx.write_cgname(&dst_alloca);
     ctx.write("\n");
     result
 }
@@ -993,14 +1026,14 @@ fn emit_operand_list(
 
 /// Widens an operand value to i64 if needed.
 /// Returns the SSA name of the widened value (already i64-typed).
-fn widen_operand_to_i64(ctx: &mut codegen_ctx::CodegenCtx, val: &str, ty: &str) -> String {
+fn widen_operand_to_i64(ctx: &mut codegen_ctx::CodegenCtx, val: &str, ty: &str) -> codegen_ctx::CgName {
     if str_eq(ty, "i64") {
-        return common::make_string(val);
+        return codegen_ctx::CgName::Str(common::make_string(val));
     }
     if str_eq(ty, "i32") || str_eq(ty, "i16") || str_eq(ty, "i8") || str_eq(ty, "i1") {
-        let widened = ctx.fresh_temp();
+        let widened = ctx.fresh_temp_cg();
         ctx.write_indent();
-        ctx.write_string(&widened);
+        ctx.write_cgname(&widened);
         ctx.write(" = zext ");
         ctx.write(ty);
         ctx.write(" ");
@@ -1009,25 +1042,25 @@ fn widen_operand_to_i64(ctx: &mut codegen_ctx::CodegenCtx, val: &str, ty: &str) 
         return widened;
     }
     if str_eq(ty, "ptr") {
-        let widened = ctx.fresh_temp();
+        let widened = ctx.fresh_temp_cg();
         ctx.write_indent();
-        ctx.write_string(&widened);
+        ctx.write_cgname(&widened);
         ctx.write(" = ptrtoint ptr ");
         ctx.write(val);
         ctx.write(" to i64\n");
         return widened;
     }
     if str_eq(ty, "double") {
-        let widened = ctx.fresh_temp();
+        let widened = ctx.fresh_temp_cg();
         ctx.write_indent();
-        ctx.write_string(&widened);
+        ctx.write_cgname(&widened);
         ctx.write(" = bitcast double ");
         ctx.write(val);
         ctx.write(" to i64\n");
         return widened;
     }
     // For other types (unit {}, etc.), return 0
-    common::make_string("0")
+    codegen_ctx::CgName::Str(common::make_string("0"))
 }
 
 /// Makes an LLVM array type string like "[3 x i64]".
@@ -1808,15 +1841,15 @@ fn is_str_concat(func_val: &String) -> bool {
 /// Helper: load a { ptr, i64 } fat pointer from a pointer operand.
 /// The generic call path for &str methods produces a pointer to the
 /// fat pointer alloca. This loads the actual { ptr, i64 } value.
-fn load_str_fat_ptr(ctx: &mut codegen_ctx::CodegenCtx, operand: &mir_types::Operand) -> String {
+fn load_str_fat_ptr(ctx: &mut codegen_ctx::CodegenCtx, operand: &mir_types::Operand) -> codegen_ctx::CgName {
     let (arg_val, arg_ty) = codegen_expr::emit_operand_typed(ctx, operand);
     // If it's already a { ptr, i64 }, return as-is
     if string_eq_str(arg_ty.as_str(), "{ ptr, i64 }") {
-        return arg_val;
+        return codegen_ctx::CgName::Str(arg_val);
     }
     // Otherwise it's a ptr — load the { ptr, i64 } from it
-    let loaded = ctx.fresh_temp();
-    ctx.emit_load(loaded.as_str(), "{ ptr, i64 }", arg_val.as_str());
+    let loaded = ctx.fresh_temp_cg();
+    ctx.emit_load_cg(&loaded, "{ ptr, i64 }", arg_val.as_str());
     loaded
 }
 
@@ -1839,7 +1872,7 @@ fn emit_str_len_call(
     // Emit: %result = call i64 @str_len({ ptr, i64 } %str_val)
     let result = ctx.fresh_temp_cg();
     ctx.begin_call(Option::Some(&result), "i64", "@str_len");
-    ctx.call_arg_str(true, "{ ptr, i64 }", str_val.as_str());
+    ctx.call_arg_cg(true, "{ ptr, i64 }", &str_val);
     ctx.end_call();
 
     // Store result to destination
@@ -1878,8 +1911,8 @@ fn emit_str_eq_call(
     // Emit: %result = call i1 @str_eq({ ptr, i64 } %a, { ptr, i64 } %b)
     let result = ctx.fresh_temp_cg();
     ctx.begin_call(Option::Some(&result), "i1", "@str_eq");
-    ctx.call_arg_str(true, "{ ptr, i64 }", str_a.as_str());
-    ctx.call_arg_str(false, "{ ptr, i64 }", str_b.as_str());
+    ctx.call_arg_cg(true, "{ ptr, i64 }", &str_a);
+    ctx.call_arg_cg(false, "{ ptr, i64 }", &str_b);
     ctx.end_call();
 
     // Store result to destination
@@ -1918,8 +1951,8 @@ fn emit_str_concat_call(
     // Emit: %result = call { ptr, i64 } @str_concat({ ptr, i64 } %a, { ptr, i64 } %b)
     let result = ctx.fresh_temp_cg();
     ctx.begin_call(Option::Some(&result), "{ ptr, i64 }", "@str_concat");
-    ctx.call_arg_str(true, "{ ptr, i64 }", str_a.as_str());
-    ctx.call_arg_str(false, "{ ptr, i64 }", str_b.as_str());
+    ctx.call_arg_cg(true, "{ ptr, i64 }", &str_a);
+    ctx.call_arg_cg(false, "{ ptr, i64 }", &str_b);
     ctx.end_call();
 
     // Store result to destination
