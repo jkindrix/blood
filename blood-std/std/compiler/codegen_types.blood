@@ -55,6 +55,44 @@ impl TypeLayout {
 // Type to LLVM IR Conversion
 // ============================================================
 
+/// Fast path: returns a static &str for common LLVM types without String allocation.
+/// Returns None for compound types (tuples, arrays, ADTs, ranges) that need dynamic construction.
+pub fn type_to_llvm_fast(ty: &hir_ty::Type) -> Option<&str> {
+    match &ty.kind {
+        &hir_ty::TypeKind::Primitive(ref prim) => {
+            match prim {
+                &hir_ty::PrimitiveTy::Bool => Option::Some("i1"),
+                &hir_ty::PrimitiveTy::Char => Option::Some("i32"),
+                &hir_ty::PrimitiveTy::I8 => Option::Some("i8"),
+                &hir_ty::PrimitiveTy::I16 => Option::Some("i16"),
+                &hir_ty::PrimitiveTy::I32 => Option::Some("i32"),
+                &hir_ty::PrimitiveTy::I64 => Option::Some("i64"),
+                &hir_ty::PrimitiveTy::I128 => Option::Some("i128"),
+                &hir_ty::PrimitiveTy::Isize => Option::Some("i64"),
+                &hir_ty::PrimitiveTy::U8 => Option::Some("i8"),
+                &hir_ty::PrimitiveTy::U16 => Option::Some("i16"),
+                &hir_ty::PrimitiveTy::U32 => Option::Some("i32"),
+                &hir_ty::PrimitiveTy::U64 => Option::Some("i64"),
+                &hir_ty::PrimitiveTy::U128 => Option::Some("i128"),
+                &hir_ty::PrimitiveTy::Usize => Option::Some("i64"),
+                &hir_ty::PrimitiveTy::F32 => Option::Some("float"),
+                &hir_ty::PrimitiveTy::F64 => Option::Some("double"),
+                &hir_ty::PrimitiveTy::Str => Option::Some("{ ptr, i64 }"),
+            }
+        }
+        &hir_ty::TypeKind::Never => Option::Some("void"),
+        &hir_ty::TypeKind::Ref { inner: _, mutable: _ } => Option::Some("ptr"),
+        &hir_ty::TypeKind::Ptr { inner: _, mutable: _ } => Option::Some("ptr"),
+        &hir_ty::TypeKind::Fn { params: _, ret: _, effects: _ } => Option::Some("ptr"),
+        &hir_ty::TypeKind::Closure { def_id: _, params: _, ret: _ } => Option::Some("ptr"),
+        &hir_ty::TypeKind::Infer(_) => Option::Some("i64"),
+        &hir_ty::TypeKind::Record { fields: _, row_var: _ } => Option::Some("ptr"),
+        &hir_ty::TypeKind::Forall { params: _, body: _ } => Option::Some("ptr"),
+        &hir_ty::TypeKind::Error => Option::Some("i64"),
+        _ => Option::None,
+    }
+}
+
 /// Converts an HIR type to its LLVM IR representation.
 pub fn type_to_llvm(ty: &hir_ty::Type) -> String {
     match &ty.kind {

@@ -15,6 +15,24 @@ mod codegen_types;
 mod hashmap;
 
 // ============================================================
+// Codegen Name (CgName) — Zero-Allocation Value Names
+// ============================================================
+
+/// A codegen value name that can be written to the output without heap allocation.
+/// Instead of creating String objects for "%tmp42" or "label7", we store the
+/// prefix type and integer, writing directly to the output buffer on demand.
+pub enum CgName {
+    /// %tmpN — SSA temporary value
+    Temp(u32),
+    /// %_N — local alloca name
+    Local(u32),
+    /// labelN — branch label
+    Label(u32),
+    /// bbN — MIR basic block label
+    Block(u32),
+}
+
+// ============================================================
 // ADT Layout Types
 // ============================================================
 
@@ -408,6 +426,26 @@ impl CodegenCtx {
         Option::None
     }
 
+    /// Gets a reference to a def name. Zero allocation.
+    /// Returns None if not found.
+    pub fn lookup_def_name_ref(self: &CodegenCtx, def_id: u32) -> Option<&String> {
+        match self.def_names_hash.get(def_id as u64) {
+            Option::Some(idx) => {
+                return Option::Some(&self.def_names[idx as usize].name);
+            }
+            Option::None => {}
+        }
+        // Fallback: linear scan
+        let mut i: usize = 0;
+        while i < self.def_names.len() {
+            if self.def_names[i].def_id == def_id {
+                return Option::Some(&self.def_names[i].name);
+            }
+            i = i + 1;
+        }
+        Option::None
+    }
+
     /// Registers LLVM function signature for a compiled function (keyed by def_id).
     pub fn register_fn_signature(self: &mut CodegenCtx, def_id: u32, param_types: Vec<String>, return_type: String) {
         let idx = self.fn_signatures.len() as u32;
@@ -601,6 +639,52 @@ impl CodegenCtx {
         }
     }
 
+    /// Writes a u64 as decimal digits directly to the output. No String allocation.
+    pub fn write_u64(self: &mut CodegenCtx, n: u64) {
+        if n == 0 {
+            self.output.push('0');
+            return;
+        }
+        // Find the highest power of 10 <= n
+        let mut divisor: u64 = 1;
+        let mut temp: u64 = n;
+        while temp >= 10 {
+            divisor = divisor * 10;
+            temp = temp / 10;
+        }
+        // Write digits from most significant to least
+        let mut d: u64 = divisor;
+        while d > 0 {
+            let digit: u64 = (n / d) % 10;
+            let d32: u32 = digit as u32;
+            let ch: char = (48u32 + d32) as char;
+            self.output.push(ch);
+            d = d / 10;
+        }
+    }
+
+    /// Writes a CgName to the output without allocating any String.
+    pub fn write_cgname(self: &mut CodegenCtx, name: &CgName) {
+        match name {
+            &CgName::Temp(n) => {
+                self.write("%tmp");
+                self.write_u64(n as u64);
+            }
+            &CgName::Local(n) => {
+                self.write("%_");
+                self.write_u64(n as u64);
+            }
+            &CgName::Label(n) => {
+                self.write("label");
+                self.write_u64(n as u64);
+            }
+            &CgName::Block(n) => {
+                self.write("bb");
+                self.write_u64(n as u64);
+            }
+        }
+    }
+
     // ======== Buffered File I/O ========
 
     /// Sets the output file path for buffered streaming writes.
@@ -622,6 +706,31 @@ impl CodegenCtx {
         if self.write_buffer.len() > 0 {
             file_append_string(self.output_path.as_str(), self.write_buffer.as_str());
             self.write_buffer = String::new();
+        }
+    }
+
+    /// Writes an HIR type as LLVM IR directly to the output buffer.
+    /// Uses the fast path (no String allocation) for common types,
+    /// falls back to type_to_llvm for compound types.
+    pub fn write_type(self: &mut CodegenCtx, ty: &hir_ty::Type) {
+        match codegen_types::type_to_llvm_fast(ty) {
+            Option::Some(s) => self.write(s),
+            Option::None => {
+                let s = codegen_types::type_to_llvm(ty);
+                self.write(s.as_str());
+            }
+        }
+    }
+
+    /// Writes an HIR type as LLVM IR directly to the output buffer,
+    /// using ADT registry lookups. No String allocation for common types.
+    pub fn write_type_with_ctx(self: &mut CodegenCtx, ty: &hir_ty::Type) {
+        match &ty.kind {
+            &hir_ty::TypeKind::Adt { def_id, args: _ } => {
+                let s = self.adt_llvm_type(def_id.index);
+                self.write(s.as_str());
+            }
+            _ => self.write_type(ty),
         }
     }
 
@@ -647,6 +756,30 @@ impl CodegenCtx {
         name
     }
 
+    /// Generates a new unique temporary CgName. Zero allocation.
+    pub fn fresh_temp_cg(self: &mut CodegenCtx) -> CgName {
+        let n = self.value_counter;
+        self.value_counter = self.value_counter + 1;
+        CgName::Temp(n)
+    }
+
+    /// Generates a new unique label CgName. Zero allocation.
+    pub fn fresh_label_cg(self: &mut CodegenCtx) -> CgName {
+        let n = self.label_counter;
+        self.label_counter = self.label_counter + 1;
+        CgName::Label(n)
+    }
+
+    /// Returns a CgName for a basic block label. Zero allocation.
+    pub fn block_label_cg(self: &CodegenCtx, block: mir_def::BasicBlockId) -> CgName {
+        CgName::Block(block.index)
+    }
+
+    /// Returns a CgName for a MIR local alloca. Zero allocation.
+    pub fn local_cg(self: &CodegenCtx, local: mir_def::MirLocalId) -> CgName {
+        CgName::Local(local.index)
+    }
+
     /// Gets the LLVM name for a MIR local.
     pub fn local_name(self: &CodegenCtx, local: mir_def::MirLocalId) -> String {
         // Fast path: hash lookup
@@ -661,6 +794,18 @@ impl CodegenCtx {
         let num_str = codegen_types::format_u64(local.index as u64);
         name.push_str(num_str.as_str());
         name
+    }
+
+    /// Gets a reference to the local's LLVM name. Zero allocation.
+    /// Returns None if the local has no registered name (use local_cg() for %_N fallback).
+    pub fn local_name_ref(self: &CodegenCtx, local: mir_def::MirLocalId) -> Option<&String> {
+        match self.local_names_hash.get(local.index as u64) {
+            Option::Some(idx) => {
+                return Option::Some(&self.local_names[idx as usize].name);
+            }
+            Option::None => {}
+        }
+        Option::None
     }
 
     /// Registers a local with its LLVM name.
@@ -694,6 +839,18 @@ impl CodegenCtx {
         }
         // Fallback: return i64 if type not found
         common::make_string("i64")
+    }
+
+    /// Gets a reference to the local's LLVM type string. Zero allocation.
+    /// Returns None if the local has no registered type.
+    pub fn get_local_type_ref(self: &CodegenCtx, local: mir_def::MirLocalId) -> Option<&String> {
+        match self.local_types_hash.get(local.index as u64) {
+            Option::Some(idx) => {
+                return Option::Some(&self.local_types[idx as usize].llvm_type);
+            }
+            Option::None => {}
+        }
+        Option::None
     }
 
     /// Registers a local with its signedness (true = signed, false = unsigned).
@@ -1439,6 +1596,437 @@ impl CodegenCtx {
         self.write_indent();
         self.write("]\n");
     }
+    // ======== CgName-Based Emit Methods (Zero Allocation) ========
+
+    /// Emits an alloca instruction using CgName for result.
+    pub fn emit_alloca_cg(self: &mut CodegenCtx, result: &CgName, ty: &str) {
+        self.write_indent();
+        self.write_cgname(result);
+        self.write(" = alloca ");
+        self.write(ty);
+        self.write("\n");
+    }
+
+    /// Emits a load instruction using CgName for result and &str for ptr.
+    pub fn emit_load_cg(self: &mut CodegenCtx, result: &CgName, ty: &str, ptr: &str) {
+        self.write_indent();
+        self.write_cgname(result);
+        self.write(" = load ");
+        self.write(ty);
+        self.write(", ptr ");
+        self.write(ptr);
+        self.write("\n");
+    }
+
+    /// Emits a load instruction using CgName for both result and ptr.
+    pub fn emit_load_cg2(self: &mut CodegenCtx, result: &CgName, ty: &str, ptr: &CgName) {
+        self.write_indent();
+        self.write_cgname(result);
+        self.write(" = load ");
+        self.write(ty);
+        self.write(", ptr ");
+        self.write_cgname(ptr);
+        self.write("\n");
+    }
+
+    /// Emits a store instruction using CgName for val.
+    pub fn emit_store_cg(self: &mut CodegenCtx, ty: &str, val: &CgName, ptr: &str) {
+        self.write_indent();
+        self.write("store ");
+        self.write(ty);
+        self.write(" ");
+        self.write_cgname(val);
+        self.write(", ptr ");
+        self.write(ptr);
+        self.write("\n");
+    }
+
+    /// Emits a store instruction using CgName for both val and ptr.
+    pub fn emit_store_cg2(self: &mut CodegenCtx, ty: &str, val: &CgName, ptr: &CgName) {
+        self.write_indent();
+        self.write("store ");
+        self.write(ty);
+        self.write(" ");
+        self.write_cgname(val);
+        self.write(", ptr ");
+        self.write_cgname(ptr);
+        self.write("\n");
+    }
+
+    /// Emits a store with &str val and CgName ptr.
+    pub fn emit_store_str_cg(self: &mut CodegenCtx, ty: &str, val: &str, ptr: &CgName) {
+        self.write_indent();
+        self.write("store ");
+        self.write(ty);
+        self.write(" ");
+        self.write(val);
+        self.write(", ptr ");
+        self.write_cgname(ptr);
+        self.write("\n");
+    }
+
+    /// Emits a binary operation using CgName for result.
+    pub fn emit_binop_cg(
+        self: &mut CodegenCtx,
+        result: &CgName,
+        opcode: &str,
+        ty: &str,
+        left: &str,
+        right: &str,
+    ) {
+        self.write_indent();
+        self.write_cgname(result);
+        self.write(" = ");
+        self.write(opcode);
+        self.write(" ");
+        self.write(ty);
+        self.write(" ");
+        self.write(left);
+        self.write(", ");
+        self.write(right);
+        self.write("\n");
+    }
+
+    /// Emits a binary operation using CgName for result and both operands.
+    pub fn emit_binop_cg3(
+        self: &mut CodegenCtx,
+        result: &CgName,
+        opcode: &str,
+        ty: &str,
+        left: &CgName,
+        right: &CgName,
+    ) {
+        self.write_indent();
+        self.write_cgname(result);
+        self.write(" = ");
+        self.write(opcode);
+        self.write(" ");
+        self.write(ty);
+        self.write(" ");
+        self.write_cgname(left);
+        self.write(", ");
+        self.write_cgname(right);
+        self.write("\n");
+    }
+
+    /// Emits an icmp instruction using CgName for result.
+    pub fn emit_icmp_cg(
+        self: &mut CodegenCtx,
+        result: &CgName,
+        cond: &str,
+        ty: &str,
+        left: &str,
+        right: &str,
+    ) {
+        self.write_indent();
+        self.write_cgname(result);
+        self.write(" = icmp ");
+        self.write(cond);
+        self.write(" ");
+        self.write(ty);
+        self.write(" ");
+        self.write(left);
+        self.write(", ");
+        self.write(right);
+        self.write("\n");
+    }
+
+    /// Emits an icmp instruction using CgName for result and left operand.
+    pub fn emit_icmp_cg2(
+        self: &mut CodegenCtx,
+        result: &CgName,
+        cond: &str,
+        ty: &str,
+        left: &CgName,
+        right: &str,
+    ) {
+        self.write_indent();
+        self.write_cgname(result);
+        self.write(" = icmp ");
+        self.write(cond);
+        self.write(" ");
+        self.write(ty);
+        self.write(" ");
+        self.write_cgname(left);
+        self.write(", ");
+        self.write(right);
+        self.write("\n");
+    }
+
+    /// Emits an fcmp instruction using CgName for result.
+    pub fn emit_fcmp_cg(
+        self: &mut CodegenCtx,
+        result: &CgName,
+        cond: &str,
+        ty: &str,
+        left: &str,
+        right: &str,
+    ) {
+        self.write_indent();
+        self.write_cgname(result);
+        self.write(" = fcmp ");
+        self.write(cond);
+        self.write(" ");
+        self.write(ty);
+        self.write(" ");
+        self.write(left);
+        self.write(", ");
+        self.write(right);
+        self.write("\n");
+    }
+
+    /// Emits a cast instruction using CgName for result.
+    pub fn emit_cast_cg(
+        self: &mut CodegenCtx,
+        result: &CgName,
+        opcode: &str,
+        src_ty: &str,
+        val: &str,
+        tgt_ty: &str,
+    ) {
+        self.write_indent();
+        self.write_cgname(result);
+        self.write(" = ");
+        self.write(opcode);
+        self.write(" ");
+        self.write(src_ty);
+        self.write(" ");
+        self.write(val);
+        self.write(" to ");
+        self.write(tgt_ty);
+        self.write("\n");
+    }
+
+    /// Emits a cast with CgName result and CgName val.
+    pub fn emit_cast_cg2(
+        self: &mut CodegenCtx,
+        result: &CgName,
+        opcode: &str,
+        src_ty: &str,
+        val: &CgName,
+        tgt_ty: &str,
+    ) {
+        self.write_indent();
+        self.write_cgname(result);
+        self.write(" = ");
+        self.write(opcode);
+        self.write(" ");
+        self.write(src_ty);
+        self.write(" ");
+        self.write_cgname(val);
+        self.write(" to ");
+        self.write(tgt_ty);
+        self.write("\n");
+    }
+
+    /// Emits a br instruction using CgName for label.
+    pub fn emit_br_cg(self: &mut CodegenCtx, label: &CgName) {
+        self.write_indent();
+        self.write("br label %");
+        self.write_cgname(label);
+        self.write("\n");
+    }
+
+    /// Emits a conditional br using CgName for condition and labels.
+    pub fn emit_cond_br_cg(
+        self: &mut CodegenCtx,
+        cond: &CgName,
+        true_label: &CgName,
+        false_label: &CgName,
+    ) {
+        self.write_indent();
+        self.write("br i1 ");
+        self.write_cgname(cond);
+        self.write(", label %");
+        self.write_cgname(true_label);
+        self.write(", label %");
+        self.write_cgname(false_label);
+        self.write("\n");
+    }
+
+    /// Emits a conditional br with &str cond and CgName labels.
+    pub fn emit_cond_br_str_cg(
+        self: &mut CodegenCtx,
+        cond: &str,
+        true_label: &CgName,
+        false_label: &CgName,
+    ) {
+        self.write_indent();
+        self.write("br i1 ");
+        self.write(cond);
+        self.write(", label %");
+        self.write_cgname(true_label);
+        self.write(", label %");
+        self.write_cgname(false_label);
+        self.write("\n");
+    }
+
+    /// Emits a ret instruction using CgName for val.
+    pub fn emit_ret_cg(self: &mut CodegenCtx, ty: &str, val: &CgName) {
+        self.write_indent();
+        self.write("ret ");
+        self.write(ty);
+        self.write(" ");
+        self.write_cgname(val);
+        self.write("\n");
+    }
+
+    /// Emits a label using CgName.
+    pub fn emit_label_cg(self: &mut CodegenCtx, label: &CgName) {
+        self.write_cgname(label);
+        self.write(":\n");
+    }
+
+    // ======== Call/GEP/Switch Builder APIs (Zero Allocation) ========
+
+    /// Begins a call instruction. Follow with call_arg_* calls and end_call().
+    pub fn begin_call(self: &mut CodegenCtx, result: Option<&CgName>, ret_ty: &str, func: &str) {
+        self.write_indent();
+        match result {
+            Option::Some(r) => {
+                self.write_cgname(r);
+                self.write(" = ");
+            }
+            Option::None => {}
+        }
+        self.write("call ");
+        self.write(ret_ty);
+        self.write(" ");
+        self.write(func);
+        self.write("(");
+    }
+
+    /// Begins a call with &str result (for rare cases where result is already a string).
+    pub fn begin_call_str(self: &mut CodegenCtx, result: Option<&str>, ret_ty: &str, func: &str) {
+        self.write_indent();
+        match result {
+            Option::Some(r) => {
+                self.write(r);
+                self.write(" = ");
+            }
+            Option::None => {}
+        }
+        self.write("call ");
+        self.write(ret_ty);
+        self.write(" ");
+        self.write(func);
+        self.write("(");
+    }
+
+    /// Writes a call argument with CgName value.
+    pub fn call_arg_cg(self: &mut CodegenCtx, first: bool, ty: &str, val: &CgName) {
+        if !first { self.write(", "); }
+        self.write(ty);
+        self.write(" ");
+        self.write_cgname(val);
+    }
+
+    /// Writes a call argument with &str value.
+    pub fn call_arg_str(self: &mut CodegenCtx, first: bool, ty: &str, val: &str) {
+        if !first { self.write(", "); }
+        self.write(ty);
+        self.write(" ");
+        self.write(val);
+    }
+
+    /// Ends a call instruction.
+    pub fn end_call(self: &mut CodegenCtx) {
+        self.write(")\n");
+    }
+
+    /// Begins a GEP instruction with CgName result and ptr.
+    pub fn begin_gep(self: &mut CodegenCtx, result: &CgName, base_ty: &str, ptr: &CgName) {
+        self.write_indent();
+        self.write_cgname(result);
+        self.write(" = getelementptr ");
+        self.write(base_ty);
+        self.write(", ptr ");
+        self.write_cgname(ptr);
+    }
+
+    /// Begins a GEP instruction with CgName result and &str ptr.
+    pub fn begin_gep_str(self: &mut CodegenCtx, result: &CgName, base_ty: &str, ptr: &str) {
+        self.write_indent();
+        self.write_cgname(result);
+        self.write(" = getelementptr ");
+        self.write(base_ty);
+        self.write(", ptr ");
+        self.write(ptr);
+    }
+
+    /// Writes a GEP pointer offset index (first index, i64 constant).
+    pub fn gep_ptr_offset(self: &mut CodegenCtx, offset: u64) {
+        self.write(", i64 ");
+        self.write_u64(offset);
+    }
+
+    /// Writes a GEP struct field index (i32 constant).
+    pub fn gep_field(self: &mut CodegenCtx, field_idx: u32) {
+        self.write(", i32 ");
+        self.write_u64(field_idx as u64);
+    }
+
+    /// Writes a GEP array index from a CgName (i64 SSA value).
+    pub fn gep_index_cg(self: &mut CodegenCtx, val: &CgName) {
+        self.write(", i64 ");
+        self.write_cgname(val);
+    }
+
+    /// Writes a GEP index from a &str value.
+    pub fn gep_index_str(self: &mut CodegenCtx, ty: &str, val: &str) {
+        self.write(", ");
+        self.write(ty);
+        self.write(" ");
+        self.write(val);
+    }
+
+    /// Ends a GEP instruction.
+    pub fn end_gep(self: &mut CodegenCtx) {
+        self.write("\n");
+    }
+
+    /// Begins a switch instruction with CgName val and default label.
+    pub fn begin_switch(self: &mut CodegenCtx, ty: &str, val: &CgName, default_label: &CgName) {
+        self.write_indent();
+        self.write("switch ");
+        self.write(ty);
+        self.write(" ");
+        self.write_cgname(val);
+        self.write(", label %");
+        self.write_cgname(default_label);
+        self.write(" [\n");
+        self.indent();
+    }
+
+    /// Writes a switch case with &str value and CgName label.
+    pub fn switch_case(self: &mut CodegenCtx, ty: &str, case_val: &str, label: &CgName) {
+        self.write_indent();
+        self.write(ty);
+        self.write(" ");
+        self.write(case_val);
+        self.write(", label %");
+        self.write_cgname(label);
+        self.write("\n");
+    }
+
+    /// Writes a switch case with u64 value and CgName label.
+    pub fn switch_case_u64(self: &mut CodegenCtx, ty: &str, case_val: u64, label: &CgName) {
+        self.write_indent();
+        self.write(ty);
+        self.write(" ");
+        self.write_u64(case_val);
+        self.write(", label %");
+        self.write_cgname(label);
+        self.write("\n");
+    }
+
+    /// Ends a switch instruction.
+    pub fn end_switch(self: &mut CodegenCtx) {
+        self.dedent();
+        self.write_indent();
+        self.write("]\n");
+    }
+
     // ======== Worker Context for Parallel Codegen ========
 
     /// Creates an isolated worker context that clones read-only state from the parent.
