@@ -1226,6 +1226,135 @@ fn record_field_list_to_vec(id: RecordFieldListId) -> Vec<hir_ty::RecordField> {
 }
 
 // ============================================================
+// TyId Query Helpers (zero-allocation type inspection)
+// ============================================================
+
+/// Unwraps a Ref or Ptr type to get the inner TyId. Returns the input unchanged
+/// if it is not a Ref or Ptr. No Type tree reconstruction.
+pub fn unwrap_ref_id(id: TyId) -> TyId {
+    let kind = type_interner().get(id);
+    match kind {
+        &InternedTypeKind::Ref { inner, mutable: _ } => inner,
+        &InternedTypeKind::Ptr { inner, mutable: _ } => inner,
+        _ => id,
+    }
+}
+
+/// Applies a Deref projection: Ref/Ptr → inner, Adt with 1 arg (Box-like) → arg[0].
+/// Returns None if the type cannot be deref'd. No Type tree reconstruction.
+pub fn deref_id(id: TyId) -> Option<TyId> {
+    let kind = type_interner().get(id);
+    match kind {
+        &InternedTypeKind::Ref { inner, mutable: _ } => Option::Some(inner),
+        &InternedTypeKind::Ptr { inner, mutable: _ } => Option::Some(inner),
+        &InternedTypeKind::Adt { def_id: _, args } => {
+            let interner = type_interner();
+            let len = interner.ty_list_len(args);
+            if len == 1 {
+                Option::Some(interner.get_ty_list_element(args, 0))
+            } else {
+                Option::None
+            }
+        }
+        _ => Option::None,
+    }
+}
+
+/// Resolves the ADT def_id from a TyId, walking through Ref/Ptr wrappers.
+/// Returns None if the type (after unwrapping) is not an Adt.
+pub fn resolve_adt_def_id_id(id: TyId) -> Option<u32> {
+    let kind = type_interner().get(id);
+    match kind {
+        &InternedTypeKind::Adt { def_id, args: _ } => Option::Some(def_id.index),
+        &InternedTypeKind::Ref { inner, mutable: _ } => resolve_adt_def_id_id(inner),
+        &InternedTypeKind::Ptr { inner, mutable: _ } => resolve_adt_def_id_id(inner),
+        _ => Option::None,
+    }
+}
+
+/// Returns true if the TyId is a Ref type.
+pub fn is_ref_id(id: TyId) -> bool {
+    let kind = type_interner().get(id);
+    match kind {
+        &InternedTypeKind::Ref { inner: _, mutable: _ } => true,
+        _ => false,
+    }
+}
+
+/// Returns true if the TyId is an Adt type.
+pub fn is_adt_id(id: TyId) -> bool {
+    let kind = type_interner().get(id);
+    match kind {
+        &InternedTypeKind::Adt { def_id: _, args: _ } => true,
+        _ => false,
+    }
+}
+
+/// Returns true if the TyId is a Fn type (function pointer / fn def).
+pub fn is_fn_id(id: TyId) -> bool {
+    let kind = type_interner().get(id);
+    match kind {
+        &InternedTypeKind::Fn { params: _, ret: _, effects: _ } => true,
+        _ => false,
+    }
+}
+
+/// Gets the def_id from an Adt type. Returns None if not Adt.
+pub fn get_adt_def_id(id: TyId) -> Option<hir_def::DefId> {
+    let kind = type_interner().get(id);
+    match kind {
+        &InternedTypeKind::Adt { def_id, args: _ } => Option::Some(def_id),
+        _ => Option::None,
+    }
+}
+
+/// Gets the type args list from an Adt type. Returns None if not Adt.
+pub fn get_adt_args(id: TyId) -> Option<TyListId> {
+    let kind = type_interner().get(id);
+    match kind {
+        &InternedTypeKind::Adt { def_id: _, args } => Option::Some(args),
+        _ => Option::None,
+    }
+}
+
+/// Gets the inner TyId from a Ref type. Returns None if not Ref.
+pub fn get_ref_inner(id: TyId) -> Option<TyId> {
+    let kind = type_interner().get(id);
+    match kind {
+        &InternedTypeKind::Ref { inner, mutable: _ } => Option::Some(inner),
+        _ => Option::None,
+    }
+}
+
+/// Returns true if the TyId is a Param type.
+pub fn is_param_id(id: TyId) -> bool {
+    let kind = type_interner().get(id);
+    match kind {
+        &InternedTypeKind::Param(_) => true,
+        _ => false,
+    }
+}
+
+/// Returns true if the TyId is a Param or Infer type (unresolved generic).
+pub fn is_param_or_infer_id(id: TyId) -> bool {
+    let kind = type_interner().get(id);
+    match kind {
+        &InternedTypeKind::Param(_) => true,
+        &InternedTypeKind::Infer(_) => true,
+        _ => false,
+    }
+}
+
+/// Returns true if the TyId is a Closure type.
+pub fn is_closure_id(id: TyId) -> bool {
+    let kind = type_interner().get(id);
+    match kind {
+        &InternedTypeKind::Closure { def_id: _, params: _, ret: _ } => true,
+        _ => false,
+    }
+}
+
+// ============================================================
 // Global Type Interner (Singleton)
 // ============================================================
 

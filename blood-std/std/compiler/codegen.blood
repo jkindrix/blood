@@ -22,6 +22,7 @@ mod codegen_term;
 mod mir_escape;
 mod hashmap;
 mod type_intern;
+mod codegen_size;
 
 // ============================================================
 // Module Generation
@@ -227,8 +228,7 @@ pub fn generate_function_with_ctx(
         let ty = if ctx.is_handler_state_ptr(local_id) {
             common::make_string("ptr")
         } else {
-            let local_hir_ty = type_intern::ty_id_to_type(local.ty);
-            codegen_stmt::type_to_llvm_with_ctx(ctx, &local_hir_ty)
+            codegen_size::type_to_llvm_with_ctx_id(ctx, local.ty)
         };
         let mut arg_name = common::make_string("%arg");
         let idx_str = codegen_types::format_u64((p - 1) as u64);
@@ -240,8 +240,7 @@ pub fn generate_function_with_ctx(
     // Get return type (local _0)
     // Normalize {} (empty struct / unit) to void for LLVM function signatures
     let ret_ty_raw = if body.locals.len() > 0 {
-        let ret_hir_ty = type_intern::ty_id_to_type(body.locals[0].ty);
-        codegen_stmt::type_to_llvm_with_ctx(ctx, &ret_hir_ty)
+        codegen_size::type_to_llvm_with_ctx_id(ctx, body.locals[0].ty)
     } else {
         common::make_string("void")
     };
@@ -530,8 +529,7 @@ fn build_struct_layout_with_ctx(
                 if fi > 0 {
                     llvm_type.push_str(", ");
                 }
-                let field_ty_hir = type_intern::ty_id_to_type(struct_fields[fi].ty);
-                let field_ty = codegen_stmt::type_to_llvm_with_ctx(ctx, &field_ty_hir);
+                let field_ty = codegen_size::type_to_llvm_with_ctx_id(ctx, struct_fields[fi].ty);
                 llvm_type.push_str(field_ty.as_str());
                 // Store HIR type for indexing element size calculation
                 fields.push(codegen_ctx::AdtFieldInfo {
@@ -547,8 +545,7 @@ fn build_struct_layout_with_ctx(
                 if fi > 0 {
                     llvm_type.push_str(", ");
                 }
-                let tuple_field_hir = type_intern::ty_id_to_type(type_intern::TyId::new(tuple_fields[fi].index));
-                let field_ty = codegen_stmt::type_to_llvm_with_ctx(ctx, &tuple_field_hir);
+                let field_ty = codegen_size::type_to_llvm_with_ctx_id(ctx, type_intern::TyId::new(tuple_fields[fi].index));
                 llvm_type.push_str(field_ty.as_str());
                 // Store HIR type for indexing element size calculation
                 fields.push(codegen_ctx::AdtFieldInfo {
@@ -604,9 +601,9 @@ fn build_enum_layout_with_ctx(
                     if fi > 0 {
                         pt.push_str(", ");
                     }
-                    let tuple_field_hir = type_intern::ty_id_to_type(type_intern::TyId::new(tuple_fields[fi].index));
-                    let field_ty = codegen_stmt::type_to_llvm_with_ctx(ctx, &tuple_field_hir);
-                    payload_size = payload_size + codegen_stmt::type_size_with_ctx(ctx, &tuple_field_hir);
+                    let tuple_ty_id = type_intern::TyId::new(tuple_fields[fi].index);
+                    let field_ty = codegen_size::type_to_llvm_with_ctx_id(ctx, tuple_ty_id);
+                    payload_size = payload_size + codegen_size::type_size_with_ctx_id(ctx, tuple_ty_id);
                     pt.push_str(field_ty.as_str());
                     fields.push(codegen_ctx::AdtFieldInfo {
                         llvm_type: field_ty,
@@ -626,9 +623,8 @@ fn build_enum_layout_with_ctx(
                     if fi > 0 {
                         pt.push_str(", ");
                     }
-                    let record_field_hir = type_intern::ty_id_to_type(record_fields[fi].ty);
-                    let field_ty = codegen_stmt::type_to_llvm_with_ctx(ctx, &record_field_hir);
-                    payload_size = payload_size + codegen_stmt::type_size_with_ctx(ctx, &record_field_hir);
+                    let field_ty = codegen_size::type_to_llvm_with_ctx_id(ctx, record_fields[fi].ty);
+                    payload_size = payload_size + codegen_size::type_size_with_ctx_id(ctx, record_fields[fi].ty);
                     pt.push_str(field_ty.as_str());
                     fields.push(codegen_ctx::AdtFieldInfo {
                         llvm_type: field_ty,

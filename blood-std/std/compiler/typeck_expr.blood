@@ -1278,9 +1278,9 @@ fn infer_index(
     // Index must be an integer type. Accept any integer (signed or unsigned),
     // matching blood-rust's behavior. Default inference variables to usize.
     let resolved_idx = checker.resolve(idx_ty);
-    let resolved_idx_hir = type_intern::ty_id_to_type(resolved_idx);
-    match &resolved_idx_hir.kind {
-        &hir_ty::TypeKind::Primitive(prim) => {
+    let resolved_idx_kind = type_intern::type_interner().get(resolved_idx);
+    match resolved_idx_kind {
+        &type_intern::InternedTypeKind::Primitive(prim) => {
             match prim {
                 hir_ty::PrimitiveTy::I8 => {}
                 hir_ty::PrimitiveTy::I16 => {}
@@ -1299,11 +1299,11 @@ fn infer_index(
                 }
             }
         }
-        &hir_ty::TypeKind::Infer(_) => {
+        &type_intern::InternedTypeKind::Infer(_) => {
             let usize_ty = type_intern::CommonTypes::usize_ty();
             checker.unify(idx_ty, usize_ty, idx.span);
         }
-        &hir_ty::TypeKind::Error => {}
+        &type_intern::InternedTypeKind::Error => {}
         _ => {
             checker.error(typeck::TypeErrorKind::TypeMismatch, idx.span);
         }

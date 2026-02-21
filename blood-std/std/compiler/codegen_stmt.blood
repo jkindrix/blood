@@ -93,15 +93,14 @@ pub fn emit_statement(
             let mut drop_size: u64 = 0;
             match ctx.get_local_hir_type(place.local) {
                 Option::Some(ty_id) => {
-                    let hir_type = type_intern::ty_id_to_type(ty_id);
-                    match &hir_type.kind {
-                        &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => {
+                    match type_intern::get_ref_inner(ty_id) {
+                        Option::Some(inner_id) => {
                             if ctx.is_region_allocated(place.local) {
                                 is_ref_region = true;
-                                drop_size = type_size_with_ctx(ctx, inner.as_ref());
+                                drop_size = codegen_size::type_size_with_ctx_id(ctx, inner_id);
                             }
                         }
-                        _ => {}
+                        Option::None => {}
                     }
                 }
                 Option::None => {}
@@ -141,9 +140,8 @@ pub fn emit_statement(
 
             match ctx.get_local_hir_type(place.local) {
                 Option::Some(ty_id) => {
-                    let hir_type = type_intern::ty_id_to_type(ty_id);
-                    match &hir_type.kind {
-                        &hir_ty::TypeKind::Adt { def_id, args: _ } => {
+                    match type_intern::get_adt_def_id(ty_id) {
+                        Option::Some(def_id) => {
                             match ctx.lookup_enum(def_id.index) {
                                 Option::Some(layout) => {
                                     discr_ty = clone_string(&layout.discriminant_type);
@@ -153,7 +151,7 @@ pub fn emit_statement(
                                 Option::None => {}
                             }
                         }
-                        _ => {}
+                        Option::None => {}
                     }
                 }
                 Option::None => {}
@@ -584,8 +582,7 @@ fn struct_has_param_fields(layout: &codegen_ctx::StructLayout) -> bool {
     while i < layout.fields.len() {
         match &layout.fields[i].hir_type {
             &Option::Some(ty_id) => {
-                let field_hir_ty = type_intern::ty_id_to_type(ty_id);
-                if hir_type_contains_param(&field_hir_ty) {
+                if ty_id_contains_param(ty_id) {
                     return true;
                 }
             }
@@ -596,14 +593,15 @@ fn struct_has_param_fields(layout: &codegen_ctx::StructLayout) -> bool {
     false
 }
 
-/// Checks if a HIR type is or contains a Param or Infer type.
+/// Checks if a TyId is or contains a Param or Infer type (via interner).
 /// Both Param and Infer indicate unresolved type parameters in struct definitions
 /// that need substitution with concrete type args.
-fn hir_type_contains_param(ty: &hir_ty::Type) -> bool {
-    match &ty.kind {
-        &hir_ty::TypeKind::Param(_) => true,
-        &hir_ty::TypeKind::Infer(_) => true,
-        &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => hir_type_contains_param(inner.as_ref()),
+fn ty_id_contains_param(ty_id: type_intern::TyId) -> bool {
+    let kind = type_intern::type_interner().get(ty_id);
+    match kind {
+        &type_intern::InternedTypeKind::Param(_) => true,
+        &type_intern::InternedTypeKind::Infer(_) => true,
+        &type_intern::InternedTypeKind::Ref { inner, mutable: _ } => ty_id_contains_param(inner),
         _ => false,
     }
 }
@@ -1035,19 +1033,20 @@ pub fn emit_allocas(
     while i < body.locals.len() {
         let local = &body.locals[i];
         let local_id = mir_def::MirLocalId::new(i as u32);
-        let name = ctx.local_alloca_name(local_id);
+        let name_cg = ctx.local_cg(local_id);
         // Use context-aware type resolution for correct ADT alloca sizes
-        let local_hir_ty = type_intern::ty_id_to_type(local.ty);
-        let ty = type_to_llvm_with_ctx(ctx, &local_hir_ty);
+        let ty = codegen_size::type_to_llvm_with_ctx_id(ctx, local.ty);
         // Normalize void to {} for allocas (LLVM allows alloca {} but not alloca void)
         if is_void_or_empty_type(ty.as_str()) {
-            ctx.emit_alloca(name.as_str(), "{}");
+            ctx.emit_alloca_cg(&name_cg, "{}");
         } else {
-            ctx.emit_alloca(name.as_str(), ty.as_str());
+            ctx.emit_alloca_cg(&name_cg, ty.as_str());
         }
+        let name = ctx.local_alloca_name(local_id);
         ctx.register_local(local_id, clone_string(&name));
         // Also register the type and signedness for this local
         ctx.register_local_type(local_id, clone_string(&ty));
+        let local_hir_ty = type_intern::ty_id_to_type(local.ty);
         ctx.register_local_signedness(local_id, codegen_types::is_signed(&local_hir_ty));
         // Register HIR type for ADT layout lookups during projection codegen
         ctx.register_local_hir_type(local_id, local.ty);
@@ -1068,9 +1067,9 @@ pub fn emit_allocas_with_escapes(
     while i < body.locals.len() {
         let local = &body.locals[i];
         let local_id = mir_def::MirLocalId::new(i as u32);
-        let name = ctx.local_alloca_name(local_id);
+        let name_cg = ctx.local_cg(local_id);
+        let ty_str = codegen_size::type_to_llvm_with_ctx_id(ctx, local.ty);
         let local_hir_ty = type_intern::ty_id_to_type(local.ty);
-        let ty_str = type_to_llvm_with_ctx(ctx, &local_hir_ty);
 
         // Get recommended tier from escape analysis
         // Copy types always use stack regardless of escape state
@@ -1083,20 +1082,22 @@ pub fn emit_allocas_with_escapes(
         // Handler op state local: alloca is `ptr` (holds state pointer from wrapper)
         if ctx.is_handler_state_ptr(local_id) {
             let ptr_ty = common::make_string("ptr");
-            emit_stack_local(ctx, &name, &ptr_ty);
+            emit_stack_local(ctx, &name_cg, &ptr_ty);
         } else {
             match &tier {
                 &mir_escape::MemoryTier::Stack => {
                     // Stack allocation (default path)
-                    emit_stack_local(ctx, &name, &ty_str);
+                    emit_stack_local(ctx, &name_cg, &ty_str);
                 }
                 &mir_escape::MemoryTier::Region => {
                     // Region allocation with generation tracking
+                    let name = ctx.local_alloca_name(local_id);
                     emit_region_local(ctx, &local_hir_ty, &name, local_id);
                     ctx.mark_region_allocated(local_id);
                 }
                 &mir_escape::MemoryTier::Persistent => {
                     // Persistent allocation
+                    let name = ctx.local_alloca_name(local_id);
                     emit_persistent_local(ctx, &local_hir_ty, &name);
                     ctx.mark_persistent_allocated(local_id);
                 }
@@ -1105,6 +1106,7 @@ pub fn emit_allocas_with_escapes(
 
         // Register local metadata (same for all tiers)
         // For handler state locals, register the VALUE type (not ptr) so loads use correct type.
+        let name = ctx.local_alloca_name(local_id);
         ctx.register_local(local_id, common::make_string(name.as_str()));
         ctx.register_local_type(local_id, common::make_string(ty_str.as_str()));
         ctx.register_local_signedness(local_id, codegen_types::is_signed(&local_hir_ty));
@@ -1117,13 +1119,13 @@ pub fn emit_allocas_with_escapes(
 /// Emits a stack-allocated local (alloca).
 fn emit_stack_local(
     ctx: &mut codegen_ctx::CodegenCtx,
-    name: &String,
+    name_cg: &codegen_ctx::CgName,
     ty_str: &String,
 ) {
     if is_void_or_empty_type(ty_str.as_str()) {
-        ctx.emit_alloca(name.as_str(), "{}");
+        ctx.emit_alloca_cg(name_cg, "{}");
     } else {
-        ctx.emit_alloca(name.as_str(), ty_str.as_str());
+        ctx.emit_alloca_cg(name_cg, ty_str.as_str());
     }
 }
 
@@ -1135,12 +1137,14 @@ fn emit_region_local(
     local_id: mir_def::MirLocalId,
 ) {
     // Allocate pointer slot on stack
-    ctx.emit_alloca(name.as_str(), "ptr");
+    let name_cg = ctx.local_cg(local_id);
+    ctx.emit_alloca_cg(&name_cg, "ptr");
 
     // Allocate generation slot on stack (i32)
     let mut gen_name = clone_string(name);
     gen_name.push_str("_gen");
-    ctx.emit_alloca(gen_name.as_str(), "i32");
+    let gen_name_cg = codegen_ctx::CgName::Str(clone_string(&gen_name));
+    ctx.emit_alloca_cg(&gen_name_cg, "i32");
 
     // Use blood_alloc_or_abort(size, gen_ptr) for heap allocation with
     // generation tracking. The generation value is written to the out-pointer.
@@ -1168,7 +1172,8 @@ fn emit_persistent_local(
     name: &String,
 ) {
     // Allocate pointer slot on stack for the result
-    ctx.emit_alloca(name.as_str(), "ptr");
+    let name_cg = codegen_ctx::CgName::Str(clone_string(name));
+    ctx.emit_alloca_cg(&name_cg, "ptr");
 
     // Allocate a stack slot for the out_id parameter (i64)
     // blood_persistent_alloc writes the slot ID to this address
@@ -1234,8 +1239,7 @@ pub fn emit_arg_stores(
         let local = &body.locals[i];
         let local_id = mir_def::MirLocalId::new(i as u32);
         let alloca_name = ctx.local_alloca_name(local_id);
-        let local_hir_ty = type_intern::ty_id_to_type(local.ty);
-        let ty = type_to_llvm_with_ctx(ctx, &local_hir_ty);
+        let ty = codegen_size::type_to_llvm_with_ctx_id(ctx, local.ty);
 
         // Argument name is %arg0, %arg1, etc. (i-1 because params start at local index 1)
         let mut arg_name = common::make_string("%arg");

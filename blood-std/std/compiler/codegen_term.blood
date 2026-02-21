@@ -15,6 +15,7 @@ mod codegen_ctx;
 mod codegen_expr;
 mod dump_mir;
 mod type_intern;
+mod codegen_size;
 
 // ============================================================
 // Terminator Codegen
@@ -203,20 +204,18 @@ fn emit_switch_int(
         ctx.emit_cond_br_cg(&cmp_result, &case_label, &default_label);
     } else {
         // Multi-way switch
-        let default_label = ctx.block_label(switch_targets.otherwise);
+        let default_label = ctx.block_label_cg(switch_targets.otherwise);
 
-        // Build cases vector
-        let mut cases: Vec<(String, String)> = Vec::new();
+        ctx.begin_switch_str(discr_ty.as_str(), discr_val.as_str(), &default_label);
         let mut i: usize = 0;
         while i < switch_targets.targets.len() {
             let switch_target = &switch_targets.targets[i];
             let val_str = codegen_types::format_u128(switch_target.value);
-            let label = ctx.block_label(switch_target.target);
-            cases.push((val_str, label));
+            let case_label = ctx.block_label_cg(switch_target.target);
+            ctx.switch_case(discr_ty.as_str(), val_str.as_str(), &case_label);
             i = i + 1;
         }
-
-        ctx.emit_switch(discr_ty.as_str(), discr_val.as_str(), default_label.as_str(), &cases);
+        ctx.end_switch();
     }
 }
 
@@ -464,12 +463,14 @@ fn emit_call(
 
     if is_void {
         // Void function - no return value
-        ctx.emit_call(
-            Option::None,
-            "void",
-            func_val.as_str(),
-            &llvm_args,
-        );
+        ctx.begin_call_str(Option::None, "void", func_val.as_str());
+        let mut vi: usize = 0;
+        while vi < llvm_args.len() {
+            let arg = &llvm_args[vi];
+            ctx.call_arg_str(vi == 0, arg.0.as_str(), arg.1.as_str());
+            vi = vi + 1;
+        }
+        ctx.end_call();
     } else {
         // Non-void function - capture return value
         let result = ctx.fresh_temp_cg();
@@ -1124,116 +1125,20 @@ fn is_vec_clear(func_val: &String) -> bool {
     string_eq_str(func_val.as_str(), "@vec_clear")
 }
 
-/// Extracts element type from Vec<T> HIR type.
-/// Returns the element type T if the type is Vec<T>, None otherwise.
-fn extract_vec_element_type(ty: &hir_ty::Type) -> Option<hir_ty::Type> {
-    match &ty.kind {
-        &hir_ty::TypeKind::Adt { def_id: _, ref args } => {
-            // Vec<T> has one type argument
-            if args.len() > 0 {
-                // Clone the element type
-                Option::Some(clone_type(&args[0]))
+/// Extracts element size from a Vec<T> or &Vec<T> TyId (via interner, no Type tree).
+fn extract_vec_element_size_id(ctx: &mut codegen_ctx::CodegenCtx, ty_id: type_intern::TyId) -> u64 {
+    let unwrapped = type_intern::unwrap_ref_id(ty_id);
+    match type_intern::get_adt_args(unwrapped) {
+        Option::Some(args) => {
+            let interner = type_intern::type_interner();
+            if interner.ty_list_len(args) > 0 {
+                let elem_id = interner.get_ty_list_element(args, 0);
+                codegen_size::type_size_with_ctx_id(ctx, elem_id)
             } else {
-                Option::None
+                8
             }
         }
-        &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => {
-            // Handle &Vec<T> or &mut Vec<T>
-            extract_vec_element_type(inner.as_ref())
-        }
-        _ => Option::None,
-    }
-}
-
-/// Clones a HIR type (needed because we can't move out of borrowed content).
-fn clone_type(ty: &hir_ty::Type) -> hir_ty::Type {
-    hir_ty::Type::new(clone_type_kind(&ty.kind))
-}
-
-/// Clones a HIR type kind.
-fn clone_type_kind(kind: &hir_ty::TypeKind) -> hir_ty::TypeKind {
-    match kind {
-        &hir_ty::TypeKind::Primitive(ref p) => hir_ty::TypeKind::Primitive(clone_primitive(p)),
-        &hir_ty::TypeKind::Tuple(ref elems) => {
-            let mut cloned: Vec<hir_ty::Type> = Vec::new();
-            let mut i: usize = 0;
-            while i < elems.len() {
-                cloned.push(clone_type(&elems[i]));
-                i = i + 1;
-            }
-            hir_ty::TypeKind::Tuple(cloned)
-        }
-        &hir_ty::TypeKind::Ref { ref inner, mutable } => {
-            hir_ty::TypeKind::Ref {
-                inner: Box::new(clone_type(inner.as_ref())),
-                mutable,
-            }
-        }
-        &hir_ty::TypeKind::Ptr { ref inner, mutable } => {
-            hir_ty::TypeKind::Ptr {
-                inner: Box::new(clone_type(inner.as_ref())),
-                mutable,
-            }
-        }
-        &hir_ty::TypeKind::Adt { ref def_id, ref args } => {
-            let mut cloned_args: Vec<hir_ty::Type> = Vec::new();
-            let mut i: usize = 0;
-            while i < args.len() {
-                cloned_args.push(clone_type(&args[i]));
-                i = i + 1;
-            }
-            hir_ty::TypeKind::Adt {
-                def_id: hir_def::DefId { index: def_id.index },
-                args: cloned_args,
-            }
-        }
-        &hir_ty::TypeKind::Array { ref element, size } => {
-            hir_ty::TypeKind::Array {
-                element: Box::new(clone_type(element.as_ref())),
-                size,
-            }
-        }
-        &hir_ty::TypeKind::Slice { ref element } => {
-            hir_ty::TypeKind::Slice {
-                element: Box::new(clone_type(element.as_ref())),
-            }
-        }
-        &hir_ty::TypeKind::Infer(ref var_id) => {
-            hir_ty::TypeKind::Infer(hir_def::TyVarId { index: var_id.index })
-        }
-        &hir_ty::TypeKind::Param(ref var_id) => {
-            hir_ty::TypeKind::Param(hir_def::TyVarId { index: var_id.index })
-        }
-        &hir_ty::TypeKind::Error => hir_ty::TypeKind::Error,
-        &hir_ty::TypeKind::Never => hir_ty::TypeKind::Never,
-        _ => {
-            // For other complex types, fall back to Error
-            // This is safe because we're only using this for Vec element extraction
-            hir_ty::TypeKind::Error
-        }
-    }
-}
-
-/// Clones a primitive type.
-fn clone_primitive(p: &hir_ty::PrimitiveTy) -> hir_ty::PrimitiveTy {
-    match p {
-        &hir_ty::PrimitiveTy::Bool => hir_ty::PrimitiveTy::Bool,
-        &hir_ty::PrimitiveTy::Char => hir_ty::PrimitiveTy::Char,
-        &hir_ty::PrimitiveTy::I8 => hir_ty::PrimitiveTy::I8,
-        &hir_ty::PrimitiveTy::I16 => hir_ty::PrimitiveTy::I16,
-        &hir_ty::PrimitiveTy::I32 => hir_ty::PrimitiveTy::I32,
-        &hir_ty::PrimitiveTy::I64 => hir_ty::PrimitiveTy::I64,
-        &hir_ty::PrimitiveTy::I128 => hir_ty::PrimitiveTy::I128,
-        &hir_ty::PrimitiveTy::Isize => hir_ty::PrimitiveTy::Isize,
-        &hir_ty::PrimitiveTy::U8 => hir_ty::PrimitiveTy::U8,
-        &hir_ty::PrimitiveTy::U16 => hir_ty::PrimitiveTy::U16,
-        &hir_ty::PrimitiveTy::U32 => hir_ty::PrimitiveTy::U32,
-        &hir_ty::PrimitiveTy::U64 => hir_ty::PrimitiveTy::U64,
-        &hir_ty::PrimitiveTy::U128 => hir_ty::PrimitiveTy::U128,
-        &hir_ty::PrimitiveTy::Usize => hir_ty::PrimitiveTy::Usize,
-        &hir_ty::PrimitiveTy::F32 => hir_ty::PrimitiveTy::F32,
-        &hir_ty::PrimitiveTy::F64 => hir_ty::PrimitiveTy::F64,
-        &hir_ty::PrimitiveTy::Str => hir_ty::PrimitiveTy::Str,
+        Option::None => 8,
     }
 }
 
@@ -1251,13 +1156,7 @@ fn emit_vec_new_call(
 
     // Get element size from the destination's HIR type (Vec<T>)
     let elem_size: u64 = match ctx.get_local_hir_type(destination.local) {
-        Option::Some(ty_id) => {
-            let hir_ty = type_intern::ty_id_to_type(ty_id);
-            match extract_vec_element_type(&hir_ty) {
-                Option::Some(elem_ty) => codegen_stmt::type_size_with_ctx(ctx, &elem_ty),
-                Option::None => 8,
-            }
-        }
+        Option::Some(ty_id) => extract_vec_element_size_id(ctx, ty_id),
         Option::None => 8,
     };
 
@@ -1317,8 +1216,7 @@ fn emit_vec_push_call(
         &mir_types::Operand::Copy(ref place) => {
             match ctx.get_local_hir_type(place.local) {
                 Option::Some(ty_id) => {
-                    let hir_ty = type_intern::ty_id_to_type(ty_id);
-                    codegen_stmt::type_size_with_ctx(ctx, &hir_ty)
+                    codegen_size::type_size_with_ctx_id(ctx, ty_id)
                 }
                 Option::None => 8,
             }
@@ -1326,15 +1224,13 @@ fn emit_vec_push_call(
         &mir_types::Operand::Move(ref place) => {
             match ctx.get_local_hir_type(place.local) {
                 Option::Some(ty_id) => {
-                    let hir_ty = type_intern::ty_id_to_type(ty_id);
-                    codegen_stmt::type_size_with_ctx(ctx, &hir_ty)
+                    codegen_size::type_size_with_ctx_id(ctx, ty_id)
                 }
                 Option::None => 8,
             }
         }
         &mir_types::Operand::Constant(ref c) => {
-            let c_hir_ty = type_intern::ty_id_to_type(c.ty);
-            codegen_stmt::type_size_with_ctx(ctx, &c_hir_ty)
+            codegen_size::type_size_with_ctx_id(ctx, c.ty)
         }
     };
 
@@ -1420,14 +1316,7 @@ fn emit_vec_pop_call(
     // Get element size from destination's HIR type (Option<T>)
     // pop returns Option<T>, so we need to extract T's size
     let elem_size: u64 = match ctx.get_local_hir_type(destination.local) {
-        Option::Some(ty_id) => {
-            // Destination is Option<T>, extract T's size
-            let hir_ty = type_intern::ty_id_to_type(ty_id);
-            match extract_vec_element_type(&hir_ty) {
-                Option::Some(elem_ty) => codegen_stmt::type_size_with_ctx(ctx, &elem_ty),
-                Option::None => 8,
-            }
-        }
+        Option::Some(ty_id) => extract_vec_element_size_id(ctx, ty_id),
         Option::None => 8,
     };
 
@@ -2039,8 +1928,7 @@ fn emit_box_new_call(
         &mir_types::Operand::Copy(ref place) => {
             match ctx.get_local_hir_type(place.local) {
                 Option::Some(ty_id) => {
-                    let hir_ty = type_intern::ty_id_to_type(ty_id);
-                    codegen_stmt::type_size_with_ctx(ctx, &hir_ty)
+                    codegen_size::type_size_with_ctx_id(ctx, ty_id)
                 }
                 Option::None => 8,
             }
@@ -2048,15 +1936,13 @@ fn emit_box_new_call(
         &mir_types::Operand::Move(ref place) => {
             match ctx.get_local_hir_type(place.local) {
                 Option::Some(ty_id) => {
-                    let hir_ty = type_intern::ty_id_to_type(ty_id);
-                    codegen_stmt::type_size_with_ctx(ctx, &hir_ty)
+                    codegen_size::type_size_with_ctx_id(ctx, ty_id)
                 }
                 Option::None => 8,
             }
         }
         &mir_types::Operand::Constant(ref c) => {
-            let c_hir_ty = type_intern::ty_id_to_type(c.ty);
-            codegen_stmt::type_size_with_ctx(ctx, &c_hir_ty)
+            codegen_size::type_size_with_ctx_id(ctx, c.ty)
         }
     };
 
@@ -2190,8 +2076,7 @@ fn emit_option_unwrap_call(
     // Get element size from destination type
     let elem_size: u64 = match ctx.get_local_hir_type(destination.local) {
         Option::Some(ty_id) => {
-            let hir_ty = type_intern::ty_id_to_type(ty_id);
-            codegen_stmt::type_size_with_ctx(ctx, &hir_ty)
+            codegen_size::type_size_with_ctx_id(ctx, ty_id)
         }
         Option::None => 8,
     };
@@ -2238,13 +2123,7 @@ fn emit_option_as_ref_call(
 
     // Get element size from destination type (Option<&T>)
     let elem_size: u64 = match ctx.get_local_hir_type(destination.local) {
-        Option::Some(ty_id) => {
-            let hir_ty = type_intern::ty_id_to_type(ty_id);
-            match extract_vec_element_type(&hir_ty) {
-                Option::Some(inner) => codegen_stmt::type_size_with_ctx(ctx, &inner),
-                Option::None => 8,
-            }
-        }
+        Option::Some(ty_id) => extract_vec_element_size_id(ctx, ty_id),
         Option::None => 8,
     };
 
