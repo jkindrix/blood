@@ -61,14 +61,10 @@ pub fn emit_terminator(
             let num_args_val = codegen_types::format_u64(num_args as u64);
 
             // Allocate args array on stack
-            let args_alloca = ctx.fresh_temp();
+            let args_alloca = ctx.fresh_temp_cg();
             if num_args > 0 {
                 let arr_ty_str = make_array_type(num_args);
-                ctx.write_indent();
-                ctx.write_string(&args_alloca);
-                ctx.write(" = alloca ");
-                ctx.write_string(&arr_ty_str);
-                ctx.write("\n");
+                ctx.emit_alloca_cg(&args_alloca, arr_ty_str.as_str());
 
                 // Store each argument widened to i64 into the array
                 let mut ai: usize = 0;
@@ -78,65 +74,68 @@ pub fn emit_terminator(
                     // Widen arg to i64
                     let widened_val = widen_operand_to_i64(ctx, arg_val.as_str(), arg_ty.as_str());
 
-                    // Get store target
-                    let store_ptr = if ai == 0 {
+                    if ai == 0 {
                         // First element: alloca is already the pointer
-                        clone_string(&args_alloca)
+                        ctx.write_indent();
+                        ctx.write("store i64 ");
+                        ctx.write_string(&widened_val);
+                        ctx.write(", ptr ");
+                        ctx.write_cgname(&args_alloca);
+                        ctx.write("\n");
                     } else {
                         // Subsequent elements: GEP to index
                         let idx_str = codegen_types::format_u64(ai as u64);
-                        let elem_ptr = ctx.fresh_temp();
+                        let elem_ptr = ctx.fresh_temp_cg();
                         ctx.write_indent();
-                        ctx.write_string(&elem_ptr);
+                        ctx.write_cgname(&elem_ptr);
                         ctx.write(" = getelementptr ");
                         ctx.write_string(&arr_ty_str);
                         ctx.write(", ptr ");
-                        ctx.write_string(&args_alloca);
+                        ctx.write_cgname(&args_alloca);
                         ctx.write(", i64 0, i64 ");
                         ctx.write_string(&idx_str);
                         ctx.write("\n");
-                        elem_ptr
-                    };
 
-                    ctx.write_indent();
-                    ctx.write("store i64 ");
-                    ctx.write_string(&widened_val);
-                    ctx.write(", ptr ");
-                    ctx.write_string(&store_ptr);
-                    ctx.write("\n");
+                        ctx.write_indent();
+                        ctx.write("store i64 ");
+                        ctx.write_string(&widened_val);
+                        ctx.write(", ptr ");
+                        ctx.write_cgname(&elem_ptr);
+                        ctx.write("\n");
+                    }
 
                     ai = ai + 1;
                 }
             }
 
             // Create continuation (identity for tail-resumptive)
-            let continuation = ctx.fresh_temp();
+            let continuation = ctx.fresh_temp_cg();
             ctx.write_indent();
-            ctx.write_string(&continuation);
+            ctx.write_cgname(&continuation);
             ctx.write(" = call i64 @blood_continuation_create_multishot(ptr @__blood_identity_continuation, ptr null)\n");
 
             // Call blood_perform(i64 effect_id, i32 op_index, ptr args, i64 arg_count, i64 continuation)
-            let result = ctx.fresh_temp();
+            let result = ctx.fresh_temp_cg();
             ctx.write_indent();
-            ctx.write_string(&result);
+            ctx.write_cgname(&result);
             ctx.write(" = call i64 @blood_perform(i64 ");
             ctx.write_string(&effect_id_val);
             ctx.write(", i32 ");
             ctx.write_string(&op_index_val);
             ctx.write(", ptr ");
             if num_args > 0 {
-                ctx.write_string(&args_alloca);
+                ctx.write_cgname(&args_alloca);
             } else {
                 ctx.write("null");
             }
             ctx.write(", i64 ");
             ctx.write_string(&num_args_val);
             ctx.write(", i64 ");
-            ctx.write_string(&continuation);
+            ctx.write_cgname(&continuation);
             ctx.write(")\n");
 
             // Store result
-            ctx.emit_store("i64", result.as_str(), dest.as_str());
+            ctx.emit_store_cg("i64", &result, dest.as_str());
 
             match target {
                 &Option::Some(t) => {
@@ -192,15 +191,15 @@ fn emit_switch_int(
     // Check if this is a simple boolean switch
     if switch_targets.targets.len() == 1 {
         // Binary switch - use conditional branch
-        let default_label = ctx.block_label(switch_targets.otherwise);
+        let default_label = ctx.block_label_cg(switch_targets.otherwise);
         let case_target = &switch_targets.targets[0];
-        let case_label = ctx.block_label(case_target.target);
+        let case_label = ctx.block_label_cg(case_target.target);
         let case_val = codegen_types::format_u128(case_target.value);
 
         // Compare discriminant with case value using actual type
-        let cmp_result = ctx.fresh_temp();
-        ctx.emit_icmp(cmp_result.as_str(), "eq", discr_ty.as_str(), discr_val.as_str(), case_val.as_str());
-        ctx.emit_cond_br(cmp_result.as_str(), case_label.as_str(), default_label.as_str());
+        let cmp_result = ctx.fresh_temp_cg();
+        ctx.emit_icmp_cg(&cmp_result, "eq", discr_ty.as_str(), discr_val.as_str(), case_val.as_str());
+        ctx.emit_cond_br_cg(&cmp_result, &case_label, &default_label);
     } else {
         // Multi-way switch
         let default_label = ctx.block_label(switch_targets.otherwise);
@@ -233,9 +232,9 @@ fn emit_return(ctx: &mut codegen_ctx::CodegenCtx) {
     if is_void {
         ctx.emit_ret("void", Option::None);
     } else {
-        let ret_val = ctx.fresh_temp();
-        ctx.emit_load(ret_val.as_str(), ret_ty.as_str(), ret_name.as_str());
-        ctx.emit_ret(ret_ty.as_str(), Option::Some(ret_val.as_str()));
+        let ret_val = ctx.fresh_temp_cg();
+        ctx.emit_load_cg(&ret_val, ret_ty.as_str(), ret_name.as_str());
+        ctx.emit_ret_cg(ret_ty.as_str(), &ret_val);
     }
 }
 
@@ -943,20 +942,20 @@ fn emit_assert(
     let cond_val = codegen_expr::emit_operand(ctx, cond);
 
     // Create labels
-    let success_label = ctx.block_label(target);
-    let fail_label = ctx.fresh_label();
+    let success_label = ctx.block_label_cg(target);
+    let fail_label = ctx.fresh_label_cg();
 
     // Compare condition with expected
     if expected {
         // Expect true: if cond, goto success, else fail
-        ctx.emit_cond_br(cond_val.as_str(), success_label.as_str(), fail_label.as_str());
+        ctx.emit_cond_br_str_cg(cond_val.as_str(), &success_label, &fail_label);
     } else {
         // Expect false: if cond, goto fail, else success
-        ctx.emit_cond_br(cond_val.as_str(), fail_label.as_str(), success_label.as_str());
+        ctx.emit_cond_br_str_cg(cond_val.as_str(), &fail_label, &success_label);
     }
 
     // Fail block
-    ctx.emit_label(fail_label.as_str());
+    ctx.emit_label_cg(&fail_label);
     ctx.indent();
 
     // Build the full assertion message: "Assertion failed: <msg>\n"
@@ -1237,11 +1236,11 @@ fn emit_vec_new_call(
     };
 
     // Emit: call void @vec_new(i64 elem_size, ptr out_ptr)
-    let mut args: Vec<(String, String)> = Vec::new();
-    args.push((common::make_string("i64"), codegen_types::format_u64(elem_size)));
-    args.push((common::make_string("ptr"), out_ptr));
-
-    ctx.emit_call(Option::None, "void", "@vec_new", &args);
+    let elem_size_str = codegen_types::format_u64(elem_size);
+    ctx.begin_call(Option::None, "void", "@vec_new");
+    ctx.call_arg_str(true, "i64", elem_size_str.as_str());
+    ctx.call_arg_str(false, "ptr", out_ptr.as_str());
+    ctx.end_call();
 
     // Jump to continuation
     match target {
@@ -1277,15 +1276,15 @@ fn emit_vec_push_call(
     let (elem_val, elem_ty) = codegen_expr::emit_operand_typed(ctx, &args[1]);
 
     // Allocate temporary storage for the element
-    let elem_alloca = ctx.fresh_temp();
+    let elem_alloca = ctx.fresh_temp_cg();
     ctx.write_indent();
-    ctx.write_string(&elem_alloca);
+    ctx.write_cgname(&elem_alloca);
     ctx.write(" = alloca ");
     ctx.write_string(&elem_ty);
     ctx.write(", align 8\n");
 
     // Store element value to alloca
-    ctx.emit_store(elem_ty.as_str(), elem_val.as_str(), elem_alloca.as_str());
+    ctx.emit_store_str_cg(elem_ty.as_str(), elem_val.as_str(), &elem_alloca);
 
     // Get element size from the element's HIR type
     let elem_size: u64 = match &args[1] {
@@ -1307,12 +1306,12 @@ fn emit_vec_push_call(
     };
 
     // Emit: call void @vec_push(ptr vec, ptr elem_ptr, i64 elem_size)
-    let mut call_args: Vec<(String, String)> = Vec::new();
-    call_args.push((common::make_string("ptr"), vec_ptr));
-    call_args.push((common::make_string("ptr"), elem_alloca));
-    call_args.push((common::make_string("i64"), codegen_types::format_u64(elem_size)));
-
-    ctx.emit_call(Option::None, "void", "@vec_push", &call_args);
+    let elem_size_str = codegen_types::format_u64(elem_size);
+    ctx.begin_call(Option::None, "void", "@vec_push");
+    ctx.call_arg_str(true, "ptr", vec_ptr.as_str());
+    ctx.call_arg_cg(false, "ptr", &elem_alloca);
+    ctx.call_arg_str(false, "i64", elem_size_str.as_str());
+    ctx.end_call();
 
     // Jump to continuation
     match target {
@@ -1345,17 +1344,14 @@ fn emit_vec_len_call(
     let vec_ptr = codegen_expr::emit_operand(ctx, &args[0]);
 
     // Emit: %result = call i64 @vec_len(ptr vec)
-    let result = ctx.fresh_temp();
-    let mut call_args: Vec<(String, String)> = Vec::new();
-    let mut vec_ptr_copy = common::make_string("");
-    vec_ptr_copy.push_str(vec_ptr.as_str());
-    call_args.push((common::make_string("ptr"), vec_ptr_copy));
-
-    ctx.emit_call(Option::Some(result.as_str()), "i64", "@vec_len", &call_args);
+    let result = ctx.fresh_temp_cg();
+    ctx.begin_call(Option::Some(&result), "i64", "@vec_len");
+    ctx.call_arg_str(true, "ptr", vec_ptr.as_str());
+    ctx.end_call();
 
     // Store result to destination
     let dest_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
-    ctx.emit_store("i64", result.as_str(), dest_ptr.as_str());
+    ctx.emit_store_cg("i64", &result, dest_ptr.as_str());
 
     // Jump to continuation
     match target {
@@ -1402,25 +1398,21 @@ fn emit_vec_pop_call(
     };
 
     // Allocate output pointer for the popped element
-    let out_alloca = ctx.fresh_temp();
+    let out_alloca = ctx.fresh_temp_cg();
+    let elem_size_str = codegen_types::format_u64(elem_size);
     ctx.write_indent();
-    ctx.write_string(&out_alloca);
+    ctx.write_cgname(&out_alloca);
     ctx.write(" = alloca [");
-    ctx.write_string(&codegen_types::format_u64(elem_size));
+    ctx.write_string(&elem_size_str);
     ctx.write(" x i8], align 8\n");
 
     // Emit: %result = call i32 @vec_pop(ptr vec, i64 elem_size, ptr out_ptr)
-    let result = ctx.fresh_temp();
-    let mut call_args: Vec<(String, String)> = Vec::new();
-    call_args.push((common::make_string("ptr"), vec_ptr));
-    call_args.push((common::make_string("i64"), codegen_types::format_u64(elem_size)));
-    // Save out_alloca string for use in call args and later memcpy
-    let out_alloca_str = out_alloca.as_str();
-    let mut out_alloca_copy = common::make_string("");
-    out_alloca_copy.push_str(out_alloca_str);
-    call_args.push((common::make_string("ptr"), out_alloca_copy));
-
-    ctx.emit_call(Option::Some(result.as_str()), "i32", "@vec_pop", &call_args);
+    let result = ctx.fresh_temp_cg();
+    ctx.begin_call(Option::Some(&result), "i32", "@vec_pop");
+    ctx.call_arg_str(true, "ptr", vec_ptr.as_str());
+    ctx.call_arg_str(false, "i64", elem_size_str.as_str());
+    ctx.call_arg_cg(false, "ptr", &out_alloca);
+    ctx.end_call();
 
     // Build Option<T> in destination
     // Option is typically { i8 tag, T value }
@@ -1428,19 +1420,19 @@ fn emit_vec_pop_call(
     let dest_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
 
     // Store the tag (result from vec_pop: 0=empty/None, 1=success/Some)
-    let tag_i8 = ctx.fresh_temp();
+    let tag_i8 = ctx.fresh_temp_cg();
     ctx.write_indent();
-    ctx.write_string(&tag_i8);
+    ctx.write_cgname(&tag_i8);
     ctx.write(" = trunc i32 ");
-    ctx.write_string(&result);
+    ctx.write_cgname(&result);
     ctx.write(" to i8\n");
-    ctx.emit_store("i8", tag_i8.as_str(), dest_ptr.as_str());
+    ctx.emit_store_cg("i8", &tag_i8, dest_ptr.as_str());
 
     // If result was 1 (Some), copy the element data
     // Calculate offset for the value field (after tag, with alignment)
-    let value_offset = ctx.fresh_temp();
+    let value_offset = ctx.fresh_temp_cg();
     ctx.write_indent();
-    ctx.write_string(&value_offset);
+    ctx.write_cgname(&value_offset);
     ctx.write(" = getelementptr i8, ptr ");
     ctx.write_string(&dest_ptr);
     ctx.write(", i64 8\n"); // Assuming 8-byte alignment for Option payload
@@ -1448,11 +1440,11 @@ fn emit_vec_pop_call(
     // Copy element data from out_alloca to Option's value field
     ctx.write_indent();
     ctx.write("call void @llvm.memcpy.p0.p0.i64(ptr ");
-    ctx.write_string(&value_offset);
+    ctx.write_cgname(&value_offset);
     ctx.write(", ptr ");
-    ctx.write_string(&out_alloca);
+    ctx.write_cgname(&out_alloca);
     ctx.write(", i64 ");
-    ctx.write_string(&codegen_types::format_u64(elem_size));
+    ctx.write_string(&elem_size_str);
     ctx.write(", i1 false)\n");
 
     // Jump to continuation
@@ -1485,10 +1477,9 @@ fn emit_vec_clear_call(
     let vec_ptr = codegen_expr::emit_operand(ctx, &args[0]);
 
     // Emit: call void @vec_clear(ptr vec)
-    let mut call_args: Vec<(String, String)> = Vec::new();
-    call_args.push((common::make_string("ptr"), vec_ptr));
-
-    ctx.emit_call(Option::None, "void", "@vec_clear", &call_args);
+    ctx.begin_call(Option::None, "void", "@vec_clear");
+    ctx.call_arg_str(true, "ptr", vec_ptr.as_str());
+    ctx.end_call();
 
     // Jump to continuation
     match target {
@@ -1556,10 +1547,9 @@ fn emit_string_new_call(
     let out_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
 
     // Emit: call void @string_new(ptr out_ptr)
-    let mut args: Vec<(String, String)> = Vec::new();
-    args.push((common::make_string("ptr"), out_ptr));
-
-    ctx.emit_call(Option::None, "void", "@string_new", &args);
+    ctx.begin_call(Option::None, "void", "@string_new");
+    ctx.call_arg_str(true, "ptr", out_ptr.as_str());
+    ctx.end_call();
 
     // Jump to continuation
     match target {
@@ -1593,20 +1583,17 @@ fn emit_string_push_str_call(
     let (arg_val, arg_ty) = codegen_expr::emit_operand_typed(ctx, &args[1]);
 
     // Alloca temp for the &str fat pointer (runtime expects ptr to BloodStr)
-    let str_tmp = ctx.fresh_temp();
-    ctx.write_indent();
-    ctx.write_string(&str_tmp);
-    ctx.write(" = alloca { ptr, i64 }\n");
+    let str_tmp = ctx.fresh_temp_cg();
+    ctx.emit_alloca_cg(&str_tmp, "{ ptr, i64 }");
 
     // Store the &str value into the temp
-    ctx.emit_store("{ ptr, i64 }", arg_val.as_str(), str_tmp.as_str());
+    ctx.emit_store_str_cg("{ ptr, i64 }", arg_val.as_str(), &str_tmp);
 
     // Emit: call void @string_push_str(ptr self, ptr str_ptr)
-    let mut call_args: Vec<(String, String)> = Vec::new();
-    call_args.push((common::make_string("ptr"), str_ptr));
-    call_args.push((common::make_string("ptr"), str_tmp));
-
-    ctx.emit_call(Option::None, "void", "@string_push_str", &call_args);
+    ctx.begin_call(Option::None, "void", "@string_push_str");
+    ctx.call_arg_str(true, "ptr", str_ptr.as_str());
+    ctx.call_arg_cg(false, "ptr", &str_tmp);
+    ctx.end_call();
 
     // Jump to continuation
     match target {
@@ -1638,17 +1625,14 @@ fn emit_string_len_call(
     let str_ptr = codegen_expr::emit_operand(ctx, &args[0]);
 
     // Emit: %result = call i64 @string_len(ptr self)
-    let result = ctx.fresh_temp();
-    let mut call_args: Vec<(String, String)> = Vec::new();
-    let mut str_ptr_copy = common::make_string("");
-    str_ptr_copy.push_str(str_ptr.as_str());
-    call_args.push((common::make_string("ptr"), str_ptr_copy));
-
-    ctx.emit_call(Option::Some(result.as_str()), "i64", "@string_len", &call_args);
+    let result = ctx.fresh_temp_cg();
+    ctx.begin_call(Option::Some(&result), "i64", "@string_len");
+    ctx.call_arg_str(true, "ptr", str_ptr.as_str());
+    ctx.end_call();
 
     // Store result to destination
     let dest_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
-    ctx.emit_store("i64", result.as_str(), dest_ptr.as_str());
+    ctx.emit_store_cg("i64", &result, dest_ptr.as_str());
 
     // Jump to continuation
     match target {
@@ -1695,11 +1679,10 @@ fn emit_string_push_call(
     };
 
     // Emit: call void @string_push(ptr self, i32 char)
-    let mut call_args: Vec<(String, String)> = Vec::new();
-    call_args.push((common::make_string("ptr"), str_ptr));
-    call_args.push((common::make_string("i32"), char_i32));
-
-    ctx.emit_call(Option::None, "void", "@string_push", &call_args);
+    ctx.begin_call(Option::None, "void", "@string_push");
+    ctx.call_arg_str(true, "ptr", str_ptr.as_str());
+    ctx.call_arg_str(false, "i32", char_i32.as_str());
+    ctx.end_call();
 
     // Jump to continuation
     match target {
@@ -1731,17 +1714,14 @@ fn emit_string_as_str_call(
     let str_ptr = codegen_expr::emit_operand(ctx, &args[0]);
 
     // Emit: %result = call { ptr, i64 } @string_as_str(ptr self)
-    let result = ctx.fresh_temp();
-    let mut call_args: Vec<(String, String)> = Vec::new();
-    let mut str_ptr_copy = common::make_string("");
-    str_ptr_copy.push_str(str_ptr.as_str());
-    call_args.push((common::make_string("ptr"), str_ptr_copy));
-
-    ctx.emit_call(Option::Some(result.as_str()), "{ ptr, i64 }", "@string_as_str", &call_args);
+    let result = ctx.fresh_temp_cg();
+    ctx.begin_call(Option::Some(&result), "{ ptr, i64 }", "@string_as_str");
+    ctx.call_arg_str(true, "ptr", str_ptr.as_str());
+    ctx.end_call();
 
     // Store result to destination
     let dest_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
-    ctx.emit_store("{ ptr, i64 }", result.as_str(), dest_ptr.as_str());
+    ctx.emit_store_cg("{ ptr, i64 }", &result, dest_ptr.as_str());
 
     // Jump to continuation
     match target {
@@ -1773,17 +1753,14 @@ fn emit_string_as_bytes_call(
     let str_ptr = codegen_expr::emit_operand(ctx, &args[0]);
 
     // Emit: %result = call { ptr, i64 } @string_as_bytes(ptr self)
-    let result = ctx.fresh_temp();
-    let mut call_args: Vec<(String, String)> = Vec::new();
-    let mut str_ptr_copy = common::make_string("");
-    str_ptr_copy.push_str(str_ptr.as_str());
-    call_args.push((common::make_string("ptr"), str_ptr_copy));
-
-    ctx.emit_call(Option::Some(result.as_str()), "{ ptr, i64 }", "@string_as_bytes", &call_args);
+    let result = ctx.fresh_temp_cg();
+    ctx.begin_call(Option::Some(&result), "{ ptr, i64 }", "@string_as_bytes");
+    ctx.call_arg_str(true, "ptr", str_ptr.as_str());
+    ctx.end_call();
 
     // Store result to destination
     let dest_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
-    ctx.emit_store("{ ptr, i64 }", result.as_str(), dest_ptr.as_str());
+    ctx.emit_store_cg("{ ptr, i64 }", &result, dest_ptr.as_str());
 
     // Jump to continuation
     match target {
@@ -1839,11 +1816,7 @@ fn load_str_fat_ptr(ctx: &mut codegen_ctx::CodegenCtx, operand: &mir_types::Oper
     }
     // Otherwise it's a ptr — load the { ptr, i64 } from it
     let loaded = ctx.fresh_temp();
-    ctx.write_indent();
-    ctx.write_string(&loaded);
-    ctx.write(" = load { ptr, i64 }, ptr ");
-    ctx.write_string(&arg_val);
-    ctx.write("\n");
+    ctx.emit_load(loaded.as_str(), "{ ptr, i64 }", arg_val.as_str());
     loaded
 }
 
@@ -1864,14 +1837,14 @@ fn emit_str_len_call(
     let str_val = load_str_fat_ptr(ctx, &args[0]);
 
     // Emit: %result = call i64 @str_len({ ptr, i64 } %str_val)
-    let result = ctx.fresh_temp();
-    let mut call_args: Vec<(String, String)> = Vec::new();
-    call_args.push((common::make_string("{ ptr, i64 }"), str_val));
-    ctx.emit_call(Option::Some(result.as_str()), "i64", "@str_len", &call_args);
+    let result = ctx.fresh_temp_cg();
+    ctx.begin_call(Option::Some(&result), "i64", "@str_len");
+    ctx.call_arg_str(true, "{ ptr, i64 }", str_val.as_str());
+    ctx.end_call();
 
     // Store result to destination
     let dest_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
-    ctx.emit_store("i64", result.as_str(), dest_ptr.as_str());
+    ctx.emit_store_cg("i64", &result, dest_ptr.as_str());
 
     // Jump to continuation
     match target {
@@ -1903,15 +1876,15 @@ fn emit_str_eq_call(
     let str_b = load_str_fat_ptr(ctx, &args[1]);
 
     // Emit: %result = call i1 @str_eq({ ptr, i64 } %a, { ptr, i64 } %b)
-    let result = ctx.fresh_temp();
-    let mut call_args: Vec<(String, String)> = Vec::new();
-    call_args.push((common::make_string("{ ptr, i64 }"), str_a));
-    call_args.push((common::make_string("{ ptr, i64 }"), str_b));
-    ctx.emit_call(Option::Some(result.as_str()), "i1", "@str_eq", &call_args);
+    let result = ctx.fresh_temp_cg();
+    ctx.begin_call(Option::Some(&result), "i1", "@str_eq");
+    ctx.call_arg_str(true, "{ ptr, i64 }", str_a.as_str());
+    ctx.call_arg_str(false, "{ ptr, i64 }", str_b.as_str());
+    ctx.end_call();
 
     // Store result to destination
     let dest_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
-    ctx.emit_store("i1", result.as_str(), dest_ptr.as_str());
+    ctx.emit_store_cg("i1", &result, dest_ptr.as_str());
 
     // Jump to continuation
     match target {
@@ -1943,15 +1916,15 @@ fn emit_str_concat_call(
     let str_b = load_str_fat_ptr(ctx, &args[1]);
 
     // Emit: %result = call { ptr, i64 } @str_concat({ ptr, i64 } %a, { ptr, i64 } %b)
-    let result = ctx.fresh_temp();
-    let mut call_args: Vec<(String, String)> = Vec::new();
-    call_args.push((common::make_string("{ ptr, i64 }"), str_a));
-    call_args.push((common::make_string("{ ptr, i64 }"), str_b));
-    ctx.emit_call(Option::Some(result.as_str()), "{ ptr, i64 }", "@str_concat", &call_args);
+    let result = ctx.fresh_temp_cg();
+    ctx.begin_call(Option::Some(&result), "{ ptr, i64 }", "@str_concat");
+    ctx.call_arg_str(true, "{ ptr, i64 }", str_a.as_str());
+    ctx.call_arg_str(false, "{ ptr, i64 }", str_b.as_str());
+    ctx.end_call();
 
     // Store result to destination
     let dest_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
-    ctx.emit_store("{ ptr, i64 }", result.as_str(), dest_ptr.as_str());
+    ctx.emit_store_cg("{ ptr, i64 }", &result, dest_ptr.as_str());
 
     // Jump to continuation
     match target {
@@ -2017,15 +1990,15 @@ fn emit_box_new_call(
     let (val, val_ty) = codegen_expr::emit_operand_typed(ctx, &args[0]);
 
     // Allocate temporary storage for the value
-    let val_alloca = ctx.fresh_temp();
+    let val_alloca = ctx.fresh_temp_cg();
     ctx.write_indent();
-    ctx.write_string(&val_alloca);
+    ctx.write_cgname(&val_alloca);
     ctx.write(" = alloca ");
     ctx.write_string(&val_ty);
     ctx.write(", align 8\n");
 
     // Store value to alloca
-    ctx.emit_store(val_ty.as_str(), val.as_str(), val_alloca.as_str());
+    ctx.emit_store_str_cg(val_ty.as_str(), val.as_str(), &val_alloca);
 
     // Get value size from HIR type
     let val_size: u64 = match &args[0] {
@@ -2047,16 +2020,16 @@ fn emit_box_new_call(
     };
 
     // Emit: %result = call ptr @box_new(ptr val_alloca, i64 val_size)
-    let result = ctx.fresh_temp();
-    let mut call_args: Vec<(String, String)> = Vec::new();
-    call_args.push((common::make_string("ptr"), val_alloca));
-    call_args.push((common::make_string("i64"), codegen_types::format_u64(val_size)));
-
-    ctx.emit_call(Option::Some(result.as_str()), "ptr", "@box_new", &call_args);
+    let result = ctx.fresh_temp_cg();
+    let val_size_str = codegen_types::format_u64(val_size);
+    ctx.begin_call(Option::Some(&result), "ptr", "@box_new");
+    ctx.call_arg_cg(true, "ptr", &val_alloca);
+    ctx.call_arg_str(false, "i64", val_size_str.as_str());
+    ctx.end_call();
 
     // Store result pointer to destination
     let dest_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
-    ctx.emit_store("ptr", result.as_str(), dest_ptr.as_str());
+    ctx.emit_store_cg("ptr", &result, dest_ptr.as_str());
 
     // Jump to continuation
     match target {
@@ -2089,19 +2062,15 @@ fn emit_option_is_some_call(
     let opt_ptr = codegen_expr::emit_operand(ctx, &args[0]);
 
     // Load i8 discriminant from byte 0
-    let disc = ctx.fresh_temp();
-    ctx.emit_load(disc.as_str(), "i8", opt_ptr.as_str());
+    let disc = ctx.fresh_temp_cg();
+    ctx.emit_load_cg(&disc, "i8", opt_ptr.as_str());
 
     // is_some = (discriminant == 1), since Some is variant index 1
-    let cmp_result = ctx.fresh_temp();
-    ctx.write_indent();
-    ctx.write_string(&cmp_result);
-    ctx.write(" = icmp eq i8 ");
-    ctx.write_string(&disc);
-    ctx.write(", 1\n");
+    let cmp_result = ctx.fresh_temp_cg();
+    ctx.emit_icmp_cg2(&cmp_result, "eq", "i8", &disc, "1");
 
     let dest_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
-    ctx.emit_store("i1", cmp_result.as_str(), dest_ptr.as_str());
+    ctx.emit_store_cg("i1", &cmp_result, dest_ptr.as_str());
 
     // Jump to continuation
     match target {
@@ -2134,19 +2103,15 @@ fn emit_option_is_none_call(
     let opt_ptr = codegen_expr::emit_operand(ctx, &args[0]);
 
     // Load i8 discriminant from byte 0
-    let disc = ctx.fresh_temp();
-    ctx.emit_load(disc.as_str(), "i8", opt_ptr.as_str());
+    let disc = ctx.fresh_temp_cg();
+    ctx.emit_load_cg(&disc, "i8", opt_ptr.as_str());
 
     // is_none = (discriminant == 0), since None is variant index 0
-    let cmp_result = ctx.fresh_temp();
-    ctx.write_indent();
-    ctx.write_string(&cmp_result);
-    ctx.write(" = icmp eq i8 ");
-    ctx.write_string(&disc);
-    ctx.write(", 0\n");
+    let cmp_result = ctx.fresh_temp_cg();
+    ctx.emit_icmp_cg2(&cmp_result, "eq", "i8", &disc, "0");
 
     let dest_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
-    ctx.emit_store("i1", cmp_result.as_str(), dest_ptr.as_str());
+    ctx.emit_store_cg("i1", &cmp_result, dest_ptr.as_str());
 
     // Jump to continuation
     match target {
@@ -2188,14 +2153,12 @@ fn emit_option_unwrap_call(
     };
 
     // Emit: call void @option_unwrap(ptr self, i64 elem_size, ptr out_ptr)
-    let mut call_args: Vec<(String, String)> = Vec::new();
-    let mut opt_ptr_copy = common::make_string("");
-    opt_ptr_copy.push_str(opt_ptr.as_str());
-    call_args.push((common::make_string("ptr"), opt_ptr_copy));
-    call_args.push((common::make_string("i64"), codegen_types::format_u64(elem_size)));
-    call_args.push((common::make_string("ptr"), dest_ptr));
-
-    ctx.emit_call(Option::None, "void", "@option_unwrap", &call_args);
+    let elem_size_str = codegen_types::format_u64(elem_size);
+    ctx.begin_call(Option::None, "void", "@option_unwrap");
+    ctx.call_arg_str(true, "ptr", opt_ptr.as_str());
+    ctx.call_arg_str(false, "i64", elem_size_str.as_str());
+    ctx.call_arg_str(false, "ptr", dest_ptr.as_str());
+    ctx.end_call();
 
     // Jump to continuation
     match target {
@@ -2241,14 +2204,12 @@ fn emit_option_as_ref_call(
     };
 
     // Emit: call void @option_as_ref(ptr self, i64 elem_size, ptr out_ptr)
-    let mut call_args: Vec<(String, String)> = Vec::new();
-    let mut opt_ptr_copy = common::make_string("");
-    opt_ptr_copy.push_str(opt_ptr.as_str());
-    call_args.push((common::make_string("ptr"), opt_ptr_copy));
-    call_args.push((common::make_string("i64"), codegen_types::format_u64(elem_size)));
-    call_args.push((common::make_string("ptr"), dest_ptr));
-
-    ctx.emit_call(Option::None, "void", "@option_as_ref", &call_args);
+    let elem_size_str = codegen_types::format_u64(elem_size);
+    ctx.begin_call(Option::None, "void", "@option_as_ref");
+    ctx.call_arg_str(true, "ptr", opt_ptr.as_str());
+    ctx.call_arg_str(false, "i64", elem_size_str.as_str());
+    ctx.call_arg_str(false, "ptr", dest_ptr.as_str());
+    ctx.end_call();
 
     // Jump to continuation
     match target {

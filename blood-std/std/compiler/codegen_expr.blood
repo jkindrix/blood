@@ -820,44 +820,44 @@ fn emit_generation_check(
     };
 
     // Load expected generation from stack alloca
-    let expected_gen = ctx.fresh_temp();
-    ctx.emit_load(expected_gen.as_str(), "i32", gen_alloca.as_str());
+    let expected_gen = ctx.fresh_temp_cg();
+    ctx.emit_load_cg(&expected_gen, "i32", gen_alloca.as_str());
 
     // Convert pointer to i64 address for runtime call
-    let ptr_addr = ctx.fresh_temp();
-    ctx.emit_cast(ptr_addr.as_str(), "ptrtoint", "ptr", ptr_name.as_str(), "i64");
+    let ptr_addr = ctx.fresh_temp_cg();
+    ctx.emit_cast_cg(&ptr_addr, "ptrtoint", "ptr", ptr_name.as_str(), "i64");
 
     // Call blood_validate_generation(address, expected_generation) -> i32
     // Returns 0 if valid, 1 if stale
-    let gen_result = ctx.fresh_temp();
-    let mut args: Vec<(String, String)> = Vec::new();
-    args.push((common::make_string("i64"), clone_string(&ptr_addr)));
-    args.push((common::make_string("i32"), clone_string(&expected_gen)));
-    ctx.emit_call(Option::Some(gen_result.as_str()), "i32", "@blood_validate_generation", &args);
+    let gen_result = ctx.fresh_temp_cg();
+    ctx.begin_call(Option::Some(&gen_result), "i32", "@blood_validate_generation");
+    ctx.call_arg_cg(true, "i64", &ptr_addr);
+    ctx.call_arg_cg(false, "i32", &expected_gen);
+    ctx.end_call();
 
     // Check if stale (result != 0)
-    let is_stale = ctx.fresh_temp();
-    ctx.emit_icmp(is_stale.as_str(), "ne", "i32", gen_result.as_str(), "0");
+    let is_stale = ctx.fresh_temp_cg();
+    ctx.emit_icmp_cg2(&is_stale, "ne", "i32", &gen_result, "0");
 
     // Branch: stale -> panic, valid -> continue
-    let stale_label = ctx.fresh_label();
-    let valid_label = ctx.fresh_label();
-    ctx.emit_cond_br(is_stale.as_str(), stale_label.as_str(), valid_label.as_str());
+    let stale_label = ctx.fresh_label_cg();
+    let valid_label = ctx.fresh_label_cg();
+    ctx.emit_cond_br_cg(&is_stale, &stale_label, &valid_label);
 
     // Stale path: get actual generation for diagnostic, then panic
-    ctx.emit_label(stale_label.as_str());
-    let actual_gen = ctx.fresh_temp();
-    let mut get_args: Vec<(String, String)> = Vec::new();
-    get_args.push((common::make_string("i64"), clone_string(&ptr_addr)));
-    ctx.emit_call(Option::Some(actual_gen.as_str()), "i32", "@blood_get_generation", &get_args);
-    let mut panic_args: Vec<(String, String)> = Vec::new();
-    panic_args.push((common::make_string("i32"), clone_string(&expected_gen)));
-    panic_args.push((common::make_string("i32"), clone_string(&actual_gen)));
-    ctx.emit_call(Option::None, "void", "@blood_stale_reference_panic", &panic_args);
+    ctx.emit_label_cg(&stale_label);
+    let actual_gen = ctx.fresh_temp_cg();
+    ctx.begin_call(Option::Some(&actual_gen), "i32", "@blood_get_generation");
+    ctx.call_arg_cg(true, "i64", &ptr_addr);
+    ctx.end_call();
+    ctx.begin_call(Option::None, "void", "@blood_stale_reference_panic");
+    ctx.call_arg_cg(true, "i32", &expected_gen);
+    ctx.call_arg_cg(false, "i32", &actual_gen);
+    ctx.end_call();
     ctx.emit_unreachable();
 
     // Valid path: continue with dereferenced pointer
-    ctx.emit_label(valid_label.as_str());
+    ctx.emit_label_cg(&valid_label);
 }
 
 /// For a generic struct field, resolves the concrete LLVM type by matching
@@ -1310,21 +1310,21 @@ pub fn emit_rvalue(
             let arr_val = emit_operand(ctx, array_ref);
 
             // Store pointer at offset 0 of the fat pointer
-            let ptr_field = ctx.fresh_temp();
-            let mut ptr_indices: Vec<String> = Vec::new();
-            ptr_indices.push(common::make_string("0"));
-            ptr_indices.push(common::make_string("0"));
-            ctx.emit_gep(ptr_field.as_str(), "{ ptr, i64 }", dest, &ptr_indices);
-            ctx.emit_store("ptr", arr_val.as_str(), ptr_field.as_str());
+            let ptr_field = ctx.fresh_temp_cg();
+            ctx.begin_gep_str(&ptr_field, "{ ptr, i64 }", dest);
+            ctx.gep_ptr_offset(0);
+            ctx.gep_field(0);
+            ctx.end_gep();
+            ctx.emit_store_str_cg("ptr", arr_val.as_str(), &ptr_field);
 
             // Store length at offset 1 of the fat pointer
-            let len_field = ctx.fresh_temp();
-            let mut len_indices: Vec<String> = Vec::new();
-            len_indices.push(common::make_string("0"));
-            len_indices.push(common::make_string("1"));
-            ctx.emit_gep(len_field.as_str(), "{ ptr, i64 }", dest, &len_indices);
+            let len_field = ctx.fresh_temp_cg();
+            ctx.begin_gep_str(&len_field, "{ ptr, i64 }", dest);
+            ctx.gep_ptr_offset(0);
+            ctx.gep_field(1);
+            ctx.end_gep();
             let len_val = codegen_types::format_u64(array_len);
-            ctx.emit_store("i64", len_val.as_str(), len_field.as_str());
+            ctx.emit_store_str_cg("i64", len_val.as_str(), &len_field);
         }
         &mir_types::Rvalue::ZeroInit(ref ty) => {
             // Zero-initialize the destination
@@ -1389,14 +1389,14 @@ pub fn emit_rvalue(
                     Option::None => {}
                 }
             }
-            let len_ptr = ctx.fresh_temp();
-            let mut indices: Vec<String> = Vec::new();
-            indices.push(common::make_string("0"));
-            indices.push(common::make_string("1"));
-            ctx.emit_gep(len_ptr.as_str(), "{ ptr, i64 }", ptr.as_str(), &indices);
-            let len_val = ctx.fresh_temp();
-            ctx.emit_load(len_val.as_str(), "i64", len_ptr.as_str());
-            ctx.emit_store("i64", len_val.as_str(), dest);
+            let len_ptr = ctx.fresh_temp_cg();
+            ctx.begin_gep_str(&len_ptr, "{ ptr, i64 }", ptr.as_str());
+            ctx.gep_ptr_offset(0);
+            ctx.gep_field(1);
+            ctx.end_gep();
+            let len_val = ctx.fresh_temp_cg();
+            ctx.emit_load_cg2(&len_val, "i64", &len_ptr);
+            ctx.emit_store_cg("i64", &len_val, dest);
         }
         &mir_types::Rvalue::Discriminant(ref place) => {
             // Load discriminant field of enum
@@ -1449,31 +1449,31 @@ pub fn emit_rvalue(
 
             if found_enum {
                 // GEP to discriminant field (index 0) of the enum type
-                let discr_ptr = ctx.fresh_temp();
-                let mut indices: Vec<String> = Vec::new();
-                indices.push(common::make_string("0"));
-                indices.push(common::make_string("0"));
-                ctx.emit_gep(discr_ptr.as_str(), enum_llvm_ty.as_str(), ptr.as_str(), &indices);
-                let discr_val = ctx.fresh_temp();
-                ctx.emit_load(discr_val.as_str(), discr_ty.as_str(), discr_ptr.as_str());
+                let discr_ptr = ctx.fresh_temp_cg();
+                ctx.begin_gep_str(&discr_ptr, enum_llvm_ty.as_str(), ptr.as_str());
+                ctx.gep_ptr_offset(0);
+                ctx.gep_field(0);
+                ctx.end_gep();
+                let discr_val = ctx.fresh_temp_cg();
+                ctx.emit_load_cg2(&discr_val, discr_ty.as_str(), &discr_ptr);
                 // Extend discriminant to destination type if needed (dest is typically i64)
                 if string_eq_str(discr_ty.as_str(), "i64") {
-                    ctx.emit_store(discr_ty.as_str(), discr_val.as_str(), dest);
+                    ctx.emit_store_cg(discr_ty.as_str(), &discr_val, dest);
                 } else {
                     // Zero-extend discriminant to i64 for use in switch
-                    let extended = ctx.fresh_temp();
-                    ctx.emit_cast(extended.as_str(), "zext", discr_ty.as_str(), discr_val.as_str(), "i64");
-                    ctx.emit_store("i64", extended.as_str(), dest);
+                    let extended = ctx.fresh_temp_cg();
+                    ctx.emit_cast_cg2(&extended, "zext", discr_ty.as_str(), &discr_val, "i64");
+                    ctx.emit_store_cg("i64", &extended, dest);
                 }
             } else {
                 // Fallback for builtin generic enums (Option<T>, Result<T,E>)
                 // not in the ADT registry: load i8 discriminant and zero-extend.
                 // All Blood enums have ≤256 variants → i8 discriminant.
-                let discr_val = ctx.fresh_temp();
-                ctx.emit_load(discr_val.as_str(), "i8", ptr.as_str());
-                let extended = ctx.fresh_temp();
-                ctx.emit_cast(extended.as_str(), "zext", "i8", discr_val.as_str(), "i64");
-                ctx.emit_store("i64", extended.as_str(), dest);
+                let discr_val = ctx.fresh_temp_cg();
+                ctx.emit_load_cg(&discr_val, "i8", ptr.as_str());
+                let extended = ctx.fresh_temp_cg();
+                ctx.emit_cast_cg2(&extended, "zext", "i8", &discr_val, "i64");
+                ctx.emit_store_cg("i64", &extended, dest);
             }
         }
     }
@@ -1981,9 +1981,9 @@ fn emit_checked_binop(
     ret_ty.push_str(", i1 }");
 
     // Call the intrinsic
-    let overflow_result = ctx.fresh_temp();
+    let overflow_result = ctx.fresh_temp_cg();
     ctx.write_indent();
-    ctx.write_string(&overflow_result);
+    ctx.write_cgname(&overflow_result);
     ctx.write(" = call ");
     ctx.write_string(&ret_ty);
     ctx.write(" ");
@@ -2004,34 +2004,34 @@ fn emit_checked_binop(
     ctx.write(" = extractvalue ");
     ctx.write_string(&ret_ty);
     ctx.write(" ");
-    ctx.write_string(&overflow_result);
+    ctx.write_cgname(&overflow_result);
     ctx.write(", 0\n");
 
     // Extract the overflow flag
-    let overflow_flag = ctx.fresh_temp();
+    let overflow_flag = ctx.fresh_temp_cg();
     ctx.write_indent();
-    ctx.write_string(&overflow_flag);
+    ctx.write_cgname(&overflow_flag);
     ctx.write(" = extractvalue ");
     ctx.write_string(&ret_ty);
     ctx.write(" ");
-    ctx.write_string(&overflow_result);
+    ctx.write_cgname(&overflow_result);
     ctx.write(", 1\n");
 
     // Emit conditional trap on overflow using basic blocks
-    let trap_label = ctx.fresh_label();
-    let continue_label = ctx.fresh_label();
+    let trap_label = ctx.fresh_label_cg();
+    let continue_label = ctx.fresh_label_cg();
 
-    ctx.emit_cond_br(overflow_flag.as_str(), trap_label.as_str(), continue_label.as_str());
+    ctx.emit_cond_br_cg(&overflow_flag, &trap_label, &continue_label);
 
     // Trap block
-    ctx.emit_label(trap_label.as_str());
+    ctx.emit_label_cg(&trap_label);
     ctx.indent();
     ctx.write("    call void @llvm.trap()\n");
     ctx.emit_unreachable();
     ctx.dedent();
 
     // Continue block
-    ctx.emit_label(continue_label.as_str());
+    ctx.emit_label_cg(&continue_label);
 }
 
 /// Checks if a string starts with a prefix.
@@ -2335,11 +2335,11 @@ fn emit_aggregate_adt(
                 let typed = emit_operand_typed(ctx, &operands[i]);
                 let operand_val = typed.0;
                 let operand_ty = typed.1;
-                let field_ptr = ctx.fresh_temp();
-                let mut indices: Vec<String> = Vec::new();
-                indices.push(common::make_string("0"));
-                indices.push(codegen_types::format_u64(i as u64));
-                ctx.emit_gep(field_ptr.as_str(), struct_ty.as_str(), dest, &indices);
+                let field_ptr = ctx.fresh_temp_cg();
+                ctx.begin_gep_str(&field_ptr, struct_ty.as_str(), dest);
+                ctx.gep_ptr_offset(0);
+                ctx.gep_field(i as u32);
+                ctx.end_gep();
                 // Use actual field type if available, fallback to i64
                 let field_ty_str = if i < field_types.len() {
                     field_types[i].as_str()
@@ -2348,34 +2348,34 @@ fn emit_aggregate_adt(
                 };
                 // Check if operand type matches field type
                 if string_eq_str(operand_ty.as_str(), field_ty_str) {
-                    ctx.emit_store(field_ty_str, operand_val.as_str(), field_ptr.as_str());
+                    ctx.emit_store_str_cg(field_ty_str, operand_val.as_str(), &field_ptr);
                 } else {
                     let src_w = llvm_int_bit_width(operand_ty.as_str());
                     let dst_w = llvm_int_bit_width(field_ty_str);
                     if src_w > dst_w && dst_w > 0 {
                         // Wider to narrower: truncate
-                        let cast_tmp = ctx.fresh_temp();
-                        ctx.emit_cast(cast_tmp.as_str(), "trunc", operand_ty.as_str(), operand_val.as_str(), field_ty_str);
-                        ctx.emit_store(field_ty_str, cast_tmp.as_str(), field_ptr.as_str());
+                        let cast_tmp = ctx.fresh_temp_cg();
+                        ctx.emit_cast_cg(&cast_tmp, "trunc", operand_ty.as_str(), operand_val.as_str(), field_ty_str);
+                        ctx.emit_store_cg2(field_ty_str, &cast_tmp, &field_ptr);
                     } else if src_w < dst_w && src_w > 0 {
                         // Narrower to wider: zero-extend
-                        let cast_tmp = ctx.fresh_temp();
-                        ctx.emit_cast(cast_tmp.as_str(), "zext", operand_ty.as_str(), operand_val.as_str(), field_ty_str);
-                        ctx.emit_store(field_ty_str, cast_tmp.as_str(), field_ptr.as_str());
+                        let cast_tmp = ctx.fresh_temp_cg();
+                        ctx.emit_cast_cg(&cast_tmp, "zext", operand_ty.as_str(), operand_val.as_str(), field_ty_str);
+                        ctx.emit_store_cg2(field_ty_str, &cast_tmp, &field_ptr);
                     } else if src_w > 0 && string_eq_str(field_ty_str, "ptr") {
                         // Integer to pointer: inttoptr
-                        let cast_tmp = ctx.fresh_temp();
-                        ctx.emit_cast(cast_tmp.as_str(), "inttoptr", operand_ty.as_str(), operand_val.as_str(), "ptr");
-                        ctx.emit_store("ptr", cast_tmp.as_str(), field_ptr.as_str());
+                        let cast_tmp = ctx.fresh_temp_cg();
+                        ctx.emit_cast_cg(&cast_tmp, "inttoptr", operand_ty.as_str(), operand_val.as_str(), "ptr");
+                        ctx.emit_store_cg2("ptr", &cast_tmp, &field_ptr);
                     } else if dst_w > 0 && string_eq_str(operand_ty.as_str(), "ptr") {
                         // Pointer to integer: ptrtoint
-                        let cast_tmp = ctx.fresh_temp();
-                        ctx.emit_cast(cast_tmp.as_str(), "ptrtoint", "ptr", operand_val.as_str(), field_ty_str);
-                        ctx.emit_store(field_ty_str, cast_tmp.as_str(), field_ptr.as_str());
+                        let cast_tmp = ctx.fresh_temp_cg();
+                        ctx.emit_cast_cg(&cast_tmp, "ptrtoint", "ptr", operand_val.as_str(), field_ty_str);
+                        ctx.emit_store_cg2(field_ty_str, &cast_tmp, &field_ptr);
                     } else {
                         // Other mismatch (e.g., i64 vs struct type from unresolved inference).
                         // Store with the operand's own type so the IR is valid.
-                        ctx.emit_store(operand_ty.as_str(), operand_val.as_str(), field_ptr.as_str());
+                        ctx.emit_store_str_cg(operand_ty.as_str(), operand_val.as_str(), &field_ptr);
                     }
                 }
                 i = i + 1;
@@ -2406,22 +2406,22 @@ fn emit_aggregate_adt(
             }
 
             // Store discriminant at field 0 of the enum type
-            let discr_ptr = ctx.fresh_temp();
-            let mut discr_indices: Vec<String> = Vec::new();
-            discr_indices.push(common::make_string("0"));
-            discr_indices.push(common::make_string("0"));
-            ctx.emit_gep(discr_ptr.as_str(), enum_ty.as_str(), dest, &discr_indices);
+            let discr_ptr = ctx.fresh_temp_cg();
+            ctx.begin_gep_str(&discr_ptr, enum_ty.as_str(), dest);
+            ctx.gep_ptr_offset(0);
+            ctx.gep_field(0);
+            ctx.end_gep();
             let discr_val = codegen_types::format_u64(variant_idx as u64);
-            ctx.emit_store(discr_ty.as_str(), discr_val.as_str(), discr_ptr.as_str());
+            ctx.emit_store_str_cg(discr_ty.as_str(), discr_val.as_str(), &discr_ptr);
 
             // Store payload fields only if there are operands
             if operands.len() > 0 {
                 // Get pointer to payload area (field 1 of enum type)
-                let data_ptr = ctx.fresh_temp();
-                let mut data_indices: Vec<String> = Vec::new();
-                data_indices.push(common::make_string("0"));
-                data_indices.push(common::make_string("1"));
-                ctx.emit_gep(data_ptr.as_str(), enum_ty.as_str(), dest, &data_indices);
+                let data_ptr = ctx.fresh_temp_cg();
+                ctx.begin_gep_str(&data_ptr, enum_ty.as_str(), dest);
+                ctx.gep_ptr_offset(0);
+                ctx.gep_field(1);
+                ctx.end_gep();
 
                 // Store each operand field using the variant's payload type
                 let mut i: usize = 0;
@@ -2429,11 +2429,11 @@ fn emit_aggregate_adt(
                     let typed = emit_operand_typed(ctx, &operands[i]);
                     let operand_val = typed.0;
                     let operand_ty = typed.1;
-                    let field_ptr = ctx.fresh_temp();
-                    let mut field_indices: Vec<String> = Vec::new();
-                    field_indices.push(common::make_string("0"));
-                    field_indices.push(codegen_types::format_u64(i as u64));
-                    ctx.emit_gep(field_ptr.as_str(), payload_ty.as_str(), data_ptr.as_str(), &field_indices);
+                    let field_ptr = ctx.fresh_temp_cg();
+                    ctx.begin_gep(&field_ptr, payload_ty.as_str(), &data_ptr);
+                    ctx.gep_ptr_offset(0);
+                    ctx.gep_field(i as u32);
+                    ctx.end_gep();
                     // Use actual field type if available, with type conversion if needed
                     let field_ty_str = if i < variant_field_types.len() {
                         variant_field_types[i].as_str()
@@ -2442,34 +2442,34 @@ fn emit_aggregate_adt(
                     };
                     // Check if operand type matches field type
                     if string_eq_str(operand_ty.as_str(), field_ty_str) {
-                        ctx.emit_store(field_ty_str, operand_val.as_str(), field_ptr.as_str());
+                        ctx.emit_store_str_cg(field_ty_str, operand_val.as_str(), &field_ptr);
                     } else {
                         let src_w = llvm_int_bit_width(operand_ty.as_str());
                         let dst_w = llvm_int_bit_width(field_ty_str);
                         if src_w > dst_w && dst_w > 0 {
                             // Wider to narrower: truncate
-                            let cast_tmp = ctx.fresh_temp();
-                            ctx.emit_cast(cast_tmp.as_str(), "trunc", operand_ty.as_str(), operand_val.as_str(), field_ty_str);
-                            ctx.emit_store(field_ty_str, cast_tmp.as_str(), field_ptr.as_str());
+                            let cast_tmp = ctx.fresh_temp_cg();
+                            ctx.emit_cast_cg(&cast_tmp, "trunc", operand_ty.as_str(), operand_val.as_str(), field_ty_str);
+                            ctx.emit_store_cg2(field_ty_str, &cast_tmp, &field_ptr);
                         } else if src_w < dst_w && src_w > 0 {
                             // Narrower to wider: zero-extend
-                            let cast_tmp = ctx.fresh_temp();
-                            ctx.emit_cast(cast_tmp.as_str(), "zext", operand_ty.as_str(), operand_val.as_str(), field_ty_str);
-                            ctx.emit_store(field_ty_str, cast_tmp.as_str(), field_ptr.as_str());
+                            let cast_tmp = ctx.fresh_temp_cg();
+                            ctx.emit_cast_cg(&cast_tmp, "zext", operand_ty.as_str(), operand_val.as_str(), field_ty_str);
+                            ctx.emit_store_cg2(field_ty_str, &cast_tmp, &field_ptr);
                         } else if src_w > 0 && string_eq_str(field_ty_str, "ptr") {
                             // Integer to pointer: inttoptr
-                            let cast_tmp = ctx.fresh_temp();
-                            ctx.emit_cast(cast_tmp.as_str(), "inttoptr", operand_ty.as_str(), operand_val.as_str(), "ptr");
-                            ctx.emit_store("ptr", cast_tmp.as_str(), field_ptr.as_str());
+                            let cast_tmp = ctx.fresh_temp_cg();
+                            ctx.emit_cast_cg(&cast_tmp, "inttoptr", operand_ty.as_str(), operand_val.as_str(), "ptr");
+                            ctx.emit_store_cg2("ptr", &cast_tmp, &field_ptr);
                         } else if dst_w > 0 && string_eq_str(operand_ty.as_str(), "ptr") {
                             // Pointer to integer: ptrtoint
-                            let cast_tmp = ctx.fresh_temp();
-                            ctx.emit_cast(cast_tmp.as_str(), "ptrtoint", "ptr", operand_val.as_str(), field_ty_str);
-                            ctx.emit_store(field_ty_str, cast_tmp.as_str(), field_ptr.as_str());
+                            let cast_tmp = ctx.fresh_temp_cg();
+                            ctx.emit_cast_cg(&cast_tmp, "ptrtoint", "ptr", operand_val.as_str(), field_ty_str);
+                            ctx.emit_store_cg2(field_ty_str, &cast_tmp, &field_ptr);
                         } else {
                             // Other mismatch (e.g., aggregate type from nested enum).
                             // Store with the operand's own type so the IR is valid.
-                            ctx.emit_store(operand_ty.as_str(), operand_val.as_str(), field_ptr.as_str());
+                            ctx.emit_store_str_cg(operand_ty.as_str(), operand_val.as_str(), &field_ptr);
                         }
                     }
                     i = i + 1;
@@ -2496,10 +2496,10 @@ fn emit_aggregate_adt(
 
     // Store payload fields at byte offset 1 (after i8 discriminant)
     if vals.len() > 0 {
-        let payload_ptr = ctx.fresh_temp();
-        let mut off_indices: Vec<String> = Vec::new();
-        off_indices.push(common::make_string("1"));
-        ctx.emit_gep(payload_ptr.as_str(), "i8", dest, &off_indices);
+        let payload_ptr = ctx.fresh_temp_cg();
+        ctx.begin_gep_str(&payload_ptr, "i8", dest);
+        ctx.gep_ptr_offset(1);
+        ctx.end_gep();
 
         // Build payload struct type from operand types
         let mut payload_ty = common::make_string("{ ");
@@ -2516,12 +2516,12 @@ fn emit_aggregate_adt(
         // Store each field in the payload
         let mut i: usize = 0;
         while i < vals.len() {
-            let field_ptr = ctx.fresh_temp();
-            let mut field_indices: Vec<String> = Vec::new();
-            field_indices.push(common::make_string("0"));
-            field_indices.push(codegen_types::format_u64(i as u64));
-            ctx.emit_gep(field_ptr.as_str(), payload_ty.as_str(), payload_ptr.as_str(), &field_indices);
-            ctx.emit_store(tys[i].as_str(), vals[i].as_str(), field_ptr.as_str());
+            let field_ptr = ctx.fresh_temp_cg();
+            ctx.begin_gep(&field_ptr, payload_ty.as_str(), &payload_ptr);
+            ctx.gep_ptr_offset(0);
+            ctx.gep_field(i as u32);
+            ctx.end_gep();
+            ctx.emit_store_str_cg(tys[i].as_str(), vals[i].as_str(), &field_ptr);
             i = i + 1;
         }
     }
@@ -2562,12 +2562,12 @@ fn emit_aggregate(
                 let typed = emit_operand_typed(ctx, &operands[i]);
                 let field_val = typed.0;
                 let field_ty = typed.1;
-                let field_ptr = ctx.fresh_temp();
-                let mut indices: Vec<String> = Vec::new();
-                indices.push(common::make_string("0"));
-                indices.push(codegen_types::format_u64(i as u64));
-                ctx.emit_gep(field_ptr.as_str(), tuple_llvm.as_str(), dest, &indices);
-                ctx.emit_store(field_ty.as_str(), field_val.as_str(), field_ptr.as_str());
+                let field_ptr = ctx.fresh_temp_cg();
+                ctx.begin_gep_str(&field_ptr, tuple_llvm.as_str(), dest);
+                ctx.gep_ptr_offset(0);
+                ctx.gep_field(i as u32);
+                ctx.end_gep();
+                ctx.emit_store_str_cg(field_ty.as_str(), field_val.as_str(), &field_ptr);
                 i = i + 1;
             }
         }
@@ -2580,20 +2580,20 @@ fn emit_aggregate(
                 if !str_eq(first_ty.as_str(), elem_llvm.as_str()) {
                     elem_llvm = clone_string(&first_ty);
                 }
-                let elem_ptr = ctx.fresh_temp();
-                let mut indices: Vec<String> = Vec::new();
-                indices.push(common::make_string("0"));
-                ctx.emit_gep(elem_ptr.as_str(), elem_llvm.as_str(), dest, &indices);
-                ctx.emit_store(elem_llvm.as_str(), first_val.as_str(), elem_ptr.as_str());
+                let elem_ptr = ctx.fresh_temp_cg();
+                ctx.begin_gep_str(&elem_ptr, elem_llvm.as_str(), dest);
+                ctx.gep_ptr_offset(0);
+                ctx.end_gep();
+                ctx.emit_store_str_cg(elem_llvm.as_str(), first_val.as_str(), &elem_ptr);
             }
             let mut i: usize = 1;
             while i < operands.len() {
                 let elem_val = emit_operand(ctx, &operands[i]);
-                let elem_ptr = ctx.fresh_temp();
-                let mut indices: Vec<String> = Vec::new();
-                indices.push(codegen_types::format_u64(i as u64));
-                ctx.emit_gep(elem_ptr.as_str(), elem_llvm.as_str(), dest, &indices);
-                ctx.emit_store(elem_llvm.as_str(), elem_val.as_str(), elem_ptr.as_str());
+                let elem_ptr = ctx.fresh_temp_cg();
+                ctx.begin_gep_str(&elem_ptr, elem_llvm.as_str(), dest);
+                ctx.gep_ptr_offset(i as u64);
+                ctx.end_gep();
+                ctx.emit_store_str_cg(elem_llvm.as_str(), elem_val.as_str(), &elem_ptr);
                 i = i + 1;
             }
         }
@@ -2609,12 +2609,12 @@ fn emit_aggregate(
                 let typed = emit_operand_typed(ctx, &operands[i]);
                 let field_val = typed.0;
                 let field_ty = typed.1;
-                let field_ptr = ctx.fresh_temp();
-                let mut indices: Vec<String> = Vec::new();
-                indices.push(common::make_string("0"));
-                indices.push(codegen_types::format_u64(i as u64));
-                ctx.emit_gep(field_ptr.as_str(), record_llvm.as_str(), dest, &indices);
-                ctx.emit_store(field_ty.as_str(), field_val.as_str(), field_ptr.as_str());
+                let field_ptr = ctx.fresh_temp_cg();
+                ctx.begin_gep_str(&field_ptr, record_llvm.as_str(), dest);
+                ctx.gep_ptr_offset(0);
+                ctx.gep_field(i as u32);
+                ctx.end_gep();
+                ctx.emit_store_str_cg(field_ty.as_str(), field_val.as_str(), &field_ptr);
                 i = i + 1;
             }
         }
@@ -2626,12 +2626,12 @@ fn emit_aggregate(
                 let typed = emit_operand_typed(ctx, &operands[i]);
                 let cap_val = typed.0;
                 let cap_ty = typed.1;
-                let cap_ptr = ctx.fresh_temp();
-                let mut indices: Vec<String> = Vec::new();
-                indices.push(common::make_string("0"));
-                indices.push(codegen_types::format_u64(i as u64));
-                ctx.emit_gep(cap_ptr.as_str(), closure_llvm.as_str(), dest, &indices);
-                ctx.emit_store(cap_ty.as_str(), cap_val.as_str(), cap_ptr.as_str());
+                let cap_ptr = ctx.fresh_temp_cg();
+                ctx.begin_gep_str(&cap_ptr, closure_llvm.as_str(), dest);
+                ctx.gep_ptr_offset(0);
+                ctx.gep_field(i as u32);
+                ctx.end_gep();
+                ctx.emit_store_str_cg(cap_ty.as_str(), cap_val.as_str(), &cap_ptr);
                 i = i + 1;
             }
         }
@@ -2653,12 +2653,12 @@ fn emit_aggregate(
             let mut i: usize = 0;
             while i < operands.len() {
                 let val = emit_operand(ctx, &operands[i]);
-                let ptr = ctx.fresh_temp();
-                let mut indices: Vec<String> = Vec::new();
-                indices.push(common::make_string("0"));
-                indices.push(codegen_types::format_u64(i as u64));
-                ctx.emit_gep(ptr.as_str(), range_llvm.as_str(), dest, &indices);
-                ctx.emit_store(elem_llvm.as_str(), val.as_str(), ptr.as_str());
+                let ptr = ctx.fresh_temp_cg();
+                ctx.begin_gep_str(&ptr, range_llvm.as_str(), dest);
+                ctx.gep_ptr_offset(0);
+                ctx.gep_field(i as u32);
+                ctx.end_gep();
+                ctx.emit_store_str_cg(elem_llvm.as_str(), val.as_str(), &ptr);
                 i = i + 1;
             }
         }
