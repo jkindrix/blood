@@ -3954,6 +3954,18 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let system_alloc_live_type = i64_type.fn_type(&[], false);
         self.module.add_function("blood_system_alloc_live_bytes", system_alloc_live_type, None);
 
+        // Realloc diagnostic counters
+        let diag_u64_type = i64_type.fn_type(&[], false);
+        self.module.add_function("blood_realloc_diag_count", diag_u64_type, None);
+        self.module.add_function("blood_realloc_diag_wasted", diag_u64_type, None);
+        self.module.add_function("blood_realloc_diag_inplace", diag_u64_type, None);
+        self.module.add_function("blood_realloc_diag_inplace_bytes", diag_u64_type, None);
+        self.module.add_function("blood_realloc_diag_offset_delta", diag_u64_type, None);
+        let diag_void_type = void_type.fn_type(&[], false);
+        self.module.add_function("blood_realloc_stats_reset", diag_void_type, None);
+        self.module.add_function("blood_print_alloc_hist", diag_void_type, None);
+        self.module.add_function("blood_alloc_hist_reset", diag_void_type, None);
+
         // blood_region_activate(region_id: i64) -> void
         // Activates a region for the current thread so String/Vec/Box allocations route to it
         let region_activate_type = void_type.fn_type(&[i64_type.into()], false);

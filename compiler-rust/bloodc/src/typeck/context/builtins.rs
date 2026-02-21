@@ -227,6 +227,40 @@ impl<'a> TypeContext<'a> {
             vec![], u64_ty.clone(),
         );
 
+        // Realloc diagnostic counters
+        self.register_builtin_fn_aliased(
+            "realloc_diag_count", "blood_realloc_diag_count",
+            vec![], u64_ty.clone(),
+        );
+        self.register_builtin_fn_aliased(
+            "realloc_diag_wasted", "blood_realloc_diag_wasted",
+            vec![], u64_ty.clone(),
+        );
+        self.register_builtin_fn_aliased(
+            "realloc_diag_inplace", "blood_realloc_diag_inplace",
+            vec![], u64_ty.clone(),
+        );
+        self.register_builtin_fn_aliased(
+            "realloc_diag_inplace_bytes", "blood_realloc_diag_inplace_bytes",
+            vec![], u64_ty.clone(),
+        );
+        self.register_builtin_fn_aliased(
+            "realloc_diag_offset_delta", "blood_realloc_diag_offset_delta",
+            vec![], u64_ty.clone(),
+        );
+        self.register_builtin_fn_aliased(
+            "realloc_stats_reset", "blood_realloc_stats_reset",
+            vec![], unit_ty.clone(),
+        );
+        self.register_builtin_fn_aliased(
+            "print_alloc_hist", "blood_print_alloc_hist",
+            vec![], unit_ty.clone(),
+        );
+        self.register_builtin_fn_aliased(
+            "alloc_hist_reset", "blood_alloc_hist_reset",
+            vec![], unit_ty.clone(),
+        );
+
         // ptr_read_i32(ptr: u64) -> i32 - read i32 from memory address
         self.register_builtin_fn("ptr_read_i32", vec![u64_ty.clone()], i32_ty.clone());
 

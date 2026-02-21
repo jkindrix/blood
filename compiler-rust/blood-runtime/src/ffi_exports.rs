@@ -44,6 +44,61 @@ pub type FiberHandle = u64;
 pub type ContinuationHandle = u64;
 
 // ============================================================================
+// Realloc Diagnostics
+// ============================================================================
+
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+
+/// Total realloc calls inside a region.
+static REALLOC_COUNT: AtomicU64 = AtomicU64::new(0);
+/// Total bytes abandoned by realloc (old buffer sizes).
+static REALLOC_WASTED_BYTES: AtomicU64 = AtomicU64::new(0);
+/// Reallocs where old buffer was the most recent bump allocation (in-place eligible).
+static REALLOC_INPLACE_ELIGIBLE: AtomicU64 = AtomicU64::new(0);
+/// Total bytes that would be saved by in-place realloc (old_size for eligible reallocs).
+static REALLOC_INPLACE_SAVED_BYTES: AtomicU64 = AtomicU64::new(0);
+/// Actual offset delta saved: (would-have-been offset advance) - (actual offset advance).
+static REALLOC_OFFSET_DELTA_SAVED: AtomicU64 = AtomicU64::new(0);
+
+// ============================================================================
+// Allocation Size Histogram
+// ============================================================================
+
+/// Allocation size histogram buckets (by log2 size class + large buckets).
+/// Bucket indices:
+///   0: 1-8 bytes       6: 513-1024        12: 32K-64K
+///   1: 9-16            7: 1K-2K           13: 64K-128K
+///   2: 17-32           8: 2K-4K           14: 128K-256K
+///   3: 33-64           9: 4K-8K           15: 256K-512K
+///   4: 65-128         10: 8K-16K          16: 512K-1M
+///   5: 129-256        11: 16K-32K         17: >1M
+const ALLOC_HIST_BUCKETS: usize = 18;
+static ALLOC_HIST_COUNT: [AtomicU64; ALLOC_HIST_BUCKETS] = {
+    const ZERO: AtomicU64 = AtomicU64::new(0);
+    [ZERO; ALLOC_HIST_BUCKETS]
+};
+static ALLOC_HIST_BYTES: [AtomicU64; ALLOC_HIST_BUCKETS] = {
+    const ZERO: AtomicU64 = AtomicU64::new(0);
+    [ZERO; ALLOC_HIST_BUCKETS]
+};
+
+#[inline]
+fn alloc_hist_bucket(size: usize) -> usize {
+    if size == 0 { return 0; }
+    let bits = (usize::BITS - size.leading_zeros()) as usize; // ceil(log2(size)) + 1
+    // bits=1 for size=1, bits=4 for size=8..15, bits=14 for 8192..16383
+    let bucket = if bits <= 3 { 0 } else { bits - 3 }; // 0 for 1-8, 1 for 9-16, etc.
+    bucket.min(ALLOC_HIST_BUCKETS - 1)
+}
+
+#[inline]
+fn record_alloc_hist(size: usize) {
+    let b = alloc_hist_bucket(size);
+    ALLOC_HIST_COUNT[b].fetch_add(1, AtomicOrdering::Relaxed);
+    ALLOC_HIST_BYTES[b].fetch_add(size as u64, AtomicOrdering::Relaxed);
+}
+
+// ============================================================================
 // Region-Aware Allocation
 // ============================================================================
 
@@ -85,17 +140,75 @@ unsafe fn runtime_dealloc(ptr: *mut u8, layout: std::alloc::Layout) {
     // Inside a region: no-op. Memory is reclaimed when the region is destroyed.
 }
 
-/// Region-aware reallocation. When a region is active, allocates new space
-/// from the region and copies data. The old buffer is abandoned (not freed)
-/// because Blood lacks a borrow checker — other code may still reference the
-/// old buffer's contents through raw pointers or slices. The abandoned memory
-/// is reclaimed when the region is destroyed.
+/// Region-aware reallocation with in-place extension.
+///
+/// When a region is active and the buffer being realloc'd is the most recent
+/// bump allocation, extends it in place — no copy, no abandoned buffer. This
+/// eliminates the primary source of region memory waste from Vec/String growth.
+///
+/// Fallback: allocates new space and copies. The old buffer is abandoned (not
+/// freed) because Blood lacks a borrow checker — other code may still reference
+/// old buffer contents through dangling pointers.
 unsafe fn runtime_realloc(ptr: *mut u8, old_layout: std::alloc::Layout, new_size: usize) -> *mut u8 {
     let region_id = current_active_region();
     if region_id != 0 {
+        let old_size = old_layout.size();
+
+        // --- Diagnostic counters ---
+        REALLOC_COUNT.fetch_add(1, AtomicOrdering::Relaxed);
+
+        // Compute actual allocation size including slab rounding, for accurate
+        // waste tracking. The bump allocator rounds up to slot_size for slab allocs.
+        let class = crate::memory::size_class_for(old_size);
+        let actual_old_size = if class != crate::memory::SIZE_CLASS_LARGE {
+            let slot = crate::memory::slot_size_for_class(class);
+            slot.max(old_size)
+        } else {
+            old_size
+        };
+
+        // Compute slab-rounded new size for offset delta tracking
+        let new_class = crate::memory::size_class_for(new_size);
+        let actual_new_size = if new_class != crate::memory::SIZE_CLASS_LARGE {
+            let slot = crate::memory::slot_size_for_class(new_class);
+            slot.max(new_size)
+        } else {
+            new_size
+        };
+
+        // Try in-place extension: if the old buffer is the most recent bump
+        // allocation, we can just advance the offset without copying.
+        if !ptr.is_null() && old_size > 0 && new_size > old_size {
+            let registry = get_region_registry();
+            let reg = registry.lock();
+            if let Some(region) = reg.get(&region_id) {
+                let offset_before = region.used();
+                if region.try_realloc_in_place(ptr, old_size, new_size) {
+                    let offset_after = region.used();
+                    // Without in-place: offset would advance by actual_new_size (new alloc)
+                    // With in-place: offset advanced by (actual_new_size - actual_old_size)
+                    // Delta saved = actual_old_size
+                    // But let's measure the REAL delta for debugging:
+                    let actual_advance = offset_after - offset_before;
+                    let would_be_advance = actual_new_size; // full new alloc (ignoring alignment)
+                    if would_be_advance > actual_advance {
+                        REALLOC_OFFSET_DELTA_SAVED.fetch_add(
+                            (would_be_advance - actual_advance) as u64,
+                            AtomicOrdering::Relaxed,
+                        );
+                    }
+                    REALLOC_INPLACE_ELIGIBLE.fetch_add(1, AtomicOrdering::Relaxed);
+                    REALLOC_INPLACE_SAVED_BYTES.fetch_add(actual_old_size as u64, AtomicOrdering::Relaxed);
+                    return ptr; // Same pointer, buffer extended in place
+                }
+            }
+        }
+
+        // Fallback: allocate new buffer and copy
+        REALLOC_WASTED_BYTES.fetch_add(actual_old_size as u64, AtomicOrdering::Relaxed);
         let new_ptr = blood_region_alloc(region_id, new_size, old_layout.align()) as *mut u8;
         if !new_ptr.is_null() && !ptr.is_null() {
-            std::ptr::copy_nonoverlapping(ptr, new_ptr, old_layout.size().min(new_size));
+            std::ptr::copy_nonoverlapping(ptr, new_ptr, old_size.min(new_size));
         }
         new_ptr
     } else {
@@ -4269,6 +4382,7 @@ pub extern "C" fn blood_region_get_status(region_id: u64) -> u32 {
 /// Returns the address of the allocated memory, or 0 on failure.
 #[no_mangle]
 pub extern "C" fn blood_region_alloc(region_id: u64, size: usize, align: usize) -> u64 {
+    record_alloc_hist(size);
     let registry = get_region_registry();
     let mut reg = registry.lock();
 
@@ -4342,6 +4456,126 @@ pub extern "C" fn blood_region_alloc_count(region_id: u64) -> u64 {
     } else {
         0
     }
+}
+
+// ============================================================================
+// Realloc Diagnostic FFI
+// ============================================================================
+
+/// Get realloc diagnostic counters. Fills 4 u64 values:
+/// [0] realloc_count, [1] wasted_bytes, [2] inplace_eligible, [3] inplace_saved_bytes
+#[no_mangle]
+pub extern "C" fn blood_realloc_stats(out: *mut u64) {
+    if out.is_null() { return; }
+    unsafe {
+        *out = REALLOC_COUNT.load(AtomicOrdering::Relaxed);
+        *out.add(1) = REALLOC_WASTED_BYTES.load(AtomicOrdering::Relaxed);
+        *out.add(2) = REALLOC_INPLACE_ELIGIBLE.load(AtomicOrdering::Relaxed);
+        *out.add(3) = REALLOC_INPLACE_SAVED_BYTES.load(AtomicOrdering::Relaxed);
+    }
+}
+
+/// Get total realloc calls inside regions.
+#[no_mangle]
+pub extern "C" fn blood_realloc_diag_count() -> u64 {
+    REALLOC_COUNT.load(AtomicOrdering::Relaxed)
+}
+
+/// Get total bytes wasted by realloc (abandoned old buffers).
+#[no_mangle]
+pub extern "C" fn blood_realloc_diag_wasted() -> u64 {
+    REALLOC_WASTED_BYTES.load(AtomicOrdering::Relaxed)
+}
+
+/// Get count of reallocs eligible for in-place growth.
+#[no_mangle]
+pub extern "C" fn blood_realloc_diag_inplace() -> u64 {
+    REALLOC_INPLACE_ELIGIBLE.load(AtomicOrdering::Relaxed)
+}
+
+/// Get bytes that would be saved by in-place realloc.
+#[no_mangle]
+pub extern "C" fn blood_realloc_diag_inplace_bytes() -> u64 {
+    REALLOC_INPLACE_SAVED_BYTES.load(AtomicOrdering::Relaxed)
+}
+
+/// Reset realloc diagnostic counters to zero.
+#[no_mangle]
+pub extern "C" fn blood_realloc_stats_reset() {
+    REALLOC_COUNT.store(0, AtomicOrdering::Relaxed);
+    REALLOC_WASTED_BYTES.store(0, AtomicOrdering::Relaxed);
+    REALLOC_INPLACE_ELIGIBLE.store(0, AtomicOrdering::Relaxed);
+    REALLOC_INPLACE_SAVED_BYTES.store(0, AtomicOrdering::Relaxed);
+    REALLOC_OFFSET_DELTA_SAVED.store(0, AtomicOrdering::Relaxed);
+}
+
+/// Get the actual offset delta saved by in-place reallocs (debugging counter).
+#[no_mangle]
+pub extern "C" fn blood_realloc_diag_offset_delta() -> u64 {
+    REALLOC_OFFSET_DELTA_SAVED.load(AtomicOrdering::Relaxed)
+}
+
+/// Get allocation histogram: writes count and bytes for each of 18 size buckets.
+/// Output buffer must hold at least 36 u64 values (18 counts + 18 bytes).
+#[no_mangle]
+pub extern "C" fn blood_alloc_hist_get(out: *mut u64) {
+    if out.is_null() { return; }
+    unsafe {
+        for i in 0..ALLOC_HIST_BUCKETS {
+            *out.add(i) = ALLOC_HIST_COUNT[i].load(AtomicOrdering::Relaxed);
+            *out.add(ALLOC_HIST_BUCKETS + i) = ALLOC_HIST_BYTES[i].load(AtomicOrdering::Relaxed);
+        }
+    }
+}
+
+/// Reset allocation histogram counters.
+#[no_mangle]
+pub extern "C" fn blood_alloc_hist_reset() {
+    for i in 0..ALLOC_HIST_BUCKETS {
+        ALLOC_HIST_COUNT[i].store(0, AtomicOrdering::Relaxed);
+        ALLOC_HIST_BYTES[i].store(0, AtomicOrdering::Relaxed);
+    }
+}
+
+/// Print allocation histogram to stderr and reset.
+/// Each line shows: size range, allocation count, total bytes, avg size.
+#[no_mangle]
+pub extern "C" fn blood_print_alloc_hist() {
+    let labels = [
+        "1-8B", "9-16B", "17-32B", "33-64B", "65-128B", "129-256B",
+        "257-512B", "513B-1K", "1K-2K", "2K-4K", "4K-8K", "8K-16K",
+        "16K-32K", "32K-64K", "64K-128K", "128K-256K", "256K-512K", ">512K",
+    ];
+    let mut total_count: u64 = 0;
+    let mut total_bytes: u64 = 0;
+    for i in 0..ALLOC_HIST_BUCKETS {
+        let count = ALLOC_HIST_COUNT[i].load(AtomicOrdering::Relaxed);
+        let bytes = ALLOC_HIST_BYTES[i].load(AtomicOrdering::Relaxed);
+        total_count += count;
+        total_bytes += bytes;
+        if count > 0 {
+            let avg = if count > 0 { bytes / count } else { 0 };
+            eprintln!("    {:>12}  count={:>12}  bytes={:>14}  avg={:>6}",
+                labels[i], format_count(count), format_bytes(bytes), avg);
+        }
+    }
+    eprintln!("    {:>12}  count={:>12}  bytes={:>14}",
+        "TOTAL", format_count(total_count), format_bytes(total_bytes));
+    blood_alloc_hist_reset();
+}
+
+fn format_count(n: u64) -> String {
+    if n >= 1_000_000_000 { format!("{:.2}B", n as f64 / 1e9) }
+    else if n >= 1_000_000 { format!("{:.2}M", n as f64 / 1e6) }
+    else if n >= 1_000 { format!("{:.1}K", n as f64 / 1e3) }
+    else { format!("{}", n) }
+}
+
+fn format_bytes(b: u64) -> String {
+    if b >= 1_073_741_824 { format!("{:.2} GB", b as f64 / 1_073_741_824.0) }
+    else if b >= 1_048_576 { format!("{:.2} MB", b as f64 / 1_048_576.0) }
+    else if b >= 1024 { format!("{:.1} KB", b as f64 / 1024.0) }
+    else { format!("{} B", b) }
 }
 
 /// Trim a region's committed pages above the current allocation offset.
@@ -10966,7 +11200,36 @@ pub extern "C" fn blood_realloc(ptr: i64, new_size: i64) -> i64 {
 
     match old_info {
         Some((old_size, region_id)) if region_id != 0 => {
-            // Region allocation: allocate new, copy, free old
+            // --- Diagnostic counters ---
+            REALLOC_COUNT.fetch_add(1, AtomicOrdering::Relaxed);
+
+            // Compute slab-rounded old size for accurate waste tracking
+            let class = crate::memory::size_class_for(old_size);
+            let actual_old_size = if class != crate::memory::SIZE_CLASS_LARGE {
+                let slot = crate::memory::slot_size_for_class(class);
+                slot.max(old_size)
+            } else {
+                old_size
+            };
+
+            // Try in-place extension if growing
+            if new_size_usize > old_size {
+                let registry = get_region_registry();
+                let reg = registry.lock();
+                if let Some(region) = reg.get(&region_id) {
+                    if region.try_realloc_in_place(old_addr as *mut u8, old_size, new_size_usize) {
+                        REALLOC_INPLACE_ELIGIBLE.fetch_add(1, AtomicOrdering::Relaxed);
+                        REALLOC_INPLACE_SAVED_BYTES.fetch_add(actual_old_size as u64, AtomicOrdering::Relaxed);
+                        // Update slot registry with new size
+                        drop(reg);
+                        crate::memory::update_slot_size(old_addr, new_size_usize);
+                        return ptr; // Same address, buffer extended in place
+                    }
+                }
+            }
+
+            // Fallback: allocate new, copy, free old
+            REALLOC_WASTED_BYTES.fetch_add(actual_old_size as u64, AtomicOrdering::Relaxed);
             let new_ptr = blood_alloc_simple(new_size);
             if new_ptr == 0 {
                 return 0;

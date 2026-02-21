@@ -278,6 +278,18 @@ impl SlotRegistry {
         slots.get(&address).map(|e| (e.size, e.region_id))
     }
 
+    /// Update the size of an existing allocation (for in-place realloc).
+    ///
+    /// Updates the stored size and size_class for an allocation that was
+    /// extended in place. The address and region_id remain unchanged.
+    pub fn update_size(&self, address: u64, new_size: usize) {
+        let mut slots = self.slots.write();
+        if let Some(entry) = slots.get_mut(&address) {
+            entry.size = new_size;
+            entry.size_class = size_class_for(new_size);
+        }
+    }
+
     /// Unregister an allocation (mark as freed).
     ///
     /// The slot entry is retained with an incremented generation to detect
@@ -721,6 +733,13 @@ pub fn register_allocation_with_region(address: u64, size: usize, region_id: u64
 /// Returns `Some((size, region_id))` if the address is registered, `None` otherwise.
 pub fn get_slot_info(address: u64) -> Option<(usize, u64)> {
     slot_registry().get_info(address)
+}
+
+/// Update the size of an existing allocation in the global registry.
+///
+/// Used by realloc-in-place to record the new size without changing the address.
+pub fn update_slot_size(address: u64, new_size: usize) {
+    slot_registry().update_size(address, new_size);
 }
 
 /// Unregister an allocation from the global slot registry.
@@ -1384,6 +1403,17 @@ impl Region {
         self.id
     }
 
+    /// Get the base address of the region's backing memory.
+    #[cfg(unix)]
+    pub fn base_addr(&self) -> usize {
+        self.base as usize
+    }
+
+    #[cfg(not(unix))]
+    pub fn base_addr(&self) -> usize {
+        self.buffer.as_ptr() as usize
+    }
+
     /// Get the current used size.
     pub fn used(&self) -> usize {
         self.offset.load(Ordering::Acquire)
@@ -1551,6 +1581,140 @@ impl Region {
         self.stats.bumped.fetch_add(1, Ordering::Relaxed);
         self.stats.allocations.fetch_add(1, Ordering::Relaxed);
         Some(unsafe { self.buffer.as_mut_ptr().add(aligned_offset) })
+    }
+
+    /// Try to extend the most recent bump allocation in place.
+    ///
+    /// If `ptr` points to the most recent bump allocation, we can extend it to
+    /// `new_size` without copying or abandoning the old buffer. This eliminates
+    /// the primary source of region memory waste: abandoned Vec/String growth.
+    ///
+    /// The check accounts for slab rounding: the bump allocator may have advanced
+    /// by `slot_size` (rounded up to power of 2) rather than `old_size`. We use
+    /// `size_class_for` + `slot_size_for_class` to compute the actual bump advance.
+    ///
+    /// Returns `true` if the extension succeeded (caller should NOT allocate+copy).
+    /// Returns `false` if the buffer is not at the top (caller must fall back).
+    ///
+    /// # Safety
+    ///
+    /// Caller must ensure `ptr` was allocated from this region with size `old_size`.
+    #[cfg(unix)]
+    pub fn try_realloc_in_place(&self, ptr: *mut u8, old_size: usize, new_size: usize) -> bool {
+        let ptr_addr = ptr as usize;
+        let base = self.base as usize;
+
+        // Sanity: ptr must be within this region
+        if ptr_addr < base {
+            return false;
+        }
+
+        let offset = self.offset.load(Ordering::Acquire);
+
+        // Compute the actual allocation size including slab rounding.
+        // The bump allocator uses slot_size.max(size) for slab-sized allocs.
+        let class = size_class_for(old_size);
+        let actual_old_size = if class != SIZE_CLASS_LARGE {
+            let slot = slot_size_for_class(class);
+            slot.max(old_size)
+        } else {
+            old_size
+        };
+
+        // Check: is this the most recent bump allocation?
+        // The old buffer occupies [ptr_addr, ptr_addr + actual_old_size).
+        if ptr_addr + actual_old_size != base + offset {
+            return false;
+        }
+
+        // Compute new allocation size with slab rounding for the new size
+        let new_class = size_class_for(new_size);
+        let actual_new_size = if new_class != SIZE_CLASS_LARGE {
+            let slot = slot_size_for_class(new_class);
+            slot.max(new_size)
+        } else {
+            new_size
+        };
+
+        // Calculate new offset
+        let new_offset = (ptr_addr - base) + actual_new_size;
+
+        if new_offset > self.reserved {
+            return false;
+        }
+
+        // Ensure we have enough committed pages
+        let committed = self.committed.load(Ordering::Acquire);
+        if new_offset > committed {
+            let ps = page_size();
+            const MAX_GROWTH: usize = 256 * 1024 * 1024;
+            let growth = committed.min(MAX_GROWTH);
+            let desired = round_up((committed + growth).max(new_offset), ps).min(self.reserved);
+            let additional = desired - committed;
+            if additional > 0 {
+                let ret = unsafe {
+                    libc::mprotect(
+                        self.base.add(committed) as *mut libc::c_void,
+                        additional,
+                        libc::PROT_READ | libc::PROT_WRITE,
+                    )
+                };
+                if ret != 0 {
+                    return false;
+                }
+                self.committed.store(desired, Ordering::Release);
+            }
+        }
+
+        // Advance the bump offset — no copy needed, buffer stays in place
+        self.offset.store(new_offset, Ordering::Release);
+        true
+    }
+
+    /// Non-Unix variant of try_realloc_in_place.
+    #[cfg(not(unix))]
+    pub fn try_realloc_in_place(&mut self, ptr: *mut u8, old_size: usize, new_size: usize) -> bool {
+        let ptr_addr = ptr as usize;
+        let base = self.buffer.as_ptr() as usize;
+
+        if ptr_addr < base {
+            return false;
+        }
+
+        let offset = self.offset.load(Ordering::Acquire);
+
+        let class = size_class_for(old_size);
+        let actual_old_size = if class != SIZE_CLASS_LARGE {
+            let slot = slot_size_for_class(class);
+            slot.max(old_size)
+        } else {
+            old_size
+        };
+
+        if ptr_addr + actual_old_size != base + offset {
+            return false;
+        }
+
+        let new_class = size_class_for(new_size);
+        let actual_new_size = if new_class != SIZE_CLASS_LARGE {
+            let slot = slot_size_for_class(new_class);
+            slot.max(new_size)
+        } else {
+            new_size
+        };
+
+        let new_offset = (ptr_addr - base) + actual_new_size;
+        if new_offset > self.max_size {
+            return false;
+        }
+
+        if new_offset > self.buffer.len() {
+            let new_capacity = (new_offset * 2).min(self.max_size);
+            self.buffer.resize(new_capacity, 0);
+        }
+
+        self.offset.store(new_offset, Ordering::Release);
+        true
     }
 
     /// Deallocate memory, returning it to the appropriate free list.
