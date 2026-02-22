@@ -925,7 +925,12 @@ fn lower_effect_ref(ctx: &mut hir_lower_ctx::LoweringCtx, ty: &ast::Type) -> Opt
                             }
                         }
                         Option::None => {
-                            // Item not yet lowered — assume it might be an effect
+                            // Forward reference: item not yet lowered in this
+                            // single-pass HIR lowering. Assume it is an effect
+                            // definition — type checking will validate this
+                            // assumption and report an error if incorrect.
+                            // This is a known limitation of single-pass lowering;
+                            // a future multi-pass design would eliminate this.
                         }
                     }
 

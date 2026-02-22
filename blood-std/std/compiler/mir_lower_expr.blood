@@ -220,8 +220,10 @@ pub fn lower_expr(
             }
         }
         &hir_expr::ExprKind::Default => {
-            // Default expression: produce zero-initialized value
-            // TODO: In the future, call Default trait method if available
+            // Default expression: produce zero-initialized value.
+            // Currently emits ZeroInit for all types. When the Default trait
+            // is implemented, this should dispatch to Default::default() for
+            // types that implement it, and only use ZeroInit for primitives.
             match dest.as_place() {
                 Option::Some(place) => {
                     ctx.emit_assign(

@@ -107,7 +107,11 @@ pub fn eval_const_expr(expr: &ast::Expr) -> ConstValue {
             eval_unary(unary_op, operand.as_ref())
         }
         &ast::ExprKind::Paren(ref inner) => eval_const_expr(inner.as_ref()),
-        // Other expressions cannot be evaluated at compile time
+        // Only literal, binary, unary, and parenthesized expressions are
+        // supported in compile-time const evaluation. Other expression
+        // kinds (paths to named constants, function calls, field accesses,
+        // indexing, etc.) require full semantic analysis and are not
+        // evaluable in the current const-eval pass.
         _ => ConstValue::error(),
     }
 }

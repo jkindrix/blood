@@ -363,7 +363,12 @@ pub fn pattern_test(
                 mir_types::Rvalue::Use(mir_types::Operand::Copy(source.clone())),
                 span,
             );
-            // Get start value
+            // Get start value.
+            // Only literal patterns are supported as range bounds. Non-literal
+            // patterns (e.g., named constants) should have been validated by
+            // typeck. If a non-literal reaches here, emit zero as a defensive
+            // placeholder — the range comparison will be semantically wrong,
+            // but the program structure remains valid for codegen.
             let start_const = match start {
                 &Option::Some(ref start_pat) => {
                     let inner = start_pat.as_ref();
@@ -371,14 +376,18 @@ pub fn pattern_test(
                         &hir_expr::PatternKind::Literal(ref lit) => {
                             mir_lower_util::lower_literal(lit, &range_pat_ty_hir)
                         }
-                        _ => mir_types::Constant::new(pattern.ty, mir_types::ConstantKind::Int(0)),
+                        _ => {
+                            // Non-literal range bound — typeck should reject this.
+                            // Zero placeholder preserves compilation structure.
+                            mir_types::Constant::new(pattern.ty, mir_types::ConstantKind::Int(0))
+                        }
                     }
                 }
                 &Option::None => mir_types::Constant::new(pattern.ty, mir_types::ConstantKind::Int(0)),
             };
             let start_operand = mir_types::Operand::Constant(start_const);
 
-            // Get end value
+            // Get end value (same constraints as start value above).
             let end_const = match end_val {
                 &Option::Some(ref end_pat) => {
                     let inner = end_pat.as_ref();
@@ -386,7 +395,11 @@ pub fn pattern_test(
                         &hir_expr::PatternKind::Literal(ref lit) => {
                             mir_lower_util::lower_literal(lit, &range_pat_ty_hir)
                         }
-                        _ => mir_types::Constant::new(pattern.ty, mir_types::ConstantKind::Int(0)),
+                        _ => {
+                            // Non-literal range bound — typeck should reject this.
+                            // Zero placeholder preserves compilation structure.
+                            mir_types::Constant::new(pattern.ty, mir_types::ConstantKind::Int(0))
+                        }
                     }
                 }
                 &Option::None => mir_types::Constant::new(pattern.ty, mir_types::ConstantKind::Int(0)),

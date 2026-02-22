@@ -807,11 +807,16 @@ fn find_return_type_for_body(
         }
         i = i + 1;
     }
-    // Default to unit type if no matching function found
+    // No matching function found. This can occur for extern functions or
+    // functions not yet lowered. Default to unit — the caller relies on
+    // type inference to unify the actual return type later.
     type_intern::CommonTypes::unit()
 }
 
 /// Looks up the return type of an effect operation by its DefId.
+/// Returns unit if the effect operation is not found. This fallback
+/// can mask missing effect definitions — callers should verify the
+/// operation exists before relying on this return type.
 fn find_effect_op_return_type(
     items: &Vec<hir_lower_ctx::ItemEntry>,
     op_def_id: hir_def::DefId,
@@ -833,6 +838,9 @@ fn find_effect_op_return_type(
         }
         i = i + 1;
     }
+    // Effect operation not found. This may indicate a missing effect
+    // definition or an incorrect DefId. Default to unit — typeck will
+    // catch any resulting type mismatch at the call site.
     type_intern::CommonTypes::unit()
 }
 

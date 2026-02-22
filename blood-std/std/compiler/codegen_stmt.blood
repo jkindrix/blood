@@ -166,9 +166,15 @@ pub fn emit_statement(
                 ctx.end_gep();
                 ctx.emit_store_str_cg(discr_ty.as_str(), discr_val.as_str(), &discr_ptr);
             } else {
-                // Fallback for builtin generic enums (Option<T>, Result<T,E>)
-                // not in the ADT registry: store i32 discriminant at byte 0.
-                ctx.emit_store("i32", discr_val.as_str(), ptr.as_str());
+                // ICE: Enum not found in ADT registry during SetDiscriminant.
+                // All enums must be registered before codegen so their discriminant
+                // type and field layout are known.
+                ctx.write("    ; ICE: SetDiscriminant on unregistered enum at ");
+                ctx.write(ptr.as_str());
+                ctx.write("\n");
+                ctx.write("    ; ICE: This is a compiler bug (codegen_stmt: SetDiscriminant fallback)\n");
+                ctx.write("    call void @llvm.trap()\n");
+                ctx.emit_unreachable();
             }
         }
         &mir_stmt::StatementKind::CopyNonOverlapping { ref src, ref dst, ref count } => {
