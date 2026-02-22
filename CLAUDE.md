@@ -88,12 +88,12 @@ compiler-rust/target/release/blood run file.blood
 # Build the Rust bootstrap compiler
 cd compiler-rust && cargo build --release
 
-# Build first_gen (self-hosted)
-cd blood-std/std/compiler && blood build main.blood --no-cache && cp main first_gen
+# Build first_gen (self-hosted, via build script)
+cd blood-std/std/compiler && ./build_selfhost.sh timings
+# Output: blood-std/std/compiler/build/first_gen
 
 # Run ground-truth tests
-BLOOD_RUNTIME=runtime.o BLOOD_RUST_RUNTIME=libblood_runtime.a \
-  bash compiler-rust/tests/ground-truth/run_tests.sh ./first_gen
+cd blood-std/std/compiler && ./build_selfhost.sh ground-truth
 ```
 
 ## Development Tools

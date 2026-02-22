@@ -32,10 +32,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-BLOOD_REF="${BLOOD_REF:-$HOME/blood/compiler-rust/target/release/blood}"
-BLOOD_TEST="${BLOOD_TEST:-$HOME/blood/blood-std/std/compiler/first_gen}"
-export BLOOD_RUNTIME="${BLOOD_RUNTIME:-$HOME/blood/runtime.o}"
-export BLOOD_RUST_RUNTIME="${BLOOD_RUST_RUNTIME:-$HOME/blood/libblood_runtime.a}"
+BLOOD_REF="${BLOOD_REF:-$REPO_ROOT/compiler-rust/target/release/blood}"
+BLOOD_TEST="${BLOOD_TEST:-$REPO_ROOT/blood-std/std/compiler/build/first_gen}"
+export BLOOD_RUNTIME="${BLOOD_RUNTIME:-$REPO_ROOT/compiler-rust/runtime/runtime.o}"
+export BLOOD_RUST_RUNTIME="${BLOOD_RUST_RUNTIME:-$REPO_ROOT/compiler-rust/target/release/libblood_runtime.a}"
 
 VERBOSE=0
 SUMMARY_ONLY=0

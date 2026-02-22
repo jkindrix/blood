@@ -13,14 +13,17 @@
 #   ./tools/filecheck-audit.sh --recommend        # Show recommended new tests
 #
 # Environment variables:
-#   COMPILER_DIR — directory with self-hosted compiler (default: ~/blood/blood-std/std/compiler)
+#   COMPILER_DIR — directory with self-hosted compiler (default: <repo>/blood-std/std/compiler)
 #   TEST_DIR     — directory with FileCheck tests (default: $COMPILER_DIR/tests)
 
 set -uo pipefail
 
-COMPILER_DIR="${COMPILER_DIR:-$HOME/blood/blood-std/std/compiler}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+COMPILER_DIR="${COMPILER_DIR:-$REPO_ROOT/blood-std/std/compiler}"
 TEST_DIR="${TEST_DIR:-$COMPILER_DIR/tests}"
-GROUND_TRUTH="${GROUND_TRUTH:-$HOME/blood/compiler-rust/tests/ground-truth}"
+GROUND_TRUTH="${GROUND_TRUTH:-$REPO_ROOT/compiler-rust/tests/ground-truth}"
 
 MODE="full"
 for arg in "$@"; do

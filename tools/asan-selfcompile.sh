@@ -18,14 +18,17 @@
 #
 # Environment variables:
 #   BLOOD_REF, BLOOD_RUNTIME, BLOOD_RUST_RUNTIME
-#   BUILD_DIR — directory containing compiler sources (default: ~/blood/blood-std/std/compiler)
+#   BUILD_DIR — directory containing compiler sources (default: <repo>/blood-std/std/compiler)
 
 set -uo pipefail
 
-BLOOD_REF="${BLOOD_REF:-$HOME/blood/compiler-rust/target/release/blood}"
-RUNTIME_O="${RUNTIME_O:-$HOME/blood/runtime.o}"
-RUNTIME_A="${RUNTIME_A:-$HOME/blood/libblood_runtime.a}"
-BUILD_DIR="${BUILD_DIR:-$HOME/blood/blood-std/std/compiler}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+BLOOD_REF="${BLOOD_REF:-$REPO_ROOT/compiler-rust/target/release/blood}"
+RUNTIME_O="${RUNTIME_O:-$REPO_ROOT/compiler-rust/runtime/runtime.o}"
+RUNTIME_A="${RUNTIME_A:-$REPO_ROOT/compiler-rust/target/release/libblood_runtime.a}"
+BUILD_DIR="${BUILD_DIR:-$REPO_ROOT/blood-std/std/compiler}"
 
 export BLOOD_RUNTIME="${BLOOD_RUNTIME:-$RUNTIME_O}"
 export BLOOD_RUST_RUNTIME="${BLOOD_RUST_RUNTIME:-$RUNTIME_A}"

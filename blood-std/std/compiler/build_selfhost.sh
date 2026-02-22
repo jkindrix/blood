@@ -4,7 +4,7 @@
 # Usage:
 #   ./build_selfhost.sh              # Full pipeline: blood-rust → first_gen → second_gen
 #   ./build_selfhost.sh rebuild      # Skip blood-rust, reuse existing first_gen
-#   ./build_selfhost.sh test [bin]   # Smoke test a binary (default: second_gen)
+#   ./build_selfhost.sh test [bin]   # Smoke test a binary (default: build/second_gen)
 #   ./build_selfhost.sh ground-truth # Run ground-truth tests through first_gen
 #   ./build_selfhost.sh emit [stage] # Emit intermediate IR (ast|hir|mir|llvm-ir|llvm-ir-unopt)
 #   ./build_selfhost.sh verify [ir]  # Run all verification checks on IR
@@ -19,11 +19,16 @@ set -euo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$DIR"
 
-# Paths (configurable via environment)
-BLOOD_RUST="${BLOOD_RUST:-$HOME/blood/compiler-rust/target/release/blood}"
-RUNTIME_O="${RUNTIME_O:-$HOME/blood/compiler-rust/runtime/runtime.o}"
-RUNTIME_A="${RUNTIME_A:-$HOME/blood/compiler-rust/target/release/libblood_runtime.a}"
-GROUND_TRUTH="${GROUND_TRUTH:-$HOME/blood/compiler-rust/tests/ground-truth}"
+# Repository root and build output directory
+REPO_ROOT="$(cd "$DIR/../../.." && pwd)"
+BUILD_DIR="$DIR/build"
+mkdir -p "$BUILD_DIR"
+
+# Paths (configurable via environment, defaults relative to repo root)
+BLOOD_RUST="${BLOOD_RUST:-$REPO_ROOT/compiler-rust/target/release/blood}"
+RUNTIME_O="${RUNTIME_O:-$REPO_ROOT/compiler-rust/runtime/runtime.o}"
+RUNTIME_A="${RUNTIME_A:-$REPO_ROOT/compiler-rust/target/release/libblood_runtime.a}"
+GROUND_TRUTH="${GROUND_TRUTH:-$REPO_ROOT/compiler-rust/tests/ground-truth}"
 
 # Export for first_gen/second_gen runtime discovery
 export BLOOD_RUNTIME="${RUNTIME_O}"
@@ -95,8 +100,8 @@ build_first_gen() {
     local start_ts
     start_ts=$(date +%s)
     if $BLOOD_RUST build main.blood --no-cache $flags; then
-        mv main first_gen
-        ok "first_gen created ($(wc -c < first_gen) bytes) in $(elapsed_since "$start_ts")"
+        mv main "$BUILD_DIR/first_gen"
+        ok "first_gen created ($(wc -c < "$BUILD_DIR/first_gen") bytes) in $(elapsed_since "$start_ts")"
     else
         local rc=$?
         fail "blood-rust build failed: $(decode_exit $rc)"
@@ -106,13 +111,13 @@ build_first_gen() {
 
 # Self-compile: first_gen → second_gen
 build_second_gen() {
-    [ -f first_gen ] || die "first_gen not found. Run './build_selfhost.sh' first."
+    [ -f "$BUILD_DIR/first_gen" ] || die "first_gen not found at $BUILD_DIR/first_gen. Run './build_selfhost.sh' first."
 
     step "Self-compiling (first_gen → second_gen)"
     local start_ts
     start_ts=$(date +%s)
     local rc=0
-    ./first_gen build main.blood --timings -o second_gen.ll || rc=$?
+    "$BUILD_DIR/first_gen" build main.blood --timings -o "$BUILD_DIR/second_gen.ll" || rc=$?
     local wall_time
     wall_time=$(elapsed_since "$start_ts")
 
@@ -126,12 +131,12 @@ build_second_gen() {
     fi
 
     # IR sanity checks (quick — catches obvious problems before expensive llc-18)
-    if [ -f second_gen.ll ]; then
+    if [ -f "$BUILD_DIR/second_gen.ll" ]; then
         local ll_lines ll_size ll_defines ll_declares
-        ll_lines=$(wc -l < second_gen.ll)
-        ll_size=$(wc -c < second_gen.ll)
-        ll_defines=$(grep -c '^define ' second_gen.ll || true)
-        ll_declares=$(grep -c '^declare ' second_gen.ll || true)
+        ll_lines=$(wc -l < "$BUILD_DIR/second_gen.ll")
+        ll_size=$(wc -c < "$BUILD_DIR/second_gen.ll")
+        ll_defines=$(grep -c '^define ' "$BUILD_DIR/second_gen.ll" || true)
+        ll_declares=$(grep -c '^declare ' "$BUILD_DIR/second_gen.ll" || true)
         printf "  IR: %s lines, %s bytes, %d defines, %d declares\n" \
             "$ll_lines" "$ll_size" "$ll_defines" "$ll_declares"
 
@@ -141,7 +146,7 @@ build_second_gen() {
         fi
     fi
 
-    ok "second_gen built ($(wc -c < second_gen) bytes) in $wall_time"
+    ok "second_gen built ($(wc -c < "$BUILD_DIR/second_gen") bytes) in $wall_time"
 }
 
 # Generate reference IR from blood-rust (used as baseline for comparisons)
@@ -151,21 +156,21 @@ generate_reference_ir() {
     [ -f "$BLOOD_RUST" ] || die "blood-rust not found at $BLOOD_RUST"
 
     step "Generating reference IR from blood-rust"
-    $BLOOD_RUST build --emit llvm-ir-unopt -o reference_ir.ll main.blood 2>/dev/null
-    [ -s reference_ir.ll ] || die "blood-rust did not produce reference_ir.ll"
-    ok "reference_ir.ll generated ($(wc -l < reference_ir.ll) lines)"
+    $BLOOD_RUST build --emit llvm-ir-unopt -o "$BUILD_DIR/reference_ir.ll" main.blood 2>/dev/null
+    [ -s "$BUILD_DIR/reference_ir.ll" ] || die "blood-rust did not produce reference_ir.ll"
+    ok "reference_ir.ll generated ($(wc -l < "$BUILD_DIR/reference_ir.ll") lines)"
 }
 
 # Verify IR correctness and ABI compatibility
-# Args: $1 = IR file to verify (default: second_gen.ll)
+# Args: $1 = IR file to verify (default: build/second_gen.ll)
 verify_ir() {
-    local ir_file="${1:-second_gen.ll}"
+    local ir_file="${1:-$BUILD_DIR/second_gen.ll}"
     [ -f "$ir_file" ] || die "$ir_file not found"
 
     local errors=0
 
     # Ensure reference IR exists
-    if [ ! -f reference_ir.ll ]; then
+    if [ ! -f "$BUILD_DIR/reference_ir.ll" ]; then
         generate_reference_ir
     fi
 
@@ -182,7 +187,7 @@ verify_ir() {
 
     # Step B: Declaration diff
     step "Comparing declarations against reference"
-    if bash "$DIR/tests/check_declarations.sh" reference_ir.ll "$ir_file"; then
+    if bash "$DIR/tests/check_declarations.sh" "$BUILD_DIR/reference_ir.ll" "$ir_file"; then
         ok "Declaration check passed"
     else
         fail "Declaration mismatches detected"
@@ -203,7 +208,7 @@ verify_ir() {
         check_tmpdir=$(mktemp -d)
         trap "rm -rf '$check_tmpdir'" RETURN 2>/dev/null || true
 
-        if ! ./first_gen build "$check_src" -o "$check_tmpdir/check_out.ll" >/dev/null 2>&1; then
+        if ! "$BUILD_DIR/first_gen" build "$check_src" -o "$check_tmpdir/check_out.ll" >/dev/null 2>&1; then
             fail "$check_name (compile failed)"
             fc_fail=$((fc_fail + 1))
             rm -rf "$check_tmpdir"
@@ -235,7 +240,7 @@ verify_ir() {
     # just report definition counts for awareness.
     step "Checking function counts"
     local ref_decls self_decls self_defines
-    ref_decls=$(grep -c '^declare ' reference_ir.ll)
+    ref_decls=$(grep -c '^declare ' "$BUILD_DIR/reference_ir.ll")
     self_decls=$(grep -c '^declare ' "$ir_file")
     self_defines=$(grep -c '^define ' "$ir_file")
 
@@ -262,7 +267,7 @@ verify_ir() {
 
 # Build second_gen with AddressSanitizer instrumentation
 build_asan() {
-    local ir_file="${1:-second_gen.ll}"
+    local ir_file="${1:-$BUILD_DIR/second_gen.ll}"
     [ -f "$ir_file" ] || die "$ir_file not found"
     [ -f "$RUNTIME_A" ] || die "Runtime library not found at $RUNTIME_A"
     [ -f "$RUNTIME_O" ] || die "Runtime object not found at $RUNTIME_O"
@@ -270,39 +275,39 @@ build_asan() {
     step "Building ASan-instrumented binary from $ir_file"
 
     # Assemble IR to bitcode
-    llvm-as-18 "$ir_file" -o second_gen_asan.bc
+    llvm-as-18 "$ir_file" -o "$BUILD_DIR/second_gen_asan.bc"
     ok "Assembled to bitcode"
 
     # Run ASan instrumentation pass
     opt-18 \
         -passes='module(asan-module),function(asan)' \
-        second_gen_asan.bc -o second_gen_asan_inst.bc
+        "$BUILD_DIR/second_gen_asan.bc" -o "$BUILD_DIR/second_gen_asan_inst.bc"
     ok "ASan instrumentation applied"
 
     # Compile to object
-    llc-18 second_gen_asan_inst.bc \
-        -o second_gen_asan.o -filetype=obj -relocation-model=pic
+    llc-18 "$BUILD_DIR/second_gen_asan_inst.bc" \
+        -o "$BUILD_DIR/second_gen_asan.o" -filetype=obj -relocation-model=pic
     ok "Compiled to object"
 
     # Link with clang (handles ASan runtime linkage)
     # runtime.o already contains main() → blood_main(), no need for main_wrapper.c
-    clang-18 second_gen_asan.o "$RUNTIME_O" "$RUNTIME_A" \
+    clang-18 "$BUILD_DIR/second_gen_asan.o" "$RUNTIME_O" "$RUNTIME_A" \
         -fsanitize=address -lstdc++ -lm -lpthread -ldl -no-pie \
-        -o second_gen_asan
-    ok "Linked second_gen_asan ($(wc -c < second_gen_asan) bytes)"
+        -o "$BUILD_DIR/second_gen_asan"
+    ok "Linked second_gen_asan ($(wc -c < "$BUILD_DIR/second_gen_asan") bytes)"
 
     # Clean intermediates
-    rm -f second_gen_asan.bc second_gen_asan_inst.bc second_gen_asan.o
+    rm -f "$BUILD_DIR/second_gen_asan.bc" "$BUILD_DIR/second_gen_asan_inst.bc" "$BUILD_DIR/second_gen_asan.o"
 
-    printf "\n  Run with: ./second_gen_asan version\n"
+    printf "\n  Run with: ./build/second_gen_asan version\n"
     printf "  ASan will report memory errors with stack traces.\n"
 }
 
 # Binary search for the miscompiled function
 bisect_functions() {
-    local self_ir="${1:-second_gen.ll}"
+    local self_ir="${1:-$BUILD_DIR/second_gen.ll}"
     [ -f "$self_ir" ] || die "$self_ir not found"
-    [ -f reference_ir.ll ] || generate_reference_ir
+    [ -f "$BUILD_DIR/reference_ir.ll" ] || generate_reference_ir
     [ -f "$RUNTIME_A" ] || die "Runtime library not found at $RUNTIME_A"
     [ -f "$RUNTIME_O" ] || die "Runtime object not found at $RUNTIME_O"
 
@@ -313,7 +318,7 @@ bisect_functions() {
     trap "rm -rf '$bisect_dir'" EXIT
 
     # Convert both IR files to bitcode
-    llvm-as-18 reference_ir.ll -o "$bisect_dir/ref.bc"
+    llvm-as-18 "$BUILD_DIR/reference_ir.ll" -o "$bisect_dir/ref.bc"
     llvm-as-18 "$self_ir" -o "$bisect_dir/self.bc"
     ok "Assembled both IR files to bitcode"
 
@@ -448,7 +453,7 @@ bisect_functions() {
         done
     fi
 
-    printf "\n  To inspect, compare this function between reference_ir.ll and %s\n" "$self_ir"
+    printf "\n  To inspect, compare this function between build/reference_ir.ll and %s\n" "$self_ir"
 }
 
 # Smoke test a binary
@@ -466,7 +471,7 @@ smoke_test() {
         total=$((total + 1))
         local start_ts rc=0
         start_ts=$(date +%s)
-        "./$bin" "$@" >/dev/null 2>&1 || rc=$?
+        "$bin" "$@" >/dev/null 2>&1 || rc=$?
         local elapsed
         elapsed=$(elapsed_since "$start_ts")
         if [ "$rc" -eq 0 ]; then
@@ -515,7 +520,7 @@ run_ground_truth() {
         # Compile with our compiler
         local tmpdir
         tmpdir=$(mktemp -d)
-        if ! "./$bin" build "$src" -o "$tmpdir/out.ll" >/dev/null 2>&1; then
+        if ! "$bin" build "$src" -o "$tmpdir/out.ll" >/dev/null 2>&1; then
             fail "$name (compile)"
             comp_fail=$((comp_fail + 1))
             rm -rf "$tmpdir"
@@ -625,14 +630,14 @@ case "${1:-full}" in
         build_second_gen
 
         step "Verification"
-        if verify_ir second_gen.ll; then
+        if verify_ir "$BUILD_DIR/second_gen.ll"; then
             ok "Verification passed"
         else
             warn "Verification had issues (see above)"
         fi
 
         step "Smoke test"
-        if smoke_test second_gen; then
+        if smoke_test "$BUILD_DIR/second_gen"; then
             printf "\n\033[1;32mSelf-hosting pipeline complete.\033[0m Total: %s\n" "$(elapsed_since "$PIPELINE_START")"
         else
             printf "\n\033[1;33mSmoke test had failures.\033[0m Total: %s\n" "$(elapsed_since "$PIPELINE_START")"
@@ -647,14 +652,14 @@ case "${1:-full}" in
         build_second_gen
 
         step "Verification"
-        if verify_ir second_gen.ll; then
+        if verify_ir "$BUILD_DIR/second_gen.ll"; then
             ok "Verification passed"
         else
             warn "Verification had issues (see above)"
         fi
 
         step "Smoke test"
-        if smoke_test second_gen; then
+        if smoke_test "$BUILD_DIR/second_gen"; then
             printf "\n\033[1;32mRebuild complete.\033[0m Total: %s\n" "$(elapsed_since "$PIPELINE_START")"
         else
             printf "\n\033[1;33mSmoke test had failures.\033[0m Total: %s\n" "$(elapsed_since "$PIPELINE_START")"
@@ -664,11 +669,11 @@ case "${1:-full}" in
         ;;
 
     test)
-        smoke_test "${2:-second_gen}"
+        smoke_test "${2:-$BUILD_DIR/second_gen}"
         ;;
 
     ground-truth)
-        run_ground_truth "${2:-first_gen}"
+        run_ground_truth "${2:-$BUILD_DIR/first_gen}"
         ;;
 
     smoke-tests)
@@ -676,13 +681,13 @@ case "${1:-full}" in
         ;;
 
     verify)
-        verify_ir "${2:-second_gen.ll}"
+        verify_ir "${2:-$BUILD_DIR/second_gen.ll}"
         ;;
 
     ir-check)
         # Run just the FileCheck tests (subset of verify)
-        local_ir="${2:-second_gen.ll}"
-        [ -f first_gen ] || die "first_gen not found. Build it first."
+        local_ir="${2:-$BUILD_DIR/second_gen.ll}"
+        [ -f "$BUILD_DIR/first_gen" ] || die "first_gen not found. Build it first."
 
         step "Running FileCheck tests"
         local_pass=0
@@ -696,7 +701,7 @@ case "${1:-full}" in
 
             local_tmpdir=$(mktemp -d)
 
-            if ! ./first_gen build "$check_src" -o "$local_tmpdir/check_out.ll" >/dev/null 2>&1; then
+            if ! "$BUILD_DIR/first_gen" build "$check_src" -o "$local_tmpdir/check_out.ll" >/dev/null 2>&1; then
                 fail "$local_name (compile failed)"
                 local_fail=$((local_fail + 1))
                 rm -rf "$local_tmpdir"
@@ -727,11 +732,11 @@ case "${1:-full}" in
         ;;
 
     asan)
-        build_asan "${2:-second_gen.ll}"
+        build_asan "${2:-$BUILD_DIR/second_gen.ll}"
         ;;
 
     bisect)
-        bisect_functions "${2:-second_gen.ll}"
+        bisect_functions "${2:-$BUILD_DIR/second_gen.ll}"
         ;;
 
     emit)
@@ -740,7 +745,7 @@ case "${1:-full}" in
         [ -f "$BLOOD_RUST" ] || die "blood-rust not found at $BLOOD_RUST"
 
         step "Emitting $local_stage for main.blood"
-        $BLOOD_RUST build --emit "$local_stage" -o "${local_stage}.ll" main.blood
+        $BLOOD_RUST build --emit "$local_stage" -o "$BUILD_DIR/${local_stage}.ll" main.blood
         ;;
 
     timings)
@@ -753,10 +758,8 @@ case "${1:-full}" in
 
     clean)
         step "Cleaning build artifacts"
-        # Binaries and intermediate files
-        rm -f first_gen second_gen second_gen_asan
-        rm -f *.ll *.o *.bc core
-        rm -rf .bisect_* .blood-cache .logs
+        rm -rf "$BUILD_DIR"
+        rm -rf .bisect_* .logs
         find "${DIR}" -name ".blood-cache" -type d -exec rm -rf {} + 2>/dev/null || true
         # Per-file incremental compilation caches (next to source files)
         rm -rf "${DIR}"/*.blood_objs
@@ -773,12 +776,12 @@ Usage: ./build_selfhost.sh <command> [args]
 Commands:
   full              Build from scratch (blood-rust → first_gen → second_gen)
   rebuild           Reuse existing first_gen to rebuild second_gen
-  test [binary]     Smoke test a binary (default: second_gen)
-  ground-truth [b]  Run ground-truth tests through binary (default: first_gen)
+  test [binary]     Smoke test a binary (default: build/second_gen)
+  ground-truth [b]  Run ground-truth tests through binary (default: build/first_gen)
   smoke-tests [b]   Run smoke tests (tests/) through binary (default: blood-rust)
-  verify [ir]       Run all verification checks (default: second_gen.ll)
+  verify [ir]       Run all verification checks (default: build/second_gen.ll)
   ir-check [ir]     Run FileCheck tests against compiler output
-  asan [ir]         Build with AddressSanitizer (default: second_gen.ll)
+  asan [ir]         Build with AddressSanitizer (default: build/second_gen.ll)
   bisect [ir]       Binary search for miscompiled function
   emit [stage]      Emit intermediate IR (ast|hir|mir|llvm-ir|llvm-ir-unopt)
   timings           Build first_gen with per-phase compilation timing
@@ -788,14 +791,14 @@ Commands:
 Verification commands:
   verify            Runs: opt verify + declaration diff + FileCheck + function counts
   ir-check          Runs: FileCheck tests only (quick check)
-  asan              Produces: second_gen_asan (run to get memory error reports)
+  asan              Produces: build/second_gen_asan (run to get memory error reports)
   bisect            Identifies: which function causes second_gen to crash
 
 Environment:
-  BLOOD_RUST        Path to blood-rust compiler (default: ~/blood/compiler-rust/target/release/blood)
-  RUNTIME_O         Path to runtime.o (default: ~/blood/compiler-rust/runtime/runtime.o)
-  RUNTIME_A         Path to libblood_runtime.a (default: ~/blood/compiler-rust/target/release/libblood_runtime.a)
-  GROUND_TRUTH      Path to ground-truth test dir (default: ~/blood/compiler-rust/tests/ground-truth)
+  BLOOD_RUST        Path to blood-rust compiler (default: <repo>/compiler-rust/target/release/blood)
+  RUNTIME_O         Path to runtime.o (default: <repo>/compiler-rust/runtime/runtime.o)
+  RUNTIME_A         Path to libblood_runtime.a (default: <repo>/compiler-rust/target/release/libblood_runtime.a)
+  GROUND_TRUTH      Path to ground-truth test dir (default: <repo>/compiler-rust/tests/ground-truth)
 USAGE
         exit 1
         ;;
