@@ -3,22 +3,26 @@
 # asan-selfcompile.sh — AddressSanitizer Self-Compilation Wrapper
 #
 # One-command wrapper that:
-#   1. Builds first_gen from blood-rust (or reuses existing)
-#   2. Self-compiles (first_gen → second_gen.ll)
-#   3. Instruments second_gen.ll with AddressSanitizer
+#   1. Locates or builds the input compiler (any generation)
+#   2. Self-compiles (input_gen → next_gen.ll)
+#   3. Instruments next_gen.ll with AddressSanitizer
 #   4. Runs the ASan-instrumented binary with a smoke test
 #   5. Formats and reports any sanitizer findings
 #
 # Usage:
-#   ./tools/asan-selfcompile.sh                 # Full pipeline
-#   ./tools/asan-selfcompile.sh --reuse         # Skip first_gen rebuild, reuse existing
-#   ./tools/asan-selfcompile.sh --ir FILE.ll    # Instrument existing IR directly
-#   ./tools/asan-selfcompile.sh --run-only      # Just run existing second_gen_asan
-#   ./tools/asan-selfcompile.sh --test CMD      # Custom test command (default: "version")
+#   ./tools/asan-selfcompile.sh                                     # first_gen → second_gen_asan
+#   ./tools/asan-selfcompile.sh --compiler ./build/second_gen       # second_gen → third_gen_asan
+#   ./tools/asan-selfcompile.sh --reuse                             # Reuse existing input compiler
+#   ./tools/asan-selfcompile.sh --ir FILE.ll                        # Instrument existing IR directly
+#   ./tools/asan-selfcompile.sh --run-only                          # Run existing ASan binary
+#   ./tools/asan-selfcompile.sh --test CMD                          # Custom test command (default: "version")
 #
 # Environment variables:
-#   BLOOD_REF, BLOOD_RUNTIME, BLOOD_RUST_RUNTIME
-#   BUILD_DIR — directory containing compiler sources (default: <repo>/blood-std/std/compiler)
+#   BLOOD_TEST          — input compiler for self-compilation (same as --compiler; flag takes precedence)
+#   BLOOD_REF           — reference compiler for building first_gen (default: blood-rust)
+#   BLOOD_RUNTIME       — path to runtime.o
+#   BLOOD_RUST_RUNTIME  — path to libblood_runtime.a
+#   BUILD_DIR           — compiler source directory (default: <repo>/blood-std/std/compiler)
 
 set -uo pipefail
 
@@ -37,34 +41,86 @@ REUSE=0
 IR_FILE=""
 RUN_ONLY=0
 TEST_CMD="version"
+COMPILER_ARG=""
 
+shift_next=""
 for arg in "$@"; do
+    if [[ -n "$shift_next" ]]; then
+        case "$shift_next" in
+            ir)       IR_FILE="$arg" ;;
+            test)     TEST_CMD="$arg" ;;
+            compiler) COMPILER_ARG="$arg" ;;
+        esac
+        shift_next=""
+        continue
+    fi
     case "$arg" in
-        --reuse)    REUSE=1 ;;
-        --run-only) RUN_ONLY=1 ;;
+        --reuse)     REUSE=1 ;;
+        --run-only)  RUN_ONLY=1 ;;
+        --ir)        shift_next=ir ;;
+        --test)      shift_next=test ;;
+        --compiler)  shift_next=compiler ;;
         --help|-h)
-            echo "Usage: $0 [--reuse] [--ir FILE.ll] [--run-only] [--test CMD]"
+            echo "Usage: $0 [--compiler PATH] [--reuse] [--ir FILE.ll] [--run-only] [--test CMD]"
+            echo ""
+            echo "Options:"
+            echo "  --compiler PATH  Input compiler for self-compilation (default: first_gen)"
+            echo "  --reuse          Reuse existing input compiler (skip blood-rust rebuild)"
+            echo "  --ir FILE.ll     Instrument existing IR directly (skip steps 1-2)"
+            echo "  --run-only       Run existing ASan binary (skip steps 1-3)"
+            echo "  --test CMD       Test command for ASan binary (default: \"version\")"
+            echo ""
+            echo "Environment:"
+            echo "  BLOOD_TEST       Input compiler (same as --compiler; flag takes precedence)"
+            echo "  BLOOD_REF        Reference compiler for building first_gen"
+            echo "  BUILD_DIR        Compiler source directory"
+            echo ""
+            echo "Examples:"
+            echo "  $0                                          # first_gen -> second_gen_asan"
+            echo "  $0 --compiler ./build/second_gen            # second_gen -> third_gen_asan"
+            echo "  BLOOD_TEST=./build/second_gen $0 --reuse    # same, via env var"
+            echo "  $0 --run-only --test 'check common.blood'   # re-run existing ASan binary"
             exit 0 ;;
-        --ir)       shift_next=ir ;;
-        --test)     shift_next=test ;;
-        -*)
-            if [[ "${shift_next:-}" == "ir" ]]; then
-                IR_FILE="$arg"; shift_next=""
-            elif [[ "${shift_next:-}" == "test" ]]; then
-                TEST_CMD="$arg"; shift_next=""
-            else
-                echo "Unknown option: $arg" >&2; exit 3
-            fi ;;
-        *)
-            if [[ "${shift_next:-}" == "ir" ]]; then
-                IR_FILE="$arg"; shift_next=""
-            elif [[ "${shift_next:-}" == "test" ]]; then
-                TEST_CMD="$arg"; shift_next=""
-            fi ;;
+        -*)  echo "Unknown option: $arg" >&2; exit 3 ;;
+        *)   echo "Unexpected argument: $arg" >&2; exit 3 ;;
     esac
 done
 
-# ── Colors ───────────────────────────────────────────────────────────────────
+# ── Resolve input compiler ────────────────────────────────────────────────────
+
+# --compiler flag takes precedence over BLOOD_TEST env var
+if [[ -n "$COMPILER_ARG" ]]; then
+    INPUT_COMPILER="$COMPILER_ARG"
+elif [[ -n "${BLOOD_TEST:-}" ]]; then
+    INPUT_COMPILER="$BLOOD_TEST"
+else
+    INPUT_COMPILER="$BUILD_DIR/first_gen"
+fi
+
+# Make absolute
+if [[ "$INPUT_COMPILER" != /* ]]; then
+    INPUT_COMPILER="$PWD/$INPUT_COMPILER"
+fi
+
+INPUT_NAME="$(basename "$INPUT_COMPILER")"
+
+# ── Derive output generation name ─────────────────────────────────────────────
+
+next_gen_name() {
+    case "$1" in
+        first_gen)   echo "second_gen" ;;
+        second_gen)  echo "third_gen" ;;
+        third_gen)   echo "fourth_gen" ;;
+        fourth_gen)  echo "fifth_gen" ;;
+        fifth_gen)   echo "sixth_gen" ;;
+        *)           echo "${1}_next" ;;
+    esac
+}
+
+OUTPUT_NAME="$(next_gen_name "$INPUT_NAME")"
+ASAN_NAME="${OUTPUT_NAME}_asan"
+
+# ── Colors ────────────────────────────────────────────────────────────────────
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
@@ -84,17 +140,19 @@ trap "rm -rf '$WORK'" EXIT
 
 echo -e "${BOLD}ASan Self-Compilation Pipeline${RESET}"
 echo -e "${DIM}  build dir:  $BUILD_DIR${RESET}"
+echo -e "${DIM}  input:      $INPUT_COMPILER${RESET}"
+echo -e "${DIM}  pipeline:   $INPUT_NAME → $OUTPUT_NAME.ll → $ASAN_NAME${RESET}"
 echo -e "${DIM}  blood-rust: $BLOOD_REF${RESET}"
 echo ""
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Step 1: Build or locate first_gen
+# Step 1: Locate or build the input compiler
 # ═══════════════════════════════════════════════════════════════════════════════
 
 if [[ $RUN_ONLY -eq 1 ]]; then
     # Skip straight to running
-    if [[ ! -x "$BUILD_DIR/second_gen_asan" ]]; then
-        fail "No second_gen_asan found at $BUILD_DIR/second_gen_asan"
+    if [[ ! -x "$BUILD_DIR/$ASAN_NAME" ]]; then
+        fail "No $ASAN_NAME found at $BUILD_DIR/$ASAN_NAME"
         echo "  Run without --run-only first to build the ASan binary."
         exit 1
     fi
@@ -106,10 +164,11 @@ elif [[ -n "$IR_FILE" ]]; then
     fi
     echo -e "  Using provided IR: $IR_FILE"
 else
-    if [[ $REUSE -eq 1 && -x "$BUILD_DIR/first_gen" ]]; then
-        step "Reusing existing first_gen"
-        ok "first_gen found ($(wc -c < "$BUILD_DIR/first_gen") bytes)"
-    else
+    if [[ $REUSE -eq 1 && -x "$INPUT_COMPILER" ]]; then
+        step "Reusing existing $INPUT_NAME"
+        ok "$INPUT_NAME found ($(wc -c < "$INPUT_COMPILER") bytes)"
+    elif [[ "$INPUT_NAME" == "first_gen" && $REUSE -eq 0 ]]; then
+        # Auto-build first_gen from blood-rust
         step "Building first_gen with blood-rust"
         if [[ ! -f "$BLOOD_REF" ]]; then
             fail "blood-rust not found at $BLOOD_REF"
@@ -120,28 +179,35 @@ else
         if $BLOOD_REF build main.blood --no-cache -o "$WORK/first_gen_build.ll" 2>"$WORK/build_err.txt"; then
             # blood-rust creates the exe next to the .ll or in CWD
             if [[ -x "$BUILD_DIR/main" ]]; then
-                mv "$BUILD_DIR/main" "$BUILD_DIR/first_gen"
+                mv "$BUILD_DIR/main" "$INPUT_COMPILER"
             elif [[ -x "$WORK/first_gen_build" ]]; then
-                mv "$WORK/first_gen_build" "$BUILD_DIR/first_gen"
+                mv "$WORK/first_gen_build" "$INPUT_COMPILER"
             fi
-            ok "first_gen built ($(wc -c < "$BUILD_DIR/first_gen") bytes)"
+            ok "first_gen built ($(wc -c < "$INPUT_COMPILER") bytes)"
         else
             fail "blood-rust build failed"
             head -20 "$WORK/build_err.txt" | sed 's/^/    /'
             exit 1
         fi
+    elif [[ -x "$INPUT_COMPILER" ]]; then
+        step "Using existing $INPUT_NAME"
+        ok "$INPUT_NAME found ($(wc -c < "$INPUT_COMPILER") bytes)"
+    else
+        fail "$INPUT_NAME not found at $INPUT_COMPILER"
+        echo "  Build it first, or use --compiler to specify a different input."
+        exit 1
     fi
 
     # ═══════════════════════════════════════════════════════════════════════════
-    # Step 2: Self-compile (first_gen → second_gen.ll)
+    # Step 2: Self-compile (input_gen → next_gen.ll)
     # ═══════════════════════════════════════════════════════════════════════════
 
-    step "Self-compiling (first_gen → second_gen.ll)"
+    step "Self-compiling ($INPUT_NAME → $OUTPUT_NAME.ll)"
     cd "$BUILD_DIR"
 
     local_start=$(date +%s)
     rc=0
-    ./first_gen build main.blood --timings -o second_gen.ll 2>"$WORK/selfcompile_stderr.txt" || rc=$?
+    "$INPUT_COMPILER" build main.blood --timings -o "$OUTPUT_NAME.ll" 2>"$WORK/selfcompile_stderr.txt" || rc=$?
     local_end=$(date +%s)
     local_elapsed=$((local_end - local_start))
 
@@ -152,16 +218,16 @@ else
         exit 1
     fi
 
-    if [[ ! -f "$BUILD_DIR/second_gen.ll" ]]; then
-        fail "second_gen.ll not produced"
+    if [[ ! -f "$BUILD_DIR/$OUTPUT_NAME.ll" ]]; then
+        fail "$OUTPUT_NAME.ll not produced"
         exit 1
     fi
 
-    local_lines=$(wc -l < "$BUILD_DIR/second_gen.ll")
-    local_defines=$(grep -c '^define ' "$BUILD_DIR/second_gen.ll" || echo 0)
-    ok "second_gen.ll produced (${local_lines} lines, ${local_defines} defines, ${local_elapsed}s)"
+    local_lines=$(wc -l < "$BUILD_DIR/$OUTPUT_NAME.ll")
+    local_defines=$(grep -c '^define ' "$BUILD_DIR/$OUTPUT_NAME.ll" || echo 0)
+    ok "$OUTPUT_NAME.ll produced (${local_lines} lines, ${local_defines} defines, ${local_elapsed}s)"
 
-    IR_FILE="$BUILD_DIR/second_gen.ll"
+    IR_FILE="$BUILD_DIR/$OUTPUT_NAME.ll"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -213,24 +279,24 @@ if [[ $RUN_ONLY -eq 0 ]]; then
     # Link with ASan runtime
     clang-18 "$WORK/asan.o" "$RUNTIME_O" "$RUNTIME_A" \
         -fsanitize=address -lstdc++ -lm -lpthread -ldl -no-pie \
-        -o "$BUILD_DIR/second_gen_asan" 2>"$WORK/link_err.txt"
+        -o "$BUILD_DIR/$ASAN_NAME" 2>"$WORK/link_err.txt"
     if [[ $? -ne 0 ]]; then
         fail "Linking failed"
         head -10 "$WORK/link_err.txt" | sed 's/^/    /'
         exit 1
     fi
-    ok "Linked second_gen_asan ($(wc -c < "$BUILD_DIR/second_gen_asan") bytes)"
+    ok "Linked $ASAN_NAME ($(wc -c < "$BUILD_DIR/$ASAN_NAME") bytes)"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Step 4: Run ASan binary with test command
 # ═══════════════════════════════════════════════════════════════════════════════
 
-step "Running ASan binary: second_gen_asan $TEST_CMD"
+step "Running ASan binary: $ASAN_NAME $TEST_CMD"
 
-ASAN_BIN="$BUILD_DIR/second_gen_asan"
+ASAN_BIN="$BUILD_DIR/$ASAN_NAME"
 if [[ ! -x "$ASAN_BIN" ]]; then
-    fail "second_gen_asan not found at $ASAN_BIN"
+    fail "$ASAN_NAME not found at $ASAN_BIN"
     exit 1
 fi
 
@@ -302,7 +368,8 @@ fi
 
 echo ""
 echo -e "${BOLD}Summary:${RESET}"
-echo -e "  ASan binary:  $ASAN_BIN"
+echo -e "  Pipeline:      $INPUT_NAME → $ASAN_NAME"
+echo -e "  ASan binary:   $ASAN_BIN"
 echo -e "  Test command:  $TEST_CMD"
 echo -e "  Exit code:     $rc"
 if [[ -s "$ASAN_LOG" ]]; then
