@@ -1018,9 +1018,18 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // Build module-qualified paths for stable linker symbols
         self.def_paths = build_def_paths(hir_crate);
 
+        // Sort items by DefId for deterministic processing order.
+        // HashMap iteration is non-deterministic; sorting ensures declarations,
+        // definitions, and function bodies are emitted in a stable order across runs.
+        let sorted_items: Vec<_> = {
+            let mut v: Vec<_> = hir_crate.items.iter().collect();
+            v.sort_by_key(|(&def_id, _)| def_id.index());
+            v
+        };
+
         // First pass: collect struct, enum, and effect definitions
         // Effects must be processed before handlers
-        for (def_id, item) in &hir_crate.items {
+        for &(def_id, item) in &sorted_items {
             match &item.kind {
                 hir::ItemKind::Struct(struct_def) => {
                     // Normalize type parameters to sequential indices so substitution works
@@ -1117,7 +1126,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
         // Second pass: collect handler definitions (effects must be registered first)
         // Also register handlers in struct_defs so they can be compiled as ADTs
-        for (def_id, item) in &hir_crate.items {
+        for &(def_id, item) in &sorted_items {
             if let hir::ItemKind::Handler { state, .. } = &item.kind {
                 // Register handler as an ADT in struct_defs (state fields are the struct fields)
                 // Normalize field types: replace arbitrary TyVarIds with sequential indices (0, 1, 2...)
@@ -1150,7 +1159,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         self.builtin_fns = hir_crate.builtin_fns.clone();
 
         // Second pass: declare all functions (excluding builtins which are resolved by runtime name)
-        for (def_id, item) in &hir_crate.items {
+        for &(def_id, item) in &sorted_items {
             if let hir::ItemKind::Fn(fn_def) = &item.kind {
                 // Skip builtin functions - they're resolved to runtime functions at call sites
                 if self.builtin_fns.contains_key(def_id) {
@@ -1447,7 +1456,10 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     /// the value is directly embedded. For complex expressions, const evaluation
     /// is performed.
     pub fn compile_const_items(&mut self, hir_crate: &hir::Crate) -> Result<(), Vec<Diagnostic>> {
-        for (def_id, item) in &hir_crate.items {
+        // Sort items by DefId for deterministic compilation order.
+        let mut sorted_items: Vec<_> = hir_crate.items.iter().collect();
+        sorted_items.sort_by_key(|(&def_id, _)| def_id.index());
+        for (&def_id, item) in sorted_items {
             if let hir::ItemKind::Const { ty, body_id } = &item.kind {
                 // Lower the type
                 let llvm_type = self.lower_type(ty);
@@ -1476,7 +1488,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 global.set_linkage(inkwell::module::Linkage::Private);
 
                 // Store for later reference
-                self.const_globals.insert(*def_id, global);
+                self.const_globals.insert(def_id, global);
             }
         }
         Ok(())
@@ -1487,7 +1499,10 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     /// Creates LLVM global variables for each static item. Mutable statics
     /// are marked as non-constant, allowing runtime mutation.
     pub fn compile_static_items(&mut self, hir_crate: &hir::Crate) -> Result<(), Vec<Diagnostic>> {
-        for (def_id, item) in &hir_crate.items {
+        // Sort items by DefId for deterministic compilation order.
+        let mut sorted_items: Vec<_> = hir_crate.items.iter().collect();
+        sorted_items.sort_by_key(|(&def_id, _)| def_id.index());
+        for (&def_id, item) in sorted_items {
             if let hir::ItemKind::Static { ty, mutable, body_id } = &item.kind {
                 // Lower the type
                 let llvm_type = self.lower_type(ty);
@@ -1517,8 +1532,8 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 global.set_linkage(inkwell::module::Linkage::LinkOnceODR);
 
                 // Store for later reference
-                self.static_globals.insert(*def_id, global);
-                self.static_types.insert(*def_id, ty.clone());
+                self.static_globals.insert(def_id, global);
+                self.static_types.insert(def_id, ty.clone());
             }
         }
         Ok(())
@@ -2251,9 +2266,18 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // Copy builtin function mappings for resolving runtime calls
         self.builtin_fns = hir_crate.builtin_fns.clone();
 
+        // Sort items by DefId for deterministic processing order.
+        // HashMap iteration is non-deterministic; sorting ensures declarations,
+        // definitions, and function bodies are emitted in a stable order across runs.
+        let sorted_items: Vec<_> = {
+            let mut v: Vec<_> = hir_crate.items.iter().collect();
+            v.sort_by_key(|(&def_id, _)| def_id.index());
+            v
+        };
+
         // First pass: collect struct, enum, and effect definitions
         // Effects must be processed before handlers
-        for (def_id, item) in &hir_crate.items {
+        for &(def_id, item) in &sorted_items {
             match &item.kind {
                 hir::ItemKind::Struct(struct_def) => {
                     // Normalize type parameters to sequential indices so substitution works
@@ -2338,7 +2362,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
         // Second pass: collect handler definitions (effects must be registered first)
         // Also register handlers in struct_defs so they can be compiled as ADTs
-        for (def_id, item) in &hir_crate.items {
+        for &(def_id, item) in &sorted_items {
             if let hir::ItemKind::Handler { state, .. } = &item.kind {
                 // Register handler as an ADT in struct_defs (state fields are the struct fields)
                 // Normalize field types: replace arbitrary TyVarIds with sequential indices (0, 1, 2...)
@@ -2368,7 +2392,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         }
 
         // Second pass: declare all functions (excluding builtins which are resolved by runtime name)
-        for (def_id, item) in &hir_crate.items {
+        for &(def_id, item) in &sorted_items {
             if let hir::ItemKind::Fn(fn_def) = &item.kind {
                 // Skip builtin functions - they're resolved to runtime functions at call sites
                 if self.builtin_fns.contains_key(def_id) {
@@ -2392,7 +2416,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         self.compile_static_items(hir_crate)?;
 
         // Fourth pass: compile function bodies
-        for (def_id, item) in &hir_crate.items {
+        for &(def_id, item) in &sorted_items {
             if let hir::ItemKind::Fn(fn_def) = &item.kind {
                 if let Some(body_id) = fn_def.body_id {
                     if let Some(body) = hir_crate.bodies.get(&body_id) {

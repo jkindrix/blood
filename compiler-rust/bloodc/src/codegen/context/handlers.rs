@@ -52,14 +52,17 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             false,
         );
 
-        for (def_id, item) in &hir_crate.items {
+        // Sort items by DefId for deterministic declaration order.
+        let mut sorted_items: Vec<_> = hir_crate.items.iter().collect();
+        sorted_items.sort_by_key(|(&def_id, _)| def_id.index());
+        for (&def_id, item) in &sorted_items {
             if let hir::ItemKind::Handler { operations, .. } = &item.kind {
                 for (op_idx, handler_op) in operations.iter().enumerate() {
                     let fn_name = format!("{}_{}", item.name, handler_op.name);
                     let fn_value = self.module.add_function(&fn_name, handler_op_type, None);
                     // Set external linkage so linker resolves from other object files
                     fn_value.set_linkage(inkwell::module::Linkage::External);
-                    self.handler_ops.insert((*def_id, op_idx), fn_value);
+                    self.handler_ops.insert((def_id, op_idx), fn_value);
                 }
             }
         }
@@ -101,12 +104,15 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     /// - Tail-resumptive: resume is a simple return
     /// - Non-tail-resumptive: resume calls blood_continuation_resume
     pub fn compile_handler_operations(&mut self, hir_crate: &hir::Crate) -> Result<(), Vec<Diagnostic>> {
+        // Sort items by DefId for deterministic compilation order.
+        let mut sorted_items: Vec<_> = hir_crate.items.iter().collect();
+        sorted_items.sort_by_key(|(&def_id, _)| def_id.index());
         // Compile all handler operations
-        for (def_id, item) in &hir_crate.items {
+        for (&def_id, item) in &sorted_items {
             if let hir::ItemKind::Handler { operations, return_clause, state, .. } = &item.kind {
                 // Compile each operation
                 for (op_idx, handler_op) in operations.iter().enumerate() {
-                    if let Some(&fn_value) = self.handler_ops.get(&(*def_id, op_idx)) {
+                    if let Some(&fn_value) = self.handler_ops.get(&(def_id, op_idx)) {
                         if let Some(body) = hir_crate.bodies.get(&handler_op.body_id) {
                             self.compile_handler_op_body(fn_value, body, handler_op, state)?;
                         }
@@ -116,7 +122,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 // Compile return clause if present
                 if let Some(ret_clause) = return_clause {
                     if let Some(body) = hir_crate.bodies.get(&ret_clause.body_id) {
-                        self.compile_return_clause(*def_id, &item.name, body, ret_clause, state)?;
+                        self.compile_return_clause(def_id, &item.name, body, ret_clause, state)?;
                     }
                 }
             }
