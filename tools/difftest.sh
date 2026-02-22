@@ -3,8 +3,8 @@
 # difftest.sh — Differential Testing Harness for Blood Compilers
 #
 # Compiles the same .blood file with both the reference compiler (blood-rust)
-# and the test compiler (first_gen), extracts per-function LLVM IR, matches
-# functions by name, and reports divergences.
+# and the test compiler (any generation), extracts per-function LLVM IR,
+# matches functions by name, and reports divergences.
 #
 # Usage:
 #   ./tools/difftest.sh <file.blood>                   # single file
@@ -15,7 +15,7 @@
 #
 # Environment variables (override defaults):
 #   BLOOD_REF       — path to reference compiler (blood-rust)
-#   BLOOD_TEST      — path to test compiler (first_gen)
+#   BLOOD_TEST      — path to test compiler (any generation)
 #   BLOOD_RUNTIME   — path to runtime.o
 #   BLOOD_RUST_RUNTIME — path to libblood_runtime.a
 #
@@ -68,7 +68,7 @@ usage() {
     echo ""
     echo "Environment:"
     echo "  BLOOD_REF          Reference compiler  (default: ~/blood/compiler-rust/target/release/blood)"
-    echo "  BLOOD_TEST         Test compiler        (default: ~/blood/blood-std/std/compiler/first_gen)"
+    echo "  BLOOD_TEST         Test compiler        (default: ~/blood/blood-std/std/compiler/build/first_gen)"
     echo "  BLOOD_RUNTIME      C runtime object     (default: ~/blood/runtime.o)"
     echo "  BLOOD_RUST_RUNTIME Rust runtime archive (default: ~/blood/libblood_runtime.a)"
     exit 3
@@ -157,12 +157,15 @@ extract_functions() {
 
 # canonicalize_name <llvm_name>
 #
-# Maps compiler-specific function names to a canonical form:
-#   blood-rust:  "blood$add$i32$i32"     → "add"
-#   first_gen:   "def18_add"             → "add"
-#   both:        "blood_main"            → "blood_main"
-#   first_gen:   "def1_String"           → (type stub, skip)
-#   first_gen:   "option_none_ctor"      → (internal, skip)
+# Maps compiler-specific function names to a canonical form so that
+# functions from different compilers can be matched by semantic name.
+#
+# Naming conventions handled:
+#   blood-rust (bootstrap):     "blood$add$i32$i32"     → "add"
+#   self-hosted (any gen):      "def18_add"             → "add"
+#   entry point:                "blood_main"            → "blood_main"
+#   self-hosted type stubs:     "def1_String"           → "String" (may not match)
+#   self-hosted internals:      "option_none_ctor"      → "option_none_ctor"
 canonicalize_name() {
     local name="$1"
 
@@ -191,7 +194,10 @@ canonicalize_name() {
         return
     fi
 
-    # first_gen style: def{N}_{name}
+    # Self-hosted compiler style (all generations): def{N}_{name}
+    # The Blood codegen emits LLVM names as def{DefId}_{name}. Since all
+    # self-hosted generations share the same codegen source, this pattern
+    # applies to first_gen, second_gen, third_gen, etc.
     if [[ "$name" =~ ^def[0-9]+_(.*) ]]; then
         echo "${BASH_REMATCH[1]}"
         return
@@ -287,9 +293,9 @@ behavioral_file() {
          2>"$tmpdir/test_cerr.txt" 1>/dev/null; then
         test_compile_ok=0
     fi
-    # first_gen outputs to a different path — find the executable
+    # Self-hosted compiler outputs to a different path — find the executable
     if [[ $test_compile_ok -eq 1 && ! -x "$tmpdir/test_exe" ]]; then
-        # first_gen creates the exe next to the .ll file
+        # Self-hosted compilers create the exe next to the .ll file
         local test_exe_name="${basename}"
         if [[ -x "/tmp/${test_exe_name}" ]]; then
             mv "/tmp/${test_exe_name}" "$tmpdir/test_exe"
