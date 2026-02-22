@@ -36,17 +36,19 @@ pub fn type_to_llvm_with_ctx(
                 && !is_adt_registered(ctx, def_id.index)
             {
                 let mut payload_size: u64 = 0;
+                let mut max_align: u64 = 1;
                 let mut ai: usize = 0;
                 while ai < args.len() {
-                    payload_size = payload_size + type_size_with_ctx(ctx, &args[ai]);
+                    let arg_llvm = type_to_llvm_with_ctx(ctx, &args[ai]);
+                    payload_size = payload_size + llvm_type_size(arg_llvm.as_str());
+                    let a = llvm_type_alignment(arg_llvm.as_str());
+                    if a > max_align {
+                        max_align = a;
+                    }
                     ai = ai + 1;
                 }
                 if payload_size > 0 {
-                    let mut s = common::make_string("{ i8, [");
-                    let size_str = codegen_types::format_u64(payload_size);
-                    s.push_str(size_str.as_str());
-                    s.push_str(" x i8] }");
-                    return s;
+                    return build_enum_type_string(payload_size, max_align);
                 }
             }
             result
@@ -63,14 +65,20 @@ pub fn type_size_with_ctx(ctx: &mut codegen_ctx::CodegenCtx, ty: &hir_ty::Type) 
             let base = adt_size_bytes(ctx, def_id.index);
             if base == 8 && args.len() > 0 && !is_adt_registered(ctx, def_id.index) {
                 let mut payload_size: u64 = 0;
+                let mut max_align: u64 = 1;
                 let mut ai: usize = 0;
                 while ai < args.len() {
-                    payload_size = payload_size + type_size_with_ctx(ctx, &args[ai]);
+                    let arg_llvm = type_to_llvm_with_ctx(ctx, &args[ai]);
+                    payload_size = payload_size + llvm_type_size(arg_llvm.as_str());
+                    let a = llvm_type_alignment(arg_llvm.as_str());
+                    if a > max_align {
+                        max_align = a;
+                    }
                     ai = ai + 1;
                 }
                 if payload_size > 8 {
-                    let tag_size: u64 = 1;
-                    return tag_size + payload_size;
+                    let enum_ty = build_enum_type_string(payload_size, max_align);
+                    return llvm_type_size(enum_ty.as_str());
                 }
             }
             base
@@ -172,18 +180,20 @@ pub fn type_to_llvm_with_ctx_id(
                 && !is_adt_registered(ctx, def_id.index)
             {
                 let mut payload_size: u64 = 0;
+                let mut max_align: u64 = 1;
                 let mut ai: usize = 0;
                 while ai < arg_len {
                     let arg_id = interner.get_ty_list_element(args, ai);
-                    payload_size = payload_size + type_size_with_ctx_id(ctx, arg_id);
+                    let arg_llvm = type_to_llvm_with_ctx_id(ctx, arg_id);
+                    payload_size = payload_size + llvm_type_size(arg_llvm.as_str());
+                    let a = llvm_type_alignment(arg_llvm.as_str());
+                    if a > max_align {
+                        max_align = a;
+                    }
                     ai = ai + 1;
                 }
                 if payload_size > 0 {
-                    let mut s = common::make_string("{ i8, [");
-                    let size_str = codegen_types::format_u64(payload_size);
-                    s.push_str(size_str.as_str());
-                    s.push_str(" x i8] }");
-                    return s;
+                    return build_enum_type_string(payload_size, max_align);
                 }
             }
             // For registered structs with type args, rebuild with concrete types.
@@ -222,15 +232,21 @@ pub fn type_size_with_ctx_id(ctx: &mut codegen_ctx::CodegenCtx, ty_id: type_inte
             let arg_len = type_intern::type_interner().ty_list_len(args);
             if base == 8 && arg_len > 0 && !is_adt_registered(ctx, def_id.index) {
                 let mut payload_size: u64 = 0;
+                let mut max_align: u64 = 1;
                 let mut ai: usize = 0;
                 while ai < arg_len {
                     let arg_id = type_intern::type_interner().get_ty_list_element(args, ai);
-                    payload_size = payload_size + type_size_with_ctx_id(ctx, arg_id);
+                    let arg_llvm = type_to_llvm_with_ctx_id(ctx, arg_id);
+                    payload_size = payload_size + llvm_type_size(arg_llvm.as_str());
+                    let a = llvm_type_alignment(arg_llvm.as_str());
+                    if a > max_align {
+                        max_align = a;
+                    }
                     ai = ai + 1;
                 }
                 if payload_size > 8 {
-                    let tag_size: u64 = 1;
-                    return tag_size + payload_size;
+                    let enum_ty = build_enum_type_string(payload_size, max_align);
+                    return llvm_type_size(enum_ty.as_str());
                 }
             }
             // For registered generic structs, compute size from rebuilt LLVM type
@@ -460,17 +476,36 @@ fn compute_struct_size(layout: &codegen_ctx::StructLayout) -> u64 {
 }
 
 /// Computes size of an enum from its layout.
-/// Enum LLVM type is { discriminant_type, [max_payload_size x i8] }.
-/// Alignment is max(discriminant_alignment, 1) = discriminant_alignment.
+/// The layout's llvm_type is the correct struct type (e.g. { i32, [3 x i64] }).
 fn compute_enum_size(layout: &codegen_ctx::EnumLayout) -> u64 {
-    let discrim_size = llvm_type_size(layout.discriminant_type.as_str());
-    let discrim_align = llvm_type_alignment(layout.discriminant_type.as_str());
-    let payload_size = layout.max_payload_size;
-    // [N x i8] has alignment 1, so no padding between discriminant and payload
-    let total = discrim_size + payload_size;
-    // Struct alignment = max(discrim_align, 1) = discrim_align
-    let final_padding = (discrim_align - (total % discrim_align)) % discrim_align;
-    total + final_padding
+    llvm_type_size(layout.llvm_type.as_str())
+}
+
+/// Builds an enum LLVM type string with i32 discriminant and alignment-aware payload.
+/// Selects the array element type based on max_align: i64, i32, i16, or i8.
+pub fn build_enum_type_string(payload_size: u64, max_align: u64) -> String {
+    let mut s = common::make_string("{ i32, [");
+    if max_align >= 8 {
+        let num_elements = (payload_size + 7) / 8;
+        let count_str = codegen_types::format_u64(num_elements);
+        s.push_str(count_str.as_str());
+        s.push_str(" x i64] }");
+    } else if max_align >= 4 {
+        let num_elements = (payload_size + 3) / 4;
+        let count_str = codegen_types::format_u64(num_elements);
+        s.push_str(count_str.as_str());
+        s.push_str(" x i32] }");
+    } else if max_align >= 2 {
+        let num_elements = (payload_size + 1) / 2;
+        let count_str = codegen_types::format_u64(num_elements);
+        s.push_str(count_str.as_str());
+        s.push_str(" x i16] }");
+    } else {
+        let size_str = codegen_types::format_u64(payload_size);
+        s.push_str(size_str.as_str());
+        s.push_str(" x i8] }");
+    }
+    s
 }
 
 /// Estimates the size of an LLVM type from its string representation.

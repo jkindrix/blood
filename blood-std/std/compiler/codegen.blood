@@ -582,12 +582,13 @@ fn build_enum_layout_with_ctx(
 ) -> codegen_ctx::EnumLayout {
     let mut variants: Vec<codegen_ctx::VariantLayout> = Vec::new();
     let mut max_payload_size: u64 = 0;
+    let mut max_alignment: u64 = 1;
+    let mut has_payload: bool = false;
 
     let mut vi: usize = 0;
     while vi < enum_def.variants.len() {
         let variant = &enum_def.variants[vi];
         let mut fields: Vec<codegen_ctx::AdtFieldInfo> = Vec::new();
-        let mut payload_size: u64 = 0;
         let mut payload_type = common::make_string("{}");
 
         match &variant.kind {
@@ -603,7 +604,6 @@ fn build_enum_layout_with_ctx(
                     }
                     let tuple_ty_id = type_intern::TyId::new(tuple_fields[fi].index);
                     let field_ty = codegen_size::type_to_llvm_with_ctx_id(ctx, tuple_ty_id);
-                    payload_size = payload_size + codegen_size::type_size_with_ctx_id(ctx, tuple_ty_id);
                     pt.push_str(field_ty.as_str());
                     fields.push(codegen_ctx::AdtFieldInfo {
                         llvm_type: field_ty,
@@ -613,6 +613,7 @@ fn build_enum_layout_with_ctx(
                 }
                 pt.push_str(" }");
                 if tuple_fields.len() > 0 {
+                    has_payload = true;
                     payload_type = pt;
                 }
             }
@@ -624,7 +625,6 @@ fn build_enum_layout_with_ctx(
                         pt.push_str(", ");
                     }
                     let field_ty = codegen_size::type_to_llvm_with_ctx_id(ctx, record_fields[fi].ty);
-                    payload_size = payload_size + codegen_size::type_size_with_ctx_id(ctx, record_fields[fi].ty);
                     pt.push_str(field_ty.as_str());
                     fields.push(codegen_ctx::AdtFieldInfo {
                         llvm_type: field_ty,
@@ -634,13 +634,20 @@ fn build_enum_layout_with_ctx(
                 }
                 pt.push_str(" }");
                 if record_fields.len() > 0 {
+                    has_payload = true;
                     payload_type = pt;
                 }
             }
         }
 
-        if payload_size > max_payload_size {
-            max_payload_size = payload_size;
+        // Use proper struct size with padding (not naive sum of field sizes)
+        let variant_size = codegen_size::llvm_type_size(payload_type.as_str());
+        let variant_align = codegen_size::llvm_type_alignment(payload_type.as_str());
+        if variant_size > max_payload_size {
+            max_payload_size = variant_size;
+        }
+        if variant_align > max_alignment {
+            max_alignment = variant_align;
         }
 
         variants.push(codegen_ctx::VariantLayout {
@@ -652,24 +659,41 @@ fn build_enum_layout_with_ctx(
         vi = vi + 1;
     }
 
-    // Determine discriminant type based on number of variants
-    let num_variants = enum_def.variants.len();
-    let discriminant_type = if num_variants <= 256 {
-        common::make_string("i8")
-    } else if num_variants <= 65536 {
-        common::make_string("i16")
-    } else {
-        common::make_string("i32")
-    };
+    // Always use i32 for discriminant (matching reference compiler)
+    let discriminant_type = common::make_string("i32");
 
-    // Build the enum LLVM type: { discriminant_type, [max_payload_size x i8] }
-    let mut llvm_type = common::make_string("{ ");
-    llvm_type.push_str(discriminant_type.as_str());
-    if max_payload_size > 0 {
-        llvm_type.push_str(", [");
-        let size_str = codegen_types::format_u64(max_payload_size);
-        llvm_type.push_str(size_str.as_str());
-        llvm_type.push_str(" x i8]");
+    // Build enum LLVM type with alignment-aware payload array.
+    // The payload array element type is chosen to satisfy the maximum alignment
+    // requirement across all variant payloads (matching reference compiler behavior).
+    let mut llvm_type = common::make_string("{ i32");
+    if has_payload && max_payload_size > 0 {
+        if max_alignment >= 8 {
+            let num_elements = (max_payload_size + 7) / 8;
+            llvm_type.push_str(", [");
+            let count_str = codegen_types::format_u64(num_elements);
+            llvm_type.push_str(count_str.as_str());
+            llvm_type.push_str(" x i64]");
+            max_payload_size = num_elements * 8;
+        } else if max_alignment >= 4 {
+            let num_elements = (max_payload_size + 3) / 4;
+            llvm_type.push_str(", [");
+            let count_str = codegen_types::format_u64(num_elements);
+            llvm_type.push_str(count_str.as_str());
+            llvm_type.push_str(" x i32]");
+            max_payload_size = num_elements * 4;
+        } else if max_alignment >= 2 {
+            let num_elements = (max_payload_size + 1) / 2;
+            llvm_type.push_str(", [");
+            let count_str = codegen_types::format_u64(num_elements);
+            llvm_type.push_str(count_str.as_str());
+            llvm_type.push_str(" x i16]");
+            max_payload_size = num_elements * 2;
+        } else {
+            llvm_type.push_str(", [");
+            let size_str = codegen_types::format_u64(max_payload_size);
+            llvm_type.push_str(size_str.as_str());
+            llvm_type.push_str(" x i8]");
+        }
     }
     llvm_type.push_str(" }");
 
@@ -788,6 +812,16 @@ pub fn intrinsic_declarations() -> String {
     output.push_str("declare void @vec_push(ptr, ptr, i64)\n");
     output.push_str("declare i32 @vec_pop(ptr, i64, ptr)\n");
     output.push_str("declare void @vec_clear(ptr)\n");
+    output.push_str("declare void @vec_with_capacity(i64, i64, ptr)\n");
+    output.push_str("declare i32 @vec_is_empty(ptr)\n");
+    output.push_str("declare i64 @vec_capacity(ptr)\n");
+    output.push_str("declare i32 @vec_get(ptr, i64, i64, ptr)\n");
+    output.push_str("declare ptr @vec_get_ptr(ptr, i64, i64)\n");
+    output.push_str("declare i32 @vec_contains(ptr, ptr, i64)\n");
+    output.push_str("declare void @vec_reverse(ptr, i64)\n");
+    output.push_str("declare void @vec_first(ptr, i64, ptr)\n");
+    output.push_str("declare void @vec_last(ptr, i64, ptr)\n");
+    output.push_str("declare void @vec_free(ptr, i64)\n");
 
     output.push_str("\n; Option method runtime declarations\n");
     output.push_str("declare i32 @option_is_some(ptr)\n");
@@ -881,6 +915,7 @@ pub fn intrinsic_declarations() -> String {
     output.push_str("define internal void @assert_eq_bool(i1 %a, i1 %b) {\n  call void @blood_assert_eq_bool(i1 %a, i1 %b)\n  ret void\n}\n");
 
     // unreachable/todo → panic with message string constants
+    // Note: @panic is declared by the runtime function codegen path, not here.
     output.push_str("@.str.unreachable = private unnamed_addr constant [26 x i8] c\"unreachable code reached!\\00\"\n");
     output.push_str("@.str.todo = private unnamed_addr constant [21 x i8] c\"not yet implemented!\\00\"\n");
     output.push_str("define internal void @unreachable() noreturn {\n  call void @panic({ ptr, i64 } { ptr @.str.unreachable, i64 25 })\n  unreachable\n}\n");

@@ -367,20 +367,57 @@ fn resolve_place_elem_type(
                     match &downcast_variant {
                         &Option::Some(vi) => {
                             // Enum variant field
+                            let mut found_field = false;
                             match ctx.lookup_enum(def_id) {
                                 Option::Some(layout) => {
                                     let mut k: usize = 0;
                                     while k < layout.variants.len() {
                                         if layout.variants[k].variant_idx == vi {
                                             if (field_idx as usize) < layout.variants[k].fields.len() {
-                                                return clone_string(&layout.variants[k].fields[field_idx as usize].llvm_type);
+                                                let fty = &layout.variants[k].fields[field_idx as usize].llvm_type;
+                                                // Check if the field type is unsubstituted (param/infer).
+                                                // For generic enums like Option<T>, the registered layout has
+                                                // the unsubstituted field type. Check via the field's HIR type.
+                                                let field_is_param = match &layout.variants[k].fields[field_idx as usize].hir_type {
+                                                    &Option::Some(ht_id) => type_intern::is_param_or_infer_id(ht_id),
+                                                    &Option::None => false,
+                                                };
+                                                if !field_is_param {
+                                                    return clone_string(fty);
+                                                }
+                                                found_field = true;
                                             }
                                             break;
                                         }
                                         k = k + 1;
                                     }
                                 }
-                                Option::None => {}
+                                Option::None => {
+                                    found_field = true;
+                                }
+                            }
+                            // For generic enum fields (param/infer type or enum not in registry),
+                            // resolve the concrete field type from the local's HIR type args.
+                            if found_field {
+                                match ctx.get_local_hir_type(place.local) {
+                                    Option::Some(ty_id) => {
+                                        let unwrapped = unwrap_ref_type(ty_id);
+                                        match type_intern::get_adt_args(unwrapped) {
+                                            Option::Some(args) => {
+                                                let interner = type_intern::type_interner();
+                                                let args_len = interner.ty_list_len(args);
+                                                // For enums, field_idx maps to type arg index
+                                                // (e.g., Option<T>.Some.0 → T, Result<T,E>.Ok.0 → T)
+                                                if (field_idx as usize) < args_len {
+                                                    let arg_ty_id = interner.get_ty_list_element(args, field_idx as usize);
+                                                    return codegen_size::type_to_llvm_with_ctx_id(ctx, arg_ty_id);
+                                                }
+                                            }
+                                            Option::None => {}
+                                        }
+                                    }
+                                    Option::None => {}
+                                }
                             }
                         }
                         &Option::None => {
@@ -778,11 +815,30 @@ pub fn emit_place_addr(
                     indices.push(common::make_string("1"));
                     ctx.emit_gep_cg(&result, current_base.as_str(), &current, &indices);
                 } else {
-                    // Scalar or fallback base type: use byte-offset GEP
-                    // Discriminant is i8 (1 byte), so variant data starts at offset 1
-                    let mut indices: Vec<String> = Vec::new();
-                    indices.push(common::make_string("1"));
-                    ctx.emit_gep_cg(&result, "i8", &current, &indices);
+                    // Scalar or fallback base type (e.g., heap-allocated locals where
+                    // current_base is "ptr"). Try to resolve the actual enum LLVM type
+                    // from the HIR type so we can use struct GEP with proper alignment.
+                    let mut resolved = false;
+                    match &current_hir_type {
+                        &Option::Some(ty_id) => {
+                            let actual_ty = codegen_size::type_to_llvm_with_ctx_id(ctx, ty_id);
+                            let afc = count_struct_fields(&actual_ty);
+                            if is_struct_or_array_type(&actual_ty) && afc >= 2 {
+                                let mut indices: Vec<String> = Vec::new();
+                                indices.push(common::make_string("0"));
+                                indices.push(common::make_string("1"));
+                                ctx.emit_gep_cg(&result, actual_ty.as_str(), &current, &indices);
+                                resolved = true;
+                            }
+                        }
+                        &Option::None => {}
+                    }
+                    if !resolved {
+                        // Last-resort fallback: i32 discriminant (4 bytes)
+                        let mut indices: Vec<String> = Vec::new();
+                        indices.push(common::make_string("4"));
+                        ctx.emit_gep_cg(&result, "i8", &current, &indices);
+                    }
                 }
                 current = result;
                 downcast_variant = Option::Some(variant_idx);
@@ -1438,12 +1494,12 @@ pub fn emit_rvalue(
                 }
             } else {
                 // Fallback for builtin generic enums (Option<T>, Result<T,E>)
-                // not in the ADT registry: load i8 discriminant and zero-extend.
-                // All Blood enums have ≤256 variants → i8 discriminant.
+                // not in the ADT registry: load i32 discriminant and zero-extend.
+                // All Blood enums use i32 discriminant.
                 let discr_val = ctx.fresh_temp_cg();
-                ctx.emit_load_cg(&discr_val, "i8", ptr.as_str());
+                ctx.emit_load_cg(&discr_val, "i32", ptr.as_str());
                 let extended = ctx.fresh_temp_cg();
-                ctx.emit_cast_cg2(&extended, "zext", "i8", &discr_val, "i64");
+                ctx.emit_cast_cg2(&extended, "zext", "i32", &discr_val, "i64");
                 ctx.emit_store_cg("i64", &extended, dest);
             }
         }
@@ -2434,7 +2490,7 @@ fn emit_aggregate_adt(
         Option::None => {}
     }
     // Fallback: ADT not in registry (builtin generic enum like Option<T>, Result<T,E>).
-    // Emit as enum: store i8 discriminant at byte 0, payload fields starting at byte 1.
+    // Emit as enum: store i32 discriminant, then payload at alignment-correct offset.
     let mut vals: Vec<String> = Vec::new();
     let mut tys: Vec<String> = Vec::new();
     let mut k: usize = 0;
@@ -2445,16 +2501,11 @@ fn emit_aggregate_adt(
         k = k + 1;
     }
 
-    // Store i8 discriminant at byte 0
-    ctx.emit_store("i8", codegen_types::format_u64(variant_idx as u64).as_str(), dest);
+    // Store i32 discriminant at byte 0
+    ctx.emit_store("i32", codegen_types::format_u64(variant_idx as u64).as_str(), dest);
 
-    // Store payload fields at byte offset 1 (after i8 discriminant)
+    // Store payload fields after discriminant, respecting alignment
     if vals.len() > 0 {
-        let payload_ptr = ctx.fresh_temp_cg();
-        ctx.begin_gep_str(&payload_ptr, "i8", dest);
-        ctx.gep_ptr_offset(1);
-        ctx.end_gep();
-
         // Build payload struct type from operand types
         let mut payload_ty = common::make_string("{ ");
         let mut pi: usize = 0;
@@ -2466,6 +2517,17 @@ fn emit_aggregate_adt(
             pi = pi + 1;
         }
         payload_ty.push_str(" }");
+
+        // Compute payload byte offset: i32 (4 bytes) + padding for alignment
+        let payload_align = codegen_size::llvm_type_alignment(payload_ty.as_str());
+        let discrim_size: u64 = 4;
+        let padding = (payload_align - (discrim_size % payload_align)) % payload_align;
+        let byte_offset = discrim_size + padding;
+
+        let payload_ptr = ctx.fresh_temp_cg();
+        ctx.begin_gep_str(&payload_ptr, "i8", dest);
+        ctx.gep_ptr_offset(byte_offset);
+        ctx.end_gep();
 
         // Store each field in the payload
         let mut i: usize = 0;

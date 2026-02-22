@@ -167,9 +167,8 @@ pub fn emit_statement(
                 ctx.emit_store_str_cg(discr_ty.as_str(), discr_val.as_str(), &discr_ptr);
             } else {
                 // Fallback for builtin generic enums (Option<T>, Result<T,E>)
-                // not in the ADT registry: store i8 discriminant at byte 0.
-                // All Blood enums have ≤256 variants → i8 discriminant.
-                ctx.emit_store("i8", discr_val.as_str(), ptr.as_str());
+                // not in the ADT registry: store i32 discriminant at byte 0.
+                ctx.emit_store("i32", discr_val.as_str(), ptr.as_str());
             }
         }
         &mir_stmt::StatementKind::CopyNonOverlapping { ref src, ref dst, ref count } => {
@@ -543,17 +542,19 @@ pub fn type_to_llvm_with_ctx(
                 && !is_adt_registered(ctx, def_id.index)
             {
                 let mut payload_size: u64 = 0;
+                let mut max_align: u64 = 1;
                 let mut ai: usize = 0;
                 while ai < args.len() {
-                    payload_size = payload_size + type_size_with_ctx(ctx, &args[ai]);
+                    let arg_llvm = codegen_size::type_to_llvm_with_ctx(ctx, &args[ai]);
+                    payload_size = payload_size + codegen_size::llvm_type_size(arg_llvm.as_str());
+                    let a = codegen_size::llvm_type_alignment(arg_llvm.as_str());
+                    if a > max_align {
+                        max_align = a;
+                    }
                     ai = ai + 1;
                 }
                 if payload_size > 0 {
-                    let mut s = common::make_string("{ i8, [");
-                    let size_str = codegen_types::format_u64(payload_size);
-                    s.push_str(size_str.as_str());
-                    s.push_str(" x i8] }");
-                    return s;
+                    return codegen_size::build_enum_type_string(payload_size, max_align);
                 }
             }
             // For registered structs with type args, rebuild with concrete types.
@@ -706,14 +707,20 @@ pub fn type_size_with_ctx(ctx: &mut codegen_ctx::CodegenCtx, ty: &hir_ty::Type) 
             // happen to be 8 bytes should NOT be expanded.
             if base == 8 && args.len() > 0 && !is_adt_registered(ctx, def_id.index) {
                 let mut payload_size: u64 = 0;
+                let mut max_align: u64 = 1;
                 let mut ai: usize = 0;
                 while ai < args.len() {
-                    payload_size = payload_size + type_size_with_ctx(ctx, &args[ai]);
+                    let arg_llvm = codegen_size::type_to_llvm_with_ctx(ctx, &args[ai]);
+                    payload_size = payload_size + codegen_size::llvm_type_size(arg_llvm.as_str());
+                    let a = codegen_size::llvm_type_alignment(arg_llvm.as_str());
+                    if a > max_align {
+                        max_align = a;
+                    }
                     ai = ai + 1;
                 }
                 if payload_size > 8 {
-                    let tag_size: u64 = 1;
-                    return tag_size + payload_size;
+                    let enum_ty = codegen_size::build_enum_type_string(payload_size, max_align);
+                    return codegen_size::llvm_type_size(enum_ty.as_str());
                 }
             }
             // For registered structs with type args, compute size from rebuilt type
@@ -828,17 +835,9 @@ fn compute_struct_size(layout: &codegen_ctx::StructLayout) -> u64 {
 }
 
 /// Computes size of an enum from its layout.
-/// Enum LLVM type is { discriminant_type, [max_payload_size x i8] }.
-/// Alignment is max(discriminant_alignment, 1) = discriminant_alignment.
+/// The layout's llvm_type is the correct struct type (e.g. { i32, [3 x i64] }).
 fn compute_enum_size(layout: &codegen_ctx::EnumLayout) -> u64 {
-    let discrim_size = llvm_type_size(layout.discriminant_type.as_str());
-    let discrim_align = codegen_size::llvm_type_alignment(layout.discriminant_type.as_str());
-    let payload_size = layout.max_payload_size;
-    // [N x i8] has alignment 1, so no padding between discriminant and payload
-    let total = discrim_size + payload_size;
-    // Struct alignment = max(discrim_align, 1) = discrim_align
-    let final_padding = (discrim_align - (total % discrim_align)) % discrim_align;
-    total + final_padding
+    llvm_type_size(layout.llvm_type.as_str())
 }
 
 /// Estimates the size of an LLVM type from its string representation.
@@ -1249,6 +1248,15 @@ pub fn emit_arg_stores(
         // Handler op state local: store the pointer (ptr type, not value type)
         if ctx.is_handler_state_ptr(local_id) {
             ctx.emit_store("ptr", arg_name.as_str(), alloca_name.as_str());
+        } else if ctx.is_region_allocated(local_id) || ctx.is_persistent_allocated(local_id) {
+            // For heap-allocated locals, the alloca holds a ptr to the heap buffer.
+            // Load the heap pointer first, then store the argument through it.
+            if !strs_equal(ty.as_str(), "{}") {
+                let heap_ptr = ctx.fresh_temp_cg();
+                ctx.emit_load_cg(&heap_ptr, "ptr", alloca_name.as_str());
+                let heap_ptr_str = cgname_to_string(&heap_ptr);
+                ctx.emit_store(ty.as_str(), arg_name.as_str(), heap_ptr_str.as_str());
+            }
         } else {
             // Skip store for unit type {} — it has zero size in LLVM
             if !strs_equal(ty.as_str(), "{}") {
