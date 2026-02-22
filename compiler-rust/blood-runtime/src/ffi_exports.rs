@@ -348,22 +348,40 @@ pub unsafe extern "C" fn string_push(s: *mut BloodString, ch: i32) {
     let encoded = c.encode_utf8(&mut buf);
     let bytes = encoded.as_bytes();
 
-    // Ensure capacity
-    let new_len = (*s).len + bytes.len() as i64;
+    // Validate current state (Pattern A: detect corruption early)
+    if (*s).len < 0 || (*s).capacity < 0 {
+        return;
+    }
+
+    // Ensure capacity (checked arithmetic to prevent overflow — Pattern N)
+    let new_len = match (*s).len.checked_add(bytes.len() as i64) {
+        Some(v) if v >= 0 => v,
+        _ => return, // overflow or negative result
+    };
     if new_len > (*s).capacity {
-        let new_cap = std::cmp::max(new_len, (*s).capacity * 2).max(8);
+        // Use saturating_mul to prevent signed overflow on capacity * 2
+        let doubled = (*s).capacity.saturating_mul(2);
+        let new_cap = std::cmp::max(new_len, doubled).max(8);
         let new_ptr = if (*s).ptr.is_null() {
             let layout = std::alloc::Layout::from_size_align(new_cap as usize, 1).unwrap();
             runtime_alloc(layout)
         } else {
-            let old_layout = std::alloc::Layout::from_size_align((*s).capacity as usize, 1).unwrap();
+            let old_cap = (*s).capacity as usize;
+            let old_layout = std::alloc::Layout::from_size_align(old_cap, 1).unwrap();
             runtime_realloc((*s).ptr, old_layout, new_cap as usize)
         };
+        if new_ptr.is_null() {
+            return; // allocation failed
+        }
         (*s).ptr = new_ptr;
         (*s).capacity = new_cap;
     }
 
-    // Copy bytes
+    // Copy bytes (Pattern E: validate pointer and bounds before copy)
+    if (*s).ptr.is_null() {
+        return;
+    }
+    debug_assert!(((*s).len as usize) + bytes.len() <= (*s).capacity as usize);
     std::ptr::copy_nonoverlapping(bytes.as_ptr(), (*s).ptr.add((*s).len as usize), bytes.len());
     (*s).len = new_len;
 }
@@ -379,24 +397,47 @@ pub unsafe extern "C" fn string_push_str(s: *mut BloodString, other: *const Bloo
         return;
     }
 
+    // Validate current state (Pattern A: detect corruption early)
+    if (*s).len < 0 || (*s).capacity < 0 {
+        return;
+    }
+
     let bytes_len = (*other).len as i64;
-    let new_len = (*s).len + bytes_len;
+    if bytes_len < 0 {
+        return; // corrupt source length
+    }
+
+    // Checked arithmetic to prevent overflow (Pattern N)
+    let new_len = match (*s).len.checked_add(bytes_len) {
+        Some(v) if v >= 0 => v,
+        _ => return, // overflow or negative result
+    };
 
     // Ensure capacity
     if new_len > (*s).capacity {
-        let new_cap = std::cmp::max(new_len, (*s).capacity * 2).max(8);
+        // Use saturating_mul to prevent signed overflow on capacity * 2
+        let doubled = (*s).capacity.saturating_mul(2);
+        let new_cap = std::cmp::max(new_len, doubled).max(8);
         let new_ptr = if (*s).ptr.is_null() {
             let layout = std::alloc::Layout::from_size_align(new_cap as usize, 1).unwrap();
             runtime_alloc(layout)
         } else {
-            let old_layout = std::alloc::Layout::from_size_align((*s).capacity as usize, 1).unwrap();
+            let old_cap = (*s).capacity as usize;
+            let old_layout = std::alloc::Layout::from_size_align(old_cap, 1).unwrap();
             runtime_realloc((*s).ptr, old_layout, new_cap as usize)
         };
+        if new_ptr.is_null() {
+            return; // allocation failed
+        }
         (*s).ptr = new_ptr;
         (*s).capacity = new_cap;
     }
 
-    // Copy bytes
+    // Copy bytes (Pattern E: validate pointer and bounds before copy)
+    if (*s).ptr.is_null() {
+        return;
+    }
+    debug_assert!(((*s).len as usize) + (bytes_len as usize) <= (*s).capacity as usize);
     std::ptr::copy_nonoverlapping((*other).ptr, (*s).ptr.add((*s).len as usize), bytes_len as usize);
     (*s).len = new_len;
 }
@@ -7409,29 +7450,50 @@ pub unsafe extern "C" fn vec_push(vec: *mut BloodVec, elem: *const u8, elem_size
 
     let v = &mut *vec;
 
+    // Validate state (Pattern A/N: detect corruption early)
+    if v.len < 0 || v.capacity < 0 || elem_size <= 0 {
+        return;
+    }
+
     // Check if we need to grow
     if v.len >= v.capacity {
-        let new_capacity = if v.capacity == 0 { 4 } else { v.capacity * 2 };
-        let new_size = (new_capacity * elem_size) as usize;
+        // Use saturating_mul to prevent signed overflow (Pattern N)
+        let new_capacity = if v.capacity == 0 { 4 } else { v.capacity.saturating_mul(2).max(v.len + 1) };
+        // Checked multiplication for total byte size
+        let new_size = match (new_capacity as u64).checked_mul(elem_size as u64) {
+            Some(sz) if sz <= isize::MAX as u64 => sz as usize,
+            _ => return, // overflow: refuse to allocate
+        };
 
         // Use 16-byte alignment to support enums with i128 payloads
         let new_ptr = if v.ptr.is_null() {
             let layout = std::alloc::Layout::from_size_align(new_size, 16).unwrap();
             runtime_alloc(layout)
         } else {
-            let old_layout = std::alloc::Layout::from_size_align(
-                (v.capacity * elem_size) as usize,
-                16,
-            ).unwrap();
+            let old_size = match (v.capacity as u64).checked_mul(elem_size as u64) {
+                Some(sz) => sz as usize,
+                None => return,
+            };
+            let old_layout = std::alloc::Layout::from_size_align(old_size, 16).unwrap();
             runtime_realloc(v.ptr, old_layout, new_size)
         };
 
+        if new_ptr.is_null() {
+            return; // allocation failed
+        }
         v.ptr = new_ptr;
         v.capacity = new_capacity;
     }
 
-    // Copy element to the end
-    let dest = v.ptr.add((v.len * elem_size) as usize);
+    // Copy element to the end (Pattern E: validate before copy)
+    if v.ptr.is_null() {
+        return;
+    }
+    let offset = match (v.len as u64).checked_mul(elem_size as u64) {
+        Some(o) => o as usize,
+        None => return,
+    };
+    let dest = v.ptr.add(offset);
     std::ptr::copy_nonoverlapping(elem, dest, elem_size as usize);
     v.len += 1;
 
@@ -7989,31 +8051,50 @@ pub unsafe extern "C" fn vec_reserve(vec: *mut BloodVec, additional: i64, elem_s
     }
 
     let v = &mut *vec;
-    let required = v.len + additional;
+
+    // Validate state (Pattern A/N: detect corruption early)
+    if v.len < 0 || v.capacity < 0 {
+        return;
+    }
+
+    // Checked addition (Pattern N: prevent overflow in len + additional)
+    let required = match v.len.checked_add(additional) {
+        Some(r) if r >= 0 => r,
+        _ => return,
+    };
 
     if required <= v.capacity {
         return; // Already have enough capacity
     }
 
     // Calculate new capacity (at least double, or required)
-    let new_capacity = std::cmp::max(v.capacity * 2, required);
+    // Use saturating_mul to prevent signed overflow (Pattern N)
+    let doubled = v.capacity.saturating_mul(2);
+    let new_capacity = std::cmp::max(doubled, required);
+
+    // Checked multiplication for total byte size
+    let new_byte_size = match (new_capacity as u64).checked_mul(elem_size as u64) {
+        Some(sz) if sz <= isize::MAX as u64 => sz as usize,
+        _ => return, // overflow: refuse to allocate
+    };
 
     // Use 16-byte alignment to support enums with i128 payloads
-    let new_layout = std::alloc::Layout::from_size_align(
-        (new_capacity * elem_size) as usize,
-        16,
-    ).unwrap();
+    let new_layout = std::alloc::Layout::from_size_align(new_byte_size, 16).unwrap();
 
     let new_ptr = if v.ptr.is_null() || v.capacity == 0 {
         runtime_alloc(new_layout)
     } else {
-        let old_layout = std::alloc::Layout::from_size_align(
-            (v.capacity * elem_size) as usize,
-            16,
-        ).unwrap();
-        runtime_realloc(v.ptr, old_layout, (new_capacity * elem_size) as usize)
+        let old_byte_size = match (v.capacity as u64).checked_mul(elem_size as u64) {
+            Some(sz) => sz as usize,
+            None => return,
+        };
+        let old_layout = std::alloc::Layout::from_size_align(old_byte_size, 16).unwrap();
+        runtime_realloc(v.ptr, old_layout, new_byte_size)
     };
 
+    if new_ptr.is_null() {
+        return; // allocation failed
+    }
     v.ptr = new_ptr;
     v.capacity = new_capacity;
 }

@@ -981,8 +981,10 @@ impl Slot {
         let size = self.size.load(Ordering::Acquire);
 
         if !ptr.is_null() && size > 0 {
-            let layout = Layout::from_size_align_unchecked(size, 1);
-            alloc::dealloc(ptr, layout);
+            // Use checked variant to avoid UB from invalid layout (Pattern N/A)
+            if let Ok(layout) = Layout::from_size_align(size, 1) {
+                alloc::dealloc(ptr, layout);
+            }
         }
 
         *self.data.get() = std::ptr::null_mut();
@@ -1639,7 +1641,16 @@ impl Region {
 
         // Check: is this the most recent bump allocation?
         // The old buffer occupies [ptr_addr, ptr_addr + actual_old_size).
-        if ptr_addr + actual_old_size != base + offset {
+        // Use checked arithmetic to prevent overflow (Pattern N: integer overflow → bad index)
+        let ptr_end = match ptr_addr.checked_add(actual_old_size) {
+            Some(v) => v,
+            None => return false,
+        };
+        let bump_end = match base.checked_add(offset) {
+            Some(v) => v,
+            None => return false,
+        };
+        if ptr_end != bump_end {
             return false;
         }
 
@@ -1652,8 +1663,12 @@ impl Region {
             new_size
         };
 
-        // Calculate new offset
-        let new_offset = (ptr_addr - base) + actual_new_size;
+        // Calculate new offset (checked to prevent overflow → bad mprotect args)
+        let ptr_relative = ptr_addr - base; // safe: we verified ptr_addr >= base above
+        let new_offset = match ptr_relative.checked_add(actual_new_size) {
+            Some(v) => v,
+            None => return false,
+        };
 
         if new_offset > self.reserved {
             return false;
@@ -1665,7 +1680,11 @@ impl Region {
             let ps = page_size();
             const MAX_GROWTH: usize = 256 * 1024 * 1024;
             let growth = committed.min(MAX_GROWTH);
-            let desired = round_up((committed + growth).max(new_offset), ps).min(self.reserved);
+            let grow_target = match committed.checked_add(growth) {
+                Some(v) => v,
+                None => self.reserved, // saturate to reserved on overflow
+            };
+            let desired = round_up(grow_target.max(new_offset), ps).min(self.reserved);
             let additional = desired - committed;
             if additional > 0 {
                 let ret = unsafe {
@@ -1707,7 +1726,16 @@ impl Region {
             old_size
         };
 
-        if ptr_addr + actual_old_size != base + offset {
+        // Use checked arithmetic to prevent overflow (Pattern N)
+        let ptr_end = match ptr_addr.checked_add(actual_old_size) {
+            Some(v) => v,
+            None => return false,
+        };
+        let bump_end = match base.checked_add(offset) {
+            Some(v) => v,
+            None => return false,
+        };
+        if ptr_end != bump_end {
             return false;
         }
 
@@ -1719,13 +1747,17 @@ impl Region {
             new_size
         };
 
-        let new_offset = (ptr_addr - base) + actual_new_size;
+        let ptr_relative = ptr_addr - base; // safe: we verified ptr_addr >= base above
+        let new_offset = match ptr_relative.checked_add(actual_new_size) {
+            Some(v) => v,
+            None => return false,
+        };
         if new_offset > self.max_size {
             return false;
         }
 
         if new_offset > self.buffer.len() {
-            let new_capacity = (new_offset * 2).min(self.max_size);
+            let new_capacity = new_offset.saturating_mul(2).min(self.max_size);
             self.buffer.resize(new_capacity, 0);
         }
 
