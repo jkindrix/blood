@@ -497,6 +497,22 @@ impl TypeChecker {
         self.errors.push(err);
     }
 
+    /// Reports a type error with an additional context note.
+    pub fn error_with_note(self: &mut Self, kind: typeck_types::TypeErrorKind, span: common::Span, note: String) {
+        let mut err = typeck_types::TypeError::new(kind, span);
+        let n = typeck_types::TypeNote::new(note);
+        err.notes.push(n);
+        self.errors.push(err);
+    }
+
+    /// Reports a type error with a note that has a source span.
+    pub fn error_with_spanned_note(self: &mut Self, kind: typeck_types::TypeErrorKind, span: common::Span, note: String, note_span: common::Span) {
+        let mut err = typeck_types::TypeError::new(kind, span);
+        let n = typeck_types::TypeNote::with_span(note, note_span);
+        err.notes.push(n);
+        self.errors.push(err);
+    }
+
     /// Returns whether any errors have been reported.
     pub fn has_errors(self: &Self) -> bool {
         self.errors.len() > 0

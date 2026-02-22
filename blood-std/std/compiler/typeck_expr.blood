@@ -767,41 +767,41 @@ fn infer_binary(
         common::BinOp::Add => {
             let resolved = checker.resolve(left_ty);
             if is_bool_type_id(resolved) {
-                checker.error(typeck::TypeErrorKind::TypeMismatch, span);
+                checker.error_with_note(typeck::TypeErrorKind::TypeMismatch, span, common::make_string("arithmetic operator '+' cannot be applied to bool"));
             }
             resolved
         }
         common::BinOp::Sub => {
             let resolved = checker.resolve(left_ty);
             if is_bool_type_id(resolved) {
-                checker.error(typeck::TypeErrorKind::TypeMismatch, span);
+                checker.error_with_note(typeck::TypeErrorKind::TypeMismatch, span, common::make_string("arithmetic operator '-' cannot be applied to bool"));
             }
             resolved
         }
         common::BinOp::Mul => {
             let resolved = checker.resolve(left_ty);
             if is_bool_type_id(resolved) {
-                checker.error(typeck::TypeErrorKind::TypeMismatch, span);
+                checker.error_with_note(typeck::TypeErrorKind::TypeMismatch, span, common::make_string("arithmetic operator '*' cannot be applied to bool"));
             }
             resolved
         }
         common::BinOp::Div => {
             let resolved = checker.resolve(left_ty);
             if is_bool_type_id(resolved) {
-                checker.error(typeck::TypeErrorKind::TypeMismatch, span);
+                checker.error_with_note(typeck::TypeErrorKind::TypeMismatch, span, common::make_string("arithmetic operator '/' cannot be applied to bool"));
             }
             if is_literal_zero(right) {
-                checker.error(typeck::TypeErrorKind::TypeMismatch, span);
+                checker.error_with_note(typeck::TypeErrorKind::TypeMismatch, span, common::make_string("division by zero"));
             }
             resolved
         }
         common::BinOp::Rem => {
             let resolved = checker.resolve(left_ty);
             if is_bool_type_id(resolved) {
-                checker.error(typeck::TypeErrorKind::TypeMismatch, span);
+                checker.error_with_note(typeck::TypeErrorKind::TypeMismatch, span, common::make_string("arithmetic operator '%' cannot be applied to bool"));
             }
             if is_literal_zero(right) {
-                checker.error(typeck::TypeErrorKind::TypeMismatch, span);
+                checker.error_with_note(typeck::TypeErrorKind::TypeMismatch, span, common::make_string("remainder by zero"));
             }
             resolved
         }
@@ -949,7 +949,11 @@ fn infer_call(
         &hir_ty::TypeKind::Fn { ref params, ref ret, ref effects } => {
             // Check arity
             if params.len() != args.len() {
-                checker.error(typeck::TypeErrorKind::ArityMismatch, span);
+                checker.error_with_note(
+                    typeck::TypeErrorKind::ArityMismatch,
+                    span,
+                    common::make_string("function parameter count does not match argument count"),
+                );
                 return type_intern::CommonTypes::error();
             }
 
@@ -1053,7 +1057,11 @@ fn infer_method_call(
     // Check for ambiguous method dispatch (multiple impls provide same method)
     let match_count = checker.count_method_matches(resolved_receiver, method.symbol);
     if match_count > 1 {
-        checker.error(typeck::TypeErrorKind::NoSuchMethod, method.span);
+        checker.error_with_note(
+            typeck::TypeErrorKind::NoSuchMethod,
+            method.span,
+            common::make_string("multiple implementations found; ambiguous method dispatch"),
+        );
         return checker.fresh_infer();
     }
 
@@ -1094,7 +1102,11 @@ fn infer_method_call(
 
             // Check arity (excluding self parameter)
             if method_info.param_tys.len() != args.len() {
-                checker.error(typeck::TypeErrorKind::ArityMismatch, span);
+                checker.error_with_note(
+                    typeck::TypeErrorKind::ArityMismatch,
+                    span,
+                    common::make_string("method parameter count does not match argument count"),
+                );
                 return type_intern::CommonTypes::error();
             }
 
@@ -1154,12 +1166,20 @@ fn infer_field(
                     if idx_usize < types.len() {
                         type_intern::type_to_ty_id(&types[idx_usize])
                     } else {
-                        checker.error(typeck::TypeErrorKind::NoSuchField, span);
+                        checker.error_with_note(
+                            typeck::TypeErrorKind::NoSuchField,
+                            span,
+                            common::make_string("tuple field index out of bounds"),
+                        );
                         type_intern::CommonTypes::error()
                     }
                 }
                 &hir_expr::FieldAccess::Named { name: _, field_idx: _ } => {
-                    checker.error(typeck::TypeErrorKind::NoSuchField, span);
+                    checker.error_with_note(
+                        typeck::TypeErrorKind::NoSuchField,
+                        span,
+                        common::make_string("tuples do not have named fields; use index access (.0, .1, ...)"),
+                    );
                     type_intern::CommonTypes::error()
                 }
             }
@@ -1175,11 +1195,19 @@ fn infer_field(
                         }
                         i = i + 1;
                     }
-                    checker.error(typeck::TypeErrorKind::NoSuchField, span);
+                    checker.error_with_note(
+                        typeck::TypeErrorKind::NoSuchField,
+                        span,
+                        common::make_string("field not found in record type"),
+                    );
                     type_intern::CommonTypes::error()
                 }
                 &hir_expr::FieldAccess::Index(_) => {
-                    checker.error(typeck::TypeErrorKind::NoSuchField, span);
+                    checker.error_with_note(
+                        typeck::TypeErrorKind::NoSuchField,
+                        span,
+                        common::make_string("records do not support index access; use named field access"),
+                    );
                     type_intern::CommonTypes::error()
                 }
             }
@@ -1212,7 +1240,7 @@ fn infer_field(
                             }
                         }
                         Option::None => {
-                            checker.error(typeck::TypeErrorKind::NoSuchField, span);
+                            checker.error_with_note(typeck::TypeErrorKind::NoSuchField, span, common::make_string("struct has no field with this name"));
                             type_intern::CommonTypes::error()
                         }
                     }
@@ -1236,13 +1264,13 @@ fn infer_field(
                                     field_ty
                                 }
                             } else {
-                                checker.error(typeck::TypeErrorKind::NoSuchField, span);
+                                checker.error_with_note(typeck::TypeErrorKind::NoSuchField, span, common::make_string("struct field index out of bounds"));
                                 type_intern::CommonTypes::error()
                             }
                         }
                         Option::None => {
                             // Not a struct - might be an enum
-                            checker.error(typeck::TypeErrorKind::NoSuchField, span);
+                            checker.error_with_note(typeck::TypeErrorKind::NoSuchField, span, common::make_string("type is not a struct; field access not supported"));
                             type_intern::CommonTypes::error()
                         }
                     }
@@ -1257,7 +1285,7 @@ fn infer_field(
             type_intern::CommonTypes::error()
         }
         _ => {
-            checker.error(typeck::TypeErrorKind::NoSuchField, span);
+            checker.error_with_note(typeck::TypeErrorKind::NoSuchField, span, common::make_string("type does not support field access"));
             type_intern::CommonTypes::error()
         }
     }
@@ -1295,7 +1323,7 @@ fn infer_index(
                 hir_ty::PrimitiveTy::U128 => {}
                 hir_ty::PrimitiveTy::Usize => {}
                 _ => {
-                    checker.error(typeck::TypeErrorKind::TypeMismatch, idx.span);
+                    checker.error_with_note(typeck::TypeErrorKind::TypeMismatch, idx.span, common::make_string("index expression must be a numeric type"));
                 }
             }
         }
@@ -1305,7 +1333,7 @@ fn infer_index(
         }
         &type_intern::InternedTypeKind::Error => {}
         _ => {
-            checker.error(typeck::TypeErrorKind::TypeMismatch, idx.span);
+            checker.error_with_note(typeck::TypeErrorKind::TypeMismatch, idx.span, common::make_string("index expression must be a numeric type"));
         }
     }
 
@@ -1334,7 +1362,7 @@ fn infer_index(
                 if is_string {
                     type_intern::CommonTypes::u8_ty()
                 } else {
-                    checker.error(typeck::TypeErrorKind::NotIndexable, span);
+                    checker.error_with_note(typeck::TypeErrorKind::NotIndexable, span, common::make_string("only Vec, String, Array, and Slice types support indexing"));
                     type_intern::CommonTypes::error()
                 }
             }
@@ -1346,7 +1374,7 @@ fn infer_index(
                     type_intern::CommonTypes::char_ty()
                 }
                 _ => {
-                    checker.error(typeck::TypeErrorKind::NotIndexable, span);
+                    checker.error_with_note(typeck::TypeErrorKind::NotIndexable, span, common::make_string("primitive type does not support indexing"));
                     type_intern::CommonTypes::error()
                 }
             }
@@ -1358,7 +1386,7 @@ fn infer_index(
             type_intern::CommonTypes::error()
         }
         _ => {
-            checker.error(typeck::TypeErrorKind::NotIndexable, span);
+            checker.error_with_note(typeck::TypeErrorKind::NotIndexable, span, common::make_string("type does not support indexing"));
             type_intern::CommonTypes::error()
         }
     }
