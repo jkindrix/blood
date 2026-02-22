@@ -57,6 +57,8 @@ pub enum Command {
     Build,
     /// Run source code (compile and execute).
     Run,
+    /// Run tests in source file.
+    Test,
     /// Remove build artifacts.
     Clean,
     /// Print help message.
@@ -115,6 +117,16 @@ pub struct Args {
     pub strip: bool,
     /// Whether to enable AddressSanitizer instrumentation.
     pub sanitize_address: bool,
+    /// Filter string for test names (--filter / -F).
+    pub test_filter: Option<String>,
+    /// Whether to list tests without running them (--list).
+    pub test_list: bool,
+    /// Whether to include ignored tests (--include-ignored).
+    pub test_include_ignored: bool,
+    /// Whether to run only ignored tests (--ignored).
+    pub test_only_ignored: bool,
+    /// Whether to stop on first failure (--fail-fast).
+    pub test_fail_fast: bool,
 }
 
 impl Args {
@@ -140,6 +152,11 @@ impl Args {
             opt_level: 0,
             strip: false,
             sanitize_address: false,
+            test_filter: Option::None,
+            test_list: false,
+            test_include_ignored: false,
+            test_only_ignored: false,
+            test_fail_fast: false,
         }
     }
 
@@ -165,6 +182,11 @@ impl Args {
             opt_level: 0,
             strip: false,
             sanitize_address: false,
+            test_filter: Option::None,
+            test_list: false,
+            test_include_ignored: false,
+            test_only_ignored: false,
+            test_fail_fast: false,
         }
     }
 
@@ -190,6 +212,11 @@ impl Args {
             opt_level: 0,
             strip: false,
             sanitize_address: false,
+            test_filter: Option::None,
+            test_list: false,
+            test_include_ignored: false,
+            test_only_ignored: false,
+            test_fail_fast: false,
         }
     }
 }
@@ -214,6 +241,7 @@ pub fn main() -> i32 {
         &Command::Check => run_check(&args),
         &Command::Build => run_build(&args),
         &Command::Run => run_run(&args),
+        &Command::Test => run_test(&args),
         &Command::Clean => run_clean(&args),
         &Command::Help => run_help(&args),
         &Command::Version => run_version(&args),
@@ -658,6 +686,7 @@ fn run_help(_args: &Args) -> i32 {
     help.push_str("    check    Check source for errors without compiling\n");
     help.push_str("    build    Compile source to executable\n");
     help.push_str("    run      Compile and execute\n");
+    help.push_str("    test     Discover and run #[test] functions\n");
     help.push_str("    clean    Remove build artifacts (.blood-cache, .ll, .o files)\n");
     help.push_str("    help     Print this help message\n");
     help.push_str("    version  Print version information\n");
@@ -681,6 +710,14 @@ fn run_help(_args: &Args) -> i32 {
     help.push_str("    --dump-types        Dump type/field resolutions to stderr\n");
     help.push_str("    --dump-layouts      Dump ADT sizes, fields, variant layouts\n");
     help.push_str("    --validate-mir      Validate MIR before codegen\n");
+    help.push_str("\n");
+    help.push_str("TEST OPTIONS (for 'test' command):\n");
+    help.push_str("    --filter <name>     Only run tests containing <name>\n");
+    help.push_str("    -F <name>           Short form of --filter\n");
+    help.push_str("    --list              List test names without running\n");
+    help.push_str("    --ignored           Run only ignored tests\n");
+    help.push_str("    --include-ignored   Include ignored tests in run\n");
+    help.push_str("    --fail-fast         Stop on first test failure\n");
     print_string(&help);
     0
 }
@@ -762,6 +799,541 @@ fn run_clean(args: &Args) -> i32 {
     }
 
     0
+}
+
+// ============================================================
+// Test Framework
+// ============================================================
+
+/// Configuration for a test function derived from its attributes.
+struct TestConfig {
+    /// Whether the function has #[test].
+    is_test: bool,
+    /// Whether the function has #[ignore].
+    ignore: bool,
+    /// Whether the function has #[should_panic].
+    should_panic: bool,
+}
+
+/// Information about a discovered test function.
+struct TestInfo {
+    /// The test function name.
+    name: String,
+    /// Test configuration from attributes.
+    config: TestConfig,
+}
+
+/// Outcome of running a single test.
+enum TestOutcome {
+    /// Test passed.
+    Passed,
+    /// Test failed with a message.
+    Failed(String),
+    /// Test was ignored.
+    Ignored,
+}
+
+/// Record of a single test failure.
+struct TestFailure {
+    /// Name of the failed test.
+    name: String,
+    /// Failure message.
+    message: String,
+}
+
+/// Aggregated test results.
+struct TestResults {
+    /// Number of tests that passed.
+    passed: u32,
+    /// Number of tests that failed.
+    failed: u32,
+    /// Number of tests that were ignored.
+    ignored: u32,
+    /// Details of each failure.
+    failures: Vec<TestFailure>,
+}
+
+/// Extracts a substring from source bytes given a span.
+fn span_to_str(source: &str, span: &common::Span) -> String {
+    let bytes = source.as_bytes();
+    let start = span.start as usize;
+    let end = span.end as usize;
+    let mut result = String::new();
+    let mut i: usize = start;
+    while i < end && i < bytes.len() {
+        result.push(bytes[i] as char);
+        i = i + 1;
+    }
+    result
+}
+
+/// Extracts test configuration from a function's attribute list.
+///
+/// Scans for #[test], #[ignore], and #[should_panic] attributes
+/// by extracting attribute path names directly from the source text.
+fn extract_test_config(attrs: &Vec<ast::Attribute>, source: &str) -> TestConfig {
+    let mut is_test = false;
+    let mut ignore = false;
+    let mut should_panic = false;
+
+    let mut i: usize = 0;
+    while i < attrs.len() {
+        let attr = &attrs[i];
+        // Each attribute path is a Vec<SpannedSymbol>; simple attrs have one element
+        if attr.path.len() > 0 {
+            let name = span_to_str(source, &attr.path[0].span);
+            if str_equals(&name, "test") {
+                is_test = true;
+            } else if str_equals(&name, "ignore") {
+                ignore = true;
+            } else if str_equals(&name, "should_panic") {
+                should_panic = true;
+            }
+        }
+        i = i + 1;
+    }
+
+    TestConfig {
+        is_test: is_test,
+        ignore: ignore,
+        should_panic: should_panic,
+    }
+}
+
+/// Discovers all #[test] functions in a parsed program.
+///
+/// Exhaustively matches all 14 Declaration variants. Only Function
+/// declarations can carry #[test] attributes. Uses source text for
+/// span-based name extraction (parser symbols are not in the global interner).
+fn discover_tests(program: &ast::Program, source: &str) -> Vec<TestInfo> {
+    let mut tests: Vec<TestInfo> = Vec::new();
+
+    let mut i: usize = 0;
+    while i < program.declarations.len() {
+        match &program.declarations[i] {
+            &ast::Declaration::Function(ref fn_decl) => {
+                let config = extract_test_config(&fn_decl.attrs, source);
+                if config.is_test {
+                    // Extract function name from source text using span
+                    let name = span_to_str(source, &fn_decl.name.span);
+                    tests.push(TestInfo {
+                        name: name,
+                        config: config,
+                    });
+                }
+            }
+            &ast::Declaration::TypeAlias(ref _ta) => {}
+            &ast::Declaration::Struct(ref _s) => {}
+            &ast::Declaration::Enum(ref _e) => {}
+            &ast::Declaration::Effect(ref _ef) => {}
+            &ast::Declaration::Handler(ref _h) => {}
+            &ast::Declaration::Const(ref _c) => {}
+            &ast::Declaration::Static(ref _s) => {}
+            &ast::Declaration::Impl(ref _im) => {}
+            &ast::Declaration::Trait(ref _t) => {}
+            &ast::Declaration::Bridge(ref _b) => {}
+            &ast::Declaration::Module(ref _m) => {}
+            &ast::Declaration::Macro(ref _ma) => {}
+            &ast::Declaration::Use(ref _u) => {}
+        }
+        i = i + 1;
+    }
+
+    tests
+}
+
+/// Generates a test harness by appending a main() that calls the test function.
+/// Uses `-> i32` return type and explicit `0` return to ensure clean exit code.
+fn generate_test_harness(original_source: &str, test_name: &String) -> String {
+    let mut harness = common::make_string(original_source);
+    harness.push_str("\nfn main() -> i32 {\n    ");
+    harness.push_str(test_name.as_str());
+    harness.push_str("();\n    0\n}\n");
+    harness
+}
+
+/// Runs a single test: generates harness, compiles, links, executes.
+///
+/// Returns the test outcome (Passed, Failed, or Ignored).
+fn run_single_test(
+    test: &TestInfo,
+    source_path: &String,
+    original_source: &str,
+    args: &Args,
+) -> TestOutcome {
+    // Generate harness source
+    let harness_source = generate_test_harness(original_source, &test.name);
+
+    // Write harness to temp file
+    let mut harness_path = String::new();
+    harness_path.push_str("/tmp/blood_test_");
+    harness_path.push_str(test.name.as_str());
+    harness_path.push_str(".blood");
+    file_write_string(harness_path.as_str(), harness_source.as_str());
+
+    // Determine output paths
+    let mut ll_path = String::new();
+    ll_path.push_str("/tmp/blood_test_");
+    ll_path.push_str(test.name.as_str());
+    ll_path.push_str(".ll");
+
+    let mut obj_path = String::new();
+    obj_path.push_str("/tmp/blood_test_");
+    obj_path.push_str(test.name.as_str());
+    obj_path.push_str(".o");
+
+    let mut bin_path = String::new();
+    bin_path.push_str("/tmp/blood_test_");
+    bin_path.push_str(test.name.as_str());
+
+    // Build Args for compilation (no cache, quiet)
+    let mut build_args = Args::build(clone_string(&harness_path));
+    build_args.no_cache = true;
+
+    // Phase 1: Compile to LLVM IR via streaming codegen
+    let compile_ok = compile_file_streaming(harness_path.as_str(), ll_path.as_str(), &build_args);
+
+    // Clean up harness source file
+    let mut rm_harness = String::new();
+    rm_harness.push_str("rm -f ");
+    rm_harness.push_str(harness_path.as_str());
+    system(rm_harness.as_str());
+
+    if !compile_ok {
+        // Clean up any partial artifacts
+        let mut rm_ll = String::new();
+        rm_ll.push_str("rm -f ");
+        rm_ll.push_str(ll_path.as_str());
+        system(rm_ll.as_str());
+
+        if test.config.should_panic {
+            return TestOutcome::Passed;
+        }
+        return TestOutcome::Failed(common::make_string("compilation failed"));
+    }
+
+    // Phase 2: Find runtime and compile IR to object
+    let runtime = match find_runtime_paths() {
+        Option::Some(rt) => rt,
+        Option::None => {
+            let mut rm_ll = String::new();
+            rm_ll.push_str("rm -f ");
+            rm_ll.push_str(ll_path.as_str());
+            system(rm_ll.as_str());
+            return TestOutcome::Failed(common::make_string("runtime not found"));
+        }
+    };
+
+    // llc-18: IR -> object
+    let mut llc_cmd = String::new();
+    llc_cmd.push_str("llc-18 ");
+    llc_cmd.push_str(ll_path.as_str());
+    llc_cmd.push_str(" -O0 -filetype=obj -relocation-model=pic -o ");
+    llc_cmd.push_str(obj_path.as_str());
+    llc_cmd.push_str(" 2>/dev/null");
+    let llc_result = system(llc_cmd.as_str());
+
+    // Clean up .ll
+    let mut rm_ll = String::new();
+    rm_ll.push_str("rm -f ");
+    rm_ll.push_str(ll_path.as_str());
+    system(rm_ll.as_str());
+
+    if llc_result != 0 {
+        let mut rm_obj = String::new();
+        rm_obj.push_str("rm -f ");
+        rm_obj.push_str(obj_path.as_str());
+        system(rm_obj.as_str());
+
+        if test.config.should_panic {
+            return TestOutcome::Passed;
+        }
+        return TestOutcome::Failed(common::make_string("llc-18 failed"));
+    }
+
+    // Phase 3: clang-18 link
+    let mut clang_cmd = String::new();
+    clang_cmd.push_str("clang-18 ");
+    clang_cmd.push_str(obj_path.as_str());
+    clang_cmd.push_str(" ");
+    clang_cmd.push_str(runtime.c_runtime.as_str());
+    clang_cmd.push_str(" ");
+    clang_cmd.push_str(runtime.rust_runtime.as_str());
+    clang_cmd.push_str(" -Wl,-z,muldefs -lm -ldl -lpthread -pie -o ");
+    clang_cmd.push_str(bin_path.as_str());
+    clang_cmd.push_str(" 2>/dev/null");
+    let clang_result = system(clang_cmd.as_str());
+
+    // Clean up .o
+    let mut rm_obj = String::new();
+    rm_obj.push_str("rm -f ");
+    rm_obj.push_str(obj_path.as_str());
+    system(rm_obj.as_str());
+
+    if clang_result != 0 {
+        let mut rm_bin = String::new();
+        rm_bin.push_str("rm -f ");
+        rm_bin.push_str(bin_path.as_str());
+        system(rm_bin.as_str());
+
+        if test.config.should_panic {
+            return TestOutcome::Passed;
+        }
+        return TestOutcome::Failed(common::make_string("linking failed"));
+    }
+
+    // Phase 4: Execute the test binary
+    let mut run_cmd = String::new();
+    run_cmd.push_str(bin_path.as_str());
+    run_cmd.push_str(" 2>/dev/null");
+    let exit_code = system(run_cmd.as_str());
+
+    // Clean up binary
+    let mut rm_bin = String::new();
+    rm_bin.push_str("rm -f ");
+    rm_bin.push_str(bin_path.as_str());
+    system(rm_bin.as_str());
+
+    // Interpret result
+    if test.config.should_panic {
+        if exit_code != 0 {
+            TestOutcome::Passed
+        } else {
+            TestOutcome::Failed(common::make_string("expected panic but test passed"))
+        }
+    } else {
+        if exit_code == 0 {
+            TestOutcome::Passed
+        } else {
+            let mut msg = String::new();
+            msg.push_str("exit code ");
+            push_usize(&mut msg, exit_code as usize);
+            TestOutcome::Failed(msg)
+        }
+    }
+}
+
+/// Prints the test summary (failures + totals).
+fn print_test_summary(results: &TestResults) {
+    // Print failure details
+    if results.failed > 0 {
+        print_str("\nfailures:\n\n");
+        let mut i: usize = 0;
+        while i < results.failures.len() {
+            let failure = &results.failures[i];
+            print_str("---- ");
+            print_str(failure.name.as_str());
+            print_str(" ----\n");
+            print_str("    ");
+            print_str(failure.message.as_str());
+            print_str("\n");
+            i = i + 1;
+        }
+
+        print_str("\nfailures:\n");
+        let mut j: usize = 0;
+        while j < results.failures.len() {
+            print_str("    ");
+            print_str(results.failures[j].name.as_str());
+            print_str("\n");
+            j = j + 1;
+        }
+    }
+
+    // Print summary line
+    print_str("\ntest result: ");
+    if results.failed == 0 {
+        print_str("ok");
+    } else {
+        print_str("FAILED");
+    }
+    print_str(". ");
+
+    let mut passed_str = String::new();
+    push_usize(&mut passed_str, results.passed as usize);
+    print_str(passed_str.as_str());
+    print_str(" passed; ");
+
+    let mut failed_str = String::new();
+    push_usize(&mut failed_str, results.failed as usize);
+    print_str(failed_str.as_str());
+    print_str(" failed; ");
+
+    let mut ignored_str = String::new();
+    push_usize(&mut ignored_str, results.ignored as usize);
+    print_str(ignored_str.as_str());
+    print_str(" ignored\n");
+}
+
+/// Runs the test command.
+///
+/// Discovers #[test] functions via AST-only parsing, generates per-test
+/// harnesses, compiles and runs each test independently.
+fn run_test(args: &Args) -> i32 {
+    match &args.source_file {
+        &Option::Some(ref path) => {
+            // Phase 1: Read source file
+            let read_result = source::read_file(path.as_str());
+            if !read_result.success {
+                print_error("Failed to read source file");
+                return 1;
+            }
+
+            let content = match &read_result.content {
+                &Option::Some(ref c) => c,
+                &Option::None => {
+                    print_error("No content in file");
+                    return 1;
+                }
+            };
+
+            // Phase 2: Parse (AST only — no type checking needed for test discovery)
+            let parse_region = region_create(2097152, 10737418240);
+            region_activate(parse_region);
+
+            let parse_result = parser::parse_file(content.as_str());
+            let program = match &parse_result.program {
+                &Option::Some(ref p) => p,
+                &Option::None => {
+                    print_error("Failed to parse source file");
+                    region_deactivate();
+                    region_destroy(parse_region);
+                    return 1;
+                }
+            };
+
+            // Phase 3: Discover tests
+            // Deactivate region first so String allocations go to system heap.
+            // AST data in the region remains valid until region_destroy.
+            region_deactivate();
+            let all_tests = discover_tests(program, content.as_str());
+
+            // Destroy parse region — AST data freed, but extracted strings survive
+            region_destroy(parse_region);
+
+            if all_tests.len() == 0 {
+                print_str("no tests found\n");
+                return 0;
+            }
+
+            // Phase 4: Apply filters
+            let mut tests: Vec<TestInfo> = Vec::new();
+            let mut ti: usize = 0;
+            while ti < all_tests.len() {
+                let t = &all_tests[ti];
+                let mut include = true;
+
+                // Filter by name substring
+                match &args.test_filter {
+                    &Option::Some(ref filter) => {
+                        if !str_contains_ref(t.name.as_str(), filter.as_str()) {
+                            include = false;
+                        }
+                    }
+                    &Option::None => {}
+                }
+
+                // Filter by ignore status
+                if args.test_only_ignored && !t.config.ignore {
+                    include = false;
+                }
+
+                if include {
+                    tests.push(TestInfo {
+                        name: clone_string(&t.name),
+                        config: TestConfig {
+                            is_test: t.config.is_test,
+                            ignore: t.config.ignore,
+                            should_panic: t.config.should_panic,
+                        },
+                    });
+                }
+
+                ti = ti + 1;
+            }
+
+            // --list mode: print test names and return
+            if args.test_list {
+                let mut li: usize = 0;
+                while li < tests.len() {
+                    print_str(tests[li].name.as_str());
+                    print_str(": test\n");
+                    li = li + 1;
+                }
+                let mut count_str = String::new();
+                push_usize(&mut count_str, tests.len());
+                print_str("\n");
+                print_str(count_str.as_str());
+                print_str(" tests\n");
+                return 0;
+            }
+
+            // Phase 5: Run tests
+            let mut count_str = String::new();
+            push_usize(&mut count_str, tests.len());
+            print_str("\nrunning ");
+            print_str(count_str.as_str());
+            print_str(" tests\n");
+
+            let mut results = TestResults {
+                passed: 0,
+                failed: 0,
+                ignored: 0,
+                failures: Vec::new(),
+            };
+
+            let mut ri: usize = 0;
+            while ri < tests.len() {
+                let t = &tests[ri];
+
+                print_str("test ");
+                print_str(t.name.as_str());
+                print_str(" ... ");
+
+                // Check if ignored (and not --include-ignored)
+                if t.config.ignore && !args.test_include_ignored {
+                    print_str("ignored\n");
+                    results.ignored = results.ignored + 1;
+                    ri = ri + 1;
+                    continue;
+                }
+
+                let outcome = run_single_test(t, path, content.as_str(), args);
+                match &outcome {
+                    &TestOutcome::Passed => {
+                        print_str("ok\n");
+                        results.passed = results.passed + 1;
+                    }
+                    &TestOutcome::Failed(ref msg) => {
+                        print_str("FAILED\n");
+                        results.failed = results.failed + 1;
+                        results.failures.push(TestFailure {
+                            name: clone_string(&t.name),
+                            message: clone_string(msg),
+                        });
+                        if args.test_fail_fast {
+                            ri = tests.len(); // break
+                        }
+                    }
+                    &TestOutcome::Ignored => {
+                        print_str("ignored\n");
+                        results.ignored = results.ignored + 1;
+                    }
+                }
+
+                ri = ri + 1;
+            }
+
+            // Phase 6: Print summary
+            print_test_summary(&results);
+
+            if results.failed > 0 { 1 } else { 0 }
+        }
+        &Option::None => {
+            print_error("No source file specified");
+            1
+        }
+    }
 }
 
 // ============================================================
@@ -922,6 +1494,26 @@ pub fn parse_args(argc: i32, argv: &Vec<String>) -> Args {
                 args.validate_mir = true;
             } else if str_equals(arg, "--mem-profile") {
                 args.mem_profile = true;
+            } else if str_equals(arg, "--list") {
+                args.test_list = true;
+            } else if str_equals(arg, "--fail-fast") {
+                args.test_fail_fast = true;
+            } else if str_equals(arg, "--ignored") {
+                args.test_only_ignored = true;
+            } else if str_equals(arg, "--include-ignored") {
+                args.test_include_ignored = true;
+            } else if str_equals(arg, "--filter") {
+                if i + 1 < argv.len() {
+                    i = i + 1;
+                    args.test_filter = Option::Some(clone_string(&argv[i]));
+                }
+            } else if str_equals(arg, "-F") {
+                if i + 1 < argv.len() {
+                    i = i + 1;
+                    args.test_filter = Option::Some(clone_string(&argv[i]));
+                }
+            } else if str_starts_with(arg, "--filter=") {
+                args.test_filter = Option::Some(substr_after(arg, 9));
             }
         } else {
             // Positional argument (source file)
@@ -943,6 +1535,8 @@ fn parse_command(cmd: &String) -> Command {
         Command::Build
     } else if str_equals(cmd, "run") {
         Command::Run
+    } else if str_equals(cmd, "test") {
+        Command::Test
     } else if str_equals(cmd, "help") {
         Command::Help
     } else if str_equals(cmd, "version") {
