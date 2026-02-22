@@ -34,6 +34,9 @@ GROUND_TRUTH="${GROUND_TRUTH:-$REPO_ROOT/compiler-rust/tests/ground-truth}"
 export BLOOD_RUNTIME="${RUNTIME_O}"
 export BLOOD_RUST_RUNTIME="${RUNTIME_A}"
 
+# Direct cache writes to build directory during scripted builds
+export BLOOD_CACHE="${BUILD_DIR}/.blood-cache"
+
 step()  { printf "\n\033[1;34m==> [%s] %s\033[0m\n" "$(date +%H:%M:%S)" "$1"; }
 ok()    { printf "  \033[1;32m✓\033[0m %s\n" "$1"; }
 fail()  { printf "  \033[1;31m✗\033[0m %s\n" "$1"; }

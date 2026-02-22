@@ -273,10 +273,16 @@ pub fn cache_ll_path(cache_dir: &str, hash: u64) -> String {
 }
 
 /// Ensures the cache directory exists. Returns the cache dir path.
+/// Checks BLOOD_CACHE env var first; falls back to base_dir/.blood-cache.
 pub fn ensure_cache_dir(base_dir: &str) -> String {
+    let env_cache: &str = env_get("BLOOD_CACHE");
     let mut cache_dir = String::new();
-    cache_dir.push_str(base_dir);
-    cache_dir.push_str("/.blood-cache");
+    if env_cache.len() > 0 {
+        cache_dir.push_str(env_cache);
+    } else {
+        cache_dir.push_str(base_dir);
+        cache_dir.push_str("/.blood-cache");
+    }
 
     let mut mkdir_cmd = String::new();
     mkdir_cmd.push_str("mkdir -p ");
