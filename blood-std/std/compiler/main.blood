@@ -3646,7 +3646,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     ctx.trace_codegen = args.trace_codegen;
     eprint_str("[done]");
 
-    // Register builtin ADT types (Vec, String, HashMap, Box) in the ADT registry
+    // Register builtin ADT types (Vec, String, HashMap, Box, Option, Result) in the ADT registry
     eprint_str("[register_adts]");
     codegen::register_builtin_adts(
         &mut ctx,
@@ -3654,6 +3654,8 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
         &lower_result.builtin_string_def,
         &lower_result.builtin_hashmap_def,
         &lower_result.builtin_box_def,
+        &lower_result.builtin_option_def,
+        &lower_result.builtin_result_def,
     );
     eprint_str("[populate_adt]");
     codegen::populate_adt_registry(&mut ctx, &lower_result.items);

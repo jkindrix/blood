@@ -412,6 +412,8 @@ pub fn register_builtin_adts(
     builtin_string_def: &Option<hir_def::DefId>,
     builtin_hashmap_def: &Option<hir_def::DefId>,
     builtin_box_def: &Option<hir_def::DefId>,
+    builtin_option_def: &Option<hir_def::DefId>,
+    builtin_result_def: &Option<hir_def::DefId>,
 ) {
     // Vec<T> = { ptr, i64, i64 } (data pointer, length, capacity)
     match builtin_vec_def {
@@ -445,6 +447,24 @@ pub fn register_builtin_adts(
         }
         &Option::None => {}
     }
+    // Option<T> = { i32, [1 x i64] } — discriminant i32, generic payload
+    // Variant 0 = None (no payload), Variant 1 = Some(T) (one field)
+    match builtin_option_def {
+        &Option::Some(ref def_id) => {
+            let layout = make_builtin_enum_layout(def_id.index, 2, true);
+            ctx.register_enum(layout);
+        }
+        &Option::None => {}
+    }
+    // Result<T, E> = { i32, [1 x i64] } — discriminant i32, generic payload
+    // Variant 0 = Ok(T) (one field), Variant 1 = Err(E) (one field)
+    match builtin_result_def {
+        &Option::Some(ref def_id) => {
+            let layout = make_builtin_enum_layout(def_id.index, 2, false);
+            ctx.register_enum(layout);
+        }
+        &Option::None => {}
+    }
 }
 
 /// Creates a synthetic StructLayout for a builtin type with the given LLVM type string.
@@ -453,6 +473,36 @@ fn make_builtin_struct_layout(def_id: u32, llvm_type_str: &str) -> codegen_ctx::
         def_id: def_id,
         fields: Vec::new(),
         llvm_type: common::make_string(llvm_type_str),
+    }
+}
+
+/// Creates a synthetic EnumLayout for a builtin enum (Option or Result).
+/// Generic enums use i64 as the payload slot size (sufficient for pointers and i64 values).
+/// `num_variants` is the number of variants (2 for Option, 2 for Result).
+/// `first_is_unit` indicates whether variant 0 has no payload (true for Option::None).
+fn make_builtin_enum_layout(def_id: u32, num_variants: u32, first_is_unit: bool) -> codegen_ctx::EnumLayout {
+    let mut variants: Vec<codegen_ctx::VariantLayout> = Vec::new();
+    let mut vi: u32 = 0;
+    while vi < num_variants {
+        let fields: Vec<codegen_ctx::AdtFieldInfo> = Vec::new();
+        let payload_ty = if first_is_unit && vi == 0 {
+            common::make_string("{}")
+        } else {
+            common::make_string("{ i64 }")
+        };
+        variants.push(codegen_ctx::VariantLayout {
+            variant_idx: vi,
+            fields: fields,
+            payload_llvm_type: payload_ty,
+        });
+        vi = vi + 1;
+    }
+    codegen_ctx::EnumLayout {
+        def_id: def_id,
+        discriminant_type: common::make_string("i32"),
+        variants: variants,
+        llvm_type: common::make_string("{ i32, [1 x i64] }"),
+        max_payload_size: 8,
     }
 }
 
