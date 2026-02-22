@@ -174,6 +174,10 @@ impl MirLowerCtx {
         let key = hashmap::combine_u32_usize(self.body_def_id, span_start);
         match self.method_hash.get(key) {
             Option::Some(def_id_index) => {
+                // Validate: dummy sentinel (0xFFFFFFFF) indicates corrupt resolution table
+                if def_id_index == 0xFFFFFFFF {
+                    panic("ICE: method resolution contains dummy DefId (corrupt resolution table)");
+                }
                 return Option::Some(hir_def::DefId::new(def_id_index));
             }
             Option::None => {}
@@ -184,7 +188,11 @@ impl MirLowerCtx {
         while i < self.method_resolutions.len() {
             if self.method_resolutions[i].body_def_id == self.body_def_id &&
                self.method_resolutions[i].span_start == span_start {
-                return Option::Some(hir_def::DefId::new(self.method_resolutions[i].def_id_index));
+                let def_id_index = self.method_resolutions[i].def_id_index;
+                if def_id_index == 0xFFFFFFFF {
+                    panic("ICE: method resolution contains dummy DefId (corrupt resolution table)");
+                }
+                return Option::Some(hir_def::DefId::new(def_id_index));
             }
             i = i + 1;
         }

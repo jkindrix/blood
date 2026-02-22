@@ -359,10 +359,16 @@ fn substitute_params_core_id(ty_id: type_intern::TyId, subst: &TypeParamSubst, c
             if capture_avoid {
                 // Filter out inner-bound params from subst
                 let mut filtered = TypeParamSubst::new();
+                let interner_count = type_intern::type_interner().type_count() as u32;
                 let mut si: usize = 0;
                 while si < subst.entries.len() {
                     let entry_idx = subst.entries[si].param_index;
-                    let entry_ty = type_intern::TyId::new(subst.entries[si].ty.index);
+                    let raw_index = subst.entries[si].ty.index;
+                    // Validate TyId is within interner bounds before propagation
+                    if raw_index >= interner_count {
+                        panic("ICE: Forall substitution entry has TyId index out of bounds");
+                    }
+                    let entry_ty = type_intern::TyId::new(raw_index);
                     let mut is_bound: bool = false;
                     let mut j: usize = 0;
                     while j < copied_params.len() {
