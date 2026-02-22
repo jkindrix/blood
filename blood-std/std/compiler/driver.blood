@@ -526,10 +526,11 @@ fn convert_parse_errors(diagnostics: &Vec<parser_base::Diagnostic>) -> Vec<error
             msg.push_str(diag.notes[ni].as_str());
             ni = ni + 1;
         }
-        errors.push(error::CompileError::with_span(
+        errors.push(error::CompileError::with_code(
             error::CompilePhase::Parse,
             msg,
             diag.span,
+            common::make_string(parser_error_code(&diag.code)),
         ));
         i = i + 1;
     }
@@ -542,10 +543,11 @@ fn convert_hir_diagnostics(diagnostics: &Vec<hir::Diagnostic>) -> Vec<error::Com
     let mut i: usize = 0;
     while i < diagnostics.len() {
         let diag = &diagnostics[i];
-        errors.push(error::CompileError::with_span(
+        errors.push(error::CompileError::with_code(
             error::CompilePhase::Lower,
             clone_string(&diag.message),
             diag.span,
+            common::make_string(hir_diagnostic_code(&diag.code)),
         ));
         i = i + 1;
     }
@@ -582,10 +584,11 @@ fn convert_type_errors(type_errors: &Vec<typeck::TypeError>) -> Vec<error::Compi
             message.push_str(te.notes[ni].message.as_str());
             ni = ni + 1;
         }
-        errors.push(error::CompileError::with_span(
+        errors.push(error::CompileError::with_code(
             error::CompilePhase::TypeCheck,
             message,
             te.span,
+            common::make_string(type_error_code(&te.kind)),
         ));
         i = i + 1;
     }
@@ -604,10 +607,11 @@ fn convert_mir_error(err: &mir_lower::mir_lower_ctx::MirLowerError) -> error::Co
         message.push_str(err.notes[ni].message.as_str());
         ni = ni + 1;
     }
-    error::CompileError::with_span(
+    error::CompileError::with_code(
         error::CompilePhase::MirLower,
         message,
         err.span,
+        common::make_string(mir_lower::mir_lower_ctx::mir_error_code(&err.kind)),
     )
 }
 
@@ -617,6 +621,7 @@ fn convert_codegen_errors(codegen_errors: &Vec<codegen::codegen_ctx::CodegenErro
     let mut i: usize = 0;
     while i < codegen_errors.len() {
         let ce = &codegen_errors[i];
+        let code_str = codegen::codegen_ctx::error_kind_code(&ce.kind);
         let mut message = common::make_string(codegen::codegen_ctx::error_kind_label(&ce.kind));
         message.push_str(": ");
         message.push_str(ce.message.as_str());
@@ -635,19 +640,24 @@ fn convert_codegen_errors(codegen_errors: &Vec<codegen::codegen_ctx::CodegenErro
             message.push_str(ce.notes[ni].message.as_str());
             ni = ni + 1;
         }
-        // Use span-aware constructor when span is available
+        // Use with_code when span is available, embed code in message otherwise
         match &ce.span {
             &Option::Some(ref span) => {
-                errors.push(error::CompileError::with_span(
+                errors.push(error::CompileError::with_code(
                     error::CompilePhase::Codegen,
                     message,
                     *span,
+                    common::make_string(code_str),
                 ));
             }
             &Option::None => {
+                let mut coded_msg = common::make_string("[");
+                coded_msg.push_str(code_str);
+                coded_msg.push_str("] ");
+                coded_msg.push_str(message.as_str());
                 errors.push(error::CompileError::new(
                     error::CompilePhase::Codegen,
-                    message,
+                    coded_msg,
                 ));
             }
         }
@@ -662,7 +672,12 @@ fn convert_codegen_errors_to_warnings(codegen_errors: &Vec<codegen::codegen_ctx:
     let mut i: usize = 0;
     while i < codegen_errors.len() {
         let ce = &codegen_errors[i];
-        let mut message = common::make_string(codegen::codegen_ctx::error_kind_label(&ce.kind));
+        let code_str = codegen::codegen_ctx::error_kind_code(&ce.kind);
+        // Embed code in warning message since CompileWarning has no code field
+        let mut message = common::make_string("[");
+        message.push_str(code_str);
+        message.push_str("] ");
+        message.push_str(codegen::codegen_ctx::error_kind_label(&ce.kind));
         message.push_str(": ");
         message.push_str(ce.message.as_str());
         match &ce.fn_name {
@@ -704,30 +719,118 @@ fn convert_codegen_errors_to_warnings(codegen_errors: &Vec<codegen::codegen_ctx:
 /// Converts a TypeErrorKind to a human-readable message.
 fn type_error_message(kind: &typeck::TypeErrorKind) -> String {
     match kind {
-        &typeck::TypeErrorKind::TypeMismatch => common::make_string("[E0201] type mismatch"),
-        &typeck::TypeErrorKind::CannotInfer => common::make_string("[E0202] cannot infer type"),
-        &typeck::TypeErrorKind::UndefinedVariable => common::make_string("[E0203] undefined variable"),
-        &typeck::TypeErrorKind::UndefinedFunction => common::make_string("[E0204] undefined function"),
-        &typeck::TypeErrorKind::ArityMismatch => common::make_string("[E0205] wrong number of arguments"),
-        &typeck::TypeErrorKind::NotCallable => common::make_string("[E0206] expression is not callable"),
-        &typeck::TypeErrorKind::NotIndexable => common::make_string("[E0207] expression is not indexable"),
-        &typeck::TypeErrorKind::NoSuchField => common::make_string("[E0208] field does not exist"),
-        &typeck::TypeErrorKind::NoSuchMethod => common::make_string("[E0209] method does not exist"),
-        &typeck::TypeErrorKind::CannotMutate => common::make_string("[E0210] cannot mutate immutable value"),
-        &typeck::TypeErrorKind::InvalidLValue => common::make_string("[E0211] invalid assignment target"),
-        &typeck::TypeErrorKind::MissingReturn => common::make_string("[E0212] missing return value"),
-        &typeck::TypeErrorKind::TraitNotImplemented => common::make_string("[E0213] type does not implement trait"),
-        &typeck::TypeErrorKind::UnhandledEffect => common::make_string("[E0214] unhandled effect"),
-        &typeck::TypeErrorKind::InvalidControl => common::make_string("[E0215] invalid break/continue"),
-        &typeck::TypeErrorKind::PatternMismatch => common::make_string("[E0216] pattern type mismatch"),
-        &typeck::TypeErrorKind::NonExhaustive => common::make_string("[E0217] non-exhaustive patterns"),
-        &typeck::TypeErrorKind::InfiniteType => common::make_string("[E0218] infinite type (recursive without indirection)"),
-        &typeck::TypeErrorKind::InvalidCast => common::make_string("[E0219] invalid cast"),
-        &typeck::TypeErrorKind::UnreachablePattern => common::make_string("[E0220] unreachable pattern"),
-        &typeck::TypeErrorKind::LinearNotUsed => common::make_string("[E0221] linear value not consumed"),
-        &typeck::TypeErrorKind::LinearUsedMultipleTimes => common::make_string("[E0222] linear value used more than once"),
-        &typeck::TypeErrorKind::AffineUsedMultipleTimes => common::make_string("[E0223] affine value used more than once"),
-        &typeck::TypeErrorKind::UndeclaredEffect => common::make_string("[E0224] undeclared effect"),
+        &typeck::TypeErrorKind::TypeMismatch => common::make_string("type mismatch"),
+        &typeck::TypeErrorKind::CannotInfer => common::make_string("cannot infer type"),
+        &typeck::TypeErrorKind::UndefinedVariable => common::make_string("undefined variable"),
+        &typeck::TypeErrorKind::UndefinedFunction => common::make_string("undefined function"),
+        &typeck::TypeErrorKind::ArityMismatch => common::make_string("wrong number of arguments"),
+        &typeck::TypeErrorKind::NotCallable => common::make_string("expression is not callable"),
+        &typeck::TypeErrorKind::NotIndexable => common::make_string("expression is not indexable"),
+        &typeck::TypeErrorKind::NoSuchField => common::make_string("field does not exist"),
+        &typeck::TypeErrorKind::NoSuchMethod => common::make_string("method does not exist"),
+        &typeck::TypeErrorKind::CannotMutate => common::make_string("cannot mutate immutable value"),
+        &typeck::TypeErrorKind::InvalidLValue => common::make_string("invalid assignment target"),
+        &typeck::TypeErrorKind::MissingReturn => common::make_string("missing return value"),
+        &typeck::TypeErrorKind::TraitNotImplemented => common::make_string("type does not implement trait"),
+        &typeck::TypeErrorKind::UnhandledEffect => common::make_string("unhandled effect"),
+        &typeck::TypeErrorKind::InvalidControl => common::make_string("invalid break/continue"),
+        &typeck::TypeErrorKind::PatternMismatch => common::make_string("pattern type mismatch"),
+        &typeck::TypeErrorKind::NonExhaustive => common::make_string("non-exhaustive patterns"),
+        &typeck::TypeErrorKind::InfiniteType => common::make_string("infinite type (recursive without indirection)"),
+        &typeck::TypeErrorKind::InvalidCast => common::make_string("invalid cast"),
+        &typeck::TypeErrorKind::UnreachablePattern => common::make_string("unreachable pattern"),
+        &typeck::TypeErrorKind::LinearNotUsed => common::make_string("linear value not consumed"),
+        &typeck::TypeErrorKind::LinearUsedMultipleTimes => common::make_string("linear value used more than once"),
+        &typeck::TypeErrorKind::AffineUsedMultipleTimes => common::make_string("affine value used more than once"),
+        &typeck::TypeErrorKind::UndeclaredEffect => common::make_string("undeclared effect"),
+    }
+}
+
+// ============================================================
+// Error Code Functions
+// ============================================================
+
+/// Returns the error code string for a parser ErrorCode.
+fn parser_error_code(code: &parser_base::ErrorCode) -> &str {
+    match code {
+        &parser_base::ErrorCode::UnexpectedToken => "E0001",
+        &parser_base::ErrorCode::UnexpectedEof => "E0002",
+        &parser_base::ErrorCode::UnexpectedCharacter => "E0003",
+        &parser_base::ErrorCode::InvalidInteger => "E0004",
+        &parser_base::ErrorCode::InvalidFloat => "E0005",
+        &parser_base::ErrorCode::ExpectedExpression => "E0006",
+        &parser_base::ErrorCode::ExpectedType => "E0007",
+        &parser_base::ErrorCode::ExpectedPattern => "E0008",
+        &parser_base::ErrorCode::ExpectedIdentifier => "E0009",
+        &parser_base::ErrorCode::ExpectedDeclaration => "E0010",
+    }
+}
+
+/// Returns the error code string for an HIR DiagnosticCode.
+fn hir_diagnostic_code(code: &hir::DiagnosticCode) -> &str {
+    match code {
+        &hir::DiagnosticCode::E0100 => "E0100",
+        &hir::DiagnosticCode::E0101 => "E0101",
+        &hir::DiagnosticCode::E0102 => "E0102",
+        &hir::DiagnosticCode::E0103 => "E0103",
+        &hir::DiagnosticCode::E0104 => "E0104",
+        &hir::DiagnosticCode::E0200 => "E0200",
+        &hir::DiagnosticCode::E0201 => "E0201",
+        &hir::DiagnosticCode::E0202 => "E0202",
+        &hir::DiagnosticCode::E0203 => "E0203",
+        &hir::DiagnosticCode::E0204 => "E0204",
+        &hir::DiagnosticCode::E0205 => "E0205",
+        &hir::DiagnosticCode::E0206 => "E0206",
+        &hir::DiagnosticCode::E0300 => "E0300",
+        &hir::DiagnosticCode::E0301 => "E0301",
+        &hir::DiagnosticCode::E0302 => "E0302",
+        &hir::DiagnosticCode::E0303 => "E0303",
+        &hir::DiagnosticCode::E0304 => "E0304",
+        &hir::DiagnosticCode::E0305 => "E0305",
+        &hir::DiagnosticCode::E0400 => "E0400",
+        &hir::DiagnosticCode::E0401 => "E0401",
+        &hir::DiagnosticCode::E0402 => "E0402",
+        &hir::DiagnosticCode::E0403 => "E0403",
+        &hir::DiagnosticCode::E0500 => "E0500",
+        &hir::DiagnosticCode::E0501 => "E0501",
+        &hir::DiagnosticCode::E0502 => "E0502",
+        &hir::DiagnosticCode::E0503 => "E0503",
+        &hir::DiagnosticCode::E0600 => "E0600",
+        &hir::DiagnosticCode::E0601 => "E0601",
+        &hir::DiagnosticCode::E0602 => "E0602",
+        &hir::DiagnosticCode::E0603 => "E0603",
+        &hir::DiagnosticCode::E0604 => "E0604",
+        &hir::DiagnosticCode::E0900 => "E0900",
+    }
+}
+
+/// Returns the error code string for a TypeErrorKind.
+fn type_error_code(kind: &typeck::TypeErrorKind) -> &str {
+    match kind {
+        &typeck::TypeErrorKind::TypeMismatch => "E0201",
+        &typeck::TypeErrorKind::CannotInfer => "E0202",
+        &typeck::TypeErrorKind::UndefinedVariable => "E0203",
+        &typeck::TypeErrorKind::UndefinedFunction => "E0204",
+        &typeck::TypeErrorKind::ArityMismatch => "E0205",
+        &typeck::TypeErrorKind::NotCallable => "E0206",
+        &typeck::TypeErrorKind::NotIndexable => "E0207",
+        &typeck::TypeErrorKind::NoSuchField => "E0208",
+        &typeck::TypeErrorKind::NoSuchMethod => "E0209",
+        &typeck::TypeErrorKind::CannotMutate => "E0210",
+        &typeck::TypeErrorKind::InvalidLValue => "E0211",
+        &typeck::TypeErrorKind::MissingReturn => "E0212",
+        &typeck::TypeErrorKind::TraitNotImplemented => "E0213",
+        &typeck::TypeErrorKind::UnhandledEffect => "E0214",
+        &typeck::TypeErrorKind::InvalidControl => "E0215",
+        &typeck::TypeErrorKind::PatternMismatch => "E0216",
+        &typeck::TypeErrorKind::NonExhaustive => "E0217",
+        &typeck::TypeErrorKind::InfiniteType => "E0218",
+        &typeck::TypeErrorKind::InvalidCast => "E0219",
+        &typeck::TypeErrorKind::UnreachablePattern => "E0220",
+        &typeck::TypeErrorKind::LinearNotUsed => "E0221",
+        &typeck::TypeErrorKind::LinearUsedMultipleTimes => "E0222",
+        &typeck::TypeErrorKind::AffineUsedMultipleTimes => "E0223",
+        &typeck::TypeErrorKind::UndeclaredEffect => "E0224",
     }
 }
 

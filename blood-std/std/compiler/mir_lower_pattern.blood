@@ -199,10 +199,11 @@ fn lower_struct_pattern(
                     Option::Some(idx) => idx,
                     Option::None => {
                         // Field resolution missing — positional fallback may be incorrect
-                        ctx.mir_error(
+                        ctx.mir_error_with_note(
                             mir_lower_ctx::MirLowerErrorKind::FieldNotResolved,
                             common::make_string("struct pattern field resolution missing; using positional index"),
                             span,
+                            common::make_string("field resolution may be missing if the struct was defined in a different module"),
                         );
                         i as u32
                     }

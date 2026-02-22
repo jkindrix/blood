@@ -368,10 +368,11 @@ fn extract_adt_def_id(ctx: &mut mir_lower_ctx::MirLowerCtx, ty: &hir_ty::Type, s
     match &ty.kind {
         &hir_ty::TypeKind::Adt { def_id, args: _ } => hir_def::DefId::new(def_id.index),
         _ => {
-            ctx.mir_error(
+            ctx.mir_error_with_note(
                 mir_lower_ctx::MirLowerErrorKind::AdtExtractionFailed,
                 common::make_string("expected ADT type but found non-ADT"),
                 span,
+                common::make_string("ensure the expression type resolves to a struct or enum after type inference"),
             );
             hir_def::DefId::dummy()
         }
@@ -865,10 +866,11 @@ fn lower_method_call_expr(
                 Option::None => {
                     // Truly unresolved - create a dummy DefId to produce a linker error
                     // instead of a cryptic runtime crash from calling undef
-                    ctx.mir_error(
+                    ctx.mir_error_with_note(
                         mir_lower_ctx::MirLowerErrorKind::MethodNotResolved,
                         common::make_string("method call target could not be resolved"),
                         span,
+                        common::make_string("check that the method is defined and the type implements it"),
                     );
                     mir_types::Operand::Constant(mir_types::Constant::new(
                         type_intern::CommonTypes::error(),
@@ -920,10 +922,11 @@ fn lower_field_expr(
                     match field_idx {
                         Option::Some(idx) => idx,
                         Option::None => {
-                            ctx.mir_error(
+                            ctx.mir_error_with_note(
                                 mir_lower_ctx::MirLowerErrorKind::FieldNotResolved,
                                 common::make_string("field index could not be resolved; defaulting to 0"),
                                 span,
+                                common::make_string("field resolution uses (body_def_id, name_span_start) as lookup key"),
                             );
                             0
                         }
@@ -2158,10 +2161,11 @@ fn expr_to_place(
                             match field_idx {
                                 Option::Some(idx) => idx,
                                 Option::None => {
-                                    ctx.mir_error(
+                                    ctx.mir_error_with_note(
                                         mir_lower_ctx::MirLowerErrorKind::FieldNotResolved,
                                         common::make_string("field index could not be resolved in place expression; defaulting to 0"),
                                         span,
+                                        common::make_string("field resolution uses (body_def_id, name_span_start) as lookup key"),
                                     );
                                     0
                                 }

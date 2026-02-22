@@ -191,6 +191,13 @@ fn emit_constant(
                 }
                 Option::None => {
                     // Fallback: generate a placeholder name
+                    let mut err_msg = common::make_string("function def_id ");
+                    err_msg.push_str(codegen_types::format_u64(def_id.index as u64).as_str());
+                    err_msg.push_str(" not found in def_names table");
+                    ctx.codegen_error(
+                        codegen_ctx::CodegenErrorKind::FnLookupFailed,
+                        err_msg,
+                    );
                     let mut result = common::make_string("@fn_");
                     result.push_str(codegen_types::format_u64(def_id.index as u64).as_str());
                     result
@@ -208,6 +215,13 @@ fn emit_constant(
                 }
                 Option::None => {
                     // Fallback: generate a placeholder
+                    let mut err_msg = common::make_string("const def_id ");
+                    err_msg.push_str(codegen_types::format_u64(def_id.index as u64).as_str());
+                    err_msg.push_str(" not found in def_names table");
+                    ctx.codegen_error(
+                        codegen_ctx::CodegenErrorKind::FnLookupFailed,
+                        err_msg,
+                    );
                     let mut result = common::make_string("@const_");
                     result.push_str(codegen_types::format_u64(def_id.index as u64).as_str());
                     result
@@ -224,6 +238,13 @@ fn emit_constant(
                 }
                 Option::None => {
                     // Fallback: generate a placeholder name
+                    let mut err_msg = common::make_string("static def_id ");
+                    err_msg.push_str(codegen_types::format_u64(def_id.index as u64).as_str());
+                    err_msg.push_str(" not found in def_names table");
+                    ctx.codegen_error(
+                        codegen_ctx::CodegenErrorKind::StaticLookupFailed,
+                        err_msg,
+                    );
                     let mut result = common::make_string("@static_");
                     result.push_str(codegen_types::format_u64(def_id.index as u64).as_str());
                     result
@@ -1063,7 +1084,10 @@ fn resolve_local_base_type(
             let mut err_msg = common::make_string("local _");
             err_msg.push_str(codegen_types::format_u64(local.index as u64).as_str());
             err_msg.push_str(" has no HIR type, using fallback { i64 }");
-            ctx.codegen_warning(err_msg);
+            ctx.codegen_error(
+                codegen_ctx::CodegenErrorKind::InternalError,
+                err_msg,
+            );
             common::make_string("{ i64 }")
         }
     }
@@ -1934,25 +1958,28 @@ pub fn emit_binop_typed(
             &mir_types::MirBinOp::Ge => ctx.emit_fcmp_cg(&result, "oge", llvm_ty, l, r),
             // Bitwise operations don't apply to floats - emit error
             &mir_types::MirBinOp::BitAnd => {
-                ctx.codegen_error(
+                ctx.codegen_error_with_note(
                     codegen_ctx::CodegenErrorKind::UnsupportedOperation,
                     common::make_string("bitwise AND on float type"),
+                    common::make_string("bitwise operations require integer operands; cast to integer first"),
                 );
                 ctx.write("    ; ERROR: bitwise AND on float\n");
                 ctx.emit_binop_cg(&result, "fadd", llvm_ty, l, "0.0");
             }
             &mir_types::MirBinOp::BitOr => {
-                ctx.codegen_error(
+                ctx.codegen_error_with_note(
                     codegen_ctx::CodegenErrorKind::UnsupportedOperation,
                     common::make_string("bitwise OR on float type"),
+                    common::make_string("bitwise operations require integer operands; cast to integer first"),
                 );
                 ctx.write("    ; ERROR: bitwise OR on float\n");
                 ctx.emit_binop_cg(&result, "fadd", llvm_ty, l, "0.0");
             }
             &mir_types::MirBinOp::BitXor => {
-                ctx.codegen_error(
+                ctx.codegen_error_with_note(
                     codegen_ctx::CodegenErrorKind::UnsupportedOperation,
                     common::make_string("bitwise XOR on float type"),
+                    common::make_string("bitwise operations require integer operands; cast to integer first"),
                 );
                 ctx.write("    ; ERROR: bitwise XOR on float\n");
                 ctx.emit_binop_cg(&result, "fadd", llvm_ty, l, "0.0");
@@ -2217,9 +2244,10 @@ fn emit_unop_typed(
         &mir_types::MirUnOp::Not => {
             if is_float {
                 // Not doesn't make sense for floats - emit error
-                ctx.codegen_error(
+                ctx.codegen_error_with_note(
                     codegen_ctx::CodegenErrorKind::UnsupportedOperation,
                     common::make_string("bitwise NOT on float type"),
+                    common::make_string("bitwise operations require integer operands; cast to integer first"),
                 );
                 ctx.write("    ; ERROR: bitwise NOT on float\n");
                 ctx.emit_binop_cg(&result, "fadd", llvm_ty, v, "0.0");

@@ -105,6 +105,17 @@ impl ErrorReporter {
         } else {
             output.push_str("error");
         }
+
+        // Add error code if present
+        match &error.code {
+            &Option::Some(ref code) => {
+                output.push('[');
+                output.push_str(code.as_str());
+                output.push(']');
+            }
+            &Option::None => {}
+        }
+
         output.push_str(": ");
         output.push_str(error.message.as_str());
         output.push('\n');

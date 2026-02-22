@@ -96,9 +96,9 @@ pub enum DiagnosticCode {
     // Name resolution errors (E01xx)
     E0100,  // Name not found
     E0101,  // Duplicate definition
-    E0102,  // Private item access
+    E0102,  // Undefined name or unknown type
     E0103,  // Import not found
-    E0104,  // Circular import
+    E0104,  // Resolution error
 
     // Type errors (E02xx)
     E0200,  // Type mismatch
@@ -110,7 +110,7 @@ pub enum DiagnosticCode {
     E0206,  // Recursive type without indirection
 
     // Expression errors (E03xx)
-    E0300,  // Invalid lvalue
+    E0300,  // Function validation error
     E0301,  // Cannot mutate immutable
     E0302,  // Invalid break/continue
     E0303,  // Missing return value
@@ -138,77 +138,6 @@ pub enum DiagnosticCode {
 
     // Internal errors (E09xx)
     E0900,  // Internal compiler error
-}
-
-/// A label in a diagnostic pointing to a span.
-pub struct DiagnosticLabel {
-    /// The span this label points to.
-    pub span: common::Span,
-    /// The label text.
-    pub message: String,
-    /// Whether this is the primary label.
-    pub is_primary: bool,
-}
-
-impl DiagnosticLabel {
-    /// Creates a primary label.
-    pub fn primary(span: common::Span, message: String) -> DiagnosticLabel {
-        DiagnosticLabel {
-            span: span,
-            message: message,
-            is_primary: true,
-        }
-    }
-
-    /// Creates a secondary label.
-    pub fn secondary(span: common::Span, message: String) -> DiagnosticLabel {
-        DiagnosticLabel {
-            span: span,
-            message: message,
-            is_primary: false,
-        }
-    }
-}
-
-/// A suggested fix for a diagnostic.
-pub struct Suggestion {
-    /// Description of the suggestion.
-    pub message: String,
-    /// The span to replace.
-    pub span: common::Span,
-    /// The replacement text.
-    pub replacement: String,
-    /// How applicable this suggestion is.
-    pub applicability: Applicability,
-}
-
-impl Suggestion {
-    /// Creates a new suggestion.
-    pub fn new(
-        message: String,
-        span: common::Span,
-        replacement: String,
-        applicability: Applicability,
-    ) -> Suggestion {
-        Suggestion {
-            message: message,
-            span: span,
-            replacement: replacement,
-            applicability: applicability,
-        }
-    }
-}
-
-/// How applicable a suggestion is.
-pub enum Applicability {
-    /// Can be applied automatically.
-    MachineApplicable,
-    /// Might need human review.
-    MaybeIncorrect,
-    /// Contains placeholders.
-    HasPlaceholders,
-    /// For reference only.
-    Unspecified,
 }
 
 // ============================================================
