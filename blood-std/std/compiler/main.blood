@@ -79,6 +79,8 @@ pub struct Args {
     pub timings: bool,
     /// Whether to skip the build cache.
     pub no_cache: bool,
+    /// Whether to build in release mode (enables LLVM optimizations and strips symbols).
+    pub release: bool,
     /// Whether to dump MIR for each function.
     pub dump_mir: bool,
     /// Optional filter for --dump-mir (only dump functions containing this substring).
@@ -106,6 +108,7 @@ impl Args {
             colors: true,
             timings: false,
             no_cache: false,
+            release: false,
             dump_mir: false,
             dump_mir_filter: Option::None,
             trace_codegen: false,
@@ -126,6 +129,7 @@ impl Args {
             colors: true,
             timings: false,
             no_cache: false,
+            release: false,
             dump_mir: false,
             dump_mir_filter: Option::None,
             trace_codegen: false,
@@ -146,6 +150,7 @@ impl Args {
             colors: true,
             timings: false,
             no_cache: false,
+            release: false,
             dump_mir: false,
             dump_mir_filter: Option::None,
             trace_codegen: false,
@@ -423,7 +428,11 @@ fn run_build(args: &Args) -> i32 {
             let mut llc_cmd = String::new();
             llc_cmd.push_str("llc-18 ");
             llc_cmd.push_str(ll_path.as_str());
-            llc_cmd.push_str(" -O0 -filetype=obj -relocation-model=pic -o ");
+            if args.release {
+                llc_cmd.push_str(" -O2 -filetype=obj -relocation-model=pic -o ");
+            } else {
+                llc_cmd.push_str(" -O0 -filetype=obj -relocation-model=pic -o ");
+            }
             llc_cmd.push_str(obj_path.as_str());
             let llc_start = blood_clock_millis();
             let llc_result = system(llc_cmd.as_str());
@@ -445,7 +454,11 @@ fn run_build(args: &Args) -> i32 {
             clang_cmd.push_str(runtime.c_runtime.as_str());
             clang_cmd.push_str(" ");
             clang_cmd.push_str(runtime.rust_runtime.as_str());
-            clang_cmd.push_str(" -Wl,-z,muldefs -lm -ldl -lpthread -pie -o ");
+            if args.release {
+                clang_cmd.push_str(" -Wl,-z,muldefs -s -lm -ldl -lpthread -pie -o ");
+            } else {
+                clang_cmd.push_str(" -Wl,-z,muldefs -lm -ldl -lpthread -pie -o ");
+            }
             clang_cmd.push_str(bin_path.as_str());
             let clang_start = blood_clock_millis();
             let clang_result = system(clang_cmd.as_str());
@@ -497,7 +510,11 @@ fn run_run(args: &Args) -> i32 {
             let mut llc_cmd = String::new();
             llc_cmd.push_str("llc-18 ");
             llc_cmd.push_str(ll_path.as_str());
-            llc_cmd.push_str(" -O0 -filetype=obj -relocation-model=pic -o ");
+            if args.release {
+                llc_cmd.push_str(" -O2 -filetype=obj -relocation-model=pic -o ");
+            } else {
+                llc_cmd.push_str(" -O0 -filetype=obj -relocation-model=pic -o ");
+            }
             llc_cmd.push_str(obj_path.as_str());
             let llc_result = system(llc_cmd.as_str());
             if llc_result != 0 {
@@ -514,7 +531,11 @@ fn run_run(args: &Args) -> i32 {
             clang_cmd.push_str(runtime.c_runtime.as_str());
             clang_cmd.push_str(" ");
             clang_cmd.push_str(runtime.rust_runtime.as_str());
-            clang_cmd.push_str(" -Wl,-z,muldefs -lm -ldl -lpthread -pie -o ");
+            if args.release {
+                clang_cmd.push_str(" -Wl,-z,muldefs -s -lm -ldl -lpthread -pie -o ");
+            } else {
+                clang_cmd.push_str(" -Wl,-z,muldefs -lm -ldl -lpthread -pie -o ");
+            }
             clang_cmd.push_str(bin_path.as_str());
             let clang_result = system(clang_cmd.as_str());
             if clang_result != 0 {
@@ -558,6 +579,7 @@ fn run_help(_args: &Args) -> i32 {
     help.push_str("    --timings      Print per-phase timing\n");
     help.push_str("    --mem-profile  Print per-phase memory diagnostics\n");
     help.push_str("    --no-cache   Skip the build cache\n");
+    help.push_str("    --release    Build with optimizations and strip symbols\n");
     help.push_str("\n");
     help.push_str("DEBUG OPTIONS:\n");
     help.push_str("    --dump-mir          Dump MIR for all functions to stderr\n");
@@ -691,6 +713,8 @@ pub fn parse_args(argc: i32, argv: &Vec<String>) -> Args {
                 args.timings = true;
             } else if str_equals(arg, "--no-cache") {
                 args.no_cache = true;
+            } else if str_equals(arg, "--release") {
+                args.release = true;
             } else if str_equals(arg, "--dump-mir") {
                 args.dump_mir = true;
             } else if str_starts_with(arg, "--dump-mir=") {
