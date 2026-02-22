@@ -1414,6 +1414,22 @@ impl Region {
         self.buffer.as_ptr() as usize
     }
 
+    /// Check if a pointer falls within this region's address range.
+    #[cfg(unix)]
+    pub fn contains_ptr(&self, ptr: *const u8) -> bool {
+        let addr = ptr as usize;
+        let base = self.base as usize;
+        addr >= base && addr < base + self.reserved
+    }
+
+    /// Check if a pointer falls within this region's address range.
+    #[cfg(not(unix))]
+    pub fn contains_ptr(&self, ptr: *const u8) -> bool {
+        let addr = ptr as usize;
+        let base = self.buffer.as_ptr() as usize;
+        addr >= base && addr < base + self.buffer.len()
+    }
+
     /// Get the current used size.
     pub fn used(&self) -> usize {
         self.offset.load(Ordering::Acquire)

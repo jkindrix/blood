@@ -152,6 +152,14 @@ unsafe fn runtime_dealloc(ptr: *mut u8, layout: std::alloc::Layout) {
 unsafe fn runtime_realloc(ptr: *mut u8, old_layout: std::alloc::Layout, new_size: usize) -> *mut u8 {
     let region_id = current_active_region();
     if region_id != 0 {
+        // If the old pointer was allocated from the system heap (not any region),
+        // use system realloc even though a region is active. This prevents
+        // long-lived global buffers (e.g. TypeInterner's Vec) from being moved
+        // into temporary regions that get destroyed later.
+        if !ptr.is_null() && !ptr_in_any_region(ptr as *const u8) {
+            return std::alloc::realloc(ptr, old_layout, new_size);
+        }
+
         let old_size = old_layout.size();
 
         // --- Diagnostic counters ---
@@ -4257,6 +4265,22 @@ static REGION_REGISTRY: OnceLock<Mutex<HashMap<u64, Region>>> = OnceLock::new();
 /// Get or initialize the region registry.
 fn get_region_registry() -> &'static Mutex<HashMap<u64, Region>> {
     REGION_REGISTRY.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Check if a pointer belongs to any known region's address range.
+///
+/// Returns `true` if the pointer falls within any region's mmap'd (or Vec-backed)
+/// memory range. Used by `runtime_realloc` to avoid moving system-heap buffers
+/// into temporary regions during reallocation.
+fn ptr_in_any_region(ptr: *const u8) -> bool {
+    let registry = get_region_registry();
+    let reg = registry.lock();
+    for region in reg.values() {
+        if region.contains_ptr(ptr) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Create a new region with the given initial and maximum sizes.
