@@ -21,6 +21,18 @@ mod unify;
 mod type_intern;
 
 // ============================================================
+// MIR Lowering Result
+// ============================================================
+
+/// Result of MIR lowering for a single function body.
+pub struct MirLowerResult {
+    /// The lowered MIR body.
+    pub body: mir_body::MirBody,
+    /// Errors encountered during lowering.
+    pub errors: Vec<mir_lower_ctx::MirLowerError>,
+}
+
+// ============================================================
 // MIR Lowering Driver
 // ============================================================
 
@@ -39,7 +51,7 @@ pub fn lower_body(
     subst_table: &unify::SubstTable,
     method_resolutions: &Vec<common::MethodResEntry>,
     field_resolutions: &Vec<common::FieldResEntry>,
-) -> mir_body::MirBody {
+) -> MirLowerResult {
     // Resolve the return type through the substitution table (TyId-native)
     let resolved_return_id = unify::apply_substs_id(subst_table, return_ty);
 
@@ -66,8 +78,15 @@ pub fn lower_body(
         ctx.terminate_return(span);
     }
 
-    // Finish and return the MIR body
-    ctx.finish()
+    // Extract errors before finishing
+    let errors = ctx.take_errors();
+
+    // Finish and return the MIR body with any errors
+    let mir_body = ctx.finish();
+    MirLowerResult {
+        body: mir_body,
+        errors: errors,
+    }
 }
 
 /// Lowers parameters from an HIR body.

@@ -41,6 +41,32 @@ pub enum CodegenErrorKind {
     InternalError,
 }
 
+/// A note attached to a codegen error providing additional context.
+pub struct CodegenNote {
+    /// The note message.
+    pub message: String,
+    /// Optional source span for the note.
+    pub span: Option<common::Span>,
+}
+
+impl CodegenNote {
+    /// Creates a note without a span.
+    pub fn new(message: String) -> CodegenNote {
+        CodegenNote {
+            message: message,
+            span: Option::None,
+        }
+    }
+
+    /// Creates a note with a source span.
+    pub fn with_span(message: String, span: common::Span) -> CodegenNote {
+        CodegenNote {
+            message: message,
+            span: Option::Some(span),
+        }
+    }
+}
+
 /// An error produced during code generation.
 pub struct CodegenError {
     /// The kind of error.
@@ -49,6 +75,10 @@ pub struct CodegenError {
     pub message: String,
     /// The function being generated when the error occurred (if known).
     pub fn_name: Option<String>,
+    /// Source span where the error occurred (if known).
+    pub span: Option<common::Span>,
+    /// Additional contextual notes.
+    pub notes: Vec<CodegenNote>,
 }
 
 impl CodegenError {
@@ -58,6 +88,8 @@ impl CodegenError {
             kind: kind,
             message: message,
             fn_name: Option::None,
+            span: Option::None,
+            notes: Vec::new(),
         }
     }
 
@@ -67,6 +99,8 @@ impl CodegenError {
             kind: kind,
             message: message,
             fn_name: Option::Some(fn_name),
+            span: Option::None,
+            notes: Vec::new(),
         }
     }
 }
@@ -254,6 +288,9 @@ pub struct CodegenCtx {
     pub codegen_errors: Vec<CodegenError>,
     /// Warnings accumulated during code generation.
     pub codegen_warnings: Vec<String>,
+    /// The span of the MIR statement/terminator currently being compiled.
+    /// Set before each statement/terminator codegen, used by codegen_error().
+    pub current_span: Option<common::Span>,
 }
 
 /// Entry mapping a handler DefId to its effect DefId.
@@ -401,6 +438,7 @@ impl CodegenCtx {
             handler_state_shadows: Vec::with_capacity(8),
             codegen_errors: Vec::new(),
             codegen_warnings: Vec::new(),
+            current_span: Option::None,
         }
     }
 
@@ -463,6 +501,7 @@ impl CodegenCtx {
             handler_state_shadows: Vec::with_capacity(8),
             codegen_errors: Vec::new(),
             codegen_warnings: Vec::new(),
+            current_span: Option::None,
         }
     }
 
@@ -658,6 +697,7 @@ impl CodegenCtx {
         self.local_types = Vec::new();
         self.local_signedness = Vec::new();
         self.current_fn = Option::None;
+        self.current_span = Option::None;
         // Note: string_table and def_names are preserved
     }
 
@@ -1065,16 +1105,43 @@ impl CodegenCtx {
 
     // ======== Error Reporting ========
 
-    /// Records a codegen error with the current function context.
+    /// Records a codegen error with the current function and span context.
     pub fn codegen_error(self: &mut CodegenCtx, kind: CodegenErrorKind, message: String) {
         let fn_name = match &self.current_fn {
             &Option::Some(ref name) => Option::Some(clone_string(name)),
+            &Option::None => Option::None,
+        };
+        let span = match &self.current_span {
+            &Option::Some(ref s) => Option::Some(*s),
             &Option::None => Option::None,
         };
         self.codegen_errors.push(CodegenError {
             kind: kind,
             message: message,
             fn_name: fn_name,
+            span: span,
+            notes: Vec::new(),
+        });
+    }
+
+    /// Records a codegen error with the current context and an attached note.
+    pub fn codegen_error_with_note(self: &mut CodegenCtx, kind: CodegenErrorKind, message: String, note: String) {
+        let fn_name = match &self.current_fn {
+            &Option::Some(ref name) => Option::Some(clone_string(name)),
+            &Option::None => Option::None,
+        };
+        let span = match &self.current_span {
+            &Option::Some(ref s) => Option::Some(*s),
+            &Option::None => Option::None,
+        };
+        let mut notes = Vec::new();
+        notes.push(CodegenNote::new(note));
+        self.codegen_errors.push(CodegenError {
+            kind: kind,
+            message: message,
+            fn_name: fn_name,
+            span: span,
+            notes: notes,
         });
     }
 
@@ -1098,10 +1165,29 @@ impl CodegenCtx {
                 &Option::Some(ref name) => Option::Some(clone_string(name)),
                 &Option::None => Option::None,
             };
+            let span = match &err.span {
+                &Option::Some(ref s) => Option::Some(*s),
+                &Option::None => Option::None,
+            };
+            let mut notes = Vec::new();
+            let mut ni: usize = 0;
+            while ni < err.notes.len() {
+                let note_span = match &err.notes[ni].span {
+                    &Option::Some(ref s) => Option::Some(*s),
+                    &Option::None => Option::None,
+                };
+                notes.push(CodegenNote {
+                    message: clone_string(&err.notes[ni].message),
+                    span: note_span,
+                });
+                ni = ni + 1;
+            }
             errors.push(CodegenError {
                 kind: clone_error_kind(&err.kind),
                 message: clone_string(&err.message),
                 fn_name: fn_name,
+                span: span,
+                notes: notes,
             });
             i = i + 1;
         }
@@ -1261,6 +1347,7 @@ impl CodegenCtx {
     /// Begins generating a new function.
     pub fn begin_function(self: &mut CodegenCtx, name: String) {
         self.current_fn = Option::Some(clone_string(&name));
+        self.current_span = Option::None;
         self.value_counter = 0;
         self.local_names.clear();
     }
@@ -1268,6 +1355,7 @@ impl CodegenCtx {
     /// Ends the current function.
     pub fn end_function(self: &mut CodegenCtx) {
         self.current_fn = Option::None;
+        self.current_span = Option::None;
     }
 
     /// Returns the current function name, or empty string if none.
@@ -2075,6 +2163,7 @@ impl CodegenCtx {
             handler_state_shadows: Vec::new(),
             codegen_errors: Vec::new(),
             codegen_warnings: Vec::new(),
+            current_span: Option::None,
         };
 
         // Copy handler_op_body_ids (read-only, needed to flag handler op bodies)

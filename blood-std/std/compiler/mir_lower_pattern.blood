@@ -197,7 +197,15 @@ fn lower_struct_pattern(
             Option::None => {
                 match field.field_idx {
                     Option::Some(idx) => idx,
-                    Option::None => i as u32,
+                    Option::None => {
+                        // Field resolution missing — positional fallback may be incorrect
+                        ctx.mir_error(
+                            mir_lower_ctx::MirLowerErrorKind::FieldNotResolved,
+                            common::make_string("struct pattern field resolution missing; using positional index"),
+                            span,
+                        );
+                        i as u32
+                    }
                 }
             }
         };
@@ -321,7 +329,7 @@ pub fn pattern_test(
                 span,
             );
             // Get variant index from path
-            let variant_idx = get_variant_index_from_path(path);
+            let variant_idx = get_variant_index_from_path(ctx, path, span);
             Option::Some(PatternTest {
                 discriminant: mir_types::Operand::Copy(mir_types::Place::local(discr_temp)),
                 expected: variant_idx as u128,
@@ -336,7 +344,7 @@ pub fn pattern_test(
                 mir_types::Rvalue::Discriminant(source.clone()),
                 span,
             );
-            let variant_idx = get_variant_index_from_path(path);
+            let variant_idx = get_variant_index_from_path(ctx, path, span);
             Option::Some(PatternTest {
                 discriminant: mir_types::Operand::Copy(mir_types::Place::local(discr_temp)),
                 expected: variant_idx as u128,
@@ -465,14 +473,22 @@ fn extract_constant_value(kind: &mir_types::ConstantKind) -> u128 {
 }
 
 /// Gets the variant index from a resolved path (for enum variants).
-fn get_variant_index_from_path(path: &hir_def::ResolvedPath) -> u32 {
+fn get_variant_index_from_path(
+    ctx: &mut mir_lower_ctx::MirLowerCtx,
+    path: &hir_def::ResolvedPath,
+    span: common::Span,
+) -> u32 {
     // Use the variant_index stored in the ResolvedPath if available
     match path.variant_index {
         Option::Some(idx) => idx,
         Option::None => {
-            // Fallback for paths without variant_index set
-            // This shouldn't happen for properly resolved variant paths,
-            // but provides backwards compatibility
+            // Variant index not set — this shouldn't happen for properly resolved
+            // variant paths. Report and use def_id.index as fallback.
+            ctx.mir_error(
+                mir_lower_ctx::MirLowerErrorKind::VariantIndexUnknown,
+                common::make_string("variant index not resolved; using def_id index as fallback"),
+                span,
+            );
             path.def_id.index
         }
     }

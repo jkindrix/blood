@@ -3044,7 +3044,7 @@ fn codegen_thread_worker(arg: u64) -> u64 {
         let mir_region = region_create(4194304, 8589934592);
         region_activate(mir_region);
 
-        let body = mir_lower::lower_body(
+        let mir_result = mir_lower::lower_body(
             work.def_id,
             hir_body,
             type_intern::TyId::new(work.return_ty.index),
@@ -3056,6 +3056,17 @@ fn codegen_thread_worker(arg: u64) -> u64 {
 
         // Pop mir_region — thread_codegen_region becomes active.
         region_deactivate();
+
+        // Report MIR lowering errors (non-fatal in streaming mode — continue to codegen)
+        if mir_result.errors.len() > 0 {
+            let mut mei: usize = 0;
+            while mei < mir_result.errors.len() {
+                eprint_str("MIR lowering error: ");
+                eprint_str(mir_result.errors[mei].message.as_str());
+                eprint_str("\n");
+                mei = mei + 1;
+            }
+        }
 
         // Set up call remaps for trait default methods
         ctx.call_remaps = find_call_remaps_for_def(
@@ -3071,7 +3082,7 @@ fn codegen_thread_worker(arg: u64) -> u64 {
         }
 
         // Codegen (thread_codegen_region active — all allocations scoped)
-        let fn_ir = codegen::generate_function_with_ctx(ctx, &body, work.fn_name.as_str());
+        let fn_ir = codegen::generate_function_with_ctx(ctx, &mir_result.body, work.fn_name.as_str());
         output.push_str(fn_ir.as_str());
 
         // Destroy MIR region — frees MIR body data
@@ -3136,7 +3147,7 @@ fn codegen_pass2(
         let mir_region = region_create(4194304, 8589934592);
         region_activate(mir_region);
 
-        let body = mir_lower::lower_body(
+        let mir_result = mir_lower::lower_body(
             work.def_id,
             hir_body,
             type_intern::TyId::new(work.return_ty.index),
@@ -3150,6 +3161,17 @@ fn codegen_pass2(
         // MIR data remains valid until region_destroy below.
         region_deactivate();
 
+        // Report MIR lowering errors (non-fatal in streaming mode — continue to codegen)
+        if mir_result.errors.len() > 0 {
+            let mut mei: usize = 0;
+            while mei < mir_result.errors.len() {
+                eprint_str("MIR lowering error: ");
+                eprint_str(mir_result.errors[mei].message.as_str());
+                eprint_str("\n");
+                mei = mei + 1;
+            }
+        }
+
         // Dump MIR if requested
         if args.dump_mir {
             let fn_name_str = work.fn_name.as_str();
@@ -3158,7 +3180,7 @@ fn codegen_pass2(
                 &Option::None => true,
             };
             if should_dump {
-                let mir_text = dump_mir::format_mir_body(&body, fn_name_str);
+                let mir_text = dump_mir::format_mir_body(&mir_result.body, fn_name_str);
                 eprint_str("=== MIR: ");
                 eprint_str(fn_name_str);
                 eprint_str(" ===\n");
@@ -3170,7 +3192,7 @@ fn codegen_pass2(
         // Validate MIR if requested
         if args.validate_mir {
             let fn_name_str = work.fn_name.as_str();
-            let errors = validate_mir::validate_body(&body, fn_name_str);
+            let errors = validate_mir::validate_body(&mir_result.body, fn_name_str);
             if errors.len() > 0 {
                 eprint_str("=== MIR VALIDATION ERRORS: ");
                 eprint_str(fn_name_str);
@@ -3199,7 +3221,7 @@ fn codegen_pass2(
         }
 
         // Codegen (no region active — all allocations in global allocator)
-        let fn_ir = codegen::generate_function_with_ctx(ctx, &body, work.fn_name.as_str());
+        let fn_ir = codegen::generate_function_with_ctx(ctx, &mir_result.body, work.fn_name.as_str());
         file_append_string(output_path, fn_ir.as_str());
 
         // Destroy MIR region — frees MIR body data

@@ -18,6 +18,110 @@ mod hashmap;
 mod type_intern;
 
 // ============================================================
+// MIR Lowering Error Types
+// ============================================================
+
+/// Categories of errors that can occur during MIR lowering.
+pub enum MirLowerErrorKind {
+    /// HIR local not found in local_map.
+    LocalNotFound,
+    /// Method call target could not be resolved.
+    MethodNotResolved,
+    /// Field index could not be determined.
+    FieldNotResolved,
+    /// ADT DefId could not be extracted from type.
+    AdtExtractionFailed,
+    /// Array element type could not be determined.
+    ArrayElementTypeUnknown,
+    /// break outside of a loop.
+    BreakOutsideLoop,
+    /// continue outside of a loop.
+    ContinueOutsideLoop,
+    /// Variant index could not be determined.
+    VariantIndexUnknown,
+    /// Internal error (should not happen in correct code).
+    InternalError,
+}
+
+/// A note attached to a MIR lowering error.
+pub struct MirLowerNote {
+    /// The note message.
+    pub message: String,
+}
+
+impl MirLowerNote {
+    pub fn new(message: String) -> MirLowerNote {
+        MirLowerNote { message: message }
+    }
+}
+
+/// An error produced during MIR lowering.
+pub struct MirLowerError {
+    /// The kind of error.
+    pub kind: MirLowerErrorKind,
+    /// Human-readable description.
+    pub message: String,
+    /// Source span where the error occurred.
+    pub span: common::Span,
+    /// Additional notes.
+    pub notes: Vec<MirLowerNote>,
+}
+
+impl MirLowerError {
+    /// Creates a new MIR lowering error.
+    pub fn new(kind: MirLowerErrorKind, message: String, span: common::Span) -> MirLowerError {
+        MirLowerError {
+            kind: kind,
+            message: message,
+            span: span,
+            notes: Vec::new(),
+        }
+    }
+
+    /// Creates a new MIR lowering error with a note.
+    pub fn with_note(kind: MirLowerErrorKind, message: String, span: common::Span, note: String) -> MirLowerError {
+        let mut notes = Vec::new();
+        notes.push(MirLowerNote::new(note));
+        MirLowerError {
+            kind: kind,
+            message: message,
+            span: span,
+            notes: notes,
+        }
+    }
+}
+
+/// Clones a MirLowerErrorKind value.
+pub fn clone_mir_error_kind(kind: &MirLowerErrorKind) -> MirLowerErrorKind {
+    match kind {
+        &MirLowerErrorKind::LocalNotFound => MirLowerErrorKind::LocalNotFound,
+        &MirLowerErrorKind::MethodNotResolved => MirLowerErrorKind::MethodNotResolved,
+        &MirLowerErrorKind::FieldNotResolved => MirLowerErrorKind::FieldNotResolved,
+        &MirLowerErrorKind::AdtExtractionFailed => MirLowerErrorKind::AdtExtractionFailed,
+        &MirLowerErrorKind::ArrayElementTypeUnknown => MirLowerErrorKind::ArrayElementTypeUnknown,
+        &MirLowerErrorKind::BreakOutsideLoop => MirLowerErrorKind::BreakOutsideLoop,
+        &MirLowerErrorKind::ContinueOutsideLoop => MirLowerErrorKind::ContinueOutsideLoop,
+        &MirLowerErrorKind::VariantIndexUnknown => MirLowerErrorKind::VariantIndexUnknown,
+        &MirLowerErrorKind::InternalError => MirLowerErrorKind::InternalError,
+    }
+}
+
+/// Returns a human-readable label with error code for a MirLowerErrorKind.
+pub fn mir_error_kind_label(kind: &MirLowerErrorKind) -> &str {
+    match kind {
+        &MirLowerErrorKind::LocalNotFound => "[E0700] local not found",
+        &MirLowerErrorKind::MethodNotResolved => "[E0701] method not resolved",
+        &MirLowerErrorKind::FieldNotResolved => "[E0702] field not resolved",
+        &MirLowerErrorKind::AdtExtractionFailed => "[E0703] ADT extraction failed",
+        &MirLowerErrorKind::ArrayElementTypeUnknown => "[E0704] array element type unknown",
+        &MirLowerErrorKind::BreakOutsideLoop => "[E0705] break outside loop",
+        &MirLowerErrorKind::ContinueOutsideLoop => "[E0706] continue outside loop",
+        &MirLowerErrorKind::VariantIndexUnknown => "[E0707] variant index unknown",
+        &MirLowerErrorKind::InternalError => "[E0708] internal MIR lowering error",
+    }
+}
+
+// ============================================================
 // MIR Lowering Context
 // ============================================================
 
@@ -58,6 +162,8 @@ pub struct MirLowerCtx {
     /// Hash-based index for O(1) field resolution lookup.
     /// Key: span_start, Value: field_idx
     field_hash: hashmap::HashMapU64U32,
+    /// Errors accumulated during MIR lowering.
+    pub errors: Vec<MirLowerError>,
 }
 
 /// Mapping from an HIR local to a MIR local.
@@ -111,7 +217,49 @@ impl MirLowerCtx {
             body_def_id: def_id.index,
             method_hash: method_hash,
             field_hash: field_hash,
+            errors: Vec::new(),
         }
+    }
+
+    // ======== Error Reporting ========
+
+    /// Records a MIR lowering error.
+    pub fn mir_error(self: &mut MirLowerCtx, kind: MirLowerErrorKind, message: String, span: common::Span) {
+        self.errors.push(MirLowerError::new(kind, message, span));
+    }
+
+    /// Records a MIR lowering error with a note.
+    pub fn mir_error_with_note(self: &mut MirLowerCtx, kind: MirLowerErrorKind, message: String, span: common::Span, note: String) {
+        self.errors.push(MirLowerError::with_note(kind, message, span, note));
+    }
+
+    /// Returns true if any errors have been recorded.
+    pub fn has_mir_errors(self: &MirLowerCtx) -> bool {
+        self.errors.len() > 0
+    }
+
+    /// Takes ownership of accumulated errors, leaving the error list empty.
+    pub fn take_errors(self: &mut MirLowerCtx) -> Vec<MirLowerError> {
+        let mut result = Vec::new();
+        let mut i: usize = 0;
+        while i < self.errors.len() {
+            let err = &self.errors[i];
+            let mut notes = Vec::new();
+            let mut ni: usize = 0;
+            while ni < err.notes.len() {
+                notes.push(MirLowerNote::new(common::make_string(err.notes[ni].message.as_str())));
+                ni = ni + 1;
+            }
+            result.push(MirLowerError {
+                kind: clone_mir_error_kind(&err.kind),
+                message: common::make_string(err.message.as_str()),
+                span: err.span,
+                notes: notes,
+            });
+            i = i + 1;
+        }
+        self.errors.clear();
+        result
     }
 
     // ======== Local Management ========

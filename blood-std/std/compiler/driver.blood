@@ -227,6 +227,7 @@ impl Compiler {
 
         // Phase 4: Lower HIR bodies to MIR
         let mut mir_functions: Vec<(String, mir_body::MirBody)> = Vec::new();
+        let mut mir_errors: Vec<error::CompileError> = Vec::new();
         let mut body_idx: usize = 0;
         while body_idx < lower_result.bodies.len() {
             let body_entry = &lower_result.bodies[body_idx];
@@ -263,7 +264,7 @@ impl Compiler {
             };
 
             // Lower the body to MIR with substitution table for type resolution
-            let mir_body = mir_lower::lower_body(
+            let mir_result = mir_lower::lower_body(
                 def_id,
                 hir_body,
                 return_ty,
@@ -273,9 +274,21 @@ impl Compiler {
                 &typeck_result.field_resolutions,
             );
 
-            mir_functions.push((fn_name, mir_body));
+            // Collect any MIR lowering errors
+            let mut ei: usize = 0;
+            while ei < mir_result.errors.len() {
+                mir_errors.push(convert_mir_error(&mir_result.errors[ei]));
+                ei = ei + 1;
+            }
+
+            mir_functions.push((fn_name, mir_result.body));
 
             body_idx = body_idx + 1;
+        }
+
+        // Halt before codegen if MIR lowering produced errors
+        if mir_errors.len() > 0 {
+            return CompileResult::err(mir_errors);
         }
 
         // Phase 5: Generate LLVM IR from MIR
@@ -505,9 +518,17 @@ fn convert_parse_errors(diagnostics: &Vec<parser_base::Diagnostic>) -> Vec<error
     let mut i: usize = 0;
     while i < diagnostics.len() {
         let diag = &diagnostics[i];
+        // Build message with notes appended
+        let mut msg = clone_string(&diag.message);
+        let mut ni: usize = 0;
+        while ni < diag.notes.len() {
+            msg.push_str("\n  note: ");
+            msg.push_str(diag.notes[ni].as_str());
+            ni = ni + 1;
+        }
         errors.push(error::CompileError::with_span(
             error::CompilePhase::Parse,
-            clone_string(&diag.message),
+            msg,
             diag.span,
         ));
         i = i + 1;
@@ -571,6 +592,25 @@ fn convert_type_errors(type_errors: &Vec<typeck::TypeError>) -> Vec<error::Compi
     errors
 }
 
+/// Converts a single MIR lowering error to a compile error.
+fn convert_mir_error(err: &mir_lower::mir_lower_ctx::MirLowerError) -> error::CompileError {
+    let mut message = common::make_string(mir_lower::mir_lower_ctx::mir_error_kind_label(&err.kind));
+    message.push_str(": ");
+    message.push_str(err.message.as_str());
+    // Append contextual notes
+    let mut ni: usize = 0;
+    while ni < err.notes.len() {
+        message.push_str("\n  note: ");
+        message.push_str(err.notes[ni].message.as_str());
+        ni = ni + 1;
+    }
+    error::CompileError::with_span(
+        error::CompilePhase::MirLower,
+        message,
+        err.span,
+    )
+}
+
 /// Converts codegen errors to compile errors.
 fn convert_codegen_errors(codegen_errors: &Vec<codegen::codegen_ctx::CodegenError>) -> Vec<error::CompileError> {
     let mut errors = Vec::new();
@@ -588,10 +628,29 @@ fn convert_codegen_errors(codegen_errors: &Vec<codegen::codegen_ctx::CodegenErro
             }
             &Option::None => {}
         }
-        errors.push(error::CompileError::new(
-            error::CompilePhase::Codegen,
-            message,
-        ));
+        // Append contextual notes
+        let mut ni: usize = 0;
+        while ni < ce.notes.len() {
+            message.push_str("\n  note: ");
+            message.push_str(ce.notes[ni].message.as_str());
+            ni = ni + 1;
+        }
+        // Use span-aware constructor when span is available
+        match &ce.span {
+            &Option::Some(ref span) => {
+                errors.push(error::CompileError::with_span(
+                    error::CompilePhase::Codegen,
+                    message,
+                    *span,
+                ));
+            }
+            &Option::None => {
+                errors.push(error::CompileError::new(
+                    error::CompilePhase::Codegen,
+                    message,
+                ));
+            }
+        }
         i = i + 1;
     }
     errors
@@ -614,10 +673,29 @@ fn convert_codegen_errors_to_warnings(codegen_errors: &Vec<codegen::codegen_ctx:
             }
             &Option::None => {}
         }
-        warnings.push(error::CompileWarning::new(
-            error::CompilePhase::Codegen,
-            message,
-        ));
+        // Append contextual notes
+        let mut ni: usize = 0;
+        while ni < ce.notes.len() {
+            message.push_str("\n  note: ");
+            message.push_str(ce.notes[ni].message.as_str());
+            ni = ni + 1;
+        }
+        // Use span-aware constructor when span is available
+        match &ce.span {
+            &Option::Some(ref span) => {
+                warnings.push(error::CompileWarning::with_span(
+                    error::CompilePhase::Codegen,
+                    message,
+                    *span,
+                ));
+            }
+            &Option::None => {
+                warnings.push(error::CompileWarning::new(
+                    error::CompilePhase::Codegen,
+                    message,
+                ));
+            }
+        }
         i = i + 1;
     }
     warnings

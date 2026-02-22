@@ -31,11 +31,12 @@ pub struct Diagnostic {
     pub message: String,
     pub span: common::Span,
     pub code: ErrorCode,
+    pub notes: Vec<String>,
 }
 
 /// Creates a new diagnostic.
 pub fn make_diagnostic(message: String, span: common::Span, code: ErrorCode) -> Diagnostic {
-    Diagnostic { message: message, span: span, code: code }
+    Diagnostic { message: message, span: span, code: code, notes: Vec::new() }
 }
 
 // ============================================================
@@ -227,18 +228,32 @@ impl<'src> Parser<'src> {
         self.errors.push(diagnostic);
     }
 
+    pub fn error_at_with_note(self: &mut Self, span: common::Span, message: String, code: ErrorCode, note: String) {
+        if self.panic_mode {
+            return;
+        }
+        self.panic_mode = true;
+        let mut diagnostic = make_diagnostic(message, span, code);
+        diagnostic.notes.push(note);
+        self.errors.push(diagnostic);
+    }
+
     pub fn error_expected_kind(self: &mut Self, expected: token::TokenKind) {
         let mut message = String::new();
         message.push_str("expected ");
         message.push_str(expected.display_name());
         message.push_str(", found ");
         message.push_str(self.current.kind.display_name());
-        let code = if self.is_at_end() {
-            ErrorCode::UnexpectedEof
+        if self.is_at_end() {
+            self.error_at_with_note(
+                self.current.span,
+                message,
+                ErrorCode::UnexpectedEof,
+                common::make_string("did you forget a closing brace or semicolon?"),
+            );
         } else {
-            ErrorCode::UnexpectedToken
-        };
-        self.error_at_current(message, code);
+            self.error_at_current(message, ErrorCode::UnexpectedToken);
+        }
     }
 
     pub fn error_expected(self: &mut Self, expected: &str) {
@@ -247,12 +262,16 @@ impl<'src> Parser<'src> {
         message.push_str(expected);
         message.push_str(", found ");
         message.push_str(self.current.kind.display_name());
-        let code = if self.is_at_end() {
-            ErrorCode::UnexpectedEof
+        if self.is_at_end() {
+            self.error_at_with_note(
+                self.current.span,
+                message,
+                ErrorCode::UnexpectedEof,
+                common::make_string("did you forget a closing brace or semicolon?"),
+            );
         } else {
-            ErrorCode::UnexpectedToken
-        };
-        self.error_at_current(message, code);
+            self.error_at_current(message, ErrorCode::UnexpectedToken);
+        }
     }
 
     /// Synchronize after an error by skipping to a statement boundary.

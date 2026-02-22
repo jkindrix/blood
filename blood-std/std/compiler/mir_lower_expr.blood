@@ -294,6 +294,11 @@ fn lower_local_expr(
                 }
                 Option::None => {
                     // Local not found - error recovery
+                    ctx.mir_error(
+                        mir_lower_ctx::MirLowerErrorKind::LocalNotFound,
+                        common::make_string("local variable not found in MIR local map"),
+                        span,
+                    );
                     ctx.emit_assign(place, mir_types::Rvalue::ZeroInit(type_intern::type_to_ty_id(ty)), span);
                 }
             }
@@ -325,7 +330,7 @@ fn lower_path_expr(
                     Option::None => 0,
                 };
                 // Unit enum variant — emit Aggregate with the enum's DefId from the type.
-                let enum_def_id = extract_adt_def_id(ty);
+                let enum_def_id = extract_adt_def_id(ctx, ty, span);
                 let resolved_ty = ctx.resolve_type(ty);
                 let unit_type_args = extract_type_args(&resolved_ty);
                 ctx.emit_assign(
@@ -357,11 +362,19 @@ fn lower_path_expr(
     }
 }
 
-/// Extracts the DefId from an Adt type. Returns a dummy DefId if the type is not Adt.
-fn extract_adt_def_id(ty: &hir_ty::Type) -> hir_def::DefId {
+/// Extracts the DefId from an Adt type. Returns a dummy DefId if the type is not Adt,
+/// and reports a MIR lowering error.
+fn extract_adt_def_id(ctx: &mut mir_lower_ctx::MirLowerCtx, ty: &hir_ty::Type, span: common::Span) -> hir_def::DefId {
     match &ty.kind {
         &hir_ty::TypeKind::Adt { def_id, args: _ } => hir_def::DefId::new(def_id.index),
-        _ => hir_def::DefId::dummy(),
+        _ => {
+            ctx.mir_error(
+                mir_lower_ctx::MirLowerErrorKind::AdtExtractionFailed,
+                common::make_string("expected ADT type but found non-ADT"),
+                span,
+            );
+            hir_def::DefId::dummy()
+        }
     }
 }
 
@@ -678,7 +691,7 @@ fn lower_call_expr(
                     }
 
                     // The return type `ty` is the enum Adt type — extract its DefId.
-                    let enum_def_id = extract_adt_def_id(ty);
+                    let enum_def_id = extract_adt_def_id(ctx, ty, span);
                     let resolved_ty = ctx.resolve_type(ty);
                     let variant_type_args = extract_type_args(&resolved_ty);
                     let dest_place = match dest.as_place() {
@@ -852,6 +865,11 @@ fn lower_method_call_expr(
                 Option::None => {
                     // Truly unresolved - create a dummy DefId to produce a linker error
                     // instead of a cryptic runtime crash from calling undef
+                    ctx.mir_error(
+                        mir_lower_ctx::MirLowerErrorKind::MethodNotResolved,
+                        common::make_string("method call target could not be resolved"),
+                        span,
+                    );
                     mir_types::Operand::Constant(mir_types::Constant::new(
                         type_intern::CommonTypes::error(),
                         mir_types::ConstantKind::FnDef(hir_def::DefId::new(0xFFFFFFFE)),
@@ -901,7 +919,14 @@ fn lower_field_expr(
                     // Fall back to HIR-stored field index
                     match field_idx {
                         Option::Some(idx) => idx,
-                        Option::None => 0,
+                        Option::None => {
+                            ctx.mir_error(
+                                mir_lower_ctx::MirLowerErrorKind::FieldNotResolved,
+                                common::make_string("field index could not be resolved; defaulting to 0"),
+                                span,
+                            );
+                            0
+                        }
                     }
                 }
             }
@@ -1003,7 +1028,7 @@ fn lower_array_expr(
         &hir_expr::ArrayExpr::List(ref elems) => {
             // Array literal [a, b, c]
             let mut operands = Vec::new();
-            let elem_ty = get_array_element_type(ty);
+            let elem_ty = get_array_element_type(ctx, ty, span);
             let mut i: usize = 0;
             while i < elems.len() {
                 let elem = &elems[i];
@@ -1060,10 +1085,17 @@ fn lower_array_expr(
     }
 }
 
-fn get_array_element_type(ty: &hir_ty::Type) -> type_intern::TyId {
+fn get_array_element_type(ctx: &mut mir_lower_ctx::MirLowerCtx, ty: &hir_ty::Type, span: common::Span) -> type_intern::TyId {
     match &ty.kind {
         &hir_ty::TypeKind::Array { ref element, size: _ } => type_intern::type_to_ty_id(element.as_ref()),
-        _ => type_intern::CommonTypes::error(),
+        _ => {
+            ctx.mir_error(
+                mir_lower_ctx::MirLowerErrorKind::ArrayElementTypeUnknown,
+                common::make_string("expected array type but found non-array"),
+                span,
+            );
+            type_intern::CommonTypes::error()
+        }
     }
 }
 
@@ -1129,7 +1161,7 @@ fn lower_struct_expr(
                         Option::None => 0,
                     };
                     let adt_def_id = match path.variant_index {
-                        Option::Some(_) => extract_adt_def_id(ty),
+                        Option::Some(_) => extract_adt_def_id(ctx, ty, span),
                         Option::None => path.def_id,
                     };
                     // Extract type args from HIR type for generic structs
@@ -1690,6 +1722,11 @@ fn lower_break_expr(
         }
         Option::None => {
             // No enclosing loop - error
+            ctx.mir_error(
+                mir_lower_ctx::MirLowerErrorKind::BreakOutsideLoop,
+                common::make_string("break outside of loop"),
+                span,
+            );
             ctx.terminate_unreachable(span);
         }
     }
@@ -1707,6 +1744,11 @@ fn lower_continue_expr(
         }
         Option::None => {
             // No enclosing loop - error
+            ctx.mir_error(
+                mir_lower_ctx::MirLowerErrorKind::ContinueOutsideLoop,
+                common::make_string("continue outside of loop"),
+                span,
+            );
             ctx.terminate_unreachable(span);
         }
     }
@@ -2115,7 +2157,14 @@ fn expr_to_place(
                             // Fall back to HIR-stored field index
                             match field_idx {
                                 Option::Some(idx) => idx,
-                                Option::None => 0,
+                                Option::None => {
+                                    ctx.mir_error(
+                                        mir_lower_ctx::MirLowerErrorKind::FieldNotResolved,
+                                        common::make_string("field index could not be resolved in place expression; defaulting to 0"),
+                                        span,
+                                    );
+                                    0
+                                }
                             }
                         }
                     }
