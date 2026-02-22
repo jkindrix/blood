@@ -668,8 +668,14 @@ impl TypeInterner {
     }
 
     /// Gets the InternedTypeKind for a TyId.
+    /// Panics with diagnostic if id is out of bounds (indicates corrupt TyId).
     pub fn get(self: &TypeInterner, id: TyId) -> &InternedTypeKind {
-        &self.types[id.index as usize]
+        let idx = id.index as usize;
+        if idx < self.types.len() {
+            &self.types[idx]
+        } else {
+            panic("ICE: TyId index out of bounds in TypeInterner::get")
+        }
     }
 
     /// Returns the number of interned types.
@@ -740,14 +746,30 @@ impl TypeInterner {
     }
 
     /// Returns the length of a type list.
+    /// Panics with diagnostic if id is out of bounds (indicates corrupt TyListId).
     pub fn ty_list_len(self: &TypeInterner, id: TyListId) -> usize {
-        self.ty_list_meta[id.index as usize].len as usize
+        let idx = id.index as usize;
+        if idx >= self.ty_list_meta.len() {
+            panic("ICE: TyListId index out of bounds in TypeInterner::ty_list_len");
+        }
+        self.ty_list_meta[idx].len as usize
     }
 
     /// Gets a TyId at a specific index within a type list.
+    /// Panics with diagnostic if id or index is out of bounds.
     pub fn get_ty_list_element(self: &TypeInterner, id: TyListId, index: usize) -> TyId {
-        let meta = &self.ty_list_meta[id.index as usize];
+        let meta_idx = id.index as usize;
+        if meta_idx >= self.ty_list_meta.len() {
+            panic("ICE: TyListId index out of bounds in TypeInterner::get_ty_list_element");
+        }
+        let meta = &self.ty_list_meta[meta_idx];
+        if index >= meta.len as usize {
+            panic("ICE: element index out of bounds in TypeInterner::get_ty_list_element");
+        }
         let offset = meta.start as usize + index;
+        if offset >= self.ty_list_data.len() {
+            panic("ICE: computed offset out of bounds in TypeInterner::get_ty_list_element");
+        }
         TyId::new(self.ty_list_data[offset].index)
     }
 
@@ -761,8 +783,14 @@ impl TypeInterner {
     }
 
     /// Gets the InternedEffectRow for an EffectRowId.
+    /// Panics with diagnostic if id is out of bounds (indicates corrupt EffectRowId).
     pub fn get_effect_row(self: &TypeInterner, id: EffectRowId) -> &InternedEffectRow {
-        &self.effect_rows[id.index as usize]
+        let idx = id.index as usize;
+        if idx < self.effect_rows.len() {
+            &self.effect_rows[idx]
+        } else {
+            panic("ICE: EffectRowId index out of bounds in TypeInterner::get_effect_row")
+        }
     }
 
     // ======== Record Field List Operations ========
@@ -775,8 +803,14 @@ impl TypeInterner {
     }
 
     /// Gets the InternedRecordFieldList for a RecordFieldListId.
+    /// Panics with diagnostic if id is out of bounds (indicates corrupt RecordFieldListId).
     pub fn get_record_field_list(self: &TypeInterner, id: RecordFieldListId) -> &InternedRecordFieldList {
-        &self.record_field_lists[id.index as usize]
+        let idx = id.index as usize;
+        if idx < self.record_field_lists.len() {
+            &self.record_field_lists[idx]
+        } else {
+            panic("ICE: RecordFieldListId index out of bounds in TypeInterner::get_record_field_list")
+        }
     }
 
     // ======== Convenience Constructors ========
@@ -1357,6 +1391,17 @@ pub fn is_closure_id(id: TyId) -> bool {
 // ============================================================
 // Global Type Interner (Singleton)
 // ============================================================
+//
+// SAFETY INVARIANT: The Blood compiler is single-threaded.
+// No concurrent access to the type interner occurs. This mutable
+// static is safe because:
+// 1. Blood compilation happens in a single thread
+// 2. No work-stealing, thread pools, or parallel phases exist
+// 3. init_type_interner() is called once at startup
+// 4. All subsequent type_interner() calls are sequential
+//
+// If parallelism is added in the future (e.g., parallel codegen),
+// this must be wrapped in a synchronization primitive.
 
 static mut GLOBAL_TYPE_INTERNER: Option<TypeInterner> = Option::None;
 

@@ -544,6 +544,9 @@ pub fn emit_place_addr(
                     Option::None => {
                         // BUG: Static def_id has no name mapping — emit trap instead of null
                         // to avoid silent null pointer dereference in generated code
+                        let mut err_msg = common::make_string("static def_name lookup failed for def_id ");
+                        err_msg.push_str(codegen_types::format_u64(def_id.index as u64).as_str());
+                        ctx.codegen_error(codegen_ctx::CodegenErrorKind::StaticLookupFailed, err_msg);
                         ctx.write("    ; BUG: static def_name lookup failed for def_id ");
                         ctx.write(codegen_types::format_u64(def_id.index as u64).as_str());
                         ctx.write("\n");
@@ -555,6 +558,10 @@ pub fn emit_place_addr(
             }
             Option::None => {
                 // BUG: Static place has no def_id — emit trap instead of null
+                ctx.codegen_error(
+                    codegen_ctx::CodegenErrorKind::StaticLookupFailed,
+                    common::make_string("static place missing def_id"),
+                );
                 ctx.write("    ; BUG: static place missing def_id\n");
                 ctx.write("    call void @llvm.trap()\n");
                 ctx.emit_unreachable();
@@ -662,11 +669,20 @@ pub fn emit_place_addr(
                     indices.push(codegen_types::format_u64(idx as u64));
                     ctx.emit_gep_cg(&result, gep_type.as_str(), &current, &indices);
                 } else {
-                    // Byte offset: each field is assumed 8 bytes (i64)
-                    let byte_offset = (idx as u64) * 8;
-                    let mut indices: Vec<String> = Vec::new();
-                    indices.push(codegen_types::format_u64(byte_offset));
-                    ctx.emit_gep_cg(&result, "i8", &current, &indices);
+                    // ICE: GEP base type is not a struct/array, or field index
+                    // exceeds struct field count. This indicates incomplete type
+                    // resolution in codegen — the MIR place projection references
+                    // a field that doesn't exist in the resolved LLVM type.
+                    ctx.write("    ; ICE: field GEP failed — base type '");
+                    ctx.write_string(&gep_type);
+                    ctx.write("' has ");
+                    ctx.write(codegen_types::format_u64(field_count as u64).as_str());
+                    ctx.write(" fields, tried to access field ");
+                    ctx.write(codegen_types::format_u64(idx as u64).as_str());
+                    ctx.write("\n");
+                    ctx.write("    ; ICE: This is a compiler bug (codegen_expr: field GEP fallback)\n");
+                    ctx.write("    call void @llvm.trap()\n");
+                    ctx.emit_unreachable();
                 }
 
                 current = result;
@@ -715,6 +731,18 @@ pub fn emit_place_addr(
                     }
                     let data_ptr = ctx.fresh_temp_cg();
                     ctx.emit_load_cg2(&data_ptr, "ptr", &current);
+
+                    // Null check: trap if data pointer is null (empty/dropped Vec)
+                    let is_null = ctx.fresh_temp_cg();
+                    ctx.emit_icmp_cg2(&is_null, "eq", "ptr", &data_ptr, "null");
+                    let trap_label = ctx.fresh_label_cg();
+                    let ok_label = ctx.fresh_label_cg();
+                    ctx.emit_cond_br_cg(&is_null, &trap_label, &ok_label);
+                    ctx.emit_label_cg(&trap_label);
+                    ctx.write("    call void @llvm.trap()\n");
+                    ctx.emit_unreachable();
+                    ctx.emit_label_cg(&ok_label);
+
                     current = data_ptr;
                 }
 
@@ -763,6 +791,18 @@ pub fn emit_place_addr(
                     }
                     let data_ptr = ctx.fresh_temp_cg();
                     ctx.emit_load_cg2(&data_ptr, "ptr", &current);
+
+                    // Null check: trap if data pointer is null (empty/dropped Vec)
+                    let is_null = ctx.fresh_temp_cg();
+                    ctx.emit_icmp_cg2(&is_null, "eq", "ptr", &data_ptr, "null");
+                    let trap_label = ctx.fresh_label_cg();
+                    let ok_label = ctx.fresh_label_cg();
+                    ctx.emit_cond_br_cg(&is_null, &trap_label, &ok_label);
+                    ctx.emit_label_cg(&trap_label);
+                    ctx.write("    call void @llvm.trap()\n");
+                    ctx.emit_unreachable();
+                    ctx.emit_label_cg(&ok_label);
+
                     current = data_ptr;
                 }
 
@@ -846,10 +886,18 @@ pub fn emit_place_addr(
                         &Option::None => {}
                     }
                     if !resolved {
-                        // Last-resort fallback: i32 discriminant (4 bytes)
-                        let mut indices: Vec<String> = Vec::new();
-                        indices.push(common::make_string("4"));
-                        ctx.emit_gep_cg(&result, "i8", &current, &indices);
+                        // ICE: Enum downcast failed — could not determine variant
+                        // payload offset. The base type is not a struct with 2+
+                        // fields, and HIR type resolution also failed to produce
+                        // a valid enum layout.
+                        ctx.write("    ; ICE: enum downcast failed — base type '");
+                        ctx.write_string(&current_base);
+                        ctx.write("', variant ");
+                        ctx.write(codegen_types::format_u64(variant_idx as u64).as_str());
+                        ctx.write("\n");
+                        ctx.write("    ; ICE: This is a compiler bug (codegen_expr: downcast fallback)\n");
+                        ctx.write("    call void @llvm.trap()\n");
+                        ctx.emit_unreachable();
                     }
                 }
                 current = result;
@@ -1011,7 +1059,13 @@ fn resolve_local_base_type(
             }
             result
         }
-        Option::None => common::make_string("{ i64 }"),
+        Option::None => {
+            let mut err_msg = common::make_string("local _");
+            err_msg.push_str(codegen_types::format_u64(local.index as u64).as_str());
+            err_msg.push_str(" has no HIR type, using fallback { i64 }");
+            ctx.codegen_warning(err_msg);
+            common::make_string("{ i64 }")
+        }
     }
 }
 
@@ -1157,9 +1211,20 @@ fn resolve_variant_payload_type(
                         i = i + 1;
                     }
                     // Variant not found in registry, fallback
+                    let mut err_msg = common::make_string("variant index ");
+                    err_msg.push_str(codegen_types::format_u64(variant_idx as u64).as_str());
+                    err_msg.push_str(" not found in enum def_id ");
+                    err_msg.push_str(codegen_types::format_u64(def_id as u64).as_str());
+                    ctx.codegen_error(codegen_ctx::CodegenErrorKind::VariantLookupFailed, err_msg);
                     common::make_string("{ i64 }")
                 }
-                Option::None => common::make_string("{ i64 }"),
+                Option::None => {
+                    let mut err_msg = common::make_string("enum def_id ");
+                    err_msg.push_str(codegen_types::format_u64(def_id as u64).as_str());
+                    err_msg.push_str(" not found in ADT registry");
+                    ctx.codegen_error(codegen_ctx::CodegenErrorKind::AdtLookupFailed, err_msg);
+                    common::make_string("{ i64 }")
+                }
             }
         }
         &Option::None => common::make_string("{ i64 }"),
@@ -1505,14 +1570,16 @@ pub fn emit_rvalue(
                     ctx.emit_store_cg("i64", &extended, dest);
                 }
             } else {
-                // Fallback for builtin generic enums (Option<T>, Result<T,E>)
-                // not in the ADT registry: load i32 discriminant and zero-extend.
-                // All Blood enums use i32 discriminant.
-                let discr_val = ctx.fresh_temp_cg();
-                ctx.emit_load_cg(&discr_val, "i32", ptr.as_str());
-                let extended = ctx.fresh_temp_cg();
-                ctx.emit_cast_cg2(&extended, "zext", "i32", &discr_val, "i64");
-                ctx.emit_store_cg("i64", &extended, dest);
+                // ICE: Enum not found in ADT registry during discriminant read.
+                // All enums must be registered before codegen so their discriminant
+                // type and layout are known. An unregistered enum here indicates a
+                // missing registration in the codegen ADT setup pass.
+                ctx.write("    ; ICE: discriminant read on unregistered enum, local=");
+                ctx.write(codegen_types::format_u64(place.local.index as u64).as_str());
+                ctx.write("\n");
+                ctx.write("    ; ICE: This is a compiler bug (codegen_expr: discriminant load fallback)\n");
+                ctx.write("    call void @llvm.trap()\n");
+                ctx.emit_unreachable();
             }
         }
     }
@@ -1865,16 +1932,28 @@ pub fn emit_binop_typed(
             &mir_types::MirBinOp::Le => ctx.emit_fcmp_cg(&result, "ole", llvm_ty, l, r),
             &mir_types::MirBinOp::Gt => ctx.emit_fcmp_cg(&result, "ogt", llvm_ty, l, r),
             &mir_types::MirBinOp::Ge => ctx.emit_fcmp_cg(&result, "oge", llvm_ty, l, r),
-            // Bitwise operations don't apply to floats - emit error comment
+            // Bitwise operations don't apply to floats - emit error
             &mir_types::MirBinOp::BitAnd => {
+                ctx.codegen_error(
+                    codegen_ctx::CodegenErrorKind::UnsupportedOperation,
+                    common::make_string("bitwise AND on float type"),
+                );
                 ctx.write("    ; ERROR: bitwise AND on float\n");
                 ctx.emit_binop_cg(&result, "fadd", llvm_ty, l, "0.0");
             }
             &mir_types::MirBinOp::BitOr => {
+                ctx.codegen_error(
+                    codegen_ctx::CodegenErrorKind::UnsupportedOperation,
+                    common::make_string("bitwise OR on float type"),
+                );
                 ctx.write("    ; ERROR: bitwise OR on float\n");
                 ctx.emit_binop_cg(&result, "fadd", llvm_ty, l, "0.0");
             }
             &mir_types::MirBinOp::BitXor => {
+                ctx.codegen_error(
+                    codegen_ctx::CodegenErrorKind::UnsupportedOperation,
+                    common::make_string("bitwise XOR on float type"),
+                );
                 ctx.write("    ; ERROR: bitwise XOR on float\n");
                 ctx.emit_binop_cg(&result, "fadd", llvm_ty, l, "0.0");
             }
@@ -2138,6 +2217,10 @@ fn emit_unop_typed(
         &mir_types::MirUnOp::Not => {
             if is_float {
                 // Not doesn't make sense for floats - emit error
+                ctx.codegen_error(
+                    codegen_ctx::CodegenErrorKind::UnsupportedOperation,
+                    common::make_string("bitwise NOT on float type"),
+                );
                 ctx.write("    ; ERROR: bitwise NOT on float\n");
                 ctx.emit_binop_cg(&result, "fadd", llvm_ty, v, "0.0");
             } else {
@@ -2362,11 +2445,22 @@ fn emit_aggregate_adt(
                 ctx.gep_ptr_offset(0);
                 ctx.gep_field(i as u32);
                 ctx.end_gep();
-                // Use actual field type if available, fallback to i64
+                // Use actual field type from the struct layout.
+                // If the field index exceeds the known field types, this is
+                // a compiler bug — the aggregate has more operands than the
+                // struct layout has fields.
                 let field_ty_str = if i < field_types.len() {
                     field_types[i].as_str()
                 } else {
-                    "i64"
+                    ctx.write("    ; ICE: aggregate field ");
+                    ctx.write(codegen_types::format_u64(i as u64).as_str());
+                    ctx.write(" exceeds field_types.len()=");
+                    ctx.write(codegen_types::format_u64(field_types.len() as u64).as_str());
+                    ctx.write("\n");
+                    ctx.write("    ; ICE: This is a compiler bug (codegen_expr: field type fallback)\n");
+                    ctx.write("    call void @llvm.trap()\n");
+                    ctx.emit_unreachable();
+                    "i64" // dead code — satisfies type checker
                 };
                 // Check if operand type matches field type
                 if string_eq_str(operand_ty.as_str(), field_ty_str) {

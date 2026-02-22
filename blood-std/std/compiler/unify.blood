@@ -255,7 +255,7 @@ pub fn substitute_type_params(ty: &hir_ty::Type, subst: &TypeParamSubst) -> hir_
 
 /// TyId-native: substitutes type parameters in a type.
 pub fn substitute_type_params_id(ty_id: type_intern::TyId, subst: &TypeParamSubst) -> type_intern::TyId {
-    substitute_params_core_id(ty_id, subst, false)
+    substitute_params_core_id(ty_id, subst, false, 0)
 }
 
 /// Substitutes forall-bound type variables in a type.
@@ -271,13 +271,18 @@ fn substitute_forall_vars(ty: &hir_ty::Type, subst: &TypeParamSubst) -> hir_ty::
 
 /// TyId-native: substitutes forall-bound type variables.
 fn substitute_forall_vars_id(ty_id: type_intern::TyId, subst: &TypeParamSubst) -> type_intern::TyId {
-    substitute_params_core_id(ty_id, subst, true)
+    substitute_params_core_id(ty_id, subst, true, 0)
 }
 
 /// Shared core for substitute_type_params_id and substitute_forall_vars_id.
 /// If capture_avoid is true, Forall arms filter out inner-bound params.
-fn substitute_params_core_id(ty_id: type_intern::TyId, subst: &TypeParamSubst, capture_avoid: bool) -> type_intern::TyId {
+/// depth tracks recursion depth to prevent stack overflow on pathological types.
+fn substitute_params_core_id(ty_id: type_intern::TyId, subst: &TypeParamSubst, capture_avoid: bool, depth: i32) -> type_intern::TyId {
     if subst.is_empty() {
+        return ty_id;
+    }
+    // Guard against stack overflow from deeply nested types
+    if depth > 200 {
         return ty_id;
     }
     let interner = type_intern::type_interner();
@@ -300,43 +305,43 @@ fn substitute_params_core_id(ty_id: type_intern::TyId, subst: &TypeParamSubst, c
             }
         }
         &type_intern::InternedTypeKind::Tuple(list_id) => {
-            let new_list = substitute_ty_list_id(list_id, subst, capture_avoid);
+            let new_list = substitute_ty_list_id(list_id, subst, capture_avoid, depth + 1);
             type_intern::type_interner().intern(type_intern::InternedTypeKind::Tuple(new_list))
         }
         &type_intern::InternedTypeKind::Array { element, size } => {
-            let new_elem = substitute_params_core_id(element, subst, capture_avoid);
+            let new_elem = substitute_params_core_id(element, subst, capture_avoid, depth + 1);
             type_intern::type_interner().mk_array(new_elem, size)
         }
         &type_intern::InternedTypeKind::Slice { element } => {
-            let new_elem = substitute_params_core_id(element, subst, capture_avoid);
+            let new_elem = substitute_params_core_id(element, subst, capture_avoid, depth + 1);
             type_intern::type_interner().mk_slice(new_elem)
         }
         &type_intern::InternedTypeKind::Ref { inner, mutable } => {
-            let new_inner = substitute_params_core_id(inner, subst, capture_avoid);
+            let new_inner = substitute_params_core_id(inner, subst, capture_avoid, depth + 1);
             type_intern::type_interner().mk_ref(new_inner, mutable)
         }
         &type_intern::InternedTypeKind::Ptr { inner, mutable } => {
-            let new_inner = substitute_params_core_id(inner, subst, capture_avoid);
+            let new_inner = substitute_params_core_id(inner, subst, capture_avoid, depth + 1);
             type_intern::type_interner().mk_ptr(new_inner, mutable)
         }
         &type_intern::InternedTypeKind::Adt { def_id, args } => {
-            let new_args = substitute_ty_list_id(args, subst, capture_avoid);
+            let new_args = substitute_ty_list_id(args, subst, capture_avoid, depth + 1);
             type_intern::type_interner().mk_adt(def_id, new_args)
         }
         &type_intern::InternedTypeKind::Fn { params, ret, effects } => {
-            let new_params = substitute_ty_list_id(params, subst, capture_avoid);
-            let new_ret = substitute_params_core_id(ret, subst, capture_avoid);
-            let new_effects = substitute_effect_row_core_id(effects, subst, capture_avoid);
+            let new_params = substitute_ty_list_id(params, subst, capture_avoid, depth + 1);
+            let new_ret = substitute_params_core_id(ret, subst, capture_avoid, depth + 1);
+            let new_effects = substitute_effect_row_core_id(effects, subst, capture_avoid, depth + 1);
             type_intern::type_interner().mk_fn(new_params, new_ret, new_effects)
         }
         &type_intern::InternedTypeKind::Closure { def_id, params, ret } => {
-            let new_params = substitute_ty_list_id(params, subst, capture_avoid);
-            let new_ret = substitute_params_core_id(ret, subst, capture_avoid);
+            let new_params = substitute_ty_list_id(params, subst, capture_avoid, depth + 1);
+            let new_ret = substitute_params_core_id(ret, subst, capture_avoid, depth + 1);
             type_intern::type_interner().mk_closure(def_id, new_params, new_ret)
         }
         &type_intern::InternedTypeKind::Record { fields, ref row_var } => {
             let rv = *row_var;
-            let new_fields = substitute_record_fields_id(fields, subst, capture_avoid);
+            let new_fields = substitute_record_fields_id(fields, subst, capture_avoid, depth + 1);
             type_intern::type_interner().intern(type_intern::InternedTypeKind::Record {
                 fields: new_fields,
                 row_var: rv,
@@ -371,13 +376,13 @@ fn substitute_params_core_id(ty_id: type_intern::TyId, subst: &TypeParamSubst, c
                     }
                     si = si + 1;
                 }
-                let new_body = substitute_params_core_id(body, &filtered, capture_avoid);
+                let new_body = substitute_params_core_id(body, &filtered, capture_avoid, depth + 1);
                 type_intern::type_interner().intern(type_intern::InternedTypeKind::Forall {
                     params: copied_params,
                     body: new_body,
                 })
             } else {
-                let new_body = substitute_params_core_id(body, subst, capture_avoid);
+                let new_body = substitute_params_core_id(body, subst, capture_avoid, depth + 1);
                 type_intern::type_interner().intern(type_intern::InternedTypeKind::Forall {
                     params: copied_params,
                     body: new_body,
@@ -385,11 +390,11 @@ fn substitute_params_core_id(ty_id: type_intern::TyId, subst: &TypeParamSubst, c
             }
         }
         &type_intern::InternedTypeKind::Ownership { qualifier, inner } => {
-            let new_inner = substitute_params_core_id(inner, subst, capture_avoid);
+            let new_inner = substitute_params_core_id(inner, subst, capture_avoid, depth + 1);
             type_intern::type_interner().mk_ownership(qualifier, new_inner)
         }
         &type_intern::InternedTypeKind::Range { element, inclusive } => {
-            let new_elem = substitute_params_core_id(element, subst, capture_avoid);
+            let new_elem = substitute_params_core_id(element, subst, capture_avoid, depth + 1);
             type_intern::type_interner().mk_range(new_elem, inclusive)
         }
         &type_intern::InternedTypeKind::DynTrait { trait_id, ref auto_traits } => {
@@ -409,21 +414,21 @@ fn substitute_params_core_id(ty_id: type_intern::TyId, subst: &TypeParamSubst, c
 }
 
 /// Substitutes params in a type list, returning new TyListId.
-fn substitute_ty_list_id(list_id: type_intern::TyListId, subst: &TypeParamSubst, capture_avoid: bool) -> type_intern::TyListId {
+fn substitute_ty_list_id(list_id: type_intern::TyListId, subst: &TypeParamSubst, capture_avoid: bool, depth: i32) -> type_intern::TyListId {
     let interner = type_intern::type_interner();
     let len = interner.ty_list_len(list_id);
     let mut result: Vec<type_intern::TyId> = Vec::new();
     let mut i: usize = 0;
     while i < len {
         let elem = type_intern::type_interner().get_ty_list_element(list_id, i);
-        result.push(substitute_params_core_id(elem, subst, capture_avoid));
+        result.push(substitute_params_core_id(elem, subst, capture_avoid, depth));
         i = i + 1;
     }
     type_intern::type_interner().intern_ty_list(&result)
 }
 
 /// Substitutes params in an effect row (TyId-native).
-fn substitute_effect_row_core_id(eff_id: type_intern::EffectRowId, subst: &TypeParamSubst, capture_avoid: bool) -> type_intern::EffectRowId {
+fn substitute_effect_row_core_id(eff_id: type_intern::EffectRowId, subst: &TypeParamSubst, capture_avoid: bool, depth: i32) -> type_intern::EffectRowId {
     let interner = type_intern::type_interner();
     let row = interner.get_effect_row(eff_id);
     let eff_count = row.effects.len();
@@ -434,7 +439,7 @@ fn substitute_effect_row_core_id(eff_id: type_intern::EffectRowId, subst: &TypeP
         let eff = &type_intern::type_interner().get_effect_row(eff_id).effects[i];
         let def_id = eff.def_id;
         let args = eff.args;
-        let new_args = substitute_ty_list_id(args, subst, capture_avoid);
+        let new_args = substitute_ty_list_id(args, subst, capture_avoid, depth);
         new_effects.push(type_intern::InternedEffectRef::new(def_id, new_args));
         i = i + 1;
     }
@@ -444,7 +449,7 @@ fn substitute_effect_row_core_id(eff_id: type_intern::EffectRowId, subst: &TypeP
 }
 
 /// Substitutes params in record fields (TyId-native).
-fn substitute_record_fields_id(fields_id: type_intern::RecordFieldListId, subst: &TypeParamSubst, capture_avoid: bool) -> type_intern::RecordFieldListId {
+fn substitute_record_fields_id(fields_id: type_intern::RecordFieldListId, subst: &TypeParamSubst, capture_avoid: bool, depth: i32) -> type_intern::RecordFieldListId {
     let interner = type_intern::type_interner();
     let list = interner.get_record_field_list(fields_id);
     let field_count = list.fields.len();
@@ -454,7 +459,7 @@ fn substitute_record_fields_id(fields_id: type_intern::RecordFieldListId, subst:
         let f = &type_intern::type_interner().get_record_field_list(fields_id).fields[i];
         let name = f.name;
         let ty = f.ty;
-        let new_ty = substitute_params_core_id(ty, subst, capture_avoid);
+        let new_ty = substitute_params_core_id(ty, subst, capture_avoid, depth);
         new_fields.push(type_intern::InternedRecordField::new(name, new_ty));
         i = i + 1;
     }
@@ -467,7 +472,7 @@ fn substitute_record_fields_id(fields_id: type_intern::RecordFieldListId, subst:
 /// Wrapper: converts to EffectRowId, delegates, converts back.
 fn substitute_forall_effect_row(row: &hir_ty::EffectRow, subst: &TypeParamSubst) -> hir_ty::EffectRow {
     let eff_id = effect_row_to_id(row);
-    let result_id = substitute_effect_row_core_id(eff_id, subst, true);
+    let result_id = substitute_effect_row_core_id(eff_id, subst, true, 0);
     effect_row_id_to_row(result_id)
 }
 
@@ -636,7 +641,7 @@ fn extract_params_tuple_elems_id(
 /// Wrapper: converts to EffectRowId, delegates, converts back.
 fn substitute_effect_row_params(row: &hir_ty::EffectRow, subst: &TypeParamSubst) -> hir_ty::EffectRow {
     let eff_id = effect_row_to_id(row);
-    let result_id = substitute_effect_row_core_id(eff_id, subst, false);
+    let result_id = substitute_effect_row_core_id(eff_id, subst, false, 0);
     effect_row_id_to_row(result_id)
 }
 

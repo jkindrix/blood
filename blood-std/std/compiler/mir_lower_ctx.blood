@@ -36,6 +36,12 @@ pub struct MirLowerCtx {
     pub move_tracker: MoveTracker,
     /// Address of the substitution table from type inference (borrowed, not owned).
     /// Used to resolve TypeKind::Infer variables to concrete types.
+    ///
+    /// SAFETY: This stores a raw pointer as u64 because Blood lacks lifetime-annotated
+    /// struct fields. The SubstTable is owned by the TypeChecker which outlives
+    /// MirLowerCtx — lower_body() runs synchronously within the typeck phase, and
+    /// the SubstTable is never freed or reallocated during lowering. All accesses
+    /// via get_subst_table() are read-only (apply_substs_id calls).
     subst_table_addr: u64,
     /// Method resolution side table from type checking.
     /// Maps (body_def_id, span_start) to resolved method DefIds.
@@ -131,6 +137,7 @@ impl MirLowerCtx {
     }
 
     /// Returns a reference to the borrowed substitution table.
+    /// SAFETY: See subst_table_addr field documentation for lifetime guarantees.
     fn get_subst_table(self: &Self) -> &unify::SubstTable {
         self.subst_table_addr as &unify::SubstTable
     }
