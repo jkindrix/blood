@@ -407,10 +407,10 @@ fn lower_binary_expr(
     match mir_op {
         Option::Some(mir_bin_op) => {
             // Evaluate operands
-            let left_temp = ctx.new_temp_id(left.ty, span);
+            let left_temp = ctx.new_temp(left.ty, span);
             lower_expr(ctx, left, mir_lower_ctx::destination_local(left_temp));
 
-            let right_temp = ctx.new_temp_id(right.ty, span);
+            let right_temp = ctx.new_temp(right.ty, span);
             lower_expr(ctx, right, mir_lower_ctx::destination_local(right_temp));
 
             match dest.as_place() {
@@ -444,13 +444,11 @@ fn lower_binary_expr(
             match bin_op {
                 common::BinOp::Pipe => {
                     // Evaluate left side first
-                    let resolved_left_ty = ctx.resolve_type_id(left.ty);
-                    let left_temp = ctx.new_temp(resolved_left_ty, span);
+                    let left_temp = ctx.new_temp(left.ty, span);
                     lower_expr(ctx, left, mir_lower_ctx::destination_local(left_temp));
 
                     // Call right with left as argument
-                    let resolved_right_ty = ctx.resolve_type_id(right.ty);
-                    let func_temp = ctx.new_temp(resolved_right_ty, span);
+                    let func_temp = ctx.new_temp(right.ty, span);
                     lower_expr(ctx, right, mir_lower_ctx::destination_local(func_temp));
 
                     match dest.as_place() {
@@ -490,13 +488,13 @@ fn lower_short_circuit_binary(
         Option::Some(p) => p,
         Option::None => {
             // No destination, still need to evaluate for side effects
-            let temp = ctx.new_temp(ty.clone(), span);
+            let temp = ctx.new_temp(type_intern::type_to_ty_id(ty), span);
             mir_types::Place::local(temp)
         }
     };
 
     // Evaluate left side
-    let left_temp = ctx.new_temp_id(left.ty, span);
+    let left_temp = ctx.new_temp(left.ty, span);
     lower_expr(ctx, left, mir_lower_ctx::destination_local(left_temp));
 
     // Create blocks
@@ -559,7 +557,7 @@ fn lower_unary_expr(
     match unary_op {
         common::UnaryOp::Deref => {
             // Evaluate to a place and deref
-            let ptr_temp = ctx.new_temp_id(operand.ty, span);
+            let ptr_temp = ctx.new_temp(operand.ty, span);
             lower_expr(ctx, operand, mir_lower_ctx::destination_local(ptr_temp));
 
             match dest.as_place() {
@@ -576,7 +574,7 @@ fn lower_unary_expr(
             // Take an immutable reference — copy to temp first.
             // For immutable borrows, copying is safe because the caller
             // cannot modify through the reference.
-            let temp = ctx.new_temp_id(operand.ty, span);
+            let temp = ctx.new_temp(operand.ty, span);
             lower_expr(ctx, operand, mir_lower_ctx::destination_local(temp));
 
             match dest.as_place() {
@@ -629,7 +627,7 @@ fn lower_simple_unary(
     dest: mir_lower_ctx::Destination,
     span: common::Span,
 ) {
-    let temp = ctx.new_temp_id(operand.ty, span);
+    let temp = ctx.new_temp(operand.ty, span);
     lower_expr(ctx, operand, mir_lower_ctx::destination_local(temp));
 
     match dest.as_place() {
@@ -668,7 +666,7 @@ fn lower_call_expr(
                     let mut i: usize = 0;
                     while i < args.len() {
                         let arg = &args[i];
-                        let arg_temp = ctx.new_temp_id(arg.ty, span);
+                        let arg_temp = ctx.new_temp(arg.ty, span);
                         lower_expr(ctx, arg, mir_lower_ctx::destination_local(arg_temp));
                         operands.push(mir_lower_util::operand_from_place_id(
                             mir_types::Place::local(arg_temp),
@@ -684,7 +682,7 @@ fn lower_call_expr(
                     let dest_place = match dest.as_place() {
                         Option::Some(p) => p,
                         Option::None => {
-                            let temp = ctx.new_temp(ty.clone(), span);
+                            let temp = ctx.new_temp(type_intern::type_to_ty_id(ty), span);
                             mir_types::Place::local(temp)
                         }
                     };
@@ -721,7 +719,7 @@ fn lower_call_expr(
         }
         _ => {
             // Indirect call (closure, function pointer, etc.) — evaluate callee
-            let func_temp = ctx.new_temp_id(callee.ty, span);
+            let func_temp = ctx.new_temp(callee.ty, span);
             lower_expr(ctx, callee, mir_lower_ctx::destination_local(func_temp));
             mir_types::Operand::Copy(mir_types::Place::local(func_temp))
         }
@@ -732,7 +730,7 @@ fn lower_call_expr(
     let mut i: usize = 0;
     while i < args.len() {
         let arg = &args[i];
-        let arg_temp = ctx.new_temp_id(arg.ty, span);
+        let arg_temp = ctx.new_temp(arg.ty, span);
         lower_expr(ctx, arg, mir_lower_ctx::destination_local(arg_temp));
         arg_operands.push(mir_lower_util::operand_from_place_id(
             mir_types::Place::local(arg_temp),
@@ -745,7 +743,7 @@ fn lower_call_expr(
     let dest_place = match dest.as_place() {
         Option::Some(p) => p,
         Option::None => {
-            let temp = ctx.new_temp(ty.clone(), span);
+            let temp = ctx.new_temp(type_intern::type_to_ty_id(ty), span);
             mir_types::Place::local(temp)
         }
     };
@@ -804,12 +802,8 @@ fn lower_method_call_expr(
         recv_place
     };
 
-    let receiver_ty_hir = type_intern::ty_id_to_type(receiver.ty);
-    let recv_ref_ty = hir_ty::Type::new(hir_ty::TypeKind::Ref {
-        inner: Box::new(receiver_ty_hir),
-        mutable: false,
-    });
-    let recv_ref_temp = ctx.new_temp(recv_ref_ty.clone(), span);
+    let recv_ref_id = type_intern::type_interner().mk_ref(receiver.ty, false);
+    let recv_ref_temp = ctx.new_temp(recv_ref_id, span);
     ctx.emit_assign(
         mir_types::Place::local(recv_ref_temp),
         mir_types::Rvalue::Ref {
@@ -818,16 +812,16 @@ fn lower_method_call_expr(
         },
         span,
     );
-    arg_operands.push(mir_lower_util::operand_from_place(
+    arg_operands.push(mir_lower_util::operand_from_place_id(
         mir_types::Place::local(recv_ref_temp),
-        &recv_ref_ty,
+        recv_ref_id,
     ));
 
     // Evaluate remaining arguments
     let mut i: usize = 0;
     while i < args.len() {
         let arg = &args[i];
-        let arg_temp = ctx.new_temp_id(arg.ty, span);
+        let arg_temp = ctx.new_temp(arg.ty, span);
         lower_expr(ctx, arg, mir_lower_ctx::destination_local(arg_temp));
         arg_operands.push(mir_lower_util::operand_from_place_id(
             mir_types::Place::local(arg_temp),
@@ -840,7 +834,7 @@ fn lower_method_call_expr(
     let func_operand = match method_def {
         Option::Some(def_id) => {
             mir_types::Operand::Constant(mir_types::Constant::new(
-                type_intern::type_to_ty_id(&hir_ty::Type::error()),
+                type_intern::CommonTypes::error(),
                 mir_types::ConstantKind::FnDef(def_id),
             ))
         }
@@ -849,7 +843,7 @@ fn lower_method_call_expr(
             match ctx.lookup_method_def(span.start) {
                 Option::Some(resolved_def) => {
                     mir_types::Operand::Constant(mir_types::Constant::new(
-                        type_intern::type_to_ty_id(&hir_ty::Type::error()),
+                        type_intern::CommonTypes::error(),
                         mir_types::ConstantKind::FnDef(resolved_def),
                     ))
                 }
@@ -857,7 +851,7 @@ fn lower_method_call_expr(
                     // Truly unresolved - create a dummy DefId to produce a linker error
                     // instead of a cryptic runtime crash from calling undef
                     mir_types::Operand::Constant(mir_types::Constant::new(
-                        type_intern::type_to_ty_id(&hir_ty::Type::error()),
+                        type_intern::CommonTypes::error(),
                         mir_types::ConstantKind::FnDef(hir_def::DefId::new(0xFFFFFFFE)),
                     ))
                 }
@@ -869,7 +863,7 @@ fn lower_method_call_expr(
     let dest_place = match dest.as_place() {
         Option::Some(p) => p,
         Option::None => {
-            let temp = ctx.new_temp(ty.clone(), span);
+            let temp = ctx.new_temp(type_intern::type_to_ty_id(ty), span);
             mir_types::Place::local(temp)
         }
     };
@@ -888,7 +882,7 @@ fn lower_field_expr(
     span: common::Span,
 ) {
     // Evaluate base
-    let base_temp = ctx.new_temp_id(base.ty, span);
+    let base_temp = ctx.new_temp(base.ty, span);
     lower_expr(ctx, base, mir_lower_ctx::destination_local(base_temp));
 
     // Get field index — for named fields, look up from the type checker's
@@ -933,14 +927,14 @@ fn lower_index_expr(
     span: common::Span,
 ) {
     // Resolve the base type — HIR types may be Infer(TyVarId), not concrete.
-    let resolved_base_ty = ctx.resolve_type_id(base.ty);
+    let resolved_base_id = ctx.resolve_type_to_id(base.ty);
 
     // Evaluate base
-    let base_temp = ctx.new_temp(resolved_base_ty.clone(), span);
+    let base_temp = ctx.new_temp(resolved_base_id, span);
     lower_expr(ctx, base, mir_lower_ctx::destination_local(base_temp));
 
     // Evaluate index
-    let idx_temp = ctx.new_temp_id(idx.ty, span);
+    let idx_temp = ctx.new_temp(idx.ty, span);
     lower_expr(ctx, idx, mir_lower_ctx::destination_local(idx_temp));
 
     match dest.as_place() {
@@ -948,11 +942,8 @@ fn lower_index_expr(
             // Auto-deref if the base evaluates to a reference type.
             // e.g. argv[1] where argv: &Vec<String> needs Deref before Index.
             let mut base_place = mir_types::Place::local(base_temp);
-            match &resolved_base_ty.kind {
-                &hir_ty::TypeKind::Ref { inner: _, mutable: _ } => {
-                    base_place = base_place.project(mir_types::PlaceElem::Deref);
-                }
-                _ => {}
+            if type_intern::is_ref_id(resolved_base_id) {
+                base_place = base_place.project(mir_types::PlaceElem::Deref);
             }
             let indexed_place = base_place
                 .project(mir_types::PlaceElem::Index(idx_temp));
@@ -975,7 +966,7 @@ fn lower_tuple_expr(
     let mut i: usize = 0;
     while i < elems.len() {
         let elem = &elems[i];
-        let temp = ctx.new_temp_id(elem.ty, span);
+        let temp = ctx.new_temp(elem.ty, span);
         lower_expr(ctx, elem, mir_lower_ctx::destination_local(temp));
         operands.push(mir_lower_util::operand_from_place_id(
             mir_types::Place::local(temp),
@@ -1014,7 +1005,7 @@ fn lower_array_expr(
             let mut i: usize = 0;
             while i < elems.len() {
                 let elem = &elems[i];
-                let temp = ctx.new_temp_id(elem.ty, span);
+                let temp = ctx.new_temp(elem.ty, span);
                 lower_expr(ctx, elem, mir_lower_ctx::destination_local(temp));
                 operands.push(mir_lower_util::operand_from_place_id(
                     mir_types::Place::local(temp),
@@ -1039,7 +1030,7 @@ fn lower_array_expr(
         }
         &hir_expr::ArrayExpr::Repeat { ref val, count } => {
             // Array repeat [val; count]
-            let val_temp = ctx.new_temp_id(val.as_ref().ty, span);
+            let val_temp = ctx.new_temp(val.as_ref().ty, span);
             lower_expr(ctx, val.as_ref(), mir_lower_ctx::destination_local(val_temp));
 
             let mut operands = Vec::new();
@@ -1070,7 +1061,7 @@ fn lower_array_expr(
 fn get_array_element_type(ty: &hir_ty::Type) -> type_intern::TyId {
     match &ty.kind {
         &hir_ty::TypeKind::Array { ref element, size: _ } => type_intern::type_to_ty_id(element.as_ref()),
-        _ => type_intern::type_to_ty_id(&hir_ty::Type::error()),
+        _ => type_intern::CommonTypes::error(),
     }
 }
 
@@ -1121,7 +1112,7 @@ fn lower_struct_expr(
                     let mut i: usize = 0;
                     while i < fields.len() {
                         let field = &fields[i];
-                        let temp = ctx.new_temp_id(field.val.ty, span);
+                        let temp = ctx.new_temp(field.val.ty, span);
                         lower_expr(ctx, &field.val, mir_lower_ctx::destination_local(temp));
                         operands.push(mir_lower_util::operand_from_place_id(
                             mir_types::Place::local(temp),
@@ -1184,7 +1175,7 @@ fn lower_anon_record_expr(
     let mut i: usize = 0;
     while i < fields.len() {
         let field = &fields[i];
-        let temp = ctx.new_temp_id(field.val.ty, span);
+        let temp = ctx.new_temp(field.val.ty, span);
         lower_expr(ctx, &field.val, mir_lower_ctx::destination_local(temp));
         operands.push(mir_lower_util::operand_from_place_id(
             mir_types::Place::local(temp),
@@ -1222,7 +1213,7 @@ fn lower_range_expr(
     // Evaluate start if present
     match start {
         &Option::Some(ref s) => {
-            let temp = ctx.new_temp_id(s.as_ref().ty, span);
+            let temp = ctx.new_temp(s.as_ref().ty, span);
             lower_expr(ctx, s.as_ref(), mir_lower_ctx::destination_local(temp));
             operands.push(mir_lower_util::operand_from_place_id(
                 mir_types::Place::local(temp),
@@ -1235,7 +1226,7 @@ fn lower_range_expr(
     // Evaluate end if present
     match end_val {
         &Option::Some(ref e) => {
-            let temp = ctx.new_temp_id(e.as_ref().ty, span);
+            let temp = ctx.new_temp(e.as_ref().ty, span);
             lower_expr(ctx, e.as_ref(), mir_lower_ctx::destination_local(temp));
             operands.push(mir_lower_util::operand_from_place_id(
                 mir_types::Place::local(temp),
@@ -1278,7 +1269,7 @@ fn lower_cast_expr(
     dest: mir_lower_ctx::Destination,
     span: common::Span,
 ) {
-    let temp = ctx.new_temp_id(inner.ty, span);
+    let temp = ctx.new_temp(inner.ty, span);
     lower_expr(ctx, inner, mir_lower_ctx::destination_local(temp));
 
     match dest.as_place() {
@@ -1312,7 +1303,7 @@ fn lower_assign_expr(
     let target_place = expr_to_place(ctx, target, span);
 
     // Evaluate value
-    let val_temp = ctx.new_temp_id(val.ty, span);
+    let val_temp = ctx.new_temp(val.ty, span);
     lower_expr(ctx, val, mir_lower_ctx::destination_local(val_temp));
 
     // Assign
@@ -1338,7 +1329,7 @@ fn lower_assign_op_expr(
     let target_place = expr_to_place(ctx, target, span);
 
     // Read current value
-    let current_temp = ctx.new_temp_id(target.ty, span);
+    let current_temp = ctx.new_temp(target.ty, span);
     let target_ty_hir = type_intern::ty_id_to_type(target.ty);
     let current_operand = mir_lower_util::operand_from_place(target_place.clone(), &target_ty_hir);
     ctx.emit_assign(
@@ -1348,14 +1339,14 @@ fn lower_assign_op_expr(
     );
 
     // Evaluate right side
-    let val_temp = ctx.new_temp_id(val.ty, span);
+    let val_temp = ctx.new_temp(val.ty, span);
     lower_expr(ctx, val, mir_lower_ctx::destination_local(val_temp));
 
     // Perform operation
     let mir_op = mir_lower_util::convert_binop(bin_op);
     match mir_op {
         Option::Some(mir_bin_op) => {
-            let result_temp = ctx.new_temp_id(target.ty, span);
+            let result_temp = ctx.new_temp(target.ty, span);
             let left_op = mir_types::Operand::Copy(mir_types::Place::local(current_temp));
             let right_op = mir_lower_util::operand_from_place_id(
                 mir_types::Place::local(val_temp),
@@ -1387,7 +1378,7 @@ fn lower_addr_of_expr(
     dest: mir_lower_ctx::Destination,
     span: common::Span,
 ) {
-    let temp = ctx.new_temp_id(inner.ty, span);
+    let temp = ctx.new_temp(inner.ty, span);
     lower_expr(ctx, inner, mir_lower_ctx::destination_local(temp));
 
     match dest.as_place() {
@@ -1445,7 +1436,7 @@ fn lower_stmt(ctx: &mut mir_lower_ctx::MirLowerCtx, stmt: &hir_expr::Stmt) {
             // Evaluate initializer if present
             match init {
                 &Option::Some(ref e) => {
-                    let temp = ctx.new_temp_id(e.ty, span);
+                    let temp = ctx.new_temp(e.ty, span);
                     lower_expr(ctx, e, mir_lower_ctx::destination_local(temp));
                     mir_lower_pattern::lower_irrefutable_pattern(
                         ctx,
@@ -1484,7 +1475,7 @@ fn lower_if_expr(
     let join_block = ctx.new_block();
 
     // Evaluate condition
-    let cond_temp = ctx.new_temp_id(condition.ty, span);
+    let cond_temp = ctx.new_temp(condition.ty, span);
     lower_expr(ctx, condition, mir_lower_ctx::destination_local(cond_temp));
 
     let cond_operand = mir_types::Operand::Copy(mir_types::Place::local(cond_temp));
@@ -1534,7 +1525,7 @@ fn lower_match_expr(
     span: common::Span,
 ) {
     // Evaluate scrutinee
-    let scrut_temp = ctx.new_temp_id(scrutinee.ty, span);
+    let scrut_temp = ctx.new_temp(scrutinee.ty, span);
     lower_expr(ctx, scrutinee, mir_lower_ctx::destination_local(scrut_temp));
     let scrut_place = mir_types::Place::local(scrut_temp);
 
@@ -1748,7 +1739,7 @@ fn lower_closure_expr(
                     }
                     hir_expr::CaptureKind::ByRef => {
                         // Create reference
-                        let ref_temp = ctx.new_temp(hir_ty::Type::error(), span);
+                        let ref_temp = ctx.new_temp(type_intern::CommonTypes::error(), span);
                         ctx.emit_assign(
                             mir_types::Place::local(ref_temp),
                             mir_types::Rvalue::Ref {
@@ -1760,7 +1751,7 @@ fn lower_closure_expr(
                         mir_types::Operand::Move(mir_types::Place::local(ref_temp))
                     }
                     hir_expr::CaptureKind::ByMutRef => {
-                        let ref_temp = ctx.new_temp(hir_ty::Type::error(), span);
+                        let ref_temp = ctx.new_temp(type_intern::CommonTypes::error(), span);
                         ctx.emit_assign(
                             mir_types::Place::local(ref_temp),
                             mir_types::Rvalue::Ref {
@@ -1814,7 +1805,7 @@ fn lower_with_handle_expr(
     //   5. Store the result to the destination
 
     // Step 1: Create state place and lower handler expression
-    let state_temp = ctx.new_temp_id(handler_expr.ty, span);
+    let state_temp = ctx.new_temp(handler_expr.ty, span);
     let state_place = mir_types::Place::local(state_temp);
     lower_expr(ctx, handler_expr, mir_lower_ctx::destination_local(state_temp));
 
@@ -1848,7 +1839,7 @@ fn lower_with_handle_expr(
     ctx.set_current_block(body_block);
 
     // Create temp for body result if destination is a place
-    let body_result_temp = ctx.new_temp_id(body.ty, span);
+    let body_result_temp = ctx.new_temp(body.ty, span);
     lower_expr(ctx, body, mir_lower_ctx::destination_local(body_result_temp));
 
     // Step 7: Emit PopHandler statement (only if block not terminated)
@@ -2019,7 +2010,7 @@ fn lower_perform_expr(
     let mut i: usize = 0;
     while i < args.len() {
         let arg = &args[i];
-        let temp = ctx.new_temp_id(arg.ty, span);
+        let temp = ctx.new_temp(arg.ty, span);
         lower_expr(ctx, arg, mir_lower_ctx::destination_local(temp));
         arg_operands.push(mir_lower_util::operand_from_place_id(
             mir_types::Place::local(temp),
@@ -2031,7 +2022,7 @@ fn lower_perform_expr(
     let dest_place = match dest.as_place() {
         Option::Some(p) => p,
         Option::None => {
-            let temp = ctx.new_temp(ty.clone(), span);
+            let temp = ctx.new_temp(type_intern::type_to_ty_id(ty), span);
             mir_types::Place::local(temp)
         }
     };
@@ -2058,7 +2049,7 @@ fn lower_resume_expr(
     span: common::Span,
 ) {
     // Evaluate value
-    let temp = ctx.new_temp_id(val.ty, span);
+    let temp = ctx.new_temp(val.ty, span);
     lower_expr(ctx, val, mir_lower_ctx::destination_local(temp));
 
     let operand = mir_lower_util::operand_from_place_id(
@@ -2103,7 +2094,7 @@ fn expr_to_place(
                     // Local not found in MIR context — create temp and initialize
                     // by evaluating the expression. Must NOT leave uninitialized,
                     // because RefMut borrows this place and reads through it.
-                    let temp = ctx.new_temp_id(expr.ty, span);
+                    let temp = ctx.new_temp(expr.ty, span);
                     lower_expr(ctx, expr, mir_lower_ctx::destination_local(temp));
                     mir_types::Place::local(temp)
                 }
@@ -2142,7 +2133,7 @@ fn expr_to_place(
                 }
                 _ => {}
             }
-            let idx_temp = ctx.new_temp_id(idx.as_ref().ty, span);
+            let idx_temp = ctx.new_temp(idx.as_ref().ty, span);
             lower_expr(ctx, idx.as_ref(), mir_lower_ctx::destination_local(idx_temp));
             base_place.project(mir_types::PlaceElem::Index(idx_temp))
         }
@@ -2154,20 +2145,20 @@ fn expr_to_place(
         &hir_expr::ExprKind::Unary { op: the_op, ref operand } => {
             match the_op {
                 common::UnaryOp::Deref => {
-                    let ptr_temp = ctx.new_temp_id(operand.as_ref().ty, span);
+                    let ptr_temp = ctx.new_temp(operand.as_ref().ty, span);
                     lower_expr(ctx, operand.as_ref(), mir_lower_ctx::destination_local(ptr_temp));
                     mir_types::Place::local(ptr_temp).project(mir_types::PlaceElem::Deref)
                 }
                 _ => {
                     // Not a place expression
-                    let temp = ctx.new_temp_id(expr.ty, span);
+                    let temp = ctx.new_temp(expr.ty, span);
                     mir_types::Place::local(temp)
                 }
             }
         }
         _ => {
             // Not a place expression - create a temp
-            let temp = ctx.new_temp_id(expr.ty, span);
+            let temp = ctx.new_temp(expr.ty, span);
             lower_expr(ctx, expr, mir_lower_ctx::destination_local(temp));
             mir_types::Place::local(temp)
         }

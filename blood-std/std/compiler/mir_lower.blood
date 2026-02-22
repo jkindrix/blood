@@ -40,9 +40,8 @@ pub fn lower_body(
     method_resolutions: &Vec<common::MethodResEntry>,
     field_resolutions: &Vec<common::FieldResEntry>,
 ) -> mir_body::MirBody {
-    // Resolve the return type through the substitution table (TyId → Type bridge)
-    let return_ty_type = type_intern::ty_id_to_type(return_ty);
-    let resolved_return = unify::apply_substs(subst_table, &return_ty_type);
+    // Resolve the return type through the substitution table (TyId-native)
+    let resolved_return_id = unify::apply_substs_id(subst_table, return_ty);
 
     // Borrow the substitution table by address (read-only during MIR lowering)
     let subst_table_addr = subst_table as u64;
@@ -54,7 +53,7 @@ pub fn lower_body(
     let cloned_field_res = clone_field_resolutions(field_resolutions);
 
     // Create lowering context with the substitution table address, method and field resolutions
-    let mut ctx = mir_lower_ctx::MirLowerCtx::new(def_id, resolved_return, span, subst_table_addr, cloned_resolutions, cloned_field_res);
+    let mut ctx = mir_lower_ctx::MirLowerCtx::new(def_id, resolved_return_id, span, subst_table_addr, cloned_resolutions, cloned_field_res);
 
     // Lower parameters (first param_count locals are parameters)
     lower_params_from_body(&mut ctx, body, span);
@@ -82,12 +81,12 @@ fn lower_params_from_body(
     let mut i: u32 = 0;
     while i < body.param_count {
         let local = &body.locals[i as usize];
-        // Resolve the parameter type through the substitution table
-        let resolved_ty = ctx.resolve_type_id(local.ty);
+        // Resolve the parameter type through the substitution table (TyId-native)
+        let resolved_id = ctx.resolve_type_to_id(local.ty);
         // Create MIR local for the parameter using add_param which
         // correctly increments param_count (new_local does not).
         let mir_local = ctx.builder.add_param(
-            type_intern::type_to_ty_id(&resolved_ty),
+            resolved_id,
             String::new(),
             local.span,
         );
@@ -108,15 +107,15 @@ fn lower_params_from_body(
 pub fn lower_closure(
     def_id: hir_def::DefId,
     params: &Vec<hir_expr::ClosureParam>,
-    return_ty: hir_ty::Type,
+    return_ty: type_intern::TyId,
     body_expr: &hir_expr::Expr,
     span: common::Span,
     subst_table: &unify::SubstTable,
 ) -> mir_body::MirBody {
-    // Resolve return type and create lowering context with borrowed substitution table
-    let resolved_return = unify::apply_substs(subst_table, &return_ty);
+    // Resolve return type (TyId-native) and create lowering context
+    let resolved_return_id = unify::apply_substs_id(subst_table, return_ty);
     let subst_table_addr = subst_table as u64;
-    let mut ctx = mir_lower_ctx::MirLowerCtx::new(def_id, resolved_return, span, subst_table_addr, Vec::new(), Vec::new());
+    let mut ctx = mir_lower_ctx::MirLowerCtx::new(def_id, resolved_return_id, span, subst_table_addr, Vec::new(), Vec::new());
 
     // Lower closure parameters
     lower_closure_params(&mut ctx, params, span);
@@ -141,10 +140,10 @@ fn lower_closure_params(
     let mut i: usize = 0;
     while i < params.len() {
         let param = &params[i];
-        // Use add_param to correctly increment param_count
-        let resolved_ty = ctx.resolve_type_id(param.ty);
+        // Use add_param to correctly increment param_count (TyId-native)
+        let resolved_id = ctx.resolve_type_to_id(param.ty);
         let mir_local = ctx.builder.add_param(
-            type_intern::type_to_ty_id(&resolved_ty),
+            resolved_id,
             String::new(),
             span,
         );
@@ -162,15 +161,15 @@ fn lower_closure_params(
 /// Lowers a static initializer to MIR.
 pub fn lower_static(
     def_id: hir_def::DefId,
-    ty: hir_ty::Type,
+    ty: type_intern::TyId,
     init: &hir_expr::Expr,
     span: common::Span,
     subst_table: &unify::SubstTable,
 ) -> mir_body::MirBody {
-    // Resolve type and create context with borrowed substitution table
-    let resolved_ty = unify::apply_substs(subst_table, &ty);
+    // Resolve type (TyId-native) and create context
+    let resolved_id = unify::apply_substs_id(subst_table, ty);
     let subst_table_addr = subst_table as u64;
-    let mut ctx = mir_lower_ctx::MirLowerCtx::new(def_id, resolved_ty, span, subst_table_addr, Vec::new(), Vec::new());
+    let mut ctx = mir_lower_ctx::MirLowerCtx::new(def_id, resolved_id, span, subst_table_addr, Vec::new(), Vec::new());
 
     // Lower initializer expression
     mir_lower_expr::lower_expr_to_return(&mut ctx, init);
@@ -186,7 +185,7 @@ pub fn lower_static(
 /// Lowers a const initializer to MIR.
 pub fn lower_const(
     def_id: hir_def::DefId,
-    ty: hir_ty::Type,
+    ty: type_intern::TyId,
     init: &hir_expr::Expr,
     span: common::Span,
     subst_table: &unify::SubstTable,

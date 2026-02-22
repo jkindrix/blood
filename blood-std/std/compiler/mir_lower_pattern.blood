@@ -115,24 +115,19 @@ fn lower_binding_pattern(
     // For ref bindings, the local holds a reference (&T), not the value (T).
     // This ensures the alloca is ptr-sized (8 bytes) instead of value-sized,
     // matching what Rvalue::Ref stores (a pointer).
-    let local_ty = match mode {
+    let ty_id = type_intern::type_to_ty_id(ty);
+    let local_ty_id = match mode {
         hir_expr::BindingMode::ByRef => {
-            hir_ty::Type::new(hir_ty::TypeKind::Ref {
-                inner: Box::new(ty.clone()),
-                mutable: false,
-            })
+            type_intern::type_interner().mk_ref(ty_id, false)
         }
         hir_expr::BindingMode::ByMutRef => {
-            hir_ty::Type::new(hir_ty::TypeKind::Ref {
-                inner: Box::new(ty.clone()),
-                mutable: true,
-            })
+            type_intern::type_interner().mk_ref(ty_id, true)
         }
-        hir_expr::BindingMode::ByValue => ty.clone(),
+        hir_expr::BindingMode::ByValue => ty_id,
     };
 
     let mir_local = ctx.new_var(
-        local_ty,
+        local_ty_id,
         common::make_string("_var"),
         true,
         span,
@@ -305,7 +300,7 @@ pub fn pattern_test(
             let pat_ty_hir = type_intern::ty_id_to_type(pattern.ty);
             let const_val = mir_lower_util::lower_literal(lit, &pat_ty_hir);
             let expected = extract_constant_value(&const_val.kind);
-            let temp = ctx.new_temp_id(pattern.ty, span);
+            let temp = ctx.new_temp(pattern.ty, span);
             ctx.emit_assign(
                 mir_types::Place::local(temp),
                 mir_types::Rvalue::Use(mir_types::Operand::Copy(source.clone())),
@@ -319,7 +314,7 @@ pub fn pattern_test(
 
         &hir_expr::PatternKind::TupleStruct { ref path, fields: _ } => {
             // For enum variants, test the discriminant
-            let discr_temp = ctx.new_temp(hir_ty::Type::usize_ty(), span);
+            let discr_temp = ctx.new_temp(type_intern::CommonTypes::usize_ty(), span);
             ctx.emit_assign(
                 mir_types::Place::local(discr_temp),
                 mir_types::Rvalue::Discriminant(source.clone()),
@@ -335,7 +330,7 @@ pub fn pattern_test(
 
         &hir_expr::PatternKind::Path(ref path) => {
             // For unit variants or constants
-            let discr_temp = ctx.new_temp(hir_ty::Type::usize_ty(), span);
+            let discr_temp = ctx.new_temp(type_intern::CommonTypes::usize_ty(), span);
             ctx.emit_assign(
                 mir_types::Place::local(discr_temp),
                 mir_types::Rvalue::Discriminant(source.clone()),
@@ -362,7 +357,7 @@ pub fn pattern_test(
             // Range pattern: scrutinee >= start && scrutinee <= end (or < end if not inclusive)
             // Copy scrutinee value
             let range_pat_ty_hir = type_intern::ty_id_to_type(pattern.ty);
-            let scrut_temp = ctx.new_temp_id(pattern.ty, span);
+            let scrut_temp = ctx.new_temp(pattern.ty, span);
             ctx.emit_assign(
                 mir_types::Place::local(scrut_temp),
                 mir_types::Rvalue::Use(mir_types::Operand::Copy(source.clone())),
@@ -399,7 +394,7 @@ pub fn pattern_test(
             let end_operand = mir_types::Operand::Constant(end_const);
 
             // Compute: scrutinee >= start
-            let ge_result = ctx.new_temp(hir_ty::Type::bool_ty(), span);
+            let ge_result = ctx.new_temp(type_intern::CommonTypes::bool_ty(), span);
             let scrut_op1 = mir_types::Operand::Copy(mir_types::Place::local(scrut_temp));
             ctx.emit_assign(
                 mir_types::Place::local(ge_result),
@@ -409,7 +404,7 @@ pub fn pattern_test(
 
             // Compute: scrutinee <= end (or < end if not inclusive)
             let upper_op = if inclusive { mir_types::MirBinOp::Le } else { mir_types::MirBinOp::Lt };
-            let le_result = ctx.new_temp(hir_ty::Type::bool_ty(), span);
+            let le_result = ctx.new_temp(type_intern::CommonTypes::bool_ty(), span);
             let scrut_op2 = mir_types::Operand::Copy(mir_types::Place::local(scrut_temp));
             ctx.emit_assign(
                 mir_types::Place::local(le_result),
@@ -418,7 +413,7 @@ pub fn pattern_test(
             );
 
             // AND them together
-            let and_result = ctx.new_temp(hir_ty::Type::bool_ty(), span);
+            let and_result = ctx.new_temp(type_intern::CommonTypes::bool_ty(), span);
             ctx.emit_assign(
                 mir_types::Place::local(and_result),
                 mir_types::Rvalue::BinaryOp(
