@@ -414,9 +414,17 @@ fn emit_call(
                             final_ty = expected_ty;
                         } else if !string_eq_str(expected_ty.as_str(), arg_ty.as_str()) {
                             // General type mismatch (e.g., struct { i32, i32 } vs scalar i64)
-                            // Use memory-based bitcast
+                            // Use memory-based bitcast: alloca the LARGER of the two types
+                            // to prevent buffer overflow (store of larger type into smaller alloca)
+                            let arg_size = codegen_size::llvm_type_size(arg_ty.as_str());
+                            let expected_size = codegen_size::llvm_type_size(expected_ty.as_str());
                             let cast_alloca = ctx.fresh_temp_cg();
-                            ctx.emit_alloca_cg(&cast_alloca, expected_ty.as_str());
+                            if arg_size > expected_size {
+                                // Source is larger: alloca source type, store source, load as expected
+                                ctx.emit_alloca_cg(&cast_alloca, arg_ty.as_str());
+                            } else {
+                                ctx.emit_alloca_cg(&cast_alloca, expected_ty.as_str());
+                            }
                             ctx.emit_store_str_cg(arg_ty.as_str(), arg_val.as_str(), &cast_alloca);
                             let cast_result = ctx.fresh_temp_cg();
                             ctx.emit_load_cg2(&cast_result, expected_ty.as_str(), &cast_alloca);
@@ -503,8 +511,16 @@ fn emit_call(
             ctx.emit_store_cg(call_site_ret_ty.as_str(), &narrowed, dest_ptr.as_str());
         } else if !string_eq_str(def_ret_ty.as_str(), call_site_ret_ty.as_str()) {
             // General type mismatch: use memory bitcast
+            // Alloca the LARGER of source/dest to prevent overflow or uninitialized reads
+            let def_size = codegen_size::llvm_type_size(def_ret_ty.as_str());
+            let site_size = codegen_size::llvm_type_size(call_site_ret_ty.as_str());
             let cast_alloca = ctx.fresh_temp_cg();
-            ctx.emit_alloca_cg(&cast_alloca, def_ret_ty.as_str());
+            if site_size > def_size {
+                // Destination is larger: alloca dest type so load doesn't read past alloca
+                ctx.emit_alloca_cg(&cast_alloca, call_site_ret_ty.as_str());
+            } else {
+                ctx.emit_alloca_cg(&cast_alloca, def_ret_ty.as_str());
+            }
             ctx.emit_store_cg2(def_ret_ty.as_str(), &result, &cast_alloca);
             let cast_result = ctx.fresh_temp_cg();
             ctx.emit_load_cg2(&cast_result, call_site_ret_ty.as_str(), &cast_alloca);
@@ -812,20 +828,37 @@ fn emit_struct_widening(
             field_val = extended;
         } else {
             // Type mismatch (e.g., struct field { i32 } vs scalar i64):
-            // Use memory-based bitcast: alloca dst, zero it, store src, load as dst
+            // Use memory-based bitcast: alloca the LARGER type, zero it, store src, load as dst
+            let src_size = codegen_size::llvm_type_size(src_fields[fi].as_str());
+            let dst_size = codegen_size::llvm_type_size(dst_fields[fi].as_str());
             let cast_alloca = ctx.fresh_temp_cg();
-            ctx.emit_alloca_cg(&cast_alloca, dst_fields[fi].as_str());
-            // Zero-initialize the destination alloca
+            if src_size > dst_size {
+                ctx.emit_alloca_cg(&cast_alloca, src_fields[fi].as_str());
+            } else {
+                ctx.emit_alloca_cg(&cast_alloca, dst_fields[fi].as_str());
+            }
+            // Zero-initialize the alloca to avoid reading uninitialized bytes
             let zero_val = ctx.fresh_temp_cg();
             ctx.write_indent();
             ctx.write_cgname(&zero_val);
-            ctx.write(" = bitcast ");
-            ctx.write(dst_fields[fi].as_str());
-            ctx.write(" zeroinitializer to ");
-            ctx.write(dst_fields[fi].as_str());
+            if src_size > dst_size {
+                ctx.write(" = bitcast ");
+                ctx.write(src_fields[fi].as_str());
+                ctx.write(" zeroinitializer to ");
+                ctx.write(src_fields[fi].as_str());
+            } else {
+                ctx.write(" = bitcast ");
+                ctx.write(dst_fields[fi].as_str());
+                ctx.write(" zeroinitializer to ");
+                ctx.write(dst_fields[fi].as_str());
+            }
             ctx.write("\n");
-            ctx.emit_store_cg2(dst_fields[fi].as_str(), &zero_val, &cast_alloca);
-            // Store source value (smaller) into the alloca
+            if src_size > dst_size {
+                ctx.emit_store_cg2(src_fields[fi].as_str(), &zero_val, &cast_alloca);
+            } else {
+                ctx.emit_store_cg2(dst_fields[fi].as_str(), &zero_val, &cast_alloca);
+            }
+            // Store source value into the alloca
             ctx.emit_store_cg2(src_fields[fi].as_str(), &extracted, &cast_alloca);
             // Load as destination type
             let cast_result = ctx.fresh_temp_cg();
@@ -915,9 +948,27 @@ fn emit_struct_narrowing(
             field_val = truncated;
         } else {
             // Type mismatch (e.g., scalar i64 vs struct { i32 }):
-            // Use memory-based bitcast: alloca src type, store src, load as dst
+            // Use memory-based bitcast: alloca the LARGER type, store src, load as dst
+            // Prevents reading past alloca boundary if dst is larger than src
+            let src_size = codegen_size::llvm_type_size(src_fields[fi].as_str());
+            let dst_size = codegen_size::llvm_type_size(dst_fields[fi].as_str());
             let cast_alloca = ctx.fresh_temp_cg();
-            ctx.emit_alloca_cg(&cast_alloca, src_fields[fi].as_str());
+            if dst_size > src_size {
+                // Destination is larger: alloca dest type, zero-init, then store source
+                ctx.emit_alloca_cg(&cast_alloca, dst_fields[fi].as_str());
+                // Zero-initialize to avoid reading uninitialized bytes
+                let zero_val = ctx.fresh_temp_cg();
+                ctx.write_indent();
+                ctx.write_cgname(&zero_val);
+                ctx.write(" = bitcast ");
+                ctx.write(dst_fields[fi].as_str());
+                ctx.write(" zeroinitializer to ");
+                ctx.write(dst_fields[fi].as_str());
+                ctx.write("\n");
+                ctx.emit_store_cg2(dst_fields[fi].as_str(), &zero_val, &cast_alloca);
+            } else {
+                ctx.emit_alloca_cg(&cast_alloca, src_fields[fi].as_str());
+            }
             ctx.emit_store_cg2(src_fields[fi].as_str(), &extracted, &cast_alloca);
             let cast_result = ctx.fresh_temp_cg();
             ctx.write_indent();
@@ -1970,9 +2021,9 @@ fn emit_box_new_call(
     }
 }
 
-/// Emits an inline is_some check using i8 discriminant.
+/// Emits an inline is_some check using i32 discriminant.
 /// Standard enum convention: None = discriminant 0, Some = discriminant 1.
-/// Inlined to avoid ABI mismatch with runtime (which uses i32 discriminant).
+/// Discriminant type is i32, matching the enum layout (codegen.blood:662).
 fn emit_option_is_some_call(
     ctx: &mut codegen_ctx::CodegenCtx,
     args: &Vec<mir_types::Operand>,
@@ -1988,13 +2039,13 @@ fn emit_option_is_some_call(
     // which is already a pointer to the Option struct.
     let opt_ptr = codegen_expr::emit_operand(ctx, &args[0]);
 
-    // Load i8 discriminant from byte 0
+    // Load i32 discriminant (enum discriminant type is always i32)
     let disc = ctx.fresh_temp_cg();
-    ctx.emit_load_cg(&disc, "i8", opt_ptr.as_str());
+    ctx.emit_load_cg(&disc, "i32", opt_ptr.as_str());
 
     // is_some = (discriminant == 1), since Some is variant index 1
     let cmp_result = ctx.fresh_temp_cg();
-    ctx.emit_icmp_cg2(&cmp_result, "eq", "i8", &disc, "1");
+    ctx.emit_icmp_cg2(&cmp_result, "eq", "i32", &disc, "1");
 
     let dest_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
     ctx.emit_store_cg("i1", &cmp_result, dest_ptr.as_str());
@@ -2011,9 +2062,9 @@ fn emit_option_is_some_call(
     }
 }
 
-/// Emits an inline is_none check using i8 discriminant.
+/// Emits an inline is_none check using i32 discriminant.
 /// Standard enum convention: None = discriminant 0, Some = discriminant 1.
-/// Inlined to avoid ABI mismatch with runtime (which uses i32 discriminant).
+/// Discriminant type is i32, matching the enum layout (codegen.blood:662).
 fn emit_option_is_none_call(
     ctx: &mut codegen_ctx::CodegenCtx,
     args: &Vec<mir_types::Operand>,
@@ -2029,13 +2080,13 @@ fn emit_option_is_none_call(
     // which is already a pointer to the Option struct.
     let opt_ptr = codegen_expr::emit_operand(ctx, &args[0]);
 
-    // Load i8 discriminant from byte 0
+    // Load i32 discriminant (enum discriminant type is always i32)
     let disc = ctx.fresh_temp_cg();
-    ctx.emit_load_cg(&disc, "i8", opt_ptr.as_str());
+    ctx.emit_load_cg(&disc, "i32", opt_ptr.as_str());
 
     // is_none = (discriminant == 0), since None is variant index 0
     let cmp_result = ctx.fresh_temp_cg();
-    ctx.emit_icmp_cg2(&cmp_result, "eq", "i8", &disc, "0");
+    ctx.emit_icmp_cg2(&cmp_result, "eq", "i32", &disc, "0");
 
     let dest_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
     ctx.emit_store_cg("i1", &cmp_result, dest_ptr.as_str());

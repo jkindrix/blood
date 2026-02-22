@@ -542,13 +542,22 @@ pub fn emit_place_addr(
                         return codegen_ctx::CgName::Str(result);
                     }
                     Option::None => {
-                        // Fallback - shouldn't happen
+                        // BUG: Static def_id has no name mapping — emit trap instead of null
+                        // to avoid silent null pointer dereference in generated code
+                        ctx.write("    ; BUG: static def_name lookup failed for def_id ");
+                        ctx.write(codegen_types::format_u64(def_id.index as u64).as_str());
+                        ctx.write("\n");
+                        ctx.write("    call void @llvm.trap()\n");
+                        ctx.emit_unreachable();
                         return codegen_ctx::CgName::Str(common::make_string("null"));
                     }
                 }
             }
             Option::None => {
-                // Fallback - shouldn't happen
+                // BUG: Static place has no def_id — emit trap instead of null
+                ctx.write("    ; BUG: static place missing def_id\n");
+                ctx.write("    call void @llvm.trap()\n");
+                ctx.emit_unreachable();
                 return codegen_ctx::CgName::Str(common::make_string("null"));
             }
         }
@@ -723,10 +732,13 @@ pub fn emit_place_addr(
                 ctx.emit_load_cg2(&idx_loaded, "i64", &idx_val);
 
                 // Calculate byte offset = index * element_size
+                // Use "mul nuw" (no unsigned wrap) to mark overflow as UB.
+                // This allows sanitizers to trap on overflow and prevents silent
+                // wraparound that could produce backward GEP into arbitrary memory.
                 let elem_size_str = codegen_types::format_u64(elem_size);
                 let byte_offset = ctx.fresh_temp_cg();
                 let idx_loaded_str = cgname_to_string(&idx_loaded);
-                ctx.emit_binop_cg(&byte_offset, "mul", "i64", idx_loaded_str.as_str(), elem_size_str.as_str());
+                ctx.emit_binop_cg(&byte_offset, "mul nuw", "i64", idx_loaded_str.as_str(), elem_size_str.as_str());
 
                 // Use byte-offset GEP with i8 element type
                 let result = ctx.fresh_temp_cg();
