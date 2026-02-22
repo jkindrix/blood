@@ -55,6 +55,13 @@ pub fn emit_terminator(
             let effect_id_val = codegen_types::format_u64(effect_id.index as u64);
             // op_index in MIR is the op_name symbol index; resolve to positional index
             let resolved_op_index = ctx.resolve_op_index(effect_id.index, op_index);
+            if resolved_op_index == 0 && op_index != 0 {
+                let mut err_msg = common::make_string("effect op resolution returned fallback 0 for effect_def_id ");
+                err_msg.push_str(codegen_types::format_u64(effect_id.index as u64).as_str());
+                err_msg.push_str(" op_name_sym ");
+                err_msg.push_str(codegen_types::format_u64(op_index as u64).as_str());
+                ctx.codegen_error(codegen_ctx::CodegenErrorKind::EffectOpLookupFailed, err_msg);
+            }
             let op_index_val = codegen_types::format_u64(resolved_op_index as u64);
             let dest = codegen_expr::emit_place_data_ptr(ctx, destination);
 
@@ -569,6 +576,11 @@ fn extract_direct_fn_name(
                             fallback_name.push_str(codegen_types::format_u64(remapped_id as u64).as_str());
                             // Register the fallback name so stub generation can create a declaration
                             ctx.register_def_name(remapped_id, clone_string(&fallback_name));
+                            let mut warn_msg = common::make_string("function def_id ");
+                            warn_msg.push_str(codegen_types::format_u64(remapped_id as u64).as_str());
+                            warn_msg.push_str(" not found in def_names, using fallback name ");
+                            warn_msg.push_str(fallback_name.as_str());
+                            ctx.codegen_warning(warn_msg);
                             let mut result = common::make_string("@");
                             result.push_str(fallback_name.as_str());
                             Option::Some(result)

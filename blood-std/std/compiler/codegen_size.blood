@@ -371,6 +371,12 @@ fn substitute_param_type_id(
                 let arg_id = type_intern::type_interner().get_ty_list_element(args, idx);
                 type_to_llvm_with_ctx_id(ctx, arg_id)
             } else {
+                let mut err_msg = common::make_string("Param type index ");
+                err_msg.push_str(codegen_types::format_u64(idx as u64).as_str());
+                err_msg.push_str(" exceeds available type args (");
+                err_msg.push_str(codegen_types::format_u64(arg_len as u64).as_str());
+                err_msg.push(')');
+                ctx.codegen_error(codegen_ctx::CodegenErrorKind::TypeSubstitutionFailed, err_msg);
                 common::make_string("ptr")
             }
         }
@@ -381,6 +387,12 @@ fn substitute_param_type_id(
                 let arg_id = type_intern::type_interner().get_ty_list_element(args, idx);
                 type_to_llvm_with_ctx_id(ctx, arg_id)
             } else {
+                let mut err_msg = common::make_string("Infer type index ");
+                err_msg.push_str(codegen_types::format_u64(idx as u64).as_str());
+                err_msg.push_str(" exceeds available type args (");
+                err_msg.push_str(codegen_types::format_u64(arg_len as u64).as_str());
+                err_msg.push(')');
+                ctx.codegen_error(codegen_ctx::CodegenErrorKind::TypeSubstitutionFailed, err_msg);
                 common::make_string("ptr")
             }
         }

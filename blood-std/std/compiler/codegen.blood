@@ -32,6 +32,8 @@ mod codegen_size;
 pub struct CodegenResult {
     /// The generated LLVM IR as a string.
     pub llvm_ir: String,
+    /// Structured errors collected during codegen.
+    pub errors: Vec<codegen_ctx::CodegenError>,
     /// Any warnings generated during codegen.
     pub warnings: Vec<String>,
     /// Whether codegen was successful.
@@ -39,24 +41,48 @@ pub struct CodegenResult {
 }
 
 impl CodegenResult {
-    /// Creates a successful result.
+    /// Creates a successful result with no errors.
     pub fn ok(llvm_ir: String) -> CodegenResult {
         CodegenResult {
             llvm_ir: llvm_ir,
+            errors: Vec::new(),
             warnings: Vec::new(),
             success: true,
         }
     }
 
-    /// Creates a failed result.
+    /// Creates a successful result that carries non-fatal errors/warnings from codegen.
+    pub fn ok_with_diagnostics(
+        llvm_ir: String,
+        errors: Vec<codegen_ctx::CodegenError>,
+        warnings: Vec<String>,
+    ) -> CodegenResult {
+        CodegenResult {
+            llvm_ir: llvm_ir,
+            errors: errors,
+            warnings: warnings,
+            success: true,
+        }
+    }
+
+    /// Creates a failed result with a single error message.
     pub fn error(msg: String) -> CodegenResult {
-        let mut warnings = Vec::new();
-        warnings.push(msg);
+        let mut errors = Vec::new();
+        errors.push(codegen_ctx::CodegenError::new(
+            codegen_ctx::CodegenErrorKind::InternalError,
+            msg,
+        ));
         CodegenResult {
             llvm_ir: String::new(),
-            warnings: warnings,
+            errors: errors,
+            warnings: Vec::new(),
             success: false,
         }
+    }
+
+    /// Returns true if there are any errors.
+    pub fn has_errors(self: &CodegenResult) -> bool {
+        self.errors.len() > 0
     }
 }
 
@@ -184,7 +210,14 @@ pub fn generate_module_with_items(
     let decls = intrinsic_declarations();
     output.push_str(decls.as_str());
 
-    CodegenResult::ok(output)
+    // Drain accumulated errors and warnings from the context
+    let errors = ctx.take_errors();
+    let warnings = ctx.take_warnings();
+    if errors.len() > 0 || warnings.len() > 0 {
+        CodegenResult::ok_with_diagnostics(output, errors, warnings)
+    } else {
+        CodegenResult::ok(output)
+    }
 }
 
 /// Generates LLVM IR for a function with access to def names table.

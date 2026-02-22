@@ -16,6 +16,62 @@ mod hashmap;
 mod type_intern;
 
 // ============================================================
+// Codegen Error Types
+// ============================================================
+
+/// Categories of errors that can occur during code generation.
+pub enum CodegenErrorKind {
+    /// ADT (struct/enum) not found in registry.
+    AdtLookupFailed,
+    /// Function DefId not found in def_names table.
+    FnLookupFailed,
+    /// Static variable DefId not found or missing def_id.
+    StaticLookupFailed,
+    /// Type parameter substitution failed (index out of bounds).
+    TypeSubstitutionFailed,
+    /// Enum variant not found in layout registry.
+    VariantLookupFailed,
+    /// Effect operation index lookup failed.
+    EffectOpLookupFailed,
+    /// Unsupported operation (e.g., bitwise on float).
+    UnsupportedOperation,
+    /// LLVM type string could not be parsed.
+    TypeParseFailed,
+    /// Internal codegen error (unexpected state).
+    InternalError,
+}
+
+/// An error produced during code generation.
+pub struct CodegenError {
+    /// The kind of error.
+    pub kind: CodegenErrorKind,
+    /// Human-readable description of the error.
+    pub message: String,
+    /// The function being generated when the error occurred (if known).
+    pub fn_name: Option<String>,
+}
+
+impl CodegenError {
+    /// Creates a new codegen error.
+    pub fn new(kind: CodegenErrorKind, message: String) -> CodegenError {
+        CodegenError {
+            kind: kind,
+            message: message,
+            fn_name: Option::None,
+        }
+    }
+
+    /// Creates a new codegen error with function context.
+    pub fn with_fn(kind: CodegenErrorKind, message: String, fn_name: String) -> CodegenError {
+        CodegenError {
+            kind: kind,
+            message: message,
+            fn_name: Option::Some(fn_name),
+        }
+    }
+}
+
+// ============================================================
 // Codegen Name (CgName) — Zero-Allocation Value Names
 // ============================================================
 
@@ -194,6 +250,10 @@ pub struct CodegenCtx {
     /// Set during PushHandler codegen, read during CallReturnClause codegen.
     /// Keyed by handler_def_id to support nested handlers.
     pub handler_state_shadows: Vec<HandlerStateShadow>,
+    /// Errors accumulated during code generation.
+    pub codegen_errors: Vec<CodegenError>,
+    /// Warnings accumulated during code generation.
+    pub codegen_warnings: Vec<String>,
 }
 
 /// Entry mapping a handler DefId to its effect DefId.
@@ -339,6 +399,8 @@ impl CodegenCtx {
             op_def_index_hash: hashmap::HashMapU64U32::with_capacity(16),
             op_def_index_entries: Vec::with_capacity(16),
             handler_state_shadows: Vec::with_capacity(8),
+            codegen_errors: Vec::new(),
+            codegen_warnings: Vec::new(),
         }
     }
 
@@ -399,6 +461,8 @@ impl CodegenCtx {
             op_def_index_hash: hashmap::HashMapU64U32::with_capacity(16),
             op_def_index_entries: Vec::with_capacity(16),
             handler_state_shadows: Vec::with_capacity(8),
+            codegen_errors: Vec::new(),
+            codegen_warnings: Vec::new(),
         }
     }
 
@@ -997,6 +1061,64 @@ impl CodegenCtx {
         self.persistent_locals_hash = hashmap::HashMapU64U32::new();
         self.local_generations.clear();
         self.local_generations_hash = hashmap::HashMapU64U32::new();
+    }
+
+    // ======== Error Reporting ========
+
+    /// Records a codegen error with the current function context.
+    pub fn codegen_error(self: &mut CodegenCtx, kind: CodegenErrorKind, message: String) {
+        let fn_name = match &self.current_fn {
+            &Option::Some(ref name) => Option::Some(clone_string(name)),
+            &Option::None => Option::None,
+        };
+        self.codegen_errors.push(CodegenError {
+            kind: kind,
+            message: message,
+            fn_name: fn_name,
+        });
+    }
+
+    /// Records a codegen warning with the current function context.
+    pub fn codegen_warning(self: &mut CodegenCtx, message: String) {
+        self.codegen_warnings.push(message);
+    }
+
+    /// Returns true if any codegen errors have been recorded.
+    pub fn has_codegen_errors(self: &CodegenCtx) -> bool {
+        self.codegen_errors.len() > 0
+    }
+
+    /// Takes ownership of accumulated errors, leaving the error list empty.
+    pub fn take_errors(self: &mut CodegenCtx) -> Vec<CodegenError> {
+        let mut errors: Vec<CodegenError> = Vec::new();
+        let mut i: usize = 0;
+        while i < self.codegen_errors.len() {
+            let err = &self.codegen_errors[i];
+            let fn_name = match &err.fn_name {
+                &Option::Some(ref name) => Option::Some(clone_string(name)),
+                &Option::None => Option::None,
+            };
+            errors.push(CodegenError {
+                kind: clone_error_kind(&err.kind),
+                message: clone_string(&err.message),
+                fn_name: fn_name,
+            });
+            i = i + 1;
+        }
+        self.codegen_errors.clear();
+        errors
+    }
+
+    /// Takes ownership of accumulated warnings, leaving the warning list empty.
+    pub fn take_warnings(self: &mut CodegenCtx) -> Vec<String> {
+        let mut warnings: Vec<String> = Vec::new();
+        let mut i: usize = 0;
+        while i < self.codegen_warnings.len() {
+            warnings.push(clone_string(&self.codegen_warnings[i]));
+            i = i + 1;
+        }
+        self.codegen_warnings.clear();
+        warnings
     }
 
     // ======== ADT Registry ========
@@ -1951,6 +2073,8 @@ impl CodegenCtx {
             op_def_index_hash: hashmap::HashMapU64U32::new(),
             op_def_index_entries: Vec::new(),
             handler_state_shadows: Vec::new(),
+            codegen_errors: Vec::new(),
+            codegen_warnings: Vec::new(),
         };
 
         // Copy handler_op_body_ids (read-only, needed to flag handler op bodies)
@@ -2141,6 +2265,36 @@ fn string_replace(s: &String, from: &String, to: &String) -> String {
 // ============================================================
 // String Helpers
 // ============================================================
+
+/// Clones a CodegenErrorKind.
+pub fn clone_error_kind(kind: &CodegenErrorKind) -> CodegenErrorKind {
+    match kind {
+        &CodegenErrorKind::AdtLookupFailed => CodegenErrorKind::AdtLookupFailed,
+        &CodegenErrorKind::FnLookupFailed => CodegenErrorKind::FnLookupFailed,
+        &CodegenErrorKind::StaticLookupFailed => CodegenErrorKind::StaticLookupFailed,
+        &CodegenErrorKind::TypeSubstitutionFailed => CodegenErrorKind::TypeSubstitutionFailed,
+        &CodegenErrorKind::VariantLookupFailed => CodegenErrorKind::VariantLookupFailed,
+        &CodegenErrorKind::EffectOpLookupFailed => CodegenErrorKind::EffectOpLookupFailed,
+        &CodegenErrorKind::UnsupportedOperation => CodegenErrorKind::UnsupportedOperation,
+        &CodegenErrorKind::TypeParseFailed => CodegenErrorKind::TypeParseFailed,
+        &CodegenErrorKind::InternalError => CodegenErrorKind::InternalError,
+    }
+}
+
+/// Converts a CodegenErrorKind to a human-readable category string.
+pub fn error_kind_label(kind: &CodegenErrorKind) -> &str {
+    match kind {
+        &CodegenErrorKind::AdtLookupFailed => "ADT lookup failed",
+        &CodegenErrorKind::FnLookupFailed => "function lookup failed",
+        &CodegenErrorKind::StaticLookupFailed => "static lookup failed",
+        &CodegenErrorKind::TypeSubstitutionFailed => "type substitution failed",
+        &CodegenErrorKind::VariantLookupFailed => "variant lookup failed",
+        &CodegenErrorKind::EffectOpLookupFailed => "effect operation lookup failed",
+        &CodegenErrorKind::UnsupportedOperation => "unsupported operation",
+        &CodegenErrorKind::TypeParseFailed => "type parse failed",
+        &CodegenErrorKind::InternalError => "internal codegen error",
+    }
+}
 
 /// Clones a String.
 fn clone_string(s: &String) -> String {

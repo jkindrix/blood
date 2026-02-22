@@ -281,15 +281,24 @@ impl Compiler {
         // Phase 5: Generate LLVM IR from MIR
         let codegen_result = codegen::generate_module_with_items("main", &mir_functions, &lower_result.items, &typeck_result.default_method_remaps);
         if !codegen_result.success {
-            let mut errors = Vec::new();
-            errors.push(error::CompileError::new(
-                error::CompilePhase::Codegen,
-                common::make_string("Code generation failed"),
-            ));
+            let errors = convert_codegen_errors(&codegen_result.errors);
             return CompileResult::err(errors);
         }
 
-        CompileResult::ok(codegen_result.llvm_ir)
+        // Propagate codegen warnings and non-fatal errors
+        let mut result = CompileResult::ok(codegen_result.llvm_ir);
+        if codegen_result.errors.len() > 0 {
+            result.warnings = convert_codegen_errors_to_warnings(&codegen_result.errors);
+        }
+        let mut wi: usize = 0;
+        while wi < codegen_result.warnings.len() {
+            result.warnings.push(error::CompileWarning::new(
+                error::CompilePhase::Codegen,
+                clone_string(&codegen_result.warnings[wi]),
+            ));
+            wi = wi + 1;
+        }
+        result
     }
 
     /// Checks source code with a specified base directory for module resolution.
@@ -553,6 +562,58 @@ fn convert_type_errors(type_errors: &Vec<typeck::TypeError>) -> Vec<error::Compi
         i = i + 1;
     }
     errors
+}
+
+/// Converts codegen errors to compile errors.
+fn convert_codegen_errors(codegen_errors: &Vec<codegen::codegen_ctx::CodegenError>) -> Vec<error::CompileError> {
+    let mut errors = Vec::new();
+    let mut i: usize = 0;
+    while i < codegen_errors.len() {
+        let ce = &codegen_errors[i];
+        let mut message = common::make_string(codegen::codegen_ctx::error_kind_label(&ce.kind));
+        message.push_str(": ");
+        message.push_str(ce.message.as_str());
+        match &ce.fn_name {
+            &Option::Some(ref name) => {
+                message.push_str(" (in function ");
+                message.push_str(name.as_str());
+                message.push(')');
+            }
+            &Option::None => {}
+        }
+        errors.push(error::CompileError::new(
+            error::CompilePhase::Codegen,
+            message,
+        ));
+        i = i + 1;
+    }
+    errors
+}
+
+/// Converts codegen errors to compile warnings (for non-fatal errors that didn't prevent codegen).
+fn convert_codegen_errors_to_warnings(codegen_errors: &Vec<codegen::codegen_ctx::CodegenError>) -> Vec<error::CompileWarning> {
+    let mut warnings = Vec::new();
+    let mut i: usize = 0;
+    while i < codegen_errors.len() {
+        let ce = &codegen_errors[i];
+        let mut message = common::make_string(codegen::codegen_ctx::error_kind_label(&ce.kind));
+        message.push_str(": ");
+        message.push_str(ce.message.as_str());
+        match &ce.fn_name {
+            &Option::Some(ref name) => {
+                message.push_str(" (in function ");
+                message.push_str(name.as_str());
+                message.push(')');
+            }
+            &Option::None => {}
+        }
+        warnings.push(error::CompileWarning::new(
+            error::CompilePhase::Codegen,
+            message,
+        ));
+        i = i + 1;
+    }
+    warnings
 }
 
 /// Converts a TypeErrorKind to a human-readable message.
