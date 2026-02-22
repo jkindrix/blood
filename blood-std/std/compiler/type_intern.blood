@@ -1389,6 +1389,218 @@ pub fn is_closure_id(id: TyId) -> bool {
 }
 
 // ============================================================
+// Type Formatting for Error Messages
+// ============================================================
+
+/// Appends a u32 value as decimal digits to a string (recursive for correct ordering).
+fn push_u32(s: &mut String, val: u32) {
+    if val >= 10 {
+        push_u32(s, val / 10);
+    }
+    let digit: u32 = val % 10;
+    s.push((digit + 48) as char);
+}
+
+/// Appends a u64 value as decimal digits to a string (recursive for correct ordering).
+fn push_u64(s: &mut String, val: u64) {
+    if val >= 10 {
+        push_u64(s, val / 10);
+    }
+    let digit: u64 = val % 10;
+    s.push((digit + 48) as char);
+}
+
+/// Formats a PrimitiveTy as a human-readable string.
+fn format_prim(prim: hir_ty::PrimitiveTy) -> String {
+    match prim {
+        hir_ty::PrimitiveTy::Bool => common::make_string("bool"),
+        hir_ty::PrimitiveTy::I8 => common::make_string("i8"),
+        hir_ty::PrimitiveTy::I16 => common::make_string("i16"),
+        hir_ty::PrimitiveTy::I32 => common::make_string("i32"),
+        hir_ty::PrimitiveTy::I64 => common::make_string("i64"),
+        hir_ty::PrimitiveTy::I128 => common::make_string("i128"),
+        hir_ty::PrimitiveTy::Isize => common::make_string("isize"),
+        hir_ty::PrimitiveTy::U8 => common::make_string("u8"),
+        hir_ty::PrimitiveTy::U16 => common::make_string("u16"),
+        hir_ty::PrimitiveTy::U32 => common::make_string("u32"),
+        hir_ty::PrimitiveTy::U64 => common::make_string("u64"),
+        hir_ty::PrimitiveTy::U128 => common::make_string("u128"),
+        hir_ty::PrimitiveTy::Usize => common::make_string("usize"),
+        hir_ty::PrimitiveTy::F32 => common::make_string("f32"),
+        hir_ty::PrimitiveTy::F64 => common::make_string("f64"),
+        hir_ty::PrimitiveTy::Char => common::make_string("char"),
+        hir_ty::PrimitiveTy::Str => common::make_string("str"),
+    }
+}
+
+/// Formats a usize as a decimal string.
+pub fn format_usize(val: usize) -> String {
+    let mut s = common::make_string("");
+    push_u64(&mut s, val as u64);
+    s
+}
+
+/// Formats a TyId as a human-readable type string for error messages.
+/// Avoids circular dependency with dump_mir by operating directly on InternedTypeKind.
+pub fn format_ty_id(id: TyId) -> String {
+    let interner = type_interner();
+    let kind = interner.get(id);
+    match kind {
+        &InternedTypeKind::Primitive(prim) => format_prim(prim),
+        &InternedTypeKind::Never => common::make_string("!"),
+        &InternedTypeKind::Error => common::make_string("{error}"),
+        &InternedTypeKind::Param(idx) => {
+            let mut s = common::make_string("T");
+            push_u32(&mut s, idx.index);
+            s
+        }
+        &InternedTypeKind::Infer(var) => {
+            let mut s = common::make_string("_");
+            push_u32(&mut s, var.index);
+            s
+        }
+        &InternedTypeKind::Adt { def_id, args } => {
+            let mut s = common::make_string("Adt(");
+            push_u32(&mut s, def_id.index);
+            if interner.ty_list_len(args) > 0 {
+                s.push('<');
+                let mut i: usize = 0;
+                while i < interner.ty_list_len(args) {
+                    if i > 0 {
+                        s.push_str(", ");
+                    }
+                    let arg = interner.get_ty_list_element(args, i);
+                    let formatted = format_ty_id(arg);
+                    s.push_str(formatted.as_str());
+                    i = i + 1;
+                }
+                s.push('>');
+            }
+            s.push(')');
+            s
+        }
+        &InternedTypeKind::Tuple(elems) => {
+            let mut s = common::make_string("(");
+            let mut i: usize = 0;
+            while i < interner.ty_list_len(elems) {
+                if i > 0 {
+                    s.push_str(", ");
+                }
+                let elem = interner.get_ty_list_element(elems, i);
+                let formatted = format_ty_id(elem);
+                s.push_str(formatted.as_str());
+                i = i + 1;
+            }
+            s.push(')');
+            s
+        }
+        &InternedTypeKind::Array { element, size } => {
+            let mut s = common::make_string("[");
+            let formatted = format_ty_id(element);
+            s.push_str(formatted.as_str());
+            s.push_str("; ");
+            push_u64(&mut s, size);
+            s.push(']');
+            s
+        }
+        &InternedTypeKind::Slice { element } => {
+            let mut s = common::make_string("[");
+            let formatted = format_ty_id(element);
+            s.push_str(formatted.as_str());
+            s.push(']');
+            s
+        }
+        &InternedTypeKind::Ref { inner, mutable } => {
+            let mut s = common::make_string("&");
+            if mutable {
+                s.push_str("mut ");
+            }
+            let formatted = format_ty_id(inner);
+            s.push_str(formatted.as_str());
+            s
+        }
+        &InternedTypeKind::Ptr { inner, mutable } => {
+            let mut s = common::make_string("*");
+            if mutable {
+                s.push_str("mut ");
+            } else {
+                s.push_str("const ");
+            }
+            let formatted = format_ty_id(inner);
+            s.push_str(formatted.as_str());
+            s
+        }
+        &InternedTypeKind::Fn { params, ret, effects: _ } => {
+            let mut s = common::make_string("fn(");
+            let mut i: usize = 0;
+            while i < interner.ty_list_len(params) {
+                if i > 0 {
+                    s.push_str(", ");
+                }
+                let param = interner.get_ty_list_element(params, i);
+                let formatted = format_ty_id(param);
+                s.push_str(formatted.as_str());
+                i = i + 1;
+            }
+            s.push_str(") -> ");
+            let formatted = format_ty_id(ret);
+            s.push_str(formatted.as_str());
+            s
+        }
+        &InternedTypeKind::Closure { def_id, params, ret } => {
+            let mut s = common::make_string("closure(");
+            push_u32(&mut s, def_id.index);
+            s.push_str(")(");
+            let mut i: usize = 0;
+            while i < interner.ty_list_len(params) {
+                if i > 0 {
+                    s.push_str(", ");
+                }
+                let param = interner.get_ty_list_element(params, i);
+                let formatted = format_ty_id(param);
+                s.push_str(formatted.as_str());
+                i = i + 1;
+            }
+            s.push_str(") -> ");
+            let formatted = format_ty_id(ret);
+            s.push_str(formatted.as_str());
+            s
+        }
+        &InternedTypeKind::Record { fields: _, row_var: _ } => {
+            common::make_string("{record}")
+        }
+        &InternedTypeKind::Range { element, inclusive: _ } => {
+            let mut s = common::make_string("Range<");
+            let formatted = format_ty_id(element);
+            s.push_str(formatted.as_str());
+            s.push('>');
+            s
+        }
+        &InternedTypeKind::DynTrait { trait_id, auto_traits: _ } => {
+            let mut s = common::make_string("dyn Trait(");
+            push_u32(&mut s, trait_id.index);
+            s.push(')');
+            s
+        }
+        &InternedTypeKind::Forall { params: _, body } => {
+            let mut s = common::make_string("forall ");
+            let formatted = format_ty_id(body);
+            s.push_str(formatted.as_str());
+            s
+        }
+        &InternedTypeKind::Ownership { qualifier, inner } => {
+            let mut s = match qualifier {
+                hir_ty::OwnershipQualifier::Linear => common::make_string("linear "),
+                hir_ty::OwnershipQualifier::Affine => common::make_string("affine "),
+            };
+            let formatted = format_ty_id(inner);
+            s.push_str(formatted.as_str());
+            s
+        }
+    }
+}
+
+// ============================================================
 // Global Type Interner (Singleton)
 // ============================================================
 //

@@ -873,12 +873,16 @@ fn infer_unary(
                     if is_box && args_len == 1 {
                         interner.get_ty_list_element(args, 0)
                     } else {
-                        checker.error(typeck::TypeErrorKind::TypeMismatch, span);
+                        let mut note = common::make_string("cannot dereference type ");
+                        note.push_str(type_intern::format_ty_id(resolved).as_str());
+                        checker.error_with_note(typeck::TypeErrorKind::TypeMismatch, span, note);
                         type_intern::CommonTypes::error()
                     }
                 }
                 _ => {
-                    checker.error(typeck::TypeErrorKind::TypeMismatch, span);
+                    let mut note = common::make_string("cannot dereference type ");
+                    note.push_str(type_intern::format_ty_id(resolved).as_str());
+                    checker.error_with_note(typeck::TypeErrorKind::TypeMismatch, span, note);
                     type_intern::CommonTypes::error()
                 }
             }
@@ -949,10 +953,14 @@ fn infer_call(
         &hir_ty::TypeKind::Fn { ref params, ref ret, ref effects } => {
             // Check arity
             if params.len() != args.len() {
+                let mut note = common::make_string("expected ");
+                note.push_str(type_intern::format_usize(params.len()).as_str());
+                note.push_str(" argument(s), found ");
+                note.push_str(type_intern::format_usize(args.len()).as_str());
                 checker.error_with_note(
                     typeck::TypeErrorKind::ArityMismatch,
                     span,
-                    common::make_string("function parameter count does not match argument count"),
+                    note,
                 );
                 return type_intern::CommonTypes::error();
             }
@@ -1011,7 +1019,10 @@ fn infer_call(
             type_intern::CommonTypes::error()
         }
         _ => {
-            checker.error(typeck::TypeErrorKind::NotCallable, span);
+            let mut note = common::make_string("type ");
+            note.push_str(type_intern::format_ty_id(resolved_callee).as_str());
+            note.push_str(" is not callable");
+            checker.error_with_note(typeck::TypeErrorKind::NotCallable, span, note);
             type_intern::CommonTypes::error()
         }
     }
@@ -1102,10 +1113,14 @@ fn infer_method_call(
 
             // Check arity (excluding self parameter)
             if method_info.param_tys.len() != args.len() {
+                let mut note = common::make_string("expected ");
+                note.push_str(type_intern::format_usize(method_info.param_tys.len()).as_str());
+                note.push_str(" argument(s), found ");
+                note.push_str(type_intern::format_usize(args.len()).as_str());
                 checker.error_with_note(
                     typeck::TypeErrorKind::ArityMismatch,
                     span,
-                    common::make_string("method parameter count does not match argument count"),
+                    note,
                 );
                 return type_intern::CommonTypes::error();
             }
@@ -1125,8 +1140,10 @@ fn infer_method_call(
             unify::substitute_type_params_id(method_info.return_ty, &subst)
         }
         Option::None => {
-            // Method not found - report error
-            checker.error(typeck::TypeErrorKind::NoSuchMethod, span);
+            // Method not found - report error with type context
+            let mut note = common::make_string("no method found on type ");
+            note.push_str(type_intern::format_ty_id(resolved_receiver).as_str());
+            checker.error_with_note(typeck::TypeErrorKind::NoSuchMethod, span, note);
 
             // Still infer types for all arguments
             let mut i: usize = 0;
@@ -1240,7 +1257,9 @@ fn infer_field(
                             }
                         }
                         Option::None => {
-                            checker.error_with_note(typeck::TypeErrorKind::NoSuchField, span, common::make_string("struct has no field with this name"));
+                            let mut note = common::make_string("no field with this name on type ");
+                            note.push_str(type_intern::format_ty_id(resolved_base).as_str());
+                            checker.error_with_note(typeck::TypeErrorKind::NoSuchField, span, note);
                             type_intern::CommonTypes::error()
                         }
                     }
@@ -1285,7 +1304,10 @@ fn infer_field(
             type_intern::CommonTypes::error()
         }
         _ => {
-            checker.error_with_note(typeck::TypeErrorKind::NoSuchField, span, common::make_string("type does not support field access"));
+            let mut note = common::make_string("type ");
+            note.push_str(type_intern::format_ty_id(resolved_base).as_str());
+            note.push_str(" does not support field access");
+            checker.error_with_note(typeck::TypeErrorKind::NoSuchField, span, note);
             type_intern::CommonTypes::error()
         }
     }
@@ -1362,7 +1384,10 @@ fn infer_index(
                 if is_string {
                     type_intern::CommonTypes::u8_ty()
                 } else {
-                    checker.error_with_note(typeck::TypeErrorKind::NotIndexable, span, common::make_string("only Vec, String, Array, and Slice types support indexing"));
+                    let mut idx_note = common::make_string("type ");
+                    idx_note.push_str(type_intern::format_ty_id(resolved_base).as_str());
+                    idx_note.push_str(" does not support indexing; only Vec, String, Array, and Slice types do");
+                    checker.error_with_note(typeck::TypeErrorKind::NotIndexable, span, idx_note);
                     type_intern::CommonTypes::error()
                 }
             }
@@ -1386,7 +1411,10 @@ fn infer_index(
             type_intern::CommonTypes::error()
         }
         _ => {
-            checker.error_with_note(typeck::TypeErrorKind::NotIndexable, span, common::make_string("type does not support indexing"));
+            let mut note = common::make_string("type ");
+            note.push_str(type_intern::format_ty_id(resolved_base).as_str());
+            note.push_str(" does not support indexing");
+            checker.error_with_note(typeck::TypeErrorKind::NotIndexable, span, note);
             type_intern::CommonTypes::error()
         }
     }
@@ -1487,7 +1515,11 @@ fn infer_struct(
         let num_declared = checker.get_struct_num_fields(path.def_id);
         let num_provided = fields.len() as u32;
         if num_provided < num_declared {
-            checker.error(typeck::TypeErrorKind::ArityMismatch, span);
+            let mut note = common::make_string("expected ");
+            note.push_str(type_intern::format_usize(num_declared as usize).as_str());
+            note.push_str(" field(s), found ");
+            note.push_str(type_intern::format_usize(num_provided as usize).as_str());
+            checker.error_with_note(typeck::TypeErrorKind::ArityMismatch, span, note);
         }
     }
 
@@ -1597,7 +1629,11 @@ fn infer_cast(
 
     // Validate that the cast is valid
     if !is_valid_cast(&resolved_src_hir, &resolved_dst_hir) {
-        checker.error(typeck::TypeErrorKind::InvalidCast, span);
+        let mut note = common::make_string("cannot cast ");
+        note.push_str(type_intern::format_ty_id(resolved_src).as_str());
+        note.push_str(" to ");
+        note.push_str(type_intern::format_ty_id(resolved_dst).as_str());
+        checker.error_with_note(typeck::TypeErrorKind::InvalidCast, span, note);
     }
 
     // Return the target type
@@ -2263,7 +2299,11 @@ fn infer_perform(
                     if effect_op.name.index == op_name.index {
                         // Found the operation - check argument count
                         if arg_tys.len() != effect_op.param_tys.len() {
-                            checker.error(typeck::TypeErrorKind::ArityMismatch, span);
+                            let mut note = common::make_string("effect operation expects ");
+                            note.push_str(type_intern::format_usize(effect_op.param_tys.len()).as_str());
+                            note.push_str(" argument(s), found ");
+                            note.push_str(type_intern::format_usize(arg_tys.len()).as_str());
+                            checker.error_with_note(typeck::TypeErrorKind::ArityMismatch, span, note);
                         } else if !effect_is_generic {
                             // Only unify when the effect is non-generic
                             // effect_op.param_tys are already TyId (from typeck_info migration)
@@ -2856,7 +2896,9 @@ fn propagate_struct_pattern_fields(
                     k = k + 1;
                 }
                 if !found {
-                    checker.error(typeck::TypeErrorKind::NoSuchField, fields[i].name.span);
+                    let mut note = common::make_string("no such field in type ");
+                    note.push_str(type_intern::format_ty_id(resolved_ty).as_str());
+                    checker.error_with_note(typeck::TypeErrorKind::NoSuchField, fields[i].name.span, note);
                 }
                 i = i + 1;
             }

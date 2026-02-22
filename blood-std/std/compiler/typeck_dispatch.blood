@@ -159,18 +159,35 @@ impl DispatchResolver {
 
 /// Computes specificity score for a type.
 /// Concrete types are more specific than generic ones.
+/// Scores: 10 = most specific (concrete primitive/never),
+///         0 = least specific (unresolved inference variable or error).
 pub fn compute_specificity(ty: type_intern::TyId) -> u32 {
     let interner = type_intern::type_interner();
     let kind = interner.get(ty);
     match kind {
         &type_intern::InternedTypeKind::Primitive(_) => 10,
+        &type_intern::InternedTypeKind::Never => 10,
         &type_intern::InternedTypeKind::Adt { def_id: _, args: _ } => 8,
+        &type_intern::InternedTypeKind::Array { element: _, size: _ } => 9,
+        &type_intern::InternedTypeKind::Slice { element: _ } => 9,
+        &type_intern::InternedTypeKind::Range { element: _, inclusive: _ } => 9,
         &type_intern::InternedTypeKind::Tuple(_) => 7,
+        &type_intern::InternedTypeKind::Record { fields: _, row_var: _ } => 7,
+        &type_intern::InternedTypeKind::Fn { params: _, ret: _, effects: _ } => 6,
+        &type_intern::InternedTypeKind::Closure { def_id: _, params: _, ret: _ } => 6,
         &type_intern::InternedTypeKind::Ref { inner, mutable: _ } => {
             compute_specificity(inner)
         }
+        &type_intern::InternedTypeKind::Ptr { inner, mutable: _ } => {
+            compute_specificity(inner)
+        }
+        &type_intern::InternedTypeKind::Ownership { qualifier: _, inner } => {
+            compute_specificity(inner)
+        }
+        &type_intern::InternedTypeKind::DynTrait { trait_id: _, auto_traits: _ } => 3,
+        &type_intern::InternedTypeKind::Forall { params: _, body: _ } => 2,
         &type_intern::InternedTypeKind::Param(_) => 1,
         &type_intern::InternedTypeKind::Infer(_) => 0,
-        _ => 5,
+        &type_intern::InternedTypeKind::Error => 0,
     }
 }

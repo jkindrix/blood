@@ -1118,7 +1118,8 @@ fn lower_local_item(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declaratio
         );
     }
 
-    // Register DefInfo with the enclosing function as parent
+    // Register DefInfo with the enclosing function as parent.
+    // Note: Impl/Bridge/Module/Macro/Use all return early above and never reach here.
     let def_kind = match decl {
         &ast::Declaration::Function(_) => hir_def::DefKind::Fn,
         &ast::Declaration::Struct(_) => hir_def::DefKind::Struct,
@@ -1129,16 +1130,60 @@ fn lower_local_item(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declaratio
         &ast::Declaration::Trait(_) => hir_def::DefKind::Trait,
         &ast::Declaration::Effect(_) => hir_def::DefKind::Effect,
         &ast::Declaration::Handler(_) => hir_def::DefKind::Handler,
-        _ => hir_def::DefKind::Fn, // Fallback
+        &ast::Declaration::Impl(_) => hir_def::DefKind::Fn,
+        &ast::Declaration::Bridge(_) => hir_def::DefKind::Fn,
+        &ast::Declaration::Module(_) => hir_def::DefKind::Fn,
+        &ast::Declaration::Macro(_) => hir_def::DefKind::Fn,
+        &ast::Declaration::Use(_) => hir_def::DefKind::Fn,
     };
     ctx.resolver.register_def_info(def_id, def_kind, re_interned_sym, span, Option::None);
 
-    // For Function declarations, lower inline (params, return type, body)
+    // Lower the declaration body based on its kind.
+    // Currently only Function declarations are fully lowered in local scope.
+    // Other declaration kinds are registered for name resolution but their
+    // bodies are not yet lowered — emit a diagnostic so users know why.
     match decl {
         &ast::Declaration::Function(ref fn_decl) => {
             lower_local_fn(ctx, fn_decl, def_id);
         }
-        _ => {}
+        &ast::Declaration::Struct(_) => {
+            ctx.error(hir::DiagnosticCode::E0104,
+                common::make_string("local struct declarations not yet supported"), span);
+        }
+        &ast::Declaration::Enum(_) => {
+            ctx.error(hir::DiagnosticCode::E0104,
+                common::make_string("local enum declarations not yet supported"), span);
+        }
+        &ast::Declaration::TypeAlias(_) => {
+            ctx.error(hir::DiagnosticCode::E0104,
+                common::make_string("local type alias declarations not yet supported"), span);
+        }
+        &ast::Declaration::Const(_) => {
+            ctx.error(hir::DiagnosticCode::E0104,
+                common::make_string("local const declarations not yet supported"), span);
+        }
+        &ast::Declaration::Static(_) => {
+            ctx.error(hir::DiagnosticCode::E0104,
+                common::make_string("local static declarations not yet supported"), span);
+        }
+        &ast::Declaration::Trait(_) => {
+            ctx.error(hir::DiagnosticCode::E0104,
+                common::make_string("local trait declarations not yet supported"), span);
+        }
+        &ast::Declaration::Effect(_) => {
+            ctx.error(hir::DiagnosticCode::E0104,
+                common::make_string("local effect declarations not yet supported"), span);
+        }
+        &ast::Declaration::Handler(_) => {
+            ctx.error(hir::DiagnosticCode::E0104,
+                common::make_string("local handler declarations not yet supported"), span);
+        }
+        // Impl/Bridge/Module/Macro/Use return early above and never reach here
+        &ast::Declaration::Impl(_) => {}
+        &ast::Declaration::Bridge(_) => {}
+        &ast::Declaration::Module(_) => {}
+        &ast::Declaration::Macro(_) => {}
+        &ast::Declaration::Use(_) => {}
     }
 
     def_id
