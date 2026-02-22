@@ -331,8 +331,11 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // First, build vtable layouts for all traits
         self.build_vtable_layouts(hir_crate);
 
-        // Then generate vtables for each trait impl
-        for item in hir_crate.items.values() {
+        // Then generate vtables for each trait impl.
+        // Sort by DefId for deterministic vtable emission order in LLVM IR.
+        let mut sorted_items: Vec<_> = hir_crate.items.iter().collect();
+        sorted_items.sort_by_key(|(&def_id, _)| def_id.index());
+        for (_, item) in sorted_items {
             if let hir::ItemKind::Impl { trait_ref: Some(tref), self_ty, items, .. } = &item.kind {
                 self.generate_vtable_for_impl(
                     tref.def_id,
@@ -349,7 +352,10 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     ///
     /// The layout determines which slot each method occupies in the vtable.
     fn build_vtable_layouts(&mut self, hir_crate: &hir::Crate) {
-        for (def_id, item) in &hir_crate.items {
+        // Sort by DefId for deterministic layout ordering.
+        let mut sorted_items: Vec<_> = hir_crate.items.iter().collect();
+        sorted_items.sort_by_key(|(&def_id, _)| def_id.index());
+        for (def_id, item) in sorted_items {
             if let hir::ItemKind::Trait { items, .. } = &item.kind {
                 let mut slots = Vec::new();
 

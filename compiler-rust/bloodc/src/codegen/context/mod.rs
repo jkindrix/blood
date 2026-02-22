@@ -1196,7 +1196,12 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     /// This declares external functions, structs, enums, unions, constants, and callbacks
     /// from FFI bridge blocks. The declarations are made in LLVM IR with C-compatible layouts.
     fn declare_ffi_functions(&mut self, hir_crate: &hir::Crate) -> Result<(), Vec<Diagnostic>> {
-        for item in hir_crate.items.values() {
+        // Sort by DefId for deterministic declaration order in LLVM IR.
+        // HashMap iteration is non-deterministic; sorting ensures FFI
+        // declarations are emitted in a stable order across runs.
+        let mut sorted_items: Vec<_> = hir_crate.items.iter().collect();
+        sorted_items.sort_by_key(|(&def_id, _)| def_id.index());
+        for (_, item) in sorted_items {
             match &item.kind {
                 hir::ItemKind::ExternFn(extern_fn) => {
                     self.declare_extern_function(&item.name, extern_fn, None)?;
