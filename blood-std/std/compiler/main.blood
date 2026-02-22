@@ -57,10 +57,22 @@ pub enum Command {
     Build,
     /// Run source code (compile and execute).
     Run,
+    /// Remove build artifacts.
+    Clean,
     /// Print help message.
     Help,
     /// Print version information.
     Version,
+}
+
+/// Controls how far the build pipeline runs.
+pub enum EmitMode {
+    /// Full pipeline: IR -> object -> executable.
+    Full,
+    /// Stop after emitting LLVM IR (.ll file).
+    LlvmIr,
+    /// Stop after emitting object file (.o file).
+    Obj,
 }
 
 /// Parsed command line arguments.
@@ -95,6 +107,14 @@ pub struct Args {
     pub validate_mir: bool,
     /// Whether to print memory profile at each phase boundary.
     pub mem_profile: bool,
+    /// Controls how far the build pipeline runs (Full, LlvmIr, or Obj).
+    pub emit_mode: EmitMode,
+    /// Optimization level for llc (0-3). Default 0; --release sets to 2.
+    pub opt_level: u32,
+    /// Whether to strip symbols from the linked binary.
+    pub strip: bool,
+    /// Whether to enable AddressSanitizer instrumentation.
+    pub sanitize_address: bool,
 }
 
 impl Args {
@@ -116,6 +136,10 @@ impl Args {
             dump_layouts: false,
             validate_mir: false,
             mem_profile: false,
+            emit_mode: EmitMode::Full,
+            opt_level: 0,
+            strip: false,
+            sanitize_address: false,
         }
     }
 
@@ -137,6 +161,10 @@ impl Args {
             dump_layouts: false,
             validate_mir: false,
             mem_profile: false,
+            emit_mode: EmitMode::Full,
+            opt_level: 0,
+            strip: false,
+            sanitize_address: false,
         }
     }
 
@@ -158,6 +186,10 @@ impl Args {
             dump_layouts: false,
             validate_mir: false,
             mem_profile: false,
+            emit_mode: EmitMode::Full,
+            opt_level: 0,
+            strip: false,
+            sanitize_address: false,
         }
     }
 }
@@ -182,6 +214,7 @@ pub fn main() -> i32 {
         &Command::Check => run_check(&args),
         &Command::Build => run_build(&args),
         &Command::Run => run_run(&args),
+        &Command::Clean => run_clean(&args),
         &Command::Help => run_help(&args),
         &Command::Version => run_version(&args),
     }
@@ -420,6 +453,13 @@ fn run_build(args: &Args) -> i32 {
             print_str(ll_path.as_str());
             print_newline();
 
+            // Early return for --emit llvm-ir
+            match &args.emit_mode {
+                &EmitMode::LlvmIr => { return 0; }
+                &EmitMode::Full => {}
+                &EmitMode::Obj => {}
+            }
+
             // Phase 2: Compile IR to object file with llc-18
             // Derive obj and bin paths from ll_path base (strip .ll extension)
             let base_path = strip_ll_ext(&ll_path);
@@ -428,11 +468,16 @@ fn run_build(args: &Args) -> i32 {
             let mut llc_cmd = String::new();
             llc_cmd.push_str("llc-18 ");
             llc_cmd.push_str(ll_path.as_str());
-            if args.release {
-                llc_cmd.push_str(" -O2 -filetype=obj -relocation-model=pic -o ");
+            if args.opt_level == 0 {
+                llc_cmd.push_str(" -O0");
+            } else if args.opt_level == 1 {
+                llc_cmd.push_str(" -O1");
+            } else if args.opt_level == 2 {
+                llc_cmd.push_str(" -O2");
             } else {
-                llc_cmd.push_str(" -O0 -filetype=obj -relocation-model=pic -o ");
+                llc_cmd.push_str(" -O3");
             }
+            llc_cmd.push_str(" -filetype=obj -relocation-model=pic -o ");
             llc_cmd.push_str(obj_path.as_str());
             let llc_start = blood_clock_millis();
             let llc_result = system(llc_cmd.as_str());
@@ -445,6 +490,13 @@ fn run_build(args: &Args) -> i32 {
             print_str(obj_path.as_str());
             print_newline();
 
+            // Early return for --emit obj
+            match &args.emit_mode {
+                &EmitMode::Obj => { return 0; }
+                &EmitMode::Full => {}
+                &EmitMode::LlvmIr => {}
+            }
+
             // Phase 3: Link with clang-18, blood runtime, and C runtime stub
             let bin_path = base_path;
             let mut clang_cmd = String::new();
@@ -454,11 +506,15 @@ fn run_build(args: &Args) -> i32 {
             clang_cmd.push_str(runtime.c_runtime.as_str());
             clang_cmd.push_str(" ");
             clang_cmd.push_str(runtime.rust_runtime.as_str());
-            if args.release {
-                clang_cmd.push_str(" -Wl,-z,muldefs -s -lm -ldl -lpthread -pie -o ");
-            } else {
-                clang_cmd.push_str(" -Wl,-z,muldefs -lm -ldl -lpthread -pie -o ");
+            clang_cmd.push_str(" -Wl,-z,muldefs");
+            if args.strip {
+                clang_cmd.push_str(" -s");
             }
+            clang_cmd.push_str(" -lm -ldl -lpthread");
+            if args.sanitize_address {
+                clang_cmd.push_str(" -fsanitize=address");
+            }
+            clang_cmd.push_str(" -pie -o ");
             clang_cmd.push_str(bin_path.as_str());
             let clang_start = blood_clock_millis();
             let clang_result = system(clang_cmd.as_str());
@@ -505,21 +561,50 @@ fn run_run(args: &Args) -> i32 {
                 return 1;
             }
 
+            // Early return for --emit llvm-ir
+            match &args.emit_mode {
+                &EmitMode::LlvmIr => {
+                    print_success("Wrote LLVM IR to: ");
+                    print_str(ll_path.as_str());
+                    print_newline();
+                    return 0;
+                }
+                &EmitMode::Full => {}
+                &EmitMode::Obj => {}
+            }
+
             // Phase 2: Compile IR to object file with llc-18
             let obj_path = replace_ext(path, ".o");
             let mut llc_cmd = String::new();
             llc_cmd.push_str("llc-18 ");
             llc_cmd.push_str(ll_path.as_str());
-            if args.release {
-                llc_cmd.push_str(" -O2 -filetype=obj -relocation-model=pic -o ");
+            if args.opt_level == 0 {
+                llc_cmd.push_str(" -O0");
+            } else if args.opt_level == 1 {
+                llc_cmd.push_str(" -O1");
+            } else if args.opt_level == 2 {
+                llc_cmd.push_str(" -O2");
             } else {
-                llc_cmd.push_str(" -O0 -filetype=obj -relocation-model=pic -o ");
+                llc_cmd.push_str(" -O3");
             }
+            llc_cmd.push_str(" -filetype=obj -relocation-model=pic -o ");
             llc_cmd.push_str(obj_path.as_str());
             let llc_result = system(llc_cmd.as_str());
             if llc_result != 0 {
                 print_error("llc-18 failed to compile IR to object file");
                 return 1;
+            }
+
+            // Early return for --emit obj
+            match &args.emit_mode {
+                &EmitMode::Obj => {
+                    print_success("Wrote object file to: ");
+                    print_str(obj_path.as_str());
+                    print_newline();
+                    return 0;
+                }
+                &EmitMode::Full => {}
+                &EmitMode::LlvmIr => {}
             }
 
             // Phase 3: Link with clang-18, blood runtime, and C runtime stub
@@ -531,11 +616,15 @@ fn run_run(args: &Args) -> i32 {
             clang_cmd.push_str(runtime.c_runtime.as_str());
             clang_cmd.push_str(" ");
             clang_cmd.push_str(runtime.rust_runtime.as_str());
-            if args.release {
-                clang_cmd.push_str(" -Wl,-z,muldefs -s -lm -ldl -lpthread -pie -o ");
-            } else {
-                clang_cmd.push_str(" -Wl,-z,muldefs -lm -ldl -lpthread -pie -o ");
+            clang_cmd.push_str(" -Wl,-z,muldefs");
+            if args.strip {
+                clang_cmd.push_str(" -s");
             }
+            clang_cmd.push_str(" -lm -ldl -lpthread");
+            if args.sanitize_address {
+                clang_cmd.push_str(" -fsanitize=address");
+            }
+            clang_cmd.push_str(" -pie -o ");
             clang_cmd.push_str(bin_path.as_str());
             let clang_result = system(clang_cmd.as_str());
             if clang_result != 0 {
@@ -567,19 +656,23 @@ fn run_help(_args: &Args) -> i32 {
     help.push_str("\n");
     help.push_str("COMMANDS:\n");
     help.push_str("    check    Check source for errors without compiling\n");
-    help.push_str("    build    Compile source to LLVM IR\n");
+    help.push_str("    build    Compile source to executable\n");
     help.push_str("    run      Compile and execute\n");
+    help.push_str("    clean    Remove build artifacts (.blood-cache, .ll, .o files)\n");
     help.push_str("    help     Print this help message\n");
     help.push_str("    version  Print version information\n");
     help.push_str("\n");
     help.push_str("OPTIONS:\n");
-    help.push_str("    -o <file>    Output file path\n");
-    help.push_str("    -v           Verbose output\n");
-    help.push_str("    --no-color   Disable colored output\n");
-    help.push_str("    --timings      Print per-phase timing\n");
-    help.push_str("    --mem-profile  Print per-phase memory diagnostics\n");
-    help.push_str("    --no-cache   Skip the build cache\n");
-    help.push_str("    --release    Build with optimizations and strip symbols\n");
+    help.push_str("    -o <file>          Output file path\n");
+    help.push_str("    -v                 Verbose output\n");
+    help.push_str("    --no-color         Disable colored output\n");
+    help.push_str("    --timings          Print per-phase timing\n");
+    help.push_str("    --mem-profile      Print per-phase memory diagnostics\n");
+    help.push_str("    --no-cache         Skip the build cache\n");
+    help.push_str("    --release          Build with -O2 and strip symbols\n");
+    help.push_str("    -O0/-O1/-O2/-O3   Set optimization level (default: -O0)\n");
+    help.push_str("    --emit <mode>      Stop early: 'llvm-ir' or 'obj'\n");
+    help.push_str("    --sanitize=address Enable AddressSanitizer\n");
     help.push_str("\n");
     help.push_str("DEBUG OPTIONS:\n");
     help.push_str("    --dump-mir          Dump MIR for all functions to stderr\n");
@@ -596,8 +689,78 @@ fn run_help(_args: &Args) -> i32 {
 fn run_version(_args: &Args) -> i32 {
     let mut version = String::new();
     version.push_str("Blood Compiler 0.1.0\n");
-    version.push_str("Self-hosted implementation\n");
+    version.push_str("Host: x86_64-unknown-linux-gnu\n");
+    version.push_str("LLVM: 18\n");
     print_string(&version);
+    0
+}
+
+/// Runs the clean command.
+/// Removes build cache directory and (if source file given) derived build artifacts.
+fn run_clean(args: &Args) -> i32 {
+    // Determine base directory
+    let base_dir = match &args.source_file {
+        &Option::Some(ref path) => source::parent_dir(path.as_str()),
+        &Option::None => common::make_string("."),
+    };
+
+    // Determine cache directory: BLOOD_CACHE env var or <base_dir>/.blood-cache/
+    let cache_env: &str = env_get("BLOOD_CACHE");
+    let cache_dir = if cache_env.len() > 0 {
+        common::make_string(cache_env)
+    } else {
+        source::join_path(base_dir.as_str(), ".blood-cache")
+    };
+
+    // Remove cache directory
+    let mut rm_cache = String::new();
+    rm_cache.push_str("rm -rf ");
+    rm_cache.push_str(cache_dir.as_str());
+    if file_exists(cache_dir.as_str()) {
+        system(rm_cache.as_str());
+        print_str("info: Removed cache: ");
+        print_str(cache_dir.as_str());
+        print_newline();
+    }
+
+    // If source file given, also remove derived artifacts (.ll, .o, binary)
+    match &args.source_file {
+        &Option::Some(ref path) => {
+            let ll = default_ll_path(path);
+            let obj = replace_ext(path, ".o");
+            let bin = strip_blood_ext(path);
+
+            if file_exists(ll.as_str()) {
+                let mut rm_ll = String::new();
+                rm_ll.push_str("rm -f ");
+                rm_ll.push_str(ll.as_str());
+                system(rm_ll.as_str());
+                print_str("info: Removed ");
+                print_str(ll.as_str());
+                print_newline();
+            }
+            if file_exists(obj.as_str()) {
+                let mut rm_obj = String::new();
+                rm_obj.push_str("rm -f ");
+                rm_obj.push_str(obj.as_str());
+                system(rm_obj.as_str());
+                print_str("info: Removed ");
+                print_str(obj.as_str());
+                print_newline();
+            }
+            if file_exists(bin.as_str()) {
+                let mut rm_bin = String::new();
+                rm_bin.push_str("rm -f ");
+                rm_bin.push_str(bin.as_str());
+                system(rm_bin.as_str());
+                print_str("info: Removed ");
+                print_str(bin.as_str());
+                print_newline();
+            }
+        }
+        &Option::None => {}
+    }
+
     0
 }
 
@@ -715,6 +878,35 @@ pub fn parse_args(argc: i32, argv: &Vec<String>) -> Args {
                 args.no_cache = true;
             } else if str_equals(arg, "--release") {
                 args.release = true;
+                args.opt_level = 2;
+                args.strip = true;
+            } else if str_equals(arg, "--emit=llvm-ir") {
+                args.emit_mode = EmitMode::LlvmIr;
+            } else if str_equals(arg, "--emit=obj") {
+                args.emit_mode = EmitMode::Obj;
+            } else if str_equals(arg, "--emit") {
+                // Space-separated: --emit llvm-ir / --emit obj
+                if i + 1 < argv.len() {
+                    i = i + 1;
+                    let emit_val = &argv[i];
+                    if str_equals(emit_val, "llvm-ir") {
+                        args.emit_mode = EmitMode::LlvmIr;
+                    } else if str_equals(emit_val, "obj") {
+                        args.emit_mode = EmitMode::Obj;
+                    } else {
+                        print_error("unknown --emit mode (expected 'llvm-ir' or 'obj')");
+                    }
+                }
+            } else if str_equals(arg, "-O0") {
+                args.opt_level = 0;
+            } else if str_equals(arg, "-O1") {
+                args.opt_level = 1;
+            } else if str_equals(arg, "-O2") {
+                args.opt_level = 2;
+            } else if str_equals(arg, "-O3") {
+                args.opt_level = 3;
+            } else if str_equals(arg, "--sanitize=address") {
+                args.sanitize_address = true;
             } else if str_equals(arg, "--dump-mir") {
                 args.dump_mir = true;
             } else if str_starts_with(arg, "--dump-mir=") {
@@ -755,6 +947,8 @@ fn parse_command(cmd: &String) -> Command {
         Command::Help
     } else if str_equals(cmd, "version") {
         Command::Version
+    } else if str_equals(cmd, "clean") {
+        Command::Clean
     } else {
         Command::Help
     }
