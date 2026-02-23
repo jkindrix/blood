@@ -937,8 +937,7 @@ fn unify_handler_op_params(
                     let span = body.locals[local_idx].span;
                     // body.locals[].ty is now TyId
                     let local_ty_id = body.locals[local_idx].ty;
-                    let ok = checker.unify(local_ty_id, type_intern::TyId::new(param_tys[k].index), span);
-                    let _ = ok;
+                    checker.unify(local_ty_id, type_intern::TyId::new(param_tys[k].index), span);
                 }
                 k = k + 1;
             }
@@ -1188,10 +1187,12 @@ fn find_def_id_for_body(
             &hir_item::ItemKind::Effect(_) => {}
             &hir_item::ItemKind::Handler(ref handler_def) => {
                 // Check return clause body
+                // Use body_id.index as the DefId to match driver::find_fn_for_body
+                // which returns DefId::new(target_body_id.index) for return clause bodies.
                 match &handler_def.return_clause {
                     &Option::Some(ref rc) => {
                         if rc.body_id.index == target_body_id.index {
-                            return entry.item.def_id.index;
+                            return rc.body_id.index;
                         }
                     }
                     &Option::None => {}
@@ -1278,13 +1279,16 @@ fn check_linearity(checker: &mut typeck::TypeChecker, body: &hir_expr::Body) {
         let entry = &entries[ei];
         if entry.is_linear {
             if entry.use_count == 0 {
-                checker.error(typeck::TypeErrorKind::LinearNotUsed, entry.def_span);
+                checker.error_with_note(typeck::TypeErrorKind::LinearNotUsed, entry.def_span,
+                    common::make_string("linear values must be used exactly once"));
             } else if entry.use_count > 1 {
-                checker.error(typeck::TypeErrorKind::LinearUsedMultipleTimes, entry.def_span);
+                checker.error_with_note(typeck::TypeErrorKind::LinearUsedMultipleTimes, entry.def_span,
+                    common::make_string("linear values must be used exactly once; this value was used multiple times"));
             }
         } else if entry.is_affine {
             if entry.use_count > 1 {
-                checker.error(typeck::TypeErrorKind::AffineUsedMultipleTimes, entry.def_span);
+                checker.error_with_note(typeck::TypeErrorKind::AffineUsedMultipleTimes, entry.def_span,
+                    common::make_string("affine values can be used at most once; this value was used multiple times"));
             }
         }
         ei = ei + 1;
@@ -1462,8 +1466,7 @@ fn check_body(checker: &mut typeck::TypeChecker, body: &hir_expr::Body, return_t
     // Unify body type with return type
     match &checker.return_ty {
         &Some(ret_ty) => {
-            let ok = checker.unify(body_ty, type_intern::TyId::new(ret_ty.index), body.expr.span);
-            let _ = ok;
+            checker.unify(body_ty, type_intern::TyId::new(ret_ty.index), body.expr.span);
         }
         &None => {}
     }
@@ -1491,7 +1494,8 @@ fn check_body(checker: &mut typeck::TypeChecker, body: &hir_expr::Body, return_t
                     // resolved type is a function type (fn pointer that couldn't
                     // be monomorphized).
                     if type_is_unresolved_fn(&resolved) {
-                        checker.error(typeck_types::TypeErrorKind::CannotInfer, local.span);
+                        checker.error_with_note(typeck_types::TypeErrorKind::CannotInfer, local.span,
+                            common::make_string("type could not be fully resolved; add a type annotation"));
                         // Only report once per body
                         li = body.locals.len();
                     }

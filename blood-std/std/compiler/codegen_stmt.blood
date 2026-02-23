@@ -244,26 +244,67 @@ pub fn emit_statement(
             // For stateful handlers, create a state shadow alloca that points
             // directly to the state value (skipping the handler struct discriminant).
             // Handler op wrappers receive this pointer and can read/write state through it.
-            let push_state_ptr = if !state_kind.is_stateless() {
-                // Create a state shadow: alloca i64 on the stack.
-                // Load initial state from handler struct (heap_ptr + 1, after discriminant).
+            // Use actual state field count from codegen context (MIR may misclassify
+            // empty ADTs as Dynamic when they are actually stateless).
+            let actual_state_count = ctx.lookup_handler_state_count(handler_id.index);
+            let has_state = actual_state_count > 0;
+            let push_state_ptr = if has_state {
+                // Create a state shadow on the stack sized to hold all state fields.
+                // total_state_bytes accounts for aggregate types (String = 24 bytes, etc.).
+                let total_bytes = ctx.lookup_handler_state_byte_size(handler_id.index) as u64;
+                let num_i64_slots = if total_bytes > 0 { (total_bytes + 7) / 8 } else { 1 };
                 let shadow = ctx.fresh_temp_cg();
-                ctx.emit_alloca_cg(&shadow, "i64");
+                let mut shadow_ty = common::make_string("[");
+                shadow_ty.push_str(codegen_types::format_u64(num_i64_slots).as_str());
+                shadow_ty.push_str(" x i64]");
+                ctx.emit_alloca_cg(&shadow, shadow_ty.as_str());
 
+                // Load heap pointer to handler struct from the state place
                 let heap_ptr_s = ctx.fresh_temp_cg();
                 ctx.emit_load_cg2(&heap_ptr_s, "ptr", &state_void_ptr);
 
-                let field_ptr = ctx.fresh_temp_cg();
+                // Handler struct layout is { i32_tag, [N x i64]_payload }.
+                // State data starts at byte offset 8 (after i32 + padding).
+                let state_data_ptr = ctx.fresh_temp_cg();
                 ctx.write_indent();
-                ctx.write_cgname(&field_ptr);
+                ctx.write_cgname(&state_data_ptr);
                 ctx.write(" = getelementptr i8, ptr ");
                 ctx.write_cgname(&heap_ptr_s);
-                ctx.write(", i64 1\n");
+                ctx.write(", i64 8\n");
 
-                let init_val = ctx.fresh_temp_cg();
-                ctx.emit_load_cg2(&init_val, "i64", &field_ptr);
-
-                ctx.emit_store_cg2("i64", &init_val, &shadow);
+                // Copy all state slots from heap struct to shadow (i64 at a time)
+                let mut si: u64 = 0;
+                while si < num_i64_slots {
+                    if si == 0 {
+                        // First slot: load/store directly through base pointers
+                        let slot_val = ctx.fresh_temp_cg();
+                        ctx.emit_load_cg2(&slot_val, "i64", &state_data_ptr);
+                        ctx.emit_store_cg2("i64", &slot_val, &shadow);
+                    } else {
+                        // Subsequent slots: GEP to offset
+                        let idx_str = codegen_types::format_u64(si);
+                        let src_ptr = ctx.fresh_temp_cg();
+                        ctx.write_indent();
+                        ctx.write_cgname(&src_ptr);
+                        ctx.write(" = getelementptr i64, ptr ");
+                        ctx.write_cgname(&state_data_ptr);
+                        ctx.write(", i64 ");
+                        ctx.write(idx_str.as_str());
+                        ctx.write("\n");
+                        let dst_ptr = ctx.fresh_temp_cg();
+                        ctx.write_indent();
+                        ctx.write_cgname(&dst_ptr);
+                        ctx.write(" = getelementptr i64, ptr ");
+                        ctx.write_cgname(&shadow);
+                        ctx.write(", i64 ");
+                        ctx.write(idx_str.as_str());
+                        ctx.write("\n");
+                        let slot_val = ctx.fresh_temp_cg();
+                        ctx.emit_load_cg2(&slot_val, "i64", &src_ptr);
+                        ctx.emit_store_cg2("i64", &slot_val, &dst_ptr);
+                    }
+                    si = si + 1;
+                }
 
                 // Save state shadow alloca name for CallReturnClause to use
                 ctx.set_handler_state_shadow(handler_id.index, cgname_to_string(&shadow));
@@ -1234,22 +1275,32 @@ fn is_copy_type(ty: &hir_ty::Type) -> bool {
 
 /// Stores function arguments into their allocas.
 /// Parameters are locals[1..1+param_count], mapped to LLVM args %arg0, %arg1, etc.
+/// For handler op bodies with multiple state fields, state field locals (2..1+count)
+/// are skipped here and initialized separately from the state pointer.
 pub fn emit_arg_stores(
     ctx: &mut codegen_ctx::CodegenCtx,
     body: &mir_body::MirBody,
 ) {
     ctx.indent();
     let mut i: usize = 1;
+    let mut arg_idx: usize = 0;
     let param_end: usize = 1usize + (body.param_count as usize);
     while i < param_end && i < body.locals.len() {
         let local = &body.locals[i];
         let local_id = mir_def::MirLocalId::new(i as u32);
+
+        // Skip handler state field locals — they're loaded from state ptr below
+        if ctx.is_handler_state_field(local_id) {
+            i = i + 1;
+            continue;
+        }
+
         let alloca_name = ctx.local_alloca_name(local_id);
         let ty = codegen_size::type_to_llvm_with_ctx_id(ctx, local.ty);
 
-        // Argument name is %arg0, %arg1, etc. (i-1 because params start at local index 1)
+        // Argument name uses actual arg index (skipping state fields)
         let mut arg_name = common::make_string("%arg");
-        let idx_str = codegen_types::format_u64((i - 1) as u64);
+        let idx_str = codegen_types::format_u64(arg_idx as u64);
         arg_name.push_str(idx_str.as_str());
 
         // Handler op state local: store the pointer (ptr type, not value type)
@@ -1270,8 +1321,51 @@ pub fn emit_arg_stores(
                 ctx.emit_store(ty.as_str(), arg_name.as_str(), alloca_name.as_str());
             }
         }
+        arg_idx = arg_idx + 1;
         i = i + 1;
     }
+
+    // For handler op bodies with multiple state fields: initialize state field locals
+    // by loading from the state pointer via GEP.
+    if ctx.handler_op_state_field_count > 1 {
+        // Load the state pointer from local 1's alloca
+        let state_local = mir_def::MirLocalId::new(1);
+        let state_alloca = ctx.local_alloca_name(state_local);
+        let state_ptr = ctx.fresh_temp_cg();
+        ctx.emit_load_cg(&state_ptr, "ptr", state_alloca.as_str());
+
+        // For each state field (local 2 through 1+count):
+        // GEP into the state struct and load the field value
+        let mut fi: u32 = 2;
+        while fi <= ctx.handler_op_state_field_count {
+            let field_local = mir_def::MirLocalId::new(fi);
+            let field_alloca = ctx.local_alloca_name(field_local);
+            let field_ty = codegen_size::type_to_llvm_with_ctx_id(ctx, body.locals[fi as usize].ty);
+            let field_idx = fi - 1; // GEP index: field 0 is at offset 0 (accessed through state ptr local 1)
+            // field 1 is at byte offset = sizeof(field_0), etc.
+            // Use byte-offset GEP for i32 fields: field_idx * 4
+            let field_gep = ctx.fresh_temp_cg();
+            let gep_idx_str = codegen_types::format_u64(field_idx as u64);
+            // Use i32-based GEP since handler state fields are typically i32
+            // The state struct layout is { field0, field1, ... } all same type
+            ctx.write("    ");
+            ctx.write_cgname(&field_gep);
+            ctx.write(" = getelementptr ");
+            ctx.write(field_ty.as_str());
+            ctx.write(", ptr ");
+            ctx.write_cgname(&state_ptr);
+            ctx.write(", i64 ");
+            ctx.write(gep_idx_str.as_str());
+            ctx.write("\n");
+            // Load field value and store to local alloca
+            let field_val = ctx.fresh_temp_cg();
+            ctx.emit_load_cg2(&field_val, field_ty.as_str(), &field_gep);
+            let field_val_str = cgname_to_string(&field_val);
+            ctx.emit_store(field_ty.as_str(), field_val_str.as_str(), field_alloca.as_str());
+            fi = fi + 1;
+        }
+    }
+
     ctx.dedent();
 }
 

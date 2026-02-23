@@ -144,8 +144,26 @@ pub fn emit_terminator(
             ctx.write_cgname(&continuation);
             ctx.write(")\n");
 
-            // Store result
-            ctx.emit_store_cg("i64", &result, dest.as_str());
+            // Store result — blood_perform returns i64, narrow to destination type
+            let dest_ty = ctx.get_local_type(destination.local);
+            if str_eq(dest_ty.as_str(), "i64") {
+                ctx.emit_store_cg("i64", &result, dest.as_str());
+            } else if str_eq(dest_ty.as_str(), "i32") || str_eq(dest_ty.as_str(), "i16") || str_eq(dest_ty.as_str(), "i8") || str_eq(dest_ty.as_str(), "i1") {
+                let truncated = ctx.fresh_temp_cg();
+                ctx.write_indent();
+                ctx.write_cgname(&truncated);
+                ctx.write(" = trunc i64 ");
+                ctx.write_cgname(&result);
+                ctx.write(" to ");
+                ctx.write_string(&dest_ty);
+                ctx.write("\n");
+                ctx.emit_store_cg(dest_ty.as_str(), &truncated, dest.as_str());
+            } else if str_eq(dest_ty.as_str(), "{}") {
+                // Unit type destination — discard the perform result
+            } else {
+                // For other types (ptr, struct, etc.), store the raw i64
+                ctx.emit_store_cg("i64", &result, dest.as_str());
+            }
 
             match target {
                 &Option::Some(t) => {
@@ -161,6 +179,10 @@ pub fn emit_terminator(
             // Resume from handler op body.
             // The inner body returns the resume value in its natural return type.
             // The wrapper function handles widening to i64 and continuation resume.
+
+            // Write back handler state fields before returning.
+            emit_handler_state_writeback(ctx);
+
             match value {
                 &Option::Some(ref v) => {
                     let (val, ty) = codegen_expr::emit_operand_typed(ctx, v);
@@ -228,7 +250,47 @@ fn emit_switch_int(
 }
 
 /// Emits a return from the function.
+/// Writes back handler state fields from local allocas to the state pointer.
+/// Called before any return/resume from a handler op body with multiple state fields.
+fn emit_handler_state_writeback(ctx: &mut codegen_ctx::CodegenCtx) {
+    if ctx.handler_op_state_field_count > 1 {
+        let state_local = mir_def::MirLocalId::new(1);
+        let state_alloca = ctx.local_alloca_name(state_local);
+        let state_ptr = ctx.fresh_temp_cg();
+        ctx.emit_load_cg(&state_ptr, "ptr", state_alloca.as_str());
+
+        let mut fi: u32 = 2;
+        while fi <= ctx.handler_op_state_field_count {
+            let field_local = mir_def::MirLocalId::new(fi);
+            let field_alloca = ctx.local_alloca_name(field_local);
+            let field_ty = ctx.get_local_type(field_local);
+            let field_idx = fi - 1;
+            let field_gep = ctx.fresh_temp_cg();
+            let gep_idx_str = codegen_types::format_u64(field_idx as u64);
+            ctx.write("    ");
+            ctx.write_cgname(&field_gep);
+            ctx.write(" = getelementptr ");
+            ctx.write(field_ty.as_str());
+            ctx.write(", ptr ");
+            ctx.write_cgname(&state_ptr);
+            ctx.write(", i64 ");
+            ctx.write(gep_idx_str.as_str());
+            ctx.write("\n");
+            let field_val = ctx.fresh_temp_cg();
+            ctx.emit_load_cg(&field_val, field_ty.as_str(), field_alloca.as_str());
+            let field_val_str = cgname_to_string(&field_val);
+            let field_gep_str = cgname_to_string(&field_gep);
+            ctx.emit_store(field_ty.as_str(), field_val_str.as_str(), field_gep_str.as_str());
+            fi = fi + 1;
+        }
+    }
+}
+
 fn emit_return(ctx: &mut codegen_ctx::CodegenCtx) {
+    // For handler op bodies with multiple state fields: write back field values
+    // from local allocas to the state pointer before returning.
+    emit_handler_state_writeback(ctx);
+
     // Load return value from _0
     let ret_local = mir_def::MirLocalId::new(0);
     let ret_name = ctx.local_cg(ret_local);
@@ -1119,8 +1181,33 @@ fn widen_operand_to_i64(ctx: &mut codegen_ctx::CodegenCtx, val: &str, ty: &str) 
         ctx.write(" to i64\n");
         return widened;
     }
-    // For other types (unit {}, etc.), return 0
-    codegen_ctx::CgName::Str(common::make_string("0"))
+    if str_eq(ty, "{}") {
+        // Unit type — return 0
+        return codegen_ctx::CgName::Str(common::make_string("0"));
+    }
+    // For aggregate types (struct, tuple, etc.): store to a temp alloca
+    // and pass the alloca address as i64. The wrapper will inttoptr and load.
+    let tmp_alloca = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&tmp_alloca);
+    ctx.write(" = alloca ");
+    ctx.write(ty);
+    ctx.write("\n");
+    ctx.write_indent();
+    ctx.write("store ");
+    ctx.write(ty);
+    ctx.write(" ");
+    ctx.write(val);
+    ctx.write(", ptr ");
+    ctx.write_cgname(&tmp_alloca);
+    ctx.write("\n");
+    let widened = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&widened);
+    ctx.write(" = ptrtoint ptr ");
+    ctx.write_cgname(&tmp_alloca);
+    ctx.write(" to i64\n");
+    widened
 }
 
 /// Makes an LLVM array type string like "[3 x i64]".

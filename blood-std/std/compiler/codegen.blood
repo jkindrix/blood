@@ -251,12 +251,20 @@ pub fn generate_function_with_ctx(
     ctx.begin_function(common::make_string(fn_name));
 
     // Build parameter list (skip first local which is return place)
+    // For handler op bodies with multiple state fields, skip the state field
+    // locals (2..1+state_count) — they are loaded from the state pointer, not passed as args.
     let mut params: Vec<(String, String)> = Vec::new();
+    let mut arg_idx: usize = 0;
     let mut p: usize = 1; // Start at 1 to skip return place
     let param_end: usize = 1usize + (body.param_count as usize);
     while p < param_end && p < body.locals.len() {
         let local = &body.locals[p];
         let local_id = mir_def::MirLocalId::new(p as u32);
+        // Skip handler state field locals — they're accessed via GEP into state ptr
+        if ctx.is_handler_state_field(local_id) {
+            p = p + 1;
+            continue;
+        }
         // Handler op state local: arg type is ptr (state pointer from wrapper)
         let ty = if ctx.is_handler_state_ptr(local_id) {
             common::make_string("ptr")
@@ -264,9 +272,10 @@ pub fn generate_function_with_ctx(
             codegen_size::type_to_llvm_with_ctx_id(ctx, local.ty)
         };
         let mut arg_name = common::make_string("%arg");
-        let idx_str = codegen_types::format_u64((p - 1) as u64);
+        let idx_str = codegen_types::format_u64(arg_idx as u64);
         arg_name.push_str(idx_str.as_str());
         params.push((ty, arg_name));
+        arg_idx = arg_idx + 1;
         p = p + 1;
     }
 
@@ -367,7 +376,10 @@ pub fn populate_adt_registry(
             &hir_item::ItemKind::Static(_) => {}
             &hir_item::ItemKind::Trait(_) => {}
             &hir_item::ItemKind::Effect(_) => {}
-            &hir_item::ItemKind::Handler(_) => {}
+            &hir_item::ItemKind::Handler(ref handler_def) => {
+                let layout = build_handler_enum_layout(ctx, entry.def_id.index, handler_def);
+                ctx.register_enum(layout);
+            }
             &hir_item::ItemKind::Module(_) => {}
             &hir_item::ItemKind::Impl(_) => {}
             &hir_item::ItemKind::Macro(_) => {}
@@ -592,6 +604,70 @@ fn build_struct_layout_basic(def_id: u32, struct_def: &hir_item::StructDef) -> c
         def_id: def_id,
         fields: fields,
         llvm_type: llvm_type,
+    }
+}
+
+/// Builds an EnumLayout for an effect handler definition.
+/// Handler structs are laid out like enums: { i32_discriminant, [N x i64]_payload }
+/// where N is computed from the actual byte sizes of state fields (ceil(total_bytes / 8)),
+/// not simply the number of fields. This ensures aggregate types like String (24 bytes)
+/// get enough payload slots.
+fn build_handler_enum_layout(ctx: &mut codegen_ctx::CodegenCtx, def_id: u32, handler_def: &hir_item::HandlerDef) -> codegen_ctx::EnumLayout {
+    let state_count = handler_def.state.len();
+
+    // Build variant payload fields using actual LLVM types
+    let mut fields: Vec<codegen_ctx::AdtFieldInfo> = Vec::new();
+    let mut payload_type = common::make_string("{ ");
+    let mut total_state_bytes: u64 = 0;
+    let mut si: usize = 0;
+    while si < state_count {
+        let field_ty_id = handler_def.state[si].ty;
+        let field_llvm_ty = codegen_size::type_to_llvm_with_ctx_id(ctx, field_ty_id);
+        let field_size = codegen_size::llvm_type_size(field_llvm_ty.as_str());
+        total_state_bytes = total_state_bytes + field_size;
+        if si > 0 {
+            payload_type.push_str(", ");
+        }
+        payload_type.push_str(field_llvm_ty.as_str());
+        fields.push(codegen_ctx::AdtFieldInfo {
+            llvm_type: field_llvm_ty,
+            hir_type: Option::Some(field_ty_id),
+        });
+        si = si + 1;
+    }
+    payload_type.push_str(" }");
+
+    // Single variant (variant_idx = 0) holding all state fields
+    let mut variants: Vec<codegen_ctx::VariantLayout> = Vec::new();
+    variants.push(codegen_ctx::VariantLayout {
+        variant_idx: 0,
+        fields: fields,
+        payload_llvm_type: if state_count > 0 { payload_type } else { common::make_string("{}") },
+    });
+
+    // Build LLVM type: { i32, [N x i64] } for stateful, { i32 } for stateless
+    // N = ceil(total_state_bytes / 8) so aggregate types get enough slots
+    let mut llvm_type = common::make_string("{ i32");
+    let max_payload_size: u64 = if state_count > 0 {
+        let num_i64_slots = (total_state_bytes + 7) / 8;
+        llvm_type.push_str(", [");
+        llvm_type.push_str(codegen_types::format_u64(num_i64_slots).as_str());
+        llvm_type.push_str(" x i64]");
+        num_i64_slots * 8
+    } else {
+        0
+    };
+    llvm_type.push_str(" }");
+
+    // Register total state byte size for PushHandler shadow alloca sizing
+    ctx.register_handler_state_byte_size(def_id, total_state_bytes as u32);
+
+    codegen_ctx::EnumLayout {
+        def_id: def_id,
+        discriminant_type: common::make_string("i32"),
+        variants: variants,
+        llvm_type: llvm_type,
+        max_payload_size: max_payload_size,
     }
 }
 

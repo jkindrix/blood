@@ -259,6 +259,13 @@ pub struct CodegenCtx {
     /// Vec entries allow iteration for cloning; hash for O(1) lookup.
     pub handler_effect_entries: Vec<HandlerEffectEntry>,
     handler_effect_hash: hashmap::HashMapU64U32,
+    /// Mapping from handler DefId to state field count.
+    /// Used during PushHandler codegen to determine if handler is truly stateless.
+    handler_state_count_hash: hashmap::HashMapU64U32,
+    /// Mapping from handler DefId to total state byte size.
+    /// Used during PushHandler codegen to allocate correctly-sized state shadow allocas.
+    /// Accounts for aggregate types like String (24 bytes) that need more than 8 bytes.
+    handler_state_byte_size_hash: hashmap::HashMapU64U32,
     /// Whether the current function being generated is a handler op body.
     /// When true, Resume terminators emit `ret i64` instead of blood_resume calls.
     pub is_handler_op: bool,
@@ -271,6 +278,9 @@ pub struct CodegenCtx {
     /// Set to 1 when compiling handler op bodies, -1 otherwise.
     /// When >= 0, the local's alloca is `ptr` and accesses go through the pointer.
     pub handler_op_state_local: i32,
+    /// Number of state fields in the current handler op body (0 if not a handler op).
+    /// When > 1, locals 2..1+count are state fields accessed via GEP into the state pointer.
+    pub handler_op_state_field_count: u32,
     /// Hash set of handler op body DefIds.  Value 1 = is a handler op body.
     handler_op_body_hash: hashmap::HashMapU64U32,
     /// Vec of handler op body DefIds (for cloning to worker contexts).
@@ -427,10 +437,13 @@ impl CodegenCtx {
             call_remaps: Vec::new(),
             handler_effect_entries: Vec::with_capacity(32),
             handler_effect_hash: hashmap::HashMapU64U32::with_capacity(32),
+            handler_state_count_hash: hashmap::HashMapU64U32::with_capacity(16),
+            handler_state_byte_size_hash: hashmap::HashMapU64U32::with_capacity(16),
             is_handler_op: false,
             inline_stubs: Vec::with_capacity(128),
             inline_stub_count: 0,
             handler_op_state_local: -1,
+            handler_op_state_field_count: 0,
             handler_op_body_hash: hashmap::HashMapU64U32::with_capacity(16),
             handler_op_body_ids: Vec::with_capacity(16),
             op_def_index_hash: hashmap::HashMapU64U32::with_capacity(16),
@@ -490,10 +503,13 @@ impl CodegenCtx {
             call_remaps: Vec::new(),
             handler_effect_entries: Vec::with_capacity(32),
             handler_effect_hash: hashmap::HashMapU64U32::with_capacity(32),
+            handler_state_count_hash: hashmap::HashMapU64U32::with_capacity(16),
+            handler_state_byte_size_hash: hashmap::HashMapU64U32::with_capacity(16),
             is_handler_op: false,
             inline_stubs: Vec::with_capacity(128),
             inline_stub_count: 0,
             handler_op_state_local: -1,
+            handler_op_state_field_count: 0,
             handler_op_body_hash: hashmap::HashMapU64U32::with_capacity(16),
             handler_op_body_ids: Vec::with_capacity(16),
             op_def_index_hash: hashmap::HashMapU64U32::with_capacity(16),
@@ -664,6 +680,34 @@ impl CodegenCtx {
         match self.handler_effect_hash.get(handler_def_id as u64) {
             Option::Some(v) => Option::Some(v),
             Option::None => Option::None,
+        }
+    }
+
+    /// Registers handler DefId → state field count mapping.
+    pub fn register_handler_state_count(self: &mut CodegenCtx, handler_def_id: u32, state_count: u32) {
+        self.handler_state_count_hash.insert(handler_def_id as u64, state_count);
+    }
+
+    /// Looks up the state field count for a handler DefId.
+    /// Returns 0 if not registered.
+    pub fn lookup_handler_state_count(self: &CodegenCtx, handler_def_id: u32) -> u32 {
+        match self.handler_state_count_hash.get(handler_def_id as u64) {
+            Option::Some(v) => v,
+            Option::None => 0,
+        }
+    }
+
+    /// Registers handler DefId → total state byte size mapping.
+    pub fn register_handler_state_byte_size(self: &mut CodegenCtx, handler_def_id: u32, byte_size: u32) {
+        self.handler_state_byte_size_hash.insert(handler_def_id as u64, byte_size);
+    }
+
+    /// Looks up the total state byte size for a handler DefId.
+    /// Returns 0 if not registered.
+    pub fn lookup_handler_state_byte_size(self: &CodegenCtx, handler_def_id: u32) -> u32 {
+        match self.handler_state_byte_size_hash.get(handler_def_id as u64) {
+            Option::Some(v) => v,
+            Option::None => 0,
         }
     }
 
@@ -1036,15 +1080,43 @@ impl CodegenCtx {
         self.handler_op_state_local >= 0 && local.index == (self.handler_op_state_local as u32)
     }
 
+    /// Returns true if a local is a handler state field (not the state pointer itself,
+    /// but a secondary field accessed via GEP into the state struct).
+    /// For state_field_count=2, locals 2 through 2 are state fields (local 2 is field index 1).
+    pub fn is_handler_state_field(self: &CodegenCtx, local: mir_def::MirLocalId) -> bool {
+        if self.handler_op_state_field_count <= 1 {
+            return false;
+        }
+        // State fields are locals 2 through (1 + state_field_count - 1)
+        // i.e., local index 2 to handler_op_state_field_count (inclusive)
+        local.index >= 2 && local.index <= self.handler_op_state_field_count
+    }
+
+    /// Returns the GEP field index for a handler state field local.
+    /// Local 2 = field index 1, local 3 = field index 2, etc.
+    pub fn handler_state_field_gep_index(self: &CodegenCtx, local: mir_def::MirLocalId) -> u32 {
+        local.index - 1
+    }
+
     /// Registers a DefId as a handler op body function.
-    pub fn register_handler_op_body(self: &mut CodegenCtx, def_id: u32) {
-        self.handler_op_body_hash.insert(def_id as u64, 1);
+    /// state_count is the number of state fields in the enclosing handler.
+    pub fn register_handler_op_body(self: &mut CodegenCtx, def_id: u32, state_count: u32) {
+        self.handler_op_body_hash.insert(def_id as u64, state_count);
         self.handler_op_body_ids.push(def_id);
     }
 
     /// Returns true if the given DefId is a handler op body function.
     pub fn is_handler_op_body(self: &CodegenCtx, def_id: u32) -> bool {
         self.handler_op_body_hash.contains_key(def_id as u64)
+    }
+
+    /// Returns the number of state fields for a handler op body.
+    /// Returns 0 if the handler has no state or the DefId is not a handler op.
+    pub fn handler_op_state_count(self: &CodegenCtx, def_id: u32) -> u32 {
+        match self.handler_op_body_hash.get(def_id as u64) {
+            Option::Some(v) => v,
+            Option::None => 0,
+        }
     }
 
     /// Registers an (effect_def_id, op_name_symbol) → positional index mapping.
@@ -1143,11 +1215,6 @@ impl CodegenCtx {
             span: span,
             notes: notes,
         });
-    }
-
-    /// Records a codegen warning with the current function context.
-    pub fn codegen_warning(self: &mut CodegenCtx, message: String) {
-        self.codegen_warnings.push(message);
     }
 
     /// Returns true if any codegen errors have been recorded.
@@ -2152,10 +2219,13 @@ impl CodegenCtx {
             call_remaps: Vec::new(),
             handler_effect_entries: Vec::new(),
             handler_effect_hash: hashmap::HashMapU64U32::new(),
+            handler_state_count_hash: hashmap::HashMapU64U32::new(),
+            handler_state_byte_size_hash: hashmap::HashMapU64U32::new(),
             is_handler_op: false,
             inline_stubs: Vec::new(),
             inline_stub_count: 0,
             handler_op_state_local: -1,
+            handler_op_state_field_count: 0,
             handler_op_body_hash: hashmap::HashMapU64U32::new(),
             handler_op_body_ids: Vec::new(),
             op_def_index_hash: hashmap::HashMapU64U32::new(),
@@ -2166,10 +2236,12 @@ impl CodegenCtx {
             current_span: Option::None,
         };
 
-        // Copy handler_op_body_ids (read-only, needed to flag handler op bodies)
+        // Copy handler_op_body_ids with state counts (read-only, needed to flag handler op bodies)
         let mut hbi: usize = 0;
         while hbi < self.handler_op_body_ids.len() {
-            worker.register_handler_op_body(self.handler_op_body_ids[hbi]);
+            let hbi_def_id = self.handler_op_body_ids[hbi];
+            let hbi_state_count = self.handler_op_state_count(hbi_def_id);
+            worker.register_handler_op_body(hbi_def_id, hbi_state_count);
             hbi = hbi + 1;
         }
 
@@ -2178,6 +2250,8 @@ impl CodegenCtx {
         while hei < self.handler_effect_entries.len() {
             let he = &self.handler_effect_entries[hei];
             worker.register_handler_effect(he.handler_def_id, he.effect_def_id);
+            worker.register_handler_state_count(he.handler_def_id, self.lookup_handler_state_count(he.handler_def_id));
+            worker.register_handler_state_byte_size(he.handler_def_id, self.lookup_handler_state_byte_size(he.handler_def_id));
             hei = hei + 1;
         }
 
