@@ -51,6 +51,33 @@ pub fn type_to_llvm_with_ctx(
                     return build_enum_type_string(payload_size, max_align);
                 }
             }
+            // For registered generic enums (Option<T>, Result<T,E>) with type args,
+            // check if the concrete payload exceeds the registered max_payload_size.
+            // e.g. Option<IntHolder> where IntHolder is { i32, i64 } = 16 bytes
+            // but registered Option has max_payload_size = 8.
+            if args.len() > 0 {
+                let registered_max = match ctx.lookup_enum(def_id.index) {
+                    Option::Some(layout) => layout.max_payload_size,
+                    Option::None => 0,
+                };
+                if registered_max > 0 {
+                    let mut payload_size: u64 = 0;
+                    let mut max_align: u64 = 1;
+                    let mut ai: usize = 0;
+                    while ai < args.len() {
+                        let arg_llvm = type_to_llvm_with_ctx(ctx, &args[ai]);
+                        payload_size = payload_size + llvm_type_size(arg_llvm.as_str());
+                        let a = llvm_type_alignment(arg_llvm.as_str());
+                        if a > max_align {
+                            max_align = a;
+                        }
+                        ai = ai + 1;
+                    }
+                    if payload_size > registered_max {
+                        return build_enum_type_string(payload_size, max_align);
+                    }
+                }
+            }
             result
         }
         _ => codegen_types::type_to_llvm(ty),
@@ -79,6 +106,31 @@ pub fn type_size_with_ctx(ctx: &mut codegen_ctx::CodegenCtx, ty: &hir_ty::Type) 
                 if payload_size > 8 {
                     let enum_ty = build_enum_type_string(payload_size, max_align);
                     return llvm_type_size(enum_ty.as_str());
+                }
+            }
+            // For registered generic enums, check if concrete payload exceeds registered size.
+            if args.len() > 0 {
+                let registered_max = match ctx.lookup_enum(def_id.index) {
+                    Option::Some(layout) => layout.max_payload_size,
+                    Option::None => 0,
+                };
+                if registered_max > 0 {
+                    let mut payload_size: u64 = 0;
+                    let mut max_align: u64 = 1;
+                    let mut ai: usize = 0;
+                    while ai < args.len() {
+                        let arg_llvm = type_to_llvm_with_ctx(ctx, &args[ai]);
+                        payload_size = payload_size + llvm_type_size(arg_llvm.as_str());
+                        let a = llvm_type_alignment(arg_llvm.as_str());
+                        if a > max_align {
+                            max_align = a;
+                        }
+                        ai = ai + 1;
+                    }
+                    if payload_size > registered_max {
+                        let enum_ty = build_enum_type_string(payload_size, max_align);
+                        return llvm_type_size(enum_ty.as_str());
+                    }
                 }
             }
             base
@@ -196,6 +248,33 @@ pub fn type_to_llvm_with_ctx_id(
                     return build_enum_type_string(payload_size, max_align);
                 }
             }
+            // For registered generic enums (Option<T>, Result<T,E>) with type args,
+            // check if the concrete payload exceeds the registered max_payload_size.
+            if arg_len > 0 {
+                let registered_max = match ctx.lookup_enum(def_id.index) {
+                    Option::Some(layout) => layout.max_payload_size,
+                    Option::None => 0,
+                };
+                if registered_max > 0 {
+                    let interner2 = type_intern::type_interner();
+                    let mut payload_size: u64 = 0;
+                    let mut max_align: u64 = 1;
+                    let mut ai: usize = 0;
+                    while ai < arg_len {
+                        let arg_id = interner2.get_ty_list_element(args, ai);
+                        let arg_llvm = type_to_llvm_with_ctx_id(ctx, arg_id);
+                        payload_size = payload_size + llvm_type_size(arg_llvm.as_str());
+                        let a = llvm_type_alignment(arg_llvm.as_str());
+                        if a > max_align {
+                            max_align = a;
+                        }
+                        ai = ai + 1;
+                    }
+                    if payload_size > registered_max {
+                        return build_enum_type_string(payload_size, max_align);
+                    }
+                }
+            }
             // For registered structs with type args, rebuild with concrete types.
             // This handles user-defined generic structs like Pair<i32, i32>.
             if arg_len > 0 {
@@ -247,6 +326,32 @@ pub fn type_size_with_ctx_id(ctx: &mut codegen_ctx::CodegenCtx, ty_id: type_inte
                 if payload_size > 8 {
                     let enum_ty = build_enum_type_string(payload_size, max_align);
                     return llvm_type_size(enum_ty.as_str());
+                }
+            }
+            // For registered generic enums, check if concrete payload exceeds registered size.
+            if arg_len > 0 {
+                let registered_max = match ctx.lookup_enum(def_id.index) {
+                    Option::Some(layout) => layout.max_payload_size,
+                    Option::None => 0,
+                };
+                if registered_max > 0 {
+                    let mut payload_size: u64 = 0;
+                    let mut max_align: u64 = 1;
+                    let mut ai: usize = 0;
+                    while ai < arg_len {
+                        let arg_id = type_intern::type_interner().get_ty_list_element(args, ai);
+                        let arg_llvm = type_to_llvm_with_ctx_id(ctx, arg_id);
+                        payload_size = payload_size + llvm_type_size(arg_llvm.as_str());
+                        let a = llvm_type_alignment(arg_llvm.as_str());
+                        if a > max_align {
+                            max_align = a;
+                        }
+                        ai = ai + 1;
+                    }
+                    if payload_size > registered_max {
+                        let enum_ty = build_enum_type_string(payload_size, max_align);
+                        return llvm_type_size(enum_ty.as_str());
+                    }
                 }
             }
             // For registered generic structs, compute size from rebuilt LLVM type

@@ -605,6 +605,31 @@ pub fn type_to_llvm_with_ctx(
                     return codegen_size::build_enum_type_string(payload_size, max_align);
                 }
             }
+            // For registered generic enums (Option<T>, Result<T,E>) with type args,
+            // check if the concrete payload exceeds the registered max_payload_size.
+            if args.len() > 0 {
+                let registered_max = match ctx.lookup_enum(def_id.index) {
+                    Option::Some(layout) => layout.max_payload_size,
+                    Option::None => 0,
+                };
+                if registered_max > 0 {
+                    let mut payload_size: u64 = 0;
+                    let mut max_align: u64 = 1;
+                    let mut ai: usize = 0;
+                    while ai < args.len() {
+                        let arg_llvm = codegen_size::type_to_llvm_with_ctx(ctx, &args[ai]);
+                        payload_size = payload_size + codegen_size::llvm_type_size(arg_llvm.as_str());
+                        let a = codegen_size::llvm_type_alignment(arg_llvm.as_str());
+                        if a > max_align {
+                            max_align = a;
+                        }
+                        ai = ai + 1;
+                    }
+                    if payload_size > registered_max {
+                        return codegen_size::build_enum_type_string(payload_size, max_align);
+                    }
+                }
+            }
             // For registered structs with type args, rebuild with concrete types.
             // This handles user-defined generic structs like Wrapper<i32>.
             if args.len() > 0 {
