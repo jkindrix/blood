@@ -79,8 +79,14 @@ All fixed bugs (BUG-001 through BUG-013) are documented in `tools/FAILURE_LOG.md
 # Check syntax/types
 compiler-rust/target/release/blood check file.blood
 
-# Build executable
+# Build executable (output: build/debug/<stem> relative to source file)
 compiler-rust/target/release/blood build file.blood
+
+# Build with custom output directory
+compiler-rust/target/release/blood build file.blood --build-dir /tmp/mybuild
+
+# Build with explicit output path (-o overrides only the final binary)
+compiler-rust/target/release/blood build file.blood -o /tmp/mybin
 
 # Run
 compiler-rust/target/release/blood run file.blood
@@ -95,6 +101,23 @@ cd blood-std/std/compiler && ./build_selfhost.sh timings
 # Run ground-truth tests
 cd blood-std/std/compiler && ./build_selfhost.sh ground-truth
 ```
+
+### Build Directory Layout
+
+All build artifacts go to `build/` by default (relative to source file parent):
+
+```
+build/
+├── debug/          # Default profile: binary, .ll, .o
+├── release/        # --release profile
+└── obj/<stem>/     # Per-definition object files (blood-rust incremental)
+```
+
+Override hierarchy (highest priority first):
+1. `--build-dir <path>` CLI flag
+2. `[build] build-dir` in Blood.toml (project mode)
+3. `BLOOD_BUILD_DIR` environment variable
+4. Default: `build/` relative to source file parent
 
 ## Development Tools
 
@@ -111,7 +134,7 @@ cd blood-std/std/compiler && ./build_selfhost.sh ground-truth
 | `tools/FAILURE_LOG.md` | Structured log of past bugs, root causes, resolutions |
 | `tools/AGENT_PROTOCOL.md` | Session protocol: investigation workflow, stop conditions |
 
-**Environment variables:** `BLOOD_REF` (reference compiler), `BLOOD_TEST` (test compiler), `BLOOD_RUNTIME` (runtime.o), `BLOOD_RUST_RUNTIME` (libblood_runtime.a).
+**Environment variables:** `BLOOD_REF` (reference compiler), `BLOOD_TEST` (test compiler), `BLOOD_RUNTIME` (runtime.o), `BLOOD_RUST_RUNTIME` (libblood_runtime.a), `BLOOD_BUILD_DIR` (build output directory), `BLOOD_CACHE` (compilation cache directory).
 
 Run each tool with `--help` or see its header comments for detailed usage.
 

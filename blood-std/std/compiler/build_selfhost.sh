@@ -34,7 +34,8 @@ GROUND_TRUTH="${GROUND_TRUTH:-$REPO_ROOT/compiler-rust/tests/ground-truth}"
 export BLOOD_RUNTIME="${RUNTIME_O}"
 export BLOOD_RUST_RUNTIME="${RUNTIME_A}"
 
-# Direct cache writes to build directory during scripted builds
+# Direct build artifacts and cache to build directory during scripted builds
+export BLOOD_BUILD_DIR="${BUILD_DIR}"
 export BLOOD_CACHE="${BUILD_DIR}/.blood-cache"
 
 step()  { printf "\n\033[1;34m==> [%s] %s\033[0m\n" "$(date +%H:%M:%S)" "$1"; }
@@ -95,15 +96,16 @@ build_first_gen() {
     [ -f "$BLOOD_RUST" ] || die "blood-rust not found at $BLOOD_RUST"
 
     step "Clearing all build caches"
-    rm -rf "${DIR}"/*.blood_objs "${DIR}"/tests/*.blood_objs
+    rm -rf "$BUILD_DIR/obj" "$BUILD_DIR/debug" "$BUILD_DIR/release"
+    rm -rf "${DIR}"/*.blood_objs "${DIR}"/tests/*.blood_objs  # Legacy cleanup
     rm -rf "${HOME}"/.blood*/cache/
     ok "Caches cleared"
 
     step "Building first_gen with blood-rust"
     local start_ts
     start_ts=$(date +%s)
-    if $BLOOD_RUST build main.blood --no-cache $flags; then
-        mv main "$BUILD_DIR/first_gen"
+    if $BLOOD_RUST build main.blood --no-cache --build-dir "$BUILD_DIR" $flags; then
+        mv "$BUILD_DIR/debug/main" "$BUILD_DIR/first_gen"
         ok "first_gen created ($(wc -c < "$BUILD_DIR/first_gen") bytes) in $(elapsed_since "$start_ts")"
     else
         local rc=$?
@@ -764,9 +766,9 @@ case "${1:-full}" in
         rm -rf "$BUILD_DIR"
         rm -rf .bisect_* .logs
         find "${DIR}" -name ".blood-cache" -type d -exec rm -rf {} + 2>/dev/null || true
-        # Per-file incremental compilation caches (next to source files)
-        rm -rf "${DIR}"/*.blood_objs
-        rm -rf "${DIR}"/tests/*.blood_objs
+        # Legacy artifacts from before build-dir support (next to source files)
+        rm -rf "${DIR}"/*.blood_objs "${DIR}"/tests/*.blood_objs
+        rm -f "${DIR}"/*.ll "${DIR}"/*.o
         # Global per-definition object cache
         rm -rf "${HOME}"/.blood*/cache/
         ok "Build artifacts and all caches removed"
@@ -799,6 +801,8 @@ Verification commands:
 
 Environment:
   BLOOD_RUST        Path to blood-rust compiler (default: <repo>/compiler-rust/target/release/blood)
+  BLOOD_BUILD_DIR   Build output directory (default: <script_dir>/build)
+  BLOOD_CACHE       Cache directory (default: <build_dir>/.blood-cache)
   RUNTIME_O         Path to runtime.o (default: <repo>/compiler-rust/runtime/runtime.o)
   RUNTIME_A         Path to libblood_runtime.a (default: <repo>/compiler-rust/target/release/libblood_runtime.a)
   GROUND_TRUTH      Path to ground-truth test dir (default: <repo>/compiler-rust/tests/ground-truth)

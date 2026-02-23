@@ -127,6 +127,8 @@ pub struct Args {
     pub test_only_ignored: bool,
     /// Whether to stop on first failure (--fail-fast).
     pub test_fail_fast: bool,
+    /// Build directory for output artifacts (if provided via --build-dir).
+    pub build_dir: Option<String>,
 }
 
 impl Args {
@@ -157,6 +159,7 @@ impl Args {
             test_include_ignored: false,
             test_only_ignored: false,
             test_fail_fast: false,
+            build_dir: Option::None,
         }
     }
 
@@ -187,6 +190,7 @@ impl Args {
             test_include_ignored: false,
             test_only_ignored: false,
             test_fail_fast: false,
+            build_dir: Option::None,
         }
     }
 
@@ -217,6 +221,7 @@ impl Args {
             test_include_ignored: false,
             test_only_ignored: false,
             test_fail_fast: false,
+            build_dir: Option::None,
         }
     }
 }
@@ -466,10 +471,23 @@ fn run_build(args: &Args) -> i32 {
                 Option::None => { return 1; }
             };
 
+            // Resolve build directory and create profile subdirectory
+            let build_dir = resolve_build_dir(args);
+            let profile_dir = source::join_path(build_dir.as_str(), profile_subdir(args));
+            ensure_dir(profile_dir.as_str());
+
+            let stem = file_stem(path);
+
             // Determine output path for LLVM IR
             let ll_path = match &args.output_file {
                 &Option::Some(ref out) => clone_string(out),
-                &Option::None => default_ll_path(path),
+                &Option::None => {
+                    let mut p = clone_string(&profile_dir);
+                    p.push('/');
+                    p.push_str(stem.as_str());
+                    p.push_str(".ll");
+                    p
+                }
             };
 
             // Phase 1: Generate LLVM IR via streaming codegen
@@ -582,8 +600,21 @@ fn run_run(args: &Args) -> i32 {
                 Option::None => { return 1; }
             };
 
+            // Resolve build directory and create profile subdirectory
+            let build_dir = resolve_build_dir(args);
+            let profile_dir = source::join_path(build_dir.as_str(), profile_subdir(args));
+            ensure_dir(profile_dir.as_str());
+
+            let stem = file_stem(path);
+
             // Phase 1: Generate LLVM IR
-            let ll_path = default_ll_path(path);
+            let ll_path = {
+                let mut p = clone_string(&profile_dir);
+                p.push('/');
+                p.push_str(stem.as_str());
+                p.push_str(".ll");
+                p
+            };
             let result = compile_file_streaming(path.as_str(), ll_path.as_str(), args);
             if !result {
                 return 1;
@@ -602,7 +633,9 @@ fn run_run(args: &Args) -> i32 {
             }
 
             // Phase 2: Compile IR to object file with llc-18
-            let obj_path = replace_ext(path, ".o");
+            let base_path = strip_ll_ext(&ll_path);
+            let mut obj_path = common::make_string(base_path.as_str());
+            obj_path.push_str(".o");
             let mut llc_cmd = String::new();
             llc_cmd.push_str("llc-18 ");
             llc_cmd.push_str(ll_path.as_str());
@@ -636,7 +669,7 @@ fn run_run(args: &Args) -> i32 {
             }
 
             // Phase 3: Link with clang-18, blood runtime, and C runtime stub
-            let bin_path = strip_blood_ext(path);
+            let bin_path = base_path;
             let mut clang_cmd = String::new();
             clang_cmd.push_str("clang-18 ");
             clang_cmd.push_str(obj_path.as_str());
@@ -661,10 +694,7 @@ fn run_run(args: &Args) -> i32 {
             }
 
             // Phase 4: Execute the binary
-            let mut run_cmd = String::new();
-            run_cmd.push_str("./");
-            run_cmd.push_str(bin_path.as_str());
-            let exit_code = system(run_cmd.as_str());
+            let exit_code = system(bin_path.as_str());
             exit_code
         }
         &Option::None => {
@@ -687,7 +717,7 @@ fn run_help(_args: &Args) -> i32 {
     help.push_str("    build    Compile source to executable\n");
     help.push_str("    run      Compile and execute\n");
     help.push_str("    test     Discover and run #[test] functions\n");
-    help.push_str("    clean    Remove build artifacts (.blood-cache, .ll, .o files)\n");
+    help.push_str("    clean    Remove build artifacts (build/ directory)\n");
     help.push_str("    help     Print this help message\n");
     help.push_str("    version  Print version information\n");
     help.push_str("\n");
@@ -700,6 +730,7 @@ fn run_help(_args: &Args) -> i32 {
     help.push_str("    --no-cache         Skip the build cache\n");
     help.push_str("    --release          Build with -O2 and strip symbols\n");
     help.push_str("    -O0/-O1/-O2/-O3   Set optimization level (default: -O0)\n");
+    help.push_str("    --build-dir <path> Build output directory (default: build/)\n");
     help.push_str("    --emit <mode>      Stop early: 'llvm-ir' or 'obj'\n");
     help.push_str("    --sanitize=address Enable AddressSanitizer\n");
     help.push_str("\n");
@@ -735,13 +766,23 @@ fn run_version(_args: &Args) -> i32 {
 /// Runs the clean command.
 /// Removes build cache directory and (if source file given) derived build artifacts.
 fn run_clean(args: &Args) -> i32 {
-    // Determine base directory
+    // Remove build directory
+    let build_dir = resolve_build_dir(args);
+    if file_exists(build_dir.as_str()) {
+        let mut rm_build = String::new();
+        rm_build.push_str("rm -rf ");
+        shell_quote_into(&mut rm_build, build_dir.as_str());
+        system(rm_build.as_str());
+        print_str("info: Removed build directory: ");
+        print_str(build_dir.as_str());
+        print_newline();
+    }
+
+    // Determine cache directory: BLOOD_CACHE env var or <base_dir>/.blood-cache/
     let base_dir = match &args.source_file {
         &Option::Some(ref path) => source::parent_dir(path.as_str()),
         &Option::None => common::make_string("."),
     };
-
-    // Determine cache directory: BLOOD_CACHE env var or <base_dir>/.blood-cache/
     let cache_env: &str = env_get("BLOOD_CACHE");
     let cache_dir = if cache_env.len() > 0 {
         common::make_string(cache_env)
@@ -750,17 +791,17 @@ fn run_clean(args: &Args) -> i32 {
     };
 
     // Remove cache directory
-    let mut rm_cache = String::new();
-    rm_cache.push_str("rm -rf ");
-    rm_cache.push_str(cache_dir.as_str());
     if file_exists(cache_dir.as_str()) {
+        let mut rm_cache = String::new();
+        rm_cache.push_str("rm -rf ");
+        shell_quote_into(&mut rm_cache, cache_dir.as_str());
         system(rm_cache.as_str());
         print_str("info: Removed cache: ");
         print_str(cache_dir.as_str());
         print_newline();
     }
 
-    // If source file given, also remove derived artifacts (.ll, .o, binary)
+    // Legacy cleanup: remove artifacts next to source files from before build-dir support
     match &args.source_file {
         &Option::Some(ref path) => {
             let ll = default_ll_path(path);
@@ -770,27 +811,27 @@ fn run_clean(args: &Args) -> i32 {
             if file_exists(ll.as_str()) {
                 let mut rm_ll = String::new();
                 rm_ll.push_str("rm -f ");
-                rm_ll.push_str(ll.as_str());
+                shell_quote_into(&mut rm_ll, ll.as_str());
                 system(rm_ll.as_str());
-                print_str("info: Removed ");
+                print_str("info: Removed legacy ");
                 print_str(ll.as_str());
                 print_newline();
             }
             if file_exists(obj.as_str()) {
                 let mut rm_obj = String::new();
                 rm_obj.push_str("rm -f ");
-                rm_obj.push_str(obj.as_str());
+                shell_quote_into(&mut rm_obj, obj.as_str());
                 system(rm_obj.as_str());
-                print_str("info: Removed ");
+                print_str("info: Removed legacy ");
                 print_str(obj.as_str());
                 print_newline();
             }
             if file_exists(bin.as_str()) {
                 let mut rm_bin = String::new();
                 rm_bin.push_str("rm -f ");
-                rm_bin.push_str(bin.as_str());
+                shell_quote_into(&mut rm_bin, bin.as_str());
                 system(rm_bin.as_str());
-                print_str("info: Removed ");
+                print_str("info: Removed legacy ");
                 print_str(bin.as_str());
                 print_newline();
             }
@@ -1439,6 +1480,8 @@ pub fn parse_args(argc: i32, argv: &Vec<String>) -> Args {
                 if i + 1 < argv.len() {
                     i = i + 1;
                     args.output_file = Option::Some(clone_string(&argv[i]));
+                } else {
+                    print_error("missing value for -o");
                 }
             } else if str_equals(arg, "-v") {
                 args.verbose = true;
@@ -1448,6 +1491,13 @@ pub fn parse_args(argc: i32, argv: &Vec<String>) -> Args {
                 args.timings = true;
             } else if str_equals(arg, "--no-cache") {
                 args.no_cache = true;
+            } else if str_equals(arg, "--build-dir") {
+                if i + 1 < argv.len() {
+                    i = i + 1;
+                    args.build_dir = Option::Some(clone_string(&argv[i]));
+                } else {
+                    print_error("missing value for --build-dir");
+                }
             } else if str_equals(arg, "--release") {
                 args.release = true;
                 args.opt_level = 2;
@@ -1468,6 +1518,8 @@ pub fn parse_args(argc: i32, argv: &Vec<String>) -> Args {
                     } else {
                         print_error("unknown --emit mode (expected 'llvm-ir' or 'obj')");
                     }
+                } else {
+                    print_error("missing value for --emit (expected 'llvm-ir' or 'obj')");
                 }
             } else if str_equals(arg, "-O0") {
                 args.opt_level = 0;
@@ -1506,11 +1558,15 @@ pub fn parse_args(argc: i32, argv: &Vec<String>) -> Args {
                 if i + 1 < argv.len() {
                     i = i + 1;
                     args.test_filter = Option::Some(clone_string(&argv[i]));
+                } else {
+                    print_error("missing value for --filter");
                 }
             } else if str_equals(arg, "-F") {
                 if i + 1 < argv.len() {
                     i = i + 1;
                     args.test_filter = Option::Some(clone_string(&argv[i]));
+                } else {
+                    print_error("missing value for -F");
                 }
             } else if str_starts_with(arg, "--filter=") {
                 args.test_filter = Option::Some(substr_after(arg, 9));
@@ -2066,6 +2122,102 @@ fn generate_foreign_declarations(
     }
 
     output
+}
+
+// ============================================================
+// Build Directory Helpers
+// ============================================================
+
+/// Resolve the build output directory using the override hierarchy:
+/// 1. CLI flag (--build-dir)
+/// 2. BLOOD_BUILD_DIR environment variable
+/// 3. Default: build/ relative to source file parent
+fn resolve_build_dir(args: &Args) -> String {
+    // 1. CLI flag
+    match &args.build_dir {
+        &Option::Some(ref dir) => { return clone_string(dir); }
+        &Option::None => {}
+    }
+    // 2. BLOOD_BUILD_DIR env var
+    let env_val: &str = env_get("BLOOD_BUILD_DIR");
+    if env_val.len() > 0 {
+        return common::make_string(env_val);
+    }
+    // 3. Default: build/ relative to source file parent
+    let base_dir = match &args.source_file {
+        &Option::Some(ref path) => source::parent_dir(path.as_str()),
+        &Option::None => common::make_string("."),
+    };
+    source::join_path(base_dir.as_str(), "build")
+}
+
+/// Return the profile subdirectory name based on release mode.
+fn profile_subdir(args: &Args) -> &str {
+    if args.release { "release" } else { "debug" }
+}
+
+/// Create a directory (and parents) if it doesn't exist. Uses mkdir -p.
+fn ensure_dir(path: &str) {
+    let mut cmd = String::new();
+    cmd.push_str("mkdir -p ");
+    shell_quote_into(&mut cmd, path);
+    system(cmd.as_str());
+}
+
+/// Append a shell-quoted version of `s` to `out`.
+/// Uses single quotes with embedded single quotes escaped as `'\''`.
+fn shell_quote_into(out: &mut String, s: &str) {
+    out.push('\'');
+    let bytes = s.as_bytes();
+    let mut i: usize = 0;
+    while i < bytes.len() {
+        if bytes[i] == 39 { // single quote
+            // End current quoted segment, add escaped quote, resume quoting
+            out.push('\'');
+            out.push('\\');
+            out.push('\'');
+            out.push('\'');
+        } else {
+            out.push(bytes[i] as char);
+        }
+        i = i + 1;
+    }
+    out.push('\'');
+}
+
+/// Extract the file stem (filename without the last extension) from a path.
+fn file_stem(path: &String) -> String {
+    // Get the filename part (after last /)
+    let bytes = path.as_bytes();
+    let mut last_sep: i32 = -1;
+    let mut i: usize = 0;
+    while i < bytes.len() {
+        if bytes[i] == 47 { // '/'
+            last_sep = i as i32;
+        }
+        i = i + 1;
+    }
+    let name_start: usize = if last_sep < 0 { 0 } else { (last_sep as usize) + 1 };
+
+    // Find the last dot in the filename part
+    let mut last_dot: i32 = -1;
+    i = name_start;
+    while i < bytes.len() {
+        if bytes[i] == 46 { // '.'
+            last_dot = i as i32;
+        }
+        i = i + 1;
+    }
+
+    // Extract stem
+    let name_end: usize = if last_dot < (name_start as i32) { bytes.len() } else { last_dot as usize };
+    let mut result = String::new();
+    i = name_start;
+    while i < name_end {
+        result.push(bytes[i] as char);
+        i = i + 1;
+    }
+    result
 }
 
 // ============================================================

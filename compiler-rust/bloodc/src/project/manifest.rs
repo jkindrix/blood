@@ -252,6 +252,14 @@ pub struct Profile {
     pub strip: Option<String>,
 }
 
+/// Build configuration section.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct BuildSection {
+    /// Build output directory (default: "build")
+    #[serde(default, rename = "build-dir")]
+    pub build_dir: Option<String>,
+}
+
 /// The complete Blood.toml manifest.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Manifest {
@@ -292,6 +300,10 @@ pub struct Manifest {
     /// Build profiles
     #[serde(default)]
     pub profile: ProfileSection,
+
+    /// Build configuration
+    #[serde(default)]
+    pub build: BuildSection,
 
     /// Feature definitions
     #[serde(default)]
@@ -429,6 +441,7 @@ impl Manifest {
             bench: Vec::new(),
             example: Vec::new(),
             profile: ProfileSection::default(),
+            build: BuildSection::default(),
             features: HashMap::new(),
         }
     }
@@ -559,5 +572,32 @@ mod tests {
         assert_eq!(bins.len(), 2);
         assert_eq!(bins[0].0, "test");
         assert_eq!(bins[1].0, "other");
+    }
+
+    #[test]
+    fn test_build_section_defaults() {
+        let content = r#"
+            [package]
+            name = "test"
+            version = "0.1.0"
+        "#;
+
+        let manifest = Manifest::from_str(content).unwrap();
+        assert!(manifest.build.build_dir.is_none());
+    }
+
+    #[test]
+    fn test_build_section_custom() {
+        let content = r#"
+            [package]
+            name = "test"
+            version = "0.1.0"
+
+            [build]
+            build-dir = "out"
+        "#;
+
+        let manifest = Manifest::from_str(content).unwrap();
+        assert_eq!(manifest.build.build_dir, Some("out".to_string()));
     }
 }

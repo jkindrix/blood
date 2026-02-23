@@ -159,6 +159,10 @@ struct FileArgs {
     /// Disable the build cache (recompile all definitions)
     #[arg(long)]
     no_cache: bool,
+
+    /// Directory for build output (default: build/)
+    #[arg(long, value_name = "PATH")]
+    build_dir: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -212,6 +216,10 @@ struct BuildArgs {
     /// Disable the build cache (recompile all definitions)
     #[arg(long)]
     no_cache: bool,
+
+    /// Directory for build output (default: build/)
+    #[arg(long, value_name = "PATH")]
+    build_dir: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -491,6 +499,7 @@ fn cmd_check_project(args: &BuildArgs, verbosity: u8) -> ExitCode {
             emit: Vec::new(),
             output: None,
             no_cache: false,
+            build_dir: args.build_dir.clone(),
         };
         return cmd_check(&file_args, verbosity);
     }
@@ -538,6 +547,7 @@ fn cmd_check_project(args: &BuildArgs, verbosity: u8) -> ExitCode {
                 emit: Vec::new(),
                 output: None,
                 no_cache: false,
+                build_dir: args.build_dir.clone(),
             };
             cmd_check(&file_args, verbosity)
         }
@@ -561,6 +571,7 @@ fn cmd_build_project(args: &BuildArgs, verbosity: u8, timings: bool) -> ExitCode
             emit: args.emit.clone(),
             output: args.output.clone(),
             no_cache: args.no_cache,
+            build_dir: args.build_dir.clone(),
         };
         return cmd_build(&file_args, verbosity, timings);
     }
@@ -592,6 +603,11 @@ fn cmd_build_project(args: &BuildArgs, verbosity: u8, timings: bool) -> ExitCode
                 }
             }
 
+            // Resolve build directory: CLI flag > Blood.toml [build] > env > default
+            let effective_build_dir = args.build_dir.clone().or_else(|| {
+                manifest.build.build_dir.as_ref().map(|d| project_root.join(d))
+            });
+
             // Build all binary targets
             let mut success = true;
             for (bin_name, bin_path) in manifest.resolved_bins() {
@@ -610,6 +626,7 @@ fn cmd_build_project(args: &BuildArgs, verbosity: u8, timings: bool) -> ExitCode
                     emit: args.emit.clone(),
                     output: args.output.clone(),
                     no_cache: args.no_cache,
+                    build_dir: effective_build_dir.clone(),
                 };
 
                 let result = cmd_build(&file_args, verbosity, timings);
@@ -943,6 +960,36 @@ fn find_rust_runtime() -> Option<PathBuf> {
     }
 
     None
+}
+
+/// Resolve the build output directory using the override hierarchy:
+/// 1. CLI flag (--build-dir)
+/// 2. Blood.toml [build] build-dir (project mode only)
+/// 3. BLOOD_BUILD_DIR environment variable
+/// 4. Default: build/ relative to source file parent
+fn resolve_build_dir(cli_build_dir: Option<&PathBuf>, source_file: &std::path::Path) -> PathBuf {
+    // 1. CLI flag (highest priority)
+    if let Some(dir) = cli_build_dir {
+        return dir.clone();
+    }
+    // 2. Blood.toml [build] build-dir (checked by caller in project mode,
+    //    passed via cli_build_dir — see cmd_build_project)
+    // 3. BLOOD_BUILD_DIR env var
+    if let Ok(env_dir) = std::env::var("BLOOD_BUILD_DIR") {
+        if !env_dir.is_empty() {
+            return PathBuf::from(env_dir);
+        }
+    }
+    // 4. Default: build/ relative to source file parent
+    source_file
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .join("build")
+}
+
+/// Return the profile subdirectory name based on release mode.
+fn profile_subdir(release: bool) -> &'static str {
+    if release { "release" } else { "debug" }
 }
 
 /// Build command - compile to executable
@@ -1421,27 +1468,32 @@ fn cmd_build(args: &FileArgs, verbosity: u8, timings: bool) -> ExitCode {
         crate_hasher.finalize()
     };
 
-    // Determine output paths
-    let _output_obj = args.file.with_extension("o");
-    let output_exe = args.output.clone().unwrap_or_else(|| args.file.with_extension(""));
+    // Determine output paths using build directory
+    let build_dir = resolve_build_dir(args.build_dir.as_ref(), &args.file);
+    let profile_dir = build_dir.join(profile_subdir(args.release));
+    if let Err(e) = std::fs::create_dir_all(&profile_dir) {
+        eprintln!("Failed to create build directory {}: {}", profile_dir.display(), e);
+        return ExitCode::from(1);
+    }
+    let stem = args.file.file_stem().unwrap_or_default();
+    let output_exe = args.output.clone().unwrap_or_else(|| profile_dir.join(stem));
 
     let (ref mir_bodies, ref escape_map, ref inline_handler_bodies, ref closure_analysis) = mir_result
         .expect("MIR result should be present (errors return early)");
 
     // Emit LLVM IR if requested (before object code generation)
     if emit_set.contains(&EmitKind::LlvmIr) || emit_set.contains(&EmitKind::LlvmIrUnopt) {
-        // Helper: write IR to -o path or stdout
+        // Default IR output goes to build/<profile>/<stem>.ll
+        let default_ir_path = profile_dir.join(stem).with_extension("ll");
+        // Helper: write IR to -o path, or build dir default
         let write_ir = |ir: &str, label: &str| -> Result<(), ExitCode> {
-            if let Some(ref output_path) = args.output {
-                if let Err(e) = std::fs::write(output_path, ir) {
-                    eprintln!("Failed to write {} to {}: {}", label, output_path.display(), e);
-                    return Err(ExitCode::from(1));
-                }
-                if verbosity > 0 {
-                    eprintln!("Wrote {} to {}", label, output_path.display());
-                }
-            } else {
-                println!("{}", ir);
+            let target = args.output.as_ref().unwrap_or(&default_ir_path);
+            if let Err(e) = std::fs::write(target, ir) {
+                eprintln!("Failed to write {} to {}: {}", label, target.display(), e);
+                return Err(ExitCode::from(1));
+            }
+            if verbosity > 0 {
+                eprintln!("Wrote {} to {}", label, target.display());
             }
             Ok(())
         };
@@ -1492,8 +1544,8 @@ fn cmd_build(args: &FileArgs, verbosity: u8, timings: bool) -> ExitCode {
     let mut object_files: Vec<std::path::PathBuf> = Vec::new();
     let mut compile_errors: Vec<bloodc::diagnostics::Diagnostic> = Vec::new();
 
-    // Create temp directory for object files
-    let obj_dir = args.file.with_extension("blood_objs");
+    // Create directory for per-definition object files inside build dir
+    let obj_dir = build_dir.join("obj").join(stem);
     if !obj_dir.exists() {
         if let Err(e) = std::fs::create_dir_all(&obj_dir) {
             eprintln!("Failed to create object directory: {}", e);
@@ -1910,8 +1962,15 @@ fn cmd_run(args: &FileArgs, verbosity: u8, timings: bool) -> ExitCode {
         return build_result;
     }
 
-    // Then run - use absolute path to ensure we find the executable
-    let output_exe = args.file.with_extension("");
+    // Determine where the build placed the executable
+    let output_exe = if let Some(ref out) = args.output {
+        out.clone()
+    } else {
+        let build_dir = resolve_build_dir(args.build_dir.as_ref(), &args.file);
+        let profile_dir = build_dir.join(profile_subdir(args.release));
+        let stem = args.file.file_stem().unwrap_or_default();
+        profile_dir.join(stem)
+    };
     let output_exe = if output_exe.is_relative() {
         std::env::current_dir()
             .map(|cwd| cwd.join(&output_exe))
@@ -2327,6 +2386,7 @@ fn run_single_test(
         emit: Vec::new(),
         output: None,
         no_cache: false,
+        build_dir: None,
     };
 
     // Suppress build output unless verbose
