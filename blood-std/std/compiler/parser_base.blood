@@ -274,6 +274,25 @@ impl<'src> Parser<'src> {
         }
     }
 
+    /// Reports an "expected X" error with a specific error code.
+    pub fn error_expected_with_code(self: &mut Self, expected: &str, code: ErrorCode) {
+        let mut message = String::new();
+        message.push_str("expected ");
+        message.push_str(expected);
+        message.push_str(", found ");
+        message.push_str(self.current.kind.display_name());
+        if self.is_at_end() {
+            self.error_at_with_note(
+                self.current.span,
+                message,
+                ErrorCode::UnexpectedEof,
+                common::make_string("unexpected end of file"),
+            );
+        } else {
+            self.error_at(self.current.span, message, code);
+        }
+    }
+
     /// Synchronize after an error by skipping to a statement boundary.
     pub fn synchronize(self: &mut Self) {
         self.panic_mode = false;

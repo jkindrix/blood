@@ -513,32 +513,30 @@ pub struct CheckResult {
 // ============================================================
 
 /// Converts parser diagnostics to compile errors.
-fn convert_parse_errors(diagnostics: &Vec<parser_base::Diagnostic>) -> Vec<error::CompileError> {
+pub fn convert_parse_errors(diagnostics: &Vec<parser_base::Diagnostic>) -> Vec<error::CompileError> {
     let mut errors = Vec::new();
     let mut i: usize = 0;
     while i < diagnostics.len() {
         let diag = &diagnostics[i];
-        // Build message with notes appended
-        let mut msg = clone_string(&diag.message);
-        let mut ni: usize = 0;
-        while ni < diag.notes.len() {
-            msg.push_str("\n  note: ");
-            msg.push_str(diag.notes[ni].as_str());
-            ni = ni + 1;
-        }
-        errors.push(error::CompileError::with_code(
+        let mut ce = error::CompileError::with_code(
             error::CompilePhase::Parse,
-            msg,
+            clone_string(&diag.message),
             diag.span,
             common::make_string(parser_error_code(&diag.code)),
-        ));
+        );
+        let mut ni: usize = 0;
+        while ni < diag.notes.len() {
+            ce.notes.push(clone_string(&diag.notes[ni]));
+            ni = ni + 1;
+        }
+        errors.push(ce);
         i = i + 1;
     }
     errors
 }
 
 /// Converts HIR diagnostics to compile errors.
-fn convert_hir_diagnostics(diagnostics: &Vec<hir::Diagnostic>) -> Vec<error::CompileError> {
+pub fn convert_hir_diagnostics(diagnostics: &Vec<hir::Diagnostic>) -> Vec<error::CompileError> {
     let mut errors = Vec::new();
     let mut i: usize = 0;
     while i < diagnostics.len() {
@@ -571,25 +569,23 @@ fn has_error_diagnostics(diagnostics: &Vec<hir::Diagnostic>) -> bool {
 }
 
 /// Converts type errors to compile errors.
-fn convert_type_errors(type_errors: &Vec<typeck::TypeError>) -> Vec<error::CompileError> {
+pub fn convert_type_errors(type_errors: &Vec<typeck::TypeError>) -> Vec<error::CompileError> {
     let mut errors = Vec::new();
     let mut i: usize = 0;
     while i < type_errors.len() {
         let te = &type_errors[i];
-        let mut message = type_error_message(&te.kind);
-        // Append any context notes to the error message
-        let mut ni: usize = 0;
-        while ni < te.notes.len() {
-            message.push_str("\n  note: ");
-            message.push_str(te.notes[ni].message.as_str());
-            ni = ni + 1;
-        }
-        errors.push(error::CompileError::with_code(
+        let mut ce = error::CompileError::with_code(
             error::CompilePhase::TypeCheck,
-            message,
+            type_error_message(&te.kind),
             te.span,
             common::make_string(type_error_code(&te.kind)),
-        ));
+        );
+        let mut ni: usize = 0;
+        while ni < te.notes.len() {
+            ce.notes.push(clone_string(&te.notes[ni].message));
+            ni = ni + 1;
+        }
+        errors.push(ce);
         i = i + 1;
     }
     errors
@@ -600,24 +596,79 @@ fn convert_mir_error(err: &mir_lower::mir_lower_ctx::MirLowerError) -> error::Co
     let mut message = common::make_string(mir_lower::mir_lower_ctx::mir_error_kind_label(&err.kind));
     message.push_str(": ");
     message.push_str(err.message.as_str());
-    // Append contextual notes
-    let mut ni: usize = 0;
-    while ni < err.notes.len() {
-        message.push_str("\n  note: ");
-        message.push_str(err.notes[ni].message.as_str());
-        ni = ni + 1;
-    }
-    error::CompileError::with_code(
+    let mut ce = error::CompileError::with_code(
         error::CompilePhase::MirLower,
         message,
         err.span,
         common::make_string(mir_lower::mir_lower_ctx::mir_error_code(&err.kind)),
-    )
+    );
+    let mut ni: usize = 0;
+    while ni < err.notes.len() {
+        ce.notes.push(clone_string(&err.notes[ni].message));
+        ni = ni + 1;
+    }
+    ce
 }
 
 /// Converts codegen errors to compile errors.
 fn convert_codegen_errors(codegen_errors: &Vec<codegen::codegen_ctx::CodegenError>) -> Vec<error::CompileError> {
     let mut errors = Vec::new();
+    let mut i: usize = 0;
+    while i < codegen_errors.len() {
+        let cge = &codegen_errors[i];
+        let code_str = codegen::codegen_ctx::error_kind_code(&cge.kind);
+        let mut message = common::make_string(codegen::codegen_ctx::error_kind_label(&cge.kind));
+        message.push_str(": ");
+        message.push_str(cge.message.as_str());
+        match &cge.fn_name {
+            &Option::Some(ref name) => {
+                message.push_str(" (in function ");
+                message.push_str(name.as_str());
+                message.push(')');
+            }
+            &Option::None => {}
+        }
+        // Use with_code when span is available, embed code in message otherwise
+        match &cge.span {
+            &Option::Some(ref span) => {
+                let mut ce = error::CompileError::with_code(
+                    error::CompilePhase::Codegen,
+                    message,
+                    *span,
+                    common::make_string(code_str),
+                );
+                let mut ni: usize = 0;
+                while ni < cge.notes.len() {
+                    ce.notes.push(clone_string(&cge.notes[ni].message));
+                    ni = ni + 1;
+                }
+                errors.push(ce);
+            }
+            &Option::None => {
+                let mut coded_msg = common::make_string("[");
+                coded_msg.push_str(code_str);
+                coded_msg.push_str("] ");
+                coded_msg.push_str(message.as_str());
+                let mut ce = error::CompileError::new(
+                    error::CompilePhase::Codegen,
+                    coded_msg,
+                );
+                let mut ni: usize = 0;
+                while ni < cge.notes.len() {
+                    ce.notes.push(clone_string(&cge.notes[ni].message));
+                    ni = ni + 1;
+                }
+                errors.push(ce);
+            }
+        }
+        i = i + 1;
+    }
+    errors
+}
+
+/// Converts codegen errors to compile warnings (for non-fatal errors that didn't prevent codegen).
+fn convert_codegen_errors_to_warnings(codegen_errors: &Vec<codegen::codegen_ctx::CodegenError>) -> Vec<error::CompileWarning> {
+    let mut warnings = Vec::new();
     let mut i: usize = 0;
     while i < codegen_errors.len() {
         let ce = &codegen_errors[i];
@@ -640,10 +691,10 @@ fn convert_codegen_errors(codegen_errors: &Vec<codegen::codegen_ctx::CodegenErro
             message.push_str(ce.notes[ni].message.as_str());
             ni = ni + 1;
         }
-        // Use with_code when span is available, embed code in message otherwise
+        // Use code-aware constructor when span is available
         match &ce.span {
             &Option::Some(ref span) => {
-                errors.push(error::CompileError::with_code(
+                warnings.push(error::CompileWarning::with_code(
                     error::CompilePhase::Codegen,
                     message,
                     *span,
@@ -651,63 +702,14 @@ fn convert_codegen_errors(codegen_errors: &Vec<codegen::codegen_ctx::CodegenErro
                 ));
             }
             &Option::None => {
-                let mut coded_msg = common::make_string("[");
-                coded_msg.push_str(code_str);
-                coded_msg.push_str("] ");
-                coded_msg.push_str(message.as_str());
-                errors.push(error::CompileError::new(
-                    error::CompilePhase::Codegen,
-                    coded_msg,
-                ));
-            }
-        }
-        i = i + 1;
-    }
-    errors
-}
-
-/// Converts codegen errors to compile warnings (for non-fatal errors that didn't prevent codegen).
-fn convert_codegen_errors_to_warnings(codegen_errors: &Vec<codegen::codegen_ctx::CodegenError>) -> Vec<error::CompileWarning> {
-    let mut warnings = Vec::new();
-    let mut i: usize = 0;
-    while i < codegen_errors.len() {
-        let ce = &codegen_errors[i];
-        let code_str = codegen::codegen_ctx::error_kind_code(&ce.kind);
-        // Embed code in warning message since CompileWarning has no code field
-        let mut message = common::make_string("[");
-        message.push_str(code_str);
-        message.push_str("] ");
-        message.push_str(codegen::codegen_ctx::error_kind_label(&ce.kind));
-        message.push_str(": ");
-        message.push_str(ce.message.as_str());
-        match &ce.fn_name {
-            &Option::Some(ref name) => {
-                message.push_str(" (in function ");
-                message.push_str(name.as_str());
-                message.push(')');
-            }
-            &Option::None => {}
-        }
-        // Append contextual notes
-        let mut ni: usize = 0;
-        while ni < ce.notes.len() {
-            message.push_str("\n  note: ");
-            message.push_str(ce.notes[ni].message.as_str());
-            ni = ni + 1;
-        }
-        // Use span-aware constructor when span is available
-        match &ce.span {
-            &Option::Some(ref span) => {
-                warnings.push(error::CompileWarning::with_span(
-                    error::CompilePhase::Codegen,
-                    message,
-                    *span,
-                ));
-            }
-            &Option::None => {
+                // No span — embed code in message as fallback
+                let mut coded_message = common::make_string("[");
+                coded_message.push_str(code_str);
+                coded_message.push_str("] ");
+                coded_message.push_str(message.as_str());
                 warnings.push(error::CompileWarning::new(
                     error::CompilePhase::Codegen,
-                    message,
+                    coded_message,
                 ));
             }
         }
@@ -717,7 +719,7 @@ fn convert_codegen_errors_to_warnings(codegen_errors: &Vec<codegen::codegen_ctx:
 }
 
 /// Converts a TypeErrorKind to a human-readable message.
-fn type_error_message(kind: &typeck::TypeErrorKind) -> String {
+pub fn type_error_message(kind: &typeck::TypeErrorKind) -> String {
     match kind {
         &typeck::TypeErrorKind::TypeMismatch => common::make_string("type mismatch"),
         &typeck::TypeErrorKind::CannotInfer => common::make_string("cannot infer type"),
@@ -751,7 +753,7 @@ fn type_error_message(kind: &typeck::TypeErrorKind) -> String {
 // ============================================================
 
 /// Returns the error code string for a parser ErrorCode.
-fn parser_error_code(code: &parser_base::ErrorCode) -> &str {
+pub fn parser_error_code(code: &parser_base::ErrorCode) -> &str {
     match code {
         &parser_base::ErrorCode::UnexpectedToken => "E0001",
         &parser_base::ErrorCode::UnexpectedEof => "E0002",
@@ -767,7 +769,7 @@ fn parser_error_code(code: &parser_base::ErrorCode) -> &str {
 }
 
 /// Returns the error code string for an HIR DiagnosticCode.
-fn hir_diagnostic_code(code: &hir::DiagnosticCode) -> &str {
+pub fn hir_diagnostic_code(code: &hir::DiagnosticCode) -> &str {
     match code {
         &hir::DiagnosticCode::E0100 => "E0100",
         &hir::DiagnosticCode::E0101 => "E0101",
@@ -805,7 +807,7 @@ fn hir_diagnostic_code(code: &hir::DiagnosticCode) -> &str {
 }
 
 /// Returns the error code string for a TypeErrorKind.
-fn type_error_code(kind: &typeck::TypeErrorKind) -> &str {
+pub fn type_error_code(kind: &typeck::TypeErrorKind) -> &str {
     match kind {
         &typeck::TypeErrorKind::TypeMismatch => "E0201",
         &typeck::TypeErrorKind::CannotInfer => "E0202",

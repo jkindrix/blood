@@ -138,6 +138,15 @@ impl ErrorReporter {
             &Option::None => {}
         }
 
+        // Structured notes
+        let mut ni: usize = 0;
+        while ni < error.notes.len() {
+            output.push_str("  = note: ");
+            output.push_str(error.notes[ni].as_str());
+            output.push('\n');
+            ni = ni + 1;
+        }
+
         output
     }
 
@@ -233,6 +242,14 @@ impl ErrorReporter {
             } else {
                 output.push_str("warning");
             }
+            match &warning.code {
+                &Option::Some(ref code) => {
+                    output.push('[');
+                    output.push_str(code.as_str());
+                    output.push(']');
+                }
+                &Option::None => {}
+            }
             output.push_str(": ");
             output.push_str(warning.message.as_str());
             output.push('\n');
@@ -274,6 +291,14 @@ pub fn format_error_simple(error: &error::CompileError) -> String {
             append_u32(&mut output, span.column);
         }
         &Option::None => {}
+    }
+
+    // Structured notes
+    let mut ni: usize = 0;
+    while ni < error.notes.len() {
+        output.push_str("\n  = note: ");
+        output.push_str(error.notes[ni].as_str());
+        ni = ni + 1;
     }
 
     output

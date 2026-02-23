@@ -250,11 +250,12 @@ fn parse_pattern_kind(parser: &mut parser_base::Parser) -> ast::PatternKind {
         }
 
         token::TokenKind::Error => {
+            parser.error_at(parser.current.span, common::make_string("invalid token in pattern position"), parser_base::ErrorCode::UnexpectedToken);
             return ast::PatternKind::Wildcard;
         }
 
         _ => {
-            parser.error_expected("pattern");
+            parser.error_expected_with_code("pattern", parser_base::ErrorCode::ExpectedPattern);
             return ast::PatternKind::Wildcard;
         }
     }

@@ -1345,7 +1345,7 @@ pub fn parse_declaration(parser: &mut parser_base::Parser) -> ast::Declaration {
                 ast::Declaration::Function(parse_fn_decl(parser, attrs, vis))
             } else {
                 // unsafe block or other uses - fall through to expression
-                parser.error_expected("declaration");
+                parser.error_expected_with_code("declaration", parser_base::ErrorCode::ExpectedDeclaration);
                 parser.advance();
                 ast::Declaration::Function(ast::FnDecl {
                     attrs: Vec::new(),
@@ -1410,7 +1410,7 @@ pub fn parse_declaration(parser: &mut parser_base::Parser) -> ast::Declaration {
         token::TokenKind::Macro => ast::Declaration::Macro(parse_macro_decl(parser, attrs, vis)),
         _ => {
             // Error recovery
-            parser.error_expected("declaration");
+            parser.error_expected_with_code("declaration", parser_base::ErrorCode::ExpectedDeclaration);
             parser.advance();
             // Return a placeholder function declaration
             let start = parser.previous.span;
@@ -1735,6 +1735,7 @@ fn parse_bridge_item(parser: &mut parser_base::Parser) -> Option<ast::BridgeItem
             Option::Some(ast::BridgeItem::Enum(parse_bridge_enum(parser, attrs)))
         }
         _ => {
+            parser.error_expected("bridge item (fn, type, struct, or enum)");
             Option::None
         }
     }

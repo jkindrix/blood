@@ -38,6 +38,8 @@ pub struct CompileError {
     pub span: Option<common::Span>,
     /// Error code (if available).
     pub code: Option<String>,
+    /// Contextual notes.
+    pub notes: Vec<String>,
 }
 
 impl CompileError {
@@ -48,6 +50,7 @@ impl CompileError {
             message,
             span: Option::None,
             code: Option::None,
+            notes: Vec::new(),
         }
     }
 
@@ -58,6 +61,7 @@ impl CompileError {
             message,
             span: Option::Some(span),
             code: Option::None,
+            notes: Vec::new(),
         }
     }
 
@@ -68,6 +72,7 @@ impl CompileError {
             message,
             span: Option::Some(span),
             code: Option::Some(code),
+            notes: Vec::new(),
         }
     }
 }
@@ -84,6 +89,8 @@ pub struct CompileWarning {
     pub message: String,
     /// Source location (if available).
     pub span: Option<common::Span>,
+    /// Warning code (if available).
+    pub code: Option<String>,
 }
 
 impl CompileWarning {
@@ -93,6 +100,7 @@ impl CompileWarning {
             phase,
             message,
             span: Option::None,
+            code: Option::None,
         }
     }
 
@@ -102,6 +110,17 @@ impl CompileWarning {
             phase,
             message,
             span: Option::Some(span),
+            code: Option::None,
+        }
+    }
+
+    /// Creates a new compile warning with span and code.
+    pub fn with_code(phase: CompilePhase, message: String, span: common::Span, code: String) -> CompileWarning {
+        CompileWarning {
+            phase,
+            message,
+            span: Option::Some(span),
+            code: Option::Some(code),
         }
     }
 }
