@@ -302,9 +302,19 @@ fn emit_return(ctx: &mut codegen_ctx::CodegenCtx) {
     if is_void {
         ctx.emit_ret("void", Option::None);
     } else {
-        let ret_val = ctx.fresh_temp_cg();
-        ctx.emit_load_cg2(&ret_val, ret_ty.as_str(), &ret_name);
-        ctx.emit_ret_cg(ret_ty.as_str(), &ret_val);
+        // For heap-allocated locals (_0 can be region/persistent allocated),
+        // the alloca holds a ptr to the heap buffer. Dereference it first.
+        if ctx.is_region_allocated(ret_local) || ctx.is_persistent_allocated(ret_local) {
+            let heap_ptr = ctx.fresh_temp_cg();
+            ctx.emit_load_cg2(&heap_ptr, "ptr", &ret_name);
+            let ret_val = ctx.fresh_temp_cg();
+            ctx.emit_load_cg2(&ret_val, ret_ty.as_str(), &heap_ptr);
+            ctx.emit_ret_cg(ret_ty.as_str(), &ret_val);
+        } else {
+            let ret_val = ctx.fresh_temp_cg();
+            ctx.emit_load_cg2(&ret_val, ret_ty.as_str(), &ret_name);
+            ctx.emit_ret_cg(ret_ty.as_str(), &ret_val);
+        }
     }
 }
 
