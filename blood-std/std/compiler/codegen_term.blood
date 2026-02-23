@@ -446,9 +446,13 @@ fn emit_call(
         return;
     }
 
-    // Check for Box builtin function which has special calling convention
+    // Check for Box builtin functions which have special calling conventions
     if is_box_new(&func_val) {
         emit_box_new_call(ctx, args, destination, target);
+        return;
+    }
+    if is_box_as_ref(&func_val) {
+        emit_box_as_ref_call(ctx, args, destination, target);
         return;
     }
 
@@ -2130,6 +2134,58 @@ fn emit_box_new_call(
     ctx.begin_call(Option::Some(&result), "ptr", "@box_new");
     ctx.call_arg_cg(true, "ptr", &val_alloca);
     ctx.call_arg_str(false, "i64", val_size_str.as_str());
+    ctx.end_call();
+
+    // Store result pointer to destination
+    let dest_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
+    ctx.emit_store_cg("ptr", &result, dest_ptr.as_str());
+
+    // Jump to continuation
+    match target {
+        &Option::Some(t) => {
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
+        }
+        &Option::None => {
+            ctx.emit_unreachable();
+        }
+    }
+}
+
+/// Checks if the function name is @box_as_ref.
+fn is_box_as_ref(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@box_as_ref")
+}
+
+/// Emits a box_as_ref call with correct calling convention.
+/// Runtime signature: ptr @box_as_ref(ptr boxed) -> ptr
+///
+/// MIR method calls auto-borrow the receiver, so args[0] is &Box<T> (a pointer
+/// to the variable holding the Box pointer). We must load through it once to get
+/// the actual Box value (the data pointer) before passing to box_as_ref.
+fn emit_box_as_ref_call(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    args: &Vec<mir_types::Operand>,
+    destination: &mir_types::Place,
+    target: &Option<mir_def::BasicBlockId>,
+) {
+    // args[0] is &Box<T> — a reference to the Box variable
+    if args.len() < 1 {
+        ctx.emit_unreachable();
+        return;
+    }
+
+    // Emit the operand to get the &Box<T> pointer
+    let (ref_val, _ref_ty) = codegen_expr::emit_operand_typed(ctx, &args[0]);
+
+    // Load through the reference to get the Box value (the data pointer)
+    let box_val = ctx.fresh_temp_cg();
+    ctx.emit_load_cg2(&box_val, "ptr", &codegen_ctx::CgName::Str(ref_val));
+
+    // Emit: %result = call ptr @box_as_ref(ptr box_val)
+    let result = ctx.fresh_temp_cg();
+    ctx.begin_call(Option::Some(&result), "ptr", "@box_as_ref");
+    ctx.call_arg_cg(true, "ptr", &box_val);
     ctx.end_call();
 
     // Store result pointer to destination
