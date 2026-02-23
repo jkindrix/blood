@@ -1197,13 +1197,13 @@ pub fn emit_allocas_with_escapes(
                 &mir_escape::MemoryTier::Region => {
                     // Region allocation with generation tracking
                     let name = ctx.local_alloca_name(local_id);
-                    emit_region_local(ctx, &local_hir_ty, &name, local_id);
+                    emit_region_local(ctx, local.ty, &name, local_id);
                     ctx.mark_region_allocated(local_id);
                 }
                 &mir_escape::MemoryTier::Persistent => {
                     // Persistent allocation
                     let name = ctx.local_alloca_name(local_id);
-                    emit_persistent_local(ctx, &local_hir_ty, &name);
+                    emit_persistent_local(ctx, local.ty, &name);
                     ctx.mark_persistent_allocated(local_id);
                 }
             }
@@ -1237,7 +1237,7 @@ fn emit_stack_local(
 /// Emits a region-allocated local with generation tracking.
 fn emit_region_local(
     ctx: &mut codegen_ctx::CodegenCtx,
-    ty: &hir_ty::Type,
+    ty_id: type_intern::TyId,
     name: &String,
     local_id: mir_def::MirLocalId,
 ) {
@@ -1253,7 +1253,10 @@ fn emit_region_local(
 
     // Use blood_alloc_or_abort(size, gen_ptr) for heap allocation with
     // generation tracking. The generation value is written to the out-pointer.
-    let size = type_size_with_ctx(ctx, ty);
+    // Use TyId-native size computation which correctly handles registered
+    // generic enums (e.g. Option<LargeStruct>) by checking if concrete
+    // payload exceeds registered base size.
+    let size = codegen_size::type_size_with_ctx_id(ctx, ty_id);
     let size_str = codegen_types::format_u64(size);
     let result_tmp = ctx.fresh_temp_cg();
     ctx.begin_call(Option::Some(&result_tmp), "i64", "@blood_alloc_or_abort");
@@ -1273,7 +1276,7 @@ fn emit_region_local(
 /// Emits a persistent-allocated local.
 fn emit_persistent_local(
     ctx: &mut codegen_ctx::CodegenCtx,
-    ty: &hir_ty::Type,
+    ty_id: type_intern::TyId,
     name: &String,
 ) {
     // Allocate pointer slot on stack for the result
@@ -1286,8 +1289,10 @@ fn emit_persistent_local(
     ctx.emit_alloca_cg(&slot_id_tmp, "i64");
 
     // Call @blood_persistent_alloc(size, align, type_fp, out_id)
-    // Use context-aware size for ADT types
-    let size = type_size_with_ctx(ctx, ty);
+    // Use TyId-native size computation which correctly handles registered
+    // generic enums (e.g. Option<LargeStruct>) by checking if concrete
+    // payload exceeds registered base size.
+    let size = codegen_size::type_size_with_ctx_id(ctx, ty_id);
     let size_str = codegen_types::format_u64(size);
     let result_tmp = ctx.fresh_temp_cg();
     ctx.begin_call(Option::Some(&result_tmp), "ptr", "@blood_persistent_alloc");
