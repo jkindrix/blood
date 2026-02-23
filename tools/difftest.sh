@@ -69,8 +69,8 @@ usage() {
     echo "Environment:"
     echo "  BLOOD_REF          Reference compiler  (default: ~/blood/src/bootstrap/target/release/blood)"
     echo "  BLOOD_TEST         Test compiler        (default: ~/blood/blood-std/std/compiler/build/first_gen)"
-    echo "  BLOOD_RUNTIME      C runtime object     (default: ~/blood/runtime.o)"
-    echo "  BLOOD_RUST_RUNTIME Rust runtime archive (default: ~/blood/libblood_runtime.a)"
+    echo "  BLOOD_RUNTIME      C runtime object     (default: ~/blood/runtime/runtime.o)"
+    echo "  BLOOD_RUST_RUNTIME Rust runtime archive (default: ~/blood/src/bootstrap/target/release/libblood_runtime.a)"
     exit 3
 }
 
