@@ -662,6 +662,30 @@ pub fn emit_place_addr(
                     &Option::Some(ty_id) => apply_deref_to_type(ty_id),
                     &Option::None => Option::None,
                 };
+                // If current_base is still the fallback "{ i64 }" but we have a
+                // valid HIR type after deref that is an ADT, use it to resolve the
+                // actual LLVM type. This handles heap-allocated enum/struct locals
+                // where resolve_deref_adt_def_id fails but the HIR type is still intact.
+                // Only do this for ADT types — primitive types like str resolve to
+                // { ptr, i64 } which would incorrectly trigger Vec-like detection.
+                if string_eq_str(current_base.as_str(), "{ i64 }") {
+                    match &current_hir_type {
+                        &Option::Some(ty_id) => {
+                            match type_intern::get_adt_def_id(ty_id) {
+                                Option::Some(def_id) => {
+                                    let resolved_ty = codegen_size::type_to_llvm_with_ctx_id(ctx, ty_id);
+                                    let rfc = count_struct_fields(&resolved_ty);
+                                    if rfc >= 2 {
+                                        current_base = resolved_ty;
+                                    }
+                                    current_adt_def_id = Option::Some(def_id.index);
+                                }
+                                Option::None => {}
+                            }
+                        }
+                        &Option::None => {}
+                    }
+                }
             }
             &mir_types::PlaceElem::Field(idx) => {
                 let result = ctx.fresh_temp_cg();
@@ -707,10 +731,17 @@ pub fn emit_place_addr(
                 }
 
                 current = result;
-                // After field access, try to preserve the field's HIR type for indexing
+                // After field access, try to preserve the field's HIR type for indexing.
+                // For ADTs: look up the field type from the ADT registry.
+                // For non-ADT composites (tuples): extract field type directly from HIR.
                 current_hir_type = match &current_adt_def_id {
                     &Option::Some(def_id) => ctx.lookup_field_hir_type(def_id, idx),
-                    &Option::None => Option::None,
+                    &Option::None => {
+                        match &current_hir_type {
+                            &Option::Some(ty_id) => extract_field_type_from_hir(ty_id, idx),
+                            &Option::None => Option::None,
+                        }
+                    }
                 };
                 current_adt_def_id = Option::None;
                 current_base = common::make_string("{ i64 }");
@@ -795,7 +826,26 @@ pub fn emit_place_addr(
                 indices.push(cgname_to_string(&byte_offset));
                 ctx.emit_gep_cg(&result, "i8", &current, &indices);
                 current = result;
-                current_adt_def_id = Option::None;
+                // After Index, update current_hir_type to the element type
+                // so subsequent Field projections resolve correctly.
+                // e.g. for Vec<BindingEntry>[i].binding.mutable, after [i]
+                // current_hir_type should be BindingEntry, not Vec<BindingEntry>.
+                current_hir_type = match &current_hir_type {
+                    &Option::Some(ty_id) => extract_element_type_id(ty_id),
+                    &Option::None => Option::None,
+                };
+                current_adt_def_id = match &current_hir_type {
+                    &Option::Some(ty_id) => {
+                        match type_intern::get_adt_def_id(ty_id) {
+                            Option::Some(def_id) => {
+                                current_base = ctx.adt_llvm_type(def_id.index);
+                                Option::Some(def_id.index)
+                            }
+                            Option::None => Option::None,
+                        }
+                    }
+                    &Option::None => Option::None,
+                };
                 downcast_variant = Option::None;
             }
             &mir_types::PlaceElem::ConstantIndex { offset, min_length: _, from_end } => {
@@ -847,7 +897,23 @@ pub fn emit_place_addr(
                 indices.push(codegen_types::format_u64(byte_offset));
                 ctx.emit_gep_cg(&result, "i8", &current, &indices);
                 current = result;
-                current_adt_def_id = Option::None;
+                // After ConstantIndex, update current_hir_type to the element type
+                current_hir_type = match &current_hir_type {
+                    &Option::Some(ty_id) => extract_element_type_id(ty_id),
+                    &Option::None => Option::None,
+                };
+                current_adt_def_id = match &current_hir_type {
+                    &Option::Some(ty_id) => {
+                        match type_intern::get_adt_def_id(ty_id) {
+                            Option::Some(def_id) => {
+                                current_base = ctx.adt_llvm_type(def_id.index);
+                                Option::Some(def_id.index)
+                            }
+                            Option::None => Option::None,
+                        }
+                    }
+                    &Option::None => Option::None,
+                };
                 downcast_variant = Option::None;
             }
             &mir_types::PlaceElem::Subslice { from, to: _, from_end: _ } => {
@@ -1302,6 +1368,64 @@ fn get_element_size_from_hir_id(ctx: &mut codegen_ctx::CodegenCtx, ty_id: type_i
             1
         }
         _ => 8, // Default to pointer size
+    }
+}
+
+/// Extracts the element type from a container TyId.
+/// Vec<T> → T, Array<T, N> → T, Slice<T> → T, Ref<C> → recurse on C.
+/// Returns None if the type is not a container.
+fn extract_element_type_id(ty_id: type_intern::TyId) -> Option<type_intern::TyId> {
+    let kind = type_intern::type_interner().get(ty_id);
+    match kind {
+        &type_intern::InternedTypeKind::Array { element, size: _ } => {
+            Option::Some(element)
+        }
+        &type_intern::InternedTypeKind::Slice { element } => {
+            Option::Some(element)
+        }
+        &type_intern::InternedTypeKind::Adt { def_id: _, args } => {
+            // Vec<T> — element type is the first type arg
+            let interner = type_intern::type_interner();
+            let arg_len = interner.ty_list_len(args);
+            if arg_len > 0 {
+                Option::Some(interner.get_ty_list_element(args, 0))
+            } else {
+                Option::None
+            }
+        }
+        &type_intern::InternedTypeKind::Ref { inner, mutable: _ } => {
+            extract_element_type_id(inner)
+        }
+        &type_intern::InternedTypeKind::Ptr { inner, mutable: _ } => {
+            extract_element_type_id(inner)
+        }
+        _ => Option::None,
+    }
+}
+
+/// Extracts the field type from a non-ADT composite HIR type.
+/// For Tuple types, returns the element at the given field index.
+/// For Ref/Ptr types, looks through to the inner type.
+/// Returns None if the type doesn't support field access or index is out of bounds.
+fn extract_field_type_from_hir(ty_id: type_intern::TyId, field_idx: u32) -> Option<type_intern::TyId> {
+    let interner = type_intern::type_interner();
+    let kind = interner.get(ty_id);
+    match kind {
+        &type_intern::InternedTypeKind::Tuple(list_id) => {
+            let len = interner.ty_list_len(list_id);
+            if (field_idx as usize) < len {
+                Option::Some(interner.get_ty_list_element(list_id, field_idx as usize))
+            } else {
+                Option::None
+            }
+        }
+        &type_intern::InternedTypeKind::Ref { inner, mutable: _ } => {
+            extract_field_type_from_hir(inner, field_idx)
+        }
+        &type_intern::InternedTypeKind::Ptr { inner, mutable: _ } => {
+            extract_field_type_from_hir(inner, field_idx)
+        }
+        _ => Option::None,
     }
 }
 

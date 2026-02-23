@@ -1354,6 +1354,13 @@ fn emit_vec_push_call(
     // Get element value and type
     let (elem_val, elem_ty) = codegen_expr::emit_operand_typed(ctx, &args[1]);
 
+    // Save stack pointer before alloca so we can restore after vec_push.
+    // Without this, allocas inside loops cause unbounded stack growth.
+    let stack_save = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&stack_save);
+    ctx.write(" = call ptr @llvm.stacksave()\n");
+
     // Allocate temporary storage for the element
     let elem_alloca = ctx.fresh_temp_cg();
     ctx.write_indent();
@@ -1395,6 +1402,13 @@ fn emit_vec_push_call(
     ctx.call_arg_cg(false, "ptr", &elem_alloca);
     ctx.call_arg_str(false, "i64", elem_size_str.as_str());
     ctx.end_call();
+
+    // Restore stack pointer to reclaim the alloca.
+    // This prevents unbounded stack growth when vec_push is called in a loop.
+    ctx.write_indent();
+    ctx.write("call void @llvm.stackrestore(ptr ");
+    ctx.write_cgname(&stack_save);
+    ctx.write(")\n");
 
     // Jump to continuation
     match target {

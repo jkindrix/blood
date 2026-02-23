@@ -504,7 +504,7 @@ run_ground_truth() {
 
     local pass=0 total=0 comp_fail=0 run_fail=0 skip=0
 
-    for src in "$GROUND_TRUTH"/t00_*.blood; do
+    for src in "$GROUND_TRUTH"/t[0-9][0-9]_*.blood; do
         local name
         name="$(basename "$src" .blood)"
         total=$((total + 1))

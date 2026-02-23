@@ -646,6 +646,25 @@ pub fn type_to_llvm_with_ctx(
             }
             result
         }
+        &hir_ty::TypeKind::Tuple(ref elems) => {
+            // Resolve tuple elements with ADT registry context
+            if elems.len() == 0 {
+                common::make_string("{}")
+            } else {
+                let mut result = common::make_string("{ ");
+                let mut ti: usize = 0;
+                while ti < elems.len() {
+                    if ti > 0 {
+                        result.push_str(", ");
+                    }
+                    let elem_llvm = codegen_size::type_to_llvm_with_ctx(ctx, &elems[ti]);
+                    result.push_str(elem_llvm.as_str());
+                    ti = ti + 1;
+                }
+                result.push_str(" }");
+                result
+            }
+        }
         _ => codegen_types::type_to_llvm(ty),
     }
 }
@@ -1148,7 +1167,21 @@ pub fn emit_allocas_with_escapes(
         let tier = if is_copy_type(&local_hir_ty) {
             mir_escape::MemoryTier::Stack
         } else {
-            escapes.recommended_tier(local_id)
+            let t = escapes.recommended_tier(local_id);
+            // Promote large NoEscape locals to Region to prevent stack overflow.
+            // The reference compiler heap-allocates all non-primitive locals;
+            // we only stack-allocate small structs (<=64 bytes) to match behavior.
+            match &t {
+                &mir_escape::MemoryTier::Stack => {
+                    let sz = codegen_size::type_size_with_ctx_id(ctx, local.ty);
+                    if sz > 64 {
+                        mir_escape::MemoryTier::Region
+                    } else {
+                        t
+                    }
+                }
+                _ => t,
+            }
         };
 
         // Handler op state local: alloca is `ptr` (holds state pointer from wrapper)
