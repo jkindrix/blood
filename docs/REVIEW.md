@@ -145,16 +145,16 @@ Blood is a systems programming language synthesizing five research innovations �
 #### Gaps
 
 **GAP-EFF-1: Segmented stack continuations not implemented**
-- Location: `compiler-rust/bloodc/src/effects/mod.rs:63` — explicitly deferred
+- Location: `src/bootstrap/bloodc/src/effects/mod.rs:63` — explicitly deferred
 - Bootstrap compiler uses synchronous dispatch; non-tail-resumptive handlers limited
 - Remediation: Implement segmented/cactus stack for continuation capture
 
 **GAP-EFF-2: Effect inheritance field is dead code**
-- Location: `compiler-rust/bloodc/src/effects/lowering.rs:94` — `extends: Vec<DefId>` always empty
+- Location: `src/bootstrap/bloodc/src/effects/lowering.rs:94` — `extends: Vec<DefId>` always empty
 - Remediation: Either implement effect inheritance or remove the field
 
 **GAP-EFF-3: Parallel effect handlers documented but not implemented**
-- Location: `compiler-rust/bloodc/src/effects/mod.rs:66` — explicitly deferred
+- Location: `src/bootstrap/bloodc/src/effects/mod.rs:66` — explicitly deferred
 - Remediation: Either implement or remove from specification claims
 
 #### Undocumented Strengths (Not in aspirational docs)
@@ -344,7 +344,7 @@ Blood is a systems programming language synthesizing five research innovations �
 
 **GAP-TYPE-2: Formal verification partially implemented (Coq proofs exist but incomplete)**
 - FORMAL_SEMANTICS.md claims "✅ Implemented" — partially accurate
-- 10 Coq/Rocq proof files exist in `compiler-rust/proofs/theories/` (~2,635 lines):
+- 10 Coq/Rocq proof files exist in `proofs/theories/` (~2,635 lines):
   - `Syntax.v` — AST and de Bruijn syntax
   - `Typing.v` — Type system and typing rules
   - `Substitution.v` — Variable substitution proofs
@@ -518,7 +518,7 @@ Supporting completed verification: SELF-VERIFY-001 (parser review: 2,992 lines, 
 
 #### Diagnostics Infrastructure
 
-`compiler-rust/bloodc/src/diagnostics.rs` — Full ariadne integration:
+`src/bootstrap/bloodc/src/diagnostics.rs` — Full ariadne integration:
 
 | Category | Code Range | Count |
 |----------|-----------|-------|
@@ -542,7 +542,7 @@ Features: Formatted error codes, human-readable descriptions, help messages with
 
 #### FFI Implementation Detail
 
-`compiler-rust/blood-runtime/src/ffi.rs` (529 lines):
+`src/bootstrap/blood-runtime/src/ffi.rs` (529 lines):
 - **Calling convention:** C only (via libloading); stdcall/fastcall/WASM not supported
 - **Type system:** FfiType with 14 variants (Void, I8-I64, U8-U64, F32, F64, Pointer, CString, Bool, Size)
 - **Components:** DynamicLibrary (loading + symbol lookup), LibraryRegistry (caching), FfiSignature (with varargs support)
@@ -550,7 +550,7 @@ Features: Formatted error codes, human-readable descriptions, help messages with
 
 #### Formatter Detail
 
-`compiler-rust/blood-tools/fmt/` (1,674 lines):
+`src/bootstrap/blood-tools/fmt/` (1,674 lines):
 
 | Mode | Flag | Description |
 |------|------|-------------|
@@ -727,7 +727,7 @@ These items complete partially-implemented features.
 | ID | Issue | Location | Action | Effort |
 |----|-------|----------|--------|--------|
 | REM-017 | Content-addressing absent from self-hosted compiler | `blood-std/std/compiler/` | Port ContentHash, Canonicalizer, per-item hashing to Blood | Very High |
-| REM-018 | Package CLI not wired | `compiler-rust/bloodc/src/main.rs` | Expose `blood add`, `blood remove`, `blood publish` commands | Medium |
+| REM-018 | Package CLI not wired | `src/bootstrap/bloodc/src/main.rs` | Expose `blood add`, `blood remove`, `blood publish` commands | Medium |
 | ~~REM-019~~ | ~~LSP missing 4 features~~ | ~~`blood-tools/lsp/src/`~~ | **CORRECTED: All 4 features are implemented. Update TOOLING.md to reflect this.** | Trivial |
 | REM-020 | Region isolation not enforced | `blood-runtime/src/memory.rs` | Add cross-region validation checks on reference creation | Medium |
 | REM-021 | MultiShot handlers not fully tested | `effects/handler.rs:129-136` | Add test cases for continuation cloning and multi-resume scenarios | Medium |
@@ -748,7 +748,7 @@ These items improve ecosystem readiness and production polish.
 | REM-029 | No releases or tags | Git | Create v0.5.3 tag; establish release process | Trivial |
 | REM-030 | Single contributor | N/A | Recruit contributors; add "good first issue" labels | Ongoing |
 | REM-031 | REPL needs implementation | `blood-tools/repl/` | Implement interactive evaluation, history, completion | High |
-| REM-032 | Formal verification incomplete (2 Admitted theorems) | `compiler-rust/proofs/theories/` | Complete the 2 Admitted theorems (detection completeness, no use-after-free) in GenerationSnapshots.v | High |
+| REM-032 | Formal verification incomplete (2 Admitted theorems) | `proofs/theories/` | Complete the 2 Admitted theorems (detection completeness, no use-after-free) in GenerationSnapshots.v | High |
 | REM-033 | Path module incomplete (Windows) | `blood-std/std/path.blood` | Implement Windows path handling | Low |
 | REM-034 | Snapshot liveness optimization missing | `blood-runtime/src/memory.rs` | Track dead snapshot entries for faster validation | Low |
 | REM-035 | No third-party programs written in Blood | N/A | Recruit at least one external developer to write a non-trivial program | Ongoing |

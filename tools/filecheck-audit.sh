@@ -23,7 +23,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 COMPILER_DIR="${COMPILER_DIR:-$REPO_ROOT/blood-std/std/compiler}"
 TEST_DIR="${TEST_DIR:-$COMPILER_DIR/tests}"
-GROUND_TRUTH="${GROUND_TRUTH:-$REPO_ROOT/compiler-rust/tests/ground-truth}"
+GROUND_TRUTH="${GROUND_TRUTH:-$REPO_ROOT/tests/ground-truth}"
 
 MODE="full"
 for arg in "$@"; do

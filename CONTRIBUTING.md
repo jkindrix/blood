@@ -28,7 +28,7 @@ Thank you for your interest in contributing to the Blood programming language! T
 ```bash
 # Clone the repository
 git clone https://github.com/jkindrix/blood.git
-cd blood/compiler-rust
+cd blood/src/bootstrap
 
 # Build everything
 cargo build --release
@@ -43,7 +43,7 @@ cargo run --release -- check ../examples/hello.blood
 ### Quick Verification
 
 ```bash
-# From compiler-rust/
+# From src/bootstrap/
 # Type check an example
 cargo run --release -- check ../examples/binary_tree_benchmark.blood
 
@@ -66,7 +66,7 @@ blood/                          # Repository root (monorepo)
 │       ├── core/               # Core types (Option, String, Box, etc.)
 │       ├── collections/        # Vec, HashMap, LinkedList, etc.
 │       └── effects/            # Effect system primitives
-├── compiler-rust/              # Rust bootstrap compiler (git subtree)
+├── src/bootstrap/              # Rust bootstrap compiler (git subtree)
 │   ├── bloodc/                 # The main compiler
 │   │   ├── src/
 │   │   │   ├── main.rs         # CLI entry point
@@ -103,7 +103,7 @@ blood/                          # Repository root (monorepo)
 └── editors/                    # Editor support (VS Code, etc.)
 ```
 
-> **Note:** The Cargo workspace is at `compiler-rust/Cargo.toml`. All `cargo` commands must be run from the `compiler-rust/` directory.
+> **Note:** The Cargo workspace is at `src/bootstrap/Cargo.toml`. All `cargo` commands must be run from the `src/bootstrap/` directory.
 
 ### Key Crates
 
@@ -129,7 +129,7 @@ blood/                          # Repository root (monorepo)
    - Add tests
    - Update documentation
 
-3. **Run tests locally** (from `compiler-rust/`)
+3. **Run tests locally** (from `src/bootstrap/`)
    ```bash
    cargo test --workspace
    cargo clippy --all-targets
@@ -274,7 +274,7 @@ pub enum ExprKind {
 
 ### Test Categories
 
-All test commands run from `compiler-rust/`:
+All test commands run from `src/bootstrap/`:
 
 1. **Unit Tests** - In `src/` alongside code
    ```bash
@@ -347,7 +347,7 @@ Examples:
 - Write documentation for public APIs
 
 ```bash
-# From compiler-rust/
+# From src/bootstrap/
 cargo fmt
 cargo clippy --all-targets
 ```
@@ -411,7 +411,7 @@ pub fn lower_pattern(
 
 ### Before Submitting
 
-- [ ] All tests pass (`cd compiler-rust && cargo test --workspace`)
+- [ ] All tests pass (`cd src/bootstrap && cargo test --workspace`)
 - [ ] No clippy warnings (`cargo clippy --all-targets`)
 - [ ] Code is formatted (`cargo fmt --check`)
 - [ ] Documentation is updated

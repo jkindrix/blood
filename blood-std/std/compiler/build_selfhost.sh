@@ -25,10 +25,10 @@ BUILD_DIR="$DIR/build"
 mkdir -p "$BUILD_DIR"
 
 # Paths (configurable via environment, defaults relative to repo root)
-BLOOD_RUST="${BLOOD_RUST:-$REPO_ROOT/compiler-rust/target/release/blood}"
-RUNTIME_O="${RUNTIME_O:-$REPO_ROOT/compiler-rust/runtime/runtime.o}"
-RUNTIME_A="${RUNTIME_A:-$REPO_ROOT/compiler-rust/target/release/libblood_runtime.a}"
-GROUND_TRUTH="${GROUND_TRUTH:-$REPO_ROOT/compiler-rust/tests/ground-truth}"
+BLOOD_RUST="${BLOOD_RUST:-$REPO_ROOT/src/bootstrap/target/release/blood}"
+RUNTIME_O="${RUNTIME_O:-$REPO_ROOT/runtime/runtime.o}"
+RUNTIME_A="${RUNTIME_A:-$REPO_ROOT/src/bootstrap/target/release/libblood_runtime.a}"
+GROUND_TRUTH="${GROUND_TRUTH:-$REPO_ROOT/tests/ground-truth}"
 
 # Export for first_gen/second_gen runtime discovery
 export BLOOD_RUNTIME="${RUNTIME_O}"
@@ -800,12 +800,12 @@ Verification commands:
   bisect            Identifies: which function causes second_gen to crash
 
 Environment:
-  BLOOD_RUST        Path to blood-rust compiler (default: <repo>/compiler-rust/target/release/blood)
+  BLOOD_RUST        Path to blood-rust compiler (default: <repo>/src/bootstrap/target/release/blood)
   BLOOD_BUILD_DIR   Build output directory (default: <script_dir>/build)
   BLOOD_CACHE       Cache directory (default: <build_dir>/.blood-cache)
-  RUNTIME_O         Path to runtime.o (default: <repo>/compiler-rust/runtime/runtime.o)
-  RUNTIME_A         Path to libblood_runtime.a (default: <repo>/compiler-rust/target/release/libblood_runtime.a)
-  GROUND_TRUTH      Path to ground-truth test dir (default: <repo>/compiler-rust/tests/ground-truth)
+  RUNTIME_O         Path to runtime.o (default: <repo>/runtime/runtime.o)
+  RUNTIME_A         Path to libblood_runtime.a (default: <repo>/src/bootstrap/target/release/libblood_runtime.a)
+  GROUND_TRUTH      Path to ground-truth test dir (default: <repo>/tests/ground-truth)
 USAGE
         exit 1
         ;;

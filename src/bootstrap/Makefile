@@ -12,7 +12,7 @@
 #   BLOOD_REPO  - Path to the blood language repo (default: ~/blood)
 #   JOBS        - Parallel jobs for cargo (default: auto)
 
-BLOOD_REPO  ?= $(dir $(abspath $(lastword $(MAKEFILE_LIST))))/..
+BLOOD_REPO  ?= $(dir $(abspath $(lastword $(MAKEFILE_LIST))))/../..
 BOOTSTRAP   := ./target/release/blood
 SELF_HOSTED := $(BLOOD_REPO)/blood-std/std/compiler/main.blood
 STDLIB_PATH := $(BLOOD_REPO)/blood-std/std
@@ -38,11 +38,11 @@ self-host: bootstrap
 # Run all tests: cargo tests + ground-truth suite
 test: build
 	cargo test --workspace
-	../tests/ground-truth/run_tests.sh $(BOOTSTRAP)
+	../../tests/ground-truth/run_tests.sh $(BOOTSTRAP)
 
 # Run only the ground-truth test suite
 ground-truth: build
-	../tests/ground-truth/run_tests.sh $(BOOTSTRAP)
+	../../tests/ground-truth/run_tests.sh $(BOOTSTRAP)
 
 # Run only cargo tests
 cargo-test:

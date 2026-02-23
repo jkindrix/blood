@@ -830,7 +830,7 @@ This section provides a concrete plan for mechanizing Blood's formal semantics i
 
 ### 12.0 Current Mechanization Status
 
-10 Coq/Rocq proof files exist in `compiler-rust/proofs/theories/` (~2,635 lines):
+10 Coq/Rocq proof files exist in `proofs/theories/` (~2,635 lines):
 
 | File | Purpose | Status |
 |------|---------|--------|
@@ -845,7 +845,7 @@ This section provides a concrete plan for mechanizing Blood's formal semantics i
 | `GenerationSnapshots.v` | Generation snapshot correctness (14 theorems) | ⚠️ 10/14 proved, 2 Admitted |
 | `LinearSafety.v` | Linear type safety invariants | ✅ Complete |
 
-Build infrastructure: `_CoqProject` + `Makefile` in `compiler-rust/proofs/`.
+Build infrastructure: `_CoqProject` + `Makefile` in `proofs/`.
 
 **Admitted theorems** (require completion):
 - Detection completeness (GenerationSnapshots.v)

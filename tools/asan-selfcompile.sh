@@ -29,9 +29,9 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-BLOOD_REF="${BLOOD_REF:-$REPO_ROOT/compiler-rust/target/release/blood}"
-RUNTIME_O="${RUNTIME_O:-$REPO_ROOT/compiler-rust/runtime/runtime.o}"
-RUNTIME_A="${RUNTIME_A:-$REPO_ROOT/compiler-rust/target/release/libblood_runtime.a}"
+BLOOD_REF="${BLOOD_REF:-$REPO_ROOT/src/bootstrap/target/release/blood}"
+RUNTIME_O="${RUNTIME_O:-$REPO_ROOT/runtime/runtime.o}"
+RUNTIME_A="${RUNTIME_A:-$REPO_ROOT/src/bootstrap/target/release/libblood_runtime.a}"
 BUILD_DIR="${BUILD_DIR:-$REPO_ROOT/blood-std/std/compiler}"
 
 export BLOOD_RUNTIME="${BLOOD_RUNTIME:-$RUNTIME_O}"

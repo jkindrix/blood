@@ -61,7 +61,7 @@ blood/
 │       ├── effects/        # Effect system primitives
 │       ├── sync/           # Concurrency primitives
 │       └── ...
-├── compiler-rust/          # Rust bootstrap compiler (git subtree)
+├── src/bootstrap/          # Rust bootstrap compiler (git subtree)
 │   ├── bloodc/src/         # Compiler source (Rust)
 │   ├── runtime/            # C runtime library
 │   ├── blood-std/          # Stdlib copy for compiler tests
@@ -74,7 +74,7 @@ blood/
 └── editors/                # Editor support (VS Code, etc.)
 ```
 
-See [`compiler-rust/README.md`](compiler-rust/README.md) for Rust-compiler-specific details.
+See [`src/bootstrap/README.md`](src/bootstrap/README.md) for Rust-compiler-specific details.
 
 ## Quick Example
 
@@ -104,7 +104,7 @@ fn main() / {IO, Error<AppError>} {
 
 ```bash
 # Build the bootstrap compiler
-cd compiler-rust
+cd src/bootstrap
 cargo build --release
 
 # Compile and run a program

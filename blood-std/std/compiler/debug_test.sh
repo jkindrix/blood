@@ -13,10 +13,10 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$DIR"
 
 # Paths (configurable via environment, same defaults as build_selfhost.sh)
-BLOOD_RUST="${BLOOD_RUST:-$HOME/blood/compiler-rust/target/release/blood}"
-RUNTIME_O="${RUNTIME_O:-$HOME/blood/compiler-rust/runtime/runtime.o}"
-RUNTIME_A="${RUNTIME_A:-$HOME/blood/compiler-rust/target/release/libblood_runtime.a}"
-GROUND_TRUTH="${GROUND_TRUTH:-$HOME/blood/compiler-rust/tests/ground-truth}"
+BLOOD_RUST="${BLOOD_RUST:-$HOME/blood/src/bootstrap/target/release/blood}"
+RUNTIME_O="${RUNTIME_O:-$HOME/blood/runtime/runtime.o}"
+RUNTIME_A="${RUNTIME_A:-$HOME/blood/src/bootstrap/target/release/libblood_runtime.a}"
+GROUND_TRUTH="${GROUND_TRUTH:-$HOME/blood/tests/ground-truth}"
 FIRST_GEN="${FIRST_GEN:-$DIR/first_gen}"
 
 export BLOOD_RUNTIME="${RUNTIME_O}"
@@ -1047,9 +1047,9 @@ usage() {
     echo "Test names: bare name (t00_arithmetic), .blood extension, or full path"
     echo ""
     echo "Environment variables:"
-    echo "  BLOOD_RUST     blood-rust binary (default: ~/blood/compiler-rust/target/release/blood)"
+    echo "  BLOOD_RUST     blood-rust binary (default: ~/blood/src/bootstrap/target/release/blood)"
     echo "  FIRST_GEN      first_gen binary  (default: ./first_gen)"
-    echo "  GROUND_TRUTH   test directory    (default: ~/blood/compiler-rust/tests/ground-truth)"
+    echo "  GROUND_TRUTH   test directory    (default: ~/blood/tests/ground-truth)"
     exit 1
 }
 

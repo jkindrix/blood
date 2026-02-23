@@ -9,7 +9,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-BLOOD="${1:-$SCRIPT_DIR/../../compiler-rust/target/release/blood}"
+BLOOD="${1:-$SCRIPT_DIR/../../src/bootstrap/target/release/blood}"
 FILTER="${2:-}"
 
 if [[ ! -x "$BLOOD" ]]; then

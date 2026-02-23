@@ -5,14 +5,14 @@
 ```
 blood/                          # Repository root
 ├── blood-std/std/compiler/     # Self-hosted Blood compiler (written in Blood)
-├── compiler-rust/bloodc/src/   # Rust bootstrap compiler (git subtree from ~/blood-rust/)
+├── src/bootstrap/bloodc/src/   # Rust bootstrap compiler (git subtree from ~/blood-rust/)
 ├── docs/spec/GRAMMAR.md        # Language grammar specification
 └── tools/                      # Development & debugging tools
 ```
 
 | Compiler | Location | Language | Purpose |
 |----------|----------|----------|---------|
-| **Reference** | `compiler-rust/bloodc/src/` | Rust | Bootstrap compiler |
+| **Reference** | `src/bootstrap/bloodc/src/` | Rust | Bootstrap compiler |
 | **Self-Hosted** | `blood-std/std/compiler/` | Blood | Self-hosting target |
 
 Pipeline: `Source → Lexer → Parser → AST → HIR → Type Check → MIR → Codegen → LLVM`
@@ -51,7 +51,7 @@ Audit search terms: `_ =>`, `unwrap_or_default`, `unwrap_or_else`, `Type::error(
 
 ## Development Rules
 
-**Compile before commit:** `compiler-rust/target/release/blood check <file.blood>`. If blood-rust rejects it, the code is wrong.
+**Compile before commit:** `src/bootstrap/target/release/blood check <file.blood>`. If blood-rust rejects it, the code is wrong.
 
 **Incremental development:** Write 10-50 lines, compile, fix, repeat. Never write hundreds of lines without compiling.
 
@@ -77,22 +77,22 @@ All fixed bugs (BUG-001 through BUG-013) are documented in `tools/FAILURE_LOG.md
 
 ```bash
 # Check syntax/types
-compiler-rust/target/release/blood check file.blood
+src/bootstrap/target/release/blood check file.blood
 
 # Build executable (output: build/debug/<stem> relative to source file)
-compiler-rust/target/release/blood build file.blood
+src/bootstrap/target/release/blood build file.blood
 
 # Build with custom output directory
-compiler-rust/target/release/blood build file.blood --build-dir /tmp/mybuild
+src/bootstrap/target/release/blood build file.blood --build-dir /tmp/mybuild
 
 # Build with explicit output path (-o overrides only the final binary)
-compiler-rust/target/release/blood build file.blood -o /tmp/mybin
+src/bootstrap/target/release/blood build file.blood -o /tmp/mybin
 
 # Run
-compiler-rust/target/release/blood run file.blood
+src/bootstrap/target/release/blood run file.blood
 
 # Build the Rust bootstrap compiler
-cd compiler-rust && cargo build --release
+cd src/bootstrap && cargo build --release
 
 # Build first_gen (self-hosted, via build script)
 cd blood-std/std/compiler && ./build_selfhost.sh timings
