@@ -55,17 +55,17 @@ This is a **monorepo** containing both the Blood language project and the Rust b
 blood/
 ├── blood-std/              # Standard library (Blood source)
 │   └── std/
-│       ├── compiler/       # Self-hosted compiler (written in Blood)
 │       ├── core/           # Core types (Option, String, Box, etc.)
 │       ├── collections/    # Vec, HashMap, LinkedList, etc.
 │       ├── effects/        # Effect system primitives
 │       ├── sync/           # Concurrency primitives
 │       └── ...
-├── src/bootstrap/          # Rust bootstrap compiler (git subtree)
-│   ├── bloodc/src/         # Compiler source (Rust)
-│   ├── runtime/            # C runtime library
-│   ├── blood-std/          # Stdlib copy for compiler tests
-│   └── Cargo.toml          # Workspace manifest
+├── src/
+│   ├── bootstrap/          # Rust bootstrap compiler (git subtree)
+│   │   ├── bloodc/src/     # Compiler source (Rust)
+│   │   ├── blood-std/      # Stdlib copy for compiler tests
+│   │   └── Cargo.toml      # Workspace manifest
+│   └── selfhost/           # Self-hosted compiler (written in Blood)
 ├── docs/                   # Language specification & documentation
 │   ├── spec/               # Core specs (SPECIFICATION, MEMORY_MODEL, etc.)
 │   ├── comparisons/        # Blood vs other languages

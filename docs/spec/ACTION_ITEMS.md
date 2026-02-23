@@ -208,7 +208,7 @@ SELF-001-003 complete. Continue toward full self-hosting.
 
 ### 4.1 Blood Parser Verification [P2]
 
-- [x] **SELF-VERIFY-001**: Verify `blood-std/std/compiler/parser.blood` manually ✅ COMPLETE
+- [x] **SELF-VERIFY-001**: Verify `src/selfhost/parser.blood` manually ✅ COMPLETE
   - Reviewed all 2992 lines of parser implementation for correctness
   - Identified 51 issues across Critical/High/Medium severity levels
   - **Bugs fixed**:
@@ -258,7 +258,7 @@ SELF-001-003 complete. Continue toward full self-hosting.
 
 ### 4.2 Type Checker Implementation [P1]
 
-- [ ] **SELF-004**: Implement type checker in Blood (`blood-std/std/compiler/typeck.blood`)
+- [ ] **SELF-004**: Implement type checker in Blood (`src/selfhost/typeck.blood`)
   - Required components:
     - Type representation (`Type`, `TypeVar`, `TypeScheme`)
     - Unification algorithm

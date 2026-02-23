@@ -129,7 +129,7 @@ After every significant change:
 # 2. Make your change
 
 # 3. Rebuild first_gen
-cd blood-std/std/compiler && blood build main.blood --no-cache
+cd src/selfhost && blood build main.blood --no-cache
 cp main first_gen
 
 # 4. Check for regressions

@@ -12,11 +12,14 @@ set -uo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$DIR"
 
+# Repository root (dynamic, same as build_selfhost.sh)
+REPO_ROOT="$(cd "$DIR/../.." && pwd)"
+
 # Paths (configurable via environment, same defaults as build_selfhost.sh)
-BLOOD_RUST="${BLOOD_RUST:-$HOME/blood/src/bootstrap/target/release/blood}"
-RUNTIME_O="${RUNTIME_O:-$HOME/blood/runtime/runtime.o}"
-RUNTIME_A="${RUNTIME_A:-$HOME/blood/src/bootstrap/target/release/libblood_runtime.a}"
-GROUND_TRUTH="${GROUND_TRUTH:-$HOME/blood/tests/ground-truth}"
+BLOOD_RUST="${BLOOD_RUST:-$REPO_ROOT/src/bootstrap/target/release/blood}"
+RUNTIME_O="${RUNTIME_O:-$REPO_ROOT/runtime/runtime.o}"
+RUNTIME_A="${RUNTIME_A:-$REPO_ROOT/src/bootstrap/target/release/libblood_runtime.a}"
+GROUND_TRUTH="${GROUND_TRUTH:-$REPO_ROOT/tests/ground-truth}"
 FIRST_GEN="${FIRST_GEN:-$DIR/first_gen}"
 
 export BLOOD_RUNTIME="${RUNTIME_O}"
@@ -234,7 +237,7 @@ mode_status() {
         ok "first_gen: $(numfmt --to=iec "$sz") | $(date -d "@$ts" '+%Y-%m-%d %H:%M:%S') | $md5"
 
         # Check for copies with different hashes
-        local other_fg="$HOME/blood/first_gen"
+        local other_fg="$REPO_ROOT/first_gen"
         if [ -f "$other_fg" ] && [ "$other_fg" != "$FIRST_GEN" ]; then
             local other_md5
             other_md5=$(md5sum "$other_fg" 2>/dev/null | cut -d' ' -f1)

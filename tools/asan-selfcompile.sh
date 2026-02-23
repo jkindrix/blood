@@ -22,7 +22,7 @@
 #   BLOOD_REF           — reference compiler for building first_gen (default: blood-rust)
 #   BLOOD_RUNTIME       — path to runtime.o
 #   BLOOD_RUST_RUNTIME  — path to libblood_runtime.a
-#   BUILD_DIR           — compiler source directory (default: <repo>/blood-std/std/compiler)
+#   BUILD_DIR           — compiler source directory (default: <repo>/src/selfhost)
 
 set -uo pipefail
 
@@ -32,7 +32,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 BLOOD_REF="${BLOOD_REF:-$REPO_ROOT/src/bootstrap/target/release/blood}"
 RUNTIME_O="${RUNTIME_O:-$REPO_ROOT/runtime/runtime.o}"
 RUNTIME_A="${RUNTIME_A:-$REPO_ROOT/src/bootstrap/target/release/libblood_runtime.a}"
-BUILD_DIR="${BUILD_DIR:-$REPO_ROOT/blood-std/std/compiler}"
+BUILD_DIR="${BUILD_DIR:-$REPO_ROOT/src/selfhost}"
 
 export BLOOD_RUNTIME="${BLOOD_RUNTIME:-$RUNTIME_O}"
 export BLOOD_RUST_RUNTIME="${BLOOD_RUST_RUNTIME:-$RUNTIME_A}"

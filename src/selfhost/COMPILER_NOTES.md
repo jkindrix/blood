@@ -346,7 +346,7 @@ fn parse_args_from_cli() -> Args {
 
 All compiler files must pass blood-rust type checking:
 ```bash
-for f in blood-std/std/compiler/*.blood; do
+for f in src/selfhost/*.blood; do
   blood check "$f"
 done
 ```
@@ -411,7 +411,7 @@ Full end-to-end testing workflow:
 Example:
 ```bash
 # Step 1: Build the self-hosted compiler
-blood build blood-std/std/compiler/main.blood -o bloodc.ll
+blood build src/selfhost/main.blood -o bloodc.ll
 llc bloodc.ll -o bloodc.o
 clang bloodc.o -o bloodc
 

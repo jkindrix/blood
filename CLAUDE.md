@@ -4,7 +4,7 @@
 
 ```
 blood/                          # Repository root
-├── blood-std/std/compiler/     # Self-hosted Blood compiler (written in Blood)
+├── src/selfhost/     # Self-hosted Blood compiler (written in Blood)
 ├── src/bootstrap/bloodc/src/   # Rust bootstrap compiler (git subtree from ~/blood-rust/)
 ├── docs/spec/GRAMMAR.md        # Language grammar specification
 └── tools/                      # Development & debugging tools
@@ -13,7 +13,7 @@ blood/                          # Repository root
 | Compiler | Location | Language | Purpose |
 |----------|----------|----------|---------|
 | **Reference** | `src/bootstrap/bloodc/src/` | Rust | Bootstrap compiler |
-| **Self-Hosted** | `blood-std/std/compiler/` | Blood | Self-hosting target |
+| **Self-Hosted** | `src/selfhost/` | Blood | Self-hosting target |
 
 Pipeline: `Source → Lexer → Parser → AST → HIR → Type Check → MIR → Codegen → LLVM`
 
@@ -63,7 +63,7 @@ Audit search terms: `_ =>`, `unwrap_or_default`, `unwrap_or_else`, `Type::error(
 
 ## Shared Types (common.blood)
 
-Canonical shared types: `Span`, `Symbol`, `SpannedSymbol`, `SpannedString`, `OrderedFloat`. Check `blood-std/std/compiler/common.blood` for current field definitions before modifying any shared type. Import via `mod common;`, reference as `common::Span`, etc. Update ALL files that use the type when making changes.
+Canonical shared types: `Span`, `Symbol`, `SpannedSymbol`, `SpannedString`, `OrderedFloat`. Check `src/selfhost/common.blood` for current field definitions before modifying any shared type. Import via `mod common;`, reference as `common::Span`, etc. Update ALL files that use the type when making changes.
 
 ## Active Limitations
 
@@ -95,11 +95,11 @@ src/bootstrap/target/release/blood run file.blood
 cd src/bootstrap && cargo build --release
 
 # Build first_gen (self-hosted, via build script)
-cd blood-std/std/compiler && ./build_selfhost.sh timings
-# Output: blood-std/std/compiler/build/first_gen
+cd src/selfhost && ./build_selfhost.sh timings
+# Output: src/selfhost/build/first_gen
 
 # Run ground-truth tests
-cd blood-std/std/compiler && ./build_selfhost.sh ground-truth
+cd src/selfhost && ./build_selfhost.sh ground-truth
 ```
 
 ### Build Directory Layout
@@ -150,7 +150,7 @@ Run each tool with `--help` or see its header comments for detailed usage.
 ## Reference
 
 - **Grammar spec**: `docs/spec/GRAMMAR.md`
-- **Design docs**: `blood-std/std/compiler/COMPILER_NOTES.md`
+- **Design docs**: `src/selfhost/COMPILER_NOTES.md`
 - **Aether examples**: `~/blood-test/aether/`
 - **Bug history**: `tools/FAILURE_LOG.md`
 - **Session protocol**: `tools/AGENT_PROTOCOL.md`

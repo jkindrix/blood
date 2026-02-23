@@ -582,7 +582,7 @@ Compiler is written in Rust, not Blood.
   - *Bootstrap strategy (5 phases)*
   - *Lines of code estimates (~25k Blood LoC)*
   - *Assessment: ~80% ready for self-hosting attempt*
-- [x] **SELF-002**: Implement lexer in Blood (`blood-std/std/compiler/lexer.blood`)
+- [x] **SELF-002**: Implement lexer in Blood (`src/selfhost/lexer.blood`)
   - Created 646-line lexer implementation in Blood
   - 118 token kinds covering all Blood syntax (keywords, operators, delimiters, literals)
   - Full Lexer struct with position tracking (line, column, offset)
@@ -590,7 +590,7 @@ Compiler is written in Rust, not Blood.
   - Public `tokenize()` function producing token array
   - Handles: escape sequences, nested block comments, doc comments, number literals with exponents
 - [x] **SELF-003**: Implement parser in Blood
-  - Created `blood-std/std/compiler/parser.blood` with 2992 lines
+  - Created `src/selfhost/parser.blood` with 2992 lines
   - Full recursive descent parser with Pratt parsing for expressions
   - Complete AST types: Program, Declaration, Expr, Pattern, Type, Statement
   - Parses all major constructs: functions, structs, enums, traits, impls, effects, handlers

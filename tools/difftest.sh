@@ -33,7 +33,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 BLOOD_REF="${BLOOD_REF:-$REPO_ROOT/src/bootstrap/target/release/blood}"
-BLOOD_TEST="${BLOOD_TEST:-$REPO_ROOT/blood-std/std/compiler/build/first_gen}"
+BLOOD_TEST="${BLOOD_TEST:-$REPO_ROOT/src/selfhost/build/first_gen}"
 export BLOOD_RUNTIME="${BLOOD_RUNTIME:-$REPO_ROOT/runtime/runtime.o}"
 export BLOOD_RUST_RUNTIME="${BLOOD_RUST_RUNTIME:-$REPO_ROOT/src/bootstrap/target/release/libblood_runtime.a}"
 
@@ -68,7 +68,7 @@ usage() {
     echo ""
     echo "Environment:"
     echo "  BLOOD_REF          Reference compiler  (default: ~/blood/src/bootstrap/target/release/blood)"
-    echo "  BLOOD_TEST         Test compiler        (default: ~/blood/blood-std/std/compiler/build/first_gen)"
+    echo "  BLOOD_TEST         Test compiler        (default: ~/blood/src/selfhost/build/first_gen)"
     echo "  BLOOD_RUNTIME      C runtime object     (default: ~/blood/runtime/runtime.o)"
     echo "  BLOOD_RUST_RUNTIME Rust runtime archive (default: ~/blood/src/bootstrap/target/release/libblood_runtime.a)"
     exit 3

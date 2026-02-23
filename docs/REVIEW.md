@@ -90,7 +90,7 @@ Blood is a systems programming language synthesizing five research innovations �
 #### Critical Gaps
 
 **~~GAP-MEM-1: Self-hosted compiler does not emit generation checks~~ FIXED**
-- Location: `blood-std/std/compiler/codegen_expr.blood` (emit_place_addr → emit_generation_check)
+- Location: `src/selfhost/codegen_expr.blood` (emit_place_addr → emit_generation_check)
 - `emit_generation_check()` emits `blood_validate_generation` + `blood_stale_reference_panic` on every Deref of a region-allocated local
 - `emit_region_local()` now uses `blood_alloc_or_abort` which writes the generation to a stack alloca
 - **Status: DONE** — generation checks emitted for region-tier pointer dereferences
@@ -726,13 +726,13 @@ These items complete partially-implemented features.
 
 | ID | Issue | Location | Action | Effort |
 |----|-------|----------|--------|--------|
-| REM-017 | Content-addressing absent from self-hosted compiler | `blood-std/std/compiler/` | Port ContentHash, Canonicalizer, per-item hashing to Blood | Very High |
+| REM-017 | Content-addressing absent from self-hosted compiler | `src/selfhost/` | Port ContentHash, Canonicalizer, per-item hashing to Blood | Very High |
 | REM-018 | Package CLI not wired | `src/bootstrap/bloodc/src/main.rs` | Expose `blood add`, `blood remove`, `blood publish` commands | Medium |
 | ~~REM-019~~ | ~~LSP missing 4 features~~ | ~~`blood-tools/lsp/src/`~~ | **CORRECTED: All 4 features are implemented. Update TOOLING.md to reflect this.** | Trivial |
 | REM-020 | Region isolation not enforced | `blood-runtime/src/memory.rs` | Add cross-region validation checks on reference creation | Medium |
 | REM-021 | MultiShot handlers not fully tested | `effects/handler.rs:129-136` | Add test cases for continuation cloning and multi-resume scenarios | Medium |
 | REM-022 | Sync primitives spinlock-based | `blood-std/std/sync/` | Upgrade Mutex to OS-backed; add condition variables | Medium |
-| REM-023 | Self-hosted build cache is module-level only | `blood-std/std/compiler/build_cache.blood` | Upgrade from FNV-1a module hashing to per-item BLAKE3 content hashing | High |
+| REM-023 | Self-hosted build cache is module-level only | `src/selfhost/build_cache.blood` | Upgrade from FNV-1a module hashing to per-item BLAKE3 content hashing | High |
 | REM-024 | Record row polymorphism underutilized | `unify.blood`, `hir_ty.blood` | Add test programs exercising extensible record types | Low |
 | REM-025 | Segmented stack continuations deferred | `effects/mod.rs:63` | Design and implement for non-tail-resumptive handlers | Very High |
 | REM-026 | Hot-swap support data structures only | `content/vft.rs:128-200` | Connect to runtime or defer to future phase with documentation | Medium |

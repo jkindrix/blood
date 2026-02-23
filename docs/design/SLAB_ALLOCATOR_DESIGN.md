@@ -873,7 +873,7 @@ cd blood-rust
 cargo test -p blood-runtime
 cargo build --release
 cd ../blood
-/home/jkindrix/blood-rust/target/release/blood check blood-std/std/compiler/main.blood
+/home/jkindrix/blood-rust/target/release/blood check src/selfhost/main.blood
 ```
 
 ---
@@ -1022,12 +1022,12 @@ cargo build --release
 # Test: Compile a large file
 cd ../blood
 /home/jkindrix/blood-rust/target/release/blood build \
-    blood-std/std/compiler/main.blood \
+    src/selfhost/main.blood \
     -o /tmp/bloodc_self
 
 # Compare memory usage
 /usr/bin/time -v /home/jkindrix/blood-rust/target/release/blood build \
-    blood-std/std/compiler/main.blood \
+    src/selfhost/main.blood \
     -o /tmp/bloodc_self 2>&1 | grep "Maximum resident"
 ```
 

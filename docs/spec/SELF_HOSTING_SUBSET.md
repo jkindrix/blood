@@ -305,18 +305,18 @@ Based on SPECIFICATION.md and blood-std:
 - Stable language semantics
 
 **Phase 2: Blood Lexer in Blood**
-- Implement `blood-std/std/compiler/lexer.blood`
+- Implement `src/selfhost/lexer.blood`
 - Test against Rust lexer output
 - SELF-002 milestone
 
 **Phase 3: Blood Parser in Blood**
-- Implement `blood-std/std/compiler/parser.blood`
+- Implement `src/selfhost/parser.blood`
 - Depend on Blood lexer
 - SELF-003 milestone
 
 **Phase 4: Blood Type Checker in Blood**
 - Most complex phase
-- Implement `blood-std/std/compiler/typeck.blood`
+- Implement `src/selfhost/typeck.blood`
 - SELF-004 milestone
 
 **Phase 5: Full Bootstrap**

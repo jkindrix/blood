@@ -62,11 +62,12 @@ cargo bench --bench runtime_bench
 blood/                          # Repository root (monorepo)
 ├── blood-std/                  # Standard library (Blood source)
 │   └── std/
-│       ├── compiler/           # Self-hosted compiler (written in Blood)
 │       ├── core/               # Core types (Option, String, Box, etc.)
 │       ├── collections/        # Vec, HashMap, LinkedList, etc.
 │       └── effects/            # Effect system primitives
-├── src/bootstrap/              # Rust bootstrap compiler (git subtree)
+├── src/
+│   ├── selfhost/               # Self-hosted compiler (written in Blood)
+│   └── bootstrap/              # Rust bootstrap compiler (git subtree)
 │   ├── bloodc/                 # The main compiler
 │   │   ├── src/
 │   │   │   ├── main.rs         # CLI entry point

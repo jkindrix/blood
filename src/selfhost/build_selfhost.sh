@@ -20,7 +20,7 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$DIR"
 
 # Repository root and build output directory
-REPO_ROOT="$(cd "$DIR/../../.." && pwd)"
+REPO_ROOT="$(cd "$DIR/../.." && pwd)"
 BUILD_DIR="$DIR/build"
 mkdir -p "$BUILD_DIR"
 

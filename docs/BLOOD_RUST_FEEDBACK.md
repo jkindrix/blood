@@ -8,7 +8,7 @@
 
 ## Context
 
-The self-hosted Blood compiler (`blood-std/std/compiler/`) has reached the point where it can compile itself. The pipeline is:
+The self-hosted Blood compiler (`src/selfhost/`) has reached the point where it can compile itself. The pipeline is:
 
 ```
 blood-rust compiles main.blood → first_gen binary
