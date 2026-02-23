@@ -38,11 +38,11 @@ self-host: bootstrap
 # Run all tests: cargo tests + ground-truth suite
 test: build
 	cargo test --workspace
-	./tests/ground-truth/run_tests.sh $(BOOTSTRAP)
+	../tests/ground-truth/run_tests.sh $(BOOTSTRAP)
 
 # Run only the ground-truth test suite
 ground-truth: build
-	./tests/ground-truth/run_tests.sh $(BOOTSTRAP)
+	../tests/ground-truth/run_tests.sh $(BOOTSTRAP)
 
 # Run only cargo tests
 cargo-test:
