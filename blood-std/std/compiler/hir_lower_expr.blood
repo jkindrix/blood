@@ -823,7 +823,29 @@ fn lower_record_expr(
     };
 
     let type_arg_count = type_args.len() as u32;
-    let resolved_path = hir_def::ResolvedPath::new(def_id, type_arg_count, p.span);
+    // Check if the resolved def is a variant — set variant_index for enum variant
+    // struct expressions (e.g., Bucket::Occupied { key, value }).
+    // Without this, variant_index defaults to None and MIR lowering uses
+    // discriminant 0 for ALL struct enum variants, breaking hash maps and
+    // any enum with payload variants.
+    let def_info = ctx.resolver.get_def_info(def_id);
+    let resolved_path = match def_info {
+        Option::Some(info) => {
+            match info.variant_index {
+                Option::Some(vi) => {
+                    let mut rp = hir_def::ResolvedPath::variant(def_id, p.span, vi);
+                    rp.type_arg_count = type_arg_count;
+                    rp
+                }
+                Option::None => {
+                    hir_def::ResolvedPath::new(def_id, type_arg_count, p.span)
+                }
+            }
+        }
+        Option::None => {
+            hir_def::ResolvedPath::new(def_id, type_arg_count, p.span)
+        }
+    };
 
     // Lower fields
     let mut fields_hir: Vec<hir_expr::FieldExpr> = Vec::new();

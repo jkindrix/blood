@@ -295,7 +295,30 @@ pub fn pattern_test(
         &hir_expr::PatternKind::Rest => Option::None,
         &hir_expr::PatternKind::Binding { local_id: _, name: _, mode: _, subpattern: _ } => Option::None,
         &hir_expr::PatternKind::Tuple(_) => Option::None,
-        &hir_expr::PatternKind::Struct { path: _, fields: _, has_rest: _ } => Option::None,
+        &hir_expr::PatternKind::Struct { ref path, fields: _, has_rest: _ } => {
+            // For enum variant struct patterns (e.g., Bucket::Occupied { key, value }),
+            // test the discriminant. Without this, struct patterns are treated as
+            // irrefutable and catch all remaining variants, making later arms unreachable.
+            match path.variant_index {
+                Option::Some(_) => {
+                    let discr_temp = ctx.new_temp(type_intern::CommonTypes::usize_ty(), span);
+                    ctx.emit_assign(
+                        mir_types::Place::local(discr_temp),
+                        mir_types::Rvalue::Discriminant(source.clone()),
+                        span,
+                    );
+                    let variant_idx = get_variant_index_from_path(ctx, path, span);
+                    Option::Some(PatternTest {
+                        discriminant: mir_types::Operand::Copy(mir_types::Place::local(discr_temp)),
+                        expected: variant_idx as u128,
+                    })
+                }
+                Option::None => {
+                    // Plain struct pattern (not an enum variant) — irrefutable
+                    Option::None
+                }
+            }
+        }
         &hir_expr::PatternKind::Ref { mutable: _, ref inner } => {
             // Dereference through the reference and test the inner pattern.
             // e.g. match c { &Color::Red => ... } where c: &Color
