@@ -893,8 +893,8 @@ fn find_c_runtime() -> PathBuf {
     // Try relative to the executable
     if let Ok(exe_path) = std::env::current_exe() {
         if let Some(exe_dir) = exe_path.parent() {
-            // Check in target/release/../runtime (for development)
-            let runtime_dev = exe_dir.join("../../runtime/runtime.o");
+            // Check in repo root runtime/ (for development: exe is at target/release/)
+            let runtime_dev = exe_dir.join("../../../runtime/runtime.o");
             if runtime_dev.exists() {
                 return runtime_dev;
             }
