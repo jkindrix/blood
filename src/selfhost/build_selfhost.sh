@@ -5,7 +5,7 @@
 #   ./build_selfhost.sh              # Full pipeline: blood-rust → first_gen → second_gen
 #   ./build_selfhost.sh rebuild      # Skip blood-rust, reuse existing first_gen
 #   ./build_selfhost.sh test [bin]   # Smoke test a binary (default: build/second_gen)
-#   ./build_selfhost.sh ground-truth # Run ground-truth tests through first_gen
+#   ./build_selfhost.sh ground-truth [bin] # Run ground-truth tests (default: BLOOD_TEST or first_gen)
 #   ./build_selfhost.sh emit [stage] # Emit intermediate IR (ast|hir|mir|llvm-ir|llvm-ir-unopt)
 #   ./build_selfhost.sh verify [ir]  # Run all verification checks on IR
 #   ./build_selfhost.sh ir-check [ir]# Run FileCheck tests against compiler output
@@ -525,7 +525,7 @@ run_ground_truth() {
         # Compile with our compiler
         local tmpdir
         tmpdir=$(mktemp -d)
-        if ! "$bin" build "$src" -o "$tmpdir/out.ll" >/dev/null 2>&1; then
+        if ! "$bin" build "$src" -o "$tmpdir/out" >/dev/null 2>&1; then
             fail "$name (compile)"
             comp_fail=$((comp_fail + 1))
             rm -rf "$tmpdir"
@@ -678,7 +678,7 @@ case "${1:-full}" in
         ;;
 
     ground-truth)
-        run_ground_truth "${2:-$BUILD_DIR/first_gen}"
+        run_ground_truth "${2:-${BLOOD_TEST:-$BUILD_DIR/first_gen}}"
         ;;
 
     smoke-tests)
@@ -782,7 +782,7 @@ Commands:
   full              Build from scratch (blood-rust → first_gen → second_gen)
   rebuild           Reuse existing first_gen to rebuild second_gen
   test [binary]     Smoke test a binary (default: build/second_gen)
-  ground-truth [b]  Run ground-truth tests through binary (default: build/first_gen)
+  ground-truth [b]  Run ground-truth tests through binary (default: BLOOD_TEST or first_gen)
   smoke-tests [b]   Run smoke tests (tests/) through binary (default: blood-rust)
   verify [ir]       Run all verification checks (default: build/second_gen.ll)
   ir-check [ir]     Run FileCheck tests against compiler output
