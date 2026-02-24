@@ -251,9 +251,6 @@ match risky_operation() {
 |------|-------|----------|
 | `forall_types.blood` | Unknown function DefId | Codegen bug |
 | `simple_effect_test.blood` | undefined reference to handler | Codegen/linking |
-| `test1.blood` | No functions to compile | Missing main |
-| `test2.blood` | No `blood_main` | Missing main |
-| `test4.blood` | No `blood_main` | Missing main |
 
 ### 3.3 Correct Rejections
 
@@ -297,7 +294,6 @@ The following examples compile and run successfully, demonstrating valid Blood s
 - `static_test.blood`
 - `strings.blood`
 - `struct_ref_test.blood`
-- `test5.blood`, `test6.blood`
 - `tuple_match.blood`, `tuple_match_nobind.blood`, `tuple_pass.blood`
 
 ---

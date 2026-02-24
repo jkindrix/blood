@@ -45,31 +45,6 @@ fn test_parse_simple_blood() {
 }
 
 #[test]
-fn test_parse_test1_blood() {
-    parse_file_ok("../examples/test1.blood");
-}
-
-#[test]
-fn test_parse_test2_blood() {
-    parse_file_ok("../examples/test2.blood");
-}
-
-#[test]
-fn test_parse_test4_blood() {
-    parse_file_ok("../examples/test4.blood");
-}
-
-#[test]
-fn test_parse_test5_blood() {
-    parse_file_ok("../examples/test5.blood");
-}
-
-#[test]
-fn test_parse_test6_blood() {
-    parse_file_ok("../examples/test6.blood");
-}
-
-#[test]
 fn test_parse_algebraic_effects_blood() {
     parse_file_ok("../examples/algebraic_effects.blood");
 }
