@@ -1518,8 +1518,12 @@ fn lower_stmt(ctx: &mut mir_lower_ctx::MirLowerCtx, stmt: &hir_expr::Stmt) {
                     );
                 }
                 &Option::None => {
-                    // Uninitialzed binding - just create the locals
-                    // The pattern lowering will create the necessary locals
+                    // Uninitialized binding — create and register MIR locals
+                    // so that later assignments resolve to the correct local.
+                    // Without this, each assignment in different branches
+                    // creates a fresh temp (lookup_local returns None),
+                    // causing value loss across control flow joins.
+                    mir_lower_pattern::register_pattern_locals(ctx, pattern, span);
                 }
             }
         }

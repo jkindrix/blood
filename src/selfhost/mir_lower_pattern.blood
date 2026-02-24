@@ -103,6 +103,68 @@ pub fn lower_irrefutable_pattern(
     }
 }
 
+/// Registers MIR locals for all bindings in a pattern without emitting
+/// assignments.  Used for uninitialized `let mut` declarations so that
+/// later assignments resolve to the correct MIR local.
+pub fn register_pattern_locals(
+    ctx: &mut mir_lower_ctx::MirLowerCtx,
+    pattern: &hir_expr::Pattern,
+    span: common::Span,
+) {
+    match &pattern.kind {
+        &hir_expr::PatternKind::Binding { local_id, name: _, mode, ref subpattern } => {
+            let ty_id = type_intern::type_to_ty_id(&type_intern::ty_id_to_type(pattern.ty));
+            let local_ty_id = match mode {
+                hir_expr::BindingMode::ByRef => {
+                    type_intern::type_interner().mk_ref(ty_id, false)
+                }
+                hir_expr::BindingMode::ByMutRef => {
+                    type_intern::type_interner().mk_ref(ty_id, true)
+                }
+                hir_expr::BindingMode::ByValue => ty_id,
+            };
+            let mir_local = ctx.new_var(local_ty_id, common::make_string("_var"), true, span);
+            ctx.register_local(local_id, mir_local);
+            match subpattern {
+                &Option::Some(ref sub) => {
+                    register_pattern_locals(ctx, sub.as_ref(), span);
+                }
+                &Option::None => {}
+            }
+        }
+        &hir_expr::PatternKind::Tuple(ref patterns) => {
+            let mut i: usize = 0;
+            while i < patterns.len() {
+                register_pattern_locals(ctx, &patterns[i], span);
+                i = i + 1;
+            }
+        }
+        &hir_expr::PatternKind::Struct { path: _, ref fields, has_rest: _ } => {
+            let mut i: usize = 0;
+            while i < fields.len() {
+                register_pattern_locals(ctx, &fields[i].pattern, span);
+                i = i + 1;
+            }
+        }
+        &hir_expr::PatternKind::TupleStruct { path: _, ref fields } => {
+            let mut i: usize = 0;
+            while i < fields.len() {
+                register_pattern_locals(ctx, &fields[i], span);
+                i = i + 1;
+            }
+        }
+        &hir_expr::PatternKind::Ref { mutable: _, ref inner } => {
+            register_pattern_locals(ctx, inner.as_ref(), span);
+        }
+        &hir_expr::PatternKind::Or(ref alternatives) => {
+            if alternatives.len() > 0 {
+                register_pattern_locals(ctx, &alternatives[0], span);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Lowers a binding pattern (name, mut name, ref name, ref mut name).
 fn lower_binding_pattern(
     ctx: &mut mir_lower_ctx::MirLowerCtx,

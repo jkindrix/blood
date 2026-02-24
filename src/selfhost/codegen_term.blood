@@ -500,6 +500,15 @@ fn emit_call(
                             let widened_cg = emit_struct_widening(ctx, &arg_val, arg_ty.as_str(), expected_ty.as_str());
                             final_val = cgname_to_string(&widened_cg);
                             final_ty = expected_ty;
+                        } else if str_eq(arg_ty.as_str(), "ptr") && is_struct_type(expected_ty.as_str()) {
+                            // Argument is a pointer (reference) but parameter expects a struct by value.
+                            // This happens when a MIR operand is a reference-typed local passed to
+                            // a function taking self by value (e.g., self.builder.finish() where
+                            // self.builder is auto-borrowed). Load the struct through the pointer.
+                            let load_result = ctx.fresh_temp_cg();
+                            ctx.emit_load_cg(&load_result, expected_ty.as_str(), arg_val.as_str());
+                            final_val = cgname_to_string(&load_result);
+                            final_ty = expected_ty;
                         } else if !string_eq_str(expected_ty.as_str(), arg_ty.as_str()) {
                             // General type mismatch (e.g., struct { i32, i32 } vs scalar i64)
                             // Use memory-based bitcast: alloca the LARGER of the two types

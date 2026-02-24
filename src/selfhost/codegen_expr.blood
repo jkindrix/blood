@@ -470,12 +470,37 @@ fn resolve_place_elem_type(
                                         return clone_string(&layout.fields[field_idx as usize].llvm_type);
                                     }
                                 }
-                                Option::None => {}
+                                Option::None => {
+                                    // Struct not in registry — could be a tuple with ADT wrapping.
+                                    // Try tuple resolution below.
+                                }
                             }
                         }
                     }
                 }
                 &Option::None => {}
+            }
+
+            // Before falling back, check if the local's HIR type is a tuple.
+            // Tuple types don't have ADT def_ids in the type interner, so the
+            // struct/enum lookup above fails. Extract the field element type directly.
+            match ctx.get_local_hir_type(place.local) {
+                Option::Some(ty_id) => {
+                    let unwrapped = unwrap_ref_type(ty_id);
+                    let kind = type_intern::type_interner().get(unwrapped);
+                    match kind {
+                        &type_intern::InternedTypeKind::Tuple(list_id) => {
+                            let interner = type_intern::type_interner();
+                            let len = interner.ty_list_len(list_id);
+                            if (field_idx as usize) < len {
+                                let elem_ty_id = interner.get_ty_list_element(list_id, field_idx as usize);
+                                return codegen_size::type_to_llvm_with_ctx_id(ctx, elem_ty_id);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                Option::None => {}
             }
 
             // Fallback: use the local's type
