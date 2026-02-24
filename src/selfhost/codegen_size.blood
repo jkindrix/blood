@@ -685,7 +685,7 @@ pub fn build_enum_type_string(payload_size: u64, max_align: u64) -> String {
 pub fn llvm_type_size(ty: &str) -> u64 {
     let bytes = ty.as_bytes();
     if bytes.len() == 0 {
-        return 8;
+        return 0;
     }
     // i1 -> 1 byte
     if bytes.len() == 2 && bytes[0] == 105 && bytes[1] == 49 {
@@ -723,6 +723,10 @@ pub fn llvm_type_size(ty: &str) -> u64 {
     if bytes.len() == 6 && bytes[0] == 100 && bytes[1] == 111 {
         return 8;
     }
+    // void -> 0 bytes (Never type, only valid in function returns)
+    if bytes.len() == 4 && bytes[0] == 118 && bytes[1] == 111 && bytes[2] == 105 && bytes[3] == 100 {
+        return 0;
+    }
     // Struct { ... }
     if bytes[0] == 123 {
         return parse_struct_size(ty);
@@ -731,6 +735,8 @@ pub fn llvm_type_size(ty: &str) -> u64 {
     if bytes[0] == 91 {
         return parse_array_size(ty);
     }
+    // Default: treat unrecognized types as pointer-sized (8 bytes).
+    // This matches the Rust bootstrap compiler's behavior for unknown types.
     8
 }
 
@@ -788,7 +794,7 @@ fn parse_struct_size(ty: &str) -> u64 {
     }
 
     if field_count == 0 {
-        return 8;
+        return 0;
     }
     // Final padding to struct alignment (max of all field alignments)
     let final_padding = (max_align - (offset % max_align)) % max_align;
@@ -833,7 +839,7 @@ fn parse_array_size(ty: &str) -> u64 {
 pub fn llvm_type_alignment(ty: &str) -> u64 {
     let bytes = ty.as_bytes();
     if bytes.len() == 0 {
-        return 8;
+        return 1;
     }
     // i1 -> 1
     if bytes.len() == 2 && bytes[0] == 105 && bytes[1] == 49 {
@@ -871,6 +877,10 @@ pub fn llvm_type_alignment(ty: &str) -> u64 {
     if bytes.len() == 6 && bytes[0] == 100 && bytes[1] == 111 {
         return 8;
     }
+    // void -> 1 (no meaningful alignment, but 1 is the safe minimum)
+    if bytes.len() == 4 && bytes[0] == 118 && bytes[1] == 111 && bytes[2] == 105 && bytes[3] == 100 {
+        return 1;
+    }
     // Struct { ... } -> max alignment of fields
     if bytes[0] == 123 {
         return parse_struct_alignment(ty);
@@ -879,6 +889,7 @@ pub fn llvm_type_alignment(ty: &str) -> u64 {
     if bytes[0] == 91 {
         return parse_array_alignment(ty);
     }
+    // Default: treat unrecognized types as pointer-aligned
     8
 }
 
