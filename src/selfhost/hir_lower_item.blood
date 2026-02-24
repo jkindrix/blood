@@ -59,9 +59,7 @@ fn lower_fn_param(ctx: &mut hir_lower_ctx::LoweringCtx, param: &ast::Param, para
     // Check if this is a self parameter by checking the name
     let is_self = is_self_param_name(name.symbol);
 
-    let result = hir_item::FnParam::new(def_id, name, ty, mutable, is_self, param.span);
-
-    result
+    hir_item::FnParam::new(def_id, name, ty, mutable, is_self, param.span)
 }
 
 /// Checks if a parameter name symbol represents "self".
@@ -153,13 +151,21 @@ pub fn lower_struct_body(ctx: &mut hir_lower_ctx::LoweringCtx, body: &ast::Struc
                         j = j + 1;
                     } else {
                         // Compare field names by interning and checking symbol index
-                        let name_i = ctx.intern(ctx.span_to_string(fields[i].name.span).as_str());
-                        let name_j = ctx.intern(ctx.span_to_string(fields[j].name.span).as_str());
+                        // NOTE: Avoid chained method calls (a.method1().method2()) to
+                        // work around a first_gen codegen bug where .method2() is called
+                        // on 'a' instead of on the result of method1().
+                        let str_i = ctx.span_to_string(fields[i].name.span);
+                        let ref_i = str_i.as_str();
+                        let name_i = ctx.intern(ref_i);
+                        let str_j = ctx.span_to_string(fields[j].name.span);
+                        let ref_j = str_j.as_str();
+                        let name_j = ctx.intern(ref_j);
                         if name_i.index == name_j.index {
                             let field_name = ctx.span_to_string(fields[i].name.span);
+                            let field_name_str = field_name.as_str();
                             let mut msg = String::new();
                             msg.push_str("duplicate field name `");
-                            msg.push_str(field_name.as_str());
+                            msg.push_str(field_name_str);
                             msg.push_str("` in struct");
                             ctx.error(hir::DiagnosticCode::E0101, msg, fields[i].name.span);
                             break;
@@ -197,15 +203,21 @@ pub fn lower_enum_variants(ctx: &mut hir_lower_ctx::LoweringCtx, parent_def_id: 
     let mut i: usize = 0;
     while i < variants.len() {
         // Check for duplicate variant name using interned symbol index
-        let name_i = ctx.intern(ctx.span_to_string(variants[i].name.span).as_str());
+        // NOTE: Avoid chained method calls to work around first_gen codegen bug
+        let vi_str = ctx.span_to_string(variants[i].name.span);
+        let vi_ref = vi_str.as_str();
+        let name_i = ctx.intern(vi_ref);
         let mut j: usize = 0;
         while j < i {
-            let name_j = ctx.intern(ctx.span_to_string(variants[j].name.span).as_str());
+            let vj_str = ctx.span_to_string(variants[j].name.span);
+            let vj_ref = vj_str.as_str();
+            let name_j = ctx.intern(vj_ref);
             if name_i.index == name_j.index {
                 let variant_name = ctx.span_to_string(variants[i].name.span);
+                let vn_ref = variant_name.as_str();
                 let mut msg = String::new();
                 msg.push_str("duplicate variant name `");
-                msg.push_str(variant_name.as_str());
+                msg.push_str(vn_ref);
                 msg.push_str("` in enum");
                 ctx.error(hir::DiagnosticCode::E0101, msg, variants[i].name.span);
                 break;
@@ -1094,11 +1106,15 @@ fn lower_handler_decl(ctx: &mut hir_lower_ctx::LoweringCtx, h: &ast::HandlerDecl
                 &hir_item::ItemKind::Effect(ref effect_def) => {
                     let mut oi: usize = 0;
                     while oi < op_impls.len() {
-                        let impl_op_name = ctx.intern(ctx.span_to_string(op_impls[oi].name.span).as_str());
+                        let impl_op_s = ctx.span_to_string(op_impls[oi].name.span);
+                        let impl_op_r = impl_op_s.as_str();
+                        let impl_op_name = ctx.intern(impl_op_r);
                         let mut found: bool = false;
                         let mut ei: usize = 0;
                         while ei < effect_def.operations.len() {
-                            let effect_op_name = ctx.intern(ctx.span_to_string(effect_def.operations[ei].name.span).as_str());
+                            let eff_op_s = ctx.span_to_string(effect_def.operations[ei].name.span);
+                            let eff_op_r = eff_op_s.as_str();
+                            let effect_op_name = ctx.intern(eff_op_r);
                             if impl_op_name.index == effect_op_name.index {
                                 found = true;
                                 // Link op impl to effect operation's DefId
@@ -1440,7 +1456,9 @@ fn lower_impl_decl(ctx: &mut hir_lower_ctx::LoweringCtx, imp: &ast::ImplBlock) {
                                         while ii < imp.items.len() {
                                             match &imp.items[ii] {
                                                 &ast::ImplItem::Function(ref impl_fn) => {
-                                                    let impl_name = ctx.intern(ctx.span_to_string(impl_fn.name.span).as_str());
+                                                    let impl_name_s = ctx.span_to_string(impl_fn.name.span);
+                                                    let impl_name_r = impl_name_s.as_str();
+                                                    let impl_name = ctx.intern(impl_name_r);
                                                     if impl_name.index == trait_method_name.index {
                                                         found_in_impl = true;
                                                     }
@@ -1479,17 +1497,22 @@ fn lower_impl_decl(ctx: &mut hir_lower_ctx::LoweringCtx, imp: &ast::ImplBlock) {
     while mi < imp.items.len() {
         match &imp.items[mi] {
             &ast::ImplItem::Function(ref f) => {
-                let name_i = ctx.intern(ctx.span_to_string(f.name.span).as_str());
+                let fi_s = ctx.span_to_string(f.name.span);
+                let fi_r = fi_s.as_str();
+                let name_i = ctx.intern(fi_r);
                 let mut mj: usize = 0;
                 while mj < mi {
                     match &imp.items[mj] {
                         &ast::ImplItem::Function(ref g) => {
-                            let name_j = ctx.intern(ctx.span_to_string(g.name.span).as_str());
+                            let gj_s = ctx.span_to_string(g.name.span);
+                            let gj_r = gj_s.as_str();
+                            let name_j = ctx.intern(gj_r);
                             if name_i.index == name_j.index {
                                 let method_name = ctx.span_to_string(f.name.span);
+                                let mn_r = method_name.as_str();
                                 let mut msg = String::new();
                                 msg.push_str("duplicate method `");
-                                msg.push_str(method_name.as_str());
+                                msg.push_str(mn_r);
                                 msg.push_str("` in impl block");
                                 ctx.error(hir::DiagnosticCode::E0101, msg, f.name.span);
                                 break;

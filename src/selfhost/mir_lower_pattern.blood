@@ -236,7 +236,8 @@ fn lower_tuple_pattern(
 ) {
     let mut i: usize = 0;
     while i < patterns.len() {
-        let field_place = source.clone().project(mir_types::PlaceElem::Field(i as u32));
+        let cloned_src = source.clone();
+        let field_place = cloned_src.project(mir_types::PlaceElem::Field(i as u32));
         lower_irrefutable_pattern(ctx, &patterns[i], field_place, span);
         i = i + 1;
     }
@@ -272,7 +273,8 @@ fn lower_struct_pattern(
                 }
             }
         };
-        let field_place = source.clone().project(mir_types::PlaceElem::Field(field_idx));
+        let cloned_src = source.clone();
+        let field_place = cloned_src.project(mir_types::PlaceElem::Field(field_idx));
         lower_irrefutable_pattern(ctx, &field.pattern, field_place, span);
         i = i + 1;
     }
@@ -287,7 +289,8 @@ fn lower_tuple_struct_pattern(
 ) {
     let mut i: usize = 0;
     while i < fields.len() {
-        let field_place = source.clone().project(mir_types::PlaceElem::Field(i as u32));
+        let cloned_src = source.clone();
+        let field_place = cloned_src.project(mir_types::PlaceElem::Field(i as u32));
         lower_irrefutable_pattern(ctx, &fields[i], field_place, span);
         i = i + 1;
     }
@@ -305,7 +308,8 @@ fn lower_slice_pattern(
     // Lower prefix patterns with constant indices from start
     let mut i: usize = 0;
     while i < prefix.len() {
-        let elem_place = source.clone().project(
+        let cloned_src = source.clone();
+        let elem_place = cloned_src.project(
             mir_types::PlaceElem::ConstantIndex {
                 offset: i as u64,
                 min_length: (prefix.len() + suffix.len()) as u64,
@@ -319,7 +323,8 @@ fn lower_slice_pattern(
     // Lower suffix patterns with constant indices from end
     let mut j: usize = 0;
     while j < suffix.len() {
-        let elem_place = source.clone().project(
+        let cloned_src = source.clone();
+        let elem_place = cloned_src.project(
             mir_types::PlaceElem::ConstantIndex {
                 offset: (suffix.len() - j) as u64,
                 min_length: (prefix.len() + suffix.len()) as u64,
@@ -384,7 +389,8 @@ pub fn pattern_test(
         &hir_expr::PatternKind::Ref { mutable: _, ref inner } => {
             // Dereference through the reference and test the inner pattern.
             // e.g. match c { &Color::Red => ... } where c: &Color
-            let deref_source = source.clone().project(mir_types::PlaceElem::Deref);
+            let cloned_src = source.clone();
+            let deref_source = cloned_src.project(mir_types::PlaceElem::Deref);
             pattern_test(ctx, inner.as_ref(), &deref_source, span)
         }
         &hir_expr::PatternKind::Error => Option::None,

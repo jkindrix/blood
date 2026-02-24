@@ -1749,7 +1749,8 @@ fn add_method(
     let def_id = checker.alloc_def_id();
     // Use the same interner as HIR lowering to get matching Symbol indices.
     // All builtin method names are pre-interned, so find() will always succeed.
-    let sym = interner.find(name).unwrap();
+    let found = interner.find(name);
+    let sym = found.unwrap();
     methods.push(typeck::MethodInfo::new(def_id, sym, params, ret, true, self_mut));
     // Record mapping from synthetic DefId to runtime function name for codegen
     checker.builtin_def_names.push(

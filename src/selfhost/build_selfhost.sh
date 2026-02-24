@@ -80,15 +80,16 @@ decode_exit() {
     fi
 }
 
-# Log file setup — tee output to timestamped log
-LOG_DIR="$DIR/.logs"
-mkdir -p "$LOG_DIR"
-LOG_FILE="$LOG_DIR/build_$(date +%Y%m%d_%H%M%S).log"
+# Log file setup — tee output to timestamped log (skip for clean)
+if [ "${1:-full}" != "clean" ]; then
+    LOG_DIR="$DIR/.logs"
+    mkdir -p "$LOG_DIR"
+    LOG_FILE="$LOG_DIR/build_$(date +%Y%m%d_%H%M%S).log"
 
-# Start logging (append to log file, also show on terminal)
-exec > >(tee -a "$LOG_FILE") 2>&1
-printf "=== Build started: %s ===\n" "$(date '+%Y-%m-%d %H:%M:%S')"
-printf "=== Log: %s ===\n" "$LOG_FILE"
+    exec > >(tee -a "$LOG_FILE") 2>&1
+    printf "=== Build started: %s ===\n" "$(date '+%Y-%m-%d %H:%M:%S')"
+    printf "=== Log: %s ===\n" "$LOG_FILE"
+fi
 
 # Build first_gen from blood-rust
 build_first_gen() {
@@ -211,7 +212,6 @@ verify_ir() {
         # Compile the test with first_gen to produce IR
         local check_tmpdir
         check_tmpdir=$(mktemp -d)
-        trap "rm -rf '$check_tmpdir'" RETURN 2>/dev/null || true
 
         if ! "$BUILD_DIR/first_gen" build "$check_src" -o "$check_tmpdir/check_out.ll" >/dev/null 2>&1; then
             fail "$check_name (compile failed)"
@@ -522,19 +522,20 @@ run_ground_truth() {
             continue
         fi
 
-        # Compile with our compiler
+        # Compile with our compiler (--build-dir keeps artifacts out of BLOOD_BUILD_DIR)
         local tmpdir
         tmpdir=$(mktemp -d)
-        if ! "$bin" build "$src" -o "$tmpdir/out" >/dev/null 2>&1; then
+        if ! "$bin" build "$src" --build-dir "$tmpdir" -o "$tmpdir/out" >/dev/null 2>&1; then
             fail "$name (compile)"
             comp_fail=$((comp_fail + 1))
             rm -rf "$tmpdir"
             continue
         fi
 
-        # Run the compiled binary
-        local actual exit_code=0
-        actual=$("$tmpdir/out" 2>/dev/null) || exit_code=$?
+        # Run the compiled binary (capture stderr for diagnostics on failure)
+        local actual stderr_file exit_code=0
+        stderr_file="$tmpdir/stderr"
+        actual=$("$tmpdir/out" 2>"$stderr_file") || exit_code=$?
 
         # Check expected output
         local expected=""
@@ -546,6 +547,11 @@ run_ground_truth() {
                 pass=$((pass + 1))
             else
                 fail "$name (output mismatch)"
+                printf "      expected: %s\n" "$expected"
+                printf "      actual:   %s\n" "$actual"
+                if [ -s "$stderr_file" ]; then
+                    printf "      stderr: %s\n" "$(head -5 "$stderr_file")"
+                fi
                 run_fail=$((run_fail + 1))
             fi
         else
@@ -562,6 +568,9 @@ run_ground_truth() {
                 pass=$((pass + 1))
             else
                 fail "$name (exit $exit_code, expected $expect_exit)"
+                if [ -s "$stderr_file" ]; then
+                    printf "      stderr: %s\n" "$(head -5 "$stderr_file")"
+                fi
                 run_fail=$((run_fail + 1))
             fi
         fi

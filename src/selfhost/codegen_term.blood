@@ -2375,8 +2375,14 @@ fn emit_option_unwrap_call(
         Option::None => 8,
     };
 
-    // Emit: call void @option_unwrap(ptr self, i64 elem_size, ptr out_ptr)
-    let elem_size_str = codegen_types::format_u64(elem_size);
+    // Encode payload alignment in upper 32 bits.
+    // Option enum layout is { i32, [N x i64] } — payload at offset 8 (i64-aligned).
+    // The runtime's decode_size_and_offset uses: offset = max(4, align).
+    let payload_align: u64 = 8;
+    let packed_size = (payload_align << 32) | elem_size;
+
+    // Emit: call void @option_unwrap(ptr self, i64 packed_size, ptr out_ptr)
+    let elem_size_str = codegen_types::format_u64(packed_size);
     ctx.begin_call(Option::None, "void", "@option_unwrap");
     ctx.call_arg_str(true, "ptr", opt_ptr.as_str());
     ctx.call_arg_str(false, "i64", elem_size_str.as_str());
@@ -2421,8 +2427,14 @@ fn emit_option_as_ref_call(
         Option::None => 8,
     };
 
-    // Emit: call void @option_as_ref(ptr self, i64 elem_size, ptr out_ptr)
-    let elem_size_str = codegen_types::format_u64(elem_size);
+    // Encode payload alignment in upper 32 bits.
+    // Option enum layout is { i32, [N x i64] } — payload at offset 8 (i64-aligned).
+    // The runtime's decode_size_and_offset uses: offset = max(4, align).
+    let payload_align: u64 = 8;
+    let packed_size = (payload_align << 32) | elem_size;
+
+    // Emit: call void @option_as_ref(ptr self, i64 packed_size, ptr out_ptr)
+    let elem_size_str = codegen_types::format_u64(packed_size);
     ctx.begin_call(Option::None, "void", "@option_as_ref");
     ctx.call_arg_str(true, "ptr", opt_ptr.as_str());
     ctx.call_arg_str(false, "i64", elem_size_str.as_str());

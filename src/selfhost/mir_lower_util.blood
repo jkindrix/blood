@@ -513,24 +513,24 @@ impl hir_ty::TypeKind {
             }
             &hir_ty::TypeKind::Array { ref element, size } => {
                 hir_ty::TypeKind::Array {
-                    element: Box::new(element.as_ref().clone()),
+                    element: { let el_ref = element.as_ref(); Box::new(el_ref.clone()) },
                     size: size,
                 }
             }
             &hir_ty::TypeKind::Slice { ref element } => {
                 hir_ty::TypeKind::Slice {
-                    element: Box::new(element.as_ref().clone()),
+                    element: { let el_ref = element.as_ref(); Box::new(el_ref.clone()) },
                 }
             }
             &hir_ty::TypeKind::Ref { ref inner, mutable } => {
                 hir_ty::TypeKind::Ref {
-                    inner: Box::new(inner.as_ref().clone()),
+                    inner: { let in_ref = inner.as_ref(); Box::new(in_ref.clone()) },
                     mutable: mutable,
                 }
             }
             &hir_ty::TypeKind::Ptr { ref inner, mutable } => {
                 hir_ty::TypeKind::Ptr {
-                    inner: Box::new(inner.as_ref().clone()),
+                    inner: { let in_ref = inner.as_ref(); Box::new(in_ref.clone()) },
                     mutable: mutable,
                 }
             }
@@ -543,7 +543,7 @@ impl hir_ty::TypeKind {
                 }
                 hir_ty::TypeKind::Fn {
                     params: cloned_params,
-                    ret: Box::new(ret.as_ref().clone()),
+                    ret: { let ret_ref = ret.as_ref(); Box::new(ret_ref.clone()) },
                     effects: effects.clone(),
                 }
             }
@@ -557,7 +557,7 @@ impl hir_ty::TypeKind {
                 hir_ty::TypeKind::Closure {
                     def_id: def_id,
                     params: cloned_params,
-                    ret: Box::new(ret.as_ref().clone()),
+                    ret: { let ret_ref = ret.as_ref(); Box::new(ret_ref.clone()) },
                 }
             }
             &hir_ty::TypeKind::Adt { ref def_id, ref args } => {
@@ -595,7 +595,7 @@ impl hir_ty::TypeKind {
                 }
                 hir_ty::TypeKind::Forall {
                     params: cloned_params,
-                    body: Box::new(body.as_ref().clone()),
+                    body: { let body_ref = body.as_ref(); Box::new(body_ref.clone()) },
                 }
             }
             &hir_ty::TypeKind::Never => hir_ty::TypeKind::Never,
@@ -603,12 +603,12 @@ impl hir_ty::TypeKind {
             &hir_ty::TypeKind::Ownership { ref qualifier, ref inner } => {
                 hir_ty::TypeKind::Ownership {
                     qualifier: qualifier.clone(),
-                    inner: Box::new(inner.as_ref().clone()),
+                    inner: { let in_ref = inner.as_ref(); Box::new(in_ref.clone()) },
                 }
             }
             &hir_ty::TypeKind::Range { ref element, inclusive } => {
                 hir_ty::TypeKind::Range {
-                    element: Box::new(element.as_ref().clone()),
+                    element: { let el_ref = element.as_ref(); Box::new(el_ref.clone()) },
                     inclusive: inclusive,
                 }
             }

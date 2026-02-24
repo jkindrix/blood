@@ -28,10 +28,11 @@ pub fn type_to_llvm_with_ctx(
             // adt_llvm_type returns "ptr" (3 bytes) as fallback for unknown ADTs.
             // Only expand when the ADT is truly unregistered. Registered ADTs
             // like Box<T> that return "ptr" should NOT be expanded.
-            if result.as_bytes().len() == 3
-                && result.as_bytes()[0] == 112
-                && result.as_bytes()[1] == 116
-                && result.as_bytes()[2] == 114
+            let result_bytes = result.as_bytes();
+            if result_bytes.len() == 3
+                && result_bytes[0] == 112
+                && result_bytes[1] == 116
+                && result_bytes[2] == 114
                 && args.len() > 0
                 && !is_adt_registered(ctx, def_id.index)
             {
@@ -243,10 +244,11 @@ pub fn type_to_llvm_with_ctx_id(
             let result = ctx.adt_llvm_type(def_id.index);
             let interner = type_intern::type_interner();
             let arg_len = interner.ty_list_len(args);
-            if result.as_bytes().len() == 3
-                && result.as_bytes()[0] == 112
-                && result.as_bytes()[1] == 116
-                && result.as_bytes()[2] == 114
+            let result_bytes = result.as_bytes();
+            if result_bytes.len() == 3
+                && result_bytes[0] == 112
+                && result_bytes[1] == 116
+                && result_bytes[2] == 114
                 && arg_len > 0
                 && !is_adt_registered(ctx, def_id.index)
             {

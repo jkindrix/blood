@@ -799,7 +799,9 @@ fn lower_method_call_expr(
     // Thin refs store just a ptr in the alloca — we must Deref to avoid &&T.
     // Fat refs (&str, &[T]) store { ptr, i64 } in the alloca — no Deref needed,
     // because &alloca already points to the full fat pointer struct.
-    let local_ty_resolved = type_intern::ty_id_to_type(ctx.builder.body_ref().get_local(recv_place.local).ty);
+    let body = ctx.builder.body_ref();
+    let local_info = body.get_local(recv_place.local);
+    let local_ty_resolved = type_intern::ty_id_to_type(local_info.ty);
     let local_is_thin_ref = match &local_ty_resolved.kind {
         &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => {
             let inner_type = inner.as_ref();
@@ -1136,7 +1138,8 @@ fn lower_struct_expr(
                             }
                         };
                         // Write field value to the appropriate projection
-                        let field_place = place.clone().project(
+                        let cloned_place = place.clone();
+                        let field_place = cloned_place.project(
                             mir_types::PlaceElem::Field(field_idx),
                         );
                         lower_expr(ctx, &field.val, mir_lower_ctx::Destination::Place(field_place));
@@ -2241,7 +2244,8 @@ fn expr_to_place(
                 common::UnaryOp::Deref => {
                     let ptr_temp = ctx.new_temp(operand.as_ref().ty, span);
                     lower_expr(ctx, operand.as_ref(), mir_lower_ctx::destination_local(ptr_temp));
-                    mir_types::Place::local(ptr_temp).project(mir_types::PlaceElem::Deref)
+                    let ptr_place = mir_types::Place::local(ptr_temp);
+                    ptr_place.project(mir_types::PlaceElem::Deref)
                 }
                 _ => {
                     // Not a place expression

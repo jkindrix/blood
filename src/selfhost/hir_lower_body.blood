@@ -57,6 +57,7 @@ pub fn lower_fn_body(
             p.mutable,
             p.span,
         );
+
         locals.push(local);
 
         // Register parameter in scope so it can be looked up in the body
@@ -204,7 +205,9 @@ fn collect_pattern_locals(pattern: &hir_expr::Pattern, locals: &mut Vec<hir_expr
 
             // Recurse into subpattern if present
             if subpattern.is_some() {
-                collect_pattern_locals(subpattern.as_ref().unwrap().as_ref(), locals);
+                let sub_box = subpattern.as_ref().unwrap();
+                let sub_ref = sub_box.as_ref();
+                collect_pattern_locals(sub_ref, locals);
             }
         }
         &hir_expr::PatternKind::Tuple(ref fields) => {
@@ -245,7 +248,9 @@ fn collect_pattern_locals(pattern: &hir_expr::Pattern, locals: &mut Vec<hir_expr
                 i = i + 1;
             }
             if rest.is_some() {
-                collect_pattern_locals(rest.as_ref().unwrap().as_ref(), locals);
+                let rest_box = rest.as_ref().unwrap();
+                let rest_ref = rest_box.as_ref();
+                collect_pattern_locals(rest_ref, locals);
             }
             let mut i: usize = 0;
             while i < suffix.len() {

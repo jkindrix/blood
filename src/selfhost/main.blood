@@ -3720,21 +3720,23 @@ fn get_rss_kb() -> u64 {
     }
     // Scan for "VmRSS:" line and parse the number
     let target: &str = "VmRSS:";
+    let status_bytes = status.as_bytes();
+    let status_len = status.len();
     let mut i: usize = 0;
-    while i < status.len() {
+    while i < status_len {
         // Check if we're at "VmRSS:"
-        if i + 6 <= status.len() {
-            let ch0 = status.as_bytes()[i];
-            let ch1 = status.as_bytes()[i + 1];
-            let ch2 = status.as_bytes()[i + 2];
-            let ch3 = status.as_bytes()[i + 3];
-            let ch4 = status.as_bytes()[i + 4];
-            let ch5 = status.as_bytes()[i + 5];
+        if i + 6 <= status_len {
+            let ch0 = status_bytes[i];
+            let ch1 = status_bytes[i + 1];
+            let ch2 = status_bytes[i + 2];
+            let ch3 = status_bytes[i + 3];
+            let ch4 = status_bytes[i + 4];
+            let ch5 = status_bytes[i + 5];
             if ch0 == 86 && ch1 == 109 && ch2 == 82 && ch3 == 83 && ch4 == 83 && ch5 == 58 {
                 // Found "VmRSS:" — skip whitespace and parse number
                 let mut j: usize = i + 6;
-                while j < status.len() {
-                    let c = status.as_bytes()[j];
+                while j < status_len {
+                    let c = status_bytes[j];
                     if c == 32 || c == 9 {
                         j = j + 1;
                     } else {
@@ -3743,8 +3745,8 @@ fn get_rss_kb() -> u64 {
                 }
                 // Parse digits
                 let mut value: u64 = 0;
-                while j < status.len() {
-                    let c = status.as_bytes()[j];
+                while j < status_len {
+                    let c = status_bytes[j];
                     if c >= 48 && c <= 57 {
                         value = value * 10 + (c - 48) as u64;
                         j = j + 1;
@@ -3756,7 +3758,7 @@ fn get_rss_kb() -> u64 {
             }
         }
         // Skip to next line
-        while i < status.len() && status.as_bytes()[i] != 10 {
+        while i < status_len && status_bytes[i] != 10 {
             i = i + 1;
         }
         i = i + 1;
