@@ -4,9 +4,28 @@ A quick guide to writing and running your first Blood programs.
 
 ## Prerequisites
 
-- **Rust**: Install via [rustup](https://rustup.rs/) (1.75+)
-- **LLVM**: Version 14+ (`llvm-config --version`)
-- **C compiler**: GCC or Clang for runtime linking
+- **Rust**: 1.77+ via [rustup](https://rustup.rs/)
+- **LLVM**: Version 18 (18.1.x)
+- **C compiler**: GCC or Clang (for linking compiled programs)
+- **System libraries**: libpthread, libdl, libm, libstdc++ (standard on Linux/macOS)
+
+### Installing LLVM 18
+
+```bash
+# Ubuntu/Debian
+wget https://apt.llvm.org/llvm.sh && chmod +x llvm.sh && sudo ./llvm.sh 18
+export LLVM_SYS_181_PREFIX=/usr/lib/llvm-18
+
+# macOS
+brew install llvm@18
+export LLVM_SYS_181_PREFIX=$(brew --prefix llvm@18)
+
+# Windows (via Chocolatey)
+choco install llvm --version=18.1.8 -y
+set LLVM_SYS_181_PREFIX=C:\Program Files\LLVM
+```
+
+Add the `LLVM_SYS_181_PREFIX` export to your shell profile (`.bashrc`, `.zshrc`, etc.) to make it persistent.
 
 ## Building the Compiler
 
@@ -15,10 +34,11 @@ A quick guide to writing and running your first Blood programs.
 git clone https://github.com/blood-lang/blood.git
 cd blood
 
-# Build in release mode
+# Build the bootstrap compiler
+cd src/bootstrap
 cargo build --release
 
-# The compiler binary is at target/release/blood
+# The compiler binary is at src/bootstrap/target/release/blood
 ```
 
 ## Your First Program
@@ -36,11 +56,13 @@ fn main() {
 Compile and run:
 
 ```bash
-# Compile to executable
-cargo run -- build examples/hello.blood -o hello
+# Compile and run directly
+src/bootstrap/target/release/blood run hello.blood
+# Output: Hello, World!
 
-# Run the program
-./hello
+# Or build an executable
+src/bootstrap/target/release/blood build hello.blood
+./build/debug/hello
 # Output: Hello, World!
 ```
 
@@ -69,8 +91,7 @@ fn main() {
 Compile and run:
 
 ```bash
-cargo run -- build fizzbuzz.blood -o fizzbuzz
-./fizzbuzz
+src/bootstrap/target/release/blood run fizzbuzz.blood
 ```
 
 Output:
@@ -728,13 +749,12 @@ fn main() {
 
 ```bash
 # Ubuntu/Debian
-sudo apt install llvm-14-dev
+wget https://apt.llvm.org/llvm.sh && chmod +x llvm.sh && sudo ./llvm.sh 18
+export LLVM_SYS_181_PREFIX=/usr/lib/llvm-18
 
 # macOS
-brew install llvm@14
-
-# Set LLVM path
-export LLVM_SYS_140_PREFIX=/usr/lib/llvm-14
+brew install llvm@18
+export LLVM_SYS_181_PREFIX=$(brew --prefix llvm@18)
 ```
 
 ### Linker Errors

@@ -105,12 +105,12 @@ fn main() / {IO, Error<AppError>} {
 ## Quick Start
 
 ```bash
-# Build the bootstrap compiler
+# Build the bootstrap compiler (requires Rust 1.77+, LLVM 18)
 cd src/bootstrap
 cargo build --release
 
 # Compile and run a program
-cargo run -- run examples/fizzbuzz.blood
+cargo run -- run ../../examples/fizzbuzz.blood
 
 # Run the test suite
 cargo test --workspace
