@@ -14,6 +14,7 @@ A quick guide to writing and running your first Blood programs.
 ```bash
 # Ubuntu/Debian
 wget https://apt.llvm.org/llvm.sh && chmod +x llvm.sh && sudo ./llvm.sh 18
+sudo apt-get install -y libpolly-18-dev
 export LLVM_SYS_181_PREFIX=/usr/lib/llvm-18
 
 # macOS
@@ -27,6 +28,11 @@ set LLVM_SYS_181_PREFIX=C:\Program Files\LLVM
 
 Add the `LLVM_SYS_181_PREFIX` export to your shell profile (`.bashrc`, `.zshrc`, etc.) to make it persistent.
 
+> **WSL2 users:** The `llvm.sh` script may misdetect your Debian version (e.g., detecting
+> "forky" instead of "bookworm") and pull packages with incompatible dependencies. If
+> installation fails with unmet dependency errors, see the [WSL2 troubleshooting section](#llvm-installation-fails-on-wsl2)
+> below.
+
 ## Building the Compiler
 
 ```bash
@@ -37,6 +43,9 @@ cd blood
 # Build the bootstrap compiler
 cd src/bootstrap
 cargo build --release
+
+# Compile the C runtime (required for linking Blood programs)
+clang-18 -c runtime/runtime.c -o runtime/runtime.o
 
 # The compiler binary is at src/bootstrap/target/release/blood
 ```
@@ -750,11 +759,62 @@ fn main() {
 ```bash
 # Ubuntu/Debian
 wget https://apt.llvm.org/llvm.sh && chmod +x llvm.sh && sudo ./llvm.sh 18
+sudo apt-get install -y libpolly-18-dev
 export LLVM_SYS_181_PREFIX=/usr/lib/llvm-18
 
 # macOS
 brew install llvm@18
 export LLVM_SYS_181_PREFIX=$(brew --prefix llvm@18)
+```
+
+### LLVM Installation Fails on WSL2
+
+The `llvm.sh` script auto-detects your Debian version. On WSL2, the reported codename may
+be `forky` (Debian testing/unstable) even though the base system libraries are from bookworm
+(Debian 12). This causes dependency conflicts because the unstable LLVM packages require
+newer versions of `libstdc++6`, `libgcc-s1`, and other libraries than bookworm provides.
+
+**Symptoms:** `apt-get install` fails with errors like:
+
+```
+libgcc-14-dev : Depends: libgcc-s1 (>= 14.3.0-12) but 12.2.0-14+deb12u1 is to be installed
+libstdc++-14-dev : Depends: libstdc++6 (>= 14.3.0-12) but 12.2.0-14+deb12u1 is to be installed
+```
+
+**Fix:** Remove the auto-detected source and add the bookworm-specific one manually:
+
+```bash
+# Remove the incorrect source
+sudo rm /etc/apt/sources.list.d/http_apt_llvm_org_unstable_-forky.sources
+
+# Add the bookworm source for LLVM 18
+echo 'Types: deb
+Architectures: amd64 arm64
+Signed-By: /etc/apt/trusted.gpg.d/apt.llvm.org.asc
+URIs: http://apt.llvm.org/bookworm/
+Suites: llvm-toolchain-bookworm-18
+Components: main' | sudo tee /etc/apt/sources.list.d/llvm-18-bookworm.sources
+
+# Update and install
+sudo apt-get update
+sudo apt-get install -y clang-18 lld-18 llvm-18-dev llvm-18-tools libpolly-18-dev
+```
+
+> **Note:** `lldb-18` and `clangd-18` are not required for building Blood and can be
+> skipped — they pull in heavy dependencies that are more likely to cause conflicts.
+
+### Polly Not Found
+
+If `cargo build` fails with:
+
+```
+error: could not find native static library `Polly`, perhaps an -L flag is missing?
+```
+
+Install the Polly development package:
+
+```bash
+sudo apt-get install -y libpolly-18-dev
 ```
 
 ### Linker Errors
