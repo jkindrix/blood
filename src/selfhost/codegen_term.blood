@@ -369,6 +369,10 @@ fn emit_call(
         emit_vec_new_call(ctx, destination, target);
         return;
     }
+    if is_vec_with_capacity(&func_val) {
+        emit_vec_with_capacity_call(ctx, args, destination, target);
+        return;
+    }
     if is_vec_push(&func_val) {
         emit_vec_push_call(ctx, args, target);
         return;
@@ -1291,6 +1295,53 @@ fn is_vec_pop(func_val: &String) -> bool {
 /// Checks if the function name is @vec_clear.
 fn is_vec_clear(func_val: &String) -> bool {
     string_eq_str(func_val.as_str(), "@vec_clear")
+}
+
+/// Checks if the function name is @vec_with_capacity.
+fn is_vec_with_capacity(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@vec_with_capacity")
+}
+
+/// Emits a vec_with_capacity call with correct calling convention.
+/// Runtime signature: void @vec_with_capacity(i64 elem_size, i64 capacity, ptr out_ptr)
+///
+/// Uses emit_place_data_ptr to handle region/persistent indirection.
+fn emit_vec_with_capacity_call(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    args: &Vec<mir_types::Operand>,
+    destination: &mir_types::Place,
+    target: &Option<mir_def::BasicBlockId>,
+) {
+    // Get data pointer (handles region/persistent heap indirection)
+    let out_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
+
+    // Get element size from the destination's HIR type (Vec<T>)
+    let elem_size: u64 = match ctx.get_local_hir_type(destination.local) {
+        Option::Some(ty_id) => extract_vec_element_size_id(ctx, ty_id),
+        Option::None => 8,
+    };
+
+    // Get capacity from first argument
+    let cap_val = codegen_expr::emit_operand(ctx, &args[0]);
+
+    // Emit: call void @vec_with_capacity(i64 elem_size, i64 capacity, ptr out_ptr)
+    let elem_size_str = codegen_types::format_u64(elem_size);
+    ctx.begin_call(Option::None, "void", "@vec_with_capacity");
+    ctx.call_arg_str(true, "i64", elem_size_str.as_str());
+    ctx.call_arg_str(false, "i64", cap_val.as_str());
+    ctx.call_arg_str(false, "ptr", out_ptr.as_str());
+    ctx.end_call();
+
+    // Jump to continuation
+    match target {
+        &Option::Some(t) => {
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
+        }
+        &Option::None => {
+            ctx.emit_unreachable();
+        }
+    }
 }
 
 /// Extracts element size from a Vec<T> or &Vec<T> TyId (via interner, no Type tree).
