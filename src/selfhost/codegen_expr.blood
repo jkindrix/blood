@@ -89,10 +89,12 @@ pub fn emit_operand_typed(
                 // Regular function reference — pointer-typed
                 (val, common::make_string("ptr"))
             } else if match &constant.kind { &mir_types::ConstantKind::Float(_) => true, _ => false } {
-                // Check if f32 or f64 based on the constant's HIR type
-                let float_ty = match &const_hir_ty.kind {
-                    &hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::F32) => common::make_string("float"),
-                    _ => common::make_string("double"),
+                // Use TyId-native type resolution to determine f32 vs f64.
+                // Avoids ty_id_to_type copy path which second_gen miscompiles
+                // for PrimitiveTy enum values (F64 reads as F32).
+                let float_ty = match codegen_size::type_to_llvm_fast_id(constant.ty) {
+                    Option::Some(s) => common::make_string(s),
+                    Option::None => common::make_string("double"),
                 };
                 (val, float_ty)
             } else {
