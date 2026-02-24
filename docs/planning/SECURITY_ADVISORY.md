@@ -2,7 +2,7 @@
 
 **Version**: 1.0
 **Status**: Draft
-**Related**: [Package Registry](PACKAGE_REGISTRY.md), [Security Model](SECURITY_MODEL.md)
+**Related**: [Package Registry](../tooling/PACKAGE_REGISTRY.md), [Security Model](../guides/SECURITY_MODEL.md)
 
 ## Overview
 

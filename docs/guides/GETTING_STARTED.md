@@ -715,10 +715,10 @@ fn main() {
 
 ## Next Steps
 
-- Read the [Language Specification](SPECIFICATION.md)
+- Read the [Language Specification](../spec/SPECIFICATION.md)
 - Explore [Example Programs](../../examples/)
-- Learn about [Effects](SPECIFICATION.md#4-effect-system)
-- Understand the [Memory Model](MEMORY_MODEL.md)
+- Learn about [Effects](../spec/SPECIFICATION.md#4-effect-system)
+- Understand the [Memory Model](../spec/MEMORY_MODEL.md)
 - See the [Effects Tutorial](EFFECTS_TUTORIAL.md) for in-depth effect usage
 - Check the [Performance Guide](PERFORMANCE_GUIDE.md) for optimization tips
 
@@ -762,5 +762,5 @@ cc your_program.o runtime.o -o your_program
 ## Getting Help
 
 - [GitHub Issues](https://github.com/blood-lang/blood/issues)
-- [Language Specification](SPECIFICATION.md)
-- [Implementation Status](IMPLEMENTATION_STATUS.md)
+- [Language Specification](../spec/SPECIFICATION.md)
+- [Implementation Status](../planning/IMPLEMENTATION_STATUS.md)

@@ -539,7 +539,7 @@ Look for issues labeled:
 
 ### Action Items
 
-See `docs/spec/ACTION_ITEMS.md` for a prioritized list of work items:
+See `docs/planning/ACTION_ITEMS.md` for a prioritized list of work items:
 
 | Priority | Description |
 |----------|-------------|
@@ -559,8 +559,8 @@ See `docs/spec/ACTION_ITEMS.md` for a prioritized list of work items:
 
 ## Getting Help
 
-- **Documentation**: Check `docs/spec/` for specifications
-- **Architecture**: See `docs/spec/DECISIONS.md` for ADRs
+- **Documentation**: Check `docs/` for specifications, guides, and planning
+- **Architecture**: See `docs/planning/DECISIONS.md` for ADRs
 - **Questions**: Open a discussion or issue
 
 ---

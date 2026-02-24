@@ -16,7 +16,7 @@ Blood synthesizes five cutting-edge programming language innovations:
 
 > **Version: 0.2.0**
 
-Core compiler is functional and tested. Programs compile and run with full type checking, effect tracking, and generational memory safety. Bootstrap compiler passes 2,047 unit tests; self-hosted compiler passes 271/317 ground-truth integration tests. See [IMPLEMENTATION_STATUS.md](docs/spec/IMPLEMENTATION_STATUS.md) for detailed component status.
+Core compiler is functional and tested. Programs compile and run with full type checking, effect tracking, and generational memory safety. Bootstrap compiler passes 2,047 unit tests; self-hosted compiler passes 271/317 ground-truth integration tests. See [IMPLEMENTATION_STATUS.md](docs/planning/IMPLEMENTATION_STATUS.md) for detailed component status.
 
 | Component | Status | Details |
 |-----------|--------|---------|
@@ -31,7 +31,7 @@ Core compiler is functional and tested. Programs compile and run with full type 
 
 **Legend**: ✅ = Implemented and integrated | 🔶 = Partially integrated
 
-**[Getting Started](docs/spec/GETTING_STARTED.md)** | [Specification](docs/spec/SPECIFICATION.md) | [Implementation Status](docs/spec/IMPLEMENTATION_STATUS.md)
+**[Getting Started](docs/guides/GETTING_STARTED.md)** | [Specification](docs/spec/SPECIFICATION.md) | [Implementation Status](docs/planning/IMPLEMENTATION_STATUS.md)
 
 ## The Name
 
@@ -65,9 +65,13 @@ blood/
 │   │   └── Cargo.toml      # Workspace manifest
 │   └── selfhost/           # Self-hosted compiler (written in Blood)
 ├── docs/                   # Language specification & documentation
-│   ├── spec/               # Core specs (SPECIFICATION, MEMORY_MODEL, etc.)
+│   ├── spec/               # Core language specifications
+│   ├── guides/             # Tutorials and user guides
+│   ├── planning/           # Roadmaps, status, decisions
+│   ├── tooling/            # Tool specifications
+│   ├── internal/           # Compiler internals
 │   ├── comparisons/        # Blood vs other languages
-│   └── postmortem/         # Bug investigation records
+│   └── ...
 ├── examples/               # Blood language examples
 └── editors/                # Editor support (VS Code, etc.)
 ```
@@ -112,7 +116,7 @@ cargo run -- run examples/fizzbuzz.blood
 cargo test --workspace
 ```
 
-See **[GETTING_STARTED.md](docs/spec/GETTING_STARTED.md)** for the full tutorial.
+See **[GETTING_STARTED.md](docs/guides/GETTING_STARTED.md)** for the full tutorial.
 
 ## Documentation
 
@@ -135,16 +139,21 @@ See **[GETTING_STARTED.md](docs/spec/GETTING_STARTED.md)** for the full tutorial
 | [FFI.md](docs/spec/FFI.md) | Foreign function interface |
 | [STDLIB.md](docs/spec/STDLIB.md) | Standard library design |
 | [DIAGNOSTICS.md](docs/spec/DIAGNOSTICS.md) | Error messages and diagnostics |
-| [UCM.md](docs/spec/UCM.md) | Codebase Manager (tooling) |
+| [UCM.md](docs/tooling/UCM.md) | Codebase Manager (tooling) |
+
+### Guides & Tutorials
+
+| Document | Description |
+|----------|-------------|
+| [GETTING_STARTED.md](docs/guides/GETTING_STARTED.md) | Tutorial and quick start guide |
 
 ### Planning & Status
 
 | Document | Description |
 |----------|-------------|
-| [GETTING_STARTED.md](docs/spec/GETTING_STARTED.md) | Tutorial and quick start guide |
-| [ROADMAP.md](docs/spec/ROADMAP.md) | Implementation plan and milestones |
-| [DECISIONS.md](docs/spec/DECISIONS.md) | Architecture decision records |
-| [IMPLEMENTATION_STATUS.md](docs/spec/IMPLEMENTATION_STATUS.md) | Detailed implementation audit |
+| [ROADMAP.md](docs/planning/ROADMAP.md) | Implementation plan and milestones |
+| [DECISIONS.md](docs/planning/DECISIONS.md) | Architecture decision records |
+| [IMPLEMENTATION_STATUS.md](docs/planning/IMPLEMENTATION_STATUS.md) | Detailed implementation audit |
 
 ## License
 
@@ -157,7 +166,7 @@ at your option.
 
 ## Contributing
 
-We welcome contributions! See the [implementation status](docs/spec/IMPLEMENTATION_STATUS.md) for areas that need work.
+We welcome contributions! See the [implementation status](docs/planning/IMPLEMENTATION_STATUS.md) for areas that need work.
 
 - **Bug reports**: Open an issue with reproduction steps
 - **Feature requests**: Open a discussion first

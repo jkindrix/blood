@@ -496,9 +496,9 @@ criterion_main!(benches);
 ## Related Documentation
 
 - [MEMORY_GUIDE.md](./MEMORY_GUIDE.md) - Memory model user guide
-- [MEMORY_MODEL.md](./MEMORY_MODEL.md) - Technical memory model
+- [MEMORY_MODEL.md](../spec/MEMORY_MODEL.md) - Technical memory model
 - [EFFECTS_TUTORIAL.md](./EFFECTS_TUTORIAL.md) - Effect system tutorial
-- [ACTION_ITEMS.md](./ACTION_ITEMS.md) - Detailed benchmark results
+- [ACTION_ITEMS.md](../planning/ACTION_ITEMS.md) - Detailed benchmark results
 
 ---
 

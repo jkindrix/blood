@@ -16,7 +16,7 @@ Blood synthesizes five cutting-edge programming language innovations:
 
 > **Version: 0.5.3**
 
-Core compiler is complete and tested. Programs compile and run with full type checking, effect tracking, and generational memory safety. 2,047 tests passing. See [IMPLEMENTATION_STATUS.md](docs/spec/IMPLEMENTATION_STATUS.md) for detailed component status.
+Core compiler is complete and tested. Programs compile and run with full type checking, effect tracking, and generational memory safety. 2,047 tests passing. See [IMPLEMENTATION_STATUS.md](docs/planning/IMPLEMENTATION_STATUS.md) for detailed component status.
 
 | Component | Status | Details |
 |-----------|--------|---------|
@@ -31,7 +31,7 @@ Core compiler is complete and tested. Programs compile and run with full type ch
 
 **Legend**: ✅ = Implemented and integrated
 
-**[Getting Started](docs/spec/GETTING_STARTED.md)** | [Specification](docs/spec/SPECIFICATION.md) | [Implementation Status](docs/spec/IMPLEMENTATION_STATUS.md)
+**[Getting Started](docs/guides/GETTING_STARTED.md)** | [Specification](docs/spec/SPECIFICATION.md) | [Implementation Status](docs/planning/IMPLEMENTATION_STATUS.md)
 
 ## The Name
 
@@ -81,7 +81,7 @@ cargo build --release
 cargo run -- run examples/fizzbuzz.blood
 ```
 
-See **[GETTING_STARTED.md](docs/spec/GETTING_STARTED.md)** for the full tutorial.
+See **[GETTING_STARTED.md](docs/guides/GETTING_STARTED.md)** for the full tutorial.
 
 ## Documentation
 
@@ -104,16 +104,16 @@ See **[GETTING_STARTED.md](docs/spec/GETTING_STARTED.md)** for the full tutorial
 | [FFI.md](docs/spec/FFI.md) | Foreign function interface |
 | [STDLIB.md](docs/spec/STDLIB.md) | Standard library design |
 | [DIAGNOSTICS.md](docs/spec/DIAGNOSTICS.md) | Error messages and diagnostics |
-| [UCM.md](docs/spec/UCM.md) | Codebase Manager (tooling) |
+| [UCM.md](docs/tooling/UCM.md) | Codebase Manager (tooling) |
 
 ### Planning & Status
 
 | Document | Description |
 |----------|-------------|
-| [GETTING_STARTED.md](docs/spec/GETTING_STARTED.md) | Tutorial and quick start guide |
-| [ROADMAP.md](docs/spec/ROADMAP.md) | Implementation plan and milestones |
-| [DECISIONS.md](docs/spec/DECISIONS.md) | Architecture decision records |
-| [IMPLEMENTATION_STATUS.md](docs/spec/IMPLEMENTATION_STATUS.md) | Detailed implementation audit |
+| [GETTING_STARTED.md](docs/guides/GETTING_STARTED.md) | Tutorial and quick start guide |
+| [ROADMAP.md](docs/planning/ROADMAP.md) | Implementation plan and milestones |
+| [DECISIONS.md](docs/planning/DECISIONS.md) | Architecture decision records |
+| [IMPLEMENTATION_STATUS.md](docs/planning/IMPLEMENTATION_STATUS.md) | Detailed implementation audit |
 
 ## License
 
@@ -126,7 +126,7 @@ at your option.
 
 ## Contributing
 
-We welcome contributions! See the [implementation status](docs/spec/IMPLEMENTATION_STATUS.md) for areas that need work.
+We welcome contributions! See the [implementation status](docs/planning/IMPLEMENTATION_STATUS.md) for areas that need work.
 
 - **Bug reports**: Open an issue with reproduction steps
 - **Feature requests**: Open a discussion first

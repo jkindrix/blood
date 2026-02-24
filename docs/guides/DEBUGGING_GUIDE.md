@@ -880,7 +880,7 @@ $ perf record -g ./program && perf report
 ## Related Documentation
 
 - [DIAGNOSTICS.md](../spec/DIAGNOSTICS.md) - Complete error code reference
-- [PERFORMANCE_GUIDE.md](../spec/PERFORMANCE_GUIDE.md) - Optimization strategies
+- [PERFORMANCE_GUIDE.md](./PERFORMANCE_GUIDE.md) - Optimization strategies
 - [EFFECTS_COOKBOOK.md](./EFFECTS_COOKBOOK.md) - Effect patterns and debugging
 - [ERROR_MESSAGES.md](../comparisons/ERROR_MESSAGES.md) - Error message philosophy
 
