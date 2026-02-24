@@ -94,7 +94,6 @@ blood/                          # Repository root (monorepo)
 │   │       ├── continuation.rs # Effect continuations
 │   │       ├── fiber.rs        # Fiber scheduling
 │   │       └── ffi_exports.rs  # C FFI exports
-│   ├── blood-std/              # Standard library copy for tests
 │   ├── runtime/                # C runtime stubs
 │   └── Cargo.toml              # Workspace manifest
 ├── docs/                       # Language specification & documentation
@@ -112,7 +111,6 @@ blood/                          # Repository root (monorepo)
 |-------|---------|
 | `bloodc` | Main compiler: lexer, parser, type checker, codegen |
 | `blood-runtime` | Runtime library: memory, effects, fibers |
-| `blood-std` | Standard library written in Blood |
 
 ---
 
