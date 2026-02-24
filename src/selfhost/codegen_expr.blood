@@ -652,8 +652,10 @@ pub fn emit_place_addr(
     }
 
     // Auto-deref: if the local is a reference type and the first projection is Field,
-    // insert an implicit load of the pointer. The MIR should have a Deref projection
-    // but the self-hosted compiler sometimes omits it for &self field access.
+    // insert implicit loads of the pointer, peeling ALL reference layers.
+    // The MIR should have Deref projections but the self-hosted compiler sometimes
+    // omits them for &self field access and ref match bindings (e.g. Option<&T>
+    // with `Some(ref entry)` produces &&T with no Deref in the projection list).
     if place.projection.len() > 0 && is_local_ref_type(ctx, place.local) {
         let first_is_field = match &place.projection[0] {
             &mir_types::PlaceElem::Field(_) => true,
@@ -661,14 +663,23 @@ pub fn emit_place_addr(
             _ => false,
         };
         if first_is_field {
-            let loaded = ctx.fresh_temp_cg();
-            ctx.emit_load_cg2(&loaded, "ptr", &current);
-            current = loaded;
-            // Also update HIR type through implicit deref
-            current_hir_type = match &current_hir_type {
-                &Option::Some(ty_id) => apply_deref_to_type(ty_id),
-                &Option::None => Option::None,
-            };
+            // Peel all reference layers until we reach a non-reference type
+            let mut keep_peeling = true;
+            while keep_peeling {
+                let loaded = ctx.fresh_temp_cg();
+                ctx.emit_load_cg2(&loaded, "ptr", &current);
+                current = loaded;
+                // Update HIR type through implicit deref
+                current_hir_type = match &current_hir_type {
+                    &Option::Some(ty_id) => apply_deref_to_type(ty_id),
+                    &Option::None => Option::None,
+                };
+                // Check if the inner type is still a reference that needs peeling
+                keep_peeling = match &current_hir_type {
+                    &Option::Some(ty_id) => type_intern::is_ref_id(ty_id),
+                    &Option::None => false,
+                };
+            }
         }
     }
 
