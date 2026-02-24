@@ -1144,18 +1144,53 @@ fn lower_struct_expr(
                     }
                 }
                 &Option::None => {
-                    // Normal struct construction: evaluate all fields and build aggregate
-                    let mut operands = Vec::new();
+                    // Normal struct construction: evaluate all fields and build aggregate.
+                    // Fields in HIR are in source order (order written by programmer),
+                    // but operands must be in declaration order (order defined in struct)
+                    // because codegen uses sequential GEP indices.
+                    //
+                    // Phase 1: evaluate all field expressions to temporaries (source order)
+                    let num_fields = fields.len();
+                    let mut temp_locals: Vec<mir_def::MirLocalId> = Vec::new();
+                    let mut temp_tys: Vec<type_intern::TyId> = Vec::new();
+                    let mut temp_field_indices: Vec<u32> = Vec::new();
+
                     let mut i: usize = 0;
-                    while i < fields.len() {
+                    while i < num_fields {
                         let field = &fields[i];
+                        // Look up declaration-order field index
+                        let field_idx: u32 = match &field.field_idx {
+                            &Option::Some(idx) => idx,
+                            &Option::None => {
+                                match ctx.lookup_field_idx(field.name.span.start) {
+                                    Option::Some(idx) => idx as u32,
+                                    Option::None => i as u32,
+                                }
+                            }
+                        };
                         let temp = ctx.new_temp(field.val.ty, span);
                         lower_expr(ctx, &field.val, mir_lower_ctx::destination_local(temp));
-                        operands.push(mir_lower_util::operand_from_place_id(
-                            mir_types::Place::local(temp),
-                            field.val.ty,
-                        ));
+                        temp_locals.push(temp);
+                        temp_tys.push(field.val.ty);
+                        temp_field_indices.push(field_idx);
                         i = i + 1;
+                    }
+
+                    // Phase 2: build operands in declaration order (0, 1, 2, ...)
+                    let mut operands: Vec<mir_types::Operand> = Vec::new();
+                    let mut decl_idx: u32 = 0;
+                    while (decl_idx as usize) < num_fields {
+                        let mut j: usize = 0;
+                        while j < num_fields {
+                            if temp_field_indices[j] == decl_idx {
+                                operands.push(mir_lower_util::operand_from_place_id(
+                                    mir_types::Place::local(temp_locals[j]),
+                                    temp_tys[j],
+                                ));
+                            }
+                            j = j + 1;
+                        }
+                        decl_idx = decl_idx + 1;
                     }
 
                     // Use actual variant index from path (0 for plain structs)

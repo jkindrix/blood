@@ -1395,6 +1395,24 @@ impl CodegenCtx {
             &hir_ty::TypeKind::Adt { def_id, args: _ } => {
                 self.adt_llvm_type(def_id.index)
             }
+            &hir_ty::TypeKind::Tuple(ref elems) => {
+                if elems.len() == 0 {
+                    common::make_string("{}")
+                } else {
+                    let mut result = common::make_string("{ ");
+                    let mut i: usize = 0;
+                    while i < elems.len() {
+                        if i > 0 {
+                            result.push_str(", ");
+                        }
+                        let elem_str = self.type_to_llvm_with_ctx(&elems[i]);
+                        result.push_str(elem_str.as_str());
+                        i = i + 1;
+                    }
+                    result.push_str(" }");
+                    result
+                }
+            }
             _ => codegen_types::type_to_llvm(ty),
         }
     }
