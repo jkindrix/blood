@@ -61,7 +61,7 @@ blood/
 │       ├── sync/           # Concurrency primitives
 │       └── ...
 ├── src/
-│   ├── bootstrap/          # Rust bootstrap compiler (git subtree)
+│   ├── bootstrap/          # Rust bootstrap compiler (Rust)
 │   │   ├── bloodc/src/     # Compiler source (Rust)
 │   │   ├── blood-std/      # Stdlib copy for compiler tests
 │   │   └── Cargo.toml      # Workspace manifest

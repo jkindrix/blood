@@ -5,7 +5,7 @@
 ```
 blood/                          # Repository root
 ├── src/selfhost/     # Self-hosted Blood compiler (written in Blood)
-├── src/bootstrap/bloodc/src/   # Rust bootstrap compiler (git subtree from ~/blood-rust/)
+├── src/bootstrap/bloodc/src/   # Rust bootstrap compiler
 ├── docs/spec/GRAMMAR.md        # Language grammar specification
 └── tools/                      # Development & debugging tools
 ```

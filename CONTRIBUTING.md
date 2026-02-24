@@ -67,7 +67,7 @@ blood/                          # Repository root (monorepo)
 │       └── effects/            # Effect system primitives
 ├── src/
 │   ├── selfhost/               # Self-hosted compiler (written in Blood)
-│   └── bootstrap/              # Rust bootstrap compiler (git subtree)
+│   └── bootstrap/              # Rust bootstrap compiler (Rust)
 │   ├── bloodc/                 # The main compiler
 │   │   ├── src/
 │   │   │   ├── main.rs         # CLI entry point
