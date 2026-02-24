@@ -245,7 +245,7 @@ std::collections::BTreeMap<K, V>  (for ordered iteration)
 
 ### 4.1 Currently Implemented ✅
 
-Based on SPECIFICATION.md and blood-std:
+Based on SPECIFICATION.md and stdlib:
 
 | Feature | Status | Location |
 |---------|--------|----------|
@@ -254,15 +254,15 @@ Based on SPECIFICATION.md and blood-std:
 | Enums | ✅ Implemented | Core language |
 | Generics | ✅ Implemented | typeck/context |
 | Pattern matching | ✅ Implemented | parser, typeck |
-| Option<T> | ✅ Implemented | blood-std/std/core/option.blood |
-| Result<T, E> | ✅ Implemented | blood-std/std/core/result.blood |
-| Vec<T> | ✅ Implemented | blood-std/std/collections/vec.blood |
-| HashMap<K, V> | ✅ Implemented | blood-std/std/collections/hash_map.blood |
-| String | ✅ Implemented | blood-std/std/core/string.blood |
+| Option<T> | ✅ Implemented | stdlib/core/option.blood |
+| Result<T, E> | ✅ Implemented | stdlib/core/result.blood |
+| Vec<T> | ✅ Implemented | stdlib/collections/vec.blood |
+| HashMap<K, V> | ✅ Implemented | stdlib/collections/hash_map.blood |
+| String | ✅ Implemented | stdlib/core/string.blood |
 | Closures | ✅ Implemented | typeck/context/closure.rs |
 | Effects | ✅ Implemented | effects/ module |
 | Traits | ✅ Implemented | typeck/context/traits.rs |
-| File I/O | ✅ Implemented | blood-std/std/fs/mod.blood |
+| File I/O | ✅ Implemented | stdlib/fs/mod.blood |
 
 ### 4.2 Gaps to Address
 

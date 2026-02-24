@@ -15,7 +15,7 @@
 BLOOD_REPO  ?= $(dir $(abspath $(lastword $(MAKEFILE_LIST))))/../..
 BOOTSTRAP   := ./target/release/blood
 SELF_HOSTED := $(BLOOD_REPO)/src/selfhost/main.blood
-STDLIB_PATH := $(BLOOD_REPO)/blood-std/std
+STDLIB_PATH := $(BLOOD_REPO)/stdlib
 
 # Build the bootstrap compiler from Rust source
 build:

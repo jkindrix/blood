@@ -247,7 +247,7 @@ SELF-001-003 complete. Continue toward full self-hosting.
     - Character/string escape handling simplified
     - Parser grew from 2992 → 3508 lines (516 lines of fixes and new features)
 - [x] **SELF-VERIFY-002**: Create test suite in Blood for parser ✅ COMPLETE
-  - Created `blood-std/tests/test_parser.blood` with 105 test functions
+  - Created `stdlib/tests/test_parser.blood` with 105 test functions
   - Test categories: literals (5), binary ops (6), assignment (2), ranges (2),
     unary ops (5), postfix (6), collections (8), control flow (11), closures (3),
     effects (4), blocks (2), types (15), patterns (14), declarations (18),

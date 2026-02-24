@@ -26,7 +26,7 @@ Fixes #
 
 - [ ] Compiler (bloodc)
 - [ ] Runtime (blood-runtime)
-- [ ] Standard Library (blood-std)
+- [ ] Standard Library (stdlib)
 - [ ] Language Server (LSP)
 - [ ] Documentation
 - [ ] Build System

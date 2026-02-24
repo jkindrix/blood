@@ -2801,7 +2801,7 @@ unsafe trait TrustedLen: Iterator {}
 
 ## 7. IO Types
 
-> **Implementation Status**: The types and signatures in this section are **specified but not yet implemented**. Path manipulation is partially implemented (`blood-std/std/path.blood` ~150 lines). File system operations have type definitions only (`blood-std/std/fs/mod.blood` ~50 lines, no syscall implementations). Networking types are defined but socket operations are not implemented (`blood-std/std/net/mod.blood` ~210 lines, types only).
+> **Implementation Status**: The types and signatures in this section are **specified but not yet implemented**. Path manipulation is partially implemented (`stdlib/path.blood` ~150 lines). File system operations have type definitions only (`stdlib/fs/mod.blood` ~50 lines, no syscall implementations). Networking types are defined but socket operations are not implemented (`stdlib/net/mod.blood` ~210 lines, types only).
 
 Blood provides types for file system and I/O operations.
 

@@ -616,13 +616,13 @@ Standard library core types are now complete.
   - Added `OccupiedError` type for `try_insert` errors
   - HashSet also updated with `shrink_to_fit()` and `shrink_to()`
 - [x] **STD-003**: Implement `String` type with UTF-8 handling
-  - Extended `blood-std/std/core/string.blood` with 700+ lines
+  - Extended `stdlib/core/string.blood` with 700+ lines
   - Added: `insert()`, `insert_str()`, `remove()`, `drain()`, `retain()`, `split_at()`
   - Added iterators: `Lines`, `SplitWhitespace`, `CharIndices`, `Drain`
   - Added ASCII ops: `is_ascii()`, `make_ascii_lowercase/uppercase()`, `to_ascii_lowercase/uppercase()`
   - Complete UTF-8 validation and character boundary checking
 - [x] **STD-004**: Implement file I/O wrappers using effects
-  *Created blood-std/std/fs/mod.blood with 700+ lines:*
+  *Created stdlib/fs/mod.blood with 700+ lines:*
   - *File struct with open/create/options, Read/Write/Seek impls*
   - *OpenOptions builder for customized file opening*
   - *Metadata, FileType, Permissions types*
@@ -631,7 +631,7 @@ Standard library core types are now complete.
   - *Links: hard_link, symlink, read_link, canonicalize*
   - *All operations require {IO} effect for explicit side effects*
 - [x] **STD-005**: Implement networking primitives
-  *Created blood-std/std/net/mod.blood with 700+ lines:*
+  *Created stdlib/net/mod.blood with 700+ lines:*
   - *Socket addresses: Ipv4Addr, Ipv6Addr, IpAddr, SocketAddr with parsing*
   - *TCP: TcpListener, TcpStream with connect/accept/bind/listen*
   - *UDP: UdpSocket with send_to/recv_from, connect, broadcast*
@@ -641,7 +641,7 @@ Standard library core types are now complete.
   - *Read/Write trait implementations for TcpStream*
   - *Network error types mapping to IoErrorKind*
 - [x] **STD-006**: Add comprehensive standard library tests
-  *Created blood-std/tests/ with comprehensive test files:*
+  *Created stdlib/tests/ with comprehensive test files:*
   - *test_vec.blood: 50+ tests for Vec construction, push/pop, indexing, iteration, search, sort, clone*
   - *test_hashmap.blood: 40+ tests for HashMap insert/get, remove, entry API, iteration, capacity*
   - *test_option.blood: 40+ tests for Option construction, accessors, transformations, pattern matching*

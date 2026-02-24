@@ -129,7 +129,7 @@ blood/
 │   │   ├── effects/          # Effect runtime
 │   │   └── ffi/              # FFI support
 │   └── Cargo.toml
-├── blood-std/                 # Standard library (in Blood)
+├── stdlib/                    # Standard library (in Blood)
 │   ├── core/                 # Core types
 │   ├── io/                   # IO effects
 │   ├── collections/          # Data structures

@@ -53,13 +53,12 @@ This is a **monorepo** containing both the Blood language project and the Rust b
 
 ```
 blood/
-├── blood-std/              # Standard library (Blood source)
-│   └── std/
-│       ├── core/           # Core types (Option, String, Box, etc.)
-│       ├── collections/    # Vec, HashMap, LinkedList, etc.
-│       ├── effects/        # Effect system primitives
-│       ├── sync/           # Concurrency primitives
-│       └── ...
+├── stdlib/                 # Standard library (Blood source)
+│   ├── core/               # Core types (Option, String, Box, etc.)
+│   ├── collections/        # Vec, HashMap, LinkedList, etc.
+│   ├── effects/            # Effect system primitives
+│   ├── sync/               # Concurrency primitives
+│   └── ...
 ├── src/
 │   ├── bootstrap/          # Rust bootstrap compiler (Rust)
 │   │   ├── bloodc/src/     # Compiler source (Rust)

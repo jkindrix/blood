@@ -390,12 +390,12 @@ Blood is a systems programming language synthesizing five research innovations �
 #### Gaps
 
 **GAP-STD-1: Networking is types only, no socket operations**
-- `blood-std/std/net/mod.blood` defines `Ipv4Addr`, `TcpListener`, `TcpStream`
+- `stdlib/net/mod.blood` defines `Ipv4Addr`, `TcpListener`, `TcpStream`
 - Zero actual socket syscall implementations
 - Remediation: Implement socket operations or downgrade documentation status
 
 **GAP-STD-2: Filesystem is empty**
-- `blood-std/std/fs/mod.blood` is ~50 lines with no actual implementation
+- `stdlib/fs/mod.blood` is ~50 lines with no actual implementation
 - Remediation: Implement file operations or remove from documentation
 
 **GAP-STD-3: Sync primitives are spinlock-based**
@@ -513,8 +513,8 @@ Supporting completed verification: SELF-VERIFY-001 (parser review: 2,992 lines, 
 |--------|-------|-------|
 | Clippy warnings | **0** | Down from 266 warnings + 1 error |
 | Workspace tests | 1,779 | All passing |
-| Self-hosted TODO/FIXME count | **6** | Only in blood-std; all are legitimate future work |
-| Blood-std TODO breakdown | 2 (net), 2 (path), 1 (iter), 1 (mir_lower_expr) | No blocking issues |
+| Self-hosted TODO/FIXME count | **6** | Only in stdlib; all are legitimate future work |
+| Stdlib TODO breakdown | 2 (net), 2 (path), 1 (iter), 1 (mir_lower_expr) | No blocking issues |
 
 #### Diagnostics Infrastructure
 
@@ -710,7 +710,7 @@ These items address gaps between documentation claims and implementation reality
 | REM-005 | FORMAL_SEMANTICS.md status slightly misleading | `docs/spec/FORMAL_SEMANTICS.md` line 1 | Change from "✅ Implemented" to "✅ In Progress (10 Coq files, 10/12 theorems proved, 2 Admitted)" | Trivial |
 | REM-006 | Canonical AST not used in hashing | `bloodc/src/content/build_cache.rs:481` | Either activate `Canonicalizer` in `hash_hir_item()` or document that same-semantic-code → same-hash is not yet guaranteed | Medium |
 | REM-007 | Multiple dispatch runtime not functional | `codegen/context/dispatch.rs`, `blood-runtime` | Implement `blood_dispatch_lookup` in runtime; build dispatch table in codegen | High |
-| REM-008 | Concurrency: runtime exists, language integration zero | `blood-std/std/effects/`, compiler codegen | Create `effect Fiber { op spawn(...) }` in stdlib; add codegen support for fiber operations | High |
+| REM-008 | Concurrency: runtime exists, language integration zero | `stdlib/effects/`, compiler codegen | Create `effect Fiber { op spawn(...) }` in stdlib; add codegen support for fiber operations | High |
 | REM-009 | "Mutable Value Semantics" claim inaccurate | `docs/spec/SPECIFICATION.md` §1.1 | Rewrite to "Move Semantics with Escape-Analyzed Allocation" or document the divergence from Hylo's model | Trivial |
 | REM-010 | REPL documented as "Implemented" | `docs/spec/TOOLING.md` | Change blood-repl status from "Implemented" to "Planned" | Trivial |
 | REM-011 | Linear/affine types not in pipeline | `main.blood` driver | Either integrate linearity checker into compilation pipeline or downgrade feature claims | Medium |
@@ -731,7 +731,7 @@ These items complete partially-implemented features.
 | ~~REM-019~~ | ~~LSP missing 4 features~~ | ~~`blood-tools/lsp/src/`~~ | **CORRECTED: All 4 features are implemented. Update TOOLING.md to reflect this.** | Trivial |
 | REM-020 | Region isolation not enforced | `blood-runtime/src/memory.rs` | Add cross-region validation checks on reference creation | Medium |
 | REM-021 | MultiShot handlers not fully tested | `effects/handler.rs:129-136` | Add test cases for continuation cloning and multi-resume scenarios | Medium |
-| REM-022 | Sync primitives spinlock-based | `blood-std/std/sync/` | Upgrade Mutex to OS-backed; add condition variables | Medium |
+| REM-022 | Sync primitives spinlock-based | `stdlib/sync/` | Upgrade Mutex to OS-backed; add condition variables | Medium |
 | REM-023 | Self-hosted build cache is module-level only | `src/selfhost/build_cache.blood` | Upgrade from FNV-1a module hashing to per-item BLAKE3 content hashing | High |
 | REM-024 | Record row polymorphism underutilized | `unify.blood`, `hir_ty.blood` | Add test programs exercising extensible record types | Low |
 | REM-025 | Segmented stack continuations deferred | `effects/mod.rs:63` | Design and implement for non-tail-resumptive handlers | Very High |
@@ -749,7 +749,7 @@ These items improve ecosystem readiness and production polish.
 | REM-030 | Single contributor | N/A | Recruit contributors; add "good first issue" labels | Ongoing |
 | REM-031 | REPL needs implementation | `blood-tools/repl/` | Implement interactive evaluation, history, completion | High |
 | REM-032 | Formal verification incomplete (2 Admitted theorems) | `proofs/theories/` | Complete the 2 Admitted theorems (detection completeness, no use-after-free) in GenerationSnapshots.v | High |
-| REM-033 | Path module incomplete (Windows) | `blood-std/std/path.blood` | Implement Windows path handling | Low |
+| REM-033 | Path module incomplete (Windows) | `stdlib/path.blood` | Implement Windows path handling | Low |
 | REM-034 | Snapshot liveness optimization missing | `blood-runtime/src/memory.rs` | Track dead snapshot entries for faster validation | Low |
 | REM-035 | No third-party programs written in Blood | N/A | Recruit at least one external developer to write a non-trivial program | Ongoing |
 | REM-036 | Publish effect-abstracted codegen paper | N/A | Write and submit paper documenting the novel use of algebraic effects as compiler-internal infrastructure | Medium |

@@ -343,7 +343,7 @@ Hello, World!
 
 | Item | Description | Priority | Status |
 |------|-------------|----------|--------|
-| WI-070 | Create `blood-std/` standard library structure | P0 | Pending |
+| WI-070 | Create `stdlib/` standard library structure | P0 | Pending |
 | WI-071 | Implement core Blood types in Blood syntax | P0 | Pending |
 | WI-072 | Create `blood-tools/` tooling structure | P1 | Pending |
 
@@ -445,7 +445,7 @@ Starting from 266 clippy warnings + 1 error, the codebase was cleaned through a 
 
 **Result**: 0 clippy warnings, 0 errors. All 1,779 tests pass.
 
-**TODO/FIXME Status**: 0 remaining `TODO` or `FIXME` comments in `bloodc/src/` or `blood-runtime/src/`. Optimization tracking IDs (EFF-OPT-001, EFF-OPT-003, GC-SNAPSHOT-001) have all been implemented. TODOs in `blood-std/` are out of scope (managed by ~/blood).
+**TODO/FIXME Status**: 0 remaining `TODO` or `FIXME` comments in `bloodc/src/` or `blood-runtime/src/`. Optimization tracking IDs (EFF-OPT-001, EFF-OPT-003, GC-SNAPSHOT-001) have all been implemented. TODOs in `stdlib/` are out of scope (managed by ~/blood).
 
 **Catch-all Pattern Status**: Previous audit eliminated catch-all `_ =>` patterns in critical code paths and replaced them with exhaustive match arms. Remaining `_ =>` patterns (418 occurrences across 65 files) are used correctly for legitimate wildcard matching in parsers, test harnesses, and pattern-match exhaustiveness (where matching all variants explicitly would be impractical or unmaintainable).
 
@@ -1299,7 +1299,7 @@ The Blood project is split across two directories:
 | Directory | Contents | Purpose |
 |-----------|----------|---------|
 | `~/blood-rust` | Compiler (`bloodc`), runtime (`blood-runtime`), tools (`blood-tools`), specifications (`docs/spec/`) | Bootstrap compiler and all Rust implementation code |
-| `~/blood` | Standard library (`blood-std/`), project-level `CLAUDE.md` | Blood language source code (future standard library written in Blood syntax) |
+| `~/blood` | Standard library (`stdlib/`), project-level `CLAUDE.md` | Blood language source code (future standard library written in Blood syntax) |
 
 The `~/blood-rust` repository contains the complete Rust-based bootstrap compiler, runtime library, tooling (LSP, formatter), benchmark suites, and all language specifications. The `~/blood` directory is reserved for Blood-language source code, primarily the future standard library that will be written in Blood itself once the compiler reaches sufficient maturity (Phase 6+).
 
