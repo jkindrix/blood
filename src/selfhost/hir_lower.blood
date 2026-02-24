@@ -1368,15 +1368,25 @@ fn register_declaration(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declar
             match &impl_block.self_ty.kind {
                 &ast::TypeKind::Path(ref type_path) => {
                     if type_path.segments.len() > 0 {
-                        let first_seg = &type_path.segments[0];
-                        let type_name_str = ctx.span_to_string(first_seg.name.span);
-                        let type_name_sym = ctx.intern(type_name_str.as_str());
-                        let type_lookup = ctx.resolver.lookup(type_name_sym);
-                        if type_lookup.is_some() {
-                            let result = type_lookup.unwrap();
-                            let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
-                            let type_def_id = hir_def::DefId::new(binding.def_id.index);
-                            register_impl_items(ctx, type_def_id, &impl_block.items);
+                        // Resolve the full qualified path (e.g., mir_types::Place)
+                        // to get the actual TYPE's DefId, not just the first segment.
+                        // Using only segments[0] would resolve to the module for
+                        // qualified paths, causing method name collisions when two
+                        // types in the same module have methods with the same name.
+                        let mut seg_names: Vec<common::SpannedSymbol> = Vec::new();
+                        let mut si: usize = 0;
+                        while si < type_path.segments.len() {
+                            let seg_str = ctx.span_to_string(type_path.segments[si].name.span);
+                            let seg_sym = ctx.intern(seg_str.as_str());
+                            seg_names.push(common::SpannedSymbol { symbol: seg_sym, span: type_path.segments[si].name.span });
+                            si = si + 1;
+                        }
+                        let path_result = ctx.resolver.resolve_qualified_path(&seg_names);
+                        match path_result {
+                            Option::Some(result) => {
+                                register_impl_items(ctx, result.def_id, &impl_block.items);
+                            }
+                            Option::None => {}
                         }
                     }
                 }
@@ -1523,21 +1533,41 @@ fn register_module_declaration(
             match &impl_block.self_ty.kind {
                 &ast::TypeKind::Path(ref type_path) => {
                     if type_path.segments.len() > 0 {
-                        let first_seg = &type_path.segments[0];
-                        let type_name_str = ctx.span_to_string(first_seg.name.span);
-                        let type_name_sym = ctx.intern(type_name_str.as_str());
-                        // Look up in parent module first, then fall back to global scope
-                        let type_def_opt = ctx.resolver.lookup_in_parent(parent_def_id, type_name_sym);
-                        let type_def_id_opt: Option<hir_def::DefId> = if type_def_opt.is_some() {
-                            Option::Some(type_def_opt.unwrap())
-                        } else {
-                            let global_lookup = ctx.resolver.lookup(type_name_sym);
-                            if global_lookup.is_some() {
-                                let result = global_lookup.unwrap();
-                                let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
-                                Option::Some(hir_def::DefId::new(binding.def_id.index))
+                        // Resolve the full qualified path to get the actual type's
+                        // DefId. For multi-segment paths (e.g., mir_types::Place),
+                        // using only segments[0] would resolve to the module,
+                        // causing method name collisions.
+                        let type_def_id_opt: Option<hir_def::DefId> = if type_path.segments.len() == 1 {
+                            // Single-segment: look up in parent module first, then global
+                            let seg_str = ctx.span_to_string(type_path.segments[0].name.span);
+                            let seg_sym = ctx.intern(seg_str.as_str());
+                            let type_def_opt = ctx.resolver.lookup_in_parent(parent_def_id, seg_sym);
+                            if type_def_opt.is_some() {
+                                Option::Some(type_def_opt.unwrap())
                             } else {
-                                Option::None
+                                let global_lookup = ctx.resolver.lookup(seg_sym);
+                                if global_lookup.is_some() {
+                                    let result = global_lookup.unwrap();
+                                    let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
+                                    Option::Some(hir_def::DefId::new(binding.def_id.index))
+                                } else {
+                                    Option::None
+                                }
+                            }
+                        } else {
+                            // Multi-segment: resolve full qualified path
+                            let mut seg_names: Vec<common::SpannedSymbol> = Vec::new();
+                            let mut si: usize = 0;
+                            while si < type_path.segments.len() {
+                                let s_str = ctx.span_to_string(type_path.segments[si].name.span);
+                                let s_sym = ctx.intern(s_str.as_str());
+                                seg_names.push(common::SpannedSymbol { symbol: s_sym, span: type_path.segments[si].name.span });
+                                si = si + 1;
+                            }
+                            let path_result = ctx.resolver.resolve_qualified_path(&seg_names);
+                            match path_result {
+                                Option::Some(result) => Option::Some(result.def_id),
+                                Option::None => Option::None,
                             }
                         };
                         if type_def_id_opt.is_some() {

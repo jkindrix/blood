@@ -1393,15 +1393,25 @@ fn lower_impl_decl(ctx: &mut hir_lower_ctx::LoweringCtx, imp: &ast::ImplBlock) {
     match &imp.self_ty.kind {
         &ast::TypeKind::Path(ref type_path) => {
             if type_path.segments.len() > 0 {
-                let first_seg = &type_path.segments[0];
-                let type_name_str = ctx.span_to_string(first_seg.name.span);
-                let type_name_sym = ctx.intern(type_name_str.as_str());
-                let type_lookup = ctx.resolver.lookup(type_name_sym);
-                match type_lookup {
+                // Resolve the full qualified path (e.g., mir_types::Place)
+                // to get the actual TYPE's DefId. Using only segments[0]
+                // would resolve to the module for qualified paths, causing
+                // DefId collisions when two types in the same module have
+                // methods with the same name (e.g., Place::clone and
+                // PlaceElem::clone both under mir_types).
+                let mut seg_names: Vec<common::SpannedSymbol> = Vec::new();
+                let mut si: usize = 0;
+                while si < type_path.segments.len() {
+                    let seg_str = ctx.span_to_string(type_path.segments[si].name.span);
+                    let seg_sym = ctx.intern(seg_str.as_str());
+                    seg_names.push(common::SpannedSymbol { symbol: seg_sym, span: type_path.segments[si].name.span });
+                    si = si + 1;
+                }
+                let path_result = ctx.resolver.resolve_qualified_path(&seg_names);
+                match path_result {
                     Option::Some(result) => {
-                        let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
                         has_impl_type = true;
-                        impl_type_idx = binding.def_id.index;
+                        impl_type_idx = result.def_id.index;
                     }
                     Option::None => {}
                 }
