@@ -391,24 +391,46 @@ pub fn populate_adt_registry(
     // Pass 2+: Rebuild struct and enum layouts using context-aware type resolution.
     // Each pass resolves one more level of nesting. Since lookup_struct/lookup_enum and
     // adt_llvm_type scan from the end, new entries override old ones.
-    // Repeat until all types stabilize (typically 2-3 iterations).
+    //
+    // Within each pass, items are processed in def_id order. When a struct S appears
+    // before enum E in the items list, S uses E's value from the PREVIOUS pass. This
+    // means S is always one pass behind E. To ensure all types converge:
+    // - Run passes until no layout changes (fixpoint), then one extra pass so that
+    //   structs pick up the final enum values from the convergence pass.
+    // - Maximum 12 passes as a safety bound (handles nesting depth up to ~6).
     let mut pass: u32 = 0;
-    while pass < 4 {
+    let mut stable_count: u32 = 0;
+    while pass < 12 && stable_count < 2 {
+        let mut changed: bool = false;
         let mut j: usize = 0;
         while j < items.len() {
             let entry = &items[j];
             match &entry.item.kind {
                 &hir_item::ItemKind::Struct(ref struct_def) => {
                     let layout = build_struct_layout_with_ctx(ctx, entry.def_id.index, struct_def);
+                    // Check if this layout differs from the last registered one
+                    let old_type = ctx.adt_llvm_type(entry.def_id.index);
+                    if !string_eq_str(old_type.as_str(), layout.llvm_type.as_str()) {
+                        changed = true;
+                    }
                     ctx.register_struct(layout);
                 }
                 &hir_item::ItemKind::Enum(ref enum_def) => {
                     let layout = build_enum_layout_with_ctx(ctx, entry.def_id.index, enum_def);
+                    let old_type = ctx.adt_llvm_type(entry.def_id.index);
+                    if !string_eq_str(old_type.as_str(), layout.llvm_type.as_str()) {
+                        changed = true;
+                    }
                     ctx.register_enum(layout);
                 }
                 _ => {}
             }
             j = j + 1;
+        }
+        if changed {
+            stable_count = 0;
+        } else {
+            stable_count = stable_count + 1;
         }
         pass = pass + 1;
     }
