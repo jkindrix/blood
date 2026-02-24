@@ -1059,7 +1059,7 @@ fn infer_method_call(
                 &type_intern::InternedTypeKind::Infer(ret_var) => ret_var.index,
                 _ => 0,
             };
-            checker.record_pending_method_call(span.start, var_id.index, method.symbol, return_var);
+            checker.record_pending_method_call(method.span.start, var_id.index, method.symbol, return_var);
             return return_ty;
         }
         _ => {}
@@ -1134,7 +1134,7 @@ fn infer_method_call(
             }
 
             // Record the resolved method DefId for MIR lowering
-            checker.record_method_resolution(span.start, method_info.def_id.index);
+            checker.record_method_resolution(method.span.start, method_info.def_id.index);
 
             // Return the return type after substitution
             unify::substitute_type_params_id(method_info.return_ty, &subst)

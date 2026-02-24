@@ -772,7 +772,7 @@ fn lower_call_expr(
 fn lower_method_call_expr(
     ctx: &mut mir_lower_ctx::MirLowerCtx,
     receiver: &hir_expr::Expr,
-    _method: &common::SpannedSymbol,
+    method: &common::SpannedSymbol,
     method_def: Option<hir_def::DefId>,
     _type_args: &Vec<type_intern::TyId>,
     args: &Vec<hir_expr::Expr>,
@@ -858,7 +858,7 @@ fn lower_method_call_expr(
         }
         Option::None => {
             // Look up from type checker's resolution side table
-            match ctx.lookup_method_def(span.start) {
+            match ctx.lookup_method_def(method.span.start) {
                 Option::Some(resolved_def) => {
                     mir_types::Operand::Constant(mir_types::Constant::new(
                         type_intern::CommonTypes::error(),
