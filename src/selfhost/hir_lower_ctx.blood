@@ -36,6 +36,23 @@ impl BuiltinFnDef {
 }
 
 // ============================================================
+// Associated Type Entry
+// ============================================================
+
+/// Maps an associated type name to its resolved TyId.
+/// Used for resolving Self::AssocType paths in trait/impl contexts.
+pub struct AssocTypeEntry {
+    pub name: common::Symbol,
+    pub ty_id: type_intern::TyId,
+}
+
+impl AssocTypeEntry {
+    pub fn new(name: common::Symbol, ty_id: type_intern::TyId) -> AssocTypeEntry {
+        AssocTypeEntry { name: name, ty_id: ty_id }
+    }
+}
+
+// ============================================================
 // Lowering Result
 // ============================================================
 
@@ -263,6 +280,9 @@ pub struct LoweringCtx {
     pub body_locals: Vec<hir_expr::Local>,
     /// The current Self type when lowering inside an impl block (interned).
     pub current_self_type: Option<type_intern::TyId>,
+    /// Associated type mappings in the current trait/impl context.
+    /// Each entry is (name_symbol, TyId) for resolving Self::AssocType paths.
+    pub current_assoc_types: Vec<AssocTypeEntry>,
     /// DefIds for builtin types (set during register_builtin_types).
     pub builtin_string_def: Option<hir_def::DefId>,
     pub builtin_vec_def: Option<hir_def::DefId>,
@@ -348,6 +368,7 @@ impl LoweringCtx {
             source: source,
             body_locals: Vec::new(),
             current_self_type: Option::None,
+            current_assoc_types: Vec::new(),
             builtin_string_def: Option::None,
             builtin_vec_def: Option::None,
             builtin_option_def: Option::None,
@@ -385,6 +406,7 @@ impl LoweringCtx {
             source: source,
             body_locals: Vec::new(),
             current_self_type: Option::None,
+            current_assoc_types: Vec::new(),
             builtin_string_def: Option::None,
             builtin_vec_def: Option::None,
             builtin_option_def: Option::None,

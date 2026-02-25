@@ -1151,8 +1151,15 @@ pub fn parse_type_alias_decl(parser: &mut parser_base::Parser, attrs: Vec<ast::A
         Option::None
     };
 
-    parser.expect(token::TokenKind::Eq);
-    let ty = parser_type::parse_type(parser);
+    // Associated type declaration: `type Item;` (no `= Type`)
+    // Type alias definition: `type Item = ConcreteType;`
+    let ty: Option<ast::Type> = if parser.check(token::TokenKind::Eq) {
+        parser.advance(); // consume '='
+        let parsed_ty = parser_type::parse_type(parser);
+        Option::Some(parsed_ty)
+    } else {
+        Option::None
+    };
     parser.expect(token::TokenKind::Semi);
 
     let end_span = parser.previous.span;
@@ -1302,7 +1309,7 @@ fn parse_trait_item(parser: &mut parser_base::Parser) -> ast::TraitItem {
                 vis: common::Visibility::Private,
                 name: common::SpannedSymbol { symbol: common::Symbol { index: 0 }, span: start },
                 type_params: Option::None,
-                ty: ast::Type { kind: ast::TypeKind::Never, span: start },
+                ty: Option::None,
                 span: start,
             };
             ast::TraitItem::TypeAlias(placeholder)

@@ -645,7 +645,15 @@ fn lower_type_alias_decl(ctx: &mut hir_lower_ctx::LoweringCtx, ta: &ast::TypeAli
     let generics = hir_lower_type::lower_generics(ctx, &ta.type_params, &no_where);
 
     // Lower the aliased type (may reference generic params)
-    let ty = hir_lower_type::lower_type_id(ctx, &ta.ty);
+    // For associated type declarations (no `= Type`), ty is None
+    let ty = match &ta.ty {
+        &Option::Some(ref ast_ty) => {
+            hir_lower_type::lower_type_id(ctx, ast_ty)
+        }
+        &Option::None => {
+            type_intern::CommonTypes::unit()
+        }
+    };
 
     // Pop type param scope after lowering all types that reference generics
     ctx.resolver.pop_scope();
@@ -786,6 +794,34 @@ fn lower_trait_decl(ctx: &mut hir_lower_ctx::LoweringCtx, t: &ast::TraitDecl) {
     let trait_self_ty_id = type_intern::type_interner().mk_adt(hir_def::DefId::new(def_id.index), type_intern::CommonTyLists::empty());
     ctx.current_self_type = Option::Some(trait_self_ty_id);
 
+    // Pre-register associated types so Self::Item can be resolved in method signatures.
+    // For trait declarations (no default), use a fresh inference variable.
+    // For trait definitions (with default), lower the type.
+    let mut ati: usize = 0;
+    while ati < t.items.len() {
+        match &t.items[ati] {
+            &ast::TraitItem::TypeAlias(ref ta) => {
+                let name_str = ctx.span_to_string(ta.name.span);
+                let name_sym = ctx.intern(name_str.as_str());
+                let assoc_ty = match &ta.ty {
+                    &Option::Some(ref ast_ty) => {
+                        hir_lower_type::lower_type_id(ctx, ast_ty)
+                    }
+                    &Option::None => {
+                        // Fresh inference variable for abstract associated type
+                        let var_id = ctx.alloc_ty_var();
+                        type_intern::type_interner().mk_infer(var_id)
+                    }
+                };
+                ctx.current_assoc_types.push(
+                    hir_lower_ctx::AssocTypeEntry::new(name_sym, assoc_ty)
+                );
+            }
+            _ => {}
+        }
+        ati = ati + 1;
+    }
+
     // Lower associated items
     let mut items: Vec<hir_item::AssocItem> = Vec::new();
     let mut i: usize = 0;
@@ -797,8 +833,9 @@ fn lower_trait_decl(ctx: &mut hir_lower_ctx::LoweringCtx, t: &ast::TraitDecl) {
         i = i + 1;
     }
 
-    // Clear Self type after trait lowering
+    // Clear Self type and associated types after trait lowering
     ctx.current_self_type = Option::None;
+    ctx.current_assoc_types.clear();
 
     // Pop type param scope after lowering all types that reference generics
     ctx.resolver.pop_scope();
@@ -899,13 +936,23 @@ fn lower_assoc_type(ctx: &mut hir_lower_ctx::LoweringCtx, ta: &ast::TypeAliasDec
     let def_id = ctx.alloc_def_id();
     let no_where: Option<ast::WhereClause> = Option::None;
     let generics = hir_lower_type::lower_generics(ctx, &ta.type_params, &no_where);
-    let ty = hir_lower_type::lower_type_id(ctx, &ta.ty);
+
+    // For associated type declarations (`type Item;`), ty is None
+    // For associated type definitions (`type Item = i32;`), ty is Some
+    let default_ty: Option<type_intern::TyId> = match &ta.ty {
+        &Option::Some(ref ast_ty) => {
+            Option::Some(hir_lower_type::lower_type_id(ctx, ast_ty))
+        }
+        &Option::None => {
+            Option::None
+        }
+    };
 
     // Pop type param scope after lowering the aliased type
     ctx.resolver.pop_scope();
 
     let bounds: Vec<hir_ty::TraitRef> = Vec::new();
-    hir_item::AssocType::new(def_id, ta.name, generics, bounds, Option::Some(ty))
+    hir_item::AssocType::new(def_id, ta.name, generics, bounds, default_ty)
 }
 
 /// Lower an associated constant.
@@ -1540,6 +1587,32 @@ fn lower_impl_decl(ctx: &mut hir_lower_ctx::LoweringCtx, imp: &ast::ImplBlock) {
         mi = mi + 1;
     }
 
+    // Pre-register associated types so Self::Item can be resolved in method signatures.
+    let mut ati: usize = 0;
+    while ati < imp.items.len() {
+        match &imp.items[ati] {
+            &ast::ImplItem::TypeAlias(ref ta) => {
+                let name_str = ctx.span_to_string(ta.name.span);
+                let name_sym = ctx.intern(name_str.as_str());
+                let assoc_ty = match &ta.ty {
+                    &Option::Some(ref ast_ty) => {
+                        hir_lower_type::lower_type_id(ctx, ast_ty)
+                    }
+                    &Option::None => {
+                        // Declaration without definition in impl - use fresh var
+                        let var_id = ctx.alloc_ty_var();
+                        type_intern::type_interner().mk_infer(var_id)
+                    }
+                };
+                ctx.current_assoc_types.push(
+                    hir_lower_ctx::AssocTypeEntry::new(name_sym, assoc_ty)
+                );
+            }
+            _ => {}
+        }
+        ati = ati + 1;
+    }
+
     // Lower associated items
     let mut items: Vec<hir_item::AssocItem> = Vec::new();
     let mut i: usize = 0;
@@ -1556,8 +1629,9 @@ fn lower_impl_decl(ctx: &mut hir_lower_ctx::LoweringCtx, imp: &ast::ImplBlock) {
         i = i + 1;
     }
 
-    // Clear the Self type after processing the impl block
+    // Clear the Self type and associated types after processing the impl block
     ctx.current_self_type = Option::None;
+    ctx.current_assoc_types.clear();
 
     // Pop type param scope after lowering all types that reference generics
     ctx.resolver.pop_scope();

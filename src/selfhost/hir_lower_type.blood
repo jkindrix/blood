@@ -406,6 +406,34 @@ fn lower_type_path_id(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::TypePath
         }
     }
 
+    // Check for Self::AssocType paths (2-segment, first is Self)
+    if path.segments.len() == 2 {
+        let first_seg = &path.segments[0];
+        let first_name = ctx.span_to_string(first_seg.name.span);
+        if str_eq(&first_name, "Self") {
+            match &ctx.current_self_type {
+                &Option::Some(ref _self_ty) => {
+                    // Look up the associated type name in current_assoc_types
+                    let second_seg = &path.segments[1];
+                    let assoc_name_str = ctx.span_to_string(second_seg.name.span);
+                    let assoc_sym = ctx.intern(assoc_name_str.as_str());
+                    let mut found: bool = false;
+                    let mut ai: usize = 0;
+                    while ai < ctx.current_assoc_types.len() {
+                        if ctx.current_assoc_types[ai].name.index == assoc_sym.index {
+                            return ctx.current_assoc_types[ai].ty_id;
+                        }
+                        ai = ai + 1;
+                    }
+                    // Not found — fall through to qualified path resolution
+                }
+                &Option::None => {
+                    // Not in trait/impl context — fall through
+                }
+            }
+        }
+    }
+
     // Multi-segment paths (e.g., module::Type)
     // Extract the names from path segments, re-interning for consistent indices
     let mut names: Vec<common::SpannedSymbol> = Vec::new();
