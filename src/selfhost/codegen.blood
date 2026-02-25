@@ -202,6 +202,13 @@ pub fn generate_module_with_items(
         output.push_str("\n");
     }
 
+    // Emit fn pointer wrapper functions collected during codegen
+    let mut wpi: usize = 0;
+    while wpi < ctx.fn_ptr_wrapper_defs.len() {
+        output.push_str(ctx.fn_ptr_wrapper_defs[wpi].as_str());
+        wpi = wpi + 1;
+    }
+
     // Append string constants from the context
     ctx.emit_string_constants();
     output.push_str(ctx.output.as_str());
@@ -316,6 +323,11 @@ pub fn generate_function_with_ctx(
     // Store arguments into allocas
     codegen_stmt::emit_arg_stores(ctx, body);
 
+    // For closure bodies with captures, load captured values from env struct
+    if body.capture_locals.len() > 0 {
+        emit_capture_loads(ctx, body);
+    }
+
     // Jump to first basic block if there are any
     if body.basic_blocks.len() > 0 {
         let first_label = ctx.block_label_cg(mir_def::BasicBlockId::new(0));
@@ -343,6 +355,85 @@ pub fn generate_function_with_ctx(
     let result = clone_string(&ctx.output);
     ctx.output = String::new();
     result
+}
+
+/// Emits loads for captured variables from the env struct pointer at closure body start.
+///
+/// Closure body layout:
+///   Local 0: return value
+///   Local 1: env_ptr (first parameter, ptr type)
+///   Locals 2..1+num_user_params: explicit closure parameters
+///   Locals (1+param_count)..(1+param_count+capture_count): capture locals
+///
+/// The env struct has the same layout as the capture operands in the
+/// AggregateKind::Closure aggregate that constructed this closure.
+fn emit_capture_loads(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    body: &mir_body::MirBody,
+) {
+    // Build env struct LLVM type from capture types
+    let mut env_llvm = common::make_string("{ ");
+    let mut ti: usize = 0;
+    while ti < body.capture_tys.len() {
+        if ti > 0 {
+            env_llvm.push_str(", ");
+        }
+        let cap_ty_llvm = codegen_size::type_to_llvm_with_ctx_id(ctx, body.capture_tys[ti]);
+        env_llvm.push_str(cap_ty_llvm.as_str());
+        ti = ti + 1;
+    }
+    env_llvm.push_str(" }");
+
+    // Load env_ptr from local 1's alloca
+    let env_load = ctx.fresh_temp_cg();
+    let local1_name = ctx.local_cg(mir_def::MirLocalId::new(1));
+    ctx.write("    ");
+    ctx.write_cgname(&env_load);
+    ctx.write(" = load ptr, ptr ");
+    ctx.write_cgname(&local1_name);
+    ctx.write("\n");
+
+    // For each capture, GEP into env struct and load value into the capture local's alloca
+    let mut ci: usize = 0;
+    while ci < body.capture_locals.len() && ci < body.capture_tys.len() {
+        let cap_ty_llvm = codegen_size::type_to_llvm_with_ctx_id(ctx, body.capture_tys[ci]);
+        let local_idx = body.capture_locals[ci];
+
+        // GEP to get pointer to this capture in the env struct
+        let field_ptr = ctx.fresh_temp_cg();
+        ctx.write("    ");
+        ctx.write_cgname(&field_ptr);
+        ctx.write(" = getelementptr ");
+        ctx.write_string(&env_llvm);
+        ctx.write(", ptr ");
+        ctx.write_cgname(&env_load);
+        ctx.write(", i32 0, i32 ");
+        ctx.write(codegen_types::format_u64(ci as u64).as_str());
+        ctx.write("\n");
+
+        // Load the captured value
+        let cap_val = ctx.fresh_temp_cg();
+        ctx.write("    ");
+        ctx.write_cgname(&cap_val);
+        ctx.write(" = load ");
+        ctx.write_string(&cap_ty_llvm);
+        ctx.write(", ptr ");
+        ctx.write_cgname(&field_ptr);
+        ctx.write("\n");
+
+        // Store into the capture local's alloca
+        let cap_local = ctx.local_cg(mir_def::MirLocalId::new(local_idx));
+        ctx.write("    ");
+        ctx.write("store ");
+        ctx.write_string(&cap_ty_llvm);
+        ctx.write(" ");
+        ctx.write_cgname(&cap_val);
+        ctx.write(", ptr ");
+        ctx.write_cgname(&cap_local);
+        ctx.write("\n");
+
+        ci = ci + 1;
+    }
 }
 
 // ============================================================

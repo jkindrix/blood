@@ -179,6 +179,12 @@ pub struct MirLowerCtx {
     field_hash: hashmap::HashMapU64U32,
     /// Errors accumulated during MIR lowering.
     pub errors: Vec<MirLowerError>,
+    /// Closure function names discovered during lowering.
+    pub closure_names: Vec<String>,
+    /// Closure MIR bodies discovered during lowering (parallel to closure_names).
+    pub closure_mir: Vec<mir_body::MirBody>,
+    /// Counter for generating unique closure DefIds.
+    pub closure_counter: u32,
 }
 
 /// Mapping from an HIR local to a MIR local.
@@ -233,7 +239,31 @@ impl MirLowerCtx {
             method_hash: method_hash,
             field_hash: field_hash,
             errors: Vec::new(),
+            closure_names: Vec::new(),
+            closure_mir: Vec::new(),
+            closure_counter: 0,
         }
+    }
+
+    // ======== Closure Registration ========
+
+    /// Registers a closure body discovered during lowering.
+    pub fn register_closure_body(self: &mut MirLowerCtx, name: String, body: mir_body::MirBody) {
+        self.closure_names.push(name);
+        self.closure_mir.push(body);
+    }
+
+    /// Returns the number of closure bodies registered.
+    pub fn closure_count(self: &MirLowerCtx) -> usize {
+        self.closure_names.len()
+    }
+
+    /// Generates a unique closure DefId.
+    pub fn next_closure_def_id(self: &mut MirLowerCtx) -> hir_def::DefId {
+        let base: u32 = 16777216; // 0x1000000 range for closures
+        let id = base + self.closure_counter;
+        self.closure_counter = self.closure_counter + 1;
+        hir_def::DefId { index: id }
     }
 
     // ======== Error Reporting ========
@@ -297,6 +327,12 @@ impl MirLowerCtx {
             i = i + 1;
         }
         Option::None
+    }
+
+    /// Returns the raw address of the substitution table.
+    /// Used when creating child MirLowerCtx for closures.
+    pub fn get_subst_table_addr(self: &Self) -> u64 {
+        self.subst_table_addr
     }
 
     /// Returns a reference to the borrowed substitution table.

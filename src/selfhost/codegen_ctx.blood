@@ -301,6 +301,13 @@ pub struct CodegenCtx {
     /// The span of the MIR statement/terminator currently being compiled.
     /// Set before each statement/terminator codegen, used by codegen_error().
     pub current_span: Option<common::Span>,
+    /// Cache of fn pointer wrapper: def_id → index into fn_ptr_wrapper_names/defs.
+    fn_ptr_wrapper_hash: hashmap::HashMapU64U32,
+    /// Wrapper function names (e.g., "fn_name$fnptr"), indexed by wrapper hash value.
+    fn_ptr_wrapper_names: Vec<String>,
+    /// Deferred fn pointer wrapper function LLVM IR definitions.
+    /// Collected when FnDef values are used, emitted after all function bodies.
+    pub fn_ptr_wrapper_defs: Vec<String>,
 }
 
 /// Entry mapping a handler DefId to its effect DefId.
@@ -452,6 +459,9 @@ impl CodegenCtx {
             codegen_errors: Vec::new(),
             codegen_warnings: Vec::new(),
             current_span: Option::None,
+            fn_ptr_wrapper_hash: hashmap::HashMapU64U32::with_capacity(32),
+            fn_ptr_wrapper_names: Vec::with_capacity(32),
+            fn_ptr_wrapper_defs: Vec::with_capacity(32),
         }
     }
 
@@ -518,6 +528,9 @@ impl CodegenCtx {
             codegen_errors: Vec::new(),
             codegen_warnings: Vec::new(),
             current_span: Option::None,
+            fn_ptr_wrapper_hash: hashmap::HashMapU64U32::with_capacity(32),
+            fn_ptr_wrapper_names: Vec::with_capacity(32),
+            fn_ptr_wrapper_defs: Vec::with_capacity(32),
         }
     }
 
@@ -610,6 +623,120 @@ impl CodegenCtx {
     pub fn def_name_at(self: &CodegenCtx, index: usize) -> (u32, String) {
         let entry = &self.def_names[index];
         (entry.def_id, clone_string(&entry.name))
+    }
+
+    /// Gets or creates a fn pointer wrapper for the given def_id.
+    /// Returns the wrapper function name (e.g., "fn_name$fnptr").
+    /// The wrapper has signature (ptr %env, params...) -> ret and
+    /// forwards to the original function ignoring the env parameter.
+    pub fn get_or_create_fn_wrapper(self: &mut CodegenCtx, def_id: u32) -> Option<String> {
+        // Check cache first
+        match self.fn_ptr_wrapper_hash.get(def_id as u64) {
+            Option::Some(idx) => {
+                return Option::Some(clone_string(&self.fn_ptr_wrapper_names[idx as usize]));
+            }
+            Option::None => {}
+        }
+
+        // Get the original function name
+        let fn_name = match self.lookup_def_name(def_id) {
+            Option::Some(name) => name,
+            Option::None => { return Option::None; }
+        };
+
+        // Build wrapper name
+        let mut wrapper_name = clone_string(&fn_name);
+        wrapper_name.push_str("$fnptr");
+
+        // Get parameter types and return type from fn_signatures
+        let has_sig = match self.fn_sigs_hash.get(def_id as u64) {
+            Option::Some(_) => true,
+            Option::None => false,
+        };
+
+        // Build wrapper function definition
+        let mut def = String::new();
+        def.push_str("define linkonce_odr ");
+
+        if has_sig {
+            let sig_idx = match self.fn_sigs_hash.get(def_id as u64) {
+                Option::Some(idx) => idx as usize,
+                Option::None => 0,
+            };
+            let ret_ty_str = clone_string(&self.fn_signatures[sig_idx].return_type);
+            let param_count = self.fn_signatures[sig_idx].param_types.len();
+
+            // Return type
+            def.push_str(ret_ty_str.as_str());
+            def.push_str(" @\"");
+            def.push_str(wrapper_name.as_str());
+            def.push_str("\"(ptr %env");
+
+            // Add original parameters
+            let mut pi: usize = 0;
+            while pi < param_count {
+                def.push_str(", ");
+                let pty = clone_string(&self.fn_signatures[sig_idx].param_types[pi]);
+                def.push_str(pty.as_str());
+                def.push_str(" %p");
+                def.push_str(codegen_types::format_u64(pi as u64).as_str());
+                pi = pi + 1;
+            }
+            def.push_str(") {\nentry:\n");
+
+            // Build the forwarding call
+            let ret_bytes = ret_ty_str.as_bytes();
+            let is_void = (ret_bytes.len() == 4 && ret_bytes[0] == 118 && ret_bytes[1] == 111 && ret_bytes[2] == 105 && ret_bytes[3] == 100) || (ret_bytes.len() == 2 && ret_bytes[0] == 123 && ret_bytes[1] == 125);
+            if is_void {
+                def.push_str("  call void @");
+            } else {
+                def.push_str("  %result = call ");
+                def.push_str(ret_ty_str.as_str());
+                def.push_str(" @");
+            }
+            def.push_str(fn_name.as_str());
+            def.push_str("(");
+            let mut ai: usize = 0;
+            while ai < param_count {
+                if ai > 0 {
+                    def.push_str(", ");
+                }
+                let pty = clone_string(&self.fn_signatures[sig_idx].param_types[ai]);
+                def.push_str(pty.as_str());
+                def.push_str(" %p");
+                def.push_str(codegen_types::format_u64(ai as u64).as_str());
+                ai = ai + 1;
+            }
+            def.push_str(")\n");
+
+            // Return
+            if is_void {
+                def.push_str("  ret void\n");
+            } else {
+                def.push_str("  ret ");
+                def.push_str(ret_ty_str.as_str());
+                def.push_str(" %result\n");
+            }
+            def.push_str("}\n");
+        } else {
+            // No signature info — generate a generic ptr-returning wrapper
+            def.push_str("i64 @\"");
+            def.push_str(wrapper_name.as_str());
+            def.push_str("\"(ptr %env) {\nentry:\n");
+            def.push_str("  %result = call i64 @");
+            def.push_str(fn_name.as_str());
+            def.push_str("()\n");
+            def.push_str("  ret i64 %result\n");
+            def.push_str("}\n");
+        }
+
+        // Cache the wrapper name and store the definition for later emission
+        let idx = self.fn_ptr_wrapper_names.len() as u32;
+        self.fn_ptr_wrapper_names.push(clone_string(&wrapper_name));
+        self.fn_ptr_wrapper_defs.push(def);
+        self.fn_ptr_wrapper_hash.insert(def_id as u64, idx);
+
+        Option::Some(wrapper_name)
     }
 
     /// Registers a DefId as a static variable.
@@ -2252,6 +2379,9 @@ impl CodegenCtx {
             codegen_errors: Vec::new(),
             codegen_warnings: Vec::new(),
             current_span: Option::None,
+            fn_ptr_wrapper_hash: hashmap::HashMapU64U32::with_capacity(32),
+            fn_ptr_wrapper_names: Vec::with_capacity(32),
+            fn_ptr_wrapper_defs: Vec::with_capacity(32),
         };
 
         // Copy handler_op_body_ids with state counts (read-only, needed to flag handler op bodies)

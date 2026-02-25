@@ -20,6 +20,18 @@ mod parser_type;
 // Pattern Parsing
 // ============================================================
 
+/// Parse a single pattern without checking for or-patterns.
+/// Used by closure parameter parsing where `|` is the parameter delimiter.
+pub fn parse_pattern_no_or(parser: &mut parser_base::Parser) -> ast::Pattern {
+    let start = parser.current.span;
+    let kind = parse_pattern_kind(parser);
+    let end_span = parser.previous.span;
+    ast::Pattern {
+        kind: kind,
+        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    }
+}
+
 /// Parse a pattern, including or-patterns: `A | B | C`.
 pub fn parse_pattern(parser: &mut parser_base::Parser) -> ast::Pattern {
     let start = parser.current.span;

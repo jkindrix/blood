@@ -3516,6 +3516,16 @@ fn codegen_thread_worker(arg: u64) -> u64 {
         let fn_ir = codegen::generate_function_with_ctx(ctx, &mir_result.body, work.fn_name.as_str());
         output.push_str(fn_ir.as_str());
 
+        // Generate closure bodies discovered during MIR lowering
+        let mut cli: usize = 0;
+        while cli < mir_result.closure_names.len() && cli < mir_result.closure_mir.len() {
+            let cname = &mir_result.closure_names[cli];
+            let cbody = &mir_result.closure_mir[cli];
+            let closure_ir = codegen::generate_function_with_ctx(ctx, cbody, cname.as_str());
+            output.push_str(closure_ir.as_str());
+            cli = cli + 1;
+        }
+
         // Destroy MIR region — frees MIR body data
         region_destroy(mir_region);
 
@@ -3593,6 +3603,7 @@ fn codegen_pass2(
         // MIR data remains valid until region_destroy below.
         region_deactivate();
 
+
         // Report MIR lowering errors (non-fatal in streaming mode — continue to codegen)
         if mir_result.errors.len() > 0 {
             let mut mei: usize = 0;
@@ -3660,6 +3671,16 @@ fn codegen_pass2(
         // Codegen (no region active — all allocations in global allocator)
         let fn_ir = codegen::generate_function_with_ctx(ctx, &mir_result.body, work.fn_name.as_str());
         file_append_string(output_path, fn_ir.as_str());
+
+        // Generate closure bodies discovered during MIR lowering
+        let mut cli: usize = 0;
+        while cli < mir_result.closure_names.len() && cli < mir_result.closure_mir.len() {
+            let cname = &mir_result.closure_names[cli];
+            let cbody = &mir_result.closure_mir[cli];
+            let closure_ir = codegen::generate_function_with_ctx(ctx, cbody, cname.as_str());
+            file_append_string(output_path, closure_ir.as_str());
+            cli = cli + 1;
+        }
 
         // Destroy MIR region — frees MIR body data
         region_destroy(mir_region);
@@ -4229,6 +4250,15 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
         let stub_ir = clone_string(&ctx.inline_stubs[stub_i]);
         ctx.buffer_write(stub_ir.as_str());
         stub_i = stub_i + 1;
+    }
+
+    // Emit fn pointer wrapper functions (fn_name$fnptr) for named functions
+    // used as fn() values.  These are deferred to emit at module scope.
+    let mut wpi: usize = 0;
+    while wpi < ctx.fn_ptr_wrapper_defs.len() {
+        let wrapper_ir = clone_string(&ctx.fn_ptr_wrapper_defs[wpi]);
+        ctx.buffer_write(wrapper_ir.as_str());
+        wpi = wpi + 1;
     }
 
     // Finish: write string constants and intrinsic declarations

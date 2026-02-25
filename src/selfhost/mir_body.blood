@@ -36,6 +36,11 @@ pub struct MirBody {
     pub span: common::Span,
     /// Effect row for this function (if it has effects).
     pub effect_row: Option<hir_ty::EffectRow>,
+    /// MIR local indices of captured variables (closure bodies only, empty for regular functions).
+    /// These are the actual MirLocalId indices of the capture locals in the closure body.
+    pub capture_locals: Vec<u32>,
+    /// Types of captured variables (parallel to capture_locals, for codegen env struct).
+    pub capture_tys: Vec<type_intern::TyId>,
 }
 
 impl MirBody {
@@ -48,6 +53,8 @@ impl MirBody {
             basic_blocks: Vec::new(),
             span: span,
             effect_row: Option::None,
+            capture_locals: Vec::new(),
+            capture_tys: Vec::new(),
         }
     }
 

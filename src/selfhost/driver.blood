@@ -264,7 +264,7 @@ impl Compiler {
             };
 
             // Lower the body to MIR with substitution table for type resolution
-            let mir_result = mir_lower::lower_body(
+            let mut mir_result = mir_lower::lower_body(
                 def_id,
                 hir_body,
                 return_ty,
@@ -282,6 +282,21 @@ impl Compiler {
             }
 
             mir_functions.push((fn_name, mir_result.body));
+
+            // Collect closure bodies discovered during MIR lowering
+            while mir_result.closure_names.len() > 0 {
+                match mir_result.closure_names.pop() {
+                    Option::Some(cname) => {
+                        match mir_result.closure_mir.pop() {
+                            Option::Some(cbody) => {
+                                mir_functions.push((cname, cbody));
+                            }
+                            Option::None => {}
+                        }
+                    }
+                    Option::None => {}
+                }
+            }
 
             body_idx = body_idx + 1;
         }

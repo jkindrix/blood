@@ -316,6 +316,28 @@ fn try_fn_pointer_coerce(
             }
             return typeck::CoercionResult::Ok(typeck::Coercion::FnPointer);
         }
+        // Closure to fn pointer (non-capturing closures are compatible with fn pointers)
+        (&hir_ty::TypeKind::Closure { def_id: _, ref params, ref ret },
+         &hir_ty::TypeKind::Fn { params: ref to_params, ret: ref to_ret, effects: _ }) => {
+            if params.len() != to_params.len() {
+                return typeck::CoercionResult::Err;
+            }
+            let mut i: usize = 0;
+            while i < params.len() {
+                let p_id = type_intern::type_to_ty_id(&params[i]);
+                let tp_id = type_intern::type_to_ty_id(&to_params[i]);
+                if !checker.unify(p_id, tp_id, span) {
+                    return typeck::CoercionResult::Err;
+                }
+                i = i + 1;
+            }
+            let ret_id = type_intern::type_to_ty_id(ret.as_ref());
+            let to_ret_id = type_intern::type_to_ty_id(to_ret.as_ref());
+            if !checker.unify(ret_id, to_ret_id, span) {
+                return typeck::CoercionResult::Err;
+            }
+            return typeck::CoercionResult::Ok(typeck::Coercion::FnPointer);
+        }
         _ => {}
     }
     typeck::CoercionResult::Err
@@ -1009,6 +1031,28 @@ fn infer_call(
             }
 
             // Return the return type
+            type_intern::type_to_ty_id(ret.as_ref())
+        }
+        &hir_ty::TypeKind::Closure { def_id: _, ref params, ref ret } => {
+            // Closures are callable like functions
+            if params.len() != args.len() {
+                let mut note = common::make_string("expected ");
+                note.push_str(type_intern::format_usize(params.len()).as_str());
+                note.push_str(" argument(s), found ");
+                note.push_str(type_intern::format_usize(args.len()).as_str());
+                checker.error_with_note(
+                    typeck::TypeErrorKind::ArityMismatch,
+                    span,
+                    note,
+                );
+                return type_intern::CommonTypes::error();
+            }
+            let mut ci: usize = 0;
+            while ci < args.len() {
+                let param_id = type_intern::type_to_ty_id(&params[ci]);
+                check_expr(checker, &args[ci], param_id);
+                ci = ci + 1;
+            }
             type_intern::type_to_ty_id(ret.as_ref())
         }
         &hir_ty::TypeKind::Infer(_) => {

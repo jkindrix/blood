@@ -83,8 +83,8 @@ pub fn type_to_llvm_fast(ty: &hir_ty::Type) -> Option<&str> {
         &hir_ty::TypeKind::Never => Option::Some("void"),
         &hir_ty::TypeKind::Ref { inner: _, mutable: _ } => Option::Some("ptr"),
         &hir_ty::TypeKind::Ptr { inner: _, mutable: _ } => Option::Some("ptr"),
-        &hir_ty::TypeKind::Fn { params: _, ret: _, effects: _ } => Option::Some("ptr"),
-        &hir_ty::TypeKind::Closure { def_id: _, params: _, ret: _ } => Option::Some("ptr"),
+        &hir_ty::TypeKind::Fn { params: _, ret: _, effects: _ } => Option::Some("{ ptr, ptr }"),
+        &hir_ty::TypeKind::Closure { def_id: _, params: _, ret: _ } => Option::Some("{ ptr, ptr }"),
         &hir_ty::TypeKind::Infer(_) => Option::Some("i64"),
         &hir_ty::TypeKind::Record { fields: _, row_var: _ } => Option::Some("ptr"),
         &hir_ty::TypeKind::Forall { params: _, body: _ } => Option::Some("ptr"),
@@ -253,9 +253,9 @@ fn adt_to_llvm(_args: &Vec<hir_ty::Type>) -> String {
 }
 
 /// Converts a function type to LLVM IR.
-/// In opaque pointer mode, function pointers are just `ptr`.
+/// Function pointers are fat pointers { fn_ptr, env_ptr } to support closures.
 fn fn_to_llvm(_params: &Vec<hir_ty::Type>, _return_ty: &hir_ty::Type) -> String {
-    common::make_string("ptr")
+    common::make_string("{ ptr, ptr }")
 }
 
 /// Converts a type parameter to LLVM IR.
@@ -293,8 +293,8 @@ pub fn get_layout(ty: &hir_ty::Type) -> TypeLayout {
             }
         }
         &hir_ty::TypeKind::Adt { def_id: _, args: _ } => TypeLayout::pointer(),
-        &hir_ty::TypeKind::Fn { params: _, ret: _, effects: _ } => TypeLayout::pointer(),
-        &hir_ty::TypeKind::Closure { def_id: _, params: _, ret: _ } => TypeLayout::pointer(),
+        &hir_ty::TypeKind::Fn { params: _, ret: _, effects: _ } => TypeLayout::new(16, 8, common::make_string("{ ptr, ptr }")),
+        &hir_ty::TypeKind::Closure { def_id: _, params: _, ret: _ } => TypeLayout::new(16, 8, common::make_string("{ ptr, ptr }")),
         &hir_ty::TypeKind::Param(_) => TypeLayout::pointer(),
         &hir_ty::TypeKind::Infer(_) => TypeLayout::new(8, 8, common::make_string("i64")),
         &hir_ty::TypeKind::Record { fields: _, row_var: _ } => TypeLayout::pointer(),

@@ -328,6 +328,9 @@ fn emit_call(
 ) {
     // Try to extract a direct function name from the operand to avoid
     // unnecessary store/load indirection for known function references.
+    // For indirect calls through fat pointers { fn_ptr, env_ptr }, we also
+    // extract the env_ptr to prepend as the first argument.
+    let mut indirect_env_ptr: Option<String> = Option::None;
     let func_val = match extract_direct_fn_name(ctx, func) {
         Option::Some(name) => name,
         Option::None => {
@@ -337,12 +340,13 @@ fn emit_call(
             let func_ty = func_typed.1;
             // LLVM requires call targets to be ptr type.
             // SSA values loaded as i64 need inttoptr conversion.
-            // Fat pointers (struct { ptr, i64 }) need extractvalue instead.
+            // Fat pointers { ptr, ptr } need extractvalue of fn_ptr (field 0)
+            // and env_ptr (field 1).
             if starts_with_percent(&raw_func) && !string_eq_str(func_ty.as_str(), "ptr") {
                 let func_ty_bytes = func_ty.as_bytes();
                 let is_fat_ptr = func_ty_bytes.len() > 0 && func_ty_bytes[0] == 123; // '{'
                 if is_fat_ptr {
-                    // Fat pointer: extract the data pointer (field 0)
+                    // Fat pointer: extract fn_ptr (field 0) and env_ptr (field 1)
                     let extracted = ctx.fresh_temp_cg();
                     ctx.write_indent();
                     ctx.write_cgname(&extracted);
@@ -351,6 +355,15 @@ fn emit_call(
                     ctx.write(" ");
                     ctx.write_string(&raw_func);
                     ctx.write(", 0\n");
+                    let env_extracted = ctx.fresh_temp_cg();
+                    ctx.write_indent();
+                    ctx.write_cgname(&env_extracted);
+                    ctx.write(" = extractvalue ");
+                    ctx.write_string(&func_ty);
+                    ctx.write(" ");
+                    ctx.write_string(&raw_func);
+                    ctx.write(", 1\n");
+                    indirect_env_ptr = Option::Some(cgname_to_string(&env_extracted));
                     cgname_to_string(&extracted)
                 } else {
                     // Integer type: use inttoptr
@@ -545,6 +558,24 @@ fn emit_call(
         }
         llvm_args.push((final_ty, final_val));
         i = i + 1;
+    }
+
+    // For indirect calls through fat pointers, prepend env_ptr as the first argument.
+    // All fn() values use the calling convention (ptr env, params...) -> ret.
+    match indirect_env_ptr {
+        Option::Some(ref env_val) => {
+            // Insert env_ptr at position 0 by building a new vec
+            let mut new_args: Vec<(String, String)> = Vec::new();
+            new_args.push((common::make_string("ptr"), clone_string(env_val)));
+            let mut j: usize = 0;
+            while j < llvm_args.len() {
+                let arg_pair = &llvm_args[j];
+                new_args.push((clone_string(&arg_pair.0), clone_string(&arg_pair.1)));
+                j = j + 1;
+            }
+            llvm_args = new_args;
+        }
+        Option::None => {}
     }
 
     // Get return type from destination

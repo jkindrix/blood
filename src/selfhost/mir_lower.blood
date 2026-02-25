@@ -30,6 +30,10 @@ pub struct MirLowerResult {
     pub body: mir_body::MirBody,
     /// Errors encountered during lowering.
     pub errors: Vec<mir_lower_ctx::MirLowerError>,
+    /// Closure function names discovered during lowering.
+    pub closure_names: Vec<String>,
+    /// Closure MIR bodies (parallel to closure_names).
+    pub closure_mir: Vec<mir_body::MirBody>,
 }
 
 // ============================================================
@@ -81,11 +85,20 @@ pub fn lower_body(
     // Extract errors before finishing
     let errors = ctx.take_errors();
 
-    // Finish and return the MIR body with any errors
+    // Directly copy the closure Vecs (bitwise copy of Vec struct).
+    // Blood has no destructors — both copies point to the same buffer,
+    // but the original is consumed by finish(). We do NOT use Vec::pop()
+    // because blood-rust has a bug with pop() on Vecs allocated in regions.
+    let closure_names = ctx.closure_names;
+    let closure_mir = ctx.closure_mir;
+
+    // Finish and return the MIR body
     let mir_body = ctx.finish();
     MirLowerResult {
         body: mir_body,
         errors: errors,
+        closure_names: closure_names,
+        closure_mir: closure_mir,
     }
 }
 

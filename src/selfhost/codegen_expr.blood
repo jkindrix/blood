@@ -86,8 +86,46 @@ pub fn emit_operand_typed(
                 ctx.emit_load_cg(&load_result, load_ty.as_str(), val.as_str());
                 (cgname_to_string(&load_result), load_ty)
             } else if match fn_def_id { Option::Some(_) => true, Option::None => false } {
-                // Regular function reference — pointer-typed
-                (val, common::make_string("ptr"))
+                // Regular function reference — construct { fn_ptr, env_ptr } fat pointer.
+                // Named functions need a wrapper with (ptr env, params...) -> ret signature.
+                let did = match fn_def_id { Option::Some(d) => d, Option::None => 0 };
+                let wrapper_name = match ctx.get_or_create_fn_wrapper(did) {
+                    Option::Some(name) => name,
+                    Option::None => {
+                        // Fallback: use original name directly
+                        let mut fallback = String::new();
+                        fallback.push_str(val.as_str());
+                        // Strip leading @ if present
+                        let vb = fallback.as_bytes();
+                        if vb.len() > 0 && vb[0] == 64 {
+                            let mut stripped = String::new();
+                            let mut si: usize = 1;
+                            while si < vb.len() {
+                                stripped.push(vb[si] as char);
+                                si = si + 1;
+                            }
+                            stripped
+                        } else {
+                            fallback
+                        }
+                    }
+                };
+                // Build: %tmp1 = insertvalue { ptr, ptr } zeroinitializer, ptr @"wrapper$fnptr", 0
+                let ins1 = ctx.fresh_temp_cg();
+                ctx.write_indent();
+                ctx.write_cgname(&ins1);
+                ctx.write(" = insertvalue { ptr, ptr } zeroinitializer, ptr @\"");
+                ctx.write_string(&wrapper_name);
+                ctx.write("\"");
+                ctx.write(", 0\n");
+                // %tmp2 = insertvalue { ptr, ptr } %tmp1, ptr null, 1
+                let ins2 = ctx.fresh_temp_cg();
+                ctx.write_indent();
+                ctx.write_cgname(&ins2);
+                ctx.write(" = insertvalue { ptr, ptr } ");
+                ctx.write_cgname(&ins1);
+                ctx.write(", ptr null, 1\n");
+                (cgname_to_string(&ins2), common::make_string("{ ptr, ptr }"))
             } else if match &constant.kind { &mir_types::ConstantKind::Float(_) => true, _ => false } {
                 // Use TyId-native type resolution to determine f32 vs f64.
                 // Avoids ty_id_to_type copy path which second_gen miscompiles
@@ -1638,36 +1676,65 @@ pub fn emit_rvalue(
             }
         }
         &mir_types::Rvalue::Cast { ref operand, ref target_ty } => {
-            // Get source type from operand
-            let (val, src_ty) = emit_operand_typed(ctx, operand);
-            let tgt_llvm = codegen_size::type_to_llvm_with_ctx_id(ctx, *target_ty);
-            // Use the type-aware cast if we have source type info.
-            // For Copy/Move operands, look up the local's HIR type so we get
-            // correct sign-awareness (zext for unsigned, sext for signed).
-            let src_ty_opt = match operand {
-                &mir_types::Operand::Constant(ref constant) => Option::Some(type_intern::ty_id_to_type(constant.ty)),
-                &mir_types::Operand::Copy(ref place) => {
-                    match ctx.get_local_hir_type(place.local) {
-                        Option::Some(ty_id) => Option::Some(type_intern::ty_id_to_type(ty_id)),
-                        Option::None => Option::None,
+            // Special case: FnDef constant cast to integer. Use the raw function
+            // pointer (not the fat-pointer wrapper) so that `fn as u64` gives
+            // the direct function address expected by low-level APIs like thread_spawn.
+            let mut handled = false;
+            match operand {
+                &mir_types::Operand::Constant(ref constant) => {
+                    match &constant.kind {
+                        &mir_types::ConstantKind::FnDef(ref def_id) => {
+                            let tgt_llvm = codegen_size::type_to_llvm_with_ctx_id(ctx, *target_ty);
+                            let tgt_is_int = !string_starts_with(tgt_llvm.as_str(), "ptr") &&
+                                             !string_starts_with(tgt_llvm.as_str(), "{") &&
+                                             !string_starts_with(tgt_llvm.as_str(), "float") &&
+                                             !string_starts_with(tgt_llvm.as_str(), "double");
+                            if tgt_is_int {
+                                // Emit: ptrtoint ptr @fn_name to i64
+                                let fn_val = emit_constant(ctx, constant);
+                                let result = ctx.fresh_temp_cg();
+                                ctx.emit_cast_cg(&result, "ptrtoint", "ptr", fn_val.as_str(), tgt_llvm.as_str());
+                                ctx.emit_store_cg(tgt_llvm.as_str(), &result, dest);
+                                handled = true;
+                            }
+                        }
+                        _ => {}
                     }
                 }
-                &mir_types::Operand::Move(ref place) => {
-                    match ctx.get_local_hir_type(place.local) {
-                        Option::Some(ty_id) => Option::Some(type_intern::ty_id_to_type(ty_id)),
-                        Option::None => Option::None,
+                _ => {}
+            }
+            if !handled {
+                // General cast path
+                let (val, src_ty) = emit_operand_typed(ctx, operand);
+                let tgt_llvm = codegen_size::type_to_llvm_with_ctx_id(ctx, *target_ty);
+                // Use the type-aware cast if we have source type info.
+                // For Copy/Move operands, look up the local's HIR type so we get
+                // correct sign-awareness (zext for unsigned, sext for signed).
+                let src_ty_opt = match operand {
+                    &mir_types::Operand::Constant(ref constant) => Option::Some(type_intern::ty_id_to_type(constant.ty)),
+                    &mir_types::Operand::Copy(ref place) => {
+                        match ctx.get_local_hir_type(place.local) {
+                            Option::Some(ty_id) => Option::Some(type_intern::ty_id_to_type(ty_id)),
+                            Option::None => Option::None,
+                        }
                     }
-                }
-            };
-            let target_hir_ty = type_intern::ty_id_to_type(*target_ty);
-            let result = match src_ty_opt {
-                Option::Some(ref src_type) => emit_cast_with_types(ctx, &val, src_type, &target_hir_ty),
-                Option::None => {
-                    // Fallback: construct approximate source type from LLVM type
-                    emit_cast_from_llvm_types(ctx, &val, src_ty.as_str(), tgt_llvm.as_str())
-                }
-            };
-            ctx.emit_store_cg(tgt_llvm.as_str(), &result, dest);
+                    &mir_types::Operand::Move(ref place) => {
+                        match ctx.get_local_hir_type(place.local) {
+                            Option::Some(ty_id) => Option::Some(type_intern::ty_id_to_type(ty_id)),
+                            Option::None => Option::None,
+                        }
+                    }
+                };
+                let target_hir_ty = type_intern::ty_id_to_type(*target_ty);
+                let result = match src_ty_opt {
+                    Option::Some(ref src_type) => emit_cast_with_types(ctx, &val, src_type, &target_hir_ty),
+                    Option::None => {
+                        // Fallback: construct approximate source type from LLVM type
+                        emit_cast_from_llvm_types(ctx, &val, src_ty.as_str(), tgt_llvm.as_str())
+                    }
+                };
+                ctx.emit_store_cg(tgt_llvm.as_str(), &result, dest);
+            }
         }
         &mir_types::Rvalue::Aggregate { ref kind, ref operands } => {
             emit_aggregate(ctx, dest, kind, operands);
@@ -2491,7 +2558,23 @@ fn emit_cast_with_types(
         }
     } else if src_is_ptr && tgt_is_int {
         // Pointer to integer
-        ctx.emit_cast_cg(&result, "ptrtoint", src_llvm.as_str(), val.as_str(), tgt_llvm.as_str());
+        // If source is a fat pointer (e.g. fn type { ptr, ptr }), extract field 0 first
+        let src_bytes = src_llvm.as_bytes();
+        let src_is_fat = src_bytes.len() > 0 && src_bytes[0] == 123;  // '{'
+        if src_is_fat {
+            let extracted = ctx.fresh_temp_cg();
+            ctx.write_indent();
+            ctx.write_cgname(&extracted);
+            ctx.write(" = extractvalue ");
+            ctx.write_string(&src_llvm);
+            ctx.write(" ");
+            ctx.write_string(val);
+            ctx.write(", 0\n");
+            let ext_str = cgname_to_string(&extracted);
+            ctx.emit_cast_cg(&result, "ptrtoint", "ptr", ext_str.as_str(), tgt_llvm.as_str());
+        } else {
+            ctx.emit_cast_cg(&result, "ptrtoint", src_llvm.as_str(), val.as_str(), tgt_llvm.as_str());
+        }
     } else if src_is_int && tgt_is_ptr {
         // Integer to pointer
         ctx.emit_cast_cg(&result, "inttoptr", src_llvm.as_str(), val.as_str(), tgt_llvm.as_str());
@@ -2568,6 +2651,23 @@ fn build_tuple_llvm_type(
     }
     result.push_str(" }");
     result
+}
+
+/// Estimates the size in bytes of an LLVM type string.
+/// Used for env struct allocation; always safe to over-estimate.
+fn llvm_type_size_estimate(ty: &str) -> u64 {
+    if string_eq_str(ty, "i1") { 1 }
+    else if string_eq_str(ty, "i8") { 1 }
+    else if string_eq_str(ty, "i16") { 2 }
+    else if string_eq_str(ty, "i32") { 4 }
+    else if string_eq_str(ty, "i64") { 8 }
+    else if string_eq_str(ty, "i128") { 16 }
+    else if string_eq_str(ty, "ptr") { 8 }
+    else if string_eq_str(ty, "float") { 4 }
+    else if string_eq_str(ty, "double") { 8 }
+    else if string_starts_with(ty, "{ ptr, ptr }") { 16 }
+    else if string_starts_with(ty, "{ ptr, i64 }") { 16 }
+    else { 8 } // safe default for unknown types
 }
 
 /// Emits an ADT aggregate (struct or enum variant) using the ADT registry.
@@ -2940,21 +3040,96 @@ fn emit_aggregate(
                 i = i + 1;
             }
         }
-        &mir_types::AggregateKind::Closure { def_id: _ } => {
-            // Closures: store captures with actual types
-            let closure_llvm = build_tuple_llvm_type(ctx, operands);
-            let mut i: usize = 0;
-            while i < operands.len() {
-                let typed = emit_operand_typed(ctx, &operands[i]);
-                let cap_val = typed.0;
-                let cap_ty = typed.1;
-                let cap_ptr = ctx.fresh_temp_cg();
-                ctx.begin_gep_str(&cap_ptr, closure_llvm.as_str(), dest);
-                ctx.gep_ptr_offset(0);
-                ctx.gep_field(i as u32);
-                ctx.end_gep();
-                ctx.emit_store_str_cg(cap_ty.as_str(), cap_val.as_str(), &cap_ptr);
-                i = i + 1;
+        &mir_types::AggregateKind::Closure { ref def_id } => {
+            // Closures: construct { ptr fn_ptr, ptr env_ptr } fat pointer
+            // Build closure function name from def_id
+            let mut closure_fn_name = common::make_string("blood_closure_");
+            let id_str = codegen_types::format_u64(def_id.index as u64);
+            closure_fn_name.push_str(id_str.as_str());
+
+            if operands.len() == 0 {
+                // Non-capturing closure: env_ptr is null
+                // %tmp1 = insertvalue { ptr, ptr } zeroinitializer, ptr @"closure_fn", 0
+                let ins1 = ctx.fresh_temp_cg();
+                ctx.write_indent();
+                ctx.write_cgname(&ins1);
+                ctx.write(" = insertvalue { ptr, ptr } zeroinitializer, ptr @\"");
+                ctx.write_string(&closure_fn_name);
+                ctx.write("\", 0\n");
+                // %tmp2 = insertvalue { ptr, ptr } %tmp1, ptr null, 1
+                let ins2 = ctx.fresh_temp_cg();
+                ctx.write_indent();
+                ctx.write_cgname(&ins2);
+                ctx.write(" = insertvalue { ptr, ptr } ");
+                ctx.write_cgname(&ins1);
+                ctx.write(", ptr null, 1\n");
+                // store { ptr, ptr } %tmp2, ptr dest
+                let ins2_str = cgname_to_string(&ins2);
+                ctx.emit_store("{ ptr, ptr }", ins2_str.as_str(), dest);
+            } else {
+                // Capturing closure: allocate env struct, store captures, build fat pointer
+
+                // Build env struct LLVM type from capture operand types
+                let env_llvm = build_tuple_llvm_type(ctx, operands);
+
+                // Compute env struct size by summing element sizes (rounded up to 8-byte
+                // alignment per element to match LLVM's default struct layout)
+                let mut env_size: u64 = 0;
+                let mut si: usize = 0;
+                while si < operands.len() {
+                    let elem_ty = operand_llvm_type(ctx, &operands[si]);
+                    let elem_size = llvm_type_size_estimate(elem_ty.as_str());
+                    env_size = env_size + elem_size;
+                    si = si + 1;
+                }
+                if env_size == 0 {
+                    env_size = 8; // minimum allocation size
+                }
+                let size_str = codegen_types::format_u64(env_size);
+
+                // Allocate env struct on heap: %alloc_i64 = call i64 @alloc(i64 size)
+                let alloc_i64 = ctx.fresh_temp_cg();
+                ctx.begin_call(Option::Some(&alloc_i64), "i64", "@alloc");
+                ctx.call_arg_str(true, "i64", size_str.as_str());
+                ctx.end_call();
+
+                // Convert i64 to ptr: %env_ptr = inttoptr i64 %alloc_i64 to ptr
+                let env_ptr = ctx.fresh_temp_cg();
+                ctx.emit_cast_cg2(&env_ptr, "inttoptr", "i64", &alloc_i64, "ptr");
+
+                // Store each capture operand into the env struct
+                let mut i: usize = 0;
+                while i < operands.len() {
+                    let typed = emit_operand_typed(ctx, &operands[i]);
+                    let cap_val = typed.0;
+                    let cap_ty = typed.1;
+                    let cap_ptr = ctx.fresh_temp_cg();
+                    ctx.begin_gep(&cap_ptr, env_llvm.as_str(), &env_ptr);
+                    ctx.gep_ptr_offset(0);
+                    ctx.gep_field(i as u32);
+                    ctx.end_gep();
+                    ctx.emit_store_str_cg(cap_ty.as_str(), cap_val.as_str(), &cap_ptr);
+                    i = i + 1;
+                }
+
+                // Build fat pointer: { ptr @closure_fn, ptr %env_ptr }
+                let ins1 = ctx.fresh_temp_cg();
+                ctx.write_indent();
+                ctx.write_cgname(&ins1);
+                ctx.write(" = insertvalue { ptr, ptr } zeroinitializer, ptr @\"");
+                ctx.write_string(&closure_fn_name);
+                ctx.write("\", 0\n");
+                let ins2 = ctx.fresh_temp_cg();
+                ctx.write_indent();
+                ctx.write_cgname(&ins2);
+                ctx.write(" = insertvalue { ptr, ptr } ");
+                ctx.write_cgname(&ins1);
+                ctx.write(", ptr ");
+                ctx.write_cgname(&env_ptr);
+                ctx.write(", 1\n");
+                // Store the fat pointer to destination
+                let ins2_str = cgname_to_string(&ins2);
+                ctx.emit_store("{ ptr, ptr }", ins2_str.as_str(), dest);
             }
         }
         &mir_types::AggregateKind::Range { ref element, inclusive: _ } => {

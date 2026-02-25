@@ -16,6 +16,7 @@ mod mir_lower_ctx;
 mod mir_lower_util;
 mod mir_lower_pattern;
 mod type_intern;
+mod codegen_types;
 
 // ============================================================
 // Cross-Module Helper Functions
@@ -1802,70 +1803,122 @@ fn lower_continue_expr(
 fn lower_closure_expr(
     ctx: &mut mir_lower_ctx::MirLowerCtx,
     captures: &Vec<hir_expr::Capture>,
-    _params: &Vec<hir_expr::ClosureParam>,
-    _return_ty: &type_intern::TyId,
-    _body: &hir_expr::Expr,
-    _body_id: hir_def::BodyId,
+    params: &Vec<hir_expr::ClosureParam>,
+    return_ty: &type_intern::TyId,
+    body: &hir_expr::Expr,
+    body_id: hir_def::BodyId,
     ty: &hir_ty::Type,
     dest: mir_lower_ctx::Destination,
     span: common::Span,
 ) {
-    // Closures are lowered as aggregate constructions
-    // The closure body is lowered separately
+    // Generate a unique DefId for this closure (0xFFFF0000 range)
+    let closure_def_id = ctx.next_closure_def_id();
 
-    // Gather capture operands
-    let mut operands = Vec::new();
-    let mut i: usize = 0;
-    while i < captures.len() {
-        let capture = &captures[i];
-        let mir_local = ctx.lookup_local(capture.local_id);
-        match mir_local {
+    // Build closure function name: "blood_closure_DEFID"
+    let mut closure_name = common::make_string("blood_closure_");
+    let id_str = codegen_types::format_u64(closure_def_id.index as u64);
+    closure_name.push_str(id_str.as_str());
+
+    // Resolve return type through the parent's substitution table
+    let resolved_return_id = ctx.resolve_type_to_id(*return_ty);
+
+    // Perform capture analysis: walk the body HIR to find parent-scope locals
+    let mut captured_locals: Vec<hir_def::LocalId> = Vec::new();
+    collect_closure_captures(ctx, body, &mut captured_locals);
+
+    // Collect capture types from the parent MIR context (resolved through subst table)
+    let mut capture_tys: Vec<type_intern::TyId> = Vec::new();
+    let mut ci: usize = 0;
+    while ci < captured_locals.len() {
+        let parent_mir_local = ctx.lookup_local(captured_locals[ci]);
+        match parent_mir_local {
             Option::Some(local) => {
-                // Get captured value based on capture kind
-                let operand = match capture.kind {
-                    hir_expr::CaptureKind::ByValue => {
-                        mir_types::Operand::Move(mir_types::Place::local(local))
-                    }
-                    hir_expr::CaptureKind::ByRef => {
-                        // Create reference
-                        let ref_temp = ctx.new_temp(type_intern::CommonTypes::error(), span);
-                        ctx.emit_assign(
-                            mir_types::Place::local(ref_temp),
-                            mir_types::Rvalue::Ref {
-                                place: mir_types::Place::local(local),
-                                mutable: false,
-                            },
-                            span,
-                        );
-                        mir_types::Operand::Move(mir_types::Place::local(ref_temp))
-                    }
-                    hir_expr::CaptureKind::ByMutRef => {
-                        let ref_temp = ctx.new_temp(type_intern::CommonTypes::error(), span);
-                        ctx.emit_assign(
-                            mir_types::Place::local(ref_temp),
-                            mir_types::Rvalue::Ref {
-                                place: mir_types::Place::local(local),
-                                mutable: true,
-                            },
-                            span,
-                        );
-                        mir_types::Operand::Move(mir_types::Place::local(ref_temp))
-                    }
-                };
-                operands.push(operand);
+                let local_ty = ctx.builder.body_ref().get_local(local).ty;
+                capture_tys.push(local_ty);
+            }
+            Option::None => {
+                // Should not happen since collect_closure_captures only includes
+                // locals that exist in the parent ctx
+                capture_tys.push(type_intern::CommonTypes::i32_ty());
+            }
+        }
+        ci = ci + 1;
+    }
+
+    // Create a new MirLowerCtx for the closure body
+    let subst_addr = ctx.get_subst_table_addr();
+    let mut closure_ctx = mir_lower_ctx::MirLowerCtx::new(
+        closure_def_id,
+        resolved_return_id,
+        span,
+        subst_addr,
+        Vec::new(),
+        Vec::new(),
+    );
+
+    // Add env_ptr as first parameter (ptr type, required by calling convention)
+    let env_ty = type_intern::ptr_ty();
+    let _env_local = closure_ctx.builder.add_param(env_ty, String::new(), span);
+
+    // Lower closure parameters
+    let mut pi: usize = 0;
+    while pi < params.len() {
+        let param = &params[pi];
+        let resolved_id = closure_ctx.resolve_type_to_id(param.ty);
+        let mir_local = closure_ctx.builder.add_param(resolved_id, String::new(), span);
+        let source = mir_types::Place::local(mir_local);
+        mir_lower_pattern::lower_irrefutable_pattern(&mut closure_ctx, &param.pattern, source, span);
+        pi = pi + 1;
+    }
+
+    // Register captured variables as locals in the closure context.
+    // Record the actual MIR local indices so codegen knows where to load captures.
+    let mut capture_local_indices: Vec<u32> = Vec::new();
+    let mut cap_i: usize = 0;
+    while cap_i < captured_locals.len() {
+        let cap_ty = capture_tys[cap_i];
+        let cap_local = closure_ctx.builder.new_temp(cap_ty, span);
+        closure_ctx.register_local(captured_locals[cap_i], cap_local);
+        capture_local_indices.push(cap_local.index);
+        cap_i = cap_i + 1;
+    }
+
+    // Lower body expression, storing result in return place
+    lower_expr_to_return(&mut closure_ctx, body);
+
+    // Terminate with return if not already terminated
+    if !closure_ctx.is_terminated() {
+        closure_ctx.terminate_return(span);
+    }
+
+    // Finish the closure body and set capture metadata
+    let mut closure_body = closure_ctx.finish();
+    closure_body.capture_locals = capture_local_indices;
+    closure_body.capture_tys = capture_tys;
+    ctx.register_closure_body(closure_name, closure_body);
+
+    // In the parent body: gather capture operands (by value for all captures)
+    let mut operands: Vec<mir_types::Operand> = Vec::new();
+    let mut oi: usize = 0;
+    while oi < captured_locals.len() {
+        let parent_mir_local = ctx.lookup_local(captured_locals[oi]);
+        match parent_mir_local {
+            Option::Some(local) => {
+                operands.push(mir_types::Operand::Copy(mir_types::Place::local(local)));
             }
             Option::None => {}
         }
-        i = i + 1;
+        oi = oi + 1;
     }
 
+    // Construct closure aggregate with the real def_id
     match dest.as_place() {
         Option::Some(place) => {
             ctx.emit_assign(
                 place,
                 mir_types::Rvalue::Aggregate {
                     kind: mir_types::AggregateKind::Closure {
-                        def_id: hir_def::DefId::dummy(),
+                        def_id: closure_def_id,
                     },
                     operands: operands,
                 },
@@ -2260,6 +2313,279 @@ fn expr_to_place(
             lower_expr(ctx, expr, mir_lower_ctx::destination_local(temp));
             mir_types::Place::local(temp)
         }
+    }
+}
+
+// ============================================================
+// Closure Capture Analysis
+// ============================================================
+
+/// Walks an HIR expression recursively and collects all Local(id) references
+/// where the local_id exists in the parent MIR context (i.e., it's a capture
+/// from an enclosing scope).
+fn collect_closure_captures(
+    ctx: &mut mir_lower_ctx::MirLowerCtx,
+    expr: &hir_expr::Expr,
+    captures: &mut Vec<hir_def::LocalId>,
+) {
+    match &expr.kind {
+        &hir_expr::ExprKind::Local(local_id) => {
+            // Check if this local exists in the parent context
+            match ctx.lookup_local(local_id) {
+                Option::Some(_) => {
+                    // Deduplicate
+                    let mut found = false;
+                    let mut i: usize = 0;
+                    while i < captures.len() {
+                        if captures[i].index == local_id.index {
+                            found = true;
+                        }
+                        i = i + 1;
+                    }
+                    if !found {
+                        captures.push(local_id);
+                    }
+                }
+                Option::None => {}
+            }
+        }
+        &hir_expr::ExprKind::Binary { op: _, ref left, ref right } => {
+            collect_closure_captures(ctx, left.as_ref(), captures);
+            collect_closure_captures(ctx, right.as_ref(), captures);
+        }
+        &hir_expr::ExprKind::Unary { op: _, ref operand } => {
+            collect_closure_captures(ctx, operand.as_ref(), captures);
+        }
+        &hir_expr::ExprKind::Call { ref callee, ref args } => {
+            collect_closure_captures(ctx, callee.as_ref(), captures);
+            let mut i: usize = 0;
+            while i < args.len() {
+                collect_closure_captures(ctx, &args[i], captures);
+                i = i + 1;
+            }
+        }
+        &hir_expr::ExprKind::MethodCall { ref receiver, method: _, method_def: _, type_args: _, ref args } => {
+            collect_closure_captures(ctx, receiver.as_ref(), captures);
+            let mut i: usize = 0;
+            while i < args.len() {
+                collect_closure_captures(ctx, &args[i], captures);
+                i = i + 1;
+            }
+        }
+        &hir_expr::ExprKind::Field { ref base, field: _ } => {
+            collect_closure_captures(ctx, base.as_ref(), captures);
+        }
+        &hir_expr::ExprKind::Index { ref base, ref idx } => {
+            collect_closure_captures(ctx, base.as_ref(), captures);
+            collect_closure_captures(ctx, idx.as_ref(), captures);
+        }
+        &hir_expr::ExprKind::Tuple(ref elems) => {
+            let mut i: usize = 0;
+            while i < elems.len() {
+                collect_closure_captures(ctx, &elems[i], captures);
+                i = i + 1;
+            }
+        }
+        &hir_expr::ExprKind::Array(ref arr) => {
+            match arr {
+                &hir_expr::ArrayExpr::List(ref elems) => {
+                    let mut i: usize = 0;
+                    while i < elems.len() {
+                        collect_closure_captures(ctx, &elems[i], captures);
+                        i = i + 1;
+                    }
+                }
+                &hir_expr::ArrayExpr::Repeat { ref val, count: _ } => {
+                    collect_closure_captures(ctx, val.as_ref(), captures);
+                }
+            }
+        }
+        &hir_expr::ExprKind::Struct { path: _, ref fields, ref base } => {
+            let mut i: usize = 0;
+            while i < fields.len() {
+                collect_closure_captures(ctx, &fields[i].val, captures);
+                i = i + 1;
+            }
+            match base {
+                &Option::Some(ref b) => {
+                    collect_closure_captures(ctx, b.as_ref(), captures);
+                }
+                &Option::None => {}
+            }
+        }
+        &hir_expr::ExprKind::AnonRecord { ref fields } => {
+            let mut i: usize = 0;
+            while i < fields.len() {
+                collect_closure_captures(ctx, &fields[i].val, captures);
+                i = i + 1;
+            }
+        }
+        &hir_expr::ExprKind::Range { ref start, ref end_val, inclusive: _ } => {
+            match start {
+                &Option::Some(ref s) => {
+                    collect_closure_captures(ctx, s.as_ref(), captures);
+                }
+                &Option::None => {}
+            }
+            match end_val {
+                &Option::Some(ref e) => {
+                    collect_closure_captures(ctx, e.as_ref(), captures);
+                }
+                &Option::None => {}
+            }
+        }
+        &hir_expr::ExprKind::Cast { ref expr, ty: _ } => {
+            collect_closure_captures(ctx, expr.as_ref(), captures);
+        }
+        &hir_expr::ExprKind::Assign { ref target, ref val } => {
+            collect_closure_captures(ctx, target.as_ref(), captures);
+            collect_closure_captures(ctx, val.as_ref(), captures);
+        }
+        &hir_expr::ExprKind::AssignOp { op: _, ref target, ref val } => {
+            collect_closure_captures(ctx, target.as_ref(), captures);
+            collect_closure_captures(ctx, val.as_ref(), captures);
+        }
+        &hir_expr::ExprKind::AddrOf { mutable: _, ref expr } => {
+            collect_closure_captures(ctx, expr.as_ref(), captures);
+        }
+        &hir_expr::ExprKind::Block(ref block) => {
+            collect_captures_in_block(ctx, block, captures);
+        }
+        &hir_expr::ExprKind::If { ref condition, ref then_branch, ref else_branch } => {
+            collect_closure_captures(ctx, condition.as_ref(), captures);
+            collect_closure_captures(ctx, then_branch.as_ref(), captures);
+            match else_branch {
+                &Option::Some(ref e) => {
+                    collect_closure_captures(ctx, e.as_ref(), captures);
+                }
+                &Option::None => {}
+            }
+        }
+        &hir_expr::ExprKind::Match { ref scrutinee, ref arms } => {
+            collect_closure_captures(ctx, scrutinee.as_ref(), captures);
+            let mut i: usize = 0;
+            while i < arms.len() {
+                match &arms[i].guard {
+                    &Option::Some(ref g) => {
+                        collect_closure_captures(ctx, g, captures);
+                    }
+                    &Option::None => {}
+                }
+                collect_closure_captures(ctx, &arms[i].body, captures);
+                i = i + 1;
+            }
+        }
+        &hir_expr::ExprKind::Loop { label: _, ref body } => {
+            collect_closure_captures(ctx, body.as_ref(), captures);
+        }
+        &hir_expr::ExprKind::Return(ref val) => {
+            match val {
+                &Option::Some(ref v) => {
+                    collect_closure_captures(ctx, v.as_ref(), captures);
+                }
+                &Option::None => {}
+            }
+        }
+        &hir_expr::ExprKind::Break { label: _, ref val } => {
+            match val {
+                &Option::Some(ref v) => {
+                    collect_closure_captures(ctx, v.as_ref(), captures);
+                }
+                &Option::None => {}
+            }
+        }
+        &hir_expr::ExprKind::Closure { captures: _, params: _, return_ty: _, effects: _, ref body, body_id: _ } => {
+            // Walk into nested closures to find transitive captures
+            collect_closure_captures(ctx, body.as_ref(), captures);
+        }
+        &hir_expr::ExprKind::WithHandle { ref handler, ref body } => {
+            collect_closure_captures(ctx, handler.as_ref(), captures);
+            collect_closure_captures(ctx, body.as_ref(), captures);
+        }
+        &hir_expr::ExprKind::InlineHandle { ref body, ref handlers } => {
+            collect_closure_captures(ctx, body.as_ref(), captures);
+            let mut i: usize = 0;
+            while i < handlers.len() {
+                collect_closure_captures(ctx, &handlers[i].body, captures);
+                i = i + 1;
+            }
+        }
+        &hir_expr::ExprKind::Perform { effect_def: _, op_def: _, op_name: _, ref args } => {
+            let mut i: usize = 0;
+            while i < args.len() {
+                collect_closure_captures(ctx, &args[i], captures);
+                i = i + 1;
+            }
+        }
+        &hir_expr::ExprKind::Resume(ref val) => {
+            collect_closure_captures(ctx, val.as_ref(), captures);
+        }
+        &hir_expr::ExprKind::Try(ref val) => {
+            collect_closure_captures(ctx, val.as_ref(), captures);
+        }
+        &hir_expr::ExprKind::Region { name: _, ref stmts, ref expr } => {
+            let mut i: usize = 0;
+            while i < stmts.len() {
+                collect_captures_in_stmt(ctx, &stmts[i], captures);
+                i = i + 1;
+            }
+            match expr {
+                &Option::Some(ref e) => {
+                    collect_closure_captures(ctx, e.as_ref(), captures);
+                }
+                &Option::None => {}
+            }
+        }
+        &hir_expr::ExprKind::Unsafe(ref val) => {
+            collect_closure_captures(ctx, val.as_ref(), captures);
+        }
+        // Terminals — no sub-expressions to walk
+        &hir_expr::ExprKind::Literal(_) => {}
+        &hir_expr::ExprKind::Path(_) => {}
+        &hir_expr::ExprKind::Continue { label: _ } => {}
+        &hir_expr::ExprKind::Default => {}
+        &hir_expr::ExprKind::Error => {}
+    }
+}
+
+/// Walks a block's statements and trailing expression for captures.
+fn collect_captures_in_block(
+    ctx: &mut mir_lower_ctx::MirLowerCtx,
+    block: &hir_expr::Block,
+    captures: &mut Vec<hir_def::LocalId>,
+) {
+    let mut i: usize = 0;
+    while i < block.stmts.len() {
+        collect_captures_in_stmt(ctx, &block.stmts[i], captures);
+        i = i + 1;
+    }
+    match &block.expr {
+        &Option::Some(ref e) => {
+            collect_closure_captures(ctx, e.as_ref(), captures);
+        }
+        &Option::None => {}
+    }
+}
+
+/// Walks a statement for captures.
+fn collect_captures_in_stmt(
+    ctx: &mut mir_lower_ctx::MirLowerCtx,
+    stmt: &hir_expr::Stmt,
+    captures: &mut Vec<hir_def::LocalId>,
+) {
+    match stmt {
+        &hir_expr::Stmt::Let { pattern: _, ty: _, ref init, span: _ } => {
+            match init {
+                &Option::Some(ref e) => {
+                    collect_closure_captures(ctx, e, captures);
+                }
+                &Option::None => {}
+            }
+        }
+        &hir_expr::Stmt::Expr { ref expr, has_semi: _ } => {
+            collect_closure_captures(ctx, expr, captures);
+        }
+        &hir_expr::Stmt::Item(_) => {}
     }
 }
 
