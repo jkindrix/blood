@@ -1325,7 +1325,9 @@ fn emit_vec_with_capacity_call(
     let out_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
 
     // Get element size from the destination's HIR type (Vec<T>)
-    let elem_size: u64 = match ctx.get_local_hir_type(destination.local) {
+    // Must resolve through Place projections: if destination is _0.Field(5),
+    // the local's type is the struct, not Vec<T>. We need the field's type.
+    let elem_size: u64 = match resolve_place_hir_type(ctx, destination) {
         Option::Some(ty_id) => extract_vec_element_size_id(ctx, ty_id),
         Option::None => 8,
     };
@@ -1370,6 +1372,44 @@ fn extract_vec_element_size_id(ctx: &mut codegen_ctx::CodegenCtx, ty_id: type_in
     }
 }
 
+/// Resolves a Place's final HIR type by walking through projections.
+/// For `_local.Field(5)`, returns the type of field 5 of the local's struct.
+/// Falls back to the local's direct type if no projections or resolution fails.
+fn resolve_place_hir_type(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    place: &mir_types::Place,
+) -> Option<type_intern::TyId> {
+    let mut current_ty = match ctx.get_local_hir_type(place.local) {
+        Option::Some(ty_id) => ty_id,
+        Option::None => { return Option::None; }
+    };
+    let mut i: usize = 0;
+    while i < place.projection.len() {
+        match &place.projection[i] {
+            &mir_types::PlaceElem::Field(idx) => {
+                let unwrapped = type_intern::unwrap_ref_id(current_ty);
+                match type_intern::get_adt_def_id(unwrapped) {
+                    Option::Some(def_id) => {
+                        match ctx.lookup_field_hir_type(def_id.index, idx) {
+                            Option::Some(field_ty) => {
+                                current_ty = field_ty;
+                            }
+                            Option::None => { return Option::Some(current_ty); }
+                        }
+                    }
+                    Option::None => { return Option::Some(current_ty); }
+                }
+            }
+            &mir_types::PlaceElem::Deref => {
+                current_ty = type_intern::unwrap_ref_id(current_ty);
+            }
+            _ => {}
+        }
+        i = i + 1;
+    }
+    Option::Some(current_ty)
+}
+
 /// Emits a vec_new call with correct calling convention.
 /// Runtime signature: void @vec_new(i64 elem_size, ptr out_ptr)
 ///
@@ -1383,7 +1423,9 @@ fn emit_vec_new_call(
     let out_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
 
     // Get element size from the destination's HIR type (Vec<T>)
-    let elem_size: u64 = match ctx.get_local_hir_type(destination.local) {
+    // Must resolve through Place projections: if destination is _0.Field(5),
+    // the local's type is the struct, not Vec<T>. We need the field's type.
+    let elem_size: u64 = match resolve_place_hir_type(ctx, destination) {
         Option::Some(ty_id) => extract_vec_element_size_id(ctx, ty_id),
         Option::None => 8,
     };

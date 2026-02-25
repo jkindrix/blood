@@ -1533,6 +1533,36 @@ fn infer_struct(
                 args.push(checker.fresh_infer());
                 g = g + 1;
             }
+
+            // Unify field expression types with variant field types
+            if lookup.field_names.len() > 0 {
+                let mut param_subst = unify::TypeParamSubst::new();
+                if lookup.num_generics > 0 {
+                    let mut si: usize = 0;
+                    while si < args.len() {
+                        param_subst.add_id(si as u32, args[si]);
+                        si = si + 1;
+                    }
+                }
+                let mut fi: usize = 0;
+                while fi < fields.len() {
+                    let mut vi: usize = 0;
+                    while vi < lookup.field_names.len() {
+                        if lookup.field_names[vi].index == fields[fi].name.symbol.index {
+                            let declared_ty = lookup.field_tys[vi];
+                            let expected_ty = if lookup.num_generics > 0 {
+                                unify::substitute_type_params_id(declared_ty, &param_subst)
+                            } else {
+                                declared_ty
+                            };
+                            checker.unify(fields[fi].val.ty, expected_ty, fields[fi].val.span);
+                        }
+                        vi = vi + 1;
+                    }
+                    fi = fi + 1;
+                }
+            }
+
             let interner = type_intern::type_interner();
             let args_list = interner.intern_ty_list(&args);
             return interner.mk_adt(lookup.enum_def_id, args_list);
@@ -1552,6 +1582,36 @@ fn infer_struct(
         args.push(checker.fresh_infer());
         ta = ta + 1;
     }
+
+    // Unify field expression types with declared field types to propagate type constraints.
+    // Without this, inference variables in field expressions (e.g., Vec<Infer(var)> from
+    // Vec::with_capacity(64)) are never constrained to the declared field type (Vec<BucketU32>),
+    // causing MIR lowering to produce locals with unresolved types and codegen to compute
+    // incorrect element sizes (always 8 bytes instead of the actual element size).
+    let mut param_subst = unify::TypeParamSubst::new();
+    if num_gen > 0 {
+        let mut si: usize = 0;
+        while si < args.len() {
+            param_subst.add_id(si as u32, args[si]);
+            si = si + 1;
+        }
+    }
+    let mut fi: usize = 0;
+    while fi < fields.len() {
+        match checker.get_struct_field_ty(path.def_id, fields[fi].name.symbol) {
+            Option::Some(declared_ty) => {
+                let expected_ty = if num_gen > 0 {
+                    unify::substitute_type_params_id(declared_ty, &param_subst)
+                } else {
+                    declared_ty
+                };
+                checker.unify(fields[fi].val.ty, expected_ty, fields[fi].val.span);
+            }
+            Option::None => {}
+        }
+        fi = fi + 1;
+    }
+
     let interner = type_intern::type_interner();
     let args_list = interner.intern_ty_list(&args);
     interner.mk_adt(path.def_id, args_list)
