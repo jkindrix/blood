@@ -1,0 +1,56 @@
+// Test: stdlib Arena allocation
+// EXPECT: 1
+// EXPECT: 0
+// EXPECT: 4096
+// EXPECT: 8
+// EXPECT: 1
+// EXPECT: 0
+// EXPECT: 1
+// EXPECT: 3
+// EXPECT: 768
+// EXPECT: 0
+
+mod stdlib_arena;
+
+fn main() -> i32 {
+    // Test 1: Create default arena
+    let mut arena = stdlib_arena::Arena::default_arena();
+    println_int(arena.chunk_count() as i32); // 1 (initial chunk)
+    println_int(arena.used_bytes() as i32);  // 0 (nothing allocated yet)
+    println_int(arena.allocated_bytes() as i32); // 4096 (default chunk size)
+
+    // Test 2: Allocate some bytes
+    let off1 = arena.alloc(8, 8);
+    println_int(arena.used_bytes() as i32); // 8
+
+    // Test 3: Multiple allocations
+    let off2 = arena.alloc(16, 8);
+    let off3 = arena.alloc(32, 8);
+    // 8+16+32 = 56 bytes, fits in one 4096-byte chunk
+    println_int(arena.chunk_count() as i32); // 1 (all fits in one chunk)
+
+    // Test 4: Reset arena
+    arena.reset();
+    println_int(arena.used_bytes() as i32); // 0 (reset)
+
+    // Test 5: Custom-sized arena
+    let mut small = stdlib_arena::Arena::new(256);
+    println_int(small.chunk_count() as i32); // 1
+
+    // Test 6: TypedArena
+    let mut typed = stdlib_arena::TypedArena::new(256);
+    let idx0 = typed.alloc();
+    let idx1 = typed.alloc();
+    let idx2 = typed.alloc();
+    println_int(typed.len() as i32); // 3
+
+    // Test 7: TypedArena inner arena stats
+    // element_size=256, chunk_size=256*64=16384, 3 elements = 768 bytes used
+    println_int(typed.inner.used_bytes() as i32); // 768
+
+    // Test 8: TypedArena reset
+    typed.reset();
+    println_int(typed.len() as i32); // 0
+
+    0
+}
