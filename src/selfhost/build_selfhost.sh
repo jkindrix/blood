@@ -29,6 +29,7 @@ BLOOD_RUST="${BLOOD_RUST:-$REPO_ROOT/src/bootstrap/target/release/blood}"
 RUNTIME_O="${RUNTIME_O:-$REPO_ROOT/runtime/runtime.o}"
 RUNTIME_A="${RUNTIME_A:-$REPO_ROOT/src/bootstrap/target/release/libblood_runtime.a}"
 GROUND_TRUTH="${GROUND_TRUTH:-$REPO_ROOT/tests/ground-truth}"
+STDLIB_PATH="${STDLIB_PATH:-$REPO_ROOT/stdlib}"
 
 # Export for first_gen/second_gen runtime discovery
 export BLOOD_RUNTIME="${RUNTIME_O}"
@@ -525,7 +526,7 @@ run_ground_truth() {
         # Compile with our compiler (--build-dir keeps artifacts out of BLOOD_BUILD_DIR)
         local tmpdir
         tmpdir=$(mktemp -d)
-        if ! "$bin" build "$src" --build-dir "$tmpdir" -o "$tmpdir/out" >/dev/null 2>&1; then
+        if ! "$bin" build "$src" --build-dir "$tmpdir" -o "$tmpdir/out" --stdlib-path "$STDLIB_PATH" >/dev/null 2>&1; then
             fail "$name (compile)"
             comp_fail=$((comp_fail + 1))
             rm -rf "$tmpdir"

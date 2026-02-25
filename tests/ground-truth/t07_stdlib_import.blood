@@ -1,0 +1,43 @@
+// XFAIL: self-hosted compiler does not support use with dot-separated paths or --stdlib-path
+// Test: stdlib import via mod std + use std.collections.hashmap (works with blood-rust --stdlib-path)
+// EXPECT: 7
+// EXPECT: 42
+// EXPECT: 1
+// EXPECT: 0
+mod std;
+use std.collections.hashmap::{HashMapU64U32, HashMapU64U64, hash_u64, hash_str};
+
+fn main() -> i32 {
+    // HashMapU64U32 via stdlib import
+    let mut map = HashMapU64U32::new();
+    map.insert(42, 7);
+    match map.get(42) {
+        Option::Some(v) => { println_int(v as i32); } // 7
+        Option::None => { return 1; }
+    }
+
+    // HashMapU64U64 via stdlib import
+    let mut map64 = HashMapU64U64::new();
+    map64.insert(1, 42);
+    match map64.get(1) {
+        Option::Some(v) => { println_int(v as i32); } // 42
+        Option::None => { return 2; }
+    }
+
+    // Hash functions via stdlib import
+    let val: u64 = 100;
+    let h = hash_u64(&val);
+    if h != 0 {
+        println_int(1); // 1 (non-zero hash)
+    } else {
+        println_int(0);
+    }
+
+    // Missing key returns None
+    match map.get(999) {
+        Option::Some(_) => { println_int(1); }
+        Option::None => { println_int(0); } // 0
+    }
+
+    0
+}
