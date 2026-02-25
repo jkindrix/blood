@@ -1,0 +1,110 @@
+// Test: stdlib HashMap extraction - exercises HashMapU64U32 and HashMapU64U64
+// EXPECT: 0
+// EXPECT: 42
+// EXPECT: 101
+// EXPECT: 1
+// EXPECT: 0
+// EXPECT: 3
+// EXPECT: 999
+// EXPECT: 0
+// EXPECT: 200
+// EXPECT: 1
+mod stdlib_hashmap;
+
+fn test_u64u32_basic() -> i32 {
+    let mut map = stdlib_hashmap::HashMapU64U32::new();
+
+    // Empty map: len == 0
+    println_int(map.len() as i32); // 0
+
+    // Insert and get
+    map.insert(1, 42);
+    match map.get(1) {
+        Option::Some(v) => { println_int(v as i32); } // 42
+        Option::None => { println_int(-1); }
+    }
+
+    // Insert many, verify len
+    let mut i: u64 = 0;
+    while i < 100 {
+        map.insert(i + 1000, i as u32);
+        i = i + 1;
+    }
+    // len should be 101 (1 original + 100 new keys 1000..1099)
+    println_int(map.len() as i32); // 101
+
+    // contains_key
+    if map.contains_key(1) {
+        println_int(1); // 1
+    } else {
+        println_int(0);
+    }
+
+    // Missing key
+    if map.contains_key(999999) {
+        println_int(1);
+    } else {
+        println_int(0); // 0
+    }
+
+    0
+}
+
+fn test_u64u32_overwrite() -> i32 {
+    let mut map = stdlib_hashmap::HashMapU64U32::with_capacity(32);
+
+    map.insert(10, 1);
+    map.insert(20, 2);
+    map.insert(30, 3);
+
+    // Len should be 3
+    println_int(map.len() as i32); // 3
+
+    // Overwrite key 20
+    map.insert(20, 999);
+    match map.get(20) {
+        Option::Some(v) => { println_int(v as i32); } // 999
+        Option::None => { println_int(-1); }
+    }
+
+    // Len should still be 3 (overwrite, not insert)
+    if map.len() == 3 {
+        println_int(0); // 0 (success)
+    } else {
+        println_int(1);
+    }
+
+    0
+}
+
+fn test_u64u64() -> i32 {
+    let mut map = stdlib_hashmap::HashMapU64U64::new();
+
+    map.insert(100, 200);
+    match map.get(100) {
+        Option::Some(v) => { println_int(v as i32); } // 200
+        Option::None => { println_int(-1); }
+    }
+
+    // contains_key
+    if map.contains_key(100) {
+        println_int(1); // 1
+    } else {
+        println_int(0);
+    }
+
+    0
+}
+
+fn main() -> i32 {
+    let r1: i32 = test_u64u32_basic();
+    if r1 != 0 { return 1; }
+
+    let r2: i32 = test_u64u32_overwrite();
+    if r2 != 0 { return 2; }
+
+    let r3: i32 = test_u64u64();
+    if r3 != 0 { return 3; }
+
+    0
+}
