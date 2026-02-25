@@ -2017,14 +2017,32 @@ fn lower_for_expr(
             lower_for_range(ctx, label, pattern, start, end_val, inclusive, body, span)
         }
         _ => {
-            // For non-range iterators, emit an error
-            ctx.error(
-                hir::DiagnosticCode::E0104,
-                common::make_string("for loops currently only support range iteration (e.g., for i in 0..10)"),
+            // For non-range iterators (arrays, slices, etc.), create a ForIter
+            // node that will be desugared during MIR lowering when types are resolved.
+            let label_sym = match label {
+                &Some(ref l) => Some(l.symbol),
+                &None => Option::None,
+            };
+
+            // Lower the iterator expression
+            let iter_hir = lower_expr(ctx, iter);
+
+            // Lower the pattern — this creates the local variable for the element binding
+            let pattern_hir = lower_pattern(ctx, pattern);
+
+            // Lower the body
+            let body_hir = lower_block_to_expr(ctx, body);
+
+            hir_expr::Expr::new(
+                hir_expr::ExprKind::ForIter {
+                    label: label_sym,
+                    pattern: Box::new(pattern_hir),
+                    iter: Box::new(iter_hir),
+                    body: Box::new(body_hir),
+                },
+                type_intern::CommonTypes::unit(),
                 span,
-            );
-            // Return the body as a fallback
-            lower_block_to_expr(ctx, body)
+            )
         }
     }
 }

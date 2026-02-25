@@ -129,6 +129,9 @@ pub fn infer_expr(checker: &mut typeck::TypeChecker, expr: &hir_expr::Expr) -> t
                 &None => type_intern::CommonTypes::unit(),
             }
         }
+        &hir_expr::ExprKind::ForIter { label: _, ref pattern, ref iter, ref body } => {
+            infer_for_iter(checker, pattern.as_ref(), iter.as_ref(), body.as_ref(), expr.span)
+        }
         &hir_expr::ExprKind::Default => {
             // Default expression type comes from context; return expression's type variable
             expr.ty
@@ -533,6 +536,7 @@ fn is_lvalue(expr: &hir_expr::Expr) -> bool {
         &hir_expr::ExprKind::Try(ref _inner) => false,
         &hir_expr::ExprKind::Unsafe(ref _inner) => false,
         &hir_expr::ExprKind::Region { name: _, stmts: _, expr: _ } => false,
+        &hir_expr::ExprKind::ForIter { label: _, pattern: _, iter: _, body: _ } => false,
         &hir_expr::ExprKind::Default => false,
         &hir_expr::ExprKind::Error => false,
     }
@@ -2213,6 +2217,65 @@ fn infer_loop(
     // If no break with value, loop has type !
     // For now, return the inference variable
     checker.resolve(loop_ty)
+}
+
+/// Infers the type of a for-iterator expression (e.g., for item in array).
+/// Resolves the iterator type, extracts the element type for arrays,
+/// and unifies the pattern type with the element type.
+fn infer_for_iter(
+    checker: &mut typeck::TypeChecker,
+    pattern: &hir_expr::Pattern,
+    iter: &hir_expr::Expr,
+    body: &hir_expr::Expr,
+    span: common::Span,
+) -> type_intern::TyId {
+    // Infer the iterator expression type
+    let iter_ty = infer_expr(checker, iter);
+
+    // Resolve the iterator type to determine what we're iterating over
+    let resolved_iter_ty = checker.resolve(iter_ty);
+    let interner = type_intern::type_interner();
+    let iter_kind = interner.get(resolved_iter_ty);
+
+    // Extract element type based on the iterator kind
+    match iter_kind {
+        &type_intern::InternedTypeKind::Array { element, size: _ } => {
+            // Unify pattern type with the array element type
+            checker.unify(pattern.ty, element, span);
+        }
+        &type_intern::InternedTypeKind::Ref { inner, mutable: _ } => {
+            // Handle &[T; N] — reference to an array
+            let inner_resolved = checker.resolve(inner);
+            let inner_kind = interner.get(inner_resolved);
+            match inner_kind {
+                &type_intern::InternedTypeKind::Array { element, size: _ } => {
+                    checker.unify(pattern.ty, element, span);
+                }
+                _ => {
+                    checker.error(typeck::TypeErrorKind::TypeMismatch, span);
+                }
+            }
+        }
+        _ => {
+            // Non-array iterator types are not yet supported
+            checker.error(typeck::TypeErrorKind::TypeMismatch, span);
+        }
+    }
+
+    // Enter loop context for break/continue
+    let prev_in_loop = checker.in_loop;
+    let prev_loop_ty = copy_option_ty_id(&checker.loop_ty);
+    checker.enter_loop(type_intern::CommonTypes::unit());
+
+    // Check the body
+    infer_expr(checker, body);
+
+    // Restore context
+    checker.in_loop = prev_in_loop;
+    checker.loop_ty = prev_loop_ty;
+
+    // For loops produce unit
+    type_intern::CommonTypes::unit()
 }
 
 /// Infers the type of a return expression.

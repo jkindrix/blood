@@ -247,6 +247,15 @@ pub enum ExprKind {
     },
     /// Unsafe block.
     Unsafe(Box<Expr>),
+    /// A for-iterator expression (not yet desugared).
+    /// Used for non-range for loops (e.g., for item in array).
+    /// Desugared to index-based loop during MIR lowering when types are resolved.
+    ForIter {
+        label: Option<common::Symbol>,
+        pattern: Box<Pattern>,
+        iter: Box<Expr>,
+        body: Box<Expr>,
+    },
     /// A default expression (produces default value of expected type).
     Default,
     /// An error expression (for error recovery).

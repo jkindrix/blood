@@ -220,6 +220,9 @@ pub fn lower_expr(
                 }
             }
         }
+        &hir_expr::ExprKind::ForIter { ref label, ref pattern, ref iter, ref body } => {
+            lower_for_iter_expr(ctx, label, pattern.as_ref(), iter.as_ref(), body.as_ref(), dest, expr.span);
+        }
         &hir_expr::ExprKind::Default => {
             // Default expression: produce zero-initialized value.
             // Currently emits ZeroInit for all types. When the Default trait
@@ -1725,6 +1728,203 @@ fn lower_loop_expr(
     ctx.set_current_block(break_block);
 }
 
+/// Lowers a ForIter expression to MIR.
+///
+/// Desugars `for pattern in iter { body }` (where iter is an array) to:
+/// ```
+/// let _arr = iter;
+/// let mut _idx: i64 = 0;
+/// loop {
+///     if _idx < ARRAY_SIZE {
+///         let pattern = _arr[_idx];
+///         body;
+///         _idx = _idx + 1;
+///     } else {
+///         break;
+///     }
+/// }
+/// ```
+fn lower_for_iter_expr(
+    ctx: &mut mir_lower_ctx::MirLowerCtx,
+    label: &Option<common::Symbol>,
+    pattern: &hir_expr::Pattern,
+    iter: &hir_expr::Expr,
+    body: &hir_expr::Expr,
+    dest: mir_lower_ctx::Destination,
+    span: common::Span,
+) {
+    // Resolve the iterator type to extract array element type and size
+    let resolved_iter_id = ctx.resolve_type_to_id(iter.ty);
+    let interner = type_intern::type_interner();
+    let iter_kind = interner.get(resolved_iter_id);
+
+    let mut array_size: u64 = 0;
+    let mut element_ty_id = type_intern::CommonTypes::unit();
+    let mut found_array: bool = false;
+
+    match iter_kind {
+        &type_intern::InternedTypeKind::Array { element, size } => {
+            array_size = size;
+            element_ty_id = element;
+            found_array = true;
+        }
+        &type_intern::InternedTypeKind::Ref { inner, mutable: _ } => {
+            // Handle &[T; N]
+            let inner_resolved = ctx.resolve_type_to_id(inner);
+            let inner_kind = interner.get(inner_resolved);
+            match inner_kind {
+                &type_intern::InternedTypeKind::Array { element, size } => {
+                    array_size = size;
+                    element_ty_id = element;
+                    found_array = true;
+                }
+                _ => {}
+            }
+        }
+        _ => {}
+    }
+
+    if !found_array {
+        ctx.mir_error(
+            mir_lower_ctx::MirLowerErrorKind::InternalError,
+            common::make_string("for-in loop: iterator type is not an array"),
+            span,
+        );
+        return;
+    }
+
+    // Use i64 for the index type (matching the reference compiler)
+    let idx_ty_id = type_intern::CommonTypes::i64_ty();
+
+    // Step 1: Evaluate the array into a temporary
+    let arr_temp = ctx.new_temp(resolved_iter_id, span);
+    lower_expr(ctx, iter, mir_lower_ctx::destination_local(arr_temp));
+
+    // Step 2: Create a mutable index variable, initialized to 0
+    let idx_local = ctx.new_var(idx_ty_id, common::make_string("_loop_idx"), true, span);
+    ctx.emit_assign(
+        mir_types::Place::local(idx_local),
+        mir_types::Rvalue::Use(mir_types::Operand::Constant(
+            mir_types::Constant::new(idx_ty_id, mir_types::ConstantKind::Int(0)),
+        )),
+        span,
+    );
+
+    // Step 3: Create basic blocks
+    let loop_header = ctx.new_block();
+    let loop_body = ctx.new_block();
+    let break_block = ctx.new_block();
+
+    // Jump to loop header
+    ctx.terminate_goto(loop_header, span);
+
+    // Step 4: Loop header — compare idx < array_size
+    ctx.set_current_block(loop_header);
+
+    let cond_temp = ctx.new_temp(type_intern::CommonTypes::bool_ty(), span);
+
+    // idx operand
+    let idx_operand = mir_types::Operand::Copy(mir_types::Place::local(idx_local));
+
+    // array_size constant operand
+    let size_const = mir_types::Constant::new(
+        idx_ty_id,
+        mir_types::ConstantKind::Int(array_size as i128),
+    );
+    let size_operand = mir_types::Operand::Constant(size_const);
+
+    // Emit: cond_temp = idx < array_size
+    ctx.emit_assign(
+        mir_types::Place::local(cond_temp),
+        mir_types::Rvalue::BinaryOp {
+            op: mir_types::MirBinOp::Lt,
+            left: idx_operand,
+            right: size_operand,
+        },
+        span,
+    );
+
+    // Branch: if cond_temp → loop_body, else → break_block
+    let cond_for_branch = mir_types::Operand::Copy(mir_types::Place::local(cond_temp));
+    ctx.terminate_if(cond_for_branch, loop_body, break_block, span);
+
+    // Step 5: Push loop context for break/continue support
+    ctx.push_loop(*label, break_block, loop_header, dest);
+
+    // Step 6: Loop body — bind pattern, execute body, increment
+    ctx.set_current_block(loop_body);
+
+    // Create a temp for the indexed element: _arr[_idx]
+    let resolved_elem_id = ctx.resolve_type_to_id(element_ty_id);
+    let elem_temp = ctx.new_temp(resolved_elem_id, span);
+
+    // Build place: arr_temp[idx_local] (with deref for references)
+    let mut arr_place = mir_types::Place::local(arr_temp);
+    match iter_kind {
+        &type_intern::InternedTypeKind::Ref { inner: _, mutable: _ } => {
+            arr_place = arr_place.project(mir_types::PlaceElem::Deref);
+        }
+        _ => {}
+    }
+    let indexed_place = arr_place.project(mir_types::PlaceElem::Index(idx_local));
+
+    // Emit: elem_temp = arr[idx]
+    let elem_ty_hir = type_intern::ty_id_to_type(resolved_elem_id);
+    let elem_operand = mir_lower_util::operand_from_place(indexed_place, &elem_ty_hir);
+    ctx.emit_assign(
+        mir_types::Place::local(elem_temp),
+        mir_types::Rvalue::Use(elem_operand),
+        span,
+    );
+
+    // Bind pattern from elem_temp (e.g., `let item = arr[idx]`)
+    mir_lower_pattern::lower_irrefutable_pattern(
+        ctx,
+        pattern,
+        mir_types::Place::local(elem_temp),
+        span,
+    );
+
+    // Lower the body expression (result is ignored, for-loop body is unit)
+    lower_expr(ctx, body, mir_lower_ctx::destination_ignore());
+
+    // Increment: _idx = _idx + 1
+    if !ctx.is_terminated() {
+        let idx_for_add = mir_types::Operand::Copy(mir_types::Place::local(idx_local));
+        let one_const = mir_types::Constant::new(
+            idx_ty_id,
+            mir_types::ConstantKind::Int(1),
+        );
+        let one_operand = mir_types::Operand::Constant(one_const);
+
+        let inc_temp = ctx.new_temp(idx_ty_id, span);
+        ctx.emit_assign(
+            mir_types::Place::local(inc_temp),
+            mir_types::Rvalue::BinaryOp {
+                op: mir_types::MirBinOp::Add,
+                left: idx_for_add,
+                right: one_operand,
+            },
+            span,
+        );
+
+        ctx.emit_assign(
+            mir_types::Place::local(idx_local),
+            mir_types::Rvalue::Use(mir_types::Operand::Copy(mir_types::Place::local(inc_temp))),
+            span,
+        );
+
+        // Loop back to header
+        ctx.terminate_goto(loop_header, span);
+    }
+
+    // Pop loop context
+    ctx.pop_loop();
+
+    // Continue from break block
+    ctx.set_current_block(break_block);
+}
+
 fn lower_return_expr(
     ctx: &mut mir_lower_ctx::MirLowerCtx,
     val: &Option<Box<hir_expr::Expr>>,
@@ -2538,6 +2738,10 @@ fn collect_closure_captures(
         }
         &hir_expr::ExprKind::Unsafe(ref val) => {
             collect_closure_captures(ctx, val.as_ref(), captures);
+        }
+        &hir_expr::ExprKind::ForIter { label: _, ref pattern, ref iter, ref body } => {
+            collect_closure_captures(ctx, iter.as_ref(), captures);
+            collect_closure_captures(ctx, body.as_ref(), captures);
         }
         // Terminals — no sub-expressions to walk
         &hir_expr::ExprKind::Literal(_) => {}
