@@ -361,7 +361,64 @@ pub fn pattern_test(
         &hir_expr::PatternKind::Wildcard => Option::None,
         &hir_expr::PatternKind::Rest => Option::None,
         &hir_expr::PatternKind::Binding { local_id: _, name: _, mode: _, subpattern: _ } => Option::None,
-        &hir_expr::PatternKind::Tuple(_) => Option::None,
+        &hir_expr::PatternKind::Tuple(ref patterns) => {
+            // Recursively test each tuple element. If any inner pattern is
+            // refutable, convert each discriminant test to a boolean via Eq,
+            // combine with BitAnd, and return as a single boolean test.
+            let mut has_refutable = false;
+            let mut combined_local: mir_def::MirLocalId = mir_def::MirLocalId::return_place();
+            let mut elem_i: usize = 0;
+            while elem_i < patterns.len() {
+                let cloned_src = source.clone();
+                let field_place = cloned_src.project(mir_types::PlaceElem::Field(elem_i as u32));
+                let sub_test = pattern_test(ctx, &patterns[elem_i], &field_place, span);
+                match sub_test {
+                    Option::Some(t) => {
+                        // Convert sub-test to bool: discriminant == expected
+                        let expected_const = mir_types::Constant::new(
+                            type_intern::CommonTypes::usize_ty(),
+                            mir_types::ConstantKind::Uint(t.expected),
+                        );
+                        let expected_op = mir_types::Operand::Constant(expected_const);
+                        let eq_result = ctx.new_temp(type_intern::CommonTypes::bool_ty(), span);
+                        ctx.emit_assign(
+                            mir_types::Place::local(eq_result),
+                            mir_types::Rvalue::BinaryOp(mir_types::MirBinOp::Eq, t.discriminant, expected_op),
+                            span,
+                        );
+                        if has_refutable {
+                            // BitAnd with running combined result
+                            let and_result = ctx.new_temp(type_intern::CommonTypes::bool_ty(), span);
+                            ctx.emit_assign(
+                                mir_types::Place::local(and_result),
+                                mir_types::Rvalue::BinaryOp(
+                                    mir_types::MirBinOp::BitAnd,
+                                    mir_types::Operand::Copy(mir_types::Place::local(combined_local)),
+                                    mir_types::Operand::Copy(mir_types::Place::local(eq_result)),
+                                ),
+                                span,
+                            );
+                            combined_local = and_result;
+                        } else {
+                            combined_local = eq_result;
+                            has_refutable = true;
+                        }
+                    }
+                    Option::None => {
+                        // Irrefutable sub-pattern — no test needed
+                    }
+                }
+                elem_i = elem_i + 1;
+            }
+            if has_refutable {
+                Option::Some(PatternTest {
+                    discriminant: mir_types::Operand::Copy(mir_types::Place::local(combined_local)),
+                    expected: 1,
+                })
+            } else {
+                Option::None
+            }
+        }
         &hir_expr::PatternKind::Struct { ref path, fields: _, has_rest: _ } => {
             // For enum variant struct patterns (e.g., Bucket::Occupied { key, value }),
             // test the discriminant. Without this, struct patterns are treated as

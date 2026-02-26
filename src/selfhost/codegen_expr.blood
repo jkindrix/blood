@@ -363,10 +363,200 @@ fn emit_place_load_with_type(
     (cgname_to_string(&result), llvm_ty)
 }
 
+/// Walks through ALL place projections to determine the final TyId.
+/// Returns None if any intermediate type cannot be resolved (triggers legacy fallback).
+fn walk_all_projections(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    place: &mir_types::Place,
+) -> Option<type_intern::TyId> {
+    let mut current_ty = match ctx.get_local_hir_type(place.local) {
+        Option::Some(ty_id) => ty_id,
+        Option::None => { return Option::None; }
+    };
+    let mut variant_ctx: Option<u32> = Option::None;
+    let mut i: usize = 0;
+    while i < place.projection.len() {
+        match &place.projection[i] {
+            &mir_types::PlaceElem::Deref => {
+                match apply_deref_to_type(current_ty) {
+                    Option::Some(inner) => { current_ty = inner; }
+                    Option::None => { return Option::None; }
+                }
+            }
+            &mir_types::PlaceElem::Field(field_idx) => {
+                match resolve_field_ty_id(ctx, current_ty, variant_ctx, field_idx) {
+                    Option::Some(ty) => { current_ty = ty; }
+                    Option::None => { return Option::None; }
+                }
+                variant_ctx = Option::None;
+            }
+            &mir_types::PlaceElem::Downcast(v) => {
+                variant_ctx = Option::Some(v);
+            }
+            &mir_types::PlaceElem::Index(_) => {
+                match extract_element_type_id(current_ty) {
+                    Option::Some(elem_ty) => { current_ty = elem_ty; }
+                    Option::None => { return Option::None; }
+                }
+            }
+            &mir_types::PlaceElem::ConstantIndex { offset: _, min_length: _, from_end: _ } => {
+                match extract_element_type_id(current_ty) {
+                    Option::Some(elem_ty) => { current_ty = elem_ty; }
+                    Option::None => { return Option::None; }
+                }
+            }
+            &mir_types::PlaceElem::Subslice { from: _, to: _, from_end: _ } => {
+                // Subslice preserves container type
+            }
+        }
+        i = i + 1;
+    }
+    Option::Some(current_ty)
+}
+
+/// Resolves a field's TyId given the current type, optional enum variant context, and field index.
+/// Handles tuple fields, struct fields (via ADT registry), and enum variant fields.
+/// Looks through Ref/Ptr for implicit auto-deref cases.
+fn resolve_field_ty_id(
+    ctx: &mut codegen_ctx::CodegenCtx,
+    current_ty: type_intern::TyId,
+    variant_ctx: Option<u32>,
+    field_idx: u32,
+) -> Option<type_intern::TyId> {
+    // Look through references for implicit deref
+    let unwrapped = unwrap_ref_type(current_ty);
+
+    // Try tuple field extraction first (tuples have no ADT def_id)
+    match extract_field_type_from_hir(unwrapped, field_idx) {
+        Option::Some(field_ty) => { return Option::Some(field_ty); }
+        Option::None => {}
+    }
+
+    // Get ADT def_id from current type
+    match type_intern::get_adt_def_id(unwrapped) {
+        Option::Some(def_id) => {
+            match variant_ctx {
+                Option::Some(vi) => {
+                    // Enum variant field
+                    match ctx.lookup_enum(def_id.index) {
+                        Option::Some(layout) => {
+                            let mut k: usize = 0;
+                            while k < layout.variants.len() {
+                                if layout.variants[k].variant_idx == vi {
+                                    if (field_idx as usize) < layout.variants[k].fields.len() {
+                                        match &layout.variants[k].fields[field_idx as usize].hir_type {
+                                            &Option::Some(ht_id) => {
+                                                if !type_intern::is_param_or_infer_id(ht_id) {
+                                                    return Option::Some(ht_id);
+                                                }
+                                            }
+                                            &Option::None => {}
+                                        }
+                                    }
+                                    // Generic or missing field type — use type args
+                                    return substitute_enum_field_from_args(unwrapped, field_idx);
+                                }
+                                k = k + 1;
+                            }
+                            // Variant not found — try type args
+                            substitute_enum_field_from_args(unwrapped, field_idx)
+                        }
+                        Option::None => {
+                            // Enum not in registry — try type args
+                            substitute_enum_field_from_args(unwrapped, field_idx)
+                        }
+                    }
+                }
+                Option::None => {
+                    // Struct field
+                    match ctx.lookup_struct(def_id.index) {
+                        Option::Some(layout) => {
+                            if (field_idx as usize) < layout.fields.len() {
+                                match &layout.fields[field_idx as usize].hir_type {
+                                    &Option::Some(ht_id) => {
+                                        if type_intern::is_param_or_infer_id(ht_id) {
+                                            substitute_struct_field_param(unwrapped, layout, field_idx as usize)
+                                        } else {
+                                            Option::Some(ht_id)
+                                        }
+                                    }
+                                    &Option::None => Option::None,
+                                }
+                            } else {
+                                Option::None
+                            }
+                        }
+                        Option::None => Option::None,
+                    }
+                }
+            }
+        }
+        Option::None => Option::None,
+    }
+}
+
+/// Substitutes a generic struct field's type parameter with the concrete type arg.
+/// Scans fields to count which param index corresponds to the target field.
+fn substitute_struct_field_param(
+    adt_ty: type_intern::TyId,
+    layout: &codegen_ctx::StructLayout,
+    field_idx: usize,
+) -> Option<type_intern::TyId> {
+    let adt_args = match type_intern::get_adt_args(adt_ty) {
+        Option::Some(args) => args,
+        Option::None => { return Option::None; }
+    };
+    let interner = type_intern::type_interner();
+    let args_len = interner.ty_list_len(adt_args);
+    if args_len == 0 { return Option::None; }
+    let mut param_idx: usize = 0;
+    let mut fi: usize = 0;
+    while fi < layout.fields.len() {
+        let is_param = match &layout.fields[fi].hir_type {
+            &Option::Some(ht_id) => type_intern::is_param_or_infer_id(ht_id),
+            &Option::None => false,
+        };
+        if fi == field_idx {
+            if is_param && param_idx < args_len {
+                return Option::Some(interner.get_ty_list_element(adt_args, param_idx));
+            }
+            return Option::None;
+        }
+        if is_param {
+            param_idx = param_idx + 1;
+        }
+        fi = fi + 1;
+    }
+    Option::None
+}
+
+/// Resolves a generic enum variant field type from the ADT's type args.
+/// Maps field_idx to type arg index (e.g., Option<T>.Some.0 → T = args[0]).
+fn substitute_enum_field_from_args(
+    adt_ty: type_intern::TyId,
+    field_idx: u32,
+) -> Option<type_intern::TyId> {
+    match type_intern::get_adt_args(adt_ty) {
+        Option::Some(args) => {
+            let interner = type_intern::type_interner();
+            let args_len = interner.ty_list_len(args);
+            if (field_idx as usize) < args_len {
+                Option::Some(interner.get_ty_list_element(args, field_idx as usize))
+            } else {
+                Option::None
+            }
+        }
+        Option::None => Option::None,
+    }
+}
+
 /// Computes the LLVM type for the value at a place after all projections.
 /// When a place has projections (Field, Deref, Downcast), the loaded type
 /// differs from the base local's type. For example, loading field 0 of a
 /// `{ i32, i32 }` struct should use `i32`, not the struct type.
+///
+/// Primary path: walks the full projection chain via TyId tracking.
+/// Fallback path: legacy last-projection-based resolution (if walk fails).
 fn resolve_place_elem_type(
     ctx: &mut codegen_ctx::CodegenCtx,
     place: &mir_types::Place,
@@ -389,7 +579,17 @@ fn resolve_place_elem_type(
         return ctx.get_local_type(place.local);
     }
 
-    // Check the last projection to determine the final type
+    // Primary path: walk the full projection chain to determine the final type.
+    // This correctly handles multi-projection chains through tuples, enums, etc.
+    match walk_all_projections(ctx, place) {
+        Option::Some(resolved_ty) => {
+            return codegen_size::type_to_llvm_with_ctx_id(ctx, resolved_ty);
+        }
+        Option::None => {}
+    }
+
+    // Fallback: legacy last-projection-based resolution.
+    // Used when the walk fails (e.g., field hir_type missing from ADT registry).
     let last_idx = place.projection.len() - 1;
     match &place.projection[last_idx] {
         &mir_types::PlaceElem::Field(field_idx) => {
@@ -436,9 +636,6 @@ fn resolve_place_elem_type(
                                         if layout.variants[k].variant_idx == vi {
                                             if (field_idx as usize) < layout.variants[k].fields.len() {
                                                 let fty = &layout.variants[k].fields[field_idx as usize].llvm_type;
-                                                // Check if the field type is unsubstituted (param/infer).
-                                                // For generic enums like Option<T>, the registered layout has
-                                                // the unsubstituted field type. Check via the field's HIR type.
                                                 let field_is_param = match &layout.variants[k].fields[field_idx as usize].hir_type {
                                                     &Option::Some(ht_id) => type_intern::is_param_or_infer_id(ht_id),
                                                     &Option::None => false,
@@ -448,9 +645,6 @@ fn resolve_place_elem_type(
                                                 }
                                                 found_field = true;
                                             } else {
-                                                // Variant found but no field info (e.g., builtin enum
-                                                // registration creates empty fields vectors). Fall through
-                                                // to generic HIR type arg resolution below.
                                                 found_field = true;
                                             }
                                             break;
@@ -462,8 +656,6 @@ fn resolve_place_elem_type(
                                     found_field = true;
                                 }
                             }
-                            // For generic enum fields (param/infer type or enum not in registry),
-                            // resolve the concrete field type from the local's HIR type args.
                             if found_field {
                                 match ctx.get_local_hir_type(place.local) {
                                     Option::Some(ty_id) => {
@@ -472,8 +664,6 @@ fn resolve_place_elem_type(
                                             Option::Some(args) => {
                                                 let interner = type_intern::type_interner();
                                                 let args_len = interner.ty_list_len(args);
-                                                // For enums, field_idx maps to type arg index
-                                                // (e.g., Option<T>.Some.0 → T, Result<T,E>.Ok.0 → T)
                                                 if (field_idx as usize) < args_len {
                                                     let arg_ty_id = interner.get_ty_list_element(args, field_idx as usize);
                                                     return codegen_size::type_to_llvm_with_ctx_id(ctx, arg_ty_id);
@@ -491,8 +681,6 @@ fn resolve_place_elem_type(
                             match ctx.lookup_struct(def_id) {
                                 Option::Some(layout) => {
                                     if (field_idx as usize) < layout.fields.len() {
-                                        // Check if this field has an unsubstituted param/infer type.
-                                        // If so, resolve the concrete type from the local's type args.
                                         let field_is_param = match &layout.fields[field_idx as usize].hir_type {
                                             &Option::Some(ht_id) => {
                                                 type_intern::is_param_or_infer_id(ht_id)
@@ -500,7 +688,6 @@ fn resolve_place_elem_type(
                                             &Option::None => false,
                                         };
                                         if field_is_param {
-                                            // Try to get concrete type arg from local's HIR type
                                             let resolved = resolve_generic_field_type(ctx, place.local, layout, field_idx as usize);
                                             match resolved {
                                                 Option::Some(ty) => { return ty; }
@@ -510,10 +697,7 @@ fn resolve_place_elem_type(
                                         return clone_string(&layout.fields[field_idx as usize].llvm_type);
                                     }
                                 }
-                                Option::None => {
-                                    // Struct not in registry — could be a tuple with ADT wrapping.
-                                    // Try tuple resolution below.
-                                }
+                                Option::None => {}
                             }
                         }
                     }
@@ -521,9 +705,7 @@ fn resolve_place_elem_type(
                 &Option::None => {}
             }
 
-            // Before falling back, check if the local's HIR type is a tuple.
-            // Tuple types don't have ADT def_ids in the type interner, so the
-            // struct/enum lookup above fails. Extract the field element type directly.
+            // Tuple field extraction from local's type
             match ctx.get_local_hir_type(place.local) {
                 Option::Some(ty_id) => {
                     let unwrapped = unwrap_ref_type(ty_id);
@@ -543,11 +725,9 @@ fn resolve_place_elem_type(
                 Option::None => {}
             }
 
-            // Fallback: use the local's type
             ctx.get_local_type(place.local)
         }
         &mir_types::PlaceElem::Index(_) => {
-            // After indexing, the type is the container's element type, not the container type
             match ctx.get_local_hir_type(place.local) {
                 Option::Some(ty_id) => {
                     let hir_type = type_intern::ty_id_to_type(ty_id);
@@ -557,7 +737,6 @@ fn resolve_place_elem_type(
             }
         }
         &mir_types::PlaceElem::ConstantIndex { offset: _, min_length: _, from_end: _ } => {
-            // After constant indexing, the type is the container's element type
             match ctx.get_local_hir_type(place.local) {
                 Option::Some(ty_id) => {
                     let hir_type = type_intern::ty_id_to_type(ty_id);
@@ -567,11 +746,8 @@ fn resolve_place_elem_type(
             }
         }
         &mir_types::PlaceElem::Deref => {
-            // Deref projection: unwrap Ref/Ptr layers from the local's HIR type
-            // to find the pointed-to type. E.g., *const u8 → i8, &String → { ptr, i64, i64 }.
             match ctx.get_local_hir_type(place.local) {
                 Option::Some(hir_type) => {
-                    // Count Deref projections in the chain
                     let mut deref_count: usize = 0;
                     let mut di: usize = 0;
                     while di < place.projection.len() {
@@ -583,10 +759,8 @@ fn resolve_place_elem_type(
                         }
                         di = di + 1;
                     }
-                    // Unwrap one layer
                     match apply_deref_to_type(hir_type) {
                         Option::Some(inner_ty) => {
-                            // Apply remaining Derefs
                             let mut final_ty = inner_ty;
                             let mut applied: usize = 1;
                             while applied < deref_count {
@@ -607,7 +781,6 @@ fn resolve_place_elem_type(
             }
         }
         _ => {
-            // For Downcast and other projections, use the local's type
             ctx.get_local_type(place.local)
         }
     }
@@ -1793,12 +1966,23 @@ pub fn emit_rvalue(
                 }
             }
 
-            // Try to look up enum layout for correct discriminant type
+            // Try to look up enum layout for correct discriminant type.
+            // For projected places (e.g., tuple_local[Field(0)]), walk through
+            // projections to find the actual enum type, not the local's type.
             let mut discr_ty = common::make_string("i64");
             let mut enum_llvm_ty = common::make_string("{ i64, i64 }");
             let mut found_enum = false;
 
-            match ctx.get_local_hir_type(place.local) {
+            let place_ty_id = if place.projection.len() > 0 {
+                match walk_all_projections(ctx, place) {
+                    Option::Some(ty_id) => Option::Some(ty_id),
+                    Option::None => ctx.get_local_hir_type(place.local),
+                }
+            } else {
+                ctx.get_local_hir_type(place.local)
+            };
+
+            match place_ty_id {
                 Option::Some(ty_id) => {
                     // Extract the enum DefId, unwrapping through Ref/Ptr via interner.
                     let enum_def_idx = type_intern::resolve_adt_def_id_id(ty_id);
