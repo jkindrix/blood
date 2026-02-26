@@ -512,9 +512,18 @@ run_ground_truth() {
         name="$(basename "$src" .blood)"
         total=$((total + 1))
 
-        # Skip compile-fail tests (they should fail)
+        # Handle compile-fail tests (they should fail to compile)
         if head -1 "$src" | grep -q '^// COMPILE_FAIL:'; then
-            skip=$((skip + 1))
+            local tmpdir_cf
+            tmpdir_cf=$(mktemp -d)
+            if "$bin" build "$src" --build-dir "$tmpdir_cf" -o "$tmpdir_cf/out" --stdlib-path "$STDLIB_PATH" >/dev/null 2>&1; then
+                fail "$name (expected compile failure, but succeeded)"
+                comp_fail=$((comp_fail + 1))
+            else
+                ok "$name"
+                pass=$((pass + 1))
+            fi
+            rm -rf "$tmpdir_cf"
             continue
         fi
         # Skip XFAIL tests
