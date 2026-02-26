@@ -462,7 +462,7 @@ impl Compiler {
     }
 
     /// Checks source code with a specified base directory for module resolution.
-    pub fn check_with_base_dir(self: &mut Compiler, source: &str, base_dir: String) -> CheckResult {
+    pub fn check_with_base_dir(self: &mut Compiler, source: &str, base_dir: String, stdlib_path: Option<String>) -> CheckResult {
         // Parse
         let parse_result = parser::parse_file(source);
         if parse_result.errors.len() > 0 {
@@ -489,7 +489,7 @@ impl Compiler {
         };
 
         // Lower to HIR with base_dir
-        let lower_result = hir_lower::lower_program_with_base_dir(program, base_dir, source, Option::None);
+        let lower_result = hir_lower::lower_program_with_base_dir(program, base_dir, source, stdlib_path);
         if has_error_diagnostics(&lower_result.diagnostics) {
             let errors = convert_hir_diagnostics(&lower_result.diagnostics);
             return CheckResult {
@@ -531,7 +531,7 @@ impl Compiler {
 
     /// Instrumented version of check_with_base_dir that traces region memory usage.
     /// Pass region_id from region_create() to enable tracing, or 0 to disable.
-    pub fn check_with_base_dir_traced(self: &mut Compiler, source: &str, base_dir: String, region_id: u64) -> CheckResult {
+    pub fn check_with_base_dir_traced(self: &mut Compiler, source: &str, base_dir: String, stdlib_path: Option<String>, region_id: u64) -> CheckResult {
         let trace = region_id != 0;
 
         if trace {
@@ -573,7 +573,7 @@ impl Compiler {
         };
 
         // Lower to HIR with base_dir
-        let lower_result = hir_lower::lower_program_with_base_dir(program, base_dir, source, Option::None);
+        let lower_result = hir_lower::lower_program_with_base_dir(program, base_dir, source, stdlib_path);
 
         if trace {
             let used2 = region_used(region_id);
@@ -1375,7 +1375,7 @@ pub fn compile_file(path: &str) -> CompileResult {
 }
 
 /// Checks a file for errors without generating code.
-pub fn check_file(path: &str) -> CheckResult {
+pub fn check_file(path: &str, stdlib_path: Option<String>) -> CheckResult {
     // Read the file
     let read_result = source::read_file(path);
     if !read_result.success {
@@ -1415,11 +1415,11 @@ pub fn check_file(path: &str) -> CheckResult {
 
     // Create compiler and check with base_dir
     let mut compiler = Compiler::new();
-    compiler.check_with_base_dir(source_str, base_dir)
+    compiler.check_with_base_dir(source_str, base_dir, stdlib_path)
 }
 
 /// Instrumented version of check_file that traces region memory usage.
-pub fn check_file_traced(path: &str, region_id: u64) -> CheckResult {
+pub fn check_file_traced(path: &str, stdlib_path: Option<String>, region_id: u64) -> CheckResult {
     // Read the file
     let read_result = source::read_file(path);
     if !read_result.success {
@@ -1455,7 +1455,7 @@ pub fn check_file_traced(path: &str, region_id: u64) -> CheckResult {
 
     // Create compiler and check with base_dir (traced)
     let mut compiler = Compiler::new();
-    compiler.check_with_base_dir_traced(content.as_str(), base_dir, region_id)
+    compiler.check_with_base_dir_traced(content.as_str(), base_dir, stdlib_path, region_id)
 }
 
 /// Clones a String from a reference.

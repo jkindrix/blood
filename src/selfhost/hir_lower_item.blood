@@ -2051,11 +2051,60 @@ fn add_decl_to_scope(
                     }
                 }
                 &ast::Import::Glob { ref path, span: _ } => {
-                    // Glob imports not yet implemented
+                    // Resolve the glob path to find the target module,
+                    // then import all public children into the current scope.
+                    let resolved = resolve_glob_path(ctx, path);
+                    if resolved.is_some() {
+                        let mod_def_id = resolved.unwrap();
+                        let children = ctx.resolver.get_children_of_parent(mod_def_id);
+                        let mut ci: usize = 0;
+                        while ci < children.len() {
+                            let child_name = children[ci].name;
+                            let child_def = children[ci].def_id;
+                            let binding = resolve::Binding::def(child_def);
+                            ctx.resolver.define(child_name, binding);
+                            ci = ci + 1;
+                        }
+                    }
                 }
             }
         }
     }
+}
+
+/// Resolve a glob import path to the target module DefId.
+/// Used by Phase 3 glob import handling. Resolves the first segment via scope
+/// lookup, then chains remaining segments via lookup_in_parent.
+fn resolve_glob_path(
+    ctx: &mut hir_lower_ctx::LoweringCtx,
+    path: &ast::ModulePath,
+) -> Option<hir_def::DefId> {
+    if path.segments.len() == 0 {
+        return Option::None;
+    }
+    // Resolve first segment via scope lookup
+    let first_str = ctx.span_to_string(path.segments[0].span);
+    let first_sym = ctx.intern(first_str.as_str());
+    let first_lookup = ctx.resolver.lookup(first_sym);
+    if !first_lookup.is_some() {
+        return Option::None;
+    }
+    let first_result = first_lookup.unwrap();
+    let first_binding = ctx.resolver.scope_binding(first_result.scope_index, first_result.binding_index);
+    let mut current_def = first_binding.def_id;
+    // Chain remaining segments via lookup_in_parent
+    let mut seg_idx: usize = 1;
+    while seg_idx < path.segments.len() {
+        let seg_str = ctx.span_to_string(path.segments[seg_idx].span);
+        let seg_sym = ctx.intern(seg_str.as_str());
+        let child = ctx.resolver.lookup_in_parent(current_def, seg_sym);
+        if !child.is_some() {
+            return Option::None;
+        }
+        current_def = child.unwrap();
+        seg_idx = seg_idx + 1;
+    }
+    Option::Some(current_def)
 }
 
 /// Collect DefIds of items that belong to a module.

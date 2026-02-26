@@ -1,0 +1,17 @@
+// Test: pub use glob re-exports from external module
+// EXPECT: 70
+mod t07_pub_use_glob_lib;
+use t07_pub_use_glob_lib::*;
+
+fn main() -> i32 {
+    // Use items re-exported via pub use inner::*
+    let sum: i32 = add(BASE, 20);
+    let product: i32 = mul(sum, 2);
+    // (10 + 20) * 2 = 60... wait, let me compute: add(10, 20) = 30, mul(30, 2) = 60
+    // But we want to also test that BASE works: BASE + add + mul
+    let result: i32 = add(product, BASE);
+    // 60 + 10 = 70
+    println_int(result);
+    if result != 70 { return 1; }
+    0
+}

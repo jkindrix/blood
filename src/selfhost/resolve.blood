@@ -556,6 +556,29 @@ impl Resolver {
         }
     }
 
+    /// Sets the visibility of a previously registered definition.
+    pub fn set_def_visibility(self: &mut Self, def_id: hir_def::DefId, vis: common::Visibility) {
+        match self.def_info_hash.get(def_id.index as u64) {
+            Option::Some(vec_idx) => {
+                let idx = vec_idx as usize;
+                if idx < self.def_info.len() {
+                    self.def_info[idx].info.visibility = vis;
+                }
+            }
+            Option::None => {
+                // Fallback to linear scan
+                let mut i: usize = 0;
+                while i < self.def_info.len() {
+                    if self.def_info[i].def_id.index == def_id.index {
+                        self.def_info[i].info.visibility = vis;
+                        return;
+                    }
+                    i = i + 1;
+                }
+            }
+        }
+    }
+
     /// Registers a variant definition with its variant index.
     pub fn register_variant_def_info(
         self: &mut Self,
@@ -742,6 +765,57 @@ impl Resolver {
         reversed
     }
 
+    /// Returns all public children of a parent definition.
+    /// Used for glob imports (`use path::*`) to import all public items from a module.
+    /// Skips Variant and Impl definitions (variants are imported via their parent enum,
+    /// impl blocks aren't named items).
+    pub fn get_children_of_parent(self: &Self, parent_def: hir_def::DefId) -> Vec<ChildEntry> {
+        let mut result: Vec<ChildEntry> = Vec::new();
+        let mut i: usize = 0;
+        while i < self.def_info.len() {
+            let entry = &self.def_info[i];
+            match &entry.info.parent {
+                &Option::Some(p) => {
+                    if p.index == parent_def.index {
+                        // Skip variants and impl blocks
+                        match entry.info.kind {
+                            hir_def::DefKind::Variant => {}
+                            hir_def::DefKind::Impl => {}
+                            _ => {
+                                // Only include public items
+                                match entry.info.visibility {
+                                    common::Visibility::Public => {
+                                        result.push(ChildEntry {
+                                            name: entry.info.name,
+                                            def_id: hir_def::DefId::new(entry.def_id.index),
+                                        });
+                                    }
+                                    common::Visibility::PublicCrate => {
+                                        result.push(ChildEntry {
+                                            name: entry.info.name,
+                                            def_id: hir_def::DefId::new(entry.def_id.index),
+                                        });
+                                    }
+                                    common::Visibility::PublicSuper => {
+                                        result.push(ChildEntry {
+                                            name: entry.info.name,
+                                            def_id: hir_def::DefId::new(entry.def_id.index),
+                                        });
+                                    }
+                                    common::Visibility::PublicSelf => {}
+                                    common::Visibility::Private => {}
+                                }
+                            }
+                        }
+                    }
+                }
+                &Option::None => {}
+            }
+            i = i + 1;
+        }
+        result
+    }
+
     /// Looks up a child definition within a parent's namespace.
     /// Used for resolving qualified paths like module::Item.
     pub fn lookup_in_parent(self: &Self, parent_def: hir_def::DefId, name: common::Symbol) -> Option<hir_def::DefId> {
@@ -851,6 +925,17 @@ impl Resolver {
             is_module: false, // Last segment is usually a type or value, not module
         })
     }
+}
+
+// ============================================================
+// Child Entry (for glob imports)
+// ============================================================
+
+/// An entry representing a child definition of a module.
+/// Used by get_children_of_parent() for glob imports.
+pub struct ChildEntry {
+    pub name: common::Symbol,
+    pub def_id: hir_def::DefId,
 }
 
 // ============================================================

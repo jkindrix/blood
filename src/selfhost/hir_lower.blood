@@ -227,7 +227,19 @@ fn resolve_import(ctx: &mut hir_lower_ctx::LoweringCtx, imp: &ast::Import) {
             }
         }
         &ast::Import::Glob { ref path, span: _ } => {
-            // Glob imports — not implemented yet, skip silently
+            let resolved = resolve_module_path_segments(ctx, dummy, path, path.segments.len(), true);
+            if resolved.is_some() {
+                let mod_def_id = resolved.unwrap();
+                let children = ctx.resolver.get_children_of_parent(mod_def_id);
+                let mut ci: usize = 0;
+                while ci < children.len() {
+                    let child_name = children[ci].name;
+                    let child_def = children[ci].def_id;
+                    let binding = resolve::Binding::def(child_def);
+                    ctx.resolver.define(child_name, binding);
+                    ci = ci + 1;
+                }
+            }
         }
     }
 }
@@ -1115,7 +1127,31 @@ fn resolve_use_decl_module_reexport(
             }
         }
         &ast::Import::Glob { ref path, span: _ } => {
-            // Glob imports not yet implemented
+            let resolved = resolve_module_path_segments(ctx, parent_def_id, path, path.segments.len(), use_global);
+            if resolved.is_some() {
+                let mod_def_id = resolved.unwrap();
+                let children = ctx.resolver.get_children_of_parent(mod_def_id);
+                let mut ci: usize = 0;
+                while ci < children.len() {
+                    let child_name = children[ci].name;
+                    let child_def = children[ci].def_id;
+                    let existing_info = ctx.resolver.get_def_info(child_def);
+                    if existing_info.is_some() {
+                        let info = existing_info.unwrap();
+                        let child_vis = info.visibility;
+                        ctx.resolver.register_def_info(
+                            child_def,
+                            info.kind,
+                            child_name,
+                            info.span,
+                            Option::Some(parent_def_id),
+                        );
+                        // Preserve the original visibility on the re-exported entry
+                        ctx.resolver.set_def_visibility(child_def, child_vis);
+                    }
+                    ci = ci + 1;
+                }
+            }
         }
     }
 }
@@ -1575,6 +1611,7 @@ fn register_module_type_name(
                 s.name.span,
                 Option::Some(parent_def_id),
             );
+            ctx.resolver.set_def_visibility(def_id, s.vis);
         }
         &ast::Declaration::Enum(ref e) => {
             let def_id = ctx.alloc_def_id();
@@ -1587,6 +1624,7 @@ fn register_module_type_name(
                 e.name.span,
                 Option::Some(parent_def_id),
             );
+            ctx.resolver.set_def_visibility(def_id, e.vis);
         }
         &ast::Declaration::Trait(ref t) => {
             let def_id = ctx.alloc_def_id();
@@ -1599,6 +1637,7 @@ fn register_module_type_name(
                 t.name.span,
                 Option::Some(parent_def_id),
             );
+            ctx.resolver.set_def_visibility(def_id, t.vis);
         }
         &ast::Declaration::Effect(ref eff) => {
             let def_id = ctx.alloc_def_id();
@@ -1611,6 +1650,7 @@ fn register_module_type_name(
                 eff.name.span,
                 Option::Some(parent_def_id),
             );
+            // EffectDecl doesn't have visibility in the AST — default Private
         }
         &ast::Declaration::TypeAlias(ref ta) => {
             let def_id = ctx.alloc_def_id();
@@ -1623,6 +1663,7 @@ fn register_module_type_name(
                 ta.name.span,
                 Option::Some(parent_def_id),
             );
+            ctx.resolver.set_def_visibility(def_id, ta.vis);
         }
         &ast::Declaration::Module(ref m) => {
             // Nested module
@@ -1638,6 +1679,7 @@ fn register_module_type_name(
                         m.name.span,
                         Option::Some(parent_def_id),
                     );
+                    ctx.resolver.set_def_visibility(def_id, m.vis);
                     // Recursively register nested module's type names
                     register_module_type_names(ctx, def_id, nested_decls);
                 }
@@ -1659,6 +1701,7 @@ fn register_module_type_name(
                             m.name.span,
                             Option::Some(parent_def_id),
                         );
+                        ctx.resolver.set_def_visibility(binding.def_id, m.vis);
                     }
                 }
             }
@@ -1901,6 +1944,7 @@ fn register_module_declaration(
                 f.name.span,
                 Option::Some(parent_def_id),
             );
+            ctx.resolver.set_def_visibility(def_id, f.vis);
         }
         &ast::Declaration::Const(ref c) => {
             let def_id = ctx.alloc_def_id();
@@ -1913,6 +1957,7 @@ fn register_module_declaration(
                 c.name.span,
                 Option::Some(parent_def_id),
             );
+            ctx.resolver.set_def_visibility(def_id, c.vis);
         }
         &ast::Declaration::Static(ref s) => {
             let def_id = ctx.alloc_def_id();
@@ -1925,6 +1970,7 @@ fn register_module_declaration(
                 s.name.span,
                 Option::Some(parent_def_id),
             );
+            ctx.resolver.set_def_visibility(def_id, s.vis);
         }
         &ast::Declaration::Handler(ref h) => {
             let def_id = ctx.alloc_def_id();
@@ -1937,6 +1983,7 @@ fn register_module_declaration(
                 h.name.span,
                 Option::Some(parent_def_id),
             );
+            // Handlers don't have visibility in the AST — default Private
         }
         &ast::Declaration::Module(ref m) => {
             // Nested module - look up its DefId and recurse
