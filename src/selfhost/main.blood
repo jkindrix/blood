@@ -129,6 +129,8 @@ pub struct Args {
     pub test_fail_fast: bool,
     /// Build directory for output artifacts (if provided via --build-dir).
     pub build_dir: Option<String>,
+    /// Stdlib directory path (if provided via --stdlib-path or BLOOD_STDLIB_PATH).
+    pub stdlib_path: Option<String>,
 }
 
 impl Args {
@@ -160,6 +162,7 @@ impl Args {
             test_only_ignored: false,
             test_fail_fast: false,
             build_dir: Option::None,
+            stdlib_path: Option::None,
         }
     }
 
@@ -191,6 +194,7 @@ impl Args {
             test_only_ignored: false,
             test_fail_fast: false,
             build_dir: Option::None,
+            stdlib_path: Option::None,
         }
     }
 
@@ -222,6 +226,7 @@ impl Args {
             test_only_ignored: false,
             test_fail_fast: false,
             build_dir: Option::None,
+            stdlib_path: Option::None,
         }
     }
 }
@@ -1498,6 +1503,13 @@ pub fn parse_args(argc: i32, argv: &Vec<String>) -> Args {
                 } else {
                     print_error("missing value for --build-dir");
                 }
+            } else if str_equals(arg, "--stdlib-path") {
+                if i + 1 < argv.len() {
+                    i = i + 1;
+                    args.stdlib_path = Option::Some(clone_string(&argv[i]));
+                } else {
+                    print_error("missing value for --stdlib-path");
+                }
             } else if str_equals(arg, "--release") {
                 args.release = true;
                 args.opt_level = 2;
@@ -2149,6 +2161,25 @@ fn resolve_build_dir(args: &Args) -> String {
         &Option::None => common::make_string("."),
     };
     source::join_path(base_dir.as_str(), "build")
+}
+
+/// Resolve the stdlib path using the override hierarchy:
+/// 1. CLI flag (--stdlib-path)
+/// 2. BLOOD_STDLIB_PATH environment variable
+/// 3. None (no stdlib path — default behavior)
+fn resolve_stdlib_path(args: &Args) -> Option<String> {
+    // 1. CLI flag
+    match &args.stdlib_path {
+        &Option::Some(ref dir) => { return Option::Some(clone_string(dir)); }
+        &Option::None => {}
+    }
+    // 2. BLOOD_STDLIB_PATH env var
+    let env_val: &str = env_get("BLOOD_STDLIB_PATH");
+    if env_val.len() > 0 {
+        return Option::Some(common::make_string(env_val));
+    }
+    // 3. No stdlib path
+    Option::None
 }
 
 /// Return the profile subdirectory name based on release mode.
@@ -3997,7 +4028,8 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     let hir_region = region_create(16777216, 53687091200);
     region_activate(hir_region);
 
-    let lower_result = hir_lower::lower_program_with_base_dir(program, base_dir, content.as_str());
+    let stdlib_path = resolve_stdlib_path(args);
+    let lower_result = hir_lower::lower_program_with_base_dir(program, base_dir, content.as_str(), stdlib_path);
     let hir_elapsed = blood_clock_millis() - hir_start;
 
     // Check for HIR lowering errors

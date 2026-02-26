@@ -42,13 +42,15 @@ mod type_intern;
 
 /// Lower an AST Program to an HIR Crate.
 pub fn lower_program(program: &ast::Program, source: &str) -> hir_lower_ctx::LowerResult {
-    lower_program_with_base_dir(program, common::make_string("."), source)
+    lower_program_with_base_dir(program, common::make_string("."), source, Option::None)
 }
 
 /// Lower an AST Program to an HIR Crate with a specified base directory.
 /// The base directory is used for resolving external module paths.
-pub fn lower_program_with_base_dir(program: &ast::Program, base_dir: String, source: &str) -> hir_lower_ctx::LowerResult {
+/// stdlib_path optionally overrides the path for `mod std;` resolution.
+pub fn lower_program_with_base_dir(program: &ast::Program, base_dir: String, source: &str, stdlib_path: Option<String>) -> hir_lower_ctx::LowerResult {
     let mut ctx = hir_lower_ctx::LoweringCtx::with_base_dir(base_dir, common::make_string(source));
+    ctx.stdlib_path = stdlib_path;
 
     // Allocate root module DefId
     let root_def_id = ctx.alloc_def_id();
@@ -900,6 +902,78 @@ fn register_builtin_functions(ctx: &mut hir_lower_ctx::LoweringCtx) {
 }
 
 // ============================================================
+// Use Module Path Resolution
+// ============================================================
+
+/// Resolves a dot-separated module path (e.g., std.collections.hashmap) using global scope lookup.
+/// Returns the DefId of the final module in the path, or None if any segment is not found.
+fn resolve_use_module_path(
+    ctx: &mut hir_lower_ctx::LoweringCtx,
+    path: &Vec<common::SpannedSymbol>,
+) -> Option<hir_def::DefId> {
+    if path.len() == 0 {
+        return Option::None;
+    }
+    // Lookup first segment in global scope
+    let first_str = ctx.span_to_string(path[0].span);
+    let first_sym = ctx.intern(first_str.as_str());
+    let first_lookup = ctx.resolver.lookup(first_sym);
+    if !first_lookup.is_some() {
+        return Option::None;
+    }
+    let first_result = first_lookup.unwrap();
+    let first_binding = ctx.resolver.scope_binding(first_result.scope_index, first_result.binding_index);
+    let mut current_def = first_binding.def_id;
+    // Walk remaining segments via lookup_in_parent
+    let mut seg_idx: usize = 1;
+    while seg_idx < path.len() {
+        let seg_str = ctx.span_to_string(path[seg_idx].span);
+        let seg_sym = ctx.intern(seg_str.as_str());
+        let child = ctx.resolver.lookup_in_parent(current_def, seg_sym);
+        if !child.is_some() {
+            return Option::None;
+        }
+        current_def = child.unwrap();
+        seg_idx = seg_idx + 1;
+    }
+    Option::Some(current_def)
+}
+
+/// Resolves a dot-separated module path starting from a parent DefId.
+/// Used for `use` declarations inside module blocks where the first segment
+/// is a child of the parent module.
+fn resolve_use_module_path_in_parent(
+    ctx: &mut hir_lower_ctx::LoweringCtx,
+    parent_def_id: hir_def::DefId,
+    path: &Vec<common::SpannedSymbol>,
+) -> Option<hir_def::DefId> {
+    if path.len() == 0 {
+        return Option::None;
+    }
+    // Lookup first segment as a child of parent
+    let first_str = ctx.span_to_string(path[0].span);
+    let first_sym = ctx.intern(first_str.as_str());
+    let first_lookup = ctx.resolver.lookup_in_parent(parent_def_id, first_sym);
+    if !first_lookup.is_some() {
+        return Option::None;
+    }
+    let mut current_def = first_lookup.unwrap();
+    // Walk remaining segments via lookup_in_parent
+    let mut seg_idx: usize = 1;
+    while seg_idx < path.len() {
+        let seg_str = ctx.span_to_string(path[seg_idx].span);
+        let seg_sym = ctx.intern(seg_str.as_str());
+        let child = ctx.resolver.lookup_in_parent(current_def, seg_sym);
+        if !child.is_some() {
+            return Option::None;
+        }
+        current_def = child.unwrap();
+        seg_idx = seg_idx + 1;
+    }
+    Option::Some(current_def)
+}
+
+// ============================================================
 // External Module Loading
 // ============================================================
 
@@ -917,10 +991,30 @@ fn load_external_module(
     // came from the parser's interner, which is separate from the lowering context's
     // interner. Span extraction always works regardless of interner state.
     let module_name = ctx.span_to_string(name_span);
-    let mut file_path = common::make_string(ctx.get_base_dir().as_str());
-    file_path.push('/');
-    append_string(&mut file_path, &module_name);
-    file_path.push_str(".blood");
+    // When stdlib_path is set and module name is "std", resolve to stdlib_path/mod.blood
+    // instead of base_dir/std.blood. This allows the compiler to find stdlib modules.
+    let file_path = if str_eq_lit(&module_name, "std") {
+        match &ctx.stdlib_path {
+            &Option::Some(ref sp) => {
+                let mut p = common::make_string(sp.as_str());
+                p.push_str("/mod.blood");
+                p
+            }
+            &Option::None => {
+                let mut p = common::make_string(ctx.get_base_dir().as_str());
+                p.push('/');
+                append_string(&mut p, &module_name);
+                p.push_str(".blood");
+                p
+            }
+        }
+    } else {
+        let mut p = common::make_string(ctx.get_base_dir().as_str());
+        p.push('/');
+        append_string(&mut p, &module_name);
+        p.push_str(".blood");
+        p
+    };
 
     // Re-intern the module name for consistent symbol indices
     let re_interned_name = ctx.intern(module_name.as_str());
@@ -1042,6 +1136,23 @@ fn resolve_symbol_to_string(ctx: &mut hir_lower_ctx::LoweringCtx, symbol: common
 /// Appends a String to another String.
 fn append_string(dest: &mut String, src: &String) {
     dest.push_str(src.as_str());
+}
+
+/// Compares a String to a string literal.
+fn str_eq_lit(s: &String, lit: &str) -> bool {
+    let a = s.as_bytes();
+    let b = lit.as_bytes();
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut i: usize = 0;
+    while i < a.len() {
+        if a[i] != b[i] {
+            return false;
+        }
+        i = i + 1;
+    }
+    true
 }
 
 // ============================================================
@@ -1350,14 +1461,10 @@ fn register_module_type_name(
         &ast::Declaration::Bridge(_) => {}
         &ast::Declaration::Macro(_) => {}
         &ast::Declaration::Use(ref u) => {
-            // pub use module::Item — register Item as a child of the current parent
-            let mod_name_str = ctx.span_to_string(u.module_name.span);
-            let mod_sym = ctx.intern(mod_name_str.as_str());
-            let mod_lookup = ctx.resolver.lookup(mod_sym);
-            if mod_lookup.is_some() {
-                let mod_result = mod_lookup.unwrap();
-                let mod_binding = ctx.resolver.scope_binding(mod_result.scope_index, mod_result.binding_index);
-                let mod_def_id = mod_binding.def_id;
+            // pub use module.path::Item — walk dot-separated module path, register Item as child
+            let resolved = resolve_use_module_path(ctx, &u.module_path);
+            if resolved.is_some() {
+                let mod_def_id = resolved.unwrap();
                 let item_name_str = ctx.span_to_string(u.item_name.span);
                 let item_sym = ctx.intern(item_name_str.as_str());
                 let item_def = ctx.resolver.lookup_in_parent(mod_def_id, item_sym);
@@ -1560,15 +1667,11 @@ fn register_declaration(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declar
         }
         &ast::Declaration::Macro(_) => {}
         &ast::Declaration::Use(ref u) => {
-            // pub use module::Item — re-export as a top-level binding.
+            // pub use module.path::Item — walk dot-separated path, re-export as top-level binding.
             // Phase 1 only works for type re-exports; functions need Phase 2.
-            let mod_name_str = ctx.span_to_string(u.module_name.span);
-            let mod_sym = ctx.intern(mod_name_str.as_str());
-            let mod_lookup = ctx.resolver.lookup(mod_sym);
-            if mod_lookup.is_some() {
-                let mod_result = mod_lookup.unwrap();
-                let mod_binding = ctx.resolver.scope_binding(mod_result.scope_index, mod_result.binding_index);
-                let mod_def_id = mod_binding.def_id;
+            let resolved = resolve_use_module_path(ctx, &u.module_path);
+            if resolved.is_some() {
+                let mod_def_id = resolved.unwrap();
                 let item_name_str = ctx.span_to_string(u.item_name.span);
                 let item_sym = ctx.intern(item_name_str.as_str());
                 let item_def = ctx.resolver.lookup_in_parent(mod_def_id, item_sym);
@@ -1744,14 +1847,12 @@ fn register_module_declaration(
         &ast::Declaration::Bridge(_) => {}
         &ast::Declaration::Macro(_) => {}
         &ast::Declaration::Use(ref u) => {
-            // pub use module::Item — re-export as child of current parent.
+            // pub use module.path::Item — walk dot-separated path, re-export as child of current parent.
             // Phase 1 only registers types; functions are registered in Phase 2.
             // Re-try the lookup here so function re-exports work.
-            let mod_name_str = ctx.span_to_string(u.module_name.span);
-            let mod_sym = ctx.intern(mod_name_str.as_str());
-            let mod_lookup = ctx.resolver.lookup_in_parent(parent_def_id, mod_sym);
-            if mod_lookup.is_some() {
-                let mod_def_id = mod_lookup.unwrap();
+            let resolved = resolve_use_module_path_in_parent(ctx, parent_def_id, &u.module_path);
+            if resolved.is_some() {
+                let mod_def_id = resolved.unwrap();
                 let item_name_str = ctx.span_to_string(u.item_name.span);
                 let item_sym = ctx.intern(item_name_str.as_str());
                 let item_def = ctx.resolver.lookup_in_parent(mod_def_id, item_sym);

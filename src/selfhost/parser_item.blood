@@ -1372,11 +1372,16 @@ pub fn parse_declaration(parser: &mut parser_base::Parser) -> ast::Declaration {
         token::TokenKind::Static => ast::Declaration::Static(parse_static_decl(parser, attrs, vis)),
         token::TokenKind::Mod => ast::Declaration::Module(parse_mod_decl(parser, attrs, vis)),
         token::TokenKind::Use => {
-            // Parse `use module::Item;` or `pub use module::Item;`
+            // Parse `use module::Item;` or `use std.collections.hashmap::Item;`
             let use_start = parser.current.span;
             parser.advance(); // consume 'use'
-            // Expect module name (identifier)
-            let module_name = parser.parse_spanned_symbol();
+            // Parse dot-separated module path: std.collections.hashmap
+            let mut module_path: Vec<common::SpannedSymbol> = Vec::new();
+            module_path.push(parser.parse_spanned_symbol());
+            while parser.current.kind == token::TokenKind::Dot {
+                parser.advance(); // consume '.'
+                module_path.push(parser.parse_spanned_symbol());
+            }
             // Expect '::'
             parser.expect(token::TokenKind::ColonColon);
             // Expect item name (identifier)
@@ -1392,7 +1397,7 @@ pub fn parse_declaration(parser: &mut parser_base::Parser) -> ast::Declaration {
             };
             ast::Declaration::Use(ast::UseDecl {
                 vis,
-                module_name,
+                module_path,
                 item_name,
                 span,
             })

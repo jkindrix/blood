@@ -303,6 +303,9 @@ pub struct LoweringCtx {
     /// Seen (trait_def_id, type_def_id) pairs for overlapping impl detection.
     /// Each entry is (trait_idx << 32) | type_idx.
     pub seen_trait_impls: Vec<u64>,
+    /// Optional path to the stdlib directory. When set, `mod std;` resolves to
+    /// `stdlib_path/mod.blood` instead of `base_dir/std.blood`.
+    pub stdlib_path: Option<String>,
 }
 
 /// Tracks a loaded external module to prevent circular imports.
@@ -382,6 +385,7 @@ impl LoweringCtx {
             loading_paths: Vec::new(),
             builtin_fn_defs: Vec::new(),
             seen_trait_impls: Vec::new(),
+            stdlib_path: Option::None,
         }
     }
 
@@ -420,6 +424,7 @@ impl LoweringCtx {
             loading_paths: Vec::new(),
             builtin_fn_defs: Vec::new(),
             seen_trait_impls: Vec::new(),
+            stdlib_path: Option::None,
         }
     }
 
