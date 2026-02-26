@@ -348,6 +348,10 @@ pub struct TypeChecker {
     /// method body that target abstract trait methods must be redirected to the
     /// concrete impl methods. This table records those remappings.
     pub default_method_remaps: Vec<common::DefaultMethodRemap>,
+    /// Array-to-slice coercion side table.
+    /// Records expressions where &[T; N] needs to be coerced to &[T].
+    /// MIR lowering uses these to emit Rvalue::ArrayToSlice.
+    pub coercion_entries: Vec<common::CoercionEntry>,
 }
 
 impl TypeChecker {
@@ -390,6 +394,7 @@ impl TypeChecker {
             in_shallow_handler: false,
             resume_count: 0,
             default_method_remaps: Vec::new(),
+            coercion_entries: Vec::new(),
         }
     }
 
@@ -433,6 +438,7 @@ impl TypeChecker {
             in_shallow_handler: false,
             resume_count: 0,
             default_method_remaps: Vec::new(),
+            coercion_entries: Vec::new(),
         }
     }
 
@@ -526,6 +532,12 @@ impl TypeChecker {
         self.method_resolutions.push(common::MethodResEntry::new(self.current_body_def_id, span_start, def_id_index));
     }
 
+    /// Records an array-to-slice coercion for an expression.
+    /// The span_start is the byte offset of the expression being coerced.
+    pub fn record_coercion(self: &mut Self, span_start: usize, array_len: u64) {
+        self.coercion_entries.push(common::CoercionEntry::new(self.current_body_def_id, span_start, array_len));
+    }
+
     /// Records a resolved field index for a named field access expression.
     /// The span_start is the byte offset of the FIELD NAME (not the whole expression).
     /// This is critical: chained accesses like `a.b.c` share the same expr.span.start
@@ -605,6 +617,18 @@ impl TypeChecker {
                 self.error(kind, e.span);
                 false
             }
+        }
+    }
+
+    /// Attempts unification without reporting errors.
+    /// Returns true if unification succeeds, false otherwise.
+    /// Used by check_expr to try unification before coercion,
+    /// deferring error reporting until both have been attempted.
+    pub fn try_unify(self: &mut Self, a: type_intern::TyId, b: type_intern::TyId, span: common::Span) -> bool {
+        let result = unify::unify_id(&mut self.subst_table, &mut self.unifier, a, b, span);
+        match result {
+            unify::UnifyResult::Ok => true,
+            unify::UnifyResult::Err(_e) => false,
         }
     }
 

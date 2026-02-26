@@ -54,6 +54,9 @@ pub struct TypeCheckResult {
     /// When a trait default method is used by an impl, calls within the body
     /// targeting abstract trait methods must be redirected to concrete impl methods.
     pub default_method_remaps: Vec<common::DefaultMethodRemap>,
+    /// Array-to-slice coercion side table from type checking.
+    /// Records expressions that need &[T; N] to &[T] conversion during MIR lowering.
+    pub coercion_entries: Vec<common::CoercionEntry>,
 }
 
 impl TypeCheckResult {
@@ -65,6 +68,7 @@ impl TypeCheckResult {
         method_resolutions: Vec<common::MethodResEntry>,
         field_resolutions: Vec<common::FieldResEntry>,
         default_method_remaps: Vec<common::DefaultMethodRemap>,
+        coercion_entries: Vec<common::CoercionEntry>,
     ) -> TypeCheckResult {
         TypeCheckResult {
             success: true,
@@ -74,6 +78,7 @@ impl TypeCheckResult {
             method_resolutions: method_resolutions,
             field_resolutions: field_resolutions,
             default_method_remaps: default_method_remaps,
+            coercion_entries: coercion_entries,
         }
     }
 
@@ -92,6 +97,7 @@ impl TypeCheckResult {
             method_resolutions: method_resolutions,
             field_resolutions: field_resolutions,
             default_method_remaps: Vec::new(),
+            coercion_entries: Vec::new(),
         }
     }
 
@@ -143,7 +149,7 @@ pub fn check_types(ctx: &hir_lower_ctx::LoweringCtx) -> TypeCheckResult {
     if checker.has_errors() {
         TypeCheckResult::failed(checker.errors, checker.subst_table, checker.method_resolutions, checker.field_resolutions)
     } else {
-        TypeCheckResult::ok(checker.subst_table, checker.builtin_def_names, checker.method_resolutions, checker.field_resolutions, checker.default_method_remaps)
+        TypeCheckResult::ok(checker.subst_table, checker.builtin_def_names, checker.method_resolutions, checker.field_resolutions, checker.default_method_remaps, checker.coercion_entries)
     }
 }
 
@@ -239,7 +245,7 @@ pub fn check_lower_result(result: &hir_lower_ctx::LowerResult) -> TypeCheckResul
     if checker.has_errors() {
         TypeCheckResult::failed(checker.errors, checker.subst_table, checker.method_resolutions, checker.field_resolutions)
     } else {
-        TypeCheckResult::ok(checker.subst_table, checker.builtin_def_names, checker.method_resolutions, checker.field_resolutions, checker.default_method_remaps)
+        TypeCheckResult::ok(checker.subst_table, checker.builtin_def_names, checker.method_resolutions, checker.field_resolutions, checker.default_method_remaps, checker.coercion_entries)
     }
 }
 

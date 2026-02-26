@@ -887,10 +887,20 @@ pub fn emit_place_addr(
                     &Option::None => get_indexing_element_size(ctx, place.local),
                 };
 
-                // Load the index value
+                // Load the index value with its actual type, then sext to i64 if needed.
+                // Index locals may be i32 (from `i: i32`) or i64/usize.
                 let idx_val = ctx.local_cg(*local);
-                let idx_loaded = ctx.fresh_temp_cg();
-                ctx.emit_load_cg2(&idx_loaded, "i64", &idx_val);
+                let idx_local_ty = ctx.get_local_type(*local);
+                let idx_raw = ctx.fresh_temp_cg();
+                ctx.emit_load_cg2(&idx_raw, idx_local_ty.as_str(), &idx_val);
+                let idx_loaded = if string_eq_str(idx_local_ty.as_str(), "i64") {
+                    idx_raw
+                } else {
+                    let extended = ctx.fresh_temp_cg();
+                    let idx_raw_str = cgname_to_string(&idx_raw);
+                    ctx.emit_cast_cg(&extended, "sext", idx_local_ty.as_str(), idx_raw_str.as_str(), "i64");
+                    extended
+                };
 
                 // Calculate byte offset = index * element_size
                 // Use "mul nuw" (no unsigned wrap) to mark overflow as UB.

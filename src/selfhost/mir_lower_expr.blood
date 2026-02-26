@@ -63,7 +63,77 @@ pub fn lower_expr_for_effects(
 ///
 /// The destination specifies where to put the result. If Ignore, the
 /// expression is evaluated for side effects only.
+///
+/// This wrapper checks for array-to-slice coercions recorded by the type
+/// checker. If a coercion is pending for this expression, the expression
+/// is first lowered to a temporary, then Rvalue::ArrayToSlice converts
+/// the thin array reference to a fat slice pointer in the actual destination.
 pub fn lower_expr(
+    ctx: &mut mir_lower_ctx::MirLowerCtx,
+    expr: &hir_expr::Expr,
+    dest: mir_lower_ctx::Destination,
+) {
+    // Check for array-to-slice coercion on this expression
+    match ctx.lookup_coercion(expr.span.start) {
+        Option::Some(array_len) => {
+            // Lower the expression to a temporary with its original type (&[T; N] = ptr)
+            let inner_ty_id = ctx.resolve_type_to_id(expr.ty);
+            let temp = ctx.new_temp(inner_ty_id, expr.span);
+            let temp_dest = mir_lower_ctx::destination_local(temp);
+
+            // Lower expression into temp (dispatches without re-checking coercion)
+            lower_expr_inner(ctx, expr, temp_dest);
+
+            // Compute the coerced type: &[T; N] -> &[T]
+            // Extract element type from the inner array, build slice ref type.
+            let interner = type_intern::type_interner();
+            let inner_kind = interner.get(inner_ty_id);
+            let mut coerced_ty_id = inner_ty_id;
+            match inner_kind {
+                &type_intern::InternedTypeKind::Ref { inner, mutable } => {
+                    let arr_kind = interner.get(inner);
+                    match arr_kind {
+                        &type_intern::InternedTypeKind::Array { element, size: _ } => {
+                            let slice_id = interner.mk_slice(element);
+                            coerced_ty_id = interner.mk_ref(slice_id, mutable);
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+
+            // Fix the destination local's type to the coerced type ({ ptr, i64 })
+            // so codegen allocates the correct size for the fat pointer.
+            match dest.as_place() {
+                Option::Some(ref dest_place) => {
+                    ctx.builder.update_local_type(dest_place.local, coerced_ty_id);
+                }
+                Option::None => {}
+            }
+
+            // Emit ArrayToSlice from temp to actual destination
+            let temp_place = mir_types::Place::local(temp);
+            let arr_ref_op = mir_lower_util::operand_from_place_id(temp_place, inner_ty_id);
+            match dest.as_place() {
+                Option::Some(dest_place) => {
+                    ctx.emit_assign(
+                        dest_place,
+                        mir_types::Rvalue::ArrayToSlice { array_ref: arr_ref_op, array_len: array_len },
+                        expr.span,
+                    );
+                }
+                Option::None => {}
+            }
+        }
+        Option::None => {
+            lower_expr_inner(ctx, expr, dest);
+        }
+    }
+}
+
+/// Inner dispatch for expression lowering, after coercion check.
+fn lower_expr_inner(
     ctx: &mut mir_lower_ctx::MirLowerCtx,
     expr: &hir_expr::Expr,
     dest: mir_lower_ctx::Destination,
@@ -2052,6 +2122,7 @@ fn lower_closure_expr(
         resolved_return_id,
         span,
         subst_addr,
+        Vec::new(),
         Vec::new(),
         Vec::new(),
     );

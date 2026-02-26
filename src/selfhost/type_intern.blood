@@ -1395,6 +1395,123 @@ pub fn is_closure_id(id: TyId) -> bool {
     }
 }
 
+/// Returns true if the TyId is an Array type.
+pub fn is_array_id(id: TyId) -> bool {
+    let kind = type_interner().get(id);
+    match kind {
+        &InternedTypeKind::Array { element: _, size: _ } => true,
+        _ => false,
+    }
+}
+
+/// Returns true if the TyId is a Slice type.
+pub fn is_slice_id(id: TyId) -> bool {
+    let kind = type_interner().get(id);
+    match kind {
+        &InternedTypeKind::Slice { element: _ } => true,
+        _ => false,
+    }
+}
+
+/// Gets the element TyId from an Array type. Returns None if not Array.
+pub fn get_array_element(id: TyId) -> Option<TyId> {
+    let kind = type_interner().get(id);
+    match kind {
+        &InternedTypeKind::Array { element, size: _ } => Option::Some(element),
+        _ => Option::None,
+    }
+}
+
+/// Gets the size from an Array type. Returns 0 if not Array.
+pub fn get_array_size(id: TyId) -> u64 {
+    let kind = type_interner().get(id);
+    match kind {
+        &InternedTypeKind::Array { element: _, size } => size,
+        _ => 0,
+    }
+}
+
+/// Gets the element TyId from a Slice type. Returns None if not Slice.
+pub fn get_slice_element(id: TyId) -> Option<TyId> {
+    let kind = type_interner().get(id);
+    match kind {
+        &InternedTypeKind::Slice { element } => Option::Some(element),
+        _ => Option::None,
+    }
+}
+
+/// Returns true if the TyId is a Ref with mutable=true.
+pub fn is_mut_ref_id(id: TyId) -> bool {
+    let kind = type_interner().get(id);
+    match kind {
+        &InternedTypeKind::Ref { inner: _, mutable: true } => true,
+        _ => false,
+    }
+}
+
+/// Returns true if the TyId is a Ptr type.
+pub fn is_ptr_id(id: TyId) -> bool {
+    let kind = type_interner().get(id);
+    match kind {
+        &InternedTypeKind::Ptr { inner: _, mutable: _ } => true,
+        _ => false,
+    }
+}
+
+/// Returns true if the TyId is a Ptr with mutable=true.
+pub fn is_mut_ptr_id(id: TyId) -> bool {
+    let kind = type_interner().get(id);
+    match kind {
+        &InternedTypeKind::Ptr { inner: _, mutable: true } => true,
+        _ => false,
+    }
+}
+
+/// Gets the inner TyId from a Ptr type. Returns None if not Ptr.
+pub fn get_ptr_inner(id: TyId) -> Option<TyId> {
+    let kind = type_interner().get(id);
+    match kind {
+        &InternedTypeKind::Ptr { inner, mutable: _ } => Option::Some(inner),
+        _ => Option::None,
+    }
+}
+
+/// Gets the params TyListId from a Fn type. Returns None if not Fn.
+pub fn get_fn_params(id: TyId) -> Option<TyListId> {
+    let kind = type_interner().get(id);
+    match kind {
+        &InternedTypeKind::Fn { params, ret: _, effects: _ } => Option::Some(params),
+        _ => Option::None,
+    }
+}
+
+/// Gets the return TyId from a Fn type. Returns None if not Fn.
+pub fn get_fn_ret(id: TyId) -> Option<TyId> {
+    let kind = type_interner().get(id);
+    match kind {
+        &InternedTypeKind::Fn { params: _, ret, effects: _ } => Option::Some(ret),
+        _ => Option::None,
+    }
+}
+
+/// Gets the params TyListId from a Closure type. Returns None if not Closure.
+pub fn get_closure_params(id: TyId) -> Option<TyListId> {
+    let kind = type_interner().get(id);
+    match kind {
+        &InternedTypeKind::Closure { def_id: _, params, ret: _ } => Option::Some(params),
+        _ => Option::None,
+    }
+}
+
+/// Gets the return TyId from a Closure type. Returns None if not Closure.
+pub fn get_closure_ret(id: TyId) -> Option<TyId> {
+    let kind = type_interner().get(id);
+    match kind {
+        &InternedTypeKind::Closure { def_id: _, params: _, ret } => Option::Some(ret),
+        _ => Option::None,
+    }
+}
+
 // ============================================================
 // Type Formatting for Error Messages
 // ============================================================

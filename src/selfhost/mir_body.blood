@@ -428,6 +428,13 @@ impl MirBodyBuilder {
         self.body.new_temp(ty, span)
     }
 
+    /// Updates the type of an existing local.
+    /// Used when array-to-slice coercion changes the result type of a local
+    /// that was pre-allocated with the uncoerced type.
+    pub fn update_local_type(self: &mut MirBodyBuilder, local: mir_def::MirLocalId, new_ty: type_intern::TyId) {
+        self.body.locals[local.index as usize].ty = new_ty;
+    }
+
     /// Allocates a new user variable.
     pub fn new_var(self: &mut MirBodyBuilder, ty: type_intern::TyId, name: String, mutable: bool, span: common::Span) -> mir_def::MirLocalId {
         self.body.new_var(ty, name, mutable, span)

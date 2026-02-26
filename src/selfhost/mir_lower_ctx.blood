@@ -185,6 +185,9 @@ pub struct MirLowerCtx {
     pub closure_mir: Vec<mir_body::MirBody>,
     /// Counter for generating unique closure DefIds.
     pub closure_counter: u32,
+    /// Coercion entries from type checking.
+    /// Records array-to-slice coercions keyed by (body_def_id, span_start).
+    coercion_entries: Vec<common::CoercionEntry>,
 }
 
 /// Mapping from an HIR local to a MIR local.
@@ -202,6 +205,7 @@ impl MirLowerCtx {
         subst_table_addr: u64,
         method_resolutions: Vec<common::MethodResEntry>,
         field_resolutions: Vec<common::FieldResEntry>,
+        coercion_entries: Vec<common::CoercionEntry>,
     ) -> MirLowerCtx {
         // Build hash indexes for O(1) lookup
         let mut method_hash = hashmap::HashMapU64U32::with_capacity(method_resolutions.len());
@@ -242,6 +246,7 @@ impl MirLowerCtx {
             closure_names: Vec::new(),
             closure_mir: Vec::new(),
             closure_counter: 0,
+            coercion_entries: coercion_entries,
         }
     }
 
@@ -418,6 +423,20 @@ impl MirLowerCtx {
             if self.field_resolutions[i].body_def_id == self.body_def_id &&
                self.field_resolutions[i].span_start == span_start {
                 return Option::Some(self.field_resolutions[i].field_idx);
+            }
+            i = i + 1;
+        }
+        Option::None
+    }
+
+    /// Looks up an array-to-slice coercion by the expression's span start.
+    /// Returns the array length if a coercion was recorded for this expression.
+    pub fn lookup_coercion(self: &MirLowerCtx, span_start: usize) -> Option<u64> {
+        let mut i: usize = 0;
+        while i < self.coercion_entries.len() {
+            if self.coercion_entries[i].body_def_id == self.body_def_id &&
+               self.coercion_entries[i].span_start == span_start {
+                return Option::Some(self.coercion_entries[i].array_len);
             }
             i = i + 1;
         }

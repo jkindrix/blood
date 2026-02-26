@@ -159,15 +159,44 @@ pub fn check_expr(
 ) -> bool {
     let inferred = infer_expr(checker, expr);
 
-    // First try direct unification
-    if checker.unify(inferred, expected, expr.span) {
+    // First try direct unification (without reporting errors, since coercion may succeed)
+    if checker.try_unify(inferred, expected, expr.span) {
         return true;
     }
 
     // If unification fails, try coercion
     match try_coerce(checker, inferred, expected, expr.span) {
-        typeck::CoercionResult::Ok(_coercion) => true,
-        typeck::CoercionResult::Err => false,
+        typeck::CoercionResult::Ok(ref coercion) => {
+            // Record array-to-slice coercions for MIR lowering
+            match coercion {
+                &typeck::Coercion::Unsize => {
+                    // Extract array length from the inferred type
+                    let resolved_from = checker.resolve(inferred);
+                    let interner = type_intern::type_interner();
+                    let from_kind = interner.get(resolved_from);
+                    match from_kind {
+                        &type_intern::InternedTypeKind::Ref { inner, mutable: _ } => {
+                            let inner_resolved = checker.resolve(inner);
+                            let inner_kind = interner.get(inner_resolved);
+                            match inner_kind {
+                                &type_intern::InternedTypeKind::Array { element: _, size } => {
+                                    checker.record_coercion(expr.span.start, size);
+                                }
+                                _ => {}
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+            true
+        }
+        typeck::CoercionResult::Err => {
+            // Both unification and coercion failed — report the type mismatch
+            checker.error(typeck::TypeErrorKind::TypeMismatch, expr.span);
+            false
+        }
     }
 }
 
@@ -177,6 +206,9 @@ pub fn check_expr(
 
 /// Attempts to coerce a type to another type.
 /// Returns CoercionResult::Ok with the coercion if successful.
+/// Uses TyId and the interner API directly, with nested single matches
+/// (NOT tuple matches) to avoid a codegen bug where tuple matches on
+/// enum references generate incorrect load types for variant fields.
 pub fn try_coerce(
     checker: &mut typeck::TypeChecker,
     from_ty: type_intern::TyId,
@@ -197,24 +229,20 @@ pub fn try_coerce(
         return typeck::CoercionResult::Ok(typeck::Coercion::NeverToAny);
     }
 
-    // Convert to hir_ty::Type for coercion matching (cold path)
-    let from_hir = type_intern::ty_id_to_type(from_resolved);
-    let to_hir = type_intern::ty_id_to_type(to_resolved);
-
     // Check for reference coercion: &mut T -> &T
-    match try_ref_coerce(checker, &from_hir, &to_hir, span) {
+    match try_ref_coerce_id(checker, from_resolved, to_resolved, span) {
         typeck::CoercionResult::Ok(c) => return typeck::CoercionResult::Ok(c),
         typeck::CoercionResult::Err => {}
     }
 
-    // Check for unsizing coercion: [T; N] -> [T]
-    match try_unsize_coerce(checker, &from_hir, &to_hir, span) {
+    // Check for unsizing coercion: &[T; N] -> &[T]
+    match try_unsize_coerce_id(checker, from_resolved, to_resolved, span) {
         typeck::CoercionResult::Ok(c) => return typeck::CoercionResult::Ok(c),
         typeck::CoercionResult::Err => {}
     }
 
     // Check for function pointer coercion
-    match try_fn_pointer_coerce(checker, &from_hir, &to_hir, span) {
+    match try_fn_pointer_coerce_id(checker, from_resolved, to_resolved, span) {
         typeck::CoercionResult::Ok(c) => return typeck::CoercionResult::Ok(c),
         typeck::CoercionResult::Err => {}
     }
@@ -223,214 +251,229 @@ pub fn try_coerce(
     typeck::CoercionResult::Err
 }
 
-/// Attempts reference coercion: &mut T -> &T
-fn try_ref_coerce(
+/// Attempts reference coercion: &mut T -> &T, *mut T -> *const T
+/// Uses TyId query helpers to avoid matching on InternedTypeKind enum.
+fn try_ref_coerce_id(
     checker: &mut typeck::TypeChecker,
-    from_ty: &hir_ty::Type,
-    to_ty: &hir_ty::Type,
+    from_resolved: type_intern::TyId,
+    to_resolved: type_intern::TyId,
     span: common::Span,
 ) -> typeck::CoercionResult {
-    match (&from_ty.kind, &to_ty.kind) {
-        // &mut T -> &T (mutable to immutable reference)
-        (&hir_ty::TypeKind::Ref { ref inner, mutable: true },
-         &hir_ty::TypeKind::Ref { inner: ref to_inner, mutable: false }) => {
-            // The inner types must unify
-            let inner_id = type_intern::type_to_ty_id(inner.as_ref());
-            let to_inner_id = type_intern::type_to_ty_id(to_inner.as_ref());
-            if checker.unify(inner_id, to_inner_id, span) {
-                return typeck::CoercionResult::Ok(typeck::Coercion::RefCoerce);
+    // &mut T -> &T
+    if type_intern::is_mut_ref_id(from_resolved) {
+        if type_intern::is_ref_id(to_resolved) {
+            if !type_intern::is_mut_ref_id(to_resolved) {
+                match type_intern::get_ref_inner(from_resolved) {
+                    Option::Some(from_inner) => {
+                        match type_intern::get_ref_inner(to_resolved) {
+                            Option::Some(to_inner) => {
+                                if checker.unify(from_inner, to_inner, span) {
+                                    return typeck::CoercionResult::Ok(typeck::Coercion::RefCoerce);
+                                }
+                            }
+                            Option::None => {}
+                        }
+                    }
+                    Option::None => {}
+                }
             }
         }
-        // *mut T -> *const T (mutable to immutable pointer)
-        (&hir_ty::TypeKind::Ptr { ref inner, mutable: true },
-         &hir_ty::TypeKind::Ptr { inner: ref to_inner, mutable: false }) => {
-            let inner_id = type_intern::type_to_ty_id(inner.as_ref());
-            let to_inner_id = type_intern::type_to_ty_id(to_inner.as_ref());
-            if checker.unify(inner_id, to_inner_id, span) {
-                return typeck::CoercionResult::Ok(typeck::Coercion::RefCoerce);
+    }
+    // *mut T -> *const T
+    if type_intern::is_mut_ptr_id(from_resolved) {
+        if type_intern::is_ptr_id(to_resolved) {
+            if !type_intern::is_mut_ptr_id(to_resolved) {
+                match type_intern::get_ptr_inner(from_resolved) {
+                    Option::Some(from_inner) => {
+                        match type_intern::get_ptr_inner(to_resolved) {
+                            Option::Some(to_inner) => {
+                                if checker.unify(from_inner, to_inner, span) {
+                                    return typeck::CoercionResult::Ok(typeck::Coercion::RefCoerce);
+                                }
+                            }
+                            Option::None => {}
+                        }
+                    }
+                    Option::None => {}
+                }
             }
         }
-        _ => {}
     }
     typeck::CoercionResult::Err
 }
 
-/// Attempts unsizing coercion: [T; N] -> [T]
-fn try_unsize_coerce(
+/// Attempts unsizing coercion: &[T; N] -> &[T]
+/// Uses TyId query helpers to avoid matching on InternedTypeKind enum.
+fn try_unsize_coerce_id(
     checker: &mut typeck::TypeChecker,
-    from_ty: &hir_ty::Type,
-    to_ty: &hir_ty::Type,
+    from_resolved: type_intern::TyId,
+    to_resolved: type_intern::TyId,
     span: common::Span,
 ) -> typeck::CoercionResult {
-    match (&from_ty.kind, &to_ty.kind) {
-        // &[T; N] -> &[T] (array reference to slice reference)
-        (&hir_ty::TypeKind::Ref { ref inner, mutable: from_mut },
-         &hir_ty::TypeKind::Ref { inner: ref to_inner, mutable: to_mut }) => {
-            // Mutability must be compatible (mut -> immut ok, immut -> mut not ok)
-            if from_mut || !to_mut {
-                match (&inner.as_ref().kind, &to_inner.as_ref().kind) {
-                    (&hir_ty::TypeKind::Array { ref element, size: _ },
-                     &hir_ty::TypeKind::Slice { element: ref slice_elem }) => {
-                        let elem_id = type_intern::type_to_ty_id(element.as_ref());
-                        let slice_elem_id = type_intern::type_to_ty_id(slice_elem.as_ref());
-                        if checker.unify(elem_id, slice_elem_id, span) {
-                            return typeck::CoercionResult::Ok(typeck::Coercion::Unsize);
+    // Both must be references
+    if !type_intern::is_ref_id(from_resolved) {
+        return typeck::CoercionResult::Err;
+    }
+    if !type_intern::is_ref_id(to_resolved) {
+        return typeck::CoercionResult::Err;
+    }
+
+    // Mutability check: &mut → & is ok, & → &mut is not
+    let from_mut = type_intern::is_mut_ref_id(from_resolved);
+    let to_mut = type_intern::is_mut_ref_id(to_resolved);
+    if !from_mut {
+        if to_mut {
+            return typeck::CoercionResult::Err;
+        }
+    }
+
+    // Get inner types
+    let from_inner_opt = type_intern::get_ref_inner(from_resolved);
+    match from_inner_opt {
+        Option::Some(from_inner_raw) => {
+            let to_inner_opt = type_intern::get_ref_inner(to_resolved);
+            match to_inner_opt {
+                Option::Some(to_inner_raw) => {
+                    let from_inner = checker.resolve(from_inner_raw);
+                    let to_inner = checker.resolve(to_inner_raw);
+
+                    // Check: from inner is Array, to inner is Slice
+                    if type_intern::is_array_id(from_inner) {
+                        if type_intern::is_slice_id(to_inner) {
+                            match type_intern::get_array_element(from_inner) {
+                                Option::Some(arr_elem) => {
+                                    match type_intern::get_slice_element(to_inner) {
+                                        Option::Some(slice_elem) => {
+                                            if checker.unify(arr_elem, slice_elem, span) {
+                                                return typeck::CoercionResult::Ok(typeck::Coercion::Unsize);
+                                            }
+                                        }
+                                        Option::None => {}
+                                    }
+                                }
+                                Option::None => {}
+                            }
                         }
                     }
-                    _ => {}
                 }
+                Option::None => {}
             }
         }
-        _ => {}
+        Option::None => {}
     }
     typeck::CoercionResult::Err
 }
 
 /// Attempts function pointer coercion: fn item/closure -> fn pointer
-fn try_fn_pointer_coerce(
+/// Uses TyId query helpers to avoid matching on InternedTypeKind enum.
+fn try_fn_pointer_coerce_id(
     checker: &mut typeck::TypeChecker,
-    from_ty: &hir_ty::Type,
-    to_ty: &hir_ty::Type,
+    from_resolved: type_intern::TyId,
+    to_resolved: type_intern::TyId,
     span: common::Span,
 ) -> typeck::CoercionResult {
-    match (&from_ty.kind, &to_ty.kind) {
-        // Fn type to fn pointer (when signatures match)
-        (&hir_ty::TypeKind::Fn { ref params, ref ret, effects: _ },
-         &hir_ty::TypeKind::Fn { params: ref to_params, ret: ref to_ret, effects: _ }) => {
-            // Check parameter count matches
-            if params.len() != to_params.len() {
-                return typeck::CoercionResult::Err;
-            }
-            // Verify each parameter type is compatible
-            let mut i: usize = 0;
-            while i < params.len() {
-                let p_id = type_intern::type_to_ty_id(&params[i]);
-                let tp_id = type_intern::type_to_ty_id(&to_params[i]);
-                if !checker.unify(p_id, tp_id, span) {
-                    return typeck::CoercionResult::Err;
+    let interner = type_intern::type_interner();
+
+    // Fn -> Fn coercion
+    if type_intern::is_fn_id(from_resolved) {
+        if type_intern::is_fn_id(to_resolved) {
+            match type_intern::get_fn_params(from_resolved) {
+                Option::Some(from_params) => {
+                    match type_intern::get_fn_params(to_resolved) {
+                        Option::Some(to_params) => {
+                            let from_len = interner.ty_list_len(from_params);
+                            let to_len = interner.ty_list_len(to_params);
+                            if from_len != to_len {
+                                return typeck::CoercionResult::Err;
+                            }
+                            let mut params_ok: bool = true;
+                            let mut i: usize = 0;
+                            while i < from_len {
+                                let p_id = interner.get_ty_list_element(from_params, i);
+                                let tp_id = interner.get_ty_list_element(to_params, i);
+                                if !checker.unify(p_id, tp_id, span) {
+                                    params_ok = false;
+                                }
+                                i = i + 1;
+                            }
+                            if params_ok {
+                                match type_intern::get_fn_ret(from_resolved) {
+                                    Option::Some(from_ret) => {
+                                        match type_intern::get_fn_ret(to_resolved) {
+                                            Option::Some(to_ret) => {
+                                                if checker.unify(from_ret, to_ret, span) {
+                                                    return typeck::CoercionResult::Ok(typeck::Coercion::FnPointer);
+                                                }
+                                            }
+                                            Option::None => {}
+                                        }
+                                    }
+                                    Option::None => {}
+                                }
+                            }
+                        }
+                        Option::None => {}
+                    }
                 }
-                i = i + 1;
+                Option::None => {}
             }
-            // Verify return type is compatible
-            let ret_id = type_intern::type_to_ty_id(ret.as_ref());
-            let to_ret_id = type_intern::type_to_ty_id(to_ret.as_ref());
-            if !checker.unify(ret_id, to_ret_id, span) {
-                return typeck::CoercionResult::Err;
-            }
-            return typeck::CoercionResult::Ok(typeck::Coercion::FnPointer);
+            return typeck::CoercionResult::Err;
         }
-        // Closure to fn pointer (non-capturing closures are compatible with fn pointers)
-        (&hir_ty::TypeKind::Closure { def_id: _, ref params, ref ret },
-         &hir_ty::TypeKind::Fn { params: ref to_params, ret: ref to_ret, effects: _ }) => {
-            if params.len() != to_params.len() {
-                return typeck::CoercionResult::Err;
-            }
-            let mut i: usize = 0;
-            while i < params.len() {
-                let p_id = type_intern::type_to_ty_id(&params[i]);
-                let tp_id = type_intern::type_to_ty_id(&to_params[i]);
-                if !checker.unify(p_id, tp_id, span) {
-                    return typeck::CoercionResult::Err;
-                }
-                i = i + 1;
-            }
-            let ret_id = type_intern::type_to_ty_id(ret.as_ref());
-            let to_ret_id = type_intern::type_to_ty_id(to_ret.as_ref());
-            if !checker.unify(ret_id, to_ret_id, span) {
-                return typeck::CoercionResult::Err;
-            }
-            return typeck::CoercionResult::Ok(typeck::Coercion::FnPointer);
-        }
-        _ => {}
     }
+
+    // Closure -> Fn coercion
+    if type_intern::is_closure_id(from_resolved) {
+        if type_intern::is_fn_id(to_resolved) {
+            match type_intern::get_closure_params(from_resolved) {
+                Option::Some(from_params) => {
+                    match type_intern::get_fn_params(to_resolved) {
+                        Option::Some(to_params) => {
+                            let from_len = interner.ty_list_len(from_params);
+                            let to_len = interner.ty_list_len(to_params);
+                            if from_len != to_len {
+                                return typeck::CoercionResult::Err;
+                            }
+                            let mut params_ok: bool = true;
+                            let mut i: usize = 0;
+                            while i < from_len {
+                                let p_id = interner.get_ty_list_element(from_params, i);
+                                let tp_id = interner.get_ty_list_element(to_params, i);
+                                if !checker.unify(p_id, tp_id, span) {
+                                    params_ok = false;
+                                }
+                                i = i + 1;
+                            }
+                            if params_ok {
+                                match type_intern::get_closure_ret(from_resolved) {
+                                    Option::Some(from_ret) => {
+                                        match type_intern::get_fn_ret(to_resolved) {
+                                            Option::Some(to_ret) => {
+                                                if checker.unify(from_ret, to_ret, span) {
+                                                    return typeck::CoercionResult::Ok(typeck::Coercion::FnPointer);
+                                                }
+                                            }
+                                            Option::None => {}
+                                        }
+                                    }
+                                    Option::None => {}
+                                }
+                            }
+                        }
+                        Option::None => {}
+                    }
+                }
+                Option::None => {}
+            }
+            return typeck::CoercionResult::Err;
+        }
+    }
+
     typeck::CoercionResult::Err
 }
 
 /// Checks if a TyId is the never type (!).
 fn is_never_type_id(ty: type_intern::TyId) -> bool {
     ty.index == type_intern::CommonTypes::never().index
-}
-
-/// Checks if a type is the never type (!).
-fn is_never_type(ty: &hir_ty::Type) -> bool {
-    match &ty.kind {
-        &hir_ty::TypeKind::Never => true,
-        _ => false,
-    }
-}
-
-/// Checks if two types are structurally equal (without unification).
-fn types_equal(a: &hir_ty::Type, b: &hir_ty::Type) -> bool {
-    match (&a.kind, &b.kind) {
-        (&hir_ty::TypeKind::Never, &hir_ty::TypeKind::Never) => true,
-        (&hir_ty::TypeKind::Error, &hir_ty::TypeKind::Error) => true,
-        (&hir_ty::TypeKind::Primitive(ref pa), &hir_ty::TypeKind::Primitive(ref pb)) => {
-            primitive_equal(pa, pb)
-        }
-        (&hir_ty::TypeKind::Tuple(ref elems_a), &hir_ty::TypeKind::Tuple(ref elems_b)) => {
-            if elems_a.len() != elems_b.len() {
-                return false;
-            }
-            let mut i: usize = 0;
-            while i < elems_a.len() {
-                if !types_equal(&elems_a[i], &elems_b[i]) {
-                    return false;
-                }
-                i = i + 1;
-            }
-            true
-        }
-        (&hir_ty::TypeKind::Ref { ref inner, mutable: ma },
-         &hir_ty::TypeKind::Ref { inner: ref inner_b, mutable: mb }) => {
-            ma == mb && types_equal(inner.as_ref(), inner_b.as_ref())
-        }
-        (&hir_ty::TypeKind::Ptr { ref inner, mutable: ma },
-         &hir_ty::TypeKind::Ptr { inner: ref inner_b, mutable: mb }) => {
-            ma == mb && types_equal(inner.as_ref(), inner_b.as_ref())
-        }
-        (&hir_ty::TypeKind::Array { ref element, size: sa },
-         &hir_ty::TypeKind::Array { element: ref elem_b, size: sb }) => {
-            sa == sb && types_equal(element.as_ref(), elem_b.as_ref())
-        }
-        (&hir_ty::TypeKind::Slice { ref element },
-         &hir_ty::TypeKind::Slice { element: ref elem_b }) => {
-            types_equal(element.as_ref(), elem_b.as_ref())
-        }
-        (&hir_ty::TypeKind::Adt { def_id: da, args: _ },
-         &hir_ty::TypeKind::Adt { def_id: db, args: _ }) => {
-            da.index == db.index
-        }
-        // Ownership types - compare qualifier and inner type
-        (&hir_ty::TypeKind::Ownership { qualifier: qa, ref inner },
-         &hir_ty::TypeKind::Ownership { qualifier: qb, inner: ref inner_b }) => {
-            qa == qb && types_equal(inner.as_ref(), inner_b.as_ref())
-        }
-        _ => false,
-    }
-}
-
-/// Checks if two primitive types are equal.
-fn primitive_equal(a: &hir_ty::PrimitiveTy, b: &hir_ty::PrimitiveTy) -> bool {
-    match (a, b) {
-        (&hir_ty::PrimitiveTy::Bool, &hir_ty::PrimitiveTy::Bool) => true,
-        (&hir_ty::PrimitiveTy::Char, &hir_ty::PrimitiveTy::Char) => true,
-        (&hir_ty::PrimitiveTy::I8, &hir_ty::PrimitiveTy::I8) => true,
-        (&hir_ty::PrimitiveTy::I16, &hir_ty::PrimitiveTy::I16) => true,
-        (&hir_ty::PrimitiveTy::I32, &hir_ty::PrimitiveTy::I32) => true,
-        (&hir_ty::PrimitiveTy::I64, &hir_ty::PrimitiveTy::I64) => true,
-        (&hir_ty::PrimitiveTy::I128, &hir_ty::PrimitiveTy::I128) => true,
-        (&hir_ty::PrimitiveTy::Isize, &hir_ty::PrimitiveTy::Isize) => true,
-        (&hir_ty::PrimitiveTy::U8, &hir_ty::PrimitiveTy::U8) => true,
-        (&hir_ty::PrimitiveTy::U16, &hir_ty::PrimitiveTy::U16) => true,
-        (&hir_ty::PrimitiveTy::U32, &hir_ty::PrimitiveTy::U32) => true,
-        (&hir_ty::PrimitiveTy::U64, &hir_ty::PrimitiveTy::U64) => true,
-        (&hir_ty::PrimitiveTy::U128, &hir_ty::PrimitiveTy::U128) => true,
-        (&hir_ty::PrimitiveTy::Usize, &hir_ty::PrimitiveTy::Usize) => true,
-        (&hir_ty::PrimitiveTy::F32, &hir_ty::PrimitiveTy::F32) => true,
-        (&hir_ty::PrimitiveTy::F64, &hir_ty::PrimitiveTy::F64) => true,
-        (&hir_ty::PrimitiveTy::Str, &hir_ty::PrimitiveTy::Str) => true,
-        _ => false,
-    }
 }
 
 /// Strips reference wrappers from a TyId for auto-dereference.
@@ -442,16 +485,6 @@ pub fn strip_refs_id(ty: type_intern::TyId) -> type_intern::TyId {
             strip_refs_id(type_intern::TyId::new(inner.index))
         }
         _ => ty,
-    }
-}
-
-/// Strips reference wrappers from a type for auto-dereference (legacy hir_ty version).
-pub fn strip_refs(ty: &hir_ty::Type) -> hir_ty::Type {
-    match &ty.kind {
-        &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => {
-            strip_refs(inner.as_ref())
-        }
-        _ => hir_ty::copy_type(ty),
     }
 }
 
@@ -2057,18 +2090,25 @@ fn infer_stmt(checker: &mut typeck::TypeChecker, stmt: &hir_expr::Stmt) -> type_
             }
 
             // Infer or check initializer type
-            let init_ty = match init {
-                &Some(ref e) => infer_expr(checker, e),
-                &None => checker.fresh_infer(),
-            };
-
-            // Unify with declared type if present
-            match ty {
+            // When there's both a declared type and an initializer, use check_expr
+            // to allow coercions (e.g., &[T; N] -> &[T]).
+            let init_ty = match ty {
                 &Some(declared) => {
-                    checker.unify(init_ty, declared, pattern.span);
+                    match init {
+                        &Some(ref e) => {
+                            check_expr(checker, e, declared);
+                            declared
+                        }
+                        &None => declared,
+                    }
                 }
-                &None => {}
-            }
+                &None => {
+                    match init {
+                        &Some(ref e) => infer_expr(checker, e),
+                        &None => checker.fresh_infer(),
+                    }
+                }
+            };
 
             // Propagate the init type through the pattern structure.
             // This unifies the pattern's type variable with the concrete

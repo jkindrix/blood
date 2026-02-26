@@ -336,6 +336,27 @@ impl MethodResEntry {
     }
 }
 
+/// Entry recording an array-to-slice coercion for an expression.
+///
+/// The type checker records these when it detects that an expression of type
+/// &[T; N] needs to be coerced to &[T]. MIR lowering uses these to emit
+/// Rvalue::ArrayToSlice at the correct points.
+pub struct CoercionEntry {
+    /// The DefId.index of the containing function body.
+    pub body_def_id: u32,
+    /// The start byte offset of the coerced expression's span.
+    pub span_start: usize,
+    /// The array length (N in [T; N]).
+    pub array_len: u64,
+}
+
+impl CoercionEntry {
+    /// Creates a new coercion entry.
+    pub fn new(body_def_id: u32, span_start: usize, array_len: u64) -> CoercionEntry {
+        CoercionEntry { body_def_id, span_start, array_len }
+    }
+}
+
 /// A deferred method call whose receiver was an unresolved Infer type
 /// during initial type checking. After all bodies are checked, Infer
 /// variables may be resolved, allowing the method to be looked up.

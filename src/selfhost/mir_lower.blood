@@ -55,6 +55,7 @@ pub fn lower_body(
     subst_table: &unify::SubstTable,
     method_resolutions: &Vec<common::MethodResEntry>,
     field_resolutions: &Vec<common::FieldResEntry>,
+    coercion_entries: &Vec<common::CoercionEntry>,
 ) -> MirLowerResult {
     // Resolve the return type through the substitution table (TyId-native)
     let resolved_return_id = unify::apply_substs_id(subst_table, return_ty);
@@ -68,8 +69,11 @@ pub fn lower_body(
     // Clone field resolutions for this lowering context
     let cloned_field_res = clone_field_resolutions(field_resolutions);
 
+    // Clone coercion entries for this lowering context
+    let cloned_coercions = clone_coercion_entries(coercion_entries);
+
     // Create lowering context with the substitution table address, method and field resolutions
-    let mut ctx = mir_lower_ctx::MirLowerCtx::new(def_id, resolved_return_id, span, subst_table_addr, cloned_resolutions, cloned_field_res);
+    let mut ctx = mir_lower_ctx::MirLowerCtx::new(def_id, resolved_return_id, span, subst_table_addr, cloned_resolutions, cloned_field_res, cloned_coercions);
 
     // Lower parameters (first param_count locals are parameters)
     lower_params_from_body(&mut ctx, body, span);
@@ -147,7 +151,7 @@ pub fn lower_closure(
     // Resolve return type (TyId-native) and create lowering context
     let resolved_return_id = unify::apply_substs_id(subst_table, return_ty);
     let subst_table_addr = subst_table as u64;
-    let mut ctx = mir_lower_ctx::MirLowerCtx::new(def_id, resolved_return_id, span, subst_table_addr, Vec::new(), Vec::new());
+    let mut ctx = mir_lower_ctx::MirLowerCtx::new(def_id, resolved_return_id, span, subst_table_addr, Vec::new(), Vec::new(), Vec::new());
 
     // Lower closure parameters
     lower_closure_params(&mut ctx, params, span);
@@ -201,7 +205,7 @@ pub fn lower_static(
     // Resolve type (TyId-native) and create context
     let resolved_id = unify::apply_substs_id(subst_table, ty);
     let subst_table_addr = subst_table as u64;
-    let mut ctx = mir_lower_ctx::MirLowerCtx::new(def_id, resolved_id, span, subst_table_addr, Vec::new(), Vec::new());
+    let mut ctx = mir_lower_ctx::MirLowerCtx::new(def_id, resolved_id, span, subst_table_addr, Vec::new(), Vec::new(), Vec::new());
 
     // Lower initializer expression
     mir_lower_expr::lower_expr_to_return(&mut ctx, init);
@@ -334,6 +338,17 @@ fn clone_field_resolutions(src: &Vec<common::FieldResEntry>) -> Vec<common::Fiel
     let mut i: usize = 0;
     while i < src.len() {
         result.push(common::FieldResEntry::new(src[i].body_def_id, src[i].span_start, src[i].field_idx));
+        i = i + 1;
+    }
+    result
+}
+
+/// Clones a coercion entry table for passing to a new MirLowerCtx.
+fn clone_coercion_entries(src: &Vec<common::CoercionEntry>) -> Vec<common::CoercionEntry> {
+    let mut result: Vec<common::CoercionEntry> = Vec::new();
+    let mut i: usize = 0;
+    while i < src.len() {
+        result.push(common::CoercionEntry::new(src[i].body_def_id, src[i].span_start, src[i].array_len));
         i = i + 1;
     }
     result
