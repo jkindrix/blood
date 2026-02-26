@@ -1018,6 +1018,69 @@ pub fn parse_string_from_span(parser: &mut Parser, span: common::Span) -> String
     result
 }
 
+/// Parse a byte string literal from the source text (b"...").
+/// Returns Vec<u8> of the raw bytes with escape sequences processed.
+pub fn parse_byte_string_from_span(parser: &mut Parser, span: common::Span) -> Vec<u8> {
+    let start = span.start;
+    let end = span.end;
+    let mut result: Vec<u8> = Vec::new();
+
+    // Skip 'b"' prefix (2 bytes)
+    let mut pos = start + 2;
+
+    // Parse until closing quote
+    while pos < end {
+        let b = parser.source_byte_at(pos);
+        if b == 34 {
+            // '"' — closing quote
+            break;
+        }
+        if b == 92 && pos + 1 < end {
+            // '\' — escape sequence
+            pos = pos + 1;
+            let esc = parser.source_byte_at(pos);
+            if esc == 110 {
+                result.push(10); // \n
+            } else if esc == 116 {
+                result.push(9); // \t
+            } else if esc == 114 {
+                result.push(13); // \r
+            } else if esc == 92 {
+                result.push(92); // \\
+            } else if esc == 34 {
+                result.push(34); // \"
+            } else if esc == 48 {
+                result.push(0); // \0
+            } else if esc == 39 {
+                result.push(39); // \'
+            } else if esc == 120 {
+                // \x## — hex escape (2 hex digits)
+                pos = pos + 1;
+                let mut hex_val: u32 = 0;
+                if pos < end {
+                    let h1 = parser.source_byte_at(pos);
+                    hex_val = hex_digit_value(h1);
+                    pos = pos + 1;
+                }
+                if pos < end {
+                    let h2 = parser.source_byte_at(pos);
+                    hex_val = hex_val * 16 + hex_digit_value(h2);
+                }
+                result.push(hex_val as u8);
+            } else {
+                // Unknown escape — push both
+                result.push(92);
+                result.push(esc as u8);
+            }
+        } else {
+            result.push(b as u8);
+        }
+        pos = pos + 1;
+    }
+
+    result
+}
+
 /// Parse a raw string literal from the source text (no escape processing).
 /// Raw string tokens have the form r"..." — skip the r" prefix and " suffix.
 pub fn parse_raw_string_from_span(parser: &mut Parser, span: common::Span) -> String {
