@@ -169,7 +169,7 @@ fn parse_prefix_expr(parser: &mut parser_base::Parser) -> ast::Expr {
         // Unary minus
         token::TokenKind::Minus => {
             parser.advance();
-            let operand = parse_expr_with_precedence(parser, 13); // Unary precedence
+            let operand = parse_expr_with_precedence(parser, 14); // Above 'as' (13) so &x as T parses as (&x) as T
             let end_span = parser.previous.span;
             return ast::Expr {
                 kind: ast::ExprKind::Unary {
@@ -182,7 +182,7 @@ fn parse_prefix_expr(parser: &mut parser_base::Parser) -> ast::Expr {
         // Unary not
         token::TokenKind::Not => {
             parser.advance();
-            let operand = parse_expr_with_precedence(parser, 13);
+            let operand = parse_expr_with_precedence(parser, 14);
             let end_span = parser.previous.span;
             return ast::Expr {
                 kind: ast::ExprKind::Unary {
@@ -195,7 +195,7 @@ fn parse_prefix_expr(parser: &mut parser_base::Parser) -> ast::Expr {
         // Dereference
         token::TokenKind::Star => {
             parser.advance();
-            let operand = parse_expr_with_precedence(parser, 13);
+            let operand = parse_expr_with_precedence(parser, 14);
             let end_span = parser.previous.span;
             return ast::Expr {
                 kind: ast::ExprKind::Unary {
@@ -209,7 +209,7 @@ fn parse_prefix_expr(parser: &mut parser_base::Parser) -> ast::Expr {
         token::TokenKind::And => {
             parser.advance();
             let is_mut = parser.try_consume(token::TokenKind::Mut);
-            let operand = parse_expr_with_precedence(parser, 13);
+            let operand = parse_expr_with_precedence(parser, 14);
             let end_span = parser.previous.span;
             let unary_op = if is_mut { common::UnaryOp::RefMut } else { common::UnaryOp::Ref };
             return ast::Expr {
