@@ -3487,7 +3487,7 @@ fn codegen_thread_worker(arg: u64) -> u64 {
 
     // Per-thread codegen region: holds codegen temporaries + ctx growth.
     // Thread-local since regions use thread-local stacks.
-    let thread_codegen_region = region_create(33554432, 8589934592);
+    let thread_codegen_region = region_create(33554432, 17179869184);
     region_activate(thread_codegen_region);
 
     let mut i: usize = targ.chunk_start;
@@ -4253,8 +4253,8 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     // Codegen region: holds all codegen temporaries, string_table growth, etc.
     // Persists across all function compilations. Per-function mir_regions sit
     // on top for MIR lowering, then pop so codegen uses this region.
-    // 32 MB initial, 8 GB max — codegen produces ~50-100 MB of IR + metadata.
-    let codegen_region = region_create(33554432, 8589934592);
+    // 32 MB initial, 16 GB max — codegen produces ~50-100 MB of IR + metadata.
+    let codegen_region = region_create(33554432, 17179869184);
     region_activate(codegen_region);
 
     // Pass 2: MIR lowering + codegen, writing each function's IR directly to file.

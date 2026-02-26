@@ -1970,13 +1970,55 @@ fn add_decl_to_scope(
         &ast::Declaration::Bridge(_) => {}
         &ast::Declaration::Macro(_) => {}
         &ast::Declaration::Use(ref u) => {
-            // pub use module::Item — add the re-exported name to the current scope
-            let item_name_str = ctx.span_to_string(u.item_name.span);
-            let item_sym = ctx.intern(item_name_str.as_str());
-            let item_def = ctx.resolver.lookup_in_parent(parent_def_id, item_sym);
-            if item_def.is_some() {
-                let binding = resolve::Binding::def(item_def.unwrap());
-                ctx.resolver.define(item_sym, binding);
+            // Add re-exported names to the current scope
+            match &u.import {
+                &ast::Import::Simple { ref path, ref alias, span: _ } => {
+                    if path.segments.len() >= 2 {
+                        let last_idx = path.segments.len() - 1;
+                        let item_name_str = ctx.span_to_string(path.segments[last_idx].span);
+                        let item_sym = ctx.intern(item_name_str.as_str());
+                        let item_def = ctx.resolver.lookup_in_parent(parent_def_id, item_sym);
+                        if item_def.is_some() {
+                            let bind_sym = match alias {
+                                &Option::Some(ref alias_name) => {
+                                    let alias_str = ctx.span_to_string(alias_name.span);
+                                    ctx.intern(alias_str.as_str())
+                                }
+                                &Option::None => {
+                                    item_sym
+                                }
+                            };
+                            let binding = resolve::Binding::def(item_def.unwrap());
+                            ctx.resolver.define(bind_sym, binding);
+                        }
+                    }
+                }
+                &ast::Import::Group { ref path, ref items, span: _ } => {
+                    // For groups, each item is looked up in parent
+                    let mut gi: usize = 0;
+                    while gi < items.len() {
+                        let item_str = ctx.span_to_string(items[gi].name.span);
+                        let item_sym = ctx.intern(item_str.as_str());
+                        let item_def = ctx.resolver.lookup_in_parent(parent_def_id, item_sym);
+                        if item_def.is_some() {
+                            let bind_sym = match &items[gi].alias {
+                                &Option::Some(ref alias_name) => {
+                                    let alias_str = ctx.span_to_string(alias_name.span);
+                                    ctx.intern(alias_str.as_str())
+                                }
+                                &Option::None => {
+                                    item_sym
+                                }
+                            };
+                            let binding = resolve::Binding::def(item_def.unwrap());
+                            ctx.resolver.define(bind_sym, binding);
+                        }
+                        gi = gi + 1;
+                    }
+                }
+                &ast::Import::Glob { ref path, span: _ } => {
+                    // Glob imports not yet implemented
+                }
             }
         }
     }

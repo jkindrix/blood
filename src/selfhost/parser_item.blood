@@ -1372,35 +1372,88 @@ pub fn parse_declaration(parser: &mut parser_base::Parser) -> ast::Declaration {
         token::TokenKind::Static => ast::Declaration::Static(parse_static_decl(parser, attrs, vis)),
         token::TokenKind::Mod => ast::Declaration::Module(parse_mod_decl(parser, attrs, vis)),
         token::TokenKind::Use => {
-            // Parse `use module::Item;` or `use std.collections.hashmap::Item;`
+            // Parse use declarations: `use mod::Item;`, `use mod::{A, B};`, `use mod::*;`
             let use_start = parser.current.span;
             parser.advance(); // consume 'use'
             // Parse dot-separated module path: std.collections.hashmap
-            let mut module_path: Vec<common::SpannedSymbol> = Vec::new();
-            module_path.push(parser.parse_spanned_symbol());
+            let mut path_segments: Vec<common::SpannedSymbol> = Vec::new();
+            path_segments.push(parser.parse_spanned_symbol());
             while parser.current.kind == token::TokenKind::Dot {
                 parser.advance(); // consume '.'
-                module_path.push(parser.parse_spanned_symbol());
+                path_segments.push(parser.parse_spanned_symbol());
             }
-            // Expect '::'
             parser.expect(token::TokenKind::ColonColon);
-            // Expect item name (identifier)
-            let item_name = parser.parse_spanned_symbol();
-            // Expect ';'
-            let end_span = parser.current.span;
-            parser.expect(token::TokenKind::Semi);
-            let span = common::Span {
-                start: use_start.start,
-                end: end_span.end,
-                line: use_start.line,
-                column: use_start.column,
+            // Capture path span before potential move
+            let path_start = path_segments[0].span;
+            let path_end = path_segments[path_segments.len() - 1].span;
+            let path_span = common::Span {
+                start: path_start.start,
+                end: path_end.end,
+                line: path_start.line,
+                column: path_start.column,
             };
-            ast::Declaration::Use(ast::UseDecl {
-                vis,
-                module_path,
-                item_name,
-                span,
-            })
+            let import = if parser.current.kind == token::TokenKind::Star {
+                // Glob: use mod::*;
+                parser.advance(); // consume '*'
+                let end_span = parser.current.span;
+                parser.expect(token::TokenKind::Semi);
+                let path = ast::ModulePath { segments: path_segments, span: path_span };
+                ast::Import::Glob {
+                    path: path,
+                    span: common::Span { start: use_start.start, end: end_span.end, line: use_start.line, column: use_start.column },
+                }
+            } else if parser.current.kind == token::TokenKind::LBrace {
+                // Group: use mod::{A, B, C};
+                parser.advance(); // consume '{'
+                let mut items: Vec<ast::ImportItem> = Vec::new();
+                while parser.current.kind != token::TokenKind::RBrace && !parser.is_at_end() {
+                    let name = parser.parse_spanned_symbol();
+                    let alias = if parser.current.kind == token::TokenKind::As {
+                        parser.advance(); // consume 'as'
+                        Option::Some(parser.parse_spanned_symbol())
+                    } else {
+                        Option::None
+                    };
+                    items.push(ast::ImportItem { name: name, alias: alias });
+                    if parser.current.kind == token::TokenKind::Comma {
+                        parser.advance(); // consume ','
+                    } else {
+                        break;
+                    }
+                }
+                parser.expect(token::TokenKind::RBrace);
+                let end_span = parser.current.span;
+                parser.expect(token::TokenKind::Semi);
+                let path = ast::ModulePath { segments: path_segments, span: path_span };
+                ast::Import::Group {
+                    path: path,
+                    items: items,
+                    span: common::Span { start: use_start.start, end: end_span.end, line: use_start.line, column: use_start.column },
+                }
+            } else {
+                // Simple: use mod::Item;  or  use mod::Item as Alias;
+                let item_name = parser.parse_spanned_symbol();
+                let alias = if parser.current.kind == token::TokenKind::As {
+                    parser.advance(); // consume 'as'
+                    Option::Some(parser.parse_spanned_symbol())
+                } else {
+                    Option::None
+                };
+                let end_span = parser.current.span;
+                parser.expect(token::TokenKind::Semi);
+                // Append item name as last segment (Import::Simple convention)
+                path_segments.push(item_name);
+                let full_path = ast::ModulePath {
+                    segments: path_segments,
+                    span: common::Span { start: path_start.start, end: item_name.span.end, line: path_start.line, column: path_start.column },
+                };
+                ast::Import::Simple {
+                    path: full_path,
+                    alias: alias,
+                    span: common::Span { start: use_start.start, end: end_span.end, line: use_start.line, column: use_start.column },
+                }
+            };
+            ast::Declaration::Use(ast::UseDecl { vis: vis, import: import })
         }
         token::TokenKind::Effect => {
             let effect_decl = parse_effect_decl(parser, attrs);
