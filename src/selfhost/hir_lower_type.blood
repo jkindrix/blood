@@ -40,7 +40,7 @@ pub fn lower_type_id(ctx: &mut hir_lower_ctx::LoweringCtx, ty: &ast::Type) -> ty
         }
         &ast::TypeKind::Array { ref element, ref size } => {
             let elem_id = lower_type_id(ctx, element.as_ref());
-            let array_size = const_eval::eval_array_size_u64(size.as_ref());
+            let array_size = eval_array_size_or_const_param(ctx, size.as_ref());
             type_intern::type_interner().mk_array(elem_id, array_size)
         }
         &ast::TypeKind::Slice { ref element } => {
@@ -83,7 +83,10 @@ pub fn lower_type_id(ctx: &mut hir_lower_ctx::LoweringCtx, ty: &ast::Type) -> ty
             while i < fields.len() {
                 let f = &fields[i];
                 let field_id = lower_type_id(ctx, &f.ty);
-                interned_fields.push(type_intern::InternedRecordField::new(f.name.symbol, field_id));
+                // Re-intern field name for cross-interner consistency (AST → HIR interner)
+                let fname_str = ctx.span_to_string(f.name.span);
+                let fname_sym = ctx.intern(fname_str.as_str());
+                interned_fields.push(type_intern::InternedRecordField::new(fname_sym, field_id));
                 i = i + 1;
             }
             let row_var = match rest {
@@ -158,7 +161,7 @@ pub fn lower_type(ctx: &mut hir_lower_ctx::LoweringCtx, ty: &ast::Type) -> hir_t
         }
         &ast::TypeKind::Array { ref element, ref size } => {
             let elem_ty = lower_type(ctx, element.as_ref());
-            let array_size = const_eval::eval_array_size_u64(size.as_ref());
+            let array_size = eval_array_size_or_const_param(ctx, size.as_ref());
             hir_ty::Type::new(hir_ty::TypeKind::Array {
                 element: Box::new(elem_ty),
                 size: array_size,
@@ -205,7 +208,10 @@ pub fn lower_type(ctx: &mut hir_lower_ctx::LoweringCtx, ty: &ast::Type) -> hir_t
             while i < fields.len() {
                 let f = &fields[i];
                 let field_ty = lower_type(ctx, &f.ty);
-                let hir_field = hir_ty::RecordField::new(f.name.symbol, field_ty);
+                // Re-intern field name for cross-interner consistency (AST → HIR interner)
+                let fname_str = ctx.span_to_string(f.name.span);
+                let fname_sym = ctx.intern(fname_str.as_str());
+                let hir_field = hir_ty::RecordField::new(fname_sym, field_ty);
                 hir_fields.push(hir_field);
                 i = i + 1;
             }
@@ -878,6 +884,48 @@ pub fn lower_type_args(ctx: &mut hir_lower_ctx::LoweringCtx, args: &ast::TypeArg
 }
 
 // ============================================================
+// Const Param Array Size Helpers
+// ============================================================
+
+/// Sentinel value for array sizes that depend on a const generic parameter.
+/// During unification, arrays with this size match any concrete size.
+pub fn const_param_array_sentinel() -> u64 {
+    // u64::MAX — no real array will ever have this size
+    18446744073709551615
+}
+
+/// Evaluates an array size expression, handling const param references.
+/// If the size is a simple path to a const generic parameter, returns
+/// the sentinel value. Otherwise delegates to const_eval.
+fn eval_array_size_or_const_param(ctx: &mut hir_lower_ctx::LoweringCtx, size_expr: &ast::Expr) -> u64 {
+    // Check if the size expression is a simple path (single identifier)
+    match &size_expr.kind {
+        &ast::ExprKind::Path(ref path) => {
+            if path.segments.len() == 1 {
+                // Check if this name matches a const param in scope
+                let seg = &path.segments[0];
+                let name_str = ctx.span_to_string(seg.name.span);
+                let lookup_symbol = ctx.intern(name_str.as_str());
+                let mut is_const_param: bool = false;
+                let mut cpi: usize = 0;
+                while cpi < ctx.const_param_defs.len() {
+                    if ctx.const_param_defs[cpi].name.index == lookup_symbol.index {
+                        is_const_param = true;
+                    }
+                    cpi = cpi + 1;
+                }
+                if is_const_param {
+                    return const_param_array_sentinel();
+                }
+            }
+        }
+        _ => {}
+    }
+    // Fall through to normal const evaluation
+    const_eval::eval_array_size_u64(size_expr)
+}
+
+// ============================================================
 // Effect Row Lowering
 // ============================================================
 
@@ -1062,14 +1110,29 @@ pub fn lower_generics(ctx: &mut hir_lower_ctx::LoweringCtx, type_params: &Option
                         params.push(param);
                     }
                     &ast::GenericParam::Const(ref const_param) => {
+                        // Allocate DefId for const param first so it can be stored in HIR
+                        let cp_def_id = ctx.alloc_def_id();
                         let ty = lower_type(ctx, &const_param.ty);
                         let const_def = hir_ty::ConstParamDef::new(
                             const_param.name.symbol,
                             ty,
                             const_param.span,
+                            cp_def_id,
                         );
                         let param = hir_ty::GenericParam::ConstParam(const_def);
                         params.push(param);
+
+                        // Register const param as a Def binding so it can be used
+                        // as an expression in the function body (e.g., `N as i32`).
+                        let _ = ctx.resolver.define(const_param.name.symbol, resolve::Binding::def(cp_def_id));
+                        // Also define with re-interned symbol for consistent lookup
+                        let cp_name_str = ctx.span_to_string(const_param.name.span);
+                        let cp_symbol = ctx.intern(cp_name_str.as_str());
+                        if cp_symbol.index != const_param.name.symbol.index {
+                            let _ = ctx.resolver.define(cp_symbol, resolve::Binding::def(cp_def_id));
+                        }
+                        // Track the const param for array size resolution and codegen
+                        ctx.const_param_defs.push(hir_lower_ctx::ConstParamEntry::new(cp_def_id, cp_symbol));
                     }
                 }
                 i = i + 1;

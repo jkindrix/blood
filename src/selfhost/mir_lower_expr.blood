@@ -420,16 +420,31 @@ fn lower_path_expr(
                     span,
                 );
             } else {
-                // Path is a function, constant, static, or variant constructor
-                let constant = mir_types::Constant::new(
-                    type_intern::type_to_ty_id(ty),
-                    mir_types::ConstantKind::FnDef(path.def_id),
-                );
-                ctx.emit_assign(
-                    place,
-                    mir_types::Rvalue::Use(mir_types::Operand::Constant(constant)),
-                    span,
-                );
+                // Check if this is a bound const param (during specialized body lowering)
+                let const_val = ctx.lookup_const_binding(path.def_id.index);
+                match const_val {
+                    Option::Some(val) => {
+                        // Const param with a concrete binding — emit as usize constant
+                        let constant = mir_types::Constant::usize_val(val);
+                        ctx.emit_assign(
+                            place,
+                            mir_types::Rvalue::Use(mir_types::Operand::Constant(constant)),
+                            span,
+                        );
+                    }
+                    Option::None => {
+                        // Path is a function, constant, static, or variant constructor
+                        let constant = mir_types::Constant::new(
+                            type_intern::type_to_ty_id(ty),
+                            mir_types::ConstantKind::FnDef(path.def_id),
+                        );
+                        ctx.emit_assign(
+                            place,
+                            mir_types::Rvalue::Use(mir_types::Operand::Constant(constant)),
+                            span,
+                        );
+                    }
+                }
             }
         }
         Option::None => {}
@@ -801,11 +816,33 @@ fn lower_call_expr(
     // directly to enable direct calls in codegen (avoiding store/load indirection).
     let func_operand = match &callee.kind {
         &hir_expr::ExprKind::Path(ref path) => {
-            // Direct function reference — emit as FnDef constant
-            mir_types::Operand::Constant(mir_types::Constant::new(
-                callee.ty,
-                mir_types::ConstantKind::FnDef(path.def_id),
-            ))
+            // Check if this is a call to a const-generic function
+            if ctx.is_const_generic_fn(path.def_id.index) {
+                // Determine const values for this call
+                let const_values = determine_call_const_values(ctx, path, args, callee.span);
+                // Build specialized function name
+                let mono_name = build_mono_fn_name(ctx, path.def_id.index, &const_values);
+                // Allocate a specialized DefId
+                let specialized_def_id = ctx.alloc_mono_def_id();
+                // Record mono request
+                ctx.mono_requests.push(mir_lower_ctx::MonoRequest::new(
+                    path.def_id.index,
+                    clone_const_values(&const_values),
+                    specialized_def_id,
+                    clone_string(&mono_name),
+                ));
+                // Emit FnDef with specialized DefId
+                mir_types::Operand::Constant(mir_types::Constant::new(
+                    callee.ty,
+                    mir_types::ConstantKind::FnDef(hir_def::DefId::new(specialized_def_id)),
+                ))
+            } else {
+                // Direct function reference — emit as FnDef constant
+                mir_types::Operand::Constant(mir_types::Constant::new(
+                    callee.ty,
+                    mir_types::ConstantKind::FnDef(path.def_id),
+                ))
+            }
         }
         _ => {
             // Indirect call (closure, function pointer, etc.) — evaluate callee
@@ -2862,5 +2899,97 @@ fn collect_captures_in_stmt(
         }
         &hir_expr::Stmt::Item(_) => {}
     }
+}
+
+// ============================================================
+// Const Generic Call Helpers
+// ============================================================
+
+/// Determines const values for a call to a const-generic function.
+/// First tries turbofish values (explicit), then falls back to
+/// inferring from resolved argument array types.
+fn determine_call_const_values(
+    ctx: &mut mir_lower_ctx::MirLowerCtx,
+    path: &hir_def::ResolvedPath,
+    args: &Vec<hir_expr::Expr>,
+    callee_span: common::Span,
+) -> Vec<u64> {
+    // Try turbofish const args first (keyed by callee path span start)
+    let tf_idx = ctx.lookup_turbofish_const_args(callee_span.start as u32);
+    match tf_idx {
+        Option::Some(idx) => {
+            // Use turbofish values
+            let tf = &ctx.turbofish_const_args[idx as usize];
+            let mut result: Vec<u64> = Vec::new();
+            let mut i: usize = 0;
+            while i < tf.values.len() {
+                result.push(tf.values[i]);
+                i = i + 1;
+            }
+            return result;
+        }
+        Option::None => {}
+    }
+
+    // Infer const values from resolved argument types (array sizes).
+    // For each arg whose resolved type is an array, extract the size.
+    let expected_count = ctx.get_const_param_count(path.def_id.index);
+    let mut result: Vec<u64> = Vec::new();
+    let mut i: usize = 0;
+    while i < args.len() {
+        let arg = &args[i];
+        let resolved_ty = ctx.resolve_type_to_id(arg.ty);
+        let size = type_intern::get_array_size_from_id(resolved_ty);
+        match size {
+            Option::Some(s) => {
+                let sentinel: u64 = 18446744073709551615;
+                if s != sentinel {
+                    result.push(s);
+                }
+            }
+            Option::None => {}
+        }
+        i = i + 1;
+    }
+    result
+}
+
+/// Builds a monomorphized function name for a const-generic specialization.
+fn build_mono_fn_name(
+    ctx: &mut mir_lower_ctx::MirLowerCtx,
+    original_def_id: u32,
+    const_values: &Vec<u64>,
+) -> String {
+    // Look up the original function name from method resolutions or use def_id
+    let mut name = common::make_string("blood_mono$def");
+    name.push_str(codegen_types::format_u64(original_def_id as u64).as_str());
+    name.push_str("$");
+    let mut i: usize = 0;
+    while i < const_values.len() {
+        if i > 0 {
+            name.push_str("_");
+        }
+        name.push_str(codegen_types::format_u64(const_values[i]).as_str());
+        i = i + 1;
+    }
+    name
+}
+
+/// Clones a Vec<u64>.
+fn clone_const_values(values: &Vec<u64>) -> Vec<u64> {
+    let mut result: Vec<u64> = Vec::new();
+    let mut i: usize = 0;
+    while i < values.len() {
+        result.push(values[i]);
+        i = i + 1;
+    }
+    result
+}
+
+/// Clones a String.
+fn clone_string(s: &String) -> String {
+    let mut result = String::new();
+    result.push_str(s.as_str());
+    result
 }
 

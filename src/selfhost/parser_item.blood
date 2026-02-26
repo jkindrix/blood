@@ -1948,16 +1948,15 @@ fn parse_bridge_enum(parser: &mut parser_base::Parser, attrs: Vec<ast::Attribute
 // Macro Declaration Parsing
 // ============================================================
 
-/// Parse a macro declaration: macro name! { ... }
-/// Parses the header and skips the body content (macro rules are not yet expanded).
+/// Parse a macro declaration: macro name { ... }
+/// Parses the header and skips the body content (expansion handled at source level).
 fn parse_macro_decl(parser: &mut parser_base::Parser, attrs: Vec<ast::Attribute>, vis: common::Visibility) -> ast::MacroDecl {
     let start = parser.current.span;
     parser.advance(); // consume 'macro'
 
     let name = parser.parse_spanned_symbol();
-    parser.expect(token::TokenKind::Not); // consume '!'
 
-    // Skip body tokens between braces (full macro rule parsing deferred)
+    // Skip body tokens between braces (expansion handled at source level)
     parser.expect(token::TokenKind::LBrace);
     let mut depth: u32 = 1;
     while depth > 0 && parser.current.kind != token::TokenKind::Eof {
@@ -1980,6 +1979,7 @@ fn parse_macro_decl(parser: &mut parser_base::Parser, attrs: Vec<ast::Attribute>
         vis: vis,
         name: name,
         rules: Vec::new(),
+        body_source: String::new(),
         span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     }
 }

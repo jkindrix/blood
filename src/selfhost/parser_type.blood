@@ -196,8 +196,23 @@ pub fn parse_type_args(parser: &mut parser_base::Parser) -> ast::TypeArgs {
         if parser.check(token::TokenKind::Lifetime) {
             let lt_sym = parser.parse_spanned_symbol();
             args.push(ast::TypeArg::Lifetime(lt_sym));
+        } else if parser.check(token::TokenKind::IntLit) {
+            // Integer literal → const generic argument
+            let lit_span = parser.current.span;
+            let int_val = parser_base::parse_int_value_from_span(parser, lit_span);
+            let int_suffix = parser_base::parse_int_suffix_from_span(parser, lit_span);
+            parser.advance();
+            let lit = ast::Literal {
+                kind: ast::LiteralKind::Int { val: int_val, suffix: int_suffix },
+                span: lit_span,
+            };
+            let expr = ast::Expr {
+                kind: ast::ExprKind::Literal(lit),
+                span: lit_span,
+            };
+            args.push(ast::TypeArg::Const(expr));
         } else {
-            // Type or const expression
+            // Type argument
             let ty = parse_type(parser);
             args.push(ast::TypeArg::Type(ty));
         }

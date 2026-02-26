@@ -480,7 +480,11 @@ fn lower_path_expr(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::ExprPath, s
 
             // Lower type arguments if present
             let type_args = match &seg.args {
-                &Some(ref args) => hir_lower_type::lower_type_args(ctx, args),
+                &Some(ref args) => {
+                    // Record turbofish const args for monomorphization
+                    record_turbofish_const_args(ctx, args, span.start as u32);
+                    hir_lower_type::lower_type_args(ctx, args)
+                }
                 &None => Vec::new(),
             };
             let type_arg_count = type_args.len() as u32;
@@ -537,7 +541,10 @@ fn lower_path_expr(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::ExprPath, s
         // Get type args from last segment
         let last_seg = &path.segments[path.segments.len() - 1];
         let type_args = match &last_seg.args {
-            &Some(ref args) => hir_lower_type::lower_type_args(ctx, args),
+            &Some(ref args) => {
+                record_turbofish_const_args(ctx, args, span.start as u32);
+                hir_lower_type::lower_type_args(ctx, args)
+            }
             &None => Vec::new(),
         };
         let type_arg_count = type_args.len() as u32;
@@ -964,8 +971,12 @@ fn lower_anon_record_expr(
                 }
             }
         };
+        // Re-intern field name for cross-interner consistency (AST → HIR interner)
+        let fname_str = ctx.span_to_string(f.name.span);
+        let fname_sym = ctx.intern(fname_str.as_str());
+        let re_name = common::SpannedSymbol { symbol: fname_sym, span: f.name.span };
         let field_hir = hir_expr::AnonRecordField::new(
-            f.name,
+            re_name,
             val_hir,
             f.span,
         );
@@ -3080,4 +3091,39 @@ fn parse_format_segments(fmt: &str) -> Vec<FormatSegment> {
     segments
 }
 
+/// Records turbofish const arg values from type arguments.
+/// If any TypeArg::Const entries exist, evaluates them and stores in the lowering context
+/// keyed by span_start so MIR lowering can recover the values for monomorphization.
+fn record_turbofish_const_args(
+    ctx: &mut hir_lower_ctx::LoweringCtx,
+    args: &ast::TypeArgs,
+    span_start: u32,
+) {
+    let mut values: Vec<u64> = Vec::new();
+    let mut has_const: bool = false;
+    let mut i: usize = 0;
+    while i < args.args.len() {
+        match &args.args[i] {
+            &ast::TypeArg::Const(ref expr) => {
+                let val = const_eval::eval_const_expr(expr);
+                match val {
+                    const_eval::ConstValue::Int(n) => {
+                        values.push(n as u64);
+                        has_const = true;
+                    }
+                    const_eval::ConstValue::Uint(n) => {
+                        values.push(n);
+                        has_const = true;
+                    }
+                    const_eval::ConstValue::Error => {}
+                }
+            }
+            _ => {}
+        }
+        i = i + 1;
+    }
+    if has_const {
+        ctx.turbofish_const_entries.push(hir_lower_ctx::TurbofishEntry::new(span_start, values));
+    }
+}
 

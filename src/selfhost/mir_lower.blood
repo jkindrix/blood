@@ -34,6 +34,10 @@ pub struct MirLowerResult {
     pub closure_names: Vec<String>,
     /// Closure MIR bodies (parallel to closure_names).
     pub closure_mir: Vec<mir_body::MirBody>,
+    /// Monomorphization requests from const-generic call interception.
+    pub mono_requests: Vec<mir_lower_ctx::MonoRequest>,
+    /// Next mono DefId counter (after allocations in this lowering).
+    pub next_mono_def_id: u32,
 }
 
 // ============================================================
@@ -97,12 +101,75 @@ pub fn lower_body(
     let closure_mir = ctx.closure_mir;
 
     // Finish and return the MIR body
+    let mono_requests = ctx.mono_requests;
+    let next_mono_def_id = ctx.next_mono_def_id;
     let mir_body = ctx.finish();
     MirLowerResult {
         body: mir_body,
         errors: errors,
         closure_names: closure_names,
         closure_mir: closure_mir,
+        mono_requests: mono_requests,
+        next_mono_def_id: next_mono_def_id,
+    }
+}
+
+/// Lowers an HIR function body to MIR with const-generic context.
+///
+/// This variant sets const-generic fields on the MIR lowering context before lowering.
+/// Used for both:
+/// - Normal bodies that may call const-generic functions (pass const_generic_fn_set)
+/// - Specialized bodies where const params are bound to concrete values (pass const_bindings)
+pub fn lower_body_with_const_info(
+    def_id: hir_def::DefId,
+    body: &hir_expr::Body,
+    return_ty: type_intern::TyId,
+    span: common::Span,
+    subst_table: &unify::SubstTable,
+    method_resolutions: &Vec<common::MethodResEntry>,
+    field_resolutions: &Vec<common::FieldResEntry>,
+    coercion_entries: &Vec<common::CoercionEntry>,
+    const_bindings: Vec<mir_lower_ctx::ConstBinding>,
+    const_generic_fn_set: Vec<u32>,
+    turbofish_const_args: Vec<mir_lower_ctx::TurbofishConstArg>,
+    const_generic_param_counts: Vec<u32>,
+    next_mono_def_id: u32,
+) -> MirLowerResult {
+    let resolved_return_id = unify::apply_substs_id(subst_table, return_ty);
+    let subst_table_addr = subst_table as u64;
+    let cloned_resolutions = clone_method_resolutions(method_resolutions);
+    let cloned_field_res = clone_field_resolutions(field_resolutions);
+    let cloned_coercions = clone_coercion_entries(coercion_entries);
+
+    let mut ctx = mir_lower_ctx::MirLowerCtx::new(def_id, resolved_return_id, span, subst_table_addr, cloned_resolutions, cloned_field_res, cloned_coercions);
+
+    // Set const-generic fields
+    ctx.const_bindings = const_bindings;
+    ctx.const_generic_fn_set = const_generic_fn_set;
+    ctx.turbofish_const_args = turbofish_const_args;
+    ctx.const_generic_param_counts = const_generic_param_counts;
+    ctx.next_mono_def_id = next_mono_def_id;
+
+    lower_params_from_body(&mut ctx, body, span);
+    mir_lower_expr::lower_expr_to_return(&mut ctx, &body.expr);
+
+    if !ctx.is_terminated() {
+        ctx.terminate_return(span);
+    }
+
+    let errors = ctx.take_errors();
+    let closure_names = ctx.closure_names;
+    let closure_mir = ctx.closure_mir;
+    let mono_requests = ctx.mono_requests;
+    let next_mono_def_id = ctx.next_mono_def_id;
+    let mir_body = ctx.finish();
+    MirLowerResult {
+        body: mir_body,
+        errors: errors,
+        closure_names: closure_names,
+        closure_mir: closure_mir,
+        mono_requests: mono_requests,
+        next_mono_def_id: next_mono_def_id,
     }
 }
 

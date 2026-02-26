@@ -20,6 +20,7 @@ mod resolve;
 mod mir_def;
 mod mir_body;
 mod mir_lower;
+mod mir_lower_ctx;
 mod codegen;
 mod interner;
 mod unify;
@@ -27,6 +28,7 @@ mod typeck;
 mod typeck_driver;
 mod source;
 mod type_intern;
+mod macro_expand;
 
 // ============================================================
 // Compilation Result
@@ -225,9 +227,44 @@ impl Compiler {
             return CompileResult::err(errors);
         }
 
-        // Phase 4: Lower HIR bodies to MIR
+        // Phase 4a: Pre-analysis — identify const-generic functions
+        let mut const_generic_fn_set: Vec<u32> = Vec::new();
+        let mut const_generic_param_counts: Vec<u32> = Vec::new();
+        let mut const_generic_body_ids: Vec<u32> = Vec::new();
+        collect_const_generic_fns(
+            &lower_result.items,
+            &mut const_generic_fn_set,
+            &mut const_generic_param_counts,
+            &mut const_generic_body_ids,
+        );
+
+        // Convert turbofish entries from HIR to MIR format
+        let mut turbofish_const_args: Vec<mir_lower_ctx::TurbofishConstArg> = Vec::new();
+        {
+            let mut ti: usize = 0;
+            while ti < lower_result.turbofish_const_entries.len() {
+                let entry = &lower_result.turbofish_const_entries[ti];
+                let mut vals: Vec<u64> = Vec::new();
+                let mut vi: usize = 0;
+                while vi < entry.values.len() {
+                    vals.push(entry.values[vi]);
+                    vi = vi + 1;
+                }
+                turbofish_const_args.push(mir_lower_ctx::TurbofishConstArg::new(
+                    entry.span_start,
+                    vals,
+                ));
+                ti = ti + 1;
+            }
+        }
+
+        // Phase 4b: Lower HIR bodies to MIR
         let mut mir_functions: Vec<(String, mir_body::MirBody)> = Vec::new();
         let mut mir_errors: Vec<error::CompileError> = Vec::new();
+        let mut all_mono_requests: Vec<mir_lower_ctx::MonoRequest> = Vec::new();
+        let mut next_mono_def_id: u32 = 0;
+        let has_const_generics: bool = const_generic_fn_set.len() > 0;
+
         let mut body_idx: usize = 0;
         while body_idx < lower_result.bodies.len() {
             let body_entry = &lower_result.bodies[body_idx];
@@ -256,24 +293,65 @@ impl Compiler {
             };
 
             // Get DefId from function info or use body_id's index as fallback.
-            // This fallback must match typeck_driver's find_def_id_for_body fallback
-            // to ensure method resolution lookups use consistent keys.
             let def_id = match &fn_info {
                 &Option::Some(ref info) => info.def_id,
                 &Option::None => hir_def::DefId::new(body_id.index),
             };
 
-            // Lower the body to MIR with substitution table for type resolution
-            let mut mir_result = mir_lower::lower_body(
-                def_id,
-                hir_body,
-                return_ty,
-                span,
-                &typeck_result.subst_table,
-                &typeck_result.method_resolutions,
-                &typeck_result.field_resolutions,
-                &typeck_result.coercion_entries,
-            );
+            // Skip const-generic function bodies — they'll be re-lowered per specialization
+            if is_const_generic_body(body_id.index, &const_generic_body_ids) {
+                body_idx = body_idx + 1;
+                continue;
+            }
+
+            // Lower the body to MIR
+            let mut mir_result = if has_const_generics {
+                mir_lower::lower_body_with_const_info(
+                    def_id,
+                    hir_body,
+                    return_ty,
+                    span,
+                    &typeck_result.subst_table,
+                    &typeck_result.method_resolutions,
+                    &typeck_result.field_resolutions,
+                    &typeck_result.coercion_entries,
+                    Vec::new(), // No const_bindings for non-specialized bodies
+                    clone_u32_vec(&const_generic_fn_set),
+                    clone_turbofish_args(&turbofish_const_args),
+                    clone_u32_vec(&const_generic_param_counts),
+                    next_mono_def_id,
+                )
+            } else {
+                mir_lower::lower_body(
+                    def_id,
+                    hir_body,
+                    return_ty,
+                    span,
+                    &typeck_result.subst_table,
+                    &typeck_result.method_resolutions,
+                    &typeck_result.field_resolutions,
+                    &typeck_result.coercion_entries,
+                )
+            };
+
+            // Update next_mono_def_id counter
+            if mir_result.next_mono_def_id > next_mono_def_id {
+                next_mono_def_id = mir_result.next_mono_def_id;
+            }
+
+            // Collect mono requests
+            {
+                let mut ri: usize = 0;
+                while ri < mir_result.mono_requests.len() {
+                    all_mono_requests.push(mir_lower_ctx::MonoRequest::new(
+                        mir_result.mono_requests[ri].original_def_id,
+                        clone_u64_vec(&mir_result.mono_requests[ri].const_values),
+                        mir_result.mono_requests[ri].specialized_def_id,
+                        common::make_string(mir_result.mono_requests[ri].fn_name.as_str()),
+                    ));
+                    ri = ri + 1;
+                }
+            }
 
             // Collect any MIR lowering errors
             let mut ei: usize = 0;
@@ -300,6 +378,59 @@ impl Compiler {
             }
 
             body_idx = body_idx + 1;
+        }
+
+        // Phase 4c: Monomorphize const-generic functions
+        // For each mono request, find the original HIR body, lower it with const_bindings,
+        // and add the specialized function to mir_functions.
+        {
+            let mut mi: usize = 0;
+            while mi < all_mono_requests.len() {
+                let req = &all_mono_requests[mi];
+
+                // Find the HIR body and FnInfo for the original const-generic function
+                let body_and_info = find_body_for_def_id(&lower_result.bodies, &lower_result.items, req.original_def_id);
+                match body_and_info {
+                    Option::Some(ref binfo) => {
+                        // Build const_bindings using Phase 4 DefIds from BodyEntry
+                        let body_entry = &lower_result.bodies[binfo.body_index];
+                        let const_bindings = build_const_bindings_from_body(
+                            &body_entry.const_param_def_ids,
+                            &req.const_values,
+                        );
+
+                        // Lower the body with const_bindings
+                        let mut spec_result = mir_lower::lower_body_with_const_info(
+                            hir_def::DefId::new(req.specialized_def_id),
+                            &lower_result.bodies[binfo.body_index].body,
+                            binfo.return_ty,
+                            binfo.span,
+                            &typeck_result.subst_table,
+                            &typeck_result.method_resolutions,
+                            &typeck_result.field_resolutions,
+                            &typeck_result.coercion_entries,
+                            const_bindings,
+                            Vec::new(), // No const_generic_fn_set for specialized bodies
+                            Vec::new(), // No turbofish for specialized bodies
+                            Vec::new(), // No param counts for specialized bodies
+                            0,          // No mono alloc needed
+                        );
+
+                        // Collect errors
+                        let mut ei: usize = 0;
+                        while ei < spec_result.errors.len() {
+                            mir_errors.push(convert_mir_error(&spec_result.errors[ei]));
+                            ei = ei + 1;
+                        }
+
+                        // Add specialized function
+                        mir_functions.push((common::make_string(req.fn_name.as_str()), spec_result.body));
+                    }
+                    Option::None => {}
+                }
+
+                mi = mi + 1;
+            }
         }
 
         // Halt before codegen if MIR lowering produced errors
@@ -608,15 +739,15 @@ pub fn convert_type_errors(type_errors: &Vec<typeck::TypeError>) -> Vec<error::C
 }
 
 /// Converts a single MIR lowering error to a compile error.
-fn convert_mir_error(err: &mir_lower::mir_lower_ctx::MirLowerError) -> error::CompileError {
-    let mut message = common::make_string(mir_lower::mir_lower_ctx::mir_error_kind_label(&err.kind));
+fn convert_mir_error(err: &mir_lower_ctx::MirLowerError) -> error::CompileError {
+    let mut message = common::make_string(mir_lower_ctx::mir_error_kind_label(&err.kind));
     message.push_str(": ");
     message.push_str(err.message.as_str());
     let mut ce = error::CompileError::with_code(
         error::CompilePhase::MirLower,
         message,
         err.span,
-        common::make_string(mir_lower::mir_lower_ctx::mir_error_code(&err.kind)),
+        common::make_string(mir_lower_ctx::mir_error_code(&err.kind)),
     );
     let mut ni: usize = 0;
     while ni < err.notes.len() {
@@ -1275,7 +1406,9 @@ pub fn check_file(path: &str) -> CheckResult {
         }
     };
 
-    let source_str = content.as_str();
+    // Preprocess macros before parsing (source-level expansion)
+    let expanded_source = macro_expand::preprocess_macros(content);
+    let source_str = expanded_source.as_str();
 
     // Get the base directory for module resolution
     let base_dir = source::parent_dir(path);
@@ -1329,3 +1462,177 @@ pub fn check_file_traced(path: &str, region_id: u64) -> CheckResult {
 fn clone_string_from_ref(s: &String) -> String {
     common::make_string(s.as_str())
 }
+
+// ============================================================
+// Const Generics Support
+// ============================================================
+
+/// Scans HIR items for const-generic functions and collects their DefIds,
+/// param counts, and body IDs.
+pub fn collect_const_generic_fns(
+    items: &Vec<hir_lower_ctx::ItemEntry>,
+    fn_set: &mut Vec<u32>,
+    param_counts: &mut Vec<u32>,
+    body_ids: &mut Vec<u32>,
+) {
+    let mut i: usize = 0;
+    while i < items.len() {
+        let entry = &items[i];
+        match &entry.item.kind {
+            &hir_item::ItemKind::Fn(ref fn_def) => {
+                let count = count_const_params(&fn_def.sig.generics);
+                if count > 0 {
+                    fn_set.push(entry.item.def_id.index);
+                    param_counts.push(count);
+                    match &fn_def.body_id {
+                        &Option::Some(ref bid) => {
+                            body_ids.push(bid.index);
+                        }
+                        &Option::None => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+        i = i + 1;
+    }
+}
+
+/// Counts the number of const generic parameters in a Generics.
+fn count_const_params(generics: &hir_ty::Generics) -> u32 {
+    let mut count: u32 = 0;
+    let mut i: usize = 0;
+    while i < generics.params.len() {
+        match &generics.params[i] {
+            &hir_ty::GenericParam::ConstParam(_) => {
+                count = count + 1;
+            }
+            &hir_ty::GenericParam::TypeParam(_) => {}
+            &hir_ty::GenericParam::LifetimeParam(_) => {}
+        }
+        i = i + 1;
+    }
+    count
+}
+
+/// Checks if a body_id belongs to a const-generic function.
+pub fn is_const_generic_body(body_id_index: u32, const_generic_body_ids: &Vec<u32>) -> bool {
+    let mut i: usize = 0;
+    while i < const_generic_body_ids.len() {
+        if const_generic_body_ids[i] == body_id_index {
+            return true;
+        }
+        i = i + 1;
+    }
+    false
+}
+
+/// Information about a body needed for monomorphization.
+pub struct BodyInfo {
+    pub body_index: usize,
+    pub return_ty: type_intern::TyId,
+    pub span: common::Span,
+}
+
+/// Finds the HIR body index and info for a function given its DefId.
+pub fn find_body_for_def_id(
+    bodies: &Vec<hir_lower_ctx::BodyEntry>,
+    items: &Vec<hir_lower_ctx::ItemEntry>,
+    def_id_index: u32,
+) -> Option<BodyInfo> {
+    // Find the function item to get its body_id and return type
+    let mut i: usize = 0;
+    while i < items.len() {
+        let entry = &items[i];
+        match &entry.item.kind {
+            &hir_item::ItemKind::Fn(ref fn_def) => {
+                if entry.item.def_id.index == def_id_index {
+                    match &fn_def.body_id {
+                        &Option::Some(ref bid) => {
+                            // Find the body index
+                            let mut bi: usize = 0;
+                            while bi < bodies.len() {
+                                if bodies[bi].body_id.index == bid.index {
+                                    return Option::Some(BodyInfo {
+                                        body_index: bi,
+                                        return_ty: fn_def.sig.return_ty,
+                                        span: entry.item.span,
+                                    });
+                                }
+                                bi = bi + 1;
+                            }
+                        }
+                        &Option::None => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+        i = i + 1;
+    }
+    Option::None
+}
+
+/// Builds const_bindings for a specialized body by mapping const param DefIds to values.
+/// Builds const_bindings from Phase 4 const param DefIds and concrete values.
+/// Uses const_param_def_ids from BodyEntry (Phase 4 DefIds that match body references).
+pub fn build_const_bindings_from_body(
+    const_param_def_ids: &Vec<u32>,
+    const_values: &Vec<u64>,
+) -> Vec<mir_lower_ctx::ConstBinding> {
+    let mut bindings: Vec<mir_lower_ctx::ConstBinding> = Vec::new();
+    let mut i: usize = 0;
+    while i < const_param_def_ids.len() && i < const_values.len() {
+        bindings.push(mir_lower_ctx::ConstBinding::new(
+            const_param_def_ids[i],
+            const_values[i],
+        ));
+        i = i + 1;
+    }
+    bindings
+}
+
+/// Clones a Vec<u32>.
+pub fn clone_u32_vec(v: &Vec<u32>) -> Vec<u32> {
+    let mut result: Vec<u32> = Vec::new();
+    let mut i: usize = 0;
+    while i < v.len() {
+        result.push(v[i]);
+        i = i + 1;
+    }
+    result
+}
+
+/// Clones a Vec<u64>.
+pub fn clone_u64_vec(v: &Vec<u64>) -> Vec<u64> {
+    let mut result: Vec<u64> = Vec::new();
+    let mut i: usize = 0;
+    while i < v.len() {
+        result.push(v[i]);
+        i = i + 1;
+    }
+    result
+}
+
+/// Clones turbofish const arg entries.
+pub fn clone_turbofish_args(
+    args: &Vec<mir_lower_ctx::TurbofishConstArg>,
+) -> Vec<mir_lower_ctx::TurbofishConstArg> {
+    let mut result: Vec<mir_lower_ctx::TurbofishConstArg> = Vec::new();
+    let mut i: usize = 0;
+    while i < args.len() {
+        let mut vals: Vec<u64> = Vec::new();
+        let mut vi: usize = 0;
+        while vi < args[i].values.len() {
+            vals.push(args[i].values[vi]);
+            vi = vi + 1;
+        }
+        result.push(mir_lower_ctx::TurbofishConstArg::new(
+            args[i].span_start,
+            vals,
+        ));
+        i = i + 1;
+    }
+    result
+}
+

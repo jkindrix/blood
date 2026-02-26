@@ -1354,6 +1354,8 @@ fn infer_field(
                     let mut i: usize = 0;
                     while i < fields.len() {
                         if fields[i].name.index == name.symbol.index {
+                            // Record the resolved field index for MIR lowering
+                            checker.record_field_resolution(name.span.start, i as u32);
                             return type_intern::type_to_ty_id(&fields[i].ty);
                         }
                         i = i + 1;

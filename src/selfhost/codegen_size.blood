@@ -224,7 +224,7 @@ pub fn type_to_llvm_fast_id(ty_id: type_intern::TyId) -> Option<&str> {
         &type_intern::InternedTypeKind::Fn { params: _, ret: _, effects: _ } => Option::Some("{ ptr, ptr }"),
         &type_intern::InternedTypeKind::Closure { def_id: _, params: _, ret: _ } => Option::Some("{ ptr, ptr }"),
         &type_intern::InternedTypeKind::Infer(_) => Option::Some("i64"),
-        &type_intern::InternedTypeKind::Record { fields: _, row_var: _ } => Option::Some("ptr"),
+        &type_intern::InternedTypeKind::Record { fields: _, row_var: _ } => Option::None, // needs slow path to build struct
         &type_intern::InternedTypeKind::Forall { params: _, body: _ } => Option::Some("ptr"),
         &type_intern::InternedTypeKind::Error => Option::Some("i64"),
         _ => Option::None,
@@ -328,6 +328,29 @@ pub fn type_to_llvm_with_ctx_id(
                     let elem_llvm = type_to_llvm_with_ctx_id(ctx, elem_id);
                     result.push_str(elem_llvm.as_str());
                     ti = ti + 1;
+                }
+                result.push_str(" }");
+                result
+            }
+        }
+        &type_intern::InternedTypeKind::Record { fields, row_var: _ } => {
+            // Build LLVM struct type from record fields: { field1_ty, field2_ty, ... }
+            let interner = type_intern::type_interner();
+            let field_list = interner.get_record_field_list(fields);
+            let len = field_list.fields.len();
+            if len == 0 {
+                common::make_string("{}")
+            } else {
+                let mut result = common::make_string("{ ");
+                let mut fi: usize = 0;
+                while fi < len {
+                    if fi > 0 {
+                        result.push_str(", ");
+                    }
+                    let field_ty_id = field_list.fields[fi].ty;
+                    let field_llvm = type_to_llvm_with_ctx_id(ctx, field_ty_id);
+                    result.push_str(field_llvm.as_str());
+                    fi = fi + 1;
                 }
                 result.push_str(" }");
                 result

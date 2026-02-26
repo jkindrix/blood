@@ -380,8 +380,20 @@ fn parse_primary_expr(parser: &mut parser_base::Parser) -> ast::Expr {
         token::TokenKind::LBracket => {
             return parse_array_expr(parser);
         }
-        // Block expression
+        // Block expression or anonymous record
         token::TokenKind::LBrace => {
+            // Disambiguate: anonymous record `{ ident: expr, ... }` vs block `{ stmts }`
+            // After '{', if we see `Ident :` it's an anonymous record.
+            if parser.check_next(token::TokenKind::Ident) {
+                let brace_start = parser.current.span;
+                parser.advance(); // consume '{'
+                // Now current=Ident. If next is ':', this is an anonymous record.
+                if parser.check(token::TokenKind::Ident) && parser.check_next(token::TokenKind::Colon) {
+                    return parse_anon_record_inner(parser, brace_start);
+                }
+                // Not a record — parse as block with '{' already consumed.
+                return parse_block_expr_inner(parser, brace_start);
+            }
             return parse_block_expr(parser);
         }
         // If expression
@@ -1025,6 +1037,100 @@ fn parse_block_expr(parser: &mut parser_base::Parser) -> ast::Expr {
     let start = parser.current.span;
     let block = parse_block(parser);
     let end_span = parser.previous.span;
+
+    ast::Expr {
+        kind: ast::ExprKind::Block(block),
+        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    }
+}
+
+/// Parse an anonymous record expression after '{' has been consumed.
+/// Called when disambiguator determined { ident: ... } is a record, not a block.
+fn parse_anon_record_inner(parser: &mut parser_base::Parser, start: common::Span) -> ast::Expr {
+    let mut fields: Vec<ast::RecordExprField> = Vec::new();
+    let mut base: Option<Box<ast::Expr>> = Option::None;
+
+    while !parser.check(token::TokenKind::RBrace) && !parser.is_at_end() {
+        // Check for base: ..expr
+        if parser.check(token::TokenKind::DotDot) {
+            parser.advance();
+            base = Option::Some(Box::new(parse_expr(parser)));
+            break;
+        }
+
+        let field_start = parser.current.span;
+        let field_name = parser.parse_spanned_symbol();
+
+        let val = if parser.try_consume(token::TokenKind::Colon) {
+            Option::Some(parse_expr(parser))
+        } else {
+            // Shorthand: val is None means use the field name as the value
+            Option::None
+        };
+
+        let field_end = parser.previous.span;
+        let field = ast::RecordExprField {
+            name: field_name,
+            val: val,
+            span: common::Span { start: field_start.start, end: field_end.end, line: field_start.line, column: field_start.column },
+        };
+        fields.push(field);
+
+        if !parser.try_consume(token::TokenKind::Comma) {
+            break;
+        }
+    }
+
+    parser.expect(token::TokenKind::RBrace);
+    let end_span = parser.previous.span;
+
+    ast::Expr {
+        kind: ast::ExprKind::Record {
+            path: Option::None,
+            fields: fields,
+            base: base,
+        },
+        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    }
+}
+
+/// Parse a block expression after '{' has been consumed.
+/// Called when disambiguator rejected record and fell through to block parsing.
+fn parse_block_expr_inner(parser: &mut parser_base::Parser, start: common::Span) -> ast::Expr {
+    let mut stmts: Vec<ast::Statement> = Vec::new();
+    let mut final_expr: Option<Box<ast::Expr>> = Option::None;
+
+    while !parser.check(token::TokenKind::RBrace) && !parser.is_at_end() {
+        let stmt = parse_statement(parser);
+
+        match stmt {
+            ast::Statement::Expr { expr, has_semi } => {
+                if !has_semi && parser.check(token::TokenKind::RBrace) {
+                    final_expr = Option::Some(Box::new(expr));
+                } else {
+                    let expr_stmt = ast::Statement::Expr { expr: expr, has_semi: has_semi };
+                    stmts.push(expr_stmt);
+                }
+            }
+            ast::Statement::Let { pattern, ty, init_val, span } => {
+                let let_stmt = ast::Statement::Let { pattern: pattern, ty: ty, init_val: init_val, span: span };
+                stmts.push(let_stmt);
+            }
+            ast::Statement::Item(decl) => {
+                let item_stmt = ast::Statement::Item(decl);
+                stmts.push(item_stmt);
+            }
+        }
+    }
+
+    parser.expect(token::TokenKind::RBrace);
+    let end_span = parser.previous.span;
+
+    let block = ast::Block {
+        statements: stmts,
+        expr: final_expr,
+        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    };
 
     ast::Expr {
         kind: ast::ExprKind::Block(block),

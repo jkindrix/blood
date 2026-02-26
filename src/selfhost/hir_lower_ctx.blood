@@ -98,6 +98,9 @@ pub struct LowerResult {
     /// Covers constructors (String::new, Vec::new, Box::new, HashMap::new)
     /// and variant constructors (Option::Some, Option::None, Result::Ok, Result::Err).
     pub builtin_fn_defs: Vec<BuiltinFnDef>,
+    /// Turbofish const arg entries from HIR lowering.
+    /// Used by the driver to pass explicit const values to MIR lowering for monomorphization.
+    pub turbofish_const_entries: Vec<TurbofishEntry>,
 }
 
 impl LowerResult {
@@ -144,6 +147,7 @@ impl LowerResult {
             builtin_result_err_def: builtin_result_err_def,
             interner: interner,
             builtin_fn_defs: builtin_fn_defs,
+            turbofish_const_entries: Vec::new(),
         }
     }
 
@@ -170,6 +174,7 @@ impl LowerResult {
             builtin_result_err_def: Option::None,
             interner: interner::StringInterner::new(),
             builtin_fn_defs: Vec::new(),
+            turbofish_const_entries: Vec::new(),
         }
     }
 
@@ -196,6 +201,7 @@ impl LowerResult {
             builtin_result_err_def: Option::None,
             interner: interner::StringInterner::new(),
             builtin_fn_defs: Vec::new(),
+            turbofish_const_entries: Vec::new(),
         }
     }
 
@@ -306,6 +312,37 @@ pub struct LoweringCtx {
     /// Optional path to the stdlib directory. When set, `mod std;` resolves to
     /// `stdlib_path/mod.blood` instead of `base_dir/std.blood`.
     pub stdlib_path: Option<String>,
+    /// Const generic parameter DefIds for the current function being lowered.
+    /// Each entry is (def_id, name_symbol, type). Cleared between functions.
+    pub const_param_defs: Vec<ConstParamEntry>,
+    /// Turbofish const arg entries recorded during expression lowering.
+    /// Each entry records explicit const values from turbofish syntax (e.g., `f::<3, 4>()`).
+    pub turbofish_const_entries: Vec<TurbofishEntry>,
+}
+
+/// Tracks a const generic parameter during HIR lowering.
+pub struct ConstParamEntry {
+    pub def_id: hir_def::DefId,
+    pub name: common::Symbol,
+}
+
+impl ConstParamEntry {
+    pub fn new(def_id: hir_def::DefId, name: common::Symbol) -> ConstParamEntry {
+        ConstParamEntry { def_id, name }
+    }
+}
+
+/// A turbofish const arg entry: records explicit const values from turbofish syntax.
+/// Keyed by the path expression's span start so MIR lowering can recover the values.
+pub struct TurbofishEntry {
+    pub span_start: u32,
+    pub values: Vec<u64>,
+}
+
+impl TurbofishEntry {
+    pub fn new(span_start: u32, values: Vec<u64>) -> TurbofishEntry {
+        TurbofishEntry { span_start, values }
+    }
 }
 
 /// Tracks a loaded external module to prevent circular imports.
@@ -334,11 +371,15 @@ impl ItemEntry {
 pub struct BodyEntry {
     pub body_id: hir_def::BodyId,
     pub body: hir_expr::Body,
+    /// DefIds assigned to const generic params during Phase 4 body lowering.
+    /// Empty for non-const-generic functions. Used by monomorphization to
+    /// build const_bindings mapping DefId → concrete value.
+    pub const_param_def_ids: Vec<u32>,
 }
 
 impl BodyEntry {
     pub fn new(body_id: hir_def::BodyId, body: hir_expr::Body) -> BodyEntry {
-        BodyEntry { body_id, body }
+        BodyEntry { body_id, body, const_param_def_ids: Vec::new() }
     }
 }
 
@@ -386,6 +427,8 @@ impl LoweringCtx {
             builtin_fn_defs: Vec::new(),
             seen_trait_impls: Vec::new(),
             stdlib_path: Option::None,
+            const_param_defs: Vec::new(),
+            turbofish_const_entries: Vec::new(),
         }
     }
 
@@ -425,6 +468,8 @@ impl LoweringCtx {
             builtin_fn_defs: Vec::new(),
             seen_trait_impls: Vec::new(),
             stdlib_path: Option::None,
+            const_param_defs: Vec::new(),
+            turbofish_const_entries: Vec::new(),
         }
     }
 

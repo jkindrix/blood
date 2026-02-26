@@ -1,0 +1,346 @@
+// Blood Self-Hosted Compiler - Source-Level Macro Expansion
+//
+// Preprocesses source text to expand user-defined macros before parsing.
+// This is a simple text-level expansion: find macro declarations, extract
+// patterns and templates, then substitute invocations.
+
+mod common;
+
+/// A macro definition extracted from source text.
+struct MacroDef {
+    name: String,
+    capture_name: String,
+    expansion: String,
+    decl_start: usize,
+    decl_end: usize,
+}
+
+/// Preprocess macros in source text.
+/// Returns the source with macros expanded and declarations removed.
+/// If no macros are found, returns the original source unchanged.
+pub fn preprocess_macros(source: &String) -> String {
+    let bytes = source.as_bytes();
+    let len = bytes.len();
+
+    // Find macro declarations
+    let mut macros: Vec<MacroDef> = Vec::new();
+    let mut pos: usize = 0;
+    while pos < len {
+        // Look for "macro " keyword at start of a line or after whitespace
+        if matches_keyword(bytes, pos, len) {
+            match parse_macro_def(bytes, pos, len) {
+                Option::Some(m) => {
+                    macros.push(m);
+                    // Skip past this macro declaration
+                    let last_idx = macros.len() - 1;
+                    pos = macros[last_idx].decl_end;
+                }
+                Option::None => {
+                    pos = pos + 1;
+                }
+            }
+        } else {
+            pos = pos + 1;
+        }
+    }
+
+    if macros.is_empty() {
+        // No macros found — return original source
+        let mut result = String::new();
+        result.push_str(source.as_str());
+        return result;
+    }
+
+    // Build source with macro declarations removed
+    let mut cleaned = String::new();
+    let mut prev_end: usize = 0;
+    let mut mi: usize = 0;
+    while mi < macros.len() {
+        // Copy text before this macro declaration
+        let mut ci: usize = prev_end;
+        while ci < macros[mi].decl_start && ci < len {
+            cleaned.push(bytes[ci] as char);
+            ci = ci + 1;
+        }
+        prev_end = macros[mi].decl_end;
+        mi = mi + 1;
+    }
+    // Copy remaining text
+    let mut ci2: usize = prev_end;
+    while ci2 < len {
+        cleaned.push(bytes[ci2] as char);
+        ci2 = ci2 + 1;
+    }
+
+    // Expand invocations for each macro
+    let mut result = cleaned;
+    let mut mi2: usize = 0;
+    while mi2 < macros.len() {
+        result = expand_invocations(&result, &macros[mi2]);
+        mi2 = mi2 + 1;
+    }
+
+    result
+}
+
+/// Check if "macro " keyword starts at position pos.
+/// Must be preceded by start-of-file, newline, or whitespace.
+fn matches_keyword(bytes: &[u8], pos: usize, len: usize) -> bool {
+    // Need at least 6 chars: "macro "
+    if pos + 6 > len { return false; }
+
+    // Check "macro "
+    if bytes[pos] != 109 { return false; }     // 'm'
+    if bytes[pos + 1] != 97 { return false; }   // 'a'
+    if bytes[pos + 2] != 99 { return false; }   // 'c'
+    if bytes[pos + 3] != 114 { return false; }  // 'r'
+    if bytes[pos + 4] != 111 { return false; }  // 'o'
+    if bytes[pos + 5] != 32 { return false; }   // ' '
+
+    // Must be at start or after whitespace/newline
+    if pos == 0 { return true; }
+    let prev = bytes[pos - 1];
+    prev == 10 || prev == 13 || prev == 32 || prev == 9 // \n, \r, space, tab
+}
+
+/// Parse a macro definition starting at "macro " keyword.
+fn parse_macro_def(bytes: &[u8], start: usize, len: usize) -> Option<MacroDef> {
+    let mut pos: usize = start + 6; // skip "macro "
+
+    // Skip whitespace
+    while pos < len && is_whitespace(bytes[pos]) {
+        pos = pos + 1;
+    }
+
+    // Parse macro name
+    let name_start = pos;
+    while pos < len && is_ident_char(bytes[pos]) {
+        pos = pos + 1;
+    }
+    if pos == name_start { return Option::None; }
+    let mut name = String::new();
+    let mut ni: usize = name_start;
+    while ni < pos {
+        name.push(bytes[ni] as char);
+        ni = ni + 1;
+    }
+
+    // Skip whitespace
+    while pos < len && is_whitespace(bytes[pos]) {
+        pos = pos + 1;
+    }
+
+    // Expect opening brace
+    if pos >= len || bytes[pos] != 123 { return Option::None; } // '{'
+    pos = pos + 1;
+
+    // Find the pattern: look for ($capture:kind)
+    // Skip to '('
+    while pos < len && bytes[pos] != 40 { // '('
+        pos = pos + 1;
+    }
+    if pos >= len { return Option::None; }
+    pos = pos + 1; // skip '('
+
+    // Parse capture: $name:kind
+    let mut capture_name = String::new();
+    // Find '$'
+    while pos < len && bytes[pos] != 36 { // '$'
+        pos = pos + 1;
+    }
+    if pos >= len { return Option::None; }
+    pos = pos + 1; // skip '$'
+
+    // Read capture name
+    while pos < len && is_ident_char(bytes[pos]) {
+        capture_name.push(bytes[pos] as char);
+        pos = pos + 1;
+    }
+
+    // Skip ':kind)' — we don't need the kind for simple expansion
+    while pos < len && bytes[pos] != 41 { // ')'
+        pos = pos + 1;
+    }
+    if pos >= len { return Option::None; }
+    pos = pos + 1; // skip ')'
+
+    // Skip whitespace
+    while pos < len && is_whitespace(bytes[pos]) {
+        pos = pos + 1;
+    }
+
+    // Expect '=>'
+    if pos + 1 >= len { return Option::None; }
+    if bytes[pos] != 61 || bytes[pos + 1] != 62 { return Option::None; } // '=' '>'
+    pos = pos + 2;
+
+    // Skip whitespace
+    while pos < len && is_whitespace(bytes[pos]) {
+        pos = pos + 1;
+    }
+
+    // Expect '{' for expansion body
+    if pos >= len || bytes[pos] != 123 { return Option::None; } // '{'
+    pos = pos + 1; // skip '{'
+    let expansion_start = pos;
+
+    // Find matching '}'
+    let mut depth: u32 = 1;
+    while pos < len && depth > 0 {
+        if bytes[pos] == 123 { depth = depth + 1; } // '{'
+        if bytes[pos] == 125 { depth = depth - 1; } // '}'
+        if depth > 0 { pos = pos + 1; }
+    }
+    let expansion_end = pos;
+    if pos >= len { return Option::None; }
+    pos = pos + 1; // skip '}'
+
+    // Extract expansion text (between { and })
+    let mut expansion = String::new();
+    let mut ei: usize = expansion_start;
+    while ei < expansion_end {
+        expansion.push(bytes[ei] as char);
+        ei = ei + 1;
+    }
+
+    // Skip ';' and whitespace to find the outer closing '}'
+    while pos < len && (is_whitespace(bytes[pos]) || bytes[pos] == 59) { // ';'
+        pos = pos + 1;
+    }
+    // Expect outer '}'
+    if pos < len && bytes[pos] == 125 { // '}'
+        pos = pos + 1;
+    }
+
+    // Skip trailing newline
+    if pos < len && bytes[pos] == 10 { // '\n'
+        pos = pos + 1;
+    }
+
+    Option::Some(MacroDef {
+        name: name,
+        capture_name: capture_name,
+        expansion: expansion,
+        decl_start: start,
+        decl_end: pos,
+    })
+}
+
+/// Expand all invocations of a macro in the source text.
+fn expand_invocations(source: &String, macro_def: &MacroDef) -> String {
+    let bytes = source.as_bytes();
+    let len = bytes.len();
+    let name_bytes = macro_def.name.as_bytes();
+    let name_len = name_bytes.len();
+
+    let mut result = String::new();
+    let mut pos: usize = 0;
+
+    while pos < len {
+        // Check if macro name starts at this position
+        if pos + name_len + 1 < len && matches_name(bytes, pos, name_bytes, name_len) {
+            let after_name = pos + name_len;
+            // Check for '!' after name
+            if bytes[after_name] == 33 { // '!'
+                let after_bang = after_name + 1;
+                // Check for '(' after '!'
+                if after_bang < len && bytes[after_bang] == 40 { // '('
+                    // Must be preceded by start, newline, whitespace, or semicolon
+                    let valid_prefix = pos == 0 || is_whitespace(bytes[pos - 1])
+                        || bytes[pos - 1] == 59 || bytes[pos - 1] == 123 // ';' or '{'
+                        || bytes[pos - 1] == 10; // '\n'
+                    if valid_prefix {
+                        // Found invocation — extract arguments
+                        let arg_start = after_bang + 1;
+                        let mut arg_pos = arg_start;
+                        let mut depth: u32 = 1;
+                        while arg_pos < len && depth > 0 {
+                            if bytes[arg_pos] == 40 { depth = depth + 1; } // '('
+                            if bytes[arg_pos] == 41 { depth = depth - 1; } // ')'
+                            if depth > 0 { arg_pos = arg_pos + 1; }
+                        }
+                        let arg_end = arg_pos;
+
+                        // Extract argument text
+                        let mut arg = String::new();
+                        let mut ai: usize = arg_start;
+                        while ai < arg_end {
+                            arg.push(bytes[ai] as char);
+                            ai = ai + 1;
+                        }
+
+                        // Perform substitution: replace $capture_name with arg
+                        let expanded = substitute(&macro_def.expansion, &macro_def.capture_name, &arg);
+
+                        // Emit block-wrapped expansion
+                        result.push(123 as char); // '{'
+                        result.push(32 as char);  // ' '
+                        result.push_str(expanded.as_str());
+                        result.push(32 as char);  // ' '
+                        result.push(125 as char); // '}'
+
+                        // Skip past the invocation including closing ')'
+                        pos = arg_end + 1; // +1 for ')'
+                        continue;
+                    }
+                }
+            }
+        }
+
+        // Copy character as-is
+        result.push(bytes[pos] as char);
+        pos = pos + 1;
+    }
+
+    result
+}
+
+/// Check if name_bytes matches at position pos in bytes.
+fn matches_name(bytes: &[u8], pos: usize, name_bytes: &[u8], name_len: usize) -> bool {
+    let mut i: usize = 0;
+    while i < name_len {
+        if bytes[pos + i] != name_bytes[i] { return false; }
+        i = i + 1;
+    }
+    true
+}
+
+/// Substitute all occurrences of $name with replacement in template text.
+fn substitute(template: &String, capture_name: &String, replacement: &String) -> String {
+    let bytes = template.as_bytes();
+    let len = bytes.len();
+    let name_bytes = capture_name.as_bytes();
+    let name_len = name_bytes.len();
+
+    let mut result = String::new();
+    let mut pos: usize = 0;
+
+    while pos < len {
+        // Check for '$' followed by capture name
+        if bytes[pos] == 36 && pos + 1 + name_len <= len { // '$'
+            if matches_name(bytes, pos + 1, name_bytes, name_len) {
+                // Check that the next char after the name is not an ident char
+                let after = pos + 1 + name_len;
+                let boundary = after >= len || !is_ident_char(bytes[after]);
+                if boundary {
+                    result.push_str(replacement.as_str());
+                    pos = after;
+                    continue;
+                }
+            }
+        }
+        result.push(bytes[pos] as char);
+        pos = pos + 1;
+    }
+
+    result
+}
+
+fn is_whitespace(b: u8) -> bool {
+    b == 32 || b == 9 || b == 10 || b == 13 // space, tab, \n, \r
+}
+
+fn is_ident_char(b: u8) -> bool {
+    (b >= 97 && b <= 122) || (b >= 65 && b <= 90) || (b >= 48 && b <= 57) || b == 95
+    // a-z, A-Z, 0-9, _
+}

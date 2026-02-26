@@ -398,12 +398,15 @@ pub struct ConstParamDef {
     pub ty: Type,
     /// Span where this parameter was declared.
     pub span: common::Span,
+    /// DefId assigned to this const param during HIR lowering.
+    /// Used by the driver for monomorphization: maps const param DefIds to concrete values.
+    pub def_id: hir_def::DefId,
 }
 
 impl ConstParamDef {
     /// Creates a new const parameter definition.
-    pub fn new(name: common::Symbol, ty: Type, span: common::Span) -> ConstParamDef {
-        ConstParamDef { name, ty, span }
+    pub fn new(name: common::Symbol, ty: Type, span: common::Span, def_id: hir_def::DefId) -> ConstParamDef {
+        ConstParamDef { name, ty, span, def_id }
     }
 }
 

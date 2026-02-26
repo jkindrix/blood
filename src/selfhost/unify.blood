@@ -1979,7 +1979,10 @@ fn unify_structural_id(
             let kind_b = type_intern::type_interner().get(b);
             match kind_b {
                 &type_intern::InternedTypeKind::Array { element, size } => {
-                    if size_a != size {
+                    // Allow const-param sentinel size (u64::MAX) to match any size.
+                    // This enables `[i32; N]` to unify with `[i32; 5]`.
+                    let sentinel: u64 = 18446744073709551615;
+                    if size_a != size && size_a != sentinel && size != sentinel {
                         return UnifyResult::Err(UnifyError::mismatch(span));
                     }
                     unify_id(table, unifier, elem_a, element, span)

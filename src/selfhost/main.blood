@@ -28,6 +28,7 @@ mod resolve;
 mod mir_def;
 mod mir_body;
 mod mir_lower;
+mod mir_lower_ctx;
 mod codegen;
 mod codegen_ctx;
 mod codegen_streaming;
@@ -44,6 +45,7 @@ mod dump_mir;
 mod validate_mir;
 mod codegen_size;
 mod type_intern;
+mod macro_expand;
 
 // ============================================================
 // Command Line Arguments
@@ -2056,7 +2058,8 @@ fn register_enum_variant_names(
 }
 
 /// Generates LLVM `declare` statements for all foreign functions in the items list.
-/// These are runtime builtins that need extern declarations for linking.
+/// Builtins (Abi::Rust) apply skip filters for intrinsic wrappers.
+/// Bridge FFI (Abi::C) always emits declarations for C library linking.
 fn generate_foreign_declarations(
     intern: &interner::StringInterner,
     items: &Vec<hir_lower_ctx::ItemEntry>,
@@ -2069,28 +2072,40 @@ fn generate_foreign_declarations(
         let entry = &items[i];
         match &entry.item.kind {
             &hir_item::ItemKind::Foreign(ref foreign_def) => {
+                // Bridge FFI uses Abi::C; builtins use Abi::Rust.
+                // Only apply intrinsic/region/format skip filters for builtins.
+                let is_builtin = match &foreign_def.abi {
+                    &hir_item::Abi::C => false,
+                    &hir_item::Abi::Rust => true,
+                    &hir_item::Abi::System => true,
+                    &hir_item::Abi::Stdcall => true,
+                    &hir_item::Abi::Fastcall => true,
+                    &hir_item::Abi::Other(ref _s) => true,
+                };
                 let mut fi: usize = 0;
                 while fi < foreign_def.items.len() {
                     match &foreign_def.items[fi] {
                         &hir_item::ForeignItem::Fn(ref ff) => {
                             let name = resolve_symbol(intern, ff.name.symbol);
-                            // Skip region_* functions - they are defined as
-                            // wrappers around blood_region_* in intrinsic_declarations()
-                            if is_region_builtin(name.as_str()) {
-                                fi = fi + 1;
-                                continue;
-                            }
-                            // Skip format runtime builtins - they are declared with
-                            // correct { ptr, i64 } return type in intrinsic_declarations()
-                            if is_format_runtime_builtin(name.as_str()) {
-                                fi = fi + 1;
-                                continue;
-                            }
-                            // Skip builtins that have wrapper definitions in
-                            // intrinsic_declarations() (print→print_str, assert→blood_assert, etc.)
-                            if is_intrinsic_wrapper_builtin(name.as_str()) {
-                                fi = fi + 1;
-                                continue;
+                            if is_builtin {
+                                // Skip region_* functions - they are defined as
+                                // wrappers around blood_region_* in intrinsic_declarations()
+                                if is_region_builtin(name.as_str()) {
+                                    fi = fi + 1;
+                                    continue;
+                                }
+                                // Skip format runtime builtins - they are declared with
+                                // correct { ptr, i64 } return type in intrinsic_declarations()
+                                if is_format_runtime_builtin(name.as_str()) {
+                                    fi = fi + 1;
+                                    continue;
+                                }
+                                // Skip builtins that have wrapper definitions in
+                                // intrinsic_declarations() (print→print_str, assert→blood_assert, etc.)
+                                if is_intrinsic_wrapper_builtin(name.as_str()) {
+                                    fi = fi + 1;
+                                    continue;
+                                }
                             }
                             let ret_hir_ty = type_intern::ty_id_to_type(ff.return_ty);
                             let ret_ty = codegen_types::return_type_to_llvm(&ret_hir_ty);
@@ -3371,6 +3386,7 @@ struct CodegenWorkList {
 fn build_codegen_worklist(
     lower_result: &hir_lower_ctx::LowerResult,
     static_def_ids: &Vec<u32>,
+    const_generic_body_ids: &Vec<u32>,
 ) -> CodegenWorkList {
     let mut items: Vec<CodegenWorkItem> = Vec::new();
     let mut defined_names: Vec<String> = Vec::new();
@@ -3411,6 +3427,12 @@ fn build_codegen_worklist(
             sbi = sbi + 1;
         }
         if is_static_body {
+            body_idx = body_idx + 1;
+            continue;
+        }
+
+        // Skip const-generic function bodies — they'll be monomorphized later.
+        if driver::is_const_generic_body(body_id.index, const_generic_body_ids) {
             body_idx = body_idx + 1;
             continue;
         }
@@ -3585,6 +3607,7 @@ fn codegen_thread_worker(arg: u64) -> u64 {
 
 /// Runs Pass 2 codegen, writing each function's IR directly to output_path.
 /// Processes functions sequentially with per-function MIR regions for memory efficiency.
+/// Returns collected mono_requests and next_mono_def_id for const-generic monomorphization.
 fn codegen_pass2(
     ctx: &mut codegen_ctx::CodegenCtx,
     worklist: &CodegenWorkList,
@@ -3592,10 +3615,21 @@ fn codegen_pass2(
     typeck_result: &typeck_driver::TypeCheckResult,
     output_path: &str,
     args: &Args,
-) -> bool {
+    has_const_generics: bool,
+    const_generic_fn_set: &Vec<u32>,
+    const_generic_param_counts: &Vec<u32>,
+    turbofish_const_args: &Vec<mir_lower_ctx::TurbofishConstArg>,
+    next_mono_def_id_in: u32,
+) -> CodegenPass2Result {
+    let mut all_mono_requests: Vec<mir_lower_ctx::MonoRequest> = Vec::new();
+    let mut next_mono_def_id: u32 = next_mono_def_id_in;
+
     let total_items: usize = worklist.items.len();
     if total_items == 0 {
-        return true;
+        return CodegenPass2Result {
+            mono_requests: all_mono_requests,
+            next_mono_def_id: next_mono_def_id,
+        };
     }
 
     let mut i: usize = 0;
@@ -3621,21 +3655,61 @@ fn codegen_pass2(
         let mir_region = region_create(4194304, 8589934592);
         region_activate(mir_region);
 
-        let mir_result = mir_lower::lower_body(
-            work.def_id,
-            hir_body,
-            type_intern::TyId::new(work.return_ty.index),
-            work.span,
-            &typeck_result.subst_table,
-            &typeck_result.method_resolutions,
-            &typeck_result.field_resolutions,
-            &typeck_result.coercion_entries,
-        );
+        let mir_result = if has_const_generics {
+            mir_lower::lower_body_with_const_info(
+                work.def_id,
+                hir_body,
+                type_intern::TyId::new(work.return_ty.index),
+                work.span,
+                &typeck_result.subst_table,
+                &typeck_result.method_resolutions,
+                &typeck_result.field_resolutions,
+                &typeck_result.coercion_entries,
+                Vec::new(), // No const_bindings for non-specialized bodies
+                driver::clone_u32_vec(const_generic_fn_set),
+                driver::clone_turbofish_args(turbofish_const_args),
+                driver::clone_u32_vec(const_generic_param_counts),
+                next_mono_def_id,
+            )
+        } else {
+            mir_lower::lower_body(
+                work.def_id,
+                hir_body,
+                type_intern::TyId::new(work.return_ty.index),
+                work.span,
+                &typeck_result.subst_table,
+                &typeck_result.method_resolutions,
+                &typeck_result.field_resolutions,
+                &typeck_result.coercion_entries,
+            )
+        };
 
         // Pop mir_region — codegen_region becomes active again.
         // MIR data remains valid until region_destroy below.
         region_deactivate();
 
+        // Update next_mono_def_id counter
+        if mir_result.next_mono_def_id > next_mono_def_id {
+            next_mono_def_id = mir_result.next_mono_def_id;
+        }
+
+        // Collect mono requests and register specialized function names immediately
+        // so codegen of the calling function can resolve them.
+        {
+            let mut ri: usize = 0;
+            while ri < mir_result.mono_requests.len() {
+                let req_ref = &mir_result.mono_requests[ri];
+                // Register the specialized name BEFORE codegen of this function
+                ctx.register_def_name(req_ref.specialized_def_id, common::make_string(req_ref.fn_name.as_str()));
+                all_mono_requests.push(mir_lower_ctx::MonoRequest::new(
+                    req_ref.original_def_id,
+                    driver::clone_u64_vec(&req_ref.const_values),
+                    req_ref.specialized_def_id,
+                    common::make_string(req_ref.fn_name.as_str()),
+                ));
+                ri = ri + 1;
+            }
+        }
 
         // Report MIR lowering errors (non-fatal in streaming mode — continue to codegen)
         if mir_result.errors.len() > 0 {
@@ -3731,7 +3805,16 @@ fn codegen_pass2(
         i = i + 1;
     }
 
-    true
+    CodegenPass2Result {
+        mono_requests: all_mono_requests,
+        next_mono_def_id: next_mono_def_id,
+    }
+}
+
+/// Result of codegen pass 2, containing mono requests for const-generic monomorphization.
+struct CodegenPass2Result {
+    mono_requests: Vec<mir_lower_ctx::MonoRequest>,
+    next_mono_def_id: u32,
 }
 
 /// Finds the call remapping entries for a given default method DefId.
@@ -3988,11 +4071,13 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     let parse_region = region_create(2097152, 10737418240);
     region_activate(parse_region);
 
-    let parse_result = parser::parse_file(content.as_str());
+    // Preprocess macros before parsing (source-level expansion)
+    let expanded_source = macro_expand::preprocess_macros(content);
+    let parse_result = parser::parse_file(expanded_source.as_str());
     let parse_elapsed = blood_clock_millis() - parse_start;
     if parse_result.errors.len() > 0 {
         eprint_str(" FAILED\n");
-        let error_reporter = reporter::ErrorReporter::new(content.as_str(), path);
+        let error_reporter = reporter::ErrorReporter::new(expanded_source.as_str(), path);
         let parse_errors = driver::convert_parse_errors(&parse_result.errors);
         let formatted = error_reporter.format_errors(&parse_errors);
         print_str(formatted.as_str());
@@ -4029,7 +4114,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     region_activate(hir_region);
 
     let stdlib_path = resolve_stdlib_path(args);
-    let lower_result = hir_lower::lower_program_with_base_dir(program, base_dir, content.as_str(), stdlib_path);
+    let lower_result = hir_lower::lower_program_with_base_dir(program, base_dir, expanded_source.as_str(), stdlib_path);
     let hir_elapsed = blood_clock_millis() - hir_start;
 
     // Check for HIR lowering errors
@@ -4049,7 +4134,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     }
     if has_hir_errors {
         eprint_str(" FAILED\n");
-        let error_reporter = reporter::ErrorReporter::new(content.as_str(), path);
+        let error_reporter = reporter::ErrorReporter::new(expanded_source.as_str(), path);
         let hir_errors = driver::convert_hir_diagnostics(&lower_result.diagnostics);
         let formatted = error_reporter.format_errors(&hir_errors);
         print_str(formatted.as_str());
@@ -4091,7 +4176,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     let typeck_elapsed = blood_clock_millis() - typeck_start;
     if !typeck_result.success {
         eprint_str(" FAILED\n");
-        let error_reporter = reporter::ErrorReporter::new(content.as_str(), path);
+        let error_reporter = reporter::ErrorReporter::new(expanded_source.as_str(), path);
         let type_errors = driver::convert_type_errors(&typeck_result.errors);
         let formatted = error_reporter.format_errors(&type_errors);
         print_str(formatted.as_str());
@@ -4239,9 +4324,42 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
         hop_i = hop_i + 1;
     }
 
+    // Pre-analysis: identify const-generic functions for monomorphization.
+    let mut const_generic_fn_set: Vec<u32> = Vec::new();
+    let mut const_generic_param_counts: Vec<u32> = Vec::new();
+    let mut const_generic_body_ids: Vec<u32> = Vec::new();
+    driver::collect_const_generic_fns(
+        &lower_result.items,
+        &mut const_generic_fn_set,
+        &mut const_generic_param_counts,
+        &mut const_generic_body_ids,
+    );
+
+    // Convert turbofish entries from HIR to MIR format
+    let mut turbofish_const_args: Vec<mir_lower_ctx::TurbofishConstArg> = Vec::new();
+    {
+        let mut ti: usize = 0;
+        while ti < lower_result.turbofish_const_entries.len() {
+            let entry = &lower_result.turbofish_const_entries[ti];
+            let mut vals: Vec<u64> = Vec::new();
+            let mut vi: usize = 0;
+            while vi < entry.values.len() {
+                vals.push(entry.values[vi]);
+                vi = vi + 1;
+            }
+            turbofish_const_args.push(mir_lower_ctx::TurbofishConstArg::new(
+                entry.span_start,
+                vals,
+            ));
+            ti = ti + 1;
+        }
+    }
+
+    let has_const_generics: bool = const_generic_fn_set.len() > 0;
+
     // Build work list: scan bodies once to identify which functions to codegen.
-    // Filters out static bodies and duplicates from generic instantiations.
-    let worklist = build_codegen_worklist(&lower_result, &static_def_ids);
+    // Filters out static bodies, duplicates, and const-generic bodies.
+    let worklist = build_codegen_worklist(&lower_result, &static_def_ids, &const_generic_body_ids);
     eprint_str("[worklist:");
     eprint_str(int_to_string(worklist.items.len() as i32));
     eprint_str("]");
@@ -4260,8 +4378,81 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     // Pass 2: MIR lowering + codegen, writing each function's IR directly to file.
     ctx.flush_write_buffer();
     eprint_str("[pass2_start]");
-    let _pass2_ok = codegen_pass2(&mut ctx, &worklist, &lower_result, &typeck_result, output_path, args);
+    let pass2_result = codegen_pass2(
+        &mut ctx, &worklist, &lower_result, &typeck_result, output_path, args,
+        has_const_generics, &const_generic_fn_set, &const_generic_param_counts,
+        &turbofish_const_args, 0,
+    );
     eprint_str("[pass2_done]");
+
+    // Pass 2b: Monomorphization — generate specialized copies of const-generic functions.
+    if pass2_result.mono_requests.len() > 0 {
+        eprint_str("[mono:");
+        eprint_str(int_to_string(pass2_result.mono_requests.len() as i32));
+        eprint_str("]");
+
+        let mut mono_i: usize = 0;
+        while mono_i < pass2_result.mono_requests.len() {
+            let req = &pass2_result.mono_requests[mono_i];
+
+            // Find the original function's body
+            let body_info = driver::find_body_for_def_id(
+                &lower_result.bodies,
+                &lower_result.items,
+                req.original_def_id,
+            );
+            match &body_info {
+                &Option::Some(ref info) => {
+                    let body_entry = &lower_result.bodies[info.body_index];
+                    let hir_body = &body_entry.body;
+
+                    // Build const_bindings using Phase 4 DefIds from the BodyEntry
+                    let const_bindings = driver::build_const_bindings_from_body(
+                        &body_entry.const_param_def_ids,
+                        &req.const_values,
+                    );
+
+                    // Lower with const-generic bindings
+                    let mir_region = region_create(4194304, 8589934592);
+                    region_activate(mir_region);
+
+                    let mono_mir = mir_lower::lower_body_with_const_info(
+                        hir_def::DefId::new(req.specialized_def_id),
+                        hir_body,
+                        info.return_ty,
+                        info.span,
+                        &typeck_result.subst_table,
+                        &typeck_result.method_resolutions,
+                        &typeck_result.field_resolutions,
+                        &typeck_result.coercion_entries,
+                        const_bindings,
+                        Vec::new(), // No further const-generic interception in specialized body
+                        Vec::new(), // No turbofish in specialized body
+                        Vec::new(), // No param counts needed
+                        pass2_result.next_mono_def_id,
+                    );
+
+                    region_deactivate();
+
+                    // Register the specialized function name
+                    ctx.register_def_name(req.specialized_def_id, common::make_string(req.fn_name.as_str()));
+
+                    // Codegen the specialized body
+                    let mono_ir = codegen::generate_function_with_ctx(&mut ctx, &mono_mir.body, req.fn_name.as_str());
+                    file_append_string(output_path, mono_ir.as_str());
+
+                    region_destroy(mir_region);
+                }
+                &Option::None => {
+                    eprint_str("[mono_err: body not found for def ");
+                    eprint_str(int_to_string(req.original_def_id as i32));
+                    eprint_str("]\n");
+                }
+            }
+
+            mono_i = mono_i + 1;
+        }
+    }
 
     if args.mem_profile {
         print_mem_phase("After codegen pass2", 0 as u64, hir_region, codegen_region);

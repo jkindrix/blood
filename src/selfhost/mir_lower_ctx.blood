@@ -137,6 +137,51 @@ pub fn mir_error_code(kind: &MirLowerErrorKind) -> &str {
 }
 
 // ============================================================
+// Sentinel Array Size Replacement
+// ============================================================
+
+/// Sentinel value for const-param-dependent array sizes.
+fn const_param_sentinel() -> u64 {
+    18446744073709551615
+}
+
+/// Replaces sentinel array sizes in a TyId with the first const binding value.
+/// Used during specialized body lowering to turn `[i32; SENTINEL]` into `[i32; 5]`.
+pub fn replace_sentinel_array_size(
+    ty_id: type_intern::TyId,
+    bindings: &Vec<ConstBinding>,
+) -> type_intern::TyId {
+    let kind = type_intern::type_interner().get(ty_id);
+    match kind {
+        &type_intern::InternedTypeKind::Array { element, size } => {
+            if size == const_param_sentinel() && bindings.len() > 0 {
+                // Replace sentinel with first const binding value
+                type_intern::type_interner().mk_array(element, bindings[0].value)
+            } else {
+                ty_id
+            }
+        }
+        &type_intern::InternedTypeKind::Ref { inner, mutable } => {
+            let replaced = replace_sentinel_array_size(inner, bindings);
+            if replaced.index != inner.index {
+                type_intern::type_interner().mk_ref(replaced, mutable)
+            } else {
+                ty_id
+            }
+        }
+        &type_intern::InternedTypeKind::Ptr { inner, mutable } => {
+            let replaced = replace_sentinel_array_size(inner, bindings);
+            if replaced.index != inner.index {
+                type_intern::type_interner().mk_ptr(replaced, mutable)
+            } else {
+                ty_id
+            }
+        }
+        _ => ty_id,
+    }
+}
+
+// ============================================================
 // MIR Lowering Context
 // ============================================================
 
@@ -188,6 +233,62 @@ pub struct MirLowerCtx {
     /// Coercion entries from type checking.
     /// Records array-to-slice coercions keyed by (body_def_id, span_start).
     coercion_entries: Vec<common::CoercionEntry>,
+    /// Const parameter bindings for specialized body lowering.
+    /// When lowering a monomorphized const-generic function body, these map
+    /// const param DefId indices to their concrete values.
+    pub const_bindings: Vec<ConstBinding>,
+    /// DefId indices of all const-generic functions in the program.
+    /// Used during caller body lowering to detect calls that need specialization.
+    pub const_generic_fn_set: Vec<u32>,
+    /// Turbofish const arg values keyed by path span start.
+    /// Used to recover explicit const values from turbofish syntax.
+    pub turbofish_const_args: Vec<TurbofishConstArg>,
+    /// Recorded monomorphization requests from call interception.
+    /// Each entry records a needed specialization of a const-generic function.
+    pub mono_requests: Vec<MonoRequest>,
+    /// Number of const params per const-generic function.
+    /// Parallel to const_generic_fn_set: fn_set[i] has param_counts[i] const params.
+    pub const_generic_param_counts: Vec<u32>,
+    /// Counter for allocating specialized DefIds.
+    pub next_mono_def_id: u32,
+}
+
+/// A const parameter binding: maps a const param DefId to a concrete value.
+pub struct ConstBinding {
+    pub def_id_index: u32,
+    pub value: u64,
+}
+
+impl ConstBinding {
+    pub fn new(def_id_index: u32, value: u64) -> ConstBinding {
+        ConstBinding { def_id_index, value }
+    }
+}
+
+/// Turbofish const arg values associated with a path expression span.
+pub struct TurbofishConstArg {
+    pub span_start: u32,
+    pub values: Vec<u64>,
+}
+
+impl TurbofishConstArg {
+    pub fn new(span_start: u32, values: Vec<u64>) -> TurbofishConstArg {
+        TurbofishConstArg { span_start, values }
+    }
+}
+
+/// A monomorphization request: records a needed specialization of a const-generic function.
+pub struct MonoRequest {
+    pub original_def_id: u32,
+    pub const_values: Vec<u64>,
+    pub specialized_def_id: u32,
+    pub fn_name: String,
+}
+
+impl MonoRequest {
+    pub fn new(original_def_id: u32, const_values: Vec<u64>, specialized_def_id: u32, fn_name: String) -> MonoRequest {
+        MonoRequest { original_def_id, const_values, specialized_def_id, fn_name }
+    }
 }
 
 /// Mapping from an HIR local to a MIR local.
@@ -247,6 +348,12 @@ impl MirLowerCtx {
             closure_mir: Vec::new(),
             closure_counter: 0,
             coercion_entries: coercion_entries,
+            const_bindings: Vec::new(),
+            const_generic_fn_set: Vec::new(),
+            turbofish_const_args: Vec::new(),
+            mono_requests: Vec::new(),
+            const_generic_param_counts: Vec::new(),
+            next_mono_def_id: 0,
         }
     }
 
@@ -269,6 +376,65 @@ impl MirLowerCtx {
         let id = base + self.closure_counter;
         self.closure_counter = self.closure_counter + 1;
         hir_def::DefId { index: id }
+    }
+
+    // ======== Const Generic Helpers ========
+
+    /// Looks up a const param binding by DefId index.
+    /// Returns Some(value) if the DefId is a bound const param, None otherwise.
+    pub fn lookup_const_binding(self: &MirLowerCtx, def_id_index: u32) -> Option<u64> {
+        let mut i: usize = 0;
+        while i < self.const_bindings.len() {
+            if self.const_bindings[i].def_id_index == def_id_index {
+                return Option::Some(self.const_bindings[i].value);
+            }
+            i = i + 1;
+        }
+        Option::None
+    }
+
+    /// Returns true if the given DefId is a const-generic function.
+    pub fn is_const_generic_fn(self: &MirLowerCtx, def_id_index: u32) -> bool {
+        let mut i: usize = 0;
+        while i < self.const_generic_fn_set.len() {
+            if self.const_generic_fn_set[i] == def_id_index {
+                return true;
+            }
+            i = i + 1;
+        }
+        false
+    }
+
+    /// Gets the number of const params for a const-generic function.
+    pub fn get_const_param_count(self: &MirLowerCtx, def_id_index: u32) -> u32 {
+        let mut i: usize = 0;
+        while i < self.const_generic_fn_set.len() {
+            if self.const_generic_fn_set[i] == def_id_index {
+                return self.const_generic_param_counts[i];
+            }
+            i = i + 1;
+        }
+        0
+    }
+
+    /// Looks up turbofish const arg values by path span start.
+    pub fn lookup_turbofish_const_args(self: &MirLowerCtx, span_start: u32) -> Option<u32> {
+        let mut i: usize = 0;
+        while i < self.turbofish_const_args.len() {
+            if self.turbofish_const_args[i].span_start == span_start {
+                return Option::Some(i as u32);
+            }
+            i = i + 1;
+        }
+        Option::None
+    }
+
+    /// Allocates a new DefId for a monomorphized specialization.
+    pub fn alloc_mono_def_id(self: &mut MirLowerCtx) -> u32 {
+        let base: u32 = 33554432; // 0x2000000 range for mono specializations
+        let id = base + self.next_mono_def_id;
+        self.next_mono_def_id = self.next_mono_def_id + 1;
+        id
     }
 
     // ======== Error Reporting ========
@@ -350,21 +516,34 @@ impl MirLowerCtx {
     /// This must be called on all types from HIR before they are used in MIR construction.
     pub fn resolve_type(self: &Self, ty: &hir_ty::Type) -> hir_ty::Type {
         let ty_id = type_intern::type_to_ty_id(ty);
-        let resolved_id = unify::apply_substs_id(self.get_subst_table(), ty_id);
+        let mut resolved_id = unify::apply_substs_id(self.get_subst_table(), ty_id);
+        if self.const_bindings.len() > 0 {
+            resolved_id = replace_sentinel_array_size(resolved_id, &self.const_bindings);
+        }
         type_intern::ty_id_to_type(resolved_id)
     }
 
     /// Resolves a TyId through the substitution table.
     /// Converts TyId to Type, applies substitutions, returns resolved Type.
     pub fn resolve_type_id(self: &Self, ty_id: type_intern::TyId) -> hir_ty::Type {
-        let resolved_id = unify::apply_substs_id(self.get_subst_table(), ty_id);
+        let mut resolved_id = unify::apply_substs_id(self.get_subst_table(), ty_id);
+        if self.const_bindings.len() > 0 {
+            resolved_id = replace_sentinel_array_size(resolved_id, &self.const_bindings);
+        }
         type_intern::ty_id_to_type(resolved_id)
     }
 
     /// Resolves a TyId through the substitution table, returning TyId directly.
     /// Avoids constructing intermediate Type trees.
+    /// When const_bindings are present, replaces sentinel array sizes with
+    /// the first const binding value (for monomorphization).
     pub fn resolve_type_to_id(self: &Self, ty_id: type_intern::TyId) -> type_intern::TyId {
-        unify::apply_substs_id(self.get_subst_table(), ty_id)
+        let resolved = unify::apply_substs_id(self.get_subst_table(), ty_id);
+        if self.const_bindings.len() > 0 {
+            replace_sentinel_array_size(resolved, &self.const_bindings)
+        } else {
+            resolved
+        }
     }
 
     /// Looks up a resolved method DefId by the body's DefId and expression's span start.

@@ -128,7 +128,8 @@ pub fn lower_program_with_base_dir(program: &ast::Program, base_dir: String, sou
     // Transfer items, item_index, and bodies to the result
     let next_ty_var = ctx.next_ty_var;
     let next_def_id = ctx.next_def_id;
-    hir_lower_ctx::LowerResult::success_with_data(
+    let turbofish_entries = ctx.turbofish_const_entries;
+    let mut result = hir_lower_ctx::LowerResult::success_with_data(
         crate_data,
         ctx.items,
         ctx.item_index,
@@ -148,7 +149,9 @@ pub fn lower_program_with_base_dir(program: &ast::Program, base_dir: String, sou
         ctx.builtin_result_err_def,
         ctx.interner,
         ctx.builtin_fn_defs,
-    )
+    );
+    result.turbofish_const_entries = turbofish_entries;
+    result
 }
 
 // ============================================================
@@ -361,7 +364,29 @@ fn register_type_name(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declarat
         &ast::Declaration::Static(_) => {}
         &ast::Declaration::Impl(_) => {}
         &ast::Declaration::Handler(_) => {}
-        &ast::Declaration::Bridge(_) => {}
+        &ast::Declaration::Bridge(ref b) => {
+            // Register bridge name as a module-like namespace (e.g., "Libc")
+            // so that qualified paths like Libc::abs resolve correctly.
+            let def_id = ctx.alloc_def_id();
+            let name_str = ctx.span_to_string(b.name.span);
+            let name_symbol = ctx.intern(name_str.as_str());
+            let success = ctx.resolver.define_global(name_symbol, def_id);
+            if !success {
+                ctx.error(
+                    hir::DiagnosticCode::E0101,
+                    common::make_string("duplicate definition"),
+                    b.name.span,
+                );
+            } else {
+                ctx.resolver.register_def_info(
+                    def_id,
+                    hir_def::DefKind::Module,
+                    name_symbol,
+                    b.name.span,
+                    Option::None,
+                );
+            }
+        }
         &ast::Declaration::Module(ref m) => {
             match &m.body {
                 &Option::Some(ref declarations) => {
@@ -754,6 +779,12 @@ fn register_builtin_functions(ctx: &mut hir_lower_ctx::LoweringCtx) {
     register_builtin_fn(ctx, &mut items, "sqrt", bi_params_1(bi_f64()), bi_f64());
     register_builtin_fn(ctx, &mut items, "sqrt_f32", bi_params_1(bi_f32()), bi_f32());
     register_builtin_fn(ctx, &mut items, "abs", bi_params_1(bi_f64()), bi_f64());
+    // Rename runtime symbol from "abs" to "abs_f64" to avoid collision with C's abs(int)
+    // when bridge FFI is used. The Blood-level name "abs" is preserved for user code.
+    if ctx.builtin_fn_defs.len() > 0 {
+        let abs_idx = ctx.builtin_fn_defs.len() - 1;
+        ctx.builtin_fn_defs[abs_idx].runtime_name = common::make_string("abs_f64");
+    }
     register_builtin_fn(ctx, &mut items, "abs_f32", bi_params_1(bi_f32()), bi_f32());
     register_builtin_fn(ctx, &mut items, "floor", bi_params_1(bi_f64()), bi_f64());
     register_builtin_fn(ctx, &mut items, "ceil", bi_params_1(bi_f64()), bi_f64());
@@ -841,13 +872,132 @@ fn register_builtin_functions(ctx: &mut hir_lower_ctx::LoweringCtx) {
         let container_def_id = ctx.alloc_def_id();
         let name_sym = ctx.intern("__builtins");
         let spanned_name = common::SpannedSymbol { symbol: name_sym, span: dummy_span };
-        let foreign_def = hir_item::ForeignDef::new(hir_item::Abi::C, items);
+        let foreign_def = hir_item::ForeignDef::new(hir_item::Abi::Rust, items);
         let item = hir_item::Item::new(
             container_def_id,
             spanned_name,
             hir_item::ItemKind::Foreign(foreign_def),
             common::Visibility::Public,
             dummy_span,
+        );
+        ctx.items.push(hir_lower_ctx::ItemEntry::new(container_def_id, item));
+    }
+}
+
+// ============================================================
+// Bridge FFI Registration
+// ============================================================
+
+/// Registers all functions from a bridge declaration.
+///
+/// For a bridge like `bridge "C" Libc { fn abs(x: i32) -> i32; }`:
+/// 1. Look up the bridge module DefId (registered in Phase 1)
+/// 2. For each function: allocate DefId, register as child, convert types
+/// 3. Create ForeignFn items for type checking
+/// 4. Register in builtin_fn_defs with C function name for codegen
+fn register_bridge_functions(
+    ctx: &mut hir_lower_ctx::LoweringCtx,
+    bdecl: &ast::BridgeDecl,
+) {
+    // Look up the bridge's module DefId from Phase 1
+    let name_str = ctx.span_to_string(bdecl.name.span);
+    let name_symbol = ctx.intern(name_str.as_str());
+    let lookup = ctx.resolver.lookup(name_symbol);
+    let bridge_def_id = match lookup {
+        Option::Some(result) => {
+            let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
+            hir_def::DefId::new(binding.def_id.index)
+        }
+        Option::None => { return; }
+    };
+
+    let mut foreign_items: Vec<hir_item::ForeignItem> = Vec::new();
+
+    let mut i: usize = 0;
+    while i < bdecl.items.len() {
+        match &bdecl.items[i] {
+            &ast::BridgeItem::Function(ref f) => {
+                let fn_def_id = ctx.alloc_def_id();
+                let fn_name_str = ctx.span_to_string(f.name.span);
+                let fn_name_symbol = ctx.intern(fn_name_str.as_str());
+
+                // Register as child of the bridge module for Libc::abs resolution
+                ctx.resolver.register_def_info(
+                    fn_def_id,
+                    hir_def::DefKind::Fn,
+                    fn_name_symbol,
+                    f.name.span,
+                    Option::Some(bridge_def_id),
+                );
+
+                // Convert parameter types to TyId
+                let mut param_tys: Vec<type_intern::TyId> = Vec::new();
+                let mut pi: usize = 0;
+                while pi < f.params.len() {
+                    let param_ty = hir_lower_type::lower_type_id(ctx, &f.params[pi].ty);
+                    param_tys.push(param_ty);
+                    pi = pi + 1;
+                }
+
+                // Convert return type to TyId
+                let return_ty = match &f.return_type {
+                    &Option::Some(ref rt) => hir_lower_type::lower_type_id(ctx, rt),
+                    &Option::None => type_intern::CommonTypes::unit(),
+                };
+
+                // Create ForeignFn for type checking
+                let spanned_name = common::SpannedSymbol { symbol: fn_name_symbol, span: f.name.span };
+                let foreign_fn = hir_item::ForeignFn::new(
+                    fn_def_id, spanned_name, param_tys, return_ty, f.is_variadic, f.span,
+                );
+                foreign_items.push(hir_item::ForeignItem::Fn(foreign_fn));
+
+                // Register in builtin_fn_defs with the C function name
+                // so codegen resolves this DefId to the bare C name (e.g., "abs")
+                ctx.builtin_fn_defs.push(
+                    hir_lower_ctx::BuiltinFnDef::new(fn_def_id.index, common::make_string(fn_name_str.as_str())),
+                );
+            }
+            &ast::BridgeItem::Const(ref _c) => {
+                // Bridge constants: not yet implemented
+            }
+            &ast::BridgeItem::OpaqueType(ref _ot) => {
+                // Bridge opaque types: not yet implemented
+            }
+            &ast::BridgeItem::TypeAlias(ref _ta) => {
+                // Bridge type aliases: not yet implemented
+            }
+            &ast::BridgeItem::Struct(ref _s) => {
+                // Bridge structs: not yet implemented
+            }
+            &ast::BridgeItem::Enum(ref _e) => {
+                // Bridge enums: not yet implemented
+            }
+            &ast::BridgeItem::Union(ref _u) => {
+                // Bridge unions: not yet implemented
+            }
+            &ast::BridgeItem::Callback(ref _cb) => {
+                // Bridge callbacks: not yet implemented
+            }
+            &ast::BridgeItem::Link(ref _ls) => {
+                // Link specifications: not yet implemented
+            }
+        }
+        i = i + 1;
+    }
+
+    // Wrap in ForeignDef and add to ctx.items for the type checker
+    if foreign_items.len() > 0 {
+        let container_def_id = ctx.alloc_def_id();
+        let bridge_sym = ctx.intern(name_str.as_str());
+        let spanned_name = common::SpannedSymbol { symbol: bridge_sym, span: bdecl.name.span };
+        let foreign_def = hir_item::ForeignDef::new(hir_item::Abi::C, foreign_items);
+        let item = hir_item::Item::new(
+            container_def_id,
+            spanned_name,
+            hir_item::ItemKind::Foreign(foreign_def),
+            common::Visibility::Public,
+            bdecl.span,
         );
         ctx.items.push(hir_lower_ctx::ItemEntry::new(container_def_id, item));
     }
@@ -1684,8 +1834,10 @@ fn register_declaration(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declar
                 &ast::TypeKind::Paren(ref inner) => {}
             }
         }
-        // Bridge, Module, Macro need special handling
-        &ast::Declaration::Bridge(_) => {}
+        // Bridge: register bridge function children and create ForeignFn items
+        &ast::Declaration::Bridge(ref b) => {
+            register_bridge_functions(ctx, b);
+        }
         &ast::Declaration::Module(ref m) => {
             match &m.body {
                 &Option::Some(ref declarations) => {
@@ -2032,6 +2184,9 @@ fn lower_single_fn_body(ctx: &mut hir_lower_ctx::LoweringCtx, f: &ast::FnDecl) {
         }
     };
 
+    // Clear const param tracking before lowering this function's generics.
+    ctx.const_param_defs = Vec::new();
+
     // Re-establish TypeParams scope for body lowering.
     // Phase 3 (lower_function_decl) popped the scope after lowering the signature.
     // Phase 4 needs it active for re-lowering parameter types and any type
@@ -2054,8 +2209,23 @@ fn lower_single_fn_body(ctx: &mut hir_lower_ctx::LoweringCtx, f: &ast::FnDecl) {
     // Pop the TypeParams scope pushed by lower_generics
     ctx.resolver.pop_scope();
 
-    // Store the body
-    ctx.add_body(body_id, body);
+    // Extract const param DefIds before clearing (for monomorphization)
+    let mut cp_def_ids: Vec<u32> = Vec::new();
+    {
+        let mut cpi: usize = 0;
+        while cpi < ctx.const_param_defs.len() {
+            cp_def_ids.push(ctx.const_param_defs[cpi].def_id.index);
+            cpi = cpi + 1;
+        }
+    }
+
+    // Clear const param tracking after body lowering
+    ctx.const_param_defs = Vec::new();
+
+    // Store the body with const param DefIds
+    let mut body_entry = hir_lower_ctx::BodyEntry::new(body_id, body);
+    body_entry.const_param_def_ids = cp_def_ids;
+    ctx.bodies.push(body_entry);
 }
 
 // ============================================================

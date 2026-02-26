@@ -355,7 +355,8 @@ pub fn lower_declaration(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Decla
             lower_impl_decl(ctx, i);
         }
         &ast::Declaration::Bridge(ref _b) => {
-            // Bridge declarations and use-placeholder declarations are silently skipped.
+            // Bridge declarations are fully handled in Phase 2 (register_bridge_functions).
+            // ForeignFn items are created there with C function names.
         }
         &ast::Declaration::Module(ref m) => {
             match &m.body {
@@ -1627,7 +1628,40 @@ fn lower_impl_decl(ctx: &mut hir_lower_ctx::LoweringCtx, imp: &ast::ImplBlock) {
                                             ctx.error(hir::DiagnosticCode::E0300, msg, imp.span);
                                         }
                                     }
-                                    &hir_item::AssocItem::Type(_) => {}
+                                    &hir_item::AssocItem::Type(ref assoc_type) => {
+                                        // Check if the associated type has a default
+                                        let has_default: bool = assoc_type.default_ty.is_some();
+                                        if !has_default {
+                                            // Re-intern the trait's assoc type name from its span
+                                            let assoc_name_str = ctx.span_to_string(assoc_type.name.span);
+                                            let assoc_name_r = assoc_name_str.as_str();
+                                            let assoc_name = ctx.intern(assoc_name_r);
+                                            let mut found_type: bool = false;
+                                            let mut ai: usize = 0;
+                                            while ai < imp.items.len() {
+                                                match &imp.items[ai] {
+                                                    &ast::ImplItem::TypeAlias(ref ta) => {
+                                                        let ta_name_s = ctx.span_to_string(ta.name.span);
+                                                        let ta_name_r = ta_name_s.as_str();
+                                                        let ta_name = ctx.intern(ta_name_r);
+                                                        if ta_name.index == assoc_name.index {
+                                                            found_type = true;
+                                                        }
+                                                    }
+                                                    &ast::ImplItem::Function(_) => {}
+                                                    &ast::ImplItem::Const(_) => {}
+                                                }
+                                                ai = ai + 1;
+                                            }
+                                            if !found_type {
+                                                let mut msg = String::new();
+                                                msg.push_str("not all trait items implemented, missing: `type ");
+                                                msg.push_str(assoc_name_r);
+                                                msg.push_str("` from trait");
+                                                ctx.error(hir::DiagnosticCode::E0300, msg, imp.span);
+                                            }
+                                        }
+                                    }
                                     &hir_item::AssocItem::Const(_) => {}
                                 }
                                 ti = ti + 1;

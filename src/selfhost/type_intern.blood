@@ -1431,6 +1431,15 @@ pub fn get_array_size(id: TyId) -> u64 {
     }
 }
 
+/// Gets the size from an Array type. Returns Some(size) if Array, None otherwise.
+pub fn get_array_size_from_id(id: TyId) -> Option<u64> {
+    let kind = type_interner().get(id);
+    match kind {
+        &InternedTypeKind::Array { element: _, size } => Option::Some(size),
+        _ => Option::None,
+    }
+}
+
 /// Gets the element TyId from a Slice type. Returns None if not Slice.
 pub fn get_slice_element(id: TyId) -> Option<TyId> {
     let kind = type_interner().get(id);

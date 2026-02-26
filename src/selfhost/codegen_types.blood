@@ -86,7 +86,7 @@ pub fn type_to_llvm_fast(ty: &hir_ty::Type) -> Option<&str> {
         &hir_ty::TypeKind::Fn { params: _, ret: _, effects: _ } => Option::Some("{ ptr, ptr }"),
         &hir_ty::TypeKind::Closure { def_id: _, params: _, ret: _ } => Option::Some("{ ptr, ptr }"),
         &hir_ty::TypeKind::Infer(_) => Option::Some("i64"),
-        &hir_ty::TypeKind::Record { fields: _, row_var: _ } => Option::Some("ptr"),
+        &hir_ty::TypeKind::Record { fields: _, row_var: _ } => Option::None, // needs slow path to build struct
         &hir_ty::TypeKind::Forall { params: _, body: _ } => Option::Some("ptr"),
         &hir_ty::TypeKind::Error => Option::Some("i64"),
         _ => Option::None,
@@ -108,7 +108,7 @@ pub fn type_to_llvm(ty: &hir_ty::Type) -> String {
         &hir_ty::TypeKind::Closure { def_id: _, ref params, ref ret } => fn_to_llvm(params, ret.as_ref()),
         &hir_ty::TypeKind::Param(ref var_id) => param_to_llvm(var_id),
         &hir_ty::TypeKind::Infer(_) => common::make_string("i64"),
-        &hir_ty::TypeKind::Record { fields: _, row_var: _ } => common::make_string("ptr"),
+        &hir_ty::TypeKind::Record { ref fields, row_var: _ } => record_to_llvm(fields),
         // Forall types are represented as opaque pointers (polymorphic values)
         &hir_ty::TypeKind::Forall { params: _, body: _ } => common::make_string("ptr"),
         // Ownership qualifiers don't affect runtime representation
@@ -182,6 +182,26 @@ fn tuple_to_llvm(elems: &Vec<hir_ty::Type>) -> String {
         }
         let elem_str = type_to_llvm(&elems[i]);
         result.push_str(elem_str.as_str());
+        i = i + 1;
+    }
+    result.push_str(" }");
+    result
+}
+
+/// Converts a record type to LLVM IR: { field1_ty, field2_ty, ... }
+fn record_to_llvm(fields: &Vec<hir_ty::RecordField>) -> String {
+    if fields.len() == 0 {
+        return common::make_string("{}");
+    }
+
+    let mut result = common::make_string("{ ");
+    let mut i: usize = 0;
+    while i < fields.len() {
+        if i > 0 {
+            result.push_str(", ");
+        }
+        let field_str = type_to_llvm(&fields[i].ty);
+        result.push_str(field_str.as_str());
         i = i + 1;
     }
     result.push_str(" }");
@@ -297,7 +317,21 @@ pub fn get_layout(ty: &hir_ty::Type) -> TypeLayout {
         &hir_ty::TypeKind::Closure { def_id: _, params: _, ret: _ } => TypeLayout::new(16, 8, common::make_string("{ ptr, ptr }")),
         &hir_ty::TypeKind::Param(_) => TypeLayout::pointer(),
         &hir_ty::TypeKind::Infer(_) => TypeLayout::new(8, 8, common::make_string("i64")),
-        &hir_ty::TypeKind::Record { fields: _, row_var: _ } => TypeLayout::pointer(),
+        &hir_ty::TypeKind::Record { ref fields, row_var: _ } => {
+            let llvm_ty = record_to_llvm(fields);
+            let mut size: u64 = 0;
+            let mut align: u64 = 1;
+            let mut i: usize = 0;
+            while i < fields.len() {
+                let field_layout = get_layout(&fields[i].ty);
+                size = size + field_layout.size;
+                if field_layout.align > align {
+                    align = field_layout.align;
+                }
+                i = i + 1;
+            }
+            TypeLayout::new(size, align, llvm_ty)
+        }
         &hir_ty::TypeKind::Forall { params: _, body: _ } => TypeLayout::pointer(),
         // Ownership qualifiers don't affect layout
         &hir_ty::TypeKind::Ownership { qualifier: _, ref inner } => get_layout(inner.as_ref()),
