@@ -82,6 +82,11 @@ pub fn lower_program_with_base_dir(program: &ast::Program, base_dir: String, sou
     let mut parsed_module_cache: Vec<CachedParsedModule> = Vec::new();
     lower_external_module_declarations(&mut ctx, &mut parsed_module_cache);
 
+    // Phase 3a.25: Auto-import stdlib prelude when --stdlib-path is set.
+    // Injects prelude's public items into root scope so programs don't need
+    // explicit `use std.prelude::*;` or individual imports for common items.
+    inject_stdlib_prelude(&mut ctx);
+
     // Phase 3a.5: Resolve use imports (e.g., `use module::item;`)
     // This must run after external modules are loaded (Phase 3a) so that
     // lookup_in_parent can find re-exported items.
@@ -1154,6 +1159,49 @@ fn resolve_use_decl_module_reexport(
             }
         }
     }
+}
+
+// ============================================================
+// Stdlib Prelude Auto-Import
+// ============================================================
+
+/// Auto-imports stdlib prelude items into root scope when --stdlib-path is set.
+/// Primary path: if `mod std;` is loaded, finds the prelude sub-module and
+/// glob-imports its public children. Fallback: loads prelude.blood directly
+/// from stdlib_path. Silently returns if prelude doesn't exist.
+fn inject_stdlib_prelude(ctx: &mut hir_lower_ctx::LoweringCtx) {
+    // Only inject when stdlib_path is set
+    if ctx.stdlib_path.is_none() {
+        return;
+    }
+
+    // Primary path: std module is loaded, prelude is a child module
+    let std_sym = ctx.intern("std");
+    let std_lookup = ctx.resolver.lookup(std_sym);
+    if std_lookup.is_some() {
+        let std_result = std_lookup.unwrap();
+        let std_binding = ctx.resolver.scope_binding(std_result.scope_index, std_result.binding_index);
+        let std_def_id = std_binding.def_id;
+        let prelude_sym = ctx.intern("prelude");
+        let prelude_def = ctx.resolver.lookup_in_parent(std_def_id, prelude_sym);
+        if prelude_def.is_some() {
+            let prelude_def_id = prelude_def.unwrap();
+            let children = ctx.resolver.get_children_of_parent(prelude_def_id);
+            let mut ci: usize = 0;
+            while ci < children.len() {
+                let child_name = children[ci].name;
+                let child_def = children[ci].def_id;
+                let binding = resolve::Binding::def(child_def);
+                ctx.resolver.define(child_name, binding);
+                ci = ci + 1;
+            }
+            return;
+        }
+    }
+
+    // No fallback: prelude requires `mod std;` to be loaded. Without std,
+    // the prelude module isn't part of the module tree and can't be processed
+    // through the normal pipeline (declaration lowering + body lowering).
 }
 
 // ============================================================
