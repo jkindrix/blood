@@ -1,0 +1,177 @@
+// Test: stdlib HashMap extended ops - remove, is_empty, clear, and HashMapU32U32
+// EXPECT: 1
+// EXPECT: 0
+// EXPECT: 1
+// EXPECT: 2
+// EXPECT: 0
+// EXPECT: 1
+// EXPECT: 1
+// EXPECT: 0
+// EXPECT: 1
+// EXPECT: 1
+// EXPECT: 2
+// EXPECT: 0
+// EXPECT: 1
+// EXPECT: 42
+// EXPECT: 3
+// EXPECT: 1
+// EXPECT: 2
+// EXPECT: 0
+mod stdlib_hashmap;
+
+fn test_u64u32_remove() -> i32 {
+    let mut map = stdlib_hashmap::HashMapU64U32::new();
+
+    // is_empty on new map
+    if map.is_empty() {
+        println_int(1); // 1
+    } else {
+        println_int(0);
+    }
+
+    map.insert(10, 100);
+    map.insert(20, 200);
+    map.insert(30, 300);
+
+    // is_empty after inserts
+    if map.is_empty() {
+        println_int(1);
+    } else {
+        println_int(0); // 0
+    }
+
+    // remove existing key
+    let removed = map.remove(20);
+    if removed {
+        println_int(1); // 1
+    } else {
+        println_int(0);
+    }
+
+    // len after remove
+    println_int(map.len() as i32); // 2
+
+    // removed key should not be found
+    if map.contains_key(20) {
+        println_int(1);
+    } else {
+        println_int(0); // 0
+    }
+
+    // other keys still present
+    if map.contains_key(10) {
+        println_int(1); // 1
+    } else {
+        println_int(0);
+    }
+
+    0
+}
+
+fn test_u64u32_clear() -> i32 {
+    let mut map = stdlib_hashmap::HashMapU64U32::with_capacity(32);
+    map.insert(1, 10);
+    map.insert(2, 20);
+    map.insert(3, 30);
+
+    map.clear();
+
+    if map.is_empty() {
+        println_int(1); // 1
+    } else {
+        println_int(0);
+    }
+
+    // len should be 0
+    println_int(map.len() as i32); // 0
+
+    // can insert after clear
+    map.insert(99, 999);
+    if map.contains_key(99) {
+        println_int(1); // 1
+    } else {
+        println_int(0);
+    }
+
+    0
+}
+
+fn test_u64u64_remove() -> i32 {
+    let mut map = stdlib_hashmap::HashMapU64U64::new();
+    map.insert(100, 1000);
+    map.insert(200, 2000);
+    map.insert(300, 3000);
+
+    let removed = map.remove(200);
+    if removed {
+        println_int(1); // 1
+    } else {
+        println_int(0);
+    }
+
+    println_int(map.len() as i32); // 2
+
+    // remove non-existent key
+    let removed2 = map.remove(999);
+    if removed2 {
+        println_int(1);
+    } else {
+        println_int(0); // 0
+    }
+
+    // clear
+    map.clear();
+    if map.is_empty() {
+        println_int(1); // 1
+    } else {
+        println_int(0);
+    }
+
+    0
+}
+
+fn test_u32u32_basic() -> i32 {
+    let mut map = stdlib_hashmap::HashMapU32U32::new();
+
+    map.insert(5, 42);
+    match map.get(5) {
+        Option::Some(v) => { println_int(v as i32); } // 42
+        Option::None => { println_int(-1); }
+    }
+
+    map.insert(10, 100);
+    map.insert(15, 150);
+    println_int(map.len() as i32); // 3
+
+    if map.contains_key(10) {
+        println_int(1); // 1
+    } else {
+        println_int(0);
+    }
+
+    // remove
+    map.remove(10);
+    println_int(map.len() as i32); // 2
+
+    // clear
+    map.clear();
+    println_int(map.len() as i32); // 0
+
+    0
+}
+
+fn main() -> i32 {
+    let r1: i32 = test_u64u32_remove();
+    if r1 != 0 { return 1; }
+
+    let r2: i32 = test_u64u32_clear();
+    if r2 != 0 { return 2; }
+
+    let r3: i32 = test_u64u64_remove();
+    if r3 != 0 { return 3; }
+
+    let r4: i32 = test_u32u32_basic();
+    if r4 != 0 { return 4; }
+
+    0
+}

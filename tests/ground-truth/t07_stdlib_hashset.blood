@@ -1,0 +1,126 @@
+// Test: stdlib HashSet - exercises HashSetU64 and HashSetU32
+// EXPECT: 1
+// EXPECT: 1
+// EXPECT: 0
+// EXPECT: 3
+// EXPECT: 1
+// EXPECT: 0
+// EXPECT: 2
+// EXPECT: 1
+// EXPECT: 0
+// EXPECT: 1
+// EXPECT: 0
+// EXPECT: 2
+// EXPECT: 1
+// EXPECT: 0
+mod stdlib_hashset;
+
+fn test_hashset_u64() -> i32 {
+    let mut set = stdlib_hashset::HashSetU64::new();
+
+    // empty set
+    if set.is_empty() {
+        println_int(1); // 1
+    } else {
+        println_int(0);
+    }
+
+    // insert returns true for new elements
+    let was_new = set.insert(42);
+    if was_new {
+        println_int(1); // 1
+    } else {
+        println_int(0);
+    }
+
+    // insert returns false for duplicates
+    let was_new2 = set.insert(42);
+    if was_new2 {
+        println_int(1);
+    } else {
+        println_int(0); // 0
+    }
+
+    set.insert(100);
+    set.insert(200);
+    println_int(set.len() as i32); // 3
+
+    // contains
+    if set.contains(100) {
+        println_int(1); // 1
+    } else {
+        println_int(0);
+    }
+
+    if set.contains(999) {
+        println_int(1);
+    } else {
+        println_int(0); // 0
+    }
+
+    // remove
+    set.remove(42);
+    println_int(set.len() as i32); // 2
+
+    // removed element no longer found
+    if set.contains(100) {
+        println_int(1); // 1
+    } else {
+        println_int(0);
+    }
+
+    // clear
+    set.clear();
+    println_int(set.len() as i32); // 0
+
+    0
+}
+
+fn test_hashset_u32() -> i32 {
+    let mut set = stdlib_hashset::HashSetU32::new();
+
+    let was_new = set.insert(5);
+    if was_new {
+        println_int(1); // 1
+    } else {
+        println_int(0);
+    }
+
+    let was_dup = set.insert(5);
+    if was_dup {
+        println_int(1);
+    } else {
+        println_int(0); // 0
+    }
+
+    set.insert(10);
+    println_int(set.len() as i32); // 2
+
+    // remove returns true for existing
+    let removed = set.remove(5);
+    if removed {
+        println_int(1); // 1
+    } else {
+        println_int(0);
+    }
+
+    // remove returns false for non-existing
+    let removed2 = set.remove(999);
+    if removed2 {
+        println_int(1);
+    } else {
+        println_int(0); // 0
+    }
+
+    0
+}
+
+fn main() -> i32 {
+    let r1: i32 = test_hashset_u64();
+    if r1 != 0 { return 1; }
+
+    let r2: i32 = test_hashset_u32();
+    if r2 != 0 { return 2; }
+
+    0
+}

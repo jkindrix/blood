@@ -1,525 +1,449 @@
 // Blood Standard Library - HashSet
 //
-// A hash set implemented as a wrapper around HashMap.
+// Self-contained hash set implementations using open addressing with linear probing.
+// Provides O(1) average-case lookup, insertion, and deletion.
+//
+// This module provides monomorphic hash sets for common key types:
+// - HashSetU64: Set of u64 values
+// - HashSetU32: Set of u32 values
+//
+// Each implementation is fully self-contained with its own inline hash function
+// and bucket types. No cross-module imports are used.
 
-use crate::hash::{Hash, BuildHasher, RandomState};
-use super::hashmap::{HashMap, self};
+// ============================================================
+// HashSetU64
+// ============================================================
 
-/// A hash set implementation
-///
-/// HashSet provides O(1) average-case lookup, insertion, and removal.
-/// It is implemented as a thin wrapper around HashMap<T, ()>.
-pub struct HashSet<T, S = RandomState> {
-    map: HashMap<T, (), S>,
+/// Bucket state for u64 set entries.
+pub enum SetBucketU64 {
+    Empty,
+    Occupied { key: u64 },
+    Deleted,
 }
 
-impl<T> HashSet<T, RandomState>
-where
-    T: Hash + Eq,
-{
-    /// Creates an empty HashSet
-    pub fn new() -> Self / pure {
-        HashSet::with_hasher(RandomState::default())
-    }
-
-    /// Creates an empty HashSet with the specified capacity
-    pub fn with_capacity(capacity: usize) -> Self / pure {
-        HashSet::with_capacity_and_hasher(capacity, RandomState::default())
-    }
+/// Hash set of u64 values.
+pub struct HashSetU64 {
+    buckets: Vec<SetBucketU64>,
+    len: usize,
+    capacity: usize,
 }
 
-impl<T, S> HashSet<T, S>
-where
-    T: Hash + Eq,
-    S: BuildHasher,
-{
-    /// Creates an empty HashSet with a custom hasher
-    pub fn with_hasher(hash_builder: S) -> Self / pure {
-        HashSet {
-            map: HashMap::with_hasher(hash_builder),
+/// FNV-1a hash for u64 (inline for self-containment).
+fn hash_u64_set(v: &u64) -> u64 {
+    let mut h: u64 = 14695981039346656037;
+    let val = *v;
+    let mut i: u32 = 0;
+    while i < 8 {
+        h = h ^ ((val >> (i * 8)) & 255);
+        h = h * 1099511628211;
+        i = i + 1;
+    }
+    h
+}
+
+impl HashSetU64 {
+    /// Create a new empty hash set.
+    pub fn new() -> HashSetU64 {
+        HashSetU64 {
+            buckets: Vec::new(),
+            len: 0,
+            capacity: 0,
         }
     }
 
-    /// Creates an empty HashSet with capacity and custom hasher
-    pub fn with_capacity_and_hasher(capacity: usize, hash_builder: S) -> Self / pure {
-        HashSet {
-            map: HashMap::with_capacity_and_hasher(capacity, hash_builder),
+    /// Create a hash set with initial capacity.
+    pub fn with_capacity(cap: usize) -> HashSetU64 {
+        let actual_cap = if cap < 16 { 16 as usize } else { cap };
+        let mut buckets: Vec<SetBucketU64> = Vec::new();
+        let mut i: usize = 0;
+        while i < actual_cap {
+            buckets.push(SetBucketU64::Empty);
+            i = i + 1;
+        }
+        HashSetU64 {
+            buckets,
+            len: 0,
+            capacity: actual_cap,
         }
     }
 
-    /// Returns the number of elements
-    pub fn len(self: &Self) -> usize / pure {
-        self.map.len()
+    /// Number of entries.
+    pub fn len(self: &Self) -> usize {
+        self.len
     }
 
-    /// Returns true if the set is empty
-    pub fn is_empty(self: &Self) -> bool / pure {
-        self.map.is_empty()
+    /// Check if the set is empty.
+    pub fn is_empty(self: &Self) -> bool {
+        self.len == 0
     }
 
-    /// Returns the capacity
-    pub fn capacity(self: &Self) -> usize / pure {
-        self.map.capacity()
-    }
-
-    /// Clears the set
-    pub fn clear(self: &mut Self) / pure {
-        self.map.clear()
-    }
-
-    /// Returns a reference to the hasher
-    pub fn hasher(self: &Self) -> &S / pure {
-        self.map.hasher()
-    }
-
-    /// Reserves capacity for at least `additional` more elements
-    pub fn reserve(self: &mut Self, additional: usize) / pure {
-        self.map.reserve(additional)
-    }
-
-    /// Shrinks the capacity of the set as much as possible
-    pub fn shrink_to_fit(self: &mut Self) / pure {
-        self.map.shrink_to_fit()
-    }
-
-    /// Shrinks the capacity of the set with a lower limit
-    pub fn shrink_to(self: &mut Self, min_capacity: usize) / pure {
-        self.map.shrink_to(min_capacity)
-    }
-
-    /// Inserts a value into the set
-    ///
-    /// Returns true if the value was newly inserted, false if it already existed.
-    pub fn insert(self: &mut Self, value: T) -> bool / pure {
-        self.map.insert(value, ()).is_none()
-    }
-
-    /// Removes a value from the set
-    ///
-    /// Returns true if the value was present.
-    pub fn remove(self: &mut Self, value: &T) -> bool / pure {
-        self.map.remove(value).is_some()
-    }
-
-    /// Removes and returns a value from the set
-    pub fn take(self: &mut Self, value: &T) -> Option<T> / pure {
-        self.map.remove_entry(value).map(|(k, _)| k)
-    }
-
-    /// Returns true if the set contains the given value
-    pub fn contains(self: &Self, value: &T) -> bool / pure {
-        self.map.contains_key(value)
-    }
-
-    /// Returns a reference to the value if it exists
-    pub fn get(self: &Self, value: &T) -> Option<&T> / pure {
-        self.map.get_key_value(value).map(|(k, _)| k)
-    }
-
-    /// Returns an iterator over the values
-    pub fn iter(self: &Self) -> Iter<'_, T> / pure {
-        Iter {
-            inner: self.map.keys(),
+    /// Ensure capacity, resizing if needed.
+    fn ensure_capacity(self: &mut Self) {
+        if self.capacity == 0 {
+            self.capacity = 16;
+            let mut i: usize = 0;
+            while i < self.capacity {
+                self.buckets.push(SetBucketU64::Empty);
+                i = i + 1;
+            }
+            return;
+        }
+        if self.len * 4 >= self.capacity * 3 {
+            self.resize();
         }
     }
 
-    /// Returns true if self has no elements in common with other
-    pub fn is_disjoint(self: &Self, other: &HashSet<T, S>) -> bool / pure {
-        if self.len() <= other.len() {
-            self.iter().all(|v| !other.contains(v))
-        } else {
-            other.iter().all(|v| !self.contains(v))
+    /// Double capacity and rehash.
+    fn resize(self: &mut Self) {
+        let new_cap = self.capacity * 2;
+        let mut new_buckets: Vec<SetBucketU64> = Vec::new();
+        let mut i: usize = 0;
+        while i < new_cap {
+            new_buckets.push(SetBucketU64::Empty);
+            i = i + 1;
         }
+
+        i = 0;
+        while i < self.capacity {
+            match &self.buckets[i] {
+                SetBucketU64::Occupied { key } => {
+                    let hash = hash_u64_set(&key);
+                    let mut idx = (hash as usize) % new_cap;
+                    let mut found = false;
+                    while !found {
+                        match &new_buckets[idx] {
+                            SetBucketU64::Empty => {
+                                new_buckets[idx] = SetBucketU64::Occupied { key: key };
+                                found = true;
+                            }
+                            _ => {
+                                idx = (idx + 1) % new_cap;
+                            }
+                        }
+                    }
+                }
+                SetBucketU64::Deleted => {}
+                SetBucketU64::Empty => {}
+            }
+            i = i + 1;
+        }
+        self.buckets = new_buckets;
+        self.capacity = new_cap;
     }
 
-    /// Returns true if self is a subset of other
-    pub fn is_subset(self: &Self, other: &HashSet<T, S>) -> bool / pure {
-        if self.len() > other.len() {
+    /// Insert a value into the set. Returns true if newly inserted, false if already present.
+    pub fn insert(self: &mut Self, key: u64) -> bool {
+        self.ensure_capacity();
+        let hash = hash_u64_set(&key);
+        let mut idx = (hash as usize) % self.capacity;
+
+        let mut probes: usize = 0;
+        while probes < self.capacity {
+            match &self.buckets[idx] {
+                SetBucketU64::Empty => {
+                    self.buckets[idx] = SetBucketU64::Occupied { key };
+                    self.len = self.len + 1;
+                    return true;
+                }
+                SetBucketU64::Deleted => {
+                    self.buckets[idx] = SetBucketU64::Occupied { key };
+                    self.len = self.len + 1;
+                    return true;
+                }
+                SetBucketU64::Occupied { key: existing_key } => {
+                    if existing_key == key {
+                        return false;
+                    }
+                }
+            }
+            idx = (idx + 1) % self.capacity;
+            probes = probes + 1;
+        }
+        false
+    }
+
+    /// Check if the set contains a value.
+    pub fn contains(self: &Self, key: u64) -> bool {
+        if self.capacity == 0 {
             return false;
         }
-        self.iter().all(|v| other.contains(v))
-    }
+        let hash = hash_u64_set(&key);
+        let mut idx = (hash as usize) % self.capacity;
 
-    /// Returns true if self is a superset of other
-    pub fn is_superset(self: &Self, other: &HashSet<T, S>) -> bool / pure {
-        other.is_subset(self)
-    }
-
-    /// Returns an iterator over values in self but not in other
-    pub fn difference<'a>(self: &'a Self, other: &'a HashSet<T, S>) -> Difference<'a, T, S> / pure {
-        Difference {
-            iter: self.iter(),
-            other,
-        }
-    }
-
-    /// Returns an iterator over values in either self or other but not both
-    pub fn symmetric_difference<'a>(
-        self: &'a Self,
-        other: &'a HashSet<T, S>,
-    ) -> SymmetricDifference<'a, T, S> / pure {
-        SymmetricDifference {
-            iter: self.difference(other).chain(other.difference(self)),
-        }
-    }
-
-    /// Returns an iterator over values in both self and other
-    pub fn intersection<'a>(self: &'a Self, other: &'a HashSet<T, S>) -> Intersection<'a, T, S> / pure {
-        if self.len() <= other.len() {
-            Intersection {
-                iter: self.iter(),
-                other,
+        let mut probes: usize = 0;
+        while probes < self.capacity {
+            match &self.buckets[idx] {
+                SetBucketU64::Empty => {
+                    return false;
+                }
+                SetBucketU64::Deleted => {}
+                SetBucketU64::Occupied { key: existing_key } => {
+                    if existing_key == key {
+                        return true;
+                    }
+                }
             }
-        } else {
-            Intersection {
-                iter: other.iter(),
-                other: self,
-            }
+            idx = (idx + 1) % self.capacity;
+            probes = probes + 1;
         }
+        false
     }
 
-    /// Returns an iterator over values in either self or other
-    pub fn union<'a>(self: &'a Self, other: &'a HashSet<T, S>) -> Union<'a, T, S> / pure {
-        if self.len() >= other.len() {
-            Union {
-                iter: self.iter().chain(other.difference(self)),
-            }
-        } else {
-            Union {
-                iter: other.iter().chain(self.difference(other)),
-            }
-        }
-    }
-
-    /// Retains only elements that satisfy the predicate
-    pub fn retain<F: FnMut(&T) -> bool>(self: &mut Self, f: F) / pure {
-        self.map.retain(|k, _| f(k))
-    }
-
-    /// Drains the set, returning all elements
-    pub fn drain(self: &mut Self) -> Drain<'_, T> / pure {
-        Drain {
-            inner: self.map.drain(),
-        }
-    }
-}
-
-impl<T, S> Default for HashSet<T, S>
-where
-    T: Hash + Eq,
-    S: BuildHasher + Default,
-{
-    fn default() -> Self / pure {
-        HashSet::with_hasher(S::default())
-    }
-}
-
-impl<T, S> Clone for HashSet<T, S>
-where
-    T: Hash + Eq + Clone,
-    S: BuildHasher + Clone,
-{
-    fn clone(self: &Self) -> Self / pure {
-        HashSet {
-            map: self.map.clone(),
-        }
-    }
-}
-
-impl<T, S> PartialEq for HashSet<T, S>
-where
-    T: Hash + Eq,
-    S: BuildHasher,
-{
-    fn eq(self: &Self, other: &Self) -> bool / pure {
-        if self.len() != other.len() {
+    /// Remove a value from the set. Returns true if the value was present.
+    pub fn remove(self: &mut Self, key: u64) -> bool {
+        if self.capacity == 0 {
             return false;
         }
-        self.iter().all(|v| other.contains(v))
-    }
-}
+        let hash = hash_u64_set(&key);
+        let mut idx = (hash as usize) % self.capacity;
 
-impl<T, S> Eq for HashSet<T, S>
-where
-    T: Hash + Eq,
-    S: BuildHasher,
-{}
-
-impl<T, S> Debug for HashSet<T, S>
-where
-    T: Debug,
-{
-    fn fmt(self: &Self, f: &mut Formatter) -> Result<(), Error> / {IO} {
-        f.debug_set().entries(self.iter()).finish()
-    }
-}
-
-impl<T, S> FromIterator<T> for HashSet<T, S>
-where
-    T: Hash + Eq,
-    S: BuildHasher + Default,
-{
-    fn from_iter<I: Iterator<Item = T>>(iter: I) -> Self / pure {
-        let mut set = HashSet::default();
-        for item in iter {
-            set.insert(item);
-        }
-        set
-    }
-}
-
-impl<T, S> Extend<T> for HashSet<T, S>
-where
-    T: Hash + Eq,
-    S: BuildHasher,
-{
-    fn extend<I: Iterator<Item = T>>(self: &mut Self, iter: I) / pure {
-        for item in iter {
-            self.insert(item);
-        }
-    }
-}
-
-impl<'a, T, S> IntoIterator for &'a HashSet<T, S>
-where
-    T: Hash + Eq,
-{
-    type Item = &'a T;
-    type IntoIter = Iter<'a, T>;
-
-    fn into_iter(self: Self) -> Iter<'a, T> / pure {
-        self.iter()
-    }
-}
-
-impl<T, S> IntoIterator for HashSet<T, S>
-where
-    T: Hash + Eq,
-{
-    type Item = T;
-    type IntoIter = IntoIter<T>;
-
-    fn into_iter(self: Self) -> IntoIter<T> / pure {
-        IntoIter {
-            inner: self.map.into_iter(),
-        }
-    }
-}
-
-// Set operations that return new sets
-
-impl<T, S> BitOr<&HashSet<T, S>> for &HashSet<T, S>
-where
-    T: Hash + Eq + Clone,
-    S: BuildHasher + Default + Clone,
-{
-    type Output = HashSet<T, S>;
-
-    /// Returns the union of two sets
-    fn bitor(self: Self, other: &HashSet<T, S>) -> HashSet<T, S> / pure {
-        self.union(other).cloned().collect()
-    }
-}
-
-impl<T, S> BitAnd<&HashSet<T, S>> for &HashSet<T, S>
-where
-    T: Hash + Eq + Clone,
-    S: BuildHasher + Default + Clone,
-{
-    type Output = HashSet<T, S>;
-
-    /// Returns the intersection of two sets
-    fn bitand(self: Self, other: &HashSet<T, S>) -> HashSet<T, S> / pure {
-        self.intersection(other).cloned().collect()
-    }
-}
-
-impl<T, S> BitXor<&HashSet<T, S>> for &HashSet<T, S>
-where
-    T: Hash + Eq + Clone,
-    S: BuildHasher + Default + Clone,
-{
-    type Output = HashSet<T, S>;
-
-    /// Returns the symmetric difference of two sets
-    fn bitxor(self: Self, other: &HashSet<T, S>) -> HashSet<T, S> / pure {
-        self.symmetric_difference(other).cloned().collect()
-    }
-}
-
-impl<T, S> Sub<&HashSet<T, S>> for &HashSet<T, S>
-where
-    T: Hash + Eq + Clone,
-    S: BuildHasher + Default + Clone,
-{
-    type Output = HashSet<T, S>;
-
-    /// Returns the difference of two sets
-    fn sub(self: Self, other: &HashSet<T, S>) -> HashSet<T, S> / pure {
-        self.difference(other).cloned().collect()
-    }
-}
-
-// Iterators
-
-/// Iterator over values in a HashSet
-pub struct Iter<'a, T> {
-    inner: hashmap::Keys<'a, T, ()>,
-}
-
-impl<'a, T> Iterator for Iter<'a, T> {
-    type Item = &'a T;
-
-    fn next(self: &mut Self) -> Option<&'a T> / pure {
-        self.inner.next()
-    }
-
-    fn size_hint(self: &Self) -> (usize, Option<usize>) / pure {
-        self.inner.size_hint()
-    }
-}
-
-/// Owning iterator over values in a HashSet
-pub struct IntoIter<T> {
-    inner: hashmap::IntoIter<T, ()>,
-}
-
-impl<T> Iterator for IntoIter<T> {
-    type Item = T;
-
-    fn next(self: &mut Self) -> Option<T> / pure {
-        self.inner.next().map(|(k, _)| k)
-    }
-}
-
-/// Draining iterator over values in a HashSet
-pub struct Drain<'a, T> {
-    inner: hashmap::Drain<'a, T, ()>,
-}
-
-impl<'a, T> Iterator for Drain<'a, T> {
-    type Item = T;
-
-    fn next(self: &mut Self) -> Option<T> / pure {
-        self.inner.next().map(|(k, _)| k)
-    }
-}
-
-/// Iterator over values in self but not in other
-pub struct Difference<'a, T, S> {
-    iter: Iter<'a, T>,
-    other: &'a HashSet<T, S>,
-}
-
-impl<'a, T, S> Iterator for Difference<'a, T, S>
-where
-    T: Hash + Eq,
-    S: BuildHasher,
-{
-    type Item = &'a T;
-
-    fn next(self: &mut Self) -> Option<&'a T> / pure {
-        loop {
-            let item = self.iter.next()?;
-            if !self.other.contains(item) {
-                return Some(item);
+        let mut probes: usize = 0;
+        while probes < self.capacity {
+            match &self.buckets[idx] {
+                SetBucketU64::Empty => {
+                    return false;
+                }
+                SetBucketU64::Deleted => {}
+                SetBucketU64::Occupied { key: existing_key } => {
+                    if existing_key == key {
+                        self.buckets[idx] = SetBucketU64::Deleted;
+                        self.len = self.len - 1;
+                        return true;
+                    }
+                }
             }
+            idx = (idx + 1) % self.capacity;
+            probes = probes + 1;
+        }
+        false
+    }
+
+    /// Remove all entries from the set.
+    pub fn clear(self: &mut Self) {
+        let mut i: usize = 0;
+        while i < self.capacity {
+            self.buckets[i] = SetBucketU64::Empty;
+            i = i + 1;
+        }
+        self.len = 0;
+    }
+}
+
+// ============================================================
+// HashSetU32
+// ============================================================
+
+/// Bucket state for u32 set entries.
+pub enum SetBucketU32 {
+    Empty,
+    Occupied { key: u32 },
+    Deleted,
+}
+
+/// Hash set of u32 values.
+pub struct HashSetU32 {
+    buckets: Vec<SetBucketU32>,
+    len: usize,
+    capacity: usize,
+}
+
+/// FNV-1a hash for u32 (inline for self-containment).
+fn hash_u32_set(v: &u32) -> u64 {
+    let mut h: u64 = 14695981039346656037;
+    let val = *v;
+    let mut i: u32 = 0;
+    while i < 4 {
+        h = h ^ (((val >> (i * 8)) & 255) as u64);
+        h = h * 1099511628211;
+        i = i + 1;
+    }
+    h
+}
+
+impl HashSetU32 {
+    /// Create a new empty hash set.
+    pub fn new() -> HashSetU32 {
+        HashSetU32 {
+            buckets: Vec::new(),
+            len: 0,
+            capacity: 0,
         }
     }
-}
 
-/// Iterator over values in either self or other but not both
-pub struct SymmetricDifference<'a, T, S> {
-    iter: Chain<Difference<'a, T, S>, Difference<'a, T, S>>,
-}
-
-impl<'a, T, S> Iterator for SymmetricDifference<'a, T, S>
-where
-    T: Hash + Eq,
-    S: BuildHasher,
-{
-    type Item = &'a T;
-
-    fn next(self: &mut Self) -> Option<&'a T> / pure {
-        self.iter.next()
+    /// Create a hash set with initial capacity.
+    pub fn with_capacity(cap: usize) -> HashSetU32 {
+        let actual_cap = if cap < 16 { 16 as usize } else { cap };
+        let mut buckets: Vec<SetBucketU32> = Vec::new();
+        let mut i: usize = 0;
+        while i < actual_cap {
+            buckets.push(SetBucketU32::Empty);
+            i = i + 1;
+        }
+        HashSetU32 {
+            buckets,
+            len: 0,
+            capacity: actual_cap,
+        }
     }
-}
 
-/// Iterator over values in both self and other
-pub struct Intersection<'a, T, S> {
-    iter: Iter<'a, T>,
-    other: &'a HashSet<T, S>,
-}
+    /// Number of entries.
+    pub fn len(self: &Self) -> usize {
+        self.len
+    }
 
-impl<'a, T, S> Iterator for Intersection<'a, T, S>
-where
-    T: Hash + Eq,
-    S: BuildHasher,
-{
-    type Item = &'a T;
+    /// Check if the set is empty.
+    pub fn is_empty(self: &Self) -> bool {
+        self.len == 0
+    }
 
-    fn next(self: &mut Self) -> Option<&'a T> / pure {
-        loop {
-            let item = self.iter.next()?;
-            if self.other.contains(item) {
-                return Some(item);
+    /// Ensure capacity, resizing if needed.
+    fn ensure_capacity(self: &mut Self) {
+        if self.capacity == 0 {
+            self.capacity = 16;
+            let mut i: usize = 0;
+            while i < self.capacity {
+                self.buckets.push(SetBucketU32::Empty);
+                i = i + 1;
             }
+            return;
+        }
+        if self.len * 4 >= self.capacity * 3 {
+            self.resize();
         }
     }
-}
 
-/// Iterator over values in either self or other
-pub struct Union<'a, T, S> {
-    iter: Chain<Iter<'a, T>, Difference<'a, T, S>>,
-}
+    /// Double capacity and rehash.
+    fn resize(self: &mut Self) {
+        let new_cap = self.capacity * 2;
+        let mut new_buckets: Vec<SetBucketU32> = Vec::new();
+        let mut i: usize = 0;
+        while i < new_cap {
+            new_buckets.push(SetBucketU32::Empty);
+            i = i + 1;
+        }
 
-impl<'a, T, S> Iterator for Union<'a, T, S>
-where
-    T: Hash + Eq,
-    S: BuildHasher,
-{
-    type Item = &'a T;
-
-    fn next(self: &mut Self) -> Option<&'a T> / pure {
-        self.iter.next()
-    }
-}
-
-/// Chain iterator helper
-pub struct Chain<A, B> {
-    a: Option<A>,
-    b: B,
-}
-
-impl<A, B> Chain<A, B> {
-    fn new(a: A, b: B) -> Self / pure {
-        Chain { a: Some(a), b }
-    }
-}
-
-impl<T, A, B> Iterator for Chain<A, B>
-where
-    A: Iterator<Item = T>,
-    B: Iterator<Item = T>,
-{
-    type Item = T;
-
-    fn next(self: &mut Self) -> Option<T> / pure {
-        if let Some(ref mut a) = self.a {
-            if let Some(item) = a.next() {
-                return Some(item);
+        i = 0;
+        while i < self.capacity {
+            match &self.buckets[i] {
+                SetBucketU32::Occupied { key } => {
+                    let hash = hash_u32_set(&key);
+                    let mut idx = (hash as usize) % new_cap;
+                    let mut found = false;
+                    while !found {
+                        match &new_buckets[idx] {
+                            SetBucketU32::Empty => {
+                                new_buckets[idx] = SetBucketU32::Occupied { key: key };
+                                found = true;
+                            }
+                            _ => {
+                                idx = (idx + 1) % new_cap;
+                            }
+                        }
+                    }
+                }
+                SetBucketU32::Deleted => {}
+                SetBucketU32::Empty => {}
             }
-            self.a = None;
+            i = i + 1;
         }
-        self.b.next()
+        self.buckets = new_buckets;
+        self.capacity = new_cap;
+    }
+
+    /// Insert a value into the set. Returns true if newly inserted, false if already present.
+    pub fn insert(self: &mut Self, key: u32) -> bool {
+        self.ensure_capacity();
+        let hash = hash_u32_set(&key);
+        let mut idx = (hash as usize) % self.capacity;
+
+        let mut probes: usize = 0;
+        while probes < self.capacity {
+            match &self.buckets[idx] {
+                SetBucketU32::Empty => {
+                    self.buckets[idx] = SetBucketU32::Occupied { key };
+                    self.len = self.len + 1;
+                    return true;
+                }
+                SetBucketU32::Deleted => {
+                    self.buckets[idx] = SetBucketU32::Occupied { key };
+                    self.len = self.len + 1;
+                    return true;
+                }
+                SetBucketU32::Occupied { key: existing_key } => {
+                    if existing_key == key {
+                        return false;
+                    }
+                }
+            }
+            idx = (idx + 1) % self.capacity;
+            probes = probes + 1;
+        }
+        false
+    }
+
+    /// Check if the set contains a value.
+    pub fn contains(self: &Self, key: u32) -> bool {
+        if self.capacity == 0 {
+            return false;
+        }
+        let hash = hash_u32_set(&key);
+        let mut idx = (hash as usize) % self.capacity;
+
+        let mut probes: usize = 0;
+        while probes < self.capacity {
+            match &self.buckets[idx] {
+                SetBucketU32::Empty => {
+                    return false;
+                }
+                SetBucketU32::Deleted => {}
+                SetBucketU32::Occupied { key: existing_key } => {
+                    if existing_key == key {
+                        return true;
+                    }
+                }
+            }
+            idx = (idx + 1) % self.capacity;
+            probes = probes + 1;
+        }
+        false
+    }
+
+    /// Remove a value from the set. Returns true if the value was present.
+    pub fn remove(self: &mut Self, key: u32) -> bool {
+        if self.capacity == 0 {
+            return false;
+        }
+        let hash = hash_u32_set(&key);
+        let mut idx = (hash as usize) % self.capacity;
+
+        let mut probes: usize = 0;
+        while probes < self.capacity {
+            match &self.buckets[idx] {
+                SetBucketU32::Empty => {
+                    return false;
+                }
+                SetBucketU32::Deleted => {}
+                SetBucketU32::Occupied { key: existing_key } => {
+                    if existing_key == key {
+                        self.buckets[idx] = SetBucketU32::Deleted;
+                        self.len = self.len - 1;
+                        return true;
+                    }
+                }
+            }
+            idx = (idx + 1) % self.capacity;
+            probes = probes + 1;
+        }
+        false
+    }
+
+    /// Remove all entries from the set.
+    pub fn clear(self: &mut Self) {
+        let mut i: usize = 0;
+        while i < self.capacity {
+            self.buckets[i] = SetBucketU32::Empty;
+            i = i + 1;
+        }
+        self.len = 0;
     }
 }
-
-// Extension trait for chaining iterators
-trait IteratorExt: Iterator + Sized {
-    fn chain<U: Iterator<Item = Self::Item>>(self: Self, other: U) -> Chain<Self, U> / pure {
-        Chain::new(self, other)
-    }
-}
-
-impl<I: Iterator> IteratorExt for I {}
