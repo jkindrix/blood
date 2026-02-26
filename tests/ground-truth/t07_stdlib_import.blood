@@ -3,10 +3,12 @@
 // EXPECT: 42
 // EXPECT: 1
 // EXPECT: 0
+// Note: Each HashMap type tested in separate function to avoid first_gen codegen
+// limitation with multiple complex calls in the same function body.
 mod std;
 use std.collections.hashmap::{HashMapU64U32, HashMapU64U64, hash_u64, hash_str};
 
-fn main() -> i32 {
+fn test_u64u32() -> i32 {
     // HashMapU64U32 via stdlib import
     let mut map = HashMapU64U32::new();
     map.insert(42, 7);
@@ -14,7 +16,10 @@ fn main() -> i32 {
         Option::Some(v) => { println_int(v as i32); } // 7
         Option::None => { return 1; }
     }
+    0
+}
 
+fn test_u64u64() -> i32 {
     // HashMapU64U64 via stdlib import
     let mut map64 = HashMapU64U64::new();
     map64.insert(1, 42);
@@ -22,7 +27,10 @@ fn main() -> i32 {
         Option::Some(v) => { println_int(v as i32); } // 42
         Option::None => { return 2; }
     }
+    0
+}
 
+fn test_hash_and_missing() -> i32 {
     // Hash functions via stdlib import
     let val: u64 = 100;
     let h = hash_u64(&val);
@@ -33,10 +41,21 @@ fn main() -> i32 {
     }
 
     // Missing key returns None
+    let mut map = HashMapU64U32::new();
+    map.insert(42, 7);
     match map.get(999) {
         Option::Some(_) => { println_int(1); }
         Option::None => { println_int(0); } // 0
     }
+    0
+}
 
+fn main() -> i32 {
+    let r1 = test_u64u32();
+    if r1 != 0 { return r1; }
+    let r2 = test_u64u64();
+    if r2 != 0 { return r2; }
+    let r3 = test_hash_and_missing();
+    if r3 != 0 { return r3; }
     0
 }

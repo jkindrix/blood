@@ -1,0 +1,196 @@
+// Test: stdlib string utilities
+// EXPECT: hello
+// EXPECT: ello
+// EXPECT: hello
+// EXPECT: trim
+// EXPECT: trim
+// EXPECT: trim
+// EXPECT: 1
+// EXPECT: 1
+// EXPECT: 0
+// EXPECT: 1
+// EXPECT: 0
+// EXPECT: 3
+// EXPECT: h-llo
+// EXPECT: he--o
+// EXPECT: 3
+// EXPECT: abc
+// EXPECT: def
+// EXPECT: ghi
+// EXPECT: HELLO
+// EXPECT: hello
+// EXPECT: ababab
+// EXPECT: 1
+// EXPECT: hello
+mod stdlib_string;
+
+fn make_string(s: &str) -> String {
+    let mut result = String::new();
+    result.push_str(s);
+    result
+}
+
+fn main() -> i32 {
+    test_substring();
+    test_trim();
+    test_search();
+    test_replace();
+    test_split();
+    test_case();
+    test_repeat();
+    test_str_equals();
+    test_clone();
+    0
+}
+
+fn test_substring() {
+    let s = make_string("hello world");
+    let sub = stdlib_string::substring(&s, 0, 5);
+    println(sub.as_str());  // hello
+
+    let sub2 = stdlib_string::substring(&s, 1, 5);
+    println(sub2.as_str()); // ello
+
+    // substring_str variant
+    let sub3 = stdlib_string::substring_str("hello world", 0, 5);
+    println(sub3.as_str()); // hello
+}
+
+fn test_trim() {
+    let s1 = make_string("  trim  ");
+    let t1 = stdlib_string::trim(&s1);
+    println(t1.as_str()); // trim
+
+    let s2 = make_string("  trim");
+    let t2 = stdlib_string::trim_start(&s2);
+    println(t2.as_str()); // trim
+
+    let s3 = make_string("trim  ");
+    let t3 = stdlib_string::trim_end(&s3);
+    println(t3.as_str()); // trim
+}
+
+fn test_search() {
+    let hay = make_string("hello world");
+    let needle = make_string("world");
+    let no_needle = make_string("xyz");
+    let prefix = make_string("hello");
+    let suffix = make_string("world");
+
+    // contains
+    if stdlib_string::contains(&hay, &needle) {
+        print_int(1); // 1
+    } else {
+        print_int(0);
+    }
+    print_str("\n");
+
+    // starts_with
+    if stdlib_string::starts_with(&hay, &prefix) {
+        print_int(1); // 1
+    } else {
+        print_int(0);
+    }
+    print_str("\n");
+
+    // does not contain
+    if stdlib_string::contains(&hay, &no_needle) {
+        print_int(1);
+    } else {
+        print_int(0); // 0
+    }
+    print_str("\n");
+
+    // ends_with
+    if stdlib_string::ends_with(&hay, &suffix) {
+        print_int(1); // 1
+    } else {
+        print_int(0);
+    }
+    print_str("\n");
+
+    // ends_with negative
+    if stdlib_string::ends_with(&hay, &prefix) {
+        print_int(1);
+    } else {
+        print_int(0); // 0
+    }
+    print_str("\n");
+
+    // index_of
+    let needle2 = make_string("lo");
+    match stdlib_string::index_of(&hay, &needle2) {
+        Option::Some(idx) => { print_int(idx as i32); } // 3
+        Option::None => { print_int(0 - 1); }
+    }
+    print_str("\n");
+}
+
+fn test_replace() {
+    let s = make_string("hello");
+    let from = make_string("e");
+    let to = make_string("-");
+    let r = stdlib_string::replace(&s, &from, &to);
+    println(r.as_str()); // h-llo
+
+    // replace all occurrences
+    let s2 = make_string("hello");
+    let from2 = make_string("l");
+    let to2 = make_string("-");
+    let r2 = stdlib_string::replace(&s2, &from2, &to2);
+    println(r2.as_str()); // he--o
+}
+
+fn test_split() {
+    // split_lines
+    let mut s = String::new();
+    s.push_str("abc");
+    s.push(10 as char); // newline
+    s.push_str("def");
+    s.push(10 as char);
+    s.push_str("ghi");
+    let lines = stdlib_string::split_lines(&s);
+    print_int(lines.len() as i32); // 3
+    print_str("\n");
+
+    let mut i: usize = 0;
+    while i < lines.len() {
+        println(lines[i].as_str());
+        i = i + 1;
+    }
+    // abc
+    // def
+    // ghi
+}
+
+fn test_case() {
+    let s = make_string("hello");
+    let upper = stdlib_string::to_uppercase(&s);
+    println(upper.as_str()); // HELLO
+
+    let s2 = make_string("HELLO");
+    let lower = stdlib_string::to_lowercase(&s2);
+    println(lower.as_str()); // hello
+}
+
+fn test_repeat() {
+    let s = make_string("ab");
+    let r = stdlib_string::repeat(&s, 3);
+    println(r.as_str()); // ababab
+}
+
+fn test_str_equals() {
+    let s = make_string("hello");
+    if stdlib_string::str_equals(&s, "hello") {
+        print_int(1); // 1
+    } else {
+        print_int(0);
+    }
+    print_str("\n");
+}
+
+fn test_clone() {
+    let s = make_string("hello");
+    let c = stdlib_string::clone_string(&s);
+    println(c.as_str()); // hello
+}
