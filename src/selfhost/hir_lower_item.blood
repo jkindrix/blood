@@ -878,13 +878,22 @@ fn lower_trait_item(ctx: &mut hir_lower_ctx::LoweringCtx, item: &ast::TraitItem)
 fn lower_assoc_fn(ctx: &mut hir_lower_ctx::LoweringCtx, f: &ast::FnDecl, is_trait_item: bool, impl_type_def_id: Option<hir_def::DefId>) -> hir_item::AssocFn {
     let def_id = match &impl_type_def_id {
         &Option::Some(ref type_def_id) => {
-            // Look up the DefId registered in phase 2 for this method
-            let fn_name_str = ctx.span_to_string(f.name.span);
-            let fn_name_sym = ctx.intern(fn_name_str.as_str());
-            let found = ctx.resolver.lookup_in_parent(hir_def::DefId::new(type_def_id.index), fn_name_sym);
+            // Look up the DefId registered in phase 2 for this method.
+            // Use span-based lookup to handle overloaded methods (same name, different spans).
+            let parent_def = hir_def::DefId::new(type_def_id.index);
+            let found = ctx.resolver.lookup_by_parent_and_span(parent_def, f.name.span.start);
             match found {
                 Option::Some(id) => id,
-                Option::None => ctx.alloc_def_id(),
+                Option::None => {
+                    // Fallback: try name-based lookup
+                    let fn_name_str = ctx.span_to_string(f.name.span);
+                    let fn_name_sym = ctx.intern(fn_name_str.as_str());
+                    let name_found = ctx.resolver.lookup_in_parent(parent_def, fn_name_sym);
+                    match name_found {
+                        Option::Some(id) => id,
+                        Option::None => ctx.alloc_def_id(),
+                    }
+                }
             }
         }
         &Option::None => ctx.alloc_def_id(),
@@ -1405,6 +1414,90 @@ fn extract_pattern_name(pattern: &ast::Pattern) -> Option<common::SpannedSymbol>
 }
 
 // ============================================================
+// Method Overload Helpers
+// ============================================================
+
+/// Counts the number of non-self parameters in an AST function declaration.
+fn count_non_self_params(ctx: &mut hir_lower_ctx::LoweringCtx, f: &ast::FnDecl) -> usize {
+    let mut count: usize = 0;
+    let mut i: usize = 0;
+    while i < f.params.len() {
+        let param = &f.params[i];
+        if !ast_param_is_self(param) {
+            count = count + 1;
+        }
+        i = i + 1;
+    }
+    count
+}
+
+/// Checks if an AST parameter is a self parameter.
+fn ast_param_is_self(param: &ast::Param) -> bool {
+    match &param.pattern.kind {
+        &ast::PatternKind::Ident { ref name, .. } => {
+            // "self" is pre-interned at index 19
+            name.symbol.index == 19
+        }
+        _ => false,
+    }
+}
+
+/// Compares two Strings byte-by-byte for equality.
+fn strings_equal(a: &String, b: &String) -> bool {
+    let a_bytes = a.as_bytes();
+    let b_bytes = b.as_bytes();
+    if a_bytes.len() != b_bytes.len() {
+        return false;
+    }
+    let mut i: usize = 0;
+    while i < a_bytes.len() {
+        if a_bytes[i] != b_bytes[i] {
+            return false;
+        }
+        i = i + 1;
+    }
+    true
+}
+
+/// Compares the non-self parameter type spans of two function declarations.
+/// Returns true if all non-self parameter types are textually identical.
+fn compare_param_type_spans(ctx: &mut hir_lower_ctx::LoweringCtx, f: &ast::FnDecl, g: &ast::FnDecl) -> bool {
+    // Collect non-self param type spans for both functions
+    let mut f_idx: usize = 0;
+    let mut g_idx: usize = 0;
+    // Walk both param lists, skipping self params
+    while f_idx < f.params.len() && g_idx < g.params.len() {
+        // Skip self in f
+        if ast_param_is_self(&f.params[f_idx]) {
+            f_idx = f_idx + 1;
+            continue;
+        }
+        // Skip self in g
+        if ast_param_is_self(&g.params[g_idx]) {
+            g_idx = g_idx + 1;
+            continue;
+        }
+        // Compare type span text
+        let f_ty_str = ctx.span_to_string(f.params[f_idx].ty.span);
+        let g_ty_str = ctx.span_to_string(g.params[g_idx].ty.span);
+        if !strings_equal(&f_ty_str, &g_ty_str) {
+            return false;
+        }
+        f_idx = f_idx + 1;
+        g_idx = g_idx + 1;
+    }
+    // Skip remaining self params
+    while f_idx < f.params.len() && ast_param_is_self(&f.params[f_idx]) {
+        f_idx = f_idx + 1;
+    }
+    while g_idx < g.params.len() && ast_param_is_self(&g.params[g_idx]) {
+        g_idx = g_idx + 1;
+    }
+    // Both should be exhausted
+    f_idx >= f.params.len() && g_idx >= g.params.len()
+}
+
+// ============================================================
 // Impl Declaration Lowering
 // ============================================================
 
@@ -1549,7 +1642,9 @@ fn lower_impl_decl(ctx: &mut hir_lower_ctx::LoweringCtx, imp: &ast::ImplBlock) {
         &Option::None => {}
     }
 
-    // Check for duplicate method names in impl block
+    // Check for duplicate method signatures in impl block.
+    // Methods with the same name but different parameter types are allowed (overloading).
+    // Only report an error if both name AND parameter types are identical.
     let mut mi: usize = 0;
     while mi < imp.items.len() {
         match &imp.items[mi] {
@@ -1565,14 +1660,25 @@ fn lower_impl_decl(ctx: &mut hir_lower_ctx::LoweringCtx, imp: &ast::ImplBlock) {
                             let gj_r = gj_s.as_str();
                             let name_j = ctx.intern(gj_r);
                             if name_i.index == name_j.index {
-                                let method_name = ctx.span_to_string(f.name.span);
-                                let mn_r = method_name.as_str();
-                                let mut msg = String::new();
-                                msg.push_str("duplicate method `");
-                                msg.push_str(mn_r);
-                                msg.push_str("` in impl block");
-                                ctx.error(hir::DiagnosticCode::E0101, msg, f.name.span);
-                                break;
+                                // Same name — check if parameter types differ (overload).
+                                // Compare non-self parameter count and type spans.
+                                let f_non_self = count_non_self_params(ctx, f);
+                                let g_non_self = count_non_self_params(ctx, g);
+                                if f_non_self == g_non_self {
+                                    // Same arity — compare type span text
+                                    let params_match = compare_param_type_spans(ctx, f, g);
+                                    if params_match {
+                                        let method_name = ctx.span_to_string(f.name.span);
+                                        let mn_r = method_name.as_str();
+                                        let mut msg = String::new();
+                                        msg.push_str("duplicate method `");
+                                        msg.push_str(mn_r);
+                                        msg.push_str("` in impl block");
+                                        ctx.error(hir::DiagnosticCode::E0101, msg, f.name.span);
+                                        break;
+                                    }
+                                }
+                                // Different param types: valid overload, not a duplicate
                             }
                         }
                         &ast::ImplItem::TypeAlias(_) => {}

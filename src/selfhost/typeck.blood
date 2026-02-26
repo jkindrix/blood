@@ -1161,6 +1161,74 @@ impl TypeChecker {
         &self.impls[result.impl_index]
     }
 
+    /// Looks up a method on a type by name with overload resolution using argument types.
+    /// When multiple methods share the same name, selects the one whose parameter types
+    /// best match the given argument types. Uses specificity scoring:
+    /// - Exact concrete match: +2 points per arg
+    /// - Flexible match (one side is Infer/Param): +1 point per arg
+    /// - Concrete mismatch: method disqualified (score 0, incompatible)
+    /// The method with the highest score wins. Ties (ambiguous) return None.
+    pub fn lookup_method_overloaded(
+        self: &Self,
+        ty: type_intern::TyId,
+        method_name: common::Symbol,
+        arg_tys: &Vec<type_intern::TyId>,
+    ) -> Option<MethodLookupResult> {
+        let mut best_impl: usize = 0;
+        let mut best_method: usize = 0;
+        let mut best_score: u32 = 0;
+        let mut found_count: u32 = 0;
+
+        let mut impl_idx: usize = 0;
+        while impl_idx < self.impls.len() {
+            let impl_info = &self.impls[impl_idx];
+            if types_match_for_impl_id(impl_info.self_ty, ty) {
+                let mut method_idx: usize = 0;
+                while method_idx < impl_info.methods.len() {
+                    let method = &impl_info.methods[method_idx];
+                    if method.name.index == method_name.index {
+                        // Name matches — compute specificity score
+                        if method.param_tys.len() == arg_tys.len() {
+                            let mut score: u32 = 0;
+                            let mut compatible: bool = true;
+                            let mut pi: usize = 0;
+                            while pi < arg_tys.len() {
+                                let match_level = type_match_specificity(method.param_tys[pi], arg_tys[pi]);
+                                if match_level == 0 {
+                                    compatible = false;
+                                    break;
+                                }
+                                score = score + match_level;
+                                pi = pi + 1;
+                            }
+                            if compatible {
+                                if score > best_score {
+                                    best_impl = impl_idx;
+                                    best_method = method_idx;
+                                    best_score = score;
+                                    found_count = 1;
+                                } else if score == best_score {
+                                    found_count = found_count + 1;
+                                }
+                            }
+                        }
+                    }
+                    method_idx = method_idx + 1;
+                }
+            }
+            impl_idx = impl_idx + 1;
+        }
+
+        if found_count == 1 {
+            Some(MethodLookupResult {
+                impl_index: best_impl,
+                method_index: best_method,
+            })
+        } else {
+            Option::None
+        }
+    }
+
     /// Gets a variant's index by name within an enum.
     pub fn get_variant_index(self: &Self, enum_def_id: hir_def::DefId, variant_name: common::Symbol) -> Option<u32> {
         let enum_info = self.get_enum(enum_def_id);
@@ -1558,6 +1626,34 @@ fn types_match_for_impl_id(impl_ty: type_intern::TyId, target_ty: type_intern::T
             }
         }
         _ => false,
+    }
+}
+
+/// Computes the specificity of a type match between a method param type and an arg type.
+/// Returns:
+/// - 0: incompatible types (no match)
+/// - 1: flexible match (one or both are Infer/Param — matches anything)
+/// - 2: exact match (both are concrete and structurally equal)
+fn type_match_specificity(param_ty: type_intern::TyId, arg_ty: type_intern::TyId) -> u32 {
+    let interner = type_intern::type_interner();
+    let param_kind = interner.get(param_ty);
+    let arg_kind = interner.get(arg_ty);
+    // If either side is Infer or Param, it's a flexible match (score 1)
+    match param_kind {
+        &type_intern::InternedTypeKind::Infer(_) => { return 1; }
+        &type_intern::InternedTypeKind::Param(_) => { return 1; }
+        _ => {}
+    }
+    match arg_kind {
+        &type_intern::InternedTypeKind::Infer(_) => { return 1; }
+        &type_intern::InternedTypeKind::Param(_) => { return 1; }
+        _ => {}
+    }
+    // Both are concrete — check for exact structural match
+    if types_match_for_impl_id(param_ty, arg_ty) {
+        2
+    } else {
+        0
     }
 }
 

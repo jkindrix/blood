@@ -617,6 +617,32 @@ fn infer_literal(checker: &mut typeck::TypeChecker, lit: &hir_expr::Literal) -> 
     }
 }
 
+/// Determines a default concrete type for a literal expression whose type is still Infer.
+/// Unsuffixed integer literals default to i32, unsuffixed floats to f64.
+/// Non-literal expressions remain as-is.
+fn default_literal_type(expr: &hir_expr::Expr, fallback: type_intern::TyId) -> type_intern::TyId {
+    match &expr.kind {
+        &hir_expr::ExprKind::Literal(ref lit) => {
+            match &lit.kind {
+                &hir_expr::LiteralKind::Int { val: _, ref ty } => {
+                    match ty {
+                        &Some(_) => fallback, // Already has suffix — keep inferred
+                        &None => type_intern::CommonTypes::i32_ty(), // Default to i32
+                    }
+                }
+                &hir_expr::LiteralKind::Float { bits: _, ref ty } => {
+                    match ty {
+                        &Some(_) => fallback,
+                        &None => type_intern::CommonTypes::f64_ty(), // Default to f64
+                    }
+                }
+                _ => fallback,
+            }
+        }
+        _ => fallback,
+    }
+}
+
 // ============================================================
 // Variable and Path Type Inference
 // ============================================================
@@ -1146,19 +1172,44 @@ fn infer_method_call(
         _ => {}
     }
 
-    // Check for ambiguous method dispatch (multiple impls provide same method)
+    // Check for overloaded methods (multiple impls provide same method name)
     let match_count = checker.count_method_matches(resolved_receiver, method.symbol);
-    if match_count > 1 {
-        checker.error_with_note(
-            typeck::TypeErrorKind::NoSuchMethod,
-            method.span,
-            common::make_string("multiple implementations found; ambiguous method dispatch"),
-        );
-        return checker.fresh_infer();
-    }
+    let args_already_inferred = match_count > 1;
+    let lookup_result_opt = if args_already_inferred {
+        // Multiple methods with same name — perform overload resolution.
+        // Infer argument types first, then select the matching overload.
+        let mut arg_tys: Vec<type_intern::TyId> = Vec::new();
+        let mut ai: usize = 0;
+        while ai < args.len() {
+            arg_tys.push(infer_expr(checker, &args[ai]));
+            ai = ai + 1;
+        }
+        // Resolve inferred types for overload matching.
+        // For still-unresolved Infer variables, apply default type rules:
+        // unsuffixed integers → i32, unsuffixed floats → f64.
+        // This allows overload resolution to disambiguate numeric literals.
+        let mut resolved_arg_tys: Vec<type_intern::TyId> = Vec::new();
+        let mut ri: usize = 0;
+        while ri < arg_tys.len() {
+            let resolved = checker.resolve(arg_tys[ri]);
+            let interner = type_intern::type_interner();
+            let defaulted = match interner.get(resolved) {
+                &type_intern::InternedTypeKind::Infer(_) => {
+                    // Check what kind of literal this argument is
+                    default_literal_type(&args[ri], resolved)
+                }
+                _ => resolved,
+            };
+            resolved_arg_tys.push(defaulted);
+            ri = ri + 1;
+        }
+        checker.lookup_method_overloaded(resolved_receiver, method.symbol, &resolved_arg_tys)
+    } else {
+        checker.lookup_method(resolved_receiver, method.symbol)
+    };
 
-    // Look up the method on the receiver type
-    match checker.lookup_method(resolved_receiver, method.symbol) {
+    // Process the resolved method
+    match lookup_result_opt {
         Some(lookup_result) => {
             // Get method info from the lookup
             let method_info = checker.get_method_from_lookup(&lookup_result);
@@ -1206,12 +1257,17 @@ fn infer_method_call(
                 return type_intern::CommonTypes::error();
             }
 
-            // Check each argument against parameter type (after substitution)
-            let mut i: usize = 0;
-            while i < args.len() {
-                let param_ty = unify::substitute_type_params_id(method_info.param_tys[i], &subst);
-                check_expr(checker, &args[i], param_ty);
-                i = i + 1;
+            // Check each argument against parameter type (after substitution).
+            // Even for overload resolution (args_already_inferred), we must unify
+            // arg types with param types so inference variables get constrained
+            // (e.g., unsuffixed `42` Infer → i32 from param type).
+            {
+                let mut i: usize = 0;
+                while i < args.len() {
+                    let param_ty = unify::substitute_type_params_id(method_info.param_tys[i], &subst);
+                    check_expr(checker, &args[i], param_ty);
+                    i = i + 1;
+                }
             }
 
             // Record the resolved method DefId for MIR lowering
@@ -1221,16 +1277,25 @@ fn infer_method_call(
             unify::substitute_type_params_id(method_info.return_ty, &subst)
         }
         Option::None => {
-            // Method not found - report error with type context
-            let mut note = common::make_string("no method found on type ");
-            note.push_str(type_intern::format_ty_id(resolved_receiver).as_str());
-            checker.error_with_note(typeck::TypeErrorKind::NoSuchMethod, span, note);
+            if args_already_inferred {
+                // Overload resolution failed — ambiguous or no matching overload
+                checker.error_with_note(
+                    typeck::TypeErrorKind::NoSuchMethod,
+                    method.span,
+                    common::make_string("multiple implementations found; ambiguous method dispatch"),
+                );
+            } else {
+                // Method not found - report error with type context
+                let mut note = common::make_string("no method found on type ");
+                note.push_str(type_intern::format_ty_id(resolved_receiver).as_str());
+                checker.error_with_note(typeck::TypeErrorKind::NoSuchMethod, span, note);
 
-            // Still infer types for all arguments
-            let mut i: usize = 0;
-            while i < args.len() {
-                infer_expr(checker, &args[i]);
-                i = i + 1;
+                // Still infer types for all arguments
+                let mut i: usize = 0;
+                while i < args.len() {
+                    infer_expr(checker, &args[i]);
+                    i = i + 1;
+                }
             }
 
             type_intern::CommonTypes::error()

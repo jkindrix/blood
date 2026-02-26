@@ -770,6 +770,25 @@ impl Resolver {
         Option::None
     }
 
+    /// Looks up a child definition by parent DefId and source span position.
+    /// Used for overloaded methods where name-based lookup is ambiguous.
+    pub fn lookup_by_parent_and_span(self: &Self, parent_def: hir_def::DefId, span_start: usize) -> Option<hir_def::DefId> {
+        let mut i: usize = 0;
+        while i < self.def_info.len() {
+            let entry = &self.def_info[i];
+            match &entry.info.parent {
+                &Some(p) => {
+                    if p.index == parent_def.index && entry.info.span.start == span_start {
+                        return Some(hir_def::DefId::new(entry.def_id.index));
+                    }
+                }
+                &None => {}
+            }
+            i = i + 1;
+        }
+        Option::None
+    }
+
     /// Resolves a qualified path with multiple segments.
     /// Returns the final DefId and whether it's a module, type, or value.
     pub fn resolve_qualified_path(
