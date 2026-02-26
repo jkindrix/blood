@@ -1,23 +1,52 @@
 // Blood Self-Hosted Compiler - Source-Level Macro Expansion
 //
 // Preprocesses source text to expand user-defined macros before parsing.
-// This is a simple text-level expansion: find macro declarations, extract
+// Supports multi-capture patterns, multi-rule macros, and recursive expansion.
+// This is a text-level expansion: find macro declarations, extract
 // patterns and templates, then substitute invocations.
 
 mod common;
 
-/// A macro definition extracted from source text.
+// ---- Data Structures ----
+
+/// A single pattern part — either a literal string to match or a capture binding.
+struct PatternPart {
+    is_capture: bool,
+    literal: String,       // used when is_capture == false
+    capture_name: String,  // used when is_capture == true
+}
+
+/// A single macro rule: pattern parts + expansion template.
+struct MacroRule {
+    parts: Vec<PatternPart>,
+    expansion: String,
+}
+
+/// A macro definition with one or more rules.
 struct MacroDef {
     name: String,
-    capture_name: String,
-    expansion: String,
+    rules: Vec<MacroRule>,
     decl_start: usize,
     decl_end: usize,
 }
 
+/// A captured argument: name-value pair from pattern matching.
+struct CapturedArg {
+    name: String,
+    value: String,
+}
+
+/// Result of parsing one rule — the rule and where parsing ended.
+struct RuleParseResult {
+    rule: MacroRule,
+    end_pos: usize,
+}
+
+// ---- Main Entry Point ----
+
 /// Preprocess macros in source text.
 /// Returns the source with macros expanded and declarations removed.
-/// If no macros are found, returns the original source unchanged.
+/// Supports recursive expansion with a depth limit of 32.
 pub fn preprocess_macros(source: &String) -> String {
     let bytes = source.as_bytes();
     let len = bytes.len();
@@ -26,12 +55,10 @@ pub fn preprocess_macros(source: &String) -> String {
     let mut macros: Vec<MacroDef> = Vec::new();
     let mut pos: usize = 0;
     while pos < len {
-        // Look for "macro " keyword at start of a line or after whitespace
         if matches_keyword(bytes, pos, len) {
             match parse_macro_def(bytes, pos, len) {
                 Option::Some(m) => {
                     macros.push(m);
-                    // Skip past this macro declaration
                     let last_idx = macros.len() - 1;
                     pos = macros[last_idx].decl_end;
                 }
@@ -45,65 +72,364 @@ pub fn preprocess_macros(source: &String) -> String {
     }
 
     if macros.is_empty() {
-        // No macros found — return original source
         let mut result = String::new();
         result.push_str(source.as_str());
         return result;
     }
 
-    // Build source with macro declarations removed
-    let mut cleaned = String::new();
-    let mut prev_end: usize = 0;
-    let mut mi: usize = 0;
-    while mi < macros.len() {
-        // Copy text before this macro declaration
-        let mut ci: usize = prev_end;
-        while ci < macros[mi].decl_start && ci < len {
-            cleaned.push(bytes[ci] as char);
-            ci = ci + 1;
-        }
-        prev_end = macros[mi].decl_end;
-        mi = mi + 1;
-    }
-    // Copy remaining text
-    let mut ci2: usize = prev_end;
-    while ci2 < len {
-        cleaned.push(bytes[ci2] as char);
-        ci2 = ci2 + 1;
-    }
+    // Remove macro declarations from source
+    let cleaned = remove_macro_decls(source, &macros);
 
-    // Expand invocations for each macro
+    // Recursive expansion: expand until no more changes or depth limit
     let mut result = cleaned;
-    let mut mi2: usize = 0;
-    while mi2 < macros.len() {
-        result = expand_invocations(&result, &macros[mi2]);
-        mi2 = mi2 + 1;
+    let mut depth: u32 = 0;
+    while depth < 32 {
+        let expanded = expand_all_invocations(&result, &macros);
+        if strings_equal(&expanded, &result) {
+            break;
+        }
+        result = expanded;
+        depth = depth + 1;
     }
 
     result
 }
 
+// ---- Declaration Removal ----
+
+/// Remove all macro declarations from source text, preserving other content.
+fn remove_macro_decls(source: &String, macros: &Vec<MacroDef>) -> String {
+    let bytes = source.as_bytes();
+    let len = bytes.len();
+    let mut result = String::new();
+    let mut prev_end: usize = 0;
+    let mut mi: usize = 0;
+    while mi < macros.len() {
+        let mut ci: usize = prev_end;
+        while ci < macros[mi].decl_start && ci < len {
+            result.push(bytes[ci] as char);
+            ci = ci + 1;
+        }
+        prev_end = macros[mi].decl_end;
+        mi = mi + 1;
+    }
+    let mut ci2: usize = prev_end;
+    while ci2 < len {
+        result.push(bytes[ci2] as char);
+        ci2 = ci2 + 1;
+    }
+    result
+}
+
+// ---- Expansion ----
+
+/// Expand all macro invocations in source for one pass.
+fn expand_all_invocations(source: &String, macros: &Vec<MacroDef>) -> String {
+    let bytes = source.as_bytes();
+    let len = bytes.len();
+    let mut result = String::new();
+    let mut pos: usize = 0;
+
+    while pos < len {
+        // Try to match any macro invocation at this position
+        let mut matched = false;
+        let mut mi: usize = 0;
+        while mi < macros.len() && !matched {
+            let name_bytes = macros[mi].name.as_bytes();
+            let name_len = name_bytes.len();
+
+            if pos + name_len + 1 < len && matches_name(bytes, pos, name_bytes, name_len) {
+                let after_name = pos + name_len;
+                if bytes[after_name] == 33 { // '!'
+                    let after_bang = after_name + 1;
+                    if after_bang < len && bytes[after_bang] == 40 { // '('
+                        // Valid prefix: not preceded by an identifier character
+                        let valid_prefix = pos == 0 || !is_ident_char(bytes[pos - 1]);
+                        if valid_prefix {
+                            // Extract args between balanced parens
+                            let arg_start = after_bang + 1;
+                            let mut arg_pos = arg_start;
+                            let mut paren_depth: u32 = 1;
+                            while arg_pos < len && paren_depth > 0 {
+                                if bytes[arg_pos] == 40 { paren_depth = paren_depth + 1; }
+                                if bytes[arg_pos] == 41 { paren_depth = paren_depth - 1; }
+                                if paren_depth > 0 { arg_pos = arg_pos + 1; }
+                            }
+                            let arg_end = arg_pos;
+
+                            let mut args = String::new();
+                            let mut ai: usize = arg_start;
+                            while ai < arg_end {
+                                args.push(bytes[ai] as char);
+                                ai = ai + 1;
+                            }
+
+                            // Try each rule in order (first match wins)
+                            match try_match_macro(&args, &macros[mi]) {
+                                Option::Some(expanded) => {
+                                    result.push(123 as char); // '{'
+                                    result.push(32 as char);  // ' '
+                                    result.push_str(expanded.as_str());
+                                    result.push(32 as char);  // ' '
+                                    result.push(125 as char); // '}'
+                                    pos = arg_end + 1; // +1 for closing ')'
+                                    matched = true;
+                                }
+                                Option::None => {}
+                            }
+                        }
+                    }
+                }
+            }
+            mi = mi + 1;
+        }
+
+        if !matched {
+            result.push(bytes[pos] as char);
+            pos = pos + 1;
+        }
+    }
+
+    result
+}
+
+/// Try matching args against each rule of a macro. Returns expanded text on match.
+fn try_match_macro(args: &String, macro_def: &MacroDef) -> Option<String> {
+    let mut ri: usize = 0;
+    while ri < macro_def.rules.len() {
+        match try_match_rule(args, &macro_def.rules[ri]) {
+            Option::Some(captures) => {
+                let expanded = substitute_multi(&macro_def.rules[ri].expansion, &captures);
+                return Option::Some(expanded);
+            }
+            Option::None => {}
+        }
+        ri = ri + 1;
+    }
+    Option::None
+}
+
+/// Try matching args text against a single rule's pattern.
+/// Returns captured arguments on success, None on failure.
+fn try_match_rule(args: &String, rule: &MacroRule) -> Option<Vec<CapturedArg>> {
+    let bytes = args.as_bytes();
+    let len = bytes.len();
+    let mut pos: usize = 0;
+    let mut captures: Vec<CapturedArg> = Vec::new();
+
+    // Empty pattern matches empty args
+    if rule.parts.is_empty() {
+        if len == 0 {
+            return Option::Some(captures);
+        } else {
+            return Option::None;
+        }
+    }
+
+    let mut pi: usize = 0;
+    while pi < rule.parts.len() {
+        if rule.parts[pi].is_capture {
+            // Find the terminator: next Literal part after this capture
+            let terminator = find_next_literal(rule, pi + 1);
+            match terminator {
+                Option::Some(term_idx) => {
+                    let lit_bytes = rule.parts[term_idx].literal.as_bytes();
+                    let lit_len = lit_bytes.len();
+                    // Find literal in args with balanced delimiters
+                    match find_literal_balanced(bytes, pos, len, lit_bytes, lit_len) {
+                        Option::Some(found_pos) => {
+                            let mut value = String::new();
+                            let mut vi: usize = pos;
+                            while vi < found_pos {
+                                value.push(bytes[vi] as char);
+                                vi = vi + 1;
+                            }
+                            captures.push(CapturedArg {
+                                name: clone_string(&rule.parts[pi].capture_name),
+                                value: value,
+                            });
+                            pos = found_pos;
+                        }
+                        Option::None => {
+                            return Option::None;
+                        }
+                    }
+                }
+                Option::None => {
+                    // No following literal — capture everything remaining
+                    let mut value = String::new();
+                    let mut vi: usize = pos;
+                    while vi < len {
+                        value.push(bytes[vi] as char);
+                        vi = vi + 1;
+                    }
+                    captures.push(CapturedArg {
+                        name: clone_string(&rule.parts[pi].capture_name),
+                        value: value,
+                    });
+                    pos = len;
+                }
+            }
+        } else {
+            // Literal — exact match at current position
+            let lit_bytes = rule.parts[pi].literal.as_bytes();
+            let lit_len = lit_bytes.len();
+            if pos + lit_len > len {
+                return Option::None;
+            }
+            if !matches_bytes_at(bytes, pos, lit_bytes, lit_len) {
+                return Option::None;
+            }
+            pos = pos + lit_len;
+        }
+        pi = pi + 1;
+    }
+
+    // Must have consumed all args
+    if pos != len {
+        return Option::None;
+    }
+
+    Option::Some(captures)
+}
+
+/// Find the index of the next Literal pattern part starting from `from`.
+fn find_next_literal(rule: &MacroRule, from: usize) -> Option<usize> {
+    let mut i: usize = from;
+    while i < rule.parts.len() {
+        if !rule.parts[i].is_capture {
+            return Option::Some(i);
+        }
+        i = i + 1;
+    }
+    Option::None
+}
+
+/// Find literal bytes in text starting at pos, respecting balanced delimiters.
+/// Skips string and char literals. Returns position of literal start, or None.
+fn find_literal_balanced(bytes: &[u8], start: usize, len: usize,
+                          lit_bytes: &[u8], lit_len: usize) -> Option<usize> {
+    let mut pos: usize = start;
+    let mut paren: u32 = 0;
+    let mut bracket: u32 = 0;
+    let mut brace: u32 = 0;
+
+    while pos + lit_len <= len {
+        let b = bytes[pos];
+
+        // Skip string literals
+        if b == 34 { // '"'
+            pos = pos + 1;
+            while pos < len {
+                if bytes[pos] == 92 { // '\\'
+                    pos = pos + 2;
+                    continue;
+                }
+                if bytes[pos] == 34 { // closing '"'
+                    pos = pos + 1;
+                    break;
+                }
+                pos = pos + 1;
+            }
+            continue;
+        }
+
+        // Skip char literals
+        if b == 39 { // '\''
+            pos = pos + 1;
+            if pos < len && bytes[pos] == 92 { // '\\'
+                pos = pos + 2;
+            } else if pos < len {
+                pos = pos + 1;
+            }
+            if pos < len && bytes[pos] == 39 { // closing '\''
+                pos = pos + 1;
+            }
+            continue;
+        }
+
+        // At depth 0, check for literal match BEFORE updating depth
+        if paren == 0 && bracket == 0 && brace == 0 {
+            if matches_bytes_at(bytes, pos, lit_bytes, lit_len) {
+                return Option::Some(pos);
+            }
+        }
+
+        // Track delimiter depth
+        if b == 40 { paren = paren + 1; }                       // '('
+        if b == 41 && paren > 0 { paren = paren - 1; }          // ')'
+        if b == 91 { bracket = bracket + 1; }                    // '['
+        if b == 93 && bracket > 0 { bracket = bracket - 1; }     // ']'
+        if b == 123 { brace = brace + 1; }                      // '{'
+        if b == 125 && brace > 0 { brace = brace - 1; }          // '}'
+
+        pos = pos + 1;
+    }
+
+    Option::None
+}
+
+// ---- Substitution ----
+
+/// Substitute all $name references in template with captured values.
+fn substitute_multi(template: &String, captures: &Vec<CapturedArg>) -> String {
+    let bytes = template.as_bytes();
+    let len = bytes.len();
+    let mut result = String::new();
+    let mut pos: usize = 0;
+
+    while pos < len {
+        if bytes[pos] == 36 { // '$'
+            // Try to match each capture name
+            let mut found = false;
+            let mut ci: usize = 0;
+            while ci < captures.len() && !found {
+                let name_bytes = captures[ci].name.as_bytes();
+                let name_len = name_bytes.len();
+                if pos + 1 + name_len <= len {
+                    if matches_name(bytes, pos + 1, name_bytes, name_len) {
+                        let after = pos + 1 + name_len;
+                        let boundary = after >= len || !is_ident_char(bytes[after]);
+                        if boundary {
+                            result.push_str(captures[ci].value.as_str());
+                            pos = after;
+                            found = true;
+                        }
+                    }
+                }
+                ci = ci + 1;
+            }
+            if !found {
+                result.push(bytes[pos] as char);
+                pos = pos + 1;
+            }
+        } else {
+            result.push(bytes[pos] as char);
+            pos = pos + 1;
+        }
+    }
+
+    result
+}
+
+// ---- Parsing ----
+
 /// Check if "macro " keyword starts at position pos.
 /// Must be preceded by start-of-file, newline, or whitespace.
 fn matches_keyword(bytes: &[u8], pos: usize, len: usize) -> bool {
-    // Need at least 6 chars: "macro "
     if pos + 6 > len { return false; }
-
-    // Check "macro "
     if bytes[pos] != 109 { return false; }     // 'm'
     if bytes[pos + 1] != 97 { return false; }   // 'a'
     if bytes[pos + 2] != 99 { return false; }   // 'c'
     if bytes[pos + 3] != 114 { return false; }  // 'r'
     if bytes[pos + 4] != 111 { return false; }  // 'o'
     if bytes[pos + 5] != 32 { return false; }   // ' '
-
-    // Must be at start or after whitespace/newline
     if pos == 0 { return true; }
     let prev = bytes[pos - 1];
-    prev == 10 || prev == 13 || prev == 32 || prev == 9 // \n, \r, space, tab
+    prev == 10 || prev == 13 || prev == 32 || prev == 9
 }
 
-/// Parse a macro definition starting at "macro " keyword.
+/// Parse a macro definition: macro name { rule1; rule2; ... }
 fn parse_macro_def(bytes: &[u8], start: usize, len: usize) -> Option<MacroDef> {
     let mut pos: usize = start + 6; // skip "macro "
 
@@ -130,84 +456,47 @@ fn parse_macro_def(bytes: &[u8], start: usize, len: usize) -> Option<MacroDef> {
         pos = pos + 1;
     }
 
-    // Expect opening brace
+    // Expect outer opening brace
     if pos >= len || bytes[pos] != 123 { return Option::None; } // '{'
     pos = pos + 1;
 
-    // Find the pattern: look for ($capture:kind)
-    // Skip to '('
-    while pos < len && bytes[pos] != 40 { // '('
-        pos = pos + 1;
-    }
-    if pos >= len { return Option::None; }
-    pos = pos + 1; // skip '('
+    // Parse rules until outer closing '}'
+    let mut rules: Vec<MacroRule> = Vec::new();
+    let mut done = false;
+    while !done && pos < len {
+        // Skip whitespace
+        while pos < len && is_whitespace(bytes[pos]) {
+            pos = pos + 1;
+        }
 
-    // Parse capture: $name:kind
-    let mut capture_name = String::new();
-    // Find '$'
-    while pos < len && bytes[pos] != 36 { // '$'
-        pos = pos + 1;
-    }
-    if pos >= len { return Option::None; }
-    pos = pos + 1; // skip '$'
+        // Check for outer closing '}'
+        if pos >= len || bytes[pos] == 125 { // '}'
+            done = true;
+        } else {
+            // Parse one rule: (pattern) => { expansion }
+            match parse_one_rule(bytes, pos, len) {
+                Option::Some(rr) => {
+                    pos = rr.end_pos;
+                    rules.push(rr.rule);
+                }
+                Option::None => {
+                    return Option::None;
+                }
+            }
 
-    // Read capture name
-    while pos < len && is_ident_char(bytes[pos]) {
-        capture_name.push(bytes[pos] as char);
-        pos = pos + 1;
-    }
-
-    // Skip ':kind)' — we don't need the kind for simple expansion
-    while pos < len && bytes[pos] != 41 { // ')'
-        pos = pos + 1;
-    }
-    if pos >= len { return Option::None; }
-    pos = pos + 1; // skip ')'
-
-    // Skip whitespace
-    while pos < len && is_whitespace(bytes[pos]) {
-        pos = pos + 1;
-    }
-
-    // Expect '=>'
-    if pos + 1 >= len { return Option::None; }
-    if bytes[pos] != 61 || bytes[pos + 1] != 62 { return Option::None; } // '=' '>'
-    pos = pos + 2;
-
-    // Skip whitespace
-    while pos < len && is_whitespace(bytes[pos]) {
-        pos = pos + 1;
+            // Skip optional ';' after rule
+            while pos < len && is_whitespace(bytes[pos]) {
+                pos = pos + 1;
+            }
+            if pos < len && bytes[pos] == 59 { // ';'
+                pos = pos + 1;
+            }
+        }
     }
 
-    // Expect '{' for expansion body
-    if pos >= len || bytes[pos] != 123 { return Option::None; } // '{'
-    pos = pos + 1; // skip '{'
-    let expansion_start = pos;
+    if rules.is_empty() { return Option::None; }
 
-    // Find matching '}'
-    let mut depth: u32 = 1;
-    while pos < len && depth > 0 {
-        if bytes[pos] == 123 { depth = depth + 1; } // '{'
-        if bytes[pos] == 125 { depth = depth - 1; } // '}'
-        if depth > 0 { pos = pos + 1; }
-    }
-    let expansion_end = pos;
-    if pos >= len { return Option::None; }
-    pos = pos + 1; // skip '}'
-
-    // Extract expansion text (between { and })
-    let mut expansion = String::new();
-    let mut ei: usize = expansion_start;
-    while ei < expansion_end {
-        expansion.push(bytes[ei] as char);
-        ei = ei + 1;
-    }
-
-    // Skip ';' and whitespace to find the outer closing '}'
-    while pos < len && (is_whitespace(bytes[pos]) || bytes[pos] == 59) { // ';'
-        pos = pos + 1;
-    }
-    // Expect outer '}'
+    // Skip outer closing '}'
     if pos < len && bytes[pos] == 125 { // '}'
         pos = pos + 1;
     }
@@ -219,81 +508,152 @@ fn parse_macro_def(bytes: &[u8], start: usize, len: usize) -> Option<MacroDef> {
 
     Option::Some(MacroDef {
         name: name,
-        capture_name: capture_name,
-        expansion: expansion,
+        rules: rules,
         decl_start: start,
         decl_end: pos,
     })
 }
 
-/// Expand all invocations of a macro in the source text.
-fn expand_invocations(source: &String, macro_def: &MacroDef) -> String {
-    let bytes = source.as_bytes();
-    let len = bytes.len();
-    let name_bytes = macro_def.name.as_bytes();
-    let name_len = name_bytes.len();
+/// Parse one rule: (pattern) => { expansion }
+fn parse_one_rule(bytes: &[u8], start: usize, len: usize) -> Option<RuleParseResult> {
+    let mut pos: usize = start;
 
-    let mut result = String::new();
-    let mut pos: usize = 0;
+    // Expect '('
+    if pos >= len || bytes[pos] != 40 { return Option::None; } // '('
+    pos = pos + 1;
+    let pattern_start = pos;
 
-    while pos < len {
-        // Check if macro name starts at this position
-        if pos + name_len + 1 < len && matches_name(bytes, pos, name_bytes, name_len) {
-            let after_name = pos + name_len;
-            // Check for '!' after name
-            if bytes[after_name] == 33 { // '!'
-                let after_bang = after_name + 1;
-                // Check for '(' after '!'
-                if after_bang < len && bytes[after_bang] == 40 { // '('
-                    // Must be preceded by start, newline, whitespace, or semicolon
-                    let valid_prefix = pos == 0 || is_whitespace(bytes[pos - 1])
-                        || bytes[pos - 1] == 59 || bytes[pos - 1] == 123 // ';' or '{'
-                        || bytes[pos - 1] == 10; // '\n'
-                    if valid_prefix {
-                        // Found invocation — extract arguments
-                        let arg_start = after_bang + 1;
-                        let mut arg_pos = arg_start;
-                        let mut depth: u32 = 1;
-                        while arg_pos < len && depth > 0 {
-                            if bytes[arg_pos] == 40 { depth = depth + 1; } // '('
-                            if bytes[arg_pos] == 41 { depth = depth - 1; } // ')'
-                            if depth > 0 { arg_pos = arg_pos + 1; }
-                        }
-                        let arg_end = arg_pos;
+    // Find matching ')' with balanced parens
+    let mut depth: u32 = 1;
+    while pos < len && depth > 0 {
+        if bytes[pos] == 40 { depth = depth + 1; } // '('
+        if bytes[pos] == 41 { depth = depth - 1; } // ')'
+        if depth > 0 { pos = pos + 1; }
+    }
+    let pattern_end = pos;
+    if pos >= len { return Option::None; }
+    pos = pos + 1; // skip ')'
 
-                        // Extract argument text
-                        let mut arg = String::new();
-                        let mut ai: usize = arg_start;
-                        while ai < arg_end {
-                            arg.push(bytes[ai] as char);
-                            ai = ai + 1;
-                        }
+    // Parse pattern parts from content between ( and )
+    let parts = parse_pattern_parts(bytes, pattern_start, pattern_end);
 
-                        // Perform substitution: replace $capture_name with arg
-                        let expanded = substitute(&macro_def.expansion, &macro_def.capture_name, &arg);
-
-                        // Emit block-wrapped expansion
-                        result.push(123 as char); // '{'
-                        result.push(32 as char);  // ' '
-                        result.push_str(expanded.as_str());
-                        result.push(32 as char);  // ' '
-                        result.push(125 as char); // '}'
-
-                        // Skip past the invocation including closing ')'
-                        pos = arg_end + 1; // +1 for ')'
-                        continue;
-                    }
-                }
-            }
-        }
-
-        // Copy character as-is
-        result.push(bytes[pos] as char);
+    // Skip whitespace
+    while pos < len && is_whitespace(bytes[pos]) {
         pos = pos + 1;
     }
 
-    result
+    // Expect '=>'
+    if pos + 1 >= len { return Option::None; }
+    if bytes[pos] != 61 || bytes[pos + 1] != 62 { return Option::None; }
+    pos = pos + 2;
+
+    // Skip whitespace
+    while pos < len && is_whitespace(bytes[pos]) {
+        pos = pos + 1;
+    }
+
+    // Expect '{' for expansion body
+    if pos >= len || bytes[pos] != 123 { return Option::None; } // '{'
+    pos = pos + 1;
+    let expansion_start = pos;
+
+    // Find matching '}'
+    let mut brace_depth: u32 = 1;
+    while pos < len && brace_depth > 0 {
+        if bytes[pos] == 123 { brace_depth = brace_depth + 1; } // '{'
+        if bytes[pos] == 125 { brace_depth = brace_depth - 1; } // '}'
+        if brace_depth > 0 { pos = pos + 1; }
+    }
+    let expansion_end = pos;
+    if pos >= len { return Option::None; }
+    pos = pos + 1; // skip '}'
+
+    // Extract expansion text
+    let mut expansion = String::new();
+    let mut ei: usize = expansion_start;
+    while ei < expansion_end {
+        expansion.push(bytes[ei] as char);
+        ei = ei + 1;
+    }
+
+    Option::Some(RuleParseResult {
+        rule: MacroRule {
+            parts: parts,
+            expansion: expansion,
+        },
+        end_pos: pos,
+    })
 }
+
+/// Parse pattern parts between ( and ) into Vec<PatternPart>.
+/// Handles $name:kind captures and literal text between them.
+fn parse_pattern_parts(bytes: &[u8], start: usize, end: usize) -> Vec<PatternPart> {
+    let mut parts: Vec<PatternPart> = Vec::new();
+    let mut pos: usize = start;
+    let mut literal = String::new();
+
+    while pos < end {
+        if bytes[pos] == 36 { // '$'
+            // Try to parse $name:kind
+            let cap_start = pos + 1;
+            let mut cap_pos = cap_start;
+            while cap_pos < end && is_ident_char(bytes[cap_pos]) {
+                cap_pos = cap_pos + 1;
+            }
+            if cap_pos > cap_start && cap_pos < end && bytes[cap_pos] == 58 { // ':'
+                // Found $name: — skip past :kind
+                let mut capture_name = String::new();
+                let mut ci: usize = cap_start;
+                while ci < cap_pos {
+                    capture_name.push(bytes[ci] as char);
+                    ci = ci + 1;
+                }
+                let kind_start = cap_pos + 1;
+                let mut kind_pos = kind_start;
+                while kind_pos < end && is_ident_char(bytes[kind_pos]) {
+                    kind_pos = kind_pos + 1;
+                }
+
+                // Flush accumulated literal
+                if literal.len() > 0 {
+                    parts.push(PatternPart {
+                        is_capture: false,
+                        literal: literal,
+                        capture_name: String::new(),
+                    });
+                    literal = String::new();
+                }
+
+                // Add capture part
+                parts.push(PatternPart {
+                    is_capture: true,
+                    literal: String::new(),
+                    capture_name: capture_name,
+                });
+
+                pos = kind_pos;
+                continue;
+            }
+        }
+
+        // Accumulate as literal
+        literal.push(bytes[pos] as char);
+        pos = pos + 1;
+    }
+
+    // Flush remaining literal
+    if literal.len() > 0 {
+        parts.push(PatternPart {
+            is_capture: false,
+            literal: literal,
+            capture_name: String::new(),
+        });
+    }
+
+    parts
+}
+
+// ---- Utility Helpers ----
 
 /// Check if name_bytes matches at position pos in bytes.
 fn matches_name(bytes: &[u8], pos: usize, name_bytes: &[u8], name_len: usize) -> bool {
@@ -305,42 +665,42 @@ fn matches_name(bytes: &[u8], pos: usize, name_bytes: &[u8], name_len: usize) ->
     true
 }
 
-/// Substitute all occurrences of $name with replacement in template text.
-fn substitute(template: &String, capture_name: &String, replacement: &String) -> String {
-    let bytes = template.as_bytes();
-    let len = bytes.len();
-    let name_bytes = capture_name.as_bytes();
-    let name_len = name_bytes.len();
-
-    let mut result = String::new();
-    let mut pos: usize = 0;
-
-    while pos < len {
-        // Check for '$' followed by capture name
-        if bytes[pos] == 36 && pos + 1 + name_len <= len { // '$'
-            if matches_name(bytes, pos + 1, name_bytes, name_len) {
-                // Check that the next char after the name is not an ident char
-                let after = pos + 1 + name_len;
-                let boundary = after >= len || !is_ident_char(bytes[after]);
-                if boundary {
-                    result.push_str(replacement.as_str());
-                    pos = after;
-                    continue;
-                }
-            }
-        }
-        result.push(bytes[pos] as char);
-        pos = pos + 1;
+/// Check if bytes at position match the given literal bytes.
+fn matches_bytes_at(bytes: &[u8], pos: usize, lit: &[u8], lit_len: usize) -> bool {
+    let mut i: usize = 0;
+    while i < lit_len {
+        if bytes[pos + i] != lit[i] { return false; }
+        i = i + 1;
     }
+    true
+}
 
+/// Compare two strings for equality.
+fn strings_equal(a: &String, b: &String) -> bool {
+    let a_bytes = a.as_bytes();
+    let b_bytes = b.as_bytes();
+    let a_len = a_bytes.len();
+    let b_len = b_bytes.len();
+    if a_len != b_len { return false; }
+    let mut i: usize = 0;
+    while i < a_len {
+        if a_bytes[i] != b_bytes[i] { return false; }
+        i = i + 1;
+    }
+    true
+}
+
+/// Clone a string.
+fn clone_string(s: &String) -> String {
+    let mut result = String::new();
+    result.push_str(s.as_str());
     result
 }
 
 fn is_whitespace(b: u8) -> bool {
-    b == 32 || b == 9 || b == 10 || b == 13 // space, tab, \n, \r
+    b == 32 || b == 9 || b == 10 || b == 13
 }
 
 fn is_ident_char(b: u8) -> bool {
     (b >= 97 && b <= 122) || (b >= 65 && b <= 90) || (b >= 48 && b <= 57) || b == 95
-    // a-z, A-Z, 0-9, _
 }

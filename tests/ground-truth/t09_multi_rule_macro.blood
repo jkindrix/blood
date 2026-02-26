@@ -1,0 +1,16 @@
+// EXPECT: 6
+// Tests multi-rule macro: different rules selected by argument count.
+// Rules ordered most-specific first (text-level expansion matches first rule that fits).
+macro add {
+    ($a:expr, $b:expr, $c:expr) => { $a + $b + $c };
+    ($a:expr, $b:expr) => { $a + $b };
+    ($a:expr) => { $a };
+}
+
+fn main() {
+    let x: i32 = add!(1);
+    let y: i32 = add!(1, 2);
+    let z: i32 = add!(1, 2, 3);
+    // x=1, y=3, z=6
+    println(int_to_string(z));
+}

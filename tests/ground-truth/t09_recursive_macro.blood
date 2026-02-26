@@ -1,0 +1,15 @@
+// EXPECT: 42
+// Tests recursive macro expansion: one macro expands to another macro invocation.
+macro double {
+    ($x:expr) => { $x + $x };
+}
+
+macro quad {
+    ($x:expr) => { double!(double!($x)) };
+}
+
+fn main() {
+    let r: i32 = quad!(10);
+    // r = 10+10+10+10 = 40
+    println(int_to_string(r + 2));
+}
