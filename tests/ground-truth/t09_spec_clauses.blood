@@ -1,0 +1,49 @@
+// Test specification clauses: requires, ensures, invariant, decreases
+// Spec clauses are parsed but not enforced at runtime.
+
+fn add(a: i32, b: i32) -> i32
+    requires a >= 0
+    requires b >= 0
+    ensures result >= a
+    ensures result >= b
+{
+    a + b
+}
+
+fn factorial(n: i32) -> i32
+    requires n >= 0
+    ensures result >= 1
+    decreases n
+{
+    if n <= 1 { 1 } else { n * factorial(n - 1) }
+}
+
+fn clamp(x: i32, lo: i32, hi: i32) -> i32
+    requires lo <= hi
+    ensures result >= lo
+    ensures result <= hi
+{
+    if x < lo {
+        lo
+    } else if x > hi {
+        hi
+    } else {
+        x
+    }
+}
+
+fn main() -> i32 {
+    let r1 = add(3, 4);
+    if r1 != 7 { return 1; }
+
+    let r2 = factorial(5);
+    if r2 != 120 { return 2; }
+
+    let r3 = clamp(10, 0, 5);
+    if r3 != 5 { return 3; }
+
+    let r4 = clamp(-3, 0, 5);
+    if r4 != 0 { return 4; }
+
+    0
+}
