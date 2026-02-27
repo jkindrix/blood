@@ -56,7 +56,7 @@ Whitespace ::= ' ' | '\t' | '\n' | '\r'
 
 Comment ::= LineComment | BlockComment
 LineComment ::= '//' [^\n]* '\n'
-BlockComment ::= '/*' (BlockComment | [^*/])* '*/'
+BlockComment ::= '/*' (BlockComment | [^*] | '*' [^/])* '*/'
 ```
 
 Comments nest (unlike C/Java).
@@ -92,9 +92,12 @@ FloatLiteral ::= DecInt '.' DecInt FloatExponent? FloatSuffix?
 FloatExponent ::= [eE] [+-]? DecInt
 FloatSuffix ::= 'f32' | 'f64'
 
-StringLiteral ::= '"' StringChar* '"'
+StringLiteral ::= '"' StringChar* '"' | RawStringLiteral
 StringChar ::= [^"\\] | EscapeSeq
 EscapeSeq ::= '\\' ([nrt\\'"0] | 'x' HexDigit HexDigit | 'u{' HexDigit+ '}')
+
+RawStringLiteral ::= 'r' RawStringBody
+RawStringBody ::= '"' [^"]* '"' | '#' RawStringBody '#'
 
 CharLiteral ::= '\'' (CharChar | EscapeSeq) '\''
 CharChar ::= [^'\\]
@@ -230,6 +233,7 @@ SpecClause ::= 'requires' Expr
              | 'decreases' Expr
 
 FnQualifier ::= 'const' | 'async' | '@unsafe'
+(* `async fn foo()` is sugar for `fn foo() / {Async}` — see §8 for the Async effect *)
 
 Visibility ::= 'pub' ('(' VisScope ')')?
 VisScope ::= 'crate' | 'super' | 'self' | ModulePath
@@ -267,7 +271,7 @@ EnumVariant ::= Ident StructBody?
 
 ```ebnf
 EffectDecl ::= 'effect' Ident TypeParams? EffectExtends? '{' OperationDecl* '}'
-EffectExtends ::= 'extends' Type (',' Type)*
+EffectExtends ::= 'extends' TypePath (',' TypePath)*
 OperationDecl ::= 'op' Ident TypeParams? '(' Params ')' '->' Type ';'
 
 HandlerDecl ::= HandlerKind? 'handler' Ident TypeParams?
@@ -352,6 +356,7 @@ TypePath ::= TypeIdent TypeArgs?
            | ModulePath '::' TypeIdent TypeArgs?
 TypeArgs ::= '<' TypeArg (',' TypeArg)* ','? '>'
 TypeArg ::= Type | Lifetime | Const
+Const ::= Literal | '-' Literal | Ident | BlockExpr
 
 ReferenceType ::= '&' Lifetime? 'mut'? Type
 PointerType ::= '*' ('const' | 'mut') Type
@@ -449,7 +454,6 @@ ExprWithBlock ::= BlockExpr
 
 ExprWithoutBlock ::= Literal
                    | PathExpr
-                   | OperatorExpr
                    | CallExpr
                    | MethodCallExpr
                    | FieldExpr
@@ -462,6 +466,7 @@ ExprWithoutBlock ::= Literal
                    | BinaryExpr
                    | CastExpr
                    | AssignExpr
+                   | AllocExpr
                    | ReturnExpr
                    | BreakExpr
                    | ContinueExpr
@@ -469,7 +474,11 @@ ExprWithoutBlock ::= Literal
                    | PerformExpr
                    | ResumeExpr
                    | '(' Expr ')'
+
+PathExpr ::= Ident | ModulePath '::' Ident
 ```
+
+**Note:** `BinaryExpr` and `UnaryExpr` are disambiguated by the precedence and associativity rules in §7. The parser uses precedence climbing (Pratt parsing).
 
 ### 5.2 Block and Control Flow
 
@@ -499,7 +508,7 @@ Label ::= LifetimeIdent ':'
 ### 5.3 Effect Expressions
 
 ```ebnf
-WithHandleExpr ::= 'with' Expr 'handle' Expr
+WithHandleExpr ::= 'with' Expr 'handle' Block
 
 PerformExpr ::= 'perform' TypePath '.' Ident '(' Args ')'
               | 'perform' Ident '(' Args ')'  (* when unambiguous *)
