@@ -222,7 +222,12 @@ Declaration ::=
 
 ```ebnf
 FnDecl ::= Visibility? FnQualifier* 'fn' Ident TypeParams? '(' Params ')'
-           ('->' Type)? ('/' EffectRow)? WhereClause? (Block | ';')
+           ('->' Type)? ('/' EffectRow)? SpecClause* WhereClause? (Block | ';')
+
+SpecClause ::= 'requires' Expr
+             | 'ensures' Expr
+             | 'invariant' Expr
+             | 'decreases' Expr
 
 FnQualifier ::= 'const' | 'async' | '@unsafe'
 
@@ -817,12 +822,12 @@ fn main() / {IO} {
 
 ```
 as async await break const continue crate
-deep dyn effect else enum extends extern
-false fn for handler if impl in
-let linear loop match mod move mut
-perform pub ref region resume return
-self Self shallow static struct super
-trait true type use where while
+decreases deep dyn effect else ensures enum
+extends extern false fn for handler if
+impl in invariant let linear loop match
+mod move mut perform pub ref region
+requires resume return self Self shallow static
+struct super trait true type use where while
 ```
 
 **Note:** `unsafe` is not a keyword in Blood. Use `@unsafe` block syntax instead (see Section 5.4).
