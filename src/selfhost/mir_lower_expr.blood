@@ -226,8 +226,7 @@ fn lower_expr_inner(
         }
         &hir_expr::ExprKind::InlineHandle { ref body, ref handlers } => {
             // Emit PushInlineHandler for each handler's effect
-            let mut hi: usize = 0;
-            while hi < handlers.len() {
+            for hi in 0usize..handlers.len() {
                 let hdlr = &handlers[hi];
                 ctx.emit_stmt(mir_stmt::Statement::new(
                     mir_stmt::StatementKind::PushInlineHandler {
@@ -236,18 +235,15 @@ fn lower_expr_inner(
                     },
                     expr.span,
                 ));
-                hi = hi + 1;
             }
             // Lower the body
             lower_expr(ctx, body.as_ref(), dest);
             // Pop handlers in reverse order
-            let mut pi: usize = 0;
-            while pi < handlers.len() {
+            for pi in 0usize..handlers.len() {
                 ctx.emit_stmt(mir_stmt::Statement::new(
                     mir_stmt::StatementKind::PopHandler,
                     expr.span,
                 ));
-                pi = pi + 1;
             }
         }
         &hir_expr::ExprKind::Perform { effect_def, op_def: _, op_name, ref args } => {
@@ -267,10 +263,8 @@ fn lower_expr_inner(
             // Region blocks: lower body like a block for now.
             // Full region lifecycle (create/activate/deactivate/destroy)
             // will be added when runtime integration is complete.
-            let mut i: usize = 0;
-            while i < stmts.len() {
+            for i in 0usize..stmts.len() {
                 lower_stmt(ctx, &stmts[i]);
-                i = i + 1;
             }
             match region_expr {
                 &Option::Some(ref e) => {
@@ -481,10 +475,8 @@ fn extract_type_args(ty: &hir_ty::Type) -> Vec<type_intern::TyId> {
     match &ty.kind {
         &hir_ty::TypeKind::Adt { def_id: _, ref args } => {
             let mut result: Vec<type_intern::TyId> = Vec::new();
-            let mut i: usize = 0;
-            while i < args.len() {
+            for i in 0usize..args.len() {
                 result.push(type_intern::type_to_ty_id(&args[i]));
-                i = i + 1;
             }
             result
         }
@@ -768,8 +760,7 @@ fn lower_call_expr(
                     // This is a payload enum variant constructor — emit Aggregate.
                     // Evaluate arguments (variant fields).
                     let mut operands = Vec::new();
-                    let mut i: usize = 0;
-                    while i < args.len() {
+                    for i in 0usize..args.len() {
                         let arg = &args[i];
                         let arg_temp = ctx.new_temp(arg.ty, span);
                         lower_expr(ctx, arg, mir_lower_ctx::destination_local(arg_temp));
@@ -777,7 +768,6 @@ fn lower_call_expr(
                             mir_types::Place::local(arg_temp),
                             arg.ty,
                         ));
-                        i = i + 1;
                     }
 
                     // The return type `ty` is the enum Adt type — extract its DefId.
@@ -854,8 +844,7 @@ fn lower_call_expr(
 
     // Evaluate arguments
     let mut arg_operands = Vec::new();
-    let mut i: usize = 0;
-    while i < args.len() {
+    for i in 0usize..args.len() {
         let arg = &args[i];
         let arg_temp = ctx.new_temp(arg.ty, span);
         lower_expr(ctx, arg, mir_lower_ctx::destination_local(arg_temp));
@@ -863,7 +852,6 @@ fn lower_call_expr(
             mir_types::Place::local(arg_temp),
             arg.ty,
         ));
-        i = i + 1;
     }
 
     // Create call
@@ -947,8 +935,7 @@ fn lower_method_call_expr(
     ));
 
     // Evaluate remaining arguments
-    let mut i: usize = 0;
-    while i < args.len() {
+    for i in 0usize..args.len() {
         let arg = &args[i];
         let arg_temp = ctx.new_temp(arg.ty, span);
         lower_expr(ctx, arg, mir_lower_ctx::destination_local(arg_temp));
@@ -956,7 +943,6 @@ fn lower_method_call_expr(
             mir_types::Place::local(arg_temp),
             arg.ty,
         ));
-        i = i + 1;
     }
 
     // Get method function - first check HIR-stored DefId, then side table from type checker
@@ -1106,8 +1092,7 @@ fn lower_tuple_expr(
 ) {
     // Evaluate all elements
     let mut operands = Vec::new();
-    let mut i: usize = 0;
-    while i < elems.len() {
+    for i in 0usize..elems.len() {
         let elem = &elems[i];
         let temp = ctx.new_temp(elem.ty, span);
         lower_expr(ctx, elem, mir_lower_ctx::destination_local(temp));
@@ -1115,7 +1100,6 @@ fn lower_tuple_expr(
             mir_types::Place::local(temp),
             elem.ty,
         ));
-        i = i + 1;
     }
 
     match dest.as_place() {
@@ -1145,8 +1129,7 @@ fn lower_array_expr(
             // Array literal [a, b, c]
             let mut operands = Vec::new();
             let elem_ty = get_array_element_type(ctx, ty, span);
-            let mut i: usize = 0;
-            while i < elems.len() {
+            for i in 0usize..elems.len() {
                 let elem = &elems[i];
                 let temp = ctx.new_temp(elem.ty, span);
                 lower_expr(ctx, elem, mir_lower_ctx::destination_local(temp));
@@ -1154,7 +1137,6 @@ fn lower_array_expr(
                     mir_types::Place::local(temp),
                     elem.ty,
                 ));
-                i = i + 1;
             }
 
             match dest.as_place() {
@@ -1178,10 +1160,8 @@ fn lower_array_expr(
 
             let mut operands = Vec::new();
             let elem_ty = val.as_ref().ty;
-            let mut i: u64 = 0;
-            while i < count {
+            for i in 0u64..count {
                 operands.push(mir_types::Operand::Copy(mir_types::Place::local(val_temp)));
-                i = i + 1;
             }
 
             match dest.as_place() {
@@ -1234,8 +1214,7 @@ fn lower_struct_expr(
                     lower_expr(ctx, base_expr.as_ref(), mir_lower_ctx::Destination::Place(place.clone()));
 
                     // Overwrite explicit fields
-                    let mut i: usize = 0;
-                    while i < fields.len() {
+                    for i in 0usize..fields.len() {
                         let field = &fields[i];
                         // Determine field index
                         let field_idx = match &field.field_idx {
@@ -1254,7 +1233,6 @@ fn lower_struct_expr(
                             mir_types::PlaceElem::Field(field_idx),
                         );
                         lower_expr(ctx, &field.val, mir_lower_ctx::Destination::Place(field_place));
-                        i = i + 1;
                     }
                 }
                 &Option::None => {
@@ -1269,8 +1247,7 @@ fn lower_struct_expr(
                     let mut temp_tys: Vec<type_intern::TyId> = Vec::new();
                     let mut temp_field_indices: Vec<u32> = Vec::new();
 
-                    let mut i: usize = 0;
-                    while i < num_fields {
+                    for i in 0usize..num_fields {
                         let field = &fields[i];
                         // Look up declaration-order field index
                         let field_idx: u32 = match &field.field_idx {
@@ -1287,22 +1264,19 @@ fn lower_struct_expr(
                         temp_locals.push(temp);
                         temp_tys.push(field.val.ty);
                         temp_field_indices.push(field_idx);
-                        i = i + 1;
                     }
 
                     // Phase 2: build operands in declaration order (0, 1, 2, ...)
                     let mut operands: Vec<mir_types::Operand> = Vec::new();
                     let mut decl_idx: u32 = 0;
                     while (decl_idx as usize) < num_fields {
-                        let mut j: usize = 0;
-                        while j < num_fields {
+                        for j in 0usize..num_fields {
                             if temp_field_indices[j] == decl_idx {
                                 operands.push(mir_lower_util::operand_from_place_id(
                                     mir_types::Place::local(temp_locals[j]),
                                     temp_tys[j],
                                 ));
                             }
-                            j = j + 1;
                         }
                         decl_idx = decl_idx + 1;
                     }
@@ -1321,10 +1295,8 @@ fn lower_struct_expr(
                     let type_args = match &resolved_ty.kind {
                         &hir_ty::TypeKind::Adt { def_id: _, ref args } => {
                             let mut cloned: Vec<type_intern::TyId> = Vec::new();
-                            let mut ai: usize = 0;
-                            while ai < args.len() {
+                            for ai in 0usize..args.len() {
                                 cloned.push(type_intern::type_to_ty_id(&args[ai]));
-                                ai = ai + 1;
                             }
                             cloned
                         }
@@ -1358,8 +1330,7 @@ fn lower_anon_record_expr(
 ) {
     // Evaluate all field values
     let mut operands = Vec::new();
-    let mut i: usize = 0;
-    while i < fields.len() {
+    for i in 0usize..fields.len() {
         let field = &fields[i];
         let temp = ctx.new_temp(field.val.ty, span);
         lower_expr(ctx, &field.val, mir_lower_ctx::destination_local(temp));
@@ -1367,7 +1338,6 @@ fn lower_anon_record_expr(
             mir_types::Place::local(temp),
             field.val.ty,
         ));
-        i = i + 1;
     }
 
     match dest.as_place() {
@@ -1589,10 +1559,8 @@ fn lower_block_expr(
     span: common::Span,
 ) {
     // Lower each statement
-    let mut i: usize = 0;
-    while i < block.stmts.len() {
+    for i in 0usize..block.stmts.len() {
         lower_stmt(ctx, &block.stmts[i]);
-        i = i + 1;
     }
 
     // Lower trailing expression if present
@@ -1722,8 +1690,7 @@ fn lower_match_expr(
     let join_block = ctx.new_block();
 
     // For simplicity, generate a chain of if-else blocks
-    let mut i: usize = 0;
-    while i < arms.len() {
+    for i in 0usize..arms.len() {
         let arm = &arms[i];
         let arm_block = ctx.new_block();
         let next_arm_block = if i + 1 < arms.len() {
@@ -1738,8 +1705,7 @@ fn lower_match_expr(
             &hir_expr::PatternKind::Or(ref alternatives) => {
                 // For Or patterns, chain tests: each alternative branches to arm_block
                 // on success, or falls through to the next alternative's test.
-                let mut alt_i: usize = 0;
-                while alt_i < alternatives.len() {
+                for alt_i in 0usize..alternatives.len() {
                     let alt = &alternatives[alt_i];
                     let test = mir_lower_pattern::pattern_test(ctx, alt, &scrut_place, span);
                     let fallthrough = if alt_i + 1 < alternatives.len() {
@@ -1762,7 +1728,6 @@ fn lower_match_expr(
                     if alt_i + 1 < alternatives.len() {
                         ctx.set_current_block(fallthrough);
                     }
-                    alt_i = alt_i + 1;
                 }
             }
             _ => {
@@ -1792,7 +1757,6 @@ fn lower_match_expr(
         }
 
         ctx.set_current_block(next_arm_block);
-        i = i + 1;
     }
 
     ctx.set_current_block(join_block);
@@ -1920,6 +1884,7 @@ fn lower_for_iter_expr(
     // Step 3: Create basic blocks
     let loop_header = ctx.new_block();
     let loop_body = ctx.new_block();
+    let increment_block = ctx.new_block();
     let break_block = ctx.new_block();
 
     // Jump to loop header
@@ -1956,7 +1921,8 @@ fn lower_for_iter_expr(
     ctx.terminate_if(cond_for_branch, loop_body, break_block, span);
 
     // Step 5: Push loop context for break/continue support
-    ctx.push_loop(*label, break_block, loop_header, dest);
+    // continue jumps to increment_block (not loop_header) to advance the index
+    ctx.push_loop(*label, break_block, increment_block, dest);
 
     // Step 6: Loop body — bind pattern, execute body, increment
     ctx.set_current_block(loop_body);
@@ -1995,38 +1961,42 @@ fn lower_for_iter_expr(
     // Lower the body expression (result is ignored, for-loop body is unit)
     lower_expr(ctx, body, mir_lower_ctx::destination_ignore());
 
-    // Increment: _idx = _idx + 1
+    // After body, jump to increment block (unless body already terminated via break/return)
     if !ctx.is_terminated() {
-        let idx_for_add = mir_types::Operand::Copy(mir_types::Place::local(idx_local));
-        let one_const = mir_types::Constant::new(
-            idx_ty_id,
-            mir_types::ConstantKind::Int(1),
-        );
-        let one_operand = mir_types::Operand::Constant(one_const);
-
-        let inc_temp = ctx.new_temp(idx_ty_id, span);
-        ctx.emit_assign(
-            mir_types::Place::local(inc_temp),
-            mir_types::Rvalue::BinaryOp {
-                op: mir_types::MirBinOp::Add,
-                left: idx_for_add,
-                right: one_operand,
-            },
-            span,
-        );
-
-        ctx.emit_assign(
-            mir_types::Place::local(idx_local),
-            mir_types::Rvalue::Use(mir_types::Operand::Copy(mir_types::Place::local(inc_temp))),
-            span,
-        );
-
-        // Loop back to header
-        ctx.terminate_goto(loop_header, span);
+        ctx.terminate_goto(increment_block, span);
     }
 
     // Pop loop context
     ctx.pop_loop();
+
+    // Increment block: _idx = _idx + 1, then loop back to header
+    ctx.set_current_block(increment_block);
+    let idx_for_add = mir_types::Operand::Copy(mir_types::Place::local(idx_local));
+    let one_const = mir_types::Constant::new(
+        idx_ty_id,
+        mir_types::ConstantKind::Int(1),
+    );
+    let one_operand = mir_types::Operand::Constant(one_const);
+
+    let inc_temp = ctx.new_temp(idx_ty_id, span);
+    ctx.emit_assign(
+        mir_types::Place::local(inc_temp),
+        mir_types::Rvalue::BinaryOp {
+            op: mir_types::MirBinOp::Add,
+            left: idx_for_add,
+            right: one_operand,
+        },
+        span,
+    );
+
+    ctx.emit_assign(
+        mir_types::Place::local(idx_local),
+        mir_types::Rvalue::Use(mir_types::Operand::Copy(mir_types::Place::local(inc_temp))),
+        span,
+    );
+
+    // Loop back to header
+    ctx.terminate_goto(loop_header, span);
 
     // Continue from break block
     ctx.set_current_block(break_block);
@@ -2135,8 +2105,7 @@ fn lower_closure_expr(
 
     // Collect capture types from the parent MIR context (resolved through subst table)
     let mut capture_tys: Vec<type_intern::TyId> = Vec::new();
-    let mut ci: usize = 0;
-    while ci < captured_locals.len() {
+    for ci in 0usize..captured_locals.len() {
         let parent_mir_local = ctx.lookup_local(captured_locals[ci]);
         match parent_mir_local {
             Option::Some(local) => {
@@ -2149,7 +2118,6 @@ fn lower_closure_expr(
                 capture_tys.push(type_intern::CommonTypes::i32_ty());
             }
         }
-        ci = ci + 1;
     }
 
     // Create a new MirLowerCtx for the closure body
@@ -2169,26 +2137,22 @@ fn lower_closure_expr(
     let _env_local = closure_ctx.builder.add_param(env_ty, String::new(), span);
 
     // Lower closure parameters
-    let mut pi: usize = 0;
-    while pi < params.len() {
+    for pi in 0usize..params.len() {
         let param = &params[pi];
         let resolved_id = closure_ctx.resolve_type_to_id(param.ty);
         let mir_local = closure_ctx.builder.add_param(resolved_id, String::new(), span);
         let source = mir_types::Place::local(mir_local);
         mir_lower_pattern::lower_irrefutable_pattern(&mut closure_ctx, &param.pattern, source, span);
-        pi = pi + 1;
     }
 
     // Register captured variables as locals in the closure context.
     // Record the actual MIR local indices so codegen knows where to load captures.
     let mut capture_local_indices: Vec<u32> = Vec::new();
-    let mut cap_i: usize = 0;
-    while cap_i < captured_locals.len() {
+    for cap_i in 0usize..captured_locals.len() {
         let cap_ty = capture_tys[cap_i];
         let cap_local = closure_ctx.builder.new_temp(cap_ty, span);
         closure_ctx.register_local(captured_locals[cap_i], cap_local);
         capture_local_indices.push(cap_local.index);
-        cap_i = cap_i + 1;
     }
 
     // Lower body expression, storing result in return place
@@ -2207,8 +2171,7 @@ fn lower_closure_expr(
 
     // In the parent body: gather capture operands (by value for all captures)
     let mut operands: Vec<mir_types::Operand> = Vec::new();
-    let mut oi: usize = 0;
-    while oi < captured_locals.len() {
+    for oi in 0usize..captured_locals.len() {
         let parent_mir_local = ctx.lookup_local(captured_locals[oi]);
         match parent_mir_local {
             Option::Some(local) => {
@@ -2216,7 +2179,6 @@ fn lower_closure_expr(
             }
             Option::None => {}
         }
-        oi = oi + 1;
     }
 
     // Construct closure aggregate with the real def_id
@@ -2413,10 +2375,8 @@ fn copy_place(place: &mir_types::Place) -> mir_types::Place {
 /// Copies a projection list.
 fn copy_projections(projs: &Vec<mir_types::PlaceElem>) -> Vec<mir_types::PlaceElem> {
     let mut result = Vec::new();
-    let mut i: usize = 0;
-    while i < projs.len() {
+    for i in 0usize..projs.len() {
         result.push(copy_projection(&projs[i]));
-        i = i + 1;
     }
     result
 }
@@ -2457,8 +2417,7 @@ fn lower_perform_expr(
 ) {
     // Evaluate arguments
     let mut arg_operands = Vec::new();
-    let mut i: usize = 0;
-    while i < args.len() {
+    for i in 0usize..args.len() {
         let arg = &args[i];
         let temp = ctx.new_temp(arg.ty, span);
         lower_expr(ctx, arg, mir_lower_ctx::destination_local(temp));
@@ -2466,7 +2425,6 @@ fn lower_perform_expr(
             mir_types::Place::local(temp),
             arg.ty,
         ));
-        i = i + 1;
     }
 
     let dest_place = match dest.as_place() {
@@ -2643,12 +2601,10 @@ fn collect_closure_captures(
                 Option::Some(_) => {
                     // Deduplicate
                     let mut found = false;
-                    let mut i: usize = 0;
-                    while i < captures.len() {
+                    for i in 0usize..captures.len() {
                         if captures[i].index == local_id.index {
                             found = true;
                         }
-                        i = i + 1;
                     }
                     if !found {
                         captures.push(local_id);
@@ -2666,18 +2622,14 @@ fn collect_closure_captures(
         }
         &hir_expr::ExprKind::Call { ref callee, ref args } => {
             collect_closure_captures(ctx, callee.as_ref(), captures);
-            let mut i: usize = 0;
-            while i < args.len() {
+            for i in 0usize..args.len() {
                 collect_closure_captures(ctx, &args[i], captures);
-                i = i + 1;
             }
         }
         &hir_expr::ExprKind::MethodCall { ref receiver, method: _, method_def: _, type_args: _, ref args } => {
             collect_closure_captures(ctx, receiver.as_ref(), captures);
-            let mut i: usize = 0;
-            while i < args.len() {
+            for i in 0usize..args.len() {
                 collect_closure_captures(ctx, &args[i], captures);
-                i = i + 1;
             }
         }
         &hir_expr::ExprKind::Field { ref base, field: _ } => {
@@ -2688,19 +2640,15 @@ fn collect_closure_captures(
             collect_closure_captures(ctx, idx.as_ref(), captures);
         }
         &hir_expr::ExprKind::Tuple(ref elems) => {
-            let mut i: usize = 0;
-            while i < elems.len() {
+            for i in 0usize..elems.len() {
                 collect_closure_captures(ctx, &elems[i], captures);
-                i = i + 1;
             }
         }
         &hir_expr::ExprKind::Array(ref arr) => {
             match arr {
                 &hir_expr::ArrayExpr::List(ref elems) => {
-                    let mut i: usize = 0;
-                    while i < elems.len() {
+                    for i in 0usize..elems.len() {
                         collect_closure_captures(ctx, &elems[i], captures);
-                        i = i + 1;
                     }
                 }
                 &hir_expr::ArrayExpr::Repeat { ref val, count: _ } => {
@@ -2709,10 +2657,8 @@ fn collect_closure_captures(
             }
         }
         &hir_expr::ExprKind::Struct { path: _, ref fields, ref base } => {
-            let mut i: usize = 0;
-            while i < fields.len() {
+            for i in 0usize..fields.len() {
                 collect_closure_captures(ctx, &fields[i].val, captures);
-                i = i + 1;
             }
             match base {
                 &Option::Some(ref b) => {
@@ -2722,10 +2668,8 @@ fn collect_closure_captures(
             }
         }
         &hir_expr::ExprKind::AnonRecord { ref fields } => {
-            let mut i: usize = 0;
-            while i < fields.len() {
+            for i in 0usize..fields.len() {
                 collect_closure_captures(ctx, &fields[i].val, captures);
-                i = i + 1;
             }
         }
         &hir_expr::ExprKind::Range { ref start, ref end_val, inclusive: _ } => {
@@ -2771,8 +2715,7 @@ fn collect_closure_captures(
         }
         &hir_expr::ExprKind::Match { ref scrutinee, ref arms } => {
             collect_closure_captures(ctx, scrutinee.as_ref(), captures);
-            let mut i: usize = 0;
-            while i < arms.len() {
+            for i in 0usize..arms.len() {
                 match &arms[i].guard {
                     &Option::Some(ref g) => {
                         collect_closure_captures(ctx, g, captures);
@@ -2780,7 +2723,6 @@ fn collect_closure_captures(
                     &Option::None => {}
                 }
                 collect_closure_captures(ctx, &arms[i].body, captures);
-                i = i + 1;
             }
         }
         &hir_expr::ExprKind::Loop { label: _, ref body } => {
@@ -2812,17 +2754,13 @@ fn collect_closure_captures(
         }
         &hir_expr::ExprKind::InlineHandle { ref body, ref handlers } => {
             collect_closure_captures(ctx, body.as_ref(), captures);
-            let mut i: usize = 0;
-            while i < handlers.len() {
+            for i in 0usize..handlers.len() {
                 collect_closure_captures(ctx, &handlers[i].body, captures);
-                i = i + 1;
             }
         }
         &hir_expr::ExprKind::Perform { effect_def: _, op_def: _, op_name: _, ref args } => {
-            let mut i: usize = 0;
-            while i < args.len() {
+            for i in 0usize..args.len() {
                 collect_closure_captures(ctx, &args[i], captures);
-                i = i + 1;
             }
         }
         &hir_expr::ExprKind::Resume(ref val) => {
@@ -2832,10 +2770,8 @@ fn collect_closure_captures(
             collect_closure_captures(ctx, val.as_ref(), captures);
         }
         &hir_expr::ExprKind::Region { name: _, ref stmts, ref expr } => {
-            let mut i: usize = 0;
-            while i < stmts.len() {
+            for i in 0usize..stmts.len() {
                 collect_captures_in_stmt(ctx, &stmts[i], captures);
-                i = i + 1;
             }
             match expr {
                 &Option::Some(ref e) => {
@@ -2866,10 +2802,8 @@ fn collect_captures_in_block(
     block: &hir_expr::Block,
     captures: &mut Vec<hir_def::LocalId>,
 ) {
-    let mut i: usize = 0;
-    while i < block.stmts.len() {
+    for i in 0usize..block.stmts.len() {
         collect_captures_in_stmt(ctx, &block.stmts[i], captures);
-        i = i + 1;
     }
     match &block.expr {
         &Option::Some(ref e) => {
@@ -2921,10 +2855,8 @@ fn determine_call_const_values(
             // Use turbofish values
             let tf = &ctx.turbofish_const_args[idx as usize];
             let mut result: Vec<u64> = Vec::new();
-            let mut i: usize = 0;
-            while i < tf.values.len() {
+            for i in 0usize..tf.values.len() {
                 result.push(tf.values[i]);
-                i = i + 1;
             }
             return result;
         }
@@ -2935,8 +2867,7 @@ fn determine_call_const_values(
     // For each arg whose resolved type is an array, extract the size.
     let expected_count = ctx.get_const_param_count(path.def_id.index);
     let mut result: Vec<u64> = Vec::new();
-    let mut i: usize = 0;
-    while i < args.len() {
+    for i in 0usize..args.len() {
         let arg = &args[i];
         let resolved_ty = ctx.resolve_type_to_id(arg.ty);
         let size = type_intern::get_array_size_from_id(resolved_ty);
@@ -2949,7 +2880,6 @@ fn determine_call_const_values(
             }
             Option::None => {}
         }
-        i = i + 1;
     }
     result
 }
@@ -2964,13 +2894,11 @@ fn build_mono_fn_name(
     let mut name = common::make_string("blood_mono$def");
     name.push_str(codegen_types::format_u64(original_def_id as u64).as_str());
     name.push_str("$");
-    let mut i: usize = 0;
-    while i < const_values.len() {
+    for i in 0usize..const_values.len() {
         if i > 0 {
             name.push_str("_");
         }
         name.push_str(codegen_types::format_u64(const_values[i]).as_str());
-        i = i + 1;
     }
     name
 }
@@ -2978,10 +2906,8 @@ fn build_mono_fn_name(
 /// Clones a Vec<u64>.
 fn clone_const_values(values: &Vec<u64>) -> Vec<u64> {
     let mut result: Vec<u64> = Vec::new();
-    let mut i: usize = 0;
-    while i < values.len() {
+    for i in 0usize..values.len() {
         result.push(values[i]);
-        i = i + 1;
     }
     result
 }

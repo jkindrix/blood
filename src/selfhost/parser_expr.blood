@@ -1633,13 +1633,11 @@ fn parse_try_with_expr(parser: &mut parser_base::Parser) -> ast::Expr {
             handler_operation = effect_path.segments[seg_len - 1].name;
             // Build effect path from all but last segment
             let mut effect_segs: Vec<ast::TypePathSegment> = Vec::new();
-            let mut si: usize = 0;
-            while si < seg_len - 1 {
+            for si in 0usize..seg_len - 1 {
                 effect_segs.push(ast::TypePathSegment {
                     name: effect_path.segments[si].name,
                     args: Option::None,
                 });
-                si = si + 1;
             }
             handler_effect = ast::TypePath {
                 segments: effect_segs,
@@ -1770,15 +1768,13 @@ fn parse_path_expr(parser: &mut parser_base::Parser) -> ast::Expr {
 /// Convert an ExprPath to a TypePath (for struct expressions).
 fn expr_path_to_type_path(path: ast::ExprPath) -> ast::TypePath {
     let mut segments: Vec<ast::TypePathSegment> = Vec::new();
-    let mut i: usize = 0;
-    while i < path.segments.len() {
+    for i in 0usize..path.segments.len() {
         let seg = &path.segments[i];
         let type_seg = ast::TypePathSegment {
             name: seg.name,
             args: seg.args,
         };
         segments.push(type_seg);
-        i = i + 1;
     }
     ast::TypePath {
         segments: segments,
@@ -1928,6 +1924,8 @@ fn can_start_expr(kind: token::TokenKind) -> bool {
         token::TokenKind::Ident => true,
         token::TokenKind::TypeIdent => true,
         token::TokenKind::ColonColon => true,
+        token::TokenKind::SelfLower => true,
+        token::TokenKind::SelfUpper => true,
         // Contextual keywords that can be identifiers
         token::TokenKind::Default => true,
         token::TokenKind::Handle => true,
@@ -2208,12 +2206,10 @@ fn span_text_eq(source: &str, span: common::Span, target: &str) -> bool {
     if len != tgt.len() {
         return false;
     }
-    let mut i: usize = 0;
-    while i < len {
+    for i in 0usize..len {
         if src[span.start + i] != tgt[i] {
             return false;
         }
-        i = i + 1;
     }
     true
 }

@@ -7084,12 +7084,15 @@ impl<'a> TypeContext<'a> {
         );
 
         // Build loop body statements - include bind_stmt only for named patterns
+        // NOTE: increment MUST come before body so that `continue` in the body
+        // (which jumps to cond_block) doesn't skip the index advancement.
+        // The user variable is already bound from _idx before the increment.
         let mut body_stmts = Vec::new();
         if let Some(stmt) = bind_stmt {
             body_stmts.push(stmt);
         }
-        body_stmts.push(hir::Stmt::Expr(body_expr));
         body_stmts.push(hir::Stmt::Expr(increment));
+        body_stmts.push(hir::Stmt::Expr(body_expr));
 
         let while_body = hir::Expr::new(
             hir::ExprKind::Block {
@@ -7265,6 +7268,8 @@ impl<'a> TypeContext<'a> {
         );
 
         // Build loop body statements
+        // NOTE: increment MUST come before body so that `continue` in the body
+        // (which jumps to cond_block) doesn't skip the index advancement.
         let mut body_stmts = Vec::new();
         if let Some(stmt) = bind_stmt {
             body_stmts.push(stmt);
@@ -7272,8 +7277,8 @@ impl<'a> TypeContext<'a> {
             // Even for wildcard, we still need to do the array access (for side effects)
             body_stmts.push(hir::Stmt::Expr(make_array_access()));
         }
-        body_stmts.push(hir::Stmt::Expr(body_expr));
         body_stmts.push(hir::Stmt::Expr(increment));
+        body_stmts.push(hir::Stmt::Expr(body_expr));
 
         let while_body = hir::Expr::new(
             hir::ExprKind::Block {
@@ -7478,6 +7483,8 @@ impl<'a> TypeContext<'a> {
         );
 
         // Build loop body statements
+        // NOTE: increment MUST come before body so that `continue` in the body
+        // (which jumps to cond_block) doesn't skip the index advancement.
         let mut body_stmts = Vec::new();
         if let Some(stmt) = bind_stmt {
             body_stmts.push(stmt);
@@ -7485,8 +7492,8 @@ impl<'a> TypeContext<'a> {
             // Even for wildcard, we still need to do the slice access (for side effects)
             body_stmts.push(hir::Stmt::Expr(make_slice_access()));
         }
-        body_stmts.push(hir::Stmt::Expr(body_expr));
         body_stmts.push(hir::Stmt::Expr(increment));
+        body_stmts.push(hir::Stmt::Expr(body_expr));
 
         let while_body = hir::Expr::new(
             hir::ExprKind::Block {
@@ -7691,13 +7698,15 @@ impl<'a> TypeContext<'a> {
             span,
         );
 
-        // Build the loop body: bind; user_body; increment;
+        // Build the loop body: bind; increment; user_body;
+        // NOTE: increment MUST come before body so that `continue` in the body
+        // (which jumps to the loop header) doesn't skip the index advancement.
         let mut loop_body_stmts = Vec::new();
         if let Some(stmt) = bind_stmt {
             loop_body_stmts.push(stmt);
         }
-        loop_body_stmts.push(hir::Stmt::Expr(body_expr));
         loop_body_stmts.push(hir::Stmt::Expr(increment));
+        loop_body_stmts.push(hir::Stmt::Expr(body_expr));
 
         let loop_body = hir::Expr::new(
             hir::ExprKind::Block {
