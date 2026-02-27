@@ -79,7 +79,11 @@ cd src/selfhost
 #    Manually build third_gen if rebuild script doesn't, then: cmp -s second_gen third_gen
 ./build_selfhost.sh rebuild
 
-# 4. Commit the cluster (clean rollback point)
+# 4. Parse parity — verify no new accept/reject drift between compilers
+#    (baseline: 14 pre-existing drifts; any increase means the cluster introduced drift)
+cd ../.. && ./tools/parse-parity.sh --quiet && cd src/selfhost
+
+# 5. Commit the cluster (clean rollback point)
 git add <cluster files> && git commit -m "refactor(selfhost): <description> (Cluster X)"
 ```
 
