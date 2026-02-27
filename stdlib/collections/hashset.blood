@@ -32,11 +32,9 @@ pub struct HashSetU64 {
 fn hash_u64_set(v: &u64) -> u64 {
     let mut h: u64 = 14695981039346656037;
     let val = *v;
-    let mut i: u32 = 0;
-    while i < 8 {
+    for i in 0u32..8 {
         h = h ^ ((val >> (i * 8)) & 255);
         h = h * 1099511628211;
-        i = i + 1;
     }
     h
 }
@@ -55,10 +53,8 @@ impl HashSetU64 {
     pub fn with_capacity(cap: usize) -> HashSetU64 {
         let actual_cap = if cap < 16 { 16 as usize } else { cap };
         let mut buckets: Vec<SetBucketU64> = Vec::new();
-        let mut i: usize = 0;
-        while i < actual_cap {
+        for i in 0usize..actual_cap {
             buckets.push(SetBucketU64::Empty);
-            i = i + 1;
         }
         HashSetU64 {
             buckets,
@@ -81,10 +77,8 @@ impl HashSetU64 {
     fn ensure_capacity(self: &mut Self) {
         if self.capacity == 0 {
             self.capacity = 16;
-            let mut i: usize = 0;
-            while i < self.capacity {
+            for i in 0usize..self.capacity {
                 self.buckets.push(SetBucketU64::Empty);
-                i = i + 1;
             }
             return;
         }
@@ -137,8 +131,7 @@ impl HashSetU64 {
         let hash = hash_u64_set(&key);
         let mut idx = (hash as usize) % self.capacity;
 
-        let mut probes: usize = 0;
-        while probes < self.capacity {
+        for probes in 0usize..self.capacity {
             match &self.buckets[idx] {
                 SetBucketU64::Empty => {
                     self.buckets[idx] = SetBucketU64::Occupied { key };
@@ -157,7 +150,6 @@ impl HashSetU64 {
                 }
             }
             idx = (idx + 1) % self.capacity;
-            probes = probes + 1;
         }
         false
     }
@@ -170,8 +162,7 @@ impl HashSetU64 {
         let hash = hash_u64_set(&key);
         let mut idx = (hash as usize) % self.capacity;
 
-        let mut probes: usize = 0;
-        while probes < self.capacity {
+        for probes in 0usize..self.capacity {
             match &self.buckets[idx] {
                 SetBucketU64::Empty => {
                     return false;
@@ -184,7 +175,6 @@ impl HashSetU64 {
                 }
             }
             idx = (idx + 1) % self.capacity;
-            probes = probes + 1;
         }
         false
     }
@@ -197,8 +187,7 @@ impl HashSetU64 {
         let hash = hash_u64_set(&key);
         let mut idx = (hash as usize) % self.capacity;
 
-        let mut probes: usize = 0;
-        while probes < self.capacity {
+        for probes in 0usize..self.capacity {
             match &self.buckets[idx] {
                 SetBucketU64::Empty => {
                     return false;
@@ -213,17 +202,14 @@ impl HashSetU64 {
                 }
             }
             idx = (idx + 1) % self.capacity;
-            probes = probes + 1;
         }
         false
     }
 
     /// Remove all entries from the set.
     pub fn clear(self: &mut Self) {
-        let mut i: usize = 0;
-        while i < self.capacity {
+        for i in 0usize..self.capacity {
             self.buckets[i] = SetBucketU64::Empty;
-            i = i + 1;
         }
         self.len = 0;
     }
@@ -251,11 +237,9 @@ pub struct HashSetU32 {
 fn hash_u32_set(v: &u32) -> u64 {
     let mut h: u64 = 14695981039346656037;
     let val = *v;
-    let mut i: u32 = 0;
-    while i < 4 {
+    for i in 0u32..4 {
         h = h ^ (((val >> (i * 8)) & 255) as u64);
         h = h * 1099511628211;
-        i = i + 1;
     }
     h
 }
@@ -274,10 +258,8 @@ impl HashSetU32 {
     pub fn with_capacity(cap: usize) -> HashSetU32 {
         let actual_cap = if cap < 16 { 16 as usize } else { cap };
         let mut buckets: Vec<SetBucketU32> = Vec::new();
-        let mut i: usize = 0;
-        while i < actual_cap {
+        for i in 0usize..actual_cap {
             buckets.push(SetBucketU32::Empty);
-            i = i + 1;
         }
         HashSetU32 {
             buckets,
@@ -300,10 +282,8 @@ impl HashSetU32 {
     fn ensure_capacity(self: &mut Self) {
         if self.capacity == 0 {
             self.capacity = 16;
-            let mut i: usize = 0;
-            while i < self.capacity {
+            for i in 0usize..self.capacity {
                 self.buckets.push(SetBucketU32::Empty);
-                i = i + 1;
             }
             return;
         }
@@ -356,8 +336,7 @@ impl HashSetU32 {
         let hash = hash_u32_set(&key);
         let mut idx = (hash as usize) % self.capacity;
 
-        let mut probes: usize = 0;
-        while probes < self.capacity {
+        for probes in 0usize..self.capacity {
             match &self.buckets[idx] {
                 SetBucketU32::Empty => {
                     self.buckets[idx] = SetBucketU32::Occupied { key };
@@ -376,7 +355,6 @@ impl HashSetU32 {
                 }
             }
             idx = (idx + 1) % self.capacity;
-            probes = probes + 1;
         }
         false
     }
@@ -389,8 +367,7 @@ impl HashSetU32 {
         let hash = hash_u32_set(&key);
         let mut idx = (hash as usize) % self.capacity;
 
-        let mut probes: usize = 0;
-        while probes < self.capacity {
+        for probes in 0usize..self.capacity {
             match &self.buckets[idx] {
                 SetBucketU32::Empty => {
                     return false;
@@ -403,7 +380,6 @@ impl HashSetU32 {
                 }
             }
             idx = (idx + 1) % self.capacity;
-            probes = probes + 1;
         }
         false
     }
@@ -416,8 +392,7 @@ impl HashSetU32 {
         let hash = hash_u32_set(&key);
         let mut idx = (hash as usize) % self.capacity;
 
-        let mut probes: usize = 0;
-        while probes < self.capacity {
+        for probes in 0usize..self.capacity {
             match &self.buckets[idx] {
                 SetBucketU32::Empty => {
                     return false;
@@ -432,17 +407,14 @@ impl HashSetU32 {
                 }
             }
             idx = (idx + 1) % self.capacity;
-            probes = probes + 1;
         }
         false
     }
 
     /// Remove all entries from the set.
     pub fn clear(self: &mut Self) {
-        let mut i: usize = 0;
-        while i < self.capacity {
+        for i in 0usize..self.capacity {
             self.buckets[i] = SetBucketU32::Empty;
-            i = i + 1;
         }
         self.len = 0;
     }

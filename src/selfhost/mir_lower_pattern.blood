@@ -133,24 +133,18 @@ pub fn register_pattern_locals(
             }
         }
         &hir_expr::PatternKind::Tuple(ref patterns) => {
-            let mut i: usize = 0;
-            while i < patterns.len() {
+            for i in 0usize..patterns.len() {
                 register_pattern_locals(ctx, &patterns[i], span);
-                i = i + 1;
             }
         }
         &hir_expr::PatternKind::Struct { path: _, ref fields, has_rest: _ } => {
-            let mut i: usize = 0;
-            while i < fields.len() {
+            for i in 0usize..fields.len() {
                 register_pattern_locals(ctx, &fields[i].pattern, span);
-                i = i + 1;
             }
         }
         &hir_expr::PatternKind::TupleStruct { path: _, ref fields } => {
-            let mut i: usize = 0;
-            while i < fields.len() {
+            for i in 0usize..fields.len() {
                 register_pattern_locals(ctx, &fields[i], span);
-                i = i + 1;
             }
         }
         &hir_expr::PatternKind::Ref { mutable: _, ref inner } => {
@@ -234,12 +228,10 @@ fn lower_tuple_pattern(
     source: mir_types::Place,
     span: common::Span,
 ) {
-    let mut i: usize = 0;
-    while i < patterns.len() {
+    for i in 0usize..patterns.len() {
         let cloned_src = source.clone();
         let field_place = cloned_src.project(mir_types::PlaceElem::Field(i as u32));
         lower_irrefutable_pattern(ctx, &patterns[i], field_place, span);
-        i = i + 1;
     }
 }
 
@@ -250,8 +242,7 @@ fn lower_struct_pattern(
     source: mir_types::Place,
     span: common::Span,
 ) {
-    let mut i: usize = 0;
-    while i < fields.len() {
+    for i in 0usize..fields.len() {
         let field = &fields[i];
         // Primary: type checker's field resolution side table (keyed by field name span)
         // Fallback: HIR-stored field index, then positional index
@@ -276,7 +267,6 @@ fn lower_struct_pattern(
         let cloned_src = source.clone();
         let field_place = cloned_src.project(mir_types::PlaceElem::Field(field_idx));
         lower_irrefutable_pattern(ctx, &field.pattern, field_place, span);
-        i = i + 1;
     }
 }
 
@@ -287,12 +277,10 @@ fn lower_tuple_struct_pattern(
     source: mir_types::Place,
     span: common::Span,
 ) {
-    let mut i: usize = 0;
-    while i < fields.len() {
+    for i in 0usize..fields.len() {
         let cloned_src = source.clone();
         let field_place = cloned_src.project(mir_types::PlaceElem::Field(i as u32));
         lower_irrefutable_pattern(ctx, &fields[i], field_place, span);
-        i = i + 1;
     }
 }
 
@@ -306,8 +294,7 @@ fn lower_slice_pattern(
     span: common::Span,
 ) {
     // Lower prefix patterns with constant indices from start
-    let mut i: usize = 0;
-    while i < prefix.len() {
+    for i in 0usize..prefix.len() {
         let cloned_src = source.clone();
         let elem_place = cloned_src.project(
             mir_types::PlaceElem::ConstantIndex {
@@ -317,12 +304,10 @@ fn lower_slice_pattern(
             }
         );
         lower_irrefutable_pattern(ctx, &prefix[i], elem_place, span);
-        i = i + 1;
     }
 
     // Lower suffix patterns with constant indices from end
-    let mut j: usize = 0;
-    while j < suffix.len() {
+    for j in 0usize..suffix.len() {
         let cloned_src = source.clone();
         let elem_place = cloned_src.project(
             mir_types::PlaceElem::ConstantIndex {
@@ -332,7 +317,6 @@ fn lower_slice_pattern(
             }
         );
         lower_irrefutable_pattern(ctx, &suffix[j], elem_place, span);
-        j = j + 1;
     }
 }
 
@@ -367,8 +351,7 @@ pub fn pattern_test(
             // combine with BitAnd, and return as a single boolean test.
             let mut has_refutable = false;
             let mut combined_local: mir_def::MirLocalId = mir_def::MirLocalId::return_place();
-            let mut elem_i: usize = 0;
-            while elem_i < patterns.len() {
+            for elem_i in 0usize..patterns.len() {
                 let cloned_src = source.clone();
                 let field_place = cloned_src.project(mir_types::PlaceElem::Field(elem_i as u32));
                 let sub_test = pattern_test(ctx, &patterns[elem_i], &field_place, span);
@@ -408,7 +391,6 @@ pub fn pattern_test(
                         // Irrefutable sub-pattern — no test needed
                     }
                 }
-                elem_i = elem_i + 1;
             }
             if has_refutable {
                 Option::Some(PatternTest {

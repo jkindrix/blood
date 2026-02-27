@@ -106,8 +106,7 @@ pub fn lower_fn_body(
 
     // Merge accumulated body locals (from let-binding patterns) into the locals Vec.
     // These were collected by lower_pattern during body expression lowering.
-    let mut bl_idx: usize = 0;
-    while bl_idx < ctx.body_locals.len() {
+    for bl_idx in 0usize..ctx.body_locals.len() {
         let bl = &ctx.body_locals[bl_idx];
         locals.push(hir_expr::Local::new(
             bl.id,
@@ -116,7 +115,6 @@ pub fn lower_fn_body(
             bl.mutable,
             bl.span,
         ));
-        bl_idx = bl_idx + 1;
     }
     ctx.body_locals = Vec::new();
 
@@ -211,24 +209,18 @@ fn collect_pattern_locals(pattern: &hir_expr::Pattern, locals: &mut Vec<hir_expr
             }
         }
         &hir_expr::PatternKind::Tuple(ref fields) => {
-            let mut i: usize = 0;
-            while i < fields.len() {
+            for i in 0usize..fields.len() {
                 collect_pattern_locals(&fields[i], locals);
-                i = i + 1;
             }
         }
         &hir_expr::PatternKind::TupleStruct { path: _, ref fields } => {
-            let mut i: usize = 0;
-            while i < fields.len() {
+            for i in 0usize..fields.len() {
                 collect_pattern_locals(&fields[i], locals);
-                i = i + 1;
             }
         }
         &hir_expr::PatternKind::Struct { path: _, ref fields, has_rest: _ } => {
-            let mut i: usize = 0;
-            while i < fields.len() {
+            for i in 0usize..fields.len() {
                 collect_pattern_locals(&fields[i].pattern, locals);
-                i = i + 1;
             }
         }
         &hir_expr::PatternKind::Ref { mutable: _, ref inner } => {
@@ -252,10 +244,8 @@ fn collect_pattern_locals(pattern: &hir_expr::Pattern, locals: &mut Vec<hir_expr
                 let rest_ref = rest_box.as_ref();
                 collect_pattern_locals(rest_ref, locals);
             }
-            let mut i: usize = 0;
-            while i < suffix.len() {
+            for i in 0usize..suffix.len() {
                 collect_pattern_locals(&suffix[i], locals);
-                i = i + 1;
             }
         }
         // These pattern kinds don't introduce bindings

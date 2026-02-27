@@ -152,12 +152,10 @@ impl EvidenceVector {
 
     /// Looks up evidence for a specific effect.
     pub fn lookup(self: &EvidenceVector, effect_id: hir_def::DefId) -> Option<usize> {
-        let mut i: usize = 0;
-        while i < self.entries.len() {
+        for i in 0usize..self.entries.len() {
             if self.entries[i].effect_id.index == effect_id.index {
                 return Option::Some(i);
             }
-            i = i + 1;
         }
         Option::None
     }
@@ -227,12 +225,10 @@ impl EvidenceContext {
     pub fn require_effect(self: &mut EvidenceContext, effect_id: hir_def::DefId) {
         // Check if already required
         let mut found = false;
-        let mut i: usize = 0;
-        while i < self.required.len() {
+        for i in 0usize..self.required.len() {
             if self.required[i].index == effect_id.index {
                 found = true;
             }
-            i = i + 1;
         }
         if !found {
             self.required.push(effect_id);
@@ -262,12 +258,10 @@ impl EvidenceContext {
 
     /// Checks if all required effects have evidence.
     pub fn all_requirements_satisfied(self: &EvidenceContext) -> bool {
-        let mut i: usize = 0;
-        while i < self.required.len() {
+        for i in 0usize..self.required.len() {
             if !self.has_evidence(self.required[i]) {
                 return false;
             }
-            i = i + 1;
         }
         true
     }
@@ -275,12 +269,10 @@ impl EvidenceContext {
     /// Returns the effects that are required but lack evidence.
     pub fn unsatisfied_requirements(self: &EvidenceContext) -> Vec<hir_def::DefId> {
         let mut unsatisfied = Vec::new();
-        let mut i: usize = 0;
-        while i < self.required.len() {
+        for i in 0usize..self.required.len() {
             if !self.has_evidence(self.required[i]) {
                 unsatisfied.push(self.required[i]);
             }
-            i = i + 1;
         }
         unsatisfied
     }
@@ -316,12 +308,10 @@ pub fn resolve_operation(
             match evidence_vec.get(ev_idx) {
                 Option::Some(ev) => {
                     // Verify the operation exists
-                    let mut i: usize = 0;
-                    while i < ev.operations.len() {
+                    for i in 0usize..ev.operations.len() {
                         if ev.operations[i].op_index == op_index {
                             return Option::Some(ev_idx);
                         }
-                        i = i + 1;
                     }
                     // Operation not found in evidence
                     Option::None
@@ -354,10 +344,8 @@ pub fn create_handler_evidence(
 /// Returns the list of effect DefIds that need evidence.
 pub fn extract_requirements(effect_row: &hir_ty::EffectRow) -> Vec<hir_def::DefId> {
     let mut requirements = Vec::new();
-    let mut i: usize = 0;
-    while i < effect_row.effects.len() {
+    for i in 0usize..effect_row.effects.len() {
         requirements.push(effect_row.effects[i].def_id);
-        i = i + 1;
     }
     requirements
 }
@@ -366,8 +354,7 @@ pub fn extract_requirements(effect_row: &hir_ty::EffectRow) -> Vec<hir_def::DefI
 pub fn merge_evidence(base: &EvidenceVector, overlay: &EvidenceVector) -> EvidenceVector {
     // Start with a copy of base
     let mut result = Vec::new();
-    let mut i: usize = 0;
-    while i < base.entries.len() {
+    for i in 0usize..base.entries.len() {
         // Only include if not shadowed by overlay
         let effect_id = base.entries[i].effect_id;
         match overlay.lookup(effect_id) {
@@ -379,14 +366,11 @@ pub fn merge_evidence(base: &EvidenceVector, overlay: &EvidenceVector) -> Eviden
                 result.push(copy_evidence(&base.entries[i]));
             }
         }
-        i = i + 1;
     }
 
     // Add all overlay entries
-    let mut j: usize = 0;
-    while j < overlay.entries.len() {
+    for j in 0usize..overlay.entries.len() {
         result.push(copy_evidence(&overlay.entries[j]));
-        j = j + 1;
     }
 
     EvidenceVector::with_entries(result)
@@ -395,17 +379,13 @@ pub fn merge_evidence(base: &EvidenceVector, overlay: &EvidenceVector) -> Eviden
 /// Creates a copy of evidence (Blood lacks Clone).
 pub fn copy_evidence(ev: &Evidence) -> Evidence {
     let mut ops = Vec::new();
-    let mut i: usize = 0;
-    while i < ev.operations.len() {
+    for i in 0usize..ev.operations.len() {
         ops.push(copy_operation_evidence(&ev.operations[i]));
-        i = i + 1;
     }
 
     let mut type_args = Vec::new();
-    let mut j: usize = 0;
-    while j < ev.type_args.len() {
+    for j in 0usize..ev.type_args.len() {
         type_args.push(hir_ty::copy_type(&ev.type_args[j]));
-        j = j + 1;
     }
 
     Evidence {
@@ -555,12 +535,10 @@ pub fn classify_handler_state(operations: &Vec<OperationEvidence>) -> HandlerSta
 
     // If all operations are tail-resumptive, the handler is effectively stateless
     let mut all_tail_resumptive = true;
-    let mut i: usize = 0;
-    while i < operations.len() {
+    for i in 0usize..operations.len() {
         if !operations[i].is_tail_resumptive {
             all_tail_resumptive = false;
         }
-        i = i + 1;
     }
 
     if all_tail_resumptive {

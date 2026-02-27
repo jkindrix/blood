@@ -215,10 +215,8 @@ fn hash_type(ty: &hir_ty::Type) -> u32 {
         }
         &hir_ty::TypeKind::Tuple(ref fields) => {
             let mut h: u32 = 0x54555031; // "TUP1"
-            let mut i: usize = 0;
-            while i < fields.len() {
+            for i in 0usize..fields.len() {
                 h = mix_hash(h, hash_type(&fields[i]));
-                i = i + 1;
             }
             h
         }
@@ -329,17 +327,13 @@ impl GenValidation {
 pub fn collect_validations(body: &mir_body::MirBody) -> Vec<GenValidation> {
     let mut validations: Vec<GenValidation> = Vec::new();
 
-    let mut bb_idx: usize = 0;
-    while bb_idx < body.basic_blocks.len() {
+    for bb_idx in 0usize..body.basic_blocks.len() {
         let block = &body.basic_blocks[bb_idx];
 
-        let mut stmt_idx: usize = 0;
-        while stmt_idx < block.statements.len() {
+        for stmt_idx in 0usize..block.statements.len() {
             collect_stmt_validations(&block.statements[stmt_idx], &mut validations);
-            stmt_idx = stmt_idx + 1;
         }
 
-        bb_idx = bb_idx + 1;
     }
 
     validations
@@ -383,8 +377,7 @@ fn check_place_for_deref(
     span: common::Span,
     validations: &mut Vec<GenValidation>,
 ) {
-    let mut i: usize = 0;
-    while i < place.projection.len() {
+    for i in 0usize..place.projection.len() {
         match &place.projection[i] {
             &mir_types::PlaceElem::Deref => {
                 // This place dereferences a pointer — needs generation validation
@@ -401,7 +394,6 @@ fn check_place_for_deref(
             &mir_types::PlaceElem::Subslice { from: _, to: _, from_end: _ } => {}
             &mir_types::PlaceElem::Downcast(_) => {}
         }
-        i = i + 1;
     }
 }
 
@@ -432,10 +424,8 @@ fn check_rvalue_for_deref(
             check_operand_for_deref(operand, span, validations);
         }
         &mir_types::Rvalue::Aggregate { kind: _, ref operands } => {
-            let mut i: usize = 0;
-            while i < operands.len() {
+            for i in 0usize..operands.len() {
                 check_operand_for_deref(&operands[i], span, validations);
-                i = i + 1;
             }
         }
         &mir_types::Rvalue::Discriminant(ref place) => {

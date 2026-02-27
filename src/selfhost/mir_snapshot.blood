@@ -109,12 +109,10 @@ impl SnapshotInfo {
             &Option::None => 0,
             &Option::Some(parent_id) => {
                 // Find parent snapshot and compute its depth + 1
-                let mut i: usize = 0;
-                while i < all_snapshots.len() {
+                for i in 0usize..all_snapshots.len() {
                     if all_snapshots[i].id == parent_id {
                         return all_snapshots[i].depth(all_snapshots) + 1;
                     }
-                    i = i + 1;
                 }
                 1 // Parent not found — assume depth 1
             }
@@ -155,12 +153,10 @@ impl SnapshotAnalysis {
 
     /// Finds a snapshot by its ID.
     pub fn find_snapshot(self: &SnapshotAnalysis, id: u32) -> Option<usize> {
-        let mut i: usize = 0;
-        while i < self.snapshots.len() {
+        for i in 0usize..self.snapshots.len() {
             if self.snapshots[i].id == id {
                 return Option::Some(i);
             }
-            i = i + 1;
         }
         Option::None
     }
@@ -184,14 +180,12 @@ pub fn analyze_snapshots(body: &mir_body::MirBody) -> SnapshotAnalysis {
     let mut handler_stack: Vec<u32> = Vec::new(); // Stack of snapshot IDs
 
     // Walk blocks in order
-    let mut bb_idx: usize = 0;
-    while bb_idx < body.basic_blocks.len() {
+    for bb_idx in 0usize..body.basic_blocks.len() {
         let block = &body.basic_blocks[bb_idx];
         let block_id = mir_def::BasicBlockId::new(bb_idx as u32);
 
         // Scan statements for handler push/pop
-        let mut stmt_idx: usize = 0;
-        while stmt_idx < block.statements.len() {
+        for stmt_idx in 0usize..block.statements.len() {
             match &block.statements[stmt_idx].kind {
                 &mir_stmt::StatementKind::PushHandler { handler_id, ref state_place, state_kind: _ } => {
                     let snapshot_id = next_id;
@@ -225,10 +219,8 @@ pub fn analyze_snapshots(body: &mir_body::MirBody) -> SnapshotAnalysis {
                         let _popped = handler_stack[handler_stack.len() - 1];
                         // Remove last element
                         let mut new_stack: Vec<u32> = Vec::new();
-                        let mut k: usize = 0;
-                        while k < handler_stack.len() - 1 {
+                        for k in 0usize..handler_stack.len() - 1 {
                             new_stack.push(handler_stack[k]);
-                            k = k + 1;
                         }
                         handler_stack = new_stack;
                     }
@@ -262,21 +254,17 @@ pub fn analyze_snapshots(body: &mir_body::MirBody) -> SnapshotAnalysis {
                 &mir_stmt::StatementKind::CopyNonOverlapping { src: _, dst: _, count: _ } => {}
                 &mir_stmt::StatementKind::Nop => {}
             }
-            stmt_idx = stmt_idx + 1;
         }
 
-        bb_idx = bb_idx + 1;
     }
 
     // Compute max nesting depth
     let mut max: u32 = 0;
-    let mut s: usize = 0;
-    while s < result.snapshots.len() {
+    for s in 0usize..result.snapshots.len() {
         let d = result.snapshots[s].depth(&result.snapshots);
         if d > max {
             max = d;
         }
-        s = s + 1;
     }
     result.max_depth = max;
 

@@ -110,10 +110,8 @@ impl EscapeAnalysis {
     /// Creates a new analysis result with all locals at NoEscape.
     pub fn new(local_count: usize) -> EscapeAnalysis {
         let mut states: Vec<EscapeState> = Vec::new();
-        let mut i: usize = 0;
-        while i < local_count {
+        for i in 0usize..local_count {
             states.push(EscapeState::NoEscape);
-            i = i + 1;
         }
         EscapeAnalysis {
             local_states: states,
@@ -170,15 +168,12 @@ pub fn analyze_escapes(body: &mir_body::MirBody) -> EscapeAnalysis {
     let mut result = EscapeAnalysis::new(body.locals.len());
 
     // Walk all basic blocks
-    let mut bb_idx: usize = 0;
-    while bb_idx < body.basic_blocks.len() {
+    for bb_idx in 0usize..body.basic_blocks.len() {
         let block = &body.basic_blocks[bb_idx];
 
         // Analyze statements
-        let mut stmt_idx: usize = 0;
-        while stmt_idx < block.statements.len() {
+        for stmt_idx in 0usize..block.statements.len() {
             analyze_statement(&block.statements[stmt_idx], &mut result);
-            stmt_idx = stmt_idx + 1;
         }
 
         // Analyze terminator
@@ -189,7 +184,6 @@ pub fn analyze_escapes(body: &mir_body::MirBody) -> EscapeAnalysis {
             &Option::None => {}
         }
 
-        bb_idx = bb_idx + 1;
     }
 
     result
@@ -245,10 +239,8 @@ fn analyze_terminator(term: &mir_term::Terminator, result: &mut EscapeAnalysis) 
         &mir_term::TerminatorKind::Return => {}
         &mir_term::TerminatorKind::Call { func: _, ref args, ref destination, target: _, unwind: _ } => {
             // All arguments passed to a call may escape through that call
-            let mut i: usize = 0;
-            while i < args.len() {
+            for i in 0usize..args.len() {
                 mark_operand_escape_arg(&args[i], result);
-                i = i + 1;
             }
             // If destination is return place, the call result escapes globally
             // (but the call result isn't a local we track — it's produced by callee)
@@ -257,10 +249,8 @@ fn analyze_terminator(term: &mir_term::Terminator, result: &mut EscapeAnalysis) 
         &mir_term::TerminatorKind::Assert { cond: _, expected: _, msg: _, target: _, unwind: _ } => {}
         &mir_term::TerminatorKind::Perform { effect_id: _, op_index: _, ref args, destination: _, target: _, is_tail_resumptive: _ } => {
             // Effect operation args escape through the handler
-            let mut i: usize = 0;
-            while i < args.len() {
+            for i in 0usize..args.len() {
                 mark_operand_escape_arg(&args[i], result);
-                i = i + 1;
             }
         }
         &mir_term::TerminatorKind::Resume { ref value } => {
@@ -329,10 +319,8 @@ fn mark_rvalue_escape_global(rvalue: &mir_types::Rvalue, result: &mut EscapeAnal
             mark_operand_escape_global(operand, result);
         }
         &mir_types::Rvalue::Aggregate { kind: _, ref operands } => {
-            let mut i: usize = 0;
-            while i < operands.len() {
+            for i in 0usize..operands.len() {
                 mark_operand_escape_global(&operands[i], result);
-                i = i + 1;
             }
         }
         &mir_types::Rvalue::Discriminant(ref place) => {

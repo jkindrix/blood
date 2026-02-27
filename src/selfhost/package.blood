@@ -311,8 +311,7 @@ pub fn parse_lockfile(content: &str) -> Vec<LockedPackage> {
     // Simple line-based parsing
     // Format: name version hash
     let mut line_start: usize = 0;
-    let mut i: usize = 0;
-    while i < len {
+    for i in 0usize..len {
         if bytes[i] == 10 { // '\n'
             if i > line_start {
                 let pkg_opt = parse_lockfile_line(bytes, line_start, i);
@@ -323,7 +322,6 @@ pub fn parse_lockfile(content: &str) -> Vec<LockedPackage> {
             }
             line_start = i + 1;
         }
-        i = i + 1;
     }
 
     // Handle last line
@@ -384,8 +382,7 @@ pub fn write_lockfile(packages: &Vec<LockedPackage>) -> String {
     let mut output = String::new();
     output.push_str("# Blood.lock - auto-generated, do not edit\n");
 
-    let mut i: usize = 0;
-    while i < packages.len() {
+    for i in 0usize..packages.len() {
         let pkg = &packages[i];
         output.push_str(pkg.name.as_str());
         output.push(' ');
@@ -396,7 +393,6 @@ pub fn write_lockfile(packages: &Vec<LockedPackage>) -> String {
             output.push_str(pkg.content_hash.as_str());
         }
         output.push('\n');
-        i = i + 1;
     }
 
     output

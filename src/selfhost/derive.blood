@@ -164,10 +164,8 @@ impl DeriveExpander {
 
     /// Expands all queued derive requests.
     pub fn expand_all(self: &mut DeriveExpander) {
-        let mut i: usize = 0;
-        while i < self.requests.len() {
+        for i in 0usize..self.requests.len() {
             self.expand_request(i);
-            i = i + 1;
         }
     }
 
@@ -330,8 +328,7 @@ pub fn extract_derive_requests(
 ) -> Vec<DeriveRequest> {
     let mut requests: Vec<DeriveRequest> = Vec::new();
 
-    let mut i: usize = 0;
-    while i < attrs.len() {
+    for i in 0usize..attrs.len() {
         let attr = &attrs[i];
 
         // Check if this is a derive attribute
@@ -341,8 +338,7 @@ pub fn extract_derive_requests(
                 &Option::Some(ref args) => {
                     match args {
                         &ast::AttributeArgs::List(ref arg_list) => {
-                            let mut j: usize = 0;
-                            while j < arg_list.len() {
+                            for j in 0usize..arg_list.len() {
                                 match &arg_list[j] {
                                     &ast::AttributeArg::Ident(ref name) => {
                                         // Look up the derive kind
@@ -367,7 +363,6 @@ pub fn extract_derive_requests(
                                     &ast::AttributeArg::Lit(_) => {}
                                     &ast::AttributeArg::Call { name: _, arg: _ } => {}
                                 }
-                                j = j + 1;
                             }
                         }
                         &ast::AttributeArgs::Eq(_) => {}
@@ -377,7 +372,6 @@ pub fn extract_derive_requests(
             }
         }
 
-        i = i + 1;
     }
 
     requests

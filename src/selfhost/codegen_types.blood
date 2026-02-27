@@ -175,14 +175,12 @@ fn tuple_to_llvm(elems: &Vec<hir_ty::Type>) -> String {
     }
 
     let mut result = common::make_string("{ ");
-    let mut i: usize = 0;
-    while i < elems.len() {
+    for i in 0usize..elems.len() {
         if i > 0 {
             result.push_str(", ");
         }
         let elem_str = type_to_llvm(&elems[i]);
         result.push_str(elem_str.as_str());
-        i = i + 1;
     }
     result.push_str(" }");
     result
@@ -195,14 +193,12 @@ fn record_to_llvm(fields: &Vec<hir_ty::RecordField>) -> String {
     }
 
     let mut result = common::make_string("{ ");
-    let mut i: usize = 0;
-    while i < fields.len() {
+    for i in 0usize..fields.len() {
         if i > 0 {
             result.push_str(", ");
         }
         let field_str = type_to_llvm(&fields[i].ty);
         result.push_str(field_str.as_str());
-        i = i + 1;
     }
     result.push_str(" }");
     result
@@ -321,14 +317,12 @@ pub fn get_layout(ty: &hir_ty::Type) -> TypeLayout {
             let llvm_ty = record_to_llvm(fields);
             let mut size: u64 = 0;
             let mut align: u64 = 1;
-            let mut i: usize = 0;
-            while i < fields.len() {
+            for i in 0usize..fields.len() {
                 let field_layout = get_layout(&fields[i].ty);
                 size = size + field_layout.size;
                 if field_layout.align > align {
                     align = field_layout.align;
                 }
-                i = i + 1;
             }
             TypeLayout::new(size, align, llvm_ty)
         }
@@ -380,8 +374,7 @@ fn tuple_layout(elems: &Vec<hir_ty::Type>) -> TypeLayout {
 
     let mut size: u64 = 0;
     let mut align: u64 = 1;
-    let mut i: usize = 0;
-    while i < elems.len() {
+    for i in 0usize..elems.len() {
         let elem_layout = get_layout(&elems[i]);
         // Align offset
         let padding = (elem_layout.align - (size % elem_layout.align)) % elem_layout.align;
@@ -389,7 +382,6 @@ fn tuple_layout(elems: &Vec<hir_ty::Type>) -> TypeLayout {
         if elem_layout.align > align {
             align = elem_layout.align;
         }
-        i = i + 1;
     }
     // Pad to alignment
     let padding = (align - (size % align)) % align;

@@ -469,10 +469,8 @@ impl CodegenCtx {
     pub fn with_def_names(def_names: Vec<DefNameEntry>) -> CodegenCtx {
         // Build hash index for def_names
         let mut def_names_hash = hashmap::HashMapU64U32::with_capacity(def_names.len());
-        let mut i: usize = 0;
-        while i < def_names.len() {
+        for i in 0usize..def_names.len() {
             def_names_hash.insert(def_names[i].def_id as u64, i as u32);
-            i = i + 1;
         }
 
         CodegenCtx {
@@ -551,12 +549,10 @@ impl CodegenCtx {
             Option::None => {}
         }
         // Fallback: linear scan (should not happen)
-        let mut i: usize = 0;
-        while i < self.def_names.len() {
+        for i in 0usize..self.def_names.len() {
             if self.def_names[i].def_id == def_id {
                 return Option::Some(clone_string(&self.def_names[i].name));
             }
-            i = i + 1;
         }
         Option::None
     }
@@ -571,12 +567,10 @@ impl CodegenCtx {
             Option::None => {}
         }
         // Fallback: linear scan
-        let mut i: usize = 0;
-        while i < self.def_names.len() {
+        for i in 0usize..self.def_names.len() {
             if self.def_names[i].def_id == def_id {
                 return Option::Some(&self.def_names[i].name);
             }
-            i = i + 1;
         }
         Option::None
     }
@@ -673,14 +667,12 @@ impl CodegenCtx {
             def.push_str("\"(ptr %env");
 
             // Add original parameters
-            let mut pi: usize = 0;
-            while pi < param_count {
+            for pi in 0usize..param_count {
                 def.push_str(", ");
                 let pty = clone_string(&self.fn_signatures[sig_idx].param_types[pi]);
                 def.push_str(pty.as_str());
                 def.push_str(" %p");
                 def.push_str(codegen_types::format_u64(pi as u64).as_str());
-                pi = pi + 1;
             }
             def.push_str(") {\nentry:\n");
 
@@ -696,8 +688,7 @@ impl CodegenCtx {
             }
             def.push_str(fn_name.as_str());
             def.push_str("(");
-            let mut ai: usize = 0;
-            while ai < param_count {
+            for ai in 0usize..param_count {
                 if ai > 0 {
                     def.push_str(", ");
                 }
@@ -705,7 +696,6 @@ impl CodegenCtx {
                 def.push_str(pty.as_str());
                 def.push_str(" %p");
                 def.push_str(codegen_types::format_u64(ai as u64).as_str());
-                ai = ai + 1;
             }
             def.push_str(")\n");
 
@@ -786,12 +776,10 @@ impl CodegenCtx {
     /// If the DefId matches a from_def_id in call_remaps, returns the to_def_id.
     /// Otherwise returns the original def_id unchanged.
     pub fn remap_def_id(self: &CodegenCtx, def_id: u32) -> u32 {
-        let mut i: usize = 0;
-        while i < self.call_remaps.len() {
+        for i in 0usize..self.call_remaps.len() {
             if self.call_remaps[i].from_def_id == def_id {
                 return self.call_remaps[i].to_def_id;
             }
-            i = i + 1;
         }
         def_id
     }
@@ -848,12 +836,10 @@ impl CodegenCtx {
 
     /// Looks up the state shadow alloca name for a handler.
     pub fn get_handler_state_shadow(self: &CodegenCtx, handler_def_id: u32) -> Option<&String> {
-        let mut i: usize = 0;
-        while i < self.handler_state_shadows.len() {
+        for i in 0usize..self.handler_state_shadows.len() {
             if self.handler_state_shadows[i].handler_def_id == handler_def_id {
                 return Option::Some(&self.handler_state_shadows[i].shadow_name);
             }
-            i = i + 1;
         }
         Option::None
     }
@@ -898,10 +884,8 @@ impl CodegenCtx {
 
     /// Writes current indentation.
     fn write_indent(self: &mut CodegenCtx) {
-        let mut i: u32 = 0;
-        while i < self.indent_level {
+        for i in 0u32..self.indent_level {
             self.write("    ");
-            i = i + 1;
         }
     }
 
@@ -1352,8 +1336,7 @@ impl CodegenCtx {
     /// Takes ownership of accumulated errors, leaving the error list empty.
     pub fn take_errors(self: &mut CodegenCtx) -> Vec<CodegenError> {
         let mut errors: Vec<CodegenError> = Vec::new();
-        let mut i: usize = 0;
-        while i < self.codegen_errors.len() {
+        for i in 0usize..self.codegen_errors.len() {
             let err = &self.codegen_errors[i];
             let fn_name = match &err.fn_name {
                 &Option::Some(ref name) => Option::Some(clone_string(name)),
@@ -1364,8 +1347,7 @@ impl CodegenCtx {
                 &Option::None => Option::None,
             };
             let mut notes = Vec::new();
-            let mut ni: usize = 0;
-            while ni < err.notes.len() {
+            for ni in 0usize..err.notes.len() {
                 let note_span = match &err.notes[ni].span {
                     &Option::Some(ref s) => Option::Some(*s),
                     &Option::None => Option::None,
@@ -1374,7 +1356,6 @@ impl CodegenCtx {
                     message: clone_string(&err.notes[ni].message),
                     span: note_span,
                 });
-                ni = ni + 1;
             }
             errors.push(CodegenError {
                 kind: clone_error_kind(&err.kind),
@@ -1383,7 +1364,6 @@ impl CodegenCtx {
                 span: span,
                 notes: notes,
             });
-            i = i + 1;
         }
         self.codegen_errors.clear();
         errors
@@ -1392,10 +1372,8 @@ impl CodegenCtx {
     /// Takes ownership of accumulated warnings, leaving the warning list empty.
     pub fn take_warnings(self: &mut CodegenCtx) -> Vec<String> {
         let mut warnings: Vec<String> = Vec::new();
-        let mut i: usize = 0;
-        while i < self.codegen_warnings.len() {
+        for i in 0usize..self.codegen_warnings.len() {
             warnings.push(clone_string(&self.codegen_warnings[i]));
-            i = i + 1;
         }
         self.codegen_warnings.clear();
         warnings
@@ -1527,14 +1505,12 @@ impl CodegenCtx {
                     common::make_string("{}")
                 } else {
                     let mut result = common::make_string("{ ");
-                    let mut i: usize = 0;
-                    while i < elems.len() {
+                    for i in 0usize..elems.len() {
                         if i > 0 {
                             result.push_str(", ");
                         }
                         let elem_str = self.type_to_llvm_with_ctx(&elems[i]);
                         result.push_str(elem_str.as_str());
-                        i = i + 1;
                     }
                     result.push_str(" }");
                     result
@@ -1615,12 +1591,10 @@ impl CodegenCtx {
         }
 
         // Hash collision case: linear scan
-        let mut i: usize = 0;
-        while i < self.string_table.len() {
+        for i in 0usize..self.string_table.len() {
             if string_equal(&self.string_table[i].content, content) {
                 return clone_string(&self.string_table[i].label);
             }
-            i = i + 1;
         }
 
         // Not found, add new (collision case)
@@ -1644,8 +1618,7 @@ impl CodegenCtx {
     /// Emits all string constants as global declarations.
     /// Should be called at the beginning of the module.
     pub fn emit_string_constants(self: &mut CodegenCtx) {
-        let mut i: usize = 0;
-        while i < self.string_table.len() {
+        for i in 0usize..self.string_table.len() {
             let entry = &self.string_table[i];
             // Emit: @.str.N = private unnamed_addr constant [M x i8] c"...\00"
             self.write_string(&entry.label);
@@ -1655,7 +1628,6 @@ impl CodegenCtx {
             self.write(" x i8] c\"");
             self.emit_string_literal_bytes(&entry.content);
             self.write("\\00\"\n");
-            i = i + 1;
         }
         if self.string_table.len() > 0 {
             self.newline();
@@ -1665,8 +1637,7 @@ impl CodegenCtx {
     /// Emits a string literal as LLVM string bytes (escaping special chars).
     fn emit_string_literal_bytes(self: &mut CodegenCtx, s: &String) {
         let bytes = s.as_bytes();
-        let mut i: usize = 0;
-        while i < bytes.len() {
+        for i in 0usize..bytes.len() {
             let b = bytes[i];
             if b == 34 {
                 // Quote "
@@ -1692,7 +1663,6 @@ impl CodegenCtx {
                 // Printable character
                 self.output.push(b as char);
             }
-            i = i + 1;
         }
     }
 
@@ -1711,8 +1681,7 @@ impl CodegenCtx {
         self.write(name);
         self.write("(");
 
-        let mut i: usize = 0;
-        while i < params.len() {
+        for i in 0usize..params.len() {
             if i > 0 {
                 self.write(", ");
             }
@@ -1720,7 +1689,6 @@ impl CodegenCtx {
             self.write_string(&param.0);
             self.write(" ");
             self.write_string(&param.1);
-            i = i + 1;
         }
 
         self.write(") {\n");
@@ -1761,8 +1729,7 @@ impl CodegenCtx {
         self.write(", ptr ");
         self.write_cgname(ptr);
 
-        let mut i: usize = 0;
-        while i < indices.len() {
+        for i in 0usize..indices.len() {
             if i == 0 {
                 self.write(", i64 ");
             } else {
@@ -1775,7 +1742,6 @@ impl CodegenCtx {
                 }
             }
             self.write_string(&indices[i]);
-            i = i + 1;
         }
 
         self.write("\n");
@@ -2262,29 +2228,24 @@ impl CodegenCtx {
         // Clone def_names (read-only during codegen)
         let mut worker_def_names: Vec<DefNameEntry> = Vec::new();
         let mut worker_def_hash = hashmap::HashMapU64U32::with_capacity(self.def_names.len());
-        let mut i: usize = 0;
-        while i < self.def_names.len() {
+        for i in 0usize..self.def_names.len() {
             let entry = &self.def_names[i];
             worker_def_names.push(DefNameEntry::new(entry.def_id, clone_string(&entry.name)));
             worker_def_hash.insert(entry.def_id as u64, i as u32);
-            i = i + 1;
         }
 
         // Deep-clone adt_registry (read-only during codegen, but each thread needs its own copy)
         let mut worker_adt_registry: Vec<AdtEntry> = Vec::new();
-        let mut ai: usize = 0;
-        while ai < self.adt_registry.len() {
+        for ai in 0usize..self.adt_registry.len() {
             match &self.adt_registry[ai] {
                 &AdtEntry::Struct(ref sl) => {
                     let mut cloned_fields: Vec<AdtFieldInfo> = Vec::new();
-                    let mut fi: usize = 0;
-                    while fi < sl.fields.len() {
+                    for fi in 0usize..sl.fields.len() {
                         let field = &sl.fields[fi];
                         cloned_fields.push(AdtFieldInfo {
                             llvm_type: clone_string(&field.llvm_type),
                             hir_type: field.hir_type,
                         });
-                        fi = fi + 1;
                     }
                     worker_adt_registry.push(AdtEntry::Struct(StructLayout {
                         def_id: sl.def_id,
@@ -2294,25 +2255,21 @@ impl CodegenCtx {
                 }
                 &AdtEntry::Enum(ref el) => {
                     let mut cloned_variants: Vec<VariantLayout> = Vec::new();
-                    let mut vi: usize = 0;
-                    while vi < el.variants.len() {
+                    for vi in 0usize..el.variants.len() {
                         let variant = &el.variants[vi];
                         let mut cloned_vfields: Vec<AdtFieldInfo> = Vec::new();
-                        let mut vfi: usize = 0;
-                        while vfi < variant.fields.len() {
+                        for vfi in 0usize..variant.fields.len() {
                             let vf = &variant.fields[vfi];
                             cloned_vfields.push(AdtFieldInfo {
                                 llvm_type: clone_string(&vf.llvm_type),
                                 hir_type: vf.hir_type,
                             });
-                            vfi = vfi + 1;
                         }
                         cloned_variants.push(VariantLayout {
                             variant_idx: variant.variant_idx,
                             fields: cloned_vfields,
                             payload_llvm_type: clone_string(&variant.payload_llvm_type),
                         });
-                        vi = vi + 1;
                     }
                     worker_adt_registry.push(AdtEntry::Enum(EnumLayout {
                         def_id: el.def_id,
@@ -2323,7 +2280,6 @@ impl CodegenCtx {
                     }));
                 }
             }
-            ai = ai + 1;
         }
 
         let mut worker = CodegenCtx {
@@ -2385,53 +2341,42 @@ impl CodegenCtx {
         };
 
         // Copy handler_op_body_ids with state counts (read-only, needed to flag handler op bodies)
-        let mut hbi: usize = 0;
-        while hbi < self.handler_op_body_ids.len() {
+        for hbi in 0usize..self.handler_op_body_ids.len() {
             let hbi_def_id = self.handler_op_body_ids[hbi];
             let hbi_state_count = self.handler_op_state_count(hbi_def_id);
             worker.register_handler_op_body(hbi_def_id, hbi_state_count);
-            hbi = hbi + 1;
         }
 
         // Copy handler_effect_entries (read-only, needed during codegen)
-        let mut hei: usize = 0;
-        while hei < self.handler_effect_entries.len() {
+        for hei in 0usize..self.handler_effect_entries.len() {
             let he = &self.handler_effect_entries[hei];
             worker.register_handler_effect(he.handler_def_id, he.effect_def_id);
             worker.register_handler_state_count(he.handler_def_id, self.lookup_handler_state_count(he.handler_def_id));
             worker.register_handler_state_byte_size(he.handler_def_id, self.lookup_handler_state_byte_size(he.handler_def_id));
-            hei = hei + 1;
         }
 
         // Copy op_def_index_entries (read-only, needed for Perform op_index resolution)
-        let mut odi: usize = 0;
-        while odi < self.op_def_index_entries.len() {
+        for odi in 0usize..self.op_def_index_entries.len() {
             let ode = &self.op_def_index_entries[odi];
             worker.register_op_def_index(ode.effect_def_id, ode.op_name_sym, ode.positional_index);
-            odi = odi + 1;
         }
 
         // Copy function signatures (read-only, needed at call sites)
-        let mut fi: usize = 0;
-        while fi < self.fn_signatures.len() {
+        for fi in 0usize..self.fn_signatures.len() {
             let sig = &self.fn_signatures[fi];
             let mut cloned_params: Vec<String> = Vec::new();
-            let mut pi: usize = 0;
-            while pi < sig.param_types.len() {
+            for pi in 0usize..sig.param_types.len() {
                 let mut p = String::new();
                 p.push_str(sig.param_types[pi].as_str());
                 cloned_params.push(p);
-                pi = pi + 1;
             }
             let mut cloned_ret = String::new();
             cloned_ret.push_str(sig.return_type.as_str());
             worker.register_fn_signature(sig.def_id, cloned_params, cloned_ret);
-            fi = fi + 1;
         }
 
         // Copy static and const defs hashes (read-only)
-        let mut si: usize = 0;
-        while si < self.def_names.len() {
+        for si in 0usize..self.def_names.len() {
             let entry = &self.def_names[si];
             if self.is_static(entry.def_id) {
                 worker.register_static(entry.def_id);
@@ -2445,7 +2390,6 @@ impl CodegenCtx {
             if self.is_const(entry.def_id) {
                 worker.register_const(entry.def_id);
             }
-            si = si + 1;
         }
 
         worker
@@ -2484,8 +2428,7 @@ pub fn merge_string_tables(
 ) -> Vec<StringRemap> {
     let mut remaps: Vec<StringRemap> = Vec::new();
 
-    let mut i: usize = 0;
-    while i < worker_ctx.string_table_len() {
+    for i in 0usize..worker_ctx.string_table_len() {
         let content = worker_ctx.string_content_at(i);
         let worker_label = worker_ctx.string_label_at(i);
 
@@ -2500,7 +2443,6 @@ pub fn merge_string_tables(
             });
         }
 
-        i = i + 1;
     }
 
     remaps
@@ -2557,10 +2499,8 @@ fn string_replace(s: &String, from: &String, to: &String) -> String {
             }
             if matches {
                 // Append replacement
-                let mut k: usize = 0;
-                while k < to_bytes.len() {
+                for k in 0usize..to_bytes.len() {
                     result.push(to_bytes[k] as char);
-                    k = k + 1;
                 }
                 i = i + from_len;
                 continue;
@@ -2636,12 +2576,10 @@ fn string_equal(a: &String, b: &String) -> bool {
     if a_bytes.len() != b_bytes.len() {
         return false;
     }
-    let mut i: usize = 0;
-    while i < a_bytes.len() {
+    for i in 0usize..a_bytes.len() {
         if a_bytes[i] != b_bytes[i] {
             return false;
         }
-        i = i + 1;
     }
     true
 }

@@ -506,23 +506,20 @@ impl<'src> Parser<'src> {
         let len = end - start;
 
         // Search for existing entry with same content
-        let mut i: usize = 0;
-        while i < self.interned.len() {
+        for i in 0usize..self.interned.len() {
             let entry = self.interned[i];
             let entry_len = entry.end - entry.start;
 
             if entry_len == len {
                 // Same length, compare bytes
                 let mut matches = true;
-                let mut j: u32 = 0;
-                while j < len {
+                for j in 0u32..len {
                     let a = self.source_byte_at((start + j) as usize);
                     let b = self.source_byte_at((entry.start + j) as usize);
                     if a != b {
                         matches = false;
                         break;
                     }
-                    j = j + 1;
                 }
 
                 if matches {
@@ -530,7 +527,6 @@ impl<'src> Parser<'src> {
                 }
             }
 
-            i = i + 1;
         }
 
         // Not found, add new entry
@@ -835,10 +831,8 @@ pub fn parse_float_bits_from_span(parser: &mut Parser, span: common::Span) -> u6
     // Add fractional part
     if frac_digits > 0 {
         let mut divisor: f64 = 1.0;
-        let mut d: u32 = 0;
-        while d < frac_digits {
+        for d in 0u32..frac_digits {
             divisor = divisor * 10.0;
-            d = d + 1;
         }
         result = result + (frac_val as f64) / divisor;
     }

@@ -383,48 +383,40 @@ impl MirLowerCtx {
     /// Looks up a const param binding by DefId index.
     /// Returns Some(value) if the DefId is a bound const param, None otherwise.
     pub fn lookup_const_binding(self: &MirLowerCtx, def_id_index: u32) -> Option<u64> {
-        let mut i: usize = 0;
-        while i < self.const_bindings.len() {
+        for i in 0usize..self.const_bindings.len() {
             if self.const_bindings[i].def_id_index == def_id_index {
                 return Option::Some(self.const_bindings[i].value);
             }
-            i = i + 1;
         }
         Option::None
     }
 
     /// Returns true if the given DefId is a const-generic function.
     pub fn is_const_generic_fn(self: &MirLowerCtx, def_id_index: u32) -> bool {
-        let mut i: usize = 0;
-        while i < self.const_generic_fn_set.len() {
+        for i in 0usize..self.const_generic_fn_set.len() {
             if self.const_generic_fn_set[i] == def_id_index {
                 return true;
             }
-            i = i + 1;
         }
         false
     }
 
     /// Gets the number of const params for a const-generic function.
     pub fn get_const_param_count(self: &MirLowerCtx, def_id_index: u32) -> u32 {
-        let mut i: usize = 0;
-        while i < self.const_generic_fn_set.len() {
+        for i in 0usize..self.const_generic_fn_set.len() {
             if self.const_generic_fn_set[i] == def_id_index {
                 return self.const_generic_param_counts[i];
             }
-            i = i + 1;
         }
         0
     }
 
     /// Looks up turbofish const arg values by path span start.
     pub fn lookup_turbofish_const_args(self: &MirLowerCtx, span_start: u32) -> Option<u32> {
-        let mut i: usize = 0;
-        while i < self.turbofish_const_args.len() {
+        for i in 0usize..self.turbofish_const_args.len() {
             if self.turbofish_const_args[i].span_start == span_start {
                 return Option::Some(i as u32);
             }
-            i = i + 1;
         }
         Option::None
     }
@@ -457,14 +449,11 @@ impl MirLowerCtx {
     /// Takes ownership of accumulated errors, leaving the error list empty.
     pub fn take_errors(self: &mut MirLowerCtx) -> Vec<MirLowerError> {
         let mut result = Vec::new();
-        let mut i: usize = 0;
-        while i < self.errors.len() {
+        for i in 0usize..self.errors.len() {
             let err = &self.errors[i];
             let mut notes = Vec::new();
-            let mut ni: usize = 0;
-            while ni < err.notes.len() {
+            for ni in 0usize..err.notes.len() {
                 notes.push(MirLowerNote::new(common::make_string(err.notes[ni].message.as_str())));
-                ni = ni + 1;
             }
             result.push(MirLowerError {
                 kind: clone_mir_error_kind(&err.kind),
@@ -472,7 +461,6 @@ impl MirLowerCtx {
                 span: err.span,
                 notes: notes,
             });
-            i = i + 1;
         }
         self.errors.clear();
         result
@@ -490,12 +478,10 @@ impl MirLowerCtx {
 
     /// Looks up the MIR local for an HIR local.
     pub fn lookup_local(self: &MirLowerCtx, hir_id: hir_def::LocalId) -> Option<mir_def::MirLocalId> {
-        let mut i: usize = 0;
-        while i < self.local_map.len() {
+        for i in 0usize..self.local_map.len() {
             if self.local_map[i].hir_id == hir_id.index {
                 return Option::Some(self.local_map[i].mir_id);
             }
-            i = i + 1;
         }
         Option::None
     }
@@ -567,8 +553,7 @@ impl MirLowerCtx {
         }
 
         // Hash lookup failed - fall back to linear scan for debugging
-        let mut i: usize = 0;
-        while i < self.method_resolutions.len() {
+        for i in 0usize..self.method_resolutions.len() {
             if self.method_resolutions[i].body_def_id == self.body_def_id &&
                self.method_resolutions[i].span_start == span_start {
                 let def_id_index = self.method_resolutions[i].def_id_index;
@@ -577,7 +562,6 @@ impl MirLowerCtx {
                 }
                 return Option::Some(hir_def::DefId::new(def_id_index));
             }
-            i = i + 1;
         }
         Option::None
     }
@@ -597,13 +581,11 @@ impl MirLowerCtx {
         }
 
         // Fallback to linear scan (should not happen with correct hash population)
-        let mut i: usize = 0;
-        while i < self.field_resolutions.len() {
+        for i in 0usize..self.field_resolutions.len() {
             if self.field_resolutions[i].body_def_id == self.body_def_id &&
                self.field_resolutions[i].span_start == span_start {
                 return Option::Some(self.field_resolutions[i].field_idx);
             }
-            i = i + 1;
         }
         Option::None
     }
@@ -611,13 +593,11 @@ impl MirLowerCtx {
     /// Looks up an array-to-slice coercion by the expression's span start.
     /// Returns the array length if a coercion was recorded for this expression.
     pub fn lookup_coercion(self: &MirLowerCtx, span_start: usize) -> Option<u64> {
-        let mut i: usize = 0;
-        while i < self.coercion_entries.len() {
+        for i in 0usize..self.coercion_entries.len() {
             if self.coercion_entries[i].body_def_id == self.body_def_id &&
                self.coercion_entries[i].span_start == span_start {
                 return Option::Some(self.coercion_entries[i].array_len);
             }
-            i = i + 1;
         }
         Option::None
     }
@@ -963,10 +943,8 @@ pub fn destination_ignore() -> Destination {
 impl mir_types::Place {
     pub fn clone(self: &mir_types::Place) -> mir_types::Place {
         let mut proj = Vec::new();
-        let mut i: usize = 0;
-        while i < self.projection.len() {
+        for i in 0usize..self.projection.len() {
             proj.push(self.projection[i].clone());
-            i = i + 1;
         }
         mir_types::Place {
             local: self.local,
@@ -1058,20 +1036,17 @@ impl MoveTracker {
     /// Checks if a local has been moved.
     /// Returns Some(span) if moved, None otherwise.
     pub fn check_moved(self: &Self, local: mir_def::MirLocalId) -> Option<common::Span> {
-        let mut i: usize = 0;
-        while i < self.moved_locals.len() {
+        for i in 0usize..self.moved_locals.len() {
             if self.moved_locals[i].local_index == local.index {
                 return Option::Some(self.moved_locals[i].move_span);
             }
-            i = i + 1;
         }
         Option::None
     }
 
     /// Clears the moved status of a local (after re-assignment).
     pub fn clear_move(self: &mut Self, local: mir_def::MirLocalId) {
-        let mut i: usize = 0;
-        while i < self.moved_locals.len() {
+        for i in 0usize..self.moved_locals.len() {
             if self.moved_locals[i].local_index == local.index {
                 // Remove by swapping with last and popping
                 let last = self.moved_locals.len() - 1;
@@ -1084,7 +1059,6 @@ impl MoveTracker {
                 self.moved_locals.pop();
                 return;
             }
-            i = i + 1;
         }
     }
 

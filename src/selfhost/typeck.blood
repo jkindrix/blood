@@ -80,8 +80,7 @@ impl BuiltinDefName {
 /// lifetime parameters and const parameters.
 fn count_type_params(params: &Vec<hir_ty::GenericParam>) -> u32 {
     let mut count: u32 = 0;
-    let mut i: usize = 0;
-    while i < params.len() {
+    for i in 0usize..params.len() {
         match &params[i] {
             &hir_ty::GenericParam::TypeParam(_) => {
                 count = count + 1;
@@ -89,7 +88,6 @@ fn count_type_params(params: &Vec<hir_ty::GenericParam>) -> u32 {
             &hir_ty::GenericParam::LifetimeParam(_) => {}
             &hir_ty::GenericParam::ConstParam(_) => {}
         }
-        i = i + 1;
     }
     count
 }
@@ -98,8 +96,7 @@ fn count_type_params(params: &Vec<hir_ty::GenericParam>) -> u32 {
 /// These are the globally unique indices assigned during HIR lowering.
 fn extract_type_param_ids(params: &Vec<hir_ty::GenericParam>) -> Vec<u32> {
     let mut ids: Vec<u32> = Vec::new();
-    let mut i: usize = 0;
-    while i < params.len() {
+    for i in 0usize..params.len() {
         match &params[i] {
             &hir_ty::GenericParam::TypeParam(ref def) => {
                 ids.push(def.var_id.index);
@@ -107,7 +104,6 @@ fn extract_type_param_ids(params: &Vec<hir_ty::GenericParam>) -> Vec<u32> {
             &hir_ty::GenericParam::LifetimeParam(_) => {}
             &hir_ty::GenericParam::ConstParam(_) => {}
         }
-        i = i + 1;
     }
     ids
 }
@@ -552,12 +548,10 @@ impl TypeChecker {
         let struct_info = self.get_struct(def_id);
         match struct_info {
             Some(info) => {
-                let mut i: usize = 0;
-                while i < info.fields.len() {
+                for i in 0usize..info.fields.len() {
                     if info.fields[i].name.index == field_name.index {
                         return Option::Some(i as u32);
                     }
-                    i = i + 1;
                 }
                 Option::None
             }
@@ -651,10 +645,8 @@ impl TypeChecker {
     pub fn register_fn_sig(self: &mut Self, def_id: hir_def::DefId, sig: &hir_item::FnSig) {
         // Extract parameter types (convert at HIR boundary)
         let mut param_tys: Vec<type_intern::TyId> = Vec::new();
-        let mut i: usize = 0;
-        while i < sig.params.len() {
+        for i in 0usize..sig.params.len() {
             param_tys.push(sig.params[i].ty);
-            i = i + 1;
         }
 
         // Count type parameters and extract their actual TyVarId indices
@@ -663,10 +655,8 @@ impl TypeChecker {
 
         // Extract effect row DefIds
         let mut effect_def_ids: Vec<u32> = Vec::new();
-        let mut ei: usize = 0;
-        while ei < sig.effects.effects.len() {
+        for ei in 0usize..sig.effects.effects.len() {
             effect_def_ids.push(sig.effects.effects[ei].def_id.index);
-            ei = ei + 1;
         }
 
         // Extract where clause predicates
@@ -697,13 +687,11 @@ impl TypeChecker {
         let mut fields: Vec<typeck_info::FieldInfo> = Vec::new();
         match &struct_def.body {
             &hir_item::StructBody::Record(ref struct_fields) => {
-                let mut i: usize = 0;
-                while i < struct_fields.len() {
+                for i in 0usize..struct_fields.len() {
                     let f = &struct_fields[i];
                     field_names.push(f.name.symbol);
                     let info = typeck_info::FieldInfo::new(f.name.symbol, f.ty);
                     fields.push(info);
-                    i = i + 1;
                 }
             }
             &hir_item::StructBody::Tuple(ref types) => {
@@ -734,8 +722,7 @@ impl TypeChecker {
         // Extract variant names and variant info
         let mut variant_names: Vec<common::Symbol> = Vec::new();
         let mut variants: Vec<typeck_info::VariantInfo> = Vec::new();
-        let mut i: usize = 0;
-        while i < enum_def.variants.len() {
+        for i in 0usize..enum_def.variants.len() {
             let v = &enum_def.variants[i];
             variant_names.push(v.name.symbol);
 
@@ -747,19 +734,15 @@ impl TypeChecker {
                     // No fields
                 }
                 &hir_item::VariantKind::Tuple(ref types) => {
-                    let mut j: usize = 0;
-                    while j < types.len() {
+                    for j in 0usize..types.len() {
                         field_tys.push(types[j]);
-                        j = j + 1;
                     }
                 }
                 &hir_item::VariantKind::Record(ref struct_fields) => {
                     // For record variants, store both field names and types
-                    let mut j: usize = 0;
-                    while j < struct_fields.len() {
+                    for j in 0usize..struct_fields.len() {
                         field_names.push(struct_fields[j].name.symbol);
                         field_tys.push(struct_fields[j].ty);
-                        j = j + 1;
                     }
                 }
             }
@@ -770,7 +753,6 @@ impl TypeChecker {
                 typeck_info::VariantInfo::with_def_id(v.name.symbol, field_tys, i as u32, v.def_id)
             };
             variants.push(info);
-            i = i + 1;
         }
 
         // Count only type parameters (not lifetime or const params)
@@ -787,13 +769,11 @@ impl TypeChecker {
         self.enums[def_idx] = Some(info);
 
         // Populate variant_hash for O(1) variant lookups
-        let mut vi: usize = 0;
-        while vi < enum_def.variants.len() {
+        for vi in 0usize..enum_def.variants.len() {
             let var_def_id = enum_def.variants[vi].def_id;
             // Combine enum_idx and variant_idx into a single u64
             let combined = hashmap::combine_u32_usize(def_id.index, vi);
             self.variant_hash.insert(var_def_id.index as u64, combined);
-            vi = vi + 1;
         }
     }
 
@@ -889,21 +869,17 @@ impl TypeChecker {
             Option::None => {}
         }
         // Fallback to linear scan
-        let mut i: usize = 0;
-        while i < self.enums.len() {
+        for i in 0usize..self.enums.len() {
             match &self.enums[i] {
                 &Some(ref enum_info) => {
-                    let mut j: usize = 0;
-                    while j < enum_info.variants.len() {
+                    for j in 0usize..enum_info.variants.len() {
                         if enum_info.variants[j].def_id.index == variant_def_id.index {
                             return Option::Some(enum_info.variants[j].variant_index);
                         }
-                        j = j + 1;
                     }
                 }
                 &None => {}
             }
-            i = i + 1;
         }
         Option::None
     }
@@ -922,10 +898,8 @@ impl TypeChecker {
                         &Some(ref enum_info) => {
                             if variant_idx < enum_info.variants.len() {
                                 let mut fn_vec: Vec<common::Symbol> = Vec::new();
-                                let mut k: usize = 0;
-                                while k < enum_info.variants[variant_idx].field_names.len() {
+                                for k in 0usize..enum_info.variants[variant_idx].field_names.len() {
                                     fn_vec.push(enum_info.variants[variant_idx].field_names[k]);
-                                    k = k + 1;
                                 }
                                 return Option::Some(EnumVariantLookup {
                                     enum_def_id: enum_info.def_id,
@@ -943,18 +917,14 @@ impl TypeChecker {
             Option::None => {}
         }
         // Fallback to linear scan
-        let mut i: usize = 0;
-        while i < self.enums.len() {
+        for i in 0usize..self.enums.len() {
             match &self.enums[i] {
                 &Some(ref enum_info) => {
-                    let mut j: usize = 0;
-                    while j < enum_info.variants.len() {
+                    for j in 0usize..enum_info.variants.len() {
                         if enum_info.variants[j].def_id.index == variant_def_id.index {
                             let mut fn_vec: Vec<common::Symbol> = Vec::new();
-                            let mut k: usize = 0;
-                            while k < enum_info.variants[j].field_names.len() {
+                            for k in 0usize..enum_info.variants[j].field_names.len() {
                                 fn_vec.push(enum_info.variants[j].field_names[k]);
-                                k = k + 1;
                             }
                             return Option::Some(EnumVariantLookup {
                                 enum_def_id: enum_info.def_id,
@@ -964,12 +934,10 @@ impl TypeChecker {
                                 field_names: fn_vec,
                             });
                         }
-                        j = j + 1;
                     }
                 }
                 &None => {}
             }
-            i = i + 1;
         }
         Option::None
     }
@@ -979,12 +947,10 @@ impl TypeChecker {
         let struct_info = self.get_struct(def_id);
         match struct_info {
             Some(info) => {
-                let mut i: usize = 0;
-                while i < info.fields.len() {
+                for i in 0usize..info.fields.len() {
                     if info.fields[i].name.index == field_name.index {
                         return Some(type_intern::TyId::new(info.fields[i].ty.index));
                     }
-                    i = i + 1;
                 }
                 Option::None
             }
@@ -1005,14 +971,12 @@ impl TypeChecker {
                         &Some(ref enum_info) => {
                             if variant_idx < enum_info.variants.len() {
                                 // Found the variant - look up field by name
-                                let mut k: usize = 0;
-                                while k < enum_info.variants[variant_idx].field_names.len() {
+                                for k in 0usize..enum_info.variants[variant_idx].field_names.len() {
                                     if enum_info.variants[variant_idx].field_names[k].index == field_name.index {
                                         if k < enum_info.variants[variant_idx].field_tys.len() {
                                             return Some(type_intern::TyId::new(enum_info.variants[variant_idx].field_tys[k].index));
                                         }
                                     }
-                                    k = k + 1;
                                 }
                                 return Option::None;
                             }
@@ -1024,32 +988,26 @@ impl TypeChecker {
             Option::None => {}
         }
         // Fallback to linear scan
-        let mut i: usize = 0;
-        while i < self.enums.len() {
+        for i in 0usize..self.enums.len() {
             match &self.enums[i] {
                 &Some(ref enum_info) => {
-                    let mut j: usize = 0;
-                    while j < enum_info.variants.len() {
+                    for j in 0usize..enum_info.variants.len() {
                         if enum_info.variants[j].def_id.index == variant_def_id.index {
                             // Found the variant - look up field by name
-                            let mut k: usize = 0;
-                            while k < enum_info.variants[j].field_names.len() {
+                            for k in 0usize..enum_info.variants[j].field_names.len() {
                                 if enum_info.variants[j].field_names[k].index == field_name.index {
                                     // Return the corresponding field type
                                     if k < enum_info.variants[j].field_tys.len() {
                                         return Some(type_intern::TyId::new(enum_info.variants[j].field_tys[k].index));
                                     }
                                 }
-                                k = k + 1;
                             }
                             return Option::None;
                         }
-                        j = j + 1;
                     }
                 }
                 &None => {}
             }
-            i = i + 1;
         }
         Option::None
     }
@@ -1106,15 +1064,13 @@ impl TypeChecker {
     /// Looks up a method on a type by name.
     /// Returns the method info and the impl it belongs to, or None if not found.
     pub fn lookup_method(self: &Self, ty: type_intern::TyId, method_name: common::Symbol) -> Option<MethodLookupResult> {
-        let mut impl_idx: usize = 0;
-        while impl_idx < self.impls.len() {
+        for impl_idx in 0usize..self.impls.len() {
             let impl_info = &self.impls[impl_idx];
 
             // Check if this impl's self_ty matches the target type
             if types_match_for_impl_id(impl_info.self_ty, ty) {
                 // Search methods in this impl
-                let mut method_idx: usize = 0;
-                while method_idx < impl_info.methods.len() {
+                for method_idx in 0usize..impl_info.methods.len() {
                     let method = &impl_info.methods[method_idx];
                     if method.name.index == method_name.index {
                         return Some(MethodLookupResult {
@@ -1122,10 +1078,8 @@ impl TypeChecker {
                             method_index: method_idx,
                         });
                     }
-                    method_idx = method_idx + 1;
                 }
             }
-            impl_idx = impl_idx + 1;
         }
         Option::None
     }
@@ -1133,20 +1087,16 @@ impl TypeChecker {
     /// Counts how many impls provide a method with the given name for the given type.
     pub fn count_method_matches(self: &Self, ty: type_intern::TyId, method_name: common::Symbol) -> u32 {
         let mut count: u32 = 0;
-        let mut impl_idx: usize = 0;
-        while impl_idx < self.impls.len() {
+        for impl_idx in 0usize..self.impls.len() {
             let impl_info = &self.impls[impl_idx];
             if types_match_for_impl_id(impl_info.self_ty, ty) {
-                let mut method_idx: usize = 0;
-                while method_idx < impl_info.methods.len() {
+                for method_idx in 0usize..impl_info.methods.len() {
                     let method = &impl_info.methods[method_idx];
                     if method.name.index == method_name.index {
                         count = count + 1;
                     }
-                    method_idx = method_idx + 1;
                 }
             }
-            impl_idx = impl_idx + 1;
         }
         count
     }
@@ -1179,27 +1129,23 @@ impl TypeChecker {
         let mut best_score: u32 = 0;
         let mut found_count: u32 = 0;
 
-        let mut impl_idx: usize = 0;
-        while impl_idx < self.impls.len() {
+        for impl_idx in 0usize..self.impls.len() {
             let impl_info = &self.impls[impl_idx];
             if types_match_for_impl_id(impl_info.self_ty, ty) {
-                let mut method_idx: usize = 0;
-                while method_idx < impl_info.methods.len() {
+                for method_idx in 0usize..impl_info.methods.len() {
                     let method = &impl_info.methods[method_idx];
                     if method.name.index == method_name.index {
                         // Name matches — compute specificity score
                         if method.param_tys.len() == arg_tys.len() {
                             let mut score: u32 = 0;
                             let mut compatible: bool = true;
-                            let mut pi: usize = 0;
-                            while pi < arg_tys.len() {
+                            for pi in 0usize..arg_tys.len() {
                                 let match_level = type_match_specificity(method.param_tys[pi], arg_tys[pi]);
                                 if match_level == 0 {
                                     compatible = false;
                                     break;
                                 }
                                 score = score + match_level;
-                                pi = pi + 1;
                             }
                             if compatible {
                                 if score > best_score {
@@ -1213,10 +1159,8 @@ impl TypeChecker {
                             }
                         }
                     }
-                    method_idx = method_idx + 1;
                 }
             }
-            impl_idx = impl_idx + 1;
         }
 
         if found_count == 1 {
@@ -1234,12 +1178,10 @@ impl TypeChecker {
         let enum_info = self.get_enum(enum_def_id);
         match enum_info {
             Some(info) => {
-                let mut i: usize = 0;
-                while i < info.variants.len() {
+                for i in 0usize..info.variants.len() {
                     if info.variants[i].name.index == variant_name.index {
                         return Some(info.variants[i].variant_index);
                     }
-                    i = i + 1;
                 }
                 Option::None
             }
@@ -1322,8 +1264,7 @@ impl TypeChecker {
             Option::None => { return false; }
         }
         // Search for an impl that matches
-        let mut i: usize = 0;
-        while i < self.trait_impls.len() {
+        for i in 0usize..self.trait_impls.len() {
             let impl_info = &self.trait_impls[i];
 
             // Check if this impl is for the right trait
@@ -1335,7 +1276,6 @@ impl TypeChecker {
                     return true;
                 }
             }
-            i = i + 1;
         }
         false
     }
@@ -1383,8 +1323,7 @@ impl TypeChecker {
             return;
         }
 
-        let mut pi: usize = 0;
-        while pi < fn_sig.where_predicates.len() {
+        for pi in 0usize..fn_sig.where_predicates.len() {
             match &fn_sig.where_predicates[pi] {
                 &hir_ty::WherePredicate::TypeBound { ref ty, ref bounds, span: pred_span } => {
                     // Find what concrete type was substituted for this type param.
@@ -1394,12 +1333,10 @@ impl TypeChecker {
                     match &concrete_ty {
                         &Option::Some(resolved_ty) => {
                             // Check each trait bound
-                            let mut bi: usize = 0;
-                            while bi < bounds.len() {
+                            for bi in 0usize..bounds.len() {
                                 if !self.type_implements_trait(resolved_ty, &bounds[bi]) {
                                     self.error(typeck_types::TypeErrorKind::TraitNotImplemented, span);
                                 }
-                                bi = bi + 1;
                             }
                         }
                         &Option::None => {
@@ -1410,7 +1347,6 @@ impl TypeChecker {
                 &hir_ty::WherePredicate::LifetimeBound { lifetime: _, bound: _, span: _ } => {}
                 &hir_ty::WherePredicate::EffectBound { effect_var: _, ref bounds, span: _ } => {}
             }
-            pi = pi + 1;
         }
     }
 
@@ -1462,13 +1398,11 @@ impl TypeChecker {
 
     /// Checks all collected obligations and reports errors for unsatisfied ones.
     pub fn check_obligations(self: &mut Self, obligations: &Vec<typeck_types::Obligation>) {
-        let mut i: usize = 0;
-        while i < obligations.len() {
+        for i in 0usize..obligations.len() {
             if !self.resolve_obligation(&obligations[i]) {
                 // Report error for unsatisfied obligation
                 self.error(typeck_types::TypeErrorKind::TraitNotImplemented, obligations[i].span);
             }
-            i = i + 1;
         }
     }
 }
@@ -1498,10 +1432,8 @@ pub struct EnumVariantLookup {
 /// Copies a Vec of TyId values.
 fn copy_ty_id_vec(tys: &Vec<type_intern::TyId>) -> Vec<type_intern::TyId> {
     let mut result: Vec<type_intern::TyId> = Vec::new();
-    let mut i: usize = 0;
-    while i < tys.len() {
+    for i in 0usize..tys.len() {
         result.push(type_intern::TyId::new(tys[i].index));
-        i = i + 1;
     }
     result
 }
@@ -1670,12 +1602,10 @@ fn types_structurally_equal(a: &hir_ty::Type, b: &hir_ty::Type) -> bool {
             if elems_a.len() != elems_b.len() {
                 return false;
             }
-            let mut i: usize = 0;
-            while i < elems_a.len() {
+            for i in 0usize..elems_a.len() {
                 if !types_structurally_equal(&elems_a[i], &elems_b[i]) {
                     return false;
                 }
-                i = i + 1;
             }
             true
         }
@@ -1703,12 +1633,10 @@ fn types_structurally_equal(a: &hir_ty::Type, b: &hir_ty::Type) -> bool {
             if args.len() != args_b.len() {
                 return false;
             }
-            let mut i: usize = 0;
-            while i < args.len() {
+            for i in 0usize..args.len() {
                 if !types_structurally_equal(&args[i], &args_b[i]) {
                     return false;
                 }
-                i = i + 1;
             }
             true
         }
@@ -1760,14 +1688,12 @@ fn types_structurally_equal_id(a: type_intern::TyId, b: type_intern::TyId) -> bo
                     if len_a != len_b {
                         return false;
                     }
-                    let mut i: usize = 0;
-                    while i < len_a {
+                    for i in 0usize..len_a {
                         let ea = interner.get_ty_list_element(list_a, i);
                         let eb = interner.get_ty_list_element(list_b, i);
                         if !types_structurally_equal_id(ea, eb) {
                             return false;
                         }
-                        i = i + 1;
                     }
                     true
                 }
@@ -1829,14 +1755,12 @@ fn types_structurally_equal_id(a: type_intern::TyId, b: type_intern::TyId) -> bo
                     if len_a != len_b {
                         return false;
                     }
-                    let mut i: usize = 0;
-                    while i < len_a {
+                    for i in 0usize..len_a {
                         let ea = interner.get_ty_list_element(args_a, i);
                         let eb = interner.get_ty_list_element(args_b, i);
                         if !types_structurally_equal_id(ea, eb) {
                             return false;
                         }
-                        i = i + 1;
                     }
                     true
                 }
@@ -1873,12 +1797,10 @@ pub fn check_exhaustiveness_arms(
     // Convert HIR patterns to deconstructed patterns
     let mut matrix = PatternMatrix::new(1);
 
-    let mut i: usize = 0;
-    while i < arms.len() {
+    for i in 0usize..arms.len() {
         let decon = deconstruct_pattern(checker, &arms[i].pattern);
         let row = PatternRow::new(vec_of_one(decon));
         matrix.push_row(row);
-        i = i + 1;
     }
 
     // Check if the matrix is exhaustive
@@ -1908,20 +1830,16 @@ fn deconstruct_pattern(checker: &mut TypeChecker, pattern: &hir_expr::Pattern) -
         }
         &hir_expr::PatternKind::Tuple(ref pats) => {
             let mut fields: Vec<DeconstructedPattern> = Vec::new();
-            let mut i: usize = 0;
-            while i < pats.len() {
+            for i in 0usize..pats.len() {
                 fields.push(deconstruct_pattern(checker, &pats[i]));
-                i = i + 1;
             }
             DeconstructedPattern::Tuple { fields: fields }
         }
         &hir_expr::PatternKind::Struct { ref path, ref fields, has_rest } => {
             let def_id = path.def_id;
             let mut field_pats: Vec<DeconstructedPattern> = Vec::new();
-            let mut i: usize = 0;
-            while i < fields.len() {
+            for i in 0usize..fields.len() {
                 field_pats.push(deconstruct_pattern(checker, &fields[i].pattern));
-                i = i + 1;
             }
             let _ = has_rest;
             // Check if this is a record enum variant (has variant_index) or a plain struct
@@ -1954,10 +1872,8 @@ fn deconstruct_pattern(checker: &mut TypeChecker, pattern: &hir_expr::Pattern) -
             match variant_idx_opt {
                 Option::Some(variant_idx) => {
                     let mut field_pats: Vec<DeconstructedPattern> = Vec::new();
-                    let mut i: usize = 0;
-                    while i < fields.len() {
+                    for i in 0usize..fields.len() {
                         field_pats.push(deconstruct_pattern(checker, &fields[i]));
-                        i = i + 1;
                     }
                     DeconstructedPattern::Variant { def_id: def_id, variant_idx: variant_idx, fields: field_pats }
                 }
@@ -1970,10 +1886,8 @@ fn deconstruct_pattern(checker: &mut TypeChecker, pattern: &hir_expr::Pattern) -
         }
         &hir_expr::PatternKind::Or(ref pats) => {
             let mut alts: Vec<DeconstructedPattern> = Vec::new();
-            let mut i: usize = 0;
-            while i < pats.len() {
+            for i in 0usize..pats.len() {
                 alts.push(deconstruct_pattern(checker, &pats[i]));
-                i = i + 1;
             }
             DeconstructedPattern::Or { pats: alts }
         }
@@ -2088,8 +2002,7 @@ fn compute_witnesses(
     let mut witnesses: Vec<Witness> = Vec::new();
 
     // For each constructor, check if it's covered
-    let mut i: usize = 0;
-    while i < constructors.len() {
+    for i in 0usize..constructors.len() {
         let ctor = &constructors[i];
 
         // Check if this constructor is matched by any row in the matrix
@@ -2097,7 +2010,6 @@ fn compute_witnesses(
             // This constructor is not covered - it's a witness
             witnesses.push(Witness::new(clone_string_helper(&ctor.description)));
         }
-        i = i + 1;
     }
 
     witnesses
@@ -2155,8 +2067,7 @@ fn get_type_constructors(checker: &mut TypeChecker, ty: &hir_ty::Type) -> Vec<Co
             match checker.get_enum(def_id) {
                 Option::Some(enum_info) => {
                     // Add one constructor per variant
-                    let mut i: usize = 0;
-                    while i < enum_info.variants.len() {
+                    for i in 0usize..enum_info.variants.len() {
                         let variant = &enum_info.variants[i];
                         let name = match interner::resolve(variant.name) {
                             Option::Some(resolved) => {
@@ -2174,7 +2085,6 @@ fn get_type_constructors(checker: &mut TypeChecker, ty: &hir_ty::Type) -> Vec<Co
                             }
                         };
                         ctors.push(Constructor::variant(name, variant.variant_index));
-                        i = i + 1;
                     }
                 }
                 Option::None => {
@@ -2210,15 +2120,13 @@ fn get_type_constructors(checker: &mut TypeChecker, ty: &hir_ty::Type) -> Vec<Co
 /// Checks if a constructor is covered by the pattern matrix.
 fn constructor_is_covered(matrix: &PatternMatrix, ctor: &Constructor) -> bool {
     // A constructor is covered if some row in the matrix matches it
-    let mut i: usize = 0;
-    while i < matrix.rows.len() {
+    for i in 0usize..matrix.rows.len() {
         if matrix.width > 0 {
             let first_pat = &matrix.rows[i].patterns[0];
             if pattern_matches_constructor(first_pat, ctor) {
                 return true;
             }
         }
-        i = i + 1;
     }
     false
 }
@@ -2249,12 +2157,10 @@ fn pattern_matches_constructor(pat: &DeconstructedPattern, ctor: &Constructor) -
         }
         &DeconstructedPattern::Or { ref pats } => {
             // Or pattern matches if any alternative matches
-            let mut i: usize = 0;
-            while i < pats.len() {
+            for i in 0usize..pats.len() {
                 if pattern_matches_constructor(&pats[i], ctor) {
                     return true;
                 }
-                i = i + 1;
             }
             false
         }
@@ -2316,8 +2222,7 @@ pub fn resolve_obligations(
 ) -> Vec<typeck_types::Obligation> {
     let mut unresolved: Vec<typeck_types::Obligation> = Vec::new();
 
-    let mut i: usize = 0;
-    while i < obligations.len() {
+    for i in 0usize..obligations.len() {
         let obligation = &obligations[i];
         let resolved = resolve_single_obligation(checker, obligation);
         if !resolved {
@@ -2329,7 +2234,6 @@ pub fn resolve_obligations(
             );
             unresolved.push(unresolve);
         }
-        i = i + 1;
     }
 
     unresolved
@@ -2433,8 +2337,7 @@ pub fn check_unreachable_arms(
     let mut wildcard_seen = false;
     let mut wildcard_index: u32 = 0;
 
-    let mut i: usize = 0;
-    while i < arms.len() {
+    for i in 0usize..arms.len() {
         if wildcard_seen {
             // Every arm after a wildcard (without guard) is unreachable
             result.unreachable_indices.push(i as u32);
@@ -2450,7 +2353,6 @@ pub fn check_unreachable_arms(
                 wildcard_index = i as u32;
             }
         }
-        i = i + 1;
     }
 
     result

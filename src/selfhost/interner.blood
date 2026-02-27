@@ -145,11 +145,9 @@ impl StringInterner {
         self.strings.push(common::make_string("Err"));          // 88
 
         // Populate hash index for all pre-interned strings
-        let mut i: usize = 0;
-        while i < self.strings.len() {
+        for i in 0usize..self.strings.len() {
             let hash = hashmap::hash_string(&self.strings[i]);
             self.hash_index.insert(hash, i as u32);
-            i = i + 1;
         }
     }
 
@@ -182,12 +180,10 @@ impl StringInterner {
 
         // Hash collision case: linear scan to find or add
         // This is rare with good hash function
-        let mut i: usize = 0;
-        while i < self.strings.len() {
+        for i in 0usize..self.strings.len() {
             if str_equals(&self.strings[i], s) {
                 return common::Symbol::new(i as u32);
             }
-            i = i + 1;
         }
 
         // Not found, add new string (collision case - hash already in use)
@@ -255,12 +251,10 @@ impl StringInterner {
         }
 
         // Hash collision case: linear scan
-        let mut i: usize = 0;
-        while i < self.strings.len() {
+        for i in 0usize..self.strings.len() {
             if str_equals(&self.strings[i], s) {
                 return Option::Some(common::Symbol::new(i as u32));
             }
-            i = i + 1;
         }
         Option::None
     }
@@ -475,12 +469,10 @@ fn str_equals(s: &String, other: &str) -> bool {
         return false;
     }
 
-    let mut i: usize = 0;
-    while i < bytes.len() {
+    for i in 0usize..bytes.len() {
         if bytes[i] != other_bytes[i] {
             return false;
         }
-        i = i + 1;
     }
 
     true

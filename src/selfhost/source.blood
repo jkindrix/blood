@@ -50,26 +50,22 @@ impl SourceFile {
         self.line_starts.push(0usize); // Line 1 starts at byte 0
 
         let bytes = self.content.as_bytes();
-        let mut i: usize = 0;
-        while i < bytes.len() {
+        for i in 0usize..bytes.len() {
             if bytes[i] == 10 { // '\n'
                 self.line_starts.push(i + 1);
             }
-            i = i + 1;
         }
     }
 
     /// Converts a byte offset to (line, column), both 1-indexed.
     pub fn offset_to_line_col(self: &SourceFile, offset: usize) -> (u32, u32) {
         let mut line: u32 = 1;
-        let mut i: usize = 0;
-        while i < self.line_starts.len() {
+        for i in 0usize..self.line_starts.len() {
             if i + 1 < self.line_starts.len() && self.line_starts[i + 1] <= offset {
                 line = line + 1;
             } else {
                 break;
             }
-            i = i + 1;
         }
 
         let line_start = if (line as usize) <= self.line_starts.len() {
@@ -168,12 +164,10 @@ impl SourceMap {
 
     /// Finds a file by path.
     pub fn find_by_path(self: &SourceMap, path: &str) -> Option<FileId> {
-        let mut i: usize = 0;
-        while i < self.files.len() {
+        for i in 0usize..self.files.len() {
             if str_equals(&self.files[i].path, path) {
                 return Option::Some(FileId::new(i as u32));
             }
-            i = i + 1;
         }
         Option::None
     }
@@ -282,23 +276,19 @@ pub fn read_file_string(path: &String) -> ReadFileResult {
 pub fn parent_dir(path: &str) -> String {
     let bytes = path.as_bytes();
     let mut last_sep: i32 = -1;
-    let mut i: usize = 0;
-    while i < bytes.len() {
+    for i in 0usize..bytes.len() {
         let b = bytes[i];
         if b == 47 || b == 92 { // '/' or '\'
             last_sep = i as i32;
         }
-        i = i + 1;
     }
 
     if last_sep < 0 {
         common::make_string(".")
     } else {
         let mut result = String::new();
-        let mut j: usize = 0;
-        while j < (last_sep as usize) {
+        for j in 0usize..(last_sep as usize) {
             result.push(bytes[j] as char);
-            j = j + 1;
         }
         result
     }
@@ -308,13 +298,11 @@ pub fn parent_dir(path: &str) -> String {
 pub fn file_name(path: &str) -> String {
     let bytes = path.as_bytes();
     let mut last_sep: i32 = -1;
-    let mut i: usize = 0;
-    while i < bytes.len() {
+    for i in 0usize..bytes.len() {
         let b = bytes[i];
         if b == 47 || b == 92 { // '/' or '\'
             last_sep = i as i32;
         }
-        i = i + 1;
     }
 
     let start = if last_sep < 0 { 0usize } else { (last_sep as usize) + 1 };
@@ -373,12 +361,10 @@ fn str_equals(s: &String, other: &str) -> bool {
         return false;
     }
 
-    let mut i: usize = 0;
-    while i < bytes.len() {
+    for i in 0usize..bytes.len() {
         if bytes[i] != other_bytes[i] {
             return false;
         }
-        i = i + 1;
     }
 
     true

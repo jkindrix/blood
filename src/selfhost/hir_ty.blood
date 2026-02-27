@@ -494,10 +494,8 @@ fn copy_type_kind(kind: &TypeKind) -> TypeKind {
         &TypeKind::Param(var_id) => TypeKind::Param(var_id),
         &TypeKind::Tuple(ref types) => {
             let mut copied: Vec<Type> = Vec::new();
-            let mut i: usize = 0;
-            while i < types.len() {
+            for i in 0usize..types.len() {
                 copied.push(copy_type(&types[i]));
-                i = i + 1;
             }
             TypeKind::Tuple(copied)
         }
@@ -526,10 +524,8 @@ fn copy_type_kind(kind: &TypeKind) -> TypeKind {
         }
         &TypeKind::Adt { def_id, ref args } => {
             let mut copied_args: Vec<Type> = Vec::new();
-            let mut i: usize = 0;
-            while i < args.len() {
+            for i in 0usize..args.len() {
                 copied_args.push(copy_type(&args[i]));
-                i = i + 1;
             }
             TypeKind::Adt {
                 def_id: def_id,
@@ -538,10 +534,8 @@ fn copy_type_kind(kind: &TypeKind) -> TypeKind {
         }
         &TypeKind::Fn { ref params, ref ret, ref effects } => {
             let mut copied_params: Vec<Type> = Vec::new();
-            let mut i: usize = 0;
-            while i < params.len() {
+            for i in 0usize..params.len() {
                 copied_params.push(copy_type(&params[i]));
-                i = i + 1;
             }
             TypeKind::Fn {
                 params: copied_params,
@@ -551,10 +545,8 @@ fn copy_type_kind(kind: &TypeKind) -> TypeKind {
         }
         &TypeKind::Closure { def_id, ref params, ref ret } => {
             let mut copied_params: Vec<Type> = Vec::new();
-            let mut i: usize = 0;
-            while i < params.len() {
+            for i in 0usize..params.len() {
                 copied_params.push(copy_type(&params[i]));
-                i = i + 1;
             }
             TypeKind::Closure {
                 def_id: def_id,
@@ -564,13 +556,11 @@ fn copy_type_kind(kind: &TypeKind) -> TypeKind {
         }
         &TypeKind::Record { ref fields, ref row_var } => {
             let mut copied_fields: Vec<RecordField> = Vec::new();
-            let mut i: usize = 0;
-            while i < fields.len() {
+            for i in 0usize..fields.len() {
                 copied_fields.push(RecordField::new(
                     fields[i].name,
                     copy_type(&fields[i].ty),
                 ));
-                i = i + 1;
             }
             TypeKind::Record {
                 fields: copied_fields,
@@ -579,10 +569,8 @@ fn copy_type_kind(kind: &TypeKind) -> TypeKind {
         }
         &TypeKind::Forall { ref params, ref body } => {
             let mut copied_params: Vec<hir_def::TyVarId> = Vec::new();
-            let mut i: usize = 0;
-            while i < params.len() {
+            for i in 0usize..params.len() {
                 copied_params.push(params[i]);
-                i = i + 1;
             }
             TypeKind::Forall {
                 params: copied_params,
@@ -603,10 +591,8 @@ fn copy_type_kind(kind: &TypeKind) -> TypeKind {
         }
         &TypeKind::DynTrait { trait_id, ref auto_traits } => {
             let mut copied_auto: Vec<hir_def::DefId> = Vec::new();
-            let mut i: usize = 0;
-            while i < auto_traits.len() {
+            for i in 0usize..auto_traits.len() {
                 copied_auto.push(auto_traits[i]);
-                i = i + 1;
             }
             TypeKind::DynTrait {
                 trait_id: trait_id,
@@ -619,20 +605,16 @@ fn copy_type_kind(kind: &TypeKind) -> TypeKind {
 /// Creates a copy of an EffectRow.
 pub fn copy_effect_row(row: &EffectRow) -> EffectRow {
     let mut copied_effects: Vec<EffectRef> = Vec::new();
-    let mut i: usize = 0;
-    while i < row.effects.len() {
+    for i in 0usize..row.effects.len() {
         let eff = &row.effects[i];
         let mut copied_args: Vec<Type> = Vec::new();
-        let mut j: usize = 0;
-        while j < eff.args.len() {
+        for j in 0usize..eff.args.len() {
             copied_args.push(copy_type(&eff.args[j]));
-            j = j + 1;
         }
         copied_effects.push(EffectRef {
             def_id: eff.def_id,
             args: copied_args,
         });
-        i = i + 1;
     }
     EffectRow {
         effects: copied_effects,
@@ -643,10 +625,8 @@ pub fn copy_effect_row(row: &EffectRow) -> EffectRow {
 /// Creates a copy of a TraitRef.
 pub fn copy_trait_ref(tr: &TraitRef) -> TraitRef {
     let mut copied_args: Vec<Type> = Vec::new();
-    let mut i: usize = 0;
-    while i < tr.args.len() {
+    for i in 0usize..tr.args.len() {
         copied_args.push(copy_type(&tr.args[i]));
-        i = i + 1;
     }
     TraitRef {
         def_id: tr.def_id,
@@ -660,10 +640,8 @@ pub fn copy_where_predicate(pred: &WherePredicate) -> WherePredicate {
     match pred {
         &WherePredicate::TypeBound { ref ty, ref bounds, span } => {
             let mut copied_bounds: Vec<TraitRef> = Vec::new();
-            let mut i: usize = 0;
-            while i < bounds.len() {
+            for i in 0usize..bounds.len() {
                 copied_bounds.push(copy_trait_ref(&bounds[i]));
-                i = i + 1;
             }
             WherePredicate::TypeBound {
                 ty: copy_type(ty),
@@ -682,20 +660,16 @@ pub fn copy_where_predicate(pred: &WherePredicate) -> WherePredicate {
         &WherePredicate::EffectBound { effect_var, ref bounds, span } => {
             // Copy effect bounds
             let mut copied_bounds: Vec<EffectRef> = Vec::new();
-            let mut i: usize = 0;
-            while i < bounds.len() {
+            for i in 0usize..bounds.len() {
                 let eff = &bounds[i];
                 let mut copied_args: Vec<Type> = Vec::new();
-                let mut j: usize = 0;
-                while j < eff.args.len() {
+                for j in 0usize..eff.args.len() {
                     copied_args.push(copy_type(&eff.args[j]));
-                    j = j + 1;
                 }
                 copied_bounds.push(EffectRef {
                     def_id: eff.def_id,
                     args: copied_args,
                 });
-                i = i + 1;
             }
             WherePredicate::EffectBound {
                 effect_var: effect_var,
@@ -709,10 +683,8 @@ pub fn copy_where_predicate(pred: &WherePredicate) -> WherePredicate {
 /// Copies a vector of where predicates.
 pub fn copy_where_predicates(preds: &Vec<WherePredicate>) -> Vec<WherePredicate> {
     let mut result: Vec<WherePredicate> = Vec::new();
-    let mut i: usize = 0;
-    while i < preds.len() {
+    for i in 0usize..preds.len() {
         result.push(copy_where_predicate(&preds[i]));
-        i = i + 1;
     }
     result
 }

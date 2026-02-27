@@ -39,8 +39,7 @@ pub fn parse_attributes(parser: &mut parser_base::Parser) -> Vec<ast::Attribute>
     // Drain accumulated doc comments and convert to #[doc = "text"] attributes
     let doc_tokens = parser.pending_doc_comments;
     parser.pending_doc_comments = Vec::new();
-    let mut di: usize = 0;
-    while di < doc_tokens.len() {
+    for di in 0usize..doc_tokens.len() {
         let doc_tok = doc_tokens[di];
         let text = parser.extract_doc_text(doc_tok);
         let span = doc_tok.span;
@@ -60,7 +59,6 @@ pub fn parse_attributes(parser: &mut parser_base::Parser) -> Vec<ast::Attribute>
             span: span,
         };
         attrs.push(attr);
-        di = di + 1;
     }
 
     while parser.check(token::TokenKind::Hash) {

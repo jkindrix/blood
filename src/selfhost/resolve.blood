@@ -384,12 +384,10 @@ impl Resolver {
 
         // Check for duplicates in current scope
         let scope = &self.scopes[scope_idx];
-        let mut i: usize = 0;
-        while i < scope.bindings.len() {
+        for i in 0usize..scope.bindings.len() {
             if scope.bindings[i].name.index == name.index {
                 return false; // Duplicate
             }
-            i = i + 1;
         }
 
         // Add binding
@@ -422,13 +420,11 @@ impl Resolver {
         let mut si: usize = self.scopes.len();
         while si > 0 {
             si = si - 1;
-            let mut bi: usize = 0;
-            while bi < self.scopes[si].bindings.len() {
+            for bi in 0usize..self.scopes[si].bindings.len() {
                 if self.scopes[si].bindings[bi].binding.local_id.index == local_id.index {
                     self.scopes[si].bindings[bi].binding.mutable = true;
                     return;
                 }
-                bi = bi + 1;
             }
         }
     }
@@ -472,12 +468,10 @@ impl Resolver {
         // Check for duplicates in current scope
         let current_scope_idx = self.current_scope();
         let current_scope = &self.scopes[current_scope_idx];
-        let mut i: usize = 0;
-        while i < current_scope.bindings.len() {
+        for i in 0usize..current_scope.bindings.len() {
             if current_scope.bindings[i].name.index == name.index {
                 return false; // Duplicate in current scope
             }
-            i = i + 1;
         }
 
         // Add to current scope
@@ -517,15 +511,13 @@ impl Resolver {
             let scope = &self.scopes[scope_idx];
 
             // Search bindings in this scope
-            let mut i: usize = 0;
-            while i < scope.bindings.len() {
+            for i in 0usize..scope.bindings.len() {
                 let entry = &scope.bindings[i];
                 if entry.name.index == name.index {
                     if entry.binding.is_type_param() {
                         return Option::Some(entry.binding.ty_var_id);
                     }
                 }
-                i = i + 1;
             }
         }
 
@@ -567,13 +559,11 @@ impl Resolver {
             }
             Option::None => {
                 // Fallback to linear scan
-                let mut i: usize = 0;
-                while i < self.def_info.len() {
+                for i in 0usize..self.def_info.len() {
                     if self.def_info[i].def_id.index == def_id.index {
                         self.def_info[i].info.visibility = vis;
                         return;
                     }
-                    i = i + 1;
                 }
             }
         }
@@ -622,8 +612,7 @@ impl Resolver {
             Option::None => {}
         }
         // Fallback to linear scan
-        let mut i: usize = 0;
-        while i < self.def_info.len() {
+        for i in 0usize..self.def_info.len() {
             if self.def_info[i].def_id.index == def_id.index {
                 // Clone the DefInfo to return it, preserving variant_index
                 let entry = &self.def_info[i].info;
@@ -638,7 +627,6 @@ impl Resolver {
                     visibility: entry.visibility,
                 });
             }
-            i = i + 1;
         }
         Option::None
     }
@@ -771,8 +759,7 @@ impl Resolver {
     /// impl blocks aren't named items).
     pub fn get_children_of_parent(self: &Self, parent_def: hir_def::DefId) -> Vec<ChildEntry> {
         let mut result: Vec<ChildEntry> = Vec::new();
-        let mut i: usize = 0;
-        while i < self.def_info.len() {
+        for i in 0usize..self.def_info.len() {
             let entry = &self.def_info[i];
             match &entry.info.parent {
                 &Option::Some(p) => {
@@ -811,7 +798,6 @@ impl Resolver {
                 }
                 &Option::None => {}
             }
-            i = i + 1;
         }
         result
     }
@@ -828,8 +814,7 @@ impl Resolver {
             Option::None => {}
         }
         // Fallback to linear scan
-        let mut i: usize = 0;
-        while i < self.def_info.len() {
+        for i in 0usize..self.def_info.len() {
             let entry = &self.def_info[i];
             match &entry.info.parent {
                 &Some(p) => {
@@ -839,7 +824,6 @@ impl Resolver {
                 }
                 &None => {}
             }
-            i = i + 1;
         }
         Option::None
     }
@@ -847,8 +831,7 @@ impl Resolver {
     /// Looks up a child definition by parent DefId and source span position.
     /// Used for overloaded methods where name-based lookup is ambiguous.
     pub fn lookup_by_parent_and_span(self: &Self, parent_def: hir_def::DefId, span_start: usize) -> Option<hir_def::DefId> {
-        let mut i: usize = 0;
-        while i < self.def_info.len() {
+        for i in 0usize..self.def_info.len() {
             let entry = &self.def_info[i];
             match &entry.info.parent {
                 &Some(p) => {
@@ -858,7 +841,6 @@ impl Resolver {
                 }
                 &None => {}
             }
-            i = i + 1;
         }
         Option::None
     }
@@ -909,15 +891,13 @@ impl Resolver {
         }
 
         // For multi-segment paths, chain the lookups
-        let mut i: usize = 1;
-        while i < segments.len() {
+        for i in 1usize..segments.len() {
             let seg = &segments[i];
             let child = self.lookup_in_parent(current_def, seg.symbol);
             if child.is_none() {
                 return Option::None;
             }
             current_def = child.unwrap();
-            i = i + 1;
         }
 
         Some(QualifiedPathResult {

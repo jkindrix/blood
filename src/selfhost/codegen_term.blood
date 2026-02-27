@@ -77,8 +77,7 @@ pub fn emit_terminator(
                 ctx.emit_alloca_cg(&args_alloca, arr_ty_str.as_str());
 
                 // Store each argument widened to i64 into the array
-                let mut ai: usize = 0;
-                while ai < num_args {
+                for ai in 0usize..num_args {
                     let (arg_val, arg_ty) = codegen_expr::emit_operand_typed(ctx, &args[ai]);
 
                     // Widen arg to i64
@@ -114,7 +113,6 @@ pub fn emit_terminator(
                         ctx.write("\n");
                     }
 
-                    ai = ai + 1;
                 }
             }
 
@@ -237,13 +235,11 @@ fn emit_switch_int(
         let default_label = ctx.block_label_cg(switch_targets.otherwise);
 
         ctx.begin_switch_str(discr_ty.as_str(), discr_val.as_str(), &default_label);
-        let mut i: usize = 0;
-        while i < switch_targets.targets.len() {
+        for i in 0usize..switch_targets.targets.len() {
             let switch_target = &switch_targets.targets[i];
             let val_str = codegen_types::format_u128(switch_target.value);
             let case_label = ctx.block_label_cg(switch_target.target);
             ctx.switch_case(discr_ty.as_str(), val_str.as_str(), &case_label);
-            i = i + 1;
         }
         ctx.end_switch();
     }
@@ -259,8 +255,7 @@ fn emit_handler_state_writeback(ctx: &mut codegen_ctx::CodegenCtx) {
         let state_ptr = ctx.fresh_temp_cg();
         ctx.emit_load_cg(&state_ptr, "ptr", state_alloca.as_str());
 
-        let mut fi: u32 = 2;
-        while fi <= ctx.handler_op_state_field_count {
+        for fi in 2u32..= ctx.handler_op_state_field_count {
             let field_local = mir_def::MirLocalId::new(fi);
             let field_alloca = ctx.local_alloca_name(field_local);
             let field_ty = ctx.get_local_type(field_local);
@@ -281,7 +276,6 @@ fn emit_handler_state_writeback(ctx: &mut codegen_ctx::CodegenCtx) {
             let field_val_str = cgname_to_string(&field_val);
             let field_gep_str = cgname_to_string(&field_gep);
             ctx.emit_store(field_ty.as_str(), field_val_str.as_str(), field_gep_str.as_str());
-            fi = fi + 1;
         }
     }
 }
@@ -478,8 +472,7 @@ fn emit_call(
 
     // Emit arguments with their types, applying generic call fixup if needed
     let mut llvm_args: Vec<(String, String)> = Vec::new();
-    let mut i: usize = 0;
-    while i < args.len() {
+    for i in 0usize..args.len() {
         let (arg_val, arg_ty) = codegen_expr::emit_operand_typed(ctx, &args[i]);
 
         // Check if this parameter needs widening for a generic function
@@ -557,7 +550,6 @@ fn emit_call(
             }
         }
         llvm_args.push((final_ty, final_val));
-        i = i + 1;
     }
 
     // For indirect calls through fat pointers, prepend env_ptr as the first argument.
@@ -567,11 +559,9 @@ fn emit_call(
             // Insert env_ptr at position 0 by building a new vec
             let mut new_args: Vec<(String, String)> = Vec::new();
             new_args.push((common::make_string("ptr"), clone_string(env_val)));
-            let mut j: usize = 0;
-            while j < llvm_args.len() {
+            for j in 0usize..llvm_args.len() {
                 let arg_pair = &llvm_args[j];
                 new_args.push((clone_string(&arg_pair.0), clone_string(&arg_pair.1)));
-                j = j + 1;
             }
             llvm_args = new_args;
         }
@@ -600,22 +590,18 @@ fn emit_call(
     if is_void {
         // Void function - no return value
         ctx.begin_call_str(Option::None, "void", func_val.as_str());
-        let mut vi: usize = 0;
-        while vi < llvm_args.len() {
+        for vi in 0usize..llvm_args.len() {
             let arg = &llvm_args[vi];
             ctx.call_arg_str(vi == 0, arg.0.as_str(), arg.1.as_str());
-            vi = vi + 1;
         }
         ctx.end_call();
     } else {
         // Non-void function - capture return value
         let result = ctx.fresh_temp_cg();
         ctx.begin_call(Option::Some(&result), def_ret_ty.as_str(), func_val.as_str());
-        let mut ai: usize = 0;
-        while ai < llvm_args.len() {
+        for ai in 0usize..llvm_args.len() {
             let arg = &llvm_args[ai];
             ctx.call_arg_str(ai == 0, arg.0.as_str(), arg.1.as_str());
-            ai = ai + 1;
         }
         ctx.end_call();
 
@@ -747,19 +733,15 @@ fn needs_int_cast(from_ty: &str, to_ty: &str) -> bool {
         return false;
     }
     // Check that rest is digits (not "iN" vs "internal" or something)
-    let mut fi: usize = 1;
-    while fi < from_bytes.len() {
+    for fi in 1usize..from_bytes.len() {
         if from_bytes[fi] < 48 || from_bytes[fi] > 57 {
             return false;
         }
-        fi = fi + 1;
     }
-    let mut ti: usize = 1;
-    while ti < to_bytes.len() {
+    for ti in 1usize..to_bytes.len() {
         if to_bytes[ti] < 48 || to_bytes[ti] > 57 {
             return false;
         }
-        ti = ti + 1;
     }
     true
 }
@@ -778,12 +760,10 @@ fn parse_int_bits(ty: &str) -> u32 {
         return 0;
     }
     let mut result: u32 = 0;
-    let mut i: usize = 1;
-    while i < bytes.len() {
+    for i in 1usize..bytes.len() {
         if bytes[i] >= 48 && bytes[i] <= 57 {
             result = result * 10 + ((bytes[i] - 48) as u32);
         }
-        i = i + 1;
     }
     result
 }
@@ -1196,10 +1176,8 @@ fn emit_operand_list(
     operands: &Vec<mir_types::Operand>,
 ) -> Vec<String> {
     let mut result: Vec<String> = Vec::new();
-    let mut i: usize = 0;
-    while i < operands.len() {
+    for i in 0usize..operands.len() {
         result.push(codegen_expr::emit_operand(ctx, &operands[i]));
-        i = i + 1;
     }
     result
 }
@@ -1284,12 +1262,10 @@ fn string_eq_str(a: &str, b: &str) -> bool {
     if a_bytes.len() != b_bytes.len() {
         return false;
     }
-    let mut i: usize = 0;
-    while i < a_bytes.len() {
+    for i in 0usize..a_bytes.len() {
         if a_bytes[i] != b_bytes[i] {
             return false;
         }
-        i = i + 1;
     }
     true
 }
@@ -1414,8 +1390,7 @@ fn resolve_place_hir_type(
         Option::Some(ty_id) => ty_id,
         Option::None => { return Option::None; }
     };
-    let mut i: usize = 0;
-    while i < place.projection.len() {
+    for i in 0usize..place.projection.len() {
         match &place.projection[i] {
             &mir_types::PlaceElem::Field(idx) => {
                 let unwrapped = type_intern::unwrap_ref_id(current_ty);
@@ -1436,7 +1411,6 @@ fn resolve_place_hir_type(
             }
             _ => {}
         }
-        i = i + 1;
     }
     Option::Some(current_ty)
 }
@@ -2542,10 +2516,8 @@ pub fn emit_basic_block(
 
     // Emit statements
     ctx.indent();
-    let mut i: usize = 0;
-    while i < block.statements.len() {
+    for i in 0usize..block.statements.len() {
         codegen_stmt::emit_statement(ctx, &block.statements[i]);
-        i = i + 1;
     }
     ctx.dedent();
 

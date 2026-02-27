@@ -147,28 +147,24 @@ impl ClosureInfo {
 
     /// Returns true if any capture is by mutable reference.
     pub fn has_mutable_captures(self: &ClosureInfo) -> bool {
-        let mut i: usize = 0;
-        while i < self.captures.len() {
+        for i in 0usize..self.captures.len() {
             match &self.captures[i].mode {
                 &CaptureMode::ByMut => { return true; }
                 &CaptureMode::ByRef => {}
                 &CaptureMode::ByValue => {}
             }
-            i = i + 1;
         }
         false
     }
 
     /// Returns true if any capture is by value.
     pub fn has_value_captures(self: &ClosureInfo) -> bool {
-        let mut i: usize = 0;
-        while i < self.captures.len() {
+        for i in 0usize..self.captures.len() {
             match &self.captures[i].mode {
                 &CaptureMode::ByValue => { return true; }
                 &CaptureMode::ByRef => {}
                 &CaptureMode::ByMut => {}
             }
-            i = i + 1;
         }
         false
     }
@@ -194,28 +190,23 @@ pub fn analyze_closure(
     // Track which enclosing locals are referenced and how
     let mut capture_modes: Vec<CaptureMode> = Vec::new();
     let mut captured: Vec<bool> = Vec::new();
-    let mut i: usize = 0;
-    while i < enclosing_body.locals.len() {
+    for i in 0usize..enclosing_body.locals.len() {
         capture_modes.push(CaptureMode::ByRef);
         captured.push(false);
-        i = i + 1;
     }
 
     // Walk all blocks in the closure body
-    let mut bb_idx: usize = 0;
-    while bb_idx < closure_body.basic_blocks.len() {
+    for bb_idx in 0usize..closure_body.basic_blocks.len() {
         let block = &closure_body.basic_blocks[bb_idx];
 
         // Analyze statements
-        let mut stmt_idx: usize = 0;
-        while stmt_idx < block.statements.len() {
+        for stmt_idx in 0usize..block.statements.len() {
             analyze_stmt_captures(
                 &block.statements[stmt_idx],
                 enclosing_local_count,
                 &mut captured,
                 &mut capture_modes,
             );
-            stmt_idx = stmt_idx + 1;
         }
 
         // Analyze terminator
@@ -231,12 +222,10 @@ pub fn analyze_closure(
             &Option::None => {}
         }
 
-        bb_idx = bb_idx + 1;
     }
 
     // Build capture info from analysis
-    let mut j: usize = 0;
-    while j < enclosing_body.locals.len() {
+    for j in 0usize..enclosing_body.locals.len() {
         if captured[j] {
             let local = &enclosing_body.locals[j];
             let mode = copy_capture_mode(&capture_modes[j]);
@@ -248,7 +237,6 @@ pub fn analyze_closure(
             );
             info.add_capture(cap);
         }
-        j = j + 1;
     }
 
     info.finalize();
@@ -321,10 +309,8 @@ fn analyze_term_captures(
 ) {
     match &term.kind {
         &mir_term::TerminatorKind::Call { func: _, ref args, destination: _, target: _, unwind: _ } => {
-            let mut i: usize = 0;
-            while i < args.len() {
+            for i in 0usize..args.len() {
                 mark_operand_capture(&args[i], enclosing_count, captured, modes, false);
-                i = i + 1;
             }
         }
         &mir_term::TerminatorKind::SwitchInt { ref discr, targets: _ } => {
@@ -336,10 +322,8 @@ fn analyze_term_captures(
             mark_operand_capture(cond, enclosing_count, captured, modes, false);
         }
         &mir_term::TerminatorKind::Perform { effect_id: _, op_index: _, ref args, destination: _, target: _, is_tail_resumptive: _ } => {
-            let mut i: usize = 0;
-            while i < args.len() {
+            for i in 0usize..args.len() {
                 mark_operand_capture(&args[i], enclosing_count, captured, modes, false);
-                i = i + 1;
             }
         }
         &mir_term::TerminatorKind::Resume { ref value } => {
@@ -433,10 +417,8 @@ fn mark_rvalue_captures(
             mark_operand_capture(operand, enclosing_count, captured, modes, false);
         }
         &mir_types::Rvalue::Aggregate { kind: _, ref operands } => {
-            let mut i: usize = 0;
-            while i < operands.len() {
+            for i in 0usize..operands.len() {
                 mark_operand_capture(&operands[i], enclosing_count, captured, modes, false);
-                i = i + 1;
             }
         }
         &mir_types::Rvalue::Discriminant(_) => {}
@@ -463,10 +445,8 @@ fn estimate_type_size(ty: &hir_ty::Type) -> u64 {
         &hir_ty::TypeKind::Ptr { inner: _, mutable: _ } => 8,
         &hir_ty::TypeKind::Tuple(ref fields) => {
             let mut total: u64 = 0;
-            let mut i: usize = 0;
-            while i < fields.len() {
+            for i in 0usize..fields.len() {
                 total = total + estimate_type_size(&fields[i]);
-                i = i + 1;
             }
             total
         }

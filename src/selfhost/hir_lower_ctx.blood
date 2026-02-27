@@ -529,15 +529,13 @@ impl LoweringCtx {
 
     /// Returns true if there are any error diagnostics.
     pub fn has_errors(self: &Self) -> bool {
-        let mut i: usize = 0;
-        while i < self.diagnostics.len() {
+        for i in 0usize..self.diagnostics.len() {
             match self.diagnostics[i].level {
                 hir::DiagnosticLevel::Error => { return true; }
                 hir::DiagnosticLevel::Warning => {}
                 hir::DiagnosticLevel::Note => {}
                 hir::DiagnosticLevel::Help => {}
             }
-            i = i + 1;
         }
         false
     }
@@ -578,12 +576,10 @@ impl LoweringCtx {
     /// Checks if a module has already been loaded (by file path).
     /// Returns the DefId if found, None otherwise.
     pub fn find_loaded_module(self: &Self, path: &String) -> Option<hir_def::DefId> {
-        let mut i: usize = 0;
-        while i < self.loaded_modules.len() {
+        for i in 0usize..self.loaded_modules.len() {
             if string_eq(&self.loaded_modules[i].path, path) {
                 return Option::Some(self.loaded_modules[i].def_id);
             }
-            i = i + 1;
         }
         Option::None
     }
@@ -603,12 +599,10 @@ impl LoweringCtx {
     /// This is separate from find_loaded_module because loaded_modules uses
     /// post-order insertion (dependencies before dependents) for correct Phase 3a ordering.
     pub fn is_path_loading(self: &Self, path: &String) -> bool {
-        let mut i: usize = 0;
-        while i < self.loading_paths.len() {
+        for i in 0usize..self.loading_paths.len() {
             if string_eq(&self.loading_paths[i], path) {
                 return true;
             }
-            i = i + 1;
         }
         false
     }
@@ -665,12 +659,10 @@ fn str_eq(s: &String, other: &str) -> bool {
     if bytes.len() != other_bytes.len() {
         return false;
     }
-    let mut i: usize = 0;
-    while i < bytes.len() {
+    for i in 0usize..bytes.len() {
         if bytes[i] != other_bytes[i] {
             return false;
         }
-        i = i + 1;
     }
     true
 }
@@ -682,12 +674,10 @@ fn string_eq(a: &String, b: &String) -> bool {
     if a_bytes.len() != b_bytes.len() {
         return false;
     }
-    let mut i: usize = 0;
-    while i < a_bytes.len() {
+    for i in 0usize..a_bytes.len() {
         if a_bytes[i] != b_bytes[i] {
             return false;
         }
-        i = i + 1;
     }
     true
 }
@@ -711,10 +701,8 @@ pub fn append_u32_to_string(s: &mut String, n: u32) {
         val = val / 10;
     }
     let len = digits.len();
-    let mut i: usize = 0;
-    while i < len {
+    for i in 0usize..len {
         s.push(digits[len - 1 - i]);
-        i = i + 1;
     }
 }
 

@@ -26,10 +26,8 @@ fn clone_string(s: &String) -> String {
 /// Clones a Vec<u8>.
 fn clone_bytes(bytes: &Vec<u8>) -> Vec<u8> {
     let mut result = Vec::new();
-    let mut i: usize = 0;
-    while i < bytes.len() {
+    for i in 0usize..bytes.len() {
         result.push(bytes[i]);
-        i = i + 1;
     }
     result
 }
@@ -267,12 +265,10 @@ pub fn is_copy_type(ty: &hir_ty::Type) -> bool {
         &hir_ty::TypeKind::Ref { inner: _, mutable: _ } => true,
         &hir_ty::TypeKind::Ptr { inner: _, mutable: _ } => true,
         &hir_ty::TypeKind::Tuple(ref elems) => {
-            let mut i: usize = 0;
-            while i < elems.len() {
+            for i in 0usize..elems.len() {
                 if !is_copy_type(&elems[i]) {
                     return false;
                 }
-                i = i + 1;
             }
             true
         }
@@ -361,10 +357,8 @@ pub fn operand_from_place_tracked(
 /// Creates a copy of a Place.
 fn copy_place(place: &mir_types::Place) -> mir_types::Place {
     let mut proj_copy: Vec<mir_types::PlaceElem> = Vec::new();
-    let mut i: usize = 0;
-    while i < place.projection.len() {
+    for i in 0usize..place.projection.len() {
         proj_copy.push(copy_place_elem(&place.projection[i]));
-        i = i + 1;
     }
     mir_types::Place {
         local: place.local,
@@ -449,23 +443,19 @@ pub fn is_irrefutable_pattern(pattern: &hir_expr::Pattern) -> bool {
             }
         }
         &hir_expr::PatternKind::Tuple(ref pats) => {
-            let mut i: usize = 0;
-            while i < pats.len() {
+            for i in 0usize..pats.len() {
                 if !is_irrefutable_pattern(&pats[i]) {
                     return false;
                 }
-                i = i + 1;
             }
             true
         }
         &hir_expr::PatternKind::Struct { path: _, ref fields, has_rest } => {
             if has_rest {
-                let mut i: usize = 0;
-                while i < fields.len() {
+                for i in 0usize..fields.len() {
                     if !is_irrefutable_pattern(&fields[i].pattern) {
                         return false;
                     }
-                    i = i + 1;
                 }
                 true
             } else {
@@ -504,10 +494,8 @@ impl hir_ty::TypeKind {
             &hir_ty::TypeKind::Primitive(ref p) => hir_ty::TypeKind::Primitive(p.clone()),
             &hir_ty::TypeKind::Tuple(ref elems) => {
                 let mut cloned = Vec::new();
-                let mut i: usize = 0;
-                while i < elems.len() {
+                for i in 0usize..elems.len() {
                     cloned.push(elems[i].clone());
-                    i = i + 1;
                 }
                 hir_ty::TypeKind::Tuple(cloned)
             }
@@ -536,10 +524,8 @@ impl hir_ty::TypeKind {
             }
             &hir_ty::TypeKind::Fn { ref params, ref ret, ref effects } => {
                 let mut cloned_params = Vec::new();
-                let mut i: usize = 0;
-                while i < params.len() {
+                for i in 0usize..params.len() {
                     cloned_params.push(params[i].clone());
-                    i = i + 1;
                 }
                 hir_ty::TypeKind::Fn {
                     params: cloned_params,
@@ -549,10 +535,8 @@ impl hir_ty::TypeKind {
             }
             &hir_ty::TypeKind::Closure { def_id, ref params, ref ret } => {
                 let mut cloned_params = Vec::new();
-                let mut i: usize = 0;
-                while i < params.len() {
+                for i in 0usize..params.len() {
                     cloned_params.push(params[i].clone());
-                    i = i + 1;
                 }
                 hir_ty::TypeKind::Closure {
                     def_id: def_id,
@@ -562,10 +546,8 @@ impl hir_ty::TypeKind {
             }
             &hir_ty::TypeKind::Adt { ref def_id, ref args } => {
                 let mut cloned_args = Vec::new();
-                let mut i: usize = 0;
-                while i < args.len() {
+                for i in 0usize..args.len() {
                     cloned_args.push(args[i].clone());
-                    i = i + 1;
                 }
                 hir_ty::TypeKind::Adt {
                     def_id: *def_id,
@@ -576,10 +558,8 @@ impl hir_ty::TypeKind {
             &hir_ty::TypeKind::Param(ref v) => hir_ty::TypeKind::Param(*v),
             &hir_ty::TypeKind::Record { ref fields, ref row_var } => {
                 let mut cloned_fields = Vec::new();
-                let mut i: usize = 0;
-                while i < fields.len() {
+                for i in 0usize..fields.len() {
                     cloned_fields.push(fields[i].clone());
-                    i = i + 1;
                 }
                 hir_ty::TypeKind::Record {
                     fields: cloned_fields,
@@ -588,10 +568,8 @@ impl hir_ty::TypeKind {
             }
             &hir_ty::TypeKind::Forall { ref params, ref body } => {
                 let mut cloned_params = Vec::new();
-                let mut i: usize = 0;
-                while i < params.len() {
+                for i in 0usize..params.len() {
                     cloned_params.push(params[i]);
-                    i = i + 1;
                 }
                 hir_ty::TypeKind::Forall {
                     params: cloned_params,
@@ -614,10 +592,8 @@ impl hir_ty::TypeKind {
             }
             &hir_ty::TypeKind::DynTrait { trait_id, ref auto_traits } => {
                 let mut cloned_auto = Vec::new();
-                let mut i: usize = 0;
-                while i < auto_traits.len() {
+                for i in 0usize..auto_traits.len() {
                     cloned_auto.push(auto_traits[i]);
-                    i = i + 1;
                 }
                 hir_ty::TypeKind::DynTrait {
                     trait_id: trait_id,
@@ -655,10 +631,8 @@ impl hir_ty::PrimitiveTy {
 impl hir_ty::EffectRow {
     pub fn clone(self: &hir_ty::EffectRow) -> hir_ty::EffectRow {
         let mut cloned_effects = Vec::new();
-        let mut i: usize = 0;
-        while i < self.effects.len() {
+        for i in 0usize..self.effects.len() {
             cloned_effects.push(self.effects[i].clone());
-            i = i + 1;
         }
         hir_ty::EffectRow {
             effects: cloned_effects,
@@ -670,10 +644,8 @@ impl hir_ty::EffectRow {
 impl hir_ty::EffectRef {
     pub fn clone(self: &hir_ty::EffectRef) -> hir_ty::EffectRef {
         let mut cloned_args = Vec::new();
-        let mut i: usize = 0;
-        while i < self.args.len() {
+        for i in 0usize..self.args.len() {
             cloned_args.push(self.args[i].clone());
-            i = i + 1;
         }
         hir_ty::EffectRef {
             def_id: self.def_id,

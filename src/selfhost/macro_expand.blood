@@ -82,14 +82,12 @@ pub fn preprocess_macros(source: &String) -> String {
 
     // Recursive expansion: expand until no more changes or depth limit
     let mut result = cleaned;
-    let mut depth: u32 = 0;
-    while depth < 32 {
+    for depth in 0u32..32 {
         let expanded = expand_all_invocations(&result, &macros);
         if strings_equal(&expanded, &result) {
             break;
         }
         result = expanded;
-        depth = depth + 1;
     }
 
     result
@@ -103,15 +101,13 @@ fn remove_macro_decls(source: &String, macros: &Vec<MacroDef>) -> String {
     let len = bytes.len();
     let mut result = String::new();
     let mut prev_end: usize = 0;
-    let mut mi: usize = 0;
-    while mi < macros.len() {
+    for mi in 0usize..macros.len() {
         let mut ci: usize = prev_end;
         while ci < macros[mi].decl_start && ci < len {
             result.push(bytes[ci] as char);
             ci = ci + 1;
         }
         prev_end = macros[mi].decl_end;
-        mi = mi + 1;
     }
     let mut ci2: usize = prev_end;
     while ci2 < len {
@@ -195,8 +191,7 @@ fn expand_all_invocations(source: &String, macros: &Vec<MacroDef>) -> String {
 
 /// Try matching args against each rule of a macro. Returns expanded text on match.
 fn try_match_macro(args: &String, macro_def: &MacroDef) -> Option<String> {
-    let mut ri: usize = 0;
-    while ri < macro_def.rules.len() {
+    for ri in 0usize..macro_def.rules.len() {
         match try_match_rule(args, &macro_def.rules[ri]) {
             Option::Some(captures) => {
                 let expanded = substitute_multi(&macro_def.rules[ri].expansion, &captures);
@@ -204,7 +199,6 @@ fn try_match_macro(args: &String, macro_def: &MacroDef) -> Option<String> {
             }
             Option::None => {}
         }
-        ri = ri + 1;
     }
     Option::None
 }
@@ -226,8 +220,7 @@ fn try_match_rule(args: &String, rule: &MacroRule) -> Option<Vec<CapturedArg>> {
         }
     }
 
-    let mut pi: usize = 0;
-    while pi < rule.parts.len() {
+    for pi in 0usize..rule.parts.len() {
         if rule.parts[pi].is_capture {
             // Find the terminator: next Literal part after this capture
             let terminator = find_next_literal(rule, pi + 1);
@@ -282,7 +275,6 @@ fn try_match_rule(args: &String, rule: &MacroRule) -> Option<Vec<CapturedArg>> {
             }
             pos = pos + lit_len;
         }
-        pi = pi + 1;
     }
 
     // Must have consumed all args
@@ -657,20 +649,16 @@ fn parse_pattern_parts(bytes: &[u8], start: usize, end: usize) -> Vec<PatternPar
 
 /// Check if name_bytes matches at position pos in bytes.
 fn matches_name(bytes: &[u8], pos: usize, name_bytes: &[u8], name_len: usize) -> bool {
-    let mut i: usize = 0;
-    while i < name_len {
+    for i in 0usize..name_len {
         if bytes[pos + i] != name_bytes[i] { return false; }
-        i = i + 1;
     }
     true
 }
 
 /// Check if bytes at position match the given literal bytes.
 fn matches_bytes_at(bytes: &[u8], pos: usize, lit: &[u8], lit_len: usize) -> bool {
-    let mut i: usize = 0;
-    while i < lit_len {
+    for i in 0usize..lit_len {
         if bytes[pos + i] != lit[i] { return false; }
-        i = i + 1;
     }
     true
 }
@@ -682,10 +670,8 @@ fn strings_equal(a: &String, b: &String) -> bool {
     let a_len = a_bytes.len();
     let b_len = b_bytes.len();
     if a_len != b_len { return false; }
-    let mut i: usize = 0;
-    while i < a_len {
+    for i in 0usize..a_len {
         if a_bytes[i] != b_bytes[i] { return false; }
-        i = i + 1;
     }
     true
 }

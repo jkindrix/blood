@@ -29,11 +29,9 @@ mod type_intern;
 /// Lower function parameters.
 pub fn lower_fn_params(ctx: &mut hir_lower_ctx::LoweringCtx, params: &Vec<ast::Param>) -> Vec<hir_item::FnParam> {
     let mut result: Vec<hir_item::FnParam> = Vec::new();
-    let mut i: usize = 0;
-    while i < params.len() {
+    for i in 0usize..params.len() {
         let param = lower_fn_param(ctx, &params[i], i as u32);
         result.push(param);
-        i = i + 1;
     }
     result
 }
@@ -131,19 +129,16 @@ pub fn lower_struct_body(ctx: &mut hir_lower_ctx::LoweringCtx, body: &ast::Struc
         &ast::StructBody::Unit => hir_item::StructBody::Unit,
         &ast::StructBody::Tuple(ref types) => {
             let mut lowered: Vec<type_intern::TyId> = Vec::new();
-            let mut i: usize = 0;
-            while i < types.len() {
+            for i in 0usize..types.len() {
                 let ty = hir_lower_type::lower_type_id(ctx, &types[i]);
                 lowered.push(ty);
-                i = i + 1;
             }
             hir_item::StructBody::Tuple(lowered)
         }
         &ast::StructBody::Record(ref fields) => {
             let mut lowered: Vec<hir_item::StructField> = Vec::new();
             // Check for duplicate field names using span bytes
-            let mut i: usize = 0;
-            while i < fields.len() {
+            for i in 0usize..fields.len() {
                 let mut j: usize = 0;
                 while j < i {
                     if fields[j].name.span.start == fields[i].name.span.start {
@@ -175,7 +170,6 @@ pub fn lower_struct_body(ctx: &mut hir_lower_ctx::LoweringCtx, body: &ast::Struc
                 }
                 let field = lower_struct_field(ctx, &fields[i]);
                 lowered.push(field);
-                i = i + 1;
             }
             hir_item::StructBody::Record(lowered)
         }
@@ -200,15 +194,13 @@ pub fn lower_struct_field(ctx: &mut hir_lower_ctx::LoweringCtx, field: &ast::Str
 /// Lower enum variants to HIR.
 pub fn lower_enum_variants(ctx: &mut hir_lower_ctx::LoweringCtx, parent_def_id: hir_def::DefId, variants: &Vec<ast::EnumVariant>) -> Vec<hir_item::Variant> {
     let mut result: Vec<hir_item::Variant> = Vec::new();
-    let mut i: usize = 0;
-    while i < variants.len() {
+    for i in 0usize..variants.len() {
         // Check for duplicate variant name using interned symbol index
         // NOTE: Avoid chained method calls to work around first_gen codegen bug
         let vi_str = ctx.span_to_string(variants[i].name.span);
         let vi_ref = vi_str.as_str();
         let name_i = ctx.intern(vi_ref);
-        let mut j: usize = 0;
-        while j < i {
+        for j in 0usize..i {
             let vj_str = ctx.span_to_string(variants[j].name.span);
             let vj_ref = vj_str.as_str();
             let name_j = ctx.intern(vj_ref);
@@ -222,11 +214,9 @@ pub fn lower_enum_variants(ctx: &mut hir_lower_ctx::LoweringCtx, parent_def_id: 
                 ctx.error(hir::DiagnosticCode::E0101, msg, variants[i].name.span);
                 break;
             }
-            j = j + 1;
         }
         let variant = lower_enum_variant(ctx, parent_def_id, &variants[i], i as u32);
         result.push(variant);
-        i = i + 1;
     }
     result
 }
@@ -266,21 +256,17 @@ fn lower_variant_kind(ctx: &mut hir_lower_ctx::LoweringCtx, body: &ast::StructBo
         }
         &ast::StructBody::Tuple(ref types) => {
             let mut lowered: Vec<type_intern::TyId> = Vec::new();
-            let mut i: usize = 0;
-            while i < types.len() {
+            for i in 0usize..types.len() {
                 let ty = hir_lower_type::lower_type_id(ctx, &types[i]);
                 lowered.push(ty);
-                i = i + 1;
             }
             hir_item::VariantKind::Tuple(lowered)
         }
         &ast::StructBody::Record(ref fields) => {
             let mut lowered: Vec<hir_item::StructField> = Vec::new();
-            let mut i: usize = 0;
-            while i < fields.len() {
+            for i in 0usize..fields.len() {
                 let field = lower_struct_field(ctx, &fields[i]);
                 lowered.push(field);
-                i = i + 1;
             }
             hir_item::VariantKind::Record(lowered)
         }
@@ -478,8 +464,7 @@ fn check_recursive_struct_fields(
 ) {
     match body {
         &hir_item::StructBody::Record(ref fields) => {
-            let mut i: usize = 0;
-            while i < fields.len() {
+            for i in 0usize..fields.len() {
                 if type_directly_contains(fields[i].ty, struct_def_id) {
                     let struct_name = ctx.span_to_string(name.span);
                     let mut msg = String::new();
@@ -489,12 +474,10 @@ fn check_recursive_struct_fields(
                     ctx.error(hir::DiagnosticCode::E0100, msg, span);
                     return;
                 }
-                i = i + 1;
             }
         }
         &hir_item::StructBody::Tuple(ref types) => {
-            let mut i: usize = 0;
-            while i < types.len() {
+            for i in 0usize..types.len() {
                 if type_directly_contains(types[i], struct_def_id) {
                     let struct_name = ctx.span_to_string(name.span);
                     let mut msg = String::new();
@@ -504,7 +487,6 @@ fn check_recursive_struct_fields(
                     ctx.error(hir::DiagnosticCode::E0100, msg, span);
                     return;
                 }
-                i = i + 1;
             }
         }
         &hir_item::StructBody::Unit => {}
@@ -519,12 +501,10 @@ fn check_recursive_enum_variants(
     name: common::SpannedSymbol,
     span: common::Span,
 ) {
-    let mut i: usize = 0;
-    while i < variants.len() {
+    for i in 0usize..variants.len() {
         match &variants[i].kind {
             &hir_item::VariantKind::Tuple(ref types) => {
-                let mut j: usize = 0;
-                while j < types.len() {
+                for j in 0usize..types.len() {
                     if type_directly_contains(types[j], enum_def_id) {
                         let enum_name = ctx.span_to_string(name.span);
                         let mut msg = String::new();
@@ -534,12 +514,10 @@ fn check_recursive_enum_variants(
                         ctx.error(hir::DiagnosticCode::E0100, msg, span);
                         return;
                     }
-                    j = j + 1;
                 }
             }
             &hir_item::VariantKind::Record(ref fields) => {
-                let mut j: usize = 0;
-                while j < fields.len() {
+                for j in 0usize..fields.len() {
                     if type_directly_contains(fields[j].ty, enum_def_id) {
                         let enum_name = ctx.span_to_string(name.span);
                         let mut msg = String::new();
@@ -549,12 +527,10 @@ fn check_recursive_enum_variants(
                         ctx.error(hir::DiagnosticCode::E0100, msg, span);
                         return;
                     }
-                    j = j + 1;
                 }
             }
             &hir_item::VariantKind::Unit => {}
         }
-        i = i + 1;
     }
 }
 
@@ -798,8 +774,7 @@ fn lower_trait_decl(ctx: &mut hir_lower_ctx::LoweringCtx, t: &ast::TraitDecl) {
     // Pre-register associated types so Self::Item can be resolved in method signatures.
     // For trait declarations (no default), use a fresh inference variable.
     // For trait definitions (with default), lower the type.
-    let mut ati: usize = 0;
-    while ati < t.items.len() {
+    for ati in 0usize..t.items.len() {
         match &t.items[ati] {
             &ast::TraitItem::TypeAlias(ref ta) => {
                 let name_str = ctx.span_to_string(ta.name.span);
@@ -820,18 +795,15 @@ fn lower_trait_decl(ctx: &mut hir_lower_ctx::LoweringCtx, t: &ast::TraitDecl) {
             }
             _ => {}
         }
-        ati = ati + 1;
     }
 
     // Lower associated items
     let mut items: Vec<hir_item::AssocItem> = Vec::new();
-    let mut i: usize = 0;
-    while i < t.items.len() {
+    for i in 0usize..t.items.len() {
         let assoc_item = lower_trait_item(ctx, &t.items[i]);
         if assoc_item.is_some() {
             items.push(assoc_item.unwrap());
         }
-        i = i + 1;
     }
 
     // Clear Self type and associated types after trait lowering
@@ -986,10 +958,8 @@ fn type_to_trait_ref(ty: &hir_ty::Type, span: common::Span) -> Option<hir_ty::Tr
         &hir_ty::TypeKind::Adt { def_id, ref args } => {
             // Copy the args vector
             let mut args_copy: Vec<hir_ty::Type> = Vec::new();
-            let mut i: usize = 0;
-            while i < args.len() {
+            for i in 0usize..args.len() {
                 args_copy.push(hir_ty::copy_type(&args[i]));
-                i = i + 1;
             }
             Option::Some(hir_ty::TraitRef::new(def_id, args_copy, span))
         }
@@ -1030,11 +1000,9 @@ fn lower_effect_decl(ctx: &mut hir_lower_ctx::LoweringCtx, e: &ast::EffectDecl) 
 
     // Lower operations
     let mut operations: Vec<hir_item::EffectOp> = Vec::new();
-    let mut i: usize = 0;
-    while i < e.operations.len() {
+    for i in 0usize..e.operations.len() {
         let eff_op = lower_effect_op(ctx, &e.operations[i]);
         operations.push(eff_op);
-        i = i + 1;
     }
 
     // Pop type param scope after lowering all types that reference generics
@@ -1061,11 +1029,9 @@ fn lower_effect_op(ctx: &mut hir_lower_ctx::LoweringCtx, oper: &ast::OperationDe
 
     // Lower parameter types
     let mut param_tys: Vec<type_intern::TyId> = Vec::new();
-    let mut i: usize = 0;
-    while i < oper.params.len() {
+    for i in 0usize..oper.params.len() {
         let ty = hir_lower_type::lower_type_id(ctx, &oper.params[i].ty);
         param_tys.push(ty);
-        i = i + 1;
     }
 
     let return_ty = hir_lower_type::lower_type_id(ctx, &oper.return_type);
@@ -1085,10 +1051,8 @@ fn type_to_effect_ref(ty: &hir_ty::Type) -> Option<hir_ty::EffectRef> {
     match &ty.kind {
         &hir_ty::TypeKind::Adt { def_id, ref args } => {
             let mut args_copy: Vec<hir_ty::Type> = Vec::new();
-            let mut i: usize = 0;
-            while i < args.len() {
+            for i in 0usize..args.len() {
                 args_copy.push(hir_ty::copy_type(&args[i]));
-                i = i + 1;
             }
             Option::Some(hir_ty::EffectRef::new(def_id, args_copy))
         }
@@ -1148,11 +1112,9 @@ fn lower_handler_decl(ctx: &mut hir_lower_ctx::LoweringCtx, h: &ast::HandlerDecl
 
     // Lower operation implementations
     let mut op_impls: Vec<hir_item::OpImpl> = Vec::new();
-    let mut i: usize = 0;
-    while i < h.operations.len() {
+    for i in 0usize..h.operations.len() {
         let oper_impl = lower_op_impl(ctx, &h.operations[i], &state);
         op_impls.push(oper_impl);
-        i = i + 1;
     }
 
     // Validate handler operation names match effect definition
@@ -1161,14 +1123,12 @@ fn lower_handler_decl(ctx: &mut hir_lower_ctx::LoweringCtx, h: &ast::HandlerDecl
         Option::Some(ref effect_entry) => {
             match &effect_entry.item.kind {
                 &hir_item::ItemKind::Effect(ref effect_def) => {
-                    let mut oi: usize = 0;
-                    while oi < op_impls.len() {
+                    for oi in 0usize..op_impls.len() {
                         let impl_op_s = ctx.span_to_string(op_impls[oi].name.span);
                         let impl_op_r = impl_op_s.as_str();
                         let impl_op_name = ctx.intern(impl_op_r);
                         let mut found: bool = false;
-                        let mut ei: usize = 0;
-                        while ei < effect_def.operations.len() {
+                        for ei in 0usize..effect_def.operations.len() {
                             let eff_op_s = ctx.span_to_string(effect_def.operations[ei].name.span);
                             let eff_op_r = eff_op_s.as_str();
                             let effect_op_name = ctx.intern(eff_op_r);
@@ -1177,7 +1137,6 @@ fn lower_handler_decl(ctx: &mut hir_lower_ctx::LoweringCtx, h: &ast::HandlerDecl
                                 // Link op impl to effect operation's DefId
                                 op_impls[oi].op_def_id = effect_def.operations[ei].def_id;
                             }
-                            ei = ei + 1;
                         }
                         if !found {
                             let op_name_str = ctx.span_to_string(op_impls[oi].name.span);
@@ -1187,7 +1146,6 @@ fn lower_handler_decl(ctx: &mut hir_lower_ctx::LoweringCtx, h: &ast::HandlerDecl
                             msg.push_str("` in handler");
                             ctx.error(hir::DiagnosticCode::E0305, msg, op_impls[oi].span);
                         }
-                        oi = oi + 1;
                     }
                 }
                 _ => {}
@@ -1256,8 +1214,7 @@ fn lower_handler_return(
     let mut next_idx: u32 = 0;
 
     // Register handler state fields as locals
-    let mut i: usize = 0;
-    while i < state.len() {
+    for i in 0usize..state.len() {
         let s = &state[i];
         let local_id = hir_def::LocalId::new(next_idx);
         let local = hir_expr::Local::new(
@@ -1269,7 +1226,6 @@ fn lower_handler_return(
         let sym = ctx.intern(name_str.as_str());
         ctx.resolver.define_local(sym, local_id, s.mutable, s.name.span);
         next_idx = next_idx + 1;
-        i = i + 1;
     }
 
     // Register return parameter as a local
@@ -1293,13 +1249,11 @@ fn lower_handler_return(
     ctx.body_locals = Vec::new();
     let body_expr = hir_lower_expr::lower_block_to_expr(ctx, &rc.body);
 
-    let mut bl_idx: usize = 0;
-    while bl_idx < ctx.body_locals.len() {
+    for bl_idx in 0usize..ctx.body_locals.len() {
         let bl = &ctx.body_locals[bl_idx];
         locals.push(hir_expr::Local::new(
             bl.id, bl.name, bl.ty, bl.mutable, bl.span,
         ));
-        bl_idx = bl_idx + 1;
     }
     ctx.body_locals = Vec::new();
 
@@ -1345,8 +1299,7 @@ fn lower_op_impl(
 
     // Lower parameter patterns to extract names and register as locals
     let mut param_names: Vec<common::SpannedSymbol> = Vec::new();
-    let mut i: usize = 0;
-    while i < oper.params.len() {
+    for i in 0usize..oper.params.len() {
         let name = extract_pattern_name(&oper.params[i]);
         if name.is_some() {
             let pname = name.unwrap();
@@ -1363,7 +1316,6 @@ fn lower_op_impl(
             ctx.resolver.define_local(param_sym, local_id, false, pname.span);
             next_idx = next_idx + 1;
         }
-        i = i + 1;
     }
 
     let param_count = next_idx;
@@ -1376,13 +1328,11 @@ fn lower_op_impl(
     let body_id = ctx.alloc_body_id();
     let body_expr = hir_lower_expr::lower_block_to_expr(ctx, &oper.body);
 
-    let mut bl_idx: usize = 0;
-    while bl_idx < ctx.body_locals.len() {
+    for bl_idx in 0usize..ctx.body_locals.len() {
         let bl = &ctx.body_locals[bl_idx];
         locals.push(hir_expr::Local::new(
             bl.id, bl.name, bl.ty, bl.mutable, bl.span,
         ));
-        bl_idx = bl_idx + 1;
     }
     ctx.body_locals = Vec::new();
 
@@ -1421,13 +1371,11 @@ fn extract_pattern_name(pattern: &ast::Pattern) -> Option<common::SpannedSymbol>
 /// Counts the number of non-self parameters in an AST function declaration.
 fn count_non_self_params(ctx: &mut hir_lower_ctx::LoweringCtx, f: &ast::FnDecl) -> usize {
     let mut count: usize = 0;
-    let mut i: usize = 0;
-    while i < f.params.len() {
+    for i in 0usize..f.params.len() {
         let param = &f.params[i];
         if !ast_param_is_self(param) {
             count = count + 1;
         }
-        i = i + 1;
     }
     count
 }
@@ -1450,12 +1398,10 @@ fn strings_equal(a: &String, b: &String) -> bool {
     if a_bytes.len() != b_bytes.len() {
         return false;
     }
-    let mut i: usize = 0;
-    while i < a_bytes.len() {
+    for i in 0usize..a_bytes.len() {
         if a_bytes[i] != b_bytes[i] {
             return false;
         }
-        i = i + 1;
     }
     true
 }
@@ -1541,12 +1487,10 @@ fn lower_impl_decl(ctx: &mut hir_lower_ctx::LoweringCtx, imp: &ast::ImplBlock) {
                 // methods with the same name (e.g., Place::clone and
                 // PlaceElem::clone both under mir_types).
                 let mut seg_names: Vec<common::SpannedSymbol> = Vec::new();
-                let mut si: usize = 0;
-                while si < type_path.segments.len() {
+                for si in 0usize..type_path.segments.len() {
                     let seg_str = ctx.span_to_string(type_path.segments[si].name.span);
                     let seg_sym = ctx.intern(seg_str.as_str());
                     seg_names.push(common::SpannedSymbol { symbol: seg_sym, span: type_path.segments[si].name.span });
-                    si = si + 1;
                 }
                 let path_result = ctx.resolver.resolve_qualified_path(&seg_names);
                 match path_result {
@@ -1569,12 +1513,10 @@ fn lower_impl_decl(ctx: &mut hir_lower_ctx::LoweringCtx, imp: &ast::ImplBlock) {
                 let type_idx = impl_type_idx as u64;
                 let key = (trait_idx << 32) | type_idx;
                 let mut found_overlap: bool = false;
-                let mut k: usize = 0;
-                while k < ctx.seen_trait_impls.len() {
+                for k in 0usize..ctx.seen_trait_impls.len() {
                     if ctx.seen_trait_impls[k] == key {
                         found_overlap = true;
                     }
-                    k = k + 1;
                 }
                 if found_overlap {
                     let mut msg = String::new();
@@ -1597,14 +1539,12 @@ fn lower_impl_decl(ctx: &mut hir_lower_ctx::LoweringCtx, imp: &ast::ImplBlock) {
                     match &trait_entry.item.kind {
                         &hir_item::ItemKind::Trait(ref trait_def) => {
                             // Check each trait method is present in the impl
-                            let mut ti: usize = 0;
-                            while ti < trait_def.items.len() {
+                            for ti in 0usize..trait_def.items.len() {
                                 match &trait_def.items[ti] {
                                     &hir_item::AssocItem::Fn(ref trait_fn) => {
                                         let trait_method_name = trait_fn.name.symbol;
                                         let mut found_in_impl: bool = false;
-                                        let mut ii: usize = 0;
-                                        while ii < imp.items.len() {
+                                        for ii in 0usize..imp.items.len() {
                                             match &imp.items[ii] {
                                                 &ast::ImplItem::Function(ref impl_fn) => {
                                                     let impl_name_s = ctx.span_to_string(impl_fn.name.span);
@@ -1617,7 +1557,6 @@ fn lower_impl_decl(ctx: &mut hir_lower_ctx::LoweringCtx, imp: &ast::ImplBlock) {
                                                 &ast::ImplItem::TypeAlias(_) => {}
                                                 &ast::ImplItem::Const(_) => {}
                                             }
-                                            ii = ii + 1;
                                         }
                                         if !found_in_impl && !trait_fn.has_default && trait_fn.body_id.is_none() {
                                             let method_name_str = ctx.span_to_string(trait_fn.name.span);
@@ -1637,8 +1576,7 @@ fn lower_impl_decl(ctx: &mut hir_lower_ctx::LoweringCtx, imp: &ast::ImplBlock) {
                                             let assoc_name_r = assoc_name_str.as_str();
                                             let assoc_name = ctx.intern(assoc_name_r);
                                             let mut found_type: bool = false;
-                                            let mut ai: usize = 0;
-                                            while ai < imp.items.len() {
+                                            for ai in 0usize..imp.items.len() {
                                                 match &imp.items[ai] {
                                                     &ast::ImplItem::TypeAlias(ref ta) => {
                                                         let ta_name_s = ctx.span_to_string(ta.name.span);
@@ -1651,7 +1589,6 @@ fn lower_impl_decl(ctx: &mut hir_lower_ctx::LoweringCtx, imp: &ast::ImplBlock) {
                                                     &ast::ImplItem::Function(_) => {}
                                                     &ast::ImplItem::Const(_) => {}
                                                 }
-                                                ai = ai + 1;
                                             }
                                             if !found_type {
                                                 let mut msg = String::new();
@@ -1664,7 +1601,6 @@ fn lower_impl_decl(ctx: &mut hir_lower_ctx::LoweringCtx, imp: &ast::ImplBlock) {
                                     }
                                     &hir_item::AssocItem::Const(_) => {}
                                 }
-                                ti = ti + 1;
                             }
                         }
                         _ => {}
@@ -1679,15 +1615,13 @@ fn lower_impl_decl(ctx: &mut hir_lower_ctx::LoweringCtx, imp: &ast::ImplBlock) {
     // Check for duplicate method signatures in impl block.
     // Methods with the same name but different parameter types are allowed (overloading).
     // Only report an error if both name AND parameter types are identical.
-    let mut mi: usize = 0;
-    while mi < imp.items.len() {
+    for mi in 0usize..imp.items.len() {
         match &imp.items[mi] {
             &ast::ImplItem::Function(ref f) => {
                 let fi_s = ctx.span_to_string(f.name.span);
                 let fi_r = fi_s.as_str();
                 let name_i = ctx.intern(fi_r);
-                let mut mj: usize = 0;
-                while mj < mi {
+                for mj in 0usize..mi {
                     match &imp.items[mj] {
                         &ast::ImplItem::Function(ref g) => {
                             let gj_s = ctx.span_to_string(g.name.span);
@@ -1718,18 +1652,15 @@ fn lower_impl_decl(ctx: &mut hir_lower_ctx::LoweringCtx, imp: &ast::ImplBlock) {
                         &ast::ImplItem::TypeAlias(_) => {}
                         &ast::ImplItem::Const(_) => {}
                     }
-                    mj = mj + 1;
                 }
             }
             &ast::ImplItem::TypeAlias(_) => {}
             &ast::ImplItem::Const(_) => {}
         }
-        mi = mi + 1;
     }
 
     // Pre-register associated types so Self::Item can be resolved in method signatures.
-    let mut ati: usize = 0;
-    while ati < imp.items.len() {
+    for ati in 0usize..imp.items.len() {
         match &imp.items[ati] {
             &ast::ImplItem::TypeAlias(ref ta) => {
                 let name_str = ctx.span_to_string(ta.name.span);
@@ -1750,13 +1681,11 @@ fn lower_impl_decl(ctx: &mut hir_lower_ctx::LoweringCtx, imp: &ast::ImplBlock) {
             }
             _ => {}
         }
-        ati = ati + 1;
     }
 
     // Lower associated items
     let mut items: Vec<hir_item::AssocItem> = Vec::new();
-    let mut i: usize = 0;
-    while i < imp.items.len() {
+    for i in 0usize..imp.items.len() {
         let type_id_opt: Option<hir_def::DefId> = if has_impl_type {
             Option::Some(hir_def::DefId::new(impl_type_idx))
         } else {
@@ -1766,7 +1695,6 @@ fn lower_impl_decl(ctx: &mut hir_lower_ctx::LoweringCtx, imp: &ast::ImplBlock) {
         if assoc_item.is_some() {
             items.push(assoc_item.unwrap());
         }
-        i = i + 1;
     }
 
     // Clear the Self type and associated types after processing the impl block
@@ -1873,10 +1801,8 @@ pub fn add_module_items_to_scope(
     parent_def_id: hir_def::DefId,
     declarations: &Vec<ast::Declaration>,
 ) {
-    let mut i: usize = 0;
-    while i < declarations.len() {
+    for i in 0usize..declarations.len() {
         add_decl_to_scope(ctx, parent_def_id, &declarations[i]);
-        i = i + 1;
     }
 }
 
@@ -2029,8 +1955,7 @@ fn add_decl_to_scope(
                 }
                 &ast::Import::Group { ref path, ref items, span: _ } => {
                     // For groups, each item is looked up in parent
-                    let mut gi: usize = 0;
-                    while gi < items.len() {
+                    for gi in 0usize..items.len() {
                         let item_str = ctx.span_to_string(items[gi].name.span);
                         let item_sym = ctx.intern(item_str.as_str());
                         let item_def = ctx.resolver.lookup_in_parent(parent_def_id, item_sym);
@@ -2047,7 +1972,6 @@ fn add_decl_to_scope(
                             let binding = resolve::Binding::def(item_def.unwrap());
                             ctx.resolver.define(bind_sym, binding);
                         }
-                        gi = gi + 1;
                     }
                 }
                 &ast::Import::Glob { ref path, span: _ } => {
@@ -2057,13 +1981,11 @@ fn add_decl_to_scope(
                     if resolved.is_some() {
                         let mod_def_id = resolved.unwrap();
                         let children = ctx.resolver.get_children_of_parent(mod_def_id);
-                        let mut ci: usize = 0;
-                        while ci < children.len() {
+                        for ci in 0usize..children.len() {
                             let child_name = children[ci].name;
                             let child_def = children[ci].def_id;
                             let binding = resolve::Binding::def(child_def);
                             ctx.resolver.define(child_name, binding);
-                            ci = ci + 1;
                         }
                     }
                 }
@@ -2093,8 +2015,7 @@ fn resolve_glob_path(
     let first_binding = ctx.resolver.scope_binding(first_result.scope_index, first_result.binding_index);
     let mut current_def = first_binding.def_id;
     // Chain remaining segments via lookup_in_parent
-    let mut seg_idx: usize = 1;
-    while seg_idx < path.segments.len() {
+    for seg_idx in 1usize..path.segments.len() {
         let seg_str = ctx.span_to_string(path.segments[seg_idx].span);
         let seg_sym = ctx.intern(seg_str.as_str());
         let child = ctx.resolver.lookup_in_parent(current_def, seg_sym);
@@ -2102,7 +2023,6 @@ fn resolve_glob_path(
             return Option::None;
         }
         current_def = child.unwrap();
-        seg_idx = seg_idx + 1;
     }
     Option::Some(current_def)
 }
@@ -2115,8 +2035,7 @@ fn collect_item_def_ids(
     let mut result: Vec<hir_def::DefId> = Vec::new();
 
     // Search through def_info for items with this parent
-    let mut i: usize = 0;
-    while i < ctx.resolver.def_info.len() {
+    for i in 0usize..ctx.resolver.def_info.len() {
         let entry = &ctx.resolver.def_info[i];
         match &entry.info.parent {
             &Option::Some(p) => {
@@ -2126,7 +2045,6 @@ fn collect_item_def_ids(
             }
             &Option::None => {}
         }
-        i = i + 1;
     }
 
     result

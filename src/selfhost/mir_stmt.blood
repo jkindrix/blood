@@ -242,12 +242,10 @@ impl StorageTracker {
         let idx = local.index;
         // Check if already present
         let mut found = false;
-        let mut i: usize = 0;
-        while i < self.live_locals.len() {
+        for i in 0usize..self.live_locals.len() {
             if self.live_locals[i] == idx {
                 found = true;
             }
-            i = i + 1;
         }
         if !found {
             self.live_locals.push(idx);
@@ -258,12 +256,10 @@ impl StorageTracker {
     pub fn mark_dead(self: &mut StorageTracker, local: mir_def::MirLocalId) {
         let idx = local.index;
         let mut new_vec = Vec::new();
-        let mut i: usize = 0;
-        while i < self.live_locals.len() {
+        for i in 0usize..self.live_locals.len() {
             if self.live_locals[i] != idx {
                 new_vec.push(self.live_locals[i]);
             }
-            i = i + 1;
         }
         self.live_locals = new_vec;
     }
@@ -271,12 +267,10 @@ impl StorageTracker {
     /// Returns true if a local is currently live.
     pub fn is_live(self: &StorageTracker, local: mir_def::MirLocalId) -> bool {
         let idx = local.index;
-        let mut i: usize = 0;
-        while i < self.live_locals.len() {
+        for i in 0usize..self.live_locals.len() {
             if self.live_locals[i] == idx {
                 return true;
             }
-            i = i + 1;
         }
         false
     }
@@ -284,10 +278,8 @@ impl StorageTracker {
     /// Returns all currently live locals.
     pub fn live_set(self: &StorageTracker) -> Vec<mir_def::MirLocalId> {
         let mut result = Vec::new();
-        let mut i: usize = 0;
-        while i < self.live_locals.len() {
+        for i in 0usize..self.live_locals.len() {
             result.push(mir_def::MirLocalId::new(self.live_locals[i]));
-            i = i + 1;
         }
         result
     }

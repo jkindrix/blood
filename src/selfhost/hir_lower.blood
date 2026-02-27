@@ -167,10 +167,8 @@ pub fn lower_program_with_base_dir(program: &ast::Program, base_dir: String, sou
 /// For `Import::Simple { path: [module, item] }`, look up `module` then
 /// find `item` as a child and bind it in the current scope.
 fn resolve_imports(ctx: &mut hir_lower_ctx::LoweringCtx, imports: &Vec<ast::Import>) {
-    let mut i: usize = 0;
-    while i < imports.len() {
+    for i in 0usize..imports.len() {
         resolve_import(ctx, &imports[i]);
-        i = i + 1;
     }
 }
 
@@ -208,8 +206,7 @@ fn resolve_import(ctx: &mut hir_lower_ctx::LoweringCtx, imp: &ast::Import) {
             let resolved = resolve_module_path_segments(ctx, dummy, path, path.segments.len(), true);
             if resolved.is_some() {
                 let mod_def_id = resolved.unwrap();
-                let mut gi: usize = 0;
-                while gi < items.len() {
+                for gi in 0usize..items.len() {
                     let item_str = ctx.span_to_string(items[gi].name.span);
                     let item_sym = ctx.intern(item_str.as_str());
                     let item_def = ctx.resolver.lookup_in_parent(mod_def_id, item_sym);
@@ -227,7 +224,6 @@ fn resolve_import(ctx: &mut hir_lower_ctx::LoweringCtx, imp: &ast::Import) {
                         let binding = resolve::Binding::def(item_def_id);
                         ctx.resolver.define(bind_sym, binding);
                     }
-                    gi = gi + 1;
                 }
             }
         }
@@ -236,13 +232,11 @@ fn resolve_import(ctx: &mut hir_lower_ctx::LoweringCtx, imp: &ast::Import) {
             if resolved.is_some() {
                 let mod_def_id = resolved.unwrap();
                 let children = ctx.resolver.get_children_of_parent(mod_def_id);
-                let mut ci: usize = 0;
-                while ci < children.len() {
+                for ci in 0usize..children.len() {
                     let child_name = children[ci].name;
                     let child_def = children[ci].def_id;
                     let binding = resolve::Binding::def(child_def);
                     ctx.resolver.define(child_name, binding);
-                    ci = ci + 1;
                 }
             }
         }
@@ -255,10 +249,8 @@ fn resolve_import(ctx: &mut hir_lower_ctx::LoweringCtx, imp: &ast::Import) {
 
 /// First pass: register all type names so they can be referenced.
 fn register_type_names(ctx: &mut hir_lower_ctx::LoweringCtx, decls: &Vec<ast::Declaration>) {
-    let mut i: usize = 0;
-    while i < decls.len() {
+    for i in 0usize..decls.len() {
         register_type_name(ctx, &decls[i]);
-        i = i + 1;
     }
 }
 
@@ -931,8 +923,7 @@ fn register_bridge_functions(
 
     let mut foreign_items: Vec<hir_item::ForeignItem> = Vec::new();
 
-    let mut i: usize = 0;
-    while i < bdecl.items.len() {
+    for i in 0usize..bdecl.items.len() {
         match &bdecl.items[i] {
             &ast::BridgeItem::Function(ref f) => {
                 let fn_def_id = ctx.alloc_def_id();
@@ -950,11 +941,9 @@ fn register_bridge_functions(
 
                 // Convert parameter types to TyId
                 let mut param_tys: Vec<type_intern::TyId> = Vec::new();
-                let mut pi: usize = 0;
-                while pi < f.params.len() {
+                for pi in 0usize..f.params.len() {
                     let param_ty = hir_lower_type::lower_type_id(ctx, &f.params[pi].ty);
                     param_tys.push(param_ty);
-                    pi = pi + 1;
                 }
 
                 // Convert return type to TyId
@@ -1001,7 +990,6 @@ fn register_bridge_functions(
                 // Link specifications: not yet implemented
             }
         }
-        i = i + 1;
     }
 
     // Wrap in ForeignDef and add to ctx.items for the type checker
@@ -1054,8 +1042,7 @@ fn resolve_module_path_segments(
         }
         first_lookup.unwrap()
     };
-    let mut seg_idx: usize = 1;
-    while seg_idx < num_segments {
+    for seg_idx in 1usize..num_segments {
         let seg_str = ctx.span_to_string(path.segments[seg_idx].span);
         let seg_sym = ctx.intern(seg_str.as_str());
         let child = ctx.resolver.lookup_in_parent(current_def, seg_sym);
@@ -1063,7 +1050,6 @@ fn resolve_module_path_segments(
             return Option::None;
         }
         current_def = child.unwrap();
-        seg_idx = seg_idx + 1;
     }
     Option::Some(current_def)
 }
@@ -1109,8 +1095,7 @@ fn resolve_use_decl_module_reexport(
             let resolved = resolve_module_path_segments(ctx, parent_def_id, path, path.segments.len(), use_global);
             if resolved.is_some() {
                 let mod_def_id = resolved.unwrap();
-                let mut gi: usize = 0;
-                while gi < items.len() {
+                for gi in 0usize..items.len() {
                     let item_str = ctx.span_to_string(items[gi].name.span);
                     let item_sym = ctx.intern(item_str.as_str());
                     let item_def = ctx.resolver.lookup_in_parent(mod_def_id, item_sym);
@@ -1128,7 +1113,6 @@ fn resolve_use_decl_module_reexport(
                             );
                         }
                     }
-                    gi = gi + 1;
                 }
             }
         }
@@ -1137,8 +1121,7 @@ fn resolve_use_decl_module_reexport(
             if resolved.is_some() {
                 let mod_def_id = resolved.unwrap();
                 let children = ctx.resolver.get_children_of_parent(mod_def_id);
-                let mut ci: usize = 0;
-                while ci < children.len() {
+                for ci in 0usize..children.len() {
                     let child_name = children[ci].name;
                     let child_def = children[ci].def_id;
                     let existing_info = ctx.resolver.get_def_info(child_def);
@@ -1155,7 +1138,6 @@ fn resolve_use_decl_module_reexport(
                         // Preserve the original visibility on the re-exported entry
                         ctx.resolver.set_def_visibility(child_def, child_vis);
                     }
-                    ci = ci + 1;
                 }
             }
         }
@@ -1188,13 +1170,11 @@ fn inject_stdlib_prelude(ctx: &mut hir_lower_ctx::LoweringCtx) {
         if prelude_def.is_some() {
             let prelude_def_id = prelude_def.unwrap();
             let children = ctx.resolver.get_children_of_parent(prelude_def_id);
-            let mut ci: usize = 0;
-            while ci < children.len() {
+            for ci in 0usize..children.len() {
                 let child_name = children[ci].name;
                 let child_def = children[ci].def_id;
                 let binding = resolve::Binding::def(child_def);
                 ctx.resolver.define(child_name, binding);
-                ci = ci + 1;
             }
             return;
         }
@@ -1237,10 +1217,8 @@ fn load_external_module(
                 } else {
                     sp_len
                 };
-                let mut ci: usize = 0;
-                while ci < end {
+                for ci in 0usize..end {
                     p.push(sp_bytes[ci] as char);
-                    ci = ci + 1;
                 }
                 p.push_str("/mod.blood");
                 p
@@ -1413,12 +1391,10 @@ fn dir_of_path(path: &String) -> String {
     let len = bytes.len();
     // Find the last '/' character
     let mut last_slash: i64 = -1;
-    let mut i: usize = 0;
-    while i < len {
+    for i in 0usize..len {
         if bytes[i] == 47 { // '/'
             last_slash = i as i64;
         }
-        i = i + 1;
     }
     if last_slash < 0 {
         // No slash found — current directory
@@ -1426,10 +1402,8 @@ fn dir_of_path(path: &String) -> String {
     }
     let end = last_slash as usize;
     let mut result = String::new();
-    let mut j: usize = 0;
-    while j < end {
+    for j in 0usize..end {
         result.push(bytes[j] as char);
-        j = j + 1;
     }
     result
 }
@@ -1441,12 +1415,10 @@ fn str_eq_lit(s: &String, lit: &str) -> bool {
     if a.len() != b.len() {
         return false;
     }
-    let mut i: usize = 0;
-    while i < a.len() {
+    for i in 0usize..a.len() {
         if a[i] != b[i] {
             return false;
         }
-        i = i + 1;
     }
     true
 }
@@ -1478,12 +1450,10 @@ struct CachedParsedModule {
 /// Collects info about all external modules.
 fn collect_external_modules(ctx: &mut hir_lower_ctx::LoweringCtx) -> Vec<ExternalModuleInfo> {
     let mut result: Vec<ExternalModuleInfo> = Vec::new();
-    let mut i: usize = 0;
-    while i < ctx.loaded_modules.len() {
+    for i in 0usize..ctx.loaded_modules.len() {
         let path = common::make_string(ctx.loaded_modules[i].path.as_str());
         let def_id = hir_def::DefId::new(ctx.loaded_modules[i].def_id.index);
         result.push(ExternalModuleInfo::new(path, def_id));
-        i = i + 1;
     }
     result
 }
@@ -1494,8 +1464,7 @@ fn lower_external_module_declarations(ctx: &mut hir_lower_ctx::LoweringCtx, cach
     // Collect module info first to avoid borrow conflicts
     let modules = collect_external_modules(ctx);
 
-    let mut i: usize = 0;
-    while i < modules.len() {
+    for i in 0usize..modules.len() {
         let path = &modules[i].path;
         let def_id = modules[i].def_id;
 
@@ -1503,14 +1472,12 @@ fn lower_external_module_declarations(ctx: &mut hir_lower_ctx::LoweringCtx, cach
         let read_result = source::read_file_string(path);
         if !read_result.success {
             // Skip - error should have been reported in Phase 1
-            i = i + 1;
             continue;
         }
 
         let content = match read_result.content {
             Option::Some(c) => c,
             Option::None => {
-                i = i + 1;
                 continue;
             }
         };
@@ -1518,7 +1485,6 @@ fn lower_external_module_declarations(ctx: &mut hir_lower_ctx::LoweringCtx, cach
         let parse_result = parser::parse_file(content.as_str());
         if parse_result.errors.len() > 0 {
             // Skip - error should have been reported in Phase 1
-            i = i + 1;
             continue;
         }
 
@@ -1528,7 +1494,6 @@ fn lower_external_module_declarations(ctx: &mut hir_lower_ctx::LoweringCtx, cach
         };
 
         if !has_program {
-            i = i + 1;
             continue;
         }
 
@@ -1540,7 +1505,6 @@ fn lower_external_module_declarations(ctx: &mut hir_lower_ctx::LoweringCtx, cach
             &Option::Some(ref p) => p,
             &Option::None => {
                 ctx.source = saved_source;
-                i = i + 1;
                 continue;
             }
         };
@@ -1559,21 +1523,18 @@ fn lower_external_module_declarations(ctx: &mut hir_lower_ctx::LoweringCtx, cach
             def_id: def_id,
         });
 
-        i = i + 1;
     }
 }
 
 /// Phase 4b: Lower function bodies from external modules.
 /// Uses cached parse results from Phase 3a to avoid re-reading and re-parsing.
 fn lower_external_module_fn_bodies(ctx: &mut hir_lower_ctx::LoweringCtx, cache: &Vec<CachedParsedModule>) {
-    let mut i: usize = 0;
-    while i < cache.len() {
+    for i in 0usize..cache.len() {
         let cached = &cache[i];
 
         let program = match &cached.parse.program {
             &Option::Some(ref p) => p,
             &Option::None => {
-                i = i + 1;
                 continue;
             }
         };
@@ -1597,7 +1558,6 @@ fn lower_external_module_fn_bodies(ctx: &mut hir_lower_ctx::LoweringCtx, cache: 
         // Restore source
         ctx.source = saved_source;
 
-        i = i + 1;
     }
 }
 
@@ -1615,10 +1575,8 @@ fn append_u32(s: &mut String, n: u32) {
         val = val / 10;
     }
     let len = digits.len();
-    let mut i: usize = 0;
-    while i < len {
+    for i in 0usize..len {
         s.push(digits[len - 1 - i]);
-        i = i + 1;
     }
 }
 
@@ -1632,10 +1590,8 @@ fn register_module_type_names(
     parent_def_id: hir_def::DefId,
     decls: &Vec<ast::Declaration>,
 ) {
-    let mut i: usize = 0;
-    while i < decls.len() {
+    for i in 0usize..decls.len() {
         register_module_type_name(ctx, parent_def_id, &decls[i]);
-        i = i + 1;
     }
 }
 
@@ -1775,10 +1731,8 @@ fn register_module_type_name(
 
 /// Second pass: register functions, consts, statics.
 fn register_declarations(ctx: &mut hir_lower_ctx::LoweringCtx, decls: &Vec<ast::Declaration>) {
-    let mut i: usize = 0;
-    while i < decls.len() {
+    for i in 0usize..decls.len() {
         register_declaration(ctx, &decls[i]);
-        i = i + 1;
     }
 }
 
@@ -1894,12 +1848,10 @@ fn register_declaration(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declar
                         // qualified paths, causing method name collisions when two
                         // types in the same module have methods with the same name.
                         let mut seg_names: Vec<common::SpannedSymbol> = Vec::new();
-                        let mut si: usize = 0;
-                        while si < type_path.segments.len() {
+                        for si in 0usize..type_path.segments.len() {
                             let seg_str = ctx.span_to_string(type_path.segments[si].name.span);
                             let seg_sym = ctx.intern(seg_str.as_str());
                             seg_names.push(common::SpannedSymbol { symbol: seg_sym, span: type_path.segments[si].name.span });
-                            si = si + 1;
                         }
                         let path_result = ctx.resolver.resolve_qualified_path(&seg_names);
                         match path_result {
@@ -1967,10 +1919,8 @@ fn register_module_declarations(
     parent_def_id: hir_def::DefId,
     decls: &Vec<ast::Declaration>,
 ) {
-    let mut i: usize = 0;
-    while i < decls.len() {
+    for i in 0usize..decls.len() {
         register_module_declaration(ctx, parent_def_id, &decls[i]);
-        i = i + 1;
     }
 }
 
@@ -2086,12 +2036,10 @@ fn register_module_declaration(
                         } else {
                             // Multi-segment: resolve full qualified path
                             let mut seg_names: Vec<common::SpannedSymbol> = Vec::new();
-                            let mut si: usize = 0;
-                            while si < type_path.segments.len() {
+                            for si in 0usize..type_path.segments.len() {
                                 let s_str = ctx.span_to_string(type_path.segments[si].name.span);
                                 let s_sym = ctx.intern(s_str.as_str());
                                 seg_names.push(common::SpannedSymbol { symbol: s_sym, span: type_path.segments[si].name.span });
-                                si = si + 1;
                             }
                             let path_result = ctx.resolver.resolve_qualified_path(&seg_names);
                             match path_result {
@@ -2137,8 +2085,7 @@ fn register_impl_items(
     type_def_id: hir_def::DefId,
     items: &Vec<ast::ImplItem>,
 ) {
-    let mut j: usize = 0;
-    while j < items.len() {
+    for j in 0usize..items.len() {
         match &items[j] {
             &ast::ImplItem::Function(ref f) => {
                 let def_id = ctx.alloc_def_id();
@@ -2177,7 +2124,6 @@ fn register_impl_items(
                 );
             }
         }
-        j = j + 1;
     }
 }
 
@@ -2187,10 +2133,8 @@ fn register_impl_items(
 
 /// Fourth pass: lower function bodies to HIR bodies.
 fn lower_fn_bodies(ctx: &mut hir_lower_ctx::LoweringCtx, decls: &Vec<ast::Declaration>) {
-    let mut i: usize = 0;
-    while i < decls.len() {
+    for i in 0usize..decls.len() {
         lower_fn_body_if_present(ctx, &decls[i]);
-        i = i + 1;
     }
 }
 
@@ -2308,10 +2252,8 @@ fn lower_single_fn_body(ctx: &mut hir_lower_ctx::LoweringCtx, f: &ast::FnDecl) {
     // Extract const param DefIds before clearing (for monomorphization)
     let mut cp_def_ids: Vec<u32> = Vec::new();
     {
-        let mut cpi: usize = 0;
-        while cpi < ctx.const_param_defs.len() {
+        for cpi in 0usize..ctx.const_param_defs.len() {
             cp_def_ids.push(ctx.const_param_defs[cpi].def_id.index);
-            cpi = cpi + 1;
         }
     }
 
@@ -2336,8 +2278,7 @@ fn lower_single_fn_body(ctx: &mut hir_lower_ctx::LoweringCtx, f: &ast::FnDecl) {
 /// (from register_builtin_fn or register_builtin_children) are skipped
 /// to preserve their correct runtime names (e.g., "vec_new", "print").
 fn collect_resolver_fn_defs(ctx: &mut hir_lower_ctx::LoweringCtx) {
-    let mut i: usize = 0;
-    while i < ctx.resolver.def_info.len() {
+    for i in 0usize..ctx.resolver.def_info.len() {
         let def_id_index = ctx.resolver.def_info[i].def_id.index;
 
         // Check if this DefId already has a runtime name registered.
@@ -2353,7 +2294,6 @@ fn collect_resolver_fn_defs(ctx: &mut hir_lower_ctx::LoweringCtx) {
         }
 
         if already_registered {
-            i = i + 1;
             continue;
         }
 
@@ -2371,6 +2311,5 @@ fn collect_resolver_fn_defs(ctx: &mut hir_lower_ctx::LoweringCtx) {
             }
             Option::None => {}
         }
-        i = i + 1;
     }
 }

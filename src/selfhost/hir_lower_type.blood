@@ -49,22 +49,18 @@ pub fn lower_type_id(ctx: &mut hir_lower_ctx::LoweringCtx, ty: &ast::Type) -> ty
         }
         &ast::TypeKind::Tuple(ref types) => {
             let mut ids: Vec<type_intern::TyId> = Vec::new();
-            let mut i: usize = 0;
-            while i < types.len() {
+            for i in 0usize..types.len() {
                 let t = lower_type_id(ctx, &types[i]);
                 ids.push(t);
-                i = i + 1;
             }
             let list_id = type_intern::type_interner().intern_ty_list(&ids);
             type_intern::type_interner().mk_tuple(list_id)
         }
         &ast::TypeKind::Function { ref params, ref return_type, ref effects } => {
             let mut param_ids: Vec<type_intern::TyId> = Vec::new();
-            let mut i: usize = 0;
-            while i < params.len() {
+            for i in 0usize..params.len() {
                 let t = lower_type_id(ctx, &params[i]);
                 param_ids.push(t);
-                i = i + 1;
             }
             let ret_id = lower_type_id(ctx, return_type.as_ref());
             let effect_row_id = match effects {
@@ -79,15 +75,13 @@ pub fn lower_type_id(ctx: &mut hir_lower_ctx::LoweringCtx, ty: &ast::Type) -> ty
         }
         &ast::TypeKind::Record { ref fields, ref rest } => {
             let mut interned_fields: Vec<type_intern::InternedRecordField> = Vec::new();
-            let mut i: usize = 0;
-            while i < fields.len() {
+            for i in 0usize..fields.len() {
                 let f = &fields[i];
                 let field_id = lower_type_id(ctx, &f.ty);
                 // Re-intern field name for cross-interner consistency (AST → HIR interner)
                 let fname_str = ctx.span_to_string(f.name.span);
                 let fname_sym = ctx.intern(fname_str.as_str());
                 interned_fields.push(type_intern::InternedRecordField::new(fname_sym, field_id));
-                i = i + 1;
             }
             let row_var = match rest {
                 &Option::Some(ref _row_var_name) => {
@@ -111,13 +105,11 @@ pub fn lower_type_id(ctx: &mut hir_lower_ctx::LoweringCtx, ty: &ast::Type) -> ty
             ctx.resolver.push_scope(resolve::ScopeKind::TypeParams);
 
             let mut param_ids: Vec<hir_def::TyVarId> = Vec::new();
-            let mut i: usize = 0;
-            while i < params.len() {
+            for i in 0usize..params.len() {
                 let var_id = ctx.alloc_ty_var();
                 param_ids.push(var_id);
                 let param = &params[i];
                 let _ = ctx.resolver.define_type_param(param.symbol, var_id);
-                i = i + 1;
             }
 
             let body_id = lower_type_id(ctx, body.as_ref());
@@ -175,21 +167,17 @@ pub fn lower_type(ctx: &mut hir_lower_ctx::LoweringCtx, ty: &ast::Type) -> hir_t
         }
         &ast::TypeKind::Tuple(ref types) => {
             let mut lowered: Vec<hir_ty::Type> = Vec::new();
-            let mut i: usize = 0;
-            while i < types.len() {
+            for i in 0usize..types.len() {
                 let t = lower_type(ctx, &types[i]);
                 lowered.push(t);
-                i = i + 1;
             }
             hir_ty::Type::new(hir_ty::TypeKind::Tuple(lowered))
         }
         &ast::TypeKind::Function { ref params, ref return_type, ref effects } => {
             let mut param_tys: Vec<hir_ty::Type> = Vec::new();
-            let mut i: usize = 0;
-            while i < params.len() {
+            for i in 0usize..params.len() {
                 let t = lower_type(ctx, &params[i]);
                 param_tys.push(t);
-                i = i + 1;
             }
             let ret_ty = lower_type(ctx, return_type.as_ref());
             let effect_row = match effects {
@@ -204,8 +192,7 @@ pub fn lower_type(ctx: &mut hir_lower_ctx::LoweringCtx, ty: &ast::Type) -> hir_t
         }
         &ast::TypeKind::Record { ref fields, ref rest } => {
             let mut hir_fields: Vec<hir_ty::RecordField> = Vec::new();
-            let mut i: usize = 0;
-            while i < fields.len() {
+            for i in 0usize..fields.len() {
                 let f = &fields[i];
                 let field_ty = lower_type(ctx, &f.ty);
                 // Re-intern field name for cross-interner consistency (AST → HIR interner)
@@ -213,7 +200,6 @@ pub fn lower_type(ctx: &mut hir_lower_ctx::LoweringCtx, ty: &ast::Type) -> hir_t
                 let fname_sym = ctx.intern(fname_str.as_str());
                 let hir_field = hir_ty::RecordField::new(fname_sym, field_ty);
                 hir_fields.push(hir_field);
-                i = i + 1;
             }
             let row_var = match rest {
                 &Option::Some(ref _row_var_name) => {
@@ -241,13 +227,11 @@ pub fn lower_type(ctx: &mut hir_lower_ctx::LoweringCtx, ty: &ast::Type) -> hir_t
             ctx.resolver.push_scope(resolve::ScopeKind::TypeParams);
 
             let mut param_ids: Vec<hir_def::TyVarId> = Vec::new();
-            let mut i: usize = 0;
-            while i < params.len() {
+            for i in 0usize..params.len() {
                 let var_id = ctx.alloc_ty_var();
                 param_ids.push(var_id);
                 let param = &params[i];
                 let _ = ctx.resolver.define_type_param(param.symbol, var_id);
-                i = i + 1;
             }
 
             let body_ty = lower_type(ctx, body.as_ref());
@@ -424,12 +408,10 @@ fn lower_type_path_id(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::TypePath
                     let assoc_name_str = ctx.span_to_string(second_seg.name.span);
                     let assoc_sym = ctx.intern(assoc_name_str.as_str());
                     let mut found: bool = false;
-                    let mut ai: usize = 0;
-                    while ai < ctx.current_assoc_types.len() {
+                    for ai in 0usize..ctx.current_assoc_types.len() {
                         if ctx.current_assoc_types[ai].name.index == assoc_sym.index {
                             return ctx.current_assoc_types[ai].ty_id;
                         }
-                        ai = ai + 1;
                     }
                     // Not found — fall through to qualified path resolution
                 }
@@ -443,13 +425,11 @@ fn lower_type_path_id(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::TypePath
     // Multi-segment paths (e.g., module::Type)
     // Extract the names from path segments, re-interning for consistent indices
     let mut names: Vec<common::SpannedSymbol> = Vec::new();
-    let mut i: usize = 0;
-    while i < path.segments.len() {
+    for i in 0usize..path.segments.len() {
         let seg = &path.segments[i];
         let name_str = ctx.span_to_string(seg.name.span);
         let re_interned = ctx.intern(name_str.as_str());
         names.push(common::SpannedSymbol { symbol: re_interned, span: seg.name.span });
-        i = i + 1;
     }
 
     let resolved = ctx.resolver.resolve_qualified_path(&names);
@@ -467,14 +447,12 @@ fn lower_type_path_id(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::TypePath
 
     // Not found - report error with path details for debugging
     let mut msg = common::make_string("undefined qualified type path: ");
-    let mut j: usize = 0;
-    while j < names.len() {
+    for j in 0usize..names.len() {
         if j > 0 {
             msg.push_str("::");
         }
         let seg_str = ctx.span_to_string(names[j].span);
         msg.push_str(seg_str.as_str());
-        j = j + 1;
     }
     ctx.error(
         hir::DiagnosticCode::E0102,
@@ -622,13 +600,11 @@ fn lower_type_path(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::TypePath) -
 
     // Multi-segment paths (e.g., module::Type)
     let mut names: Vec<common::SpannedSymbol> = Vec::new();
-    let mut i: usize = 0;
-    while i < path.segments.len() {
+    for i in 0usize..path.segments.len() {
         let seg = &path.segments[i];
         let name_str = ctx.span_to_string(seg.name.span);
         let re_interned = ctx.intern(name_str.as_str());
         names.push(common::SpannedSymbol { symbol: re_interned, span: seg.name.span });
-        i = i + 1;
     }
 
     let resolved = ctx.resolver.resolve_qualified_path(&names);
@@ -649,14 +625,12 @@ fn lower_type_path(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::TypePath) -
 
     // Not found - report error
     let mut msg = common::make_string("undefined qualified type path: ");
-    let mut j: usize = 0;
-    while j < names.len() {
+    for j in 0usize..names.len() {
         if j > 0 {
             msg.push_str("::");
         }
         let seg_str = ctx.span_to_string(names[j].span);
         msg.push_str(seg_str.as_str());
-        j = j + 1;
     }
     ctx.error(
         hir::DiagnosticCode::E0102,
@@ -761,12 +735,10 @@ fn str_eq(s: &String, other: &str) -> bool {
     if bytes.len() != other_bytes.len() {
         return false;
     }
-    let mut i: usize = 0;
-    while i < bytes.len() {
+    for i in 0usize..bytes.len() {
         if bytes[i] != other_bytes[i] {
             return false;
         }
-        i = i + 1;
     }
     true
 }
@@ -842,8 +814,7 @@ fn try_primitive_type(sym: common::Symbol) -> Option<hir_ty::Type> {
 /// Lower type arguments directly to Vec<TyId>.
 pub fn lower_type_args_id(ctx: &mut hir_lower_ctx::LoweringCtx, args: &ast::TypeArgs) -> Vec<type_intern::TyId> {
     let mut result: Vec<type_intern::TyId> = Vec::new();
-    let mut i: usize = 0;
-    while i < args.args.len() {
+    for i in 0usize..args.args.len() {
         match &args.args[i] {
             &ast::TypeArg::Type(ref ty) => {
                 let t = lower_type_id(ctx, ty);
@@ -856,7 +827,6 @@ pub fn lower_type_args_id(ctx: &mut hir_lower_ctx::LoweringCtx, args: &ast::Type
                 let _value = const_eval::eval_const_expr(expr);
             }
         }
-        i = i + 1;
     }
     result
 }
@@ -864,8 +834,7 @@ pub fn lower_type_args_id(ctx: &mut hir_lower_ctx::LoweringCtx, args: &ast::Type
 /// Lower type arguments to a Vec of HIR types.
 pub fn lower_type_args(ctx: &mut hir_lower_ctx::LoweringCtx, args: &ast::TypeArgs) -> Vec<hir_ty::Type> {
     let mut result: Vec<hir_ty::Type> = Vec::new();
-    let mut i: usize = 0;
-    while i < args.args.len() {
+    for i in 0usize..args.args.len() {
         match &args.args[i] {
             &ast::TypeArg::Type(ref ty) => {
                 let t = lower_type(ctx, ty);
@@ -878,7 +847,6 @@ pub fn lower_type_args(ctx: &mut hir_lower_ctx::LoweringCtx, args: &ast::TypeArg
                 let _value = const_eval::eval_const_expr(expr);
             }
         }
-        i = i + 1;
     }
     result
 }
@@ -907,12 +875,10 @@ fn eval_array_size_or_const_param(ctx: &mut hir_lower_ctx::LoweringCtx, size_exp
                 let name_str = ctx.span_to_string(seg.name.span);
                 let lookup_symbol = ctx.intern(name_str.as_str());
                 let mut is_const_param: bool = false;
-                let mut cpi: usize = 0;
-                while cpi < ctx.const_param_defs.len() {
+                for cpi in 0usize..ctx.const_param_defs.len() {
                     if ctx.const_param_defs[cpi].name.index == lookup_symbol.index {
                         is_const_param = true;
                     }
-                    cpi = cpi + 1;
                 }
                 if is_const_param {
                     return const_param_array_sentinel();
@@ -937,13 +903,11 @@ pub fn lower_effect_row(ctx: &mut hir_lower_ctx::LoweringCtx, row: &ast::EffectR
         }
         &ast::EffectRowKind::Effects { ref effects, ref rest } => {
             let mut hir_effects: Vec<hir_ty::EffectRef> = Vec::new();
-            let mut i: usize = 0;
-            while i < effects.len() {
+            for i in 0usize..effects.len() {
                 let eff = lower_effect_ref(ctx, &effects[i]);
                 if eff.is_some() {
                     hir_effects.push(eff.unwrap());
                 }
-                i = i + 1;
             }
             // Handle row polymorphism: if `rest` is Some, this is an open effect row
             // with a row variable (e.g., Read, Write | r)
@@ -1054,8 +1018,7 @@ pub fn lower_generics(ctx: &mut hir_lower_ctx::LoweringCtx, type_params: &Option
 
     match type_params {
         &Some(ref tp) => {
-            let mut i: usize = 0;
-            while i < tp.params.len() {
+            for i in 0usize..tp.params.len() {
                 match &tp.params[i] {
                     &ast::GenericParam::Type(ref type_param) => {
                         let var_id = ctx.alloc_ty_var();
@@ -1081,15 +1044,13 @@ pub fn lower_generics(ctx: &mut hir_lower_ctx::LoweringCtx, type_params: &Option
                         if type_param.bounds.len() > 0 {
                             let param_ty = hir_ty::Type::new(hir_ty::TypeKind::Param(var_id));
                             let mut trait_refs: Vec<hir_ty::TraitRef> = Vec::new();
-                            let mut j: usize = 0;
-                            while j < type_param.bounds.len() {
+                            for j in 0usize..type_param.bounds.len() {
                                 let bound_ty = lower_type(ctx, &type_param.bounds[j]);
                                 // Convert the bound type to a TraitRef
                                 let trait_ref = type_to_trait_ref(&bound_ty, type_param.bounds[j].span);
                                 if trait_ref.is_some() {
                                     trait_refs.push(trait_ref.unwrap());
                                 }
-                                j = j + 1;
                             }
                             if trait_refs.len() > 0 {
                                 let pred = hir_ty::WherePredicate::TypeBound {
@@ -1135,7 +1096,6 @@ pub fn lower_generics(ctx: &mut hir_lower_ctx::LoweringCtx, type_params: &Option
                         ctx.const_param_defs.push(hir_lower_ctx::ConstParamEntry::new(cp_def_id, cp_symbol));
                     }
                 }
-                i = i + 1;
             }
         }
         &None => {}
@@ -1146,20 +1106,17 @@ pub fn lower_generics(ctx: &mut hir_lower_ctx::LoweringCtx, type_params: &Option
         let wc = where_clause.as_ref().unwrap();
         let pred_len = wc.predicates.len();
         {
-            let mut i: usize = 0;
-            while i < pred_len {
+            for i in 0usize..pred_len {
                 match &wc.predicates[i] {
                     &ast::WherePredicate::TypeBound { ref ty, ref bounds, span } => {
                         let lowered_ty = lower_type(ctx, ty);
                         let mut trait_refs: Vec<hir_ty::TraitRef> = Vec::new();
-                        let mut j: usize = 0;
-                        while j < bounds.len() {
+                        for j in 0usize..bounds.len() {
                             let bound_ty = lower_type(ctx, &bounds[j]);
                             let trait_ref = type_to_trait_ref(&bound_ty, bounds[j].span);
                             if trait_ref.is_some() {
                                 trait_refs.push(trait_ref.unwrap());
                             }
-                            j = j + 1;
                         }
                         if trait_refs.len() > 0 {
                             let pred = hir_ty::WherePredicate::TypeBound {
@@ -1179,7 +1136,6 @@ pub fn lower_generics(ctx: &mut hir_lower_ctx::LoweringCtx, type_params: &Option
                         where_predicates.push(pred);
                     }
                 }
-                i = i + 1;
             }
         }
     }
@@ -1193,10 +1149,8 @@ fn type_to_trait_ref(ty: &hir_ty::Type, span: common::Span) -> Option<hir_ty::Tr
         &hir_ty::TypeKind::Adt { def_id, ref args } => {
             // Manually copy the args vector since Blood doesn't have clone
             let mut args_copy: Vec<hir_ty::Type> = Vec::new();
-            let mut i: usize = 0;
-            while i < args.len() {
+            for i in 0usize..args.len() {
                 args_copy.push(hir_ty::copy_type(&args[i]));
-                i = i + 1;
             }
             Some(hir_ty::TraitRef::new(def_id, args_copy, span))
         }

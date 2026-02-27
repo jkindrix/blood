@@ -104,10 +104,8 @@ pub fn infer_expr(checker: &mut typeck::TypeChecker, expr: &hir_expr::Expr) -> t
             checker.in_handler = true;
             let body_ty = infer_expr(checker, body.as_ref());
             // Type check each handler body
-            let mut i: usize = 0;
-            while i < handlers.len() {
+            for i in 0usize..handlers.len() {
                 let _hdlr_ty = infer_expr(checker, &handlers[i].body);
-                i = i + 1;
             }
             checker.in_handler = prev_in_handler;
             body_ty
@@ -119,10 +117,8 @@ pub fn infer_expr(checker: &mut typeck::TypeChecker, expr: &hir_expr::Expr) -> t
         &hir_expr::ExprKind::Try(ref inner) => infer_try(checker, inner.as_ref(), expr.span),
         &hir_expr::ExprKind::Unsafe(ref inner) => infer_expr(checker, inner.as_ref()),
         &hir_expr::ExprKind::Region { name: _, ref stmts, ref expr } => {
-            let mut i: usize = 0;
-            while i < stmts.len() {
+            for i in 0usize..stmts.len() {
                 infer_stmt(checker, &stmts[i]);
-                i = i + 1;
             }
             match expr {
                 &Some(ref e) => infer_expr(checker, e.as_ref()),
@@ -387,14 +383,12 @@ fn try_fn_pointer_coerce_id(
                                 return typeck::CoercionResult::Err;
                             }
                             let mut params_ok: bool = true;
-                            let mut i: usize = 0;
-                            while i < from_len {
+                            for i in 0usize..from_len {
                                 let p_id = interner.get_ty_list_element(from_params, i);
                                 let tp_id = interner.get_ty_list_element(to_params, i);
                                 if !checker.unify(p_id, tp_id, span) {
                                     params_ok = false;
                                 }
-                                i = i + 1;
                             }
                             if params_ok {
                                 match type_intern::get_fn_ret(from_resolved) {
@@ -434,14 +428,12 @@ fn try_fn_pointer_coerce_id(
                                 return typeck::CoercionResult::Err;
                             }
                             let mut params_ok: bool = true;
-                            let mut i: usize = 0;
-                            while i < from_len {
+                            for i in 0usize..from_len {
                                 let p_id = interner.get_ty_list_element(from_params, i);
                                 let tp_id = interner.get_ty_list_element(to_params, i);
                                 if !checker.unify(p_id, tp_id, span) {
                                     params_ok = false;
                                 }
-                                i = i + 1;
                             }
                             if params_ok {
                                 match type_intern::get_closure_ret(from_resolved) {
@@ -673,10 +665,8 @@ fn infer_path(checker: &mut typeck::TypeChecker, path: &hir_def::ResolvedPath, s
 
             // Non-generic function - build the function type directly
             let mut param_tys: Vec<type_intern::TyId> = Vec::new();
-            let mut i: usize = 0;
-            while i < fn_info.param_tys.len() {
+            for i in 0usize..fn_info.param_tys.len() {
                 param_tys.push(type_intern::TyId::new(fn_info.param_tys[i].index));
-                i = i + 1;
             }
             let interner = type_intern::type_interner();
             let params_list = interner.intern_ty_list(&param_tys);
@@ -708,12 +698,10 @@ fn infer_path(checker: &mut typeck::TypeChecker, path: &hir_def::ResolvedPath, s
             // Build the ADT type for the parent enum
             let mut type_args: Vec<type_intern::TyId> = Vec::new();
             let mut subst = unify::TypeParamSubst::new();
-            let mut g: u32 = 0;
-            while g < lookup.num_generics {
+            for g in 0u32..lookup.num_generics {
                 let fresh = checker.fresh_infer();
                 type_args.push(type_intern::TyId::new(fresh.index));
                 subst.add_id(g, fresh);
-                g = g + 1;
             }
             let interner = type_intern::type_interner();
             let args_list = interner.intern_ty_list(&type_args);
@@ -725,10 +713,8 @@ fn infer_path(checker: &mut typeck::TypeChecker, path: &hir_def::ResolvedPath, s
             } else {
                 // Tuple variant - return a function type (field_tys) -> Adt
                 let mut param_tys: Vec<type_intern::TyId> = Vec::new();
-                let mut fi: usize = 0;
-                while fi < lookup.field_tys.len() {
+                for fi in 0usize..lookup.field_tys.len() {
                     param_tys.push(unify::substitute_type_params_id(lookup.field_tys[fi], &subst));
-                    fi = fi + 1;
                 }
                 let params_list = interner.intern_ty_list(&param_tys);
                 return interner.mk_fn(params_list, adt_ty, type_intern::EffectRowId::new(0));
@@ -741,10 +727,8 @@ fn infer_path(checker: &mut typeck::TypeChecker, path: &hir_def::ResolvedPath, s
     match checker.get_struct(def_id) {
         Option::Some(ref struct_info) => {
             let mut type_args: Vec<type_intern::TyId> = Vec::new();
-            let mut g: u32 = 0;
-            while g < struct_info.num_generics {
+            for g in 0u32..struct_info.num_generics {
                 type_args.push(checker.fresh_infer());
-                g = g + 1;
             }
             let interner = type_intern::type_interner();
             let args_list = interner.intern_ty_list(&type_args);
@@ -766,24 +750,20 @@ fn instantiate_fn_sig(checker: &mut typeck::TypeChecker, fn_info: &typeck::FnSig
     // Build a mapping from type-parameter Infer IDs to fresh Infer variables.
     // type_param_ids contains the actual TyVarId indices assigned during HIR lowering.
     let mut subst = unify::TypeParamSubst::new();
-    let mut i: u32 = 0;
-    while i < fn_info.num_generics {
+    for i in 0u32..fn_info.num_generics {
         let fresh_var = checker.fresh_infer();
         if (i as usize) < fn_info.type_param_ids.len() {
             subst.add_id(fn_info.type_param_ids[i as usize], fresh_var);
         } else {
             subst.add_id(i, fresh_var);
         }
-        i = i + 1;
     }
 
     // Substitute Infer(param_id) → fresh Infer in parameter types
     // Uses substitute_type_params_id which handles both Infer and Param nodes
     let mut param_tys: Vec<type_intern::TyId> = Vec::new();
-    let mut j: usize = 0;
-    while j < fn_info.param_tys.len() {
+    for j in 0usize..fn_info.param_tys.len() {
         param_tys.push(unify::substitute_type_params_id(fn_info.param_tys[j], &subst));
-        j = j + 1;
     }
 
     // Substitute Infer(param_id) → fresh Infer in return type
@@ -1003,12 +983,10 @@ fn check_call_trait_bounds(
             }
             // Collect resolved argument types
             let mut resolved_arg_types: Vec<type_intern::TyId> = Vec::new();
-            let mut ai: usize = 0;
-            while ai < args.len() {
+            for ai in 0usize..args.len() {
                 let arg_ty = infer_expr(checker, &args[ai]);
                 let resolved = checker.resolve(arg_ty);
                 resolved_arg_types.push(resolved);
-                ai = ai + 1;
             }
             checker.check_where_clause_bounds(fn_info, &resolved_arg_types, span);
         }
@@ -1051,11 +1029,9 @@ fn infer_call(
             }
 
             // Check each argument against parameter type
-            let mut i: usize = 0;
-            while i < args.len() {
+            for i in 0usize..args.len() {
                 let param_id = type_intern::type_to_ty_id(&params[i]);
                 check_expr(checker, &args[i], param_id);
-                i = i + 1;
             }
 
             // Check that callee's effects are handled by caller (if not in handler)
@@ -1066,21 +1042,17 @@ fn infer_call(
                     match checker.get_fn_sig(sig_def_id) {
                         Option::Some(ref fn_info) => {
                             if fn_info.effect_def_ids.len() > 0 && !checker.in_handler {
-                                let mut efi: usize = 0;
-                                while efi < fn_info.effect_def_ids.len() {
+                                for efi in 0usize..fn_info.effect_def_ids.len() {
                                     let eff_id = fn_info.effect_def_ids[efi];
                                     let mut found_in_caller = false;
-                                    let mut ej: usize = 0;
-                                    while ej < checker.current_effect_row.len() {
+                                    for ej in 0usize..checker.current_effect_row.len() {
                                         if checker.current_effect_row[ej] == eff_id {
                                             found_in_caller = true;
                                         }
-                                        ej = ej + 1;
                                     }
                                     if !found_in_caller {
                                         checker.error(typeck::TypeErrorKind::UnhandledEffect, span);
                                     }
-                                    efi = efi + 1;
                                 }
                             }
 
@@ -1110,11 +1082,9 @@ fn infer_call(
                 );
                 return type_intern::CommonTypes::error();
             }
-            let mut ci: usize = 0;
-            while ci < args.len() {
+            for ci in 0usize..args.len() {
                 let param_id = type_intern::type_to_ty_id(&params[ci]);
                 check_expr(checker, &args[ci], param_id);
-                ci = ci + 1;
             }
             type_intern::type_to_ty_id(ret.as_ref())
         }
@@ -1155,10 +1125,8 @@ fn infer_method_call(
     let interner = type_intern::type_interner();
     match interner.get(resolved_receiver) {
         &type_intern::InternedTypeKind::Infer(var_id) => {
-            let mut i: usize = 0;
-            while i < args.len() {
+            for i in 0usize..args.len() {
                 infer_expr(checker, &args[i]);
-                i = i + 1;
             }
             let return_ty = checker.fresh_infer();
             // Extract the TyVarId index from the fresh infer
@@ -1179,18 +1147,15 @@ fn infer_method_call(
         // Multiple methods with same name — perform overload resolution.
         // Infer argument types first, then select the matching overload.
         let mut arg_tys: Vec<type_intern::TyId> = Vec::new();
-        let mut ai: usize = 0;
-        while ai < args.len() {
+        for ai in 0usize..args.len() {
             arg_tys.push(infer_expr(checker, &args[ai]));
-            ai = ai + 1;
         }
         // Resolve inferred types for overload matching.
         // For still-unresolved Infer variables, apply default type rules:
         // unsuffixed integers → i32, unsuffixed floats → f64.
         // This allows overload resolution to disambiguate numeric literals.
         let mut resolved_arg_tys: Vec<type_intern::TyId> = Vec::new();
-        let mut ri: usize = 0;
-        while ri < arg_tys.len() {
+        for ri in 0usize..arg_tys.len() {
             let resolved = checker.resolve(arg_tys[ri]);
             let interner = type_intern::type_interner();
             let defaulted = match interner.get(resolved) {
@@ -1201,7 +1166,6 @@ fn infer_method_call(
                 _ => resolved,
             };
             resolved_arg_tys.push(defaulted);
-            ri = ri + 1;
         }
         checker.lookup_method_overloaded(resolved_receiver, method.symbol, &resolved_arg_tys)
     } else {
@@ -1231,15 +1195,13 @@ fn infer_method_call(
                 let recv_hir = type_intern::ty_id_to_type(resolved_receiver);
                 unify::extract_type_params_from_self_ty(&impl_self_hir, &recv_hir, &mut subst);
                 // Fill in any remaining params with fresh inference variables
-                let mut i: u32 = 0;
-                while i < impl_info.num_generics {
+                for i in 0u32..impl_info.num_generics {
                     match subst.lookup_id(i) {
                         Option::Some(_) => {}
                         Option::None => {
                             subst.add_id(i, checker.fresh_infer());
                         }
                     }
-                    i = i + 1;
                 }
             }
 
@@ -1262,11 +1224,9 @@ fn infer_method_call(
             // arg types with param types so inference variables get constrained
             // (e.g., unsuffixed `42` Infer → i32 from param type).
             {
-                let mut i: usize = 0;
-                while i < args.len() {
+                for i in 0usize..args.len() {
                     let param_ty = unify::substitute_type_params_id(method_info.param_tys[i], &subst);
                     check_expr(checker, &args[i], param_ty);
-                    i = i + 1;
                 }
             }
 
@@ -1291,10 +1251,8 @@ fn infer_method_call(
                 checker.error_with_note(typeck::TypeErrorKind::NoSuchMethod, span, note);
 
                 // Still infer types for all arguments
-                let mut i: usize = 0;
-                while i < args.len() {
+                for i in 0usize..args.len() {
                     infer_expr(checker, &args[i]);
-                    i = i + 1;
                 }
             }
 
@@ -1351,14 +1309,12 @@ fn infer_field(
             // Record field access by name
             match field {
                 &hir_expr::FieldAccess::Named { ref name, field_idx: _ } => {
-                    let mut i: usize = 0;
-                    while i < fields.len() {
+                    for i in 0usize..fields.len() {
                         if fields[i].name.index == name.symbol.index {
                             // Record the resolved field index for MIR lowering
                             checker.record_field_resolution(name.span.start, i as u32);
                             return type_intern::type_to_ty_id(&fields[i].ty);
                         }
-                        i = i + 1;
                     }
                     checker.error_with_note(
                         typeck::TypeErrorKind::NoSuchField,
@@ -1394,10 +1350,8 @@ fn infer_field(
                             // If the struct has type arguments, substitute them
                             if args.len() > 0 {
                                 let mut subst = unify::TypeParamSubst::new();
-                                let mut ai: usize = 0;
-                                while ai < args.len() {
+                                for ai in 0usize..args.len() {
                                     subst.add_id(ai as u32, type_intern::type_to_ty_id(&args[ai]));
-                                    ai = ai + 1;
                                 }
                                 unify::substitute_type_params_id(field_ty, &subst)
                             } else {
@@ -1421,10 +1375,8 @@ fn infer_field(
                                 let field_ty = type_intern::TyId::new(struct_info.fields[idx_usize].ty.index);
                                 if args.len() > 0 {
                                     let mut subst = unify::TypeParamSubst::new();
-                                    let mut ai: usize = 0;
-                                    while ai < args.len() {
+                                    for ai in 0usize..args.len() {
                                         subst.add_id(ai as u32, type_intern::type_to_ty_id(&args[ai]));
-                                        ai = ai + 1;
                                     }
                                     unify::substitute_type_params_id(field_ty, &subst)
                                 } else {
@@ -1579,10 +1531,8 @@ fn infer_tuple(
     span: common::Span,
 ) -> type_intern::TyId {
     let mut types: Vec<type_intern::TyId> = Vec::new();
-    let mut i: usize = 0;
-    while i < exprs.len() {
+    for i in 0usize..exprs.len() {
         types.push(infer_expr(checker, &exprs[i]));
-        i = i + 1;
     }
     let interner = type_intern::type_interner();
     let elems_list = interner.intern_ty_list(&types);
@@ -1604,11 +1554,9 @@ fn infer_array(
             } else {
                 // Infer element type from first element, unify all others
                 let elem_ty = infer_expr(checker, &exprs[0]);
-                let mut i: usize = 1;
-                while i < exprs.len() {
+                for i in 1usize..exprs.len() {
                     let ty = infer_expr(checker, &exprs[i]);
                     checker.unify(ty, elem_ty, exprs[i].span);
-                    i = i + 1;
                 }
                 let resolved_elem = checker.resolve(elem_ty);
                 type_intern::type_interner().mk_array(resolved_elem, exprs.len() as u64)
@@ -1632,8 +1580,7 @@ fn infer_struct(
     span: common::Span,
 ) -> type_intern::TyId {
     // Check all field expressions and record field resolutions
-    let mut i: usize = 0;
-    while i < fields.len() {
+    for i in 0usize..fields.len() {
         infer_expr(checker, &fields[i].val);
         // Record field resolution for struct expression fields (used by MIR lowering
         // for struct update syntax to get correct field indices)
@@ -1643,7 +1590,6 @@ fn infer_struct(
             }
             Option::None => {}
         }
-        i = i + 1;
     }
 
     // Check base expression if present
@@ -1676,26 +1622,20 @@ fn infer_struct(
         Option::Some(ref lookup) => {
             // Build ADT type using the parent enum's DefId
             let mut args: Vec<type_intern::TyId> = Vec::new();
-            let mut g: u32 = 0;
-            while g < lookup.num_generics {
+            for g in 0u32..lookup.num_generics {
                 args.push(checker.fresh_infer());
-                g = g + 1;
             }
 
             // Unify field expression types with variant field types
             if lookup.field_names.len() > 0 {
                 let mut param_subst = unify::TypeParamSubst::new();
                 if lookup.num_generics > 0 {
-                    let mut si: usize = 0;
-                    while si < args.len() {
+                    for si in 0usize..args.len() {
                         param_subst.add_id(si as u32, args[si]);
-                        si = si + 1;
                     }
                 }
-                let mut fi: usize = 0;
-                while fi < fields.len() {
-                    let mut vi: usize = 0;
-                    while vi < lookup.field_names.len() {
+                for fi in 0usize..fields.len() {
+                    for vi in 0usize..lookup.field_names.len() {
                         if lookup.field_names[vi].index == fields[fi].name.symbol.index {
                             let declared_ty = lookup.field_tys[vi];
                             let expected_ty = if lookup.num_generics > 0 {
@@ -1705,9 +1645,7 @@ fn infer_struct(
                             };
                             checker.unify(fields[fi].val.ty, expected_ty, fields[fi].val.span);
                         }
-                        vi = vi + 1;
                     }
-                    fi = fi + 1;
                 }
             }
 
@@ -1725,10 +1663,8 @@ fn infer_struct(
         path.type_arg_count
     };
     let mut args: Vec<type_intern::TyId> = Vec::new();
-    let mut ta: u32 = 0;
-    while ta < num_gen {
+    for ta in 0u32..num_gen {
         args.push(checker.fresh_infer());
-        ta = ta + 1;
     }
 
     // Unify field expression types with declared field types to propagate type constraints.
@@ -1738,14 +1674,11 @@ fn infer_struct(
     // incorrect element sizes (always 8 bytes instead of the actual element size).
     let mut param_subst = unify::TypeParamSubst::new();
     if num_gen > 0 {
-        let mut si: usize = 0;
-        while si < args.len() {
+        for si in 0usize..args.len() {
             param_subst.add_id(si as u32, args[si]);
-            si = si + 1;
         }
     }
-    let mut fi: usize = 0;
-    while fi < fields.len() {
+    for fi in 0usize..fields.len() {
         match checker.get_struct_field_ty(path.def_id, fields[fi].name.symbol) {
             Option::Some(declared_ty) => {
                 let expected_ty = if num_gen > 0 {
@@ -1757,7 +1690,6 @@ fn infer_struct(
             }
             Option::None => {}
         }
-        fi = fi + 1;
     }
 
     let interner = type_intern::type_interner();
@@ -1775,8 +1707,7 @@ fn infer_anon_record(
     // Records are not yet interned — use ty_id_to_type bridge to build hir_ty::Type,
     // then convert back. This is temporary until records are supported in InternedTypeKind.
     let mut record_fields: Vec<hir_ty::RecordField> = Vec::new();
-    let mut i: usize = 0;
-    while i < fields.len() {
+    for i in 0usize..fields.len() {
         let field = &fields[i];
         let field_ty_id = infer_expr(checker, &field.val);
         let field_ty_hir = type_intern::ty_id_to_type(field_ty_id);
@@ -1784,7 +1715,6 @@ fn infer_anon_record(
             field.name.symbol,
             field_ty_hir,
         ));
-        i = i + 1;
     }
 
     // Create a closed record type (no row variable), then intern
@@ -2116,10 +2046,8 @@ fn infer_block(
 ) -> type_intern::TyId {
     // Process all statements, tracking the last statement's type
     let mut last_stmt_ty: type_intern::TyId = type_intern::CommonTypes::unit();
-    let mut i: usize = 0;
-    while i < block.stmts.len() {
+    for i in 0usize..block.stmts.len() {
         last_stmt_ty = infer_stmt(checker, &block.stmts[i]);
-        i = i + 1;
     }
 
     // Block type is the type of the final expression, or unit.
@@ -2255,10 +2183,8 @@ fn infer_match(
     // Bridge: convert TyId to hir_ty::Type for pattern propagation
     // (pattern functions still take &hir_ty::Type until pattern batch conversion)
     let scrut_ty_raw_type = type_intern::ty_id_to_type(scrut_ty_raw);
-    let mut pat_i: usize = 0;
-    while pat_i < arms.len() {
+    for pat_i in 0usize..arms.len() {
         propagate_match_pattern_types(checker, &arms[pat_i].pattern, &scrut_ty_raw_type);
-        pat_i = pat_i + 1;
     }
 
     // Infer type from first arm, unify all others.
@@ -2266,8 +2192,7 @@ fn infer_match(
     // adopt the next non-diverging arm's type as the result.
     let mut result_ty = infer_expr(checker, &arms[0].body);
 
-    let mut i: usize = 1;
-    while i < arms.len() {
+    for i in 1usize..arms.len() {
         let arm_ty = infer_expr(checker, &arms[i].body);
         if is_never_type_id(result_ty) {
             // Previous result was Never (diverging); adopt this arm's type
@@ -2275,7 +2200,6 @@ fn infer_match(
         } else {
             checker.unify(arm_ty, result_ty, arms[i].body.span);
         }
-        i = i + 1;
     }
 
     // Check pattern exhaustiveness (resolve inference variables first)
@@ -2289,11 +2213,9 @@ fn infer_match(
 
     // Check for unreachable arms (wildcard/catch-all before other arms)
     let unreachable = typeck::check_unreachable_arms(checker, arms);
-    let mut ui: usize = 0;
-    while ui < unreachable.unreachable_indices.len() {
+    for ui in 0usize..unreachable.unreachable_indices.len() {
         let idx = unreachable.unreachable_indices[ui] as usize;
         checker.error(typeck::TypeErrorKind::UnreachablePattern, arms[idx].pattern.span);
-        ui = ui + 1;
     }
 
     checker.resolve(result_ty)
@@ -2467,10 +2389,8 @@ fn infer_closure(
 ) -> type_intern::TyId {
     // Build parameter types as TyIds
     let mut param_ty_ids: Vec<type_intern::TyId> = Vec::new();
-    let mut i: usize = 0;
-    while i < params.len() {
+    for i in 0usize..params.len() {
         param_ty_ids.push(params[i].ty);
-        i = i + 1;
     }
 
     let ret_ty_id = return_ty;
@@ -2523,12 +2443,10 @@ fn infer_perform(
 ) -> type_intern::TyId {
     // Check that the effect is declared in the current function's effect row
     let mut effect_declared = false;
-    let mut ei: usize = 0;
-    while ei < checker.current_effect_row.len() {
+    for ei in 0usize..checker.current_effect_row.len() {
         if checker.current_effect_row[ei] == effect_def.index {
             effect_declared = true;
         }
-        ei = ei + 1;
     }
     if !effect_declared && !checker.in_handler {
         checker.error(typeck::TypeErrorKind::UndeclaredEffect, span);
@@ -2536,11 +2454,9 @@ fn infer_perform(
 
     // Infer argument types first
     let mut arg_tys: Vec<type_intern::TyId> = Vec::new();
-    let mut i: usize = 0;
-    while i < args.len() {
+    for i in 0usize..args.len() {
         let arg_ty = infer_expr(checker, &args[i]);
         arg_tys.push(arg_ty);
-        i = i + 1;
     }
 
     // Look up the effect to find the operation
@@ -2564,8 +2480,7 @@ fn infer_perform(
 
         let mut found = false;
         let mut result_ty = checker.fresh_infer();
-        let mut oi: u32 = 0;
-        while oi < num_ops {
+        for oi in 0u32..num_ops {
             let oi_usize = oi as usize;
             match &checker.effects[def_idx] {
                 &Some(ref info) => {
@@ -2581,10 +2496,8 @@ fn infer_perform(
                         } else if !effect_is_generic {
                             // Only unify when the effect is non-generic
                             // effect_op.param_tys are already TyId (from typeck_info migration)
-                            let mut ai: usize = 0;
-                            while ai < arg_tys.len() {
+                            for ai in 0usize..arg_tys.len() {
                                 checker.unify(arg_tys[ai], type_intern::TyId::new(effect_op.param_tys[ai].index), span);
-                                ai = ai + 1;
                             }
                         }
                         if effect_is_generic {
@@ -2599,7 +2512,6 @@ fn infer_perform(
                 }
                 &None => {}
             }
-            oi = oi + 1;
         }
         if !found {
             // Operation not found in effect - report error
@@ -2824,10 +2736,8 @@ fn propagate_match_sub_patterns(
             let elem_ty = get_element_type_id(resolved);
             match elem_ty {
                 Option::Some(et) => {
-                    let mut i: usize = 0;
-                    while i < prefix.len() {
+                    for i in 0usize..prefix.len() {
                         propagate_pattern_types(checker, &prefix[i], et);
-                        i = i + 1;
                     }
                     match rest {
                         &Some(ref r) => {
@@ -2835,10 +2745,8 @@ fn propagate_match_sub_patterns(
                         }
                         &None => {}
                     }
-                    let mut j: usize = 0;
-                    while j < suffix.len() {
+                    for j in 0usize..suffix.len() {
                         propagate_pattern_types(checker, &suffix[j], et);
-                        j = j + 1;
                     }
                 }
                 Option::None => {}
@@ -2847,10 +2755,8 @@ fn propagate_match_sub_patterns(
 
         &hir_expr::PatternKind::Or(ref alternatives) => {
             // Each alternative sees the same raw scrutinee
-            let mut i: usize = 0;
-            while i < alternatives.len() {
+            for i in 0usize..alternatives.len() {
                 propagate_match_sub_patterns(checker, &alternatives[i], raw_scrutinee);
-                i = i + 1;
             }
         }
 
@@ -3003,10 +2909,8 @@ fn propagate_pattern_types_inner(
             let elem_ty = get_element_type_id(resolved);
             match elem_ty {
                 Option::Some(et) => {
-                    let mut i: usize = 0;
-                    while i < prefix.len() {
+                    for i in 0usize..prefix.len() {
                         propagate_pattern_types(checker, &prefix[i], et);
-                        i = i + 1;
                     }
                     match rest {
                         &Some(ref r) => {
@@ -3015,10 +2919,8 @@ fn propagate_pattern_types_inner(
                         }
                         &None => {}
                     }
-                    let mut j: usize = 0;
-                    while j < suffix.len() {
+                    for j in 0usize..suffix.len() {
                         propagate_pattern_types(checker, &suffix[j], et);
-                        j = j + 1;
                     }
                 }
                 Option::None => {}
@@ -3026,10 +2928,8 @@ fn propagate_pattern_types_inner(
         }
 
         &hir_expr::PatternKind::Or(ref alternatives) => {
-            let mut i: usize = 0;
-            while i < alternatives.len() {
+            for i in 0usize..alternatives.len() {
                 propagate_pattern_types(checker, &alternatives[i], resolved);
-                i = i + 1;
             }
         }
 
@@ -3055,10 +2955,8 @@ fn build_adt_subst(ty: type_intern::TyId) -> unify::TypeParamSubst {
         &type_intern::InternedTypeKind::Adt { def_id: _, args } => {
             let mut subst = unify::TypeParamSubst::new();
             let len = interner.ty_list_len(args);
-            let mut i: usize = 0;
-            while i < len {
+            for i in 0usize..len {
                 subst.add_id(i as u32, interner.get_ty_list_element(args, i));
-                i = i + 1;
             }
             subst
         }
@@ -3116,8 +3014,7 @@ fn propagate_struct_pattern_fields(
     if is_struct {
         // Struct pattern — look up field types by name
         // get_struct_field_ty returns Option<TyId>
-        let mut i: usize = 0;
-        while i < fields.len() {
+        for i in 0usize..fields.len() {
             let field_name = fields[i].name.symbol;
             match checker.get_struct_field_ty(def_id, field_name) {
                 Some(raw_ty) => {
@@ -3136,7 +3033,6 @@ fn propagate_struct_pattern_fields(
                     checker.error(typeck::TypeErrorKind::NoSuchField, fields[i].name.span);
                 }
             }
-            i = i + 1;
         }
         return;
     }
@@ -3149,13 +3045,11 @@ fn propagate_struct_pattern_fields(
 
             // Match field patterns by name against variant's field_names
             // lookup.field_tys is Vec<TyId>
-            let mut i: usize = 0;
-            while i < fields.len() {
+            for i in 0usize..fields.len() {
                 let field_name = fields[i].name.symbol;
                 // Find matching field name in variant
                 let mut found: bool = false;
-                let mut k: usize = 0;
-                while k < lookup.field_names.len() {
+                for k in 0usize..lookup.field_names.len() {
                     if lookup.field_names[k].index == field_name.index {
                         // Found matching field — get its type
                         if k < lookup.field_tys.len() {
@@ -3167,14 +3061,12 @@ fn propagate_struct_pattern_fields(
                         checker.record_field_resolution(fields[i].name.span.start, k as u32);
                         found = true;
                     }
-                    k = k + 1;
                 }
                 if !found {
                     let mut note = common::make_string("no such field in type ");
                     note.push_str(type_intern::format_ty_id(resolved_ty).as_str());
                     checker.error_with_note(typeck::TypeErrorKind::NoSuchField, fields[i].name.span, note);
                 }
-                i = i + 1;
             }
         }
         Option::None => {
@@ -3201,12 +3093,10 @@ fn propagate_tuple_struct_pattern_fields(
     match checker.find_enum_for_variant(def_id) {
         Option::Some(ref lookup) => {
             let limit = if fields.len() < lookup.field_tys.len() { fields.len() } else { lookup.field_tys.len() };
-            let mut i: usize = 0;
-            while i < limit {
+            for i in 0usize..limit {
                 let raw_ty = type_intern::TyId::new(lookup.field_tys[i].index);
                 let concrete_ty = unify::substitute_type_params_id(raw_ty, &subst);
                 propagate_pattern_types(checker, &fields[i], concrete_ty);
-                i = i + 1;
             }
         }
         Option::None => {

@@ -170,28 +170,22 @@ impl MirBody {
     /// Computes the predecessor map for all blocks.
     pub fn predecessors(self: &MirBody) -> Vec<Vec<mir_def::BasicBlockId>> {
         let mut preds: Vec<Vec<mir_def::BasicBlockId>> = Vec::new();
-        let mut i: usize = 0;
-        while i < self.basic_blocks.len() {
+        for i in 0usize..self.basic_blocks.len() {
             preds.push(Vec::new());
-            i = i + 1;
         }
 
-        let mut bb_idx: usize = 0;
-        while bb_idx < self.basic_blocks.len() {
+        for bb_idx in 0usize..self.basic_blocks.len() {
             let block = &self.basic_blocks[bb_idx];
             match &block.terminator {
                 &Option::Some(ref term) => {
                     let succs = term.successors();
-                    let mut j: usize = 0;
-                    while j < succs.len() {
+                    for j in 0usize..succs.len() {
                         let succ_idx = succs[j].as_usize();
                         preds[succ_idx].push(mir_def::BasicBlockId::new(bb_idx as u32));
-                        j = j + 1;
                     }
                 }
                 &Option::None => {}
             }
-            bb_idx = bb_idx + 1;
         }
 
         preds
@@ -200,10 +194,8 @@ impl MirBody {
     /// Returns blocks in reverse postorder (useful for dataflow analysis).
     pub fn reverse_postorder(self: &MirBody) -> Vec<mir_def::BasicBlockId> {
         let mut visited: Vec<bool> = Vec::new();
-        let mut i: usize = 0;
-        while i < self.basic_blocks.len() {
+        for i in 0usize..self.basic_blocks.len() {
             visited.push(false);
-            i = i + 1;
         }
 
         let mut result: Vec<mir_def::BasicBlockId> = Vec::new();
@@ -236,10 +228,8 @@ impl MirBody {
         match &block_data.terminator {
             &Option::Some(ref term) => {
                 let succs = term.successors();
-                let mut i: usize = 0;
-                while i < succs.len() {
+                for i in 0usize..succs.len() {
                     self.postorder_visit(succs[i], visited, result);
-                    i = i + 1;
                 }
             }
             &Option::None => {}

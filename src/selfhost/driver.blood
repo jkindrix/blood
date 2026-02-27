@@ -241,20 +241,16 @@ impl Compiler {
         // Convert turbofish entries from HIR to MIR format
         let mut turbofish_const_args: Vec<mir_lower_ctx::TurbofishConstArg> = Vec::new();
         {
-            let mut ti: usize = 0;
-            while ti < lower_result.turbofish_const_entries.len() {
+            for ti in 0usize..lower_result.turbofish_const_entries.len() {
                 let entry = &lower_result.turbofish_const_entries[ti];
                 let mut vals: Vec<u64> = Vec::new();
-                let mut vi: usize = 0;
-                while vi < entry.values.len() {
+                for vi in 0usize..entry.values.len() {
                     vals.push(entry.values[vi]);
-                    vi = vi + 1;
                 }
                 turbofish_const_args.push(mir_lower_ctx::TurbofishConstArg::new(
                     entry.span_start,
                     vals,
                 ));
-                ti = ti + 1;
             }
         }
 
@@ -265,8 +261,7 @@ impl Compiler {
         let mut next_mono_def_id: u32 = 0;
         let has_const_generics: bool = const_generic_fn_set.len() > 0;
 
-        let mut body_idx: usize = 0;
-        while body_idx < lower_result.bodies.len() {
+        for body_idx in 0usize..lower_result.bodies.len() {
             let body_entry = &lower_result.bodies[body_idx];
             let hir_body = &body_entry.body;
             let body_id = body_entry.body_id;
@@ -300,7 +295,6 @@ impl Compiler {
 
             // Skip const-generic function bodies — they'll be re-lowered per specialization
             if is_const_generic_body(body_id.index, &const_generic_body_ids) {
-                body_idx = body_idx + 1;
                 continue;
             }
 
@@ -341,23 +335,19 @@ impl Compiler {
 
             // Collect mono requests
             {
-                let mut ri: usize = 0;
-                while ri < mir_result.mono_requests.len() {
+                for ri in 0usize..mir_result.mono_requests.len() {
                     all_mono_requests.push(mir_lower_ctx::MonoRequest::new(
                         mir_result.mono_requests[ri].original_def_id,
                         clone_u64_vec(&mir_result.mono_requests[ri].const_values),
                         mir_result.mono_requests[ri].specialized_def_id,
                         common::make_string(mir_result.mono_requests[ri].fn_name.as_str()),
                     ));
-                    ri = ri + 1;
                 }
             }
 
             // Collect any MIR lowering errors
-            let mut ei: usize = 0;
-            while ei < mir_result.errors.len() {
+            for ei in 0usize..mir_result.errors.len() {
                 mir_errors.push(convert_mir_error(&mir_result.errors[ei]));
-                ei = ei + 1;
             }
 
             mir_functions.push((fn_name, mir_result.body));
@@ -377,15 +367,13 @@ impl Compiler {
                 }
             }
 
-            body_idx = body_idx + 1;
         }
 
         // Phase 4c: Monomorphize const-generic functions
         // For each mono request, find the original HIR body, lower it with const_bindings,
         // and add the specialized function to mir_functions.
         {
-            let mut mi: usize = 0;
-            while mi < all_mono_requests.len() {
+            for mi in 0usize..all_mono_requests.len() {
                 let req = &all_mono_requests[mi];
 
                 // Find the HIR body and FnInfo for the original const-generic function
@@ -417,10 +405,8 @@ impl Compiler {
                         );
 
                         // Collect errors
-                        let mut ei: usize = 0;
-                        while ei < spec_result.errors.len() {
+                        for ei in 0usize..spec_result.errors.len() {
                             mir_errors.push(convert_mir_error(&spec_result.errors[ei]));
-                            ei = ei + 1;
                         }
 
                         // Add specialized function
@@ -429,7 +415,6 @@ impl Compiler {
                     Option::None => {}
                 }
 
-                mi = mi + 1;
             }
         }
 
@@ -450,13 +435,11 @@ impl Compiler {
         if codegen_result.errors.len() > 0 {
             result.warnings = convert_codegen_errors_to_warnings(&codegen_result.errors);
         }
-        let mut wi: usize = 0;
-        while wi < codegen_result.warnings.len() {
+        for wi in 0usize..codegen_result.warnings.len() {
             result.warnings.push(error::CompileWarning::new(
                 error::CompilePhase::Codegen,
                 clone_string(&codegen_result.warnings[wi]),
             ));
-            wi = wi + 1;
         }
         result
     }
@@ -662,8 +645,7 @@ pub struct CheckResult {
 /// Converts parser diagnostics to compile errors.
 pub fn convert_parse_errors(diagnostics: &Vec<parser_base::Diagnostic>) -> Vec<error::CompileError> {
     let mut errors = Vec::new();
-    let mut i: usize = 0;
-    while i < diagnostics.len() {
+    for i in 0usize..diagnostics.len() {
         let diag = &diagnostics[i];
         let mut ce = error::CompileError::with_code(
             error::CompilePhase::Parse,
@@ -671,13 +653,10 @@ pub fn convert_parse_errors(diagnostics: &Vec<parser_base::Diagnostic>) -> Vec<e
             diag.span,
             common::make_string(parser_error_code(&diag.code)),
         );
-        let mut ni: usize = 0;
-        while ni < diag.notes.len() {
+        for ni in 0usize..diag.notes.len() {
             ce.notes.push(clone_string(&diag.notes[ni]));
-            ni = ni + 1;
         }
         errors.push(ce);
-        i = i + 1;
     }
     errors
 }
@@ -685,8 +664,7 @@ pub fn convert_parse_errors(diagnostics: &Vec<parser_base::Diagnostic>) -> Vec<e
 /// Converts HIR diagnostics to compile errors.
 pub fn convert_hir_diagnostics(diagnostics: &Vec<hir::Diagnostic>) -> Vec<error::CompileError> {
     let mut errors = Vec::new();
-    let mut i: usize = 0;
-    while i < diagnostics.len() {
+    for i in 0usize..diagnostics.len() {
         let diag = &diagnostics[i];
         errors.push(error::CompileError::with_code(
             error::CompilePhase::Lower,
@@ -694,15 +672,13 @@ pub fn convert_hir_diagnostics(diagnostics: &Vec<hir::Diagnostic>) -> Vec<error:
             diag.span,
             common::make_string(hir_diagnostic_code(&diag.code)),
         ));
-        i = i + 1;
     }
     errors
 }
 
 /// Checks if any diagnostic is an error (not just a warning).
 fn has_error_diagnostics(diagnostics: &Vec<hir::Diagnostic>) -> bool {
-    let mut i: usize = 0;
-    while i < diagnostics.len() {
+    for i in 0usize..diagnostics.len() {
         let diag = &diagnostics[i];
         match &diag.level {
             &hir::DiagnosticLevel::Error => return true,
@@ -710,7 +686,6 @@ fn has_error_diagnostics(diagnostics: &Vec<hir::Diagnostic>) -> bool {
             &hir::DiagnosticLevel::Note => {}
             &hir::DiagnosticLevel::Help => {}
         }
-        i = i + 1;
     }
     false
 }
@@ -718,8 +693,7 @@ fn has_error_diagnostics(diagnostics: &Vec<hir::Diagnostic>) -> bool {
 /// Converts type errors to compile errors.
 pub fn convert_type_errors(type_errors: &Vec<typeck::TypeError>) -> Vec<error::CompileError> {
     let mut errors = Vec::new();
-    let mut i: usize = 0;
-    while i < type_errors.len() {
+    for i in 0usize..type_errors.len() {
         let te = &type_errors[i];
         let mut ce = error::CompileError::with_code(
             error::CompilePhase::TypeCheck,
@@ -727,13 +701,10 @@ pub fn convert_type_errors(type_errors: &Vec<typeck::TypeError>) -> Vec<error::C
             te.span,
             common::make_string(type_error_code(&te.kind)),
         );
-        let mut ni: usize = 0;
-        while ni < te.notes.len() {
+        for ni in 0usize..te.notes.len() {
             ce.notes.push(clone_string(&te.notes[ni].message));
-            ni = ni + 1;
         }
         errors.push(ce);
-        i = i + 1;
     }
     errors
 }
@@ -749,10 +720,8 @@ fn convert_mir_error(err: &mir_lower_ctx::MirLowerError) -> error::CompileError 
         err.span,
         common::make_string(mir_lower_ctx::mir_error_code(&err.kind)),
     );
-    let mut ni: usize = 0;
-    while ni < err.notes.len() {
+    for ni in 0usize..err.notes.len() {
         ce.notes.push(clone_string(&err.notes[ni].message));
-        ni = ni + 1;
     }
     ce
 }
@@ -760,8 +729,7 @@ fn convert_mir_error(err: &mir_lower_ctx::MirLowerError) -> error::CompileError 
 /// Converts codegen errors to compile errors.
 fn convert_codegen_errors(codegen_errors: &Vec<codegen::codegen_ctx::CodegenError>) -> Vec<error::CompileError> {
     let mut errors = Vec::new();
-    let mut i: usize = 0;
-    while i < codegen_errors.len() {
+    for i in 0usize..codegen_errors.len() {
         let cge = &codegen_errors[i];
         let code_str = codegen::codegen_ctx::error_kind_code(&cge.kind);
         let mut message = common::make_string(codegen::codegen_ctx::error_kind_label(&cge.kind));
@@ -784,10 +752,8 @@ fn convert_codegen_errors(codegen_errors: &Vec<codegen::codegen_ctx::CodegenErro
                     *span,
                     common::make_string(code_str),
                 );
-                let mut ni: usize = 0;
-                while ni < cge.notes.len() {
+                for ni in 0usize..cge.notes.len() {
                     ce.notes.push(clone_string(&cge.notes[ni].message));
-                    ni = ni + 1;
                 }
                 errors.push(ce);
             }
@@ -800,15 +766,12 @@ fn convert_codegen_errors(codegen_errors: &Vec<codegen::codegen_ctx::CodegenErro
                     error::CompilePhase::Codegen,
                     coded_msg,
                 );
-                let mut ni: usize = 0;
-                while ni < cge.notes.len() {
+                for ni in 0usize..cge.notes.len() {
                     ce.notes.push(clone_string(&cge.notes[ni].message));
-                    ni = ni + 1;
                 }
                 errors.push(ce);
             }
         }
-        i = i + 1;
     }
     errors
 }
@@ -816,8 +779,7 @@ fn convert_codegen_errors(codegen_errors: &Vec<codegen::codegen_ctx::CodegenErro
 /// Converts codegen errors to compile warnings (for non-fatal errors that didn't prevent codegen).
 fn convert_codegen_errors_to_warnings(codegen_errors: &Vec<codegen::codegen_ctx::CodegenError>) -> Vec<error::CompileWarning> {
     let mut warnings = Vec::new();
-    let mut i: usize = 0;
-    while i < codegen_errors.len() {
+    for i in 0usize..codegen_errors.len() {
         let ce = &codegen_errors[i];
         let code_str = codegen::codegen_ctx::error_kind_code(&ce.kind);
         let mut message = common::make_string(codegen::codegen_ctx::error_kind_label(&ce.kind));
@@ -832,11 +794,9 @@ fn convert_codegen_errors_to_warnings(codegen_errors: &Vec<codegen::codegen_ctx:
             &Option::None => {}
         }
         // Append contextual notes
-        let mut ni: usize = 0;
-        while ni < ce.notes.len() {
+        for ni in 0usize..ce.notes.len() {
             message.push_str("\n  note: ");
             message.push_str(ce.notes[ni].message.as_str());
-            ni = ni + 1;
         }
         // Use code-aware constructor when span is available
         match &ce.span {
@@ -860,7 +820,6 @@ fn convert_codegen_errors_to_warnings(codegen_errors: &Vec<codegen::codegen_ctx:
                 ));
             }
         }
-        i = i + 1;
     }
     warnings
 }
@@ -1006,8 +965,7 @@ pub fn find_fn_for_body(
     items: &Vec<hir_lower_ctx::ItemEntry>,
     target_body_id: hir_def::BodyId,
 ) -> Option<FnInfo> {
-    let mut i: usize = 0;
-    while i < items.len() {
+    for i in 0usize..items.len() {
         let entry = &items[i];
         match &entry.item.kind {
             &hir_item::ItemKind::Fn(ref fn_def) => {
@@ -1028,8 +986,7 @@ pub fn find_fn_for_body(
             }
             &hir_item::ItemKind::Impl(ref impl_def) => {
                 // Check associated functions in impl blocks
-                let mut j: usize = 0;
-                while j < impl_def.items.len() {
+                for j in 0usize..impl_def.items.len() {
                     match &impl_def.items[j] {
                         &hir_item::AssocItem::Fn(ref assoc_fn) => {
                             match &assoc_fn.body_id {
@@ -1065,7 +1022,6 @@ pub fn find_fn_for_body(
                             }
                         }
                     }
-                    j = j + 1;
                 }
             }
             // Other item kinds don't have function bodies
@@ -1096,8 +1052,7 @@ pub fn find_fn_for_body(
             }
             &hir_item::ItemKind::Trait(ref trait_def) => {
                 // Check associated functions in trait definitions (default method bodies)
-                let mut j: usize = 0;
-                while j < trait_def.items.len() {
+                for j in 0usize..trait_def.items.len() {
                     match &trait_def.items[j] {
                         &hir_item::AssocItem::Fn(ref assoc_fn) => {
                             match &assoc_fn.body_id {
@@ -1133,7 +1088,6 @@ pub fn find_fn_for_body(
                             }
                         }
                     }
-                    j = j + 1;
                 }
             }
             &hir_item::ItemKind::Effect(_) => {}
@@ -1156,8 +1110,7 @@ pub fn find_fn_for_body(
                     &Option::None => {}
                 }
                 // Check operation implementation bodies
-                let mut j: usize = 0;
-                while j < handler_def.op_impls.len() {
+                for j in 0usize..handler_def.op_impls.len() {
                     let impl_entry = &handler_def.op_impls[j];
                     if impl_entry.body_id.index == target_body_id.index {
                         // Find the effect operation return type by searching Effect items
@@ -1170,14 +1123,12 @@ pub fn find_fn_for_body(
                             span: impl_entry.span,
                         });
                     }
-                    j = j + 1;
                 }
             }
             &hir_item::ItemKind::Module(_) => {}
             &hir_item::ItemKind::Macro(_) => {}
             &hir_item::ItemKind::Foreign(_) => {}
         }
-        i = i + 1;
     }
     Option::None
 }
@@ -1187,22 +1138,18 @@ fn find_effect_op_return_ty(
     items: &Vec<hir_lower_ctx::ItemEntry>,
     op_def_id: hir_def::DefId,
 ) -> type_intern::TyId {
-    let mut i: usize = 0;
-    while i < items.len() {
+    for i in 0usize..items.len() {
         match &items[i].item.kind {
             &hir_item::ItemKind::Effect(ref effect_def) => {
-                let mut j: usize = 0;
-                while j < effect_def.operations.len() {
+                for j in 0usize..effect_def.operations.len() {
                     let effect_op = &effect_def.operations[j];
                     if effect_op.def_id.index == op_def_id.index {
                         return effect_op.return_ty;
                     }
-                    j = j + 1;
                 }
             }
             _ => {}
         }
-        i = i + 1;
     }
     // Fallback: couldn't find the op definition
     type_intern::CommonTypes::unit()
@@ -1244,8 +1191,7 @@ pub fn resolve_fn_name(source: &str, info: &FnInfo) -> String {
 
 /// Checks if the lowered program contains a main function.
 fn has_main_function(lower_result: &hir_lower_ctx::LowerResult) -> bool {
-    let mut i: usize = 0;
-    while i < lower_result.items.len() {
+    for i in 0usize..lower_result.items.len() {
         let entry = &lower_result.items[i];
         match &entry.item.kind {
             &hir_item::ItemKind::Fn(_) => {
@@ -1256,7 +1202,6 @@ fn has_main_function(lower_result: &hir_lower_ctx::LowerResult) -> bool {
             }
             _ => {}
         }
-        i = i + 1;
     }
     false
 }
@@ -1268,12 +1213,10 @@ fn str_equals(s: &String, other: &str) -> bool {
     if bytes.len() != other_bytes.len() {
         return false;
     }
-    let mut i: usize = 0;
-    while i < bytes.len() {
+    for i in 0usize..bytes.len() {
         if bytes[i] != other_bytes[i] {
             return false;
         }
-        i = i + 1;
     }
     true
 }
@@ -1307,10 +1250,8 @@ fn append_usize(s: &mut String, n: usize) {
 
     // Reverse digits
     let len = digits.len();
-    let mut i: usize = 0;
-    while i < len {
+    for i in 0usize..len {
         s.push(digits[len - 1 - i]);
-        i = i + 1;
     }
 }
 
@@ -1475,8 +1416,7 @@ pub fn collect_const_generic_fns(
     param_counts: &mut Vec<u32>,
     body_ids: &mut Vec<u32>,
 ) {
-    let mut i: usize = 0;
-    while i < items.len() {
+    for i in 0usize..items.len() {
         let entry = &items[i];
         match &entry.item.kind {
             &hir_item::ItemKind::Fn(ref fn_def) => {
@@ -1494,15 +1434,13 @@ pub fn collect_const_generic_fns(
             }
             _ => {}
         }
-        i = i + 1;
     }
 }
 
 /// Counts the number of const generic parameters in a Generics.
 fn count_const_params(generics: &hir_ty::Generics) -> u32 {
     let mut count: u32 = 0;
-    let mut i: usize = 0;
-    while i < generics.params.len() {
+    for i in 0usize..generics.params.len() {
         match &generics.params[i] {
             &hir_ty::GenericParam::ConstParam(_) => {
                 count = count + 1;
@@ -1510,19 +1448,16 @@ fn count_const_params(generics: &hir_ty::Generics) -> u32 {
             &hir_ty::GenericParam::TypeParam(_) => {}
             &hir_ty::GenericParam::LifetimeParam(_) => {}
         }
-        i = i + 1;
     }
     count
 }
 
 /// Checks if a body_id belongs to a const-generic function.
 pub fn is_const_generic_body(body_id_index: u32, const_generic_body_ids: &Vec<u32>) -> bool {
-    let mut i: usize = 0;
-    while i < const_generic_body_ids.len() {
+    for i in 0usize..const_generic_body_ids.len() {
         if const_generic_body_ids[i] == body_id_index {
             return true;
         }
-        i = i + 1;
     }
     false
 }
@@ -1541,8 +1476,7 @@ pub fn find_body_for_def_id(
     def_id_index: u32,
 ) -> Option<BodyInfo> {
     // Find the function item to get its body_id and return type
-    let mut i: usize = 0;
-    while i < items.len() {
+    for i in 0usize..items.len() {
         let entry = &items[i];
         match &entry.item.kind {
             &hir_item::ItemKind::Fn(ref fn_def) => {
@@ -1550,8 +1484,7 @@ pub fn find_body_for_def_id(
                     match &fn_def.body_id {
                         &Option::Some(ref bid) => {
                             // Find the body index
-                            let mut bi: usize = 0;
-                            while bi < bodies.len() {
+                            for bi in 0usize..bodies.len() {
                                 if bodies[bi].body_id.index == bid.index {
                                     return Option::Some(BodyInfo {
                                         body_index: bi,
@@ -1559,7 +1492,6 @@ pub fn find_body_for_def_id(
                                         span: entry.item.span,
                                     });
                                 }
-                                bi = bi + 1;
                             }
                         }
                         &Option::None => {}
@@ -1568,7 +1500,6 @@ pub fn find_body_for_def_id(
             }
             _ => {}
         }
-        i = i + 1;
     }
     Option::None
 }
@@ -1595,10 +1526,8 @@ pub fn build_const_bindings_from_body(
 /// Clones a Vec<u32>.
 pub fn clone_u32_vec(v: &Vec<u32>) -> Vec<u32> {
     let mut result: Vec<u32> = Vec::new();
-    let mut i: usize = 0;
-    while i < v.len() {
+    for i in 0usize..v.len() {
         result.push(v[i]);
-        i = i + 1;
     }
     result
 }
@@ -1606,10 +1535,8 @@ pub fn clone_u32_vec(v: &Vec<u32>) -> Vec<u32> {
 /// Clones a Vec<u64>.
 pub fn clone_u64_vec(v: &Vec<u64>) -> Vec<u64> {
     let mut result: Vec<u64> = Vec::new();
-    let mut i: usize = 0;
-    while i < v.len() {
+    for i in 0usize..v.len() {
         result.push(v[i]);
-        i = i + 1;
     }
     result
 }
@@ -1619,19 +1546,15 @@ pub fn clone_turbofish_args(
     args: &Vec<mir_lower_ctx::TurbofishConstArg>,
 ) -> Vec<mir_lower_ctx::TurbofishConstArg> {
     let mut result: Vec<mir_lower_ctx::TurbofishConstArg> = Vec::new();
-    let mut i: usize = 0;
-    while i < args.len() {
+    for i in 0usize..args.len() {
         let mut vals: Vec<u64> = Vec::new();
-        let mut vi: usize = 0;
-        while vi < args[i].values.len() {
+        for vi in 0usize..args[i].values.len() {
             vals.push(args[i].values[vi]);
-            vi = vi + 1;
         }
         result.push(mir_lower_ctx::TurbofishConstArg::new(
             args[i].span_start,
             vals,
         ));
-        i = i + 1;
     }
     result
 }

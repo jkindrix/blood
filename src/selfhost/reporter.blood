@@ -49,26 +49,22 @@ impl ErrorReporter {
         self.line_starts.push(0usize); // First line starts at 0
 
         let bytes = self.source.as_bytes();
-        let mut i: usize = 0;
-        while i < bytes.len() {
+        for i in 0usize..bytes.len() {
             if bytes[i] == 10 { // '\n'
                 self.line_starts.push(i + 1);
             }
-            i = i + 1;
         }
     }
 
     /// Converts a byte offset to line and column (1-indexed).
     pub fn offset_to_line_col(self: &ErrorReporter, offset: usize) -> (u32, u32) {
         let mut line: u32 = 1;
-        let mut i: usize = 0;
-        while i < self.line_starts.len() {
+        for i in 0usize..self.line_starts.len() {
             if i + 1 < self.line_starts.len() && self.line_starts[i + 1] <= offset {
                 line = line + 1;
             } else {
                 break;
             }
-            i = i + 1;
         }
         let line_start = if (line as usize) <= self.line_starts.len() {
             self.line_starts[(line as usize) - 1]
@@ -139,12 +135,10 @@ impl ErrorReporter {
         }
 
         // Structured notes
-        let mut ni: usize = 0;
-        while ni < error.notes.len() {
+        for ni in 0usize..error.notes.len() {
             output.push_str("  = note: ");
             output.push_str(error.notes[ni].as_str());
             output.push('\n');
-            ni = ni + 1;
         }
 
         output
@@ -165,10 +159,8 @@ impl ErrorReporter {
 
         // Underline
         output.push_str("   | ");
-        let mut i: u32 = 1;
-        while i < start_col {
+        for i in 1u32..start_col {
             output.push(' ');
-            i = i + 1;
         }
 
         // Calculate underline length
@@ -182,10 +174,8 @@ impl ErrorReporter {
         if self.use_colors {
             output.push_str("\x1b[31m"); // Red
         }
-        let mut j: u32 = 0;
-        while j < underline_len {
+        for j in 0u32..underline_len {
             output.push('^');
-            j = j + 1;
         }
         if self.use_colors {
             output.push_str("\x1b[0m"); // Reset
@@ -196,14 +186,12 @@ impl ErrorReporter {
     /// Formats multiple errors.
     pub fn format_errors(self: &ErrorReporter, errors: &Vec<error::CompileError>) -> String {
         let mut output = String::new();
-        let mut i: usize = 0;
-        while i < errors.len() {
+        for i in 0usize..errors.len() {
             let formatted = self.format_error(&errors[i]);
             output.push_str(formatted.as_str());
             if i + 1 < errors.len() {
                 output.push('\n');
             }
-            i = i + 1;
         }
         output
     }
@@ -234,8 +222,7 @@ impl ErrorReporter {
         }
 
         // Format warnings
-        let mut wi: usize = 0;
-        while wi < result.warnings.len() {
+        for wi in 0usize..result.warnings.len() {
             let warning = &result.warnings[wi];
             if self.use_colors {
                 output.push_str("\x1b[33mwarning\x1b[0m"); // Yellow
@@ -253,7 +240,6 @@ impl ErrorReporter {
             output.push_str(": ");
             output.push_str(warning.message.as_str());
             output.push('\n');
-            wi = wi + 1;
         }
 
         output
@@ -294,11 +280,9 @@ pub fn format_error_simple(error: &error::CompileError) -> String {
     }
 
     // Structured notes
-    let mut ni: usize = 0;
-    while ni < error.notes.len() {
+    for ni in 0usize..error.notes.len() {
         output.push_str("\n  = note: ");
         output.push_str(error.notes[ni].as_str());
-        ni = ni + 1;
     }
 
     output
@@ -307,12 +291,10 @@ pub fn format_error_simple(error: &error::CompileError) -> String {
 /// Formats multiple errors without source context.
 pub fn format_errors_simple(errors: &Vec<error::CompileError>) -> String {
     let mut output = String::new();
-    let mut i: usize = 0;
-    while i < errors.len() {
+    for i in 0usize..errors.len() {
         let formatted = format_error_simple(&errors[i]);
         output.push_str(formatted.as_str());
         output.push('\n');
-        i = i + 1;
     }
     output
 }
@@ -371,10 +353,8 @@ fn append_u32(s: &mut String, n: u32) {
 
     // Reverse digits
     let len = digits.len();
-    let mut i: usize = 0;
-    while i < len {
+    for i in 0usize..len {
         s.push(digits[len - 1 - i]);
-        i = i + 1;
     }
 }
 

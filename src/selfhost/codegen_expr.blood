@@ -99,10 +99,8 @@ pub fn emit_operand_typed(
                         let vb = fallback.as_bytes();
                         if vb.len() > 0 && vb[0] == 64 {
                             let mut stripped = String::new();
-                            let mut si: usize = 1;
-                            while si < vb.len() {
+                            for si in 1usize..vb.len() {
                                 stripped.push(vb[si] as char);
-                                si = si + 1;
                             }
                             stripped
                         } else {
@@ -205,10 +203,8 @@ fn emit_constant(
         &mir_types::ConstantKind::ByteString(ref bytes) => {
             // Convert byte string to regular string for storage
             let mut s = String::new();
-            let mut i: usize = 0;
-            while i < bytes.len() {
+            for i in 0usize..bytes.len() {
                 s.push(bytes[i] as char);
-                i = i + 1;
             }
             // Build fat pointer: { ptr @.str.N, i64 len }
             let label = ctx.add_string_constant(&s);
@@ -374,8 +370,7 @@ fn walk_all_projections(
         Option::None => { return Option::None; }
     };
     let mut variant_ctx: Option<u32> = Option::None;
-    let mut i: usize = 0;
-    while i < place.projection.len() {
+    for i in 0usize..place.projection.len() {
         match &place.projection[i] {
             &mir_types::PlaceElem::Deref => {
                 match apply_deref_to_type(current_ty) {
@@ -409,7 +404,6 @@ fn walk_all_projections(
                 // Subslice preserves container type
             }
         }
-        i = i + 1;
     }
     Option::Some(current_ty)
 }
@@ -440,8 +434,7 @@ fn resolve_field_ty_id(
                     // Enum variant field
                     match ctx.lookup_enum(def_id.index) {
                         Option::Some(layout) => {
-                            let mut k: usize = 0;
-                            while k < layout.variants.len() {
+                            for k in 0usize..layout.variants.len() {
                                 if layout.variants[k].variant_idx == vi {
                                     if (field_idx as usize) < layout.variants[k].fields.len() {
                                         match &layout.variants[k].fields[field_idx as usize].hir_type {
@@ -456,7 +449,6 @@ fn resolve_field_ty_id(
                                     // Generic or missing field type — use type args
                                     return substitute_enum_field_from_args(unwrapped, field_idx);
                                 }
-                                k = k + 1;
                             }
                             // Variant not found — try type args
                             substitute_enum_field_from_args(unwrapped, field_idx)
@@ -510,8 +502,7 @@ fn substitute_struct_field_param(
     let args_len = interner.ty_list_len(adt_args);
     if args_len == 0 { return Option::None; }
     let mut param_idx: usize = 0;
-    let mut fi: usize = 0;
-    while fi < layout.fields.len() {
+    for fi in 0usize..layout.fields.len() {
         let is_param = match &layout.fields[fi].hir_type {
             &Option::Some(ht_id) => type_intern::is_param_or_infer_id(ht_id),
             &Option::None => false,
@@ -525,7 +516,6 @@ fn substitute_struct_field_param(
         if is_param {
             param_idx = param_idx + 1;
         }
-        fi = fi + 1;
     }
     Option::None
 }
@@ -597,8 +587,7 @@ fn resolve_place_elem_type(
             // Count Deref projections and check for Downcast before this field.
             let mut deref_count: usize = 0;
             let mut downcast_variant: Option<u32> = Option::None;
-            let mut j: usize = 0;
-            while j < last_idx {
+            for j in 0usize..last_idx {
                 match &place.projection[j] {
                     &mir_types::PlaceElem::Deref => {
                         deref_count = deref_count + 1;
@@ -608,7 +597,6 @@ fn resolve_place_elem_type(
                     }
                     _ => {}
                 }
-                j = j + 1;
             }
 
             // Resolve the ADT def_id by walking through Ref/Ptr layers
@@ -631,8 +619,7 @@ fn resolve_place_elem_type(
                             let mut found_field = false;
                             match ctx.lookup_enum(def_id) {
                                 Option::Some(layout) => {
-                                    let mut k: usize = 0;
-                                    while k < layout.variants.len() {
+                                    for k in 0usize..layout.variants.len() {
                                         if layout.variants[k].variant_idx == vi {
                                             if (field_idx as usize) < layout.variants[k].fields.len() {
                                                 let fty = &layout.variants[k].fields[field_idx as usize].llvm_type;
@@ -649,7 +636,6 @@ fn resolve_place_elem_type(
                                             }
                                             break;
                                         }
-                                        k = k + 1;
                                     }
                                 }
                                 Option::None => {
@@ -749,15 +735,13 @@ fn resolve_place_elem_type(
             match ctx.get_local_hir_type(place.local) {
                 Option::Some(hir_type) => {
                     let mut deref_count: usize = 0;
-                    let mut di: usize = 0;
-                    while di < place.projection.len() {
+                    for di in 0usize..place.projection.len() {
                         match &place.projection[di] {
                             &mir_types::PlaceElem::Deref => {
                                 deref_count = deref_count + 1;
                             }
                             _ => {}
                         }
-                        di = di + 1;
                     }
                     match apply_deref_to_type(hir_type) {
                         Option::Some(inner_ty) => {
@@ -1345,8 +1329,7 @@ fn resolve_generic_field_type(
     }
     // Count which param index this field corresponds to
     let mut param_idx: usize = 0;
-    let mut fi: usize = 0;
-    while fi < layout.fields.len() {
+    for fi in 0usize..layout.fields.len() {
         let is_param = match &layout.fields[fi].hir_type {
             &Option::Some(ht_id) => {
                 type_intern::is_param_or_infer_id(ht_id)
@@ -1363,7 +1346,6 @@ fn resolve_generic_field_type(
         if is_param {
             param_idx = param_idx + 1;
         }
-        fi = fi + 1;
     }
     Option::None
 }
@@ -1557,12 +1539,10 @@ fn resolve_variant_payload_type(
             match ctx.lookup_enum(def_id) {
                 Option::Some(enum_layout) => {
                     // Find the variant layout
-                    let mut i: usize = 0;
-                    while i < enum_layout.variants.len() {
+                    for i in 0usize..enum_layout.variants.len() {
                         if enum_layout.variants[i].variant_idx == variant_idx {
                             return clone_string(&enum_layout.variants[i].payload_llvm_type);
                         }
-                        i = i + 1;
                     }
                     // Variant not found in registry, fallback
                     let mut err_msg = common::make_string("variant index ");
@@ -1698,13 +1678,11 @@ fn extract_field_type_from_hir(ty_id: type_intern::TyId, field_idx: u32) -> Opti
 fn is_str_index_place(ctx: &mut codegen_ctx::CodegenCtx, place: &mir_types::Place) -> bool {
     // Check if any projection is an Index
     let mut has_index = false;
-    let mut pi: usize = 0;
-    while pi < place.projection.len() {
+    for pi in 0usize..place.projection.len() {
         match &place.projection[pi] {
             &mir_types::PlaceElem::Index(_) => { has_index = true; }
             _ => {}
         }
-        pi = pi + 1;
     }
     if !has_index { return false; }
     // Check if the local's HIR type is &str or str
@@ -2149,15 +2127,13 @@ fn get_int_type_size(llvm_ty: &str) -> u64 {
     }
     // Parse number after 'i'
     let mut n: u64 = 0;
-    let mut i: usize = 1;
-    while i < bytes.len() {
+    for i in 1usize..bytes.len() {
         let b = bytes[i];
         if b >= 48 && b <= 57 {
             n = n * 10 + ((b - 48) as u64);
         } else {
             break;
         }
-        i = i + 1;
     }
     if n == 0 { 64 } else { n }
 }
@@ -2199,15 +2175,13 @@ fn llvm_int_bit_width(ty: &str) -> u32 {
     }
     // Parse the number after 'i'
     let mut val: u32 = 0;
-    let mut idx: usize = 1;
-    while idx < bytes.len() {
+    for idx in 1usize..bytes.len() {
         let b = bytes[idx];
         if b >= 48 && b <= 57 {
             val = val * 10 + ((b - 48) as u32);
         } else {
             return 0; // Non-digit character means not a simple integer type
         }
-        idx = idx + 1;
     }
     val
 }
@@ -2269,8 +2243,7 @@ fn count_struct_fields(ty: &String) -> u32 {
     // Count commas at nesting depth 0 (inside the outermost braces)
     let mut count: u32 = 1; // At least 1 field if it's a struct
     let mut depth: u32 = 0;
-    let mut i: usize = 1; // Skip opening '{'
-    while i < bytes.len() {
+    for i in 1usize..bytes.len() {
         let b = bytes[i];
         if b == 123 || b == 91 {
             // '{' or '['
@@ -2286,7 +2259,6 @@ fn count_struct_fields(ty: &String) -> u32 {
             // ',' at top level
             count = count + 1;
         }
-        i = i + 1;
     }
     // Handle empty struct "{}"
     if bytes.len() == 2 && bytes[0] == 123 && bytes[1] == 125 {
@@ -2302,12 +2274,10 @@ fn string_eq_str(s: &str, other: &str) -> bool {
     if s_bytes.len() != other_bytes.len() {
         return false;
     }
-    let mut i: usize = 0;
-    while i < s_bytes.len() {
+    for i in 0usize..s_bytes.len() {
         if s_bytes[i] != other_bytes[i] {
             return false;
         }
-        i = i + 1;
     }
     true
 }
@@ -2601,12 +2571,10 @@ fn string_starts_with(s: &str, prefix: &str) -> bool {
     if prefix_bytes.len() > s_bytes.len() {
         return false;
     }
-    let mut i: usize = 0;
-    while i < prefix_bytes.len() {
+    for i in 0usize..prefix_bytes.len() {
         if s_bytes[i] != prefix_bytes[i] {
             return false;
         }
-        i = i + 1;
     }
     true
 }
@@ -2834,14 +2802,12 @@ fn build_tuple_llvm_type(
     operands: &Vec<mir_types::Operand>,
 ) -> String {
     let mut result = common::make_string("{ ");
-    let mut i: usize = 0;
-    while i < operands.len() {
+    for i in 0usize..operands.len() {
         if i > 0 {
             result.push_str(", ");
         }
         let ty = operand_llvm_type(ctx, &operands[i]);
         result.push_str(ty.as_str());
-        i = i + 1;
     }
     result.push_str(" }");
     result
@@ -2880,18 +2846,15 @@ fn emit_aggregate_adt(
             let has_params = layout_has_param_fields(layout);
             // Collect base field types from registry
             let mut field_types: Vec<String> = Vec::new();
-            let mut fi: usize = 0;
-            while fi < layout.fields.len() {
+            for fi in 0usize..layout.fields.len() {
                 field_types.push(clone_string(&layout.fields[fi].llvm_type));
-                fi = fi + 1;
             }
             let struct_ty = clone_string(&layout.llvm_type);
             // If the struct has param/infer fields and concrete type args are available,
             // compute concrete field types by substituting type args for param fields.
             if has_params && type_args.len() > 0 {
                 let mut param_idx: usize = 0;
-                let mut fj: usize = 0;
-                while fj < layout.fields.len() {
+                for fj in 0usize..layout.fields.len() {
                     let is_param = match &layout.fields[fj].hir_type {
                         &Option::Some(ht_id) => {
                             type_intern::is_param_or_infer_id(ht_id)
@@ -2902,19 +2865,16 @@ fn emit_aggregate_adt(
                         field_types[fj] = codegen_types::type_to_llvm(&type_args[param_idx]);
                         param_idx = param_idx + 1;
                     }
-                    fj = fj + 1;
                 }
             }
             // Rebuild struct_ty from field_types if params were substituted
             let struct_ty = if has_params && type_args.len() > 0 {
                 let mut s = common::make_string("{ ");
-                let mut si: usize = 0;
-                while si < field_types.len() {
+                for si in 0usize..field_types.len() {
                     if si > 0 {
                         s.push_str(", ");
                     }
                     s.push_str(field_types[si].as_str());
-                    si = si + 1;
                 }
                 s.push_str(" }");
                 s
@@ -2924,8 +2884,7 @@ fn emit_aggregate_adt(
             // Store each field using actual types from the struct layout.
             // If the operand type differs from the field type (e.g., i64 vs i32),
             // emit a trunc or zext to match the target field width.
-            let mut i: usize = 0;
-            while i < operands.len() {
+            for i in 0usize..operands.len() {
                 let typed = emit_operand_typed(ctx, &operands[i]);
                 let operand_val = typed.0;
                 let operand_ty = typed.1;
@@ -2983,7 +2942,6 @@ fn emit_aggregate_adt(
                         ctx.emit_store_str_cg(operand_ty.as_str(), operand_val.as_str(), &field_ptr);
                     }
                 }
-                i = i + 1;
             }
             return;
         }
@@ -2997,17 +2955,13 @@ fn emit_aggregate_adt(
             // Find the variant's payload type and field types
             let mut payload_ty = common::make_string("{}");
             let mut variant_field_types: Vec<String> = Vec::new();
-            let mut vi: usize = 0;
-            while vi < layout.variants.len() {
+            for vi in 0usize..layout.variants.len() {
                 if layout.variants[vi].variant_idx == variant_idx {
                     payload_ty = clone_string(&layout.variants[vi].payload_llvm_type);
-                    let mut vfi: usize = 0;
-                    while vfi < layout.variants[vi].fields.len() {
+                    for vfi in 0usize..layout.variants[vi].fields.len() {
                         variant_field_types.push(clone_string(&layout.variants[vi].fields[vfi].llvm_type));
-                        vfi = vfi + 1;
                     }
                 }
-                vi = vi + 1;
             }
 
             // Store discriminant at field 0 of the enum type
@@ -3029,8 +2983,7 @@ fn emit_aggregate_adt(
                 ctx.end_gep();
 
                 // Store each operand field using the variant's payload type
-                let mut i: usize = 0;
-                while i < operands.len() {
+                for i in 0usize..operands.len() {
                     let typed = emit_operand_typed(ctx, &operands[i]);
                     let operand_val = typed.0;
                     let operand_ty = typed.1;
@@ -3077,7 +3030,6 @@ fn emit_aggregate_adt(
                             ctx.emit_store_str_cg(operand_ty.as_str(), operand_val.as_str(), &field_ptr);
                         }
                     }
-                    i = i + 1;
                 }
             }
             return;
@@ -3088,12 +3040,10 @@ fn emit_aggregate_adt(
     // Emit as enum: store i32 discriminant, then payload at alignment-correct offset.
     let mut vals: Vec<String> = Vec::new();
     let mut tys: Vec<String> = Vec::new();
-    let mut k: usize = 0;
-    while k < operands.len() {
+    for k in 0usize..operands.len() {
         let typed = emit_operand_typed(ctx, &operands[k]);
         vals.push(typed.0);
         tys.push(typed.1);
-        k = k + 1;
     }
 
     // Store i32 discriminant at byte 0
@@ -3103,13 +3053,11 @@ fn emit_aggregate_adt(
     if vals.len() > 0 {
         // Build payload struct type from operand types
         let mut payload_ty = common::make_string("{ ");
-        let mut pi: usize = 0;
-        while pi < tys.len() {
+        for pi in 0usize..tys.len() {
             if pi > 0 {
                 payload_ty.push_str(", ");
             }
             payload_ty.push_str(tys[pi].as_str());
-            pi = pi + 1;
         }
         payload_ty.push_str(" }");
 
@@ -3125,23 +3073,20 @@ fn emit_aggregate_adt(
         ctx.end_gep();
 
         // Store each field in the payload
-        let mut i: usize = 0;
-        while i < vals.len() {
+        for i in 0usize..vals.len() {
             let field_ptr = ctx.fresh_temp_cg();
             ctx.begin_gep(&field_ptr, payload_ty.as_str(), &payload_ptr);
             ctx.gep_ptr_offset(0);
             ctx.gep_field(i as u32);
             ctx.end_gep();
             ctx.emit_store_str_cg(tys[i].as_str(), vals[i].as_str(), &field_ptr);
-            i = i + 1;
         }
     }
 }
 
 /// Checks if any field in a struct layout has a Param or Infer HIR type.
 fn layout_has_param_fields(layout: &codegen_ctx::StructLayout) -> bool {
-    let mut i: usize = 0;
-    while i < layout.fields.len() {
+    for i in 0usize..layout.fields.len() {
         match &layout.fields[i].hir_type {
             &Option::Some(ht_id) => {
                 if type_intern::is_param_or_infer_id(ht_id) {
@@ -3150,7 +3095,6 @@ fn layout_has_param_fields(layout: &codegen_ctx::StructLayout) -> bool {
             }
             &Option::None => {}
         }
-        i = i + 1;
     }
     false
 }
@@ -3166,8 +3110,7 @@ fn emit_aggregate(
         &mir_types::AggregateKind::Tuple => {
             // Build the tuple LLVM type from operand types
             let tuple_llvm = build_tuple_llvm_type(ctx, operands);
-            let mut i: usize = 0;
-            while i < operands.len() {
+            for i in 0usize..operands.len() {
                 let typed = emit_operand_typed(ctx, &operands[i]);
                 let field_val = typed.0;
                 let field_ty = typed.1;
@@ -3177,7 +3120,6 @@ fn emit_aggregate(
                 ctx.gep_field(i as u32);
                 ctx.end_gep();
                 ctx.emit_store_str_cg(field_ty.as_str(), field_val.as_str(), &field_ptr);
-                i = i + 1;
             }
         }
         &mir_types::AggregateKind::Array(ref elem_ty) => {
@@ -3195,24 +3137,20 @@ fn emit_aggregate(
                 ctx.end_gep();
                 ctx.emit_store_str_cg(elem_llvm.as_str(), first_val.as_str(), &elem_ptr);
             }
-            let mut i: usize = 1;
-            while i < operands.len() {
+            for i in 1usize..operands.len() {
                 let elem_val = emit_operand(ctx, &operands[i]);
                 let elem_ptr = ctx.fresh_temp_cg();
                 ctx.begin_gep_str(&elem_ptr, elem_llvm.as_str(), dest);
                 ctx.gep_ptr_offset(i as u64);
                 ctx.end_gep();
                 ctx.emit_store_str_cg(elem_llvm.as_str(), elem_val.as_str(), &elem_ptr);
-                i = i + 1;
             }
         }
         &mir_types::AggregateKind::Adt { ref def_id, variant_idx, ref type_args } => {
             // Convert TyId type_args to hir_ty::Type for emit_aggregate_adt
             let mut hir_type_args: Vec<hir_ty::Type> = Vec::new();
-            let mut ta: usize = 0;
-            while ta < type_args.len() {
+            for ta in 0usize..type_args.len() {
                 hir_type_args.push(type_intern::ty_id_to_type(type_args[ta]));
-                ta = ta + 1;
             }
             // Look up the ADT in the registry to determine if it's a struct or enum
             emit_aggregate_adt(ctx, dest, def_id.index, variant_idx, operands, &hir_type_args);
@@ -3220,8 +3158,7 @@ fn emit_aggregate(
         &mir_types::AggregateKind::Record => {
             // Extensible records - store fields with actual types
             let record_llvm = build_tuple_llvm_type(ctx, operands);
-            let mut i: usize = 0;
-            while i < operands.len() {
+            for i in 0usize..operands.len() {
                 let typed = emit_operand_typed(ctx, &operands[i]);
                 let field_val = typed.0;
                 let field_ty = typed.1;
@@ -3231,7 +3168,6 @@ fn emit_aggregate(
                 ctx.gep_field(i as u32);
                 ctx.end_gep();
                 ctx.emit_store_str_cg(field_ty.as_str(), field_val.as_str(), &field_ptr);
-                i = i + 1;
             }
         }
         &mir_types::AggregateKind::Closure { ref def_id } => {
@@ -3269,12 +3205,10 @@ fn emit_aggregate(
                 // Compute env struct size by summing element sizes (rounded up to 8-byte
                 // alignment per element to match LLVM's default struct layout)
                 let mut env_size: u64 = 0;
-                let mut si: usize = 0;
-                while si < operands.len() {
+                for si in 0usize..operands.len() {
                     let elem_ty = operand_llvm_type(ctx, &operands[si]);
                     let elem_size = llvm_type_size_estimate(elem_ty.as_str());
                     env_size = env_size + elem_size;
-                    si = si + 1;
                 }
                 if env_size == 0 {
                     env_size = 8; // minimum allocation size
@@ -3292,8 +3226,7 @@ fn emit_aggregate(
                 ctx.emit_cast_cg2(&env_ptr, "inttoptr", "i64", &alloc_i64, "ptr");
 
                 // Store each capture operand into the env struct
-                let mut i: usize = 0;
-                while i < operands.len() {
+                for i in 0usize..operands.len() {
                     let typed = emit_operand_typed(ctx, &operands[i]);
                     let cap_val = typed.0;
                     let cap_ty = typed.1;
@@ -3303,7 +3236,6 @@ fn emit_aggregate(
                     ctx.gep_field(i as u32);
                     ctx.end_gep();
                     ctx.emit_store_str_cg(cap_ty.as_str(), cap_val.as_str(), &cap_ptr);
-                    i = i + 1;
                 }
 
                 // Build fat pointer: { ptr @closure_fn, ptr %env_ptr }
@@ -3331,18 +3263,15 @@ fn emit_aggregate(
             let elem_llvm = codegen_size::type_to_llvm_with_ctx_id(ctx, *element);
             // Range struct is { elem_type, elem_type } (start, end)
             let mut range_llvm = common::make_string("{ ");
-            let mut fi: usize = 0;
-            while fi < operands.len() {
+            for fi in 0usize..operands.len() {
                 if fi > 0 {
                     range_llvm.push_str(", ");
                 }
                 range_llvm.push_str(elem_llvm.as_str());
-                fi = fi + 1;
             }
             range_llvm.push_str(" }");
 
-            let mut i: usize = 0;
-            while i < operands.len() {
+            for i in 0usize..operands.len() {
                 let val = emit_operand(ctx, &operands[i]);
                 let ptr = ctx.fresh_temp_cg();
                 ctx.begin_gep_str(&ptr, range_llvm.as_str(), dest);
@@ -3350,7 +3279,6 @@ fn emit_aggregate(
                 ctx.gep_field(i as u32);
                 ctx.end_gep();
                 ctx.emit_store_str_cg(elem_llvm.as_str(), val.as_str(), &ptr);
-                i = i + 1;
             }
         }
     }

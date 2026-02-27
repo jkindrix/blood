@@ -126,20 +126,17 @@ impl LinearityChecker {
 
     /// Records a use of a local variable.
     pub fn record_use(self: &mut Self, local_id: hir_def::LocalId, span: common::Span) {
-        let mut i: usize = 0;
-        while i < self.entries.len() {
+        for i in 0usize..self.entries.len() {
             if self.entries[i].local_id.index == local_id.index {
                 self.entries[i].record_use(span);
                 return;
             }
-            i = i + 1;
         }
     }
 
     /// Finalizes checking and collects linearity violations.
     pub fn finalize(self: &mut Self) {
-        let mut i: usize = 0;
-        while i < self.entries.len() {
+        for i in 0usize..self.entries.len() {
             let entry = &self.entries[i];
             match &entry.qualifier {
                 &Option::Some(ref q) => {
@@ -182,7 +179,6 @@ impl LinearityChecker {
                     // No ownership qualifier — no linearity constraints
                 }
             }
-            i = i + 1;
         }
     }
 }
@@ -206,18 +202,14 @@ pub fn collect_usages(checker: &mut LinearityChecker, expr: &hir_expr::Expr) {
         }
         &hir_expr::ExprKind::Call { ref callee, ref args } => {
             collect_usages(checker, callee.as_ref());
-            let mut i: usize = 0;
-            while i < args.len() {
+            for i in 0usize..args.len() {
                 collect_usages(checker, &args[i]);
-                i = i + 1;
             }
         }
         &hir_expr::ExprKind::MethodCall { ref receiver, method: _, method_def: _, type_args: _, ref args } => {
             collect_usages(checker, receiver.as_ref());
-            let mut i: usize = 0;
-            while i < args.len() {
+            for i in 0usize..args.len() {
                 collect_usages(checker, &args[i]);
-                i = i + 1;
             }
         }
         &hir_expr::ExprKind::If { ref condition, ref then_branch, ref else_branch } => {
@@ -235,10 +227,8 @@ pub fn collect_usages(checker: &mut LinearityChecker, expr: &hir_expr::Expr) {
         }
         &hir_expr::ExprKind::Match { ref scrutinee, ref arms } => {
             collect_usages(checker, scrutinee.as_ref());
-            let mut i: usize = 0;
-            while i < arms.len() {
+            for i in 0usize..arms.len() {
                 collect_usages(checker, &arms[i].body);
-                i = i + 1;
             }
         }
         &hir_expr::ExprKind::Assign { ref target, ref val } => {
@@ -277,8 +267,7 @@ pub fn collect_usages(checker: &mut LinearityChecker, expr: &hir_expr::Expr) {
 
 /// Walk a block and collect usages.
 fn collect_usages_block(checker: &mut LinearityChecker, block: &hir_expr::Block) {
-    let mut i: usize = 0;
-    while i < block.stmts.len() {
+    for i in 0usize..block.stmts.len() {
         match &block.stmts[i] {
             &hir_expr::Stmt::Expr { ref expr, has_semi: _ } => {
                 collect_usages(checker, expr);
@@ -293,7 +282,6 @@ fn collect_usages_block(checker: &mut LinearityChecker, block: &hir_expr::Block)
             }
             &hir_expr::Stmt::Item(_) => {}
         }
-        i = i + 1;
     }
     match &block.expr {
         &Option::Some(ref e) => {

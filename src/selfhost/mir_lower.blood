@@ -181,8 +181,7 @@ fn lower_params_from_body(
     body: &hir_expr::Body,
     span: common::Span,
 ) {
-    let mut i: u32 = 0;
-    while i < body.param_count {
+    for i in 0u32..body.param_count {
         let local = &body.locals[i as usize];
         // Resolve the parameter type through the substitution table (TyId-native)
         let resolved_id = ctx.resolve_type_to_id(local.ty);
@@ -195,7 +194,6 @@ fn lower_params_from_body(
         );
         // Register mapping from HIR local to MIR local
         ctx.register_local(local.id, mir_local);
-        i = i + 1;
     }
 }
 
@@ -240,8 +238,7 @@ fn lower_closure_params(
     params: &Vec<hir_expr::ClosureParam>,
     span: common::Span,
 ) {
-    let mut i: usize = 0;
-    while i < params.len() {
+    for i in 0usize..params.len() {
         let param = &params[i];
         // Use add_param to correctly increment param_count (TyId-native)
         let resolved_id = ctx.resolve_type_to_id(param.ty);
@@ -253,7 +250,6 @@ fn lower_closure_params(
         // Pattern binding for closure params
         let source = mir_types::Place::local(mir_local);
         mir_lower_pattern::lower_irrefutable_pattern(ctx, &param.pattern, source, span);
-        i = i + 1;
     }
 }
 
@@ -349,8 +345,7 @@ impl MirModule {
 /// Checks if a MIR body has any unreachable code.
 pub fn has_unreachable_code(body: &mir_body::MirBody) -> bool {
     // Simple check: any block with unreachable terminator
-    let mut i: usize = 0;
-    while i < body.basic_blocks.len() {
+    for i in 0usize..body.basic_blocks.len() {
         let block = &body.basic_blocks[i];
         match &block.terminator {
             &Option::Some(ref term) => {
@@ -363,7 +358,6 @@ pub fn has_unreachable_code(body: &mir_body::MirBody) -> bool {
             }
             &Option::None => {}
         }
-        i = i + 1;
     }
     false
 }
@@ -391,10 +385,8 @@ pub fn get_return_type(body: &mir_body::MirBody) -> hir_ty::Type {
 /// Clones a method resolution table for passing to a new MirLowerCtx.
 fn clone_method_resolutions(src: &Vec<common::MethodResEntry>) -> Vec<common::MethodResEntry> {
     let mut result: Vec<common::MethodResEntry> = Vec::new();
-    let mut i: usize = 0;
-    while i < src.len() {
+    for i in 0usize..src.len() {
         result.push(common::MethodResEntry::new(src[i].body_def_id, src[i].span_start, src[i].def_id_index));
-        i = i + 1;
     }
     result
 }
@@ -402,10 +394,8 @@ fn clone_method_resolutions(src: &Vec<common::MethodResEntry>) -> Vec<common::Me
 /// Clones a field resolution table for passing to a new MirLowerCtx.
 fn clone_field_resolutions(src: &Vec<common::FieldResEntry>) -> Vec<common::FieldResEntry> {
     let mut result: Vec<common::FieldResEntry> = Vec::new();
-    let mut i: usize = 0;
-    while i < src.len() {
+    for i in 0usize..src.len() {
         result.push(common::FieldResEntry::new(src[i].body_def_id, src[i].span_start, src[i].field_idx));
-        i = i + 1;
     }
     result
 }
@@ -413,10 +403,8 @@ fn clone_field_resolutions(src: &Vec<common::FieldResEntry>) -> Vec<common::Fiel
 /// Clones a coercion entry table for passing to a new MirLowerCtx.
 fn clone_coercion_entries(src: &Vec<common::CoercionEntry>) -> Vec<common::CoercionEntry> {
     let mut result: Vec<common::CoercionEntry> = Vec::new();
-    let mut i: usize = 0;
-    while i < src.len() {
+    for i in 0usize..src.len() {
         result.push(common::CoercionEntry::new(src[i].body_def_id, src[i].span_start, src[i].array_len));
-        i = i + 1;
     }
     result
 }

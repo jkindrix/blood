@@ -268,11 +268,9 @@ fn parse_args_stub() -> Args {
 
     // Build argv vector from CLI args
     let mut argv: Vec<String> = Vec::new();
-    let mut i: i32 = 0;
-    while i < argc {
+    for i in 0..argc {
         let arg_ref: &str = args_get(i);
         argv.push(common::make_string(arg_ref));
-        i = i + 1;
     }
 
     // Use existing parse_args function
@@ -925,8 +923,7 @@ fn extract_test_config(attrs: &Vec<ast::Attribute>, source: &str) -> TestConfig 
     let mut ignore = false;
     let mut should_panic = false;
 
-    let mut i: usize = 0;
-    while i < attrs.len() {
+    for i in 0usize..attrs.len() {
         let attr = &attrs[i];
         // Each attribute path is a Vec<SpannedSymbol>; simple attrs have one element
         if attr.path.len() > 0 {
@@ -939,7 +936,6 @@ fn extract_test_config(attrs: &Vec<ast::Attribute>, source: &str) -> TestConfig 
                 should_panic = true;
             }
         }
-        i = i + 1;
     }
 
     TestConfig {
@@ -957,8 +953,7 @@ fn extract_test_config(attrs: &Vec<ast::Attribute>, source: &str) -> TestConfig 
 fn discover_tests(program: &ast::Program, source: &str) -> Vec<TestInfo> {
     let mut tests: Vec<TestInfo> = Vec::new();
 
-    let mut i: usize = 0;
-    while i < program.declarations.len() {
+    for i in 0usize..program.declarations.len() {
         match &program.declarations[i] {
             &ast::Declaration::Function(ref fn_decl) => {
                 let config = extract_test_config(&fn_decl.attrs, source);
@@ -985,7 +980,6 @@ fn discover_tests(program: &ast::Program, source: &str) -> Vec<TestInfo> {
             &ast::Declaration::Macro(ref _ma) => {}
             &ast::Declaration::Use(ref _u) => {}
         }
-        i = i + 1;
     }
 
     tests
@@ -1167,8 +1161,7 @@ fn print_test_summary(results: &TestResults) {
     // Print failure details
     if results.failed > 0 {
         print_str("\nfailures:\n\n");
-        let mut i: usize = 0;
-        while i < results.failures.len() {
+        for i in 0usize..results.failures.len() {
             let failure = &results.failures[i];
             print_str("---- ");
             print_str(failure.name.as_str());
@@ -1176,16 +1169,13 @@ fn print_test_summary(results: &TestResults) {
             print_str("    ");
             print_str(failure.message.as_str());
             print_str("\n");
-            i = i + 1;
         }
 
         print_str("\nfailures:\n");
-        let mut j: usize = 0;
-        while j < results.failures.len() {
+        for j in 0usize..results.failures.len() {
             print_str("    ");
             print_str(results.failures[j].name.as_str());
             print_str("\n");
-            j = j + 1;
         }
     }
 
@@ -1267,8 +1257,7 @@ fn run_test(args: &Args) -> i32 {
 
             // Phase 4: Apply filters
             let mut tests: Vec<TestInfo> = Vec::new();
-            let mut ti: usize = 0;
-            while ti < all_tests.len() {
+            for ti in 0usize..all_tests.len() {
                 let t = &all_tests[ti];
                 let mut include = true;
 
@@ -1298,16 +1287,13 @@ fn run_test(args: &Args) -> i32 {
                     });
                 }
 
-                ti = ti + 1;
             }
 
             // --list mode: print test names and return
             if args.test_list {
-                let mut li: usize = 0;
-                while li < tests.len() {
+                for li in 0usize..tests.len() {
                     print_str(tests[li].name.as_str());
                     print_str(": test\n");
-                    li = li + 1;
                 }
                 let mut count_str = String::new();
                 push_usize(&mut count_str, tests.len());
@@ -1632,12 +1618,10 @@ fn str_equals(s: &String, other: &str) -> bool {
         return false;
     }
 
-    let mut i: usize = 0;
-    while i < bytes.len() {
+    for i in 0usize..bytes.len() {
         if bytes[i] != other_bytes[i] {
             return false;
         }
-        i = i + 1;
     }
 
     true
@@ -1655,12 +1639,10 @@ fn str_starts_with(s: &String, prefix: &str) -> bool {
     if bytes.len() < prefix_bytes.len() {
         return false;
     }
-    let mut i: usize = 0;
-    while i < prefix_bytes.len() {
+    for i in 0usize..prefix_bytes.len() {
         if bytes[i] != prefix_bytes[i] {
             return false;
         }
-        i = i + 1;
     }
     true
 }
@@ -1688,8 +1670,7 @@ fn str_contains_ref(haystack: &str, needle: &str) -> bool {
         return false;
     }
     let limit = h_bytes.len() - n_bytes.len() + 1;
-    let mut i: usize = 0;
-    while i < limit {
+    for i in 0usize..limit {
         let mut matched = true;
         let mut j: usize = 0;
         while j < n_bytes.len() {
@@ -1702,7 +1683,6 @@ fn str_contains_ref(haystack: &str, needle: &str) -> bool {
         if matched {
             return true;
         }
-        i = i + 1;
     }
     false
 }
@@ -1878,15 +1858,13 @@ fn generate_missing_stubs(
     let count = ctx.def_names_count();
     let mut stubs = String::new();
     stubs.push_str("\n; Stub functions for enum variant constructors\n");
-    let mut stub_idx: usize = 0;
-    while stub_idx < count {
+    for stub_idx in 0usize..count {
         let entry = ctx.def_name_at(stub_idx);
         let def_id = entry.0; // (def_id, name) tuple - get def_id
         let name = entry.1; // (def_id, name) tuple - get name
 
         // Skip static global variables - they are declared as globals, not functions
         if ctx.is_static(def_id) {
-            stub_idx = stub_idx + 1;
             continue;
         }
 
@@ -1903,7 +1881,6 @@ fn generate_missing_stubs(
             && name_bytes[1] == 110  // 'n'
             && name_bytes[2] == 95); // '_'
         if !is_user_fn {
-            stub_idx = stub_idx + 1;
             continue;
         }
 
@@ -1936,7 +1913,6 @@ fn generate_missing_stubs(
                 generated_stubs.push(clone_string(&name));
             }
         }
-        stub_idx = stub_idx + 1;
     }
     // Buffer stubs for batched file I/O
     ctx.buffer_write(stubs.as_str());
@@ -1952,8 +1928,7 @@ fn register_all_item_names(
     intern: &interner::StringInterner,
     items: &Vec<hir_lower_ctx::ItemEntry>,
 ) {
-    let mut i: usize = 0;
-    while i < items.len() {
+    for i in 0usize..items.len() {
         let entry = &items[i];
         match &entry.item.kind {
             &hir_item::ItemKind::Fn(ref fn_def) => {
@@ -1967,8 +1942,7 @@ fn register_all_item_names(
             }
             &hir_item::ItemKind::Foreign(ref foreign_def) => {
                 // Foreign functions use bare names (matching runtime symbols)
-                let mut fi: usize = 0;
-                while fi < foreign_def.items.len() {
+                for fi in 0usize..foreign_def.items.len() {
                     match &foreign_def.items[fi] {
                         &hir_item::ForeignItem::Fn(ref ff) => {
                             let name = resolve_symbol(intern, ff.name.symbol);
@@ -1977,12 +1951,10 @@ fn register_all_item_names(
                         &hir_item::ForeignItem::Static(ref _fs) => {}
                         &hir_item::ForeignItem::OpaqueType(ref _ot) => {}
                     }
-                    fi = fi + 1;
                 }
             }
             &hir_item::ItemKind::Impl(ref impl_def) => {
-                let mut ai: usize = 0;
-                while ai < impl_def.items.len() {
+                for ai in 0usize..impl_def.items.len() {
                     match &impl_def.items[ai] {
                         &hir_item::AssocItem::Fn(ref assoc_fn) => {
                             let name = resolve_symbol(intern, assoc_fn.name.symbol);
@@ -1992,12 +1964,10 @@ fn register_all_item_names(
                         &hir_item::AssocItem::Type(ref _at) => {}
                         &hir_item::AssocItem::Const(ref _ac) => {}
                     }
-                    ai = ai + 1;
                 }
             }
             &hir_item::ItemKind::Trait(ref trait_def) => {
-                let mut ti: usize = 0;
-                while ti < trait_def.items.len() {
+                for ti in 0usize..trait_def.items.len() {
                     match &trait_def.items[ti] {
                         &hir_item::AssocItem::Fn(ref assoc_fn) => {
                             let name = resolve_symbol(intern, assoc_fn.name.symbol);
@@ -2007,7 +1977,6 @@ fn register_all_item_names(
                         &hir_item::AssocItem::Type(ref _at) => {}
                         &hir_item::AssocItem::Const(ref _ac) => {}
                     }
-                    ti = ti + 1;
                 }
             }
             &hir_item::ItemKind::Struct(ref _s) => {}
@@ -2020,7 +1989,6 @@ fn register_all_item_names(
             &hir_item::ItemKind::Module(ref _m) => {}
             &hir_item::ItemKind::Macro(ref _m) => {}
         }
-        i = i + 1;
     }
 }
 
@@ -2032,14 +2000,12 @@ fn register_enum_variant_names(
     intern: &interner::StringInterner,
     items: &Vec<hir_lower_ctx::ItemEntry>,
 ) {
-    let mut i: usize = 0;
-    while i < items.len() {
+    for i in 0usize..items.len() {
         let entry = &items[i];
         match &entry.item.kind {
             &hir_item::ItemKind::Enum(ref enum_def) => {
                 let enum_name = resolve_symbol(intern, entry.item.name.symbol);
-                let mut vi: usize = 0;
-                while vi < enum_def.variants.len() {
+                for vi in 0usize..enum_def.variants.len() {
                     let variant = &enum_def.variants[vi];
                     let variant_name = resolve_symbol(intern, variant.name.symbol);
                     let mut mangled = String::new();
@@ -2050,12 +2016,10 @@ fn register_enum_variant_names(
                     mangled.push_str("__");
                     mangled.push_str(variant_name.as_str());
                     ctx.register_def_name(variant.def_id.index, mangled);
-                    vi = vi + 1;
                 }
             }
             _ => {}
         }
-        i = i + 1;
     }
 }
 
@@ -2069,8 +2033,7 @@ fn generate_foreign_declarations(
     let mut output = String::new();
     output.push_str("\n; Foreign function declarations (blood-rust runtime)\n");
 
-    let mut i: usize = 0;
-    while i < items.len() {
+    for i in 0usize..items.len() {
         let entry = &items[i];
         match &entry.item.kind {
             &hir_item::ItemKind::Foreign(ref foreign_def) => {
@@ -2084,8 +2047,7 @@ fn generate_foreign_declarations(
                     &hir_item::Abi::Fastcall => true,
                     &hir_item::Abi::Other(ref _s) => true,
                 };
-                let mut fi: usize = 0;
-                while fi < foreign_def.items.len() {
+                for fi in 0usize..foreign_def.items.len() {
                     match &foreign_def.items[fi] {
                         &hir_item::ForeignItem::Fn(ref ff) => {
                             let name = resolve_symbol(intern, ff.name.symbol);
@@ -2093,19 +2055,16 @@ fn generate_foreign_declarations(
                                 // Skip region_* functions - they are defined as
                                 // wrappers around blood_region_* in intrinsic_declarations()
                                 if is_region_builtin(name.as_str()) {
-                                    fi = fi + 1;
                                     continue;
                                 }
                                 // Skip format runtime builtins - they are declared with
                                 // correct { ptr, i64 } return type in intrinsic_declarations()
                                 if is_format_runtime_builtin(name.as_str()) {
-                                    fi = fi + 1;
                                     continue;
                                 }
                                 // Skip builtins that have wrapper definitions in
                                 // intrinsic_declarations() (print→print_str, assert→blood_assert, etc.)
                                 if is_intrinsic_wrapper_builtin(name.as_str()) {
-                                    fi = fi + 1;
                                     continue;
                                 }
                             }
@@ -2116,22 +2075,19 @@ fn generate_foreign_declarations(
                             output.push_str(" @");
                             output.push_str(name.as_str());
                             output.push_str("(");
-                            let mut pi: usize = 0;
-                            while pi < ff.param_tys.len() {
+                            for pi in 0usize..ff.param_tys.len() {
                                 if pi > 0 {
                                     output.push_str(", ");
                                 }
                                 let param_hir_ty = type_intern::ty_id_to_type(ff.param_tys[pi]);
                                 let param_ty = codegen_types::type_to_llvm(&param_hir_ty);
                                 output.push_str(param_ty.as_str());
-                                pi = pi + 1;
                             }
                             output.push_str(")\n");
                         }
                         &hir_item::ForeignItem::Static(ref _fs) => {}
                         &hir_item::ForeignItem::OpaqueType(ref _ot) => {}
                     }
-                    fi = fi + 1;
                 }
             }
             &hir_item::ItemKind::Fn(ref _f) => {}
@@ -2147,7 +2103,6 @@ fn generate_foreign_declarations(
             &hir_item::ItemKind::Impl(ref _im) => {}
             &hir_item::ItemKind::Macro(ref _m) => {}
         }
-        i = i + 1;
     }
 
     output
@@ -2217,8 +2172,7 @@ fn ensure_dir(path: &str) {
 fn shell_quote_into(out: &mut String, s: &str) {
     out.push('\'');
     let bytes = s.as_bytes();
-    let mut i: usize = 0;
-    while i < bytes.len() {
+    for i in 0usize..bytes.len() {
         if bytes[i] == 39 { // single quote
             // End current quoted segment, add escaped quote, resume quoting
             out.push('\'');
@@ -2228,7 +2182,6 @@ fn shell_quote_into(out: &mut String, s: &str) {
         } else {
             out.push(bytes[i] as char);
         }
-        i = i + 1;
     }
     out.push('\'');
 }
@@ -2287,20 +2240,16 @@ fn replace_ext(source_path: &String, new_ext: &str) -> String {
     if bytes.len() >= ext_bytes.len() {
         let start = bytes.len() - ext_bytes.len();
         let mut matches = true;
-        let mut k: usize = 0;
-        while k < ext_bytes.len() {
+        for k in 0usize..ext_bytes.len() {
             if bytes[start + k] != ext_bytes[k] {
                 matches = false;
             }
-            k = k + 1;
         }
         if matches {
             // Strip .blood and add new extension
             let mut result = String::new();
-            let mut j: usize = 0;
-            while j < start {
+            for j in 0usize..start {
                 result.push(bytes[j] as char);
-                j = j + 1;
             }
             result.push_str(new_ext);
             return result;
@@ -2325,19 +2274,15 @@ fn strip_ll_ext(path: &String) -> String {
     if bytes.len() >= ext_bytes.len() {
         let start = bytes.len() - ext_bytes.len();
         let mut matches = true;
-        let mut k: usize = 0;
-        while k < ext_bytes.len() {
+        for k in 0usize..ext_bytes.len() {
             if bytes[start + k] != ext_bytes[k] {
                 matches = false;
             }
-            k = k + 1;
         }
         if matches {
             let mut result = String::new();
-            let mut j: usize = 0;
-            while j < start {
+            for j in 0usize..start {
                 result.push(bytes[j] as char);
-                j = j + 1;
             }
             return result;
         }
@@ -2435,8 +2380,7 @@ fn classify_return_clause(
     state_count: u32,
 ) -> ReturnClauseKind {
     // Find the body by body_id
-    let mut bi: usize = 0;
-    while bi < bodies.len() {
+    for bi in 0usize..bodies.len() {
         if bodies[bi].body_id.index == body_id_index {
             let body = &bodies[bi].body;
             // Classify the body expression.
@@ -2444,7 +2388,6 @@ fn classify_return_clause(
             // We need to dig through Block wrappers to find the actual leaf expression.
             return classify_leaf_expr(&body.expr, state_count);
         }
-        bi = bi + 1;
     }
     // Body not found — treat as identity
     ReturnClauseKind { kind: 0, field_index: 0, literal_value: 0 }
@@ -2599,8 +2542,7 @@ fn collect_handler_info(
     let mut ops: Vec<HandlerOpInfo> = Vec::new();
     let mut returns: Vec<HandlerReturnInfo> = Vec::new();
 
-    let mut i: usize = 0;
-    while i < items.len() {
+    for i in 0usize..items.len() {
         let entry = &items[i];
         match &entry.item.kind {
             &hir_item::ItemKind::Handler(ref handler_def) => {
@@ -2619,10 +2561,8 @@ fn collect_handler_info(
 
                 // Collect state field TyId indices for kind=2 wrapper call generation.
                 let mut field_ty_ids: Vec<u32> = Vec::new();
-                let mut si: usize = 0;
-                while si < handler_def.state.len() {
+                for si in 0usize..handler_def.state.len() {
                     field_ty_ids.push(handler_def.state[si].ty.index);
-                    si = si + 1;
                 }
 
                 // Collect return clause info
@@ -2667,8 +2607,7 @@ fn collect_handler_info(
                 }
 
                 // Collect operation infos
-                let mut oi: usize = 0;
-                while oi < handler_def.op_impls.len() {
+                for oi in 0usize..handler_def.op_impls.len() {
                     let op_impl = &handler_def.op_impls[oi];
 
                     // Use DefId-based op name for reliability
@@ -2690,7 +2629,6 @@ fn collect_handler_info(
                         param_count: op_impl.param_names.len() as u32,
                         state_field_count: state_count,
                     });
-                    oi = oi + 1;
                 }
             }
             &hir_item::ItemKind::Fn(_) => {}
@@ -2703,14 +2641,12 @@ fn collect_handler_info(
             &hir_item::ItemKind::Effect(ref effect_def) => {
                 // Register (effect_def_id, op_name_symbol) → positional index for Perform resolution.
                 let effect_item_def_id = entry.item.def_id.index;
-                let mut opi: usize = 0;
-                while opi < effect_def.operations.len() {
+                for opi in 0usize..effect_def.operations.len() {
                     ctx.register_op_def_index(
                         effect_item_def_id,
                         effect_def.operations[opi].name.symbol.index,
                         opi as u32,
                     );
-                    opi = opi + 1;
                 }
             }
             &hir_item::ItemKind::Module(_) => {}
@@ -2718,7 +2654,6 @@ fn collect_handler_info(
             &hir_item::ItemKind::Impl(_) => {}
             &hir_item::ItemKind::Foreign(_) => {}
         }
-        i = i + 1;
     }
 
     HandlerInfo { ops, returns }
@@ -2730,23 +2665,19 @@ fn find_op_index(
     effect_def_id: u32,
     op_def_id: u32,
 ) -> u32 {
-    let mut i: usize = 0;
-    while i < items.len() {
+    for i in 0usize..items.len() {
         match &items[i].item.kind {
             &hir_item::ItemKind::Effect(ref effect_def) => {
                 if items[i].def_id.index == effect_def_id {
-                    let mut j: usize = 0;
-                    while j < effect_def.operations.len() {
+                    for j in 0usize..effect_def.operations.len() {
                         if effect_def.operations[j].def_id.index == op_def_id {
                             return j as u32;
                         }
-                        j = j + 1;
                     }
                 }
             }
             _ => {}
         }
-        i = i + 1;
     }
     0 // fallback
 }
@@ -2768,8 +2699,7 @@ fn generate_handler_wrappers(
     // Generate wrapper for each handler operation.
     // Wrapper signature: i64 (ptr %state, ptr %args, i64 %arg_count, i64 %cont)
     // The wrapper unpacks args, calls the inner body, and handles continuation resume.
-    let mut oi: usize = 0;
-    while oi < handler_info.ops.len() {
+    for oi in 0usize..handler_info.ops.len() {
         let opinfo = &handler_info.ops[oi];
 
         // Wrapper function name: {HandlerName}_{OpName}
@@ -2860,8 +2790,7 @@ fn generate_handler_wrappers(
             }
         } else {
             // Load args from args array
-            let mut pi: usize = 0;
-            while pi < param_count {
+            for pi in 0usize..param_count {
                 // Get the expected param type from inner function signature.
                 // sig_offset skips past state params for stateful handlers.
                 let param_ty = match ctx.lookup_fn_param_type(opinfo.body_def_id, pi + sig_offset) {
@@ -2952,7 +2881,6 @@ fn generate_handler_wrappers(
                     ir.push_str("\n");
                 }
 
-                pi = pi + 1;
             }
 
             // Build call to inner function.
@@ -2996,13 +2924,11 @@ fn generate_handler_wrappers(
 
         ir.push_str("}\n\n");
 
-        oi = oi + 1;
     }
 
     // Generate return clause wrappers
     // Signature: i64 (i64 %result, ptr %state)
-    let mut ri: usize = 0;
-    while ri < handler_info.returns.len() {
+    for ri in 0usize..handler_info.returns.len() {
         let ret_info = &handler_info.returns[ri];
 
         let mut wrapper_name = clone_string(&ret_info.handler_name);
@@ -3092,8 +3018,7 @@ fn generate_handler_wrappers(
                     // State shadow layout: [N x i64] where state fields are packed.
                     let field_count = ret_info.state_field_ty_ids.len();
                     let mut offset: u64 = 0;
-                    let mut fi: usize = 0;
-                    while fi < field_count {
+                    for fi in 0usize..field_count {
                         let ty_id = type_intern::TyId::new(ret_info.state_field_ty_ids[fi]);
                         let llvm_ty = codegen_size::type_to_llvm_with_ctx_id(ctx, ty_id);
                         let ty_size = codegen_size::llvm_type_size(llvm_ty.as_str());
@@ -3120,14 +3045,12 @@ fn generate_handler_wrappers(
                         }
                         // Advance offset, aligned to 8 bytes
                         offset = offset + ((ty_size + 7) / 8) * 8;
-                        fi = fi + 1;
                     }
                     // Build the call: void @body_fn(field0, field1, ..., i64 %result)
                     ir.push_str("  call void @");
                     ir.push_str(fn_name.as_str());
                     ir.push_str("(");
-                    let mut ai: usize = 0;
-                    while ai < field_count {
+                    for ai in 0usize..field_count {
                         if ai > 0 {
                             ir.push_str(", ");
                         }
@@ -3136,7 +3059,6 @@ fn generate_handler_wrappers(
                         ir.push_str(llvm_ty.as_str());
                         ir.push_str(" %fld");
                         push_usize(&mut ir, ai);
-                        ai = ai + 1;
                     }
                     if field_count > 0 {
                         ir.push_str(", ");
@@ -3153,7 +3075,6 @@ fn generate_handler_wrappers(
 
         ir.push_str("}\n\n");
 
-        ri = ri + 1;
     }
 
     // Generate __blood_register_handlers
@@ -3164,8 +3085,7 @@ fn generate_handler_wrappers(
     // Group ops by handler (effect_def_id)
     // For each unique effect, build an ops array and call blood_evidence_register
     let mut registered_effects: Vec<u32> = Vec::new();
-    let mut ei: usize = 0;
-    while ei < handler_info.ops.len() {
+    for ei in 0usize..handler_info.ops.len() {
         let opentry = &handler_info.ops[ei];
         let eid = opentry.effect_def_id;
 
@@ -3185,12 +3105,10 @@ fn generate_handler_wrappers(
 
             // Count ops for this effect
             let mut op_count: usize = 0;
-            let mut ci: usize = 0;
-            while ci < handler_info.ops.len() {
+            for ci in 0usize..handler_info.ops.len() {
                 if handler_info.ops[ci].effect_def_id == eid {
                     op_count = op_count + 1;
                 }
-                ci = ci + 1;
             }
 
             // Alloca for ops array
@@ -3203,8 +3121,7 @@ fn generate_handler_wrappers(
 
             // Store each op's wrapper function pointer
             let mut store_idx: usize = 0;
-            let mut si: usize = 0;
-            while si < handler_info.ops.len() {
+            for si in 0usize..handler_info.ops.len() {
                 if handler_info.ops[si].effect_def_id == eid {
                     let sop = &handler_info.ops[si];
                     let mut wrapper_name = clone_string(&sop.handler_name);
@@ -3239,7 +3156,6 @@ fn generate_handler_wrappers(
                     }
                     store_idx = store_idx + 1;
                 }
-                si = si + 1;
             }
 
             // Call blood_evidence_register
@@ -3252,7 +3168,6 @@ fn generate_handler_wrappers(
             ir.push_str(")\n");
         }
 
-        ei = ei + 1;
     }
 
     ir.push_str("  ret void\n");
@@ -3332,8 +3247,7 @@ fn widen_to_i64(ir: &mut String, val_name: &str, ty: &str) -> String {
 /// For other types, uses %arg_{N} (narrowing creates this name).
 /// sig_offset: offset into fn_signatures params (1 to skip state ptr, 0 for no offset).
 fn emit_call_args(ir: &mut String, ctx: &mut codegen_ctx::CodegenCtx, body_def_id: u32, param_count: usize, sig_offset: usize) {
-    let mut pi: usize = 0;
-    while pi < param_count {
+    for pi in 0usize..param_count {
         if pi > 0 {
             ir.push_str(", ");
         }
@@ -3350,7 +3264,6 @@ fn emit_call_args(ir: &mut String, ctx: &mut codegen_ctx::CodegenCtx, body_def_i
             ir.push_str(" %arg_");
         }
         push_usize(ir, pi);
-        pi = pi + 1;
     }
 }
 
@@ -3394,8 +3307,7 @@ fn build_codegen_worklist(
     let mut defined_names: Vec<String> = Vec::new();
     let mut defined_def_ids: Vec<u32> = Vec::new();
 
-    let mut body_idx: usize = 0;
-    while body_idx < lower_result.bodies.len() {
+    for body_idx in 0usize..lower_result.bodies.len() {
         let body_entry = &lower_result.bodies[body_idx];
         let body_id = body_entry.body_id;
 
@@ -3429,13 +3341,11 @@ fn build_codegen_worklist(
             sbi = sbi + 1;
         }
         if is_static_body {
-            body_idx = body_idx + 1;
             continue;
         }
 
         // Skip const-generic function bodies — they'll be monomorphized later.
         if driver::is_const_generic_body(body_id.index, const_generic_body_ids) {
-            body_idx = body_idx + 1;
             continue;
         }
 
@@ -3450,7 +3360,6 @@ fn build_codegen_worklist(
             di = di + 1;
         }
         if is_duplicate {
-            body_idx = body_idx + 1;
             continue;
         }
 
@@ -3465,7 +3374,6 @@ fn build_codegen_worklist(
             span,
         });
 
-        body_idx = body_idx + 1;
     }
 
     CodegenWorkList {
@@ -3543,12 +3451,10 @@ fn codegen_thread_worker(arg: u64) -> u64 {
 
         // Report MIR lowering errors (non-fatal in streaming mode — continue to codegen)
         if mir_result.errors.len() > 0 {
-            let mut mei: usize = 0;
-            while mei < mir_result.errors.len() {
+            for mei in 0usize..mir_result.errors.len() {
                 eprint_str("MIR lowering error: ");
                 eprint_str(mir_result.errors[mei].message.as_str());
                 eprint_str("\n");
-                mei = mei + 1;
             }
         }
 
@@ -3644,8 +3550,7 @@ fn codegen_pass2(
     // Avoids mmap/munmap cycling that causes memory layout instability.
     let mir_region = region_create(4194304, 8589934592);
 
-    let mut i: usize = 0;
-    while i < total_items {
+    for i in 0usize..total_items {
         let work = &worklist.items[i];
 
         if i % 100 == 0 {
@@ -3707,8 +3612,7 @@ fn codegen_pass2(
         // Collect mono requests and register specialized function names immediately
         // so codegen of the calling function can resolve them.
         {
-            let mut ri: usize = 0;
-            while ri < mir_result.mono_requests.len() {
+            for ri in 0usize..mir_result.mono_requests.len() {
                 let req_ref = &mir_result.mono_requests[ri];
                 // Register the specialized name BEFORE codegen of this function
                 ctx.register_def_name(req_ref.specialized_def_id, common::make_string(req_ref.fn_name.as_str()));
@@ -3718,18 +3622,15 @@ fn codegen_pass2(
                     req_ref.specialized_def_id,
                     common::make_string(req_ref.fn_name.as_str()),
                 ));
-                ri = ri + 1;
             }
         }
 
         // Report MIR lowering errors (non-fatal in streaming mode — continue to codegen)
         if mir_result.errors.len() > 0 {
-            let mut mei: usize = 0;
-            while mei < mir_result.errors.len() {
+            for mei in 0usize..mir_result.errors.len() {
                 eprint_str("MIR lowering error: ");
                 eprint_str(mir_result.errors[mei].message.as_str());
                 eprint_str("\n");
-                mei = mei + 1;
             }
         }
 
@@ -3758,12 +3659,10 @@ fn codegen_pass2(
                 eprint_str("=== MIR VALIDATION ERRORS: ");
                 eprint_str(fn_name_str);
                 eprint_str(" ===\n");
-                let mut ei: usize = 0;
-                while ei < errors.len() {
+                for ei in 0usize..errors.len() {
                     eprint_str("  ");
                     eprint_str(errors[ei].as_str());
                     eprint_str("\n");
-                    ei = ei + 1;
                 }
             }
         }
@@ -3813,7 +3712,6 @@ fn codegen_pass2(
         // Clear call remaps after generating the function
         ctx.call_remaps = Vec::new();
 
-        i = i + 1;
     }
 
     // Destroy MIR region after all functions processed
@@ -3839,21 +3737,17 @@ fn find_call_remaps_for_def(
     def_id: u32,
 ) -> Vec<common::CallRemapEntry> {
     let mut result: Vec<common::CallRemapEntry> = Vec::new();
-    let mut i: usize = 0;
-    while i < remaps.len() {
+    for i in 0usize..remaps.len() {
         if remaps[i].body_def_id == def_id {
             // Copy the remap entries
-            let mut j: usize = 0;
-            while j < remaps[i].call_remaps.len() {
+            for j in 0usize..remaps[i].call_remaps.len() {
                 result.push(common::CallRemapEntry::new(
                     remaps[i].call_remaps[j].from_def_id,
                     remaps[i].call_remaps[j].to_def_id,
                 ));
-                j = j + 1;
             }
             return result;
         }
-        i = i + 1;
     }
     result
 }
@@ -4133,8 +4027,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
 
     // Check for HIR lowering errors
     let mut has_hir_errors = false;
-    let mut di: usize = 0;
-    while di < lower_result.diagnostics.len() {
+    for di in 0usize..lower_result.diagnostics.len() {
         let diag = &lower_result.diagnostics[di];
         match &diag.level {
             &hir::DiagnosticLevel::Error => {
@@ -4144,7 +4037,6 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
             &hir::DiagnosticLevel::Note => {}
             &hir::DiagnosticLevel::Help => {}
         }
-        di = di + 1;
     }
     if has_hir_errors {
         eprint_str(" FAILED\n");
@@ -4252,8 +4144,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     eprint_str("[statics]");
     // Collect static DefIds first - needed for name registration filtering.
     let mut static_def_ids: Vec<u32> = Vec::new();
-    let mut si: usize = 0;
-    while si < lower_result.items.len() {
+    for si in 0usize..lower_result.items.len() {
         let item = &lower_result.items[si].item;
         match &item.kind {
             &hir_item::ItemKind::Static(ref _static_def) => {
@@ -4261,7 +4152,6 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
             }
             _ => {}
         }
-        si = si + 1;
     }
 
     // Pass 0: Emit static global variable declarations.
@@ -4272,8 +4162,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
 
     // Pass 1a: Register def_names for all function bodies (global allocator)
     // SKIP static bodies - their names are already registered by emit_static_globals_with_names
-    let mut body_idx: usize = 0;
-    while body_idx < lower_result.bodies.len() {
+    for body_idx in 0usize..lower_result.bodies.len() {
         let body_entry = &lower_result.bodies[body_idx];
         let body_id = body_entry.body_id;
         let fn_info = driver::find_fn_for_body(&lower_result.items, body_id);
@@ -4298,7 +4187,6 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
             };
             ctx.register_def_name(def_id, fn_name);
         }
-        body_idx = body_idx + 1;
     }
 
     // Pass 1b: Register def_names for ALL function-like items (including those without bodies).
@@ -4308,11 +4196,9 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
 
     // Pass 1c: Register def_names for builtin constructors (String::new, Vec::new, etc.).
     // These DefIds are allocated by the HIR lowering and map to runtime function names.
-    let mut bfi: usize = 0;
-    while bfi < lower_result.builtin_fn_defs.len() {
+    for bfi in 0usize..lower_result.builtin_fn_defs.len() {
         let entry = &lower_result.builtin_fn_defs[bfi];
         ctx.register_def_name(entry.def_id_index, clone_string(&entry.runtime_name));
-        bfi = bfi + 1;
     }
 
     // Pass 1e: Register def_names for enum variant constructors.
@@ -4321,21 +4207,17 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
 
     // Pass 1d: Register def_names for synthetic builtin methods (String::push_str, Vec::push, etc.).
     // These DefIds are allocated by the type checker and map to runtime function names.
-    let mut bi: usize = 0;
-    while bi < typeck_result.builtin_def_names.len() {
+    for bi in 0usize..typeck_result.builtin_def_names.len() {
         let entry = &typeck_result.builtin_def_names[bi];
         ctx.register_def_name(entry.def_id_index, clone_string(&entry.runtime_name));
-        bi = bi + 1;
     }
 
     // Collect handler→effect mappings and handler op info for wrapper generation.
     let handler_info = collect_handler_info(&mut ctx, &lower_result.interner, &lower_result.items, &lower_result.bodies);
 
     // Register handler op body DefIds with state field counts for conditional state-by-pointer codegen.
-    let mut hop_i: usize = 0;
-    while hop_i < handler_info.ops.len() {
+    for hop_i in 0usize..handler_info.ops.len() {
         ctx.register_handler_op_body(handler_info.ops[hop_i].body_def_id, handler_info.ops[hop_i].state_field_count);
-        hop_i = hop_i + 1;
     }
 
     // Pre-analysis: identify const-generic functions for monomorphization.
@@ -4352,20 +4234,16 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     // Convert turbofish entries from HIR to MIR format
     let mut turbofish_const_args: Vec<mir_lower_ctx::TurbofishConstArg> = Vec::new();
     {
-        let mut ti: usize = 0;
-        while ti < lower_result.turbofish_const_entries.len() {
+        for ti in 0usize..lower_result.turbofish_const_entries.len() {
             let entry = &lower_result.turbofish_const_entries[ti];
             let mut vals: Vec<u64> = Vec::new();
-            let mut vi: usize = 0;
-            while vi < entry.values.len() {
+            for vi in 0usize..entry.values.len() {
                 vals.push(entry.values[vi]);
-                vi = vi + 1;
             }
             turbofish_const_args.push(mir_lower_ctx::TurbofishConstArg::new(
                 entry.span_start,
                 vals,
             ));
-            ti = ti + 1;
         }
     }
 
@@ -4408,8 +4286,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
         // Shared MIR region for monomorphization — created once, reset between functions.
         let mono_mir_region = region_create(4194304, 8589934592);
 
-        let mut mono_i: usize = 0;
-        while mono_i < pass2_result.mono_requests.len() {
+        for mono_i in 0usize..pass2_result.mono_requests.len() {
             let req = &pass2_result.mono_requests[mono_i];
 
             // Find the original function's body
@@ -4467,7 +4344,6 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
                 }
             }
 
-            mono_i = mono_i + 1;
         }
 
         // Destroy mono MIR region after all mono functions processed
@@ -4490,20 +4366,16 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     ctx.buffer_write(handler_wrapper_ir.as_str());
 
     // Emit inline handler stub functions collected during PushInlineHandler codegen.
-    let mut stub_i: usize = 0;
-    while stub_i < ctx.inline_stubs.len() {
+    for stub_i in 0usize..ctx.inline_stubs.len() {
         let stub_ir = clone_string(&ctx.inline_stubs[stub_i]);
         ctx.buffer_write(stub_ir.as_str());
-        stub_i = stub_i + 1;
     }
 
     // Emit fn pointer wrapper functions (fn_name$fnptr) for named functions
     // used as fn() values.  These are deferred to emit at module scope.
-    let mut wpi: usize = 0;
-    while wpi < ctx.fn_ptr_wrapper_defs.len() {
+    for wpi in 0usize..ctx.fn_ptr_wrapper_defs.len() {
         let wrapper_ir = clone_string(&ctx.fn_ptr_wrapper_defs[wpi]);
         ctx.buffer_write(wrapper_ir.as_str());
-        wpi = wpi + 1;
     }
 
     // Finish: write string constants and intrinsic declarations
@@ -4573,8 +4445,7 @@ fn dump_type_resolutions(typeck_result: &typeck_driver::TypeCheckResult) {
     push_usize(&mut field_count_str, typeck_result.field_resolutions.len());
     eprint_str(field_count_str.as_str());
     eprint_str(" entries) ===\n");
-    let mut fi: usize = 0;
-    while fi < typeck_result.field_resolutions.len() {
+    for fi in 0usize..typeck_result.field_resolutions.len() {
         let entry = &typeck_result.field_resolutions[fi];
         let mut line = String::new();
         line.push_str("  field[body=d");
@@ -4585,7 +4456,6 @@ fn dump_type_resolutions(typeck_result: &typeck_driver::TypeCheckResult) {
         push_usize(&mut line, entry.field_idx as usize);
         line.push('\n');
         eprint_str(line.as_str());
-        fi = fi + 1;
     }
 
     // Method resolutions
@@ -4594,8 +4464,7 @@ fn dump_type_resolutions(typeck_result: &typeck_driver::TypeCheckResult) {
     push_usize(&mut meth_count_str, typeck_result.method_resolutions.len());
     eprint_str(meth_count_str.as_str());
     eprint_str(" entries) ===\n");
-    let mut mi: usize = 0;
-    while mi < typeck_result.method_resolutions.len() {
+    for mi in 0usize..typeck_result.method_resolutions.len() {
         let entry = &typeck_result.method_resolutions[mi];
         let mut line = String::new();
         line.push_str("  method[body=d");
@@ -4606,7 +4475,6 @@ fn dump_type_resolutions(typeck_result: &typeck_driver::TypeCheckResult) {
         push_usize(&mut line, entry.def_id_index as usize);
         line.push('\n');
         eprint_str(line.as_str());
-        mi = mi + 1;
     }
 
     // Type variable substitutions
@@ -4615,8 +4483,7 @@ fn dump_type_resolutions(typeck_result: &typeck_driver::TypeCheckResult) {
     push_usize(&mut tv_count_str, typeck_result.subst_table.ty_substs.len());
     eprint_str(tv_count_str.as_str());
     eprint_str(" entries) ===\n");
-    let mut ti: usize = 0;
-    while ti < typeck_result.subst_table.ty_substs.len() {
+    for ti in 0usize..typeck_result.subst_table.ty_substs.len() {
         let subst = &typeck_result.subst_table.ty_substs[ti];
         let mut line = String::new();
         line.push_str("  ?");
@@ -4627,7 +4494,6 @@ fn dump_type_resolutions(typeck_result: &typeck_driver::TypeCheckResult) {
         line.push_str(type_str.as_str());
         line.push('\n');
         eprint_str(line.as_str());
-        ti = ti + 1;
     }
 
     // Builtin def names
@@ -4636,8 +4502,7 @@ fn dump_type_resolutions(typeck_result: &typeck_driver::TypeCheckResult) {
     push_usize(&mut bdn_count_str, typeck_result.builtin_def_names.len());
     eprint_str(bdn_count_str.as_str());
     eprint_str(" entries) ===\n");
-    let mut bi: usize = 0;
-    while bi < typeck_result.builtin_def_names.len() {
+    for bi in 0usize..typeck_result.builtin_def_names.len() {
         let entry = &typeck_result.builtin_def_names[bi];
         let mut line = String::new();
         line.push_str("  def");
@@ -4646,7 +4511,6 @@ fn dump_type_resolutions(typeck_result: &typeck_driver::TypeCheckResult) {
         line.push_str(entry.runtime_name.as_str());
         line.push('\n');
         eprint_str(line.as_str());
-        bi = bi + 1;
     }
 }
 
@@ -4658,8 +4522,7 @@ fn dump_adt_layouts(ctx: &codegen_ctx::CodegenCtx) {
     eprint_str(count_str.as_str());
     eprint_str(" entries) ===\n");
 
-    let mut i: usize = 0;
-    while i < ctx.adt_registry.len() {
+    for i in 0usize..ctx.adt_registry.len() {
         match &ctx.adt_registry[i] {
             &codegen_ctx::AdtEntry::Struct(ref layout) => {
                 let total_size = codegen_size::llvm_type_size(layout.llvm_type.as_str());
@@ -4684,8 +4547,7 @@ fn dump_adt_layouts(ctx: &codegen_ctx::CodegenCtx) {
                 eprint_str(line.as_str());
 
                 // Fields
-                let mut fi: usize = 0;
-                while fi < layout.fields.len() {
+                for fi in 0usize..layout.fields.len() {
                     let field = &layout.fields[fi];
                     let field_size = codegen_size::llvm_type_size(field.llvm_type.as_str());
                     let mut fline = String::new();
@@ -4707,7 +4569,6 @@ fn dump_adt_layouts(ctx: &codegen_ctx::CodegenCtx) {
                     }
                     fline.push('\n');
                     eprint_str(fline.as_str());
-                    fi = fi + 1;
                 }
             }
             &codegen_ctx::AdtEntry::Enum(ref layout) => {
@@ -4749,8 +4610,7 @@ fn dump_adt_layouts(ctx: &codegen_ctx::CodegenCtx) {
                 eprint_str(pline.as_str());
 
                 // Variants
-                let mut vi: usize = 0;
-                while vi < layout.variants.len() {
+                for vi in 0usize..layout.variants.len() {
                     let variant = &layout.variants[vi];
                     let mut vline = String::new();
                     vline.push_str("      variant ");
@@ -4764,8 +4624,7 @@ fn dump_adt_layouts(ctx: &codegen_ctx::CodegenCtx) {
                     eprint_str(vline.as_str());
 
                     // Variant fields
-                    let mut vfi: usize = 0;
-                    while vfi < variant.fields.len() {
+                    for vfi in 0usize..variant.fields.len() {
                         let field = &variant.fields[vfi];
                         let field_size = codegen_size::llvm_type_size(field.llvm_type.as_str());
                         let mut fline = String::new();
@@ -4787,13 +4646,10 @@ fn dump_adt_layouts(ctx: &codegen_ctx::CodegenCtx) {
                         }
                         fline.push('\n');
                         eprint_str(fline.as_str());
-                        vfi = vfi + 1;
                     }
-                    vi = vi + 1;
                 }
             }
         }
-        i = i + 1;
     }
 }
 

@@ -31,8 +31,7 @@ pub fn format_mir_body(body: &mir_body::MirBody, fn_name: &str) -> String {
 
     // Parameter list
     let param_count = body.param_count as usize;
-    let mut pi: usize = 1;  // skip _0 (return place)
-    while pi <= param_count {
+    for pi in 1usize..= param_count {
         if pi > 1 {
             out.push_str(", ");
         }
@@ -43,7 +42,6 @@ pub fn format_mir_body(body: &mir_body::MirBody, fn_name: &str) -> String {
         let param_hir_ty = type_intern::ty_id_to_type(local.ty);
         let ty_str = format_type(&param_hir_ty);
         out.push_str(ty_str.as_str());
-        pi = pi + 1;
     }
     out.push_str(") -> ");
     let ret_hir_ty = type_intern::ty_id_to_type(body.locals[0].ty);
@@ -52,34 +50,29 @@ pub fn format_mir_body(body: &mir_body::MirBody, fn_name: &str) -> String {
     out.push_str(" {\n");
 
     // Local declarations
-    let mut li: usize = 0;
-    while li < body.locals.len() {
+    for li in 0usize..body.locals.len() {
         let local = &body.locals[li];
         let local_str = format_local(local, li, body.param_count);
         out.push_str("    ");
         out.push_str(local_str.as_str());
         out.push('\n');
-        li = li + 1;
     }
     out.push('\n');
 
     // Basic blocks
-    let mut bi: usize = 0;
-    while bi < body.basic_blocks.len() {
+    for bi in 0usize..body.basic_blocks.len() {
         let block = &body.basic_blocks[bi];
         out.push_str("    bb");
         push_u32(&mut out, bi as u32);
         out.push_str(": {\n");
 
         // Statements
-        let mut si: usize = 0;
-        while si < block.statements.len() {
+        for si in 0usize..block.statements.len() {
             let stmt = &block.statements[si];
             let stmt_str = format_statement(stmt);
             out.push_str("        ");
             out.push_str(stmt_str.as_str());
             out.push('\n');
-            si = si + 1;
         }
 
         // Terminator
@@ -99,7 +92,6 @@ pub fn format_mir_body(body: &mir_body::MirBody, fn_name: &str) -> String {
         if bi + 1 < body.basic_blocks.len() {
             out.push('\n');
         }
-        bi = bi + 1;
     }
 
     out.push_str("}\n");
@@ -160,14 +152,12 @@ pub fn format_type(ty: &hir_ty::Type) -> String {
         &hir_ty::TypeKind::Tuple(ref elems) => {
             let mut out = String::new();
             out.push('(');
-            let mut i: usize = 0;
-            while i < elems.len() {
+            for i in 0usize..elems.len() {
                 if i > 0 {
                     out.push_str(", ");
                 }
                 let elem_str = format_type(&elems[i]);
                 out.push_str(elem_str.as_str());
-                i = i + 1;
             }
             out.push(')');
             out
@@ -215,14 +205,12 @@ pub fn format_type(ty: &hir_ty::Type) -> String {
         &hir_ty::TypeKind::Fn { ref params, ref ret, ref effects } => {
             let mut out = String::new();
             out.push_str("fn(");
-            let mut i: usize = 0;
-            while i < params.len() {
+            for i in 0usize..params.len() {
                 if i > 0 {
                     out.push_str(", ");
                 }
                 let p = format_type(&params[i]);
                 out.push_str(p.as_str());
-                i = i + 1;
             }
             out.push_str(") -> ");
             let ret_str = format_type(ret.as_ref());
@@ -234,14 +222,12 @@ pub fn format_type(ty: &hir_ty::Type) -> String {
             out.push_str("closure[def");
             push_u32(&mut out, def_id.index);
             out.push_str("](");
-            let mut i: usize = 0;
-            while i < params.len() {
+            for i in 0usize..params.len() {
                 if i > 0 {
                     out.push_str(", ");
                 }
                 let p = format_type(&params[i]);
                 out.push_str(p.as_str());
-                i = i + 1;
             }
             out.push_str(") -> ");
             let ret_str = format_type(ret.as_ref());
@@ -254,14 +240,12 @@ pub fn format_type(ty: &hir_ty::Type) -> String {
             push_u32(&mut out, def_id.index);
             if args.len() > 0 {
                 out.push('<');
-                let mut i: usize = 0;
-                while i < args.len() {
+                for i in 0usize..args.len() {
                     if i > 0 {
                         out.push_str(", ");
                     }
                     let a = format_type(&args[i]);
                     out.push_str(a.as_str());
-                    i = i + 1;
                 }
                 out.push('>');
             }
@@ -283,15 +267,13 @@ pub fn format_type(ty: &hir_ty::Type) -> String {
         &hir_ty::TypeKind::Record { ref fields, ref row_var } => {
             let mut out = String::new();
             out.push_str("{ ");
-            let mut i: usize = 0;
-            while i < fields.len() {
+            for i in 0usize..fields.len() {
                 if i > 0 {
                     out.push_str(", ");
                 }
                 out.push_str("field: ");
                 let f = format_type(&fields[i].ty);
                 out.push_str(f.as_str());
-                i = i + 1;
             }
             out.push_str(" }");
             out
@@ -299,14 +281,12 @@ pub fn format_type(ty: &hir_ty::Type) -> String {
         &hir_ty::TypeKind::Forall { ref params, ref body } => {
             let mut out = String::new();
             out.push_str("forall<");
-            let mut i: usize = 0;
-            while i < params.len() {
+            for i in 0usize..params.len() {
                 if i > 0 {
                     out.push_str(", ");
                 }
                 out.push('T');
                 push_u32(&mut out, params[i].index);
-                i = i + 1;
             }
             out.push_str("> ");
             let body_str = format_type(body.as_ref());
@@ -385,11 +365,9 @@ pub fn format_place(place: &mir_types::Place) -> String {
             push_u32(&mut out, def_id.index);
             out.push(')');
             // Apply projections
-            let mut pi: usize = 0;
-            while pi < place.projection.len() {
+            for pi in 0usize..place.projection.len() {
                 let proj = format_projection(&place.projection[pi]);
                 out.push_str(proj.as_str());
-                pi = pi + 1;
             }
             return out;
         }
@@ -401,11 +379,9 @@ pub fn format_place(place: &mir_types::Place) -> String {
     push_u32(&mut out, place.local.index);
 
     // Apply projections
-    let mut i: usize = 0;
-    while i < place.projection.len() {
+    for i in 0usize..place.projection.len() {
         let proj = format_projection(&place.projection[i]);
         out.push_str(proj.as_str());
-        i = i + 1;
     }
 
     out
@@ -552,8 +528,7 @@ pub fn format_constant_kind(kind: &mir_types::ConstantKind) -> String {
             // Truncate very long strings for readability
             let bytes = val.as_bytes();
             let limit: usize = if bytes.len() > 60 { 60 } else { bytes.len() };
-            let mut i: usize = 0;
-            while i < limit {
+            for i in 0usize..limit {
                 let b = bytes[i];
                 if b == 10 { // '\n'
                     out.push_str("\\n");
@@ -571,7 +546,6 @@ pub fn format_constant_kind(kind: &mir_types::ConstantKind) -> String {
                     out.push_str("\\x");
                     push_hex_u8(&mut out, b);
                 }
-                i = i + 1;
             }
             if bytes.len() > 60 {
                 out.push_str("...");
@@ -670,15 +644,13 @@ pub fn format_aggregate_kind(kind: &mir_types::AggregateKind) -> String {
             push_u32(&mut out, variant_idx);
             if type_args.len() > 0 {
                 out.push_str(", args=<");
-                let mut i: usize = 0;
-                while i < type_args.len() {
+                for i in 0usize..type_args.len() {
                     if i > 0 {
                         out.push_str(", ");
                     }
                     let ta_hir_ty = type_intern::ty_id_to_type(type_args[i]);
                     let a = format_type(&ta_hir_ty);
                     out.push_str(a.as_str());
-                    i = i + 1;
                 }
                 out.push('>');
             }
@@ -791,14 +763,12 @@ pub fn format_rvalue(rv: &mir_types::Rvalue) -> String {
             let kind_str = format_aggregate_kind(kind);
             out.push_str(kind_str.as_str());
             out.push_str(", [");
-            let mut i: usize = 0;
-            while i < operands.len() {
+            for i in 0usize..operands.len() {
                 if i > 0 {
                     out.push_str(", ");
                 }
                 let op_str = format_operand(&operands[i]);
                 out.push_str(op_str.as_str());
-                i = i + 1;
             }
             out.push_str("])");
             out
@@ -969,8 +939,7 @@ pub fn format_terminator(term: &mir_term::Terminator) -> String {
             let d = format_operand(discr);
             out.push_str(d.as_str());
             out.push_str(") [");
-            let mut i: usize = 0;
-            while i < targets.targets.len() {
+            for i in 0usize..targets.targets.len() {
                 let t = &targets.targets[i];
                 if i > 0 {
                     out.push_str(", ");
@@ -978,7 +947,6 @@ pub fn format_terminator(term: &mir_term::Terminator) -> String {
                 push_u64(&mut out, t.value as u64);
                 out.push_str(" -> bb");
                 push_u32(&mut out, t.target.index);
-                i = i + 1;
             }
             out.push_str(", otherwise -> bb");
             push_u32(&mut out, targets.otherwise.index);
@@ -996,14 +964,12 @@ pub fn format_terminator(term: &mir_term::Terminator) -> String {
             let f = format_operand(func);
             out.push_str(f.as_str());
             out.push('(');
-            let mut i: usize = 0;
-            while i < args.len() {
+            for i in 0usize..args.len() {
                 if i > 0 {
                     out.push_str(", ");
                 }
                 let a = format_operand(&args[i]);
                 out.push_str(a.as_str());
-                i = i + 1;
             }
             out.push_str(") -> ");
             match target {
@@ -1043,14 +1009,12 @@ pub fn format_terminator(term: &mir_term::Terminator) -> String {
             out.push_str(".op");
             push_u32(&mut out, op_index);
             out.push('(');
-            let mut i: usize = 0;
-            while i < args.len() {
+            for i in 0usize..args.len() {
                 if i > 0 {
                     out.push_str(", ");
                 }
                 let a = format_operand(&args[i]);
                 out.push_str(a.as_str());
-                i = i + 1;
             }
             out.push_str(") -> ");
             match target {

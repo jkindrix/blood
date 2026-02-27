@@ -57,15 +57,13 @@ pub fn validate_body(body: &mir_body::MirBody, fn_name: &str) -> Vec<String> {
     }
 
     // Check 4: Every block must have a terminator
-    let mut bb_idx: usize = 0;
-    while bb_idx < num_blocks {
+    for bb_idx in 0usize..num_blocks {
         let block = &body.basic_blocks[bb_idx];
         match &block.terminator {
             &Option::Some(ref term) => {
                 // Check 5: Successor block indices must be in range
                 let succs = term.successors();
-                let mut si: usize = 0;
-                while si < succs.len() {
+                for si in 0usize..succs.len() {
                     let succ_idx = succs[si].as_usize();
                     if succ_idx >= num_blocks {
                         let mut msg = String::new();
@@ -78,7 +76,6 @@ pub fn validate_body(body: &mir_body::MirBody, fn_name: &str) -> Vec<String> {
                         msg.push_str(" blocks)");
                         errors.push(msg);
                     }
-                    si = si + 1;
                 }
 
                 // Check 6: Validate terminator operand local references
@@ -94,13 +91,10 @@ pub fn validate_body(body: &mir_body::MirBody, fn_name: &str) -> Vec<String> {
         }
 
         // Check 7: Validate statement operand local references
-        let mut stmt_idx: usize = 0;
-        while stmt_idx < block.statements.len() {
+        for stmt_idx in 0usize..block.statements.len() {
             validate_statement_locals(&mut errors, &block.statements[stmt_idx], bb_idx, stmt_idx, num_locals);
-            stmt_idx = stmt_idx + 1;
         }
 
-        bb_idx = bb_idx + 1;
     }
 
     errors
@@ -175,10 +169,8 @@ fn validate_terminator_locals(
         }
         &mir_term::TerminatorKind::Call { ref func, ref args, ref destination, target: _, unwind: _ } => {
             validate_operand_local(errors, func, bb_idx, stmt_idx, num_locals, "Call func");
-            let mut ai: usize = 0;
-            while ai < args.len() {
+            for ai in 0usize..args.len() {
                 validate_operand_local(errors, &args[ai], bb_idx, stmt_idx, num_locals, "Call arg");
-                ai = ai + 1;
             }
             validate_place_local(errors, destination, bb_idx, stmt_idx, num_locals, "Call dest");
         }
@@ -189,10 +181,8 @@ fn validate_terminator_locals(
             validate_place_local(errors, place, bb_idx, stmt_idx, num_locals, "Drop");
         }
         &mir_term::TerminatorKind::Perform { effect_id: _, op_index: _, ref args, ref destination, target: _, is_tail_resumptive: _ } => {
-            let mut ai: usize = 0;
-            while ai < args.len() {
+            for ai in 0usize..args.len() {
                 validate_operand_local(errors, &args[ai], bb_idx, stmt_idx, num_locals, "Perform arg");
-                ai = ai + 1;
             }
             validate_place_local(errors, destination, bb_idx, stmt_idx, num_locals, "Perform dest");
         }
@@ -236,10 +226,8 @@ fn validate_rvalue_locals(
             validate_operand_local(errors, operand, bb_idx, stmt_idx, num_locals, "Cast");
         }
         &mir_types::Rvalue::Aggregate { kind: _, ref operands } => {
-            let mut ai: usize = 0;
-            while ai < operands.len() {
+            for ai in 0usize..operands.len() {
                 validate_operand_local(errors, &operands[ai], bb_idx, stmt_idx, num_locals, "Aggregate elem");
-                ai = ai + 1;
             }
         }
         &mir_types::Rvalue::Discriminant(ref place) => {
@@ -266,8 +254,7 @@ fn validate_place_local(
 ) {
     check_local_range(errors, place.local.as_usize(), bb_idx, stmt_idx, num_locals, context);
     // Also check Index projections
-    let mut pi: usize = 0;
-    while pi < place.projection.len() {
+    for pi in 0usize..place.projection.len() {
         match &place.projection[pi] {
             &mir_types::PlaceElem::Index(ref idx_local) => {
                 check_local_range(errors, idx_local.as_usize(), bb_idx, stmt_idx, num_locals, "Index projection");
@@ -278,7 +265,6 @@ fn validate_place_local(
             &mir_types::PlaceElem::Subslice { from: _, to: _, from_end: _ } => {}
             &mir_types::PlaceElem::Downcast(_) => {}
         }
-        pi = pi + 1;
     }
 }
 

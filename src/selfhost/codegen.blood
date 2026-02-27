@@ -103,20 +103,16 @@ fn find_call_remaps(
     def_id: u32,
 ) -> Vec<common::CallRemapEntry> {
     let mut result: Vec<common::CallRemapEntry> = Vec::new();
-    let mut i: usize = 0;
-    while i < remaps.len() {
+    for i in 0usize..remaps.len() {
         if remaps[i].body_def_id == def_id {
-            let mut j: usize = 0;
-            while j < remaps[i].call_remaps.len() {
+            for j in 0usize..remaps[i].call_remaps.len() {
                 result.push(common::CallRemapEntry::new(
                     remaps[i].call_remaps[j].from_def_id,
                     remaps[i].call_remaps[j].to_def_id,
                 ));
-                j = j + 1;
             }
             return result;
         }
-        i = i + 1;
     }
     result
 }
@@ -132,22 +128,18 @@ pub fn generate_module_with_items(
 
     // Build the DefId to name mapping for all functions
     let mut def_names: Vec<codegen_ctx::DefNameEntry> = Vec::new();
-    let mut idx: usize = 0;
-    while idx < functions.len() {
+    for idx in 0usize..functions.len() {
         let (ref name, ref body) = functions[idx];
         def_names.push(codegen_ctx::DefNameEntry::new(
             body.def_id.index,
             clone_string(name),
         ));
-        idx = idx + 1;
     }
 
     // Create the shared codegen context with def names
     let mut ctx = codegen_ctx::CodegenCtx::new();
-    let mut di: usize = 0;
-    while di < def_names.len() {
+    for di in 0usize..def_names.len() {
         ctx.register_def_name(def_names[di].def_id, clone_string(&def_names[di].name));
-        di = di + 1;
     }
 
     // Populate ADT registry from HIR items
@@ -169,8 +161,7 @@ pub fn generate_module_with_items(
     // This is a workaround for missing proper monomorphization
     let mut generated_set = hashmap::HashMapU64U32::with_capacity(functions.len());
     let mut skip_count: usize = 0;
-    let mut i: usize = 0;
-    while i < functions.len() {
+    for i in 0usize..functions.len() {
         let (ref name, ref body) = functions[i];
         // Check if this function name has already been generated (O(1) hash lookup)
         let name_hash = hashmap::hash_str(name.as_str());
@@ -192,7 +183,6 @@ pub fn generate_module_with_items(
             output.push_str(name.as_str());
             output.push_str("\n");
         }
-        i = i + 1;
     }
     // Debug: emit total skip count as comment
     if skip_count > 0 {
@@ -203,10 +193,8 @@ pub fn generate_module_with_items(
     }
 
     // Emit fn pointer wrapper functions collected during codegen
-    let mut wpi: usize = 0;
-    while wpi < ctx.fn_ptr_wrapper_defs.len() {
+    for wpi in 0usize..ctx.fn_ptr_wrapper_defs.len() {
         output.push_str(ctx.fn_ptr_wrapper_defs[wpi].as_str());
-        wpi = wpi + 1;
     }
 
     // Append string constants from the context
@@ -237,10 +225,8 @@ pub fn generate_function_with_defs(
     let mut ctx = codegen_ctx::CodegenCtx::new();
 
     // Register all def names in the context
-    let mut i: usize = 0;
-    while i < def_names.len() {
+    for i in 0usize..def_names.len() {
         ctx.register_def_name(def_names[i].def_id, clone_string(&def_names[i].name));
-        i = i + 1;
     }
 
     generate_function_with_ctx(&mut ctx, body, fn_name)
@@ -301,10 +287,8 @@ pub fn generate_function_with_ctx(
 
     // Store function signature for generic call fixup at call sites
     let mut sig_param_types: Vec<String> = Vec::new();
-    let mut sp: usize = 0;
-    while sp < params.len() {
+    for sp in 0usize..params.len() {
         sig_param_types.push(clone_string(&params[sp].0));
-        sp = sp + 1;
     }
     ctx.register_fn_signature(body.def_id.index, sig_param_types, clone_string(&ret_ty));
 
@@ -341,11 +325,9 @@ pub fn generate_function_with_ctx(
     }
 
     // Emit all basic blocks
-    let mut block_idx: usize = 0;
-    while block_idx < body.basic_blocks.len() {
+    for block_idx in 0usize..body.basic_blocks.len() {
         let block_id = mir_def::BasicBlockId::new(block_idx as u32);
         codegen_term::emit_basic_block(ctx, block_id, &body.basic_blocks[block_idx]);
-        block_idx = block_idx + 1;
     }
 
     ctx.emit_fn_footer();
@@ -373,14 +355,12 @@ fn emit_capture_loads(
 ) {
     // Build env struct LLVM type from capture types
     let mut env_llvm = common::make_string("{ ");
-    let mut ti: usize = 0;
-    while ti < body.capture_tys.len() {
+    for ti in 0usize..body.capture_tys.len() {
         if ti > 0 {
             env_llvm.push_str(", ");
         }
         let cap_ty_llvm = codegen_size::type_to_llvm_with_ctx_id(ctx, body.capture_tys[ti]);
         env_llvm.push_str(cap_ty_llvm.as_str());
-        ti = ti + 1;
     }
     env_llvm.push_str(" }");
 
@@ -449,8 +429,7 @@ pub fn populate_adt_registry(
 ) {
     // Pass 1: Register all ADTs with basic (possibly ptr) field types.
     // This ensures all ADT def_ids are known before resolving nested types.
-    let mut i: usize = 0;
-    while i < items.len() {
+    for i in 0usize..items.len() {
         let entry = &items[i];
         match &entry.item.kind {
             &hir_item::ItemKind::Struct(ref struct_def) => {
@@ -476,7 +455,6 @@ pub fn populate_adt_registry(
             &hir_item::ItemKind::Macro(_) => {}
             &hir_item::ItemKind::Foreign(_) => {}
         }
-        i = i + 1;
     }
 
     // Pass 2+: Rebuild struct and enum layouts using context-aware type resolution.
@@ -493,8 +471,7 @@ pub fn populate_adt_registry(
     let mut stable_count: u32 = 0;
     while pass < 12 && stable_count < 2 {
         let mut changed: bool = false;
-        let mut j: usize = 0;
-        while j < items.len() {
+        for j in 0usize..items.len() {
             let entry = &items[j];
             match &entry.item.kind {
                 &hir_item::ItemKind::Struct(ref struct_def) => {
@@ -516,7 +493,6 @@ pub fn populate_adt_registry(
                 }
                 _ => {}
             }
-            j = j + 1;
         }
         if changed {
             stable_count = 0;
@@ -607,8 +583,7 @@ fn make_builtin_struct_layout(def_id: u32, llvm_type_str: &str) -> codegen_ctx::
 /// `first_is_unit` indicates whether variant 0 has no payload (true for Option::None).
 fn make_builtin_enum_layout(def_id: u32, num_variants: u32, first_is_unit: bool) -> codegen_ctx::EnumLayout {
     let mut variants: Vec<codegen_ctx::VariantLayout> = Vec::new();
-    let mut vi: u32 = 0;
-    while vi < num_variants {
+    for vi in 0u32..num_variants {
         let fields: Vec<codegen_ctx::AdtFieldInfo> = Vec::new();
         let payload_ty = if first_is_unit && vi == 0 {
             common::make_string("{}")
@@ -620,7 +595,6 @@ fn make_builtin_enum_layout(def_id: u32, num_variants: u32, first_is_unit: bool)
             fields: fields,
             payload_llvm_type: payload_ty,
         });
-        vi = vi + 1;
     }
     codegen_ctx::EnumLayout {
         def_id: def_id,
@@ -638,10 +612,8 @@ pub fn rebuild_adt_layouts(
     ctx: &mut codegen_ctx::CodegenCtx,
     items: &Vec<hir_lower_ctx::ItemEntry>,
 ) {
-    let mut pass: u32 = 0;
-    while pass < 4 {
-        let mut j: usize = 0;
-        while j < items.len() {
+    for pass in 0u32..4 {
+        for j in 0usize..items.len() {
             let entry = &items[j];
             match &entry.item.kind {
                 &hir_item::ItemKind::Struct(ref struct_def) => {
@@ -654,9 +626,7 @@ pub fn rebuild_adt_layouts(
                 }
                 _ => {}
             }
-            j = j + 1;
         }
-        pass = pass + 1;
     }
 }
 
@@ -668,8 +638,7 @@ fn build_struct_layout_basic(def_id: u32, struct_def: &hir_item::StructDef) -> c
 
     match &struct_def.body {
         &hir_item::StructBody::Record(ref struct_fields) => {
-            let mut fi: usize = 0;
-            while fi < struct_fields.len() {
+            for fi in 0usize..struct_fields.len() {
                 if fi > 0 {
                     llvm_type.push_str(", ");
                 }
@@ -681,12 +650,10 @@ fn build_struct_layout_basic(def_id: u32, struct_def: &hir_item::StructDef) -> c
                     llvm_type: field_ty,
                     hir_type: Option::Some(struct_fields[fi].ty),
                 });
-                fi = fi + 1;
             }
         }
         &hir_item::StructBody::Tuple(ref tuple_fields) => {
-            let mut fi: usize = 0;
-            while fi < tuple_fields.len() {
+            for fi in 0usize..tuple_fields.len() {
                 if fi > 0 {
                     llvm_type.push_str(", ");
                 }
@@ -698,7 +665,6 @@ fn build_struct_layout_basic(def_id: u32, struct_def: &hir_item::StructDef) -> c
                     llvm_type: field_ty,
                     hir_type: Option::Some(type_intern::TyId::new(tuple_fields[fi].index)),
                 });
-                fi = fi + 1;
             }
         }
         &hir_item::StructBody::Unit => {
@@ -732,8 +698,7 @@ fn build_handler_enum_layout(ctx: &mut codegen_ctx::CodegenCtx, def_id: u32, han
     let mut fields: Vec<codegen_ctx::AdtFieldInfo> = Vec::new();
     let mut payload_type = common::make_string("{ ");
     let mut total_state_bytes: u64 = 0;
-    let mut si: usize = 0;
-    while si < state_count {
+    for si in 0usize..state_count {
         let field_ty_id = handler_def.state[si].ty;
         let field_llvm_ty = codegen_size::type_to_llvm_with_ctx_id(ctx, field_ty_id);
         let field_size = codegen_size::llvm_type_size(field_llvm_ty.as_str());
@@ -746,7 +711,6 @@ fn build_handler_enum_layout(ctx: &mut codegen_ctx::CodegenCtx, def_id: u32, han
             llvm_type: field_llvm_ty,
             hir_type: Option::Some(field_ty_id),
         });
-        si = si + 1;
     }
     payload_type.push_str(" }");
 
@@ -796,8 +760,7 @@ fn build_struct_layout_with_ctx(
 
     match &struct_def.body {
         &hir_item::StructBody::Record(ref struct_fields) => {
-            let mut fi: usize = 0;
-            while fi < struct_fields.len() {
+            for fi in 0usize..struct_fields.len() {
                 if fi > 0 {
                     llvm_type.push_str(", ");
                 }
@@ -808,12 +771,10 @@ fn build_struct_layout_with_ctx(
                     llvm_type: field_ty,
                     hir_type: Option::Some(struct_fields[fi].ty),
                 });
-                fi = fi + 1;
             }
         }
         &hir_item::StructBody::Tuple(ref tuple_fields) => {
-            let mut fi: usize = 0;
-            while fi < tuple_fields.len() {
+            for fi in 0usize..tuple_fields.len() {
                 if fi > 0 {
                     llvm_type.push_str(", ");
                 }
@@ -824,7 +785,6 @@ fn build_struct_layout_with_ctx(
                     llvm_type: field_ty,
                     hir_type: Option::Some(type_intern::TyId::new(tuple_fields[fi].index)),
                 });
-                fi = fi + 1;
             }
         }
         &hir_item::StructBody::Unit => {
@@ -857,8 +817,7 @@ fn build_enum_layout_with_ctx(
     let mut max_alignment: u64 = 1;
     let mut has_payload: bool = false;
 
-    let mut vi: usize = 0;
-    while vi < enum_def.variants.len() {
+    for vi in 0usize..enum_def.variants.len() {
         let variant = &enum_def.variants[vi];
         let mut fields: Vec<codegen_ctx::AdtFieldInfo> = Vec::new();
         let mut payload_type = common::make_string("{}");
@@ -869,8 +828,7 @@ fn build_enum_layout_with_ctx(
             }
             &hir_item::VariantKind::Tuple(ref tuple_fields) => {
                 let mut pt = common::make_string("{ ");
-                let mut fi: usize = 0;
-                while fi < tuple_fields.len() {
+                for fi in 0usize..tuple_fields.len() {
                     if fi > 0 {
                         pt.push_str(", ");
                     }
@@ -881,7 +839,6 @@ fn build_enum_layout_with_ctx(
                         llvm_type: field_ty,
                         hir_type: Option::Some(type_intern::TyId::new(tuple_fields[fi].index)),
                     });
-                    fi = fi + 1;
                 }
                 pt.push_str(" }");
                 if tuple_fields.len() > 0 {
@@ -891,8 +848,7 @@ fn build_enum_layout_with_ctx(
             }
             &hir_item::VariantKind::Record(ref record_fields) => {
                 let mut pt = common::make_string("{ ");
-                let mut fi: usize = 0;
-                while fi < record_fields.len() {
+                for fi in 0usize..record_fields.len() {
                     if fi > 0 {
                         pt.push_str(", ");
                     }
@@ -902,7 +858,6 @@ fn build_enum_layout_with_ctx(
                         llvm_type: field_ty,
                         hir_type: Option::Some(record_fields[fi].ty),
                     });
-                    fi = fi + 1;
                 }
                 pt.push_str(" }");
                 if record_fields.len() > 0 {
@@ -928,7 +883,6 @@ fn build_enum_layout_with_ctx(
             payload_llvm_type: payload_type,
         });
 
-        vi = vi + 1;
     }
 
     // Always use i32 for discriminant (matching reference compiler)
@@ -1254,13 +1208,11 @@ pub fn extern_function(name: &str, params: &Vec<String>, ret_ty: &str) -> String
     output.push_str(" @");
     output.push_str(name);
     output.push_str("(");
-    let mut i: usize = 0;
-    while i < params.len() {
+    for i in 0usize..params.len() {
         if i > 0 {
             output.push_str(", ");
         }
         output.push_str(params[i].as_str());
-        i = i + 1;
     }
     output.push_str(")\n");
     output
@@ -1294,12 +1246,10 @@ fn string_eq_str(a: &str, b: &str) -> bool {
     if a_bytes.len() != b_bytes.len() {
         return false;
     }
-    let mut i: usize = 0;
-    while i < a_bytes.len() {
+    for i in 0usize..a_bytes.len() {
         if a_bytes[i] != b_bytes[i] {
             return false;
         }
-        i = i + 1;
     }
     true
 }

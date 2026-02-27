@@ -161,8 +161,7 @@ pub fn discover_project_root(start_dir: &str) -> Option<String> {
     current.push_str(start_dir);
 
     // Limit search depth to prevent infinite loops
-    let mut depth: u32 = 0;
-    while depth < 20 {
+    for depth in 0u32..20 {
         // Check if Blood.toml exists in current directory
         let mut manifest_path = String::new();
         manifest_path.push_str(current.as_str());
@@ -182,7 +181,6 @@ pub fn discover_project_root(start_dir: &str) -> Option<String> {
             Option::None => { return Option::None; }
         }
 
-        depth = depth + 1;
     }
 
     Option::None
@@ -195,12 +193,10 @@ fn parent_dir(path: &str) -> Option<String> {
 
     // Find the last path separator
     let mut last_sep: i64 = -1;
-    let mut i: usize = 0;
-    while i < len {
+    for i in 0usize..len {
         if bytes[i] == 47 { // '/'
             last_sep = i as i64;
         }
-        i = i + 1;
     }
 
     if last_sep <= 0 {
@@ -208,10 +204,8 @@ fn parent_dir(path: &str) -> Option<String> {
     }
 
     let mut result = String::new();
-    let mut j: usize = 0;
-    while j < last_sep as usize {
+    for j in 0usize..last_sep as usize {
         result.push(bytes[j] as char);
-        j = j + 1;
     }
     Option::Some(result)
 }
@@ -231,19 +225,16 @@ pub fn parse_manifest(content: &str) -> Manifest {
     let mut current_section = String::new();
 
     let lines = split_lines(content);
-    let mut line_idx: usize = 0;
-    while line_idx < lines.len() {
+    for line_idx in 0usize..lines.len() {
         let line = trim_str(lines[line_idx].as_str());
         let line_len = line.len();
 
         // Skip empty lines and comments
         if line_len == 0 {
-            line_idx = line_idx + 1;
             continue;
         }
         let line_bytes = line.as_bytes();
         if line_bytes[0] == 35 { // '#'
-            line_idx = line_idx + 1;
             continue;
         }
 
@@ -256,7 +247,6 @@ pub fn parse_manifest(content: &str) -> Manifest {
                 // Regular section: [name]
                 current_section = extract_section_name(line.as_str(), false);
             }
-            line_idx = line_idx + 1;
             continue;
         }
 
@@ -269,7 +259,6 @@ pub fn parse_manifest(content: &str) -> Manifest {
             Option::None => {}
         }
 
-        line_idx = line_idx + 1;
     }
 
     manifest
@@ -323,8 +312,7 @@ pub fn resolve_modules(manifest: &Manifest, root: &str) -> Vec<ModuleFile> {
     }
 
     // Add binary targets
-    let mut i: usize = 0;
-    while i < manifest.bin_targets.len() {
+    for i in 0usize..manifest.bin_targets.len() {
         let bin = &manifest.bin_targets[i];
         let mut path = String::new();
         path.push_str(root);
@@ -332,7 +320,6 @@ pub fn resolve_modules(manifest: &Manifest, root: &str) -> Vec<ModuleFile> {
         path.push_str(bin.src_path.as_str());
         let mf = ModuleFile::new(make_string_copy(bin.name.as_str()), path);
         modules.push(mf);
-        i = i + 1;
     }
 
     modules
@@ -355,9 +342,8 @@ fn split_lines(content: &str) -> Vec<String> {
     let bytes = content.as_bytes();
     let len = content.len();
     let mut start: usize = 0;
-    let mut i: usize = 0;
 
-    while i < len {
+    for i in 0usize..len {
         if bytes[i] == 10 { // '\n'
             let mut line = String::new();
             let mut j: usize = start;
@@ -368,7 +354,6 @@ fn split_lines(content: &str) -> Vec<String> {
             lines.push(line);
             start = i + 1;
         }
-        i = i + 1;
     }
 
     // Handle last line (no trailing newline)
@@ -452,12 +437,10 @@ fn parse_key_value(line: &str) -> Option<(String, String)> {
 
     // Extract key (before =)
     let mut key = String::new();
-    let mut k: usize = 0;
-    while k < eq_pos {
+    for k in 0usize..eq_pos {
         if bytes[k] != 32 && bytes[k] != 9 { // not whitespace
             key.push(bytes[k] as char);
         }
-        k = k + 1;
     }
 
     // Extract value (after =), removing quotes

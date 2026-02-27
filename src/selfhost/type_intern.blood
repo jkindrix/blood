@@ -230,11 +230,9 @@ pub enum InternedTypeKind {
 /// Mixes a u64 value into an FNV-1a hash state.
 fn hash_mix(h: u64, val: u64) -> u64 {
     let mut state: u64 = h;
-    let mut i: u32 = 0;
-    while i < 8 {
+    for i in 0u32..8 {
         state = state ^ ((val >> (i * 8)) & 255);
         state = state * 1099511628211;
-        i = i + 1;
     }
     state
 }
@@ -351,10 +349,8 @@ fn hash_interned_type_kind(kind: &InternedTypeKind) -> u64 {
             h = hash_mix(h, 12);
             h = hash_mix(h, body.index as u64);
             h = hash_mix(h, params.len() as u64);
-            let mut i: usize = 0;
-            while i < params.len() {
+            for i in 0usize..params.len() {
                 h = hash_mix(h, params[i].index as u64);
-                i = i + 1;
             }
         }
         &InternedTypeKind::Range { element, inclusive } => {
@@ -370,10 +366,8 @@ fn hash_interned_type_kind(kind: &InternedTypeKind) -> u64 {
             h = hash_mix(h, 14);
             h = hash_mix(h, trait_id.index as u64);
             h = hash_mix(h, auto_traits.len() as u64);
-            let mut i: usize = 0;
-            while i < auto_traits.len() {
+            for i in 0usize..auto_traits.len() {
                 h = hash_mix(h, auto_traits[i].index as u64);
-                i = i + 1;
             }
         }
         &InternedTypeKind::Never => {
@@ -395,10 +389,8 @@ fn hash_interned_type_kind(kind: &InternedTypeKind) -> u64 {
 fn hash_ty_list(ids: &Vec<TyId>) -> u64 {
     let mut h: u64 = 14695981039346656037;
     h = hash_mix(h, ids.len() as u64);
-    let mut i: usize = 0;
-    while i < ids.len() {
+    for i in 0usize..ids.len() {
         h = hash_mix(h, ids[i].index as u64);
-        i = i + 1;
     }
     h
 }
@@ -660,12 +652,10 @@ impl TypeInterner {
         }
 
         // Hash collision: linear scan
-        let mut i: usize = 0;
-        while i < self.types.len() {
+        for i in 0usize..self.types.len() {
             if interned_type_kind_eq(&self.types[i], &kind) {
                 return TyId::new(i as u32);
             }
-            i = i + 1;
         }
 
         // Not found — new type (collision case, hash already in use)
@@ -711,12 +701,10 @@ impl TypeInterner {
         }
 
         // Hash collision: linear scan
-        let mut i: usize = 0;
-        while i < self.ty_list_meta.len() {
+        for i in 0usize..self.ty_list_meta.len() {
             if ty_lists_equal(&self.ty_list_meta, &self.ty_list_data, TyListId::new(i as u32), ids) {
                 return TyListId::new(i as u32);
             }
-            i = i + 1;
         }
 
         // Not found — new list (collision case)
@@ -727,10 +715,8 @@ impl TypeInterner {
     fn push_ty_list(self: &mut TypeInterner, ids: &Vec<TyId>, hash: u64) -> TyListId {
         let start = self.ty_list_data.len() as u32;
         let len = ids.len() as u32;
-        let mut i: usize = 0;
-        while i < ids.len() {
+        for i in 0usize..ids.len() {
             self.ty_list_data.push(TyId::new(ids[i].index));
-            i = i + 1;
         }
         let index = self.ty_list_meta.len() as u32;
         self.ty_list_meta.push(TyListMeta::new(start, len));
@@ -742,10 +728,8 @@ impl TypeInterner {
     fn push_ty_list_no_hash(self: &mut TypeInterner, ids: &Vec<TyId>) -> TyListId {
         let start = self.ty_list_data.len() as u32;
         let len = ids.len() as u32;
-        let mut i: usize = 0;
-        while i < ids.len() {
+        for i in 0usize..ids.len() {
             self.ty_list_data.push(TyId::new(ids[i].index));
-            i = i + 1;
         }
         let index = self.ty_list_meta.len() as u32;
         self.ty_list_meta.push(TyListMeta::new(start, len));
@@ -919,12 +903,10 @@ fn forall_eq(a_params: &Vec<hir_def::TyVarId>, a_body: TyId, b: &InternedTypeKin
             if a_params.len() != params.len() {
                 return false;
             }
-            let mut i: usize = 0;
-            while i < a_params.len() {
+            for i in 0usize..a_params.len() {
                 if a_params[i].index != params[i].index {
                     return false;
                 }
-                i = i + 1;
             }
             true
         }
@@ -942,12 +924,10 @@ fn dyntrait_eq(a_trait_id: hir_def::DefId, a_auto_traits: &Vec<hir_def::DefId>, 
             if a_auto_traits.len() != auto_traits.len() {
                 return false;
             }
-            let mut i: usize = 0;
-            while i < a_auto_traits.len() {
+            for i in 0usize..a_auto_traits.len() {
                 if a_auto_traits[i].index != auto_traits[i].index {
                     return false;
                 }
-                i = i + 1;
             }
             true
         }
@@ -971,13 +951,11 @@ fn ty_lists_equal(meta_vec: &Vec<TyListMeta>, data_vec: &Vec<TyId>, stored_id: T
     if meta.len as usize != ids.len() {
         return false;
     }
-    let mut i: usize = 0;
-    while i < ids.len() {
+    for i in 0usize..ids.len() {
         let stored = &data_vec[(meta.start as usize) + i];
         if stored.index != ids[i].index {
             return false;
         }
-        i = i + 1;
     }
     true
 }
@@ -1048,10 +1026,8 @@ pub fn type_to_ty_id(ty: &hir_ty::Type) -> TyId {
         &hir_ty::TypeKind::Forall { ref params, ref body } => {
             let body_id = type_to_ty_id(body.as_ref());
             let mut copied_params: Vec<hir_def::TyVarId> = Vec::new();
-            let mut i: usize = 0;
-            while i < params.len() {
+            for i in 0usize..params.len() {
                 copied_params.push(params[i]);
-                i = i + 1;
             }
             type_interner().intern(InternedTypeKind::Forall { params: copied_params, body: body_id })
         }
@@ -1061,10 +1037,8 @@ pub fn type_to_ty_id(ty: &hir_ty::Type) -> TyId {
         }
         &hir_ty::TypeKind::DynTrait { trait_id, ref auto_traits } => {
             let mut copied_auto: Vec<hir_def::DefId> = Vec::new();
-            let mut i: usize = 0;
-            while i < auto_traits.len() {
+            for i in 0usize..auto_traits.len() {
                 copied_auto.push(auto_traits[i]);
-                i = i + 1;
             }
             type_interner().intern(InternedTypeKind::DynTrait { trait_id, auto_traits: copied_auto })
         }
@@ -1149,10 +1123,8 @@ pub fn ty_id_to_type(id: TyId) -> hir_ty::Type {
         }
         &InternedTypeKind::Forall { ref params, body } => {
             let mut copied_params: Vec<hir_def::TyVarId> = Vec::new();
-            let mut i: usize = 0;
-            while i < params.len() {
+            for i in 0usize..params.len() {
                 copied_params.push(params[i]);
-                i = i + 1;
             }
             hir_ty::Type::new(hir_ty::TypeKind::Forall {
                 params: copied_params,
@@ -1167,10 +1139,8 @@ pub fn ty_id_to_type(id: TyId) -> hir_ty::Type {
         }
         &InternedTypeKind::DynTrait { trait_id, ref auto_traits } => {
             let mut copied_auto: Vec<hir_def::DefId> = Vec::new();
-            let mut i: usize = 0;
-            while i < auto_traits.len() {
+            for i in 0usize..auto_traits.len() {
                 copied_auto.push(auto_traits[i]);
-                i = i + 1;
             }
             hir_ty::Type::new(hir_ty::TypeKind::DynTrait {
                 trait_id,
@@ -1189,10 +1159,8 @@ pub fn ty_id_to_type(id: TyId) -> hir_ty::Type {
 /// Interns a Vec<Type> into a Vec<TyId>.
 fn intern_type_vec(types: &Vec<hir_ty::Type>) -> Vec<TyId> {
     let mut ids: Vec<TyId> = Vec::new();
-    let mut i: usize = 0;
-    while i < types.len() {
+    for i in 0usize..types.len() {
         ids.push(type_to_ty_id(&types[i]));
-        i = i + 1;
     }
     ids
 }
@@ -1200,13 +1168,11 @@ fn intern_type_vec(types: &Vec<hir_ty::Type>) -> Vec<TyId> {
 /// Interns a hir_ty::EffectRow into an EffectRowId.
 pub fn intern_effect_row(row: &hir_ty::EffectRow) -> EffectRowId {
     let mut effects: Vec<InternedEffectRef> = Vec::new();
-    let mut i: usize = 0;
-    while i < row.effects.len() {
+    for i in 0usize..row.effects.len() {
         let eff = &row.effects[i];
         let arg_ids = intern_type_vec(&eff.args);
         let arg_list = type_interner().intern_ty_list(&arg_ids);
         effects.push(InternedEffectRef::new(eff.def_id, arg_list));
-        i = i + 1;
     }
     type_interner().intern_effect_row(InternedEffectRow::new(effects, row.row_var))
 }
@@ -1214,11 +1180,9 @@ pub fn intern_effect_row(row: &hir_ty::EffectRow) -> EffectRowId {
 /// Interns a Vec<RecordField> into an InternedRecordFieldList.
 fn intern_record_fields(fields: &Vec<hir_ty::RecordField>) -> InternedRecordFieldList {
     let mut interned: Vec<InternedRecordField> = Vec::new();
-    let mut i: usize = 0;
-    while i < fields.len() {
+    for i in 0usize..fields.len() {
         let ty_id = type_to_ty_id(&fields[i].ty);
         interned.push(InternedRecordField::new(fields[i].name, ty_id));
-        i = i + 1;
     }
     InternedRecordFieldList::new(interned)
 }
@@ -1228,11 +1192,9 @@ fn ty_list_to_type_vec(list_id: TyListId) -> Vec<hir_ty::Type> {
     let interner = type_interner();
     let len = interner.ty_list_len(list_id);
     let mut types: Vec<hir_ty::Type> = Vec::new();
-    let mut i: usize = 0;
-    while i < len {
+    for i in 0usize..len {
         let elem_id = interner.get_ty_list_element(list_id, i);
         types.push(ty_id_to_type(elem_id));
-        i = i + 1;
     }
     types
 }
@@ -1242,12 +1204,10 @@ fn effect_row_id_to_effect_row(id: EffectRowId) -> hir_ty::EffectRow {
     let interner = type_interner();
     let row = interner.get_effect_row(id);
     let mut effects: Vec<hir_ty::EffectRef> = Vec::new();
-    let mut i: usize = 0;
-    while i < row.effects.len() {
+    for i in 0usize..row.effects.len() {
         let eff = &row.effects[i];
         let args = ty_list_to_type_vec(eff.args);
         effects.push(hir_ty::EffectRef::new(eff.def_id, args));
-        i = i + 1;
     }
     hir_ty::EffectRow { effects, row_var: row.row_var }
 }
@@ -1257,11 +1217,9 @@ fn record_field_list_to_vec(id: RecordFieldListId) -> Vec<hir_ty::RecordField> {
     let interner = type_interner();
     let list = interner.get_record_field_list(id);
     let mut fields: Vec<hir_ty::RecordField> = Vec::new();
-    let mut i: usize = 0;
-    while i < list.fields.len() {
+    for i in 0usize..list.fields.len() {
         let f = &list.fields[i];
         fields.push(hir_ty::RecordField::new(f.name, ty_id_to_type(f.ty)));
-        i = i + 1;
     }
     fields
 }
@@ -1597,15 +1555,13 @@ pub fn format_ty_id(id: TyId) -> String {
             push_u32(&mut s, def_id.index);
             if interner.ty_list_len(args) > 0 {
                 s.push('<');
-                let mut i: usize = 0;
-                while i < interner.ty_list_len(args) {
+                for i in 0usize..interner.ty_list_len(args) {
                     if i > 0 {
                         s.push_str(", ");
                     }
                     let arg = interner.get_ty_list_element(args, i);
                     let formatted = format_ty_id(arg);
                     s.push_str(formatted.as_str());
-                    i = i + 1;
                 }
                 s.push('>');
             }
@@ -1614,15 +1570,13 @@ pub fn format_ty_id(id: TyId) -> String {
         }
         &InternedTypeKind::Tuple(elems) => {
             let mut s = common::make_string("(");
-            let mut i: usize = 0;
-            while i < interner.ty_list_len(elems) {
+            for i in 0usize..interner.ty_list_len(elems) {
                 if i > 0 {
                     s.push_str(", ");
                 }
                 let elem = interner.get_ty_list_element(elems, i);
                 let formatted = format_ty_id(elem);
                 s.push_str(formatted.as_str());
-                i = i + 1;
             }
             s.push(')');
             s
@@ -1665,15 +1619,13 @@ pub fn format_ty_id(id: TyId) -> String {
         }
         &InternedTypeKind::Fn { params, ret, effects: _ } => {
             let mut s = common::make_string("fn(");
-            let mut i: usize = 0;
-            while i < interner.ty_list_len(params) {
+            for i in 0usize..interner.ty_list_len(params) {
                 if i > 0 {
                     s.push_str(", ");
                 }
                 let param = interner.get_ty_list_element(params, i);
                 let formatted = format_ty_id(param);
                 s.push_str(formatted.as_str());
-                i = i + 1;
             }
             s.push_str(") -> ");
             let formatted = format_ty_id(ret);
@@ -1684,15 +1636,13 @@ pub fn format_ty_id(id: TyId) -> String {
             let mut s = common::make_string("closure(");
             push_u32(&mut s, def_id.index);
             s.push_str(")(");
-            let mut i: usize = 0;
-            while i < interner.ty_list_len(params) {
+            for i in 0usize..interner.ty_list_len(params) {
                 if i > 0 {
                     s.push_str(", ");
                 }
                 let param = interner.get_ty_list_element(params, i);
                 let formatted = format_ty_id(param);
                 s.push_str(formatted.as_str());
-                i = i + 1;
             }
             s.push_str(") -> ");
             let formatted = format_ty_id(ret);
