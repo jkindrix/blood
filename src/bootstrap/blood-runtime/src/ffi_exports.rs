@@ -4350,6 +4350,21 @@ pub extern "C" fn blood_region_destroy(region_id: u64) {
     reg.remove(&region_id);
 }
 
+/// Reset a region, releasing all allocations but keeping the virtual address
+/// mapping. The bump pointer is moved back to the start and free lists are
+/// cleared. This is cheaper than destroy + create because it avoids
+/// munmap/mmap system calls.
+///
+/// Any pointers into this region become stale after reset.
+#[no_mangle]
+pub extern "C" fn blood_region_reset(region_id: u64) {
+    let registry = get_region_registry();
+    let mut reg = registry.lock();
+    if let Some(region) = reg.get_mut(&region_id) {
+        region.reset();
+    }
+}
+
 /// Get a region by ID.
 ///
 /// Returns a raw pointer to the region, or null if not found.

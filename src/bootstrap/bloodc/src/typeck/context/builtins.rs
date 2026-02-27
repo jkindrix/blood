@@ -173,6 +173,12 @@ impl<'a> TypeContext<'a> {
             vec![u64_ty.clone()], unit_ty.clone(),
         );
 
+        // region_reset(region_id: u64) -> () - reset a region (reuse virtual mapping, free all allocations)
+        self.register_builtin_fn_aliased(
+            "region_reset", "blood_region_reset",
+            vec![u64_ty.clone()], unit_ty.clone(),
+        );
+
         // region_activate(region_id: u64) -> () - route String/Vec/Box allocations to this region
         self.register_builtin_fn_aliased(
             "region_activate", "blood_region_activate",

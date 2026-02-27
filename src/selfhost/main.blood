@@ -1746,6 +1746,7 @@ fn make_mangled_fn_name(intern: &interner::StringInterner, info: &driver::FnInfo
 fn is_region_builtin(name: &str) -> bool {
     if str_eq(name, "region_create") { return true; }
     if str_eq(name, "region_destroy") { return true; }
+    if str_eq(name, "region_reset") { return true; }
     if str_eq(name, "region_activate") { return true; }
     if str_eq(name, "region_deactivate") { return true; }
     if str_eq(name, "region_alloc") { return true; }
@@ -3513,14 +3514,17 @@ fn codegen_thread_worker(arg: u64) -> u64 {
     let thread_codegen_region = region_create(33554432, 17179869184);
     region_activate(thread_codegen_region);
 
+    // Shared MIR region — created once, reset between functions.
+    // Avoids mmap/munmap cycling that causes memory layout instability.
+    let mir_region = region_create(4194304, 8589934592);
+
     let mut i: usize = targ.chunk_start;
     while i < targ.chunk_end {
         let work = &wl.items[i];
         let body_entry = &lower.bodies[work.body_idx];
         let hir_body = &body_entry.body;
 
-        // Per-function MIR region sits on top of thread_codegen_region.
-        let mir_region = region_create(4194304, 8589934592);
+        // Activate per-function MIR region on top of thread_codegen_region.
         region_activate(mir_region);
 
         let mir_result = mir_lower::lower_body(
@@ -3581,8 +3585,8 @@ fn codegen_thread_worker(arg: u64) -> u64 {
             cli = cli + 1;
         }
 
-        // Destroy MIR region — frees MIR body data
-        region_destroy(mir_region);
+        // Reset MIR region — bump pointer back to start, keep virtual mapping
+        region_reset(mir_region);
 
         // Clear handler op state flags
         if is_hop {
@@ -3596,6 +3600,9 @@ fn codegen_thread_worker(arg: u64) -> u64 {
 
         i = i + 1;
     }
+
+    // Destroy MIR region after all functions processed
+    region_destroy(mir_region);
 
     region_deactivate();
     region_destroy(thread_codegen_region);
@@ -3633,6 +3640,10 @@ fn codegen_pass2(
         };
     }
 
+    // Shared MIR region — created once, reset between functions.
+    // Avoids mmap/munmap cycling that causes memory layout instability.
+    let mir_region = region_create(4194304, 8589934592);
+
     let mut i: usize = 0;
     while i < total_items {
         let work = &worklist.items[i];
@@ -3650,10 +3661,9 @@ fn codegen_pass2(
         let body_entry = &lower_result.bodies[work.body_idx];
         let hir_body = &body_entry.body;
 
-        // Per-function MIR region sits ON TOP of the codegen_region stack.
+        // Activate MIR region ON TOP of the codegen_region stack.
         // MIR lowering allocations go here, then we pop so codegen uses
         // the parent codegen_region (persistent across all functions).
-        let mir_region = region_create(4194304, 8589934592);
         region_activate(mir_region);
 
         let mir_result = if has_const_generics {
@@ -3790,8 +3800,8 @@ fn codegen_pass2(
             cli = cli + 1;
         }
 
-        // Destroy MIR region — frees MIR body data
-        region_destroy(mir_region);
+        // Reset MIR region — bump pointer back to start, keep virtual mapping
+        region_reset(mir_region);
 
         // Clear handler op state flags
         if is_hop {
@@ -3805,6 +3815,9 @@ fn codegen_pass2(
 
         i = i + 1;
     }
+
+    // Destroy MIR region after all functions processed
+    region_destroy(mir_region);
 
     CodegenPass2Result {
         mono_requests: all_mono_requests,
@@ -4392,6 +4405,9 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
         eprint_str(int_to_string(pass2_result.mono_requests.len() as i32));
         eprint_str("]");
 
+        // Shared MIR region for monomorphization — created once, reset between functions.
+        let mono_mir_region = region_create(4194304, 8589934592);
+
         let mut mono_i: usize = 0;
         while mono_i < pass2_result.mono_requests.len() {
             let req = &pass2_result.mono_requests[mono_i];
@@ -4413,9 +4429,8 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
                         &req.const_values,
                     );
 
-                    // Lower with const-generic bindings
-                    let mir_region = region_create(4194304, 8589934592);
-                    region_activate(mir_region);
+                    // Activate MIR region for lowering
+                    region_activate(mono_mir_region);
 
                     let mono_mir = mir_lower::lower_body_with_const_info(
                         hir_def::DefId::new(req.specialized_def_id),
@@ -4442,7 +4457,8 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
                     let mono_ir = codegen::generate_function_with_ctx(&mut ctx, &mono_mir.body, req.fn_name.as_str());
                     file_append_string(output_path, mono_ir.as_str());
 
-                    region_destroy(mir_region);
+                    // Reset MIR region for next mono function
+                    region_reset(mono_mir_region);
                 }
                 &Option::None => {
                     eprint_str("[mono_err: body not found for def ");
@@ -4453,6 +4469,9 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
 
             mono_i = mono_i + 1;
         }
+
+        // Destroy mono MIR region after all mono functions processed
+        region_destroy(mono_mir_region);
     }
 
     if args.mem_profile {

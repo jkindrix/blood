@@ -3934,6 +3934,11 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let region_destroy_type = void_type.fn_type(&[i64_type.into()], false);
         self.module.add_function("blood_region_destroy", region_destroy_type, None);
 
+        // blood_region_reset(region_id: i64) -> void
+        // Resets a region (bump pointer to start, keep virtual mapping)
+        let region_reset_type = void_type.fn_type(&[i64_type.into()], false);
+        self.module.add_function("blood_region_reset", region_reset_type, None);
+
         // blood_region_alloc(region_id: i64, size: i64, align: i64) -> i64 (address)
         // Allocates memory from a region
         let region_alloc_type = i64_type.fn_type(&[i64_type.into(), i64_type.into(), i64_type.into()], false);
