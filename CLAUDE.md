@@ -126,6 +126,7 @@ Override hierarchy (highest priority first):
 | Tool | Purpose |
 |------|---------|
 | `tools/difftest.sh` | Compare blood-rust vs first_gen output (behavioral or IR) |
+| `tools/parse-parity.sh` | Detect accept/reject drift between blood-rust and first_gen |
 | `tools/minimize.sh` | Reduce failing test to minimal reproduction |
 | `tools/phase-compare.sh` | Identify which compilation phase first diverges |
 | `tools/memprofile.sh` | Profile memory usage with per-phase breakdown |
