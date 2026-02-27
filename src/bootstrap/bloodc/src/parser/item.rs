@@ -134,6 +134,9 @@ impl<'src> Parser<'src> {
             None
         };
 
+        // Parse specification clauses
+        let spec_clauses = self.parse_spec_clauses();
+
         // Parse where clause
         let where_clause = self.parse_optional_where_clause();
 
@@ -154,10 +157,34 @@ impl<'src> Parser<'src> {
             params,
             return_type,
             effects,
+            spec_clauses,
             where_clause,
             body,
             span: start.merge(self.previous.span),
         }
+    }
+
+    /// Parse specification clauses (requires, ensures, invariant, decreases).
+    ///
+    /// These appear between the effect row and the where clause. Multiple
+    /// clauses of the same kind are allowed.
+    fn parse_spec_clauses(&mut self) -> Vec<SpecClause> {
+        let mut clauses = Vec::new();
+        loop {
+            let kind = match self.current.kind {
+                TokenKind::Requires => SpecClauseKind::Requires,
+                TokenKind::Ensures => SpecClauseKind::Ensures,
+                TokenKind::Invariant => SpecClauseKind::Invariant,
+                TokenKind::Decreases => SpecClauseKind::Decreases,
+                _ => break,
+            };
+            let start = self.current.span;
+            self.advance(); // consume keyword
+            let expr = Box::new(self.parse_expr_no_struct());
+            let span = start.merge(self.previous.span);
+            clauses.push(SpecClause { kind, expr, span });
+        }
+        clauses
     }
 
     fn parse_params(&mut self) -> Vec<Param> {

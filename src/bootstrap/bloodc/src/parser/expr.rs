@@ -1443,7 +1443,7 @@ impl<'src> Parser<'src> {
 
     /// Parse an expression that cannot end with a struct literal (for ambiguous contexts).
     /// Used in match scrutinees, if conditions, etc. where `{` starts a block.
-    fn parse_expr_no_struct(&mut self) -> Expr {
+    pub(super) fn parse_expr_no_struct(&mut self) -> Expr {
         self.parse_expr_prec_no_struct(Precedence::None)
     }
 

@@ -275,6 +275,7 @@ pub struct FnDecl {
     pub params: Vec<Param>,
     pub return_type: Option<Type>,
     pub effects: Option<EffectRow>,
+    pub spec_clauses: Vec<SpecClause>,
     pub where_clause: Option<WhereClause>,
     pub body: Option<Block>,
     pub span: Span,
@@ -285,6 +286,26 @@ pub struct FnQualifiers {
     pub is_const: bool,
     pub is_async: bool,
     pub is_unsafe: bool,
+}
+
+/// The kind of specification clause.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpecClauseKind {
+    Requires,
+    Ensures,
+    Invariant,
+    Decreases,
+}
+
+/// A specification clause on a function declaration.
+///
+/// Spec clauses are parsed and stored in the AST but not enforced at runtime.
+/// They serve as documentation/annotations for future formal verification.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpecClause {
+    pub kind: SpecClauseKind,
+    pub expr: Box<Expr>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

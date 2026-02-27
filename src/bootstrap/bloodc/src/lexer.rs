@@ -51,12 +51,16 @@ pub enum TokenKind {
     Continue,
     #[token("crate")]
     Crate,
+    #[token("decreases")]
+    Decreases,
     #[token("deep")]
     Deep,
     #[token("dyn")]
     Dyn,
     #[token("effect")]
     Effect,
+    #[token("ensures")]
+    Ensures,
     #[token("else")]
     Else,
     #[token("enum")]
@@ -81,6 +85,8 @@ pub enum TokenKind {
     Impl,
     #[token("in")]
     In,
+    #[token("invariant")]
+    Invariant,
     #[token("let")]
     Let,
     #[token("linear")]
@@ -109,6 +115,8 @@ pub enum TokenKind {
     Ref,
     #[token("region")]
     Region,
+    #[token("requires")]
+    Requires,
     #[token("resume")]
     Resume,
     #[token("return")]
@@ -486,9 +494,11 @@ impl TokenKind {
             TokenKind::Const => Some("const"),
             TokenKind::Continue => Some("continue"),
             TokenKind::Crate => Some("crate"),
+            TokenKind::Decreases => Some("decreases"),
             TokenKind::Deep => Some("deep"),
             TokenKind::Dyn => Some("dyn"),
             TokenKind::Effect => Some("effect"),
+            TokenKind::Ensures => Some("ensures"),
             TokenKind::Else => Some("else"),
             TokenKind::Enum => Some("enum"),
             TokenKind::Extends => Some("extends"),
@@ -500,6 +510,7 @@ impl TokenKind {
             TokenKind::If => Some("if"),
             TokenKind::Impl => Some("impl"),
             TokenKind::In => Some("in"),
+            TokenKind::Invariant => Some("invariant"),
             TokenKind::Let => Some("let"),
             TokenKind::Linear => Some("linear"),
             TokenKind::Loop => Some("loop"),
@@ -514,6 +525,7 @@ impl TokenKind {
             TokenKind::Pure => Some("pure"),
             TokenKind::Ref => Some("ref"),
             TokenKind::Region => Some("region"),
+            TokenKind::Requires => Some("requires"),
             TokenKind::Resume => Some("resume"),
             TokenKind::Return => Some("return"),
             TokenKind::SelfLower => Some("self"),
@@ -546,9 +558,11 @@ impl TokenKind {
             TokenKind::Const => "keyword `const`",
             TokenKind::Continue => "keyword `continue`",
             TokenKind::Crate => "keyword `crate`",
+            TokenKind::Decreases => "keyword `decreases`",
             TokenKind::Deep => "keyword `deep`",
             TokenKind::Dyn => "keyword `dyn`",
             TokenKind::Effect => "keyword `effect`",
+            TokenKind::Ensures => "keyword `ensures`",
             TokenKind::Else => "keyword `else`",
             TokenKind::Enum => "keyword `enum`",
             TokenKind::Extends => "keyword `extends`",
@@ -560,6 +574,7 @@ impl TokenKind {
             TokenKind::If => "keyword `if`",
             TokenKind::Impl => "keyword `impl`",
             TokenKind::In => "keyword `in`",
+            TokenKind::Invariant => "keyword `invariant`",
             TokenKind::Let => "keyword `let`",
             TokenKind::Linear => "keyword `linear`",
             TokenKind::Loop => "keyword `loop`",
@@ -574,6 +589,7 @@ impl TokenKind {
             TokenKind::Pure => "keyword `pure`",
             TokenKind::Ref => "keyword `ref`",
             TokenKind::Region => "keyword `region`",
+            TokenKind::Requires => "keyword `requires`",
             TokenKind::Resume => "keyword `resume`",
             TokenKind::Return => "keyword `return`",
             TokenKind::SelfLower => "keyword `self`",
