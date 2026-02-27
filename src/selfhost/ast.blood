@@ -136,8 +136,22 @@ pub struct FnDecl {
     pub params: Vec<Param>,
     pub return_type: Option<Type>,
     pub effects: Option<EffectRow>,
+    pub spec_clauses: Vec<SpecClause>,
     pub where_clause: Option<WhereClause>,
     pub body: Option<Block>,
+    pub span: common::Span,
+}
+
+pub enum SpecClauseKind {
+    Requires,
+    Ensures,
+    Invariant,
+    Decreases,
+}
+
+pub struct SpecClause {
+    pub kind: SpecClauseKind,
+    pub expr: Box<Expr>,
     pub span: common::Span,
 }
 

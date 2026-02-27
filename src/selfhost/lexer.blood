@@ -809,6 +809,7 @@ impl<'src> Lexer<'src> {
         }
         if first == 100 {
             // 'd'
+            if len == 9 && self.match_bytes9(start, 100, 101, 99, 114, 101, 97, 115, 101, 115) { return token::TokenKind::Decreases; }
             if len == 4 && self.match_bytes4(start, 100, 101, 101, 112) { return token::TokenKind::Deep; }
             if len == 3 && self.match_bytes3(start, 100, 121, 110) { return token::TokenKind::Dyn; }
             if len == 7 && self.match_bytes7(start, 100, 101, 102, 97, 117, 108, 116) { return token::TokenKind::Default; }
@@ -818,6 +819,7 @@ impl<'src> Lexer<'src> {
             // 'e'
             if len == 6 && self.match_bytes6(start, 101, 102, 102, 101, 99, 116) { return token::TokenKind::Effect; }
             if len == 4 && self.match_bytes4(start, 101, 108, 115, 101) { return token::TokenKind::Else; }
+            if len == 7 && self.match_bytes7(start, 101, 110, 115, 117, 114, 101, 115) { return token::TokenKind::Ensures; }
             if len == 4 && self.match_bytes4(start, 101, 110, 117, 109) { return token::TokenKind::Enum; }
             if len == 7 && self.match_bytes7(start, 101, 120, 116, 101, 110, 100, 115) { return token::TokenKind::Extends; }
             if len == 6 && self.match_bytes6(start, 101, 120, 116, 101, 114, 110) { return token::TokenKind::Extern; }
@@ -841,6 +843,7 @@ impl<'src> Lexer<'src> {
             if len == 2 && self.byte_at(start + 1) == 102 { return token::TokenKind::If; }
             if len == 4 && self.match_bytes4(start, 105, 109, 112, 108) { return token::TokenKind::Impl; }
             if len == 2 && self.byte_at(start + 1) == 110 { return token::TokenKind::In; }
+            if len == 9 && self.match_bytes9(start, 105, 110, 118, 97, 114, 105, 97, 110, 116) { return token::TokenKind::Invariant; }
         }
         if first == 108 {
             // 'l'
@@ -873,6 +876,7 @@ impl<'src> Lexer<'src> {
             // 'r'
             if len == 3 && self.match_bytes3(start, 114, 101, 102) { return token::TokenKind::Ref; }
             if len == 6 && self.match_bytes6(start, 114, 101, 103, 105, 111, 110) { return token::TokenKind::Region; }
+            if len == 8 && self.match_bytes8(start, 114, 101, 113, 117, 105, 114, 101, 115) { return token::TokenKind::Requires; }
             if len == 6 && self.match_bytes6(start, 114, 101, 115, 117, 109, 101) { return token::TokenKind::Resume; }
             if len == 6 && self.match_bytes6(start, 114, 101, 116, 117, 114, 110) { return token::TokenKind::Return; }
         }
@@ -988,5 +992,11 @@ impl<'src> Lexer<'src> {
         self.byte_at(start) == b0 && self.byte_at(start + 1) == b1 && self.byte_at(start + 2) == b2 &&
         self.byte_at(start + 3) == b3 && self.byte_at(start + 4) == b4 && self.byte_at(start + 5) == b5 &&
         self.byte_at(start + 6) == b6 && self.byte_at(start + 7) == b7
+    }
+
+    fn match_bytes9(self: &Self, start: usize, b0: u8, b1: u8, b2: u8, b3: u8, b4: u8, b5: u8, b6: u8, b7: u8, b8: u8) -> bool {
+        self.byte_at(start) == b0 && self.byte_at(start + 1) == b1 && self.byte_at(start + 2) == b2 &&
+        self.byte_at(start + 3) == b3 && self.byte_at(start + 4) == b4 && self.byte_at(start + 5) == b5 &&
+        self.byte_at(start + 6) == b6 && self.byte_at(start + 7) == b7 && self.byte_at(start + 8) == b8
     }
 }

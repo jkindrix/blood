@@ -467,6 +467,9 @@ pub fn parse_fn_decl(parser: &mut parser_base::Parser, attrs: Vec<ast::Attribute
         Option::None
     };
 
+    // Parse specification clauses
+    let spec_clauses = parse_spec_clauses(parser);
+
     // Parse where clause
     let where_clause: Option<ast::WhereClause> = if parser.check(token::TokenKind::Where) {
         Option::Some(parse_where_clause(parser))
@@ -492,11 +495,45 @@ pub fn parse_fn_decl(parser: &mut parser_base::Parser, attrs: Vec<ast::Attribute
         params: params,
         return_type: return_type,
         effects: effects,
+        spec_clauses: spec_clauses,
         where_clause: where_clause,
         body: body,
         span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     };
     result
+}
+
+fn parse_spec_clauses(parser: &mut parser_base::Parser) -> Vec<ast::SpecClause> {
+    let mut clauses: Vec<ast::SpecClause> = Vec::new();
+    loop {
+        let kind: Option<ast::SpecClauseKind> = if parser.check(token::TokenKind::Requires) {
+            Option::Some(ast::SpecClauseKind::Requires)
+        } else if parser.check(token::TokenKind::Ensures) {
+            Option::Some(ast::SpecClauseKind::Ensures)
+        } else if parser.check(token::TokenKind::Invariant) {
+            Option::Some(ast::SpecClauseKind::Invariant)
+        } else if parser.check(token::TokenKind::Decreases) {
+            Option::Some(ast::SpecClauseKind::Decreases)
+        } else {
+            Option::None
+        };
+        match kind {
+            Option::None => { break; }
+            Option::Some(k) => {
+                let start = parser.current.span;
+                parser.advance();
+                let expr = parser_expr::parse_expr_no_struct(parser);
+                let end = parser.previous.span;
+                let clause = ast::SpecClause {
+                    kind: k,
+                    expr: Box::new(expr),
+                    span: common::Span { start: start.start, end: end.end, line: start.line, column: start.column },
+                };
+                clauses.push(clause);
+            }
+        }
+    }
+    clauses
 }
 
 fn parse_fn_params(parser: &mut parser_base::Parser) -> Vec<ast::Param> {
@@ -1070,6 +1107,7 @@ fn parse_impl_item(parser: &mut parser_base::Parser) -> ast::ImplItem {
                 params: Vec::new(),
                 return_type: Option::None,
                 effects: Option::None,
+                spec_clauses: Vec::new(),
                 where_clause: Option::None,
                 body: Option::None,
                 span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
@@ -1361,6 +1399,7 @@ pub fn parse_declaration(parser: &mut parser_base::Parser) -> ast::Declaration {
                     params: Vec::new(),
                     return_type: Option::None,
                     effects: Option::None,
+                    spec_clauses: Vec::new(),
                     where_clause: Option::None,
                     body: Option::None,
                     span: parser.previous.span,
@@ -1486,6 +1525,7 @@ pub fn parse_declaration(parser: &mut parser_base::Parser) -> ast::Declaration {
                 params: Vec::new(),
                 return_type: Option::None,
                 effects: Option::None,
+                spec_clauses: Vec::new(),
                 where_clause: Option::None,
                 body: Option::None,
                 span: start,
