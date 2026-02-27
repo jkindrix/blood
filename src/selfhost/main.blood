@@ -909,7 +909,7 @@ fn span_to_str(source: &str, span: &common::Span) -> String {
     let mut i: usize = start;
     while i < end && i < bytes.len() {
         result.push(bytes[i] as char);
-        i = i + 1;
+        i += 1;
     }
     result
 }
@@ -1329,7 +1329,7 @@ fn run_test(args: &Args) -> i32 {
                 if t.config.ignore && !args.test_include_ignored && !args.test_only_ignored {
                     print_str("ignored\n");
                     results.ignored = results.ignored + 1;
-                    ri = ri + 1;
+                    ri += 1;
                     continue;
                 }
 
@@ -1356,7 +1356,7 @@ fn run_test(args: &Args) -> i32 {
                     }
                 }
 
-                ri = ri + 1;
+                ri += 1;
             }
 
             // Phase 6: Print summary
@@ -1472,7 +1472,7 @@ pub fn parse_args(argc: i32, argv: &Vec<String>) -> Args {
             // Option flag
             if str_equals(arg, "-o") {
                 if i + 1 < argv.len() {
-                    i = i + 1;
+                    i += 1;
                     args.output_file = Option::Some(clone_string(&argv[i]));
                 } else {
                     print_error("missing value for -o");
@@ -1487,14 +1487,14 @@ pub fn parse_args(argc: i32, argv: &Vec<String>) -> Args {
                 args.no_cache = true;
             } else if str_equals(arg, "--build-dir") {
                 if i + 1 < argv.len() {
-                    i = i + 1;
+                    i += 1;
                     args.build_dir = Option::Some(clone_string(&argv[i]));
                 } else {
                     print_error("missing value for --build-dir");
                 }
             } else if str_equals(arg, "--stdlib-path") {
                 if i + 1 < argv.len() {
-                    i = i + 1;
+                    i += 1;
                     args.stdlib_path = Option::Some(clone_string(&argv[i]));
                 } else {
                     print_error("missing value for --stdlib-path");
@@ -1510,7 +1510,7 @@ pub fn parse_args(argc: i32, argv: &Vec<String>) -> Args {
             } else if str_equals(arg, "--emit") {
                 // Space-separated: --emit llvm-ir / --emit obj
                 if i + 1 < argv.len() {
-                    i = i + 1;
+                    i += 1;
                     let emit_val = &argv[i];
                     if str_equals(emit_val, "llvm-ir") {
                         args.emit_mode = EmitMode::LlvmIr;
@@ -1557,14 +1557,14 @@ pub fn parse_args(argc: i32, argv: &Vec<String>) -> Args {
                 args.test_include_ignored = true;
             } else if str_equals(arg, "--filter") {
                 if i + 1 < argv.len() {
-                    i = i + 1;
+                    i += 1;
                     args.test_filter = Option::Some(clone_string(&argv[i]));
                 } else {
                     print_error("missing value for --filter");
                 }
             } else if str_equals(arg, "-F") {
                 if i + 1 < argv.len() {
-                    i = i + 1;
+                    i += 1;
                     args.test_filter = Option::Some(clone_string(&argv[i]));
                 } else {
                     print_error("missing value for -F");
@@ -1578,7 +1578,7 @@ pub fn parse_args(argc: i32, argv: &Vec<String>) -> Args {
                 args.source_file = Option::Some(clone_string(arg));
             }
         }
-        i = i + 1;
+        i += 1;
     }
 
     args
@@ -1654,7 +1654,7 @@ fn substr_after(s: &String, offset: usize) -> String {
     let mut i: usize = offset;
     while i < bytes.len() {
         result.push(bytes[i] as char);
-        i = i + 1;
+        i += 1;
     }
     result
 }
@@ -1678,7 +1678,7 @@ fn str_contains_ref(haystack: &str, needle: &str) -> bool {
                 matched = false;
                 j = n_bytes.len(); // break
             }
-            j = j + 1;
+            j += 1;
         }
         if matched {
             return true;
@@ -1892,7 +1892,7 @@ fn generate_missing_stubs(
                 is_defined = true;
                 di = defined_names.len(); // break
             }
-            di = di + 1;
+            di += 1;
         }
         // Also check if we already generated a stub for this name
         if !is_defined {
@@ -1903,7 +1903,7 @@ fn generate_missing_stubs(
                     already_stubbed = true;
                     si = generated_stubs.len(); // break
                 }
-                si = si + 1;
+                si += 1;
             }
             if !already_stubbed {
                 // Generate stub and track it
@@ -2196,7 +2196,7 @@ fn file_stem(path: &String) -> String {
         if bytes[i] == 47 { // '/'
             last_sep = i as i32;
         }
-        i = i + 1;
+        i += 1;
     }
     let name_start: usize = if last_sep < 0 { 0 } else { (last_sep as usize) + 1 };
 
@@ -2207,7 +2207,7 @@ fn file_stem(path: &String) -> String {
         if bytes[i] == 46 { // '.'
             last_dot = i as i32;
         }
-        i = i + 1;
+        i += 1;
     }
 
     // Extract stem
@@ -2216,7 +2216,7 @@ fn file_stem(path: &String) -> String {
     i = name_start;
     while i < name_end {
         result.push(bytes[i] as char);
-        i = i + 1;
+        i += 1;
     }
     result
 }
@@ -3097,7 +3097,7 @@ fn generate_handler_wrappers(
                 already = true;
                 ri2 = registered_effects.len(); // break
             }
-            ri2 = ri2 + 1;
+            ri2 += 1;
         }
 
         if !already {
@@ -3107,7 +3107,7 @@ fn generate_handler_wrappers(
             let mut op_count: usize = 0;
             for ci in 0usize..handler_info.ops.len() {
                 if handler_info.ops[ci].effect_def_id == eid {
-                    op_count = op_count + 1;
+                    op_count += 1;
                 }
             }
 
@@ -3154,7 +3154,7 @@ fn generate_handler_wrappers(
                         push_usize(&mut ir, store_idx);
                         ir.push_str("\n");
                     }
-                    store_idx = store_idx + 1;
+                    store_idx += 1;
                 }
             }
 
@@ -3338,7 +3338,7 @@ fn build_codegen_worklist(
                 is_static_body = true;
                 sbi = static_def_ids.len(); // break
             }
-            sbi = sbi + 1;
+            sbi += 1;
         }
         if is_static_body {
             continue;
@@ -3357,7 +3357,7 @@ fn build_codegen_worklist(
                 is_duplicate = true;
                 di = defined_def_ids.len(); // break
             }
-            di = di + 1;
+            di += 1;
         }
         if is_duplicate {
             continue;
@@ -3488,7 +3488,7 @@ fn codegen_thread_worker(arg: u64) -> u64 {
             let cbody = &mir_result.closure_mir[cli];
             let closure_ir = codegen::generate_function_with_ctx(ctx, cbody, cname.as_str());
             output.push_str(closure_ir.as_str());
-            cli = cli + 1;
+            cli += 1;
         }
 
         // Reset MIR region — bump pointer back to start, keep virtual mapping
@@ -3504,7 +3504,7 @@ fn codegen_thread_worker(arg: u64) -> u64 {
         // Clear call remaps
         ctx.call_remaps = Vec::new();
 
-        i = i + 1;
+        i += 1;
     }
 
     // Destroy MIR region after all functions processed
@@ -3696,7 +3696,7 @@ fn codegen_pass2(
             let cbody = &mir_result.closure_mir[cli];
             let closure_ir = codegen::generate_function_with_ctx(ctx, cbody, cname.as_str());
             file_append_string(output_path, closure_ir.as_str());
-            cli = cli + 1;
+            cli += 1;
         }
 
         // Reset MIR region — bump pointer back to start, keep virtual mapping
@@ -3783,7 +3783,7 @@ fn get_rss_kb() -> u64 {
                 while j < status_len {
                     let c = status_bytes[j];
                     if c == 32 || c == 9 {
-                        j = j + 1;
+                        j += 1;
                     } else {
                         break;
                     }
@@ -3794,7 +3794,7 @@ fn get_rss_kb() -> u64 {
                     let c = status_bytes[j];
                     if c >= 48 && c <= 57 {
                         value = value * 10 + (c - 48) as u64;
-                        j = j + 1;
+                        j += 1;
                     } else {
                         break;
                     }
@@ -3804,9 +3804,9 @@ fn get_rss_kb() -> u64 {
         }
         // Skip to next line
         while i < status_len && status_bytes[i] != 10 {
-            i = i + 1;
+            i += 1;
         }
-        i = i + 1;
+        i += 1;
     }
     0 as u64
 }
@@ -4178,7 +4178,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
                 is_static = true;
                 sbi = static_def_ids.len();
             }
-            sbi = sbi + 1;
+            sbi += 1;
         }
         if !is_static {
             let fn_name = match &fn_info {
@@ -4673,13 +4673,13 @@ fn push_u64(s: &mut String, val: u64) {
     while n > 0 {
         let digit = (n % 10) as u8;
         digits.push(digit + 48);
-        n = n / 10;
+        n /= 10;
     }
     // Push in reverse order with comma separators
     let len = digits.len();
     let mut i = len;
     while i > 0 {
-        i = i - 1;
+        i -= 1;
         s.push(digits[i] as char);
         let pos_from_right = i;
         if pos_from_right > 0 && pos_from_right % 3 == 0 {
@@ -4700,12 +4700,12 @@ fn push_usize(s: &mut String, val: usize) {
     while n > 0 {
         let digit = (n % 10) as u8;
         digits.push(digit + 48);
-        n = n / 10;
+        n /= 10;
     }
     // Push in reverse order
     let mut i = digits.len();
     while i > 0 {
-        i = i - 1;
+        i -= 1;
         s.push(digits[i] as char);
     }
 }

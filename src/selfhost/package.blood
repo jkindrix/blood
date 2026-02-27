@@ -176,7 +176,7 @@ pub fn parse_version(s: &str) -> Option<Version> {
             if pos >= len || bytes[pos] != 46 { // '.'
                 return Option::Some(Version::new(major, 0, 0));
             }
-            pos = pos + 1;
+            pos += 1;
 
             // Parse minor
             let minor_result = parse_u32_at(bytes, len, pos);
@@ -190,7 +190,7 @@ pub fn parse_version(s: &str) -> Option<Version> {
                     if pos >= len || bytes[pos] != 46 {
                         return Option::Some(Version::new(major, minor, 0));
                     }
-                    pos = pos + 1;
+                    pos += 1;
 
                     // Parse patch
                     let patch_result = parse_u32_at(bytes, len, pos);
@@ -262,7 +262,7 @@ pub fn parse_version_req(s: &str) -> Option<VersionReq> {
     let mut ver_str = String::new();
     while pos < len {
         ver_str.push(bytes[pos] as char);
-        pos = pos + 1;
+        pos += 1;
     }
 
     let ver_opt = parse_version(ver_str.as_str());
@@ -350,7 +350,7 @@ fn parse_lockfile_line(bytes: &[u8], start: usize, end_pos: usize) -> Option<Loc
     // Read name
     while pos < end_pos && bytes[pos] != 32 && bytes[pos] != 9 {
         name.push(bytes[pos] as char);
-        pos = pos + 1;
+        pos += 1;
     }
 
     if name.len() == 0 {
@@ -359,14 +359,14 @@ fn parse_lockfile_line(bytes: &[u8], start: usize, end_pos: usize) -> Option<Loc
 
     // Skip whitespace
     while pos < end_pos && (bytes[pos] == 32 || bytes[pos] == 9) {
-        pos = pos + 1;
+        pos += 1;
     }
 
     // Read version
     let mut ver_str = String::new();
     while pos < end_pos && bytes[pos] != 32 && bytes[pos] != 9 {
         ver_str.push(bytes[pos] as char);
-        pos = pos + 1;
+        pos += 1;
     }
 
     let ver = match parse_version(ver_str.as_str()) {
@@ -412,7 +412,7 @@ fn parse_u32_at(bytes: &[u8], len: usize, start: usize) -> Option<(u32, usize)> 
     let mut val: u32 = 0;
     while pos < len && bytes[pos] >= 48 && bytes[pos] <= 57 {
         val = val * 10 + (bytes[pos] - 48) as u32;
-        pos = pos + 1;
+        pos += 1;
     }
 
     Option::Some((val, pos))
@@ -430,12 +430,12 @@ fn append_u32(s: &mut String, val: u32) {
     while n > 0 {
         let digit = (n % 10) as u8 + 48;
         digits.push(digit);
-        n = n / 10;
+        n /= 10;
     }
 
     let mut i: usize = digits.len();
     while i > 0 {
-        i = i - 1;
+        i -= 1;
         s.push(digits[i] as char);
     }
 }

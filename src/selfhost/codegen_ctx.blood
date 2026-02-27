@@ -911,8 +911,8 @@ impl CodegenCtx {
         let mut divisor: u64 = 1;
         let mut temp: u64 = n;
         while temp >= 10 {
-            divisor = divisor * 10;
-            temp = temp / 10;
+            divisor *= 10;
+            temp /= 10;
         }
         // Write digits from most significant to least
         let mut d: u64 = divisor;
@@ -921,7 +921,7 @@ impl CodegenCtx {
             let d32: u32 = digit as u32;
             let ch: char = (48u32 + d32) as char;
             self.output.push(ch);
-            d = d / 10;
+            d /= 10;
         }
     }
 
@@ -1397,7 +1397,7 @@ impl CodegenCtx {
     pub fn lookup_struct(self: &CodegenCtx, def_id: u32) -> Option<&StructLayout> {
         let mut i: usize = self.adt_registry.len();
         while i > 0 {
-            i = i - 1;
+            i -= 1;
             match &self.adt_registry[i] {
                 &AdtEntry::Struct(ref layout) => {
                     if layout.def_id == def_id {
@@ -1415,7 +1415,7 @@ impl CodegenCtx {
     pub fn lookup_enum(self: &CodegenCtx, def_id: u32) -> Option<&EnumLayout> {
         let mut i: usize = self.adt_registry.len();
         while i > 0 {
-            i = i - 1;
+            i -= 1;
             match &self.adt_registry[i] {
                 &AdtEntry::Struct(_) => {}
                 &AdtEntry::Enum(ref layout) => {
@@ -1452,7 +1452,7 @@ impl CodegenCtx {
     pub fn adt_llvm_type(self: &CodegenCtx, def_id: u32) -> String {
         let mut i: usize = self.adt_registry.len();
         while i > 0 {
-            i = i - 1;
+            i -= 1;
             match &self.adt_registry[i] {
                 &AdtEntry::Struct(ref layout) => {
                     if layout.def_id == def_id {
@@ -2462,7 +2462,7 @@ pub fn remap_string_labels(ir: &String, remaps: &Vec<StringRemap>) -> String {
     // Process in reverse order of label number to avoid @.str.1 replacing part of @.str.10.
     let mut i: usize = remaps.len();
     while i > 0 {
-        i = i - 1;
+        i -= 1;
         let remap = &remaps[i];
         result = string_replace(&result, &remap.from, &remap.to);
     }
@@ -2495,19 +2495,19 @@ fn string_replace(s: &String, from: &String, to: &String) -> String {
                     matches = false;
                     j = from_len; // break
                 }
-                j = j + 1;
+                j += 1;
             }
             if matches {
                 // Append replacement
                 for k in 0usize..to_bytes.len() {
                     result.push(to_bytes[k] as char);
                 }
-                i = i + from_len;
+                i += from_len;
                 continue;
             }
         }
         result.push(s_bytes[i] as char);
-        i = i + 1;
+        i += 1;
     }
 
     result

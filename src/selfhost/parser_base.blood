@@ -453,10 +453,10 @@ impl<'src> Parser<'src> {
         let mut depth: u32 = 1;
         while !self.is_at_end() {
             if self.current.kind == token::TokenKind::LBrace {
-                depth = depth + 1;
+                depth += 1;
             }
             if self.current.kind == token::TokenKind::RBrace {
-                depth = depth - 1;
+                depth -= 1;
                 if depth == 0 {
                     return;
                 }
@@ -562,13 +562,13 @@ impl<'src> Parser<'src> {
         let mut pos = start + 3; // skip "///"
         // Skip one optional leading space
         if pos < end && self.source_byte_at(pos) == 32 {
-            pos = pos + 1;
+            pos += 1;
         }
         let mut result = String::new();
         while pos < end {
             let b = self.source_byte_at(pos);
             result.push(b as char);
-            pos = pos + 1;
+            pos += 1;
         }
         result
     }
@@ -597,15 +597,15 @@ pub fn parse_int_value_from_span(parser: &mut Parser, span: common::Span) -> u12
             if second == 120 || second == 88 {
                 // 'x' or 'X' — hex
                 base = 16;
-                pos = pos + 2;
+                pos += 2;
             } else if second == 111 || second == 79 {
                 // 'o' or 'O' — octal
                 base = 8;
-                pos = pos + 2;
+                pos += 2;
             } else if second == 98 || second == 66 {
                 // 'b' or 'B' — binary
                 base = 2;
-                pos = pos + 2;
+                pos += 2;
             }
         }
     }
@@ -615,24 +615,24 @@ pub fn parse_int_value_from_span(parser: &mut Parser, span: common::Span) -> u12
         let b = parser.source_byte_at(pos);
         if b == 95 {
             // Underscore separator — skip
-            pos = pos + 1;
+            pos += 1;
         } else if b >= 48 && b <= 57 {
             // '0'-'9'
             let digit = (b - 48) as u128;
             if digit < base {
                 val = val * base + digit;
             }
-            pos = pos + 1;
+            pos += 1;
         } else if base == 16 && b >= 97 && b <= 102 {
             // 'a'-'f' (hex lowercase)
             let digit = (b - 97 + 10) as u128;
             val = val * base + digit;
-            pos = pos + 1;
+            pos += 1;
         } else if base == 16 && b >= 65 && b <= 70 {
             // 'A'-'F' (hex uppercase)
             let digit = (b - 65 + 10) as u128;
             val = val * base + digit;
-            pos = pos + 1;
+            pos += 1;
         } else {
             // Hit suffix or other non-digit character
             break;
@@ -654,7 +654,7 @@ pub fn parse_int_suffix_from_span(parser: &mut Parser, span: common::Span) -> Op
         let first = parser.source_byte_at(pos);
         let second = parser.source_byte_at(pos + 1);
         if first == 48 && (second == 120 || second == 88 || second == 111 || second == 79 || second == 98 || second == 66) {
-            pos = pos + 2;
+            pos += 2;
         }
     }
 
@@ -663,17 +663,17 @@ pub fn parse_int_suffix_from_span(parser: &mut Parser, span: common::Span) -> Op
         let b = parser.source_byte_at(pos);
         if b == 95 || (b >= 48 && b <= 57) {
             // Underscore or decimal digit
-            pos = pos + 1;
+            pos += 1;
         } else if b >= 97 && b <= 102 {
             // Could be hex digit or start of suffix
             if b == 105 || b == 117 {
                 // 'i' or 'u' — this is a suffix
                 break;
             }
-            pos = pos + 1;
+            pos += 1;
         } else if b >= 65 && b <= 70 {
             // Uppercase hex digit
-            pos = pos + 1;
+            pos += 1;
         } else {
             // Non-digit, non-hex — start of suffix
             break;
@@ -759,7 +759,7 @@ pub fn parse_float_bits_from_span(parser: &mut Parser, span: common::Span) -> u6
         let b = parser.source_byte_at(num_end);
         if (b >= 48 && b <= 57) || b == 46 || b == 95 || b == 101 || b == 69 || b == 43 || b == 45 {
             // digit, '.', '_', 'e', 'E', '+', '-'
-            num_end = num_end + 1;
+            num_end += 1;
         } else {
             break;
         }
@@ -776,24 +776,24 @@ pub fn parse_float_bits_from_span(parser: &mut Parser, span: common::Span) -> u6
             break;
         }
         // Skip underscores
-        pos = pos + 1;
+        pos += 1;
     }
 
     // Parse fractional part
     let mut frac_val: u64 = 0;
     let mut frac_digits: u32 = 0;
     if pos < num_end && parser.source_byte_at(pos) == 46 {
-        pos = pos + 1;
+        pos += 1;
         while pos < num_end {
             let b = parser.source_byte_at(pos);
             if b >= 48 && b <= 57 {
                 frac_val = frac_val * 10 + ((b - 48) as u64);
-                frac_digits = frac_digits + 1;
+                frac_digits += 1;
             } else if b == 101 || b == 69 {
                 break;
             }
             // Skip underscores
-            pos = pos + 1;
+            pos += 1;
         }
     }
 
@@ -801,12 +801,12 @@ pub fn parse_float_bits_from_span(parser: &mut Parser, span: common::Span) -> u6
     let mut exp: i32 = 0;
     let mut exp_neg = false;
     if pos < num_end && (parser.source_byte_at(pos) == 101 || parser.source_byte_at(pos) == 69) {
-        pos = pos + 1;
+        pos += 1;
         if pos < num_end && parser.source_byte_at(pos) == 45 {
             exp_neg = true;
-            pos = pos + 1;
+            pos += 1;
         } else if pos < num_end && parser.source_byte_at(pos) == 43 {
-            pos = pos + 1;
+            pos += 1;
         }
         let exp_digit_start = pos;
         while pos < num_end {
@@ -814,7 +814,7 @@ pub fn parse_float_bits_from_span(parser: &mut Parser, span: common::Span) -> u6
             if b >= 48 && b <= 57 {
                 exp = exp * 10 + ((b - 48) as i32);
             }
-            pos = pos + 1;
+            pos += 1;
         }
         if pos == exp_digit_start {
             // No digits after exponent marker — invalid float
@@ -842,13 +842,13 @@ pub fn parse_float_bits_from_span(parser: &mut Parser, span: common::Span) -> u6
         let mut e: i32 = 0;
         while e < exp {
             result = result * 10.0;
-            e = e + 1;
+            e += 1;
         }
     } else if exp < 0 {
         let mut e: i32 = exp;
         while e < 0 {
             result = result / 10.0;
-            e = e + 1;
+            e += 1;
         }
     }
 
@@ -900,7 +900,7 @@ pub fn parse_string_from_span(parser: &mut Parser, span: common::Span) -> String
         }
         if b == 92 && pos + 1 < end {
             // '\' — escape sequence
-            pos = pos + 1;
+            pos += 1;
             let esc = parser.source_byte_at(pos);
             if esc == 110 {
                 // \n
@@ -925,12 +925,12 @@ pub fn parse_string_from_span(parser: &mut Parser, span: common::Span) -> String
                 result.push(39 as char);
             } else if esc == 120 {
                 // \x## — hex escape (2 hex digits)
-                pos = pos + 1;
+                pos += 1;
                 let mut hex_val: u32 = 0;
                 if pos < end {
                     let h1 = parser.source_byte_at(pos);
                     hex_val = hex_digit_value(h1);
-                    pos = pos + 1;
+                    pos += 1;
                 }
                 if pos < end {
                     let h2 = parser.source_byte_at(pos);
@@ -939,22 +939,22 @@ pub fn parse_string_from_span(parser: &mut Parser, span: common::Span) -> String
                 result.push(hex_val as char);
             } else if esc == 117 {
                 // \u{####} — unicode escape
-                pos = pos + 1;
+                pos += 1;
                 if pos < end && parser.source_byte_at(pos) == 123 {
                     // skip '{'
-                    pos = pos + 1;
+                    pos += 1;
                     let mut code_point: u32 = 0;
                     while pos < end && parser.source_byte_at(pos) != 125 {
                         let digit = parser.source_byte_at(pos);
                         code_point = code_point * 16 + hex_digit_value(digit);
-                        pos = pos + 1;
+                        pos += 1;
                     }
                     // skip '}'
                     if pos < end && parser.source_byte_at(pos) == 125 {
-                        pos = pos + 1;
+                        pos += 1;
                     }
                     result.push(code_point as char);
-                    pos = pos - 1; // adjust for outer pos = pos + 1
+                    pos -= 1; // adjust for outer pos = pos + 1
                 }
             } else {
                 // Unknown escape — report error
@@ -984,7 +984,7 @@ pub fn parse_string_from_span(parser: &mut Parser, span: common::Span) -> String
                        | ((b2 as u32 & 63) << 6)
                        | (b3 as u32 & 63);
                 result.push(cp as char);
-                pos = pos + 3; // +1 at end of loop
+                pos += 3; // +1 at end of loop
             } else if b >= 224 && pos + 2 < end {
                 // 3-byte sequence: 1110xxxx
                 let b1 = parser.source_byte_at(pos + 1);
@@ -993,20 +993,20 @@ pub fn parse_string_from_span(parser: &mut Parser, span: common::Span) -> String
                        | ((b1 as u32 & 63) << 6)
                        | (b2 as u32 & 63);
                 result.push(cp as char);
-                pos = pos + 2; // +1 at end of loop
+                pos += 2; // +1 at end of loop
             } else if b >= 192 && pos + 1 < end {
                 // 2-byte sequence: 110xxxxx
                 let b1 = parser.source_byte_at(pos + 1);
                 let cp = ((b as u32 & 31) << 6)
                        | (b1 as u32 & 63);
                 result.push(cp as char);
-                pos = pos + 1; // +1 at end of loop
+                pos += 1; // +1 at end of loop
             } else {
                 // Invalid UTF-8 continuation byte or truncated — emit as-is
                 result.push(b as char);
             }
         }
-        pos = pos + 1;
+        pos += 1;
     }
 
     result
@@ -1031,7 +1031,7 @@ pub fn parse_byte_string_from_span(parser: &mut Parser, span: common::Span) -> V
         }
         if b == 92 && pos + 1 < end {
             // '\' — escape sequence
-            pos = pos + 1;
+            pos += 1;
             let esc = parser.source_byte_at(pos);
             if esc == 110 {
                 result.push(10); // \n
@@ -1049,12 +1049,12 @@ pub fn parse_byte_string_from_span(parser: &mut Parser, span: common::Span) -> V
                 result.push(39); // \'
             } else if esc == 120 {
                 // \x## — hex escape (2 hex digits)
-                pos = pos + 1;
+                pos += 1;
                 let mut hex_val: u32 = 0;
                 if pos < end {
                     let h1 = parser.source_byte_at(pos);
                     hex_val = hex_digit_value(h1);
-                    pos = pos + 1;
+                    pos += 1;
                 }
                 if pos < end {
                     let h2 = parser.source_byte_at(pos);
@@ -1069,7 +1069,7 @@ pub fn parse_byte_string_from_span(parser: &mut Parser, span: common::Span) -> V
         } else {
             result.push(b as u8);
         }
-        pos = pos + 1;
+        pos += 1;
     }
 
     result
@@ -1102,23 +1102,23 @@ pub fn parse_raw_string_from_span(parser: &mut Parser, span: common::Span) -> St
                 let b4 = parser.source_byte_at(pos + 3);
                 let cp: u32 = ((b as u32) & 7) * 262144 + ((b2 as u32) & 63) * 4096 + ((b3 as u32) & 63) * 64 + ((b4 as u32) & 63);
                 result.push(cp as char);
-                pos = pos + 3;
+                pos += 3;
             } else if b >= 224 && pos + 2 < end {
                 let b2 = parser.source_byte_at(pos + 1);
                 let b3 = parser.source_byte_at(pos + 2);
                 let cp: u32 = ((b as u32) & 15) * 4096 + ((b2 as u32) & 63) * 64 + ((b3 as u32) & 63);
                 result.push(cp as char);
-                pos = pos + 2;
+                pos += 2;
             } else if b >= 192 && pos + 1 < end {
                 let b2 = parser.source_byte_at(pos + 1);
                 let cp: u32 = ((b as u32) & 31) * 64 + ((b2 as u32) & 63);
                 result.push(cp as char);
-                pos = pos + 1;
+                pos += 1;
             } else {
                 result.push(b as char);
             }
         }
-        pos = pos + 1;
+        pos += 1;
     }
 
     result
@@ -1169,11 +1169,11 @@ pub fn parse_char_from_span(parser: &mut Parser, span: common::Span) -> char {
             // \u{####} — unicode escape
             let mut idx = pos + 2;
             if idx < end && parser.source_byte_at(idx) == 123 {
-                idx = idx + 1;
+                idx += 1;
                 let mut code_point: u32 = 0;
                 while idx < end && parser.source_byte_at(idx) != 125 {
                     code_point = code_point * 16 + hex_digit_value(parser.source_byte_at(idx));
-                    idx = idx + 1;
+                    idx += 1;
                 }
                 return code_point as char;
             }

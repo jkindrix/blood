@@ -764,7 +764,7 @@ pub fn clone_subst_table(table: &SubstTable) -> SubstTable {
             type_intern::TyId::new(table.ty_substs[i].ty.index),
         ));
         new_table.ty_hash.insert(var_id.index as u64, vec_idx);
-        i = i + 1;
+        i += 1;
     }
 
     // Clone effect row substitutions (EffectRowId is u32 — trivial copy)
@@ -777,7 +777,7 @@ pub fn clone_subst_table(table: &SubstTable) -> SubstTable {
             type_intern::EffectRowId::new(table.effect_substs[i].row.index),
         ));
         new_table.effect_hash.insert(var_id.index as u64, vec_idx);
-        i = i + 1;
+        i += 1;
     }
 
     // Clone record row substitutions (RecordFieldListId is u32 — trivial copy)
@@ -1428,7 +1428,7 @@ pub fn apply_substs_id(table: &SubstTable, ty_id: type_intern::TyId) -> type_int
             &type_intern::InternedTypeKind::Infer(var_id) => {
                 match table.lookup_ty_id(var_id) {
                     Option::Some(resolved_id) => {
-                        depth = depth + 1;
+                        depth += 1;
                         if depth > 1000 {
                             chase = false;
                         } else {
@@ -2664,7 +2664,7 @@ fn usize_to_str(n: usize) -> String {
         tmp.push(c);
         tmp.push_str(digits.as_str());
         digits = tmp;
-        val = val / 10;
+        val /= 10;
     }
     digits
 }

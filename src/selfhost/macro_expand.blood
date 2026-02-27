@@ -63,11 +63,11 @@ pub fn preprocess_macros(source: &String) -> String {
                     pos = macros[last_idx].decl_end;
                 }
                 Option::None => {
-                    pos = pos + 1;
+                    pos += 1;
                 }
             }
         } else {
-            pos = pos + 1;
+            pos += 1;
         }
     }
 
@@ -105,14 +105,14 @@ fn remove_macro_decls(source: &String, macros: &Vec<MacroDef>) -> String {
         let mut ci: usize = prev_end;
         while ci < macros[mi].decl_start && ci < len {
             result.push(bytes[ci] as char);
-            ci = ci + 1;
+            ci += 1;
         }
         prev_end = macros[mi].decl_end;
     }
     let mut ci2: usize = prev_end;
     while ci2 < len {
         result.push(bytes[ci2] as char);
-        ci2 = ci2 + 1;
+        ci2 += 1;
     }
     result
 }
@@ -147,9 +147,9 @@ fn expand_all_invocations(source: &String, macros: &Vec<MacroDef>) -> String {
                             let mut arg_pos = arg_start;
                             let mut paren_depth: u32 = 1;
                             while arg_pos < len && paren_depth > 0 {
-                                if bytes[arg_pos] == 40 { paren_depth = paren_depth + 1; }
-                                if bytes[arg_pos] == 41 { paren_depth = paren_depth - 1; }
-                                if paren_depth > 0 { arg_pos = arg_pos + 1; }
+                                if bytes[arg_pos] == 40 { paren_depth += 1; }
+                                if bytes[arg_pos] == 41 { paren_depth -= 1; }
+                                if paren_depth > 0 { arg_pos += 1; }
                             }
                             let arg_end = arg_pos;
 
@@ -157,7 +157,7 @@ fn expand_all_invocations(source: &String, macros: &Vec<MacroDef>) -> String {
                             let mut ai: usize = arg_start;
                             while ai < arg_end {
                                 args.push(bytes[ai] as char);
-                                ai = ai + 1;
+                                ai += 1;
                             }
 
                             // Try each rule in order (first match wins)
@@ -177,12 +177,12 @@ fn expand_all_invocations(source: &String, macros: &Vec<MacroDef>) -> String {
                     }
                 }
             }
-            mi = mi + 1;
+            mi += 1;
         }
 
         if !matched {
             result.push(bytes[pos] as char);
-            pos = pos + 1;
+            pos += 1;
         }
     }
 
@@ -235,7 +235,7 @@ fn try_match_rule(args: &String, rule: &MacroRule) -> Option<Vec<CapturedArg>> {
                             let mut vi: usize = pos;
                             while vi < found_pos {
                                 value.push(bytes[vi] as char);
-                                vi = vi + 1;
+                                vi += 1;
                             }
                             captures.push(CapturedArg {
                                 name: clone_string(&rule.parts[pi].capture_name),
@@ -254,7 +254,7 @@ fn try_match_rule(args: &String, rule: &MacroRule) -> Option<Vec<CapturedArg>> {
                     let mut vi: usize = pos;
                     while vi < len {
                         value.push(bytes[vi] as char);
-                        vi = vi + 1;
+                        vi += 1;
                     }
                     captures.push(CapturedArg {
                         name: clone_string(&rule.parts[pi].capture_name),
@@ -273,7 +273,7 @@ fn try_match_rule(args: &String, rule: &MacroRule) -> Option<Vec<CapturedArg>> {
             if !matches_bytes_at(bytes, pos, lit_bytes, lit_len) {
                 return Option::None;
             }
-            pos = pos + lit_len;
+            pos += lit_len;
         }
     }
 
@@ -292,7 +292,7 @@ fn find_next_literal(rule: &MacroRule, from: usize) -> Option<usize> {
         if !rule.parts[i].is_capture {
             return Option::Some(i);
         }
-        i = i + 1;
+        i += 1;
     }
     Option::None
 }
@@ -311,31 +311,31 @@ fn find_literal_balanced(bytes: &[u8], start: usize, len: usize,
 
         // Skip string literals
         if b == 34 { // '"'
-            pos = pos + 1;
+            pos += 1;
             while pos < len {
                 if bytes[pos] == 92 { // '\\'
-                    pos = pos + 2;
+                    pos += 2;
                     continue;
                 }
                 if bytes[pos] == 34 { // closing '"'
-                    pos = pos + 1;
+                    pos += 1;
                     break;
                 }
-                pos = pos + 1;
+                pos += 1;
             }
             continue;
         }
 
         // Skip char literals
         if b == 39 { // '\''
-            pos = pos + 1;
+            pos += 1;
             if pos < len && bytes[pos] == 92 { // '\\'
-                pos = pos + 2;
+                pos += 2;
             } else if pos < len {
-                pos = pos + 1;
+                pos += 1;
             }
             if pos < len && bytes[pos] == 39 { // closing '\''
-                pos = pos + 1;
+                pos += 1;
             }
             continue;
         }
@@ -348,14 +348,14 @@ fn find_literal_balanced(bytes: &[u8], start: usize, len: usize,
         }
 
         // Track delimiter depth
-        if b == 40 { paren = paren + 1; }                       // '('
-        if b == 41 && paren > 0 { paren = paren - 1; }          // ')'
-        if b == 91 { bracket = bracket + 1; }                    // '['
-        if b == 93 && bracket > 0 { bracket = bracket - 1; }     // ']'
-        if b == 123 { brace = brace + 1; }                      // '{'
-        if b == 125 && brace > 0 { brace = brace - 1; }          // '}'
+        if b == 40 { paren += 1; }                       // '('
+        if b == 41 && paren > 0 { paren -= 1; }          // ')'
+        if b == 91 { bracket += 1; }                    // '['
+        if b == 93 && bracket > 0 { bracket -= 1; }     // ']'
+        if b == 123 { brace += 1; }                      // '{'
+        if b == 125 && brace > 0 { brace -= 1; }          // '}'
 
-        pos = pos + 1;
+        pos += 1;
     }
 
     Option::None
@@ -389,15 +389,15 @@ fn substitute_multi(template: &String, captures: &Vec<CapturedArg>) -> String {
                         }
                     }
                 }
-                ci = ci + 1;
+                ci += 1;
             }
             if !found {
                 result.push(bytes[pos] as char);
-                pos = pos + 1;
+                pos += 1;
             }
         } else {
             result.push(bytes[pos] as char);
-            pos = pos + 1;
+            pos += 1;
         }
     }
 
@@ -427,30 +427,30 @@ fn parse_macro_def(bytes: &[u8], start: usize, len: usize) -> Option<MacroDef> {
 
     // Skip whitespace
     while pos < len && is_whitespace(bytes[pos]) {
-        pos = pos + 1;
+        pos += 1;
     }
 
     // Parse macro name
     let name_start = pos;
     while pos < len && is_ident_char(bytes[pos]) {
-        pos = pos + 1;
+        pos += 1;
     }
     if pos == name_start { return Option::None; }
     let mut name = String::new();
     let mut ni: usize = name_start;
     while ni < pos {
         name.push(bytes[ni] as char);
-        ni = ni + 1;
+        ni += 1;
     }
 
     // Skip whitespace
     while pos < len && is_whitespace(bytes[pos]) {
-        pos = pos + 1;
+        pos += 1;
     }
 
     // Expect outer opening brace
     if pos >= len || bytes[pos] != 123 { return Option::None; } // '{'
-    pos = pos + 1;
+    pos += 1;
 
     // Parse rules until outer closing '}'
     let mut rules: Vec<MacroRule> = Vec::new();
@@ -458,7 +458,7 @@ fn parse_macro_def(bytes: &[u8], start: usize, len: usize) -> Option<MacroDef> {
     while !done && pos < len {
         // Skip whitespace
         while pos < len && is_whitespace(bytes[pos]) {
-            pos = pos + 1;
+            pos += 1;
         }
 
         // Check for outer closing '}'
@@ -478,10 +478,10 @@ fn parse_macro_def(bytes: &[u8], start: usize, len: usize) -> Option<MacroDef> {
 
             // Skip optional ';' after rule
             while pos < len && is_whitespace(bytes[pos]) {
-                pos = pos + 1;
+                pos += 1;
             }
             if pos < len && bytes[pos] == 59 { // ';'
-                pos = pos + 1;
+                pos += 1;
             }
         }
     }
@@ -490,12 +490,12 @@ fn parse_macro_def(bytes: &[u8], start: usize, len: usize) -> Option<MacroDef> {
 
     // Skip outer closing '}'
     if pos < len && bytes[pos] == 125 { // '}'
-        pos = pos + 1;
+        pos += 1;
     }
 
     // Skip trailing newline
     if pos < len && bytes[pos] == 10 { // '\n'
-        pos = pos + 1;
+        pos += 1;
     }
 
     Option::Some(MacroDef {
@@ -512,60 +512,60 @@ fn parse_one_rule(bytes: &[u8], start: usize, len: usize) -> Option<RuleParseRes
 
     // Expect '('
     if pos >= len || bytes[pos] != 40 { return Option::None; } // '('
-    pos = pos + 1;
+    pos += 1;
     let pattern_start = pos;
 
     // Find matching ')' with balanced parens
     let mut depth: u32 = 1;
     while pos < len && depth > 0 {
-        if bytes[pos] == 40 { depth = depth + 1; } // '('
-        if bytes[pos] == 41 { depth = depth - 1; } // ')'
-        if depth > 0 { pos = pos + 1; }
+        if bytes[pos] == 40 { depth += 1; } // '('
+        if bytes[pos] == 41 { depth -= 1; } // ')'
+        if depth > 0 { pos += 1; }
     }
     let pattern_end = pos;
     if pos >= len { return Option::None; }
-    pos = pos + 1; // skip ')'
+    pos += 1; // skip ')'
 
     // Parse pattern parts from content between ( and )
     let parts = parse_pattern_parts(bytes, pattern_start, pattern_end);
 
     // Skip whitespace
     while pos < len && is_whitespace(bytes[pos]) {
-        pos = pos + 1;
+        pos += 1;
     }
 
     // Expect '=>'
     if pos + 1 >= len { return Option::None; }
     if bytes[pos] != 61 || bytes[pos + 1] != 62 { return Option::None; }
-    pos = pos + 2;
+    pos += 2;
 
     // Skip whitespace
     while pos < len && is_whitespace(bytes[pos]) {
-        pos = pos + 1;
+        pos += 1;
     }
 
     // Expect '{' for expansion body
     if pos >= len || bytes[pos] != 123 { return Option::None; } // '{'
-    pos = pos + 1;
+    pos += 1;
     let expansion_start = pos;
 
     // Find matching '}'
     let mut brace_depth: u32 = 1;
     while pos < len && brace_depth > 0 {
-        if bytes[pos] == 123 { brace_depth = brace_depth + 1; } // '{'
-        if bytes[pos] == 125 { brace_depth = brace_depth - 1; } // '}'
-        if brace_depth > 0 { pos = pos + 1; }
+        if bytes[pos] == 123 { brace_depth += 1; } // '{'
+        if bytes[pos] == 125 { brace_depth -= 1; } // '}'
+        if brace_depth > 0 { pos += 1; }
     }
     let expansion_end = pos;
     if pos >= len { return Option::None; }
-    pos = pos + 1; // skip '}'
+    pos += 1; // skip '}'
 
     // Extract expansion text
     let mut expansion = String::new();
     let mut ei: usize = expansion_start;
     while ei < expansion_end {
         expansion.push(bytes[ei] as char);
-        ei = ei + 1;
+        ei += 1;
     }
 
     Option::Some(RuleParseResult {
@@ -590,7 +590,7 @@ fn parse_pattern_parts(bytes: &[u8], start: usize, end: usize) -> Vec<PatternPar
             let cap_start = pos + 1;
             let mut cap_pos = cap_start;
             while cap_pos < end && is_ident_char(bytes[cap_pos]) {
-                cap_pos = cap_pos + 1;
+                cap_pos += 1;
             }
             if cap_pos > cap_start && cap_pos < end && bytes[cap_pos] == 58 { // ':'
                 // Found $name: — skip past :kind
@@ -598,12 +598,12 @@ fn parse_pattern_parts(bytes: &[u8], start: usize, end: usize) -> Vec<PatternPar
                 let mut ci: usize = cap_start;
                 while ci < cap_pos {
                     capture_name.push(bytes[ci] as char);
-                    ci = ci + 1;
+                    ci += 1;
                 }
                 let kind_start = cap_pos + 1;
                 let mut kind_pos = kind_start;
                 while kind_pos < end && is_ident_char(bytes[kind_pos]) {
-                    kind_pos = kind_pos + 1;
+                    kind_pos += 1;
                 }
 
                 // Flush accumulated literal
@@ -630,7 +630,7 @@ fn parse_pattern_parts(bytes: &[u8], start: usize, end: usize) -> Vec<PatternPar
 
         // Accumulate as literal
         literal.push(bytes[pos] as char);
-        pos = pos + 1;
+        pos += 1;
     }
 
     // Flush remaining literal

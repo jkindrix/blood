@@ -385,7 +385,7 @@ fn tuple_layout(elems: &Vec<hir_ty::Type>) -> TypeLayout {
     }
     // Pad to alignment
     let padding = (align - (size % align)) % align;
-    size = size + padding;
+    size += padding;
 
     TypeLayout::new(size, align, tuple_to_llvm(elems))
 }
@@ -423,13 +423,13 @@ pub fn format_u64(n: u64) -> String {
         let digit = (value % 10) as u32;
         let c = (48u32 + digit) as char;
         digits.push(c);
-        value = value / 10;
+        value /= 10;
     }
 
     // Reverse the digits
     let mut i = digits.len();
     while i > 0 {
-        i = i - 1;
+        i -= 1;
         result.push(digits[i]);
     }
 
@@ -463,13 +463,13 @@ pub fn format_u128(n: u128) -> String {
         let digit = (value % 10) as u32;
         let c = (48u32 + digit) as char;
         digits.push(c);
-        value = value / 10;
+        value /= 10;
     }
 
     // Reverse the digits
     let mut i = digits.len();
     while i > 0 {
-        i = i - 1;
+        i -= 1;
         result.push(digits[i]);
     }
 
@@ -506,7 +506,7 @@ pub fn f64_bits_to_llvm_hex(bits: u64) -> String {
             (55u32 + nibble) as char
         };
         result.push(c);
-        i = i - 4;
+        i -= 4;
     }
     result
 }

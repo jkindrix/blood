@@ -226,7 +226,7 @@ pub fn check_lower_result(result: &hir_lower_ctx::LowerResult) -> TypeCheckResul
         unify_handler_op_params(&mut checker, &result.items, &body_entry.body, body_entry.body_id);
         setup_handler_op_context(&mut checker, &result.items, body_entry.body_id);
         check_body(&mut checker, &body_entry.body, return_ty);
-        j = j + 1;
+        j += 1;
     }
 
     // Discard errors from external bodies by truncating back to main error count.
@@ -646,7 +646,7 @@ fn count_type_params(params: &Vec<hir_ty::GenericParam>) -> u32 {
     for i in 0usize..params.len() {
         match &params[i] {
             &hir_ty::GenericParam::TypeParam(_) => {
-                count = count + 1;
+                count += 1;
             }
             &hir_ty::GenericParam::LifetimeParam(_) => {}
             &hir_ty::GenericParam::ConstParam(_) => {}
@@ -1401,7 +1401,7 @@ fn check_body(checker: &mut typeck::TypeChecker, body: &hir_expr::Body, return_t
                     }
                 }
             }
-            li = li + 1;
+            li += 1;
         }
     }
 
@@ -1555,7 +1555,7 @@ fn resolve_pending_methods(checker: &mut typeck::TypeChecker) {
                         ));
                         checker.unify(return_infer_id, actual_ret_id, common::Span::dummy());
 
-                        resolved_count = resolved_count + 1;
+                        resolved_count += 1;
                     }
                     Option::None => {
                         // Method not found even with concrete receiver — skip
@@ -1570,7 +1570,7 @@ fn resolve_pending_methods(checker: &mut typeck::TypeChecker) {
         let body_def_id = checker.pending_method_calls[j].body_def_id;
         let span_start = checker.pending_method_calls[j].span_start;
         if !is_already_resolved(checker, body_def_id, span_start) {
-            unresolved = unresolved + 1;
+            unresolved += 1;
         }
     }
     // Pending methods resolved

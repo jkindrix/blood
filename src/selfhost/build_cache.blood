@@ -30,13 +30,13 @@ pub fn scan_mod_names(content: &str) -> Vec<String> {
         // Find end of current line
         let mut line_end: usize = pos;
         while line_end < len && bytes[line_end] != 10 {
-            line_end = line_end + 1;
+            line_end += 1;
         }
 
         // Skip leading whitespace
         let mut start: usize = pos;
         while start < line_end && (bytes[start] == 32 || bytes[start] == 9) {
-            start = start + 1;
+            start += 1;
         }
 
         // Skip empty lines
@@ -90,7 +90,7 @@ pub fn scan_mod_names(content: &str) -> Vec<String> {
                             found_brace = true;
                             semi_pos = line_end; // break
                         }
-                        semi_pos = semi_pos + 1;
+                        semi_pos += 1;
                     }
 
                     // Only external modules (with ';', not '{')
@@ -99,13 +99,13 @@ pub fn scan_mod_names(content: &str) -> Vec<String> {
                         // Re-find semicolon position
                         let mut name_end: usize = mod_name_start;
                         while name_end < line_end && bytes[name_end] != 59 {
-                            name_end = name_end + 1;
+                            name_end += 1;
                         }
 
                         // Trim trailing whitespace from name
                         let mut trimmed_end = name_end;
                         while trimmed_end > mod_name_start && (bytes[trimmed_end - 1] == 32 || bytes[trimmed_end - 1] == 9) {
-                            trimmed_end = trimmed_end - 1;
+                            trimmed_end -= 1;
                         }
 
                         if trimmed_end > mod_name_start {
@@ -113,7 +113,7 @@ pub fn scan_mod_names(content: &str) -> Vec<String> {
                             let mut ni: usize = mod_name_start;
                             while ni < trimmed_end {
                                 name.push(bytes[ni] as char);
-                                ni = ni + 1;
+                                ni += 1;
                             }
                             names.push(name);
                         }
@@ -154,7 +154,7 @@ pub fn collect_source_files(base_dir: &str, entry_path: &str) -> Vec<String> {
                 already_visited = true;
                 vi = visited.len(); // break
             }
-            vi = vi + 1;
+            vi += 1;
         }
 
         if already_visited {
@@ -387,7 +387,7 @@ fn sort_strings(v: &mut Vec<String>) {
             let src = clone_string(&v[j as usize]);
             // v[j+1] = v[j]
             overwrite_string(&mut v[(j + 1) as usize], &src);
-            j = j - 1;
+            j -= 1;
         }
 
         // Place key in its correct position

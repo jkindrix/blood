@@ -1287,7 +1287,7 @@ fn lower_local_fn(
                         let param_name_str = ctx.span_to_string(pname.span);
                         let param_sym = ctx.intern(param_name_str.as_str());
                         ctx.resolver.define_local(param_sym, local_id, false, pname.span);
-                        param_count = param_count + 1;
+                        param_count += 1;
                     }
 
                     // Save and clear body_locals
@@ -1976,7 +1976,7 @@ fn lower_for_expr(
     match &iter.kind {
         &ast::ExprKind::Range { ref start, ref end_val, inclusive } => {
             // Desugar: for pattern in start..end { body }
-            // to: { let mut pattern = start; loop { if pattern < end { body; pattern = pattern + 1; } else { break } } }
+            // to: { let mut pattern = start; loop { if pattern < end { body; pattern += 1; } else { break } } }
             lower_for_range(ctx, label, pattern, start, end_val, inclusive, body, span)
         }
         _ => {
@@ -2019,7 +2019,7 @@ fn lower_for_expr(
 ///     loop {
 ///         if _for_idx < end {
 ///             let i = _for_idx;     // user variable (immutable snapshot)
-///             _for_idx = _for_idx + 1;  // increment BEFORE body
+///             _for_idx += 1;  // increment BEFORE body
 ///             body;
 ///         } else {
 ///             break;
@@ -2204,7 +2204,7 @@ fn lower_for_range(
         span,
     );
 
-    // Create body block: { let i = _for_idx; _for_idx = _for_idx + 1; body; }
+    // Create body block: { let i = _for_idx; _for_idx += 1; body; }
     // Increment BEFORE body so that `continue` (which jumps to loop header)
     // doesn't skip the index advancement. User var `i` is already bound.
     let mut body_stmts: Vec<hir_expr::Stmt> = Vec::new();
@@ -2672,7 +2672,7 @@ fn lower_macro_call_expr(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::ExprP
                             let converted = make_builtin_call_expr(ctx, "int_to_string", conv_args, span);
                             parts.push(converted);
                         }
-                        placeholder_idx = placeholder_idx + 1;
+                        placeholder_idx += 1;
                     }
                 } else {
                     if seg.text.len() > 0 {
@@ -2988,7 +2988,7 @@ fn parse_format_segments(fmt: &str) -> Vec<FormatSegment> {
             if pos + 1 < len && bytes[pos + 1] == 123 {
                 // {{ - escaped literal brace
                 current_text.push('{');
-                pos = pos + 2;
+                pos += 2;
             } else {
                 // Start of placeholder
                 // Flush current text as a literal segment
@@ -3001,12 +3001,12 @@ fn parse_format_segments(fmt: &str) -> Vec<FormatSegment> {
                     current_text = String::new();
                 }
                 // Skip everything until closing }
-                pos = pos + 1;
+                pos += 1;
                 while pos < len && bytes[pos] != 125 {
-                    pos = pos + 1;
+                    pos += 1;
                 }
                 if pos < len {
-                    pos = pos + 1; // skip '}'
+                    pos += 1; // skip '}'
                 }
                 let placeholder_seg = FormatSegment {
                     text: String::new(),
@@ -3019,16 +3019,16 @@ fn parse_format_segments(fmt: &str) -> Vec<FormatSegment> {
             if pos + 1 < len && bytes[pos + 1] == 125 {
                 // }} - escaped literal brace
                 current_text.push('}');
-                pos = pos + 2;
+                pos += 2;
             } else {
                 // Stray } — treat as literal
                 current_text.push('}');
-                pos = pos + 1;
+                pos += 1;
             }
         } else if b < 128 {
             // ASCII byte — safe to push directly
             current_text.push(b as char);
-            pos = pos + 1;
+            pos += 1;
         } else {
             // Multi-byte UTF-8 sequence — decode to code point then push
             if b >= 240 && pos + 3 < len {
@@ -3040,7 +3040,7 @@ fn parse_format_segments(fmt: &str) -> Vec<FormatSegment> {
                        | ((b2 as u32 & 63) << 6)
                        | (b3 as u32 & 63);
                 current_text.push(cp as char);
-                pos = pos + 4;
+                pos += 4;
             } else if b >= 224 && pos + 2 < len {
                 let b1 = bytes[pos + 1];
                 let b2 = bytes[pos + 2];
@@ -3048,16 +3048,16 @@ fn parse_format_segments(fmt: &str) -> Vec<FormatSegment> {
                        | ((b1 as u32 & 63) << 6)
                        | (b2 as u32 & 63);
                 current_text.push(cp as char);
-                pos = pos + 3;
+                pos += 3;
             } else if b >= 192 && pos + 1 < len {
                 let b1 = bytes[pos + 1];
                 let cp = ((b as u32 & 31) << 6)
                        | (b1 as u32 & 63);
                 current_text.push(cp as char);
-                pos = pos + 2;
+                pos += 2;
             } else {
                 current_text.push(b as char);
-                pos = pos + 1;
+                pos += 1;
             }
         }
     }

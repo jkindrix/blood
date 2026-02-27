@@ -177,7 +177,7 @@ pub fn generate_module_with_items(
             ctx.call_remaps = Vec::new();
             generated_set.insert(name_hash, 1);
         } else {
-            skip_count = skip_count + 1;
+            skip_count += 1;
             // Emit a comment noting the skipped duplicate
             output.push_str("; DUPLICATE SKIPPED: @");
             output.push_str(name.as_str());
@@ -255,7 +255,7 @@ pub fn generate_function_with_ctx(
         let local_id = mir_def::MirLocalId::new(p as u32);
         // Skip handler state field locals — they're accessed via GEP into state ptr
         if ctx.is_handler_state_field(local_id) {
-            p = p + 1;
+            p += 1;
             continue;
         }
         // Handler op state local: arg type is ptr (state pointer from wrapper)
@@ -268,8 +268,8 @@ pub fn generate_function_with_ctx(
         let idx_str = codegen_types::format_u64(arg_idx as u64);
         arg_name.push_str(idx_str.as_str());
         params.push((ty, arg_name));
-        arg_idx = arg_idx + 1;
-        p = p + 1;
+        arg_idx += 1;
+        p += 1;
     }
 
     // Get return type (local _0)
@@ -412,7 +412,7 @@ fn emit_capture_loads(
         ctx.write_cgname(&cap_local);
         ctx.write("\n");
 
-        ci = ci + 1;
+        ci += 1;
     }
 }
 
@@ -497,9 +497,9 @@ pub fn populate_adt_registry(
         if changed {
             stable_count = 0;
         } else {
-            stable_count = stable_count + 1;
+            stable_count += 1;
         }
-        pass = pass + 1;
+        pass += 1;
     }
 }
 
@@ -702,7 +702,7 @@ fn build_handler_enum_layout(ctx: &mut codegen_ctx::CodegenCtx, def_id: u32, han
         let field_ty_id = handler_def.state[si].ty;
         let field_llvm_ty = codegen_size::type_to_llvm_with_ctx_id(ctx, field_ty_id);
         let field_size = codegen_size::llvm_type_size(field_llvm_ty.as_str());
-        total_state_bytes = total_state_bytes + field_size;
+        total_state_bytes += field_size;
         if si > 0 {
             payload_type.push_str(", ");
         }
@@ -1266,12 +1266,12 @@ fn append_u32(s: &mut String, n: u32) {
     let mut count: usize = 0;
     while val > 0 {
         digits[count] = ((val % 10) as u8) + 48u8; // '0' = 48
-        val = val / 10;
-        count = count + 1;
+        val /= 10;
+        count += 1;
     }
     // Reverse order
     while count > 0 {
-        count = count - 1;
+        count -= 1;
         s.push(digits[count] as char);
     }
 }

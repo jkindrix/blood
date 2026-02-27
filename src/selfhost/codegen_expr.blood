@@ -514,7 +514,7 @@ fn substitute_struct_field_param(
             return Option::None;
         }
         if is_param {
-            param_idx = param_idx + 1;
+            param_idx += 1;
         }
     }
     Option::None
@@ -590,7 +590,7 @@ fn resolve_place_elem_type(
             for j in 0usize..last_idx {
                 match &place.projection[j] {
                     &mir_types::PlaceElem::Deref => {
-                        deref_count = deref_count + 1;
+                        deref_count += 1;
                     }
                     &mir_types::PlaceElem::Downcast(vi) => {
                         downcast_variant = Option::Some(vi);
@@ -738,7 +738,7 @@ fn resolve_place_elem_type(
                     for di in 0usize..place.projection.len() {
                         match &place.projection[di] {
                             &mir_types::PlaceElem::Deref => {
-                                deref_count = deref_count + 1;
+                                deref_count += 1;
                             }
                             _ => {}
                         }
@@ -751,7 +751,7 @@ fn resolve_place_elem_type(
                                 match apply_deref_to_type(final_ty) {
                                     Option::Some(next) => {
                                         final_ty = next;
-                                        applied = applied + 1;
+                                        applied += 1;
                                     }
                                     Option::None => { break; }
                                 }
@@ -1240,7 +1240,7 @@ pub fn emit_place_addr(
                 // Keep current_adt_def_id for field resolution after downcast
             }
         }
-        i = i + 1;
+        i += 1;
     }
 
     current
@@ -1344,7 +1344,7 @@ fn resolve_generic_field_type(
             return Option::None;
         }
         if is_param {
-            param_idx = param_idx + 1;
+            param_idx += 1;
         }
     }
     Option::None
@@ -1505,11 +1505,11 @@ fn resolve_deref_adt_def_id(
                 match &ty.kind {
                     &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => {
                         ty = inner.as_ref();
-                        depth = depth + 1;
+                        depth += 1;
                     }
                     &hir_ty::TypeKind::Ptr { ref inner, mutable: _ } => {
                         ty = inner.as_ref();
-                        depth = depth + 1;
+                        depth += 1;
                     }
                     _ => {
                         return Option::None;
@@ -2200,11 +2200,11 @@ fn extract_first_field_type(struct_ty: &str) -> String {
             start = i + 1;
             // Skip whitespace
             while start < bytes.len() && bytes[start] == 32 {
-                start = start + 1;
+                start += 1;
             }
             break;
         }
-        i = i + 1;
+        i += 1;
     }
     // Find end: first ',', ' }', or '}'
     let mut end: usize = start;
@@ -2213,18 +2213,18 @@ fn extract_first_field_type(struct_ty: &str) -> String {
             // ',' or '}'
             break;
         }
-        end = end + 1;
+        end += 1;
     }
     // Trim trailing whitespace
     while end > start && bytes[end - 1] == 32 {
-        end = end - 1;
+        end -= 1;
     }
     if end > start {
         let mut result = String::new();
         let mut j: usize = start;
         while j < end {
             result.push(bytes[j] as char);
-            j = j + 1;
+            j += 1;
         }
         result
     } else {
@@ -2247,17 +2247,17 @@ fn count_struct_fields(ty: &String) -> u32 {
         let b = bytes[i];
         if b == 123 || b == 91 {
             // '{' or '['
-            depth = depth + 1;
+            depth += 1;
         } else if b == 125 || b == 93 {
             // '}' or ']'
             if depth > 0 {
-                depth = depth - 1;
+                depth -= 1;
             } else {
                 break; // End of outermost struct
             }
         } else if b == 44 && depth == 0 {
             // ',' at top level
-            count = count + 1;
+            count += 1;
         }
     }
     // Handle empty struct "{}"
@@ -2863,7 +2863,7 @@ fn emit_aggregate_adt(
                     };
                     if is_param && param_idx < type_args.len() {
                         field_types[fj] = codegen_types::type_to_llvm(&type_args[param_idx]);
-                        param_idx = param_idx + 1;
+                        param_idx += 1;
                     }
                 }
             }
@@ -3208,7 +3208,7 @@ fn emit_aggregate(
                 for si in 0usize..operands.len() {
                     let elem_ty = operand_llvm_type(ctx, &operands[si]);
                     let elem_size = llvm_type_size_estimate(elem_ty.as_str());
-                    env_size = env_size + elem_size;
+                    env_size += elem_size;
                 }
                 if env_size == 0 {
                     env_size = 8; // minimum allocation size

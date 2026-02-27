@@ -2384,17 +2384,17 @@ fn parse_custom_macro_args(parser: &mut parser_base::Parser) -> ast::MacroCallKi
     let mut depth: u32 = 1;
     while depth > 0 && parser.current.kind != token::TokenKind::Eof {
         match parser.current.kind {
-            token::TokenKind::LParen => { depth = depth + 1; }
+            token::TokenKind::LParen => { depth += 1; }
             token::TokenKind::RParen => {
-                match delim { ast::MacroDelimiter::Paren => { depth = depth - 1; } _ => {} }
+                match delim { ast::MacroDelimiter::Paren => { depth -= 1; } _ => {} }
             }
-            token::TokenKind::LBracket => { depth = depth + 1; }
+            token::TokenKind::LBracket => { depth += 1; }
             token::TokenKind::RBracket => {
-                match delim { ast::MacroDelimiter::Bracket => { depth = depth - 1; } _ => {} }
+                match delim { ast::MacroDelimiter::Bracket => { depth -= 1; } _ => {} }
             }
-            token::TokenKind::LBrace => { depth = depth + 1; }
+            token::TokenKind::LBrace => { depth += 1; }
             token::TokenKind::RBrace => {
-                match delim { ast::MacroDelimiter::Brace => { depth = depth - 1; } _ => {} }
+                match delim { ast::MacroDelimiter::Brace => { depth -= 1; } _ => {} }
             }
             _ => {}
         }
@@ -2410,7 +2410,7 @@ fn parse_custom_macro_args(parser: &mut parser_base::Parser) -> ast::MacroCallKi
     let mut i: usize = content_start;
     while i < content_end && i < src.len() {
         content.push(src[i] as char);
-        i = i + 1;
+        i += 1;
     }
 
     // Consume closing delimiter

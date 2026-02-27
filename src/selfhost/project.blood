@@ -349,7 +349,7 @@ fn split_lines(content: &str) -> Vec<String> {
             let mut j: usize = start;
             while j < i {
                 line.push(bytes[j] as char);
-                j = j + 1;
+                j += 1;
             }
             lines.push(line);
             start = i + 1;
@@ -362,7 +362,7 @@ fn split_lines(content: &str) -> Vec<String> {
         let mut j: usize = start;
         while j < len {
             line.push(bytes[j] as char);
-            j = j + 1;
+            j += 1;
         }
         lines.push(line);
     }
@@ -377,19 +377,19 @@ fn trim_str(s: &str) -> String {
 
     let mut start: usize = 0;
     while start < len && (bytes[start] == 32 || bytes[start] == 9) {
-        start = start + 1;
+        start += 1;
     }
 
     let mut end_pos: usize = len;
     while end_pos > start && (bytes[end_pos - 1] == 32 || bytes[end_pos - 1] == 9 || bytes[end_pos - 1] == 13) {
-        end_pos = end_pos - 1;
+        end_pos -= 1;
     }
 
     let mut result = String::new();
     let mut i: usize = start;
     while i < end_pos {
         result.push(bytes[i] as char);
-        i = i + 1;
+        i += 1;
     }
     result
 }
@@ -408,7 +408,7 @@ fn extract_section_name(line: &str, is_array: bool) -> String {
             break;
         }
         result.push(bytes[i] as char);
-        i = i + 1;
+        i += 1;
     }
     result
 }
@@ -428,7 +428,7 @@ fn parse_key_value(line: &str) -> Option<(String, String)> {
             found = true;
             i = len; // break
         }
-        i = i + 1;
+        i += 1;
     }
 
     if !found {
@@ -447,21 +447,21 @@ fn parse_key_value(line: &str) -> Option<(String, String)> {
     let mut val = String::new();
     let mut v: usize = eq_pos + 1;
     while v < len && (bytes[v] == 32 || bytes[v] == 9) {
-        v = v + 1; // skip whitespace after =
+        v += 1; // skip whitespace after =
     }
 
     // Check for quoted string
     if v < len && bytes[v] == 34 { // '"'
-        v = v + 1; // skip opening quote
+        v += 1; // skip opening quote
         while v < len && bytes[v] != 34 {
             val.push(bytes[v] as char);
-            v = v + 1;
+            v += 1;
         }
     } else {
         // Unquoted value
         while v < len && bytes[v] != 32 && bytes[v] != 9 && bytes[v] != 35 {
             val.push(bytes[v] as char);
-            v = v + 1;
+            v += 1;
         }
     }
 

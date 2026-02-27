@@ -748,7 +748,7 @@ fn parse_struct_size(ty: &str) -> u64 {
     while i < bytes.len() {
         let c = bytes[i];
         if c == 123 {
-            depth = depth + 1;
+            depth += 1;
             if depth == 1 {
                 field_start = i + 1;
             }
@@ -764,10 +764,10 @@ fn parse_struct_size(ty: &str) -> u64 {
                     }
                     let padding = (field_align - (offset % field_align)) % field_align;
                     offset = offset + padding + field_size;
-                    field_count = field_count + 1;
+                    field_count += 1;
                 }
             }
-            depth = depth - 1;
+            depth -= 1;
         } else if c == 44 && depth == 1 {
             let field_ty = substring(ty, field_start, i);
             let trimmed = trim_whitespace(field_ty.as_str());
@@ -779,11 +779,11 @@ fn parse_struct_size(ty: &str) -> u64 {
                 }
                 let padding = (field_align - (offset % field_align)) % field_align;
                 offset = offset + padding + field_size;
-                field_count = field_count + 1;
+                field_count += 1;
             }
             field_start = i + 1;
         }
-        i = i + 1;
+        i += 1;
     }
 
     if field_count == 0 {
@@ -799,21 +799,21 @@ fn parse_array_size(ty: &str) -> u64 {
     let bytes = ty.as_bytes();
     let mut i: usize = 1;
     while i < bytes.len() && bytes[i] == 32 {
-        i = i + 1;
+        i += 1;
     }
     let mut count: u64 = 0;
     while i < bytes.len() && bytes[i] >= 48 && bytes[i] <= 57 {
         count = count * 10 + ((bytes[i] - 48) as u64);
-        i = i + 1;
+        i += 1;
     }
     while i < bytes.len() && (bytes[i] == 32 || bytes[i] == 120) {
-        i = i + 1;
+        i += 1;
     }
     let elem_start = i;
     let mut elem_end = bytes.len();
     let mut j: usize = bytes.len();
     while j > elem_start {
-        j = j - 1;
+        j -= 1;
         if bytes[j] == 93 {
             elem_end = j;
             break;
@@ -897,7 +897,7 @@ fn parse_struct_alignment(ty: &str) -> u64 {
     while i < bytes.len() {
         let c = bytes[i];
         if c == 123 {
-            depth = depth + 1;
+            depth += 1;
             if depth == 1 {
                 field_start = i + 1;
             }
@@ -912,7 +912,7 @@ fn parse_struct_alignment(ty: &str) -> u64 {
                     }
                 }
             }
-            depth = depth - 1;
+            depth -= 1;
         } else if c == 44 && depth == 1 {
             let field_ty = substring(ty, field_start, i);
             let trimmed = trim_whitespace(field_ty.as_str());
@@ -924,7 +924,7 @@ fn parse_struct_alignment(ty: &str) -> u64 {
             }
             field_start = i + 1;
         }
-        i = i + 1;
+        i += 1;
     }
     max_align
 }
@@ -936,21 +936,21 @@ fn parse_array_alignment(ty: &str) -> u64 {
     let mut i: usize = 1;
     // Skip whitespace
     while i < bytes.len() && bytes[i] == 32 {
-        i = i + 1;
+        i += 1;
     }
     // Skip the count N
     while i < bytes.len() && bytes[i] >= 48 && bytes[i] <= 57 {
-        i = i + 1;
+        i += 1;
     }
     // Skip " x "
     while i < bytes.len() && (bytes[i] == 32 || bytes[i] == 120) {
-        i = i + 1;
+        i += 1;
     }
     let elem_start = i;
     let mut elem_end = bytes.len();
     let mut j: usize = bytes.len();
     while j > elem_start {
-        j = j - 1;
+        j -= 1;
         if bytes[j] == 93 {
             elem_end = j;
             break;
@@ -971,7 +971,7 @@ fn substring(s: &str, start: usize, end: usize) -> String {
     let mut i = start;
     while i < end && i < bytes.len() {
         result.push(bytes[i] as char);
-        i = i + 1;
+        i += 1;
     }
     result
 }
@@ -982,10 +982,10 @@ fn trim_whitespace(s: &str) -> String {
     let mut end: usize = bytes.len();
 
     while start < bytes.len() && (bytes[start] == 32 || bytes[start] == 9) {
-        start = start + 1;
+        start += 1;
     }
     while end > start && (bytes[end - 1] == 32 || bytes[end - 1] == 9) {
-        end = end - 1;
+        end -= 1;
     }
 
     substring(s, start, end)

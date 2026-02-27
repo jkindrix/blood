@@ -143,7 +143,7 @@ pub fn lower_struct_body(ctx: &mut hir_lower_ctx::LoweringCtx, body: &ast::Struc
                 while j < i {
                     if fields[j].name.span.start == fields[i].name.span.start {
                         // Same span start means same source text (can't happen for different fields)
-                        j = j + 1;
+                        j += 1;
                     } else {
                         // Compare field names by interning and checking symbol index
                         // NOTE: Avoid chained method calls (a.method1().method2()) to
@@ -165,7 +165,7 @@ pub fn lower_struct_body(ctx: &mut hir_lower_ctx::LoweringCtx, body: &ast::Struc
                             ctx.error(hir::DiagnosticCode::E0101, msg, fields[i].name.span);
                             break;
                         }
-                        j = j + 1;
+                        j += 1;
                     }
                 }
                 let field = lower_struct_field(ctx, &fields[i]);
@@ -292,7 +292,7 @@ pub fn lower_declarations(ctx: &mut hir_lower_ctx::LoweringCtx, decls: &Vec<ast:
                 lower_declaration(ctx, &decls[i]);
             }
         }
-        i = i + 1;
+        i += 1;
     }
     // Pass 2: lower impl blocks (method bodies can now reference all enum variants)
     i = 0;
@@ -303,7 +303,7 @@ pub fn lower_declarations(ctx: &mut hir_lower_ctx::LoweringCtx, decls: &Vec<ast:
             }
             _ => {}
         }
-        i = i + 1;
+        i += 1;
     }
 }
 
@@ -762,7 +762,7 @@ fn lower_trait_decl(ctx: &mut hir_lower_ctx::LoweringCtx, t: &ast::TraitDecl) {
         if trait_ref.is_some() {
             supertraits.push(trait_ref.unwrap());
         }
-        i = i + 1;
+        i += 1;
     }
 
     // Set Self type for trait method signatures.
@@ -995,7 +995,7 @@ fn lower_effect_decl(ctx: &mut hir_lower_ctx::LoweringCtx, e: &ast::EffectDecl) 
         if effect_ref.is_some() {
             parents.push(effect_ref.unwrap());
         }
-        i = i + 1;
+        i += 1;
     }
 
     // Lower operations
@@ -1098,7 +1098,7 @@ fn lower_handler_decl(ctx: &mut hir_lower_ctx::LoweringCtx, h: &ast::HandlerDecl
     while i < h.state.len() {
         let hs = lower_handler_state(ctx, &h.state[i]);
         state.push(hs);
-        i = i + 1;
+        i += 1;
     }
 
     // Lower return clause
@@ -1225,7 +1225,7 @@ fn lower_handler_return(
         let name_str = ctx.span_to_string(s.name.span);
         let sym = ctx.intern(name_str.as_str());
         ctx.resolver.define_local(sym, local_id, s.mutable, s.name.span);
-        next_idx = next_idx + 1;
+        next_idx += 1;
     }
 
     // Register return parameter as a local
@@ -1238,7 +1238,7 @@ fn lower_handler_return(
     );
     locals.push(param_local);
     ctx.resolver.define_local(param_sym, param_local_id, false, rc.param.span);
-    next_idx = next_idx + 1;
+    next_idx += 1;
 
     let param_count = next_idx;
     if ctx.next_local_id < param_count {
@@ -1293,8 +1293,8 @@ fn lower_op_impl(
         let name_str = ctx.span_to_string(s.name.span);
         let sym = ctx.intern(name_str.as_str());
         ctx.resolver.define_local(sym, local_id, s.mutable, s.name.span);
-        next_idx = next_idx + 1;
-        i = i + 1;
+        next_idx += 1;
+        i += 1;
     }
 
     // Lower parameter patterns to extract names and register as locals
@@ -1314,7 +1314,7 @@ fn lower_op_impl(
             );
             locals.push(param_local);
             ctx.resolver.define_local(param_sym, local_id, false, pname.span);
-            next_idx = next_idx + 1;
+            next_idx += 1;
         }
     }
 
@@ -1374,7 +1374,7 @@ fn count_non_self_params(ctx: &mut hir_lower_ctx::LoweringCtx, f: &ast::FnDecl) 
     for i in 0usize..f.params.len() {
         let param = &f.params[i];
         if !ast_param_is_self(param) {
-            count = count + 1;
+            count += 1;
         }
     }
     count
@@ -1416,12 +1416,12 @@ fn compare_param_type_spans(ctx: &mut hir_lower_ctx::LoweringCtx, f: &ast::FnDec
     while f_idx < f.params.len() && g_idx < g.params.len() {
         // Skip self in f
         if ast_param_is_self(&f.params[f_idx]) {
-            f_idx = f_idx + 1;
+            f_idx += 1;
             continue;
         }
         // Skip self in g
         if ast_param_is_self(&g.params[g_idx]) {
-            g_idx = g_idx + 1;
+            g_idx += 1;
             continue;
         }
         // Compare type span text
@@ -1430,15 +1430,15 @@ fn compare_param_type_spans(ctx: &mut hir_lower_ctx::LoweringCtx, f: &ast::FnDec
         if !strings_equal(&f_ty_str, &g_ty_str) {
             return false;
         }
-        f_idx = f_idx + 1;
-        g_idx = g_idx + 1;
+        f_idx += 1;
+        g_idx += 1;
     }
     // Skip remaining self params
     while f_idx < f.params.len() && ast_param_is_self(&f.params[f_idx]) {
-        f_idx = f_idx + 1;
+        f_idx += 1;
     }
     while g_idx < g.params.len() && ast_param_is_self(&g.params[g_idx]) {
-        g_idx = g_idx + 1;
+        g_idx += 1;
     }
     // Both should be exhausted
     f_idx >= f.params.len() && g_idx >= g.params.len()
