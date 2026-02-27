@@ -1,8 +1,27 @@
 # Blood Compiler Development Methodology
 
-**Version:** 1.0
+**Version:** 1.1
 **Established:** 2026-02-27
 **Status:** Active and Enforced
+
+---
+
+## Supporting Documents
+
+This document defines the CCV methodology — *what* to do and *why*. Operational procedures, tooling workflows, and project history live in dedicated documents:
+
+| Document | Location | Purpose |
+|----------|----------|---------|
+| **AGENT_PROTOCOL.md** | `tools/AGENT_PROTOCOL.md` | Session start/end procedures, investigation workflow, hard stop conditions, tool escalation chain |
+| **FAILURE_LOG.md** | `tools/FAILURE_LOG.md` | Structured bug history — root causes, resolutions, lessons learned |
+| **CLAUDE.md** | `CLAUDE.md` | Build commands, tool quick-reference, key patterns, active limitations |
+| **build_selfhost.sh** | `src/selfhost/build_selfhost.sh` | All build modes (`--help` for full list); CCV uses `timings`, `ground-truth`, `rebuild` |
+
+**Tool escalation chain** (for debugging regressions — see AGENT_PROTOCOL.md for full workflow):
+
+```
+phase-compare.sh → difftest.sh → minimize.sh → asan-selfcompile.sh
+```
 
 ---
 
@@ -44,42 +63,42 @@ Apply changes within one cluster at a time. Keep clusters small enough that any 
 
 ### Step 3: Verify
 
-After each cluster:
+After **each** cluster:
 
 ```bash
 cd src/selfhost
 
-# 1. Build first_gen
+# 1. Build first_gen (blood-rust compiles the modified self-hosted source)
 ./build_selfhost.sh timings
 
-# 2. Run ground-truth — must be 336/336 (or current total)
+# 2. Run ground-truth — all tests must pass (check the "Passed: N" total in output)
 ./build_selfhost.sh ground-truth
 
-# 3. If all pass, rebuild for bootstrap stability
+# 3. Build second_gen + third_gen, verify byte-identical
+#    (first_gen compiles itself → second_gen; second_gen compiles itself → third_gen)
+#    Manually build third_gen if rebuild script doesn't, then: cmp -s second_gen third_gen
 ./build_selfhost.sh rebuild
+
+# 4. Commit the cluster (clean rollback point)
+git add <cluster files> && git commit -m "refactor(selfhost): <description> (Cluster X)"
 ```
+
+**Commit after each verified cluster.** This gives clean rollback points — if cluster F regresses, `git revert` the cluster F commit. Without per-cluster commits, reverting requires manually identifying which files belong to which cluster.
+
+**Why bootstrap after every cluster, not just at the end:**
+- Ground-truth tests verify that user programs compile correctly.
+- Bootstrap verification verifies that the *compiler itself* compiles correctly when it contains the new patterns.
+- These are different questions. A feature can work in user code but break when used in the compiler's own source (different code paths, different type contexts, different optimization interactions).
+- If bootstrap breaks after cluster E but not after cluster D, the bug is in the typeck files. If you only check at the end, it could be any cluster.
 
 **If regression is found:**
 1. **STOP.** Do not continue to the next cluster.
-2. Revert the cluster (`git checkout -- <files>`).
-3. Diagnose the root cause — do not guess, do not shotgun-fix.
+2. Revert the cluster (`git revert` or `git checkout -- <files>`).
+3. Diagnose the root cause — do not guess, do not shotgun-fix. Use the tool escalation chain (see Supporting Documents).
 4. If root cause is in blood-rust, invoke the Bootstrap Gate.
 5. If root cause is in the self-hosted compiler, fix it, rebuild, re-verify from scratch.
-6. Only proceed to the next cluster after a clean pass.
-
-**Full bootstrap verification** (after all clusters in a sub-phase complete):
-
-```bash
-cd src/selfhost
-
-# Build second_gen from first_gen
-./build_selfhost.sh rebuild
-
-# Build third_gen from second_gen, verify byte-identical
-# (handled by rebuild script)
-```
-
-Second_gen and third_gen must be byte-identical. If not, the bootstrap is unstable and all changes since the last stable point must be investigated.
+6. Log the bug in `tools/FAILURE_LOG.md` with root cause and resolution.
+7. Only proceed to the next cluster after a clean pass (ground-truth + bootstrap).
 
 ---
 
@@ -101,8 +120,9 @@ Second_gen and third_gen must be byte-identical. If not, the bootstrap is unstab
      cd src/bootstrap && cargo build --release
 5. Rebuild first_gen from the CURRENT self-hosted source:
      cd src/selfhost && ./build_selfhost.sh timings
-6. Re-verify ground-truth (336/336 or current total).
-7. Only THEN resume self-hosted compiler work.
+6. Re-verify ground-truth (all tests must pass — check reported total).
+7. Log the bug in tools/FAILURE_LOG.md.
+8. Only THEN resume self-hosted compiler work.
 ```
 
 ### Why This Is Non-Negotiable
@@ -212,7 +232,23 @@ When a regression is found:
 - If the bug is in blood-rust's compilation of the changed code: invoke the Bootstrap Gate.
 - If the bug is pre-existing but was masked: document it, fix it, add a regression test.
 
-### 4. Never Do These Things
+### 4. Hard Stop Conditions
+
+If debugging is not converging, stop and reassess:
+
+- **3 failed fix attempts** for the same regression → reassess the diagnosis. The root cause hypothesis is likely wrong.
+- **5 fruitless investigation steps** (tool calls that don't narrow the problem) → stop, summarize what's known, escalate or take a different approach.
+- **Any suspicion of blood-rust miscompilation** → invoke Bootstrap Gate immediately. Do not continue debugging the self-hosted compiler.
+
+See `tools/AGENT_PROTOCOL.md` for the full investigation workflow and tool escalation chain.
+
+### 5. Record the Bug
+
+When a bug is found and resolved during CCV:
+- Add an entry to `tools/FAILURE_LOG.md` with: symptom, root cause, resolution, and which cluster/phase triggered it.
+- If the bug required a code fix (not just a revert), add a regression test to `tests/ground-truth/`.
+
+### 6. Never Do These Things
 
 - **Do not shotgun-fix.** Changing multiple things hoping one works wastes time and masks the real issue.
 - **Do not work around blood-rust bugs.** The self-hosted compiler must express correct semantics.
