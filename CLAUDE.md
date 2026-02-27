@@ -34,8 +34,8 @@ These patterns are **correct in Blood**, not shortcuts:
 
 | Pattern | Why It's Correct |
 |---------|------------------|
-| `while i < len { ... i = i + 1; }` | Blood lacks iterator adapters |
-| `i = i + 1` | Blood lacks `+=` operator |
+| `for i in 0..len { ... }` | Preferred over while-counter loops |
+| `i += 1` | Compound assignment (also `-=`, `*=`, `/=`, `%=`) |
 | Explicit match arms for every variant | Required by zero shortcuts principle |
 | `HashMap<u32, Type>` vs newtype keys | Blood's type system differs from Rust |
 
@@ -56,6 +56,8 @@ Audit search terms: `_ =>`, `unwrap_or_default`, `unwrap_or_else`, `Type::error(
 **Incremental development:** Write 10-50 lines, compile, fix, repeat. Never write hundreds of lines without compiling.
 
 **Blood-rust bugs: report, do NOT work around.** Write the correct code. If blood-rust miscompiles it, that's a blood-rust bug. STOP, isolate, document, report, wait. Signs: DefId errors, works in one context but not another, mutations lost through references, runtime mismatch. See `tools/FAILURE_LOG.md` for history.
+
+**Canary-Cluster-Verify (CCV) method:** All batch changes to the self-hosted compiler follow the CCV protocol. Canary-test new patterns before mass conversion. Cluster changes by compiler phase. Verify (build + ground-truth + bootstrap) after each cluster. See `DEVELOPMENT.md` for the full protocol, cluster definitions, and bootstrap gate rules.
 
 **Document discoveries:** Test in isolation, document in this file, comment in code. Distinguish bugs (report and wait) from documented limitations (work around).
 
