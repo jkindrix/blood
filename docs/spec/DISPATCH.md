@@ -1,8 +1,13 @@
 # Blood Multiple Dispatch Specification
 
-**Version**: 0.3.0
+**Version**: 0.4.0
 **Status**: Implemented
-**Last Updated**: 2026-01-10
+**Last Updated**: 2026-02-28
+
+**Revision 0.4.0 Changes**:
+- Added object safety rules (§10.7) — formal rules for trait object validity
+- Added dynamic dispatch via trait objects (§10.8) — vtable layout, construction, method resolution
+- Added multiple dispatch vs. dynamic dispatch comparison (§10.9)
 
 This document specifies Blood's multiple dispatch system, including method resolution, type stability enforcement, and ambiguity detection.
 
@@ -31,6 +36,9 @@ This document specifies Blood's multiple dispatch system, including method resol
 8. [Performance Considerations](#8-performance-considerations)
 9. [Constraint Solver Specification](#9-constraint-solver-specification)
 10. [Cross-Reference: Formal Typing Rules](#10-cross-reference-formal-typing-rules)
+    - 10.7 [Object Safety](#107-object-safety)
+    - 10.8 [Dynamic Dispatch via Trait Objects](#108-dynamic-dispatch-via-trait-objects)
+    - 10.9 [Multiple Dispatch vs. Dynamic Dispatch](#109-multiple-dispatch-vs-dynamic-dispatch)
 11. [Related Work](#11-related-work)
 12. [Appendices](#12-appendices)
     - A. [Dispatch Algorithm Pseudocode](#appendix-a-dispatch-algorithm-pseudocode)
@@ -2185,6 +2193,144 @@ with h handle { ... f(x, y) ... }
 | §7 Dispatch and Effects | §5.3 Effect Rules | Effect-aware method selection |
 | §5 Ambiguity Detection | §9 Metatheory | Ambiguity = compile error |
 | §9 Constraint Solver | §5.5 Row Polymorphism | Unification for dispatch |
+
+### 10.7 Object Safety
+
+A trait is *object-safe* when all its methods can be represented as function pointers in a virtual function table (vtable). Object safety is a constraint on traits, not on types — it determines whether `dyn Trait` is a valid type.
+
+> **Design note**: Object safety is an ABI constraint, not an arbitrary restriction. Multiple dispatch (§1-§9) operates at compile time on concrete types and is orthogonal to `dyn Trait`. Type stability (§4) applies to static dispatch resolution, not to vtable construction. See [GRAMMAR.md §4.1 DynType](./GRAMMAR.md#41-types) for the surface syntax design note.
+
+#### 10.7.1 Object Safety Rules
+
+A trait `T` is object-safe if **all** of the following hold:
+
+```
+OBJECT_SAFE(T) ⟺
+    ∀ method m ∈ T.methods:
+        1. m has no type parameters on Self              [No-Generic-Self]
+        2. m does not take Self by value                 [No-Self-By-Value]
+        3. m does not return Self by value               [No-Self-Return]
+    ∧ ∀ assoc_type a ∈ T.associated_types:
+        4. a has a determinable resolution               [Assoc-Type-Bound]
+           (bound in the dyn type or has a default)
+```
+
+**Rationale for each rule:**
+
+| Rule | Constraint | Reason |
+|------|-----------|--------|
+| [No-Generic-Self] | `fn method<U>(&self, x: U)` | Generic methods require monomorphization; vtable slots have fixed signatures |
+| [No-Self-By-Value] | `fn consume(self)` | Self by value requires known size at call site; `dyn Trait` is unsized |
+| [No-Self-Return] | `fn clone(&self) -> Self` | Caller cannot allocate return value of unknown size |
+| [Assoc-Type-Bound] | `type Output;` without bound | Vtable callers need to know associated types to interpret return values |
+
+#### 10.7.2 Object Safety Checking Algorithm
+
+```
+CHECK_OBJECT_SAFETY(trait_id: TraitId) → Result<(), ObjectSafetyError>:
+
+    trait_def ← lookup_trait(trait_id)
+
+    FOR method IN trait_def.methods:
+        // Rule 1: No generic type parameters on method
+        IF method.type_params.any(tp → tp.is_on_self()):
+            RETURN Err(GenericSelfMethod { method, trait_id })
+
+        // Rule 2: Self not taken by value as parameter
+        IF method.self_param == SelfByValue:
+            RETURN Err(SelfByValue { method, trait_id })
+
+        // Rule 3: Self not returned by value
+        IF method.return_type.contains_self_by_value():
+            RETURN Err(SelfReturn { method, trait_id })
+
+    FOR assoc_type IN trait_def.associated_types:
+        // Rule 4: Associated type must be determinable
+        IF NOT assoc_type.has_default() AND NOT assoc_type.is_bound_in_dyn():
+            RETURN Err(UnboundAssocType { assoc_type, trait_id })
+
+    RETURN Ok(())
+```
+
+### 10.8 Dynamic Dispatch via Trait Objects
+
+Dynamic dispatch through `dyn Trait` uses vtable-based indirect calls. This is distinct from the compile-time multiple dispatch system (§3) — they are orthogonal mechanisms.
+
+#### 10.8.1 Vtable Layout
+
+For an object-safe trait `T` with methods `m₁, ..., mₙ`:
+
+```
+Vtable layout for dyn T:
+┌─────────────────┐
+│ drop_fn: fn_ptr │  -- Destructor for the concrete type
+│ size: usize     │  -- Size of concrete type
+│ align: usize    │  -- Alignment of concrete type
+│ m₁: fn_ptr      │  -- Method 1 implementation
+│ m₂: fn_ptr      │  -- Method 2 implementation
+│ ...              │
+│ mₙ: fn_ptr      │  -- Method N implementation
+└─────────────────┘
+```
+
+Method ordering in the vtable follows declaration order in the trait.
+
+#### 10.8.2 Trait Object Representation
+
+A `dyn Trait` value is a fat pointer:
+
+```
+dyn Trait = { data: *const (), vtable: *const Vtable<Trait> }
+```
+
+Construction from a concrete type `C` implementing `T`:
+
+```
+CONSTRUCT_TRAIT_OBJECT(value: C, trait_id: T) → dyn T:
+    REQUIRE OBJECT_SAFE(T)
+    REQUIRE C : T                    -- C implements T
+
+    data_ptr ← &value as *const ()
+    vtable ← BUILD_VTABLE(C, T)
+    RETURN { data: data_ptr, vtable: vtable }
+```
+
+#### 10.8.3 Dynamic Method Resolution
+
+Method calls on trait objects resolve through the vtable at runtime:
+
+```
+DYNAMIC_DISPATCH(obj: dyn T, method_name: Symbol, args: [Value]) → Value:
+    vtable ← obj.vtable
+    method_index ← T.method_index(method_name)
+    fn_ptr ← vtable[method_index]
+    RETURN fn_ptr(obj.data, args...)
+```
+
+#### 10.8.4 Typing Rule for Trait Objects
+
+```
+Γ; Δ ⊢ e : C / ε    C : T (C implements T)    OBJECT_SAFE(T)
+──────────────────────────────────────────────────────────────  [T-Trait-Object]
+Γ; Δ ⊢ e as dyn T : dyn T / ε
+
+Γ; Δ₁ ⊢ e : dyn T / ε₁    method m ∈ T.methods
+Γ; Δ₂ ⊢ args : A / ε₂     Δ = Δ₁ ⊗ Δ₂
+──────────────────────────────────────────────────────────────  [T-Dyn-Call]
+Γ; Δ ⊢ e.m(args) : m.return_type / ε₁ ∪ ε₂ ∪ m.effects
+```
+
+### 10.9 Multiple Dispatch vs. Dynamic Dispatch
+
+| Aspect | Multiple Dispatch (§3) | Dynamic Dispatch (§10.8) |
+|--------|----------------------|--------------------------|
+| Resolution time | Compile time | Runtime |
+| Selection basis | All argument types | Vtable index |
+| Type stability | Required (§4) | N/A (fixed vtable layout) |
+| Monomorphization | Yes (§6.4) | No (indirect call) |
+| Use case | Method families with multiple specializations | Heterogeneous collections, plugin interfaces |
+
+These mechanisms compose: a method family (multiple dispatch) can include a specialization for `dyn Trait` types, which then dispatches dynamically through the vtable.
 
 ---
 

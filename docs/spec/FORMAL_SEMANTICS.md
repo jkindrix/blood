@@ -1,9 +1,21 @@
 # Blood Formal Semantics
 
-**Version**: 0.3.0
+**Version**: 0.4.0
 **Status**: Specified
 **Implementation**: ✅ In Progress (effect typing complete; 10 Coq proof files with 10/12 theorems proved, 2 Admitted)
-**Last Updated**: 2026-01-10
+**Last Updated**: 2026-02-28
+
+**Revision 0.4.0 Changes**:
+- Added closure typing rules (§5.7) — capture modes, linearity propagation, effect composition
+- Added region typing (§5.8) — scoped allocation with generational safety
+- Added pattern matching typing (§5.9) — exhaustiveness, pattern binding
+- Added cast typing rules (§5.10) — numeric, pointer, and sign reinterpretation casts
+- Added associated type typing (§5.11) — projection, defaults, generic resolution
+- Added closure-handler linearity interaction (§8.3)
+- Added scope statement listing formalized vs. companion-document features
+- Added cross-references to MACROS.md and FFI.md
+- Extended surface syntax (§1.1) with closures, regions, match, cast
+- Extended reduction rules (§3.1.1) with region evaluation semantics
 
 **Revision 0.3.0 Changes**:
 - Added notation alignment with GRAMMAR.md surface syntax
@@ -12,12 +24,42 @@
 
 This document provides the formal operational semantics for Blood, suitable for mechanized proof and compiler verification.
 
+### Scope
+
+This document formalizes the **core type system and evaluation semantics** of Blood. The following features are formalized here:
+
+| Feature | Section | Status |
+|---------|---------|--------|
+| Lambda calculus + let bindings | §1-§3, §5.1-§5.2 | Complete |
+| Row-polymorphic records | §5.5 | Complete |
+| Algebraic effects + handlers | §3.2-§3.4, §5.3, §6 | Complete |
+| Generational references | §4 | Complete |
+| Linear and affine types | §5.4, §8 | Complete |
+| Closures + capture semantics | §5.7 | Complete |
+| Region scoped allocation | §5.8 | Complete |
+| Pattern matching | §5.9 | Complete |
+| Type casts | §5.10 | Complete |
+| Associated types | §5.11 | Complete |
+
+The following features are **specified in companion documents** and are NOT duplicated here:
+
+| Feature | Document | Rationale |
+|---------|----------|-----------|
+| Macro expansion | [MACROS.md](./MACROS.md) | Pre-type-checking source transformation; no interaction with typing rules |
+| Bridge FFI safety | [FFI.md](./FFI.md) | FFI operates at the ABI boundary, outside the type-safe core |
+| Multiple dispatch resolution | [DISPATCH.md §3](./DISPATCH.md#3-dispatch-resolution-algorithm) | Extends [T-App] with dispatch; cross-referenced in §5.2 |
+| Object safety + dyn Trait | [DISPATCH.md §10.7-10.8](./DISPATCH.md#107-object-safety) | ABI constraints for vtable construction |
+| Memory model (tiers, GC) | [MEMORY_MODEL.md](./MEMORY_MODEL.md) | Runtime memory management details |
+| Concurrency (fibers) | [CONCURRENCY.md](./CONCURRENCY.md) | Fiber scheduling and isolation |
+
 ### Related Specifications
 
 - [SPECIFICATION.md](./SPECIFICATION.md) — Core language specification
 - [MEMORY_MODEL.md](./MEMORY_MODEL.md) — Generation snapshot semantics
-- [DISPATCH.md](./DISPATCH.md) — Multiple dispatch typing rules
+- [DISPATCH.md](./DISPATCH.md) — Multiple dispatch typing rules and object safety
 - [GRAMMAR.md](./GRAMMAR.md) — Surface syntax grammar; see [Notation Alignment](./GRAMMAR.md#notation-alignment) for surface-to-formal notation mapping
+- [MACROS.md](./MACROS.md) — Macro system design, fragment kinds, expansion semantics
+- [FFI.md](./FFI.md) — Bridge FFI safety model and ABI specification
 - [STDLIB.md](./STDLIB.md) — Standard effect and type definitions
 
 ---
@@ -59,6 +101,12 @@ e ::= x                           -- Variable
     | perform E.op(e)             -- Effect operation
     | with h handle e             -- Effect handling
     | resume(e)                   -- Continuation resume (in handlers)
+    | |x₁:T₁,...,xₙ:Tₙ| e       -- Closure (captures by reference)
+    | move |x₁:T₁,...,xₙ:Tₙ| e  -- Move closure (captures by value)
+    | match e { p₁ => e₁, ..., pₙ => eₙ }  -- Pattern match
+    | e as T                      -- Type cast
+    | region e                    -- Anonymous region scope
+    | region 'r e                 -- Named region scope
 ```
 
 ### 1.2 Values
@@ -68,6 +116,7 @@ v ::= c                           -- Constants
     | λx:T. e                     -- Functions
     | {l₁ = v₁, ..., lₙ = vₙ}     -- Record values
     | (κ, Γ_gen, L)               -- Continuation (with snapshot)
+    | ⟨Env, λx:T. e⟩             -- Closure value (environment + code)
 ```
 
 ### 1.3 Types
@@ -139,6 +188,20 @@ let x = v in e  ──►  e[v/x]                                 [β-Let]
 
 {l = v | {l₁=v₁,...,lₙ=vₙ}}  ──►  {l=v,l₁=v₁,...,lₙ=vₙ}    [Record-Extend]
 ```
+
+### 3.1.1 Region Reduction
+
+```
+region e  ──►  let r = fresh_region() in
+               activate(r); let result = e in
+               deactivate(r); destroy(r); result        [Region-Eval]
+
+-- Region destruction bumps generations of all allocations in r:
+destroy(r):
+    ∀a ∈ allocations(r). M(a).generation += 1           [Region-Destroy]
+```
+
+> **Design note**: Blood uses generational references (ADR-001), not borrow checking. References to region-allocated objects are NOT prevented from escaping at the type level. Instead, generation bumps on region exit invalidate all pointers. Any subsequent dereference triggers `StaleReference` via [Resume-Stale] or the standard dereference check (§4.5). Compile-time escape analysis may warn or optimize, but the safety guarantee is the generation system. See [MEMORY_MODEL.md §7](./MEMORY_MODEL.md#7-region-based-allocation) for the full runtime specification.
 
 ### 3.2 Effect Handling (Deep Handlers)
 
@@ -371,6 +434,335 @@ A' <: A    B <: B'    ε ⊆ ε'
 pure <: ε
 ```
 
+### 5.7 Closure Typing
+
+Closures differ from lambda abstractions in that they capture variables from an enclosing scope. The capture environment determines the closure's linearity and effect constraints.
+
+> **Design note**: Blood uses a single callable type `fn(T) -> U / ε` rather than Rust's `Fn`/`FnMut`/`FnOnce` trait hierarchy. The three concerns those traits encode are handled by orthogonal systems: mutation tracking via effects (ADR-002), one-shot semantics via linear types (ADR-006), and effect polymorphism via row polymorphism (ADR-009). See [GRAMMAR.md §4.4](./GRAMMAR.md#44-callable-types-design-note).
+
+#### 5.7.1 Capture Environment
+
+A capture environment `Env` maps captured variables to their capture modes:
+
+```
+CaptureMode ::= ref    -- Shared reference to enclosing variable
+              | mut    -- Mutable reference to enclosing variable
+              | val    -- By-value (move) of enclosing variable
+
+Env = { (x₁, m₁, T₁), ..., (xₙ, mₙ, Tₙ) }
+    where xᵢ ∈ dom(Γ), mᵢ ∈ CaptureMode, Tᵢ = Γ(xᵢ)
+```
+
+For a closure expression `|params| body`:
+- Variables in `FV(body) \ {params}` that are bound in the enclosing scope are captured
+- Without `move`, capture mode is inferred: `ref` for read-only access, `mut` for mutation
+- With `move`, all captures use `val` mode
+
+#### 5.7.2 Typing Rules
+
+```
+Env = captures(Γ, FV(body) \ {x₁,...,xₘ})
+Γ, x₁:A₁,...,xₘ:Aₘ; Δ_body ⊢ body : U / ε
+∀(xᵢ, ref, Tᵢ) ∈ Env. xᵢ remains available in Γ
+∀(xᵢ, mut, Tᵢ) ∈ Env. xᵢ remains available in Γ
+∀(xᵢ, val, Tᵢ) ∈ Env. xᵢ consumed from Δ
+──────────────────────────────────────────────  [T-Closure]
+Γ; Δ ⊢ |x₁:A₁,...,xₘ:Aₘ| body
+       : fn(A₁,...,Aₘ) -> U / ε / pure
+
+Env = { (xᵢ, val, Tᵢ) | xᵢ ∈ FV(body) \ {params} }
+Γ, x₁:A₁,...,xₘ:Aₘ; Δ_body ⊢ body : U / ε
+∀(xᵢ, val, Tᵢ) ∈ Env. xᵢ consumed from Δ
+──────────────────────────────────────────────  [T-Closure-Move]
+Γ; Δ ⊢ move |x₁:A₁,...,xₘ:Aₘ| body
+       : fn(A₁,...,Aₘ) -> U / ε / pure
+```
+
+**Note**: The closure expression itself is pure — it constructs a value. The effect row `ε` describes what happens when the closure is *called*, not when it is *created*.
+
+#### 5.7.3 Closure Application
+
+Closure application follows the standard function application rule [T-App]:
+
+```
+Γ; Δ₁ ⊢ e_clo : fn(A) -> U / ε / ε₁    Γ; Δ₂ ⊢ e_arg : A / ε₂
+Δ = Δ₁ ⊗ Δ₂
+───────────────────────────────────────────────────                [T-Closure-App]
+Γ; Δ ⊢ e_clo(e_arg) : U / ε ∪ ε₁ ∪ ε₂
+```
+
+At runtime, closure application evaluates the body in the captured environment extended with the arguments:
+
+```
+⟨Env, λx:T. body⟩ v  ──►  body[Env, v/x]                       [β-Closure]
+```
+
+#### 5.7.4 Capture Linearity
+
+Closures interact with linearity through capture modes:
+
+```
+-- Linear values CANNOT be captured by reference (no aliasing)
+∀(xᵢ, ref, Tᵢ) ∈ Env. Tᵢ ≠ linear S                           [Linear-No-Ref]
+
+-- Linear values CANNOT be captured by mutable reference
+∀(xᵢ, mut, Tᵢ) ∈ Env. Tᵢ ≠ linear S                           [Linear-No-Mut]
+
+-- Linear values CAN be captured by value (move)
+-- The closure itself becomes linear
+If ∃(xᵢ, val, Tᵢ) ∈ Env. Tᵢ = linear S
+then the closure has type: linear fn(A) -> U / ε                 [Linear-Closure]
+```
+
+**Consequence**: A closure capturing a linear value by-value is itself linear — it must be called exactly once. This replaces Rust's `FnOnce` without a separate trait.
+
+#### 5.7.5 Closure Effect Composition
+
+The effect row on a closure type describes the effects performed when the closure is called:
+
+```
+-- Pure closure (no effects when called)
+|x| x * 2                        : fn(i32) -> i32 / pure
+
+-- IO closure
+|x| perform IO.print(x)          : fn(i32) -> () / {IO}
+
+-- Closure with row-polymorphic effects
+-- (when used as argument to a generic function)
+f : ∀ε. fn(fn() -> i32 / {IO | ε}) -> i32 / {IO | ε}
+```
+
+Effect subtyping through closures follows [S-Fun]: a closure with fewer effects can be passed where more effects are expected.
+
+### 5.8 Region Typing
+
+Regions provide scoped bulk allocation with generational safety. Unlike systems with borrow checking (which prevent reference escape at the type level), Blood detects escaped references at runtime via generation checks (ADR-001).
+
+> **Design note**: Region typing does NOT introduce lifetime annotations on types. The typing rule is simple: a region block produces a value, and references allocated within the region become stale when the region exits. Safety is guaranteed by the generation system (§4), not by type-level region tracking. See [MEMORY_MODEL.md §7](./MEMORY_MODEL.md#7-region-based-allocation) for the runtime specification and [GRAMMAR.md §5.3](./GRAMMAR.md#53-region-expressions) for surface syntax.
+
+#### 5.8.1 Region Expression Typing
+
+```
+Γ; Δ ⊢ e : T / ε
+─────────────────────────────────────                              [T-Region]
+Γ; Δ ⊢ region e : T / ε
+
+Γ; Δ ⊢ e : T / ε
+─────────────────────────────────────                              [T-Region-Named]
+Γ; Δ ⊢ region 'r e : T / ε
+```
+
+The region expression has the same type and effects as its body. No type-level distinction is introduced — region boundaries are invisible to the type system.
+
+#### 5.8.2 Region Safety via Generations
+
+Region safety is NOT a typing property — it is a runtime property guaranteed by the generation system:
+
+```
+-- After region exit, all allocations in region r have bumped generations
+∀a ∈ allocations(r). currentGen(a) = g_old + 1                   [Region-Invalidation]
+
+-- Any reference !a^g to region-allocated memory satisfies:
+-- g = g_old (from before region exit), currentGen(a) = g_old + 1
+-- Therefore g ≠ currentGen(a), so deref triggers StaleReference  [Region-Stale-Detect]
+```
+
+This is a consequence of the existing generation safety theorem (§7.3, §11.5). No new proof obligations arise — region deallocation is just a specific case of `free` that bumps generations.
+
+#### 5.8.3 Region-Effect Interaction
+
+When an effect handler captures a continuation that references region-allocated memory:
+
+```
+-- At effect operation inside a region:
+with h handle region { ... D[perform E.op(v)] ... }
+
+-- The continuation κ captures references to region-allocated memory
+-- The generation snapshot Γ_gen includes these references
+-- Region deallocation is DEFERRED until all continuations complete
+```
+
+This deferred deallocation is specified operationally in [MEMORY_MODEL.md §7.7](./MEMORY_MODEL.md#77-region-effect-interaction). The formal guarantee follows from [Handle-Op-Deep] and [Resume-Valid]/[Resume-Stale]: if the region is deallocated before resume, the generation snapshot detects it.
+
+#### 5.8.4 Nested Regions
+
+Regions may nest. Inner region deallocation does not affect outer region allocations:
+
+```
+region 'outer {
+    let x = alloc_in('outer, v₁)     -- allocated in outer
+    region 'inner {
+        let y = alloc_in('inner, v₂) -- allocated in inner
+        use(x, y)                     -- both valid
+    }
+    -- y's generation bumped (stale), x still valid
+    use(x)                            -- OK: outer still live
+}
+-- x's generation bumped (stale)
+```
+
+The nesting invariant follows from generation independence: each region maintains its own generation counters, and `destroy(r_inner)` only bumps generations for allocations in `r_inner`.
+
+### 5.9 Pattern Matching
+
+Pattern matching is exhaustive: every `match` expression must cover all possible values of the scrutinee type. The typing rules ensure that bindings introduced by patterns are correctly typed and that the overall match expression has a consistent type.
+
+See [GRAMMAR.md §5.5](./GRAMMAR.md#55-match-expressions) for surface syntax.
+
+#### 5.9.1 Pattern Syntax
+
+```
+p ::= x                           -- Variable binding
+    | _                           -- Wildcard
+    | c                           -- Literal constant
+    | C(p₁, ..., pₙ)             -- Constructor pattern (enum variant)
+    | (p₁, ..., pₙ)              -- Tuple pattern
+    | { l₁: p₁, ..., lₙ: pₙ }   -- Struct pattern
+    | p₁ | p₂                    -- Or-pattern
+    | p if e                      -- Guard
+```
+
+#### 5.9.2 Pattern Typing
+
+```
+Γ; Δ ⊢ e : T / ε₀
+∀i. Γ ⊢ pᵢ : T ⊣ Γᵢ                     -- Pattern pᵢ matches type T, binding Γᵢ
+∀i. Γ, Γᵢ; Δᵢ ⊢ eᵢ : U / εᵢ            -- Each arm body has type U
+exhaustive(T, [p₁, ..., pₙ])             -- Patterns cover all of T
+────────────────────────────────────────────────────────── [T-Match]
+Γ; Δ ⊢ match e { p₁ => e₁, ..., pₙ => eₙ } : U / ε₀ ∪ ε₁ ∪ ... ∪ εₙ
+```
+
+All arms must produce the same type `U`. The effect row is the union of the scrutinee's effects and all arm body effects.
+
+#### 5.9.3 Pattern Binding
+
+```
+───────────────────────────                [P-Var]
+Γ ⊢ x : T ⊣ {x : T}
+
+───────────────────────────                [P-Wildcard]
+Γ ⊢ _ : T ⊣ ∅
+
+typeof(c) = T
+───────────────────────────                [P-Literal]
+Γ ⊢ c : T ⊣ ∅
+
+C : (T₁, ..., Tₙ) → T_enum
+∀i. Γ ⊢ pᵢ : Tᵢ ⊣ Γᵢ
+───────────────────────────────────        [P-Constructor]
+Γ ⊢ C(p₁, ..., pₙ) : T_enum ⊣ Γ₁ ∪ ... ∪ Γₙ
+
+∀i. Γ ⊢ pᵢ : Tᵢ ⊣ Γᵢ
+───────────────────────────────────        [P-Tuple]
+Γ ⊢ (p₁, ..., pₙ) : (T₁, ..., Tₙ) ⊣ Γ₁ ∪ ... ∪ Γₙ
+
+Γ ⊢ p₁ : T ⊣ Γ₁    Γ ⊢ p₂ : T ⊣ Γ₂
+Γ₁ = Γ₂   (same bindings in both alternatives)
+───────────────────────────────────        [P-Or]
+Γ ⊢ p₁ | p₂ : T ⊣ Γ₁
+```
+
+#### 5.9.4 Exhaustiveness
+
+A pattern set `{p₁, ..., pₙ}` is exhaustive for type `T` if every value of type `T` is matched by at least one pattern. For algebraic data types (enums), this requires that every constructor is covered:
+
+```
+exhaustive(T, P) ⟺
+    -- For enum types: every variant has a matching pattern
+    ∀ C ∈ constructors(T). ∃ pᵢ ∈ P. matches(pᵢ, C)
+    -- Recursively: sub-patterns must be exhaustive for their types
+    ∧ ∀ C(p₁,...,pₖ) ∈ P. exhaustive(Tⱼ, sub_patterns(P, C, j)) for each field j
+
+    -- For integer/string types: wildcard or variable pattern required
+    -- (finite enumeration is not practical)
+```
+
+Non-exhaustive matches are compile-time errors.
+
+### 5.10 Cast Typing
+
+Type casts (`e as T`) perform explicit type conversions. Allowed casts are defined by the cast compatibility relation. See [GRAMMAR.md §5.6 CastExpr](./GRAMMAR.md#56-cast-expressions) for the surface syntax and cast semantics table.
+
+```
+Γ; Δ ⊢ e : S / ε    cast_compatible(S, T)
+──────────────────────────────────────────     [T-Cast]
+Γ; Δ ⊢ e as T : T / ε
+```
+
+#### 5.10.1 Cast Compatibility
+
+The `cast_compatible` relation defines which casts are allowed:
+
+```
+cast_compatible(S, T) ⟺ one of:
+    1. Numeric widening:  S and T are numeric, sizeof(S) ≤ sizeof(T)
+                          e.g., i32 as i64, u8 as u32, f32 as f64
+    2. Numeric narrowing: S and T are numeric, sizeof(S) > sizeof(T)
+                          Truncates. e.g., i64 as i32, f64 as f32
+    3. Int ↔ Float:       S is integer, T is float (or vice versa)
+                          e.g., i32 as f64, f64 as i32 (truncates toward zero)
+    4. Sign reinterpret:  S and T are integers of same width, different signedness
+                          Bit-preserving. e.g., i32 as u32, u64 as i64
+    5. Bool ↔ Int:        bool as integer (false=0, true=1)
+                          Integer as bool (0=false, nonzero=true)
+    6. Ptr ↔ usize:       Raw pointer to usize or usize to raw pointer
+                          Bit-preserving. Bridge/unsafe contexts only.
+    7. Ptr coercion:      &T as *const T, &mut T as *mut T
+                          Bridge contexts only.
+```
+
+Casts that are not in this relation are compile-time errors.
+
+### 5.11 Associated Type Typing
+
+Traits may declare associated types. Implementations provide concrete types for these declarations. Resolution normalizes associated type projections to concrete types.
+
+#### 5.11.1 Declaration and Implementation
+
+```
+-- In trait declaration:
+trait T {
+    type Assoc;                    -- Associated type (no default)
+    type Assoc = DefaultType;      -- Associated type with default
+}
+
+-- In implementation:
+impl T for C {
+    type Assoc = ConcreteType;     -- Required unless default exists
+}
+```
+
+#### 5.11.2 Projection Typing
+
+```
+C : T    impl T for C { type Assoc = U }
+──────────────────────────────────────────     [T-Assoc-Resolve]
+<C as T>::Assoc ≡ U
+
+-- With default:
+C : T    no explicit Assoc in impl T for C    trait T { type Assoc = D }
+──────────────────────────────────────────     [T-Assoc-Default]
+<C as T>::Assoc ≡ D
+```
+
+#### 5.11.3 Associated Types in Generic Contexts
+
+In generic contexts, associated type projections remain symbolic until monomorphization:
+
+```
+∀ G : T.
+    <G as T>::Assoc                            -- Symbolic projection
+    -- Resolves to concrete type when G is instantiated
+```
+
+Constraints may bound associated types:
+
+```
+fn f<G: T>(x: G) -> G::Assoc where G::Assoc: Display
+    -- G::Assoc must implement Display
+```
+
 ---
 
 ## 6. Handler Typing
@@ -448,6 +840,27 @@ If `resume` appears in `e_op` under a `map`, `fold`, or other iteration, then:
 Γ; Δ ⊢ perform E.op(v) : T / ε
 Δ must have no linear bindings unless transferred
 ```
+
+### 8.3 Closure Capture in Handlers
+
+When a closure is created inside a handler operation clause and captures `resume` or variables from the handler scope, the linearity rules from §5.7.4 interact with the handler multi-shot rules from §6.2:
+
+```
+-- Single-shot handler: closures may capture linear values by-value
+If handler is single-shot (resume used exactly once):
+    Closures in handler scope may capture linear values via [T-Closure-Move]
+    The closure itself becomes linear (§5.7.4 [Linear-Closure])
+    Since resume is single-shot, the closure is called at most once ✓
+
+-- Multi-shot handler: closures CANNOT capture linear values
+If handler is multi-shot (resume used more than once):
+    No linear captures in handler scope (§6.2 multi-shot rule)
+    This extends to closures: a closure in a multi-shot handler
+    cannot capture linear values, because the closure itself
+    could be duplicated through multiple resumes               [Linear-Handler-Closure]
+```
+
+**Composition theorem**: The closure linearity rules (§5.7.4) and the handler multi-shot rules (§6.2) compose safely. A linear closure in a single-shot handler is consumed exactly once. A closure in a multi-shot handler cannot capture linear values.
 
 ---
 
