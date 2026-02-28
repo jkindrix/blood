@@ -1,6 +1,6 @@
 # Specification Work Plan
 
-**Version**: 3.0
+**Version**: 3.1
 **Established**: 2026-02-28
 **Last Updated**: 2026-02-28
 **Status**: Active
@@ -73,12 +73,27 @@ All 337/337 ground-truth tests pass. Bootstrap is stable (second_gen/third_gen b
 
 **Priority**: Highest — unresolved design questions and unapproved proposals could change syntax, semantics, and compiler architecture. Alignment work is premature until these are settled.
 
+### Phase 0 Methodology: Design-First Principle
+
+> **CRITICAL: All Phase 0 decisions are made from first principles, independent of existing implementations.**
+>
+> Phase 0 resolves what Blood's design *should be* — not what it currently *is*. The existing compilers (`src/bootstrap/`, `src/selfhost/`), runtime (`blood-runtime/`), and stdlib (`stdlib/`) are **irrelevant** to Phase 0 reasoning. They must NOT be used to constrain, validate, or shortcut design decisions.
+>
+> **Correct reasoning:** "Given Blood's goals (effects-based, memory-safe, content-addressed), what is the best concurrency model? What does the research say? What do Blood's design principles require?"
+>
+> **Incorrect reasoning:** "The stdlib already implements nurseries with `Send` bounds, so we should codify that." ← This is implementation-constrained thinking. The existing implementation may be wrong, incomplete, or suboptimal. The design must be evaluated independently.
+>
+> Existing implementations become relevant only in **Phase A and later**, when we align compilers and runtime to match the settled design. If the design contradicts the implementation, the implementation changes — not the design.
+>
+> This principle applies to all Phase 0 work: architectural findings (F-06, F-07), proposal triage (Tier 1-3), grammar updates, design gap resolutions, defaults, and inherited decision confirmations.
+
 **Inputs**:
 - [DESIGN_SPACE_AUDIT.md](../design/DESIGN_SPACE_AUDIT.md) — 122 design axes evaluated, 10 findings
 - [PROPOSAL_ANALYSIS.md](../proposals/PROPOSAL_ANALYSIS.md) — 26 proposals with critical path analysis
 - [EXTRAORDINARY_FEATURES.md](../proposals/EXTRAORDINARY_FEATURES.md) (I, II, III) — proposal details
 - [SAFETY_LEVELS.md](../proposals/SAFETY_LEVELS.md) — granular safety controls RFC
 - [SYNTAX_REDESIGN.md](../proposals/SYNTAX_REDESIGN.md) — AI-native syntax decisions
+- [Designing a Programming Language](~/references/language-design/designing-a-programming-language.md) — practitioner's reference for language design decisions
 
 ### 0.1 — Architectural Findings
 
@@ -92,30 +107,46 @@ These could change what we're building. Each requires an ADR or design document.
 
 #### F-06: Concurrency Model
 
-Blood has the pieces (effects for async, fiber runtime, handler scoping) but hasn't assembled them into a cohesive concurrency model. Eight sub-decisions are defaulted:
+**Design question:** What is the best language-level concurrency model for Blood, given its effect system, region-based memory, linear types, and content-addressed compilation?
 
-| Sub-decision | Status |
-|-------------|--------|
-| Structured concurrency (task scoping) | Defaulted |
-| Cancellation mechanism | Deferred (DECISIONS.md) |
-| Cancellation safety guarantees | Defaulted |
-| Async drop / cleanup | Defaulted |
-| Thread-safety markers (Send/Sync) | Defaulted |
-| Async iterators / streams | Defaulted |
-| Runtime-provided vs. library concurrency | Defaulted |
-| Fiber ↔ OS thread interaction | Defaulted |
+This is a first-principles design problem. Eight sub-decisions must be resolved by reasoning from Blood's goals, its unique features, and the state of the art in language design — NOT from what currently exists in any compiler or runtime.
 
-**Deliverable**: Design document composing effects + fibers + handlers into a cohesive concurrency model.
+| Sub-decision | Status | Design question |
+|-------------|--------|-----------------|
+| Structured concurrency (task scoping) | Defaulted | How should task lifetimes relate to effect handler scopes? |
+| Cancellation mechanism | Deferred (DECISIONS.md) | Should cancellation be an effect, a scope property, handler non-resumption, or something else? |
+| Cancellation safety guarantees | Defaulted | What invariants does the language guarantee when a concurrent task is cancelled? |
+| Async drop / cleanup | Defaulted | How do linear types, regions, and effect handlers interact with task cancellation and resource cleanup? |
+| Thread-safety markers (Send/Sync) | Defaulted | Should cross-fiber safety be modeled as traits, effects, capabilities, or something else? What fits Blood's effect-first philosophy? |
+| Async iterators / streams | Defaulted | What is the right abstraction for asynchronous sequences in an effect-based language? |
+| Runtime-provided vs. library concurrency | Defaulted | What belongs in the language runtime vs. what can be expressed as library-level effect handlers? |
+| Fiber ↔ OS thread interaction | Defaulted | How should the language expose (or hide) the mapping between fibers and OS threads? |
 
-**Impact if answer changes**: Could add new syntax (GRAMMAR.md), new effects (FORMAL_SEMANTICS.md), new runtime contracts (CONCURRENCY.md), and new typing rules.
+**Methodology**: Research effect-based concurrency (Koka, OCaml 5/Eio, Effekt), structured concurrency (Trio, Kotlin, Swift, Java Loom), and the academic literature on cancellation safety and async cleanup. Evaluate each sub-decision against Blood's design principles. Propose the best design regardless of implementation cost.
+
+**Deliverable**: Design document (ADR + CONCURRENCY.md update) specifying the cohesive concurrency model. All 8 sub-decisions resolved with rationale.
+
+**Impact if answer changes**: Could add new syntax (GRAMMAR.md), new effects (FORMAL_SEMANTICS.md), new runtime contracts (CONCURRENCY.md), new typing rules, and new stdlib abstractions.
 
 #### F-07: Compiler-as-a-Library
 
-The self-hosted compiler is a monolithic pipeline. Content-addressed compilation is naturally query-based, but the compiler doesn't exploit this. Proposals #16 (constrained decoding oracle) and #18 (verification cache) both implicitly assume query-based architecture.
+**Design question:** What internal architecture should Blood's compiler adopt to support query-based compilation, content-addressed caching, and use as a library by external tools?
 
-**Deliverable**: Architectural note evaluating query-based internal architecture. This constrains the compiler's internal API boundaries — it does not require immediate implementation.
+This is an architectural design question about what the compiler *should* look like, independent of its current structure. The deliverable is an architectural note that identifies query boundaries, cache invalidation strategies, and API surfaces — not an implementation plan.
 
-**Impact if answer changes**: Could restructure self-hosted compiler modules, change how CCV clusters are organized.
+| Design axis | Question |
+|------------|----------|
+| Query granularity | Per-file, per-definition, or per-expression? |
+| Cache integration | How does BLAKE3 content addressing map to query invalidation? |
+| API boundaries | What queries should external consumers (LSP, verification tools, AI oracles) be able to invoke? |
+| Incremental strategy | Signature/body split? Fingerprint-based cascading prevention? |
+| Phased adoption | Can query architecture be adopted incrementally without a full rewrite? |
+
+**Methodology**: Research query-based compiler architecture (Salsa/rust-analyzer, Roslyn, rustc's query system, Sixten). Evaluate how Blood's content-addressed compilation model creates natural query boundaries.
+
+**Deliverable**: Architectural note (ADR) specifying query boundaries, invalidation strategy, and API surface. No implementation required.
+
+**Impact if answer changes**: Constrains compiler internal API boundaries, affects how CCV clusters are organized in future phases, and determines feasibility of Tier 3 proposals (#16, #18, #19).
 
 ### 0.2 — Proposal Triage and Approval
 
@@ -235,8 +266,8 @@ Phase 0 is complete when:
 
 **Architectural:**
 - [x] F-01 ADR written and accepted (ADR-030, 2026-02-28)
-- [ ] F-06 concurrency model design document written and accepted
-- [ ] F-07 compiler-as-a-library architectural note written
+- [x] F-06 concurrency model design document written and accepted (ADR-036, 2026-02-28)
+- [x] F-07 compiler-as-a-library architectural note written (ADR-037, 2026-02-28)
 
 **Proposals:**
 - [x] All Tier 1 proposals evaluated: **all 6 approved** (ADR-031, 2026-02-28)
@@ -245,7 +276,8 @@ Phase 0 is complete when:
 
 **Grammar:**
 - [x] GRAMMAR.md updated to v0.5.0 incorporating all approved Tier 1 proposals (2026-02-28)
-- [ ] FORMAL_SEMANTICS.md updated if approved proposals add typing rules
+- [x] GRAMMAR.md updated to v0.6.0: `FinallyClause` added to handler syntax (ADR-036, 2026-02-28)
+- [x] FORMAL_SEMANTICS.md updated: `finally` clause typing rules added (§6.3, 2026-02-28)
 
 **Design gaps:**
 - [x] F-02, F-03, F-04, F-05, F-08, F-09, F-10 resolved (ADR-033, 2026-02-28)
@@ -253,15 +285,15 @@ Phase 0 is complete when:
 - [x] All inherited decisions confirmed or revised (ADR-035, 2026-02-28)
 
 **Coordination:**
-- [ ] CONCURRENCY.md updated with cohesive concurrency model (from F-06)
-- [ ] SPECIFICATION.md updated if hierarchy changes
+- [x] CONCURRENCY.md updated to v0.4.0 with cohesive concurrency model (ADR-036, 2026-02-28)
+- [x] SPECIFICATION.md updated: `Async` → `Fiber` throughout, `Cancel` effect added (ADR-036, 2026-02-28)
 
 ---
 
 ## 4. Phase A: Syntax Alignment
 
 **Priority**: High — blocks compiler alignment.
-**Prerequisite**: Phase 0 complete (design is stable, GRAMMAR.md at v0.5.0).
+**Prerequisite**: Phase 0 complete (design is stable, GRAMMAR.md at v0.6.0).
 **Method**: CCV (Canary-Cluster-Verify) per DEVELOPMENT.md.
 
 The compilers currently accept old syntax in several places where GRAMMAR.md has evolved. Every `.blood` file in the repository must be audited and updated. Because Tier 1 proposals were resolved in Phase 0, this alignment happens **once** against the **final** grammar.
@@ -498,6 +530,10 @@ Proposals #20 (spec annotations), #21a (named arguments), #21b (expression-orien
 - **0.3 (grammar update)** is mechanical: write the productions for whatever was approved.
 - **0.4-0.6 (gaps/defaults/inherited)** are independent of grammar and can be resolved in parallel or after 0.3.
 
+**Why Phase 0 uses design-first methodology:**
+
+Phase 0 decides what Blood *should be*. Phases A-F make it *actually be that*. If Phase 0 reasoning is constrained by existing implementations, it degenerates into documenting the status quo rather than designing the best language. The compilers and runtime are prototypes that informed the design space — they are not the design itself. Design decisions that contradict existing implementations are not bugs; they are signals that the implementation needs to change in Phase A or later.
+
 **Why alignment (Phase A) happens only once:**
 
 Previous plan versions had alignment against v0.4.0 with a risk of grammar re-revision. The v3.0 plan eliminates this risk by settling the grammar completely before alignment begins. The CCV cost of a full alignment pass is high (~65 files, 9 clusters, 337 tests × 3 verification steps per cluster). Doing it twice would be prohibitive.
@@ -602,3 +638,4 @@ Tier 1 triage (Phase 0.2) evaluates #20 and the other grammar-affecting proposal
 | 1.0 | 2026-02-28 | Initial plan: 6 phases (A-F), 56+ items |
 | 2.0 | 2026-02-28 | Added Phase 0 (design space resolution) from DESIGN_SPACE_AUDIT.md |
 | 3.0 | 2026-02-28 | Restructured Phase 0: added proposal triage (0.2), grammar pre-update (0.3); 26 proposals evaluated in 3 tiers; align-once strategy |
+| 3.1 | 2026-02-28 | Added Phase 0 Methodology (design-first principle); reframed F-06/F-07 as design questions; added sequencing rationale for design-first methodology |
