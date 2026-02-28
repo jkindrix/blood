@@ -136,19 +136,17 @@ All six Tier 1 proposals were evaluated and unanimously approved. GRAMMAR.md has
 | **#21b** | Expression-oriented design | EF_III #21 | **APPROVED** | §5.2.2 — design note added |
 | **RFC-S** | Granular safety controls | SAFETY_LEVELS.md | **APPROVED** | §5.4 — `UncheckedBlock` + `#[unchecked(...)]` |
 
-#### Tier 2: Architecture-Affecting (evaluate before alignment)
+#### Tier 2: Architecture-Affecting — **ALL APPROVED** (ADR-032)
 
-These don't change the grammar but affect compiler internals, diagnostic output, or tooling contracts. Approving them constrains implementation decisions during Phase A.
+All five Tier 2 proposals approved as committed design direction. No grammar changes required.
 
-| # | Proposal | Source | Impact | Dependencies |
-|---|----------|--------|--------|-------------|
-| **#17** | Structured diagnostics (dual human/machine) | EF_III | Error codes as public API, JSON output, fix suggestions as structured diffs | None — compiler internal |
-| **#8** | Deterministic simulation testing (DST) | EF_II | Library pattern on existing effects — no compiler changes | None — ready now |
-| **#12** | Deterministic replay debugging | EF_II | Library pattern on existing effects — no compiler changes | None — ready now |
-| **#13** | Observability (zero-code via effect wrapping) | EF_II | Library pattern on existing effects — no compiler changes | None — ready now |
-| **#11** | Semantic versioning (automatic via content hashes) | EF_II | Tooling — `blood semver` command | Content addressing (exists) |
-
-**Decision**: Approve as committed design direction or defer. These can be approved at any time without rework cost, but approving now signals design intent and unlocks downstream proposals.
+| # | Proposal | Source | Status | Implementation |
+|---|----------|--------|--------|---------------|
+| **#17** | Structured diagnostics (dual human/machine) | EF_III | **APPROVED** | Compiler internal (incremental) |
+| **#8** | Deterministic simulation testing (DST) | EF_II | **APPROVED** | Library/stdlib pattern |
+| **#12** | Deterministic replay debugging | EF_II | **APPROVED** | Tooling (recording runtime) |
+| **#13** | Observability (zero-code via effect wrapping) | EF_II | **APPROVED** | Library/stdlib pattern |
+| **#11** | Semantic versioning (automatic via content hashes) | EF_II | **APPROVED** | Tooling (`blood semver`) |
 
 #### Tier 3: Deferred (deep infrastructure dependencies)
 
@@ -242,7 +240,7 @@ Phase 0 is complete when:
 
 **Proposals:**
 - [x] All Tier 1 proposals evaluated: **all 6 approved** (ADR-031, 2026-02-28)
-- [ ] All Tier 2 proposals evaluated: approved as direction or deferred
+- [x] All Tier 2 proposals evaluated: **all 5 approved** (ADR-032, 2026-02-28)
 - [ ] Tier 3 proposals acknowledged with dependency map
 
 **Grammar:**

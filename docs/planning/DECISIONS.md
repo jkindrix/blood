@@ -1174,6 +1174,54 @@ If compile times or binary size become problematic, Blood may adopt **polymorphi
 
 ---
 
+## ADR-032: Tier 2 Proposal Approvals (Architecture-Affecting)
+
+**Status**: Accepted
+
+**Context**: Five Tier 2 proposals affect compiler internals, diagnostics, or tooling contracts but require no grammar changes. All five have their dependencies fully satisfied by existing infrastructure (algebraic effects, content-addressing, generational memory). Approving them as committed design direction costs nothing and signals clear design intent for Blood's tooling ecosystem.
+
+**Decision**: Approve all five Tier 2 (architecture-affecting) proposals as committed design direction:
+
+| # | Proposal | Source | Decision | Implementation Type |
+|---|----------|--------|----------|-------------------|
+| #17 | Structured diagnostics (dual human/machine) | EF_III | **Approved** | Compiler internal (incremental) |
+| #8 | Deterministic simulation testing (DST) | EF_II | **Approved** | Library/stdlib pattern |
+| #12 | Deterministic replay debugging | EF_II | **Approved** | Tooling (recording runtime) |
+| #13 | Zero-code observability | EF_II | **Approved** | Library/stdlib pattern |
+| #11 | Automatic semantic versioning | EF_II | **Approved** | Tooling (`blood semver` command) |
+
+**Rationale**:
+
+1. **Structured diagnostics (#17)**: Highest-priority Tier 2 proposal (ranked #3 overall). Foundation of Blood's AI-native developer experience. Every diagnostic natively structured JSON with stable error codes (public API), constraint provenance chains, and fix suggestions as structured diffs. Enables 60-80% token savings per AI fix cycle. Error codes become compatibility surface — design carefully upfront. Enables downstream #16 (constrained decoding oracle).
+
+2. **Deterministic simulation testing (#8)**: FoundationDB-style simulation testing via effect handlers. All nondeterminism intercepted at effect boundaries. Single seed → deterministic execution → reproducible failures. Demonstrates that effects-as-universal-interception delivers concrete developer tools, not just type-system aesthetics. Library pattern — no compiler changes.
+
+3. **Deterministic replay debugging (#12)**: Language-level time-travel debugging at 2-5% overhead (vs 15-40% for rr) by recording only effect invocations, not every instruction. Works on any platform Blood targets. Structural completeness guarantee: effects are the only nondeterminism source, so recording them captures everything.
+
+4. **Zero-code observability (#13)**: Automatic tracing/metrics/logging via effect handler wrapping. Zero instrumentation in application code. Every effect invocation is a natural tracing span. Traces include exact code version via content hash. Switch backends by swapping handler, not rewriting application.
+
+5. **Automatic semantic versioning (#11)**: Provably correct semver classification via content hashes and effect signatures. Hash unchanged → PATCH. Effect signature identical → PATCH. Effect widened → MINOR. Function/param removed → MAJOR. Eliminates version-misclassification bugs with mathematical certainty.
+
+**Key insight**: Proposals #8, #12, and #13 form a coherent "effects-as-interception" triad. They demonstrate that algebraic effects are not just a type-system feature but a universal mechanism for testing, debugging, and observability — capabilities that require separate bespoke infrastructure in every other language.
+
+**Consequences**:
+- These proposals become committed design direction — Blood's tooling roadmap includes all five
+- No grammar changes required (all approved proposals are compiler-internal or library/tooling work)
+- Implementation priority is independent of approval — approval signals design intent, not timeline
+- #17 (structured diagnostics) should be implemented first among these, as it enables #16 downstream
+- #8, #12, #13 can be implemented in any order as stdlib/tooling work
+- #11 requires `blood semver` CLI infrastructure
+
+**References**:
+- EXTRAORDINARY_FEATURES_II.md (Proposals #8, #11, #12, #13)
+- EXTRAORDINARY_FEATURES_III.md (Proposal #17)
+- PROPOSAL_ANALYSIS.md (Priority ranking and dependency analysis)
+- ADR-002: Algebraic effects for all side effects
+- ADR-003: Content-addressed code via BLAKE3-256
+- ADR-031: Tier 1 proposal approvals
+
+---
+
 ## Decision Status Legend
 
 - **Proposed**: Under discussion
