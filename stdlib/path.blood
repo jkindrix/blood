@@ -15,10 +15,10 @@
 // Path separators are unified: forward slash '/' works on all platforms.
 // On Windows, both '/' and '\' are recognized as separators.
 
-use crate::core::{Option, Result, String};
-use crate::collections::Vec;
-use crate::traits::{Clone, Debug, Default, Display, Eq, Hash, PartialEq, PartialOrd, Ord, Ordering};
-use crate::traits::fmt::Formatter;
+use crate.core.{Option, Result, String};
+use crate.collections.Vec;
+use crate.traits.{Clone, Debug, Default, Display, Eq, Hash, PartialEq, PartialOrd, Ord, Ordering};
+use crate.traits.fmt.Formatter;
 
 // ===========================================================================
 // Constants
@@ -43,9 +43,9 @@ pub const MAIN_SEPARATOR_STR: &str = "/";
 /// # Examples
 ///
 /// ```blood
-/// use std::path::PathBuf;
+/// use std::path.PathBuf;
 ///
-/// let mut path = PathBuf::from("/usr/bin");
+/// let mut path = PathBuf.from("/usr/bin");
 /// path.push("rustc");
 /// assert_eq!(path.as_str(), "/usr/bin/rustc");
 /// ```
@@ -63,16 +63,16 @@ impl PathBuf {
     /// # Examples
     ///
     /// ```blood
-    /// let path = PathBuf::new();
+    /// let path = PathBuf.new();
     /// assert!(path.as_str().is_empty());
     /// ```
     pub fn new() -> PathBuf / pure {
-        PathBuf { inner: String::new() }
+        PathBuf { inner: String.new() }
     }
 
     /// Creates a new `PathBuf` with the given capacity.
     pub fn with_capacity(capacity: usize) -> PathBuf / pure {
-        PathBuf { inner: String::with_capacity(capacity) }
+        PathBuf { inner: String.with_capacity(capacity) }
     }
 
     /// Creates a `PathBuf` from a string slice.
@@ -80,11 +80,11 @@ impl PathBuf {
     /// # Examples
     ///
     /// ```blood
-    /// let path = PathBuf::from("/home/user");
+    /// let path = PathBuf.from("/home/user");
     /// assert_eq!(path.as_str(), "/home/user");
     /// ```
     pub fn from(s: &str) -> PathBuf / pure {
-        PathBuf { inner: String::from(s) }
+        PathBuf { inner: String.from(s) }
     }
 
     /// Creates a `PathBuf` from an owned `String`.
@@ -103,7 +103,7 @@ impl PathBuf {
 
     /// Returns a `Path` slice referencing this `PathBuf`.
     pub fn as_path(self: &Self) -> &Path / pure {
-        Path::new(self.inner.as_str())
+        Path.new(self.inner.as_str())
     }
 
     /// Consumes the `PathBuf` and returns the underlying `String`.
@@ -128,7 +128,7 @@ impl PathBuf {
     /// # Examples
     ///
     /// ```blood
-    /// let mut path = PathBuf::from("/usr");
+    /// let mut path = PathBuf.from("/usr");
     /// path.push("bin");
     /// assert_eq!(path.as_str(), "/usr/bin");
     ///
@@ -142,7 +142,7 @@ impl PathBuf {
 
         // If the path being pushed is absolute, replace entirely
         if is_absolute_path(path) {
-            self.inner = String::from(path);
+            self.inner = String.from(path);
             return;
         }
 
@@ -162,14 +162,14 @@ impl PathBuf {
     /// # Examples
     ///
     /// ```blood
-    /// let mut path = PathBuf::from("/usr/bin/rustc");
+    /// let mut path = PathBuf.from("/usr/bin/rustc");
     /// assert!(path.pop());
     /// assert_eq!(path.as_str(), "/usr/bin");
     /// ```
     pub fn pop(self: &mut Self) -> bool / pure {
         match self.parent_str() {
             Some(parent) => {
-                self.inner = String::from(parent);
+                self.inner = String.from(parent);
                 true
             }
             None => false,
@@ -183,7 +183,7 @@ impl PathBuf {
     /// # Examples
     ///
     /// ```blood
-    /// let mut path = PathBuf::from("/usr/bin/foo");
+    /// let mut path = PathBuf.from("/usr/bin/foo");
     /// path.set_file_name("bar");
     /// assert_eq!(path.as_str(), "/usr/bin/bar");
     /// ```
@@ -204,7 +204,7 @@ impl PathBuf {
     /// # Examples
     ///
     /// ```blood
-    /// let mut path = PathBuf::from("/usr/bin/foo.txt");
+    /// let mut path = PathBuf.from("/usr/bin/foo.txt");
     /// path.set_extension("rs");
     /// assert_eq!(path.as_str(), "/usr/bin/foo.rs");
     /// ```
@@ -222,9 +222,9 @@ impl PathBuf {
 
         // Build new file name
         let new_name = if extension.is_empty() {
-            String::from(stem)
+            String.from(stem)
         } else {
-            let mut s = String::from(stem);
+            let mut s = String.from(stem);
             s.push('.');
             s.push_str(extension);
             s
@@ -257,7 +257,7 @@ impl PathBuf {
     ///
     /// Returns `None` if the path has no parent (is a root or empty).
     pub fn parent(self: &Self) -> Option<PathBuf> / pure {
-        self.parent_str().map(|s| PathBuf::from(s))
+        self.parent_str().map(|s| PathBuf.from(s))
     }
 
     /// Returns the parent directory as a string slice.
@@ -374,7 +374,7 @@ impl PathBuf {
     /// # Examples
     ///
     /// ```blood
-    /// let path = PathBuf::from("/usr");
+    /// let path = PathBuf.from("/usr");
     /// let joined = path.join("bin");
     /// assert_eq!(joined.as_str(), "/usr/bin");
     /// ```
@@ -404,7 +404,7 @@ impl PathBuf {
 
     /// Returns an iterator over the components of the path.
     pub fn components(self: &Self) -> Components / pure {
-        Components::new(self.inner.as_str())
+        Components.new(self.inner.as_str())
     }
 
     /// Returns an iterator over the path's ancestors.
@@ -456,12 +456,12 @@ impl Hash for PathBuf {
 
 impl Default for PathBuf {
     fn default() -> Self / pure {
-        PathBuf::new()
+        PathBuf.new()
     }
 }
 
 impl Debug for PathBuf {
-    fn fmt(self: &Self, f: &mut Formatter) -> fmt::Result / {IO} {
+    fn fmt(self: &Self, f: &mut Formatter) -> fmt.Result / {IO} {
         f.debug_tuple("PathBuf")
             .field(&self.inner)
             .finish()
@@ -469,20 +469,20 @@ impl Debug for PathBuf {
 }
 
 impl Display for PathBuf {
-    fn fmt(self: &Self, f: &mut Formatter) -> fmt::Result / {IO} {
+    fn fmt(self: &Self, f: &mut Formatter) -> fmt.Result / {IO} {
         f.write_str(self.inner.as_str())
     }
 }
 
 impl From<&str> for PathBuf {
     fn from(s: &str) -> Self / pure {
-        PathBuf::from(s)
+        PathBuf.from(s)
     }
 }
 
 impl From<String> for PathBuf {
     fn from(s: String) -> Self / pure {
-        PathBuf::from_string(s)
+        PathBuf.from_string(s)
     }
 }
 
@@ -510,9 +510,9 @@ impl AsRef<str> for PathBuf {
 /// # Examples
 ///
 /// ```blood
-/// use std::path::Path;
+/// use std::path.Path;
 ///
-/// let path = Path::new("/usr/bin");
+/// let path = Path.new("/usr/bin");
 /// assert_eq!(path.file_name(), Some("bin"));
 /// ```
 pub struct Path {
@@ -540,7 +540,7 @@ impl Path {
 
     /// Converts the path to an owned `PathBuf`.
     pub fn to_path_buf(self: &Self) -> PathBuf / pure {
-        PathBuf::from(&self.inner)
+        PathBuf.from(&self.inner)
     }
 
     /// Returns `true` if the path is absolute.
@@ -581,10 +581,10 @@ impl Path {
                     if s.len() == 1 {
                         None
                     } else {
-                        Some(Path::new(&s[..1]))
+                        Some(Path.new(&s[..1]))
                     }
                 } else {
-                    Some(Path::new(&s[..pos]))
+                    Some(Path.new(&s[..pos]))
                 }
             }
             None => None,
@@ -659,7 +659,7 @@ impl Path {
 
     /// Returns an iterator over the components of the path.
     pub fn components(self: &Self) -> Components / pure {
-        Components::new(&self.inner)
+        Components.new(&self.inner)
     }
 
     /// Returns an iterator over the path's ancestors.
@@ -669,7 +669,7 @@ impl Path {
 }
 
 impl Debug for Path {
-    fn fmt(self: &Self, f: &mut Formatter) -> fmt::Result / {IO} {
+    fn fmt(self: &Self, f: &mut Formatter) -> fmt.Result / {IO} {
         f.debug_tuple("Path")
             .field(&self.inner)
             .finish()
@@ -677,7 +677,7 @@ impl Debug for Path {
 }
 
 impl Display for Path {
-    fn fmt(self: &Self, f: &mut Formatter) -> fmt::Result / {IO} {
+    fn fmt(self: &Self, f: &mut Formatter) -> fmt.Result / {IO} {
         f.write_str(&self.inner)
     }
 }
@@ -722,13 +722,13 @@ impl AsRef<str> for Path {
 
 impl AsRef<Path> for str {
     fn as_ref(self: &Self) -> &Path / pure {
-        Path::new(self)
+        Path.new(self)
     }
 }
 
 impl AsRef<Path> for String {
     fn as_ref(self: &Self) -> &Path / pure {
-        Path::new(self.as_str())
+        Path.new(self.as_str())
     }
 }
 
@@ -764,7 +764,7 @@ impl<'a> Iterator for Components<'a> {
         if self.pos == 0 && !remaining.is_empty() {
             if is_separator(remaining.chars().next().unwrap()) {
                 self.pos = 1;
-                return Some(Component::RootDir);
+                return Some(Component.RootDir);
             }
         }
 
@@ -793,9 +793,9 @@ impl<'a> Iterator for Components<'a> {
         let component = &self.path[comp_start..self.pos];
 
         match component {
-            "." => Some(Component::CurDir),
-            ".." => Some(Component::ParentDir),
-            name => Some(Component::Normal(name)),
+            "." => Some(Component.CurDir),
+            ".." => Some(Component.ParentDir),
+            name => Some(Component.Normal(name)),
         }
     }
 }
@@ -819,11 +819,11 @@ impl<'a> Component<'a> {
     /// Returns the component as a string slice.
     pub fn as_str(self: &Self) -> &'a str / pure {
         match self {
-            Component::Prefix(p) => p.as_str(),
-            Component::RootDir => MAIN_SEPARATOR_STR,
-            Component::CurDir => ".",
-            Component::ParentDir => "..",
-            Component::Normal(s) => s,
+            Component.Prefix(p) => p.as_str(),
+            Component.RootDir => MAIN_SEPARATOR_STR,
+            Component.CurDir => ".",
+            Component.ParentDir => "..",
+            Component.Normal(s) => s,
         }
     }
 }
