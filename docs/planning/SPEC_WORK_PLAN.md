@@ -187,47 +187,47 @@ GRAMMAR.md has been updated to v0.5.0 incorporating all six approved Tier 1 prop
 
 **Deliverable**: GRAMMAR.md v0.5.0 — the final pre-alignment grammar. ✓
 
-### 0.4 — Remaining Design Gaps
+### 0.4 — Remaining Design Gaps — **COMPLETE** (ADR-033)
 
-Short ADRs or design notes. These don't change grammar but resolve ambiguity.
+All 7 design gaps resolved:
 
-| # | Finding | Deliverable |
-|---|---------|-------------|
-| F-02 | Higher-kinded types | ADR: row poly + effects + dispatch cover HKT use cases (or document gaps) |
-| F-03 | Variance | ADR: all type parameters invariant by default, future relaxation path |
-| F-04 | String representation × 128-bit pointers | ADR: concrete `&str` and `&[T]` representation |
-| F-05 | Result/Option × Effects | ADR: role of `Result`/`Option` alongside effects, when each is appropriate, interconversion |
-| F-08 | Stdlib scope / freestanding split | Design note: core/alloc/std tier mapping |
-| F-09 | Testing as language feature | Design note: effect-based test declarations, `blood test` runner |
-| F-10 | ABI stability | ADR: "explicitly unstable" + content-hash-based ABI concept |
+| # | Finding | Decision |
+|---|---------|----------|
+| F-02 | Higher-kinded types | **Not planned** — row poly + effects + dispatch cover use cases |
+| F-03 | Variance | **Invariant by default**, compiler-inferred where safe |
+| F-04 | String representation | **`{ ptr, i64 }` (16 bytes)** — gen checks at creation, not access |
+| F-05 | Result/Option × Effects | **Complementary** — Result for leaf, effects for orchestration |
+| F-08 | Stdlib scope | **Three-tier** — core (freestanding) / alloc / std (OS) |
+| F-09 | Testing | **First-class** — `#[test]` + `blood test` + effect-based DST |
+| F-10 | ABI stability | **Explicitly unstable** — content hashes replace ABI guarantees |
 
-### 0.5 — Minimal-Effort Defaults
+### 0.5 — Minimal-Effort Defaults — **COMPLETE** (ADR-034)
 
-One-paragraph decision records each:
+All 7 defaults documented:
 
-1. **Cyclic imports**: Allowed or forbidden? (Likely: forbidden, matches content-addressed DAG)
-2. **Interior mutability**: Supported or not? (Likely: defer, document as not-yet-designed)
-3. **Dead code detection**: Planned or not? (Likely: yes, as compiler warning)
-4. **Definite initialization**: Statically enforced? (Likely: yes, via MIR analysis)
-5. **Doc comment syntax**: `///` or other? (Decide before stdlib grows)
-6. **Frame pointer preservation**: Default on or off? (Likely: on, for profiling)
-7. **Variance**: Invariant by default? (Likely: yes — see also F-03)
+1. **Cyclic imports**: Forbidden (content-addressed DAG)
+2. **Interior mutability**: Deferred (no concrete use case yet)
+3. **Dead code detection**: Yes, compiler warning via MIR analysis
+4. **Definite initialization**: Statically enforced via MIR
+5. **Doc comment syntax**: `///` (already in grammar)
+6. **Frame pointer preservation**: On by default
+7. **Variance**: Invariant by default (= F-03)
 
-### 0.6 — Inherited Decision Confirmations
+### 0.6 — Inherited Decision Confirmations — **COMPLETE** (ADR-035)
 
-These were adopted from Rust without documented independent evaluation. Each needs a brief ADR confirming or revising the choice in Blood's context.
+All 9 inherited decisions evaluated:
 
-| Decision | Why It Warrants Evaluation | Overlaps With |
-|----------|---------------------------|---------------|
-| Monomorphization | Interacts with content addressing | **Resolved** (ADR-030 / F-01) |
-| `Option<T>` / `Result<T, E>` | Coexists with effects | F-05 |
-| UTF-8 strings | Interacts with 128-bit pointers | F-04 |
-| File-based module hierarchy | Content addressing decouples identity from files | — |
-| `pub` visibility (Rust-style) | Row polymorphism introduces structural subtyping | — |
-| Call-by-value evaluation | Natural for effects but undocumented | — |
-| No runtime type information | Multiple dispatch uses 24-bit type fingerprints — this IS RTTI | — |
-| `&T` / `&mut T` reference syntax | Blood's references are generational, not borrowed | — |
-| Binary `unsafe` blocks | Granular safety controls proposed (RFC-S) | Tier 1 proposals |
+| Decision | Verdict |
+|----------|---------|
+| Monomorphization | **Already resolved** (ADR-030) |
+| `Option<T>` / `Result<T, E>` | **Confirmed** with guidance (F-05) |
+| UTF-8 strings | **Confirmed** (F-04) |
+| File-based module hierarchy | **Confirmed** — files are authoring UI, hashes are identity |
+| `pub` visibility | **Confirmed** — orthogonal to row polymorphism |
+| Call-by-value evaluation | **Confirmed** — natural for effects |
+| No runtime type information | **Revised** — minimal RTTI (type fingerprints for dispatch), no reflection |
+| `&T` / `&mut T` syntax | **Confirmed** — same syntax, generational semantics |
+| Binary `unsafe` blocks | **Superseded** by ADR-031 (granular `unchecked`) |
 
 ### Phase 0 Exit Criteria
 
@@ -241,16 +241,16 @@ Phase 0 is complete when:
 **Proposals:**
 - [x] All Tier 1 proposals evaluated: **all 6 approved** (ADR-031, 2026-02-28)
 - [x] All Tier 2 proposals evaluated: **all 5 approved** (ADR-032, 2026-02-28)
-- [ ] Tier 3 proposals acknowledged with dependency map
+- [x] Tier 3 proposals acknowledged with dependency map (documented in §0.2, 2026-02-28)
 
 **Grammar:**
 - [x] GRAMMAR.md updated to v0.5.0 incorporating all approved Tier 1 proposals (2026-02-28)
 - [ ] FORMAL_SEMANTICS.md updated if approved proposals add typing rules
 
 **Design gaps:**
-- [ ] F-02, F-03, F-04, F-05, F-08, F-09, F-10 resolved (ADRs or design notes)
-- [ ] All 7 minimal-effort defaults documented
-- [ ] All inherited decisions confirmed or revised (monomorphization already done)
+- [x] F-02, F-03, F-04, F-05, F-08, F-09, F-10 resolved (ADR-033, 2026-02-28)
+- [x] All 7 minimal-effort defaults documented (ADR-034, 2026-02-28)
+- [x] All inherited decisions confirmed or revised (ADR-035, 2026-02-28)
 
 **Coordination:**
 - [ ] CONCURRENCY.md updated with cohesive concurrency model (from F-06)

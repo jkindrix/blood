@@ -1222,6 +1222,142 @@ If compile times or binary size become problematic, Blood may adopt **polymorphi
 
 ---
 
+## ADR-033: Design Gap Resolutions (F-02 through F-10)
+
+**Status**: Accepted
+
+**Context**: The Design Space Audit identified seven design gaps (F-02 through F-10, excluding the already-resolved F-01 and the architectural F-06/F-07) that needed short ADRs or design notes. These are decisions where Blood inherited behavior without independent evaluation, or where the interaction between Blood's innovations wasn't documented.
+
+### F-02: Higher-Kinded Types — Not Planned
+
+**Decision**: Blood does not provide higher-kinded types (HKTs). Row polymorphism, algebraic effects, and multiple dispatch collectively cover the practical use cases.
+
+**Coverage analysis**:
+- **Functor/Monad abstraction** → algebraic effects (ADR-002). Blood uses effects instead of monads for sequencing side effects. No need for `trait Monad<M<_>>`.
+- **Generic container abstraction** (`Collection<F<_>>`) → traits + multiple dispatch (ADR-005). Functions parameterized by container type use trait bounds, not type constructor parameters.
+- **Iterator/Stream abstraction** → trait-based (`Iterator` trait with associated `Item` type). No HKTs needed.
+- **Effect handler abstraction** → effect handlers are structurally higher-kinded (transform `Comp<E> → Comp<E'>`) but this is built into the language, not exposed as a user-level HKT mechanism.
+
+**Known gap**: Cannot abstract over type constructors directly (e.g., `fn map<F<_>, A, B>(fa: F<A>, f: fn(A) -> B) -> F<B>`). This is intentional — such abstractions are rare outside Haskell/Scala and add significant type system complexity. If a gap is discovered in practice, `forall` types (higher-rank polymorphism) provide a partial substitute. Full HKTs can be added in a future edition if needed, as an additive change.
+
+### F-03: Variance — Invariant by Default
+
+**Decision**: All type parameters are invariant by default. No user-facing variance annotations.
+
+**Rationale**: Invariance is always sound. Covariance for `&T` and contravariance for `fn(T)` can be inferred by the compiler as an optimization (following Rust's model) without user-facing syntax. Blood's generational references (not borrowed references) make variance less critical than in Rust — there's no lifetime parameter variance to reason about.
+
+**Future path**: If ergonomic demand arises, the compiler can infer variance for read-only type parameters. This is additive and requires no language change.
+
+### F-04: String and Slice Representation
+
+**Decision**: `&str` and `&[T]` use **thin fat pointers**: `{ ptr, i64 }` (16 bytes). Generational checking applies to owned references (`&T` = 128-bit generational pointer), not to slice/string data pointers.
+
+**Current implementation**: This is already how the codegen works (`codegen_size.blood`, `codegen_types.blood`). Slices store a raw data pointer + length. The generational check occurs when the slice is *created* from an owned reference, not on every element access.
+
+**Rationale**: Slice data is contiguous memory — checking the generation of the owning allocation at slice creation time is sufficient. Per-element generation checks would impose unacceptable overhead for iteration. This matches Vale's model: generation checks at reference creation, not at every dereference.
+
+**Consequence**: `&str` is 16 bytes (same as Rust). `&[T]` is 16 bytes (same as Rust). `&T` is 16 bytes (128-bit generational pointer — 2x Rust's 8-byte `&T`). The 2x overhead on thin references is the documented cost of generational safety (ADR-001).
+
+### F-05: Result/Option Alongside Effects
+
+**Decision**: `Result<T, E>` and `Option<T>` coexist with algebraic effects. They serve complementary roles:
+
+| Mechanism | Use When | Propagation | Resumable? |
+|-----------|----------|-------------|-----------|
+| `Result<T, E>` + `?` | Expected failures in the function's contract. Caller must handle. | `?` propagates to immediate caller | No |
+| `Option<T>` | Value may or may not exist. Not an error. | Pattern match | No |
+| `perform Error.raise(e)` | Structured error handling with handler-provided recovery. | Effect propagation to enclosing handler | Yes (via `resume`) |
+
+**Interconversion**: `Result` can be converted to an effect (`raise` on `Err`) and effects can be caught into `Result` (handler that wraps in `Ok`/`Err`). Library functions should provide both APIs where appropriate.
+
+**Guidance for library authors**: Use `Result` for leaf functions (parsers, validators, lookups). Use effects for orchestration functions where callers benefit from handler-based recovery, dependency injection, or testing.
+
+**`?` does not cross effect boundaries**: `?` propagates `Result` errors up the call stack. It does not interact with effect handlers. To convert between `Result` and effects, use explicit conversion functions.
+
+### F-08: Standard Library Scope
+
+**Decision**: Blood's standard library follows a three-tier model:
+
+| Tier | Name | Requires | Contents |
+|------|------|----------|----------|
+| `core` | Core | Nothing (freestanding) | Primitives, traits, Option, Result, iterators, formatting, math |
+| `alloc` | Allocation | Allocator | Vec, String, Box, HashMap, Arena, sorting |
+| `std` | Standard | OS | IO, filesystem, networking, process, threading, time |
+
+**Current state**: Blood's 8 stdlib modules (HashMap, HashSet, Arena, Sort/Search, fmt, String, Math, prelude) all fit in the `alloc` tier. No `core` or `std` split exists yet.
+
+**Regions interaction**: Region-based allocation (`@stack`, `region`) is available at all tiers. `@heap` requires the `alloc` tier. The allocator trait is defined in `core` but implemented in `alloc`.
+
+**Implementation**: The split is organizational, not urgent. Current stdlib is small enough that a monolithic `std` works. The split becomes necessary when targeting embedded/freestanding environments.
+
+### F-09: Testing as a Language Feature
+
+**Decision**: Testing is a first-class language feature using existing infrastructure:
+
+1. **`#[test]` attribute**: Marks functions as tests. Already in GRAMMAR.md §1.5.1 standard attributes. Not yet implemented in compilers.
+2. **`blood test` command**: Discovers and runs `#[test]` functions. Future CLI addition.
+3. **`assert!` / `assert_eq!` macros**: Built-in assertion macros. Basic `assert!` already exists.
+4. **Effect-based simulation testing**: Proposal #8 (ADR-032) provides DST via effect handlers — this is a library pattern, not a compiler feature.
+5. **`#[should_panic]`**: Already in GRAMMAR.md §1.5.1.
+
+**What testing is NOT**: Testing does not require new syntax beyond the existing `#[test]` attribute. No `test` block keyword. No special test modules. Tests are regular functions with `#[test]`, co-located with the code they test (following Rust's model).
+
+**Implementation priority**: `#[test]` attribute recognition → `blood test` runner → `assert_eq!` macro → integration with DST handlers.
+
+### F-10: ABI Stability
+
+**Decision**: Blood's ABI is **explicitly unstable**. No cross-compiler-version binary compatibility is guaranteed.
+
+**Rationale**: Content-addressed compilation (ADR-003) provides a stronger alternative to traditional ABI stability. If two compilation units share the same content hash, they are guaranteed to be compatible — not because the ABI is stable, but because they are *identical*. This gives Blood the benefits of ABI stability (artifact reuse, caching) without the costs (constraining struct layout, vtable format, calling conventions).
+
+**Consequence**: Libraries are distributed as source (or as content-addressed artifacts for exact compiler versions). The compiler is free to change struct layout, calling conventions, and vtable format between versions. Static linking is the default. Dynamic linking requires version-locked shared libraries.
+
+**Future**: If dynamic linking across compiler versions becomes necessary, a `#[repr(C)]` escape hatch already exists for C-compatible layout. A future `#[repr(stable)]` attribute could opt specific types into layout stability, but this is not planned.
+
+---
+
+## ADR-034: Minimal-Effort Defaults
+
+**Status**: Accepted
+
+**Context**: Seven design axes were identified as "defaulted" — the language behaves a certain way without an explicit decision having been made. Each gets a one-paragraph decision record.
+
+1. **Cyclic imports**: **Forbidden.** Content-addressed compilation requires a DAG of definitions. Cyclic imports would create circular hash dependencies, violating the content-addressing model (ADR-003). The compiler already rejects cyclic `mod` declarations. This is a permanent constraint, not a temporary limitation.
+
+2. **Interior mutability**: **Deferred.** No `Cell`/`RefCell` equivalent is designed. Blood's generational references validate at creation time, not at every access, which changes the interior mutability story compared to Rust. If needed, interior mutability can be provided via effect handlers (a `State` effect provides controlled mutation). Design this when a concrete use case demands it.
+
+3. **Dead code detection**: **Yes, as compiler warning.** The compiler should warn on unreachable code, unused variables, unused imports, and unused functions. This is standard practice and requires no language design — it's a compiler quality issue implementable via MIR analysis.
+
+4. **Definite initialization**: **Statically enforced via MIR analysis.** All variables must be initialized before use. The MIR phase already tracks local initialization status. Uninitialized reads are compile errors, not runtime errors. This matches Rust and is already partially implemented.
+
+5. **Doc comment syntax**: **`///` (triple-slash).** Already specified in GRAMMAR.md §1.1 (`DocComment ::= '///' [^\n]* '\n'`). Consistent with Rust. Doc comments are preserved for tooling. No change needed.
+
+6. **Frame pointer preservation**: **On by default.** Frame pointers enable profiling and debugging. The overhead is one register per function. In release builds, `#[optimize(size)]` or a future flag can disable frame pointers. Default-on follows Go's approach.
+
+7. **Variance**: Resolved by F-03 above — invariant by default, compiler-inferred where safe.
+
+---
+
+## ADR-035: Inherited Decision Confirmations
+
+**Status**: Accepted
+
+**Context**: Eight design decisions were adopted from Rust without independent evaluation in Blood's context. Each is confirmed, revised, or noted as already resolved.
+
+| Decision | Verdict | Notes |
+|----------|---------|-------|
+| Monomorphization | **Already resolved** | ADR-030 (two-level content-addressed cache) |
+| `Option<T>` / `Result<T, E>` | **Confirmed with guidance** | F-05 above — coexist with effects, serve complementary roles |
+| UTF-8 strings | **Confirmed** | F-04 above — `&str` = `{ ptr, i64 }` (16 bytes). UTF-8 is the universal standard. No reason to deviate. |
+| File-based module hierarchy | **Confirmed** | Content addressing operates at definition level; files are a developer-facing organization convention. `mod name;` loads `name.blood` from the same directory. Files remain the authoring interface even though content hashes are the identity mechanism. |
+| `pub` visibility (Rust-style) | **Confirmed** | `pub`, `pub(crate)`, `pub(super)` work as in Rust. Row polymorphism is orthogonal — it operates on record/effect types, not module visibility. Structural subtyping doesn't bypass `pub` boundaries; a module's exported interface is its public items, regardless of whether those items use structural types. |
+| Call-by-value evaluation | **Confirmed** | Strict/eager evaluation is the right default for a systems language with algebraic effects. Effect handlers receive values, not thunks. Lazy evaluation would require boxing and allocation at every effect boundary. |
+| No runtime type information | **Revised** | Blood DOES have lightweight RTTI: 24-bit type fingerprints stored in the metadata field of generational pointers. This enables multiple dispatch (ADR-005) at runtime. However, this is NOT reflective RTTI — programs cannot enumerate fields, invoke methods by name, or inspect type hierarchies. The correct characterization is: "minimal RTTI for dispatch, no reflection." |
+| `&T` / `&mut T` reference syntax | **Confirmed with distinction** | Same syntax as Rust but different semantics. Blood's `&T` is a 128-bit generational pointer (not a borrowed reference). No borrow checker, no lifetime annotations on references (regions handle scoping). The syntax is familiar but the mental model is different — documented in ADR-001. |
+| Binary `unsafe` blocks | **Superseded** | ADR-031 approved RFC-S: `@unsafe` retained for fundamentally unsafe operations; `unchecked(checks)` added for granular check disabling. Binary `unsafe` is no longer the only safety escape hatch. |
+
+---
+
 ## Decision Status Legend
 
 - **Proposed**: Under discussion
