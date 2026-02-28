@@ -610,6 +610,61 @@ fn lower_call_expr(ctx: &mut hir_lower_ctx.LoweringCtx, callee: &ast.Expr, args:
     )
 }
 
+/// DEF-001 helper: Try to extract a chain of module path segments from an expression.
+/// For `outer.inner` (Field { base: Path("outer"), field: Named("inner") }), returns ["outer", "inner"].
+/// For `outer` (Path(["outer"])), returns ["outer"].
+/// Returns None if the expression isn't a simple field/path chain, or if the
+/// base path resolves to a local variable (to avoid intercepting value.field).
+fn try_extract_module_chain(ctx: &mut hir_lower_ctx.LoweringCtx, expr: &ast.Expr) -> Option<Vec<common.SpannedSymbol>> {
+    match &expr.kind {
+        &ast.ExprKind.Path(ref path) => {
+            if path.segments.len() == 1 {
+                let seg = &path.segments[0];
+                let name_str = ctx.span_to_string(seg.name.span);
+                let name_sym = ctx.intern(name_str.as_str());
+                // Guard: only consider this a potential module chain if
+                // the name resolves to a non-local binding (Def or Module).
+                // Local variables and type params should use field access.
+                let lookup = ctx.resolver.lookup(name_sym);
+                match lookup {
+                    Option.Some(result) => {
+                        let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
+                        if binding.is_local() || binding.is_type_param() {
+                            return Option.None;
+                        }
+                    }
+                    Option.None => {
+                        return Option.None;
+                    }
+                }
+                let mut result: Vec<common.SpannedSymbol> = Vec.new();
+                result.push(common.SpannedSymbol { symbol: name_sym, span: seg.name.span });
+                Option.Some(result)
+            } else {
+                Option.None
+            }
+        }
+        &ast.ExprKind.Field { ref base, ref field } => {
+            match field {
+                &ast.FieldAccess.Named(ref field_name) => {
+                    let base_chain = try_extract_module_chain(ctx, base.as_ref());
+                    match base_chain {
+                        Option.Some(mut segments) => {
+                            let fname_str = ctx.span_to_string(field_name.span);
+                            let fname_sym = ctx.intern(fname_str.as_str());
+                            segments.push(common.SpannedSymbol { symbol: fname_sym, span: field_name.span });
+                            Option.Some(segments)
+                        }
+                        Option.None => Option.None,
+                    }
+                }
+                _ => Option.None,
+            }
+        }
+        _ => Option.None,
+    }
+}
+
 /// Lower a method call expression.
 fn lower_method_call_expr(
     ctx: &mut hir_lower_ctx.LoweringCtx,
@@ -619,6 +674,66 @@ fn lower_method_call_expr(
     args: &Vec<ast.CallArg>,
     span: common.Span,
 ) -> hir_expr.Expr {
+    // DEF-001: Try to resolve receiver as a module path chain.
+    // Handles both single-segment (module.func) and multi-segment
+    // (outer.inner.func) by extracting the path chain and appending the method.
+    let chain = try_extract_module_chain(ctx, receiver);
+    match chain {
+        Option.Some(mut segments) => {
+            let method_str = ctx.span_to_string(method.span);
+            let method_sym = ctx.intern(method_str.as_str());
+            segments.push(common.SpannedSymbol { symbol: method_sym, span: method.span });
+            let resolved = ctx.resolver.resolve_qualified_path(&segments);
+            if resolved.is_some() {
+                let qp_result = resolved.unwrap();
+                let def_info = ctx.resolver.get_def_info(qp_result.def_id);
+                let type_arg_count = match type_args {
+                    &Some(ref ta) => ta.args.len() as u32,
+                    &None => 0,
+                };
+                let resolved_path = match def_info {
+                    Option.Some(info) => {
+                        match info.variant_index {
+                            Option.Some(vi) => hir_def.ResolvedPath.variant(qp_result.def_id, span, vi),
+                            Option.None => hir_def.ResolvedPath.new(qp_result.def_id, type_arg_count, span),
+                        }
+                    }
+                    Option.None => hir_def.ResolvedPath.new(qp_result.def_id, type_arg_count, span),
+                };
+                // Lower type args
+                let type_args_hir = match type_args {
+                    &Some(ref ta) => {
+                        record_turbofish_const_args(ctx, ta, span.start as u32);
+                        hir_lower_type::lower_type_args(ctx, ta)
+                    }
+                    &None => Vec.new(),
+                };
+                // Lower call args
+                let mut args_hir: Vec<hir_expr.Expr> = Vec.new();
+                for i in 0usize..args.len() {
+                    let arg_hir = lower_expr(ctx, &args[i].val);
+                    args_hir.push(arg_hir);
+                }
+                let callee_ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+                let callee_expr = hir_expr.Expr.new(
+                    hir_expr.ExprKind.Path(resolved_path),
+                    callee_ty,
+                    span,
+                );
+                let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+                return hir_expr.Expr.new(
+                    hir_expr.ExprKind.Call {
+                        callee: Box.new(callee_expr),
+                        args: args_hir,
+                    },
+                    ty,
+                    span,
+                );
+            }
+        }
+        Option.None => {}
+    }
+
     let receiver_hir = lower_expr(ctx, receiver);
 
     let type_args_hir = match type_args {
@@ -659,6 +774,50 @@ fn lower_method_call_expr(
 
 /// Lower a field access expression.
 fn lower_field_expr(ctx: &mut hir_lower_ctx.LoweringCtx, base: &ast.Expr, field: &ast.FieldAccess, span: common.Span) -> hir_expr.Expr {
+    // DEF-001: Try to resolve as a qualified path (module.item or module.module.item).
+    // Uses try_extract_module_chain to handle both single and multi-segment chains.
+    // Falls through to normal field access if resolve_qualified_path fails.
+    match field {
+        &ast.FieldAccess.Named(ref field_name) => {
+            let chain = try_extract_module_chain(ctx, base);
+            match chain {
+                Option.Some(mut segments) => {
+                    let fname_str = ctx.span_to_string(field_name.span);
+                    let fname_sym = ctx.intern(fname_str.as_str());
+                    segments.push(common.SpannedSymbol { symbol: fname_sym, span: field_name.span });
+                    let resolved = ctx.resolver.resolve_qualified_path(&segments);
+                    if resolved.is_some() {
+                        let result = resolved.unwrap();
+                        let def_info = ctx.resolver.get_def_info(result.def_id);
+                        let resolved_path = match def_info {
+                            Option.Some(info) => {
+                                match info.variant_index {
+                                    Option.Some(vi) => {
+                                        hir_def.ResolvedPath.variant(result.def_id, span, vi)
+                                    }
+                                    Option.None => {
+                                        hir_def.ResolvedPath.new(result.def_id, 0, span)
+                                    }
+                                }
+                            }
+                            Option.None => {
+                                hir_def.ResolvedPath.new(result.def_id, 0, span)
+                            }
+                        };
+                        let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+                        return hir_expr.Expr.new(
+                            hir_expr.ExprKind.Path(resolved_path),
+                            ty,
+                            span,
+                        );
+                    }
+                }
+                Option.None => {}
+            }
+        }
+        _ => {}
+    }
+
     let base_hir = lower_expr(ctx, base);
 
     let field_hir = match field {
