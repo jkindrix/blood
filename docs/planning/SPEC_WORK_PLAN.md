@@ -1,11 +1,11 @@
 # Specification Work Plan
 
-**Version**: 2.0
+**Version**: 3.0
 **Established**: 2026-02-28
 **Last Updated**: 2026-02-28
 **Status**: Active
 
-This document captures the remaining work to resolve open design questions, bring Blood's specifications and compilers into full alignment, complete formal verification, and close all known gaps.
+This document captures the remaining work to resolve open design questions, approve early-impact proposals, bring Blood's specifications and compilers into full alignment, complete formal verification, and close all known gaps.
 
 ---
 
@@ -14,6 +14,12 @@ This document captures the remaining work to resolve open design questions, brin
 1. [Context](#1-context)
 2. [Spec Maturity Summary](#2-spec-maturity-summary)
 3. [Phase 0: Design Space Resolution](#3-phase-0-design-space-resolution)
+   - [0.1 Architectural Findings](#01--architectural-findings)
+   - [0.2 Proposal Triage and Approval](#02--proposal-triage-and-approval)
+   - [0.3 Grammar Update (v0.5.0)](#03--grammar-update-v050)
+   - [0.4 Remaining Design Gaps](#04--remaining-design-gaps)
+   - [0.5 Minimal-Effort Defaults](#05--minimal-effort-defaults)
+   - [0.6 Inherited Decision Confirmations](#06--inherited-decision-confirmations)
 4. [Phase A: Syntax Alignment](#4-phase-a-syntax-alignment)
 5. [Phase B: Semantic Alignment Audit](#5-phase-b-semantic-alignment-audit)
 6. [Phase C: Semantic Alignment Fixes](#6-phase-c-semantic-alignment-fixes)
@@ -33,11 +39,16 @@ As of 2026-02-28, the specification documents have reached a mature state:
 - **GRAMMAR.md** (v0.4.0) is settled — the source of truth for surface syntax. Only procedural macros remain deferred (legitimate: semantic design must precede syntax).
 - **FORMAL_SEMANTICS.md** (v0.4.0) now formalizes closures, regions, pattern matching, casts, and associated types. A scope statement explicitly lists what is and isn't formalized.
 - **DISPATCH.md** (v0.4.0) now includes object safety rules and dyn Trait dispatch semantics.
+- **CONTENT_ADDRESSED.md** (v0.4.0) now specifies monomorphized instance hashing (three-level cache model, ADR-030).
 - **SPECIFICATION.md** (v0.3.0) body is current and comprehensive. Dead links fixed, MACROS.md added to hierarchy.
 
 All 337/337 ground-truth tests pass. Bootstrap is stable (second_gen/third_gen byte-identical). The compilers work correctly but use **old syntax** in places where GRAMMAR.md has evolved.
 
-**However**, a comprehensive design space audit ([DESIGN_SPACE_AUDIT.md](../design/DESIGN_SPACE_AUDIT.md)) identified 30 accidental defaults and several architectural tensions that must be resolved **before** committing to compiler alignment work. Syntax and semantic alignment are premature if unresolved design questions could change the language.
+**However**, two factors require resolution before compiler alignment:
+
+1. **Design space audit** ([DESIGN_SPACE_AUDIT.md](../design/DESIGN_SPACE_AUDIT.md)) identified 28 accidental defaults and several architectural tensions.
+
+2. **Proposal layer** ([PROPOSAL_ANALYSIS.md](../proposals/PROPOSAL_ANALYSIS.md)) contains 26 researched-but-uncommitted design decisions. Several proposals **change the grammar** — if approved after alignment, every `.blood` file would need to be updated twice. Approving grammar-affecting proposals **before** alignment saves enormous rework.
 
 ---
 
@@ -45,11 +56,11 @@ All 337/337 ground-truth tests pass. Bootstrap is stable (second_gen/third_gen b
 
 | Document | Version | Status | Gaps |
 |----------|---------|--------|------|
-| GRAMMAR.md | 0.4.0 | Settled (pending Phase 0 outcomes) | Procedural macros deferred; concurrency syntax TBD |
-| FORMAL_SEMANTICS.md | 0.4.0 | Core features formalized | Coq mechanization incomplete (§7) |
+| GRAMMAR.md | 0.4.0 → **0.5.0** (after Phase 0.3) | Pending proposal incorporation | Procedural macros deferred; concurrency syntax TBD |
+| FORMAL_SEMANTICS.md | 0.4.0 | Core features formalized | Coq mechanization incomplete (§7); may need updates from approved proposals |
 | DISPATCH.md | 0.4.0 | Complete | None |
 | MEMORY_MODEL.md | 0.3.0 | Tiers 0/1 solid | Tier 3 designed but not implemented |
-| CONCURRENCY.md | 0.3.0 | Incomplete | Largest design gap (see Phase 0) |
+| CONCURRENCY.md | 0.3.0 | Incomplete | Largest design gap (F-06) |
 | MACROS.md | 0.1.0 | Syntax/expansion covered | Hygiene deferred (compiler semantics, not grammar) |
 | SPECIFICATION.md | 0.3.0 | Current | None |
 | FFI.md | 0.4.0 | Complete | None |
@@ -60,32 +71,26 @@ All 337/337 ground-truth tests pass. Bootstrap is stable (second_gen/third_gen b
 
 ## 3. Phase 0: Design Space Resolution
 
-**Priority**: Highest — unresolved design questions could change syntax, semantics, and compiler architecture. Alignment work is premature until these are settled.
+**Priority**: Highest — unresolved design questions and unapproved proposals could change syntax, semantics, and compiler architecture. Alignment work is premature until these are settled.
 
-**Input**: [DESIGN_SPACE_AUDIT.md](../design/DESIGN_SPACE_AUDIT.md) — 98 design axes evaluated, 10 findings.
+**Inputs**:
+- [DESIGN_SPACE_AUDIT.md](../design/DESIGN_SPACE_AUDIT.md) — 122 design axes evaluated, 10 findings
+- [PROPOSAL_ANALYSIS.md](../proposals/PROPOSAL_ANALYSIS.md) — 26 proposals with critical path analysis
+- [EXTRAORDINARY_FEATURES.md](../proposals/EXTRAORDINARY_FEATURES.md) (I, II, III) — proposal details
+- [SAFETY_LEVELS.md](../proposals/SAFETY_LEVELS.md) — granular safety controls RFC
+- [SYNTAX_REDESIGN.md](../proposals/SYNTAX_REDESIGN.md) — AI-native syntax decisions
 
-### 0.1 — Architectural Findings (must resolve first)
+### 0.1 — Architectural Findings
 
-These findings could change what we're building. Each requires an ADR or design document.
+These could change what we're building. Each requires an ADR or design document.
 
-#### F-01: Monomorphization × Content Addressing
-
-**Severity**: Architectural — latent tension between two core innovations.
-
-Blood uses content-addressed compilation (each definition identified by hash) and monomorphization (each generic instantiation produces a specialized copy). Undocumented interactions:
-
-1. Hash space explosion (50 type instantiations × 1 generic = 50 hashes)
-2. Incremental invalidation cascading (type change invalidates all monomorphized uses)
-3. Caching efficiency (nominal types prevent structural sharing)
-4. Dictionary passing as alternative (one hash per generic, runtime dispatch cost)
-
-**Deliverable**: ADR documenting the hashing strategy for monomorphized instances, the invalidation model, and whether dictionary passing was evaluated.
-
-**Impact if answer changes**: Could change codegen, caching model, CONTENT_ADDRESSED.md, and performance characteristics.
+| # | Finding | Severity | Status | Deliverable |
+|---|---------|----------|--------|-------------|
+| F-01 | Monomorphization × Content Addressing | Architectural | **RESOLVED** (ADR-030) | Two-level content-addressed cache |
+| F-06 | Concurrency Model | Architectural | Open | Design document: effects + fibers + structured concurrency |
+| F-07 | Compiler-as-a-Library | Architectural | Open | Architectural note: query-based API boundaries |
 
 #### F-06: Concurrency Model
-
-**Severity**: Architectural — largest undecided area.
 
 Blood has the pieces (effects for async, fiber runtime, handler scoping) but hasn't assembled them into a cohesive concurrency model. Eight sub-decisions are defaulted:
 
@@ -100,48 +105,113 @@ Blood has the pieces (effects for async, fiber runtime, handler scoping) but has
 | Runtime-provided vs. library concurrency | Defaulted |
 | Fiber ↔ OS thread interaction | Defaulted |
 
-**Deliverable**: Design document composing effects + fibers + handlers into a cohesive concurrency model. Define structured concurrency via effect handler scoping, cancellation as an effect, thread-safety as effect-based or trait-based constraints.
+**Deliverable**: Design document composing effects + fibers + handlers into a cohesive concurrency model.
 
 **Impact if answer changes**: Could add new syntax (GRAMMAR.md), new effects (FORMAL_SEMANTICS.md), new runtime contracts (CONCURRENCY.md), and new typing rules.
 
-**Risk**: If the fiber runtime calcifies before the language-level model is designed, the runtime constrains the language rather than serving it.
-
 #### F-07: Compiler-as-a-Library
 
-**Severity**: Architectural — expensive to retrofit.
+The self-hosted compiler is a monolithic pipeline. Content-addressed compilation is naturally query-based, but the compiler doesn't exploit this. Proposals #16 (constrained decoding oracle) and #18 (verification cache) both implicitly assume query-based architecture.
 
-The self-hosted compiler is a monolithic pipeline. Content-addressed compilation is naturally query-based (each definition independently hashable and cacheable), but the compiler doesn't exploit this. Every CCV cluster that adds code to the monolithic pipeline makes a query-based retrofit more expensive.
-
-**Deliverable**: Architectural note evaluating query-based internal architecture aligned with content addressing. This constrains the compiler's internal API boundaries — it does not require immediate implementation.
+**Deliverable**: Architectural note evaluating query-based internal architecture. This constrains the compiler's internal API boundaries — it does not require immediate implementation.
 
 **Impact if answer changes**: Could restructure self-hosted compiler modules, change how CCV clusters are organized.
 
-### 0.2 — Ecosystem Coherence (resolve before alignment)
+### 0.2 — Proposal Triage and Approval
 
-These don't change the core language but affect how it's used. Short ADRs.
+**Rationale**: 26 proposals are at "Proposed" status. Several change the grammar. If approved after alignment (Phase A), every `.blood` file would need updating twice. The cost of approving grammar-affecting proposals **now** vs. **after alignment** is the difference between aligning once and aligning twice.
 
-#### F-05: Result/Option × Effects
+Proposals are evaluated in three tiers based on their impact on the alignment pass.
 
-**Severity**: Ecosystem coherence.
+#### Tier 1: Grammar-Affecting (evaluate before alignment)
 
-Blood has effects as primary error handling AND `Result<T, E>` / `Option<T>` inherited from Rust. Without guidance, the ecosystem will split: some libraries use effects, others use `Result`, composing them requires boilerplate.
+These proposals change surface syntax. If approved, they must be incorporated into GRAMMAR.md before Phase A begins. If rejected, their syntax is excluded and alignment proceeds against v0.4.0.
 
-**Deliverable**: ADR specifying the intended role of `Result` and `Option` alongside effects, when each is appropriate, and how they interconvert.
+| # | Proposal | Source | Grammar Change | Already in Grammar? | Risk |
+|---|----------|--------|---------------|---------------------|------|
+| **#20** | Spec annotations (`requires`/`ensures`/`invariant`/`decreases`) | EF_III, SYNTAX_REDESIGN | New clause syntax on function signatures | **Yes** (SpecClause production, v0.4.0) | Low — additive keywords |
+| **—** | Optional semicolons | SYNTAX_REDESIGN C.1 | `Statement ::= ... ';'?` | **Yes** (v0.4.0) | Low — already specified |
+| **—** | Function signature ordering | SYNTAX_REDESIGN B.1 | attrs → sig → effects → specs → where → body | Partially | Low — ordering convention |
+| **#21a** | Named arguments | EF_III, SYNTAX_REDESIGN C.2 | `f(name: value)` call-site syntax | **No** — new production | Medium — parser change |
+| **#21b** | Expression-oriented design | EF_III #21 | Every construct returns a value; blocks are expressions | **No** — semantic change to blocks/if/match | Medium — pervasive change |
+| **RFC-S** | Granular safety controls | SAFETY_LEVELS.md | `#[unchecked(check)]` attribute, `unchecked(checks) { }` block | **No** — replaces binary `unsafe` | Low — more expressive replacement |
 
-### 0.3 — Design Gaps (resolve with short ADRs)
+**Decision required for each**: Approve (→ add to GRAMMAR.md v0.5.0) or Reject (→ not in scope for alignment).
 
-These require evaluation but likely confirm existing direction.
+**Evaluation criteria**:
+- Does it align with Blood's design philosophy (Five Pillars, Priority Hierarchy)?
+- Is it well-researched with clear semantics?
+- Does deferring it create technical debt that outweighs the cost of adoption?
+- Does it have unresolved dependencies that prevent commitment?
 
-| # | Finding | Recommended Resolution |
-|---|---------|----------------------|
-| F-02 | Higher-kinded types | Evaluate whether row poly + effects + dispatch cover HKT use cases; document conclusion |
-| F-03 | Variance | Document "all type parameters invariant by default" with future relaxation path |
-| F-04 | String representation × 128-bit pointers | Document concrete `&str` and `&[T]` representation under Blood's memory model |
-| F-08 | Stdlib scope / freestanding split | Document core/alloc/std tier mapping strategy |
-| F-09 | Testing as language feature | Evaluate effect-based test declarations as differentiator |
-| F-10 | ABI stability | Document "explicitly unstable until further notice" + content-hash-based ABI concept |
+#### Tier 2: Architecture-Affecting (evaluate before alignment)
 
-### 0.4 — Minimal-Effort Defaults (batch resolve)
+These don't change the grammar but affect compiler internals, diagnostic output, or tooling contracts. Approving them constrains implementation decisions during Phase A.
+
+| # | Proposal | Source | Impact | Dependencies |
+|---|----------|--------|--------|-------------|
+| **#17** | Structured diagnostics (dual human/machine) | EF_III | Error codes as public API, JSON output, fix suggestions as structured diffs | None — compiler internal |
+| **#8** | Deterministic simulation testing (DST) | EF_II | Library pattern on existing effects — no compiler changes | None — ready now |
+| **#12** | Deterministic replay debugging | EF_II | Library pattern on existing effects — no compiler changes | None — ready now |
+| **#13** | Observability (zero-code via effect wrapping) | EF_II | Library pattern on existing effects — no compiler changes | None — ready now |
+| **#11** | Semantic versioning (automatic via content hashes) | EF_II | Tooling — `blood semver` command | Content addressing (exists) |
+
+**Decision**: Approve as committed design direction or defer. These can be approved at any time without rework cost, but approving now signals design intent and unlocks downstream proposals.
+
+#### Tier 3: Deferred (deep infrastructure dependencies)
+
+These depend on infrastructure that doesn't exist yet (incremental type checker, SMT integration, query-based compiler). Approving them prematurely creates commitment without implementation evidence.
+
+| # | Proposal | Source | Blocked By |
+|---|----------|--------|-----------|
+| #7 | Graduated verification (4 levels) | EF_I, EF_III | #20 (spec annotations — approved in Tier 1 if accepted) |
+| #18 | Verification cache | EF_III | #7 + content addressing |
+| #16 | Constrained decoding oracle | EF_III | F-07 (compiler-as-a-library), incremental type checker |
+| #10 | Proof-carrying code | EF_II | #7 + #18 (verification pipeline) |
+| #9 | Taint tracking / information flow | EF_II | Effects infrastructure (exists) |
+| #4 | Capability security | EF_I | Effects infrastructure (exists) |
+| #1 | WCET analysis | EF_I | #20 + verification infrastructure |
+| #2 | Session types | EF_I, EF_II | New `protocol` keyword (grammar change) |
+| #14 | Choreographic programming | EF_II | #2 (session types) |
+| #15 | Complexity bounds | EF_II | #7 (verification), purity analysis |
+| #3 | Automatic memoization | EF_I | Content addressing + purity |
+| #5 | Auto-parallelization | EF_I | Purity analysis + runtime |
+| #6 | Provenance tracking | EF_I | Effects infrastructure |
+| #19 | Module signatures for AI | EF_III | Compiler-as-a-library (F-07) |
+| #22 | Dependency graph API | EF_III | Full compilation model |
+| #23 | Effect handlers as agent middleware | EF_III | Effects (exists) + tooling |
+
+**Decision**: Acknowledge as design direction. Do not commit to implementation timeline. Revisit when blocking dependencies are resolved.
+
+### 0.3 — Grammar Update (v0.5.0)
+
+**Prerequisite**: Tier 1 proposal decisions complete.
+
+For each Tier 1 proposal approved in §0.2:
+1. Write or update the GRAMMAR.md production rules
+2. Add formal typing rules to FORMAL_SEMANTICS.md where applicable
+3. Update SPECIFICATION.md hierarchy if new companion documents are created
+4. Increment GRAMMAR.md to v0.5.0
+
+This is the **last grammar change before alignment**. Phase A aligns to v0.5.0 and does not revisit.
+
+**Deliverable**: GRAMMAR.md v0.5.0 — the final pre-alignment grammar.
+
+### 0.4 — Remaining Design Gaps
+
+Short ADRs or design notes. These don't change grammar but resolve ambiguity.
+
+| # | Finding | Deliverable |
+|---|---------|-------------|
+| F-02 | Higher-kinded types | ADR: row poly + effects + dispatch cover HKT use cases (or document gaps) |
+| F-03 | Variance | ADR: all type parameters invariant by default, future relaxation path |
+| F-04 | String representation × 128-bit pointers | ADR: concrete `&str` and `&[T]` representation |
+| F-05 | Result/Option × Effects | ADR: role of `Result`/`Option` alongside effects, when each is appropriate, interconversion |
+| F-08 | Stdlib scope / freestanding split | Design note: core/alloc/std tier mapping |
+| F-09 | Testing as language feature | Design note: effect-based test declarations, `blood test` runner |
+| F-10 | ABI stability | ADR: "explicitly unstable" + content-hash-based ABI concept |
+
+### 0.5 — Minimal-Effort Defaults
 
 One-paragraph decision records each:
 
@@ -151,62 +221,78 @@ One-paragraph decision records each:
 4. **Definite initialization**: Statically enforced? (Likely: yes, via MIR analysis)
 5. **Doc comment syntax**: `///` or other? (Decide before stdlib grows)
 6. **Frame pointer preservation**: Default on or off? (Likely: on, for profiling)
-7. **Variance**: Invariant by default? (Likely: yes)
+7. **Variance**: Invariant by default? (Likely: yes — see also F-03)
 
-### 0.5 — Inherited Decisions to Confirm
+### 0.6 — Inherited Decision Confirmations
 
-These were adopted from Rust without documented independent evaluation. Each needs at minimum a brief ADR confirming the choice in Blood's context:
+These were adopted from Rust without documented independent evaluation. Each needs a brief ADR confirming or revising the choice in Blood's context.
 
-| Decision | Why It Warrants Evaluation |
-|----------|---------------------------|
-| Monomorphization | Interacts with content addressing (F-01) |
-| `Option<T>` / `Result<T, E>` | Coexists with effects (F-05) |
-| UTF-8 strings | Interacts with 128-bit pointers (F-04) |
-| File-based module hierarchy | Content addressing decouples identity from files |
-| `pub` visibility (Rust-style) | Row polymorphism introduces structural subtyping |
-| Call-by-value evaluation | Natural for effects but undocumented |
-| No runtime type information | Multiple dispatch uses 24-bit type fingerprints — this IS RTTI |
-| `&T` / `&mut T` reference syntax | Blood's references are generational, not borrowed |
+| Decision | Why It Warrants Evaluation | Overlaps With |
+|----------|---------------------------|---------------|
+| Monomorphization | Interacts with content addressing | **Resolved** (ADR-030 / F-01) |
+| `Option<T>` / `Result<T, E>` | Coexists with effects | F-05 |
+| UTF-8 strings | Interacts with 128-bit pointers | F-04 |
+| File-based module hierarchy | Content addressing decouples identity from files | — |
+| `pub` visibility (Rust-style) | Row polymorphism introduces structural subtyping | — |
+| Call-by-value evaluation | Natural for effects but undocumented | — |
+| No runtime type information | Multiple dispatch uses 24-bit type fingerprints — this IS RTTI | — |
+| `&T` / `&mut T` reference syntax | Blood's references are generational, not borrowed | — |
+| Binary `unsafe` blocks | Granular safety controls proposed (RFC-S) | Tier 1 proposals |
 
 ### Phase 0 Exit Criteria
 
 Phase 0 is complete when:
+
+**Architectural:**
 - [x] F-01 ADR written and accepted (ADR-030, 2026-02-28)
-- [ ] F-06 design document written and accepted
-- [ ] F-07 architectural note written
-- [ ] F-05 ADR written
-- [ ] F-02, F-03, F-04, F-08, F-09, F-10 resolved (ADRs or design notes)
+- [ ] F-06 concurrency model design document written and accepted
+- [ ] F-07 compiler-as-a-library architectural note written
+
+**Proposals:**
+- [ ] All Tier 1 proposals evaluated: approved or rejected with rationale
+- [ ] All Tier 2 proposals evaluated: approved as direction or deferred
+- [ ] Tier 3 proposals acknowledged with dependency map
+
+**Grammar:**
+- [ ] GRAMMAR.md updated to v0.5.0 incorporating all approved Tier 1 proposals
+- [ ] FORMAL_SEMANTICS.md updated if approved proposals add typing rules
+
+**Design gaps:**
+- [ ] F-02, F-03, F-04, F-05, F-08, F-09, F-10 resolved (ADRs or design notes)
 - [ ] All 7 minimal-effort defaults documented
-- [ ] All 8 inherited decisions confirmed or revised
-- [ ] GRAMMAR.md updated if any Phase 0 outcome changes syntax
-- [ ] FORMAL_SEMANTICS.md updated if any Phase 0 outcome changes typing rules
-- [ ] CONCURRENCY.md updated with cohesive concurrency model
+- [ ] All inherited decisions confirmed or revised (monomorphization already done)
+
+**Coordination:**
+- [ ] CONCURRENCY.md updated with cohesive concurrency model (from F-06)
+- [ ] SPECIFICATION.md updated if hierarchy changes
 
 ---
 
 ## 4. Phase A: Syntax Alignment
 
 **Priority**: High — blocks compiler alignment.
-**Prerequisite**: Phase 0 complete (design is stable).
+**Prerequisite**: Phase 0 complete (design is stable, GRAMMAR.md at v0.5.0).
 **Method**: CCV (Canary-Cluster-Verify) per DEVELOPMENT.md.
 
-The compilers currently accept old syntax in several places where GRAMMAR.md has evolved. Every `.blood` file in the repository must be audited and updated.
+The compilers currently accept old syntax in several places where GRAMMAR.md has evolved. Every `.blood` file in the repository must be audited and updated. Because Tier 1 proposals were resolved in Phase 0, this alignment happens **once** against the **final** grammar.
 
 ### A.1 — Syntax Delta Analysis
 
-Comprehensive diff between GRAMMAR.md productions and what each parser actually accepts. Covers:
+Comprehensive diff between GRAMMAR.md v0.5.0 productions and what each parser actually accepts. Covers:
 
 - Imports (grouped, glob, simple) — known `::` vs `.` gap
 - Qualified expressions and paths
 - Type syntax
-- Expression syntax
+- Expression syntax (including any expression-oriented changes from approved proposals)
 - Pattern syntax
 - Bridge/FFI syntax
 - Effect/handler syntax
 - Macro syntax
-- Any new syntax from Phase 0 outcomes
+- Spec annotation syntax (if #20 approved — already in v0.4.0)
+- Named argument syntax (if #21a approved)
+- Safety attribute syntax (if RFC-S approved)
 
-**Inputs**: GRAMMAR.md, `src/bootstrap/bloodc/src/parser/`, `src/bootstrap/bloodc/src/lexer.rs`, `src/selfhost/parser_*.blood`, `src/selfhost/lexer.blood`, `src/selfhost/token.blood`
+**Inputs**: GRAMMAR.md v0.5.0, `src/bootstrap/bloodc/src/parser/`, `src/bootstrap/bloodc/src/lexer.rs`, `src/selfhost/parser_*.blood`, `src/selfhost/lexer.blood`, `src/selfhost/token.blood`
 
 **Output**: Complete list of deltas with severity (breaking vs cosmetic).
 
@@ -214,7 +300,7 @@ Comprehensive diff between GRAMMAR.md productions and what each parser actually 
 
 The bootstrap compiler defines language semantics. It must accept the spec syntax **first**.
 
-- Update lexer/parser in `src/bootstrap/bloodc/src/` to match GRAMMAR.md
+- Update lexer/parser in `src/bootstrap/bloodc/src/` to match GRAMMAR.md v0.5.0
 - Rebuild: `cd src/bootstrap && cargo build --release`
 - Verify: `cargo test --workspace` (unit tests must pass)
 
@@ -399,40 +485,46 @@ Fix any semantic gaps discovered in Phase B. Scope is unknown until audit comple
 ## 10. Sequencing Rationale
 
 ```
-Phase 0  ──►  Phase A  ──►  Phase B  ──►  Phase C  ──►  Phase D
-(design)      (syntax)      (semantic      (semantic      (Coq proofs)
-                            audit)         fixes)
-                                                         ──► Phase E ──► Phase F
-                                                             (Tier 3)    (benchmarks)
+Phase 0.1  ──►  Phase 0.2  ──►  Phase 0.3  ──►  Phase 0.4-0.6  ──►  Phase A
+(arch           (proposal        (grammar         (gaps, defaults,     (syntax
+ findings)       triage)          v0.5.0)          inherited)           alignment
+                                                                        — ONCE)
+
+Phase A  ──►  Phase B  ──►  Phase C  ──►  Phase D
+(syntax)      (semantic      (semantic      (Coq proofs)
+               audit)         fixes)
+                                            ──► Phase E ──► Phase F
+                                                (Tier 3)    (benchmarks)
 ```
 
-**Why Phase 0 comes first:**
+**Why proposals (0.2) come before grammar update (0.3):**
 
-The design space audit ([DESIGN_SPACE_AUDIT.md](../design/DESIGN_SPACE_AUDIT.md)) identified 30 accidental defaults, 3 architectural tensions (F-01, F-06, F-07), and 18 inherited decisions without independent evaluation. If any of these change the language — particularly F-01 (monomorphization strategy) or F-06 (concurrency model adding new syntax/effects) — then syntax alignment work done before resolution would need to be redone.
+Proposals #20 (spec annotations), #21a (named arguments), #21b (expression-oriented), and RFC-S (safety controls) all change the grammar. If approved after Phase A alignment, every `.blood` file would need updating twice — once for v0.4.0 alignment, once for v0.5.0 additions. Evaluating these proposals now and incorporating approved ones into v0.5.0 means alignment happens **once** against the **final** grammar.
 
-Phase 0 is design work: ADRs, design documents, architectural notes. It produces documents, not code. But those documents determine what the code should look like.
+**Why Phase 0 is split into sub-phases:**
 
-**Why Phase A after Phase 0:**
+- **0.1 (architectural)** resolves tensions that could invalidate everything downstream (F-06 concurrency could add syntax; F-07 compiler-as-library constrains implementation).
+- **0.2 (proposals)** evaluates what goes into the grammar. This depends on 0.1 because F-06 concurrency decisions may affect proposal feasibility.
+- **0.3 (grammar update)** is mechanical: write the productions for whatever was approved.
+- **0.4-0.6 (gaps/defaults/inherited)** are independent of grammar and can be resolved in parallel or after 0.3.
 
-Once design questions are settled, the specs become truly stable. Only then does it make sense to spend CCV cycles (expensive, meticulous) aligning every `.blood` file with the spec. The `::` vs `.` syntax gap is known; Phase 0 may reveal others.
+**Why alignment (Phase A) happens only once:**
 
-**Why Phase B/C after A:**
+Previous plan versions had alignment against v0.4.0 with a risk of grammar re-revision. The v3.0 plan eliminates this risk by settling the grammar completely before alignment begins. The CCV cost of a full alignment pass is high (~65 files, 9 clusters, 337 tests × 3 verification steps per cluster). Doing it twice would be prohibitive.
 
-Semantic audit is meaningless until syntax is aligned — you can't test whether the compiler implements the spec if the compiler can't parse the spec's syntax.
+**Why Phases B-F are unchanged:**
 
-**Why Phase D after A-C:**
-
-Coq proofs formalize typing rules. If Phase 0 changes a typing rule, or Phase B/C reveals a rule is wrong, we'd have to redo Coq work. Align first, then prove.
-
-**Why Phase E/F deferred:**
-
-Tier 3 is fully designed but no code exercises it. Performance benchmarks don't affect correctness. Both are explicitly pre-1.0 work.
+Semantic audit, Coq proofs, Tier 3, and benchmarks are not affected by the proposal triage. They depend on stable specs and aligned compilers, which Phases 0 and A provide.
 
 ---
 
 ## 11. Decisions Made
 
-The following semantic decisions were made during the 2026-02-28 specification session, derived from Blood's design philosophy documents (SPECIFICATION.md, DECISIONS.md, MEMORY_MODEL.md, DISPATCH.md, FORMAL_SEMANTICS.md):
+The following semantic decisions were made during the 2026-02-28 specification sessions, derived from Blood's design philosophy documents (SPECIFICATION.md, DECISIONS.md, MEMORY_MODEL.md, DISPATCH.md, FORMAL_SEMANTICS.md):
+
+### ADR-030: Monomorphization × Content Addressing (F-01)
+
+Resolved via two-level content-addressed cache. Monomorphization retained as primary strategy (zero-cost abstraction for generics). Instance hashes use `BLAKE3(def_hash ‖ type_arg_hashes)` — no DefId in hash, enabling cross-project artifact sharing. Dictionary passing evaluated and rejected (5-15% runtime overhead conflicts with ADR-010 priority hierarchy). See DECISIONS.md ADR-030 and CONTENT_ADDRESSED.md §4.6.
 
 ### Closure Typing (FORMAL_SEMANTICS.md §5.7)
 
@@ -442,35 +534,22 @@ The following semantic decisions were made during the 2026-02-28 specification s
 | `FnMut` (mutable access) | `fn(T) -> U / {State<S>}` | ADR-002: mutation is an effect |
 | `FnOnce` (consumed) | `linear fn(T) -> U` | ADR-006: linear types = exactly-once |
 
-- **Linearity propagation**: Closure capturing linear value by-value becomes linear itself
-- **No aliasing**: ByRef/ByMut capture of linear values forbidden
-- **Effects orthogonal**: Effect row describes what closure *does*, not what it *captures*
-- **Inference**: `move` keyword signals by-value capture; linearity inferred from capture analysis
-
 ### Region Typing (FORMAL_SEMANTICS.md §5.8)
 
 - **No type-level region annotations** — would re-introduce borrow checking (violates ADR-001)
 - **Safety via generations**: Region exit bumps generations; stale references detected at runtime
 - **Invisible to type system**: `region { e }` has same type as `e`
-- **Effect interaction**: Region deallocation deferred when effect handlers hold continuations referencing region memory
 
 ### Object Safety (DISPATCH.md §10.7)
 
 - **ABI constraints**, not arbitrary restrictions
 - **Four rules**: No generic methods on Self, no Self by value, no Self return, associated types must be determinable
-- **Orthogonal to multiple dispatch**: Type stability applies to static dispatch, not vtable construction
 
-### dyn Trait Dispatch (DISPATCH.md §10.8)
+### Other Settled Decisions
 
-- **Vtable layout**: drop_fn, size, align, then methods in declaration order
-- **Fat pointer**: `{ data: *const (), vtable: *const Vtable<Trait> }`
-- **Composes with multiple dispatch**: A method family can include specialization for `dyn Trait` types
-
-### Other Decisions
-
-- **impl Trait return-position**: Not planned (effects eliminate async returns, universal `fn` type eliminates unnamed closures)
-- **Labeled blocks**: Not planned (loops only; effects subsume non-local control flow)
-- **T: 'a lifetime bounds**: Not planned (ADR-001 rejected borrow checker; ADR-008 tiered regions replace)
+- **impl Trait return-position**: Not planned (effects + universal `fn` type replace)
+- **Labeled blocks**: Not planned (effects subsume non-local control flow)
+- **T: 'a lifetime bounds**: Not planned (ADR-001 rejected borrow checker)
 - **Fn/FnMut/FnOnce traits**: Not planned (effects + linear types + row polymorphism replace)
 - **union keyword**: Bridge FFI only; Blood uses enums (tagged unions)
 
@@ -478,22 +557,31 @@ The following semantic decisions were made during the 2026-02-28 specification s
 
 ## 12. Design Space Audit Reference
 
-The full design space audit is at [docs/design/DESIGN_SPACE_AUDIT.md](../design/DESIGN_SPACE_AUDIT.md). Key statistics:
+The full design space audit is at [docs/design/DESIGN_SPACE_AUDIT.md](../design/DESIGN_SPACE_AUDIT.md). Updated statistics (v1.1, including proposals):
 
 | Category | Count | Percentage |
 |----------|-------|------------|
-| Consciously Decided | 42 | 43% |
-| Inherited from Rust | 18 | 18% |
-| Accidentally Defaulted | 30 | 31% |
-| Explicitly Deferred | 8 | 8% |
+| Consciously Decided | 42 | 34% |
+| Proposed (researched, not committed) | 26 | 21% |
+| Inherited from Rust | 18 | 15% |
+| Accidentally Defaulted | 28 | 23% |
+| Explicitly Deferred | 8 | 7% |
 
-**Top 3 findings by severity:**
+**Decided + Proposed = 55%** of the design space is covered. The proposal triage in Phase 0.2 will move approved proposals from "Proposed" to "Decided", further increasing coverage.
 
-1. **F-01**: Monomorphization × content addressing — latent tension between two core innovations
+**Top findings by severity:**
+
+1. **F-01**: Monomorphization × content addressing — **RESOLVED** (ADR-030)
 2. **F-06**: Concurrency model — largest undecided area; effects + fibers not composed
 3. **F-07**: Compiler-as-a-library — monolithic pipeline; retrofit is expensive
 
-**Phase 0 resolves all findings before alignment work begins.**
+**Proposal critical path** (from PROPOSAL_ANALYSIS.md):
+
+```
+#20 (Spec Annotations) → #7 (Verification) → #18 (Cache) → #10 (Proof-Carrying Code)
+```
+
+Tier 1 triage (Phase 0.2) evaluates #20 and the other grammar-affecting proposals. The rest of the critical path (#7→#18→#10) is in Tier 3 (deferred until infrastructure exists).
 
 ---
 
@@ -501,11 +589,26 @@ The full design space audit is at [docs/design/DESIGN_SPACE_AUDIT.md](../design/
 
 | Phase | Items | Nature |
 |-------|-------|--------|
-| 0: Design resolution | 3 architectural + 1 ecosystem + 6 design gaps + 7 defaults + 8 inherited = **25** | Design / ADRs |
-| A: Syntax alignment | 4 major steps (A.1-A.4), 9 CCV clusters in A.3 | Implementation |
+| 0.1: Architectural findings | 2 remaining (F-06, F-07) | Design documents |
+| 0.2: Proposal triage | 6 Tier 1 + 5 Tier 2 + 16 Tier 3 = **27** evaluations | Decision records |
+| 0.3: Grammar update | 1 (GRAMMAR.md v0.5.0) | Specification |
+| 0.4: Design gaps | 7 findings (F-02–F-10, minus F-01) | ADRs / design notes |
+| 0.5: Minimal defaults | 7 | One-paragraph decisions |
+| 0.6: Inherited confirmations | 8 (minus monomorphization, already done) | Brief ADRs |
+| A: Syntax alignment | 4 major steps, 9 CCV clusters | Implementation |
 | B: Semantic audit | 7 checks | Analysis |
 | C: Semantic fixes | Unknown (depends on B) | Implementation |
 | D: Coq mechanization | 31 items across 7 sub-phases | Formal proofs |
 | E: Tier 3 | 8 items | Implementation |
 | F: Performance | 6 items | Measurement |
-| **Total** | **80+ items** | |
+| **Total** | **~108 items** | |
+
+---
+
+## Version History
+
+| Version | Date | Changes |
+|---------|------|---------|
+| 1.0 | 2026-02-28 | Initial plan: 6 phases (A-F), 56+ items |
+| 2.0 | 2026-02-28 | Added Phase 0 (design space resolution) from DESIGN_SPACE_AUDIT.md |
+| 3.0 | 2026-02-28 | Restructured Phase 0: added proposal triage (0.2), grammar pre-update (0.3); 26 proposals evaluated in 3 tiers; align-once strategy |
