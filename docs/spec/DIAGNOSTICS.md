@@ -12,7 +12,7 @@
 - Added related errors cross-references
 - Reorganized error code registry for clarity
 
-**Implementation Scope**: Core error codes (E00xx, E01xx, E02xx, E03xx) are fully implemented. Effect and memory error codes (E04xx-E07xx) are in development. See [IMPLEMENTATION_STATUS.md](./IMPLEMENTATION_STATUS.md).
+**Implementation Scope**: Core error codes (E00xx, E01xx, E02xx, E03xx) are fully implemented. Effect and memory error codes (E04xx-E07xx) are in development.
 
 This document specifies Blood's error messages, warnings, and diagnostic output format, designed for maximum developer productivity and clarity.
 

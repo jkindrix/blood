@@ -1,8 +1,8 @@
 # Blood Programming Language Specification
 
-**Version**: 0.2.0
+**Version**: 0.3.0
 **Status**: Implementation Complete, Validation In Progress
-**Last Updated**: 2026-01-09
+**Last Updated**: 2026-02-28
 
 ---
 
@@ -67,11 +67,11 @@ This document provides the high-level language design. Detailed specifications a
 | Concurrency | [CONCURRENCY.md](./CONCURRENCY.md) | Fiber semantics, scheduler design |
 | FFI | [FFI.md](./FFI.md) | Foreign function interface, bridge dialect |
 | Syntax | [GRAMMAR.md](./GRAMMAR.md) | Complete grammar with precedence |
+| Macros | [MACROS.md](./MACROS.md) | Macro system design, fragment kinds, hygiene |
 | Semantics | [FORMAL_SEMANTICS.md](./FORMAL_SEMANTICS.md) | Operational semantics, typing rules |
 | Library | [STDLIB.md](./STDLIB.md) | Standard library effects and types |
 | Diagnostics | [DIAGNOSTICS.md](./DIAGNOSTICS.md) | Error messages, warning system |
-| Tooling | [UCM.md](./UCM.md) | Codebase manager specification |
-| Roadmap | [ROADMAP.md](./ROADMAP.md) | Implementation plan, milestones |
+| Roadmap | [../planning/ROADMAP.md](../planning/ROADMAP.md) | Implementation plan, milestones |
 
 ---
 
@@ -1706,9 +1706,10 @@ fn main() / {IO} {
 
 | Version | Date | Changes |
 |---------|------|---------|
+| 0.3.0 | 2026-02-28 | Added MACROS.md to spec hierarchy, fixed dead links (UCM.md, IMPLEMENTATION_STATUS.md), aligned version with companions |
 | 0.2.0 | 2026-01-09 | Added comprehensive examples, tooling reference |
 | 0.1.0 | 2026-01-09 | Initial specification |
 
 ---
 
-*This specification is maintained alongside the implementation. See [IMPLEMENTATION_STATUS.md](./IMPLEMENTATION_STATUS.md) for current status.*
+*This specification is maintained alongside the implementation. See [../planning/ROADMAP.md](../planning/ROADMAP.md) for current status.*

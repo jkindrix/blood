@@ -2,10 +2,10 @@
 
 **Version**: 0.3.0
 **Status**: Implemented
-**Implementation**: ✅ Integrated (see [IMPLEMENTATION_STATUS.md](./IMPLEMENTATION_STATUS.md))
+**Implementation**: ✅ Integrated
 **Last Updated**: 2026-01-10
 
-**Implementation Status**: Runtime is implemented and linked to compiled programs. See [IMPLEMENTATION_STATUS.md](./IMPLEMENTATION_STATUS.md) for current status. Performance benchmarks are ongoing.
+**Implementation Status**: Runtime is implemented and linked to compiled programs. Performance benchmarks are ongoing.
 
 **Revision 0.3.0 Changes**:
 - Added implementation status link
