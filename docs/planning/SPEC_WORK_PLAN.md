@@ -53,6 +53,7 @@ All 337/337 ground-truth tests pass. Bootstrap is stable (second_gen/third_gen b
 | MACROS.md | 0.1.0 | Syntax/expansion covered | Hygiene deferred (compiler semantics, not grammar) |
 | SPECIFICATION.md | 0.3.0 | Current | None |
 | FFI.md | 0.4.0 | Complete | None |
+| CONTENT_ADDRESSED.md | 0.4.0 | Updated with monomorphized instance hashing | ADR-030 resolved F-01 tension |
 | DIAGNOSTICS.md | 0.4.0 | Complete | None |
 
 ---
@@ -170,7 +171,7 @@ These were adopted from Rust without documented independent evaluation. Each nee
 ### Phase 0 Exit Criteria
 
 Phase 0 is complete when:
-- [ ] F-01 ADR written and accepted
+- [x] F-01 ADR written and accepted (ADR-030, 2026-02-28)
 - [ ] F-06 design document written and accepted
 - [ ] F-07 architectural note written
 - [ ] F-05 ADR written

@@ -1,9 +1,10 @@
 # Blood Language Design Space Audit
 
-**Version:** 1.0
+**Version:** 1.1
 **Date:** 2026-02-28
 **Scope:** Evaluation of Blood's design decisions against the full language design space
 **Method:** Each axis from a comprehensive language design reference is classified by decision status
+**Sources:** Spec documents (GRAMMAR.md, FORMAL_SEMANTICS.md, MEMORY_MODEL.md, DISPATCH.md, CONTENT_ADDRESSED.md, FFI.md, MACROS.md), design evaluations (IMPL_TRAIT.md, COMPARISON_CHAINING.md), planning documents (ROADMAP.md, DECISIONS.md, IMPLEMENTATION_ROADMAP.md, IMPLEMENTATION_STATUS.md, ACTION_ITEMS.md, LEGITIMIZATION_CHECKLIST.md, SYNTAX_SUPPORT.md), proposals (EXTRAORDINARY_FEATURES.md I/II/III, PROPOSAL_ANALYSIS.md, SAFETY_LEVELS.md, SYNTAX_REDESIGN.md), and compiler notes (COMPILER_NOTES.md)
 
 ---
 
@@ -12,6 +13,7 @@
 | Status | Meaning |
 |--------|---------|
 | **Decided** | Explicit ADR, design document, or spec rationale exists |
+| **Proposed** | Researched and designed in a proposal document, but not yet committed (implementation not started) |
 | **Inherited** | Adopted from Rust without documented independent evaluation |
 | **Defaulted** | No evidence of deliberate choice; position is a side effect of other decisions |
 | **Deferred** | Explicitly acknowledged as open with revisit criteria |
@@ -74,7 +76,7 @@
 | Interior mutability | Not documented | **Defaulted** | No `Cell`/`RefCell` equivalent discussed; unclear how shared mutable state interacts with generational references |
 | Region semantics | Scoped allocation with generational safety | **Decided** | FORMAL_SEMANTICS.md, MEMORY_MODEL.md |
 
-### 1.5 Error Handling
+### 1.5 Error Handling and Verification
 
 | Axis | Blood's Position | Status | Evidence |
 |------|-----------------|--------|----------|
@@ -83,6 +85,9 @@
 | `Result<T, E>` | Exists in the language | **Inherited** | See Finding F-05 |
 | `?` operator | Present in grammar | **Inherited** | No document on interaction between `?` and effect handlers |
 | Error propagation strategy | Undocumented | **Defaulted** | When to use effects vs. Result vs. panic is not specified |
+| Specification annotations | `requires`/`ensures`/`invariant`/`decreases` as first-class keywords | **Proposed** | SYNTAX_REDESIGN.md (B.1), EF_III Proposal #20; definitive signature ordering specified |
+| Graduated verification | Four levels: runtime contracts → SMT verification → full proofs | **Proposed** | EF_I Proposal #7, EF_III Proposal #20; depends on spec annotations |
+| Proof-carrying code | Proofs indexed by `(function_hash, contract_hash, proof_hash)` | **Proposed** | EF_II Proposal #10; depends on graduated verification + content addressing |
 
 ### 1.6 Control Flow and Pattern Matching
 
@@ -97,6 +102,10 @@
 | Labeled loops | Yes | **Decided** | GRAMMAR.md |
 | Labeled blocks | Explicitly rejected | **Decided** | GRAMMAR.md (effects subsume the use case) |
 | Containment expressions | `x in lo..hi` | **Decided** | GRAMMAR.md v0.4.0 |
+| Semicolons | Optional with continuation rules | **Proposed** | SYNTAX_REDESIGN.md (C.1); `Statement ::= ... ';'?`; both styles compile identically |
+| Named arguments | Gradual adoption; prefer for 3+ params | **Proposed** | SYNTAX_REDESIGN.md (C.2), EF_III Proposal #21; eliminates 6.9% "Wrong Attribute" AI bug category |
+| Expression-oriented design | Every construct returns a value | **Proposed** | EF_III Proposal #21; 5-10% token reduction, more locally replaceable for AI |
+| Function signature ordering | Definitive: attrs → sig → effects → specs → where → body | **Proposed** | SYNTAX_REDESIGN.md (B.1); resolves previously ad-hoc ordering |
 
 ### 1.7 Concurrency
 
@@ -111,6 +120,8 @@
 | Send/Sync equivalents | Not documented | **Defaulted** | No thread-safety marker traits or effect-based equivalent discussed |
 | Async iterators/streams | Not addressed | **Defaulted** | No evaluation of async sequences |
 | Runtime-provided vs. library async | Not documented | **Defaulted** | Fiber scheduler exists in runtime; relationship to language semantics unclear |
+| Deterministic simulation testing | Effect handlers intercept all nondeterminism sources | **Proposed** | EF_II Proposal #8; no compiler changes needed — library pattern on existing effects |
+| Deterministic replay debugging | Record/replay all effect invocations at handler boundaries | **Proposed** | EF_II Proposal #12; ~2-5% overhead vs. 15-40% for OS-level (rr) |
 
 ### 1.8 Module System
 
@@ -147,6 +158,7 @@
 | Error recovery (parser) | Parser recovers from errors | **Decided** | Implemented |
 | Error recovery (type checker) | Error types prevent cascading | **Decided** | `TypeError` API with `TypeErrorKind` variants |
 | Structured diagnostics | Error codes (E0300+) with spans | **Decided** | Implemented |
+| Dual-consumption diagnostics | Human-readable default + `--diagnostics=json` for machines | **Proposed** | EF_III Proposal #17; constraint provenance chains, fix suggestions as structured diffs, stable error codes as public API |
 | Type error quality | Not specifically designed | **Defaulted** | No design doc on inference chain explanation, expected-vs-found rendering |
 
 ---
@@ -214,16 +226,19 @@
 |------|-----------------|--------|----------|
 | Build system / package manager | Specified, not implemented | **Decided** / **Deferred** | Design exists; implementation is post-bootstrap |
 | Package versioning | Content-addressed (eliminates version conflicts) | **Decided** | ADR-003 |
-| REPL | Not addressed | **Defaulted** | No evaluation |
-| Language server (LSP) | Not addressed | **Defaulted** | See Finding F-07 |
+| REPL | Not addressed | **Defaulted** | SYNTAX_REDESIGN.md mentions future REPL should default to expression-mode (semicolonless) but no REPL is planned |
+| Language server (LSP) | Constrained decoding oracle proposed as LSP extension | **Proposed** / **Defaulted** | EF_III Proposal #16 proposes `ConstrainedDecodingService` as LSP extension; no general LSP strategy; see Finding F-07 |
 | Formatter | Not addressed | **Defaulted** | Grammar designed with mechanical formatting potential (trailing commas, brace-delimited blocks) but no formatter planned |
-| Linter | Not addressed | **Defaulted** | |
+| Linter | Safety audit tooling proposed | **Proposed** | SAFETY_LEVELS.md: `--warn-unchecked`, `blood audit --safety`, certification mode |
 | Debugger / DAP | Not addressed | **Defaulted** | |
 | Profiling | Diagnostic flags (`--dump-mir`, `--dump-types`, `--dump-adt-layouts`) | Partially **decided** | No profiling strategy (frame pointers, instrumentation hooks) |
+| Observability | Zero-code via effect handler wrapping | **Proposed** | EF_II Proposal #13; generic `Traced<E>` and `Metered<E>` handlers; guaranteed-complete because effect type system tracks all operations |
 | Documentation generator | Not addressed | **Defaulted** | No doc comment syntax defined in grammar |
 | Std library scope | Minimal (8 modules) | **Defaulted** | No doc on batteries-included vs. minimal strategy; see Finding F-08 |
 | Freestanding / no-OS support | Not addressed | **Defaulted** | See Finding F-08 |
-| Testing as language feature | `assert!`/`panic!` macros only | **Defaulted** | See Finding F-09 |
+| Testing as language feature | `assert!`/`panic!` macros; DST via effects proposed | Partially **proposed** | See Finding F-09; EF_II Proposal #8 (DST) and FFI.md `MockFFI` handler demonstrate the pattern; no first-class `#[test]` declaration |
+| Module signatures for AI | `blood sig` and `blood context --for-ai` commands | **Proposed** | EF_III Proposal #19; 14x compression of module interfaces; content-addressed signatures change only when public API changes |
+| Dependency graph API | `blood deps`, `blood effects`, `blood impact` commands | **Proposed** | EF_III Proposal #22; JSON output for AI consumption |
 | Bootstrapping | Active (first_gen/second_gen/third_gen byte-identical) | **Decided** | Comprehensive bootstrap infrastructure with verification |
 
 ---
@@ -233,15 +248,20 @@
 | Axis | Blood's Position | Status | Evidence |
 |------|-----------------|--------|----------|
 | FFI | Bridge blocks with `@unsafe`, FFI as effect | **Decided** | FFI.md (thorough: ownership annotations, calling conventions, callbacks, panic safety, mock handlers) |
+| Safety controls | Granular per-check `#[unchecked(generation\|bounds\|overflow\|null\|alignment)]` | **Proposed** | SAFETY_LEVELS.md (RFC-S); diverges from Rust's binary `unsafe`; includes block scoping, conditional safety, certification mode, audit tooling |
 | ABI stability | Not addressed | **Defaulted** | No stable/unstable ABI commitment; see Finding F-10 |
 | Backward compatibility | Not addressed | **Defaulted** | No edition system, versioning strategy, or evolution policy |
+| Semantic versioning | Automatic via content hashes + effect signature diff | **Proposed** | EF_II Proposal #11; provably sound "patch" classification (identical hash = identical behavior) |
 | Ecosystem governance | Not addressed | **Defaulted** | No RFC process or governance model |
-| Security model | `@unsafe` blocks, effect-tracked FFI | Partially **decided** | No capability-based security, sandboxing, or information-flow control |
+| Security model — capability security | Effects as capabilities; `attenuate` for restriction; `main()` as capability root | **Proposed** | EF_I Proposal #4; effects already track capabilities, handlers enable attenuation |
+| Security model — information flow | Tainted data as effects; sanitization as handlers; compile-time guarantee | **Proposed** | EF_II Proposal #9; structural guarantee via type system, not approximation |
 | Compilation speed | Not a stated design goal | **Defaulted** | Monomorphization + LLVM accepted without compile-time budget analysis |
 | Incremental compilation | Content-addressing enables it; partial implementation | **Decided** | CONTENT_ADDRESSED.md (theory); IMPLEMENTATION_STATUS.md (partial practice) |
 | Reproducible builds | Determinism proof for content addressing | **Decided** | CONTENT_ADDRESSED.md (determinism proof sketch with structural induction) |
 | SIMD / vectorization | Not addressed | **Defaulted** | |
 | Compile-time resource limits | Macro expansion limits (32 passes / 256 depth) | Partially **decided** | Macros bounded; type recursion and monomorphization unbounded |
+| Compile-time timing analysis | `@ wcet(duration)` annotations verified against effect-explicit control flow | **Proposed** | EF_I Proposal #1; no other language provides WCET as first-class concept |
+| Compile-time complexity bounds | `@ complexity(time: O(...), space: O(...))` for pure functions | **Proposed** | EF_II Proposal #15; decidable subset only; honest about limitations |
 | Serialization | Not addressed | **Defaulted** | |
 | Cross-compilation | Not addressed | **Defaulted** | |
 | Conditional compilation | `#[cfg(target_os = "...")]` in FFI context | **Inherited** | No broader conditional compilation design |
@@ -251,14 +271,61 @@
 
 ---
 
+## Beyond the Reference Framework: AI-Native Design
+
+The reference design document does not address AI-native language design — an axis Blood's proposals treat as foundational. The EXTRAORDINARY_FEATURES_III.md proposals and SYNTAX_REDESIGN.md collectively define a design surface that has no precedent in the reference literature.
+
+| Axis | Blood's Position | Status | Evidence |
+|------|-----------------|--------|----------|
+| AI-native identity | "AI-native, effects-first systems language" | **Proposed** | SYNTAX_REDESIGN.md identity statement |
+| Constrained decoding oracle | Three-level (grammar → types → effects) LLM token constraint | **Proposed** | EF_III Proposal #16; ~50% of LLM code generation bugs eliminated before full generation; requires incremental type checker |
+| Verification cache | Content-addressed `(spec_hash, impl_hash)` → proof artifact cache | **Proposed** | EF_III Proposal #18; verification cost per function approaches zero for common operations; global cache trustworthy because content-addressing is tamper-evident |
+| Module signatures for AI context | `blood sig` generates compact type+effect signatures (14x compression) | **Proposed** | EF_III Proposal #19; addresses 54% vs. 90% success gap between multi-file and single-file AI tasks |
+| Specification as AI prompt | `requires`/`ensures` serve as generation prompt, verification target, and documentation simultaneously | **Proposed** | EF_III Proposal #20; "triple-duty principle"; POPL 2026 vericoding benchmark shows specs eliminate 20.77% of LLM misinterpretation bugs |
+| Syntax optimized for token efficiency | ~15-25% more compact than Rust/TypeScript; ~20% more codebase fits in context | **Proposed** | EF_III Proposal #21; specific decisions: optional semicolons, named args, pipeline, expression-oriented |
+| Effect handlers as agent middleware | Agent capabilities as effects with composable handler stacks | **Proposed** | EF_III Proposal #23; if an effect is not handled, the program does not compile — no other agent framework provides this guarantee |
+| Session types / choreographic programming | Binary (`protocol` keyword) and N-party (choreography) protocol verification | **Proposed** | EF_I Proposal #2, EF_II Proposal #14; session types are structured effects; choreography is Phase 4+ |
+| Automatic memoization | `#[memoize]` via `(function_hash, input_hash)` caching | **Proposed** | EF_I Proposal #3; only pure functions; content addressing makes this natural |
+| Provenance tracking | `#[provenance]` attribute with forward/backward trace via Provenance effect | **Proposed** | EF_I Proposal #6; regulated industry data lineage at language level |
+| Auto-parallelization | `/ pure` functions automatically parallelizable; `#[parallel]` verification | **Proposed** | EF_I Proposal #5; effects solve the proof obligation that has historically made auto-parallelization fail |
+
+### Proposal Maturity and Dependencies
+
+The proposals follow a documented critical path (from PROPOSAL_ANALYSIS.md):
+
+```
+Phase 1: Spec annotations (#20) + Safety controls (RFC-S) + AI syntax (#21)
+Phase 2: Runtime contracts + Structured diagnostics (#17) + DST (#8)
+Phase 3: Compile-time verification (#7) + Verification cache (#18)
+Phase 4: Constrained decoding (#16) + Taint tracking (#9) + Observability (#13)
+Phase 5: Capability security (#4) + WCET (#1) + Session types (#2)
+Phase 6: Choreography (#14) + Proof-carrying code (#10) + Complexity bounds (#15)
+```
+
+### Pillar Utilization (from PROPOSAL_ANALYSIS.md)
+
+| Pillar | Proposals Using It | Coverage |
+|--------|-------------------|----------|
+| Algebraic Effects | 17/23 | 74% |
+| Content-Addressed Code | 14/23 | 61% |
+| Generational Memory | 6/23 | 25% — **underrepresented** |
+| Multiple Dispatch | 3/23 | 13% — **underrepresented** |
+
+The proposals disproportionately leverage effects and content addressing. Generational memory and multiple dispatch are underexploited — suggesting either these pillars have fewer novel applications or that the proposal space has not been fully explored for them.
+
+---
+
 ## Summary
 
 | Category | Count | Percentage |
 |----------|-------|------------|
-| **Consciously Decided** | 42 | 43% |
-| **Inherited from Rust** | 18 | 18% |
-| **Accidentally Defaulted** | 30 | 31% |
-| **Explicitly Deferred** | 8 | 8% |
+| **Consciously Decided** | 42 | 34% |
+| **Proposed (researched, not committed)** | 26 | 21% |
+| **Inherited from Rust** | 18 | 15% |
+| **Accidentally Defaulted** | 28 | 23% |
+| **Explicitly Deferred** | 8 | 7% |
+
+With proposals included, the decided+proposed coverage rises to **55%** of the design space, up from 43%. The largest shift is in the security model (from "inherited" to "proposed: capability-based + information flow"), verification (from "not addressed" to "proposed: graduated four-level"), and diagnostics (from "basic" to "proposed: dual human/machine consumption").
 
 ---
 
@@ -412,15 +479,22 @@ This split would enable Blood for embedded systems, OS kernels, and WebAssembly 
 ### F-09: Testing as a Language Feature
 
 **Severity:** Ecosystem — opportunity
-**Status:** Defaulted
+**Status:** Partially proposed, partially defaulted
 
-Blood has `assert!` and `panic!` macros but no first-class test declaration mechanism (`#[test]`, `test` blocks, or equivalent). This is a missed opportunity because Blood's effect system enables a testing model that no other systems language can match:
+Blood has `assert!` and `panic!` macros but no first-class test declaration mechanism (`#[test]`, `test` blocks, or equivalent). The proposals partially address the testing story:
 
-- **Handler-based mocking:** Effect handlers can intercept any effectful operation, enabling pure testing of I/O-dependent code without mock frameworks. This is already idiomatic (FFI.md documents `MockFFI` handler pattern).
-- **Deterministic test isolation:** Each test can run in its own effect handler scope, guaranteeing no shared mutable state between tests.
-- **Property-based testing via effects:** Random generation can be an effect, enabling the runtime to control shrinking and replay.
+- **EF_II Proposal #8 (DST)** demonstrates that effect handlers enable deterministic simulation testing as a library pattern — no compiler changes needed. This is the strongest testing proposal.
+- **EF_II Proposal #12 (Replay Debugging)** extends the same handler infrastructure to record/replay all effect invocations for time-travel debugging.
+- **FFI.md** documents the `MockFFI` handler pattern for testing FFI-dependent code.
 
-**Recommendation:** Evaluate first-class test declarations that leverage Blood's effect system. This is a potential differentiator — "testing is trivially pure because effects are interceptable" is a compelling pitch that no other systems language can make.
+What remains unaddressed:
+- **No first-class test declaration syntax.** There is no `#[test]`, `test` block, or equivalent. Tests are not compiler-aware.
+- **No test runner.** No `blood test` command or standard test discovery mechanism.
+- **No property-based testing primitives.** Random generation as an effect is a natural fit but not proposed.
+
+Blood's effect system enables a testing model no other systems language can match. The DST proposal demonstrates the pattern, but the gap between "effects enable good testing" and "Blood has a great testing story" is a first-class declaration mechanism + toolchain integration.
+
+**Recommendation:** Add a first-class test declaration mechanism (e.g., `test "name" { ... }` blocks or `#[test]` attribute) and a `blood test` runner that leverages effect handler isolation. The DST proposal provides the conceptual foundation; what's missing is the ergonomic surface.
 
 ### F-10: ABI Stability
 
@@ -443,16 +517,17 @@ Content addressing could enable a novel approach: ABI compatibility defined by c
 
 The following decisions were adopted from Rust and are likely correct for Blood, but have no documented rationale in Blood's design context. Each should receive at minimum a brief ADR confirming the choice:
 
-| Decision | Why It Warrants Evaluation |
-|----------|---------------------------|
-| Monomorphization | Interacts with content addressing (F-01) |
-| `Option<T>` / `Result<T, E>` | Coexists with effects (F-05) |
-| UTF-8 strings | Interacts with 128-bit pointers (F-04) |
-| File-based module hierarchy | Content addressing decouples identity from files |
-| `pub` visibility (Rust-style) | Row polymorphism introduces structural subtyping that may need different visibility rules |
-| Call-by-value evaluation | Natural for effects but undocumented |
-| No runtime type information | Multiple dispatch uses 24-bit type fingerprints — this IS runtime type info by another name |
-| `&T` / `&mut T` reference syntax | Blood's references are semantically different (generational, not borrowed) — same syntax may mislead |
+| Decision | Why It Warrants Evaluation | Proposal Coverage |
+|----------|---------------------------|-------------------|
+| Monomorphization | Interacts with content addressing (F-01) | None |
+| `Option<T>` / `Result<T, E>` | Coexists with effects (F-05) | None |
+| UTF-8 strings | Interacts with 128-bit pointers (F-04) | None |
+| File-based module hierarchy | Content addressing decouples identity from files | None |
+| `pub` visibility (Rust-style) | Row polymorphism introduces structural subtyping that may need different visibility rules | None |
+| Call-by-value evaluation | Natural for effects but undocumented | None |
+| No runtime type information | Multiple dispatch uses 24-bit type fingerprints — this IS runtime type info by another name | None |
+| `&T` / `&mut T` reference syntax | Blood's references are semantically different (generational, not borrowed) — same syntax may mislead | None |
+| Binary `unsafe` blocks | Granular safety controls proposed in SAFETY_LEVELS.md (RFC-S) but not yet committed | **Partially addressed** by RFC-S |
 
 ---
 
@@ -472,14 +547,34 @@ These items can be resolved with a one-paragraph decision record each:
 
 ## Overall Assessment
 
-Blood's design is characterized by a **strong core with a thin periphery**. The five central innovations (generational references, algebraic effects, content addressing, multiple dispatch, linear/affine types) are among the most thoroughly evaluated design decisions in any pre-1.0 language. The formal semantics, Coq mechanization, and ADR process demonstrate unusual rigor.
+Blood's design is characterized by a **strong core, an ambitious proposal layer, and a thin periphery**.
 
-The gaps are predominantly in three areas:
+### Strengths
 
-1. **Rust-inherited surface** (18% of decisions): The syntax and standard library conventions were adopted from Rust without re-evaluating them in Blood's divergent context. Most are fine. Some (monomorphization, Result/Option, string representation) have non-obvious interactions with Blood's core innovations.
+The five central innovations (generational references, algebraic effects, content addressing, multiple dispatch, linear/affine types) are among the most thoroughly evaluated design decisions in any pre-1.0 language. The formal semantics, Coq mechanization, and ADR process demonstrate unusual rigor.
 
-2. **Ecosystem infrastructure** (31% of decisions defaulted): Normal for a pre-1.0 language, but some ecosystem decisions (compiler-as-a-library, testing model, freestanding split) exert backward pressure on the core and should be decided before implementation locks them in.
+The proposal documents (EXTRAORDINARY_FEATURES I/II/III, SAFETY_LEVELS.md, SYNTAX_REDESIGN.md) demonstrate that Blood's designers have thought deeply about areas the reference framework considers — security (capability-based + information flow), verification (graduated four-level), diagnostics (dual human/machine), and testing (DST via effects) — even though these decisions are at "proposed" rather than "committed" status. The proposal layer adds 26 design axes that are researched and designed but not yet implemented.
 
-3. **Concurrency** (the largest single gap): Blood has the most promising concurrency foundation of any systems language (effects that subsume async, fibers, structured scoping via handlers) but has not yet designed the cohesive model that ties these pieces together.
+The AI-native design surface (EF_III) extends beyond anything in the reference framework. No other language has a documented design for constrained decoding oracles, content-addressed verification caches, or specification annotations that serve simultaneously as AI prompts, verification targets, and documentation.
 
-The ratio of decided-to-defaulted (43% to 31%) is healthy for a language at Blood's stage. The critical question is whether the defaulted items remain compatible with the decided core as implementation proceeds. The monomorphization × content addressing tension (F-01) and the concurrency void (F-06) are the two areas where accidental defaults are most likely to create future architectural conflicts.
+### Remaining Gaps
+
+Even with proposals included, gaps remain in four areas:
+
+1. **Rust-inherited surface** (15% of decisions): The syntax and standard library conventions were adopted from Rust without re-evaluating them in Blood's divergent context. Most are fine. Some (monomorphization, Result/Option, string representation) have non-obvious interactions with Blood's core innovations. The proposals do not address any of these inherited decisions.
+
+2. **Ecosystem infrastructure** (23% of decisions defaulted): Normal for a pre-1.0 language, but some ecosystem decisions (compiler-as-a-library, freestanding split) exert backward pressure on the core and should be decided before implementation locks them in. The proposals partially address this (linter via safety audit, observability via effect handlers) but leave REPL, formatter, debugger, and doc generator unaddressed.
+
+3. **Concurrency** (the largest single gap): Blood has the most promising concurrency foundation of any systems language (effects that subsume async, fibers, structured scoping via handlers) but has not yet designed the cohesive model that ties these pieces together. The DST and replay proposals (EF_II #8, #12) demonstrate the testing side of concurrency but do not address the programming model (structured concurrency, cancellation, Send/Sync, async drop).
+
+4. **Proposal-to-commitment gap**: 21% of the design space is at "proposed" status. These proposals are well-researched but carry risk: none have been implemented, some depend on unbuilt infrastructure (incremental type checker, SMT solver integration), and the proposal layer is disproportionately focused on effects and content addressing while underexploiting generational memory (25%) and multiple dispatch (13%). Committing to proposals requires implementation evidence, not just design documents.
+
+### Critical Questions
+
+1. **Monomorphization × content addressing (F-01):** No proposal or document addresses this interaction despite it being at the intersection of two core innovations. This remains the highest-priority architectural question.
+
+2. **Concurrency composition (F-06):** Effects + fibers + structured concurrency + cancellation need a cohesive design. The pieces exist but the composition doesn't.
+
+3. **Compiler-as-a-library (F-07):** The constrained decoding oracle (Proposal #16) and verification cache (Proposal #18) both assume a query-based, incremental compiler architecture that does not yet exist. These proposals implicitly require the compiler-as-a-library architecture but do not explicitly call it out as a prerequisite.
+
+4. **Proposal dependency depth:** The critical path `#20 → #7 → #18 → #10` (Spec Annotations → Verification → Cache → Proof-Carrying Code) is four proposals deep. Each link must work before the next can begin. The risk of a single foundational proposal proving impractical is significant.

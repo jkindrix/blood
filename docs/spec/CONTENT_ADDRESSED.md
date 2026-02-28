@@ -1,8 +1,8 @@
 # Blood Content-Addressed Storage Specification
 
-**Version**: 0.3.0
+**Version**: 0.4.0
 **Status**: Implemented
-**Last Updated**: 2026-01-10
+**Last Updated**: 2026-02-28
 
 This document specifies Blood's content-addressed code identity system, including AST canonicalization, hash computation, storage format, and the Virtual Function Table (VFT) specification.
 
@@ -18,6 +18,7 @@ This document specifies Blood's content-addressed code identity system, includin
    - 3.6.1 [Effect Row Sorting Algorithm](#361-effect-row-sorting-algorithm)
 4. [Hash Computation Algorithm](#4-hash-computation-algorithm)
    - 4.5 [Determinism Proof Sketch](#45-determinism-proof-sketch)
+   - 4.6 [Monomorphized Instance Hashing](#46-monomorphized-instance-hashing)
 5. [Storage Format](#5-storage-format)
    - 5.5 [Format Version Migration](#55-format-version-migration)
 6. [Virtual Function Table (VFT)](#6-virtual-function-table-vft)
@@ -979,6 +980,140 @@ Same canonical form → same serialization → same hash. ∎
 | Thread scheduling | Canonicalization is single-threaded | ✅ Addressed |
 | Global state | Canonicalization is pure (no side effects) | ✅ Addressed |
 | Time/randomness | Not used in canonicalization | ✅ Addressed |
+
+### 4.6 Monomorphized Instance Hashing
+
+Generic definitions are hashed at Level 1 as polymorphic ASTs (§4.1–4.5). When a generic definition is monomorphized (instantiated with concrete type arguments), the resulting specialized code is hashed at Level 2 using a derived hash that incorporates both the generic definition and the concrete type arguments.
+
+See ADR-030 for the full architectural rationale.
+
+#### 4.6.1 Three-Level Cache Model
+
+```
+Level 1: Generic Definition Hash (stable)
+  Key:   BLAKE3(SERIALIZE(CANONICALIZE(generic_def)))
+  Value: Polymorphic HIR/MIR artifact
+  Scope: Changes only when the generic definition's source changes
+
+Level 2: Monomorphized Instance Hash (derived)
+  Key:   BLAKE3(generic_def_hash ‖ type_arg_hash₁ ‖ ... ‖ type_arg_hashₙ)
+  Value: Monomorphized MIR body
+  Scope: Changes when generic definition OR any type argument changes
+
+Level 3: Native Artifact Hash (platform-specific)
+  Key:   BLAKE3(instance_hash ‖ target_triple ‖ opt_level)
+  Value: Compiled object file
+  Scope: Changes when instance OR compilation target/flags change
+```
+
+#### 4.6.2 Instance Hash Computation
+
+```
+COMPUTE_INSTANCE_HASH(generic_def_hash, type_args) → ContentHash:
+    hasher ← ContentHasher::new()
+
+    // Include the generic definition's content hash
+    hasher.update_bytes(generic_def_hash.as_bytes())
+
+    // Include each type argument's content hash (in declaration order)
+    FOR type_arg IN type_args:
+        arg_hash ← COMPUTE_TYPE_HASH(type_arg)
+        hasher.update_bytes(arg_hash.as_bytes())
+
+    RETURN hasher.finalize()
+
+
+COMPUTE_TYPE_HASH(type) → ContentHash:
+    MATCH type:
+        // Primitive types have fixed hashes
+        Primitive(kind) →
+            RETURN PRIMITIVE_HASH(kind)
+
+        // Named types use their definition's content hash
+        NamedType(def_hash) →
+            RETURN def_hash
+
+        // Compound types hash their structure
+        TypeApp(constructor_hash, args) →
+            hasher ← ContentHasher::new()
+            hasher.update_bytes(constructor_hash.as_bytes())
+            FOR arg IN args:
+                hasher.update_bytes(COMPUTE_TYPE_HASH(arg).as_bytes())
+            RETURN hasher.finalize()
+
+        // Reference/pointer types include mutability
+        RefType(inner, mutability) →
+            hasher ← ContentHasher::new()
+            hasher.update_u8(REF_TAG)
+            hasher.update_u8(mutability_byte(mutability))
+            hasher.update_bytes(COMPUTE_TYPE_HASH(inner).as_bytes())
+            RETURN hasher.finalize()
+```
+
+#### 4.6.3 Cross-Project Sharing
+
+Because instance hashes are computed from content hashes (not DefIds), two independent projects compiling `Vec<i32>` produce identical instance hashes:
+
+```
+Project A:                          Project B:
+  Vec<i32>                            Vec<i32>
+  = BLAKE3(Vec_hash ‖ i32_hash)      = BLAKE3(Vec_hash ‖ i32_hash)
+  = #instance_xyz                     = #instance_xyz  ← same!
+```
+
+This enables distributed cache sharing: a CI server can populate a shared cache, and developer machines can reuse monomorphized artifacts without recompilation.
+
+#### 4.6.4 Symbol Names
+
+Monomorphized functions use instance hashes (not DefIds) in symbol names:
+
+```
+// Old (DefId-based, not shareable):
+_blood_fn_33554432_Vec_push     // DefId 0x2000000
+
+// New (hash-based, globally shareable):
+_blood_fn_#a7f2k9_Vec_push     // Instance hash prefix
+```
+
+This ensures the same monomorphized instance from different compilation units produces identical object code with identical symbols, enabling linker deduplication and cache hits.
+
+#### 4.6.5 Invalidation Model
+
+```
+INVALIDATE_ON_CHANGE(changed_def_hash) → Set<ContentHash>:
+    invalidated ← {}
+
+    // Level 1: The definition itself
+    invalidated.add(changed_def_hash)
+
+    // Level 2: All instances derived from this definition
+    FOR instance IN reverse_index[changed_def_hash]:
+        invalidated.add(instance.instance_hash)
+
+    // Level 2: All instances that use this type as an argument
+    FOR instance IN type_arg_reverse_index[changed_def_hash]:
+        invalidated.add(instance.instance_hash)
+
+    // Level 3: All native artifacts derived from invalidated instances
+    FOR instance_hash IN invalidated:
+        FOR artifact IN artifact_index[instance_hash]:
+            invalidated.add(artifact.artifact_hash)
+
+    RETURN invalidated
+```
+
+The reverse dependency index is maintained incrementally: when a new instance is compiled, its generic definition hash and type argument hashes are recorded in the index.
+
+#### 4.6.6 Determinism
+
+**Theorem**: Instance hash computation is deterministic.
+
+**Proof**: Instance hashes are computed from:
+1. Generic definition hash (deterministic by §4.5.2)
+2. Type argument hashes (deterministic by type canonicalization §3.5.1)
+3. BLAKE3 (deterministic by construction)
+
+Composition of deterministic functions is deterministic. ∎
 
 ---
 

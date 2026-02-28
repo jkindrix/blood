@@ -10,6 +10,7 @@ This document captures key architectural decisions made during the design of Blo
 - [CONTENT_ADDRESSED.md](./CONTENT_ADDRESSED.md) — ADR-003, ADR-012 details
 - [FORMAL_SEMANTICS.md](./FORMAL_SEMANTICS.md) — ADR-002, ADR-006, ADR-007, ADR-011 details
 - [ROADMAP.md](./ROADMAP.md) — Implementation timeline
+- [DESIGN_SPACE_AUDIT.md](../design/DESIGN_SPACE_AUDIT.md) — Design space evaluation (ADR-030 context)
 
 ---
 
@@ -1008,6 +1009,116 @@ insert(key, value):
 
 ---
 
+## ADR-030: Two-Level Content-Addressed Compilation for Generics
+
+**Status**: Accepted
+
+**Context**: Blood's two core innovations — content-addressed compilation (ADR-003) and monomorphization of generics — are in architectural tension. This interaction was identified as Finding F-01 in the Design Space Audit (2026-02-28).
+
+The tension manifests in three ways:
+
+1. **Hash space explosion.** A generic function `fn map<T, U>(...)` instantiated with 50 type combinations produces 50 monomorphized copies. Each gets a different DefId and therefore a different content hash. The cache grows O(definitions × type combinations).
+
+2. **Incremental invalidation cascading.** If type `Foo` changes, every monomorphized function instantiated with `Foo` must be invalidated. The invalidation set grows with the number of generic uses of the changed type.
+
+3. **Cross-project cache failure.** Content addressing promises global cache sharing ("identical definitions produce identical hashes"). But two projects independently compiling `Vec<i32>` currently produce different DefIds, different hashes, and therefore different cache entries — breaking the global sharing promise.
+
+**Alternatives evaluated:**
+
+| Strategy | Runtime Cost | Cache Fit | Binary Size | Implementation Cost |
+|----------|-------------|-----------|-------------|---------------------|
+| **A. Full monomorphization (Rust)** | Zero dispatch | Poor — O(defs × types) artifacts | Large | Already implemented |
+| **B. Witness-table dispatch (Swift)** | ~5-15% method overhead | Excellent — one artifact per definition | Small | Major refactor |
+| **C. Dictionary passing (Haskell/Koka)** | ~5-15% dispatch overhead | Excellent — one artifact per definition | Small | Major refactor |
+| **D. Hybrid: mono with two-level cache** | Zero dispatch | Good — structured cache | Large | Moderate extension |
+| **E. Hybrid: witness default + opt-in mono** | Near-zero for hot paths | Very good — additive specializations | Controlled | Major refactor |
+
+Key evidence:
+
+- **OOPSLA 2022 ("Generic Go to Go")**: Quantitative comparison of dictionary passing, monomorphization, and hybrid. Conclusion: hybrids get neither the best compile time nor the best runtime performance. Choose one primary strategy and use the other selectively.
+
+- **Swift's proven model**: Witness tables by default, `@inlinable`/`@_specialize` for opt-in monomorphization. The base (unspecialized) artifact has a stable content hash. Specializations are additive.
+
+- **Blood's ADR-025**: Evidence passing for effects already threads implicit witness parameters. The infrastructure pattern exists.
+
+- **LLVM CAS RFC (2022)**: Content-addressed compilation at the LLVM IR level uses per-function global reference arrays to make function bodies self-contained and hashable. Template/generic deduplication is a stated key use case.
+
+- **Blood's priority hierarchy (ADR-010)**: Correctness > Safety > Predictability > Performance > Ergonomics. Content addressing serves correctness and predictability. Monomorphization serves performance.
+
+**Decision**: Blood uses a **two-level content-addressed cache** with monomorphization as the primary compilation strategy, structured to preserve content-addressing guarantees.
+
+**Level 1 — Generic definition hash (stable):**
+- Content hash computed from canonicalized AST of the polymorphic definition (as today)
+- Invariant: a generic definition's hash changes only when its source changes
+- This level is what CONTENT_ADDRESSED.md §3-4 describes
+- Enables: separate compilation, incremental recompilation, global cache sharing of the polymorphic definition
+
+**Level 2 — Monomorphized instance hash (derived):**
+- Content hash: `BLAKE3(generic_def_hash ‖ type_arg_hash₁ ‖ ... ‖ type_arg_hashₙ)`
+- Invariant: an instance's hash changes only when the generic definition or any type argument changes
+- DefId is NOT included in the instance hash (breaking current practice in `build_cache.rs:490-493`)
+- Symbol names use the instance hash, not the DefId, enabling cross-project artifact sharing
+- Enables: global cache sharing of monomorphized instances, bounded invalidation
+
+**Level 3 — Native artifact hash (platform-specific):**
+- Content hash: `BLAKE3(instance_hash ‖ target_triple ‖ opt_level)`
+- Keyed by optimization level and target to support multi-target builds
+- Enables: distributed build caching, reproducible artifacts
+
+**Invalidation model:**
+- Type `Foo` changes → `Foo`'s hash changes → all Level 2 entries containing `Foo`'s hash are invalidated (by dependency tracking, not by rehashing all instances)
+- Generic definition changes → its Level 1 hash changes → all Level 2 entries derived from it are invalidated
+- Dependency graph: Level 1 entries record which type hashes they were instantiated with. On change, the reverse index identifies affected Level 2 entries.
+
+**Why monomorphization over witness tables:**
+
+1. **Systems-language performance target (ADR-010, ADR-015).** Blood targets C-competitive performance. Monomorphization enables the LLVM optimizer to inline, devirtualize, and specialize — critical for tight loops over generic containers. The 5-15% overhead from witness-table dispatch is significant in Blood's target domain.
+
+2. **Multiple dispatch already provides dynamic paths (ADR-005).** Where runtime polymorphism is desired, Blood offers trait objects (`dyn Trait`) and multiple dispatch. Adding witness tables as a second dynamic dispatch mechanism creates complexity without clear benefit.
+
+3. **Manageable implementation cost.** Extending the existing cache from one level to two levels is less invasive than replacing the compilation model. The current `MonoRequest` infrastructure in `mir_lower_ctx.blood` and `main.blood` already handles specialization; the change is in hashing and caching, not code generation.
+
+4. **LLVM CAS validates the approach.** The LLVM CAS design (Apple/Google/Sony/Nintendo/Meta collaboration) addresses exactly this problem for C++ templates. Their solution is content-addressed per-function artifacts with self-contained references — the same principle as Blood's two-level model.
+
+**Why dictionary passing was rejected:**
+
+- Blood is a systems language. The 5-15% method dispatch overhead (measured in Haskell and Swift studies) conflicts with ADR-010's priority hierarchy.
+- Blood already has evidence passing for effects (ADR-025). Using dictionary passing for value-type generics would create two overlapping but distinct dictionary mechanisms.
+- Dictionary passing prevents LLVM from specializing code paths based on concrete types, losing autovectorization, constant folding, and layout-specific optimizations.
+- The OOPSLA 2022 "Generic Go to Go" paper found dictionary passing produces worse runtime performance in every benchmark compared to monomorphization, with compilation speed as the only advantage. Blood's two-level cache recovers the compilation speed benefit.
+
+**Future optimization path:**
+
+If compile times or binary size become problematic, Blood may adopt **polymorphization** (Rust's `-Zpolymorphize`): detecting generic functions where type parameters don't affect code generation and compiling them once. This is additive to the two-level model and does not require architectural change.
+
+**Rationale**:
+- Preserves zero-cost abstraction principle for generics (no runtime dispatch overhead)
+- Recovers content-addressing benefits (global cache, incremental compilation, reproducible builds) through structured two-level hashing
+- Uses deterministic, DefId-free instance hashing to enable cross-project artifact sharing
+- Bounded invalidation via reverse dependency index prevents cascading recompilation
+- Consistent with LLVM CAS direction for the broader ecosystem
+- Minimal disruption to existing compiler architecture
+
+**Consequences**:
+- `build_cache.rs` must be updated: remove DefId from hash computation for monomorphized instances, add Level 2 cache keyed by `(generic_def_hash, [type_arg_hashes])`
+- Symbol names must transition from DefId-based to instance-hash-based for monomorphized code
+- CONTENT_ADDRESSED.md must be updated with §4.6 "Monomorphized Instance Hashing" specifying the two-level model
+- Reverse dependency index needed for bounded invalidation
+- Generic definitions remain hashable as today (no change to Level 1)
+- Binary size is unchanged (still fully monomorphized) — future polymorphization is a separate optimization
+- Cross-project sharing of common instantiations (e.g., `Vec<i32>`, `Option<String>`) becomes possible
+
+**References**:
+- OOPSLA 2022: "Generic Go to Go: Dictionary-Passing, Monomorphisation, and Hybrid" (Griesemer et al.)
+- LLVM CAS RFC: "Fine-Grained Caching for Builds" (Discourse, 2022)
+- ADR-003: Content-addressed code via BLAKE3-256
+- ADR-010: Priority hierarchy (Correctness > Safety > Predictability > Performance > Ergonomics)
+- ADR-015: AOT-first compilation model
+- ADR-025: Evidence passing for effect handlers
+- Design Space Audit Finding F-01 (2026-02-28)
+
+---
+
 ## Decision Status Legend
 
 - **Proposed**: Under discussion
@@ -1017,4 +1128,4 @@ insert(key, value):
 
 ---
 
-*Last updated: 2026-01-13*
+*Last updated: 2026-02-28*
