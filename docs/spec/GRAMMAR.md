@@ -42,6 +42,7 @@
 - Added multiple dispatch cross-reference to DISPATCH.md
 - Added cast semantics table documenting all allowed `as` conversions
 - Clarified `union` keyword as bridge-only (Blood uses enums for tagged unions)
+- Changed `impl Trait` return-position from "deferred" to "not planned"
 
 **Revision 0.3.0 Changes**:
 - Added cross-references to FORMAL_SEMANTICS.md for effect syntax (§4.2, §8)
@@ -581,7 +582,7 @@ fn draw_all(shapes: &[&dyn Drawable]) / {IO} {
 }
 ```
 
-> **Design note (`impl Trait`):** `impl Trait` in argument position is **rejected** — Blood's multiple dispatch already subsumes this use case. Return-position opaque types are **deferred** until real-world pain points are documented; if eventually needed, `opaque` type aliases are preferred over `impl Trait` syntax. See `docs/design/IMPL_TRAIT.md` for the full evaluation.
+> **Design note (`impl Trait`):** `impl Trait` is **not planned** for Blood. Argument-position is **rejected** — Blood's multiple dispatch subsumes this use case. Return-position is **not planned** — Blood's effect system eliminates the primary motivator (`async fn` returns effects, not `impl Future`), and the universal callable type `fn(T) -> U` eliminates unnamed closure types. If a mechanism for hiding concrete return types is ever needed, `opaque` type aliases are the designated path, not `impl Trait` syntax. See `docs/design/IMPL_TRAIT.md` for the full evaluation.
 
 > **Design note (trait object safety):** Not every trait can be used as `dyn Trait`. A trait is **object-safe** (usable as a trait object) when all its methods can be represented as function pointers in a virtual function table. Methods that **prevent** object safety:
 >
