@@ -4,6 +4,8 @@
 
 use std::collections::HashSet;
 
+use string_interner::Symbol as _;
+
 use crate::ast;
 use crate::hir::{self, DefId, LocalId, Type, TypeKind};
 use crate::hir::ty::TyVarId;
@@ -1085,6 +1087,37 @@ impl<'a> TypeContext<'a> {
                     )));
                 }
 
+                // [P-Or]: Validate all alternatives bind the same variable names.
+                let first_bindings = Self::collect_pattern_bindings(&alternatives[0]);
+                for (i, alt) in alternatives.iter().enumerate().skip(1) {
+                    let alt_bindings = Self::collect_pattern_bindings(alt);
+                    if alt_bindings != first_bindings {
+                        let resolve = |idx: &u32| -> String {
+                            let sym = ast::Symbol::try_from_usize(*idx as usize)
+                                .unwrap_or_else(|| ast::Symbol::try_from_usize(0).unwrap());
+                            self.symbol_to_string(sym)
+                        };
+                        let missing: Vec<_> = first_bindings.difference(&alt_bindings)
+                            .map(resolve).collect();
+                        let extra: Vec<_> = alt_bindings.difference(&first_bindings)
+                            .map(resolve).collect();
+                        let mut msg = format!("or-pattern alternative {} binds different variables", i + 1);
+                        if !missing.is_empty() {
+                            msg.push_str(&format!("; missing: {}", missing.join(", ")));
+                        }
+                        if !extra.is_empty() {
+                            msg.push_str(&format!("; extra: {}", extra.join(", ")));
+                        }
+                        return Err(Box::new(TypeError::new(
+                            TypeErrorKind::PatternMismatch {
+                                expected: expected_ty.clone(),
+                                pattern: msg,
+                            },
+                            alt.span,
+                        )));
+                    }
+                }
+
                 let mut hir_alternatives = Vec::new();
                 for alt in alternatives {
                     hir_alternatives.push(self.lower_pattern(alt, expected_ty)?);
@@ -1291,5 +1324,65 @@ impl<'a> TypeContext<'a> {
             ty: expected_ty.clone(),
             span: pattern.span,
         })
+    }
+
+    /// Collect the set of variable names bound by an AST pattern.
+    /// Used by [P-Or] validation to ensure all or-pattern alternatives
+    /// bind the same variables. Uses Symbol indices for comparison; the
+    /// or-pattern error message is constructed with indices since we don't
+    /// have access to the string interner in a static context.
+    fn collect_pattern_bindings(pattern: &ast::Pattern) -> HashSet<u32> {
+        let mut names = HashSet::new();
+        Self::collect_bindings_recursive(pattern, &mut names);
+        names
+    }
+
+    fn collect_bindings_recursive(pattern: &ast::Pattern, names: &mut HashSet<u32>) {
+        match &pattern.kind {
+            ast::PatternKind::Ident { name, .. } => {
+                names.insert(name.node.to_usize() as u32);
+            }
+            ast::PatternKind::Tuple { fields, .. } => {
+                for f in fields {
+                    Self::collect_bindings_recursive(f, names);
+                }
+            }
+            ast::PatternKind::Struct { fields, .. } => {
+                for f in fields {
+                    if let Some(ref pat) = f.pattern {
+                        Self::collect_bindings_recursive(pat, names);
+                    } else {
+                        // Shorthand: `Foo { x }` — the field name is the binding
+                        names.insert(f.name.node.to_usize() as u32);
+                    }
+                }
+            }
+            ast::PatternKind::TupleStruct { fields, .. } => {
+                for f in fields {
+                    Self::collect_bindings_recursive(f, names);
+                }
+            }
+            ast::PatternKind::Or(alternatives) => {
+                // Nested or — collect from first (all should be same)
+                if let Some(first) = alternatives.first() {
+                    Self::collect_bindings_recursive(first, names);
+                }
+            }
+            ast::PatternKind::Ref { inner, .. }
+            | ast::PatternKind::Paren(inner) => {
+                Self::collect_bindings_recursive(inner, names);
+            }
+            ast::PatternKind::Slice { elements, .. } => {
+                for p in elements {
+                    Self::collect_bindings_recursive(p, names);
+                }
+            }
+            // These patterns don't bind names
+            ast::PatternKind::Wildcard
+            | ast::PatternKind::Literal(_)
+            | ast::PatternKind::Rest
+            | ast::PatternKind::Range { .. }
+            | ast::PatternKind::Path(_) => {}
+        }
     }
 }

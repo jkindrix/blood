@@ -1,0 +1,14 @@
+// COMPILE_FAIL: or-pattern binding mismatch
+// Test: or-pattern alternatives must bind the same variables [P-Or]
+enum Shape {
+    Circle(i32),
+    Square(i32),
+}
+
+fn main() -> i32 {
+    let s = Shape.Circle(10);
+    match s {
+        // ERROR: first alternative binds `r`, second binds `side` — mismatch
+        Shape.Circle(r) | Shape.Square(side) => r,
+    }
+}
