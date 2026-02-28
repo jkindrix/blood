@@ -1,8 +1,14 @@
 # Blood Surface Syntax Grammar
 
-**Version**: 0.5.0
+**Version**: 0.6.0
 **Status**: Specification target
 **Last Updated**: 2026-02-28
+
+**Revision 0.6.0 Changes** (ADR-036 — Concurrency Model):
+- Added `FinallyClause` to `HandlerBody` production (§3.4)
+- Added §3.4.3 Handler Finalization design note (semantics, effect context, non-cancellability)
+- Moved `finally` from reserved keywords (§9.3) to contextual keywords (§9.2)
+- Updated effect extension example to use `Fiber` (not `Async`) per ADR-036 naming decision
 
 **Revision 0.5.0 Changes** (ADR-031 — Tier 1 Proposal Approvals):
 - Semicolons made optional on all statements with continuation rules (§5.2)
@@ -395,9 +401,10 @@ OperationDecl ::= 'op' Ident TypeParams? '(' Params ')' '->' Type ';'
 HandlerDecl ::= HandlerKind? 'handler' Ident TypeParams?
                 'for' Type WhereClause? '{' HandlerBody '}'
 HandlerKind ::= 'shallow' | 'deep'
-HandlerBody ::= HandlerState* ReturnClause? OperationImpl*
+HandlerBody ::= HandlerState* ReturnClause? FinallyClause? OperationImpl*
 HandlerState ::= 'let' 'mut'? Ident ':' Type ('=' Expr)?
 ReturnClause ::= 'return' '(' Ident ')' Block
+FinallyClause ::= 'finally' Block
 OperationImpl ::= 'op' Ident '(' Params ')' Block
 ```
 
@@ -411,9 +418,9 @@ effect IO extends Log {
     // ...
 }
 
-effect Async extends IO {
-    op spawn<T>(f: fn() -> T / Async) -> TaskHandle<T>;
-    op await<T>(future: Future<T>) -> T;
+effect Fiber extends IO {
+    op spawn<T: Send>(f: fn() -> T / {Fiber} + Send) -> FiberHandle<T>;
+    op yield() -> unit;
 }
 ```
 
@@ -431,6 +438,38 @@ deep handler LocalState<S> for State<S> {
     op put(s) { state = s; resume(()) }
 }
 ```
+
+#### 3.4.3 Handler Finalization (`finally`)
+
+The `finally` clause runs when the handler scope exits, regardless of exit reason (normal completion, cancellation, or error). This provides guaranteed cleanup for handler-managed resources.
+
+```blood
+deep handler ManagedDB for Database {
+    let conn: linear Connection
+
+    return(x) { x }
+
+    finally {
+        conn.close()  // Runs on any scope exit
+    }
+
+    op query(sql) {
+        let result = conn.execute(sql)
+        resume(result)
+    }
+}
+```
+
+**Execution order**:
+- Normal exit: `return` clause runs, then `finally` clause
+- Abnormal exit (cancellation/error): `finally` clause only
+- Nested handlers: `finally` clauses run in reverse nesting order (innermost first)
+
+**Effect context**: A `finally` clause executes in the *enclosing* handler context. It may perform effects handled by enclosing scopes, but NOT effects handled by the handler being torn down. Formally: if handler H handles effect E, then H's `finally` may perform effects from `(EffectRow \ {E})`.
+
+**Non-cancellability**: `finally` clauses are non-cancellable. The `Cancel` handler is not installed around them. Any `check_cancelled()` within `finally` is an unhandled effect (compile error). Cleanup that must happen cannot be cancelled.
+
+See ADR-036 for full rationale and provenance (Effekt OOPSLA 2025).
 
 ### 3.5 Trait and Implementation
 
@@ -1319,6 +1358,7 @@ with handle                (* handler expressions *)
 affine                     (* ownership type qualifier *)
 default                    (* impl blocks, default expressions *)
 unchecked                  (* granular safety control — see §5.4 *)
+finally                    (* handler finalization clause — see §3.4.3 *)
 union                      (* bridge FFI blocks only — see §3.8; Blood uses enums for tagged unions *)
 'static '_                 (* lifetimes *)
 ```
@@ -1342,7 +1382,7 @@ unchecked(bounds) { data[i] }                   // unchecked is a keyword here
 These cannot be used as identifiers but have no current meaning. They are reserved to prevent identifier conflicts if Blood adopts these features later.
 
 ```
-abstract become box catch defer do final finally
+abstract become box catch defer do final
 gen override priv raw select spawn throw typeof
 unsized virtual yield
 ```

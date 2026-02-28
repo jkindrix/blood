@@ -1,11 +1,23 @@
 # Blood Concurrency Specification
 
-**Version**: 0.3.0
-**Status**: Implemented
-**Implementation**: ✅ Integrated
-**Last Updated**: 2026-01-10
+**Version**: 0.4.0
+**Status**: Specification target
+**Last Updated**: 2026-02-28
 
-**Implementation Status**: Runtime is implemented and linked to compiled programs. Performance benchmarks are ongoing.
+**Revision 0.4.0 Changes** (ADR-036 — Cohesive Concurrency Model):
+- Unified naming: `Fiber` throughout (replaced `Async` in §8); `Async` effect removed
+- Added `Cancel` effect with ADR-036 semantics (§4.5, §8.1): cooperative, separate from `Fiber`
+- Added `Send` bounds to `spawn` operations (§2.4, §8.1)
+- Added `spawn_blocking` operation for FFI interop (§2.4, §8.1)
+- Added handler finalization (`finally` clause) integration (§4.6)
+- Added generation snapshot cost model (§9.4)
+- Updated preemption mechanism to compiler-inserted safepoints (§3.5)
+- Added deep/shallow handler concurrency semantics (§8.2)
+- Added fiber-local storage via `State` effect (§8.4)
+- Added streams via effect composition (§8.5)
+- Added priority inversion mitigation (§3.6)
+- Added five-pillar leverage summary (§8.6)
+- See ADR-036 for full design rationale
 
 **Revision 0.3.0 Changes**:
 - Added implementation status link
@@ -18,14 +30,14 @@ This document specifies Blood's concurrency model, including fiber semantics, sc
 ## Table of Contents
 
 1. [Overview](#1-overview)
-2. [Fiber Model](#2-fiber-model)
-3. [Scheduler](#3-scheduler)
-4. [Fiber Lifecycle](#4-fiber-lifecycle)
+2. [Fiber Model](#2-fiber-model) — Send bounds, spawn_blocking (ADR-036)
+3. [Scheduler](#3-scheduler) — Safepoint preemption, priority inheritance (ADR-036)
+4. [Fiber Lifecycle](#4-fiber-lifecycle) — Cancel effect, handler finalization (ADR-036)
 5. [Communication](#5-communication)
 6. [Synchronization](#6-synchronization)
 7. [Parallel Primitives](#7-parallel-primitives)
-8. [Effect Integration](#8-effect-integration)
-9. [Memory Model](#9-memory-model)
+8. [Effect Integration](#8-effect-integration) — Cohesive model, deep/shallow, streams (ADR-036)
+9. [Memory Model](#9-memory-model) — Generation snapshot cost model (ADR-036)
 10. [Platform Mapping](#10-platform-mapping)
 11. [Runtime Linking Requirements](#11-runtime-linking-requirements)
 
@@ -220,14 +232,17 @@ enum WakeCondition {
 
 ```blood
 effect Fiber {
-    /// Spawn a new fiber
-    op spawn<T>(f: fn() -> T / {Fiber | ε}) -> FiberHandle<T>;
+    /// Spawn a new fiber (requires Send bounds — ADR-036 Sub-5)
+    op spawn<T: Send>(f: fn() -> T / {Fiber} + Send) -> FiberHandle<T>;
 
     /// Spawn with configuration
-    op spawn_with<T>(
+    op spawn_with<T: Send>(
         config: FiberConfig,
-        f: fn() -> T / {Fiber | ε}
+        f: fn() -> T / {Fiber} + Send
     ) -> FiberHandle<T>;
+
+    /// Spawn on a dedicated OS thread (for blocking FFI — ADR-036 Sub-8)
+    op spawn_blocking<T: Send>(f: fn() -> T + Send) -> FiberHandle<T>;
 
     /// Get current fiber's handle
     op current() -> FiberHandle<()>;
@@ -237,6 +252,9 @@ effect Fiber {
 
     /// Sleep for duration
     op sleep(duration: Duration);
+
+    /// Join a fiber (wait for completion)
+    op join<T>(handle: FiberHandle<T>) -> T;
 }
 
 struct FiberConfig {
@@ -265,7 +283,7 @@ fn example() / {Fiber, IO} {
     let local_result = light_computation();
 
     // Wait for fiber to complete
-    let fiber_result = await(handle);
+    let fiber_result = join(handle);
 
     (local_result, fiber_result)
 }
@@ -281,7 +299,18 @@ fn configured_example() / {Fiber} {
         || { work() }
     );
 
-    await(handle)
+    join(handle)
+}
+
+// Blocking FFI interop (ADR-036 Sub-8)
+fn ffi_example() / {Fiber} {
+    // Runs on dedicated OS thread, outside fiber scheduler
+    let result = spawn_blocking(|| {
+        // Safe to call blocking C library functions here
+        c_blocking_read(fd, buf, len)
+    });
+
+    join(result)
 }
 ```
 
@@ -404,39 +433,52 @@ Fibers yield cooperatively at defined points:
 | Yield Point | Trigger |
 |-------------|---------|
 | `yield()` | Explicit yield |
-| `await(handle)` | Waiting for another fiber |
+| `join(handle)` | Waiting for another fiber |
 | `channel.send()` | Channel full |
 | `channel.recv()` | Channel empty |
 | `sleep(duration)` | Timer |
 | `perform(effect)` | Effect operation |
 | Function call | Optional preemption check |
 
-### 3.5 Preemption
+### 3.5 Preemption via Compiler-Inserted Safepoints
 
-For long-running computations, Blood inserts preemption checks:
+Blood uses compiler-inserted safepoints for preemption, matching Go 1.14's approach. Safepoints are inserted at:
+
+1. **Loop back-edges** — ensures long-running loops can be preempted
+2. **Function prologues** — ensures deep call chains can be preempted
+
+Each safepoint checks a per-fiber preemption flag set by the scheduler when the fiber's quantum expires:
+
+```llvm
+; Safepoint check (~1 cycle when not preempting, branch predicted not-taken)
+%preempt = load i8, ptr %fiber.preempt_flag
+%should_yield = icmp ne i8 %preempt, 0
+br i1 %should_yield, label %yield_point, label %continue
+```
+
+**Cost**: ~1 cycle per safepoint when not preempting. Code size increase ~1-2%.
+
+**Safepoint disabling**: `#[unchecked(preemption)]` (extending RFC-S, ADR-031) disables safepoint insertion in performance-critical code. The programmer accepts starvation risk.
+
+**Why safepoints over signals**: Signal-based preemption (SIGALRM) is unpredictable in delivery point and interacts with FFI signal handlers. Safepoints are predictable (only fire at known locations) and don't interfere with external C libraries.
 
 ```blood
-// Compiler inserts preemption checks at:
-// - Function entry (if loop body)
-// - Loop back edges
-// - After N instructions (configurable)
-
-#[preemption_check]
 fn long_loop() / {Fiber} {
     for i in 0..1_000_000 {
-        // Preemption check inserted here by compiler
+        // Compiler-inserted safepoint here (loop back-edge)
         compute(i);
     }
 }
-```
 
-Implementation:
-
-```
-PREEMPTION_CHECK():
-    IF current_fiber.should_yield:
-        current_fiber.should_yield ← false
-        yield()
+#[unchecked(preemption)]
+fn hot_inner_loop(data: &[f64]) -> f64 {
+    // No safepoints — maximum throughput, starvation risk accepted
+    let mut sum = 0.0;
+    for i in 0..data.len() {
+        sum += data[i];
+    }
+    sum
+}
 ```
 
 ### 3.6 Priority Scheduling
@@ -461,6 +503,8 @@ impl Scheduler {
     }
 }
 ```
+
+**Priority inversion mitigation** (ADR-036): The default scheduler uses priority inheritance — when a high-priority fiber joins (waits on) a low-priority fiber, the low-priority fiber inherits the higher priority. This prevents medium-priority fibers from starving the high-priority one. Priority ceiling (resources carry a priority ceiling as a type-level property) is available for real-time scheduler handlers. Both are handler implementation choices, not language-level changes.
 
 ---
 
@@ -529,10 +573,10 @@ SPAWN(f):
     RETURN FiberHandle { id: fiber_id }
 ```
 
-### 4.3 Await Operation
+### 4.3 Join Operation
 
 ```
-AWAIT(handle):
+JOIN(handle):
     target ← get_fiber(handle.id)
 
     MATCH target.state:
@@ -551,7 +595,7 @@ AWAIT(handle):
             YIELD_TO_SCHEDULER()
 
             // When resumed, target has completed
-            RETURN AWAIT(handle)  // Retry
+            RETURN JOIN(handle)  // Retry
 ```
 
 ### 4.4 Structured Concurrency
@@ -564,8 +608,8 @@ fn structured_example() / {Fiber} {
     let h2 = spawn(|| task2());
 
     // Implicit: parent waits for h1, h2 before returning
-    let r1 = await(h1);
-    let r2 = await(h2);
+    let r1 = join(h1);
+    let r2 = join(h2);
 
     (r1, r2)
 }
@@ -582,38 +626,51 @@ fn nursery_example() / {Fiber} {
 }
 ```
 
-### 4.5 Cancellation
+### 4.5 Cancellation (ADR-036 Sub-2)
+
+Cancellation is a separate `Cancel` effect, distinct from `Fiber`. This makes cancellation points visible in function signatures (ADR-036 Sub-2).
 
 ```blood
 effect Cancel {
-    /// Check if cancellation requested
-    op is_cancelled() -> bool;
-
-    /// Throw if cancelled
-    op check_cancelled();
+    /// Check if cancelled — yields if cancelled, resumes if not
+    op check_cancelled() -> unit;
 }
+```
 
+**Visibility in types**: `fn work() / {Fiber, Cancel}` has cancellation points. `fn work() / {Fiber}` runs to completion — no cooperative cancellation possible.
+
+**Cancellation protocol**:
+1. A parent scope requests cancellation of a child (sets a flag)
+2. The child's `Cancel` handler checks the flag when `check_cancelled()` is performed
+3. If cancelled, the handler does NOT resume the child's continuation — the child terminates
+4. If not cancelled, the handler resumes normally
+5. Cancellation only occurs at explicit `check_cancelled()` points — it is cooperative
+
+```blood
 fn cancellable_task() / {Fiber, Cancel} {
     for item in items {
-        check_cancelled();  // Cancellation point
+        check_cancelled();  // Cancellation point — visible in signature
         process(item);
     }
 }
 
 fn cancel_example() / {Fiber} {
-    let handle = spawn(|| cancellable_task());
+    nursery(|scope| {
+        let handle = scope.spawn(|| cancellable_task());
 
-    // Cancel after timeout
-    sleep(Duration::seconds(5));
-    cancel(handle);
+        sleep(Duration::seconds(5));
+        scope.cancel(handle);  // Sets cancellation flag
 
-    // Wait for cancellation to complete
-    match await_cancellable(handle) {
-        Ok(result) => result,
-        Err(Cancelled) => default_value(),
-    }
+        // Handler finalization (finally) ensures cleanup
+    })
 }
 ```
+
+**Cancellation safety guarantees** (ADR-036 Sub-3):
+1. **Memory safety**: Fiber-local regions bulk-deallocated (O(1)). No other fiber holds references (MEMORY_MODEL.md Theorem 5).
+2. **Resource safety**: Linear values must be consumed. Compiler ensures cleanup code runs or rejects the program.
+3. **Handler finalization**: All nested handler `finally` clauses run in reverse order.
+4. **No cross-fiber corruption**: Region isolation prevents any cancelled fiber from affecting another fiber's state.
 
 Implementation:
 
@@ -629,8 +686,36 @@ CANCEL(handle):
         fiber.state ← Runnable
         scheduler.enqueue(fiber.id)
 
-    // Cancellation is cooperative - fiber must check
+    // Cancellation is cooperative — fiber must reach check_cancelled()
+    // Cancel handler then does NOT resume the continuation
 ```
+
+### 4.6 Handler Finalization on Scope Exit
+
+When a fiber is cancelled or a handler scope exits abnormally, all nested handler `finally` clauses run in reverse nesting order (innermost first). See GRAMMAR.md §3.4.3 and ADR-036 Sub-4.
+
+```blood
+deep handler ManagedDB for Database {
+    let conn: linear Connection
+
+    return(x) { x }
+
+    finally {
+        conn.close()  // Guaranteed to run on any scope exit
+    }
+
+    op query(sql) {
+        let result = conn.execute(sql)
+        resume(result)
+    }
+}
+```
+
+**Key rules**:
+- `finally` runs in the enclosing handler context (may perform effects from enclosing scopes, NOT from the handler being torn down)
+- `finally` clauses are non-cancellable — `Cancel` handler is not installed around them
+- Normal exit: `return` runs, then `finally`
+- Abnormal exit: `finally` only
 
 ---
 
@@ -1021,7 +1106,7 @@ impl<T: Send> ParallelIterator<T> for Vec<T> {
             .collect();
 
         results.into_iter()
-            .flat_map(|h| await(h))
+            .flat_map(|h| join(h))
             .collect()
     }
 }
@@ -1060,7 +1145,7 @@ impl Scope {
 
     fn wait_all(&self) / {Fiber} {
         for handle in &self.fibers {
-            await(handle.clone());
+            join(handle.clone());
         }
     }
 }
@@ -1112,24 +1197,25 @@ impl<T> WorkStealingDeque<T> {
 
 ---
 
-## 8. Effect Integration
+## 8. Effect Integration (ADR-036)
 
 ### 8.1 Concurrency as Effects
 
-All concurrency operations are effects:
+All concurrency operations are effects. The `Async` effect from earlier spec versions is removed — `Fiber` is the sole concurrency effect (ADR-036 Preliminary).
 
 ```blood
 effect Fiber {
-    op spawn<T>(f: fn() -> T / {Fiber | ε}) -> FiberHandle<T>;
+    op spawn<T: Send>(f: fn() -> T / {Fiber} + Send) -> FiberHandle<T>;
+    op spawn_with<T: Send>(config: FiberConfig, f: fn() -> T / {Fiber} + Send) -> FiberHandle<T>;
+    op spawn_blocking<T: Send>(f: fn() -> T + Send) -> FiberHandle<T>;
     op current() -> FiberHandle<()>;
     op yield();
     op sleep(duration: Duration);
+    op join<T>(handle: FiberHandle<T>) -> T;
 }
 
-effect Async {
-    op await<T>(handle: FiberHandle<T>) -> T;
-    op select<T>(handles: Vec<FiberHandle<T>>) -> (usize, T);
-    op timeout<T>(duration: Duration, f: fn() -> T / {Async | ε}) -> Result<T, Timeout>;
+effect Cancel {
+    op check_cancelled() -> unit;
 }
 
 effect Channel<T> {
@@ -1139,17 +1225,48 @@ effect Channel<T> {
 }
 ```
 
-### 8.2 Effect Handler Integration
+**`Send` bounds** (ADR-036 Sub-5): `Send` and `Sync` are auto-derived traits based on memory tier:
+
+| Memory Tier | Send? | Sync? | Reason |
+|-------------|-------|-------|--------|
+| Tier 0 (stack) | Yes (if fields Send) | No | Stack-local |
+| Tier 1 (region), mutable | No | No | Fiber-private |
+| Tier 1 (region), Frozen | Yes | Yes | Deeply immutable |
+| Tier 2/3 (persistent) | Yes | Yes | Ref-counted, designed for sharing |
+| Linear values | Yes (via transfer) | No | Unique ownership |
+
+### 8.2 Deep/Shallow Handler Concurrency Semantics
+
+The deep/shallow handler distinction has specific concurrency implications (ADR-036 Sub-1):
+
+**Deep handler** = recursive interception. Every `spawn` in the entire subtree is intercepted. This is *structural supervision*: the handler cannot be escaped by nested spawns.
+
+**Shallow handler** = one-shot interception. Handles exactly one `spawn`, then the continuation runs without the handler.
 
 ```blood
-// Handler for running concurrent code
-deep handler FiberRuntime for Fiber {
+// Deep handler: nursery pattern — supervises all spawns in subtree
+deep handler Nursery for Fiber {
     let scheduler: Scheduler
+    let children: Vec<FiberHandle<()>>
 
-    return(x) { x }
+    return(x) {
+        // Wait for all children before returning
+        for child in children {
+            scheduler.join(child);
+        }
+        x
+    }
+
+    finally {
+        // Cancel remaining children on scope exit
+        for child in children {
+            scheduler.cancel(child);
+        }
+    }
 
     op spawn(f) {
         let handle = scheduler.spawn(f);
+        children.push(handle);
         resume(handle)
     }
 
@@ -1162,16 +1279,28 @@ deep handler FiberRuntime for Fiber {
         scheduler.sleep_current(duration);
         resume(())
     }
+
+    op join(handle) {
+        let result = scheduler.join(handle);
+        resume(result)
+    }
 }
 
 // Run concurrent computation
 fn run<T>(f: fn() -> T / {Fiber}) -> T {
     let scheduler = Scheduler::new();
-    with FiberRuntime { scheduler } handle {
+    with Nursery { scheduler, children: Vec::new() } handle {
         f()
     }
 }
 ```
+
+| Pattern | Handler Type | Formal Property |
+|---------|-------------|-----------------|
+| Nursery (supervise all) | Deep | Cannot be escaped — all spawns intercepted |
+| One-shot spawn-and-join | Shallow | Handles exactly one spawn |
+| Spawn with inspection | Shallow + re-install | Inspects each spawn before proceeding |
+| Supervisor (isolate failures) | Deep + per-child error handling | Isolates child failures |
 
 ### 8.3 Fiber + Region Interaction
 
@@ -1183,15 +1312,72 @@ fn region_fiber_example() / {Fiber} {
     region local_data {
         let buffer = allocate_buffer();  // In local_data region
 
-        // WRONG: Cannot share region reference
-        // spawn(|| use_buffer(&buffer));  // COMPILE ERROR
+        // WRONG: Cannot share region reference (not Send)
+        // spawn(|| use_buffer(&buffer));  // COMPILE ERROR: &Region<T> is not Send
 
-        // CORRECT: Promote to Tier 3
+        // CORRECT: Promote to Tier 3 (Frozen is Send+Sync)
         let shared = persist(buffer.clone());
         spawn(|| use_buffer(&shared));
+
+        // CORRECT: Linear transfer (moves ownership)
+        let linear_buf = move_to_linear(buffer);
+        spawn(move || consume_buffer(linear_buf));
     }
 }
 ```
+
+### 8.4 Fiber-Local Storage via State Effect
+
+Fiber-local storage is modeled as a `State` effect scoped to the fiber's handler lifetime (ADR-036):
+
+```blood
+deep handler FiberLocal<T> for State<T> {
+    let value: T
+
+    return(x) { x }
+    op get() { resume(value) }
+    op set(new_val) { value = new_val; resume(()) }
+}
+```
+
+`get()` and `set()` are tail-resumptive, so ADR-028's optimization applies — fiber-local access compiles to a direct memory read with zero effect dispatch overhead. This is both principled (visible in types as `/ {State<Config>}`) and zero-cost.
+
+### 8.5 Streams via Effect Composition
+
+Streams emerge from composing `Yield<T>` (generators) with `Fiber` (concurrency). No new abstraction needed (ADR-036 Sub-6):
+
+```blood
+// A stream: yields values, may suspend between them
+fn sensor_readings() / {Yield<Reading>, Fiber} {
+    loop {
+        let reading = read_sensor()     // May suspend (Fiber)
+        yield(reading)                  // Produce value (Yield<T>)
+        sleep(Duration::seconds(1))     // Suspend between values (Fiber)
+    }
+}
+
+// Consumer handles Yield<T> to receive values
+fn consume_readings() / {Fiber} {
+    with handle_readings handle {
+        sensor_readings()
+    }
+}
+```
+
+**Backpressure**: The `Yield<T>` handler controls when to resume the producer. Delaying resumption = backpressure. Channels provide explicit backpressure via bounded capacity.
+
+### 8.6 Five-Pillar Leverage Summary
+
+Blood's concurrency model leverages all five language pillars (ADR-036):
+
+| Pillar | Concurrency Role |
+|--------|-----------------|
+| **Effects** | `Fiber`, `Cancel`, `Yield` — concurrency as effect composition |
+| **Handlers** | Deep/shallow = supervision patterns; `finally` = cleanup; handler scope = task scope |
+| **Regions** | Fiber-local memory, O(1) bulk dealloc on cancellation, generation snapshots O(R_mutable) |
+| **Linear types** | Cancellation safety, resource cleanup enforcement, ownership transfer |
+| **Multiple dispatch** | Spawn strategy, channel transfer, observability specialization |
+| **Content addressing** | Handler composition hashing, deterministic replay, pure fiber deduplication |
 
 ---
 
@@ -1262,6 +1448,23 @@ fn atomic_example() {
 }
 ```
 
+### 9.4 Generation Snapshot Cost Model (ADR-036)
+
+During fiber context switching, generation snapshots validate that references haven't been invalidated during suspension. The snapshot uses bulk region-level comparison, not per-reference comparison.
+
+**Specification**: Each fiber maintains `RegionSnapshot = Vec<(RegionId, Generation)>` captured at suspend, validated at resume.
+
+| Tier | In snapshot? | Reason |
+|------|-------------|--------|
+| Tier 0 (stack) | No | Stack frames are fiber-local by construction |
+| Tier 1 (region), mutable access | Yes | May be invalidated during suspension |
+| Tier 1 (region), Frozen access | No | Immutable — generation counter never advances |
+| Tier 2/3 (persistent) | No | Uses refcounting, not generations |
+
+**Cost**: O(R_mutable) where R_mutable = count of mutable Tier 1 regions with live references. For the vast majority of fibers (those that only mutate their own region), R_mutable = 1. This is effectively O(1).
+
+**Validation**: One integer comparison per snapshot entry (~4 cycles per entry, per MEMORY_MODEL.md estimates). Total context switch overhead from generation validation: ~4 cycles for typical fibers.
+
 ---
 
 ## 10. Platform Mapping
@@ -1286,7 +1489,7 @@ fn atomic_example() {
 
 ```blood
 // Platform-abstracted I/O
-effect AsyncIO {
+effect IO {
     op read(fd: Fd, buf: &mut [u8]) -> Result<usize, IoError>;
     op write(fd: Fd, buf: &[u8]) -> Result<usize, IoError>;
     op accept(socket: Socket) -> Result<Socket, IoError>;

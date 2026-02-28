@@ -793,6 +793,27 @@ If handler is multi-shot:
   ∀i. LinearVars(FV(e_opᵢ) ∩ Γ) = ∅
 ```
 
+### 6.3 Finally Clause Typing (ADR-036)
+
+If a handler includes a `finally` clause, it must satisfy:
+
+```
+-- Finally clause types correctly in the ENCLOSING handler context
+-- It may perform effects from (ε' \ {E}) where ε' is the outer effect row
+-- and E is the effect being handled by this handler
+Γ ⊢ e_finally : unit / (ε' \ {E})
+
+-- Finally clause is non-cancellable:
+-- The Cancel effect is NOT available within e_finally
+-- check_cancelled() within finally is an unhandled effect (compile error)
+Cancel ∉ available_effects(e_finally)
+```
+
+**Execution semantics**:
+- Normal exit: `e_ret` evaluates, then `e_finally` evaluates
+- Abnormal exit (cancellation, error): `e_finally` evaluates only
+- Nested handlers: `e_finally` clauses evaluate in reverse nesting order (innermost first)
+
 ---
 
 ## 7. Progress and Preservation

@@ -399,7 +399,7 @@ Handlers can:
 - **Resume once** — Normal control flow
 - **Resume multiple times** — Non-determinism, backtracking
 - **Never resume** — Exceptions, early exit
-- **Resume later** — Async, coroutines
+- **Resume later** — Fibers, coroutines (ADR-036: `Fiber`, not `Async`)
 
 ### 4.2 Effect Declaration
 
@@ -425,9 +425,10 @@ effect Error<E> {
     op raise(err: E) -> never
 }
 
-effect Async<T> {
-    op await(future: Future<T>) -> T
-    op spawn(task: fn() -> T / Async<T>) -> Handle<T>
+effect Fiber {
+    op spawn<T: Send>(task: fn() -> T / {Fiber} + Send) -> FiberHandle<T>
+    op yield() -> unit
+    op join<T>(handle: FiberHandle<T>) -> T
 }
 ```
 
@@ -600,13 +601,19 @@ deep handler Collect<T> for Yield<T> {
 }
 ```
 
-#### Async
+#### Fiber (ADR-036)
 
 ```blood
-effect Async {
-    op await<T>(future: Future<T>) -> T
-    op spawn<T>(task: fn() -> T / Async) -> TaskHandle<T>
-    op yield_now() -> unit
+effect Fiber {
+    op spawn<T: Send>(task: fn() -> T / {Fiber} + Send) -> FiberHandle<T>
+    op spawn_blocking<T: Send>(f: fn() -> T + Send) -> FiberHandle<T>
+    op yield() -> unit
+    op sleep(duration: Duration) -> unit
+    op join<T>(handle: FiberHandle<T>) -> T
+}
+
+effect Cancel {
+    op check_cancelled() -> unit
 }
 ```
 
@@ -766,12 +773,12 @@ Every concurrent Fiber operates in its own memory region. Data transfer between 
 Mutable data moves between Fibers via linear types:
 
 ```blood
-fn sender(linear data: Buffer) / {Async} {
+fn sender(linear data: Buffer) / {Fiber} {
     let handle = spawn(|| receiver(data))  // Ownership transferred
     // data no longer accessible here
 }
 
-fn receiver(linear data: Buffer) / {Async} {
+fn receiver(linear data: Buffer) / {Fiber} {
     process(data)
     drop(data)
 }
@@ -792,11 +799,11 @@ spawn(|| use_config(&shared))
 All spawned tasks are children of their spawning scope. Parent waits for all children before completing.
 
 ```blood
-fn parallel_work() / {Async} {
-    // Both tasks complete before function returns
+fn parallel_work() / {Fiber} {
+    // Both tasks complete before function returns (ADR-036 Sub-1)
     let a = spawn(|| compute_a())
     let b = spawn(|| compute_b())
-    combine(await(a), await(b))
+    combine(join(a), join(b))
 }
 ```
 
@@ -898,7 +905,7 @@ See [STDLIB.md](./STDLIB.md) for the complete standard library specification.
 ### 9.2 Core Effects
 
 - `IO`, `Error<E>`, `State<S>`
-- `Async`, `Yield<T>`, `NonDet`
+- `Fiber`, `Cancel`, `Yield<T>`, `NonDet`
 
 ### 9.3 Core Handlers
 
@@ -1457,19 +1464,19 @@ deep handler ResultHandler<T, E> for Error<E> -> Result<T, E> {
 }
 ```
 
-### C.6 Async/Await with Fibers
+### C.6 Concurrent Fibers (ADR-036)
 
-Concurrent programming:
+Concurrent programming with effect-based fibers:
 
 ```blood
-fn fetch_data(url: &str) -> Bytes / {Async, Error<HttpError>} {
-    let response = await(http_get(url))?
+fn fetch_data(url: &str) -> Bytes / {Fiber, Error<HttpError>} {
+    let response = http_get(url)?
     response.body()
 }
 
-fn process_urls(urls: Vec<String>) -> Vec<Result<Bytes, HttpError>> / {Async} {
+fn process_urls(urls: Vec<String>) -> Vec<Result<Bytes, HttpError>> / {Fiber} {
     // Spawn concurrent fetches
-    let handles: Vec<TaskHandle<Result<Bytes, HttpError>>> = urls
+    let handles: Vec<FiberHandle<Result<Bytes, HttpError>>> = urls
         .into_iter()
         .map(|url| spawn(|| {
             with ErrorToResult handle {
@@ -1478,9 +1485,9 @@ fn process_urls(urls: Vec<String>) -> Vec<Result<Bytes, HttpError>> / {Async} {
         }))
         .collect()
 
-    // Await all results
+    // Join all results
     handles.into_iter()
-        .map(|h| h.join())
+        .map(|h| join(h))
         .collect()
 }
 
@@ -1490,7 +1497,7 @@ fn main() / {IO} {
         "https://api.example.com/data2".to_string(),
     ];
 
-    let results = with AsyncRuntime handle {
+    let results = with FiberRuntime handle {
         process_urls(urls)
     };
 
@@ -1673,7 +1680,7 @@ where
     }
 }
 
-fn run_server(addr: &str) / {IO, Async, Error<IoError>} {
+fn run_server(addr: &str) / {IO, Fiber, Error<IoError>} {
     let listener = tcp_bind(addr)?
 
     info!("Listening on {}", addr)
@@ -1692,7 +1699,7 @@ fn run_server(addr: &str) / {IO, Async, Error<IoError>} {
 }
 
 fn main() / {IO} {
-    with AsyncRuntime handle {
+    with FiberRuntime handle {
         with ErrorHandler handle {
             run_server("0.0.0.0:8080")
         }

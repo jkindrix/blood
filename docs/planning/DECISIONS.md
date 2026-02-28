@@ -9,6 +9,7 @@ This document captures key architectural decisions made during the design of Blo
 - [DISPATCH.md](./DISPATCH.md) — ADR-005 details
 - [CONTENT_ADDRESSED.md](./CONTENT_ADDRESSED.md) — ADR-003, ADR-012 details
 - [FORMAL_SEMANTICS.md](./FORMAL_SEMANTICS.md) — ADR-002, ADR-006, ADR-007, ADR-011 details
+- [CONCURRENCY.md](./CONCURRENCY.md) — ADR-036 details
 - [ROADMAP.md](./ROADMAP.md) — Implementation timeline
 - [DESIGN_SPACE_AUDIT.md](../design/DESIGN_SPACE_AUDIT.md) — Design space evaluation (ADR-030 context)
 
@@ -1358,6 +1359,483 @@ If compile times or binary size become problematic, Blood may adopt **polymorphi
 
 ---
 
+## ADR-036: Concurrency Model — Effect-Based Structured Concurrency (F-06)
+
+**Status**: Accepted
+
+**Context**: The Design Space Audit (F-06) identified that Blood has all the pieces for a concurrency model — algebraic effects, fiber runtime, handler scoping, regions, linear types — but hadn't composed them into a cohesive language-level design. Eight sub-decisions were defaulted without independent evaluation. This ADR resolves all eight from first principles, reasoning from Blood's design goals, specification documents, and external research (Koka, OCaml 5/Eio, Effekt OOPSLA 2025, Trio, Kotlin coroutines, Swift structured concurrency, Java Loom).
+
+**Methodology**: Design-first (SPEC_WORK_PLAN.md §3). All decisions reason from Blood's goals and external research. Existing implementations are irrelevant to these design choices.
+
+**Design Principles Governing All Sub-decisions**:
+1. All side effects visible in function signatures (SPECIFICATION.md §1)
+2. Effects are bidirectional — handlers resume once, multiple times, never, or later (SPECIFICATION.md §4.1)
+3. Region isolation — each fiber has its own memory region (SPECIFICATION.md §6.1)
+4. Linear ownership transfer — mutable data moves between fibers (SPECIFICATION.md §6.2)
+5. Immutable sharing via `Frozen<T>` (SPECIFICATION.md §6.3)
+6. No colored functions — concurrency is an effect, not a type bifurcation
+7. Linear values cannot cross effect suspension points without explicit transfer (SPECIFICATION.md §4.5)
+8. Generation snapshots validate references on handler resume (SPECIFICATION.md §4.5)
+
+### Preliminary: Naming — `Fiber`, Not `Async`
+
+**Decision**: The concurrency effect is named `Fiber`. SPECIFICATION.md §4.6 and §6 (which use `Async`) must be updated for consistency with CONCURRENCY.md.
+
+**Rationale**: Blood avoids the colored-function problem by NOT having an async/sync distinction. Calling the effect `Async` imports the very framing Blood rejects. `Fiber` names the concurrency unit (what the programmer works with). `await` implies a Future/Promise model; Blood uses effect operations — a fiber *joins* another fiber, it doesn't *await* a future.
+
+### Sub-1: Structured Concurrency — Handler Scope = Task Scope
+
+**Decision**: Every `spawn` occurs within an effect handler scope. An unscoped `spawn` is a compile error (the `Fiber` effect must be handled). The handler scope defines the structured concurrency boundary: all spawned fibers must complete before the handler scope exits.
+
+**Rationale**: In Blood's effect system, `with handler handle { computation }` defines a lexical scope where effect operations are intercepted. If `spawn` is a `Fiber` effect operation, then the handler that intercepts `spawn` manages the spawned fiber's lifetime. When the handler scope exits, all spawned fibers must have completed. Handler scope = task scope falls directly from effect handler semantics — it is not a library invariant but a structural consequence.
+
+**Deep vs. shallow handler semantics**: Deep and shallow handlers have distinct concurrency roles:
+
+| Pattern | Handler Type | Property |
+|---------|-------------|----------|
+| Nursery (supervise all children) | Deep | Automatically intercepts all spawns in the subtree — cannot be escaped |
+| One-shot spawn-and-join | Shallow | Handles exactly one spawn, gets result |
+| Spawn with inspection (middleware) | Shallow + explicit re-install | Inspects each spawn before proceeding |
+| Supervisor (isolate failures) | Deep + per-child error handling | Deep catches all spawns; handler logic isolates failures |
+
+**Key formal property**: A deep `Fiber` handler provides airtight structured concurrency. Because deep handlers automatically re-wrap the continuation, nested spawns (spawns from children, grandchildren, etc.) are all intercepted. No nested computation can spawn outside the handler's supervision. This is strictly stronger than Trio/Kotlin/Swift where structured concurrency is a library invariant.
+
+**Convenience abstractions** (nursery, scope, par_map, supervisor) are library-level handlers with specific policies. They are not special constructs.
+
+### Sub-2: Cancellation — Separate `Cancel` Effect
+
+**Decision**: Cancellation is modeled as a separate `Cancel` effect, distinct from `Fiber`:
+
+```blood
+effect Cancel {
+    op check_cancelled() -> unit
+}
+```
+
+**Cancellation protocol**:
+1. A parent scope requests cancellation of a child (sets a flag)
+2. The child's `Cancel` handler checks the flag when `check_cancelled()` is performed
+3. If cancelled, the handler does NOT resume the child's continuation — the child terminates
+4. If not cancelled, the handler resumes normally
+5. Cancellation only occurs at explicit `check_cancelled()` points — it is cooperative
+
+**Rationale**: Separating `Cancel` from `Fiber` provides visibility in types: `fn work() / {Fiber, Cancel}` explicitly declares cancellation points; `fn work() / {Fiber}` runs to completion. This follows Blood's principle that all behaviors are visible in signatures.
+
+**Tradeoff acknowledged**: The `Cancel` effect creates a capability distinction — cancellable (`/ {Fiber, Cancel}`) vs non-cancellable (`/ {Fiber}`) functions. This is intentional and differs from async coloring:
+
+| Property | Async coloring | Cancel capability |
+|----------|---------------|-------------------|
+| Propagation | Upward (viral) | Upward (like any effect) |
+| Can be eliminated? | No | Yes — handle `Cancel` at any scope |
+| Callability | Async cannot call sync | Cancellable CAN call non-cancellable |
+| Opt-out | Impossible | Handle `Cancel` to create non-cancellable scope |
+
+The asymmetry: `Cancel` can be *handled* (eliminated) at any scope boundary, converting a cancellable computation to a non-cancellable one. Async coloring propagates upward and cannot be eliminated. This is why Cancel-as-effect avoids the coloring problem.
+
+### Sub-3: Cancellation Safety — Safe by Construction
+
+**Decision**: Blood guarantees compile-time cancellation safety through the combination of regions, linear types, and handler finalization.
+
+**Guarantees**:
+1. **Memory safety**: Regions are fiber-local (SPECIFICATION.md §6.1, MEMORY_MODEL.md Theorem 5). When a fiber is cancelled, its regions are bulk-deallocated (O(1)). No other fiber holds references into them.
+2. **Resource safety**: Linear values must be consumed exactly once (SPECIFICATION.md §3.3). If a linear value is live when cancellation occurs, the compiler ensures cleanup code consumes it, or rejects the program.
+3. **Handler finalization**: When cancellation discards a continuation, all nested handler scopes unwind. Each handler's `finally` clause (Sub-4) runs in reverse order.
+4. **No cross-fiber corruption**: Region isolation prevents any cancelled fiber from affecting another fiber's state.
+
+**Comparison**:
+
+| Language | Memory cleanup | Resource cleanup | Cross-task corruption prevention |
+|----------|---------------|-----------------|--------------------------------|
+| Rust | Drop (sync only) | No async cleanup | Send/Sync (opt-in, unsafe overridable) |
+| Kotlin | GC | `finally` (CancellationException) | Coroutine scope (runtime) |
+| Swift | ARC | `defer` (sync only) | Actor isolation (compile-time) |
+| Blood | Region bulk dealloc (O(1)) | Linear types (compiler-enforced) | Region isolation (structural, not overridable) |
+
+Blood's guarantees are structural — they come from the type system, not from runtime checks or programmer discipline.
+
+### Sub-4: Async Drop — Sidestep via Regions + Linear Types + `finally`
+
+**Decision**: Blood sidesteps the "async drop" problem through three mechanisms:
+
+1. **Memory doesn't need destructors** — regions provide O(1) bulk deallocation. No per-object finalizers for memory management.
+2. **Resources use linear types** — a `linear Connection` cannot be implicitly dropped. The compiler rejects code that lets a linear value go out of scope unconsumed. The programmer MUST call `connection.close()`, which can be an effect operation (and therefore can suspend).
+3. **Handler finalization via `finally`** — for resources managed by handlers, a `finally` clause runs when the handler scope exits regardless of exit reason.
+
+**Grammar change** (GRAMMAR.md v0.6.0):
+
+```ebnf
+HandlerBody ::= HandlerState* ReturnClause? FinallyClause? OperationImpl*
+FinallyClause ::= 'finally' Block
+```
+
+`finally` is already a reserved keyword (GRAMMAR.md §9.3). Semantics:
+- `return(x) { ... }` — runs on normal completion (existing)
+- `finally { ... }` — runs on ANY exit (normal + abnormal/cancellation)
+- When both present: normal exit runs `return` then `finally`; abnormal exit runs `finally` only
+- Nested handlers: `finally` clauses run in reverse nesting order (innermost first)
+
+**Example**:
+
+```blood
+deep handler ManagedDB for Database {
+    let conn: linear Connection
+
+    finally {
+        conn.close()  // Runs on scope exit regardless of reason
+    }
+
+    return(x) { x }
+
+    op query(sql) {
+        let result = conn.execute(sql)
+        resume(result)
+    }
+}
+```
+
+**`finally` clause effect semantics**: A `finally` clause executes in the *enclosing* handler context — the handler stack outside the handler being finalized. The clause may perform effects handled by enclosing scopes, but NOT effects handled by the handler being torn down (that handler is being destructed).
+
+Formally: if handler H handles effect E, then H's `finally` clause may perform effects from `(EffectRow \ {E})`.
+
+**`finally` clauses are non-cancellable**: When a `finally` clause executes, the `Cancel` handler is not installed around it. Any `check_cancelled()` within `finally` is an unhandled effect — a compile error. Cleanup that must happen cannot be cancelled. This matches Java's `finally` (not interruptible) and Kotlin's `NonCancellable`, but is enforced structurally by the type system rather than by opt-in.
+
+**Provenance**: The Effekt research (OOPSLA 2025, "Dynamic Wind for Effect Handlers") formally verifies that finalization clauses compose correctly with effect handlers, including nested effects and cancellation. `finally` is equivalent to Effekt's `on_suspend + on_return` (the paper proves this). More specialized lifecycle hooks (`on_suspend`, `on_resume`) can be added later if needed.
+
+### Sub-5: Send/Sync — Auto-Derived Traits from Memory Tier
+
+**Decision**: `Send` and `Sync` are auto-derived traits, not effects. A type is `Send` if all its fields are `Send`. A type is `Sync` if it is `Frozen` or `Synchronized`.
+
+**Derivation rules from Blood's memory model**:
+
+| Memory Tier | Send? | Sync? | Reason |
+|-------------|-------|-------|--------|
+| Tier 0 (stack) | Yes (if fields Send) | No | Stack-local, no sharing |
+| Tier 1 (region), mutable | No | No | Region-local, fiber-private |
+| Tier 1 (region), Frozen | Yes | Yes | Deeply immutable |
+| Tier 2/3 (persistent) | Yes | Yes | Ref-counted, designed for sharing |
+| Linear values | Yes (via transfer) | No | Unique ownership, no aliasing |
+
+The `spawn` operation requires `Send` bounds:
+
+```blood
+op spawn<T: Send>(f: fn() -> T / {Fiber} + Send) -> FiberHandle<T>
+```
+
+**Rationale**: `Send`/`Sync` describe structural type properties (whether fields are sendable/sharable), not runtime behaviors. Effects describe runtime behaviors (suspension, I/O, mutation). Conflating type properties with runtime effects muddies both systems.
+
+Blood's memory model provides a stronger foundation than Rust's `Send`/`Sync`:
+- In Rust, `Send` is an `unsafe` trait — it can be incorrectly implemented
+- In Blood, `Send` is derived from the memory tier: region references are structurally not `Send`. There is no way to "opt in" a region reference because the type system prevents cross-fiber region access at a fundamental level
+
+### Sub-6: Streams — Effect Composition (`Yield<T>` + `Fiber`)
+
+**Decision**: Streams are the natural composition of `Yield<T>` (produce values) and `Fiber` (suspend between them). No new abstraction needed.
+
+```blood
+fn sensor_readings() / {Yield<Reading>, Fiber} {
+    loop {
+        let reading = read_sensor()
+        yield(reading)
+        sleep(Duration::seconds(1))
+    }
+}
+```
+
+**Backpressure**: With effect-based streams, backpressure is implicit — the `Yield<T>` handler controls when to resume the producer. Delaying resumption = backpressure. With channel-based streams, backpressure is explicit via bounded channel capacity.
+
+**Design principle**: Blood's effect system is compositional. New patterns emerge from combining existing effects, not from adding new ones. Both effect-based and channel-based streams are library patterns requiring no new syntax.
+
+### Sub-7: Runtime vs Library — Runtime Substrate + Effect Model
+
+**Decision**: The runtime provides the substrate; effect handlers provide the concurrency model.
+
+**Must be runtime-provided** (cannot be expressed in Blood):
+- OS thread management, fiber context switching, I/O multiplexing (epoll/kqueue/IOCP/io_uring), timer management, fiber stack allocation (mmap, guard pages)
+
+**Must be library-defined** (effect handlers):
+- Scheduling policy, structured concurrency semantics, cancellation protocol, channel semantics, select/await combinators
+
+This enables:
+- **DST** (Proposal #8): A deterministic handler replaces the real scheduler — same `Fiber` effect, different handler
+- **Replay debugging** (Proposal #12): A recording handler wraps the real scheduler
+- **Testing**: A blocking handler runs everything sequentially
+- **Custom schedulers**: Domain-specific handlers for latency-sensitive, throughput-optimized, or real-time workloads
+
+### Sub-8: Fiber ↔ OS Thread — Fibers as Primary Abstraction
+
+**Decision**:
+1. Fibers are the primary and only concurrency abstraction. Users spawn fibers, never OS threads directly. Raw thread creation requires FFI.
+2. M:N scheduling is a handler implementation detail. The default `Fiber` handler maps M fibers to N worker threads (N = core count).
+3. `spawn_blocking` for FFI interop — runs a closure on a dedicated OS thread outside the fiber scheduler:
+
+```blood
+effect Fiber {
+    // ... existing operations ...
+    op spawn_blocking<T: Send>(f: fn() -> T + Send) -> FiberHandle<T>
+}
+```
+
+4. Thread affinity via configuration (`FiberConfig`), not a first-class concept. Optimization hint, not a correctness requirement.
+5. No language-level thread pool API. The number of worker threads is a runtime configuration concern.
+
+### Cross-Cutting: Multiple Dispatch in Concurrency
+
+**Decision**: Multiple dispatch specializes concurrency operations by type, leveraging Blood's unique combination of dispatch + effects.
+
+**Tier-based spawn dispatch**: The `spawn` operation dispatches on capture types to select allocation strategy:
+
+```blood
+// Region-local captures → lightweight fiber environment
+fn spawn(f: fn() -> T / {Fiber}) -> FiberHandle<T>
+    where T: Send, captures(f): RegionLocal { ... }
+
+// Persistent captures → standard fiber environment
+fn spawn(f: fn() -> T / {Fiber}) -> FiberHandle<T>
+    where T: Send, captures(f): Persistent { ... }
+```
+
+If `captures(f)` type-level extraction is too advanced for initial implementation, `spawn` and `spawn_heavy` as explicit `Fiber` effect operations provide the same dispatch with simpler typing. Size-based dispatch (e.g., `where size_of(captures(f)) <= 64`) is noted as a future optimization enabled by richer const evaluation.
+
+**Channel transfer dispatch**: Send/receive dispatches on message type for optimal transfer strategy:
+- Region-compatible types → zero-copy transfer (move region ownership)
+- Small value types → copy transfer
+- Frozen types → shared reference transfer
+
+**Observability dispatch** (Proposal #13): Tracing handlers can specialize per effect type via multiple dispatch.
+
+### Cross-Cutting: Content Addressing in Concurrency
+
+**Decision**: Content addressing interacts with concurrency in three specified ways:
+
+1. **Handler composition identity**: Handler *definitions* (code) are content-addressed, not handler *instances* (code + runtime state). The composition hash `H(H_fiber || H_cancel || H_traced)` identifies the behavioral code. Different instances of the same handler definition share verification proofs (Proposal #18). Runtime state is not content-addressable.
+
+2. **Deterministic replay format** (Proposal #12): Effect traces record `[(handler_def_hash, operation_name, args_hash, result_hash), ...]`. Content addressing makes traces structurally stable across refactors (handler renames don't change hashes). Replay reinstalls handlers by matching definitions, not instances.
+
+3. **Pure fiber deduplication** (future optimization): If two fibers spawn identical pure computations (same function hash, same captured value hashes, `/ pure` effect row), the scheduler MAY deduplicate them (compute once, share result). This connects to Proposal #3 (automatic memoization).
+
+### Cross-Cutting: Generation Snapshot Cost Model
+
+**Decision**: Generation snapshots during fiber context switching use bulk region-level comparison, not per-reference comparison.
+
+**Specification**: Each fiber maintains a `RegionSnapshot = Vec<(RegionId, Generation)>` captured at suspend, validated at resume. The snapshot tracks only mutable Tier 1 regions:
+
+| Tier | In snapshot? | Reason |
+|------|-------------|--------|
+| Tier 0 (stack) | No | Stack frames are fiber-local by construction |
+| Tier 1 (region), mutable access | Yes | May be invalidated during suspension |
+| Tier 1 (region), Frozen access | No | Immutable — generation counter never advances |
+| Tier 2/3 (persistent) | No | Uses refcounting, not generations |
+
+**Cost**: O(R_mutable) where R_mutable is the count of mutable Tier 1 regions the fiber holds references into. For the vast majority of fibers, R_mutable = 1 (the fiber's own region). This is effectively O(1). Validation is a single integer comparison per snapshot entry.
+
+### Cross-Cutting: Fairness, Fiber-Local Storage, Priority Inversion
+
+**Fairness and starvation**: The default deep `Fiber` handler provides cooperative fairness — fibers yield at effect operation boundaries; the scheduler uses round-robin among ready fibers. For pure computation loops that perform no effects, the compiler inserts safepoints at loop back-edges and function prologues (matching Go 1.14's approach). Safepoint cost is one instruction per site (~1 cycle, branch predicted not-taken):
+
+```llvm
+; At each safepoint
+%preempt = load i8, ptr %fiber.preempt_flag
+%should_yield = icmp ne i8 %preempt, 0
+br i1 %should_yield, label %yield_point, label %continue
+```
+
+The `#[unchecked(preemption)]` attribute (extending RFC-S) disables safepoint insertion in performance-critical code, with the programmer accepting starvation risk. This is chosen over signal-based preemption (SIGALRM) because safepoints are more predictable and don't interact with FFI signal handlers.
+
+**Fiber-local storage**: Modeled as a `State` effect scoped to the fiber's handler lifetime:
+
+```blood
+deep handler FiberLocal<T> for State<T> {
+    let value: T
+
+    return(x) { x }
+    op get() { resume(value) }
+    op set(new_val) { value = new_val; resume(()) }
+}
+```
+
+The `State<T>` operations (`get`, `set`) are tail-resumptive, so ADR-028's optimization applies — fiber-local access compiles to a direct memory read with zero effect dispatch overhead. This is both principled (visible in types as `/ {State<Config>}`) and zero-cost.
+
+**Priority inversion**: Priority inheritance is the default policy in the standard scheduler handler — when a high-priority fiber joins a low-priority fiber's result, the low-priority fiber inherits the higher priority. Priority ceiling for linear values (the resource carries a priority ceiling as a type-level property) is available for real-time handlers. Both are handler implementation choices, not language-level changes. These connect to Proposal #1 (WCET analysis) for safety-critical domains.
+
+### Grammar Impact
+
+| Sub-decision | Grammar Change? | Details |
+|-------------|----------------|---------|
+| 1. Structured concurrency | No | Falls from effect handler semantics |
+| 2. Cancellation | No | `Cancel` defined in stdlib |
+| 3. Cancellation safety | No | Falls from regions + linear types |
+| 4. Async drop / handler finalization | **Yes** | `FinallyClause` in handler syntax |
+| 5. Send/Sync | No | Auto-derived traits |
+| 6. Streams | No | Effect composition |
+| 7. Runtime vs library | No | Architectural principle |
+| 8. Fiber ↔ OS thread | No | `spawn_blocking` is a Fiber operation |
+
+**One grammar change**: `FinallyClause ::= 'finally' Block` added to `HandlerBody`. Requires GRAMMAR.md v0.6.0. `finally` is already reserved (§9.3) and moves to contextual keyword status.
+
+### Five-Pillar Leverage Summary
+
+| Pillar | Concurrency Role |
+|--------|-----------------|
+| **Effects** | `Fiber`, `Cancel`, `Yield` — concurrency as effect composition |
+| **Handlers** | Deep/shallow = supervision patterns; `finally` = cleanup; handler scope = task scope |
+| **Regions** | Fiber-local memory, O(1) bulk dealloc on cancellation, generation snapshots O(R_mutable) |
+| **Linear types** | Cancellation safety, resource cleanup enforcement, ownership transfer |
+| **Multiple dispatch** | Spawn strategy, channel transfer, observability specialization |
+| **Content addressing** | Handler composition hashing, deterministic replay, pure fiber deduplication |
+
+**Consequences**:
+- SPECIFICATION.md §4.6, §6 must be updated: `Async` → `Fiber`
+- GRAMMAR.md v0.6.0: `FinallyClause` production added to `HandlerBody`
+- CONCURRENCY.md v0.4.0: Updated with the cohesive model defined here
+- FORMAL_SEMANTICS.md: `finally` clause typing rules, non-cancellability rule
+- `finally` moves from reserved keyword (§9.3) to contextual keyword (§9.2)
+- Compiler-inserted safepoints at loop back-edges and function prologues (codegen requirement)
+- `#[unchecked(preemption)]` added to RFC-S's check list
+
+---
+
+## ADR-037: Compiler-as-a-Library — Content-Hash-Gated Query Architecture (F-07)
+
+**Status**: Accepted
+
+**Context**: The Design Space Audit (F-07) identified that Blood's self-hosted compiler is a monolithic pipeline (source in, binary out) that does not exploit the content-addressed compilation model for incremental re-analysis, partial program processing, or external tool integration (LSP, verification tools, AI oracles). The reference design literature warns that retrofitting query-based architecture for LSP support is "extremely expensive." This ADR specifies the target architecture before the compiler API boundaries solidify further.
+
+**Methodology**: Design-first (SPEC_WORK_PLAN.md §3). Research: Salsa framework (rust-analyzer), Roslyn red-green trees, rustc query system, Sixten query driver, Unison content-addressed model, matklad's "against query-based compilers" analysis (Feb 2026). All decisions reason from Blood's unique features, not from existing compiler implementation.
+
+### Blood's Unique Advantages
+
+Blood has three properties that fundamentally shape its compiler architecture strategy:
+
+1. **Content-addressed definitions (ADR-003)**: Every definition is identified by BLAKE3-256 hash of its canonicalized AST. This provides a stronger invalidation signal than rustc's post-execution fingerprints or Salsa's memoization — if the hash is unchanged, ALL downstream work can be skipped before any query executes.
+
+2. **Explicit effect signatures**: Effect rows are part of function signatures. This makes the "body changes don't cascade" invariant structural: changing a function body without changing its signature (including effect row) cannot invalidate callers' type information. This is the critical firewall that makes per-definition incrementality effective.
+
+3. **Three-level cache model (CONTENT_ADDRESSED.md §4.6)**: Generic definition hash → monomorphized instance hash → native artifact hash. This hierarchy maps directly to query tiers.
+
+### Design Decision: Content-Hash Gating as Primary Incrementality Mechanism
+
+**Decision**: Blood's compiler architecture uses BLAKE3 content hashing as its primary incrementality mechanism, with a query-based architecture as an additive optimization for IDE scenarios. This is the inverse of rustc's approach (query engine primary, fingerprints secondary) and is more aligned with Unison's model.
+
+**Key principle**: Content hash is computed BEFORE query execution (from canonicalized AST). If unchanged, skip all downstream work entirely. In rustc, fingerprints are computed AFTER query execution as a change-detection proxy. Blood's approach is strictly cheaper — it avoids even invoking the query engine for unchanged definitions.
+
+### Query Granularity: Per-Definition
+
+**Decision**: Per-definition (keyed by DefId) is the natural query granularity. Per-file is too coarse (a single changed function recompiles the entire file). Per-expression is too fine (excessive overhead, low benefit). Per-definition aligns with content-addressed hashing (each definition has its own BLAKE3 hash).
+
+Per-file serves as the coarse-grained input layer (source text, parsing). Per-definition handles all semantic analysis. Whole-program queries handle name resolution, dispatch tables, and linking.
+
+### Natural Query Boundaries
+
+**Tier 1: Per-File (input layer)**
+
+| Query | Input | Output |
+|-------|-------|--------|
+| `source_text(FileId)` | File path | String (Salsa input) |
+| `parsed_file(FileId)` | Source text | AST + diagnostics |
+| `item_tree(FileId)` | Parsed AST | Condensed signature summaries (strips bodies) |
+
+**Tier 2: Per-Definition (semantic layer, keyed by DefId)**
+
+| Query | Input | Output | Notes |
+|-------|-------|--------|-------|
+| `content_hash(DefId)` | Canonicalized AST | BLAKE3Hash | **Early-exit gate** |
+| `hir_of(DefId)` | AST item | HIR item | AST-to-HIR lowering |
+| `fn_sig(DefId)` | HIR function | FnSig (params, return type, effect row) | Signature extraction — the critical firewall |
+| `effects_of(DefId)` | HIR item | EffectRow | **Blood-specific** — effect annotations |
+| `type_of(DefId)` | HIR item + resolved names | Type | Type inference for items |
+| `typeck(DefId)` | HIR body + types of dependencies | TypeckResults | Full body type checking |
+| `mir_built(DefId)` | Typechecked HIR body | MIR Body | MIR construction |
+| `optimized_mir(DefId)` | Built MIR | Optimized MIR | MIR optimization passes |
+| `codegen_of(DefId)` | Optimized MIR | LLVM IR fragment | Per-definition codegen |
+
+**Tier 3: Whole-Program**
+
+| Query | Input | Output |
+|-------|-------|--------|
+| `resolve_names(ModuleId)` | Item trees of all files in module | Resolved names/imports |
+| `dispatch_table(TraitId)` | All impl blocks for trait | Dispatch table (ADR-005) |
+| `link(CrateId)` | All codegen results | Final binary |
+
+### The Signature/Body Firewall
+
+**The critical architectural invariant**: Changing a function body NEVER invalidates other functions' type-level information, provided the signature (including effect row) is unchanged.
+
+This is enforced by the query dependency structure:
+- `fn_sig(def)` depends only on the definition's HIR signature, not its body
+- `typeck(caller)` depends on `fn_sig(callee)`, not `typeck(callee)` or `mir_built(callee)`
+- If `content_hash(def)` changes but `fn_sig(def)` produces the same result (backdating), no caller re-checks
+
+Blood's explicit effect rows strengthen this firewall: effect signatures are part of `fn_sig`, so effect changes cascade correctly, but body-only changes that don't alter the effect row are isolated.
+
+### Cache Integration with CONTENT_ADDRESSED.md
+
+The three-level cache model (§4.6) maps to query tiers:
+
+| Cache Level | Query Tier | Cache Key | Invalidation |
+|-------------|-----------|-----------|-------------|
+| L1: Generic definition hash | Tier 2 | `BLAKE3(canonicalize(generic_def))` | Source change to this definition |
+| L2: Monomorphized instance hash | Tier 2 (mono) | `BLAKE3(generic_hash ‖ type_arg_hashes)` | Definition or type argument change |
+| L3: Native artifact hash | Tier 2 (codegen) | `BLAKE3(instance_hash ‖ target ‖ opt_level)` | Instance, target, or optimization change |
+
+**Content-hash gating algorithm**:
+```
+query(def_id):
+    current_hash = content_hash(def_id)
+    cached_hash = cache.load_hash(def_id)
+    if current_hash == cached_hash:
+        return cache.load_result(def_id)  // Skip ALL downstream work
+    else:
+        result = execute_query(def_id)
+        cache.store(def_id, current_hash, result)
+        return result
+```
+
+### API Boundaries for External Consumers
+
+| Consumer | Queries Used | Access Pattern |
+|----------|-------------|---------------|
+| **LSP** (future) | `type_of`, `fn_sig`, `effects_of`, `diagnostics_of`, `completions_at` | On-demand, per-keystroke |
+| **Verification tools** (Proposal #18) | `verification_result(DefId)` cached by content hash | Batch, skips verified definitions |
+| **AI oracle** (Proposal #16) | `fn_sig`, `effects_of`, `item_tree` (compact signatures) | Read-only, context generation |
+| **Build system** | `codegen_of`, `link` | Batch, incremental |
+| **Dependency tools** (Proposal #22) | `resolve_names`, `dispatch_table`, reverse dependencies | Read-only, analysis |
+
+### Phased Adoption Strategy
+
+The architecture can be adopted incrementally without a full compiler rewrite:
+
+**Stage 0 (Preparation)**: Ensure DefId is the universal key, signature extraction is separate from body processing, content hashing works per-definition, and output is deterministic. Blood's spec already requires all of these.
+
+**Stage 1 (Projection queries)**: Add fine-grained caching on top of the existing monolithic pipeline. The pipeline still runs entirely, but projection queries extract per-definition results and compare content hashes. This creates change propagation firewalls without a query engine. *This is the minimum viable architecture.*
+
+**Stage 2 (Content-hash gating)**: Use BLAKE3 hashes as an early-exit mechanism. Before running any query for a definition, check if its content hash is unchanged — if so, skip the entire pipeline for that definition. This gives most of the incremental compilation benefit with minimal architectural disruption.
+
+**Stage 3 (Demand-driven type checking)**: Make `type_of` and `typeck` real queries that compute on demand. Changing a function body no longer re-type-checks all other functions. Requires refactoring the type checker from "process all items" to "process one item, calling queries for dependencies."
+
+**Stage 4 (Demand-driven MIR/codegen)**: Make `mir_built`, `optimized_mir`, and `codegen_of` per-definition queries. Each depends only on the queries of functions it references.
+
+**Stage 5 (Full query engine)**: Replace ad-hoc caching with a proper query engine (Salsa-like or custom). Add the red-green algorithm with backdating, durability tracking, and disk persistence.
+
+**Stage 6 (IDE integration)**: Expose the query engine as a library. The compiler becomes a service that accepts file changes and answers queries. Cancellation support for in-progress queries on new edits.
+
+**Recommendation**: Stages 0-2 should be the near-term target. They require no query engine and can be implemented within the existing compiler structure. Stages 3-6 should be deferred until IDE support becomes a priority. Blood's content-addressed design means Stages 0-2 provide proportionally MORE benefit than in other languages because the content hash is a complete invalidation signal.
+
+### The matklad Counter-Argument
+
+matklad (creator of rust-analyzer) argues against full query-based compilers (Feb 2026), recommending "grug-style" map-reduce compilation instead: parse files independently, extract signature summaries, evaluate signatures sequentially, parallelize body type-checking. This works when body changes cannot introduce type errors elsewhere.
+
+**Blood's position**: Blood's explicit effect signatures and content-addressed definitions make the "body changes don't cascade" invariant structural. The grug-style approach is viable for Blood and could serve as an alternative to Stages 3-5. The architectural note does not commit to Salsa — it commits to the query boundaries and API surfaces, which are compatible with either approach.
+
+**Consequences**:
+- Compiler internal APIs should be organized around the query boundaries defined above
+- The signature/body firewall must be maintained as an architectural invariant
+- `effects_of(DefId)` is a Blood-specific query that participates in the dependency graph
+- Content-hash gating (Stage 2) should be prioritized as the highest-ROI optimization
+- CCV clusters (DEVELOPMENT.md) should align with query tiers where practical
+- Proposals #16 (constrained decoding), #18 (verification cache), #19 (compact signatures), #22 (dependency graph API) are all enabled by this architecture
+
+---
+
 ## Decision Status Legend
 
 - **Proposed**: Under discussion
@@ -1367,4 +1845,4 @@ If compile times or binary size become problematic, Blood may adopt **polymorphi
 
 ---
 
-*Last updated: 2026-02-28*
+*Last updated: 2026-02-28 (ADR-036, ADR-037 added)*
