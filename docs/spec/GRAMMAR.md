@@ -33,6 +33,15 @@
 - Added string formatting design note (via `format!` macro, no interpolation syntax)
 - Updated CLAUDE.md to reflect `::` removal
 - Added comparison chaining design note
+- Updated `TypeDecl` to allow optional `= Type` and bounds for abstract associated types in traits
+- Added `BridgeUnion`, `BridgeCallback`, `BridgeLink` productions to bridge grammar
+- Added callable types design note (effects + linear types replace Fn/FnMut/FnOnce)
+- Added labeled blocks design note (loops only; effects handle complex control flow)
+- Added `T: 'a` lifetime bounds design note (regions replace Rust-style lifetime bounds)
+- Added trait object safety design note with fundamental ABI constraints
+- Added multiple dispatch cross-reference to DISPATCH.md
+- Added cast semantics table documenting all allowed `as` conversions
+- Clarified `union` keyword as bridge-only (Blood uses enums for tagged unions)
 
 **Revision 0.3.0 Changes**:
 - Added cross-references to FORMAL_SEMANTICS.md for effect syntax (§4.2, §8)
@@ -314,8 +323,29 @@ WherePredicate ::= Type ':' TypeBound
 ### 3.3 Type Declarations
 
 ```ebnf
-TypeDecl ::= Visibility? 'type' Ident TypeParams? '=' Type ';'
+TypeDecl ::= Visibility? 'type' Ident TypeParams? (':' TypeBound)? ('=' Type)? ';'
+```
 
+**Associated type semantics:** In **trait declarations**, `= Type` is optional — omitting it declares an abstract associated type that implementors must provide. Bounds constrain what the implementor may choose. In **impl blocks** and **top-level type aliases**, `= Type` is required.
+
+```blood
+trait Iterator {
+    type Item;                           // abstract — implementors provide concrete type
+    type Error: Display;                 // abstract with bound
+    type Hint = usize;                   // default (implementor may override)
+    fn next(&mut self) -> Option<Self.Item>;
+}
+
+impl Iterator for MyIter {
+    type Item = i32;                     // required — fills the abstract slot
+    type Error = MyError;                // must satisfy: MyError: Display
+    fn next(&mut self) -> Option<i32> { ... }
+}
+
+type Alias<T> = Vec<T>;                 // top-level: '= Type' always required
+```
+
+```ebnf
 StructDecl ::= Visibility? 'struct' Ident TypeParams? StructBody
 StructBody ::= '{' StructFields '}' | '(' TupleFields ')' ';' | ';'
 StructFields ::= (StructField (',' StructField)* ','?)?
@@ -385,6 +415,8 @@ ImplBlock ::= 'impl' TypeParams? Type ('for' Type)? WhereClause? '{' ImplItem* '
 ImplItem ::= FnDecl | TypeDecl | ConstDecl
 ```
 
+> **Design note:** When multiple `impl` blocks define methods with the same name for overlapping types, Blood resolves calls via **multiple dispatch** — the most specific applicable method is selected at compile time. Type stability is enforced: a method's return type must be fully determined by its parameter types. Ambiguity is a compile error. See [DISPATCH.md](./DISPATCH.md) for the full dispatch algorithm (applicability, specificity, ambiguity detection).
+
 ### 3.6 Constants and Statics
 
 ```ebnf
@@ -414,12 +446,18 @@ mod utils {         // inline module
 ```ebnf
 BridgeDecl ::= 'bridge' StringLiteral Ident '{' BridgeItem* '}'
 BridgeItem ::= BridgeFn | BridgeConst | BridgeTypeDecl | BridgeStruct
+             | BridgeUnion | BridgeCallback | BridgeLink
 
 BridgeFn    ::= OuterAttribute* 'fn' Ident '(' BridgeParams ')' ('->' Type)? ';'
 BridgeConst ::= 'const' Ident ':' Type '=' Literal ';'
 BridgeTypeDecl ::= 'type' Ident ';'
                  | 'type' Ident '=' Type ';'
 BridgeStruct ::= OuterAttribute* 'struct' Ident '{' StructFields '}'
+BridgeUnion  ::= OuterAttribute* 'union' Ident '{' StructFields '}'
+BridgeCallback ::= 'callback' Ident '=' 'fn' '(' BridgeParams ')' ('->' Type)? ';'
+BridgeLink   ::= '#[link(' LinkSpec ')]'
+LinkSpec     ::= 'name' '=' StringLiteral (',' LinkAttr)*
+LinkAttr     ::= Ident '=' Literal
 
 BridgeParams ::= (BridgeParam (',' BridgeParam)* (',' '...')?)? (* variadic via ... *)
 BridgeParam  ::= Ident ':' Type
@@ -427,9 +465,12 @@ BridgeParam  ::= Ident ':' Type
 
 ```blood
 bridge "C" libc {
+    #[link(name = "c")]
+
     fn malloc(size: usize) -> *mut u8;
     fn free(ptr: *mut u8);
     fn printf(format: *const u8, ...) -> i32;    // variadic
+    fn qsort(base: *mut u8, nmemb: usize, size: usize, cmp: compar_fn) -> ();
 
     const EOF: i32 = -1;
 
@@ -440,10 +481,21 @@ bridge "C" libc {
         tv_sec: i64,
         tv_nsec: i64,
     }
+
+    #[repr(C)]
+    union Value {                                 // C-style untagged union (bridge only)
+        i: i32,
+        f: f32,
+        p: *mut u8,
+    }
+
+    callback compar_fn = fn(a: *const u8, b: *const u8) -> i32;
 }
 ```
 
-See [FFI.md](./FFI.md) for full FFI specification including callbacks, safety annotations, and ABI details.
+> **Design note (unions):** Untagged unions (`union`) are available **only inside `bridge` blocks** for C interop. Blood-native code uses enums (tagged unions) which provide type safety — the compiler tracks which variant is active. This follows from Blood's principle: *"We will not ship unsafe abstractions."* If you need variant-typed data in Blood, use an enum.
+
+See [FFI.md](./FFI.md) for the full FFI specification including callbacks, link attributes, safety annotations, ownership transfer semantics, and ABI details.
 
 ### 3.9 Macro Declarations
 
@@ -491,7 +543,17 @@ SliceType ::= '[' Type ']'
 TupleType ::= '(' ')' | '(' Type ',' (Type ',')* Type? ')'
 
 FunctionType ::= 'fn' '(' (Type (',' Type)*)? ')' '->' Type ('/' EffectRow)?
+```
 
+> **Design note (callable types):** Blood does **not** have `Fn(T) -> U`, `FnMut(T) -> U`, or `FnOnce(T) -> U` trait types. In Rust, these three traits exist to track closure capture semantics (shared borrow, mutable borrow, move). Blood handles these concerns through orthogonal mechanisms that already exist in the language:
+>
+> - **Mutation tracking** → effect signatures: a closure that mutates captured state carries the appropriate effect (e.g., `/ {State<T>}`)
+> - **One-shot semantics** → linear types (ADR-006): a closure capturing linear values can only be called once — the type system enforces this without a separate `FnOnce` trait
+> - **Effect polymorphism** → row polymorphism (ADR-009): functions can accept callables with varying effects via `/ {E | ε}`
+>
+> The `fn(T) -> U / Effects` type is Blood's universal callable type. Whether the underlying value is a bare function pointer or a closure with captured environment is a representation detail managed by the compiler, not exposed in the type system.
+
+```ebnf
 RecordType ::= '{' (RecordField (',' RecordField)*)? ('|' TypeVar)? '}'
 RecordField ::= Ident ':' Type
 
@@ -519,7 +581,15 @@ fn draw_all(shapes: &[&dyn Drawable]) / {IO} {
 }
 ```
 
-> **Design note:** `impl Trait` in argument position is **rejected** — Blood's multiple dispatch already subsumes this use case. Return-position opaque types are **deferred** until real-world pain points are documented; if eventually needed, `opaque` type aliases are preferred over `impl Trait` syntax. See `docs/design/IMPL_TRAIT.md` for the full evaluation.
+> **Design note (`impl Trait`):** `impl Trait` in argument position is **rejected** — Blood's multiple dispatch already subsumes this use case. Return-position opaque types are **deferred** until real-world pain points are documented; if eventually needed, `opaque` type aliases are preferred over `impl Trait` syntax. See `docs/design/IMPL_TRAIT.md` for the full evaluation.
+
+> **Design note (trait object safety):** Not every trait can be used as `dyn Trait`. A trait is **object-safe** (usable as a trait object) when all its methods can be represented as function pointers in a virtual function table. Methods that **prevent** object safety:
+>
+> - **Generic type parameters on methods** — each instantiation is a distinct function, requiring an infinite vtable
+> - **`Self` by value as parameter or return type** — the caller must know the concrete size of `Self`, which is erased behind `dyn`
+> - **Associated types without bounds used in method signatures** — the caller cannot determine concrete types
+>
+> These are fundamental ABI constraints, not arbitrary restrictions. Blood's multiple dispatch operates at compile time on concrete types and is orthogonal to `dyn Trait` — type stability enforcement (see [DISPATCH.md](./DISPATCH.md)) applies to static dispatch resolution, not to vtable construction. See [DISPATCH.md §6](./DISPATCH.md) for vtable layout and dynamic dispatch semantics.
 
 ### 4.2 Effect Types
 
@@ -579,6 +649,8 @@ takes_io(io_fn)    // OK: {IO} <: {IO}
 ```ebnf
 Lifetime ::= LifetimeIdent | '\'static' | '\'_'
 ```
+
+> **Design note (`T: 'a` bounds):** Blood does **not** support Rust-style `T: 'a` lifetime bounds (meaning "type T outlives lifetime 'a"). Blood's memory model uses **generational references** (ADR-001) and a **tiered region system** (ADR-008: Stack → Region → Persistent) instead of Rust's borrow checker with parametric lifetimes. Region membership and liveness are expressed through the region system natively, not through lifetime bounds on type parameters. The `WherePredicate` grammar supports `Lifetime ':' Lifetime` (region outlives region) but not `Type ':' Lifetime`. See [MEMORY_MODEL.md](./MEMORY_MODEL.md) for Blood's memory safety model.
 
 ---
 
@@ -660,6 +732,8 @@ WhileLetExpr ::= Label? 'while' 'let' Pattern '=' Expr Block
 
 Label ::= LifetimeIdent ':'
 ```
+
+> **Design note (labeled blocks):** Labels apply **only to loops**, not to bare blocks. Blood does not support `'label: { break 'label value }`. In Rust, labeled blocks serve as a workaround for early-exit from complex block expressions. Blood's algebraic effect system (ADR-002) provides a cleaner mechanism for structured non-local control flow — use an effect handler instead of ad-hoc block breaking. This eliminates unnecessary complexity without reducing expressiveness.
 
 ### 5.3 Effect Expressions
 
@@ -775,7 +849,23 @@ UnaryExpr ::= UnaryOp Expr
 BinaryExpr ::= Expr BinaryOp Expr
 
 CastExpr ::= Expr 'as' Type
+```
 
+**Cast semantics:** The `as` operator performs **explicit type conversions**. Blood follows the principle of *no hidden costs* — every cast has well-defined behavior:
+
+| Cast Category | Examples | Semantics |
+|---------------|----------|-----------|
+| Integer widening | `i32 as i64` | Zero-extend (unsigned) or sign-extend (signed); lossless |
+| Integer narrowing | `i64 as i32` | Truncate to target width; may lose data |
+| Float ↔ integer | `f64 as i64`, `i32 as f64` | Truncate toward zero (float→int), nearest representable (int→float) |
+| Float widening/narrowing | `f32 as f64`, `f64 as f32` | Precision change; may lose precision on narrowing |
+| Integer sign reinterpretation | `i32 as u32` | Bit pattern preserved; reinterprets sign |
+| Pointer casts | `*const T as *mut T` | Requires `@unsafe`; changes pointer mutability |
+| Reference to raw pointer | `&T as *const T` | Safe; creates a raw pointer from a reference |
+
+Casts not in this table (e.g., between unrelated struct types, `bool as struct`) are **compile errors**. Pointer-to-integer and integer-to-pointer casts require `@unsafe`. This follows Blood's safety hierarchy: safe conversions are available freely, conversions with data loss are explicit via `as`, conversions that compromise safety require `@unsafe`.
+
+```ebnf
 ContainmentExpr ::= Expr 'in' Expr
 
 TryExpr ::= Expr '?'
@@ -1082,7 +1172,7 @@ bridge                     (* FFI declarations *)
 with handle                (* handler expressions *)
 affine                     (* ownership type qualifier *)
 default                    (* impl blocks, default expressions *)
-union                      (* type declarations *)
+union                      (* bridge FFI blocks only — see §3.8; Blood uses enums for tagged unions *)
 'static '_                 (* lifetimes *)
 ```
 
