@@ -364,8 +364,20 @@ impl<'hir> LinearityChecker<'hir> {
                 for capture in captures {
                     if let Some(usage) = self.locals.get(&capture.local_id) {
                         if usage.is_linear {
-                            // Linear value captured by closure - this is a use
-                            self.record_use(capture.local_id, expr.span);
+                            if capture.by_move {
+                                // Linear value captured by-move — this is a valid use
+                                self.record_use(capture.local_id, expr.span);
+                            } else {
+                                // [Linear-No-Ref] / [Linear-No-Mut]: linear value captured
+                                // by reference violates linearity — references allow aliasing
+                                self.errors.push(TypeError::new(
+                                    TypeErrorKind::LinearCaptureByRef {
+                                        name: usage.name.clone(),
+                                        ty: usage.ty.clone(),
+                                    },
+                                    expr.span,
+                                ));
+                            }
                         }
                     }
                 }

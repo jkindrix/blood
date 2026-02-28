@@ -222,12 +222,29 @@ impl<'a> TypeContext<'a> {
             self.handled_effects.pop();
         }
 
+        // [Linear-Closure]: If any captured variable has a linear type and is
+        // captured by-move, the closure itself becomes linear (one-shot).
+        let has_linear_capture = captures.iter().any(|cap| {
+            if !cap.by_move { return false; }
+            outer_locals.iter().any(|local| {
+                local.id == cap.local_id && matches!(
+                    self.unifier.resolve(&local.ty).kind(),
+                    hir::TypeKind::Ownership {
+                        qualifier: hir::ty::OwnershipQualifier::Linear, ..
+                    }
+                )
+            })
+        });
+
         // Restore outer context
         self.locals = outer_locals;
         self.return_type = outer_return_type;
 
         // Build the closure type: Fn(params) -> ret
-        let closure_ty = Type::function(resolved_param_types, resolved_return_ty);
+        let mut closure_ty = Type::function(resolved_param_types, resolved_return_ty);
+        if has_linear_capture {
+            closure_ty = Type::linear(closure_ty);
+        }
 
         Ok(hir::Expr::new(
             hir::ExprKind::Closure {

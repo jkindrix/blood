@@ -1,0 +1,12 @@
+// COMPILE_FAIL: linear capture by reference
+// Test: capturing a linear value by reference in a closure should fail (E0806)
+// [Linear-No-Ref] from FORMAL_SEMANTICS.md §5.7.4
+
+fn main() -> i32 {
+    let x: linear i32 = 42;
+    // Non-move closure captures `x` by reference.
+    // This violates [Linear-No-Ref]: linear values cannot be aliased.
+    let f = || -> linear i32 { x };
+    let y: linear i32 = f();
+    0
+}

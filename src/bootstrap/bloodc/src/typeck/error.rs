@@ -326,6 +326,12 @@ impl TypeError {
                     "linear value `{name}: {ty}` consumed in {consumed_count} of {branch_count} branches. Linear values must be consumed in all branches or none."
                 ),
             ),
+            TypeErrorKind::LinearCaptureByRef { name, ty } => (
+                "E0806",
+                format!(
+                    "linear value `{name}: {ty}` cannot be captured by reference. Use `move` to capture by value."
+                ),
+            ),
 
             // FFI errors (E05xx)
             TypeErrorKind::FfiUnsafeType { ty, reason, context } => (
@@ -671,6 +677,12 @@ pub enum TypeErrorKind {
         ty: Type,
         consumed_count: usize,
         branch_count: usize,
+    },
+    /// Linear/affine value captured by reference in a closure.
+    /// Linear values can only be captured by-move (with `move` keyword).
+    LinearCaptureByRef {
+        name: String,
+        ty: Type,
     },
 
     // FFI errors (E05xx)
