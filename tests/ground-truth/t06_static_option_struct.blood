@@ -1,7 +1,7 @@
 // Test: static mutable item with Option<Struct> type
 // This tests that static items with complex types work correctly:
-// 1. Static can be initialized with Option::None
-// 2. Static can be assigned Option::Some with struct payload
+// 1. Static can be initialized with Option.None
+// 2. Static can be assigned Option.Some with struct payload
 // 3. Static can be read and matched against
 // EXPECT: 100
 
@@ -16,19 +16,19 @@ impl IntHolder {
     }
 }
 
-static mut GLOBAL_HOLDER: Option<IntHolder> = Option::None;
+static mut GLOBAL_HOLDER: Option<IntHolder> = Option.None;
 
 fn init_global() {
     @unsafe {
-        GLOBAL_HOLDER = Option::Some(IntHolder::new(42));
+        GLOBAL_HOLDER = Option.Some(IntHolder.new(42));
     }
 }
 
 fn get_extra() -> i64 {
     @unsafe {
         match GLOBAL_HOLDER {
-            Option::Some(ref h) => h.extra,
-            Option::None => -1,
+            Option.Some(ref h) => h.extra,
+            Option.None => -1,
         }
     }
 }
@@ -37,10 +37,10 @@ fn main() -> i32 {
     // Before init, should be None
     @unsafe {
         match GLOBAL_HOLDER {
-            Option::Some(_) => {
+            Option.Some(_) => {
                 println_int(-100);  // Should not reach here
             }
-            Option::None => {
+            Option.None => {
                 // Expected path before init
             }
         }

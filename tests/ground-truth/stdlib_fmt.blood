@@ -1,1 +1,176 @@
-../../stdlib/core/fmt.blood
+// Blood Standard Library - String Formatting
+//
+// Provides functions for converting integers to string representations.
+// Includes both push variants (append to existing String) and format
+// variants (return new String).
+//
+// These are concrete, non-generic implementations that work within Blood's
+// current language capabilities. A trait-based Display/Debug system will
+// be added once closures and associated types are available.
+
+// ============================================================
+// Push variants — append decimal/hex digits to a &mut String
+// ============================================================
+
+/// Pushes a u32 as decimal digits into a string.
+pub fn push_u32(s: &mut String, val: u32) {
+    if val == 0 {
+        s.push('0');
+        return;
+    }
+    let mut digits: Vec<u8> = Vec.new();
+    let mut n = val;
+    while n > 0 {
+        let digit = (n % 10) as u8;
+        digits.push(digit + 48);
+        n = n / 10;
+    }
+    let mut i = digits.len();
+    while i > 0 {
+        i = i - 1;
+        s.push(digits[i] as char);
+    }
+}
+
+/// Pushes a u64 as decimal digits into a string.
+pub fn push_u64(s: &mut String, val: u64) {
+    if val == 0 {
+        s.push('0');
+        return;
+    }
+    let mut digits: Vec<u8> = Vec.new();
+    let mut n = val;
+    while n > 0 {
+        let digit = (n % 10) as u8;
+        digits.push(digit + 48);
+        n = n / 10;
+    }
+    let mut i = digits.len();
+    while i > 0 {
+        i = i - 1;
+        s.push(digits[i] as char);
+    }
+}
+
+/// Pushes a usize as decimal digits into a string.
+pub fn push_usize(s: &mut String, val: usize) {
+    if val == 0 {
+        s.push('0');
+        return;
+    }
+    let mut digits: Vec<u8> = Vec.new();
+    let mut n = val;
+    while n > 0 {
+        let digit = (n % 10) as u8;
+        digits.push(digit + 48);
+        n = n / 10;
+    }
+    let mut i = digits.len();
+    while i > 0 {
+        i = i - 1;
+        s.push(digits[i] as char);
+    }
+}
+
+/// Pushes an i32 as decimal digits into a string (with sign for negatives).
+pub fn push_i32(s: &mut String, val: i32) {
+    if val < 0 {
+        s.push('-');
+        push_u32(s, (0i32 - val) as u32);
+    } else {
+        push_u32(s, val as u32);
+    }
+}
+
+/// Pushes an i64 as decimal digits into a string (with sign for negatives).
+pub fn push_i64(s: &mut String, val: i64) {
+    if val < 0 {
+        s.push('-');
+        push_u64(s, (0i64 - val) as u64);
+    } else {
+        push_u64(s, val as u64);
+    }
+}
+
+// ============================================================
+// Push hex variants — append hexadecimal digits to a &mut String
+// ============================================================
+
+/// Pushes a u64 as hexadecimal digits into a string (lowercase, no prefix).
+pub fn push_hex_u64(s: &mut String, val: u64) {
+    if val == 0 {
+        s.push('0');
+        return;
+    }
+    let mut digits: Vec<u8> = Vec.new();
+    let mut n = val;
+    while n > 0 {
+        let digit = (n % 16) as u8;
+        if digit < 10 {
+            digits.push(digit + 48);
+        } else {
+            digits.push(digit - 10 + 97); // 'a'
+        }
+        n = n / 16;
+    }
+    let mut i = digits.len();
+    while i > 0 {
+        i = i - 1;
+        s.push(digits[i] as char);
+    }
+}
+
+/// Pushes a u8 as two-digit hex into a string (lowercase, zero-padded).
+pub fn push_hex_u8(s: &mut String, val: u8) {
+    let hi = val / 16;
+    let lo = val % 16;
+    if hi < 10 {
+        s.push((hi + 48) as char);
+    } else {
+        s.push((hi - 10 + 97) as char);
+    }
+    if lo < 10 {
+        s.push((lo + 48) as char);
+    } else {
+        s.push((lo - 10 + 97) as char);
+    }
+}
+
+// ============================================================
+// Format variants — return a new String
+// ============================================================
+
+/// Converts a u32 to its decimal string representation.
+pub fn format_u32(n: u32) -> String {
+    let mut result = String.new();
+    push_u32(&mut result, n);
+    result
+}
+
+/// Converts a u64 to its decimal string representation.
+pub fn format_u64(n: u64) -> String {
+    let mut result = String.new();
+    push_u64(&mut result, n);
+    result
+}
+
+/// Converts an i32 to its decimal string representation.
+pub fn format_i32(n: i32) -> String {
+    let mut result = String.new();
+    push_i32(&mut result, n);
+    result
+}
+
+/// Converts an i64 to its decimal string representation.
+pub fn format_i64(n: i64) -> String {
+    let mut result = String.new();
+    push_i64(&mut result, n);
+    result
+}
+
+/// Converts a usize to its decimal string representation.
+pub fn format_usize(n: usize) -> String {
+    let mut result = String.new();
+    push_usize(&mut result, n);
+    result
+}

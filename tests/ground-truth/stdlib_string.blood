@@ -1,1 +1,329 @@
-../../stdlib/string.blood
+// Blood Standard Library - String Utilities
+//
+// Free functions for string manipulation using byte-level operations.
+// All functions operate on &String or &str and produce new Strings.
+
+/// Extracts a substring from a String by byte range [start, end).
+pub fn substring(s: &String, start: usize, end: usize) -> String {
+    let bytes = s.as_bytes();
+    let mut result = String.new();
+    let actual_end = if end > bytes.len() { bytes.len() } else { end };
+    let mut i = start;
+    while i < actual_end {
+        result.push(bytes[i] as char);
+        i += 1;
+    }
+    result
+}
+
+/// Extracts a substring from a &str by byte range [start, end).
+pub fn substring_str(s: &str, start: usize, end: usize) -> String {
+    let bytes = s.as_bytes();
+    let mut result = String.new();
+    let actual_end = if end > bytes.len() { bytes.len() } else { end };
+    let mut i = start;
+    while i < actual_end {
+        result.push(bytes[i] as char);
+        i += 1;
+    }
+    result
+}
+
+/// Strips leading and trailing whitespace (spaces and tabs).
+pub fn trim(s: &String) -> String {
+    let bytes = s.as_bytes();
+    let len = bytes.len();
+    let mut start: usize = 0;
+    let mut end: usize = len;
+
+    while start < len && (bytes[start] == 32 || bytes[start] == 9 || bytes[start] == 10 || bytes[start] == 13) {
+        start += 1;
+    }
+    while end > start && (bytes[end - 1] == 32 || bytes[end - 1] == 9 || bytes[end - 1] == 10 || bytes[end - 1] == 13) {
+        end -= 1;
+    }
+
+    substring(s, start, end)
+}
+
+/// Strips leading whitespace (spaces, tabs, newlines, carriage returns).
+pub fn trim_start(s: &String) -> String {
+    let bytes = s.as_bytes();
+    let len = bytes.len();
+    let mut start: usize = 0;
+
+    while start < len && (bytes[start] == 32 || bytes[start] == 9 || bytes[start] == 10 || bytes[start] == 13) {
+        start += 1;
+    }
+
+    substring(s, start, len)
+}
+
+/// Strips trailing whitespace (spaces, tabs, newlines, carriage returns).
+pub fn trim_end(s: &String) -> String {
+    let bytes = s.as_bytes();
+    let len = bytes.len();
+    let mut end: usize = len;
+
+    while end > 0 && (bytes[end - 1] == 32 || bytes[end - 1] == 9 || bytes[end - 1] == 10 || bytes[end - 1] == 13) {
+        end -= 1;
+    }
+
+    substring(s, 0, end)
+}
+
+/// Returns true if haystack contains needle as a substring.
+pub fn contains(haystack: &String, needle: &String) -> bool {
+    match index_of(haystack, needle) {
+        Option.Some(_) => true,
+        Option.None => false,
+    }
+}
+
+/// Returns true if s starts with prefix.
+pub fn starts_with(s: &String, prefix: &String) -> bool {
+    let s_bytes = s.as_bytes();
+    let p_bytes = prefix.as_bytes();
+    let p_len = p_bytes.len();
+
+    if p_len > s_bytes.len() {
+        return false;
+    }
+
+    for i in 0usize..p_len {
+        if s_bytes[i] != p_bytes[i] {
+            return false;
+        }
+    }
+    true
+}
+
+/// Returns true if s ends with suffix.
+pub fn ends_with(s: &String, suffix: &String) -> bool {
+    let s_bytes = s.as_bytes();
+    let suf_bytes = suffix.as_bytes();
+    let s_len = s_bytes.len();
+    let suf_len = suf_bytes.len();
+
+    if suf_len > s_len {
+        return false;
+    }
+
+    let offset = s_len - suf_len;
+    for i in 0usize..suf_len {
+        if s_bytes[offset + i] != suf_bytes[i] {
+            return false;
+        }
+    }
+    true
+}
+
+/// Returns the byte index of the first occurrence of needle in s, or None.
+pub fn index_of(s: &String, needle: &String) -> Option<usize> {
+    let s_bytes = s.as_bytes();
+    let n_bytes = needle.as_bytes();
+    let s_len = s_bytes.len();
+    let n_len = n_bytes.len();
+
+    if n_len == 0 {
+        let zero: usize = 0;
+        return Option.Some(zero);
+    }
+    if n_len > s_len {
+        return Option.None;
+    }
+
+    let mut i: usize = 0;
+    while i + n_len <= s_len {
+        let mut matches = true;
+        let mut j: usize = 0;
+        while j < n_len {
+            if s_bytes[i + j] != n_bytes[j] {
+                matches = false;
+                j = n_len; // break
+            }
+            j += 1;
+        }
+        if matches {
+            return Option.Some(i);
+        }
+        i += 1;
+    }
+    Option.None
+}
+
+/// Replaces all occurrences of `from` with `to` in the string.
+pub fn replace(s: &String, from: &String, to: &String) -> String {
+    let s_bytes = s.as_bytes();
+    let from_bytes = from.as_bytes();
+    let to_bytes = to.as_bytes();
+    let s_len = s_bytes.len();
+    let from_len = from_bytes.len();
+
+    if from_len == 0 || from_len > s_len {
+        return clone_string(s);
+    }
+
+    let mut result = String.new();
+    let mut i: usize = 0;
+
+    while i < s_len {
+        if i + from_len <= s_len {
+            let mut matches = true;
+            let mut j: usize = 0;
+            while j < from_len {
+                if s_bytes[i + j] != from_bytes[j] {
+                    matches = false;
+                    j = from_len; // break
+                }
+                j += 1;
+            }
+            if matches {
+                for k in 0usize..to_bytes.len() {
+                    result.push(to_bytes[k] as char);
+                }
+                i += from_len;
+                continue;
+            }
+        }
+        result.push(s_bytes[i] as char);
+        i += 1;
+    }
+
+    result
+}
+
+/// Splits a string by a single byte delimiter.
+pub fn split(s: &String, delim: u8) -> Vec<String> {
+    let mut parts: Vec<String> = Vec.new();
+    let bytes = s.as_bytes();
+    let len = bytes.len();
+    let mut start: usize = 0;
+
+    for i in 0usize..len {
+        if bytes[i] == delim {
+            let mut part = String.new();
+            let mut j: usize = start;
+            while j < i {
+                part.push(bytes[j] as char);
+                j += 1;
+            }
+            parts.push(part);
+            start = i + 1;
+        }
+    }
+
+    // Last segment
+    let mut part = String.new();
+    let mut j: usize = start;
+    while j < len {
+        part.push(bytes[j] as char);
+        j += 1;
+    }
+    parts.push(part);
+
+    parts
+}
+
+/// Splits a string by newline characters.
+pub fn split_lines(s: &String) -> Vec<String> {
+    let mut lines: Vec<String> = Vec.new();
+    let bytes = s.as_bytes();
+    let len = bytes.len();
+    let mut start: usize = 0;
+
+    for i in 0usize..len {
+        if bytes[i] == 10 { // '\n'
+            let mut line = String.new();
+            let mut j: usize = start;
+            while j < i {
+                line.push(bytes[j] as char);
+                j += 1;
+            }
+            lines.push(line);
+            start = i + 1;
+        }
+    }
+
+    // Handle last line (no trailing newline)
+    if start < len {
+        let mut line = String.new();
+        let mut j: usize = start;
+        while j < len {
+            line.push(bytes[j] as char);
+            j += 1;
+        }
+        lines.push(line);
+    }
+
+    lines
+}
+
+/// Converts ASCII lowercase letters to uppercase.
+pub fn to_uppercase(s: &String) -> String {
+    let bytes = s.as_bytes();
+    let len = bytes.len();
+    let mut result = String.new();
+
+    for i in 0usize..len {
+        let b = bytes[i];
+        if b >= 97 && b <= 122 {
+            // a-z → A-Z: subtract 32
+            result.push((b - 32) as char);
+        } else {
+            result.push(b as char);
+        }
+    }
+
+    result
+}
+
+/// Converts ASCII uppercase letters to lowercase.
+pub fn to_lowercase(s: &String) -> String {
+    let bytes = s.as_bytes();
+    let len = bytes.len();
+    let mut result = String.new();
+
+    for i in 0usize..len {
+        let b = bytes[i];
+        if b >= 65 && b <= 90 {
+            // A-Z → a-z: add 32
+            result.push((b + 32) as char);
+        } else {
+            result.push(b as char);
+        }
+    }
+
+    result
+}
+
+/// Repeats the string `count` times.
+pub fn repeat(s: &String, count: usize) -> String {
+    let mut result = String.new();
+    for i in 0usize..count {
+        result.push_str(s.as_str());
+    }
+    result
+}
+
+/// Compares a String with a &str for equality.
+pub fn str_equals(a: &String, b: &str) -> bool {
+    let a_bytes = a.as_bytes();
+    let b_bytes = b.as_bytes();
+    if a_bytes.len() != b_bytes.len() {
+        return false;
+    }
+    for i in 0usize..a_bytes.len() {
+        if a_bytes[i] != b_bytes[i] {
+            return false;
+        }
+    }
+    true
+}
+
+/// Creates a deep copy of a String.
+pub fn clone_string(s: &String) -> String {
+    let mut result = String.new();
+    result.push_str(s.as_str());
+    result
+}

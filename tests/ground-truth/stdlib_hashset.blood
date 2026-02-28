@@ -1,1 +1,421 @@
-../../stdlib/collections/hashset.blood
+// Blood Standard Library - HashSet
+//
+// Self-contained hash set implementations using open addressing with linear probing.
+// Provides O(1) average-case lookup, insertion, and deletion.
+//
+// This module provides monomorphic hash sets for common key types:
+// - HashSetU64: Set of u64 values
+// - HashSetU32: Set of u32 values
+//
+// Each implementation is fully self-contained with its own inline hash function
+// and bucket types. No cross-module imports are used.
+
+// ============================================================
+// HashSetU64
+// ============================================================
+
+/// Bucket state for u64 set entries.
+pub enum SetBucketU64 {
+    Empty,
+    Occupied { key: u64 },
+    Deleted,
+}
+
+/// Hash set of u64 values.
+pub struct HashSetU64 {
+    buckets: Vec<SetBucketU64>,
+    len: usize,
+    capacity: usize,
+}
+
+/// FNV-1a hash for u64 (inline for self-containment).
+fn hash_u64_set(v: &u64) -> u64 {
+    let mut h: u64 = 14695981039346656037;
+    let val = *v;
+    for i in 0u32..8 {
+        h = h ^ ((val >> (i * 8)) & 255);
+        h = h * 1099511628211;
+    }
+    h
+}
+
+impl HashSetU64 {
+    /// Create a new empty hash set.
+    pub fn new() -> HashSetU64 {
+        HashSetU64 {
+            buckets: Vec.new(),
+            len: 0,
+            capacity: 0,
+        }
+    }
+
+    /// Create a hash set with initial capacity.
+    pub fn with_capacity(cap: usize) -> HashSetU64 {
+        let actual_cap = if cap < 16 { 16 as usize } else { cap };
+        let mut buckets: Vec<SetBucketU64> = Vec.new();
+        for i in 0usize..actual_cap {
+            buckets.push(SetBucketU64.Empty);
+        }
+        HashSetU64 {
+            buckets,
+            len: 0,
+            capacity: actual_cap,
+        }
+    }
+
+    /// Number of entries.
+    pub fn len(self: &Self) -> usize {
+        self.len
+    }
+
+    /// Check if the set is empty.
+    pub fn is_empty(self: &Self) -> bool {
+        self.len == 0
+    }
+
+    /// Ensure capacity, resizing if needed.
+    fn ensure_capacity(self: &mut Self) {
+        if self.capacity == 0 {
+            self.capacity = 16;
+            for i in 0usize..self.capacity {
+                self.buckets.push(SetBucketU64.Empty);
+            }
+            return;
+        }
+        if self.len * 4 >= self.capacity * 3 {
+            self.resize();
+        }
+    }
+
+    /// Double capacity and rehash.
+    fn resize(self: &mut Self) {
+        let new_cap = self.capacity * 2;
+        let mut new_buckets: Vec<SetBucketU64> = Vec.new();
+        let mut i: usize = 0;
+        while i < new_cap {
+            new_buckets.push(SetBucketU64.Empty);
+            i = i + 1;
+        }
+
+        i = 0;
+        while i < self.capacity {
+            match &self.buckets[i] {
+                SetBucketU64.Occupied { key } => {
+                    let hash = hash_u64_set(&key);
+                    let mut idx = (hash as usize) % new_cap;
+                    let mut found = false;
+                    while !found {
+                        match &new_buckets[idx] {
+                            SetBucketU64.Empty => {
+                                new_buckets[idx] = SetBucketU64.Occupied { key: key };
+                                found = true;
+                            }
+                            _ => {
+                                idx = (idx + 1) % new_cap;
+                            }
+                        }
+                    }
+                }
+                SetBucketU64.Deleted => {}
+                SetBucketU64.Empty => {}
+            }
+            i = i + 1;
+        }
+        self.buckets = new_buckets;
+        self.capacity = new_cap;
+    }
+
+    /// Insert a value into the set. Returns true if newly inserted, false if already present.
+    pub fn insert(self: &mut Self, key: u64) -> bool {
+        self.ensure_capacity();
+        let hash = hash_u64_set(&key);
+        let mut idx = (hash as usize) % self.capacity;
+
+        for probes in 0usize..self.capacity {
+            match &self.buckets[idx] {
+                SetBucketU64.Empty => {
+                    self.buckets[idx] = SetBucketU64.Occupied { key };
+                    self.len = self.len + 1;
+                    return true;
+                }
+                SetBucketU64.Deleted => {
+                    self.buckets[idx] = SetBucketU64.Occupied { key };
+                    self.len = self.len + 1;
+                    return true;
+                }
+                SetBucketU64.Occupied { key: existing_key } => {
+                    if existing_key == key {
+                        return false;
+                    }
+                }
+            }
+            idx = (idx + 1) % self.capacity;
+        }
+        false
+    }
+
+    /// Check if the set contains a value.
+    pub fn contains(self: &Self, key: u64) -> bool {
+        if self.capacity == 0 {
+            return false;
+        }
+        let hash = hash_u64_set(&key);
+        let mut idx = (hash as usize) % self.capacity;
+
+        for probes in 0usize..self.capacity {
+            match &self.buckets[idx] {
+                SetBucketU64.Empty => {
+                    return false;
+                }
+                SetBucketU64.Deleted => {}
+                SetBucketU64.Occupied { key: existing_key } => {
+                    if existing_key == key {
+                        return true;
+                    }
+                }
+            }
+            idx = (idx + 1) % self.capacity;
+        }
+        false
+    }
+
+    /// Remove a value from the set. Returns true if the value was present.
+    pub fn remove(self: &mut Self, key: u64) -> bool {
+        if self.capacity == 0 {
+            return false;
+        }
+        let hash = hash_u64_set(&key);
+        let mut idx = (hash as usize) % self.capacity;
+
+        for probes in 0usize..self.capacity {
+            match &self.buckets[idx] {
+                SetBucketU64.Empty => {
+                    return false;
+                }
+                SetBucketU64.Deleted => {}
+                SetBucketU64.Occupied { key: existing_key } => {
+                    if existing_key == key {
+                        self.buckets[idx] = SetBucketU64.Deleted;
+                        self.len = self.len - 1;
+                        return true;
+                    }
+                }
+            }
+            idx = (idx + 1) % self.capacity;
+        }
+        false
+    }
+
+    /// Remove all entries from the set.
+    pub fn clear(self: &mut Self) {
+        for i in 0usize..self.capacity {
+            self.buckets[i] = SetBucketU64.Empty;
+        }
+        self.len = 0;
+    }
+}
+
+// ============================================================
+// HashSetU32
+// ============================================================
+
+/// Bucket state for u32 set entries.
+pub enum SetBucketU32 {
+    Empty,
+    Occupied { key: u32 },
+    Deleted,
+}
+
+/// Hash set of u32 values.
+pub struct HashSetU32 {
+    buckets: Vec<SetBucketU32>,
+    len: usize,
+    capacity: usize,
+}
+
+/// FNV-1a hash for u32 (inline for self-containment).
+fn hash_u32_set(v: &u32) -> u64 {
+    let mut h: u64 = 14695981039346656037;
+    let val = *v;
+    for i in 0u32..4 {
+        h = h ^ (((val >> (i * 8)) & 255) as u64);
+        h = h * 1099511628211;
+    }
+    h
+}
+
+impl HashSetU32 {
+    /// Create a new empty hash set.
+    pub fn new() -> HashSetU32 {
+        HashSetU32 {
+            buckets: Vec.new(),
+            len: 0,
+            capacity: 0,
+        }
+    }
+
+    /// Create a hash set with initial capacity.
+    pub fn with_capacity(cap: usize) -> HashSetU32 {
+        let actual_cap = if cap < 16 { 16 as usize } else { cap };
+        let mut buckets: Vec<SetBucketU32> = Vec.new();
+        for i in 0usize..actual_cap {
+            buckets.push(SetBucketU32.Empty);
+        }
+        HashSetU32 {
+            buckets,
+            len: 0,
+            capacity: actual_cap,
+        }
+    }
+
+    /// Number of entries.
+    pub fn len(self: &Self) -> usize {
+        self.len
+    }
+
+    /// Check if the set is empty.
+    pub fn is_empty(self: &Self) -> bool {
+        self.len == 0
+    }
+
+    /// Ensure capacity, resizing if needed.
+    fn ensure_capacity(self: &mut Self) {
+        if self.capacity == 0 {
+            self.capacity = 16;
+            for i in 0usize..self.capacity {
+                self.buckets.push(SetBucketU32.Empty);
+            }
+            return;
+        }
+        if self.len * 4 >= self.capacity * 3 {
+            self.resize();
+        }
+    }
+
+    /// Double capacity and rehash.
+    fn resize(self: &mut Self) {
+        let new_cap = self.capacity * 2;
+        let mut new_buckets: Vec<SetBucketU32> = Vec.new();
+        let mut i: usize = 0;
+        while i < new_cap {
+            new_buckets.push(SetBucketU32.Empty);
+            i = i + 1;
+        }
+
+        i = 0;
+        while i < self.capacity {
+            match &self.buckets[i] {
+                SetBucketU32.Occupied { key } => {
+                    let hash = hash_u32_set(&key);
+                    let mut idx = (hash as usize) % new_cap;
+                    let mut found = false;
+                    while !found {
+                        match &new_buckets[idx] {
+                            SetBucketU32.Empty => {
+                                new_buckets[idx] = SetBucketU32.Occupied { key: key };
+                                found = true;
+                            }
+                            _ => {
+                                idx = (idx + 1) % new_cap;
+                            }
+                        }
+                    }
+                }
+                SetBucketU32.Deleted => {}
+                SetBucketU32.Empty => {}
+            }
+            i = i + 1;
+        }
+        self.buckets = new_buckets;
+        self.capacity = new_cap;
+    }
+
+    /// Insert a value into the set. Returns true if newly inserted, false if already present.
+    pub fn insert(self: &mut Self, key: u32) -> bool {
+        self.ensure_capacity();
+        let hash = hash_u32_set(&key);
+        let mut idx = (hash as usize) % self.capacity;
+
+        for probes in 0usize..self.capacity {
+            match &self.buckets[idx] {
+                SetBucketU32.Empty => {
+                    self.buckets[idx] = SetBucketU32.Occupied { key };
+                    self.len = self.len + 1;
+                    return true;
+                }
+                SetBucketU32.Deleted => {
+                    self.buckets[idx] = SetBucketU32.Occupied { key };
+                    self.len = self.len + 1;
+                    return true;
+                }
+                SetBucketU32.Occupied { key: existing_key } => {
+                    if existing_key == key {
+                        return false;
+                    }
+                }
+            }
+            idx = (idx + 1) % self.capacity;
+        }
+        false
+    }
+
+    /// Check if the set contains a value.
+    pub fn contains(self: &Self, key: u32) -> bool {
+        if self.capacity == 0 {
+            return false;
+        }
+        let hash = hash_u32_set(&key);
+        let mut idx = (hash as usize) % self.capacity;
+
+        for probes in 0usize..self.capacity {
+            match &self.buckets[idx] {
+                SetBucketU32.Empty => {
+                    return false;
+                }
+                SetBucketU32.Deleted => {}
+                SetBucketU32.Occupied { key: existing_key } => {
+                    if existing_key == key {
+                        return true;
+                    }
+                }
+            }
+            idx = (idx + 1) % self.capacity;
+        }
+        false
+    }
+
+    /// Remove a value from the set. Returns true if the value was present.
+    pub fn remove(self: &mut Self, key: u32) -> bool {
+        if self.capacity == 0 {
+            return false;
+        }
+        let hash = hash_u32_set(&key);
+        let mut idx = (hash as usize) % self.capacity;
+
+        for probes in 0usize..self.capacity {
+            match &self.buckets[idx] {
+                SetBucketU32.Empty => {
+                    return false;
+                }
+                SetBucketU32.Deleted => {}
+                SetBucketU32.Occupied { key: existing_key } => {
+                    if existing_key == key {
+                        self.buckets[idx] = SetBucketU32.Deleted;
+                        self.len = self.len - 1;
+                        return true;
+                    }
+                }
+            }
+            idx = (idx + 1) % self.capacity;
+        }
+        false
+    }
+
+    /// Remove all entries from the set.
+    pub fn clear(self: &mut Self) {
+        for i in 0usize..self.capacity {
+            self.buckets[i] = SetBucketU32.Empty;
+        }
+        self.len = 0;
+    }
+}
