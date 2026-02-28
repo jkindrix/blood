@@ -383,24 +383,75 @@ Audit whether compiler behavior matches the formal semantics we've specified:
 
 | # | Check | Spec Section | Method |
 |---|-------|-------------|--------|
-| B.1 | Closure capture modes match §5.7 | FORMAL_SEMANTICS.md §5.7 | Review typeck_expr, mir_closure vs rules |
-| B.2 | Region generation bumping matches §5.8 | FORMAL_SEMANTICS.md §5.8 | Review codegen + runtime vs rules |
-| B.3 | Object safety enforced per §10.7 | DISPATCH.md §10.7 | Attempt to create dyn Trait from unsafe trait |
-| B.4 | dyn Trait vtable layout matches §10.8 | DISPATCH.md §10.8 | Review codegen_types vs spec |
-| B.5 | Pattern exhaustiveness matches §5.9 | FORMAL_SEMANTICS.md §5.9 | Test non-exhaustive patterns |
-| B.6 | Cast compatibility matches §5.10 | FORMAL_SEMANTICS.md §5.10 | Test each cast category |
-| B.7 | Associated type resolution matches §5.11 | FORMAL_SEMANTICS.md §5.11 | Test projection, defaults |
+| # | Check | Spec Section | Result |
+|---|-------|-------------|--------|
+| B.1 | Closure capture modes match §5.7 | FORMAL_SEMANTICS.md §5.7 | **4 gaps** — linear capture not enforced, binary capture mode, no move validation, no effect composition tests |
+| B.2 | Region generation bumping matches §5.8 | FORMAL_SEMANTICS.md §5.8 | **3 gaps** — MIR lifecycle stub, no generation checks at dereference, no region-effect interaction |
+| B.3 | Object safety enforced per §10.7 | DISPATCH.md §10.7 | **Expected gap** — not implemented (DEF-005) |
+| B.4 | dyn Trait vtable layout matches §10.8 | DISPATCH.md §10.8 | **Expected gap** — not implemented (DEF-005) |
+| B.5 | Pattern exhaustiveness matches §5.9 | FORMAL_SEMANTICS.md §5.9 | **1 gap** — or-pattern binding consistency not enforced |
+| B.6 | Cast compatibility matches §5.10 | FORMAL_SEMANTICS.md §5.10 | **1 critical gap** — typeck has zero cast validation; any cast accepted |
+| B.7 | Associated type resolution matches §5.11 | FORMAL_SEMANTICS.md §5.11 | **Minor gaps** — defaults untested, qualified projection unimplemented |
 
-**Output**: List of semantic gaps (if any) with severity and recommended fixes.
+### Phase B Findings (2026-02-28)
+
+**Critical gaps requiring Phase C fixes (ordered by safety impact):**
+
+1. **Cast validation absent** (B.6) — `infer_cast()` accepts any type→type cast without checking `cast_compatible(S, T)`. Pointer↔integer casts not gated by `@unsafe`. Files: `typeck/context/expr.rs:9074`, `mir_lower_expr.blood:1421`.
+
+2. **Linear closure capture not enforced** (B.1) — Linear values can be captured by ref/mut (spec says error). Closures with linear captures don't become linear. Bootstrap uses binary `by_move: bool` instead of ternary capture modes. Files: `typeck/context/closure.rs`, `mir_closure.blood`.
+
+3. **Region MIR lifecycle stub** (B.2) — `mir_lower_expr.blood:263` just lowers body statements; no `region_create/activate/deactivate/destroy` calls emitted. No generation checks at dereference. Stale reference detection specified but unimplemented. Files: `mir_lower_expr.blood`, codegen.
+
+4. **Or-pattern binding consistency** (B.5) — Both branches of `p1 | p2` must bind identical variables (spec rule [P-Or]). Not enforced. Files: `hir_lower_expr.blood:1619`, `typeck.blood`.
+
+**Working correctly:** Exhaustiveness checking, unreachable patterns, associated type declaration/error, region type transparency, all cast codegen, closure basic functionality.
 
 ---
 
 ## 6. Phase C: Semantic Alignment Fixes
 
-**Priority**: High — depends on Phase B findings.
+**Priority**: High — addresses Phase B findings.
 **Prerequisite**: Phase B complete.
 
-Fix any semantic gaps discovered in Phase B. Scope is unknown until audit completes. Each fix follows CCV.
+### C.1 — Cast Validation (B.6)
+
+Add `cast_compatible(source, target)` check in `infer_cast()` for both compilers:
+- Validate against spec cast table (numeric widening/narrowing, int↔float, sign reinterpret, bool↔int, ptr↔usize)
+- Gate ptr↔int and ptr→ptr casts behind `@unsafe` / bridge context
+- Reject incompatible casts (struct→array, etc.)
+- Add ground-truth tests for all cast categories + COMPILE_FAIL tests for invalid casts
+
+### C.2 — Linear Closure Captures (B.1)
+
+Enforce spec rules [Linear-No-Ref], [Linear-No-Mut], [Linear-Closure]:
+- After capture analysis, check each capture's type for linearity
+- If linear + ref/mut capture → type error
+- If linear + val capture → mark closure as linear
+- Upgrade bootstrap from binary to ternary capture mode
+- Add COMPILE_FAIL tests for linear ref/mut captures
+
+### C.3 — Region Lifecycle (B.2)
+
+Complete region MIR lowering:
+- Emit `region_create/activate/deactivate/destroy` in MIR
+- Add generation checks at region pointer dereference
+- Implement stale reference detection via `blood_validate_generation()`
+- Add tests for stale reference after region exit
+- (Advanced) Region-effect interaction / deferred deallocation
+
+### C.4 — Or-Pattern Binding Consistency (B.5)
+
+Enforce [P-Or] rule:
+- After lowering both branches of an or-pattern, verify binding environments are identical
+- Add `TypeErrorKind::OrPatternBindingMismatch` error
+- Add COMPILE_FAIL test for inconsistent bindings
+
+### C.5 — Associated Type Defaults & Projection (B.7)
+
+- Add ground-truth test for default associated types
+- Add test for qualified projection `<T as Trait>::Item` (if implemented)
+- Verify default fallback works when impl omits associated type
 
 ---
 
