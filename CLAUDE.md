@@ -157,8 +157,10 @@ Run each tool with `--help` or see its header comments for detailed usage.
 
 ## Reference
 
-- **Grammar spec**: `docs/spec/GRAMMAR.md`
-- **Design docs**: `src/selfhost/COMPILER_NOTES.md`
+- **Grammar spec**: `docs/spec/GRAMMAR.md` — source of truth for Blood's surface syntax
+- **Macro spec**: `docs/spec/MACROS.md` — macro system design, fragment kinds, hygiene roadmap
+- **Design evaluations**: `docs/design/IMPL_TRAIT.md`, `docs/design/COMPARISON_CHAINING.md`
+- **Compiler notes**: `src/selfhost/COMPILER_NOTES.md`
 - **Aether examples**: `~/blood-test/aether/`
 - **Bug history**: `tools/FAILURE_LOG.md`
 - **Session protocol**: `tools/AGENT_PROTOCOL.md`
