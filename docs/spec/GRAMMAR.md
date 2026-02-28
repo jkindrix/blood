@@ -21,6 +21,17 @@
 - Added `@` prefix design rule documentation
 - Added path disambiguation rule (Appendix B.2), replacing turbofish section
 - Added `ContainmentExpr` (`x in lo..hi`) for range checks, at comparison precedence level
+- Added `ReturnExpr`, `BreakExpr`, `ContinueExpr` productions
+- Added `SelfParam` syntax (`&self`, `&mut self`, `self`) to `Params`
+- Added `PipeOp` to `BinaryOp` production
+- Fixed `TypePath` to accept `Ident` (not just `TypeIdent`), enabling primitive types (`i32`, `bool`)
+- Added `Self` as `TypePath` alternative; `()` documented as unit type
+- Connected `IntSuffix` to `IntLiteral`; defined `HexDigit` and `TypeVar` non-terminals
+- Fixed `Attribute` → `OuterAttribute` in bridge declarations
+- Fixed `move` closures to allow return type and effect row annotations
+- Fixed `extends` keyword table entry (effect extension only, traits use `:`)
+- Added string formatting design note (via `format!` macro, no interpolation syntax)
+- Updated CLAUDE.md to reflect `::` removal
 - Added comparison chaining design note
 
 **Revision 0.3.0 Changes**:
@@ -97,7 +108,7 @@ LifetimeIdent ::= '\'' Ident              (* Lifetimes prefixed with ' *)
 ```ebnf
 Literal ::= IntLiteral | FloatLiteral | StringLiteral | CharLiteral | BoolLiteral
 
-IntLiteral ::= DecInt | HexInt | OctInt | BinInt
+IntLiteral ::= (DecInt | HexInt | OctInt | BinInt) IntSuffix?
 DecInt ::= [0-9] [0-9_]*
 HexInt ::= '0x' [0-9a-fA-F_]+
 OctInt ::= '0o' [0-7_]+
@@ -115,6 +126,7 @@ StringLiteral ::= '"' StringChar* '"' | RawStringLiteral | ByteStringLiteral
 ByteStringLiteral ::= 'b"' StringChar* '"'
 StringChar ::= [^"\\] | EscapeSeq
 EscapeSeq ::= '\\' ([nrt\\'"0] | 'x' HexDigit HexDigit | 'u{' HexDigit+ '}')
+HexDigit ::= [0-9a-fA-F]
 
 RawStringLiteral ::= 'r' RawStringBody
 RawStringBody ::= '"' [^"]* '"' | '#' RawStringBody '#'
@@ -288,7 +300,9 @@ TypeParam ::= Ident (':' TypeBound)?
             | 'const' Ident ':' Type        (* const generic parameter *)
 TypeBound ::= Type ('+' Type)*
 
-Params ::= (Param (',' Param)* ','?)?
+Params ::= (SelfParam (',' Param)* ','?)? | (Param (',' Param)* ','?)?
+SelfParam ::= '&' Lifetime? 'mut'? 'self'
+            | 'mut'? 'self'
 Param ::= ParamQualifier? Pattern ':' Type
 ParamQualifier ::= 'linear' | 'affine' | 'mut'
 
@@ -401,11 +415,11 @@ mod utils {         // inline module
 BridgeDecl ::= 'bridge' StringLiteral Ident '{' BridgeItem* '}'
 BridgeItem ::= BridgeFn | BridgeConst | BridgeTypeDecl | BridgeStruct
 
-BridgeFn    ::= Attribute* 'fn' Ident '(' BridgeParams ')' ('->' Type)? ';'
+BridgeFn    ::= OuterAttribute* 'fn' Ident '(' BridgeParams ')' ('->' Type)? ';'
 BridgeConst ::= 'const' Ident ':' Type '=' Literal ';'
 BridgeTypeDecl ::= 'type' Ident ';'
                  | 'type' Ident '=' Type ';'
-BridgeStruct ::= Attribute* 'struct' Ident '{' StructFields '}'
+BridgeStruct ::= OuterAttribute* 'struct' Ident '{' StructFields '}'
 
 BridgeParams ::= (BridgeParam (',' BridgeParam)* (',' '...')?)? (* variadic via ... *)
 BridgeParam  ::= Ident ':' Type
@@ -459,10 +473,11 @@ Type ::= TypePath
        | DynType
        | '!' (* never type *)
        | '_' (* inferred type *)
-       | '(' Type ')'
+       | '(' Type ')'     (* parenthesized type; '()' is the unit type *)
 
-TypePath ::= TypeIdent TypeArgs?
-           | ModulePath '.' TypeIdent TypeArgs?
+TypePath ::= Ident TypeArgs?
+           | ModulePath '.' Ident TypeArgs?
+           | 'Self'
 TypeArgs ::= '<' TypeArg (',' TypeArg)* ','? '>'
 TypeArg ::= Type | Lifetime | Const
 Const ::= Literal | '-' Literal | Ident | BlockExpr
@@ -479,6 +494,8 @@ FunctionType ::= 'fn' '(' (Type (',' Type)*)? ')' '->' Type ('/' EffectRow)?
 
 RecordType ::= '{' (RecordField (',' RecordField)*)? ('|' TypeVar)? '}'
 RecordField ::= Ident ':' Type
+
+TypeVar ::= Ident              (* type/effect row variable *)
 
 OwnershipType ::= 'linear' Type | 'affine' Type
 
@@ -733,7 +750,7 @@ See §9.5 for the `@` prefix design rule.
 
 ```ebnf
 ClosureExpr ::= '|' ClosureParams '|' ('->' Type)? ('/' EffectRow)? ClosureBody
-              | 'move' '|' ClosureParams '|' ClosureBody
+              | 'move' '|' ClosureParams '|' ('->' Type)? ('/' EffectRow)? ClosureBody
 
 ClosureParams ::= (ClosureParam (',' ClosureParam)*)?
 ClosureParam ::= Pattern (':' Type)?
@@ -765,6 +782,10 @@ TryExpr ::= Expr '?'
 
 AssignExpr ::= Expr '=' Expr
              | Expr AssignOp Expr
+
+ReturnExpr   ::= 'return' Expr?
+BreakExpr    ::= 'break' LifetimeIdent? Expr?
+ContinueExpr ::= 'continue' LifetimeIdent?
 
 DefaultExpr ::= 'default'
 
@@ -799,6 +820,8 @@ let n: i32 = "42".parse();
 // NOT supported: no turbofish or call-site type arguments
 // let values = collect::<Vec<i32>>();  // ERROR
 ```
+
+**String formatting:** Blood has no string interpolation syntax. String formatting is performed via the `format!` built-in macro (see `docs/spec/MACROS.md` §7.1). Example: `format!("x = {}", x)`.
 
 ### 5.7 Data Construction
 
@@ -951,7 +974,10 @@ BitOp ::= '&' | '|' | '^' | '<<' | '>>'
 AssignOp ::= '+=' | '-=' | '*=' | '/=' | '%='
            | '&=' | '|=' | '^=' | '<<=' | '>>='
 
-BinaryOp ::= ArithOp | CmpOp | LogicOp | BitOp
+(* Pipe *)
+PipeOp ::= '|>'
+
+BinaryOp ::= ArithOp | CmpOp | LogicOp | BitOp | PipeOp
 ```
 
 ### 7.4 Pipe Operator
@@ -1051,7 +1077,7 @@ handler perform resume     (* effect/handler declarations and expressions *)
 shallow deep               (* handler kind qualifiers *)
 requires ensures           (* specification clauses — see §3.2 *)
 invariant decreases        (* specification clauses — see §3.2 *)
-extends                    (* trait/effect extension *)
+extends                    (* effect extension — traits use ':' for supertraits *)
 bridge                     (* FFI declarations *)
 with handle                (* handler expressions *)
 affine                     (* ownership type qualifier *)

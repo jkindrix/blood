@@ -28,7 +28,12 @@ use std.mem.allocate;       // CORRECT
 // use std::mem::allocate;  // WRONG — this is Rust
 ```
 
-`::` is ONLY for: grouped imports (`use std.iter::{A, B}`), glob imports (`use std.ops::*`), and qualified expressions (`module::Type { ... }`).
+`::` is **not part of Blood's syntax** (removed in GRAMMAR.md v0.4.0). Dots are used everywhere:
+- Grouped imports: `use std.iter.{A, B}`
+- Glob imports: `use std.ops.*`
+- Qualified paths: `module.Type { ... }`
+
+> **Note:** The compilers have not yet been updated to match — they still use `::` for grouped/glob imports and qualified expressions. This is a known alignment gap.
 
 These patterns are **correct in Blood**, not shortcuts:
 
