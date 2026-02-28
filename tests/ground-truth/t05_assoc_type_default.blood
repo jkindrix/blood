@@ -1,0 +1,31 @@
+// Test: trait associated type with default — omitting type in impl uses default
+trait Container {
+    type Item = i32;
+    fn value(self) -> Self.Item;
+}
+
+struct UseDefault {
+    x: i32,
+}
+
+// Impl omits `type Item = ...;` — uses trait default (i32)
+impl Container for UseDefault {
+    fn value(self) -> i32 { self.x }
+}
+
+struct OverrideDefault {
+    name_len: i32,
+}
+
+// Impl overrides `type Item` — uses i32 explicitly
+impl Container for OverrideDefault {
+    type Item = i32;
+    fn value(self) -> i32 { self.name_len }
+}
+
+fn main() -> i32 {
+    let a: UseDefault = UseDefault { x: 10 };
+    let b: OverrideDefault = OverrideDefault { name_len: 32 };
+    let sum: i32 = a.value() + b.value();
+    if sum == 42 { 0 } else { 1 }
+}

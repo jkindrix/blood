@@ -1,0 +1,31 @@
+// Test: associated type projection in trait method signatures
+trait Producer {
+    type Output;
+    fn produce(self) -> Self.Output;
+}
+
+struct IntSource {
+    val: i32,
+}
+
+impl Producer for IntSource {
+    type Output = i32;
+    fn produce(self) -> i32 { self.val }
+}
+
+struct PairSource {
+    a: i32,
+    b: i32,
+}
+
+impl Producer for PairSource {
+    type Output = i32;
+    fn produce(self) -> i32 { self.a + self.b }
+}
+
+fn main() -> i32 {
+    let s: IntSource = IntSource { val: 20 };
+    let p: PairSource = PairSource { a: 11, b: 11 };
+    let total: i32 = s.produce() + p.produce();
+    if total == 42 { 0 } else { 1 }
+}
