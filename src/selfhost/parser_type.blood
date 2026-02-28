@@ -25,196 +25,210 @@ mod ast;
 // ============================================================
 
 /// Parse a type.
-pub fn parse_type(parser: &mut parser_base::Parser) -> ast::Type {
+pub fn parse_type(parser: &mut parser_base.Parser) -> ast.Type {
     let start = parser.current.span;
 
     // Handle prefix type constructors
     match parser.current.kind {
         // Never type: !
-        token::TokenKind::Not => {
+        token.TokenKind.Not => {
             parser.advance();
-            return ast::Type {
-                kind: ast::TypeKind::Never,
+            return ast.Type {
+                kind: ast.TypeKind.Never,
                 span: start,
             };
         }
         // Infer type: _ or regular identifier path
-        token::TokenKind::Ident => {
+        token.TokenKind.Ident => {
             // Check if it's underscore for infer
             if parser.token_is_underscore(parser.current) {
                 parser.advance();
-                return ast::Type {
-                    kind: ast::TypeKind::Infer,
+                return ast.Type {
+                    kind: ast.TypeKind.Infer,
                     span: start,
                 };
             }
             return parse_path_type(parser);
         }
         // TypeIdent for types starting with uppercase
-        token::TokenKind::TypeIdent => {
+        token.TokenKind.TypeIdent => {
             return parse_path_type(parser);
         }
         // SelfUpper for Self type
-        token::TokenKind::SelfUpper => {
+        token.TokenKind.SelfUpper => {
             return parse_path_type(parser);
         }
         // Qualified paths: crate::, super::, self::
-        token::TokenKind::Crate => {
+        token.TokenKind.Crate => {
             return parse_path_type(parser);
         }
-        token::TokenKind::Super => {
+        token.TokenKind.Super => {
             return parse_path_type(parser);
         }
-        token::TokenKind::SelfLower => {
+        token.TokenKind.SelfLower => {
             return parse_path_type(parser);
         }
         // Reference type: &T, &mut T, &'a T
-        token::TokenKind::And => {
+        token.TokenKind.And => {
             return parse_reference_type(parser);
         }
         // Pointer type: *const T, *mut T
-        token::TokenKind::Star => {
+        token.TokenKind.Star => {
             return parse_pointer_type(parser);
         }
         // Tuple or parenthesized type: (T), (T, U)
-        token::TokenKind::LParen => {
+        token.TokenKind.LParen => {
             return parse_tuple_or_paren_type(parser);
         }
         // Array or slice type: [T], [T; N]
-        token::TokenKind::LBracket => {
+        token.TokenKind.LBracket => {
             return parse_array_or_slice_type(parser);
         }
         // Function type: fn(T) -> U
-        token::TokenKind::Fn => {
+        token.TokenKind.Fn => {
             return parse_fn_type(parser);
         }
         // Record type: {x: T, y: U}
-        token::TokenKind::LBrace => {
+        token.TokenKind.LBrace => {
             return parse_record_type(parser);
         }
         // Forall type: forall<T> T
-        token::TokenKind::Forall => {
+        token.TokenKind.Forall => {
             return parse_forall_type(parser);
         }
         // Ownership qualifiers: linear T, affine T
-        token::TokenKind::Linear => {
+        token.TokenKind.Linear => {
             parser.advance();
             let inner = parse_type(parser);
             let end_span = parser.previous.span;
-            return ast::Type {
-                kind: ast::TypeKind::Ownership {
-                    qualifier: ast::OwnershipQualifier::Linear,
-                    inner: Box::new(inner),
+            return ast.Type {
+                kind: ast.TypeKind.Ownership {
+                    qualifier: ast.OwnershipQualifier.Linear,
+                    inner: Box.new(inner),
                 },
-                span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+                span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
             };
         }
-        token::TokenKind::Affine => {
+        token.TokenKind.Affine => {
             parser.advance();
             let inner = parse_type(parser);
             let end_span = parser.previous.span;
-            return ast::Type {
-                kind: ast::TypeKind::Ownership {
-                    qualifier: ast::OwnershipQualifier::Affine,
-                    inner: Box::new(inner),
+            return ast.Type {
+                kind: ast.TypeKind.Ownership {
+                    qualifier: ast.OwnershipQualifier.Affine,
+                    inner: Box.new(inner),
                 },
-                span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+                span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
             };
         }
         // Dynamic type: dyn Trait
-        token::TokenKind::Dyn => {
+        token.TokenKind.Dyn => {
             return parse_path_type(parser);
         }
         // impl Trait
-        token::TokenKind::Impl => {
+        token.TokenKind.Impl => {
             return parse_path_type(parser);
         }
         // All other tokens - report error
         _ => {
-            parser.error_expected_with_code("type", parser_base::ErrorCode::ExpectedType);
-            return ast::Type { kind: ast::TypeKind::Infer, span: start };
+            parser.error_expected_with_code("type", parser_base.ErrorCode.ExpectedType);
+            return ast.Type { kind: ast.TypeKind.Infer, span: start };
         }
     }
 }
 
-/// Parse a path type like `u32`, `Vec<T>`, `std::collections::HashMap<K, V>`.
-pub fn parse_path_type(parser: &mut parser_base::Parser) -> ast::Type {
+/// Parse a path type like `u32`, `Vec<T>`, `std::collections.HashMap<K, V>`.
+pub fn parse_path_type(parser: &mut parser_base.Parser) -> ast.Type {
     let start = parser.current.span;
     let type_path = parse_type_path(parser);
     let end_span = parser.previous.span;
-    ast::Type {
-        kind: ast::TypeKind::Path(type_path),
-        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    ast.Type {
+        kind: ast.TypeKind.Path(type_path),
+        span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     }
 }
 
 /// Parse a type path with segments and optional generic arguments.
-pub fn parse_type_path(parser: &mut parser_base::Parser) -> ast::TypePath {
+pub fn parse_type_path(parser: &mut parser_base.Parser) -> ast.TypePath {
     let start = parser.current.span;
-    let mut segments: Vec<ast::TypePathSegment> = Vec::new();
+    let mut segments: Vec<ast.TypePathSegment> = Vec.new();
 
     // First segment
     let first_seg = parse_type_path_segment(parser);
     segments.push(first_seg);
 
-    // Additional segments after ::
-    while parser.try_consume(token::TokenKind::ColonColon) {
-        let seg = parse_type_path_segment(parser);
-        segments.push(seg);
+    // Additional segments after :: or .
+    loop {
+        if parser.try_consume(token.TokenKind.ColonColon) {
+            // :: always continues the path
+            let seg = parse_type_path_segment(parser);
+            segments.push(seg);
+        } else if parser.current.kind == token.TokenKind.Dot
+                  && (parser.check_next(token.TokenKind.TypeIdent)
+                      || parser.check_next(token.TokenKind.SelfUpper)
+                      || parser.check_next(token.TokenKind.Crate)
+                      || parser.check_next(token.TokenKind.Super)) {
+            // . accepted when followed by TypeIdent, Self, crate, or super
+            parser.advance(); // consume '.'
+            let seg = parse_type_path_segment(parser);
+            segments.push(seg);
+        } else {
+            break;
+        }
     }
 
     let end_span = parser.previous.span;
-    ast::TypePath {
+    ast.TypePath {
         segments: segments,
-        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     }
 }
 
 /// Parse a single segment of a type path.
-pub fn parse_type_path_segment(parser: &mut parser_base::Parser) -> ast::TypePathSegment {
+pub fn parse_type_path_segment(parser: &mut parser_base.Parser) -> ast.TypePathSegment {
     let name = parser.parse_spanned_symbol();
 
     // Check for generic arguments <T, U, ...>
-    let args: Option<ast::TypeArgs> = if parser.check(token::TokenKind::Lt) {
-        Option::Some(parse_type_args(parser))
+    let args: Option<ast.TypeArgs> = if parser.check(token.TokenKind.Lt) {
+        Option.Some(parse_type_args(parser))
     } else {
-        Option::None
+        Option.None
     };
 
-    ast::TypePathSegment { name: name, args: args }
+    ast.TypePathSegment { name: name, args: args }
 }
 
 /// Parse generic type arguments: <T, U, 'a, CONST>.
-pub fn parse_type_args(parser: &mut parser_base::Parser) -> ast::TypeArgs {
+pub fn parse_type_args(parser: &mut parser_base.Parser) -> ast.TypeArgs {
     let start = parser.current.span;
-    parser.expect(token::TokenKind::Lt);
+    parser.expect(token.TokenKind.Lt);
 
-    let mut args: Vec<ast::TypeArg> = Vec::new();
+    let mut args: Vec<ast.TypeArg> = Vec.new();
 
     while !parser.check_closing_angle() && !parser.is_at_end() {
         // Check for lifetime
-        if parser.check(token::TokenKind::Lifetime) {
+        if parser.check(token.TokenKind.Lifetime) {
             let lt_sym = parser.parse_spanned_symbol();
-            args.push(ast::TypeArg::Lifetime(lt_sym));
-        } else if parser.check(token::TokenKind::IntLit) {
+            args.push(ast.TypeArg.Lifetime(lt_sym));
+        } else if parser.check(token.TokenKind.IntLit) {
             // Integer literal → const generic argument
             let lit_span = parser.current.span;
             let int_val = parser_base::parse_int_value_from_span(parser, lit_span);
             let int_suffix = parser_base::parse_int_suffix_from_span(parser, lit_span);
             parser.advance();
-            let lit = ast::Literal {
-                kind: ast::LiteralKind::Int { val: int_val, suffix: int_suffix },
+            let lit = ast.Literal {
+                kind: ast.LiteralKind.Int { val: int_val, suffix: int_suffix },
                 span: lit_span,
             };
-            let expr = ast::Expr {
-                kind: ast::ExprKind::Literal(lit),
+            let expr = ast.Expr {
+                kind: ast.ExprKind.Literal(lit),
                 span: lit_span,
             };
-            args.push(ast::TypeArg::Const(expr));
+            args.push(ast.TypeArg.Const(expr));
         } else {
             // Type argument
             let ty = parse_type(parser);
-            args.push(ast::TypeArg::Type(ty));
+            args.push(ast.TypeArg.Type(ty));
         }
 
         // After >> splitting, pending_gt may be set — don't consume
@@ -222,7 +236,7 @@ pub fn parse_type_args(parser: &mut parser_base::Parser) -> ast::TypeArgs {
         if parser.check_closing_angle() {
             break;
         }
-        if !parser.try_consume(token::TokenKind::Comma) {
+        if !parser.try_consume(token.TokenKind.Comma) {
             break;
         }
     }
@@ -230,50 +244,50 @@ pub fn parse_type_args(parser: &mut parser_base::Parser) -> ast::TypeArgs {
     parser.expect_closing_angle();
 
     let end_span = parser.previous.span;
-    ast::TypeArgs {
+    ast.TypeArgs {
         args: args,
-        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     }
 }
 
 /// Parse a reference type: &T, &mut T, &'a T, &'a mut T.
-fn parse_reference_type(parser: &mut parser_base::Parser) -> ast::Type {
+fn parse_reference_type(parser: &mut parser_base.Parser) -> ast.Type {
     let start = parser.current.span;
     parser.advance(); // consume '&'
 
     // Optional lifetime
-    let lifetime = if parser.check(token::TokenKind::Lifetime) {
-        Option::Some(parser.parse_spanned_symbol())
+    let lifetime = if parser.check(token.TokenKind.Lifetime) {
+        Option.Some(parser.parse_spanned_symbol())
     } else {
-        Option::None
+        Option.None
     };
 
     // Optional mut
-    let is_mut = parser.try_consume(token::TokenKind::Mut);
+    let is_mut = parser.try_consume(token.TokenKind.Mut);
 
     // Inner type
     let inner = parse_type(parser);
     let end_span = parser.previous.span;
 
-    ast::Type {
-        kind: ast::TypeKind::Reference {
+    ast.Type {
+        kind: ast.TypeKind.Reference {
             lifetime: lifetime,
             is_mut: is_mut,
-            inner: Box::new(inner),
+            inner: Box.new(inner),
         },
-        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     }
 }
 
 /// Parse a pointer type: *const T, *mut T.
-fn parse_pointer_type(parser: &mut parser_base::Parser) -> ast::Type {
+fn parse_pointer_type(parser: &mut parser_base.Parser) -> ast.Type {
     let start = parser.current.span;
     parser.advance(); // consume '*'
 
     // Expect const or mut
-    let is_mut = if parser.try_consume(token::TokenKind::Const) {
+    let is_mut = if parser.try_consume(token.TokenKind.Const) {
         false
-    } else if parser.try_consume(token::TokenKind::Mut) {
+    } else if parser.try_consume(token.TokenKind.Mut) {
         true
     } else {
         parser.error_expected("const or mut after *");
@@ -284,26 +298,26 @@ fn parse_pointer_type(parser: &mut parser_base::Parser) -> ast::Type {
     let inner = parse_type(parser);
     let end_span = parser.previous.span;
 
-    ast::Type {
-        kind: ast::TypeKind::Pointer {
+    ast.Type {
+        kind: ast.TypeKind.Pointer {
             is_mut: is_mut,
-            inner: Box::new(inner),
+            inner: Box.new(inner),
         },
-        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     }
 }
 
 /// Parse a tuple or parenthesized type: (T) or (T, U, ...).
-fn parse_tuple_or_paren_type(parser: &mut parser_base::Parser) -> ast::Type {
+fn parse_tuple_or_paren_type(parser: &mut parser_base.Parser) -> ast.Type {
     let start = parser.current.span;
     parser.advance(); // consume '('
 
     // Empty tuple: ()
-    if parser.check(token::TokenKind::RParen) {
+    if parser.check(token.TokenKind.RParen) {
         parser.advance();
-        return ast::Type {
-            kind: ast::TypeKind::Tuple(Vec::new()),
-            span: common::Span { start: start.start, end: parser.previous.span.end, line: start.line, column: start.column },
+        return ast.Type {
+            kind: ast.TypeKind.Tuple(Vec.new()),
+            span: common.Span { start: start.start, end: parser.previous.span.end, line: start.line, column: start.column },
         };
     }
 
@@ -311,97 +325,97 @@ fn parse_tuple_or_paren_type(parser: &mut parser_base::Parser) -> ast::Type {
     let first = parse_type(parser);
 
     // Check for comma - if so, it's a tuple
-    if parser.try_consume(token::TokenKind::Comma) {
-        let mut elements: Vec<ast::Type> = Vec::new();
+    if parser.try_consume(token.TokenKind.Comma) {
+        let mut elements: Vec<ast.Type> = Vec.new();
         elements.push(first);
 
         // Parse remaining elements
-        while !parser.check(token::TokenKind::RParen) && !parser.is_at_end() {
+        while !parser.check(token.TokenKind.RParen) && !parser.is_at_end() {
             elements.push(parse_type(parser));
 
-            if !parser.try_consume(token::TokenKind::Comma) {
+            if !parser.try_consume(token.TokenKind.Comma) {
                 break;
             }
         }
 
-        parser.expect(token::TokenKind::RParen);
+        parser.expect(token.TokenKind.RParen);
         let end_span = parser.previous.span;
 
-        return ast::Type {
-            kind: ast::TypeKind::Tuple(elements),
-            span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        return ast.Type {
+            kind: ast.TypeKind.Tuple(elements),
+            span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
         };
     }
 
     // Just a parenthesized type
-    parser.expect(token::TokenKind::RParen);
+    parser.expect(token.TokenKind.RParen);
 
     // Return the inner type (parentheses are just grouping)
     first
 }
 
 /// Parse an array or slice type: [T] or [T; N].
-fn parse_array_or_slice_type(parser: &mut parser_base::Parser) -> ast::Type {
+fn parse_array_or_slice_type(parser: &mut parser_base.Parser) -> ast.Type {
     let start = parser.current.span;
     parser.advance(); // consume '['
 
     let element = parse_type(parser);
 
-    if parser.try_consume(token::TokenKind::Semi) {
+    if parser.try_consume(token.TokenKind.Semi) {
         // Array type [T; N] - parse the size expression inline
         let size = parse_const_expr(parser);
-        parser.expect(token::TokenKind::RBracket);
+        parser.expect(token.TokenKind.RBracket);
 
         let end_span = parser.previous.span;
-        ast::Type {
-            kind: ast::TypeKind::Array {
-                element: Box::new(element),
-                size: Box::new(size),
+        ast.Type {
+            kind: ast.TypeKind.Array {
+                element: Box.new(element),
+                size: Box.new(size),
             },
-            span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+            span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
         }
     } else {
         // Slice type [T]
-        parser.expect(token::TokenKind::RBracket);
+        parser.expect(token.TokenKind.RBracket);
 
         let end_span = parser.previous.span;
-        ast::Type {
-            kind: ast::TypeKind::Slice {
-                element: Box::new(element),
+        ast.Type {
+            kind: ast.TypeKind.Slice {
+                element: Box.new(element),
             },
-            span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+            span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
         }
     }
 }
 
 /// Parse a simple constant expression for array sizes.
 /// Handles: literals, paths, and basic binary operations.
-fn parse_const_expr(parser: &mut parser_base::Parser) -> ast::Expr {
+fn parse_const_expr(parser: &mut parser_base.Parser) -> ast.Expr {
     parse_const_additive(parser)
 }
 
 /// Parse additive expressions (+, -)
-fn parse_const_additive(parser: &mut parser_base::Parser) -> ast::Expr {
+fn parse_const_additive(parser: &mut parser_base.Parser) -> ast.Expr {
     let mut left = parse_const_multiplicative(parser);
 
-    while parser.check(token::TokenKind::Plus) || parser.check(token::TokenKind::Minus) {
-        let bin_op = if parser.check(token::TokenKind::Plus) {
+    while parser.check(token.TokenKind.Plus) || parser.check(token.TokenKind.Minus) {
+        let bin_op = if parser.check(token.TokenKind.Plus) {
             parser.advance();
-            common::BinOp::Add
+            common.BinOp.Add
         } else {
             parser.advance();
-            common::BinOp::Sub
+            common.BinOp.Sub
         };
 
         let right = parse_const_multiplicative(parser);
         let end_span = parser.previous.span;
-        left = ast::Expr {
-            kind: ast::ExprKind::Binary {
+        left = ast.Expr {
+            kind: ast.ExprKind.Binary {
                 op: bin_op,
-                left: Box::new(left),
-                right: Box::new(right),
+                left: Box.new(left),
+                right: Box.new(right),
             },
-            span: common::Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
+            span: common.Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
         };
     }
 
@@ -409,30 +423,30 @@ fn parse_const_additive(parser: &mut parser_base::Parser) -> ast::Expr {
 }
 
 /// Parse multiplicative expressions (*, /, %)
-fn parse_const_multiplicative(parser: &mut parser_base::Parser) -> ast::Expr {
+fn parse_const_multiplicative(parser: &mut parser_base.Parser) -> ast.Expr {
     let mut left = parse_const_primary(parser);
 
-    while parser.check(token::TokenKind::Star) || parser.check(token::TokenKind::Slash) || parser.check(token::TokenKind::Percent) {
-        let bin_op = if parser.check(token::TokenKind::Star) {
+    while parser.check(token.TokenKind.Star) || parser.check(token.TokenKind.Slash) || parser.check(token.TokenKind.Percent) {
+        let bin_op = if parser.check(token.TokenKind.Star) {
             parser.advance();
-            common::BinOp::Mul
-        } else if parser.check(token::TokenKind::Slash) {
+            common.BinOp.Mul
+        } else if parser.check(token.TokenKind.Slash) {
             parser.advance();
-            common::BinOp::Div
+            common.BinOp.Div
         } else {
             parser.advance();
-            common::BinOp::Rem
+            common.BinOp.Rem
         };
 
         let right = parse_const_primary(parser);
         let end_span = parser.previous.span;
-        left = ast::Expr {
-            kind: ast::ExprKind::Binary {
+        left = ast.Expr {
+            kind: ast.ExprKind.Binary {
                 op: bin_op,
-                left: Box::new(left),
-                right: Box::new(right),
+                left: Box.new(left),
+                right: Box.new(right),
             },
-            span: common::Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
+            span: common.Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
         };
     }
 
@@ -440,71 +454,71 @@ fn parse_const_multiplicative(parser: &mut parser_base::Parser) -> ast::Expr {
 }
 
 /// Parse primary constant expressions (literals, paths, parenthesized)
-fn parse_const_primary(parser: &mut parser_base::Parser) -> ast::Expr {
+fn parse_const_primary(parser: &mut parser_base.Parser) -> ast.Expr {
     let start = parser.current.span;
 
     match parser.current.kind {
         // Integer literal
-        token::TokenKind::IntLit => {
+        token.TokenKind.IntLit => {
             let int_val = parse_const_int_value(parser, start);
             parser.advance();
-            let lit = ast::Literal {
-                kind: ast::LiteralKind::Int { val: int_val, suffix: Option::None },
+            let lit = ast.Literal {
+                kind: ast.LiteralKind.Int { val: int_val, suffix: Option.None },
                 span: start,
             };
-            return ast::Expr {
-                kind: ast::ExprKind::Literal(lit),
+            return ast.Expr {
+                kind: ast.ExprKind.Literal(lit),
                 span: start,
             };
         }
 
         // Parenthesized expression
-        token::TokenKind::LParen => {
+        token.TokenKind.LParen => {
             parser.advance();
             let inner = parse_const_expr(parser);
-            parser.expect(token::TokenKind::RParen);
+            parser.expect(token.TokenKind.RParen);
             return inner;
         }
 
         // Path (constant name)
-        token::TokenKind::Ident => {
+        token.TokenKind.Ident => {
             let path = parse_const_path(parser);
             let end_span = parser.previous.span;
-            return ast::Expr {
-                kind: ast::ExprKind::Path(path),
-                span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+            return ast.Expr {
+                kind: ast.ExprKind.Path(path),
+                span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
             };
         }
-        token::TokenKind::TypeIdent => {
+        token.TokenKind.TypeIdent => {
             let path = parse_const_path(parser);
             let end_span = parser.previous.span;
-            return ast::Expr {
-                kind: ast::ExprKind::Path(path),
-                span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+            return ast.Expr {
+                kind: ast.ExprKind.Path(path),
+                span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
             };
         }
-        token::TokenKind::SelfUpper => {
+        token.TokenKind.SelfUpper => {
             let path = parse_const_path(parser);
             let end_span = parser.previous.span;
-            return ast::Expr {
-                kind: ast::ExprKind::Path(path),
-                span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+            return ast.Expr {
+                kind: ast.ExprKind.Path(path),
+                span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
             };
         }
-        token::TokenKind::Crate => {
+        token.TokenKind.Crate => {
             let path = parse_const_path(parser);
             let end_span = parser.previous.span;
-            return ast::Expr {
-                kind: ast::ExprKind::Path(path),
-                span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+            return ast.Expr {
+                kind: ast.ExprKind.Path(path),
+                span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
             };
         }
-        token::TokenKind::Super => {
+        token.TokenKind.Super => {
             let path = parse_const_path(parser);
             let end_span = parser.previous.span;
-            return ast::Expr {
-                kind: ast::ExprKind::Path(path),
-                span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+            return ast.Expr {
+                kind: ast.ExprKind.Path(path),
+                span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
             };
         }
 
@@ -512,8 +526,8 @@ fn parse_const_primary(parser: &mut parser_base::Parser) -> ast::Expr {
         _ => {
             parser.error_expected("constant expression");
             parser.advance();
-            return ast::Expr {
-                kind: ast::ExprKind::Tuple(Vec::new()),
+            return ast.Expr {
+                kind: ast.ExprKind.Tuple(Vec.new()),
                 span: start,
             };
         }
@@ -523,7 +537,7 @@ fn parse_const_primary(parser: &mut parser_base::Parser) -> ast::Expr {
 /// Parse an integer value from the source text at the given span.
 /// Handles decimal, hex (0x), octal (0o), and binary (0b) formats.
 /// Skips underscore separators and stops at type suffix characters.
-fn parse_const_int_value(parser: &mut parser_base::Parser, span: common::Span) -> u128 {
+fn parse_const_int_value(parser: &mut parser_base.Parser, span: common.Span) -> u128 {
     let start = span.start;
     let end = span.end;
     let mut pos = start;
@@ -586,112 +600,125 @@ fn parse_const_int_value(parser: &mut parser_base::Parser, span: common::Span) -
 }
 
 /// Parse a simple path for constant expressions.
-fn parse_const_path(parser: &mut parser_base::Parser) -> ast::ExprPath {
+fn parse_const_path(parser: &mut parser_base.Parser) -> ast.ExprPath {
     let start = parser.current.span;
-    let mut segments: Vec<ast::ExprPathSegment> = Vec::new();
+    let mut segments: Vec<ast.ExprPathSegment> = Vec.new();
 
     let first_name = parser.parse_spanned_symbol();
-    let first_seg = ast::ExprPathSegment { name: first_name, args: Option::None };
+    let first_seg = ast.ExprPathSegment { name: first_name, args: Option.None };
     segments.push(first_seg);
 
-    while parser.try_consume(token::TokenKind::ColonColon) {
-        let seg_name = parser.parse_spanned_symbol();
-        let seg = ast::ExprPathSegment { name: seg_name, args: Option::None };
-        segments.push(seg);
-    }
-
-    let end_span = parser.previous.span;
-    ast::ExprPath {
-        segments: segments,
-        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
-    }
-}
-
-/// Parse a function type: fn(T, U) -> V.
-fn parse_fn_type(parser: &mut parser_base::Parser) -> ast::Type {
-    let start = parser.current.span;
-    parser.advance(); // consume 'fn'
-
-    parser.expect(token::TokenKind::LParen);
-
-    let mut params: Vec<ast::Type> = Vec::new();
-    while !parser.check(token::TokenKind::RParen) && !parser.is_at_end() {
-        params.push(parse_type(parser));
-
-        if !parser.try_consume(token::TokenKind::Comma) {
+    loop {
+        if parser.try_consume(token.TokenKind.ColonColon) {
+            let seg_name = parser.parse_spanned_symbol();
+            let seg = ast.ExprPathSegment { name: seg_name, args: Option.None };
+            segments.push(seg);
+        } else if parser.current.kind == token.TokenKind.Dot
+                  && (parser.check_next(token.TokenKind.TypeIdent)
+                      || parser.check_next(token.TokenKind.SelfUpper)
+                      || parser.check_next(token.TokenKind.Crate)
+                      || parser.check_next(token.TokenKind.Super)) {
+            parser.advance(); // consume '.'
+            let seg_name = parser.parse_spanned_symbol();
+            let seg = ast.ExprPathSegment { name: seg_name, args: Option.None };
+            segments.push(seg);
+        } else {
             break;
         }
     }
 
-    parser.expect(token::TokenKind::RParen);
+    let end_span = parser.previous.span;
+    ast.ExprPath {
+        segments: segments,
+        span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    }
+}
+
+/// Parse a function type: fn(T, U) -> V.
+fn parse_fn_type(parser: &mut parser_base.Parser) -> ast.Type {
+    let start = parser.current.span;
+    parser.advance(); // consume 'fn'
+
+    parser.expect(token.TokenKind.LParen);
+
+    let mut params: Vec<ast.Type> = Vec.new();
+    while !parser.check(token.TokenKind.RParen) && !parser.is_at_end() {
+        params.push(parse_type(parser));
+
+        if !parser.try_consume(token.TokenKind.Comma) {
+            break;
+        }
+    }
+
+    parser.expect(token.TokenKind.RParen);
 
     // Optional return type
-    let return_type = if parser.try_consume(token::TokenKind::Arrow) {
+    let return_type = if parser.try_consume(token.TokenKind.Arrow) {
         parse_type(parser)
     } else {
         // Default to unit type
-        ast::Type {
-            kind: ast::TypeKind::Tuple(Vec::new()),
+        ast.Type {
+            kind: ast.TypeKind.Tuple(Vec.new()),
             span: parser.previous.span,
         }
     };
 
     // Optional effects clause: / {Effect1, Effect2} or / Effect
-    let effects: Option<ast::EffectRow> = if parser.check(token::TokenKind::Slash) {
-        Option::Some(parse_fn_type_effect_row(parser))
+    let effects: Option<ast.EffectRow> = if parser.check(token.TokenKind.Slash) {
+        Option.Some(parse_fn_type_effect_row(parser))
     } else {
-        Option::None
+        Option.None
     };
 
     let end_span = parser.previous.span;
-    ast::Type {
-        kind: ast::TypeKind::Function {
+    ast.Type {
+        kind: ast.TypeKind.Function {
             params: params,
-            return_type: Box::new(return_type),
+            return_type: Box.new(return_type),
             effects: effects,
         },
-        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     }
 }
 
 /// Parse an effect row in a function type: / {Effect1, Effect2} or / Effect
-pub fn parse_fn_type_effect_row(parser: &mut parser_base::Parser) -> ast::EffectRow {
+pub fn parse_fn_type_effect_row(parser: &mut parser_base.Parser) -> ast.EffectRow {
     let start = parser.current.span;
     parser.advance(); // consume '/'
 
     // Check for "pure" keyword
-    if parser.check(token::TokenKind::Pure) {
+    if parser.check(token.TokenKind.Pure) {
         parser.advance();
         let end_span = parser.previous.span;
-        return ast::EffectRow {
-            kind: ast::EffectRowKind::Pure,
-            span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        return ast.EffectRow {
+            kind: ast.EffectRowKind.Pure,
+            span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
         };
     }
 
     // Brace-wrapped effect row: / {Effect1, Effect2}
-    if parser.check(token::TokenKind::LBrace) {
+    if parser.check(token.TokenKind.LBrace) {
         parser.advance(); // consume '{'
 
         // Empty braces: / {} means pure
-        if parser.try_consume(token::TokenKind::RBrace) {
+        if parser.try_consume(token.TokenKind.RBrace) {
             let end_span = parser.previous.span;
-            return ast::EffectRow {
-                kind: ast::EffectRowKind::Pure,
-                span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+            return ast.EffectRow {
+                kind: ast.EffectRowKind.Pure,
+                span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
             };
         }
 
-        let mut effects: Vec<ast::Type> = Vec::new();
-        let mut rest: Option<common::SpannedSymbol> = Option::None;
+        let mut effects: Vec<ast.Type> = Vec.new();
+        let mut rest: Option<common.SpannedSymbol> = Option.None;
 
         // Parse comma-separated effects
         let done = false;
         while !done {
             // Check for row variable: | e
-            if parser.try_consume(token::TokenKind::Or) {
-                if parser.check(token::TokenKind::Ident) || parser.check(token::TokenKind::TypeIdent) {
-                    rest = Option::Some(parser.parse_spanned_symbol());
+            if parser.try_consume(token.TokenKind.Or) {
+                if parser.check(token.TokenKind.Ident) || parser.check(token.TokenKind.TypeIdent) {
+                    rest = Option.Some(parser.parse_spanned_symbol());
                 }
                 break;
             }
@@ -699,114 +726,114 @@ pub fn parse_fn_type_effect_row(parser: &mut parser_base::Parser) -> ast::Effect
             let eff = parse_type(parser);
             effects.push(eff);
 
-            if !parser.try_consume(token::TokenKind::Comma) {
+            if !parser.try_consume(token.TokenKind.Comma) {
                 // Check for trailing row variable: Effect | e
-                if parser.try_consume(token::TokenKind::Or) {
-                    if parser.check(token::TokenKind::Ident) || parser.check(token::TokenKind::TypeIdent) {
-                        rest = Option::Some(parser.parse_spanned_symbol());
+                if parser.try_consume(token.TokenKind.Or) {
+                    if parser.check(token.TokenKind.Ident) || parser.check(token.TokenKind.TypeIdent) {
+                        rest = Option.Some(parser.parse_spanned_symbol());
                     }
                 }
                 break;
             }
         }
 
-        parser.expect(token::TokenKind::RBrace);
+        parser.expect(token.TokenKind.RBrace);
         let end_span = parser.previous.span;
-        let kind = ast::EffectRowKind::Effects { effects: effects, rest: rest };
-        return ast::EffectRow {
+        let kind = ast.EffectRowKind.Effects { effects: effects, rest: rest };
+        return ast.EffectRow {
             kind: kind,
-            span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+            span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
         };
     }
 
     // Bare effect: / Effect1 + Effect2
-    let mut effects: Vec<ast::Type> = Vec::new();
-    let rest: Option<common::SpannedSymbol> = Option::None;
+    let mut effects: Vec<ast.Type> = Vec.new();
+    let rest: Option<common.SpannedSymbol> = Option.None;
 
     let eff = parse_type(parser);
     effects.push(eff);
 
-    while parser.try_consume(token::TokenKind::Plus) {
+    while parser.try_consume(token.TokenKind.Plus) {
         let eff = parse_type(parser);
         effects.push(eff);
     }
 
     let end_span = parser.previous.span;
-    let kind = ast::EffectRowKind::Effects { effects: effects, rest: rest };
-    ast::EffectRow {
+    let kind = ast.EffectRowKind.Effects { effects: effects, rest: rest };
+    ast.EffectRow {
         kind: kind,
-        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     }
 }
 
 /// Parse a record type: {x: T, y: U | R}.
-fn parse_record_type(parser: &mut parser_base::Parser) -> ast::Type {
+fn parse_record_type(parser: &mut parser_base.Parser) -> ast.Type {
     let start = parser.current.span;
     parser.advance(); // consume '{'
 
-    let mut fields: Vec<ast::RecordTypeField> = Vec::new();
-    let mut rest: Option<common::SpannedSymbol> = Option::None;
+    let mut fields: Vec<ast.RecordTypeField> = Vec.new();
+    let mut rest: Option<common.SpannedSymbol> = Option.None;
 
-    while !parser.check(token::TokenKind::RBrace) && !parser.is_at_end() {
+    while !parser.check(token.TokenKind.RBrace) && !parser.is_at_end() {
         // Check for row variable: | R
-        if parser.try_consume(token::TokenKind::Or) {
-            if parser.check(token::TokenKind::Ident) || parser.check(token::TokenKind::TypeIdent) {
-                rest = Option::Some(parser.parse_spanned_symbol());
+        if parser.try_consume(token.TokenKind.Or) {
+            if parser.check(token.TokenKind.Ident) || parser.check(token.TokenKind.TypeIdent) {
+                rest = Option.Some(parser.parse_spanned_symbol());
             }
             break;
         }
 
         let field_start = parser.current.span;
         let field_name = parser.parse_spanned_symbol();
-        parser.expect(token::TokenKind::Colon);
+        parser.expect(token.TokenKind.Colon);
         let field_type = parse_type(parser);
         let field_end = parser.previous.span;
 
-        let field = ast::RecordTypeField {
+        let field = ast.RecordTypeField {
             name: field_name,
             ty: field_type,
-            span: common::Span { start: field_start.start, end: field_end.end, line: field_start.line, column: field_start.column },
+            span: common.Span { start: field_start.start, end: field_end.end, line: field_start.line, column: field_start.column },
         };
         fields.push(field);
 
-        if !parser.try_consume(token::TokenKind::Comma) {
+        if !parser.try_consume(token.TokenKind.Comma) {
             // Check for trailing row variable: | R (after last field without comma)
-            if parser.try_consume(token::TokenKind::Or) {
-                if parser.check(token::TokenKind::Ident) || parser.check(token::TokenKind::TypeIdent) {
-                    rest = Option::Some(parser.parse_spanned_symbol());
+            if parser.try_consume(token.TokenKind.Or) {
+                if parser.check(token.TokenKind.Ident) || parser.check(token.TokenKind.TypeIdent) {
+                    rest = Option.Some(parser.parse_spanned_symbol());
                 }
             }
             break;
         }
     }
 
-    parser.expect(token::TokenKind::RBrace);
+    parser.expect(token.TokenKind.RBrace);
 
     let end_span = parser.previous.span;
-    ast::Type {
-        kind: ast::TypeKind::Record {
+    ast.Type {
+        kind: ast.TypeKind.Record {
             fields: fields,
             rest: rest,
         },
-        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     }
 }
 
 /// Parse a forall type: forall<T, U> T.
-fn parse_forall_type(parser: &mut parser_base::Parser) -> ast::Type {
+fn parse_forall_type(parser: &mut parser_base.Parser) -> ast.Type {
     let start = parser.current.span;
     parser.advance(); // consume 'forall'
 
-    parser.expect(token::TokenKind::Lt);
+    parser.expect(token.TokenKind.Lt);
 
-    let mut params: Vec<common::SpannedSymbol> = Vec::new();
+    let mut params: Vec<common.SpannedSymbol> = Vec.new();
     while !parser.check_closing_angle() && !parser.is_at_end() {
         params.push(parser.parse_spanned_symbol());
 
         if parser.check_closing_angle() {
             break;
         }
-        if !parser.try_consume(token::TokenKind::Comma) {
+        if !parser.try_consume(token.TokenKind.Comma) {
             break;
         }
     }
@@ -816,11 +843,11 @@ fn parse_forall_type(parser: &mut parser_base::Parser) -> ast::Type {
     let inner = parse_type(parser);
     let end_span = parser.previous.span;
 
-    ast::Type {
-        kind: ast::TypeKind::Forall {
+    ast.Type {
+        kind: ast.TypeKind.Forall {
             params: params,
-            body: Box::new(inner),
+            body: Box.new(inner),
         },
-        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     }
 }

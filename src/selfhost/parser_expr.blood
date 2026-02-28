@@ -27,13 +27,13 @@ mod parser_pattern;
 // ============================================================
 
 /// Parse an expression.
-pub fn parse_expr(parser: &mut parser_base::Parser) -> ast::Expr {
+pub fn parse_expr(parser: &mut parser_base.Parser) -> ast.Expr {
     parse_expr_with_precedence(parser, 1)
 }
 
 /// Parse an expression without allowing struct literals.
 /// Used in condition contexts to avoid ambiguity.
-pub fn parse_expr_no_struct(parser: &mut parser_base::Parser) -> ast::Expr {
+pub fn parse_expr_no_struct(parser: &mut parser_base.Parser) -> ast.Expr {
     let prev = parser.allow_struct_literal;
     parser.allow_struct_literal = false;
     let expr = parse_expr_with_precedence(parser, 1);
@@ -43,23 +43,23 @@ pub fn parse_expr_no_struct(parser: &mut parser_base::Parser) -> ast::Expr {
 
 /// Returns true if the expression is block-like (ends with a `}`).
 /// Used to prevent treating `(` after block-like expressions as function calls.
-fn is_block_like_expr(expr: &ast::Expr) -> bool {
+fn is_block_like_expr(expr: &ast.Expr) -> bool {
     match &expr.kind {
-        &ast::ExprKind::Block(ref _b) => true,
-        &ast::ExprKind::If { condition: _, then_branch: _, else_branch: _ } => true,
-        &ast::ExprKind::IfLet { pattern: _, scrutinee: _, then_branch: _, else_branch: _ } => true,
-        &ast::ExprKind::Match { scrutinee: _, arms: _ } => true,
-        &ast::ExprKind::Loop { label: _, body: _ } => true,
-        &ast::ExprKind::While { label: _, condition: _, body: _ } => true,
-        &ast::ExprKind::WhileLet { label: _, pattern: _, scrutinee: _, body: _ } => true,
-        &ast::ExprKind::For { label: _, pattern: _, iter: _, body: _ } => true,
-        &ast::ExprKind::Unsafe(ref _b) => true,
+        &ast.ExprKind.Block(ref _b) => true,
+        &ast.ExprKind.If { condition: _, then_branch: _, else_branch: _ } => true,
+        &ast.ExprKind.IfLet { pattern: _, scrutinee: _, then_branch: _, else_branch: _ } => true,
+        &ast.ExprKind.Match { scrutinee: _, arms: _ } => true,
+        &ast.ExprKind.Loop { label: _, body: _ } => true,
+        &ast.ExprKind.While { label: _, condition: _, body: _ } => true,
+        &ast.ExprKind.WhileLet { label: _, pattern: _, scrutinee: _, body: _ } => true,
+        &ast.ExprKind.For { label: _, pattern: _, iter: _, body: _ } => true,
+        &ast.ExprKind.Unsafe(ref _b) => true,
         _ => false,
     }
 }
 
 /// Parse an expression with a minimum precedence level (Pratt parser).
-pub fn parse_expr_with_precedence(parser: &mut parser_base::Parser, min_prec: u8) -> ast::Expr {
+pub fn parse_expr_with_precedence(parser: &mut parser_base.Parser, min_prec: u8) -> ast.Expr {
     // Parse prefix/primary expression
     let mut left = parse_prefix_expr(parser);
 
@@ -74,8 +74,8 @@ pub fn parse_expr_with_precedence(parser: &mut parser_base::Parser, min_prec: u8
         // This prevents parsing `while { ... }(tuple)` as a call.
         if is_block_like_expr(&left) {
             match parser.current.kind {
-                token::TokenKind::LParen => { break; }
-                token::TokenKind::LBracket => { break; }
+                token.TokenKind.LParen => { break; }
+                token.TokenKind.LBracket => { break; }
                 _ => {}
             }
         }
@@ -87,74 +87,74 @@ pub fn parse_expr_with_precedence(parser: &mut parser_base::Parser, min_prec: u8
 }
 
 /// Get the precedence of an infix operator.
-fn infix_precedence(kind: token::TokenKind) -> u8 {
+fn infix_precedence(kind: token.TokenKind) -> u8 {
     match kind {
         // Assignment (right-to-left, lowest)
-        token::TokenKind::Eq => 1,
+        token.TokenKind.Eq => 1,
 
         // Compound assignment (right-to-left, same precedence as assignment)
-        token::TokenKind::PlusEq => 1,
-        token::TokenKind::MinusEq => 1,
-        token::TokenKind::StarEq => 1,
-        token::TokenKind::SlashEq => 1,
-        token::TokenKind::PercentEq => 1,
-        token::TokenKind::AndEq => 1,
-        token::TokenKind::OrEq => 1,
-        token::TokenKind::CaretEq => 1,
-        token::TokenKind::ShlEq => 1,
-        token::TokenKind::ShrEq => 1,
+        token.TokenKind.PlusEq => 1,
+        token.TokenKind.MinusEq => 1,
+        token.TokenKind.StarEq => 1,
+        token.TokenKind.SlashEq => 1,
+        token.TokenKind.PercentEq => 1,
+        token.TokenKind.AndEq => 1,
+        token.TokenKind.OrEq => 1,
+        token.TokenKind.CaretEq => 1,
+        token.TokenKind.ShlEq => 1,
+        token.TokenKind.ShrEq => 1,
 
         // Pipe operator (lowest after assignment)
-        token::TokenKind::Pipe => 2,
+        token.TokenKind.Pipe => 2,
 
         // Range operators
-        token::TokenKind::DotDot => 3,
-        token::TokenKind::DotDotEq => 3,
+        token.TokenKind.DotDot => 3,
+        token.TokenKind.DotDotEq => 3,
 
         // Logical or
-        token::TokenKind::OrOr => 4,
+        token.TokenKind.OrOr => 4,
 
         // Logical and
-        token::TokenKind::AndAnd => 5,
+        token.TokenKind.AndAnd => 5,
 
         // Comparison
-        token::TokenKind::EqEq => 6,
-        token::TokenKind::NotEq => 6,
-        token::TokenKind::Lt => 6,
-        token::TokenKind::Gt => 6,
-        token::TokenKind::LtEq => 6,
-        token::TokenKind::GtEq => 6,
+        token.TokenKind.EqEq => 6,
+        token.TokenKind.NotEq => 6,
+        token.TokenKind.Lt => 6,
+        token.TokenKind.Gt => 6,
+        token.TokenKind.LtEq => 6,
+        token.TokenKind.GtEq => 6,
 
         // Bitwise or
-        token::TokenKind::Or => 7,
+        token.TokenKind.Or => 7,
 
         // Bitwise xor
-        token::TokenKind::Caret => 8,
+        token.TokenKind.Caret => 8,
 
         // Bitwise and
-        token::TokenKind::And => 9,
+        token.TokenKind.And => 9,
 
         // Shift
-        token::TokenKind::Shl => 10,
-        token::TokenKind::Shr => 10,
+        token.TokenKind.Shl => 10,
+        token.TokenKind.Shr => 10,
 
         // Additive
-        token::TokenKind::Plus => 11,
-        token::TokenKind::Minus => 11,
+        token.TokenKind.Plus => 11,
+        token.TokenKind.Minus => 11,
 
         // Multiplicative
-        token::TokenKind::Star => 12,
-        token::TokenKind::Slash => 12,
-        token::TokenKind::Percent => 12,
+        token.TokenKind.Star => 12,
+        token.TokenKind.Slash => 12,
+        token.TokenKind.Percent => 12,
 
         // Cast (as)
-        token::TokenKind::As => 13,
+        token.TokenKind.As => 13,
 
         // Postfix (call, index, field access)
-        token::TokenKind::LParen => 15,
-        token::TokenKind::LBracket => 15,
-        token::TokenKind::Dot => 15,
-        token::TokenKind::Question => 15,
+        token.TokenKind.LParen => 15,
+        token.TokenKind.LBracket => 15,
+        token.TokenKind.Dot => 15,
+        token.TokenKind.Question => 15,
 
         // Not an infix operator
         _ => 0,
@@ -162,99 +162,99 @@ fn infix_precedence(kind: token::TokenKind) -> u8 {
 }
 
 /// Parse a prefix expression (unary operators, primary expressions).
-fn parse_prefix_expr(parser: &mut parser_base::Parser) -> ast::Expr {
+fn parse_prefix_expr(parser: &mut parser_base.Parser) -> ast.Expr {
     let start = parser.current.span;
 
     match parser.current.kind {
         // Unary minus
-        token::TokenKind::Minus => {
+        token.TokenKind.Minus => {
             parser.advance();
             let operand = parse_expr_with_precedence(parser, 14); // Above 'as' (13) so &x as T parses as (&x) as T
             let end_span = parser.previous.span;
-            return ast::Expr {
-                kind: ast::ExprKind::Unary {
-                    op: common::UnaryOp::Neg,
-                    operand: Box::new(operand),
+            return ast.Expr {
+                kind: ast.ExprKind.Unary {
+                    op: common.UnaryOp.Neg,
+                    operand: Box.new(operand),
                 },
-                span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+                span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
             };
         }
         // Unary not
-        token::TokenKind::Not => {
+        token.TokenKind.Not => {
             parser.advance();
             let operand = parse_expr_with_precedence(parser, 14);
             let end_span = parser.previous.span;
-            return ast::Expr {
-                kind: ast::ExprKind::Unary {
-                    op: common::UnaryOp::Not,
-                    operand: Box::new(operand),
+            return ast.Expr {
+                kind: ast.ExprKind.Unary {
+                    op: common.UnaryOp.Not,
+                    operand: Box.new(operand),
                 },
-                span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+                span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
             };
         }
         // Dereference
-        token::TokenKind::Star => {
+        token.TokenKind.Star => {
             parser.advance();
             let operand = parse_expr_with_precedence(parser, 14);
             let end_span = parser.previous.span;
-            return ast::Expr {
-                kind: ast::ExprKind::Unary {
-                    op: common::UnaryOp::Deref,
-                    operand: Box::new(operand),
+            return ast.Expr {
+                kind: ast.ExprKind.Unary {
+                    op: common.UnaryOp.Deref,
+                    operand: Box.new(operand),
                 },
-                span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+                span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
             };
         }
         // Reference
-        token::TokenKind::And => {
+        token.TokenKind.And => {
             parser.advance();
-            let is_mut = parser.try_consume(token::TokenKind::Mut);
+            let is_mut = parser.try_consume(token.TokenKind.Mut);
             let operand = parse_expr_with_precedence(parser, 14);
             let end_span = parser.previous.span;
-            let unary_op = if is_mut { common::UnaryOp::RefMut } else { common::UnaryOp::Ref };
-            return ast::Expr {
-                kind: ast::ExprKind::Unary {
+            let unary_op = if is_mut { common.UnaryOp.RefMut } else { common.UnaryOp.Ref };
+            return ast.Expr {
+                kind: ast.ExprKind.Unary {
                     op: unary_op,
-                    operand: Box::new(operand),
+                    operand: Box.new(operand),
                 },
-                span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+                span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
             };
         }
         // Prefix range: ..expr or ..=expr
-        token::TokenKind::DotDot => {
+        token.TokenKind.DotDot => {
             parser.advance();
             let inclusive = false;
             let end_val = if can_start_expr(parser.current.kind) {
-                Option::Some(Box::new(parse_expr_with_precedence(parser, 3)))
+                Option.Some(Box.new(parse_expr_with_precedence(parser, 3)))
             } else {
-                Option::None
+                Option.None
             };
             let end_span = parser.previous.span;
-            return ast::Expr {
-                kind: ast::ExprKind::Range {
-                    start: Option::None,
+            return ast.Expr {
+                kind: ast.ExprKind.Range {
+                    start: Option.None,
                     end_val: end_val,
                     inclusive: inclusive,
                 },
-                span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+                span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
             };
         }
-        token::TokenKind::DotDotEq => {
+        token.TokenKind.DotDotEq => {
             parser.advance();
             let inclusive = true;
             let end_val = if can_start_expr(parser.current.kind) {
-                Option::Some(Box::new(parse_expr_with_precedence(parser, 3)))
+                Option.Some(Box.new(parse_expr_with_precedence(parser, 3)))
             } else {
-                Option::None
+                Option.None
             };
             let end_span = parser.previous.span;
-            return ast::Expr {
-                kind: ast::ExprKind::Range {
-                    start: Option::None,
+            return ast.Expr {
+                kind: ast.ExprKind.Range {
+                    start: Option.None,
                     end_val: end_val,
                     inclusive: inclusive,
                 },
-                span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+                span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
             };
         }
         // All other cases fall through to primary expression
@@ -265,130 +265,130 @@ fn parse_prefix_expr(parser: &mut parser_base::Parser) -> ast::Expr {
 }
 
 /// Parse a primary expression (literals, identifiers, parenthesized expressions, etc.).
-fn parse_primary_expr(parser: &mut parser_base::Parser) -> ast::Expr {
+fn parse_primary_expr(parser: &mut parser_base.Parser) -> ast.Expr {
     let start = parser.current.span;
 
     match parser.current.kind {
         // Integer literal
-        token::TokenKind::IntLit => {
+        token.TokenKind.IntLit => {
             let int_val = parser_base::parse_int_value_from_span(parser, start);
             let int_suffix = parser_base::parse_int_suffix_from_span(parser, start);
             parser.advance();
-            let lit = ast::Literal {
-                kind: ast::LiteralKind::Int { val: int_val, suffix: int_suffix },
+            let lit = ast.Literal {
+                kind: ast.LiteralKind.Int { val: int_val, suffix: int_suffix },
                 span: start,
             };
-            return ast::Expr {
-                kind: ast::ExprKind::Literal(lit),
+            return ast.Expr {
+                kind: ast.ExprKind.Literal(lit),
                 span: start,
             };
         }
         // Float literal
-        token::TokenKind::FloatLit => {
+        token.TokenKind.FloatLit => {
             let float_bits = parser_base::parse_float_bits_from_span(parser, start);
             let float_suffix = parser_base::parse_float_suffix_from_span(parser, start);
             parser.advance();
-            let lit = ast::Literal {
-                kind: ast::LiteralKind::Float { bits: float_bits, suffix: float_suffix },
+            let lit = ast.Literal {
+                kind: ast.LiteralKind.Float { bits: float_bits, suffix: float_suffix },
                 span: start,
             };
-            return ast::Expr {
-                kind: ast::ExprKind::Literal(lit),
+            return ast.Expr {
+                kind: ast.ExprKind.Literal(lit),
                 span: start,
             };
         }
         // String literal
-        token::TokenKind::StringLit => {
+        token.TokenKind.StringLit => {
             let str_val = parser_base::parse_string_from_span(parser, start);
             parser.advance();
-            let lit = ast::Literal {
-                kind: ast::LiteralKind::Str(str_val),
+            let lit = ast.Literal {
+                kind: ast.LiteralKind.Str(str_val),
                 span: start,
             };
-            return ast::Expr {
-                kind: ast::ExprKind::Literal(lit),
+            return ast.Expr {
+                kind: ast.ExprKind.Literal(lit),
                 span: start,
             };
         }
         // Raw string literal (no escape processing)
-        token::TokenKind::RawStringLit => {
+        token.TokenKind.RawStringLit => {
             let str_val = parser_base::parse_raw_string_from_span(parser, start);
             parser.advance();
-            let lit = ast::Literal {
-                kind: ast::LiteralKind::Str(str_val),
+            let lit = ast.Literal {
+                kind: ast.LiteralKind.Str(str_val),
                 span: start,
             };
-            return ast::Expr {
-                kind: ast::ExprKind::Literal(lit),
+            return ast.Expr {
+                kind: ast.ExprKind.Literal(lit),
                 span: start,
             };
         }
         // Byte string literal
-        token::TokenKind::ByteStringLit => {
+        token.TokenKind.ByteStringLit => {
             let bytes = parser_base::parse_byte_string_from_span(parser, start);
             parser.advance();
-            let lit = ast::Literal {
-                kind: ast::LiteralKind::ByteStr(bytes),
+            let lit = ast.Literal {
+                kind: ast.LiteralKind.ByteStr(bytes),
                 span: start,
             };
-            return ast::Expr {
-                kind: ast::ExprKind::Literal(lit),
+            return ast.Expr {
+                kind: ast.ExprKind.Literal(lit),
                 span: start,
             };
         }
         // Char literal
-        token::TokenKind::CharLit => {
+        token.TokenKind.CharLit => {
             let char_val = parser_base::parse_char_from_span(parser, start);
             parser.advance();
-            let lit = ast::Literal {
-                kind: ast::LiteralKind::Char(char_val),
+            let lit = ast.Literal {
+                kind: ast.LiteralKind.Char(char_val),
                 span: start,
             };
-            return ast::Expr {
-                kind: ast::ExprKind::Literal(lit),
+            return ast.Expr {
+                kind: ast.ExprKind.Literal(lit),
                 span: start,
             };
         }
         // Boolean literals
-        token::TokenKind::True => {
+        token.TokenKind.True => {
             parser.advance();
-            let lit = ast::Literal {
-                kind: ast::LiteralKind::Bool(true),
+            let lit = ast.Literal {
+                kind: ast.LiteralKind.Bool(true),
                 span: start,
             };
-            return ast::Expr {
-                kind: ast::ExprKind::Literal(lit),
+            return ast.Expr {
+                kind: ast.ExprKind.Literal(lit),
                 span: start,
             };
         }
-        token::TokenKind::False => {
+        token.TokenKind.False => {
             parser.advance();
-            let lit = ast::Literal {
-                kind: ast::LiteralKind::Bool(false),
+            let lit = ast.Literal {
+                kind: ast.LiteralKind.Bool(false),
                 span: start,
             };
-            return ast::Expr {
-                kind: ast::ExprKind::Literal(lit),
+            return ast.Expr {
+                kind: ast.ExprKind.Literal(lit),
                 span: start,
             };
         }
         // Parenthesized expression or tuple
-        token::TokenKind::LParen => {
+        token.TokenKind.LParen => {
             return parse_paren_or_tuple_expr(parser);
         }
         // Array literal
-        token::TokenKind::LBracket => {
+        token.TokenKind.LBracket => {
             return parse_array_expr(parser);
         }
         // Block expression or anonymous record
-        token::TokenKind::LBrace => {
+        token.TokenKind.LBrace => {
             // Disambiguate: anonymous record `{ ident: expr, ... }` vs block `{ stmts }`
             // After '{', if we see `Ident :` it's an anonymous record.
-            if parser.check_next(token::TokenKind::Ident) {
+            if parser.check_next(token.TokenKind.Ident) {
                 let brace_start = parser.current.span;
                 parser.advance(); // consume '{'
                 // Now current=Ident. If next is ':', this is an anonymous record.
-                if parser.check(token::TokenKind::Ident) && parser.check_next(token::TokenKind::Colon) {
+                if parser.check(token.TokenKind.Ident) && parser.check_next(token.TokenKind.Colon) {
                     return parse_anon_record_inner(parser, brace_start);
                 }
                 // Not a record — parse as block with '{' already consumed.
@@ -397,129 +397,129 @@ fn parse_primary_expr(parser: &mut parser_base::Parser) -> ast::Expr {
             return parse_block_expr(parser);
         }
         // If expression
-        token::TokenKind::If => {
+        token.TokenKind.If => {
             return parse_if_expr(parser);
         }
         // Match expression
-        token::TokenKind::Match => {
+        token.TokenKind.Match => {
             return parse_match_expr(parser);
         }
         // Labeled loop: 'label: loop/while/for
-        token::TokenKind::Lifetime => {
+        token.TokenKind.Lifetime => {
             return parse_labeled_loop(parser);
         }
         // Loop expressions
-        token::TokenKind::Loop => {
-            return parse_loop_expr(parser, Option::None);
+        token.TokenKind.Loop => {
+            return parse_loop_expr(parser, Option.None);
         }
-        token::TokenKind::While => {
-            return parse_while_expr(parser, Option::None);
+        token.TokenKind.While => {
+            return parse_while_expr(parser, Option.None);
         }
-        token::TokenKind::For => {
-            return parse_for_expr(parser, Option::None);
+        token.TokenKind.For => {
+            return parse_for_expr(parser, Option.None);
         }
         // Return expression
-        token::TokenKind::Return => {
+        token.TokenKind.Return => {
             return parse_return_expr(parser);
         }
         // Break expression
-        token::TokenKind::Break => {
+        token.TokenKind.Break => {
             return parse_break_expr(parser);
         }
         // Continue expression
-        token::TokenKind::Continue => {
+        token.TokenKind.Continue => {
             return parse_continue_expr(parser);
         }
         // Closure (|args| body, || body, move |args| body)
-        token::TokenKind::Or => {
+        token.TokenKind.Or => {
             return parse_closure_expr(parser);
         }
-        token::TokenKind::OrOr => {
+        token.TokenKind.OrOr => {
             return parse_closure_expr(parser);
         }
-        token::TokenKind::Move => {
+        token.TokenKind.Move => {
             return parse_closure_expr(parser);
         }
         // Identifier or path
-        token::TokenKind::Ident => {
+        token.TokenKind.Ident => {
             return parse_path_expr(parser);
         }
-        token::TokenKind::TypeIdent => {
+        token.TokenKind.TypeIdent => {
             return parse_path_expr(parser);
         }
-        token::TokenKind::SelfLower => {
+        token.TokenKind.SelfLower => {
             return parse_path_expr(parser);
         }
-        token::TokenKind::SelfUpper => {
+        token.TokenKind.SelfUpper => {
             return parse_path_expr(parser);
         }
-        token::TokenKind::Crate => {
+        token.TokenKind.Crate => {
             return parse_path_expr(parser);
         }
-        token::TokenKind::Super => {
+        token.TokenKind.Super => {
             return parse_path_expr(parser);
         }
-        token::TokenKind::ColonColon => {
+        token.TokenKind.ColonColon => {
             return parse_path_expr(parser);
         }
         // Default expression - produces type's default value
-        token::TokenKind::Default => {
+        token.TokenKind.Default => {
             parser.advance();
-            return ast::Expr {
-                kind: ast::ExprKind::Default,
+            return ast.Expr {
+                kind: ast.ExprKind.Default,
                 span: start,
             };
         }
-        token::TokenKind::Handle => {
+        token.TokenKind.Handle => {
             return parse_path_expr(parser);
         }
-        token::TokenKind::Handler => {
+        token.TokenKind.Handler => {
             return parse_path_expr(parser);
         }
-        token::TokenKind::Effect => {
+        token.TokenKind.Effect => {
             return parse_path_expr(parser);
         }
-        token::TokenKind::Op => {
+        token.TokenKind.Op => {
             return parse_path_expr(parser);
         }
-        token::TokenKind::Deep => {
+        token.TokenKind.Deep => {
             return parse_path_expr(parser);
         }
-        token::TokenKind::Shallow => {
+        token.TokenKind.Shallow => {
             return parse_path_expr(parser);
         }
         // Unsafe block: @unsafe { ... }
-        token::TokenKind::AtUnsafe => {
+        token.TokenKind.AtUnsafe => {
             parser.advance();
             let block = parse_block(parser);
             let end_span = parser.previous.span;
-            return ast::Expr {
-                kind: ast::ExprKind::Unsafe(block),
-                span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+            return ast.Expr {
+                kind: ast.ExprKind.Unsafe(block),
+                span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
             };
         }
         // Effect expressions
-        token::TokenKind::Perform => {
+        token.TokenKind.Perform => {
             return parse_perform_expr(parser);
         }
-        token::TokenKind::Resume => {
+        token.TokenKind.Resume => {
             return parse_resume_expr(parser);
         }
-        token::TokenKind::With => {
+        token.TokenKind.With => {
             return parse_with_handle_expr(parser);
         }
-        token::TokenKind::Try => {
+        token.TokenKind.Try => {
             return parse_try_with_expr(parser);
         }
-        token::TokenKind::Region => {
+        token.TokenKind.Region => {
             return parse_region_expr(parser);
         }
         // Error recovery - return unit tuple as placeholder
         _ => {
-            parser.error_expected_with_code("expression", parser_base::ErrorCode::ExpectedExpression);
+            parser.error_expected_with_code("expression", parser_base.ErrorCode.ExpectedExpression);
             parser.advance();
-            return ast::Expr {
-                kind: ast::ExprKind::Tuple(Vec::new()),
+            return ast.Expr {
+                kind: ast.ExprKind.Tuple(Vec.new()),
                 span: start,
             };
         }
@@ -527,408 +527,408 @@ fn parse_primary_expr(parser: &mut parser_base::Parser) -> ast::Expr {
 }
 
 /// Parse an infix expression.
-fn parse_infix_expr(parser: &mut parser_base::Parser, left: ast::Expr, prec: u8) -> ast::Expr {
+fn parse_infix_expr(parser: &mut parser_base.Parser, left: ast.Expr, prec: u8) -> ast.Expr {
     let op_span = parser.current.span;
     let op_kind = parser.current.kind;
 
     match op_kind {
         // Binary operators
-        token::TokenKind::Plus => {
+        token.TokenKind.Plus => {
             parser.advance();
             let right = parse_expr_with_precedence(parser, prec + 1);
             let end_span = parser.previous.span;
-            return ast::Expr {
-                kind: ast::ExprKind::Binary {
-                    op: common::BinOp::Add,
-                    left: Box::new(left),
-                    right: Box::new(right),
+            return ast.Expr {
+                kind: ast.ExprKind.Binary {
+                    op: common.BinOp.Add,
+                    left: Box.new(left),
+                    right: Box.new(right),
                 },
-                span: common::Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
+                span: common.Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
             };
         }
-        token::TokenKind::Minus => {
+        token.TokenKind.Minus => {
             parser.advance();
             let right = parse_expr_with_precedence(parser, prec + 1);
             let end_span = parser.previous.span;
-            return ast::Expr {
-                kind: ast::ExprKind::Binary {
-                    op: common::BinOp::Sub,
-                    left: Box::new(left),
-                    right: Box::new(right),
+            return ast.Expr {
+                kind: ast.ExprKind.Binary {
+                    op: common.BinOp.Sub,
+                    left: Box.new(left),
+                    right: Box.new(right),
                 },
-                span: common::Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
+                span: common.Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
             };
         }
-        token::TokenKind::Star => {
+        token.TokenKind.Star => {
             parser.advance();
             let right = parse_expr_with_precedence(parser, prec + 1);
             let end_span = parser.previous.span;
-            return ast::Expr {
-                kind: ast::ExprKind::Binary {
-                    op: common::BinOp::Mul,
-                    left: Box::new(left),
-                    right: Box::new(right),
+            return ast.Expr {
+                kind: ast.ExprKind.Binary {
+                    op: common.BinOp.Mul,
+                    left: Box.new(left),
+                    right: Box.new(right),
                 },
-                span: common::Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
+                span: common.Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
             };
         }
-        token::TokenKind::Slash => {
+        token.TokenKind.Slash => {
             parser.advance();
             let right = parse_expr_with_precedence(parser, prec + 1);
             let end_span = parser.previous.span;
-            return ast::Expr {
-                kind: ast::ExprKind::Binary {
-                    op: common::BinOp::Div,
-                    left: Box::new(left),
-                    right: Box::new(right),
+            return ast.Expr {
+                kind: ast.ExprKind.Binary {
+                    op: common.BinOp.Div,
+                    left: Box.new(left),
+                    right: Box.new(right),
                 },
-                span: common::Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
+                span: common.Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
             };
         }
-        token::TokenKind::Percent => {
+        token.TokenKind.Percent => {
             parser.advance();
             let right = parse_expr_with_precedence(parser, prec + 1);
             let end_span = parser.previous.span;
-            return ast::Expr {
-                kind: ast::ExprKind::Binary {
-                    op: common::BinOp::Rem,
-                    left: Box::new(left),
-                    right: Box::new(right),
+            return ast.Expr {
+                kind: ast.ExprKind.Binary {
+                    op: common.BinOp.Rem,
+                    left: Box.new(left),
+                    right: Box.new(right),
                 },
-                span: common::Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
+                span: common.Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
             };
         }
         // Comparison operators
-        token::TokenKind::EqEq => {
+        token.TokenKind.EqEq => {
             parser.advance();
             let right = parse_expr_with_precedence(parser, prec + 1);
             let end_span = parser.previous.span;
-            return ast::Expr {
-                kind: ast::ExprKind::Binary {
-                    op: common::BinOp::Eq,
-                    left: Box::new(left),
-                    right: Box::new(right),
+            return ast.Expr {
+                kind: ast.ExprKind.Binary {
+                    op: common.BinOp.Eq,
+                    left: Box.new(left),
+                    right: Box.new(right),
                 },
-                span: common::Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
+                span: common.Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
             };
         }
-        token::TokenKind::NotEq => {
+        token.TokenKind.NotEq => {
             parser.advance();
             let right = parse_expr_with_precedence(parser, prec + 1);
             let end_span = parser.previous.span;
-            return ast::Expr {
-                kind: ast::ExprKind::Binary {
-                    op: common::BinOp::Ne,
-                    left: Box::new(left),
-                    right: Box::new(right),
+            return ast.Expr {
+                kind: ast.ExprKind.Binary {
+                    op: common.BinOp.Ne,
+                    left: Box.new(left),
+                    right: Box.new(right),
                 },
-                span: common::Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
+                span: common.Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
             };
         }
-        token::TokenKind::Lt => {
+        token.TokenKind.Lt => {
             parser.advance();
             let right = parse_expr_with_precedence(parser, prec + 1);
             let end_span = parser.previous.span;
-            return ast::Expr {
-                kind: ast::ExprKind::Binary {
-                    op: common::BinOp::Lt,
-                    left: Box::new(left),
-                    right: Box::new(right),
+            return ast.Expr {
+                kind: ast.ExprKind.Binary {
+                    op: common.BinOp.Lt,
+                    left: Box.new(left),
+                    right: Box.new(right),
                 },
-                span: common::Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
+                span: common.Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
             };
         }
-        token::TokenKind::Gt => {
+        token.TokenKind.Gt => {
             parser.advance();
             let right = parse_expr_with_precedence(parser, prec + 1);
             let end_span = parser.previous.span;
-            return ast::Expr {
-                kind: ast::ExprKind::Binary {
-                    op: common::BinOp::Gt,
-                    left: Box::new(left),
-                    right: Box::new(right),
+            return ast.Expr {
+                kind: ast.ExprKind.Binary {
+                    op: common.BinOp.Gt,
+                    left: Box.new(left),
+                    right: Box.new(right),
                 },
-                span: common::Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
+                span: common.Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
             };
         }
-        token::TokenKind::LtEq => {
+        token.TokenKind.LtEq => {
             parser.advance();
             let right = parse_expr_with_precedence(parser, prec + 1);
             let end_span = parser.previous.span;
-            return ast::Expr {
-                kind: ast::ExprKind::Binary {
-                    op: common::BinOp::Le,
-                    left: Box::new(left),
-                    right: Box::new(right),
+            return ast.Expr {
+                kind: ast.ExprKind.Binary {
+                    op: common.BinOp.Le,
+                    left: Box.new(left),
+                    right: Box.new(right),
                 },
-                span: common::Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
+                span: common.Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
             };
         }
-        token::TokenKind::GtEq => {
+        token.TokenKind.GtEq => {
             parser.advance();
             let right = parse_expr_with_precedence(parser, prec + 1);
             let end_span = parser.previous.span;
-            return ast::Expr {
-                kind: ast::ExprKind::Binary {
-                    op: common::BinOp::Ge,
-                    left: Box::new(left),
-                    right: Box::new(right),
+            return ast.Expr {
+                kind: ast.ExprKind.Binary {
+                    op: common.BinOp.Ge,
+                    left: Box.new(left),
+                    right: Box.new(right),
                 },
-                span: common::Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
+                span: common.Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
             };
         }
         // Logical operators
-        token::TokenKind::AndAnd => {
+        token.TokenKind.AndAnd => {
             parser.advance();
             let right = parse_expr_with_precedence(parser, prec + 1);
             let end_span = parser.previous.span;
-            return ast::Expr {
-                kind: ast::ExprKind::Binary {
-                    op: common::BinOp::And,
-                    left: Box::new(left),
-                    right: Box::new(right),
+            return ast.Expr {
+                kind: ast.ExprKind.Binary {
+                    op: common.BinOp.And,
+                    left: Box.new(left),
+                    right: Box.new(right),
                 },
-                span: common::Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
+                span: common.Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
             };
         }
-        token::TokenKind::OrOr => {
+        token.TokenKind.OrOr => {
             parser.advance();
             let right = parse_expr_with_precedence(parser, prec + 1);
             let end_span = parser.previous.span;
-            return ast::Expr {
-                kind: ast::ExprKind::Binary {
-                    op: common::BinOp::Or,
-                    left: Box::new(left),
-                    right: Box::new(right),
+            return ast.Expr {
+                kind: ast.ExprKind.Binary {
+                    op: common.BinOp.Or,
+                    left: Box.new(left),
+                    right: Box.new(right),
                 },
-                span: common::Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
+                span: common.Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
             };
         }
         // Bitwise operators
-        token::TokenKind::And => {
+        token.TokenKind.And => {
             parser.advance();
             let right = parse_expr_with_precedence(parser, prec + 1);
             let end_span = parser.previous.span;
-            return ast::Expr {
-                kind: ast::ExprKind::Binary {
-                    op: common::BinOp::BitAnd,
-                    left: Box::new(left),
-                    right: Box::new(right),
+            return ast.Expr {
+                kind: ast.ExprKind.Binary {
+                    op: common.BinOp.BitAnd,
+                    left: Box.new(left),
+                    right: Box.new(right),
                 },
-                span: common::Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
+                span: common.Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
             };
         }
-        token::TokenKind::Or => {
+        token.TokenKind.Or => {
             parser.advance();
             let right = parse_expr_with_precedence(parser, prec + 1);
             let end_span = parser.previous.span;
-            return ast::Expr {
-                kind: ast::ExprKind::Binary {
-                    op: common::BinOp::BitOr,
-                    left: Box::new(left),
-                    right: Box::new(right),
+            return ast.Expr {
+                kind: ast.ExprKind.Binary {
+                    op: common.BinOp.BitOr,
+                    left: Box.new(left),
+                    right: Box.new(right),
                 },
-                span: common::Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
+                span: common.Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
             };
         }
-        token::TokenKind::Caret => {
+        token.TokenKind.Caret => {
             parser.advance();
             let right = parse_expr_with_precedence(parser, prec + 1);
             let end_span = parser.previous.span;
-            return ast::Expr {
-                kind: ast::ExprKind::Binary {
-                    op: common::BinOp::BitXor,
-                    left: Box::new(left),
-                    right: Box::new(right),
+            return ast.Expr {
+                kind: ast.ExprKind.Binary {
+                    op: common.BinOp.BitXor,
+                    left: Box.new(left),
+                    right: Box.new(right),
                 },
-                span: common::Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
+                span: common.Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
             };
         }
-        token::TokenKind::Shl => {
+        token.TokenKind.Shl => {
             parser.advance();
             let right = parse_expr_with_precedence(parser, prec + 1);
             let end_span = parser.previous.span;
-            return ast::Expr {
-                kind: ast::ExprKind::Binary {
-                    op: common::BinOp::Shl,
-                    left: Box::new(left),
-                    right: Box::new(right),
+            return ast.Expr {
+                kind: ast.ExprKind.Binary {
+                    op: common.BinOp.Shl,
+                    left: Box.new(left),
+                    right: Box.new(right),
                 },
-                span: common::Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
+                span: common.Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
             };
         }
-        token::TokenKind::Shr => {
+        token.TokenKind.Shr => {
             parser.advance();
             let right = parse_expr_with_precedence(parser, prec + 1);
             let end_span = parser.previous.span;
-            return ast::Expr {
-                kind: ast::ExprKind::Binary {
-                    op: common::BinOp::Shr,
-                    left: Box::new(left),
-                    right: Box::new(right),
+            return ast.Expr {
+                kind: ast.ExprKind.Binary {
+                    op: common.BinOp.Shr,
+                    left: Box.new(left),
+                    right: Box.new(right),
                 },
-                span: common::Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
+                span: common.Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
             };
         }
         // Field access or method call
-        token::TokenKind::Dot => {
+        token.TokenKind.Dot => {
             parser.advance();
             // Check for tuple index access (e.g., expr.0, expr.1)
-            if parser.check(token::TokenKind::IntLit) {
+            if parser.check(token.TokenKind.IntLit) {
                 let idx_span = parser.current.span;
                 let idx_val = parser_base::parse_int_value_from_span(parser, idx_span) as u32;
                 parser.advance();
                 let end_span = parser.previous.span;
-                return ast::Expr {
-                    kind: ast::ExprKind::Field {
-                        base: Box::new(left),
-                        field: ast::FieldAccess::Index(idx_val, idx_span),
+                return ast.Expr {
+                    kind: ast.ExprKind.Field {
+                        base: Box.new(left),
+                        field: ast.FieldAccess.Index(idx_val, idx_span),
                     },
-                    span: common::Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
+                    span: common.Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
                 };
             }
             let field_name = parser.parse_spanned_symbol();
             // Check if this is a method call (followed by '(')
-            if parser.check(token::TokenKind::LParen) {
+            if parser.check(token.TokenKind.LParen) {
                 // Method call: x.method(args)
                 parser.advance(); // consume '('
-                let mut args: Vec<ast::CallArg> = Vec::new();
-                while !parser.check(token::TokenKind::RParen) && !parser.is_at_end() {
+                let mut args: Vec<ast.CallArg> = Vec.new();
+                while !parser.check(token.TokenKind.RParen) && !parser.is_at_end() {
                     let arg_start = parser.current.span;
                     let arg_expr = parse_expr(parser);
                     let arg_end = parser.previous.span;
-                    let call_arg = ast::CallArg {
-                        name: Option::None,
+                    let call_arg = ast.CallArg {
+                        name: Option.None,
                         val: arg_expr,
-                        span: common::Span { start: arg_start.start, end: arg_end.end, line: arg_start.line, column: arg_start.column },
+                        span: common.Span { start: arg_start.start, end: arg_end.end, line: arg_start.line, column: arg_start.column },
                     };
                     args.push(call_arg);
-                    if !parser.try_consume(token::TokenKind::Comma) {
+                    if !parser.try_consume(token.TokenKind.Comma) {
                         break;
                     }
                 }
-                parser.expect(token::TokenKind::RParen);
+                parser.expect(token.TokenKind.RParen);
                 let end_span = parser.previous.span;
-                return ast::Expr {
-                    kind: ast::ExprKind::MethodCall {
-                        receiver: Box::new(left),
+                return ast.Expr {
+                    kind: ast.ExprKind.MethodCall {
+                        receiver: Box.new(left),
                         method: field_name,
-                        type_args: Option::None,
+                        type_args: Option.None,
                         args: args,
                     },
-                    span: common::Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
+                    span: common.Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
                 };
             }
             let end_span = parser.previous.span;
-            return ast::Expr {
-                kind: ast::ExprKind::Field {
-                    base: Box::new(left),
-                    field: ast::FieldAccess::Named(field_name),
+            return ast.Expr {
+                kind: ast.ExprKind.Field {
+                    base: Box.new(left),
+                    field: ast.FieldAccess.Named(field_name),
                 },
-                span: common::Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
+                span: common.Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
             };
         }
         // Function call
-        token::TokenKind::LParen => {
+        token.TokenKind.LParen => {
             return parse_call_expr(parser, left);
         }
         // Index
-        token::TokenKind::LBracket => {
+        token.TokenKind.LBracket => {
             return parse_index_expr(parser, left);
         }
         // Assignment (right-associative)
-        token::TokenKind::Eq => {
+        token.TokenKind.Eq => {
             parser.advance();
             let right = parse_expr_with_precedence(parser, prec);
             let end_span = parser.previous.span;
-            return ast::Expr {
-                kind: ast::ExprKind::Assign {
-                    target: Box::new(left),
-                    val: Box::new(right),
+            return ast.Expr {
+                kind: ast.ExprKind.Assign {
+                    target: Box.new(left),
+                    val: Box.new(right),
                 },
-                span: common::Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
+                span: common.Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
             };
         }
         // Compound assignment (right-associative, same as =)
-        token::TokenKind::PlusEq => { return parse_assign_op(parser, left, common::BinOp::Add, prec); }
-        token::TokenKind::MinusEq => { return parse_assign_op(parser, left, common::BinOp::Sub, prec); }
-        token::TokenKind::StarEq => { return parse_assign_op(parser, left, common::BinOp::Mul, prec); }
-        token::TokenKind::SlashEq => { return parse_assign_op(parser, left, common::BinOp::Div, prec); }
-        token::TokenKind::PercentEq => { return parse_assign_op(parser, left, common::BinOp::Rem, prec); }
-        token::TokenKind::AndEq => { return parse_assign_op(parser, left, common::BinOp::BitAnd, prec); }
-        token::TokenKind::OrEq => { return parse_assign_op(parser, left, common::BinOp::BitOr, prec); }
-        token::TokenKind::CaretEq => { return parse_assign_op(parser, left, common::BinOp::BitXor, prec); }
-        token::TokenKind::ShlEq => { return parse_assign_op(parser, left, common::BinOp::Shl, prec); }
-        token::TokenKind::ShrEq => { return parse_assign_op(parser, left, common::BinOp::Shr, prec); }
+        token.TokenKind.PlusEq => { return parse_assign_op(parser, left, common.BinOp.Add, prec); }
+        token.TokenKind.MinusEq => { return parse_assign_op(parser, left, common.BinOp.Sub, prec); }
+        token.TokenKind.StarEq => { return parse_assign_op(parser, left, common.BinOp.Mul, prec); }
+        token.TokenKind.SlashEq => { return parse_assign_op(parser, left, common.BinOp.Div, prec); }
+        token.TokenKind.PercentEq => { return parse_assign_op(parser, left, common.BinOp.Rem, prec); }
+        token.TokenKind.AndEq => { return parse_assign_op(parser, left, common.BinOp.BitAnd, prec); }
+        token.TokenKind.OrEq => { return parse_assign_op(parser, left, common.BinOp.BitOr, prec); }
+        token.TokenKind.CaretEq => { return parse_assign_op(parser, left, common.BinOp.BitXor, prec); }
+        token.TokenKind.ShlEq => { return parse_assign_op(parser, left, common.BinOp.Shl, prec); }
+        token.TokenKind.ShrEq => { return parse_assign_op(parser, left, common.BinOp.Shr, prec); }
         // Range (infix): expr..expr, expr..=expr, expr..
-        token::TokenKind::DotDot => {
+        token.TokenKind.DotDot => {
             parser.advance();
             let end_val = if can_start_expr(parser.current.kind) {
-                Option::Some(Box::new(parse_expr_with_precedence(parser, 3)))
+                Option.Some(Box.new(parse_expr_with_precedence(parser, 3)))
             } else {
-                Option::None
+                Option.None
             };
             let end_span = parser.previous.span;
-            return ast::Expr {
-                kind: ast::ExprKind::Range {
-                    start: Option::Some(Box::new(left)),
+            return ast.Expr {
+                kind: ast.ExprKind.Range {
+                    start: Option.Some(Box.new(left)),
                     end_val: end_val,
                     inclusive: false,
                 },
-                span: common::Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
+                span: common.Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
             };
         }
-        token::TokenKind::DotDotEq => {
+        token.TokenKind.DotDotEq => {
             parser.advance();
             let end_val = if can_start_expr(parser.current.kind) {
-                Option::Some(Box::new(parse_expr_with_precedence(parser, 3)))
+                Option.Some(Box.new(parse_expr_with_precedence(parser, 3)))
             } else {
-                Option::None
+                Option.None
             };
             let end_span = parser.previous.span;
-            return ast::Expr {
-                kind: ast::ExprKind::Range {
-                    start: Option::Some(Box::new(left)),
+            return ast.Expr {
+                kind: ast.ExprKind.Range {
+                    start: Option.Some(Box.new(left)),
                     end_val: end_val,
                     inclusive: true,
                 },
-                span: common::Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
+                span: common.Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
             };
         }
         // Pipe operator: left |> right becomes Binary { Pipe, left, right }
-        token::TokenKind::Pipe => {
+        token.TokenKind.Pipe => {
             parser.advance();
             let right = parse_expr_with_precedence(parser, prec + 1);
             let end_span = parser.previous.span;
-            return ast::Expr {
-                kind: ast::ExprKind::Binary {
-                    op: common::BinOp::Pipe,
-                    left: Box::new(left),
-                    right: Box::new(right),
+            return ast.Expr {
+                kind: ast.ExprKind.Binary {
+                    op: common.BinOp.Pipe,
+                    left: Box.new(left),
+                    right: Box.new(right),
                 },
-                span: common::Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
+                span: common.Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
             };
         }
         // Type cast
-        token::TokenKind::As => {
+        token.TokenKind.As => {
             parser.advance();
             let ty = parser_type::parse_type(parser);
             let end_span = parser.previous.span;
-            return ast::Expr {
-                kind: ast::ExprKind::Cast {
-                    expr: Box::new(left),
+            return ast.Expr {
+                kind: ast.ExprKind.Cast {
+                    expr: Box.new(left),
                     ty: ty,
                 },
-                span: common::Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
+                span: common.Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
             };
         }
         // Try operator
-        token::TokenKind::Question => {
+        token.TokenKind.Question => {
             parser.advance();
             let end_span = parser.previous.span;
-            return ast::Expr {
-                kind: ast::ExprKind::Try(Box::new(left)),
-                span: common::Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
+            return ast.Expr {
+                kind: ast.ExprKind.Try(Box.new(left)),
+                span: common.Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
             };
         }
         _ => {
@@ -942,54 +942,54 @@ fn parse_infix_expr(parser: &mut parser_base::Parser, left: ast::Expr, prec: u8)
 // Helper Expression Parsers
 // ============================================================
 
-fn parse_paren_or_tuple_expr(parser: &mut parser_base::Parser) -> ast::Expr {
+fn parse_paren_or_tuple_expr(parser: &mut parser_base.Parser) -> ast.Expr {
     let start = parser.current.span;
     parser.advance(); // consume '('
 
-    if parser.check(token::TokenKind::RParen) {
+    if parser.check(token.TokenKind.RParen) {
         parser.advance();
-        return ast::Expr {
-            kind: ast::ExprKind::Tuple(Vec::new()),
-            span: common::Span { start: start.start, end: parser.previous.span.end, line: start.line, column: start.column },
+        return ast.Expr {
+            kind: ast.ExprKind.Tuple(Vec.new()),
+            span: common.Span { start: start.start, end: parser.previous.span.end, line: start.line, column: start.column },
         };
     }
 
     let first = parse_expr(parser);
 
-    if parser.try_consume(token::TokenKind::Comma) {
-        let mut elements: Vec<ast::Expr> = Vec::new();
+    if parser.try_consume(token.TokenKind.Comma) {
+        let mut elements: Vec<ast.Expr> = Vec.new();
         elements.push(first);
 
-        while !parser.check(token::TokenKind::RParen) && !parser.is_at_end() {
+        while !parser.check(token.TokenKind.RParen) && !parser.is_at_end() {
             elements.push(parse_expr(parser));
-            if !parser.try_consume(token::TokenKind::Comma) {
+            if !parser.try_consume(token.TokenKind.Comma) {
                 break;
             }
         }
 
-        parser.expect(token::TokenKind::RParen);
+        parser.expect(token.TokenKind.RParen);
         let end_span = parser.previous.span;
-        return ast::Expr {
-            kind: ast::ExprKind::Tuple(elements),
-            span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        return ast.Expr {
+            kind: ast.ExprKind.Tuple(elements),
+            span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
         };
     }
 
-    parser.expect(token::TokenKind::RParen);
+    parser.expect(token.TokenKind.RParen);
     first
 }
 
-fn parse_array_expr(parser: &mut parser_base::Parser) -> ast::Expr {
+fn parse_array_expr(parser: &mut parser_base.Parser) -> ast.Expr {
     let start = parser.current.span;
     parser.advance(); // consume '['
 
     // Empty array
-    if parser.check(token::TokenKind::RBracket) {
+    if parser.check(token.TokenKind.RBracket) {
         parser.advance();
         let end_span = parser.previous.span;
-        return ast::Expr {
-            kind: ast::ExprKind::Array(ast::ArrayExpr::List(Vec::new())),
-            span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        return ast.Expr {
+            kind: ast.ExprKind.Array(ast.ArrayExpr.List(Vec.new())),
+            span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
         };
     }
 
@@ -997,35 +997,35 @@ fn parse_array_expr(parser: &mut parser_base::Parser) -> ast::Expr {
     let first = parse_expr(parser);
 
     // Check for repeat syntax: [expr; count]
-    if parser.try_consume(token::TokenKind::Semi) {
+    if parser.try_consume(token.TokenKind.Semi) {
         let count = parse_expr(parser);
-        parser.expect(token::TokenKind::RBracket);
+        parser.expect(token.TokenKind.RBracket);
         let end_span = parser.previous.span;
-        return ast::Expr {
-            kind: ast::ExprKind::Array(ast::ArrayExpr::Repeat {
-                val: Box::new(first),
-                count: Box::new(count),
+        return ast.Expr {
+            kind: ast.ExprKind.Array(ast.ArrayExpr.Repeat {
+                val: Box.new(first),
+                count: Box.new(count),
             }),
-            span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+            span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
         };
     }
 
     // List syntax: [expr, expr, ...]
-    let mut elements: Vec<ast::Expr> = Vec::new();
+    let mut elements: Vec<ast.Expr> = Vec.new();
     elements.push(first);
-    while parser.try_consume(token::TokenKind::Comma) {
-        if parser.check(token::TokenKind::RBracket) {
+    while parser.try_consume(token.TokenKind.Comma) {
+        if parser.check(token.TokenKind.RBracket) {
             break; // trailing comma
         }
         elements.push(parse_expr(parser));
     }
 
-    parser.expect(token::TokenKind::RBracket);
+    parser.expect(token.TokenKind.RBracket);
     let end_span = parser.previous.span;
 
-    ast::Expr {
-        kind: ast::ExprKind::Array(ast::ArrayExpr::List(elements)),
-        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    ast.Expr {
+        kind: ast.ExprKind.Array(ast.ArrayExpr.List(elements)),
+        span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     }
 }
 
@@ -1033,291 +1033,291 @@ fn parse_array_expr(parser: &mut parser_base::Parser) -> ast::Expr {
 // Control Flow Expression Parsers
 // ============================================================
 
-fn parse_block_expr(parser: &mut parser_base::Parser) -> ast::Expr {
+fn parse_block_expr(parser: &mut parser_base.Parser) -> ast.Expr {
     let start = parser.current.span;
     let block = parse_block(parser);
     let end_span = parser.previous.span;
 
-    ast::Expr {
-        kind: ast::ExprKind::Block(block),
-        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    ast.Expr {
+        kind: ast.ExprKind.Block(block),
+        span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     }
 }
 
 /// Parse an anonymous record expression after '{' has been consumed.
 /// Called when disambiguator determined { ident: ... } is a record, not a block.
-fn parse_anon_record_inner(parser: &mut parser_base::Parser, start: common::Span) -> ast::Expr {
-    let mut fields: Vec<ast::RecordExprField> = Vec::new();
-    let mut base: Option<Box<ast::Expr>> = Option::None;
+fn parse_anon_record_inner(parser: &mut parser_base.Parser, start: common.Span) -> ast.Expr {
+    let mut fields: Vec<ast.RecordExprField> = Vec.new();
+    let mut base: Option<Box<ast.Expr>> = Option.None;
 
-    while !parser.check(token::TokenKind::RBrace) && !parser.is_at_end() {
+    while !parser.check(token.TokenKind.RBrace) && !parser.is_at_end() {
         // Check for base: ..expr
-        if parser.check(token::TokenKind::DotDot) {
+        if parser.check(token.TokenKind.DotDot) {
             parser.advance();
-            base = Option::Some(Box::new(parse_expr(parser)));
+            base = Option.Some(Box.new(parse_expr(parser)));
             break;
         }
 
         let field_start = parser.current.span;
         let field_name = parser.parse_spanned_symbol();
 
-        let val = if parser.try_consume(token::TokenKind::Colon) {
-            Option::Some(parse_expr(parser))
+        let val = if parser.try_consume(token.TokenKind.Colon) {
+            Option.Some(parse_expr(parser))
         } else {
             // Shorthand: val is None means use the field name as the value
-            Option::None
+            Option.None
         };
 
         let field_end = parser.previous.span;
-        let field = ast::RecordExprField {
+        let field = ast.RecordExprField {
             name: field_name,
             val: val,
-            span: common::Span { start: field_start.start, end: field_end.end, line: field_start.line, column: field_start.column },
+            span: common.Span { start: field_start.start, end: field_end.end, line: field_start.line, column: field_start.column },
         };
         fields.push(field);
 
-        if !parser.try_consume(token::TokenKind::Comma) {
+        if !parser.try_consume(token.TokenKind.Comma) {
             break;
         }
     }
 
-    parser.expect(token::TokenKind::RBrace);
+    parser.expect(token.TokenKind.RBrace);
     let end_span = parser.previous.span;
 
-    ast::Expr {
-        kind: ast::ExprKind::Record {
-            path: Option::None,
+    ast.Expr {
+        kind: ast.ExprKind.Record {
+            path: Option.None,
             fields: fields,
             base: base,
         },
-        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     }
 }
 
 /// Parse a block expression after '{' has been consumed.
 /// Called when disambiguator rejected record and fell through to block parsing.
-fn parse_block_expr_inner(parser: &mut parser_base::Parser, start: common::Span) -> ast::Expr {
-    let mut stmts: Vec<ast::Statement> = Vec::new();
-    let mut final_expr: Option<Box<ast::Expr>> = Option::None;
+fn parse_block_expr_inner(parser: &mut parser_base.Parser, start: common.Span) -> ast.Expr {
+    let mut stmts: Vec<ast.Statement> = Vec.new();
+    let mut final_expr: Option<Box<ast.Expr>> = Option.None;
 
-    while !parser.check(token::TokenKind::RBrace) && !parser.is_at_end() {
+    while !parser.check(token.TokenKind.RBrace) && !parser.is_at_end() {
         let stmt = parse_statement(parser);
 
         match stmt {
-            ast::Statement::Expr { expr, has_semi } => {
-                if !has_semi && parser.check(token::TokenKind::RBrace) {
-                    final_expr = Option::Some(Box::new(expr));
+            ast.Statement.Expr { expr, has_semi } => {
+                if !has_semi && parser.check(token.TokenKind.RBrace) {
+                    final_expr = Option.Some(Box.new(expr));
                 } else {
-                    let expr_stmt = ast::Statement::Expr { expr: expr, has_semi: has_semi };
+                    let expr_stmt = ast.Statement.Expr { expr: expr, has_semi: has_semi };
                     stmts.push(expr_stmt);
                 }
             }
-            ast::Statement::Let { pattern, ty, init_val, span } => {
-                let let_stmt = ast::Statement::Let { pattern: pattern, ty: ty, init_val: init_val, span: span };
+            ast.Statement.Let { pattern, ty, init_val, span } => {
+                let let_stmt = ast.Statement.Let { pattern: pattern, ty: ty, init_val: init_val, span: span };
                 stmts.push(let_stmt);
             }
-            ast::Statement::Item(decl) => {
-                let item_stmt = ast::Statement::Item(decl);
+            ast.Statement.Item(decl) => {
+                let item_stmt = ast.Statement.Item(decl);
                 stmts.push(item_stmt);
             }
         }
     }
 
-    parser.expect(token::TokenKind::RBrace);
+    parser.expect(token.TokenKind.RBrace);
     let end_span = parser.previous.span;
 
-    let block = ast::Block {
+    let block = ast.Block {
         statements: stmts,
         expr: final_expr,
-        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     };
 
-    ast::Expr {
-        kind: ast::ExprKind::Block(block),
-        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    ast.Expr {
+        kind: ast.ExprKind.Block(block),
+        span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     }
 }
 
-fn parse_if_expr(parser: &mut parser_base::Parser) -> ast::Expr {
+fn parse_if_expr(parser: &mut parser_base.Parser) -> ast.Expr {
     let start = parser.current.span;
     parser.advance(); // consume 'if'
 
     // Check for if-let: `if let PATTERN = EXPR { } else { }`
-    if parser.try_consume(token::TokenKind::Let) {
+    if parser.try_consume(token.TokenKind.Let) {
         let pattern = parser_pattern::parse_pattern(parser);
-        parser.expect(token::TokenKind::Eq);
+        parser.expect(token.TokenKind.Eq);
         let scrutinee = parse_expr_no_struct(parser);
         let then_branch = parse_block(parser);
 
-        let else_branch = if parser.try_consume(token::TokenKind::Else) {
-            if parser.check(token::TokenKind::If) {
-                Option::Some(ast::ElseBranch::If(Box::new(parse_if_expr(parser))))
+        let else_branch = if parser.try_consume(token.TokenKind.Else) {
+            if parser.check(token.TokenKind.If) {
+                Option.Some(ast.ElseBranch.If(Box.new(parse_if_expr(parser))))
             } else {
-                Option::Some(ast::ElseBranch::Block(parse_block(parser)))
+                Option.Some(ast.ElseBranch.Block(parse_block(parser)))
             }
         } else {
-            Option::None
+            Option.None
         };
 
         let end_span = parser.previous.span;
-        return ast::Expr {
-            kind: ast::ExprKind::IfLet {
+        return ast.Expr {
+            kind: ast.ExprKind.IfLet {
                 pattern: pattern,
-                scrutinee: Box::new(scrutinee),
+                scrutinee: Box.new(scrutinee),
                 then_branch: then_branch,
                 else_branch: else_branch,
             },
-            span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+            span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
         };
     }
 
     let condition = parse_expr_no_struct(parser);
     let then_branch = parse_block(parser);
 
-    let else_branch = if parser.try_consume(token::TokenKind::Else) {
-        if parser.check(token::TokenKind::If) {
-            Option::Some(ast::ElseBranch::If(Box::new(parse_if_expr(parser))))
+    let else_branch = if parser.try_consume(token.TokenKind.Else) {
+        if parser.check(token.TokenKind.If) {
+            Option.Some(ast.ElseBranch.If(Box.new(parse_if_expr(parser))))
         } else {
-            Option::Some(ast::ElseBranch::Block(parse_block(parser)))
+            Option.Some(ast.ElseBranch.Block(parse_block(parser)))
         }
     } else {
-        Option::None
+        Option.None
     };
 
     let end_span = parser.previous.span;
-    ast::Expr {
-        kind: ast::ExprKind::If {
-            condition: Box::new(condition),
+    ast.Expr {
+        kind: ast.ExprKind.If {
+            condition: Box.new(condition),
             then_branch: then_branch,
             else_branch: else_branch,
         },
-        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     }
 }
 
-fn parse_match_expr(parser: &mut parser_base::Parser) -> ast::Expr {
+fn parse_match_expr(parser: &mut parser_base.Parser) -> ast.Expr {
     let start = parser.current.span;
     parser.advance(); // consume 'match'
 
     let scrutinee = parse_expr_no_struct(parser);
 
-    parser.expect(token::TokenKind::LBrace);
+    parser.expect(token.TokenKind.LBrace);
 
-    let mut arms: Vec<ast::MatchArm> = Vec::new();
+    let mut arms: Vec<ast.MatchArm> = Vec.new();
 
-    while !parser.check(token::TokenKind::RBrace) && !parser.is_at_end() {
+    while !parser.check(token.TokenKind.RBrace) && !parser.is_at_end() {
         let arm_start = parser.current.span;
         let pattern = parser_pattern::parse_pattern(parser);
 
-        let guard = if parser.try_consume(token::TokenKind::If) {
-            Option::Some(parse_expr(parser))
+        let guard = if parser.try_consume(token.TokenKind.If) {
+            Option.Some(parse_expr(parser))
         } else {
-            Option::None
+            Option.None
         };
 
-        parser.expect(token::TokenKind::FatArrow);
+        parser.expect(token.TokenKind.FatArrow);
         // For compound expressions (block, if, match, loop, while, for),
         // parse just the compound expression without entering the Pratt
         // loop. Otherwise the Pratt parser would see `&` from the next
         // arm's ref-pattern as the bitwise-AND infix operator and try to
         // extend the body expression, causing an infinite parse.
-        let body = if parser.check(token::TokenKind::LBrace)
-                   || parser.check(token::TokenKind::If)
-                   || parser.check(token::TokenKind::Match)
-                   || parser.check(token::TokenKind::Loop)
-                   || parser.check(token::TokenKind::While)
-                   || parser.check(token::TokenKind::For) {
+        let body = if parser.check(token.TokenKind.LBrace)
+                   || parser.check(token.TokenKind.If)
+                   || parser.check(token.TokenKind.Match)
+                   || parser.check(token.TokenKind.Loop)
+                   || parser.check(token.TokenKind.While)
+                   || parser.check(token.TokenKind.For) {
             parse_prefix_expr(parser)
         } else {
             parse_expr(parser)
         };
         let arm_end = parser.previous.span;
 
-        let arm = ast::MatchArm {
+        let arm = ast.MatchArm {
             pattern: pattern,
             guard: guard,
             body: body,
-            span: common::Span { start: arm_start.start, end: arm_end.end, line: arm_start.line, column: arm_start.column },
+            span: common.Span { start: arm_start.start, end: arm_end.end, line: arm_start.line, column: arm_start.column },
         };
         arms.push(arm);
 
         // Try to consume trailing comma. Block bodies don't require one.
-        if !parser.try_consume(token::TokenKind::Comma) {
+        if !parser.try_consume(token.TokenKind.Comma) {
             // No comma found. If previous token was '}' (block body), continue
             // parsing — block arms don't need trailing commas. Otherwise break.
-            if parser.previous.kind != token::TokenKind::RBrace {
+            if parser.previous.kind != token.TokenKind.RBrace {
                 break;
             }
         }
     }
 
-    parser.expect(token::TokenKind::RBrace);
+    parser.expect(token.TokenKind.RBrace);
     let end_span = parser.previous.span;
 
-    ast::Expr {
-        kind: ast::ExprKind::Match {
-            scrutinee: Box::new(scrutinee),
+    ast.Expr {
+        kind: ast.ExprKind.Match {
+            scrutinee: Box.new(scrutinee),
             arms: arms,
         },
-        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     }
 }
 
-fn parse_labeled_loop(parser: &mut parser_base::Parser) -> ast::Expr {
+fn parse_labeled_loop(parser: &mut parser_base.Parser) -> ast.Expr {
     let label = parser.parse_spanned_symbol();
-    parser.expect(token::TokenKind::Colon);
+    parser.expect(token.TokenKind.Colon);
     match parser.current.kind {
-        token::TokenKind::Loop => { return parse_loop_expr(parser, Option::Some(label)); }
-        token::TokenKind::While => { return parse_while_expr(parser, Option::Some(label)); }
-        token::TokenKind::For => { return parse_for_expr(parser, Option::Some(label)); }
+        token.TokenKind.Loop => { return parse_loop_expr(parser, Option.Some(label)); }
+        token.TokenKind.While => { return parse_while_expr(parser, Option.Some(label)); }
+        token.TokenKind.For => { return parse_for_expr(parser, Option.Some(label)); }
         _ => {
             parser.error_expected("loop, while, or for after label");
             let end_span = parser.previous.span;
-            let empty_block = ast::Block { statements: Vec::new(), expr: Option::None, span: end_span };
-            return ast::Expr {
-                kind: ast::ExprKind::Loop { label: Option::Some(label), body: empty_block },
-                span: common::Span { start: label.span.start, end: end_span.end, line: label.span.line, column: label.span.column },
+            let empty_block = ast.Block { statements: Vec.new(), expr: Option.None, span: end_span };
+            return ast.Expr {
+                kind: ast.ExprKind.Loop { label: Option.Some(label), body: empty_block },
+                span: common.Span { start: label.span.start, end: end_span.end, line: label.span.line, column: label.span.column },
             };
         }
     }
 }
 
-fn parse_loop_expr(parser: &mut parser_base::Parser, label: Option<common::SpannedSymbol>) -> ast::Expr {
+fn parse_loop_expr(parser: &mut parser_base.Parser, label: Option<common.SpannedSymbol>) -> ast.Expr {
     let start = parser.current.span;
     parser.advance(); // consume 'loop'
 
     let body = parse_block(parser);
     let end_span = parser.previous.span;
 
-    ast::Expr {
-        kind: ast::ExprKind::Loop {
+    ast.Expr {
+        kind: ast.ExprKind.Loop {
             label: label,
             body: body,
         },
-        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     }
 }
 
-fn parse_while_expr(parser: &mut parser_base::Parser, label: Option<common::SpannedSymbol>) -> ast::Expr {
+fn parse_while_expr(parser: &mut parser_base.Parser, label: Option<common.SpannedSymbol>) -> ast.Expr {
     let start = parser.current.span;
     parser.advance(); // consume 'while'
 
     // Check for while-let: `while let PATTERN = EXPR { }`
-    if parser.try_consume(token::TokenKind::Let) {
+    if parser.try_consume(token.TokenKind.Let) {
         let pattern = parser_pattern::parse_pattern(parser);
-        parser.expect(token::TokenKind::Eq);
+        parser.expect(token.TokenKind.Eq);
         let scrutinee = parse_expr_no_struct(parser);
         let body = parse_block(parser);
         let end_span = parser.previous.span;
 
-        return ast::Expr {
-            kind: ast::ExprKind::WhileLet {
+        return ast.Expr {
+            kind: ast.ExprKind.WhileLet {
                 label: label,
                 pattern: pattern,
-                scrutinee: Box::new(scrutinee),
+                scrutinee: Box.new(scrutinee),
                 body: body,
             },
-            span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+            span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
         };
     }
 
@@ -1325,163 +1325,163 @@ fn parse_while_expr(parser: &mut parser_base::Parser, label: Option<common::Span
     let body = parse_block(parser);
     let end_span = parser.previous.span;
 
-    ast::Expr {
-        kind: ast::ExprKind::While {
+    ast.Expr {
+        kind: ast.ExprKind.While {
             label: label,
-            condition: Box::new(condition),
+            condition: Box.new(condition),
             body: body,
         },
-        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     }
 }
 
-fn parse_for_expr(parser: &mut parser_base::Parser, label: Option<common::SpannedSymbol>) -> ast::Expr {
+fn parse_for_expr(parser: &mut parser_base.Parser, label: Option<common.SpannedSymbol>) -> ast.Expr {
     let start = parser.current.span;
     parser.advance(); // consume 'for'
 
     let pattern = parser_pattern::parse_pattern(parser);
-    parser.expect(token::TokenKind::In);
+    parser.expect(token.TokenKind.In);
     let iter = parse_expr_no_struct(parser);
     let body = parse_block(parser);
     let end_span = parser.previous.span;
 
-    ast::Expr {
-        kind: ast::ExprKind::For {
+    ast.Expr {
+        kind: ast.ExprKind.For {
             label: label,
             pattern: pattern,
-            iter: Box::new(iter),
+            iter: Box.new(iter),
             body: body,
         },
-        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     }
 }
 
-fn parse_return_expr(parser: &mut parser_base::Parser) -> ast::Expr {
+fn parse_return_expr(parser: &mut parser_base.Parser) -> ast.Expr {
     let start = parser.current.span;
     parser.advance(); // consume 'return'
 
-    let val = if !parser.check(token::TokenKind::Semi) && !parser.check(token::TokenKind::RBrace) {
-        Option::Some(Box::new(parse_expr(parser)))
+    let val = if !parser.check(token.TokenKind.Semi) && !parser.check(token.TokenKind.RBrace) {
+        Option.Some(Box.new(parse_expr(parser)))
     } else {
-        Option::None
+        Option.None
     };
 
     let end_span = parser.previous.span;
-    ast::Expr {
-        kind: ast::ExprKind::Return(val),
-        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    ast.Expr {
+        kind: ast.ExprKind.Return(val),
+        span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     }
 }
 
-fn parse_break_expr(parser: &mut parser_base::Parser) -> ast::Expr {
+fn parse_break_expr(parser: &mut parser_base.Parser) -> ast.Expr {
     let start = parser.current.span;
     parser.advance(); // consume 'break'
 
     // Check for label: break 'label
-    let label = if parser.check(token::TokenKind::Lifetime) {
-        Option::Some(parser.parse_spanned_symbol())
+    let label = if parser.check(token.TokenKind.Lifetime) {
+        Option.Some(parser.parse_spanned_symbol())
     } else {
-        Option::None
+        Option.None
     };
 
-    let val = if !parser.check(token::TokenKind::Semi) && !parser.check(token::TokenKind::RBrace) {
-        Option::Some(Box::new(parse_expr(parser)))
+    let val = if !parser.check(token.TokenKind.Semi) && !parser.check(token.TokenKind.RBrace) {
+        Option.Some(Box.new(parse_expr(parser)))
     } else {
-        Option::None
+        Option.None
     };
 
     let end_span = parser.previous.span;
-    ast::Expr {
-        kind: ast::ExprKind::Break { label: label, val: val },
-        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    ast.Expr {
+        kind: ast.ExprKind.Break { label: label, val: val },
+        span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     }
 }
 
-fn parse_continue_expr(parser: &mut parser_base::Parser) -> ast::Expr {
+fn parse_continue_expr(parser: &mut parser_base.Parser) -> ast.Expr {
     let start = parser.current.span;
     parser.advance(); // consume 'continue'
 
     // Check for label: continue 'label
-    let label = if parser.check(token::TokenKind::Lifetime) {
-        Option::Some(parser.parse_spanned_symbol())
+    let label = if parser.check(token.TokenKind.Lifetime) {
+        Option.Some(parser.parse_spanned_symbol())
     } else {
-        Option::None
+        Option.None
     };
 
     let end_span = parser.previous.span;
 
-    ast::Expr {
-        kind: ast::ExprKind::Continue { label: label },
-        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    ast.Expr {
+        kind: ast.ExprKind.Continue { label: label },
+        span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     }
 }
 
-fn parse_closure_expr(parser: &mut parser_base::Parser) -> ast::Expr {
+fn parse_closure_expr(parser: &mut parser_base.Parser) -> ast.Expr {
     let start = parser.current.span;
 
     // Check for `move` keyword
-    let is_move = parser.try_consume(token::TokenKind::Move);
+    let is_move = parser.try_consume(token.TokenKind.Move);
 
     // Parse parameters
-    let mut params: Vec<ast::ClosureParam> = Vec::new();
+    let mut params: Vec<ast.ClosureParam> = Vec.new();
 
-    if parser.try_consume(token::TokenKind::OrOr) {
+    if parser.try_consume(token.TokenKind.OrOr) {
         // Empty parameter list ||
     } else {
-        parser.expect(token::TokenKind::Or);
+        parser.expect(token.TokenKind.Or);
 
-        while !parser.check(token::TokenKind::Or) && !parser.is_at_end() {
+        while !parser.check(token.TokenKind.Or) && !parser.is_at_end() {
             let param_start = parser.current.span;
             let pattern = parser_pattern::parse_pattern_no_or(parser);
-            let ty = if parser.try_consume(token::TokenKind::Colon) {
-                Option::Some(parser_type::parse_type(parser))
+            let ty = if parser.try_consume(token.TokenKind.Colon) {
+                Option.Some(parser_type::parse_type(parser))
             } else {
-                Option::None
+                Option.None
             };
             let param_end = parser.previous.span;
 
-            let param = ast::ClosureParam {
+            let param = ast.ClosureParam {
                 pattern: pattern,
                 ty: ty,
-                span: common::Span { start: param_start.start, end: param_end.end, line: param_start.line, column: param_start.column },
+                span: common.Span { start: param_start.start, end: param_end.end, line: param_start.line, column: param_start.column },
             };
             params.push(param);
 
-            if !parser.try_consume(token::TokenKind::Comma) {
+            if !parser.try_consume(token.TokenKind.Comma) {
                 break;
             }
         }
 
-        parser.expect(token::TokenKind::Or);
+        parser.expect(token.TokenKind.Or);
     }
 
     // Optional return type
-    let return_type = if parser.try_consume(token::TokenKind::Arrow) {
-        Option::Some(parser_type::parse_type(parser))
+    let return_type = if parser.try_consume(token.TokenKind.Arrow) {
+        Option.Some(parser_type::parse_type(parser))
     } else {
-        Option::None
+        Option.None
     };
 
     // Optional effects clause: / {Effect1, Effect2}
-    let effects: Option<ast::EffectRow> = if parser.check(token::TokenKind::Slash) {
-        Option::Some(parser_type::parse_fn_type_effect_row(parser))
+    let effects: Option<ast.EffectRow> = if parser.check(token.TokenKind.Slash) {
+        Option.Some(parser_type::parse_fn_type_effect_row(parser))
     } else {
-        Option::None
+        Option.None
     };
 
     // Body
     let body = parse_expr(parser);
     let end_span = parser.previous.span;
 
-    ast::Expr {
-        kind: ast::ExprKind::Closure {
+    ast.Expr {
+        kind: ast.ExprKind.Closure {
             is_move: is_move,
             params: params,
             return_type: return_type,
             effects: effects,
-            body: Box::new(body),
+            body: Box.new(body),
         },
-        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     }
 }
 
@@ -1490,91 +1490,91 @@ fn parse_closure_expr(parser: &mut parser_base::Parser) -> ast::Expr {
 // ============================================================
 
 /// Parse a perform expression: `perform Effect.operation(args)` or `perform operation(args)`
-fn parse_perform_expr(parser: &mut parser_base::Parser) -> ast::Expr {
+fn parse_perform_expr(parser: &mut parser_base.Parser) -> ast.Expr {
     let start = parser.current.span;
     parser.advance(); // consume 'perform'
 
     // Parse the effect path (could be Effect.op or just op)
     let path = parser_type::parse_type_path(parser);
 
-    let mut effect_path: Option<ast::TypePath>;
-    let mut operation: common::SpannedSymbol;
+    let mut effect_path: Option<ast.TypePath>;
+    let mut operation: common.SpannedSymbol;
 
-    if parser.try_consume(token::TokenKind::Dot) {
+    if parser.try_consume(token.TokenKind.Dot) {
         // Dot syntax: Effect.operation
-        effect_path = Option::Some(path);
-        if parser.check_ident() || parser.check(token::TokenKind::TypeIdent) {
+        effect_path = Option.Some(path);
+        if parser.check_ident() || parser.check(token.TokenKind.TypeIdent) {
             operation = parser.parse_spanned_symbol();
         } else {
             parser.error_expected("operation name");
-            operation = common::SpannedSymbol {
-                symbol: common::Symbol::new(0),
+            operation = common.SpannedSymbol {
+                symbol: common.Symbol.new(0),
                 span: parser.current.span,
             };
         }
     } else {
         // No dot: path is just the operation name (single segment)
-        effect_path = Option::None;
+        effect_path = Option.None;
         if path.segments.len() > 0 {
             operation = path.segments[0].name;
         } else {
-            operation = common::SpannedSymbol {
-                symbol: common::Symbol::new(0),
+            operation = common.SpannedSymbol {
+                symbol: common.Symbol.new(0),
                 span: start,
             };
         }
     }
 
     // Parse arguments
-    parser.expect(token::TokenKind::LParen);
-    let mut args: Vec<ast::Expr> = Vec::new();
-    while !parser.check(token::TokenKind::RParen) && !parser.is_at_end() {
+    parser.expect(token.TokenKind.LParen);
+    let mut args: Vec<ast.Expr> = Vec.new();
+    while !parser.check(token.TokenKind.RParen) && !parser.is_at_end() {
         args.push(parse_expr(parser));
-        if !parser.try_consume(token::TokenKind::Comma) {
+        if !parser.try_consume(token.TokenKind.Comma) {
             break;
         }
     }
-    parser.expect(token::TokenKind::RParen);
+    parser.expect(token.TokenKind.RParen);
 
     let end_span = parser.previous.span;
-    ast::Expr {
-        kind: ast::ExprKind::Perform {
+    ast.Expr {
+        kind: ast.ExprKind.Perform {
             effect: effect_path,
             operation: operation,
             args: args,
         },
-        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     }
 }
 
 /// Parse a resume expression: `resume(value)`
-fn parse_resume_expr(parser: &mut parser_base::Parser) -> ast::Expr {
+fn parse_resume_expr(parser: &mut parser_base.Parser) -> ast.Expr {
     let start = parser.current.span;
     parser.advance(); // consume 'resume'
-    parser.expect(token::TokenKind::LParen);
+    parser.expect(token.TokenKind.LParen);
     let value = parse_expr(parser);
-    parser.expect(token::TokenKind::RParen);
+    parser.expect(token.TokenKind.RParen);
     let end_span = parser.previous.span;
-    ast::Expr {
-        kind: ast::ExprKind::Resume(Box::new(value)),
-        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    ast.Expr {
+        kind: ast.ExprKind.Resume(Box.new(value)),
+        span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     }
 }
 
 /// Parse a with-handle expression: `with handler handle { body }`
-fn parse_with_handle_expr(parser: &mut parser_base::Parser) -> ast::Expr {
+fn parse_with_handle_expr(parser: &mut parser_base.Parser) -> ast.Expr {
     let start = parser.current.span;
     parser.advance(); // consume 'with'
 
     let handler_expr = parse_expr(parser);
 
-    parser.expect(token::TokenKind::Handle);
+    parser.expect(token.TokenKind.Handle);
 
-    let body = if parser.check(token::TokenKind::LBrace) {
+    let body = if parser.check(token.TokenKind.LBrace) {
         let block = parse_block(parser);
         let block_span = block.span;
-        ast::Expr {
-            kind: ast::ExprKind::Block(block),
+        ast.Expr {
+            kind: ast.ExprKind.Block(block),
             span: block_span,
         }
     } else {
@@ -1582,17 +1582,17 @@ fn parse_with_handle_expr(parser: &mut parser_base::Parser) -> ast::Expr {
     };
 
     let end_span = parser.previous.span;
-    ast::Expr {
-        kind: ast::ExprKind::WithHandle {
-            handler: Box::new(handler_expr),
-            body: Box::new(body),
+    ast.Expr {
+        kind: ast.ExprKind.WithHandle {
+            handler: Box.new(handler_expr),
+            body: Box.new(body),
         },
-        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     }
 }
 
 /// Parse a try-with expression: `try { body } with { Effect.op(params) => { handler_body }, ... }`
-fn parse_try_with_expr(parser: &mut parser_base::Parser) -> ast::Expr {
+fn parse_try_with_expr(parser: &mut parser_base.Parser) -> ast.Expr {
     let start = parser.current.span;
     parser.advance(); // consume 'try'
 
@@ -1600,136 +1600,136 @@ fn parse_try_with_expr(parser: &mut parser_base::Parser) -> ast::Expr {
     let body = parse_block(parser);
 
     // Expect 'with'
-    parser.expect(token::TokenKind::With);
+    parser.expect(token.TokenKind.With);
 
     // Parse handler clauses in braces
-    parser.expect(token::TokenKind::LBrace);
+    parser.expect(token.TokenKind.LBrace);
 
-    let mut handlers: Vec<ast::TryWithHandler> = Vec::new();
-    while !parser.check(token::TokenKind::RBrace) && !parser.is_at_end() {
+    let mut handlers: Vec<ast.TryWithHandler> = Vec.new();
+    while !parser.check(token.TokenKind.RBrace) && !parser.is_at_end() {
         let handler_start = parser.current.span;
 
-        // Parse Effect.operation or Effect::operation pattern
+        // Parse Effect.operation or Effect.operation pattern
         let effect_path = parser_type::parse_type_path(parser);
 
-        let mut handler_effect: ast::TypePath;
-        let mut handler_operation: common::SpannedSymbol;
+        let mut handler_effect: ast.TypePath;
+        let mut handler_operation: common.SpannedSymbol;
 
-        if parser.try_consume(token::TokenKind::Dot) {
+        if parser.try_consume(token.TokenKind.Dot) {
             // Dot syntax: Effect.operation
             handler_effect = effect_path;
-            if parser.check_ident() || parser.check(token::TokenKind::TypeIdent) {
+            if parser.check_ident() || parser.check(token.TokenKind.TypeIdent) {
                 handler_operation = parser.parse_spanned_symbol();
             } else {
                 parser.error_expected("operation name after '.'");
-                handler_operation = common::SpannedSymbol {
-                    symbol: common::Symbol::new(0),
+                handler_operation = common.SpannedSymbol {
+                    symbol: common.Symbol.new(0),
                     span: parser.current.span,
                 };
             }
         } else if effect_path.segments.len() >= 2 {
-            // Path syntax: Effect::operation — last segment is operation
+            // Path syntax: Effect.operation — last segment is operation
             let seg_len = effect_path.segments.len();
             handler_operation = effect_path.segments[seg_len - 1].name;
             // Build effect path from all but last segment
-            let mut effect_segs: Vec<ast::TypePathSegment> = Vec::new();
+            let mut effect_segs: Vec<ast.TypePathSegment> = Vec.new();
             for si in 0usize..seg_len - 1 {
-                effect_segs.push(ast::TypePathSegment {
+                effect_segs.push(ast.TypePathSegment {
                     name: effect_path.segments[si].name,
-                    args: Option::None,
+                    args: Option.None,
                 });
             }
-            handler_effect = ast::TypePath {
+            handler_effect = ast.TypePath {
                 segments: effect_segs,
                 span: effect_path.span,
             };
         } else if effect_path.segments.len() == 1 {
             // Single segment — just the operation name, no effect path
             handler_operation = effect_path.segments[0].name;
-            handler_effect = ast::TypePath {
-                segments: Vec::new(),
+            handler_effect = ast.TypePath {
+                segments: Vec.new(),
                 span: effect_path.span,
             };
         } else {
             parser.error_expected("Effect.operation pattern");
-            handler_operation = common::SpannedSymbol {
-                symbol: common::Symbol::new(0),
+            handler_operation = common.SpannedSymbol {
+                symbol: common.Symbol.new(0),
                 span: parser.current.span,
             };
-            handler_effect = ast::TypePath {
-                segments: Vec::new(),
+            handler_effect = ast.TypePath {
+                segments: Vec.new(),
                 span: parser.current.span,
             };
         }
 
         // Parse parameters
-        parser.expect(token::TokenKind::LParen);
-        let mut params: Vec<ast::Pattern> = Vec::new();
-        while !parser.check(token::TokenKind::RParen) && !parser.is_at_end() {
+        parser.expect(token.TokenKind.LParen);
+        let mut params: Vec<ast.Pattern> = Vec.new();
+        while !parser.check(token.TokenKind.RParen) && !parser.is_at_end() {
             let pat = parser_pattern::parse_pattern(parser);
             params.push(pat);
-            if !parser.try_consume(token::TokenKind::Comma) {
+            if !parser.try_consume(token.TokenKind.Comma) {
                 break;
             }
         }
-        parser.expect(token::TokenKind::RParen);
+        parser.expect(token.TokenKind.RParen);
 
         // Expect '=>' or ':'
-        if parser.check(token::TokenKind::FatArrow) || parser.check(token::TokenKind::Colon) {
+        if parser.check(token.TokenKind.FatArrow) || parser.check(token.TokenKind.Colon) {
             parser.advance();
         } else {
-            parser.expect(token::TokenKind::FatArrow);
+            parser.expect(token.TokenKind.FatArrow);
         }
 
         // Parse handler body
         let handler_body = parse_block(parser);
         let handler_end = parser.previous.span;
 
-        handlers.push(ast::TryWithHandler {
+        handlers.push(ast.TryWithHandler {
             effect: handler_effect,
             operation: handler_operation,
             params: params,
             body: handler_body,
-            span: common::Span { start: handler_start.start, end: handler_end.end, line: handler_start.line, column: handler_start.column },
+            span: common.Span { start: handler_start.start, end: handler_end.end, line: handler_start.line, column: handler_start.column },
         });
 
         // Consume optional comma between handlers
-        parser.try_consume(token::TokenKind::Comma);
+        parser.try_consume(token.TokenKind.Comma);
     }
 
-    parser.expect(token::TokenKind::RBrace);
+    parser.expect(token.TokenKind.RBrace);
 
     let end_span = parser.previous.span;
-    ast::Expr {
-        kind: ast::ExprKind::TryWith {
+    ast.Expr {
+        kind: ast.ExprKind.TryWith {
             body: body,
             handlers: handlers,
         },
-        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     }
 }
 
 /// Parse a region expression: `region 'name { body }` or `region { body }`
-fn parse_region_expr(parser: &mut parser_base::Parser) -> ast::Expr {
+fn parse_region_expr(parser: &mut parser_base.Parser) -> ast.Expr {
     let start = parser.current.span;
     parser.advance(); // consume 'region'
 
-    let region_name = if parser.check(token::TokenKind::Lifetime) {
+    let region_name = if parser.check(token.TokenKind.Lifetime) {
         let name = parser.parse_spanned_symbol();
-        Option::Some(name)
+        Option.Some(name)
     } else {
-        Option::None
+        Option.None
     };
 
     let body = parse_block(parser);
     let end_span = parser.previous.span;
 
-    ast::Expr {
-        kind: ast::ExprKind::Region {
+    ast.Expr {
+        kind: ast.ExprKind.Region {
             name: region_name,
             body: body,
         },
-        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     }
 }
 
@@ -1737,259 +1737,284 @@ fn parse_region_expr(parser: &mut parser_base::Parser) -> ast::Expr {
 // Path and Struct Expression Parsers
 // ============================================================
 
-fn parse_path_expr(parser: &mut parser_base::Parser) -> ast::Expr {
+fn parse_path_expr(parser: &mut parser_base.Parser) -> ast.Expr {
     let start = parser.current.span;
     let path = parse_expr_path(parser);
 
     // Check for macro call: path!(args) or path![args] or path!{args}
-    if parser.check(token::TokenKind::Not) {
-        if parser.check_next(token::TokenKind::LParen)
-            || parser.check_next(token::TokenKind::LBracket)
-            || parser.check_next(token::TokenKind::LBrace)
+    if parser.check(token.TokenKind.Not) {
+        if parser.check_next(token.TokenKind.LParen)
+            || parser.check_next(token.TokenKind.LBracket)
+            || parser.check_next(token.TokenKind.LBrace)
         {
             return parse_macro_call(parser, path, start);
         }
     }
 
     // Check for struct literal: Path { ... }
-    if parser.allow_struct_literal && parser.check(token::TokenKind::LBrace) {
+    if parser.allow_struct_literal && parser.check(token.TokenKind.LBrace) {
         // Convert ExprPath to TypePath for struct expression
         let type_path = expr_path_to_type_path(path);
         return parse_struct_expr(parser, type_path);
     }
 
     let end_span = parser.previous.span;
-    ast::Expr {
-        kind: ast::ExprKind::Path(path),
-        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    ast.Expr {
+        kind: ast.ExprKind.Path(path),
+        span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     }
 }
 
 /// Convert an ExprPath to a TypePath (for struct expressions).
-fn expr_path_to_type_path(path: ast::ExprPath) -> ast::TypePath {
-    let mut segments: Vec<ast::TypePathSegment> = Vec::new();
+fn expr_path_to_type_path(path: ast.ExprPath) -> ast.TypePath {
+    let mut segments: Vec<ast.TypePathSegment> = Vec.new();
     for i in 0usize..path.segments.len() {
         let seg = &path.segments[i];
-        let type_seg = ast::TypePathSegment {
+        let type_seg = ast.TypePathSegment {
             name: seg.name,
             args: seg.args,
         };
         segments.push(type_seg);
     }
-    ast::TypePath {
+    ast.TypePath {
         segments: segments,
         span: path.span,
     }
 }
 
-fn parse_expr_path(parser: &mut parser_base::Parser) -> ast::ExprPath {
+fn parse_expr_path(parser: &mut parser_base.Parser) -> ast.ExprPath {
     let start = parser.current.span;
-    let mut segments: Vec<ast::ExprPathSegment> = Vec::new();
+    let mut segments: Vec<ast.ExprPathSegment> = Vec.new();
 
+    // Track whether last segment was TypeIdent (starts with uppercase)
+    let mut last_was_type_ident = parser.current.kind == token.TokenKind.TypeIdent;
     let first_seg = parse_expr_path_segment(parser);
     segments.push(first_seg);
 
-    while parser.try_consume(token::TokenKind::ColonColon) {
-        let seg = parse_expr_path_segment(parser);
-        segments.push(seg);
+    loop {
+        if parser.try_consume(token.TokenKind.ColonColon) {
+            // :: always continues the path
+            last_was_type_ident = parser.current.kind == token.TokenKind.TypeIdent;
+            let seg = parse_expr_path_segment(parser);
+            segments.push(seg);
+        } else if parser.current.kind == token.TokenKind.Dot {
+            // Dot-path heuristic to disambiguate path vs field access:
+            // After TypeIdent: always accept . (TypeIdent is always a type, never a variable)
+            // After lowercase: accept . only when followed by TypeIdent
+            if last_was_type_ident {
+                parser.advance(); // consume '.'
+                last_was_type_ident = parser.current.kind == token.TokenKind.TypeIdent;
+                let seg = parse_expr_path_segment(parser);
+                segments.push(seg);
+            } else if parser.check_next(token.TokenKind.TypeIdent) {
+                parser.advance(); // consume '.'
+                last_was_type_ident = true;
+                let seg = parse_expr_path_segment(parser);
+                segments.push(seg);
+            } else {
+                break; // . is field access, not path continuation
+            }
+        } else {
+            break;
+        }
     }
 
     let end_span = parser.previous.span;
-    ast::ExprPath {
+    ast.ExprPath {
         segments: segments,
-        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     }
 }
 
-fn parse_expr_path_segment(parser: &mut parser_base::Parser) -> ast::ExprPathSegment {
+fn parse_expr_path_segment(parser: &mut parser_base.Parser) -> ast.ExprPathSegment {
     let name = parser.parse_spanned_symbol();
 
     // Check for turbofish ::<T, U>
-    let args = if parser.check(token::TokenKind::ColonColon) && parser.check_next(token::TokenKind::Lt) {
+    let args = if parser.check(token.TokenKind.ColonColon) && parser.check_next(token.TokenKind.Lt) {
         parser.advance(); // consume ::
-        Option::Some(parser_type::parse_type_args(parser))
+        Option.Some(parser_type::parse_type_args(parser))
     } else {
-        Option::None
+        Option.None
     };
 
-    ast::ExprPathSegment { name: name, args: args }
+    ast.ExprPathSegment { name: name, args: args }
 }
 
-fn parse_struct_expr(parser: &mut parser_base::Parser, path: ast::TypePath) -> ast::Expr {
+fn parse_struct_expr(parser: &mut parser_base.Parser, path: ast.TypePath) -> ast.Expr {
     let start = path.span;
     parser.advance(); // consume '{'
 
-    let mut fields: Vec<ast::RecordExprField> = Vec::new();
-    let mut base: Option<Box<ast::Expr>> = Option::None;
+    let mut fields: Vec<ast.RecordExprField> = Vec.new();
+    let mut base: Option<Box<ast.Expr>> = Option.None;
 
-    while !parser.check(token::TokenKind::RBrace) && !parser.is_at_end() {
+    while !parser.check(token.TokenKind.RBrace) && !parser.is_at_end() {
         // Check for base: ..expr
-        if parser.check(token::TokenKind::DotDot) {
+        if parser.check(token.TokenKind.DotDot) {
             parser.advance();
-            base = Option::Some(Box::new(parse_expr(parser)));
+            base = Option.Some(Box.new(parse_expr(parser)));
             break;
         }
 
         let field_start = parser.current.span;
         let field_name = parser.parse_spanned_symbol();
 
-        let val = if parser.try_consume(token::TokenKind::Colon) {
-            Option::Some(parse_expr(parser))
+        let val = if parser.try_consume(token.TokenKind.Colon) {
+            Option.Some(parse_expr(parser))
         } else {
             // Shorthand: val is None means use the field name as the value
-            Option::None
+            Option.None
         };
 
         let field_end = parser.previous.span;
-        let field = ast::RecordExprField {
+        let field = ast.RecordExprField {
             name: field_name,
             val: val,
-            span: common::Span { start: field_start.start, end: field_end.end, line: field_start.line, column: field_start.column },
+            span: common.Span { start: field_start.start, end: field_end.end, line: field_start.line, column: field_start.column },
         };
         fields.push(field);
 
-        if !parser.try_consume(token::TokenKind::Comma) {
+        if !parser.try_consume(token.TokenKind.Comma) {
             break;
         }
     }
 
-    parser.expect(token::TokenKind::RBrace);
+    parser.expect(token.TokenKind.RBrace);
     let end_span = parser.previous.span;
 
-    ast::Expr {
-        kind: ast::ExprKind::Record {
-            path: Option::Some(path),
+    ast.Expr {
+        kind: ast.ExprKind.Record {
+            path: Option.Some(path),
             fields: fields,
             base: base,
         },
-        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     }
 }
 
-fn parse_call_expr(parser: &mut parser_base::Parser, callee: ast::Expr) -> ast::Expr {
+fn parse_call_expr(parser: &mut parser_base.Parser, callee: ast.Expr) -> ast.Expr {
     let start = callee.span;
     parser.advance(); // consume '('
 
-    let mut args: Vec<ast::CallArg> = Vec::new();
+    let mut args: Vec<ast.CallArg> = Vec.new();
 
-    while !parser.check(token::TokenKind::RParen) && !parser.is_at_end() {
+    while !parser.check(token.TokenKind.RParen) && !parser.is_at_end() {
         let arg_start = parser.current.span;
         // Check for named argument pattern: ident ':'
-        let mut arg_name: Option<common::SpannedSymbol> = Option::None;
-        if parser.check(token::TokenKind::Ident) && parser.check_next(token::TokenKind::Colon) {
+        let mut arg_name: Option<common.SpannedSymbol> = Option.None;
+        if parser.check(token.TokenKind.Ident) && parser.check_next(token.TokenKind.Colon) {
             let name_ss = parser.parse_spanned_symbol(); // consume identifier
             parser.advance(); // consume ':'
-            arg_name = Option::Some(name_ss);
+            arg_name = Option.Some(name_ss);
         }
         let arg_expr = parse_expr(parser);
         let arg_end = parser.previous.span;
-        let call_arg = ast::CallArg {
+        let call_arg = ast.CallArg {
             name: arg_name,
             val: arg_expr,
-            span: common::Span { start: arg_start.start, end: arg_end.end, line: arg_start.line, column: arg_start.column },
+            span: common.Span { start: arg_start.start, end: arg_end.end, line: arg_start.line, column: arg_start.column },
         };
         args.push(call_arg);
 
-        if !parser.try_consume(token::TokenKind::Comma) {
+        if !parser.try_consume(token.TokenKind.Comma) {
             break;
         }
     }
 
-    parser.expect(token::TokenKind::RParen);
+    parser.expect(token.TokenKind.RParen);
     let end_span = parser.previous.span;
 
-    ast::Expr {
-        kind: ast::ExprKind::Call {
-            callee: Box::new(callee),
+    ast.Expr {
+        kind: ast.ExprKind.Call {
+            callee: Box.new(callee),
             args: args,
         },
-        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     }
 }
 
 /// Check if a token kind can start an expression.
 /// Used by range operators to decide whether to parse a right-hand side.
-fn can_start_expr(kind: token::TokenKind) -> bool {
+fn can_start_expr(kind: token.TokenKind) -> bool {
     match kind {
         // Literals
-        token::TokenKind::IntLit => true,
-        token::TokenKind::FloatLit => true,
-        token::TokenKind::StringLit => true,
-        token::TokenKind::RawStringLit => true,
-        token::TokenKind::ByteStringLit => true,
-        token::TokenKind::CharLit => true,
-        token::TokenKind::True => true,
-        token::TokenKind::False => true,
+        token.TokenKind.IntLit => true,
+        token.TokenKind.FloatLit => true,
+        token.TokenKind.StringLit => true,
+        token.TokenKind.RawStringLit => true,
+        token.TokenKind.ByteStringLit => true,
+        token.TokenKind.CharLit => true,
+        token.TokenKind.True => true,
+        token.TokenKind.False => true,
         // Identifiers and paths
-        token::TokenKind::Ident => true,
-        token::TokenKind::TypeIdent => true,
-        token::TokenKind::ColonColon => true,
-        token::TokenKind::SelfLower => true,
-        token::TokenKind::SelfUpper => true,
+        token.TokenKind.Ident => true,
+        token.TokenKind.TypeIdent => true,
+        token.TokenKind.ColonColon => true,
+        token.TokenKind.SelfLower => true,
+        token.TokenKind.SelfUpper => true,
         // Contextual keywords that can be identifiers
-        token::TokenKind::Default => true,
-        token::TokenKind::Handle => true,
-        token::TokenKind::Handler => true,
-        token::TokenKind::Effect => true,
-        token::TokenKind::Op => true,
-        token::TokenKind::Deep => true,
-        token::TokenKind::Shallow => true,
+        token.TokenKind.Default => true,
+        token.TokenKind.Handle => true,
+        token.TokenKind.Handler => true,
+        token.TokenKind.Effect => true,
+        token.TokenKind.Op => true,
+        token.TokenKind.Deep => true,
+        token.TokenKind.Shallow => true,
         // Grouping and collection
-        token::TokenKind::LParen => true,
-        token::TokenKind::LBracket => true,
-        token::TokenKind::LBrace => true,
+        token.TokenKind.LParen => true,
+        token.TokenKind.LBracket => true,
+        token.TokenKind.LBrace => true,
         // Prefix operators
-        token::TokenKind::Minus => true,
-        token::TokenKind::Not => true,
-        token::TokenKind::Star => true,
-        token::TokenKind::And => true,
+        token.TokenKind.Minus => true,
+        token.TokenKind.Not => true,
+        token.TokenKind.Star => true,
+        token.TokenKind.And => true,
         // Keywords that start expressions
-        token::TokenKind::If => true,
-        token::TokenKind::Match => true,
-        token::TokenKind::Loop => true,
-        token::TokenKind::While => true,
-        token::TokenKind::For => true,
-        token::TokenKind::Return => true,
-        token::TokenKind::Break => true,
-        token::TokenKind::Continue => true,
-        token::TokenKind::Move => true,
-        token::TokenKind::Unsafe => true,
+        token.TokenKind.If => true,
+        token.TokenKind.Match => true,
+        token.TokenKind.Loop => true,
+        token.TokenKind.While => true,
+        token.TokenKind.For => true,
+        token.TokenKind.Return => true,
+        token.TokenKind.Break => true,
+        token.TokenKind.Continue => true,
+        token.TokenKind.Move => true,
+        token.TokenKind.Unsafe => true,
         // Prefix range
-        token::TokenKind::DotDot => true,
-        token::TokenKind::DotDotEq => true,
+        token.TokenKind.DotDot => true,
+        token.TokenKind.DotDotEq => true,
         _ => false,
     }
 }
 
 /// Parse a compound assignment expression (+=, -=, etc.).
-fn parse_assign_op(parser: &mut parser_base::Parser, left: ast::Expr, bin_op: common::BinOp, prec: u8) -> ast::Expr {
+fn parse_assign_op(parser: &mut parser_base.Parser, left: ast.Expr, bin_op: common.BinOp, prec: u8) -> ast.Expr {
     parser.advance();
     let right = parse_expr_with_precedence(parser, prec);
     let end_span = parser.previous.span;
-    ast::Expr {
-        kind: ast::ExprKind::AssignOp {
+    ast.Expr {
+        kind: ast.ExprKind.AssignOp {
             op: bin_op,
-            target: Box::new(left),
-            val: Box::new(right),
+            target: Box.new(left),
+            val: Box.new(right),
         },
-        span: common::Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
+        span: common.Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
     }
 }
 
-fn parse_index_expr(parser: &mut parser_base::Parser, base: ast::Expr) -> ast::Expr {
+fn parse_index_expr(parser: &mut parser_base.Parser, base: ast.Expr) -> ast.Expr {
     let start = base.span;
     parser.advance(); // consume '['
 
     let idx = parse_expr(parser);
-    parser.expect(token::TokenKind::RBracket);
+    parser.expect(token.TokenKind.RBracket);
     let end_span = parser.previous.span;
 
-    ast::Expr {
-        kind: ast::ExprKind::Index {
-            base: Box::new(base),
-            idx: Box::new(idx),
+    ast.Expr {
+        kind: ast.ExprKind.Index {
+            base: Box.new(base),
+            idx: Box.new(idx),
         },
-        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     }
 }
 
@@ -1999,166 +2024,166 @@ fn parse_index_expr(parser: &mut parser_base::Parser, base: ast::Expr) -> ast::E
 
 /// Parse a local function declaration (nested fn inside block).
 /// Handles: fn name(params) -> return_type { body }
-fn parse_local_fn_decl(parser: &mut parser_base::Parser) -> ast::Declaration {
+fn parse_local_fn_decl(parser: &mut parser_base.Parser) -> ast.Declaration {
     let start = parser.current.span;
     parser.advance(); // consume 'fn'
 
     let name = parser.parse_spanned_symbol();
 
     // Local functions don't support generics — skip type params
-    let type_params: Option<ast::TypeParams> = Option::None;
+    let type_params: Option<ast.TypeParams> = Option.None;
 
     // Parse parameters
-    parser.expect(token::TokenKind::LParen);
-    let mut params: Vec<ast::Param> = Vec::new();
-    while !parser.check(token::TokenKind::RParen) && !parser.is_at_end() {
+    parser.expect(token.TokenKind.LParen);
+    let mut params: Vec<ast.Param> = Vec.new();
+    while !parser.check(token.TokenKind.RParen) && !parser.is_at_end() {
         let param_start = parser.current.span;
         let param_pattern = parser_pattern::parse_pattern(parser);
-        let param_ty = if parser.try_consume(token::TokenKind::Colon) {
+        let param_ty = if parser.try_consume(token.TokenKind.Colon) {
             parser_type::parse_type(parser)
         } else {
-            ast::Type { kind: ast::TypeKind::Infer, span: param_start }
+            ast.Type { kind: ast.TypeKind.Infer, span: param_start }
         };
         let param_end = parser.previous.span;
-        let param = ast::Param {
-            qualifier: Option::None,
+        let param = ast.Param {
+            qualifier: Option.None,
             pattern: param_pattern,
             ty: param_ty,
-            span: common::Span { start: param_start.start, end: param_end.end, line: param_start.line, column: param_start.column },
+            span: common.Span { start: param_start.start, end: param_end.end, line: param_start.line, column: param_start.column },
         };
         params.push(param);
-        if !parser.try_consume(token::TokenKind::Comma) {
+        if !parser.try_consume(token.TokenKind.Comma) {
             break;
         }
     }
-    parser.expect(token::TokenKind::RParen);
+    parser.expect(token.TokenKind.RParen);
 
     // Parse return type
-    let return_type: Option<ast::Type> = if parser.try_consume(token::TokenKind::Arrow) {
-        Option::Some(parser_type::parse_type(parser))
+    let return_type: Option<ast.Type> = if parser.try_consume(token.TokenKind.Arrow) {
+        Option.Some(parser_type::parse_type(parser))
     } else {
-        Option::None
+        Option.None
     };
 
     // Parse body
-    let body: Option<ast::Block> = if parser.check(token::TokenKind::LBrace) {
-        Option::Some(parse_block(parser))
+    let body: Option<ast.Block> = if parser.check(token.TokenKind.LBrace) {
+        Option.Some(parse_block(parser))
     } else {
-        parser.expect(token::TokenKind::Semi);
-        Option::None
+        parser.expect(token.TokenKind.Semi);
+        Option.None
     };
 
     let end_span = parser.previous.span;
-    let fn_decl = ast::FnDecl {
-        attrs: Vec::new(),
-        vis: common::Visibility::Private,
-        qualifiers: common::FnQualifiers { is_const: false, is_async: false, is_unsafe: false },
+    let fn_decl = ast.FnDecl {
+        attrs: Vec.new(),
+        vis: common.Visibility.Private,
+        qualifiers: common.FnQualifiers { is_const: false, is_async: false, is_unsafe: false },
         name: name,
         type_params: type_params,
         params: params,
         return_type: return_type,
-        effects: Option::None,
-        spec_clauses: Vec::new(),
-        where_clause: Option::None,
+        effects: Option.None,
+        spec_clauses: Vec.new(),
+        where_clause: Option.None,
         body: body,
-        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     };
-    ast::Declaration::Function(fn_decl)
+    ast.Declaration.Function(fn_decl)
 }
 
 /// Parse a statement.
-pub fn parse_statement(parser: &mut parser_base::Parser) -> ast::Statement {
+pub fn parse_statement(parser: &mut parser_base.Parser) -> ast.Statement {
     // Let statement
-    if parser.check(token::TokenKind::Let) {
+    if parser.check(token.TokenKind.Let) {
         return parse_let_statement(parser);
     }
 
     // Local item declaration (nested fn)
-    if parser.check(token::TokenKind::Fn) {
+    if parser.check(token.TokenKind.Fn) {
         let decl = parse_local_fn_decl(parser);
-        return ast::Statement::Item(decl);
+        return ast.Statement.Item(decl);
     }
 
     // Expression statement
     let expr = parse_expr(parser);
-    let has_semi = parser.try_consume(token::TokenKind::Semi);
+    let has_semi = parser.try_consume(token.TokenKind.Semi);
 
-    ast::Statement::Expr {
+    ast.Statement.Expr {
         expr: expr,
         has_semi: has_semi,
     }
 }
 
 /// Parse a let statement.
-pub fn parse_let_statement(parser: &mut parser_base::Parser) -> ast::Statement {
+pub fn parse_let_statement(parser: &mut parser_base.Parser) -> ast.Statement {
     let start = parser.current.span;
     parser.advance(); // consume 'let'
 
     let pattern = parser_pattern::parse_pattern(parser);
 
-    let ty = if parser.try_consume(token::TokenKind::Colon) {
-        Option::Some(parser_type::parse_type(parser))
+    let ty = if parser.try_consume(token.TokenKind.Colon) {
+        Option.Some(parser_type::parse_type(parser))
     } else {
-        Option::None
+        Option.None
     };
 
-    let init_val = if parser.try_consume(token::TokenKind::Eq) {
-        Option::Some(parse_expr(parser))
+    let init_val = if parser.try_consume(token.TokenKind.Eq) {
+        Option.Some(parse_expr(parser))
     } else {
-        Option::None
+        Option.None
     };
 
-    parser.expect(token::TokenKind::Semi);
+    parser.expect(token.TokenKind.Semi);
 
     let end_span = parser.previous.span;
-    ast::Statement::Let {
+    ast.Statement.Let {
         pattern: pattern,
         ty: ty,
         init_val: init_val,
-        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     }
 }
 
-/// Parse a block and return ast::Block directly.
-pub fn parse_block(parser: &mut parser_base::Parser) -> ast::Block {
+/// Parse a block and return ast.Block directly.
+pub fn parse_block(parser: &mut parser_base.Parser) -> ast.Block {
     let start = parser.current.span;
-    parser.expect(token::TokenKind::LBrace);
+    parser.expect(token.TokenKind.LBrace);
 
-    let mut stmts: Vec<ast::Statement> = Vec::new();
-    let mut final_expr: Option<Box<ast::Expr>> = Option::None;
+    let mut stmts: Vec<ast.Statement> = Vec.new();
+    let mut final_expr: Option<Box<ast.Expr>> = Option.None;
 
-    while !parser.check(token::TokenKind::RBrace) && !parser.is_at_end() {
+    while !parser.check(token.TokenKind.RBrace) && !parser.is_at_end() {
         let stmt = parse_statement(parser);
 
         // Check if this is an expression without semicolon at the end of block
         match stmt {
-            ast::Statement::Expr { expr, has_semi } => {
-                if !has_semi && parser.check(token::TokenKind::RBrace) {
+            ast.Statement.Expr { expr, has_semi } => {
+                if !has_semi && parser.check(token.TokenKind.RBrace) {
                     // This is the final expression
-                    final_expr = Option::Some(Box::new(expr));
+                    final_expr = Option.Some(Box.new(expr));
                 } else {
-                    let expr_stmt = ast::Statement::Expr { expr: expr, has_semi: has_semi };
+                    let expr_stmt = ast.Statement.Expr { expr: expr, has_semi: has_semi };
                     stmts.push(expr_stmt);
                 }
             }
-            ast::Statement::Let { pattern, ty, init_val, span } => {
-                let let_stmt = ast::Statement::Let { pattern: pattern, ty: ty, init_val: init_val, span: span };
+            ast.Statement.Let { pattern, ty, init_val, span } => {
+                let let_stmt = ast.Statement.Let { pattern: pattern, ty: ty, init_val: init_val, span: span };
                 stmts.push(let_stmt);
             }
-            ast::Statement::Item(decl) => {
-                let item_stmt = ast::Statement::Item(decl);
+            ast.Statement.Item(decl) => {
+                let item_stmt = ast.Statement.Item(decl);
                 stmts.push(item_stmt);
             }
         }
     }
 
-    parser.expect(token::TokenKind::RBrace);
+    parser.expect(token.TokenKind.RBrace);
     let end_span = parser.previous.span;
 
-    ast::Block {
+    ast.Block {
         statements: stmts,
         expr: final_expr,
-        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     }
 }
 
@@ -2167,7 +2192,7 @@ pub fn parse_block(parser: &mut parser_base::Parser) -> ast::Block {
 // ============================================================
 
 /// Parse a macro call after the path and before the `!`.
-fn parse_macro_call(parser: &mut parser_base::Parser, path: ast::ExprPath, start: common::Span) -> ast::Expr {
+fn parse_macro_call(parser: &mut parser_base.Parser, path: ast.ExprPath, start: common.Span) -> ast.Expr {
     parser.advance(); // consume '!'
 
     // Get the macro name span from the last segment
@@ -2190,17 +2215,17 @@ fn parse_macro_call(parser: &mut parser_base::Parser, path: ast::ExprPath, start
     };
 
     let end_span = parser.previous.span;
-    ast::Expr {
-        kind: ast::ExprKind::MacroCall {
+    ast.Expr {
+        kind: ast.ExprKind.MacroCall {
             path: path,
             kind: kind,
         },
-        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     }
 }
 
 /// Check if source text at a span equals a target string.
-fn span_text_eq(source: &str, span: common::Span, target: &str) -> bool {
+fn span_text_eq(source: &str, span: common.Span, target: &str) -> bool {
     let src = source.as_bytes();
     let tgt = target.as_bytes();
     let len = span.end - span.start;
@@ -2216,7 +2241,7 @@ fn span_text_eq(source: &str, span: common::Span, target: &str) -> bool {
 }
 
 /// Check if the macro name is a format-style macro.
-fn is_format_macro_name(source: &str, span: common::Span) -> bool {
+fn is_format_macro_name(source: &str, span: common.Span) -> bool {
     if span_text_eq(source, span, "format") { return true; }
     if span_text_eq(source, span, "println") { return true; }
     if span_text_eq(source, span, "print") { return true; }
@@ -2232,45 +2257,45 @@ fn is_format_macro_name(source: &str, span: common::Span) -> bool {
 }
 
 /// Parse format-style macro args: format!("fmt", arg1, arg2)
-fn parse_format_macro_args(parser: &mut parser_base::Parser) -> ast::MacroCallKind {
-    parser.expect(token::TokenKind::LParen);
+fn parse_format_macro_args(parser: &mut parser_base.Parser) -> ast.MacroCallKind {
+    parser.expect(token.TokenKind.LParen);
 
     // First argument must be a string literal (the format string)
     let fmt_span = parser.current.span;
-    let fmt_str = if parser.check(token::TokenKind::StringLit) {
+    let fmt_str = if parser.check(token.TokenKind.StringLit) {
         let s = parser_base::parse_string_from_span(parser, fmt_span);
         parser.advance();
-        common::SpannedString {
+        common.SpannedString {
             value: s,
             span: fmt_span,
         }
     } else {
         // Not a string — create empty format string and let HIR handle the error
-        common::SpannedString {
-            value: String::new(),
+        common.SpannedString {
+            value: String.new(),
             span: fmt_span,
         }
     };
 
     // Parse remaining arguments (positional and named)
-    let mut args: Vec<ast::Expr> = Vec::new();
-    let mut named_args: Vec<ast::NamedFormatArg> = Vec::new();
-    while parser.try_consume(token::TokenKind::Comma) {
-        if parser.check(token::TokenKind::RParen) {
+    let mut args: Vec<ast.Expr> = Vec.new();
+    let mut named_args: Vec<ast.NamedFormatArg> = Vec.new();
+    while parser.try_consume(token.TokenKind.Comma) {
+        if parser.check(token.TokenKind.RParen) {
             break;
         }
         // Check for named arg: ident = expr
         // Use lookahead: if current is Ident and next is Eq, it's a named arg
-        if parser.check(token::TokenKind::Ident) {
+        if parser.check(token.TokenKind.Ident) {
             let is_named = match &parser.next.kind {
-                &token::TokenKind::Eq => true,
+                &token.TokenKind.Eq => true,
                 _ => false,
             };
             if is_named {
                 let name = parser.parse_spanned_symbol();
-                parser.expect(token::TokenKind::Eq);
+                parser.expect(token.TokenKind.Eq);
                 let val = parse_expr(parser);
-                let named = ast::NamedFormatArg { name: name, val: val };
+                let named = ast.NamedFormatArg { name: name, val: val };
                 named_args.push(named);
             } else {
                 args.push(parse_expr(parser));
@@ -2280,9 +2305,9 @@ fn parse_format_macro_args(parser: &mut parser_base::Parser) -> ast::MacroCallKi
         }
     }
 
-    parser.expect(token::TokenKind::RParen);
+    parser.expect(token.TokenKind.RParen);
 
-    ast::MacroCallKind::Format {
+    ast.MacroCallKind.Format {
         format_str: fmt_str,
         args: args,
         named_args: named_args,
@@ -2290,112 +2315,112 @@ fn parse_format_macro_args(parser: &mut parser_base::Parser) -> ast::MacroCallKi
 }
 
 /// Parse vec macro args: vec![1, 2, 3] or vec![0; 10]
-fn parse_vec_macro_args(parser: &mut parser_base::Parser) -> ast::MacroCallKind {
-    parser.expect(token::TokenKind::LBracket);
+fn parse_vec_macro_args(parser: &mut parser_base.Parser) -> ast.MacroCallKind {
+    parser.expect(token.TokenKind.LBracket);
 
-    if parser.check(token::TokenKind::RBracket) {
+    if parser.check(token.TokenKind.RBracket) {
         parser.advance();
-        return ast::MacroCallKind::VecMacro(ast::VecMacroArgs::List(Vec::new()));
+        return ast.MacroCallKind.VecMacro(ast.VecMacroArgs.List(Vec.new()));
     }
 
     let first = parse_expr(parser);
 
     // Check for repeat syntax: vec![val; count]
-    if parser.try_consume(token::TokenKind::Semi) {
+    if parser.try_consume(token.TokenKind.Semi) {
         let count = parse_expr(parser);
-        parser.expect(token::TokenKind::RBracket);
-        return ast::MacroCallKind::VecMacro(ast::VecMacroArgs::Repeat {
-            val: Box::new(first),
-            count: Box::new(count),
+        parser.expect(token.TokenKind.RBracket);
+        return ast.MacroCallKind.VecMacro(ast.VecMacroArgs.Repeat {
+            val: Box.new(first),
+            count: Box.new(count),
         });
     }
 
     // List syntax: vec![a, b, c]
-    let mut elems: Vec<ast::Expr> = Vec::new();
+    let mut elems: Vec<ast.Expr> = Vec.new();
     elems.push(first);
-    while parser.try_consume(token::TokenKind::Comma) {
-        if parser.check(token::TokenKind::RBracket) {
+    while parser.try_consume(token.TokenKind.Comma) {
+        if parser.check(token.TokenKind.RBracket) {
             break;
         }
         elems.push(parse_expr(parser));
     }
 
-    parser.expect(token::TokenKind::RBracket);
-    ast::MacroCallKind::VecMacro(ast::VecMacroArgs::List(elems))
+    parser.expect(token.TokenKind.RBracket);
+    ast.MacroCallKind.VecMacro(ast.VecMacroArgs.List(elems))
 }
 
 /// Parse assert macro args: assert!(cond) or assert!(cond, "msg")
-fn parse_assert_macro_args(parser: &mut parser_base::Parser) -> ast::MacroCallKind {
-    parser.expect(token::TokenKind::LParen);
+fn parse_assert_macro_args(parser: &mut parser_base.Parser) -> ast.MacroCallKind {
+    parser.expect(token.TokenKind.LParen);
     let condition = parse_expr(parser);
 
-    let message = if parser.try_consume(token::TokenKind::Comma) {
-        if parser.check(token::TokenKind::RParen) {
-            Option::None
+    let message = if parser.try_consume(token.TokenKind.Comma) {
+        if parser.check(token.TokenKind.RParen) {
+            Option.None
         } else {
-            Option::Some(Box::new(parse_expr(parser)))
+            Option.Some(Box.new(parse_expr(parser)))
         }
     } else {
-        Option::None
+        Option.None
     };
 
-    parser.expect(token::TokenKind::RParen);
-    ast::MacroCallKind::Assert {
-        condition: Box::new(condition),
+    parser.expect(token.TokenKind.RParen);
+    ast.MacroCallKind.Assert {
+        condition: Box.new(condition),
         message: message,
     }
 }
 
 /// Parse dbg macro args: dbg!(expr)
-fn parse_dbg_macro_args(parser: &mut parser_base::Parser) -> ast::MacroCallKind {
-    parser.expect(token::TokenKind::LParen);
+fn parse_dbg_macro_args(parser: &mut parser_base.Parser) -> ast.MacroCallKind {
+    parser.expect(token.TokenKind.LParen);
     let expr = parse_expr(parser);
-    parser.expect(token::TokenKind::RParen);
-    ast::MacroCallKind::Dbg(Box::new(expr))
+    parser.expect(token.TokenKind.RParen);
+    ast.MacroCallKind.Dbg(Box.new(expr))
 }
 
 /// Parse matches macro args: matches!(expr, pattern)
-fn parse_matches_macro_args(parser: &mut parser_base::Parser) -> ast::MacroCallKind {
-    parser.expect(token::TokenKind::LParen);
+fn parse_matches_macro_args(parser: &mut parser_base.Parser) -> ast.MacroCallKind {
+    parser.expect(token.TokenKind.LParen);
     let expr = parse_expr(parser);
-    parser.expect(token::TokenKind::Comma);
+    parser.expect(token.TokenKind.Comma);
     let pattern = parser_pattern::parse_pattern(parser);
-    parser.expect(token::TokenKind::RParen);
-    ast::MacroCallKind::Matches {
-        expr: Box::new(expr),
-        pattern: Box::new(pattern),
+    parser.expect(token.TokenKind.RParen);
+    ast.MacroCallKind.Matches {
+        expr: Box.new(expr),
+        pattern: Box.new(pattern),
     }
 }
 
 /// Parse custom/unknown macro args as raw content.
-fn parse_custom_macro_args(parser: &mut parser_base::Parser) -> ast::MacroCallKind {
-    let delim = if parser.check(token::TokenKind::LParen) {
+fn parse_custom_macro_args(parser: &mut parser_base.Parser) -> ast.MacroCallKind {
+    let delim = if parser.check(token.TokenKind.LParen) {
         parser.advance();
-        ast::MacroDelimiter::Paren
-    } else if parser.check(token::TokenKind::LBracket) {
+        ast.MacroDelimiter.Paren
+    } else if parser.check(token.TokenKind.LBracket) {
         parser.advance();
-        ast::MacroDelimiter::Bracket
+        ast.MacroDelimiter.Bracket
     } else {
         parser.advance(); // consume LBrace
-        ast::MacroDelimiter::Brace
+        ast.MacroDelimiter.Brace
     };
 
     // Skip tokens until matching close delimiter, tracking nesting
     let content_start = parser.current.span.start;
     let mut depth: u32 = 1;
-    while depth > 0 && parser.current.kind != token::TokenKind::Eof {
+    while depth > 0 && parser.current.kind != token.TokenKind.Eof {
         match parser.current.kind {
-            token::TokenKind::LParen => { depth += 1; }
-            token::TokenKind::RParen => {
-                match delim { ast::MacroDelimiter::Paren => { depth -= 1; } _ => {} }
+            token.TokenKind.LParen => { depth += 1; }
+            token.TokenKind.RParen => {
+                match delim { ast.MacroDelimiter.Paren => { depth -= 1; } _ => {} }
             }
-            token::TokenKind::LBracket => { depth += 1; }
-            token::TokenKind::RBracket => {
-                match delim { ast::MacroDelimiter::Bracket => { depth -= 1; } _ => {} }
+            token.TokenKind.LBracket => { depth += 1; }
+            token.TokenKind.RBracket => {
+                match delim { ast.MacroDelimiter.Bracket => { depth -= 1; } _ => {} }
             }
-            token::TokenKind::LBrace => { depth += 1; }
-            token::TokenKind::RBrace => {
-                match delim { ast::MacroDelimiter::Brace => { depth -= 1; } _ => {} }
+            token.TokenKind.LBrace => { depth += 1; }
+            token.TokenKind.RBrace => {
+                match delim { ast.MacroDelimiter.Brace => { depth -= 1; } _ => {} }
             }
             _ => {}
         }
@@ -2406,7 +2431,7 @@ fn parse_custom_macro_args(parser: &mut parser_base::Parser) -> ast::MacroCallKi
 
     // Extract content text from source
     let content_end = parser.current.span.start;
-    let mut content = String::new();
+    let mut content = String.new();
     let src = parser.source.as_bytes();
     let mut i: usize = content_start;
     while i < content_end && i < src.len() {
@@ -2419,7 +2444,7 @@ fn parse_custom_macro_args(parser: &mut parser_base::Parser) -> ast::MacroCallKi
         parser.advance();
     }
 
-    ast::MacroCallKind::Custom {
+    ast.MacroCallKind.Custom {
         delim: delim,
         content: content,
     }

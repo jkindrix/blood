@@ -22,43 +22,43 @@ mod parser_type;
 
 /// Parse a single pattern without checking for or-patterns.
 /// Used by closure parameter parsing where `|` is the parameter delimiter.
-pub fn parse_pattern_no_or(parser: &mut parser_base::Parser) -> ast::Pattern {
+pub fn parse_pattern_no_or(parser: &mut parser_base.Parser) -> ast.Pattern {
     let start = parser.current.span;
     let kind = parse_pattern_kind(parser);
     let end_span = parser.previous.span;
-    ast::Pattern {
+    ast.Pattern {
         kind: kind,
-        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     }
 }
 
 /// Parse a pattern, including or-patterns: `A | B | C`.
-pub fn parse_pattern(parser: &mut parser_base::Parser) -> ast::Pattern {
+pub fn parse_pattern(parser: &mut parser_base.Parser) -> ast.Pattern {
     let start = parser.current.span;
     let kind = parse_pattern_kind(parser);
     let end_span = parser.previous.span;
-    let first = ast::Pattern {
+    let first = ast.Pattern {
         kind: kind,
-        span: common::Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     };
 
     // Check for or-pattern: `A | B | C`
-    if parser.check(token::TokenKind::Or) {
-        let mut patterns: Vec<ast::Pattern> = Vec::new();
+    if parser.check(token.TokenKind.Or) {
+        let mut patterns: Vec<ast.Pattern> = Vec.new();
         patterns.push(first);
-        while parser.try_consume(token::TokenKind::Or) {
+        while parser.try_consume(token.TokenKind.Or) {
             let alt_start = parser.current.span;
             let alt_kind = parse_pattern_kind(parser);
             let alt_end = parser.previous.span;
-            patterns.push(ast::Pattern {
+            patterns.push(ast.Pattern {
                 kind: alt_kind,
-                span: common::Span { start: alt_start.start, end: alt_end.end, line: alt_start.line, column: alt_start.column },
+                span: common.Span { start: alt_start.start, end: alt_end.end, line: alt_start.line, column: alt_start.column },
             });
         }
         let or_end = parser.previous.span;
-        ast::Pattern {
-            kind: ast::PatternKind::Or(patterns),
-            span: common::Span { start: start.start, end: or_end.end, line: start.line, column: start.column },
+        ast.Pattern {
+            kind: ast.PatternKind.Or(patterns),
+            span: common.Span { start: start.start, end: or_end.end, line: start.line, column: start.column },
         }
     } else {
         first
@@ -66,131 +66,131 @@ pub fn parse_pattern(parser: &mut parser_base::Parser) -> ast::Pattern {
 }
 
 /// Parse a pattern kind.
-fn parse_pattern_kind(parser: &mut parser_base::Parser) -> ast::PatternKind {
+fn parse_pattern_kind(parser: &mut parser_base.Parser) -> ast.PatternKind {
     match parser.current.kind {
         // Negative literal pattern: -42, -3.14 (with range check: -1..=1)
-        token::TokenKind::Minus => {
+        token.TokenKind.Minus => {
             let neg_start = parser.current.span;
             parser.advance(); // consume '-'
-            if parser.check(token::TokenKind::IntLit) {
+            if parser.check(token.TokenKind.IntLit) {
                 let pat_start = parser.current.span;
                 let int_val = parser_base::parse_int_value_from_span(parser, pat_start);
                 let int_suffix = parser_base::parse_int_suffix_from_span(parser, pat_start);
                 parser.advance();
-                let neg_span = common::Span { start: neg_start.start, end: pat_start.end, line: neg_start.line, column: neg_start.column };
-                let lit = ast::Literal {
-                    kind: ast::LiteralKind::Int { val: int_val, suffix: int_suffix },
+                let neg_span = common.Span { start: neg_start.start, end: pat_start.end, line: neg_start.line, column: neg_start.column };
+                let lit = ast.Literal {
+                    kind: ast.LiteralKind.Int { val: int_val, suffix: int_suffix },
                     span: neg_span,
                 };
-                return maybe_range_pattern(parser, ast::PatternKind::Literal(lit), neg_span);
-            } else if parser.check(token::TokenKind::FloatLit) {
+                return maybe_range_pattern(parser, ast.PatternKind.Literal(lit), neg_span);
+            } else if parser.check(token.TokenKind.FloatLit) {
                 let pat_start = parser.current.span;
                 let float_bits = parser_base::parse_float_bits_from_span(parser, pat_start);
                 let float_suffix = parser_base::parse_float_suffix_from_span(parser, pat_start);
                 parser.advance();
                 // Negate by flipping the sign bit (bit 63)
                 let neg_bits = float_bits ^ 9223372036854775808;
-                let neg_span = common::Span { start: neg_start.start, end: pat_start.end, line: neg_start.line, column: neg_start.column };
-                let lit = ast::Literal {
-                    kind: ast::LiteralKind::Float { bits: neg_bits, suffix: float_suffix },
+                let neg_span = common.Span { start: neg_start.start, end: pat_start.end, line: neg_start.line, column: neg_start.column };
+                let lit = ast.Literal {
+                    kind: ast.LiteralKind.Float { bits: neg_bits, suffix: float_suffix },
                     span: neg_span,
                 };
-                return maybe_range_pattern(parser, ast::PatternKind::Literal(lit), neg_span);
+                return maybe_range_pattern(parser, ast.PatternKind.Literal(lit), neg_span);
             } else {
                 parser.error_expected("number after `-`");
-                return ast::PatternKind::Wildcard;
+                return ast.PatternKind.Wildcard;
             }
         }
 
         // Rest pattern: ..
-        token::TokenKind::DotDot => {
+        token.TokenKind.DotDot => {
             parser.advance();
-            return ast::PatternKind::Rest;
+            return ast.PatternKind.Rest;
         }
 
         // Literal patterns (with range check: 0..5, 0..=9)
-        token::TokenKind::IntLit => {
+        token.TokenKind.IntLit => {
             let pat_start = parser.current.span;
             let int_val = parser_base::parse_int_value_from_span(parser, pat_start);
             let int_suffix = parser_base::parse_int_suffix_from_span(parser, pat_start);
             parser.advance();
-            let lit = ast::Literal {
-                kind: ast::LiteralKind::Int { val: int_val, suffix: int_suffix },
+            let lit = ast.Literal {
+                kind: ast.LiteralKind.Int { val: int_val, suffix: int_suffix },
                 span: pat_start,
             };
-            return maybe_range_pattern(parser, ast::PatternKind::Literal(lit), pat_start);
+            return maybe_range_pattern(parser, ast.PatternKind.Literal(lit), pat_start);
         }
-        token::TokenKind::FloatLit => {
+        token.TokenKind.FloatLit => {
             let pat_start = parser.current.span;
             let float_bits = parser_base::parse_float_bits_from_span(parser, pat_start);
             let float_suffix = parser_base::parse_float_suffix_from_span(parser, pat_start);
             parser.advance();
-            let lit = ast::Literal {
-                kind: ast::LiteralKind::Float { bits: float_bits, suffix: float_suffix },
+            let lit = ast.Literal {
+                kind: ast.LiteralKind.Float { bits: float_bits, suffix: float_suffix },
                 span: pat_start,
             };
-            return maybe_range_pattern(parser, ast::PatternKind::Literal(lit), pat_start);
+            return maybe_range_pattern(parser, ast.PatternKind.Literal(lit), pat_start);
         }
-        token::TokenKind::StringLit => {
+        token.TokenKind.StringLit => {
             let pat_start = parser.current.span;
             let str_val = parser_base::parse_string_from_span(parser, pat_start);
             parser.advance();
-            let lit = ast::Literal {
-                kind: ast::LiteralKind::Str(str_val),
+            let lit = ast.Literal {
+                kind: ast.LiteralKind.Str(str_val),
                 span: pat_start,
             };
-            return ast::PatternKind::Literal(lit);
+            return ast.PatternKind.Literal(lit);
         }
-        token::TokenKind::CharLit => {
+        token.TokenKind.CharLit => {
             let pat_start = parser.current.span;
             let char_val = parser_base::parse_char_from_span(parser, pat_start);
             parser.advance();
-            let lit = ast::Literal {
-                kind: ast::LiteralKind::Char(char_val),
+            let lit = ast.Literal {
+                kind: ast.LiteralKind.Char(char_val),
                 span: pat_start,
             };
-            return maybe_range_pattern(parser, ast::PatternKind::Literal(lit), pat_start);
+            return maybe_range_pattern(parser, ast.PatternKind.Literal(lit), pat_start);
         }
-        token::TokenKind::True => {
+        token.TokenKind.True => {
             let pat_start = parser.current.span;
             parser.advance();
-            let lit = ast::Literal {
-                kind: ast::LiteralKind::Bool(true),
+            let lit = ast.Literal {
+                kind: ast.LiteralKind.Bool(true),
                 span: pat_start,
             };
-            return ast::PatternKind::Literal(lit);
+            return ast.PatternKind.Literal(lit);
         }
-        token::TokenKind::False => {
+        token.TokenKind.False => {
             let pat_start = parser.current.span;
             parser.advance();
-            let lit = ast::Literal {
-                kind: ast::LiteralKind::Bool(false),
+            let lit = ast.Literal {
+                kind: ast.LiteralKind.Bool(false),
                 span: pat_start,
             };
-            return ast::PatternKind::Literal(lit);
+            return ast.PatternKind.Literal(lit);
         }
 
         // Reference pattern: &pat or &mut pat
-        token::TokenKind::And => {
+        token.TokenKind.And => {
             parser.advance();
-            let is_mut = parser.try_consume(token::TokenKind::Mut);
+            let is_mut = parser.try_consume(token.TokenKind.Mut);
             let inner = parse_pattern(parser);
-            return ast::PatternKind::Ref {
+            return ast.PatternKind.Ref {
                 is_mut: is_mut,
-                inner: Box::new(inner),
+                inner: Box.new(inner),
             };
         }
 
         // mut binding
-        token::TokenKind::Mut => {
+        token.TokenKind.Mut => {
             parser.advance();
             let name = parser.parse_spanned_symbol();
-            let subpattern = if parser.try_consume(token::TokenKind::At) {
-                Option::Some(Box::new(parse_pattern(parser)))
+            let subpattern = if parser.try_consume(token.TokenKind.At) {
+                Option.Some(Box.new(parse_pattern(parser)))
             } else {
-                Option::None
+                Option.None
             };
-            return ast::PatternKind::Ident {
+            return ast.PatternKind.Ident {
                 by_ref: false,
                 is_mut: true,
                 name: name,
@@ -199,16 +199,16 @@ fn parse_pattern_kind(parser: &mut parser_base::Parser) -> ast::PatternKind {
         }
 
         // ref binding
-        token::TokenKind::Ref => {
+        token.TokenKind.Ref => {
             parser.advance();
-            let is_mut = parser.try_consume(token::TokenKind::Mut);
+            let is_mut = parser.try_consume(token.TokenKind.Mut);
             let name = parser.parse_spanned_symbol();
-            let subpattern = if parser.try_consume(token::TokenKind::At) {
-                Option::Some(Box::new(parse_pattern(parser)))
+            let subpattern = if parser.try_consume(token.TokenKind.At) {
+                Option.Some(Box.new(parse_pattern(parser)))
             } else {
-                Option::None
+                Option.None
             };
-            return ast::PatternKind::Ident {
+            return ast.PatternKind.Ident {
                 by_ref: true,
                 is_mut: is_mut,
                 name: name,
@@ -217,81 +217,81 @@ fn parse_pattern_kind(parser: &mut parser_base::Parser) -> ast::PatternKind {
         }
 
         // Tuple pattern: (pat, pat, ...)
-        token::TokenKind::LParen => {
+        token.TokenKind.LParen => {
             return parse_tuple_pattern(parser);
         }
 
         // Slice pattern: [pat, pat, ...]
-        token::TokenKind::LBracket => {
+        token.TokenKind.LBracket => {
             return parse_slice_pattern(parser);
         }
 
         // Identifier or path pattern
-        token::TokenKind::Ident => {
+        token.TokenKind.Ident => {
             return parse_ident_or_path_pattern(parser);
         }
-        token::TokenKind::TypeIdent => {
+        token.TokenKind.TypeIdent => {
             return parse_ident_or_path_pattern(parser);
         }
         // Keywords that can be used as identifiers in pattern position
-        token::TokenKind::Default => {
+        token.TokenKind.Default => {
             return parse_ident_or_path_pattern(parser);
         }
-        token::TokenKind::Handle => {
+        token.TokenKind.Handle => {
             return parse_ident_or_path_pattern(parser);
         }
-        token::TokenKind::Handler => {
+        token.TokenKind.Handler => {
             return parse_ident_or_path_pattern(parser);
         }
-        token::TokenKind::Effect => {
+        token.TokenKind.Effect => {
             return parse_ident_or_path_pattern(parser);
         }
-        token::TokenKind::Op => {
+        token.TokenKind.Op => {
             return parse_ident_or_path_pattern(parser);
         }
-        token::TokenKind::Deep => {
+        token.TokenKind.Deep => {
             return parse_ident_or_path_pattern(parser);
         }
-        token::TokenKind::Shallow => {
+        token.TokenKind.Shallow => {
             return parse_ident_or_path_pattern(parser);
         }
 
         // Path starting with ::
-        token::TokenKind::ColonColon => {
+        token.TokenKind.ColonColon => {
             return parse_path_pattern(parser);
         }
 
-        token::TokenKind::Error => {
-            parser.error_at(parser.current.span, common::make_string("invalid token in pattern position"), parser_base::ErrorCode::UnexpectedToken);
-            return ast::PatternKind::Wildcard;
+        token.TokenKind.Error => {
+            parser.error_at(parser.current.span, common::make_string("invalid token in pattern position"), parser_base.ErrorCode.UnexpectedToken);
+            return ast.PatternKind.Wildcard;
         }
 
         _ => {
-            parser.error_expected_with_code("pattern", parser_base::ErrorCode::ExpectedPattern);
-            return ast::PatternKind::Wildcard;
+            parser.error_expected_with_code("pattern", parser_base.ErrorCode.ExpectedPattern);
+            return ast.PatternKind.Wildcard;
         }
     }
 }
 
-fn parse_tuple_pattern(parser: &mut parser_base::Parser) -> ast::PatternKind {
+fn parse_tuple_pattern(parser: &mut parser_base.Parser) -> ast.PatternKind {
     parser.advance(); // consume '('
 
     // Empty tuple: ()
-    if parser.check(token::TokenKind::RParen) {
+    if parser.check(token.TokenKind.RParen) {
         parser.advance();
-        return ast::PatternKind::Tuple {
-            fields: Vec::new(),
-            rest_pos: Option::None,
+        return ast.PatternKind.Tuple {
+            fields: Vec.new(),
+            rest_pos: Option.None,
         };
     }
 
     // Check for (..) rest pattern
-    if parser.check(token::TokenKind::DotDot) {
+    if parser.check(token.TokenKind.DotDot) {
         parser.advance();
-        parser.expect(token::TokenKind::RParen);
-        return ast::PatternKind::Tuple {
-            fields: Vec::new(),
-            rest_pos: Option::Some(0 as usize),
+        parser.expect(token.TokenKind.RParen);
+        return ast.PatternKind.Tuple {
+            fields: Vec.new(),
+            rest_pos: Option.Some(0 as usize),
         };
     }
 
@@ -299,244 +299,264 @@ fn parse_tuple_pattern(parser: &mut parser_base::Parser) -> ast::PatternKind {
     let first = parse_pattern(parser);
 
     // If no comma follows, this is a parenthesized pattern, not a tuple
-    if !parser.try_consume(token::TokenKind::Comma) {
-        parser.expect(token::TokenKind::RParen);
-        return ast::PatternKind::Paren(Box::new(first));
+    if !parser.try_consume(token.TokenKind.Comma) {
+        parser.expect(token.TokenKind.RParen);
+        return ast.PatternKind.Paren(Box.new(first));
     }
 
     // Comma was consumed — this is a tuple pattern
-    let mut fields: Vec<ast::Pattern> = Vec::new();
+    let mut fields: Vec<ast.Pattern> = Vec.new();
     fields.push(first);
-    let mut rest_pos: Option<usize> = Option::None;
+    let mut rest_pos: Option<usize> = Option.None;
     let mut idx: usize = 1;
 
-    while !parser.check(token::TokenKind::RParen) && !parser.is_at_end() {
-        if parser.check(token::TokenKind::DotDot) {
+    while !parser.check(token.TokenKind.RParen) && !parser.is_at_end() {
+        if parser.check(token.TokenKind.DotDot) {
             parser.advance();
-            rest_pos = Option::Some(idx);
+            rest_pos = Option.Some(idx);
         } else {
             let pat = parse_pattern(parser);
             fields.push(pat);
             idx += 1;
         }
 
-        if !parser.try_consume(token::TokenKind::Comma) {
+        if !parser.try_consume(token.TokenKind.Comma) {
             break;
         }
     }
 
-    parser.expect(token::TokenKind::RParen);
+    parser.expect(token.TokenKind.RParen);
 
-    ast::PatternKind::Tuple {
+    ast.PatternKind.Tuple {
         fields: fields,
         rest_pos: rest_pos,
     }
 }
 
-fn parse_slice_pattern(parser: &mut parser_base::Parser) -> ast::PatternKind {
+fn parse_slice_pattern(parser: &mut parser_base.Parser) -> ast.PatternKind {
     parser.advance(); // consume '['
-    let mut elements: Vec<ast::Pattern> = Vec::new();
-    let mut rest_pos: Option<usize> = Option::None;
+    let mut elements: Vec<ast.Pattern> = Vec.new();
+    let mut rest_pos: Option<usize> = Option.None;
     let mut idx: usize = 0;
 
-    while !parser.check(token::TokenKind::RBracket) && !parser.is_at_end() {
-        if parser.check(token::TokenKind::DotDot) {
+    while !parser.check(token.TokenKind.RBracket) && !parser.is_at_end() {
+        if parser.check(token.TokenKind.DotDot) {
             parser.advance();
-            rest_pos = Option::Some(idx);
+            rest_pos = Option.Some(idx);
         } else {
             let pat = parse_pattern(parser);
             elements.push(pat);
             idx += 1;
         }
 
-        if !parser.try_consume(token::TokenKind::Comma) {
+        if !parser.try_consume(token.TokenKind.Comma) {
             break;
         }
     }
 
-    parser.expect(token::TokenKind::RBracket);
+    parser.expect(token.TokenKind.RBracket);
 
-    ast::PatternKind::Slice {
+    ast.PatternKind.Slice {
         elements: elements,
         rest_pos: rest_pos,
     }
 }
 
-fn parse_ident_or_path_pattern(parser: &mut parser_base::Parser) -> ast::PatternKind {
+fn parse_ident_or_path_pattern(parser: &mut parser_base.Parser) -> ast.PatternKind {
     // Check for wildcard pattern: _
     if parser.token_is_underscore(parser.current) {
         parser.advance();
-        return ast::PatternKind::Wildcard;
+        return ast.PatternKind.Wildcard;
     }
 
     let first_name = parser.parse_spanned_symbol();
 
-    // Check for :: to see if this is a path
-    if parser.check(token::TokenKind::ColonColon) {
-        let mut segments: Vec<ast::TypePathSegment> = Vec::new();
-        let first_seg = ast::TypePathSegment { name: first_name, args: Option::None };
+    // Check for :: or . to see if this is a path
+    // For ., accept when followed by TypeIdent (e.g., Visibility.Private, Option.Some)
+    let first_is_type_ident = parser.source_byte_at(first_name.span.start as usize) >= 65
+                           && parser.source_byte_at(first_name.span.start as usize) <= 90;
+    let has_path_continuation = parser.check(token.TokenKind.ColonColon)
+        || (parser.current.kind == token.TokenKind.Dot
+            && (first_is_type_ident || parser.check_next(token.TokenKind.TypeIdent)));
+
+    if has_path_continuation {
+        let mut segments: Vec<ast.TypePathSegment> = Vec.new();
+        let first_seg = ast.TypePathSegment { name: first_name, args: Option.None };
         segments.push(first_seg);
 
-        while parser.try_consume(token::TokenKind::ColonColon) {
-            let seg_name = parser.parse_spanned_symbol();
-            let seg = ast::TypePathSegment { name: seg_name, args: Option::None };
-            segments.push(seg);
+        loop {
+            if parser.try_consume(token.TokenKind.ColonColon) {
+                let seg_name = parser.parse_spanned_symbol();
+                let seg = ast.TypePathSegment { name: seg_name, args: Option.None };
+                segments.push(seg);
+            } else if parser.current.kind == token.TokenKind.Dot
+                      && (parser.check_next(token.TokenKind.TypeIdent)
+                          || parser.check_next(token.TokenKind.SelfUpper)
+                          || parser.check_next(token.TokenKind.Crate)
+                          || parser.check_next(token.TokenKind.Super)) {
+                parser.advance(); // consume '.'
+                let seg_name = parser.parse_spanned_symbol();
+                let seg = ast.TypePathSegment { name: seg_name, args: Option.None };
+                segments.push(seg);
+            } else {
+                break;
+            }
         }
 
-        let path_span = common::Span {
+        let path_span = common.Span {
             start: first_name.span.start,
             end: parser.previous.span.end,
             line: first_name.span.line,
             column: first_name.span.column,
         };
-        let path = ast::TypePath { segments: segments, span: path_span };
+        let path = ast.TypePath { segments: segments, span: path_span };
 
         // Check for struct pattern: Path { ... }
-        if parser.check(token::TokenKind::LBrace) {
+        if parser.check(token.TokenKind.LBrace) {
             return parse_struct_pattern(parser, path);
         }
 
         // Check for tuple struct pattern: Path(...)
-        if parser.check(token::TokenKind::LParen) {
+        if parser.check(token.TokenKind.LParen) {
             return parse_tuple_struct_pattern(parser, path);
         }
 
-        return ast::PatternKind::Path(path);
+        return ast.PatternKind.Path(path);
     }
 
     // Check for @ subpattern
-    if parser.try_consume(token::TokenKind::At) {
+    if parser.try_consume(token.TokenKind.At) {
         let subpat = parse_pattern(parser);
-        return ast::PatternKind::Ident {
+        return ast.PatternKind.Ident {
             by_ref: false,
             is_mut: false,
             name: first_name,
-            subpattern: Option::Some(Box::new(subpat)),
+            subpattern: Option.Some(Box.new(subpat)),
         };
     }
 
     // Check for struct pattern with single ident: Foo { ... }
-    if parser.check(token::TokenKind::LBrace) {
-        let mut segments: Vec<ast::TypePathSegment> = Vec::new();
-        let seg = ast::TypePathSegment { name: first_name, args: Option::None };
+    if parser.check(token.TokenKind.LBrace) {
+        let mut segments: Vec<ast.TypePathSegment> = Vec.new();
+        let seg = ast.TypePathSegment { name: first_name, args: Option.None };
         segments.push(seg);
-        let path = ast::TypePath { segments: segments, span: first_name.span };
+        let path = ast.TypePath { segments: segments, span: first_name.span };
         return parse_struct_pattern(parser, path);
     }
 
     // Check for tuple struct pattern with single ident: Foo(...)
-    if parser.check(token::TokenKind::LParen) {
-        let mut segments: Vec<ast::TypePathSegment> = Vec::new();
-        let seg = ast::TypePathSegment { name: first_name, args: Option::None };
+    if parser.check(token.TokenKind.LParen) {
+        let mut segments: Vec<ast.TypePathSegment> = Vec.new();
+        let seg = ast.TypePathSegment { name: first_name, args: Option.None };
         segments.push(seg);
-        let path = ast::TypePath { segments: segments, span: first_name.span };
+        let path = ast.TypePath { segments: segments, span: first_name.span };
         return parse_tuple_struct_pattern(parser, path);
     }
 
     // Simple identifier pattern
-    ast::PatternKind::Ident {
+    ast.PatternKind.Ident {
         by_ref: false,
         is_mut: false,
         name: first_name,
-        subpattern: Option::None,
+        subpattern: Option.None,
     }
 }
 
-fn parse_path_pattern(parser: &mut parser_base::Parser) -> ast::PatternKind {
+fn parse_path_pattern(parser: &mut parser_base.Parser) -> ast.PatternKind {
     let path = parser_type::parse_type_path(parser);
 
     // Check for struct pattern
-    if parser.check(token::TokenKind::LBrace) {
+    if parser.check(token.TokenKind.LBrace) {
         return parse_struct_pattern(parser, path);
     }
 
     // Check for tuple struct pattern
-    if parser.check(token::TokenKind::LParen) {
+    if parser.check(token.TokenKind.LParen) {
         return parse_tuple_struct_pattern(parser, path);
     }
 
-    ast::PatternKind::Path(path)
+    ast.PatternKind.Path(path)
 }
 
-fn parse_struct_pattern(parser: &mut parser_base::Parser, path: ast::TypePath) -> ast::PatternKind {
+fn parse_struct_pattern(parser: &mut parser_base.Parser, path: ast.TypePath) -> ast.PatternKind {
     parser.advance(); // consume '{'
-    let mut fields: Vec<ast::StructPatternField> = Vec::new();
+    let mut fields: Vec<ast.StructPatternField> = Vec.new();
     let mut has_rest = false;
 
-    while !parser.check(token::TokenKind::RBrace) && !parser.is_at_end() {
-        if parser.check(token::TokenKind::DotDot) {
+    while !parser.check(token.TokenKind.RBrace) && !parser.is_at_end() {
+        if parser.check(token.TokenKind.DotDot) {
             parser.advance();
             has_rest = true;
             break;
         }
 
         // Check for ref/mut modifiers before field name
-        let by_ref = parser.try_consume(token::TokenKind::Ref);
-        let is_field_mut = if !by_ref { parser.try_consume(token::TokenKind::Mut) } else { parser.try_consume(token::TokenKind::Mut) };
+        let by_ref = parser.try_consume(token.TokenKind.Ref);
+        let is_field_mut = if !by_ref { parser.try_consume(token.TokenKind.Mut) } else { parser.try_consume(token.TokenKind.Mut) };
 
         let field_start = parser.current.span;
         let field_name = parser.parse_spanned_symbol();
 
-        let pattern = if parser.try_consume(token::TokenKind::Colon) {
-            Option::Some(parse_pattern(parser))
+        let pattern = if parser.try_consume(token.TokenKind.Colon) {
+            Option.Some(parse_pattern(parser))
         } else {
             // Shorthand: `field` or `ref field` or `mut field` or `ref mut field`
             // All create an ident binding pattern equivalent to `field: field`
-            let pat_kind = ast::PatternKind::Ident {
+            let pat_kind = ast.PatternKind.Ident {
                 by_ref: by_ref,
                 is_mut: is_field_mut,
                 name: field_name,
-                subpattern: Option::None,
+                subpattern: Option.None,
             };
-            Option::Some(ast::Pattern { kind: pat_kind, span: common::Span { start: field_start.start, end: parser.previous.span.end, line: field_start.line, column: field_start.column } })
+            Option.Some(ast.Pattern { kind: pat_kind, span: common.Span { start: field_start.start, end: parser.previous.span.end, line: field_start.line, column: field_start.column } })
         };
 
         let field_end = parser.previous.span;
-        let field = ast::StructPatternField {
+        let field = ast.StructPatternField {
             name: field_name,
             pattern: pattern,
-            span: common::Span { start: field_start.start, end: field_end.end, line: field_start.line, column: field_start.column },
+            span: common.Span { start: field_start.start, end: field_end.end, line: field_start.line, column: field_start.column },
         };
         fields.push(field);
 
-        if !parser.try_consume(token::TokenKind::Comma) {
+        if !parser.try_consume(token.TokenKind.Comma) {
             break;
         }
     }
 
-    parser.expect(token::TokenKind::RBrace);
+    parser.expect(token.TokenKind.RBrace);
 
-    ast::PatternKind::Struct {
+    ast.PatternKind.Struct {
         path: path,
         fields: fields,
         has_rest: has_rest,
     }
 }
 
-fn parse_tuple_struct_pattern(parser: &mut parser_base::Parser, path: ast::TypePath) -> ast::PatternKind {
+fn parse_tuple_struct_pattern(parser: &mut parser_base.Parser, path: ast.TypePath) -> ast.PatternKind {
     parser.advance(); // consume '('
-    let mut fields: Vec<ast::Pattern> = Vec::new();
-    let mut rest_pos: Option<usize> = Option::None;
+    let mut fields: Vec<ast.Pattern> = Vec.new();
+    let mut rest_pos: Option<usize> = Option.None;
     let mut idx: usize = 0;
 
-    while !parser.check(token::TokenKind::RParen) && !parser.is_at_end() {
-        if parser.check(token::TokenKind::DotDot) {
+    while !parser.check(token.TokenKind.RParen) && !parser.is_at_end() {
+        if parser.check(token.TokenKind.DotDot) {
             parser.advance();
-            rest_pos = Option::Some(idx);
+            rest_pos = Option.Some(idx);
         } else {
             let pat = parse_pattern(parser);
             fields.push(pat);
             idx += 1;
         }
 
-        if !parser.try_consume(token::TokenKind::Comma) {
+        if !parser.try_consume(token.TokenKind.Comma) {
             break;
         }
     }
 
-    parser.expect(token::TokenKind::RParen);
+    parser.expect(token.TokenKind.RParen);
 
-    ast::PatternKind::TupleStruct {
+    ast.PatternKind.TupleStruct {
         path: path,
         fields: fields,
         rest_pos: rest_pos,
@@ -545,33 +565,33 @@ fn parse_tuple_struct_pattern(parser: &mut parser_base::Parser, path: ast::TypeP
 
 /// Check if the current token is `..` or `..=` and if so, parse a range pattern.
 /// Otherwise return the given pattern kind as-is.
-fn maybe_range_pattern(parser: &mut parser_base::Parser, start_kind: ast::PatternKind, start_span: common::Span) -> ast::PatternKind {
-    if parser.check(token::TokenKind::DotDot) {
+fn maybe_range_pattern(parser: &mut parser_base.Parser, start_kind: ast.PatternKind, start_span: common.Span) -> ast.PatternKind {
+    if parser.check(token.TokenKind.DotDot) {
         parser.advance();
         let end_pat = parse_pattern_kind(parser);
         let end_span = parser.previous.span;
-        return ast::PatternKind::Range {
-            start: Option::Some(Box::new(ast::Pattern {
+        return ast.PatternKind.Range {
+            start: Option.Some(Box.new(ast.Pattern {
                 kind: start_kind,
                 span: start_span,
             })),
-            end_val: Option::Some(Box::new(ast::Pattern {
+            end_val: Option.Some(Box.new(ast.Pattern {
                 kind: end_pat,
                 span: end_span,
             })),
             inclusive: false,
         };
     }
-    if parser.check(token::TokenKind::DotDotEq) {
+    if parser.check(token.TokenKind.DotDotEq) {
         parser.advance();
         let end_pat = parse_pattern_kind(parser);
         let end_span = parser.previous.span;
-        return ast::PatternKind::Range {
-            start: Option::Some(Box::new(ast::Pattern {
+        return ast.PatternKind.Range {
+            start: Option.Some(Box.new(ast.Pattern {
                 kind: start_kind,
                 span: start_span,
             })),
-            end_val: Option::Some(Box::new(ast::Pattern {
+            end_val: Option.Some(Box.new(ast.Pattern {
                 kind: end_pat,
                 span: end_span,
             })),
