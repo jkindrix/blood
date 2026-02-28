@@ -20,6 +20,7 @@
 - Added raw identifier syntax (`r#keyword`)
 - Added `@` prefix design rule documentation
 - Added path disambiguation rule (Appendix B.2), replacing turbofish section
+- Added `ContainmentExpr` (`x in lo..hi`) for range checks, at comparison precedence level
 - Added comparison chaining design note
 
 **Revision 0.3.0 Changes**:
@@ -597,6 +598,7 @@ ExprWithoutBlock ::= Literal
                    | UnaryExpr
                    | BinaryExpr
                    | CastExpr
+                   | ContainmentExpr
                    | TryExpr
                    | AssignExpr
                    | AllocExpr
@@ -757,6 +759,8 @@ BinaryExpr ::= Expr BinaryOp Expr
 
 CastExpr ::= Expr 'as' Type
 
+ContainmentExpr ::= Expr 'in' Expr
+
 TryExpr ::= Expr '?'
 
 AssignExpr ::= Expr '=' Expr
@@ -768,6 +772,18 @@ MacroCallExpr ::= Ident '!' '(' Args? ')'
                 | Ident '!' '[' Args? ']'
                 | Ident '!' '{' Args? '}'
 ```
+
+**`in` (containment test):** Tests whether a value is contained in a range. Returns `bool`. The right-hand operand is typically a range expression (`..` or `..=`):
+
+```blood
+if x in 0..len { ... }          // half-open: 0 <= x < len
+if ch in 'a'..='z' { ... }      // inclusive: 'a' <= ch <= 'z'
+if i in 1..=100 {               // readable range check
+    println("in bounds");
+}
+```
+
+This is the idiomatic way to express range checks in Blood. It avoids the pitfalls of comparison chaining (hidden temporaries, linear type conflicts, effect ordering ambiguity) while being more readable than `x >= lo && x < hi`. The value (`x`) is evaluated once; the range bounds are evaluated once each.
 
 **`?` (try operator):** Propagates errors from `Result` types. `expr?` evaluates `expr`; if it is `Err(e)`, the enclosing function returns `Err(e)`. Use `?` for Result-based error propagation (especially FFI interop). Use algebraic effects for structured error handling with resumption.
 
@@ -891,7 +907,7 @@ From highest to lowest precedence:
 | 9 | Bitwise AND | `&` | Left |
 | 8 | Bitwise XOR | `^` | Left |
 | 7 | Bitwise OR | `\|` | Left |
-| 6 | Comparison | `==` `!=` `<` `>` `<=` `>=` | Non-assoc |
+| 6 | Comparison | `==` `!=` `<` `>` `<=` `>=` `in` | Non-assoc |
 | 5 | Logical AND | `&&` | Left |
 | 4 | Logical OR | `\|\|` | Left |
 | 3 | Range | `..` `..=` | Non-assoc |
@@ -902,7 +918,7 @@ From highest to lowest precedence:
 **Design notes:**
 
 - **Pipe binds tighter than assignment** so `x = data |> transform |> collect` parses as `x = (data |> transform |> collect)`.
-- **Comparison operators are non-associative.** `a < b < c` is a parse error. Comparison chaining is **not planned** — hidden temporaries conflict with linear types, and short-circuit evaluation creates ambiguous effect ordering. Range containment (`x in lo..hi`) is the recommended alternative for the dominant use case. See `docs/design/COMPARISON_CHAINING.md` for the full evaluation.
+- **Comparison operators are non-associative.** `a < b < c` is a parse error. Comparison chaining is **not planned** — hidden temporaries conflict with linear types, and short-circuit evaluation creates ambiguous effect ordering. Use the `in` operator for range checks: `x in lo..hi` (see §5.6 ContainmentExpr). See `docs/design/COMPARISON_CHAINING.md` for the full evaluation.
 - **Postfix `?`** is the try operator for error propagation (see §5.6).
 - **Path (`.`)** is handled during postfix parsing, not as a binary operator in the precedence table.
 
