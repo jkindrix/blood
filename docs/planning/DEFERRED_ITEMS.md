@@ -20,30 +20,6 @@ Items are removed only when fully resolved, with a completion date and commit ha
 
 ## Active Deferrals
 
-### DEF-001: Expression paths — `lowercase.lowercase` patterns remain `::` only
-
-| Field | Value |
-|-------|-------|
-| **Delta** | D1 (partial — 93% resolved) |
-| **Deferred from** | A.2.1 |
-| **Partially resolved** | 2026-02-28 |
-| **Severity** | Medium — covers 93% of patterns, remaining 7% can keep `::` |
-
-**What**: Expression paths now accept `.` via a case-based heuristic in `parse_expr_path`:
-- **After TypeIdent**: `.` always accepted (TypeIdent is always a type, never a variable)
-- **After lowercase ident**: `.` accepted only when followed by TypeIdent
-
-This covers 93% of expression-path `::` occurrences:
-- `lowercase.TypeIdent` (11,734): `ast.Attribute`, `common.Span` — WORKS
-- `TypeIdent.TypeIdent` (9,546): `Option.Some`, `TokenKind.Hash` — WORKS
-- `TypeIdent.lowercase` (3,284): `Vec.new()`, `Point.origin()` — WORKS
-
-**Remaining gap**: `lowercase.lowercase` (1,971 occurrences, 7%) — patterns like `parser_base.parse_string_from_span()`. These are ambiguous with `value.field` and are NOT consumed by the heuristic. They must continue using `::`.
-
-**What unblocks the remaining 7%**: Name resolution fallback — when `infer_path` fails on a multi-segment path, try treating the first segment as a local variable and remaining segments as field access. Or accept the 7% gap and leave `lowercase.lowercase` qualified calls using `::`.
-
----
-
 ### DEF-002: `UncheckedBlock` expression
 
 | Field | Value |
@@ -188,23 +164,37 @@ This covers 93% of expression-path `::` occurrences:
 
 ## Resolved Deferrals
 
-*None yet.*
+### DEF-001: Expression paths — `lowercase.lowercase` dot syntax ✓
+
+| Field | Value |
+|-------|-------|
+| **Delta** | D1 |
+| **Deferred from** | A.2.1 |
+| **Resolved** | 2026-02-28 |
+| **Commits** | `0f60269` (selfhost), `ff5ac38` + `4bc7ca1` (bootstrap), `f6fbc79` (migration) |
+
+**Resolution**: Both compilers now resolve `module.function(args)` as qualified calls via name resolution fallback (DEF-001 fix). The approach: `try_extract_module_chain` extracts path segments from nested Field/Path AST expressions, guards against local variables, then `resolve_qualified_path` (selfhost) or `try_resolve_qualified_chain` (bootstrap) walks the module hierarchy. Return types are properly extracted from function signatures and unified with arguments.
+
+**Result**: ~1,960 `lowercase::lowercase` expression paths converted to dot syntax across 47 selfhost files. 8 three-segment type paths remain using `::` for the first separator (`token::common.Span` × 6, `codegen::codegen_ctx.CodegenError` × 2) — these require the type-path parser to support 3+ dot-separated segments, a separate issue.
+
+**Verification**: 339/339 ground-truth, second_gen/third_gen byte-identical (13,079,128 bytes), 1269/1269 bootstrap lib tests.
 
 ---
 
 ## Summary
 
-| ID | Delta | Severity | Target Phase | Blocks |
+| ID | Delta | Severity | Target Phase | Status |
 |----|-------|----------|-------------|--------|
-| DEF-001 | Expression path `.` (7% gap) | Medium | Partial — 93% resolved | `lowercase.lowercase` calls |
-| DEF-002 | UncheckedBlock | Medium | Phase C | Granular safety |
-| DEF-003 | #[unchecked(...)] | Medium | Phase C | Per-fn safety |
-| DEF-004 | @heap/@stack | Medium | Phase C/E | Allocation placement |
-| DEF-005 | dyn Trait | Medium | Phase C | Dynamic dispatch |
-| DEF-006 | `in` containment | Low | Phase C | Boolean containment |
-| DEF-007 | Async → Fiber | High | Sub-phase | Concurrency naming |
-| DEF-008 | Continuation tokens | Low | Phase C | Spec strictness |
+| ~~DEF-001~~ | ~~Expression path `.`~~ | ~~Medium~~ | ~~Phase A~~ | **RESOLVED** (2026-02-28) |
+| DEF-002 | UncheckedBlock | Medium | Phase C | Active |
+| DEF-003 | #[unchecked(...)] | Medium | Phase C | Active |
+| DEF-004 | @heap/@stack | Medium | Phase C/E | Active |
+| DEF-005 | dyn Trait | Medium | Phase C | Active |
+| DEF-006 | `in` containment | Low | Phase C | Active |
+| DEF-007 | Async → Fiber | High | Sub-phase | Active |
+| DEF-008 | Continuation tokens | Low | Phase C | Active |
 
-**High severity (2)**: DEF-001, DEF-007 — these create visible spec/compiler mismatches.
+**Active: 7 items.** Resolved: 1 (DEF-001).
+**High severity (1)**: DEF-007 — visible spec/compiler naming mismatch.
 **Medium severity (4)**: DEF-002 through DEF-005 — new features, no existing code affected.
 **Low severity (2)**: DEF-006, DEF-008 — nice-to-have, non-blocking.

@@ -341,46 +341,32 @@ The bootstrap compiler defines language semantics. It must accept the spec synta
 
 **This is a Bootstrap Gate prerequisite** — nothing else moves until this is done.
 
-**Status (2026-02-28):**
+**Status (2026-02-28): COMPLETE**
 - [x] A.2.1: Import paths and type paths accept both `::` and `.`
 - [x] A.2.2: `FinallyClause` parsed in handler bodies (`finally_clause: Option<Block>` on `HandlerDecl`)
 - [x] A.2.3: `finally` reclassified as contextual keyword
 - [x] A.2.4: Release build passes, 1269 lib tests pass
+- [x] DEF-001: Expression paths resolved via name-resolution fallback (`try_extract_module_chain` + `try_resolve_qualified_chain`). Commits: `ff5ac38`, `4bc7ca1`
 
-**Known deferral**: Expression paths (`parse_expr_path`) remain `::` only. See [DEFERRED_ITEMS.md](DEFERRED_ITEMS.md) DEF-001. The parser architecture conflict (postfix `.` for field access consumes the token before path parsing) requires name resolution changes, not just parser changes.
+**Residual**: 8 three-segment type paths (`token::common.Span` × 6, `codegen::codegen_ctx.CodegenError` × 2) still use `::` for the first separator. Requires type-path parser to support 3+ dot-separated segments — a minor parser enhancement, not a blocking issue.
 
-### A.3 — CCV Migration of Self-Hosted Compiler
+### A.3 — CCV Migration of Self-Hosted Compiler — **COMPLETE** (2026-02-28)
 
-Update all `.blood` files in `src/selfhost/` following CCV:
+All 47 `.blood` files in `src/selfhost/` migrated. Key steps:
+1. Import paths (grouped, glob) converted to `.` syntax — canary tests in `tests/fixtures/modules/`
+2. DEF-001 resolved in selfhost (`0f60269`): `try_extract_module_chain` + `resolve_qualified_path` fallback
+3. Batch conversion of ~1,960 `lowercase::lowercase` expression paths (`f6fbc79`)
+4. `FinallyClause` parsing added to selfhost parser (`4797be9`)
 
-| Cluster | Files | Subsystem |
-|---------|-------|-----------|
-| A | `common`, `interner`, `source`, `error`, `reporter` | Utilities |
-| B | `lexer`, `token`, `parser_*`, `macro_expand` | Frontend |
-| C | `ast`, `hir`, `hir_expr`, `hir_item`, `hir_ty`, `hir_def` | AST/HIR Definitions |
-| D | `hir_lower`, `hir_lower_*`, `resolve` | HIR Lowering |
-| E | `typeck`, `typeck_*`, `unify`, `type_intern` | Type Checking |
-| F | `mir_*`, `validate_mir` | MIR |
-| G | `codegen`, `codegen_*` | Code Generation |
-| H | `driver`, `main`, `project`, `package`, `build_cache` | Driver + Project |
-| I | `stdlib/*.blood` | Standard Library |
+**Verification**: 339/339 ground-truth, second_gen/third_gen byte-identical (13,079,128 bytes).
 
-After **each** cluster:
-```bash
-cd src/selfhost
-./build_selfhost.sh timings        # Build first_gen
-./build_selfhost.sh ground-truth   # All 337 must pass
-./build_selfhost.sh rebuild        # second_gen/third_gen byte-identical
-cd ../.. && ./tools/parse-parity.sh --quiet  # No new drift
-git commit                          # Clean rollback point
-```
+**Residual `::` (8 occurrences)**: Three-segment type paths — `token::common.Span` (lexer.blood × 6), `codegen::codegen_ctx.CodegenError` (driver.blood × 2). Not convertible until type-path parser supports 3+ dot-separated segments.
 
-### A.4 — Update Tests and Examples
+### A.4 — Update Tests and Examples — **COMPLETE** (2026-02-28)
 
-- Update `tests/ground-truth/*.blood` to spec syntax
-- Update `stdlib/*.blood` to spec syntax
-- Update any example files
-- Verify all tests still pass
+- [x] `tests/ground-truth/*.blood` — all expression-path `::` converted to `.` (`c8bc323`, `788df5a`)
+- [x] `stdlib/*.blood` — converted in earlier commit (`3ea4e4f`)
+- [x] All 339/339 tests pass
 
 ---
 
