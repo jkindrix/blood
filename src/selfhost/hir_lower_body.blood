@@ -80,10 +80,10 @@ pub fn lower_fn_body(
 
     // Lower the body expression
     let mut body_lowered = match body_expr {
-        &Some(ref e) => hir_lower_expr::lower_expr(ctx, e),
+        &Some(ref e) => hir_lower_expr.lower_expr(ctx, e),
         &None => {
             match body_block {
-                &Some(ref block) => hir_lower_expr::lower_block_to_expr(ctx, block),
+                &Some(ref block) => hir_lower_expr.lower_block_to_expr(ctx, block),
                 &None => {
                     // No body - create unit expression
                     hir_expr.Expr.new(
@@ -157,7 +157,7 @@ fn generate_param_destructures(
             let param_local_id = hir_def.LocalId.new(i as u32);
 
             // Lower the pattern
-            let pattern_hir = hir_lower_expr::lower_pattern(ctx, &ast_param.pattern);
+            let pattern_hir = hir_lower_expr.lower_pattern(ctx, &ast_param.pattern);
 
             // Collect local IDs from the pattern and add them to locals
             collect_pattern_locals(&pattern_hir, locals);
@@ -265,7 +265,7 @@ fn wrap_with_destructures(body: hir_expr.Expr, stmts: Vec<hir_expr.Stmt>) -> hir
     let block = hir_expr.Block.new(stmts, Some(Box.new(body)), span);
     hir_expr.Expr.new(
         hir_expr.ExprKind.Block(block),
-        type_intern::type_interner().mk_infer(hir_def.TyVarId.new(0)),  // Type will be inferred
+        type_intern.type_interner().mk_infer(hir_def.TyVarId.new(0)),  // Type will be inferred
         span,
     )
 }

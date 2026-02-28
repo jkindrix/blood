@@ -62,7 +62,7 @@ pub fn lower_body(
     coercion_entries: &Vec<common.CoercionEntry>,
 ) -> MirLowerResult {
     // Resolve the return type through the substitution table (TyId-native)
-    let resolved_return_id = unify::apply_substs_id(subst_table, return_ty);
+    let resolved_return_id = unify.apply_substs_id(subst_table, return_ty);
 
     // Borrow the substitution table by address (read-only during MIR lowering)
     let subst_table_addr = subst_table as u64;
@@ -83,7 +83,7 @@ pub fn lower_body(
     lower_params_from_body(&mut ctx, body, span);
 
     // Lower body expression, storing result in return place
-    mir_lower_expr::lower_expr_to_return(&mut ctx, &body.expr);
+    mir_lower_expr.lower_expr_to_return(&mut ctx, &body.expr);
 
     // Terminate with return if not already terminated
     if !ctx.is_terminated() {
@@ -135,7 +135,7 @@ pub fn lower_body_with_const_info(
     const_generic_param_counts: Vec<u32>,
     next_mono_def_id: u32,
 ) -> MirLowerResult {
-    let resolved_return_id = unify::apply_substs_id(subst_table, return_ty);
+    let resolved_return_id = unify.apply_substs_id(subst_table, return_ty);
     let subst_table_addr = subst_table as u64;
     let cloned_resolutions = clone_method_resolutions(method_resolutions);
     let cloned_field_res = clone_field_resolutions(field_resolutions);
@@ -151,7 +151,7 @@ pub fn lower_body_with_const_info(
     ctx.next_mono_def_id = next_mono_def_id;
 
     lower_params_from_body(&mut ctx, body, span);
-    mir_lower_expr::lower_expr_to_return(&mut ctx, &body.expr);
+    mir_lower_expr.lower_expr_to_return(&mut ctx, &body.expr);
 
     if !ctx.is_terminated() {
         ctx.terminate_return(span);
@@ -214,7 +214,7 @@ pub fn lower_closure(
     subst_table: &unify.SubstTable,
 ) -> mir_body.MirBody {
     // Resolve return type (TyId-native) and create lowering context
-    let resolved_return_id = unify::apply_substs_id(subst_table, return_ty);
+    let resolved_return_id = unify.apply_substs_id(subst_table, return_ty);
     let subst_table_addr = subst_table as u64;
     let mut ctx = mir_lower_ctx.MirLowerCtx.new(def_id, resolved_return_id, span, subst_table_addr, Vec.new(), Vec.new(), Vec.new());
 
@@ -222,7 +222,7 @@ pub fn lower_closure(
     lower_closure_params(&mut ctx, params, span);
 
     // Lower body expression
-    mir_lower_expr::lower_expr_to_return(&mut ctx, body_expr);
+    mir_lower_expr.lower_expr_to_return(&mut ctx, body_expr);
 
     // Terminate with return if not already terminated
     if !ctx.is_terminated() {
@@ -249,7 +249,7 @@ fn lower_closure_params(
         );
         // Pattern binding for closure params
         let source = mir_types.Place.local(mir_local);
-        mir_lower_pattern::lower_irrefutable_pattern(ctx, &param.pattern, source, span);
+        mir_lower_pattern.lower_irrefutable_pattern(ctx, &param.pattern, source, span);
     }
 }
 
@@ -266,12 +266,12 @@ pub fn lower_static(
     subst_table: &unify.SubstTable,
 ) -> mir_body.MirBody {
     // Resolve type (TyId-native) and create context
-    let resolved_id = unify::apply_substs_id(subst_table, ty);
+    let resolved_id = unify.apply_substs_id(subst_table, ty);
     let subst_table_addr = subst_table as u64;
     let mut ctx = mir_lower_ctx.MirLowerCtx.new(def_id, resolved_id, span, subst_table_addr, Vec.new(), Vec.new(), Vec.new());
 
     // Lower initializer expression
-    mir_lower_expr::lower_expr_to_return(&mut ctx, init);
+    mir_lower_expr.lower_expr_to_return(&mut ctx, init);
 
     // Terminate with return
     if !ctx.is_terminated() {
@@ -376,7 +376,7 @@ pub fn local_count(body: &mir_body.MirBody) -> usize {
 /// The return type is stored in the first local (_0).
 pub fn get_return_type(body: &mir_body.MirBody) -> hir_ty.Type {
     if body.locals.len() > 0 {
-        type_intern::ty_id_to_type(body.locals[0].ty)
+        type_intern.ty_id_to_type(body.locals[0].ty)
     } else {
         hir_ty.Type.unit()
     }

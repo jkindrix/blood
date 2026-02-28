@@ -164,7 +164,7 @@ pub fn generate_module_with_items(
     for i in 0usize..functions.len() {
         let (ref name, ref body) = functions[i];
         // Check if this function name has already been generated (O(1) hash lookup)
-        let name_hash = hashmap::hash_str(name.as_str());
+        let name_hash = hashmap.hash_str(name.as_str());
         let already_generated = match generated_set.get(name_hash) {
             Option.Some(_) => true,
             Option.None => false,
@@ -187,7 +187,7 @@ pub fn generate_module_with_items(
     // Debug: emit total skip count as comment
     if skip_count > 0 {
         output.push_str("; TOTAL DUPLICATES SKIPPED: ");
-        let skip_str = codegen_types::format_u64(skip_count as u64);
+        let skip_str = codegen_types.format_u64(skip_count as u64);
         output.push_str(skip_str.as_str());
         output.push_str("\n");
     }
@@ -241,7 +241,7 @@ pub fn generate_function_with_ctx(
     // Reset per-function state but keep global state (def_names, adt_registry, string_table)
     ctx.clear_locals();
     ctx.output = String.new();
-    ctx.begin_function(common::make_string(fn_name));
+    ctx.begin_function(common.make_string(fn_name));
 
     // Build parameter list (skip first local which is return place)
     // For handler op bodies with multiple state fields, skip the state field
@@ -260,12 +260,12 @@ pub fn generate_function_with_ctx(
         }
         // Handler op state local: arg type is ptr (state pointer from wrapper)
         let ty = if ctx.is_handler_state_ptr(local_id) {
-            common::make_string("ptr")
+            common.make_string("ptr")
         } else {
-            codegen_size::type_to_llvm_with_ctx_id(ctx, local.ty)
+            codegen_size.type_to_llvm_with_ctx_id(ctx, local.ty)
         };
-        let mut arg_name = common::make_string("%arg");
-        let idx_str = codegen_types::format_u64(arg_idx as u64);
+        let mut arg_name = common.make_string("%arg");
+        let idx_str = codegen_types.format_u64(arg_idx as u64);
         arg_name.push_str(idx_str.as_str());
         params.push((ty, arg_name));
         arg_idx += 1;
@@ -275,12 +275,12 @@ pub fn generate_function_with_ctx(
     // Get return type (local _0)
     // Normalize {} (empty struct / unit) to void for LLVM function signatures
     let ret_ty_raw = if body.locals.len() > 0 {
-        codegen_size::type_to_llvm_with_ctx_id(ctx, body.locals[0].ty)
+        codegen_size.type_to_llvm_with_ctx_id(ctx, body.locals[0].ty)
     } else {
-        common::make_string("void")
+        common.make_string("void")
     };
     let ret_ty = if is_empty_struct_type(ret_ty_raw.as_str()) {
-        common::make_string("void")
+        common.make_string("void")
     } else {
         ret_ty_raw
     };
@@ -299,13 +299,13 @@ pub fn generate_function_with_ctx(
     ctx.write("entry:\n");
 
     // Run escape analysis to determine allocation tiers
-    let escape_result = mir_escape::analyze_escapes(body);
+    let escape_result = mir_escape.analyze_escapes(body);
 
     // Emit allocas with escape-aware allocation decisions
-    codegen_stmt::emit_allocas_with_escapes(ctx, body, &escape_result);
+    codegen_stmt.emit_allocas_with_escapes(ctx, body, &escape_result);
 
     // Store arguments into allocas
-    codegen_stmt::emit_arg_stores(ctx, body);
+    codegen_stmt.emit_arg_stores(ctx, body);
 
     // For closure bodies with captures, load captured values from env struct
     if body.capture_locals.len() > 0 {
@@ -327,7 +327,7 @@ pub fn generate_function_with_ctx(
     // Emit all basic blocks
     for block_idx in 0usize..body.basic_blocks.len() {
         let block_id = mir_def.BasicBlockId.new(block_idx as u32);
-        codegen_term::emit_basic_block(ctx, block_id, &body.basic_blocks[block_idx]);
+        codegen_term.emit_basic_block(ctx, block_id, &body.basic_blocks[block_idx]);
     }
 
     ctx.emit_fn_footer();
@@ -354,12 +354,12 @@ fn emit_capture_loads(
     body: &mir_body.MirBody,
 ) {
     // Build env struct LLVM type from capture types
-    let mut env_llvm = common::make_string("{ ");
+    let mut env_llvm = common.make_string("{ ");
     for ti in 0usize..body.capture_tys.len() {
         if ti > 0 {
             env_llvm.push_str(", ");
         }
-        let cap_ty_llvm = codegen_size::type_to_llvm_with_ctx_id(ctx, body.capture_tys[ti]);
+        let cap_ty_llvm = codegen_size.type_to_llvm_with_ctx_id(ctx, body.capture_tys[ti]);
         env_llvm.push_str(cap_ty_llvm.as_str());
     }
     env_llvm.push_str(" }");
@@ -376,7 +376,7 @@ fn emit_capture_loads(
     // For each capture, GEP into env struct and load value into the capture local's alloca
     let mut ci: usize = 0;
     while ci < body.capture_locals.len() && ci < body.capture_tys.len() {
-        let cap_ty_llvm = codegen_size::type_to_llvm_with_ctx_id(ctx, body.capture_tys[ci]);
+        let cap_ty_llvm = codegen_size.type_to_llvm_with_ctx_id(ctx, body.capture_tys[ci]);
         let local_idx = body.capture_locals[ci];
 
         // GEP to get pointer to this capture in the env struct
@@ -388,7 +388,7 @@ fn emit_capture_loads(
         ctx.write(", ptr ");
         ctx.write_cgname(&env_load);
         ctx.write(", i32 0, i32 ");
-        ctx.write(codegen_types::format_u64(ci as u64).as_str());
+        ctx.write(codegen_types.format_u64(ci as u64).as_str());
         ctx.write("\n");
 
         // Load the captured value
@@ -573,7 +573,7 @@ fn make_builtin_struct_layout(def_id: u32, llvm_type_str: &str) -> codegen_ctx.S
     codegen_ctx.StructLayout {
         def_id: def_id,
         fields: Vec.new(),
-        llvm_type: common::make_string(llvm_type_str),
+        llvm_type: common.make_string(llvm_type_str),
     }
 }
 
@@ -586,9 +586,9 @@ fn make_builtin_enum_layout(def_id: u32, num_variants: u32, first_is_unit: bool)
     for vi in 0u32..num_variants {
         let fields: Vec<codegen_ctx.AdtFieldInfo> = Vec.new();
         let payload_ty = if first_is_unit && vi == 0 {
-            common::make_string("{}")
+            common.make_string("{}")
         } else {
-            common::make_string("{ i64 }")
+            common.make_string("{ i64 }")
         };
         variants.push(codegen_ctx.VariantLayout {
             variant_idx: vi,
@@ -598,9 +598,9 @@ fn make_builtin_enum_layout(def_id: u32, num_variants: u32, first_is_unit: bool)
     }
     codegen_ctx.EnumLayout {
         def_id: def_id,
-        discriminant_type: common::make_string("i32"),
+        discriminant_type: common.make_string("i32"),
         variants: variants,
-        llvm_type: common::make_string("{ i32, [1 x i64] }"),
+        llvm_type: common.make_string("{ i32, [1 x i64] }"),
         max_payload_size: 8,
     }
 }
@@ -634,7 +634,7 @@ pub fn rebuild_adt_layouts(
 /// Used in pass 1 to get all ADTs registered before resolving nested types.
 fn build_struct_layout_basic(def_id: u32, struct_def: &hir_item.StructDef) -> codegen_ctx.StructLayout {
     let mut fields: Vec<codegen_ctx.AdtFieldInfo> = Vec.new();
-    let mut llvm_type = common::make_string("{ ");
+    let mut llvm_type = common.make_string("{ ");
 
     match &struct_def.body {
         &hir_item.StructBody.Record(ref struct_fields) => {
@@ -642,8 +642,8 @@ fn build_struct_layout_basic(def_id: u32, struct_def: &hir_item.StructDef) -> co
                 if fi > 0 {
                     llvm_type.push_str(", ");
                 }
-                let field_ty_hir = type_intern::ty_id_to_type(struct_fields[fi].ty);
-                let field_ty = codegen_types::type_to_llvm(&field_ty_hir);
+                let field_ty_hir = type_intern.ty_id_to_type(struct_fields[fi].ty);
+                let field_ty = codegen_types.type_to_llvm(&field_ty_hir);
                 llvm_type.push_str(field_ty.as_str());
                 // Store HIR type for indexing element size calculation
                 fields.push(codegen_ctx.AdtFieldInfo {
@@ -657,8 +657,8 @@ fn build_struct_layout_basic(def_id: u32, struct_def: &hir_item.StructDef) -> co
                 if fi > 0 {
                     llvm_type.push_str(", ");
                 }
-                let tuple_field_hir = type_intern::ty_id_to_type(type_intern.TyId.new(tuple_fields[fi].index));
-                let field_ty = codegen_types::type_to_llvm(&tuple_field_hir);
+                let tuple_field_hir = type_intern.ty_id_to_type(type_intern.TyId.new(tuple_fields[fi].index));
+                let field_ty = codegen_types.type_to_llvm(&tuple_field_hir);
                 llvm_type.push_str(field_ty.as_str());
                 // Store HIR type for indexing element size calculation
                 fields.push(codegen_ctx.AdtFieldInfo {
@@ -676,7 +676,7 @@ fn build_struct_layout_basic(def_id: u32, struct_def: &hir_item.StructDef) -> co
 
     // Handle edge case: empty struct
     if fields.len() == 0 {
-        llvm_type = common::make_string("{}");
+        llvm_type = common.make_string("{}");
     }
 
     codegen_ctx.StructLayout {
@@ -696,12 +696,12 @@ fn build_handler_enum_layout(ctx: &mut codegen_ctx.CodegenCtx, def_id: u32, hand
 
     // Build variant payload fields using actual LLVM types
     let mut fields: Vec<codegen_ctx.AdtFieldInfo> = Vec.new();
-    let mut payload_type = common::make_string("{ ");
+    let mut payload_type = common.make_string("{ ");
     let mut total_state_bytes: u64 = 0;
     for si in 0usize..state_count {
         let field_ty_id = handler_def.state[si].ty;
-        let field_llvm_ty = codegen_size::type_to_llvm_with_ctx_id(ctx, field_ty_id);
-        let field_size = codegen_size::llvm_type_size(field_llvm_ty.as_str());
+        let field_llvm_ty = codegen_size.type_to_llvm_with_ctx_id(ctx, field_ty_id);
+        let field_size = codegen_size.llvm_type_size(field_llvm_ty.as_str());
         total_state_bytes += field_size;
         if si > 0 {
             payload_type.push_str(", ");
@@ -719,16 +719,16 @@ fn build_handler_enum_layout(ctx: &mut codegen_ctx.CodegenCtx, def_id: u32, hand
     variants.push(codegen_ctx.VariantLayout {
         variant_idx: 0,
         fields: fields,
-        payload_llvm_type: if state_count > 0 { payload_type } else { common::make_string("{}") },
+        payload_llvm_type: if state_count > 0 { payload_type } else { common.make_string("{}") },
     });
 
     // Build LLVM type: { i32, [N x i64] } for stateful, { i32 } for stateless
     // N = ceil(total_state_bytes / 8) so aggregate types get enough slots
-    let mut llvm_type = common::make_string("{ i32");
+    let mut llvm_type = common.make_string("{ i32");
     let max_payload_size: u64 = if state_count > 0 {
         let num_i64_slots = (total_state_bytes + 7) / 8;
         llvm_type.push_str(", [");
-        llvm_type.push_str(codegen_types::format_u64(num_i64_slots).as_str());
+        llvm_type.push_str(codegen_types.format_u64(num_i64_slots).as_str());
         llvm_type.push_str(" x i64]");
         num_i64_slots * 8
     } else {
@@ -741,7 +741,7 @@ fn build_handler_enum_layout(ctx: &mut codegen_ctx.CodegenCtx, def_id: u32, hand
 
     codegen_ctx.EnumLayout {
         def_id: def_id,
-        discriminant_type: common::make_string("i32"),
+        discriminant_type: common.make_string("i32"),
         variants: variants,
         llvm_type: llvm_type,
         max_payload_size: max_payload_size,
@@ -756,7 +756,7 @@ fn build_struct_layout_with_ctx(
     struct_def: &hir_item.StructDef,
 ) -> codegen_ctx.StructLayout {
     let mut fields: Vec<codegen_ctx.AdtFieldInfo> = Vec.new();
-    let mut llvm_type = common::make_string("{ ");
+    let mut llvm_type = common.make_string("{ ");
 
     match &struct_def.body {
         &hir_item.StructBody.Record(ref struct_fields) => {
@@ -764,7 +764,7 @@ fn build_struct_layout_with_ctx(
                 if fi > 0 {
                     llvm_type.push_str(", ");
                 }
-                let field_ty = codegen_size::type_to_llvm_with_ctx_id(ctx, struct_fields[fi].ty);
+                let field_ty = codegen_size.type_to_llvm_with_ctx_id(ctx, struct_fields[fi].ty);
                 llvm_type.push_str(field_ty.as_str());
                 // Store HIR type for indexing element size calculation
                 fields.push(codegen_ctx.AdtFieldInfo {
@@ -778,7 +778,7 @@ fn build_struct_layout_with_ctx(
                 if fi > 0 {
                     llvm_type.push_str(", ");
                 }
-                let field_ty = codegen_size::type_to_llvm_with_ctx_id(ctx, type_intern.TyId.new(tuple_fields[fi].index));
+                let field_ty = codegen_size.type_to_llvm_with_ctx_id(ctx, type_intern.TyId.new(tuple_fields[fi].index));
                 llvm_type.push_str(field_ty.as_str());
                 // Store HIR type for indexing element size calculation
                 fields.push(codegen_ctx.AdtFieldInfo {
@@ -795,7 +795,7 @@ fn build_struct_layout_with_ctx(
     llvm_type.push_str(" }");
 
     if fields.len() == 0 {
-        llvm_type = common::make_string("{}");
+        llvm_type = common.make_string("{}");
     }
 
     codegen_ctx.StructLayout {
@@ -820,20 +820,20 @@ fn build_enum_layout_with_ctx(
     for vi in 0usize..enum_def.variants.len() {
         let variant = &enum_def.variants[vi];
         let mut fields: Vec<codegen_ctx.AdtFieldInfo> = Vec.new();
-        let mut payload_type = common::make_string("{}");
+        let mut payload_type = common.make_string("{}");
 
         match &variant.kind {
             &hir_item.VariantKind.Unit => {
                 // No payload
             }
             &hir_item.VariantKind.Tuple(ref tuple_fields) => {
-                let mut pt = common::make_string("{ ");
+                let mut pt = common.make_string("{ ");
                 for fi in 0usize..tuple_fields.len() {
                     if fi > 0 {
                         pt.push_str(", ");
                     }
                     let tuple_ty_id = type_intern.TyId.new(tuple_fields[fi].index);
-                    let field_ty = codegen_size::type_to_llvm_with_ctx_id(ctx, tuple_ty_id);
+                    let field_ty = codegen_size.type_to_llvm_with_ctx_id(ctx, tuple_ty_id);
                     pt.push_str(field_ty.as_str());
                     fields.push(codegen_ctx.AdtFieldInfo {
                         llvm_type: field_ty,
@@ -847,12 +847,12 @@ fn build_enum_layout_with_ctx(
                 }
             }
             &hir_item.VariantKind.Record(ref record_fields) => {
-                let mut pt = common::make_string("{ ");
+                let mut pt = common.make_string("{ ");
                 for fi in 0usize..record_fields.len() {
                     if fi > 0 {
                         pt.push_str(", ");
                     }
-                    let field_ty = codegen_size::type_to_llvm_with_ctx_id(ctx, record_fields[fi].ty);
+                    let field_ty = codegen_size.type_to_llvm_with_ctx_id(ctx, record_fields[fi].ty);
                     pt.push_str(field_ty.as_str());
                     fields.push(codegen_ctx.AdtFieldInfo {
                         llvm_type: field_ty,
@@ -868,8 +868,8 @@ fn build_enum_layout_with_ctx(
         }
 
         // Use proper struct size with padding (not naive sum of field sizes)
-        let variant_size = codegen_size::llvm_type_size(payload_type.as_str());
-        let variant_align = codegen_size::llvm_type_alignment(payload_type.as_str());
+        let variant_size = codegen_size.llvm_type_size(payload_type.as_str());
+        let variant_align = codegen_size.llvm_type_alignment(payload_type.as_str());
         if variant_size > max_payload_size {
             max_payload_size = variant_size;
         }
@@ -886,37 +886,37 @@ fn build_enum_layout_with_ctx(
     }
 
     // Always use i32 for discriminant (matching reference compiler)
-    let discriminant_type = common::make_string("i32");
+    let discriminant_type = common.make_string("i32");
 
     // Build enum LLVM type with alignment-aware payload array.
     // The payload array element type is chosen to satisfy the maximum alignment
     // requirement across all variant payloads (matching reference compiler behavior).
-    let mut llvm_type = common::make_string("{ i32");
+    let mut llvm_type = common.make_string("{ i32");
     if has_payload && max_payload_size > 0 {
         if max_alignment >= 8 {
             let num_elements = (max_payload_size + 7) / 8;
             llvm_type.push_str(", [");
-            let count_str = codegen_types::format_u64(num_elements);
+            let count_str = codegen_types.format_u64(num_elements);
             llvm_type.push_str(count_str.as_str());
             llvm_type.push_str(" x i64]");
             max_payload_size = num_elements * 8;
         } else if max_alignment >= 4 {
             let num_elements = (max_payload_size + 3) / 4;
             llvm_type.push_str(", [");
-            let count_str = codegen_types::format_u64(num_elements);
+            let count_str = codegen_types.format_u64(num_elements);
             llvm_type.push_str(count_str.as_str());
             llvm_type.push_str(" x i32]");
             max_payload_size = num_elements * 4;
         } else if max_alignment >= 2 {
             let num_elements = (max_payload_size + 1) / 2;
             llvm_type.push_str(", [");
-            let count_str = codegen_types::format_u64(num_elements);
+            let count_str = codegen_types.format_u64(num_elements);
             llvm_type.push_str(count_str.as_str());
             llvm_type.push_str(" x i16]");
             max_payload_size = num_elements * 2;
         } else {
             llvm_type.push_str(", [");
-            let size_str = codegen_types::format_u64(max_payload_size);
+            let size_str = codegen_types.format_u64(max_payload_size);
             llvm_type.push_str(size_str.as_str());
             llvm_type.push_str(" x i8]");
         }
@@ -944,7 +944,7 @@ pub fn generate_constant_function(name: &str, value: i64) -> String {
     output.push_str("() {\n");
     output.push_str("entry:\n");
     output.push_str("    ret i64 ");
-    let val_str = codegen_types::format_i64(value);
+    let val_str = codegen_types.format_i64(value);
     output.push_str(val_str.as_str());
     output.push_str("\n}\n");
     output

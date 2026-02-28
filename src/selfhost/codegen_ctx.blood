@@ -672,7 +672,7 @@ impl CodegenCtx {
                 let pty = clone_string(&self.fn_signatures[sig_idx].param_types[pi]);
                 def.push_str(pty.as_str());
                 def.push_str(" %p");
-                def.push_str(codegen_types::format_u64(pi as u64).as_str());
+                def.push_str(codegen_types.format_u64(pi as u64).as_str());
             }
             def.push_str(") {\nentry:\n");
 
@@ -695,7 +695,7 @@ impl CodegenCtx {
                 let pty = clone_string(&self.fn_signatures[sig_idx].param_types[ai]);
                 def.push_str(pty.as_str());
                 def.push_str(" %p");
-                def.push_str(codegen_types::format_u64(ai as u64).as_str());
+                def.push_str(codegen_types.format_u64(ai as u64).as_str());
             }
             def.push_str(")\n");
 
@@ -955,26 +955,26 @@ impl CodegenCtx {
     pub fn cgname_to_string(name: &CgName) -> String {
         match name {
             &CgName.Temp(n) => {
-                let mut s = common::make_string("%tmp");
-                let ns = codegen_types::format_u64(n as u64);
+                let mut s = common.make_string("%tmp");
+                let ns = codegen_types.format_u64(n as u64);
                 s.push_str(ns.as_str());
                 s
             }
             &CgName.Local(n) => {
-                let mut s = common::make_string("%_");
-                let ns = codegen_types::format_u64(n as u64);
+                let mut s = common.make_string("%_");
+                let ns = codegen_types.format_u64(n as u64);
                 s.push_str(ns.as_str());
                 s
             }
             &CgName.Label(n) => {
-                let mut s = common::make_string("label");
-                let ns = codegen_types::format_u64(n as u64);
+                let mut s = common.make_string("label");
+                let ns = codegen_types.format_u64(n as u64);
                 s.push_str(ns.as_str());
                 s
             }
             &CgName.Block(n) => {
-                let mut s = common::make_string("bb");
-                let ns = codegen_types::format_u64(n as u64);
+                let mut s = common.make_string("bb");
+                let ns = codegen_types.format_u64(n as u64);
                 s.push_str(ns.as_str());
                 s
             }
@@ -1012,10 +1012,10 @@ impl CodegenCtx {
     /// Uses the fast path (no String allocation) for common types,
     /// falls back to type_to_llvm for compound types.
     pub fn write_type(self: &mut CodegenCtx, ty: &hir_ty.Type) {
-        match codegen_types::type_to_llvm_fast(ty) {
+        match codegen_types.type_to_llvm_fast(ty) {
             Option.Some(s) => self.write(s),
             Option.None => {
-                let s = codegen_types::type_to_llvm(ty);
+                let s = codegen_types.type_to_llvm(ty);
                 self.write(s.as_str());
             }
         }
@@ -1102,7 +1102,7 @@ impl CodegenCtx {
             Option.None => {}
         }
         // Fallback: return i64 if type not found
-        common::make_string("i64")
+        common.make_string("i64")
     }
 
     /// Gets a reference to the local's LLVM type string. Zero allocation.
@@ -1472,29 +1472,29 @@ impl CodegenCtx {
                 let name_bytes = name.as_bytes();
                 // Vec -> { ptr, i64, i64 }
                 if name_bytes.len() == 3 && name_bytes[0] == 86 && name_bytes[1] == 101 && name_bytes[2] == 99 {
-                    return common::make_string("{ ptr, i64, i64 }");
+                    return common.make_string("{ ptr, i64, i64 }");
                 }
                 // String -> { ptr, i64, i64 }
                 if name_bytes.len() == 6 && name_bytes[0] == 83 && name_bytes[1] == 116 && name_bytes[2] == 114 {
-                    return common::make_string("{ ptr, i64, i64 }");
+                    return common.make_string("{ ptr, i64, i64 }");
                 }
                 // HashMap -> { ptr, i64, i64 }
                 if name_bytes.len() == 7 && name_bytes[0] == 72 && name_bytes[1] == 97 && name_bytes[2] == 115 && name_bytes[3] == 104 {
-                    return common::make_string("{ ptr, i64, i64 }");
+                    return common.make_string("{ ptr, i64, i64 }");
                 }
                 // Box -> ptr
                 if name_bytes.len() == 3 && name_bytes[0] == 66 && name_bytes[1] == 111 && name_bytes[2] == 120 {
-                    return common::make_string("ptr");
+                    return common.make_string("ptr");
                 }
-                common::make_string("ptr")
+                common.make_string("ptr")
             }
-            Option.None => common::make_string("ptr"),
+            Option.None => common.make_string("ptr"),
         }
     }
 
     /// Converts a type to LLVM IR, using the ADT registry for struct/enum types.
     /// This is the context-aware version that properly resolves ADT types.
-    /// Falls back to `codegen_types::type_to_llvm` for non-ADT types.
+    /// Falls back to `codegen_types.type_to_llvm` for non-ADT types.
     pub fn type_to_llvm_with_ctx(self: &CodegenCtx, ty: &hir_ty.Type) -> String {
         match &ty.kind {
             &hir_ty.TypeKind.Adt { def_id, args: _ } => {
@@ -1502,9 +1502,9 @@ impl CodegenCtx {
             }
             &hir_ty.TypeKind.Tuple(ref elems) => {
                 if elems.len() == 0 {
-                    common::make_string("{}")
+                    common.make_string("{}")
                 } else {
-                    let mut result = common::make_string("{ ");
+                    let mut result = common.make_string("{ ");
                     for i in 0usize..elems.len() {
                         if i > 0 {
                             result.push_str(", ");
@@ -1516,14 +1516,14 @@ impl CodegenCtx {
                     result
                 }
             }
-            _ => codegen_types::type_to_llvm(ty),
+            _ => codegen_types.type_to_llvm(ty),
         }
     }
 
     /// Generates the name for a MIR local alloca.
     pub fn local_alloca_name(self: &mut CodegenCtx, local: mir_def.MirLocalId) -> String {
-        let mut name = common::make_string("%_");
-        let num_str = codegen_types::format_u64(local.index as u64);
+        let mut name = common.make_string("%_");
+        let num_str = codegen_types.format_u64(local.index as u64);
         name.push_str(num_str.as_str());
         name
     }
@@ -1550,7 +1550,7 @@ impl CodegenCtx {
     pub fn current_function(self: &CodegenCtx) -> String {
         match &self.current_fn {
             &Option.Some(ref name) => clone_string(name),
-            &Option.None => common::make_string(""),
+            &Option.None => common.make_string(""),
         }
     }
 
@@ -1559,7 +1559,7 @@ impl CodegenCtx {
     /// Adds a string constant to the table and returns its global label.
     pub fn add_string_constant(self: &mut CodegenCtx, content: &String) -> String {
         // Fast path: check hash index
-        let hash = hashmap::hash_string(content);
+        let hash = hashmap.hash_string(content);
         match self.string_table_hash.get(hash) {
             Option.Some(idx) => {
                 // Verify it's the same string (handle hash collisions)
@@ -1572,8 +1572,8 @@ impl CodegenCtx {
                 // Definitely new, add it
                 let n = self.string_counter;
                 self.string_counter = self.string_counter + 1;
-                let mut label = common::make_string("@.str.");
-                let num_str = codegen_types::format_u64(n as u64);
+                let mut label = common.make_string("@.str.");
+                let num_str = codegen_types.format_u64(n as u64);
                 label.push_str(num_str.as_str());
 
                 let length = content.len() + 1; // +1 for null terminator
@@ -1600,8 +1600,8 @@ impl CodegenCtx {
         // Not found, add new (collision case)
         let n = self.string_counter;
         self.string_counter = self.string_counter + 1;
-        let mut label = common::make_string("@.str.");
-        let num_str = codegen_types::format_u64(n as u64);
+        let mut label = common.make_string("@.str.");
+        let num_str = codegen_types.format_u64(n as u64);
         label.push_str(num_str.as_str());
 
         let length = content.len() + 1;
@@ -1623,7 +1623,7 @@ impl CodegenCtx {
             // Emit: @.str.N = private unnamed_addr constant [M x i8] c"...\00"
             self.write_string(&entry.label);
             self.write(" = private unnamed_addr constant [");
-            let len_str = codegen_types::format_u64(entry.length as u64);
+            let len_str = codegen_types.format_u64(entry.length as u64);
             self.write_string(&len_str);
             self.write(" x i8] c\"");
             self.emit_string_literal_bytes(&entry.content);

@@ -38,7 +38,7 @@ pub fn lower_irrefutable_pattern(
             // Rest: nothing to bind here
         }
         &hir_expr.PatternKind.Binding { local_id, name: _, mode, ref subpattern } => {
-            let pattern_ty_hir = type_intern::ty_id_to_type(pattern.ty);
+            let pattern_ty_hir = type_intern.ty_id_to_type(pattern.ty);
             lower_binding_pattern(ctx, local_id, mode, &source, &pattern_ty_hir, span);
             match subpattern {
                 &Option.Some(ref sub) => {
@@ -113,17 +113,17 @@ pub fn register_pattern_locals(
 ) {
     match &pattern.kind {
         &hir_expr.PatternKind.Binding { local_id, name: _, mode, ref subpattern } => {
-            let ty_id = type_intern::type_to_ty_id(&type_intern::ty_id_to_type(pattern.ty));
+            let ty_id = type_intern.type_to_ty_id(&type_intern.ty_id_to_type(pattern.ty));
             let local_ty_id = match mode {
                 hir_expr.BindingMode.ByRef => {
-                    type_intern::type_interner().mk_ref(ty_id, false)
+                    type_intern.type_interner().mk_ref(ty_id, false)
                 }
                 hir_expr.BindingMode.ByMutRef => {
-                    type_intern::type_interner().mk_ref(ty_id, true)
+                    type_intern.type_interner().mk_ref(ty_id, true)
                 }
                 hir_expr.BindingMode.ByValue => ty_id,
             };
-            let mir_local = ctx.new_var(local_ty_id, common::make_string("_var"), true, span);
+            let mir_local = ctx.new_var(local_ty_id, common.make_string("_var"), true, span);
             ctx.register_local(local_id, mir_local);
             match subpattern {
                 &Option.Some(ref sub) => {
@@ -171,20 +171,20 @@ fn lower_binding_pattern(
     // For ref bindings, the local holds a reference (&T), not the value (T).
     // This ensures the alloca is ptr-sized (8 bytes) instead of value-sized,
     // matching what Rvalue.Ref stores (a pointer).
-    let ty_id = type_intern::type_to_ty_id(ty);
+    let ty_id = type_intern.type_to_ty_id(ty);
     let local_ty_id = match mode {
         hir_expr.BindingMode.ByRef => {
-            type_intern::type_interner().mk_ref(ty_id, false)
+            type_intern.type_interner().mk_ref(ty_id, false)
         }
         hir_expr.BindingMode.ByMutRef => {
-            type_intern::type_interner().mk_ref(ty_id, true)
+            type_intern.type_interner().mk_ref(ty_id, true)
         }
         hir_expr.BindingMode.ByValue => ty_id,
     };
 
     let mir_local = ctx.new_var(
         local_ty_id,
-        common::make_string("_var"),
+        common.make_string("_var"),
         true,
         span,
     );
@@ -195,7 +195,7 @@ fn lower_binding_pattern(
     match mode {
         hir_expr.BindingMode.ByValue => {
             // Copy or move the value
-            let operand = mir_lower_util::operand_from_place(source.clone(), ty);
+            let operand = mir_lower_util.operand_from_place(source.clone(), ty);
             ctx.emit_assign(
                 dest,
                 mir_types.Rvalue.Use(operand),
@@ -255,9 +255,9 @@ fn lower_struct_pattern(
                         // Field resolution missing — positional fallback may be incorrect
                         ctx.mir_error_with_note(
                             mir_lower_ctx.MirLowerErrorKind.FieldNotResolved,
-                            common::make_string("struct pattern field resolution missing; using positional index"),
+                            common.make_string("struct pattern field resolution missing; using positional index"),
                             span,
-                            common::make_string("field resolution may be missing if the struct was defined in a different module"),
+                            common.make_string("field resolution may be missing if the struct was defined in a different module"),
                         );
                         i as u32
                     }
@@ -436,8 +436,8 @@ pub fn pattern_test(
 
         &hir_expr.PatternKind.Literal(ref lit) => {
             // Compare against literal value
-            let pat_ty_hir = type_intern::ty_id_to_type(pattern.ty);
-            let const_val = mir_lower_util::lower_literal(lit, &pat_ty_hir);
+            let pat_ty_hir = type_intern.ty_id_to_type(pattern.ty);
+            let const_val = mir_lower_util.lower_literal(lit, &pat_ty_hir);
             let expected = extract_constant_value(&const_val.kind);
             let temp = ctx.new_temp(pattern.ty, span);
             ctx.emit_assign(
@@ -495,7 +495,7 @@ pub fn pattern_test(
         &hir_expr.PatternKind.Range { ref start, ref end_val, inclusive } => {
             // Range pattern: scrutinee >= start && scrutinee <= end (or < end if not inclusive)
             // Copy scrutinee value
-            let range_pat_ty_hir = type_intern::ty_id_to_type(pattern.ty);
+            let range_pat_ty_hir = type_intern.ty_id_to_type(pattern.ty);
             let scrut_temp = ctx.new_temp(pattern.ty, span);
             ctx.emit_assign(
                 mir_types.Place.local(scrut_temp),
@@ -513,7 +513,7 @@ pub fn pattern_test(
                     let inner = start_pat.as_ref();
                     match &inner.kind {
                         &hir_expr.PatternKind.Literal(ref lit) => {
-                            mir_lower_util::lower_literal(lit, &range_pat_ty_hir)
+                            mir_lower_util.lower_literal(lit, &range_pat_ty_hir)
                         }
                         _ => {
                             // Non-literal range bound — typeck should reject this.
@@ -532,7 +532,7 @@ pub fn pattern_test(
                     let inner = end_pat.as_ref();
                     match &inner.kind {
                         &hir_expr.PatternKind.Literal(ref lit) => {
-                            mir_lower_util::lower_literal(lit, &range_pat_ty_hir)
+                            mir_lower_util.lower_literal(lit, &range_pat_ty_hir)
                         }
                         _ => {
                             // Non-literal range bound — typeck should reject this.
@@ -617,7 +617,7 @@ fn get_variant_index_from_path(
             // variant paths. Report and use def_id.index as fallback.
             ctx.mir_error(
                 mir_lower_ctx.MirLowerErrorKind.VariantIndexUnknown,
-                common::make_string("variant index not resolved; using def_id index as fallback"),
+                common.make_string("variant index not resolved; using def_id index as fallback"),
                 span,
             );
             path.def_id.index

@@ -29,15 +29,15 @@ pub fn emit_statement(
 ) {
     ctx.current_span = Option.Some(stmt.span);
     if ctx.trace_codegen {
-        let trace = dump_mir::format_statement(stmt);
+        let trace = dump_mir.format_statement(stmt);
         ctx.write("    ; MIR: ");
         ctx.write_string(&trace);
         ctx.newline();
     }
     match &stmt.kind {
         &mir_stmt.StatementKind.Assign { ref place, ref rvalue } => {
-            let dest = codegen_expr::emit_place_data_ptr(ctx, place);
-            codegen_expr::emit_rvalue(ctx, dest.as_str(), rvalue);
+            let dest = codegen_expr.emit_place_data_ptr(ctx, place);
+            codegen_expr.emit_rvalue(ctx, dest.as_str(), rvalue);
         }
         &mir_stmt.StatementKind.StorageLive(ref local) => {
             // In LLVM IR, storage is typically handled by alloca placement
@@ -94,11 +94,11 @@ pub fn emit_statement(
             let mut drop_size: u64 = 0;
             match ctx.get_local_hir_type(place.local) {
                 Option.Some(ty_id) => {
-                    match type_intern::get_ref_inner(ty_id) {
+                    match type_intern.get_ref_inner(ty_id) {
                         Option.Some(inner_id) => {
                             if ctx.is_region_allocated(place.local) {
                                 is_ref_region = true;
-                                drop_size = codegen_size::type_size_with_ctx_id(ctx, inner_id);
+                                drop_size = codegen_size.type_size_with_ctx_id(ctx, inner_id);
                             }
                         }
                         Option.None => {}
@@ -108,40 +108,40 @@ pub fn emit_statement(
             }
             if is_ref_region {
                 // Region-allocated reference: free the pointed-to memory
-                let ptr = codegen_expr::emit_place_addr(ctx, place);
+                let ptr = codegen_expr.emit_place_addr(ctx, place);
                 ctx.write("    ; drop (region free)\n");
                 let addr_val = ctx.fresh_temp_cg();
                 ctx.emit_load_cg2(&addr_val, "ptr", &ptr);
                 let int_val = ctx.fresh_temp_cg();
                 ctx.emit_cast_cg2(&int_val, "ptrtoint", "ptr", &addr_val, "i64");
-                let size_str = codegen_types::format_u64(drop_size);
+                let size_str = codegen_types.format_u64(drop_size);
                 ctx.begin_call(Option.None, "void", "@blood_free");
                 ctx.call_arg_cg(true, "i64", &int_val);
                 ctx.call_arg_str(false, "i64", size_str.as_str());
                 ctx.end_call();
             } else {
-                let _ptr = codegen_expr::emit_place_addr(ctx, place);
+                let _ptr = codegen_expr.emit_place_addr(ctx, place);
                 ctx.write("    ; drop (no-op)\n");
             }
         }
         &mir_stmt.StatementKind.Deinit(ref place) => {
             // Deinit - mark as uninitialized (no-op in simple codegen)
-            let _ptr = codegen_expr::emit_place_addr(ctx, place);
+            let _ptr = codegen_expr.emit_place_addr(ctx, place);
             ctx.write("    ; deinit\n");
         }
         &mir_stmt.StatementKind.SetDiscriminant { ref place, variant_idx } => {
             // Set the discriminant field of an enum
-            let ptr = codegen_expr::emit_place_data_ptr(ctx, place);
-            let discr_val = codegen_types::format_u64(variant_idx as u64);
+            let ptr = codegen_expr.emit_place_data_ptr(ctx, place);
+            let discr_val = codegen_types.format_u64(variant_idx as u64);
 
             // Try to look up enum layout for correct discriminant type
-            let mut discr_ty = common::make_string("i64");
-            let mut enum_llvm_ty = common::make_string("{ i64, i64 }");
+            let mut discr_ty = common.make_string("i64");
+            let mut enum_llvm_ty = common.make_string("{ i64, i64 }");
             let mut found_enum = false;
 
             match ctx.get_local_hir_type(place.local) {
                 Option.Some(ty_id) => {
-                    match type_intern::get_adt_def_id(ty_id) {
+                    match type_intern.get_adt_def_id(ty_id) {
                         Option.Some(def_id) => {
                             match ctx.lookup_enum(def_id.index) {
                                 Option.Some(layout) => {
@@ -180,9 +180,9 @@ pub fn emit_statement(
         }
         &mir_stmt.StatementKind.CopyNonOverlapping { ref src, ref dst, ref count } => {
             // Emit memcpy intrinsic
-            let src_val = codegen_expr::emit_operand(ctx, src);
-            let dst_val = codegen_expr::emit_operand(ctx, dst);
-            let count_val = codegen_expr::emit_operand(ctx, count);
+            let src_val = codegen_expr.emit_operand(ctx, src);
+            let dst_val = codegen_expr.emit_operand(ctx, dst);
+            let count_val = codegen_expr.emit_operand(ctx, count);
             emit_memcpy(ctx, &dst_val, &src_val, &count_val);
         }
         &mir_stmt.StatementKind.Nop => {
@@ -192,12 +192,12 @@ pub fn emit_statement(
             // Effect handler push via evidence API.
             // Look up the effect_id for this handler.
             let effect_id_val = match ctx.lookup_handler_effect(handler_id.index) {
-                Option.Some(eid) => codegen_types::format_u64(eid as u64),
-                Option.None => codegen_types::format_u64(handler_id.index as u64),
+                Option.Some(eid) => codegen_types.format_u64(eid as u64),
+                Option.None => codegen_types.format_u64(handler_id.index as u64),
             };
 
             // Get state pointer
-            let state_void_ptr = codegen_expr::emit_place_addr(ctx, state_place);
+            let state_void_ptr = codegen_expr.emit_place_addr(ctx, state_place);
 
             // Get or create evidence vector (using alloca to avoid phi predecessor issue)
             let ev_alloca = ctx.fresh_temp_cg();
@@ -254,8 +254,8 @@ pub fn emit_statement(
                 let total_bytes = ctx.lookup_handler_state_byte_size(handler_id.index) as u64;
                 let num_i64_slots = if total_bytes > 0 { (total_bytes + 7) / 8 } else { 1 };
                 let shadow = ctx.fresh_temp_cg();
-                let mut shadow_ty = common::make_string("[");
-                shadow_ty.push_str(codegen_types::format_u64(num_i64_slots).as_str());
+                let mut shadow_ty = common.make_string("[");
+                shadow_ty.push_str(codegen_types.format_u64(num_i64_slots).as_str());
                 shadow_ty.push_str(" x i64]");
                 ctx.emit_alloca_cg(&shadow, shadow_ty.as_str());
 
@@ -281,7 +281,7 @@ pub fn emit_statement(
                         ctx.emit_store_cg2("i64", &slot_val, &shadow);
                     } else {
                         // Subsequent slots: GEP to offset
-                        let idx_str = codegen_types::format_u64(si);
+                        let idx_str = codegen_types.format_u64(si);
                         let src_ptr = ctx.fresh_temp_cg();
                         ctx.write_indent();
                         ctx.write_cgname(&src_ptr);
@@ -345,17 +345,17 @@ pub fn emit_statement(
         }
         &mir_stmt.StatementKind.PushInlineHandler { effect_id, operations: _ } => {
             // Inline effect handler push via evidence API
-            let effect_id_val = codegen_types::format_u64(effect_id.index as u64);
+            let effect_id_val = codegen_types.format_u64(effect_id.index as u64);
 
             // Generate a unique stub function name for this inline handler op
             let stub_id = ctx.inline_stub_count;
             ctx.inline_stub_count = ctx.inline_stub_count + 1;
-            let mut stub_name = common::make_string("__inline_stub_");
-            let stub_id_str = codegen_types::format_u64(stub_id as u64);
+            let mut stub_name = common.make_string("__inline_stub_");
+            let stub_id_str = codegen_types.format_u64(stub_id as u64);
             stub_name.push_str(stub_id_str.as_str());
 
             // Add the stub function definition (emitted at module level after all bodies)
-            let mut stub_def = common::make_string("define internal i64 @");
+            let mut stub_def = common.make_string("define internal i64 @");
             stub_def.push_str(stub_name.as_str());
             stub_def.push_str("(ptr %state, ptr %args, i64 %arg_count, i64 %cont) {\nentry:\n  ret i64 0\n}\n\n");
             ctx.inline_stubs.push(stub_def);
@@ -444,18 +444,18 @@ pub fn emit_statement(
             ref destination,
         } => {
             // Call the return clause wrapper: handler{N}_return(i64 body_result, ptr state) -> i64
-            let (result_val, result_ty) = codegen_expr::emit_operand_typed(ctx, body_result);
+            let (result_val, result_ty) = codegen_expr.emit_operand_typed(ctx, body_result);
             // Use the state shadow alloca (set during PushHandler) instead of state_place.
             // Handler ops mutate through the shadow pointer, so it has the correct state.
             let state_ptr = match ctx.get_handler_state_shadow(handler_id.index) {
                 Option.Some(shadow) => clone_string(shadow),
                 Option.None => {
-                    let addr = codegen_expr::emit_place_addr(ctx, state_place);
+                    let addr = codegen_expr.emit_place_addr(ctx, state_place);
                     cgname_to_string(&addr)
                 }
             };
             let dest_ptr = {
-                let addr = codegen_expr::emit_place_addr(ctx, destination);
+                let addr = codegen_expr.emit_place_addr(ctx, destination);
                 cgname_to_string(&addr)
             };
 
@@ -475,8 +475,8 @@ pub fn emit_statement(
             };
 
             // Build return clause function name: handler{N}_return
-            let mut return_fn = common::make_string("handler");
-            let id_str = codegen_types::format_u64(handler_id.index as u64);
+            let mut return_fn = common.make_string("handler");
+            let id_str = codegen_types.format_u64(handler_id.index as u64);
             return_fn.push_str(id_str.as_str());
             return_fn.push_str("_return");
 
@@ -552,7 +552,7 @@ pub fn emit_memset_zero(
     ptr: &String,
     size: u64,
 ) {
-    let size_str = codegen_types::format_u64(size);
+    let size_str = codegen_types.format_u64(size);
     ctx.write_indent();
     ctx.write("call void @llvm.memset.p0.i64(ptr ");
     ctx.write_string(ptr);
@@ -566,7 +566,7 @@ pub fn emit_memset_zero(
 // ============================================================
 
 /// Converts a type to LLVM IR, using the ADT registry for struct/enum types.
-/// Falls back to `codegen_types::type_to_llvm` for non-ADT types.
+/// Falls back to `codegen_types.type_to_llvm` for non-ADT types.
 pub fn type_to_llvm_with_ctx(
     ctx: &mut codegen_ctx.CodegenCtx,
     ty: &hir_ty.Type,
@@ -589,15 +589,15 @@ pub fn type_to_llvm_with_ctx(
                 let mut payload_size: u64 = 0;
                 let mut max_align: u64 = 1;
                 for ai in 0usize..args.len() {
-                    let arg_llvm = codegen_size::type_to_llvm_with_ctx(ctx, &args[ai]);
-                    payload_size = payload_size + codegen_size::llvm_type_size(arg_llvm.as_str());
-                    let a = codegen_size::llvm_type_alignment(arg_llvm.as_str());
+                    let arg_llvm = codegen_size.type_to_llvm_with_ctx(ctx, &args[ai]);
+                    payload_size = payload_size + codegen_size.llvm_type_size(arg_llvm.as_str());
+                    let a = codegen_size.llvm_type_alignment(arg_llvm.as_str());
                     if a > max_align {
                         max_align = a;
                     }
                 }
                 if payload_size > 0 {
-                    return codegen_size::build_enum_type_string(payload_size, max_align);
+                    return codegen_size.build_enum_type_string(payload_size, max_align);
                 }
             }
             // For registered generic enums (Option<T>, Result<T,E>) with type args,
@@ -611,15 +611,15 @@ pub fn type_to_llvm_with_ctx(
                     let mut payload_size: u64 = 0;
                     let mut max_align: u64 = 1;
                     for ai in 0usize..args.len() {
-                        let arg_llvm = codegen_size::type_to_llvm_with_ctx(ctx, &args[ai]);
-                        payload_size = payload_size + codegen_size::llvm_type_size(arg_llvm.as_str());
-                        let a = codegen_size::llvm_type_alignment(arg_llvm.as_str());
+                        let arg_llvm = codegen_size.type_to_llvm_with_ctx(ctx, &args[ai]);
+                        payload_size = payload_size + codegen_size.llvm_type_size(arg_llvm.as_str());
+                        let a = codegen_size.llvm_type_alignment(arg_llvm.as_str());
                         if a > max_align {
                             max_align = a;
                         }
                     }
                     if payload_size > registered_max {
-                        return codegen_size::build_enum_type_string(payload_size, max_align);
+                        return codegen_size.build_enum_type_string(payload_size, max_align);
                     }
                 }
             }
@@ -642,21 +642,21 @@ pub fn type_to_llvm_with_ctx(
         &hir_ty.TypeKind.Tuple(ref elems) => {
             // Resolve tuple elements with ADT registry context
             if elems.len() == 0 {
-                common::make_string("{}")
+                common.make_string("{}")
             } else {
-                let mut result = common::make_string("{ ");
+                let mut result = common.make_string("{ ");
                 for ti in 0usize..elems.len() {
                     if ti > 0 {
                         result.push_str(", ");
                     }
-                    let elem_llvm = codegen_size::type_to_llvm_with_ctx(ctx, &elems[ti]);
+                    let elem_llvm = codegen_size.type_to_llvm_with_ctx(ctx, &elems[ti]);
                     result.push_str(elem_llvm.as_str());
                 }
                 result.push_str(" }");
                 result
             }
         }
-        _ => codegen_types::type_to_llvm(ty),
+        _ => codegen_types.type_to_llvm(ty),
     }
 }
 
@@ -679,7 +679,7 @@ fn struct_has_param_fields(layout: &codegen_ctx.StructLayout) -> bool {
 /// Both Param and Infer indicate unresolved type parameters in struct definitions
 /// that need substitution with concrete type args.
 fn ty_id_contains_param(ty_id: type_intern.TyId) -> bool {
-    let kind = type_intern::type_interner().get(ty_id);
+    let kind = type_intern.type_interner().get(ty_id);
     match kind {
         &type_intern.InternedTypeKind.Param(_) => true,
         &type_intern.InternedTypeKind.Infer(_) => true,
@@ -719,7 +719,7 @@ fn rebuild_struct_from_info(
     fields: &Vec<FieldBuildInfo>,
     args: &Vec<hir_ty.Type>,
 ) -> String {
-    let mut result = common::make_string("{ ");
+    let mut result = common.make_string("{ ");
     let mut param_idx: usize = 0;
     for fi in 0usize..fields.len() {
         if fi > 0 {
@@ -727,7 +727,7 @@ fn rebuild_struct_from_info(
         }
         let field_ty = match &fields[fi].hir_type {
             &Option.Some(ty_id) => {
-                let field_hir_ty = type_intern::ty_id_to_type(ty_id);
+                let field_hir_ty = type_intern.ty_id_to_type(ty_id);
                 substitute_param_type(ctx, &field_hir_ty, args, &mut param_idx)
             }
             &Option.None => {
@@ -755,7 +755,7 @@ fn substitute_param_type(
                 *param_idx = idx + 1;
                 type_to_llvm_with_ctx(ctx, &args[idx])
             } else {
-                common::make_string("ptr")
+                common.make_string("ptr")
             }
         }
         &hir_ty.TypeKind.Infer(_) => {
@@ -765,7 +765,7 @@ fn substitute_param_type(
                 *param_idx = idx + 1;
                 type_to_llvm_with_ctx(ctx, &args[idx])
             } else {
-                common::make_string("ptr")
+                common.make_string("ptr")
             }
         }
         _ => type_to_llvm_with_ctx(ctx, ty),
@@ -786,16 +786,16 @@ pub fn type_size_with_ctx(ctx: &mut codegen_ctx.CodegenCtx, ty: &hir_ty.Type) ->
                 let mut payload_size: u64 = 0;
                 let mut max_align: u64 = 1;
                 for ai in 0usize..args.len() {
-                    let arg_llvm = codegen_size::type_to_llvm_with_ctx(ctx, &args[ai]);
-                    payload_size = payload_size + codegen_size::llvm_type_size(arg_llvm.as_str());
-                    let a = codegen_size::llvm_type_alignment(arg_llvm.as_str());
+                    let arg_llvm = codegen_size.type_to_llvm_with_ctx(ctx, &args[ai]);
+                    payload_size = payload_size + codegen_size.llvm_type_size(arg_llvm.as_str());
+                    let a = codegen_size.llvm_type_alignment(arg_llvm.as_str());
                     if a > max_align {
                         max_align = a;
                     }
                 }
                 if payload_size > 8 {
-                    let enum_ty = codegen_size::build_enum_type_string(payload_size, max_align);
-                    return codegen_size::llvm_type_size(enum_ty.as_str());
+                    let enum_ty = codegen_size.build_enum_type_string(payload_size, max_align);
+                    return codegen_size.llvm_type_size(enum_ty.as_str());
                 }
             }
             // For registered structs with type args, compute size from rebuilt type
@@ -812,7 +812,7 @@ pub fn type_size_with_ctx(ctx: &mut codegen_ctx.CodegenCtx, ty: &hir_ty.Type) ->
             }
             base
         }
-        _ => codegen_types::type_size_bytes(ty),
+        _ => codegen_types.type_size_bytes(ty),
     }
 }
 
@@ -885,7 +885,7 @@ fn compute_struct_size(layout: &codegen_ctx.StructLayout) -> u64 {
     for i in 0usize..layout.fields.len() {
         let field = &layout.fields[i];
         let field_size = llvm_type_size(field.llvm_type.as_str());
-        let field_align = codegen_size::llvm_type_alignment(field.llvm_type.as_str());
+        let field_align = codegen_size.llvm_type_alignment(field.llvm_type.as_str());
         if field_align > max_align {
             max_align = field_align;
         }
@@ -992,7 +992,7 @@ fn parse_struct_size(ty: &str) -> u64 {
                 let trimmed = trim_whitespace(field_ty.as_str());
                 if trimmed.len() > 0 {
                     let field_size = llvm_type_size(trimmed.as_str());
-                    let field_align = codegen_size::llvm_type_alignment(trimmed.as_str());
+                    let field_align = codegen_size.llvm_type_alignment(trimmed.as_str());
                     if field_align > max_align {
                         max_align = field_align;
                     }
@@ -1007,7 +1007,7 @@ fn parse_struct_size(ty: &str) -> u64 {
             let trimmed = trim_whitespace(field_ty.as_str());
             if trimmed.len() > 0 {
                 let field_size = llvm_type_size(trimmed.as_str());
-                let field_align = codegen_size::llvm_type_alignment(trimmed.as_str());
+                let field_align = codegen_size.llvm_type_alignment(trimmed.as_str());
                 if field_align > max_align {
                     max_align = field_align;
                 }
@@ -1106,7 +1106,7 @@ pub fn emit_allocas(
         let local_id = mir_def.MirLocalId.new(i as u32);
         let name_cg = ctx.local_cg(local_id);
         // Use context-aware type resolution for correct ADT alloca sizes
-        let ty = codegen_size::type_to_llvm_with_ctx_id(ctx, local.ty);
+        let ty = codegen_size.type_to_llvm_with_ctx_id(ctx, local.ty);
         // Normalize void to {} for allocas (LLVM allows alloca {} but not alloca void)
         if is_void_or_empty_type(ty.as_str()) {
             ctx.emit_alloca_cg(&name_cg, "{}");
@@ -1117,8 +1117,8 @@ pub fn emit_allocas(
         ctx.register_local(local_id, clone_string(&name));
         // Also register the type and signedness for this local
         ctx.register_local_type(local_id, clone_string(&ty));
-        let local_hir_ty = type_intern::ty_id_to_type(local.ty);
-        ctx.register_local_signedness(local_id, codegen_types::is_signed(&local_hir_ty));
+        let local_hir_ty = type_intern.ty_id_to_type(local.ty);
+        ctx.register_local_signedness(local_id, codegen_types.is_signed(&local_hir_ty));
         // Register HIR type for ADT layout lookups during projection codegen
         ctx.register_local_hir_type(local_id, local.ty);
     }
@@ -1137,8 +1137,8 @@ pub fn emit_allocas_with_escapes(
         let local = &body.locals[i];
         let local_id = mir_def.MirLocalId.new(i as u32);
         let name_cg = ctx.local_cg(local_id);
-        let ty_str = codegen_size::type_to_llvm_with_ctx_id(ctx, local.ty);
-        let local_hir_ty = type_intern::ty_id_to_type(local.ty);
+        let ty_str = codegen_size.type_to_llvm_with_ctx_id(ctx, local.ty);
+        let local_hir_ty = type_intern.ty_id_to_type(local.ty);
 
         // Get recommended tier from escape analysis
         // Copy types always use stack regardless of escape state
@@ -1151,7 +1151,7 @@ pub fn emit_allocas_with_escapes(
             // we only stack-allocate small structs (<=64 bytes) to match behavior.
             match &t {
                 &mir_escape.MemoryTier.Stack => {
-                    let sz = codegen_size::type_size_with_ctx_id(ctx, local.ty);
+                    let sz = codegen_size.type_size_with_ctx_id(ctx, local.ty);
                     if sz > 64 {
                         mir_escape.MemoryTier.Region
                     } else {
@@ -1164,7 +1164,7 @@ pub fn emit_allocas_with_escapes(
 
         // Handler op state local: alloca is `ptr` (holds state pointer from wrapper)
         if ctx.is_handler_state_ptr(local_id) {
-            let ptr_ty = common::make_string("ptr");
+            let ptr_ty = common.make_string("ptr");
             emit_stack_local(ctx, &name_cg, &ptr_ty);
         } else {
             match &tier {
@@ -1190,9 +1190,9 @@ pub fn emit_allocas_with_escapes(
         // Register local metadata (same for all tiers)
         // For handler state locals, register the VALUE type (not ptr) so loads use correct type.
         let name = ctx.local_alloca_name(local_id);
-        ctx.register_local(local_id, common::make_string(name.as_str()));
-        ctx.register_local_type(local_id, common::make_string(ty_str.as_str()));
-        ctx.register_local_signedness(local_id, codegen_types::is_signed(&local_hir_ty));
+        ctx.register_local(local_id, common.make_string(name.as_str()));
+        ctx.register_local_type(local_id, common.make_string(ty_str.as_str()));
+        ctx.register_local_signedness(local_id, codegen_types.is_signed(&local_hir_ty));
         ctx.register_local_hir_type(local_id, local.ty);
     }
     ctx.dedent();
@@ -1233,8 +1233,8 @@ fn emit_region_local(
     // Use TyId-native size computation which correctly handles registered
     // generic enums (e.g. Option<LargeStruct>) by checking if concrete
     // payload exceeds registered base size.
-    let size = codegen_size::type_size_with_ctx_id(ctx, ty_id);
-    let size_str = codegen_types::format_u64(size);
+    let size = codegen_size.type_size_with_ctx_id(ctx, ty_id);
+    let size_str = codegen_types.format_u64(size);
     let result_tmp = ctx.fresh_temp_cg();
     ctx.begin_call(Option.Some(&result_tmp), "i64", "@blood_alloc_or_abort");
     ctx.call_arg_str(true, "i64", size_str.as_str());
@@ -1269,8 +1269,8 @@ fn emit_persistent_local(
     // Use TyId-native size computation which correctly handles registered
     // generic enums (e.g. Option<LargeStruct>) by checking if concrete
     // payload exceeds registered base size.
-    let size = codegen_size::type_size_with_ctx_id(ctx, ty_id);
-    let size_str = codegen_types::format_u64(size);
+    let size = codegen_size.type_size_with_ctx_id(ctx, ty_id);
+    let size_str = codegen_types.format_u64(size);
     let result_tmp = ctx.fresh_temp_cg();
     ctx.begin_call(Option.Some(&result_tmp), "ptr", "@blood_persistent_alloc");
     ctx.call_arg_str(true, "i64", size_str.as_str());
@@ -1334,11 +1334,11 @@ pub fn emit_arg_stores(
         }
 
         let alloca_name = ctx.local_alloca_name(local_id);
-        let ty = codegen_size::type_to_llvm_with_ctx_id(ctx, local.ty);
+        let ty = codegen_size.type_to_llvm_with_ctx_id(ctx, local.ty);
 
         // Argument name uses actual arg index (skipping state fields)
-        let mut arg_name = common::make_string("%arg");
-        let idx_str = codegen_types::format_u64(arg_idx as u64);
+        let mut arg_name = common.make_string("%arg");
+        let idx_str = codegen_types.format_u64(arg_idx as u64);
         arg_name.push_str(idx_str.as_str());
 
         // Handler op state local: store the pointer (ptr type, not value type)
@@ -1377,12 +1377,12 @@ pub fn emit_arg_stores(
         for fi in 2u32..= ctx.handler_op_state_field_count {
             let field_local = mir_def.MirLocalId.new(fi);
             let field_alloca = ctx.local_alloca_name(field_local);
-            let field_ty = codegen_size::type_to_llvm_with_ctx_id(ctx, body.locals[fi as usize].ty);
+            let field_ty = codegen_size.type_to_llvm_with_ctx_id(ctx, body.locals[fi as usize].ty);
             let field_idx = fi - 1; // GEP index: field 0 is at offset 0 (accessed through state ptr local 1)
             // field 1 is at byte offset = sizeof(field_0), etc.
             // Use byte-offset GEP for i32 fields: field_idx * 4
             let field_gep = ctx.fresh_temp_cg();
-            let gep_idx_str = codegen_types::format_u64(field_idx as u64);
+            let gep_idx_str = codegen_types.format_u64(field_idx as u64);
             // Use i32-based GEP since handler state fields are typically i32
             // The state struct layout is { field0, field1, ... } all same type
             ctx.write("    ");
@@ -1447,26 +1447,26 @@ fn strs_equal(a: &str, b: &str) -> bool {
 fn cgname_to_string(name: &codegen_ctx.CgName) -> String {
     match name {
         &codegen_ctx.CgName.Temp(n) => {
-            let mut s = common::make_string("%tmp");
-            let ns = codegen_types::format_u64(n as u64);
+            let mut s = common.make_string("%tmp");
+            let ns = codegen_types.format_u64(n as u64);
             s.push_str(ns.as_str());
             s
         }
         &codegen_ctx.CgName.Local(n) => {
-            let mut s = common::make_string("%_");
-            let ns = codegen_types::format_u64(n as u64);
+            let mut s = common.make_string("%_");
+            let ns = codegen_types.format_u64(n as u64);
             s.push_str(ns.as_str());
             s
         }
         &codegen_ctx.CgName.Label(n) => {
-            let mut s = common::make_string("label");
-            let ns = codegen_types::format_u64(n as u64);
+            let mut s = common.make_string("label");
+            let ns = codegen_types.format_u64(n as u64);
             s.push_str(ns.as_str());
             s
         }
         &codegen_ctx.CgName.Block(n) => {
-            let mut s = common::make_string("bb");
-            let ns = codegen_types::format_u64(n as u64);
+            let mut s = common.make_string("bb");
+            let ns = codegen_types.format_u64(n as u64);
             s.push_str(ns.as_str());
             s
         }

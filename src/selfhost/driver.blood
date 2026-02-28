@@ -101,12 +101,12 @@ impl Compiler {
     /// 5. Generate LLVM IR from MIR
     pub fn compile(self: &mut Compiler, source: &str) -> CompileResult {
         // Delegate to compile_with_base_dir with empty base dir
-        self.compile_with_base_dir(source, common::make_string(""))
+        self.compile_with_base_dir(source, common.make_string(""))
     }
 
     /// Parses source code and returns the AST.
     pub fn parse(self: &mut Compiler, source: &str) -> ParseOnlyResult {
-        let parse_result = parser::parse_file(source);
+        let parse_result = parser.parse_file(source);
 
         if parse_result.errors.len() > 0 {
             let errors = convert_parse_errors(&parse_result.errors);
@@ -129,7 +129,7 @@ impl Compiler {
     /// Runs parsing and HIR lowering to check for errors.
     pub fn check(self: &mut Compiler, source: &str) -> CheckResult {
         // Parse
-        let parse_result = parser::parse_file(source);
+        let parse_result = parser.parse_file(source);
         if parse_result.errors.len() > 0 {
             let errors = convert_parse_errors(&parse_result.errors);
             return CheckResult {
@@ -144,7 +144,7 @@ impl Compiler {
                 let mut errors = Vec.new();
                 errors.push(error.CompileError.new(
                     error.CompilePhase.Parse,
-                    common::make_string("No program produced by parser"),
+                    common.make_string("No program produced by parser"),
                 ));
                 return CheckResult {
                     success: false,
@@ -154,7 +154,7 @@ impl Compiler {
         };
 
         // Lower to HIR
-        let lower_result = hir_lower::lower_program(program, source);
+        let lower_result = hir_lower.lower_program(program, source);
         if has_error_diagnostics(&lower_result.diagnostics) {
             let errors = convert_hir_diagnostics(&lower_result.diagnostics);
             return CheckResult {
@@ -164,7 +164,7 @@ impl Compiler {
         }
 
         // Type check
-        let typeck_result = typeck_driver::check_lower_result(&lower_result);
+        let typeck_result = typeck_driver.check_lower_result(&lower_result);
         if !typeck_result.success {
             let errors = convert_type_errors(&typeck_result.errors);
             return CheckResult {
@@ -183,7 +183,7 @@ impl Compiler {
     /// Compiles source code with a specified base directory for module resolution.
     pub fn compile_with_base_dir(self: &mut Compiler, source: &str, base_dir: String) -> CompileResult {
         // Phase 1: Parse
-        let parse_result = parser::parse_file(source);
+        let parse_result = parser.parse_file(source);
         if parse_result.errors.len() > 0 {
             let errors = convert_parse_errors(&parse_result.errors);
             return CompileResult.err(errors);
@@ -195,14 +195,14 @@ impl Compiler {
                 let mut errors = Vec.new();
                 errors.push(error.CompileError.new(
                     error.CompilePhase.Parse,
-                    common::make_string("No program produced by parser"),
+                    common.make_string("No program produced by parser"),
                 ));
                 return CompileResult.err(errors);
             }
         };
 
         // Phase 2: Lower to HIR with base_dir
-        let lower_result = hir_lower::lower_program_with_base_dir(program, base_dir, source, Option.None);
+        let lower_result = hir_lower.lower_program_with_base_dir(program, base_dir, source, Option.None);
         if has_error_diagnostics(&lower_result.diagnostics) {
             let errors = convert_hir_diagnostics(&lower_result.diagnostics);
             return CompileResult.err(errors);
@@ -214,14 +214,14 @@ impl Compiler {
                 let mut errors = Vec.new();
                 errors.push(error.CompileError.new(
                     error.CompilePhase.Lower,
-                    common::make_string("No HIR crate produced"),
+                    common.make_string("No HIR crate produced"),
                 ));
                 return CompileResult.err(errors);
             }
         };
 
         // Phase 3: Type checking
-        let typeck_result = typeck_driver::check_lower_result(&lower_result);
+        let typeck_result = typeck_driver.check_lower_result(&lower_result);
         if !typeck_result.success {
             let errors = convert_type_errors(&typeck_result.errors);
             return CompileResult.err(errors);
@@ -300,7 +300,7 @@ impl Compiler {
 
             // Lower the body to MIR
             let mut mir_result = if has_const_generics {
-                mir_lower::lower_body_with_const_info(
+                mir_lower.lower_body_with_const_info(
                     def_id,
                     hir_body,
                     return_ty,
@@ -316,7 +316,7 @@ impl Compiler {
                     next_mono_def_id,
                 )
             } else {
-                mir_lower::lower_body(
+                mir_lower.lower_body(
                     def_id,
                     hir_body,
                     return_ty,
@@ -340,7 +340,7 @@ impl Compiler {
                         mir_result.mono_requests[ri].original_def_id,
                         clone_u64_vec(&mir_result.mono_requests[ri].const_values),
                         mir_result.mono_requests[ri].specialized_def_id,
-                        common::make_string(mir_result.mono_requests[ri].fn_name.as_str()),
+                        common.make_string(mir_result.mono_requests[ri].fn_name.as_str()),
                     ));
                 }
             }
@@ -388,7 +388,7 @@ impl Compiler {
                         );
 
                         // Lower the body with const_bindings
-                        let mut spec_result = mir_lower::lower_body_with_const_info(
+                        let mut spec_result = mir_lower.lower_body_with_const_info(
                             hir_def.DefId.new(req.specialized_def_id),
                             &lower_result.bodies[binfo.body_index].body,
                             binfo.return_ty,
@@ -410,7 +410,7 @@ impl Compiler {
                         }
 
                         // Add specialized function
-                        mir_functions.push((common::make_string(req.fn_name.as_str()), spec_result.body));
+                        mir_functions.push((common.make_string(req.fn_name.as_str()), spec_result.body));
                     }
                     Option.None => {}
                 }
@@ -424,7 +424,7 @@ impl Compiler {
         }
 
         // Phase 5: Generate LLVM IR from MIR
-        let codegen_result = codegen::generate_module_with_items("main", &mir_functions, &lower_result.items, &typeck_result.default_method_remaps);
+        let codegen_result = codegen.generate_module_with_items("main", &mir_functions, &lower_result.items, &typeck_result.default_method_remaps);
         if !codegen_result.success {
             let errors = convert_codegen_errors(&codegen_result.errors);
             return CompileResult.err(errors);
@@ -447,7 +447,7 @@ impl Compiler {
     /// Checks source code with a specified base directory for module resolution.
     pub fn check_with_base_dir(self: &mut Compiler, source: &str, base_dir: String, stdlib_path: Option<String>) -> CheckResult {
         // Parse
-        let parse_result = parser::parse_file(source);
+        let parse_result = parser.parse_file(source);
         if parse_result.errors.len() > 0 {
             let errors = convert_parse_errors(&parse_result.errors);
             return CheckResult {
@@ -462,7 +462,7 @@ impl Compiler {
                 let mut errors = Vec.new();
                 errors.push(error.CompileError.new(
                     error.CompilePhase.Parse,
-                    common::make_string("No program produced by parser"),
+                    common.make_string("No program produced by parser"),
                 ));
                 return CheckResult {
                     success: false,
@@ -472,7 +472,7 @@ impl Compiler {
         };
 
         // Lower to HIR with base_dir
-        let lower_result = hir_lower::lower_program_with_base_dir(program, base_dir, source, stdlib_path);
+        let lower_result = hir_lower.lower_program_with_base_dir(program, base_dir, source, stdlib_path);
         if has_error_diagnostics(&lower_result.diagnostics) {
             let errors = convert_hir_diagnostics(&lower_result.diagnostics);
             return CheckResult {
@@ -482,7 +482,7 @@ impl Compiler {
         }
 
         // Type check
-        let typeck_result = typeck_driver::check_lower_result(&lower_result);
+        let typeck_result = typeck_driver.check_lower_result(&lower_result);
         if !typeck_result.success {
             let errors = convert_type_errors(&typeck_result.errors);
             return CheckResult {
@@ -497,7 +497,7 @@ impl Compiler {
             let mut errors: Vec<error.CompileError> = Vec.new();
             errors.push(error.CompileError.new(
                 error.CompilePhase.TypeCheck,
-                common::make_string("main function not found"),
+                common.make_string("main function not found"),
             ));
             return CheckResult {
                 success: false,
@@ -524,7 +524,7 @@ impl Compiler {
         }
 
         // Parse
-        let parse_result = parser::parse_file(source);
+        let parse_result = parser.parse_file(source);
 
         if trace {
             let used1 = region_used(region_id);
@@ -546,7 +546,7 @@ impl Compiler {
                 let mut errors = Vec.new();
                 errors.push(error.CompileError.new(
                     error.CompilePhase.Parse,
-                    common::make_string("No program produced by parser"),
+                    common.make_string("No program produced by parser"),
                 ));
                 return CheckResult {
                     success: false,
@@ -556,7 +556,7 @@ impl Compiler {
         };
 
         // Lower to HIR with base_dir
-        let lower_result = hir_lower::lower_program_with_base_dir(program, base_dir, source, stdlib_path);
+        let lower_result = hir_lower.lower_program_with_base_dir(program, base_dir, source, stdlib_path);
 
         if trace {
             let used2 = region_used(region_id);
@@ -573,7 +573,7 @@ impl Compiler {
         }
 
         // Type check
-        let typeck_result = typeck_driver::check_lower_result(&lower_result);
+        let typeck_result = typeck_driver.check_lower_result(&lower_result);
 
         if trace {
             let used3 = region_used(region_id);
@@ -595,7 +595,7 @@ impl Compiler {
             let mut errors: Vec<error.CompileError> = Vec.new();
             errors.push(error.CompileError.new(
                 error.CompilePhase.TypeCheck,
-                common::make_string("main function not found"),
+                common.make_string("main function not found"),
             ));
             return CheckResult {
                 success: false,
@@ -651,7 +651,7 @@ pub fn convert_parse_errors(diagnostics: &Vec<parser_base.Diagnostic>) -> Vec<er
             error.CompilePhase.Parse,
             clone_string(&diag.message),
             diag.span,
-            common::make_string(parser_error_code(&diag.code)),
+            common.make_string(parser_error_code(&diag.code)),
         );
         for ni in 0usize..diag.notes.len() {
             ce.notes.push(clone_string(&diag.notes[ni]));
@@ -670,7 +670,7 @@ pub fn convert_hir_diagnostics(diagnostics: &Vec<hir.Diagnostic>) -> Vec<error.C
             error.CompilePhase.Lower,
             clone_string(&diag.message),
             diag.span,
-            common::make_string(hir_diagnostic_code(&diag.code)),
+            common.make_string(hir_diagnostic_code(&diag.code)),
         ));
     }
     errors
@@ -699,7 +699,7 @@ pub fn convert_type_errors(type_errors: &Vec<typeck.TypeError>) -> Vec<error.Com
             error.CompilePhase.TypeCheck,
             type_error_message(&te.kind),
             te.span,
-            common::make_string(type_error_code(&te.kind)),
+            common.make_string(type_error_code(&te.kind)),
         );
         for ni in 0usize..te.notes.len() {
             ce.notes.push(clone_string(&te.notes[ni].message));
@@ -711,14 +711,14 @@ pub fn convert_type_errors(type_errors: &Vec<typeck.TypeError>) -> Vec<error.Com
 
 /// Converts a single MIR lowering error to a compile error.
 fn convert_mir_error(err: &mir_lower_ctx.MirLowerError) -> error.CompileError {
-    let mut message = common::make_string(mir_lower_ctx::mir_error_kind_label(&err.kind));
+    let mut message = common.make_string(mir_lower_ctx.mir_error_kind_label(&err.kind));
     message.push_str(": ");
     message.push_str(err.message.as_str());
     let mut ce = error.CompileError.with_code(
         error.CompilePhase.MirLower,
         message,
         err.span,
-        common::make_string(mir_lower_ctx::mir_error_code(&err.kind)),
+        common.make_string(mir_lower_ctx.mir_error_code(&err.kind)),
     );
     for ni in 0usize..err.notes.len() {
         ce.notes.push(clone_string(&err.notes[ni].message));
@@ -731,8 +731,8 @@ fn convert_codegen_errors(codegen_errors: &Vec<codegen::codegen_ctx.CodegenError
     let mut errors = Vec.new();
     for i in 0usize..codegen_errors.len() {
         let cge = &codegen_errors[i];
-        let code_str = codegen::codegen_ctx::error_kind_code(&cge.kind);
-        let mut message = common::make_string(codegen::codegen_ctx::error_kind_label(&cge.kind));
+        let code_str = codegen.codegen_ctx.error_kind_code(&cge.kind);
+        let mut message = common.make_string(codegen.codegen_ctx.error_kind_label(&cge.kind));
         message.push_str(": ");
         message.push_str(cge.message.as_str());
         match &cge.fn_name {
@@ -750,7 +750,7 @@ fn convert_codegen_errors(codegen_errors: &Vec<codegen::codegen_ctx.CodegenError
                     error.CompilePhase.Codegen,
                     message,
                     *span,
-                    common::make_string(code_str),
+                    common.make_string(code_str),
                 );
                 for ni in 0usize..cge.notes.len() {
                     ce.notes.push(clone_string(&cge.notes[ni].message));
@@ -758,7 +758,7 @@ fn convert_codegen_errors(codegen_errors: &Vec<codegen::codegen_ctx.CodegenError
                 errors.push(ce);
             }
             &Option.None => {
-                let mut coded_msg = common::make_string("[");
+                let mut coded_msg = common.make_string("[");
                 coded_msg.push_str(code_str);
                 coded_msg.push_str("] ");
                 coded_msg.push_str(message.as_str());
@@ -781,8 +781,8 @@ fn convert_codegen_errors_to_warnings(codegen_errors: &Vec<codegen::codegen_ctx.
     let mut warnings = Vec.new();
     for i in 0usize..codegen_errors.len() {
         let ce = &codegen_errors[i];
-        let code_str = codegen::codegen_ctx::error_kind_code(&ce.kind);
-        let mut message = common::make_string(codegen::codegen_ctx::error_kind_label(&ce.kind));
+        let code_str = codegen.codegen_ctx.error_kind_code(&ce.kind);
+        let mut message = common.make_string(codegen.codegen_ctx.error_kind_label(&ce.kind));
         message.push_str(": ");
         message.push_str(ce.message.as_str());
         match &ce.fn_name {
@@ -805,12 +805,12 @@ fn convert_codegen_errors_to_warnings(codegen_errors: &Vec<codegen::codegen_ctx.
                     error.CompilePhase.Codegen,
                     message,
                     *span,
-                    common::make_string(code_str),
+                    common.make_string(code_str),
                 ));
             }
             &Option.None => {
                 // No span — embed code in message as fallback
-                let mut coded_message = common::make_string("[");
+                let mut coded_message = common.make_string("[");
                 coded_message.push_str(code_str);
                 coded_message.push_str("] ");
                 coded_message.push_str(message.as_str());
@@ -827,30 +827,30 @@ fn convert_codegen_errors_to_warnings(codegen_errors: &Vec<codegen::codegen_ctx.
 /// Converts a TypeErrorKind to a human-readable message.
 pub fn type_error_message(kind: &typeck.TypeErrorKind) -> String {
     match kind {
-        &typeck.TypeErrorKind.TypeMismatch => common::make_string("type mismatch"),
-        &typeck.TypeErrorKind.CannotInfer => common::make_string("cannot infer type"),
-        &typeck.TypeErrorKind.UndefinedVariable => common::make_string("undefined variable"),
-        &typeck.TypeErrorKind.UndefinedFunction => common::make_string("undefined function"),
-        &typeck.TypeErrorKind.ArityMismatch => common::make_string("wrong number of arguments"),
-        &typeck.TypeErrorKind.NotCallable => common::make_string("expression is not callable"),
-        &typeck.TypeErrorKind.NotIndexable => common::make_string("expression is not indexable"),
-        &typeck.TypeErrorKind.NoSuchField => common::make_string("field does not exist"),
-        &typeck.TypeErrorKind.NoSuchMethod => common::make_string("method does not exist"),
-        &typeck.TypeErrorKind.CannotMutate => common::make_string("cannot mutate immutable value"),
-        &typeck.TypeErrorKind.InvalidLValue => common::make_string("invalid assignment target"),
-        &typeck.TypeErrorKind.MissingReturn => common::make_string("missing return value"),
-        &typeck.TypeErrorKind.TraitNotImplemented => common::make_string("type does not implement trait"),
-        &typeck.TypeErrorKind.UnhandledEffect => common::make_string("unhandled effect"),
-        &typeck.TypeErrorKind.InvalidControl => common::make_string("invalid break/continue"),
-        &typeck.TypeErrorKind.PatternMismatch => common::make_string("pattern type mismatch"),
-        &typeck.TypeErrorKind.NonExhaustive => common::make_string("non-exhaustive patterns"),
-        &typeck.TypeErrorKind.InfiniteType => common::make_string("infinite type (recursive without indirection)"),
-        &typeck.TypeErrorKind.InvalidCast => common::make_string("invalid cast"),
-        &typeck.TypeErrorKind.UnreachablePattern => common::make_string("unreachable pattern"),
-        &typeck.TypeErrorKind.LinearNotUsed => common::make_string("linear value not consumed"),
-        &typeck.TypeErrorKind.LinearUsedMultipleTimes => common::make_string("linear value used more than once"),
-        &typeck.TypeErrorKind.AffineUsedMultipleTimes => common::make_string("affine value used more than once"),
-        &typeck.TypeErrorKind.UndeclaredEffect => common::make_string("undeclared effect"),
+        &typeck.TypeErrorKind.TypeMismatch => common.make_string("type mismatch"),
+        &typeck.TypeErrorKind.CannotInfer => common.make_string("cannot infer type"),
+        &typeck.TypeErrorKind.UndefinedVariable => common.make_string("undefined variable"),
+        &typeck.TypeErrorKind.UndefinedFunction => common.make_string("undefined function"),
+        &typeck.TypeErrorKind.ArityMismatch => common.make_string("wrong number of arguments"),
+        &typeck.TypeErrorKind.NotCallable => common.make_string("expression is not callable"),
+        &typeck.TypeErrorKind.NotIndexable => common.make_string("expression is not indexable"),
+        &typeck.TypeErrorKind.NoSuchField => common.make_string("field does not exist"),
+        &typeck.TypeErrorKind.NoSuchMethod => common.make_string("method does not exist"),
+        &typeck.TypeErrorKind.CannotMutate => common.make_string("cannot mutate immutable value"),
+        &typeck.TypeErrorKind.InvalidLValue => common.make_string("invalid assignment target"),
+        &typeck.TypeErrorKind.MissingReturn => common.make_string("missing return value"),
+        &typeck.TypeErrorKind.TraitNotImplemented => common.make_string("type does not implement trait"),
+        &typeck.TypeErrorKind.UnhandledEffect => common.make_string("unhandled effect"),
+        &typeck.TypeErrorKind.InvalidControl => common.make_string("invalid break/continue"),
+        &typeck.TypeErrorKind.PatternMismatch => common.make_string("pattern type mismatch"),
+        &typeck.TypeErrorKind.NonExhaustive => common.make_string("non-exhaustive patterns"),
+        &typeck.TypeErrorKind.InfiniteType => common.make_string("infinite type (recursive without indirection)"),
+        &typeck.TypeErrorKind.InvalidCast => common.make_string("invalid cast"),
+        &typeck.TypeErrorKind.UnreachablePattern => common.make_string("unreachable pattern"),
+        &typeck.TypeErrorKind.LinearNotUsed => common.make_string("linear value not consumed"),
+        &typeck.TypeErrorKind.LinearUsedMultipleTimes => common.make_string("linear value used more than once"),
+        &typeck.TypeErrorKind.AffineUsedMultipleTimes => common.make_string("affine value used more than once"),
+        &typeck.TypeErrorKind.UndeclaredEffect => common.make_string("undeclared effect"),
     }
 }
 
@@ -1223,12 +1223,12 @@ fn str_equals(s: &String, other: &str) -> bool {
 
 /// Clones a String.
 fn clone_string(s: &String) -> String {
-    common::make_string(s.as_str())
+    common.make_string(s.as_str())
 }
 
 /// Generates a function name from an index.
 pub fn make_fn_name(index: usize) -> String {
-    let mut name = common::make_string("fn_");
+    let mut name = common.make_string("fn_");
     append_usize(&mut name, index);
     name
 }
@@ -1284,12 +1284,12 @@ pub fn parse(source: &str) -> ParseOnlyResult {
 /// Compiles a file to LLVM IR using its directory as the base for module resolution.
 pub fn compile_file(path: &str) -> CompileResult {
     // Read the file
-    let read_result = source::read_file(path);
+    let read_result = source.read_file(path);
     if !read_result.success {
         let mut errors: Vec<error.CompileError> = Vec.new();
         let msg = match &read_result.error {
             &Option.Some(ref e) => clone_string_from_ref(e),
-            &Option.None => common::make_string("Unknown file read error"),
+            &Option.None => common.make_string("Unknown file read error"),
         };
         errors.push(error.CompileError.new(error.CompilePhase.Parse, msg));
         return CompileResult.err(errors);
@@ -1301,14 +1301,14 @@ pub fn compile_file(path: &str) -> CompileResult {
             let mut errors: Vec<error.CompileError> = Vec.new();
             errors.push(error.CompileError.new(
                 error.CompilePhase.Parse,
-                common::make_string("No content in file"),
+                common.make_string("No content in file"),
             ));
             return CompileResult.err(errors);
         }
     };
 
     // Get the base directory for module resolution
-    let base_dir = source::parent_dir(path);
+    let base_dir = source.parent_dir(path);
 
     // Create compiler and compile with base_dir
     let mut compiler = Compiler.new();
@@ -1318,12 +1318,12 @@ pub fn compile_file(path: &str) -> CompileResult {
 /// Checks a file for errors without generating code.
 pub fn check_file(path: &str, stdlib_path: Option<String>) -> CheckResult {
     // Read the file
-    let read_result = source::read_file(path);
+    let read_result = source.read_file(path);
     if !read_result.success {
         let mut errors: Vec<error.CompileError> = Vec.new();
         let msg = match &read_result.error {
             &Option.Some(ref e) => clone_string_from_ref(e),
-            &Option.None => common::make_string("Unknown file read error"),
+            &Option.None => common.make_string("Unknown file read error"),
         };
         errors.push(error.CompileError.new(error.CompilePhase.Parse, msg));
         return CheckResult {
@@ -1338,7 +1338,7 @@ pub fn check_file(path: &str, stdlib_path: Option<String>) -> CheckResult {
             let mut errors: Vec<error.CompileError> = Vec.new();
             errors.push(error.CompileError.new(
                 error.CompilePhase.Parse,
-                common::make_string("No content in file"),
+                common.make_string("No content in file"),
             ));
             return CheckResult {
                 success: false,
@@ -1348,11 +1348,11 @@ pub fn check_file(path: &str, stdlib_path: Option<String>) -> CheckResult {
     };
 
     // Preprocess macros before parsing (source-level expansion)
-    let expanded_source = macro_expand::preprocess_macros(content);
+    let expanded_source = macro_expand.preprocess_macros(content);
     let source_str = expanded_source.as_str();
 
     // Get the base directory for module resolution
-    let base_dir = source::parent_dir(path);
+    let base_dir = source.parent_dir(path);
 
     // Create compiler and check with base_dir
     let mut compiler = Compiler.new();
@@ -1362,12 +1362,12 @@ pub fn check_file(path: &str, stdlib_path: Option<String>) -> CheckResult {
 /// Instrumented version of check_file that traces region memory usage.
 pub fn check_file_traced(path: &str, stdlib_path: Option<String>, region_id: u64) -> CheckResult {
     // Read the file
-    let read_result = source::read_file(path);
+    let read_result = source.read_file(path);
     if !read_result.success {
         let mut errors: Vec<error.CompileError> = Vec.new();
         let msg = match &read_result.error {
             &Option.Some(ref e) => clone_string_from_ref(e),
-            &Option.None => common::make_string("Unknown file read error"),
+            &Option.None => common.make_string("Unknown file read error"),
         };
         errors.push(error.CompileError.new(error.CompilePhase.Parse, msg));
         return CheckResult {
@@ -1382,7 +1382,7 @@ pub fn check_file_traced(path: &str, stdlib_path: Option<String>, region_id: u64
             let mut errors: Vec<error.CompileError> = Vec.new();
             errors.push(error.CompileError.new(
                 error.CompilePhase.Parse,
-                common::make_string("No content in file"),
+                common.make_string("No content in file"),
             ));
             return CheckResult {
                 success: false,
@@ -1392,7 +1392,7 @@ pub fn check_file_traced(path: &str, stdlib_path: Option<String>, region_id: u64
     };
 
     // Get the base directory for module resolution
-    let base_dir = source::parent_dir(path);
+    let base_dir = source.parent_dir(path);
 
     // Create compiler and check with base_dir (traced)
     let mut compiler = Compiler.new();
@@ -1401,7 +1401,7 @@ pub fn check_file_traced(path: &str, stdlib_path: Option<String>, region_id: u64
 
 /// Clones a String from a reference.
 fn clone_string_from_ref(s: &String) -> String {
-    common::make_string(s.as_str())
+    common.make_string(s.as_str())
 }
 
 // ============================================================

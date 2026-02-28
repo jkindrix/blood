@@ -32,20 +32,20 @@ pub fn lower_type_id(ctx: &mut hir_lower_ctx.LoweringCtx, ty: &ast.Type) -> type
         }
         &ast.TypeKind.Reference { lifetime: _, is_mut, ref inner } => {
             let inner_id = lower_type_id(ctx, inner.as_ref());
-            type_intern::type_interner().mk_ref(inner_id, is_mut)
+            type_intern.type_interner().mk_ref(inner_id, is_mut)
         }
         &ast.TypeKind.Pointer { is_mut, ref inner } => {
             let inner_id = lower_type_id(ctx, inner.as_ref());
-            type_intern::type_interner().mk_ptr(inner_id, is_mut)
+            type_intern.type_interner().mk_ptr(inner_id, is_mut)
         }
         &ast.TypeKind.Array { ref element, ref size } => {
             let elem_id = lower_type_id(ctx, element.as_ref());
             let array_size = eval_array_size_or_const_param(ctx, size.as_ref());
-            type_intern::type_interner().mk_array(elem_id, array_size)
+            type_intern.type_interner().mk_array(elem_id, array_size)
         }
         &ast.TypeKind.Slice { ref element } => {
             let elem_id = lower_type_id(ctx, element.as_ref());
-            type_intern::type_interner().mk_slice(elem_id)
+            type_intern.type_interner().mk_slice(elem_id)
         }
         &ast.TypeKind.Tuple(ref types) => {
             let mut ids: Vec<type_intern.TyId> = Vec.new();
@@ -53,8 +53,8 @@ pub fn lower_type_id(ctx: &mut hir_lower_ctx.LoweringCtx, ty: &ast.Type) -> type
                 let t = lower_type_id(ctx, &types[i]);
                 ids.push(t);
             }
-            let list_id = type_intern::type_interner().intern_ty_list(&ids);
-            type_intern::type_interner().mk_tuple(list_id)
+            let list_id = type_intern.type_interner().intern_ty_list(&ids);
+            type_intern.type_interner().mk_tuple(list_id)
         }
         &ast.TypeKind.Function { ref params, ref return_type, ref effects } => {
             let mut param_ids: Vec<type_intern.TyId> = Vec.new();
@@ -66,12 +66,12 @@ pub fn lower_type_id(ctx: &mut hir_lower_ctx.LoweringCtx, ty: &ast.Type) -> type
             let effect_row_id = match effects {
                 &Some(ref eff) => {
                     let row = lower_effect_row(ctx, eff);
-                    type_intern::intern_effect_row(&row)
+                    type_intern.intern_effect_row(&row)
                 }
                 &None => type_intern.EffectRowId.new(0),
             };
-            let param_list = type_intern::type_interner().intern_ty_list(&param_ids);
-            type_intern::type_interner().mk_fn(param_list, ret_id, effect_row_id)
+            let param_list = type_intern.type_interner().intern_ty_list(&param_ids);
+            type_intern.type_interner().mk_fn(param_list, ret_id, effect_row_id)
         }
         &ast.TypeKind.Record { ref fields, ref rest } => {
             let mut interned_fields: Vec<type_intern.InternedRecordField> = Vec.new();
@@ -90,8 +90,8 @@ pub fn lower_type_id(ctx: &mut hir_lower_ctx.LoweringCtx, ty: &ast.Type) -> type
                 &Option.None => Option.None,
             };
             let field_list = type_intern.InternedRecordFieldList.new(interned_fields);
-            let field_list_id = type_intern::type_interner().intern_record_field_list(field_list);
-            type_intern::type_interner().intern(type_intern.InternedTypeKind.Record { fields: field_list_id, row_var: row_var })
+            let field_list_id = type_intern.type_interner().intern_record_field_list(field_list);
+            type_intern.type_interner().intern(type_intern.InternedTypeKind.Record { fields: field_list_id, row_var: row_var })
         }
         &ast.TypeKind.Ownership { ref qualifier, ref inner } => {
             let hir_qualifier = match qualifier {
@@ -99,7 +99,7 @@ pub fn lower_type_id(ctx: &mut hir_lower_ctx.LoweringCtx, ty: &ast.Type) -> type
                 &ast.OwnershipQualifier.Affine => hir_ty.OwnershipQualifier.Affine,
             };
             let inner_id = lower_type_id(ctx, inner.as_ref());
-            type_intern::type_interner().mk_ownership(hir_qualifier, inner_id)
+            type_intern.type_interner().mk_ownership(hir_qualifier, inner_id)
         }
         &ast.TypeKind.Forall { ref params, ref body } => {
             ctx.resolver.push_scope(resolve.ScopeKind.TypeParams);
@@ -116,14 +116,14 @@ pub fn lower_type_id(ctx: &mut hir_lower_ctx.LoweringCtx, ty: &ast.Type) -> type
 
             ctx.resolver.pop_scope();
 
-            type_intern::type_interner().intern(type_intern.InternedTypeKind.Forall { params: param_ids, body: body_id })
+            type_intern.type_interner().intern(type_intern.InternedTypeKind.Forall { params: param_ids, body: body_id })
         }
         &ast.TypeKind.Never => {
             type_intern.CommonTypes.never()
         }
         &ast.TypeKind.Infer => {
             let var_id = ctx.alloc_ty_var();
-            type_intern::type_interner().mk_infer(var_id)
+            type_intern.type_interner().mk_infer(var_id)
         }
         &ast.TypeKind.Paren(ref inner) => {
             lower_type_id(ctx, inner.as_ref())
@@ -286,7 +286,7 @@ fn lower_type_path_id(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.TypePath) 
                     &Option.None => {
                         ctx.error(
                             hir.DiagnosticCode.E0102,
-                            common::make_string("Self used outside of impl block"),
+                            common.make_string("Self used outside of impl block"),
                             seg.name.span,
                         );
                         return type_intern.CommonTypes.error();
@@ -307,7 +307,7 @@ fn lower_type_path_id(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.TypePath) 
             let type_param = ctx.resolver.lookup_type_param(seg.name.symbol);
             if type_param.is_some() {
                 let ty_var_id = type_param.unwrap();
-                return type_intern::type_interner().mk_infer(ty_var_id);
+                return type_intern.type_interner().mk_infer(ty_var_id);
             }
             // Then try re-interned symbol
             let tp_name_str = ctx.span_to_string(seg.name.span);
@@ -315,7 +315,7 @@ fn lower_type_path_id(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.TypePath) 
             let type_param2 = ctx.resolver.lookup_type_param(tp_symbol);
             if type_param2.is_some() {
                 let ty_var_id2 = type_param2.unwrap();
-                return type_intern::type_interner().mk_infer(ty_var_id2);
+                return type_intern.type_interner().mk_infer(ty_var_id2);
             }
         }
     }
@@ -360,7 +360,7 @@ fn lower_type_path_id(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.TypePath) 
                         hir_def.DefKind.AssocType => {}
                         _ => {
                             // Not a valid type — report error
-                            let mut tmsg = common::make_string("not a type: `");
+                            let mut tmsg = common.make_string("not a type: `");
                             let tname_str = ctx.span_to_string(seg.name.span);
                             tmsg.push_str(tname_str.as_str());
                             tmsg.push_str("` is not a type");
@@ -381,10 +381,10 @@ fn lower_type_path_id(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.TypePath) 
                 &Some(ref args) => lower_type_args_id(ctx, args),
                 &None => Vec.new(),
             };
-            let arg_list = type_intern::type_interner().intern_ty_list(&type_arg_ids);
-            return type_intern::type_interner().mk_adt(def_id, arg_list);
+            let arg_list = type_intern.type_interner().intern_ty_list(&type_arg_ids);
+            return type_intern.type_interner().mk_adt(def_id, arg_list);
         } else {
-            let mut tmsg = common::make_string("unknown type: ");
+            let mut tmsg = common.make_string("unknown type: ");
             let tname_str = ctx.span_to_string(seg.name.span);
             tmsg.push_str(tname_str.as_str());
             ctx.error(
@@ -441,12 +441,12 @@ fn lower_type_path_id(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.TypePath) 
             &Some(ref args) => lower_type_args_id(ctx, args),
             &None => Vec.new(),
         };
-        let arg_list = type_intern::type_interner().intern_ty_list(&type_arg_ids);
-        return type_intern::type_interner().mk_adt(result.def_id, arg_list);
+        let arg_list = type_intern.type_interner().intern_ty_list(&type_arg_ids);
+        return type_intern.type_interner().mk_adt(result.def_id, arg_list);
     }
 
     // Not found - report error with path details for debugging
-    let mut msg = common::make_string("undefined qualified type path: ");
+    let mut msg = common.make_string("undefined qualified type path: ");
     for j in 0usize..names.len() {
         if j > 0 {
             msg.push_str("::");
@@ -484,12 +484,12 @@ fn lower_type_path(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.TypePath) -> 
             if str_eq(&name_str, "Self") || str_eq(&name_str, "self") {
                 match &ctx.current_self_type {
                     &Option.Some(ref self_ty) => {
-                        return type_intern::ty_id_to_type(*self_ty);
+                        return type_intern.ty_id_to_type(*self_ty);
                     }
                     &Option.None => {
                         ctx.error(
                             hir.DiagnosticCode.E0102,
-                            common::make_string("Self used outside of impl block"),
+                            common.make_string("Self used outside of impl block"),
                             seg.name.span,
                         );
                         return hir_ty.Type.error();
@@ -543,7 +543,7 @@ fn lower_type_path(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.TypePath) -> 
                                 &Option.Some(ref entry) => {
                                     match &entry.item.kind {
                                         &hir_item.ItemKind.TypeAlias(ref alias_def) => {
-                                            return type_intern::ty_id_to_type(alias_def.ty);
+                                            return type_intern.ty_id_to_type(alias_def.ty);
                                         }
                                         _ => {}
                                     }
@@ -559,7 +559,7 @@ fn lower_type_path(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.TypePath) -> 
                         hir_def.DefKind.AssocType => {}
                         _ => {
                             // Not a valid type — report error
-                            let mut tmsg = common::make_string("not a type: `");
+                            let mut tmsg = common.make_string("not a type: `");
                             let tname_str = ctx.span_to_string(seg.name.span);
                             tmsg.push_str(tname_str.as_str());
                             tmsg.push_str("` is not a type");
@@ -586,7 +586,7 @@ fn lower_type_path(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.TypePath) -> 
                 args: type_args,
             });
         } else {
-            let mut tmsg = common::make_string("unknown type: ");
+            let mut tmsg = common.make_string("unknown type: ");
             let tname_str = ctx.span_to_string(seg.name.span);
             tmsg.push_str(tname_str.as_str());
             ctx.error(
@@ -624,7 +624,7 @@ fn lower_type_path(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.TypePath) -> 
     }
 
     // Not found - report error
-    let mut msg = common::make_string("undefined qualified type path: ");
+    let mut msg = common.make_string("undefined qualified type path: ");
     for j in 0usize..names.len() {
         if j > 0 {
             msg.push_str("::");
@@ -824,7 +824,7 @@ pub fn lower_type_args_id(ctx: &mut hir_lower_ctx.LoweringCtx, args: &ast.TypeAr
                 // Lifetimes don't produce types in our representation
             }
             &ast.TypeArg.Const(ref expr) => {
-                let _value = const_eval::eval_const_expr(expr);
+                let _value = const_eval.eval_const_expr(expr);
             }
         }
     }
@@ -844,7 +844,7 @@ pub fn lower_type_args(ctx: &mut hir_lower_ctx.LoweringCtx, args: &ast.TypeArgs)
                 // Lifetimes don't produce types in our representation
             }
             &ast.TypeArg.Const(ref expr) => {
-                let _value = const_eval::eval_const_expr(expr);
+                let _value = const_eval.eval_const_expr(expr);
             }
         }
     }
@@ -888,7 +888,7 @@ fn eval_array_size_or_const_param(ctx: &mut hir_lower_ctx.LoweringCtx, size_expr
         _ => {}
     }
     // Fall through to normal const evaluation
-    const_eval::eval_array_size_u64(size_expr)
+    const_eval.eval_array_size_u64(size_expr)
 }
 
 // ============================================================
@@ -957,7 +957,7 @@ fn lower_effect_ref(ctx: &mut hir_lower_ctx.LoweringCtx, ty: &ast.Type) -> Optio
                                     // Not an effect — report error
                                     ctx.error(
                                         hir.DiagnosticCode.E0102,
-                                        common::make_string("not an effect type"),
+                                        common.make_string("not an effect type"),
                                         ty.span,
                                     );
                                     return Option.None;
@@ -984,7 +984,7 @@ fn lower_effect_ref(ctx: &mut hir_lower_ctx.LoweringCtx, ty: &ast.Type) -> Optio
             }
             ctx.error(
                 hir.DiagnosticCode.E0102,
-                common::make_string("unknown effect"),
+                common.make_string("unknown effect"),
                 ty.span,
             );
             Option.None
@@ -992,7 +992,7 @@ fn lower_effect_ref(ctx: &mut hir_lower_ctx.LoweringCtx, ty: &ast.Type) -> Optio
         _ => {
             ctx.error(
                 hir.DiagnosticCode.E0102,
-                common::make_string("invalid effect type"),
+                common.make_string("invalid effect type"),
                 ty.span,
             );
             Option.None
@@ -1150,7 +1150,7 @@ fn type_to_trait_ref(ty: &hir_ty.Type, span: common.Span) -> Option<hir_ty.Trait
             // Manually copy the args vector since Blood doesn't have clone
             let mut args_copy: Vec<hir_ty.Type> = Vec.new();
             for i in 0usize..args.len() {
-                args_copy.push(hir_ty::copy_type(&args[i]));
+                args_copy.push(hir_ty.copy_type(&args[i]));
             }
             Some(hir_ty.TraitRef.new(def_id, args_copy, span))
         }

@@ -241,8 +241,8 @@ impl Args {
 pub fn main() -> i32 {
     // Initialize the global string interner before any parsing
     // This ensures consistent symbol indices across all compilation phases
-    interner::init_global_interner();
-    type_intern::init_type_interner();
+    interner.init_global_interner();
+    type_intern.init_type_interner();
 
     // Parse command line arguments
     // Note: Without FFI for argument access, we use a stub
@@ -270,7 +270,7 @@ fn parse_args_stub() -> Args {
     let mut argv: Vec<String> = Vec.new();
     for i in 0..argc {
         let arg_ref: &str = args_get(i);
-        argv.push(common::make_string(arg_ref));
+        argv.push(common.make_string(arg_ref));
     }
 
     // Use existing parse_args function
@@ -298,7 +298,7 @@ fn run_check(args: &Args) -> i32 {
 
             eprint_str("  Checking...");
             let stdlib_path = resolve_stdlib_path(args);
-            let result = driver::check_file(path.as_str(), stdlib_path);
+            let result = driver.check_file(path.as_str(), stdlib_path);
             let check_elapsed = blood_clock_millis() - check_start;
             eprint_str(" done\n");
 
@@ -312,7 +312,7 @@ fn run_check(args: &Args) -> i32 {
                 0
             } else {
                 // Read the source content for error reporting
-                let read_result = source::read_file(path.as_str());
+                let read_result = source.read_file(path.as_str());
                 let content = match &read_result.content {
                     &Option.Some(ref c) => c.as_str(),
                     &Option.None => "",
@@ -360,23 +360,23 @@ fn find_c_runtime() -> Option<String> {
     let env_val: &str = env_get("BLOOD_RUNTIME");
     if env_val.len() > 0 {
         if file_exists(env_val) {
-            return Option.Some(common::make_string(env_val));
+            return Option.Some(common.make_string(env_val));
         }
     }
 
     // 2. Search relative to executable
     let exe_path: &str = args_get(0);
-    let exe_dir = source::parent_dir(exe_path);
+    let exe_dir = source.parent_dir(exe_path);
 
     // <exe_dir>/runtime.o
-    let sibling = source::join_path(exe_dir.as_str(), "runtime.o");
+    let sibling = source.join_path(exe_dir.as_str(), "runtime.o");
     if file_exists(sibling.as_str()) {
         return Option.Some(sibling);
     }
 
     // <exe_dir>/runtime/runtime.o
-    let runtime_subdir = source::join_path(exe_dir.as_str(), "runtime");
-    let in_subdir = source::join_path(runtime_subdir.as_str(), "runtime.o");
+    let runtime_subdir = source.join_path(exe_dir.as_str(), "runtime");
+    let in_subdir = source.join_path(runtime_subdir.as_str(), "runtime.o");
     if file_exists(in_subdir.as_str()) {
         return Option.Some(in_subdir);
     }
@@ -394,16 +394,16 @@ fn find_rust_runtime() -> Option<String> {
     let env_val: &str = env_get("BLOOD_RUST_RUNTIME");
     if env_val.len() > 0 {
         if file_exists(env_val) {
-            return Option.Some(common::make_string(env_val));
+            return Option.Some(common.make_string(env_val));
         }
     }
 
     // 2. Search relative to executable
     let exe_path: &str = args_get(0);
-    let exe_dir = source::parent_dir(exe_path);
+    let exe_dir = source.parent_dir(exe_path);
 
     // <exe_dir>/libblood_runtime.a
-    let sibling = source::join_path(exe_dir.as_str(), "libblood_runtime.a");
+    let sibling = source.join_path(exe_dir.as_str(), "libblood_runtime.a");
     if file_exists(sibling.as_str()) {
         return Option.Some(sibling);
     }
@@ -451,7 +451,7 @@ fn find_runtime_paths() -> Option<RuntimePaths> {
     print_str("  Searched:\n");
     print_str("    1. BLOOD_RUNTIME / BLOOD_RUST_RUNTIME environment variables\n");
     let exe_path: &str = args_get(0);
-    let exe_dir = source::parent_dir(exe_path);
+    let exe_dir = source.parent_dir(exe_path);
     print_str("    2. Next to executable: ");
     print_str(exe_dir.as_str());
     print_str("/\n");
@@ -479,7 +479,7 @@ fn run_build(args: &Args) -> i32 {
 
             // Resolve build directory and create profile subdirectory
             let build_dir = resolve_build_dir(args);
-            let profile_dir = source::join_path(build_dir.as_str(), profile_subdir(args));
+            let profile_dir = source.join_path(build_dir.as_str(), profile_subdir(args));
             ensure_dir(profile_dir.as_str());
 
             let stem = file_stem(path);
@@ -515,7 +515,7 @@ fn run_build(args: &Args) -> i32 {
             // Phase 2: Compile IR to object file with llc-18
             // Derive obj and bin paths from ll_path base (strip .ll extension)
             let base_path = strip_ll_ext(&ll_path);
-            let mut obj_path = common::make_string(base_path.as_str());
+            let mut obj_path = common.make_string(base_path.as_str());
             obj_path.push_str(".o");
             let mut llc_cmd = String.new();
             llc_cmd.push_str("llc-18 ");
@@ -608,7 +608,7 @@ fn run_run(args: &Args) -> i32 {
 
             // Resolve build directory and create profile subdirectory
             let build_dir = resolve_build_dir(args);
-            let profile_dir = source::join_path(build_dir.as_str(), profile_subdir(args));
+            let profile_dir = source.join_path(build_dir.as_str(), profile_subdir(args));
             ensure_dir(profile_dir.as_str());
 
             let stem = file_stem(path);
@@ -640,7 +640,7 @@ fn run_run(args: &Args) -> i32 {
 
             // Phase 2: Compile IR to object file with llc-18
             let base_path = strip_ll_ext(&ll_path);
-            let mut obj_path = common::make_string(base_path.as_str());
+            let mut obj_path = common.make_string(base_path.as_str());
             obj_path.push_str(".o");
             let mut llc_cmd = String.new();
             llc_cmd.push_str("llc-18 ");
@@ -786,14 +786,14 @@ fn run_clean(args: &Args) -> i32 {
 
     // Determine cache directory: BLOOD_CACHE env var or <base_dir>/.blood-cache/
     let base_dir = match &args.source_file {
-        &Option.Some(ref path) => source::parent_dir(path.as_str()),
-        &Option.None => common::make_string("."),
+        &Option.Some(ref path) => source.parent_dir(path.as_str()),
+        &Option.None => common.make_string("."),
     };
     let cache_env: &str = env_get("BLOOD_CACHE");
     let cache_dir = if cache_env.len() > 0 {
-        common::make_string(cache_env)
+        common.make_string(cache_env)
     } else {
-        source::join_path(base_dir.as_str(), ".blood-cache")
+        source.join_path(base_dir.as_str(), ".blood-cache")
     };
 
     // Remove cache directory
@@ -988,7 +988,7 @@ fn discover_tests(program: &ast.Program, source: &str) -> Vec<TestInfo> {
 /// Generates a test harness by appending a main() that calls the test function.
 /// Uses `-> i32` return type and explicit `0` return to ensure clean exit code.
 fn generate_test_harness(original_source: &str, test_name: &String) -> String {
-    let mut harness = common::make_string(original_source);
+    let mut harness = common.make_string(original_source);
     harness.push_str("\nfn main() -> i32 {\n    ");
     harness.push_str(test_name.as_str());
     harness.push_str("();\n    0\n}\n");
@@ -1052,7 +1052,7 @@ fn run_single_test(
         if test.config.should_panic {
             return TestOutcome.Passed;
         }
-        return TestOutcome.Failed(common::make_string("compilation failed"));
+        return TestOutcome.Failed(common.make_string("compilation failed"));
     }
 
     // Phase 2: Find runtime and compile IR to object
@@ -1063,7 +1063,7 @@ fn run_single_test(
             rm_ll.push_str("rm -f ");
             rm_ll.push_str(ll_path.as_str());
             system(rm_ll.as_str());
-            return TestOutcome.Failed(common::make_string("runtime not found"));
+            return TestOutcome.Failed(common.make_string("runtime not found"));
         }
     };
 
@@ -1091,7 +1091,7 @@ fn run_single_test(
         if test.config.should_panic {
             return TestOutcome.Passed;
         }
-        return TestOutcome.Failed(common::make_string("llc-18 failed"));
+        return TestOutcome.Failed(common.make_string("llc-18 failed"));
     }
 
     // Phase 3: clang-18 link
@@ -1122,7 +1122,7 @@ fn run_single_test(
         if test.config.should_panic {
             return TestOutcome.Passed;
         }
-        return TestOutcome.Failed(common::make_string("linking failed"));
+        return TestOutcome.Failed(common.make_string("linking failed"));
     }
 
     // Phase 4: Execute the test binary
@@ -1142,7 +1142,7 @@ fn run_single_test(
         if exit_code != 0 {
             TestOutcome.Passed
         } else {
-            TestOutcome.Failed(common::make_string("expected panic but test passed"))
+            TestOutcome.Failed(common.make_string("expected panic but test passed"))
         }
     } else {
         if exit_code == 0 {
@@ -1212,7 +1212,7 @@ fn run_test(args: &Args) -> i32 {
     match &args.source_file {
         &Option.Some(ref path) => {
             // Phase 1: Read source file
-            let read_result = source::read_file(path.as_str());
+            let read_result = source.read_file(path.as_str());
             if !read_result.success {
                 print_error("Failed to read source file");
                 return 1;
@@ -1230,7 +1230,7 @@ fn run_test(args: &Args) -> i32 {
             let parse_region = region_create(2097152, 10737418240);
             region_activate(parse_region);
 
-            let parse_result = parser::parse_file(content.as_str());
+            let parse_result = parser.parse_file(content.as_str());
             let program = match &parse_result.program {
                 &Option.Some(ref p) => p,
                 &Option.None => {
@@ -1377,7 +1377,7 @@ fn run_test(args: &Args) -> i32 {
 
 /// Compiles source code from a string (for testing without file I/O).
 pub fn compile_source(source: &str, filename: &str) -> CompileOutput {
-    let result = driver::compile(source);
+    let result = driver.compile(source);
 
     if result.success {
         CompileOutput {
@@ -1629,7 +1629,7 @@ fn str_equals(s: &String, other: &str) -> bool {
 
 /// Clones a String.
 fn clone_string(s: &String) -> String {
-    common::make_string(s.as_str())
+    common.make_string(s.as_str())
 }
 
 /// Checks if a String starts with a given &str prefix.
@@ -1698,16 +1698,16 @@ fn str_contains_ref(haystack: &str, needle: &str) -> bool {
 fn make_mangled_fn_name(intern: &interner.StringInterner, info: &driver.FnInfo) -> String {
     // Resolve bare name from interner
     let bare_name = match intern.resolve(info.name) {
-        Option.Some(s) => common::make_string(s.as_str()),
+        Option.Some(s) => common.make_string(s.as_str()),
         Option.None => {
             // Fallback: use DefId-based name
-            return driver::make_fn_name(info.def_id.index as usize);
+            return driver.make_fn_name(info.def_id.index as usize);
         }
     };
 
     // Entry point: blood-rust runtime expects "blood_main"
     if str_equals(&bare_name, "main") {
-        return common::make_string("blood_main");
+        return common.make_string("blood_main");
     }
 
     // Regular function: def{N}_{name}
@@ -1824,7 +1824,7 @@ fn is_intrinsic_wrapper_builtin(name: &str) -> bool {
 
 fn resolve_symbol(intern: &interner.StringInterner, sym: common.Symbol) -> String {
     match intern.resolve(sym) {
-        Option.Some(s) => common::make_string(s.as_str()),
+        Option.Some(s) => common.make_string(s.as_str()),
         Option.None => {
             let mut fallback = String.new();
             fallback.push_str("sym");
@@ -1934,7 +1934,7 @@ fn register_all_item_names(
             &hir_item.ItemKind.Fn(ref fn_def) => {
                 let name = resolve_symbol(intern, entry.item.name.symbol);
                 if str_equals(&name, "main") {
-                    ctx.register_def_name(entry.def_id.index, common::make_string("blood_main"));
+                    ctx.register_def_name(entry.def_id.index, common.make_string("blood_main"));
                 } else {
                     let mangled = make_def_name(entry.def_id.index, &name);
                     ctx.register_def_name(entry.def_id.index, mangled);
@@ -2068,8 +2068,8 @@ fn generate_foreign_declarations(
                                     continue;
                                 }
                             }
-                            let ret_hir_ty = type_intern::ty_id_to_type(ff.return_ty);
-                            let ret_ty = codegen_types::return_type_to_llvm(&ret_hir_ty);
+                            let ret_hir_ty = type_intern.ty_id_to_type(ff.return_ty);
+                            let ret_ty = codegen_types.return_type_to_llvm(&ret_hir_ty);
                             output.push_str("declare ");
                             output.push_str(ret_ty.as_str());
                             output.push_str(" @");
@@ -2079,8 +2079,8 @@ fn generate_foreign_declarations(
                                 if pi > 0 {
                                     output.push_str(", ");
                                 }
-                                let param_hir_ty = type_intern::ty_id_to_type(ff.param_tys[pi]);
-                                let param_ty = codegen_types::type_to_llvm(&param_hir_ty);
+                                let param_hir_ty = type_intern.ty_id_to_type(ff.param_tys[pi]);
+                                let param_ty = codegen_types.type_to_llvm(&param_hir_ty);
                                 output.push_str(param_ty.as_str());
                             }
                             output.push_str(")\n");
@@ -2125,14 +2125,14 @@ fn resolve_build_dir(args: &Args) -> String {
     // 2. BLOOD_BUILD_DIR env var
     let env_val: &str = env_get("BLOOD_BUILD_DIR");
     if env_val.len() > 0 {
-        return common::make_string(env_val);
+        return common.make_string(env_val);
     }
     // 3. Default: build/ relative to source file parent
     let base_dir = match &args.source_file {
-        &Option.Some(ref path) => source::parent_dir(path.as_str()),
-        &Option.None => common::make_string("."),
+        &Option.Some(ref path) => source.parent_dir(path.as_str()),
+        &Option.None => common.make_string("."),
     };
-    source::join_path(base_dir.as_str(), "build")
+    source.join_path(base_dir.as_str(), "build")
 }
 
 /// Resolve the stdlib path using the override hierarchy:
@@ -2148,7 +2148,7 @@ fn resolve_stdlib_path(args: &Args) -> Option<String> {
     // 2. BLOOD_STDLIB_PATH env var
     let env_val: &str = env_get("BLOOD_STDLIB_PATH");
     if env_val.len() > 0 {
-        return Option.Some(common::make_string(env_val));
+        return Option.Some(common.make_string(env_val));
     }
     // 3. No stdlib path
     Option.None
@@ -2256,7 +2256,7 @@ fn replace_ext(source_path: &String, new_ext: &str) -> String {
         }
     }
     // No .blood extension found, just append
-    let mut result = common::make_string(source_path.as_str());
+    let mut result = common.make_string(source_path.as_str());
     result.push_str(new_ext);
     result
 }
@@ -2287,7 +2287,7 @@ fn strip_ll_ext(path: &String) -> String {
             return result;
         }
     }
-    common::make_string(path.as_str())
+    common.make_string(path.as_str())
 }
 
 // ============================================================
@@ -2551,7 +2551,7 @@ fn collect_handler_info(
 
                 // Use DefId-based handler name to avoid interner mismatch.
                 // The wrapper functions use handler{N} prefix (e.g., handler19_log).
-                let mut handler_name = common::make_string("handler");
+                let mut handler_name = common.make_string("handler");
                 push_usize(&mut handler_name, handler_def_id as usize);
 
                 // Register handler→effect mapping and state count
@@ -2589,7 +2589,7 @@ fn collect_handler_info(
                     }
                     &Option.None => {
                         // Generate identity return wrapper (ret i64 %result)
-                        let mut id_name = common::make_string("handler");
+                        let mut id_name = common.make_string("handler");
                         push_usize(&mut id_name, handler_def_id as usize);
                         returns.push(HandlerReturnInfo {
                             handler_name: id_name,
@@ -2611,7 +2611,7 @@ fn collect_handler_info(
                     let op_impl = &handler_def.op_impls[oi];
 
                     // Use DefId-based op name for reliability
-                    let mut op_name = common::make_string("op");
+                    let mut op_name = common.make_string("op");
                     push_usize(&mut op_name, op_impl.op_def_id.index as usize);
 
                     // Find op_index by searching the effect's operations
@@ -2711,7 +2711,7 @@ fn generate_handler_wrappers(
         let inner_name = match ctx.lookup_def_name(opinfo.body_def_id) {
             Option.Some(name) => name,
             Option.None => {
-                let mut fallback = common::make_string("fn_");
+                let mut fallback = common.make_string("fn_");
                 push_usize(&mut fallback, opinfo.body_def_id as usize);
                 fallback
             }
@@ -2720,7 +2720,7 @@ fn generate_handler_wrappers(
         // Determine inner function return type (from fn_signatures)
         let inner_ret_ty = match ctx.lookup_fn_ret_type(opinfo.body_def_id) {
             Option.Some(ty) => ty,
-            Option.None => common::make_string("void"),
+            Option.None => common.make_string("void"),
         };
 
         // Generate wrapper
@@ -2795,7 +2795,7 @@ fn generate_handler_wrappers(
                 // sig_offset skips past state params for stateful handlers.
                 let param_ty = match ctx.lookup_fn_param_type(opinfo.body_def_id, pi + sig_offset) {
                     Option.Some(ty) => ty,
-                    Option.None => common::make_string("i64"),
+                    Option.None => common.make_string("i64"),
                 };
 
                 if pi == 0 {
@@ -3020,8 +3020,8 @@ fn generate_handler_wrappers(
                     let mut offset: u64 = 0;
                     for fi in 0usize..field_count {
                         let ty_id = type_intern.TyId.new(ret_info.state_field_ty_ids[fi]);
-                        let llvm_ty = codegen_size::type_to_llvm_with_ctx_id(ctx, ty_id);
-                        let ty_size = codegen_size::llvm_type_size(llvm_ty.as_str());
+                        let llvm_ty = codegen_size.type_to_llvm_with_ctx_id(ctx, ty_id);
+                        let ty_size = codegen_size.llvm_type_size(llvm_ty.as_str());
                         // GEP to byte offset, then load
                         if offset == 0 {
                             ir.push_str("  %fld");
@@ -3055,7 +3055,7 @@ fn generate_handler_wrappers(
                             ir.push_str(", ");
                         }
                         let ty_id = type_intern.TyId.new(ret_info.state_field_ty_ids[ai]);
-                        let llvm_ty = codegen_size::type_to_llvm_with_ctx_id(ctx, ty_id);
+                        let llvm_ty = codegen_size.type_to_llvm_with_ctx_id(ctx, ty_id);
                         ir.push_str(llvm_ty.as_str());
                         ir.push_str(" %fld");
                         push_usize(&mut ir, ai);
@@ -3112,7 +3112,7 @@ fn generate_handler_wrappers(
             }
 
             // Alloca for ops array
-            let eid_str = codegen_types::format_u64(eid as u64);
+            let eid_str = codegen_types.format_u64(eid as u64);
             ir.push_str("  %handler_ops_");
             ir.push_str(eid_str.as_str());
             ir.push_str(" = alloca [");
@@ -3199,7 +3199,7 @@ fn emit_resume_logic(ir: &mut String, resume_val: &str) {
 /// Widens a value to i64, returning the name of the widened value.
 fn widen_to_i64(ir: &mut String, val_name: &str, ty: &str) -> String {
     if str_eq(ty, "i64") {
-        let mut s = common::make_string("%");
+        let mut s = common.make_string("%");
         s.push_str(val_name);
         return s;
     }
@@ -3211,7 +3211,7 @@ fn widen_to_i64(ir: &mut String, val_name: &str, ty: &str) -> String {
         ir.push_str(" %");
         ir.push_str(val_name);
         ir.push_str(" to i64\n");
-        let mut s = common::make_string("%");
+        let mut s = common.make_string("%");
         s.push_str(val_name);
         s.push_str("_wide");
         return s;
@@ -3222,7 +3222,7 @@ fn widen_to_i64(ir: &mut String, val_name: &str, ty: &str) -> String {
         ir.push_str("_wide = ptrtoint ptr %");
         ir.push_str(val_name);
         ir.push_str(" to i64\n");
-        let mut s = common::make_string("%");
+        let mut s = common.make_string("%");
         s.push_str(val_name);
         s.push_str("_wide");
         return s;
@@ -3233,13 +3233,13 @@ fn widen_to_i64(ir: &mut String, val_name: &str, ty: &str) -> String {
         ir.push_str("_wide = bitcast double %");
         ir.push_str(val_name);
         ir.push_str(" to i64\n");
-        let mut s = common::make_string("%");
+        let mut s = common.make_string("%");
         s.push_str(val_name);
         s.push_str("_wide");
         return s;
     }
     // For other types (void, struct, etc.), return 0
-    common::make_string("0")
+    common.make_string("0")
 }
 
 /// Emits call arguments for the inner handler op body function.
@@ -3253,7 +3253,7 @@ fn emit_call_args(ir: &mut String, ctx: &mut codegen_ctx.CodegenCtx, body_def_id
         }
         let param_ty = match ctx.lookup_fn_param_type(body_def_id, pi + sig_offset) {
             Option.Some(ty) => ty,
-            Option.None => common::make_string("i64"),
+            Option.None => common.make_string("i64"),
         };
         ir.push_str(param_ty.as_str());
         if str_eq(param_ty.as_str(), "i64") {
@@ -3311,7 +3311,7 @@ fn build_codegen_worklist(
         let body_entry = &lower_result.bodies[body_idx];
         let body_id = body_entry.body_id;
 
-        let fn_info = driver::find_fn_for_body(&lower_result.items, body_id);
+        let fn_info = driver.find_fn_for_body(&lower_result.items, body_id);
 
         let return_ty = match &fn_info {
             &Option.Some(ref info) => type_intern.TyId.new(info.return_ty.index),
@@ -3323,7 +3323,7 @@ fn build_codegen_worklist(
         };
         let fn_name = match &fn_info {
             &Option.Some(ref info) => make_mangled_fn_name(&lower_result.interner, info),
-            &Option.None => driver::make_fn_name(body_idx),
+            &Option.None => driver.make_fn_name(body_idx),
         };
         let def_id = match &fn_info {
             &Option.Some(ref info) => info.def_id,
@@ -3345,7 +3345,7 @@ fn build_codegen_worklist(
         }
 
         // Skip const-generic function bodies — they'll be monomorphized later.
-        if driver::is_const_generic_body(body_id.index, const_generic_body_ids) {
+        if driver.is_const_generic_body(body_id.index, const_generic_body_ids) {
             continue;
         }
 
@@ -3435,7 +3435,7 @@ fn codegen_thread_worker(arg: u64) -> u64 {
         // Activate per-function MIR region on top of thread_codegen_region.
         region_activate(mir_region);
 
-        let mir_result = mir_lower::lower_body(
+        let mir_result = mir_lower.lower_body(
             work.def_id,
             hir_body,
             type_intern.TyId.new(work.return_ty.index),
@@ -3478,7 +3478,7 @@ fn codegen_thread_worker(arg: u64) -> u64 {
         }
 
         // Codegen (thread_codegen_region active — all allocations scoped)
-        let fn_ir = codegen::generate_function_with_ctx(ctx, &mir_result.body, work.fn_name.as_str());
+        let fn_ir = codegen.generate_function_with_ctx(ctx, &mir_result.body, work.fn_name.as_str());
         output.push_str(fn_ir.as_str());
 
         // Generate closure bodies discovered during MIR lowering
@@ -3486,7 +3486,7 @@ fn codegen_thread_worker(arg: u64) -> u64 {
         while cli < mir_result.closure_names.len() && cli < mir_result.closure_mir.len() {
             let cname = &mir_result.closure_names[cli];
             let cbody = &mir_result.closure_mir[cli];
-            let closure_ir = codegen::generate_function_with_ctx(ctx, cbody, cname.as_str());
+            let closure_ir = codegen.generate_function_with_ctx(ctx, cbody, cname.as_str());
             output.push_str(closure_ir.as_str());
             cli += 1;
         }
@@ -3572,7 +3572,7 @@ fn codegen_pass2(
         region_activate(mir_region);
 
         let mir_result = if has_const_generics {
-            mir_lower::lower_body_with_const_info(
+            mir_lower.lower_body_with_const_info(
                 work.def_id,
                 hir_body,
                 type_intern.TyId.new(work.return_ty.index),
@@ -3582,13 +3582,13 @@ fn codegen_pass2(
                 &typeck_result.field_resolutions,
                 &typeck_result.coercion_entries,
                 Vec.new(), // No const_bindings for non-specialized bodies
-                driver::clone_u32_vec(const_generic_fn_set),
-                driver::clone_turbofish_args(turbofish_const_args),
-                driver::clone_u32_vec(const_generic_param_counts),
+                driver.clone_u32_vec(const_generic_fn_set),
+                driver.clone_turbofish_args(turbofish_const_args),
+                driver.clone_u32_vec(const_generic_param_counts),
                 next_mono_def_id,
             )
         } else {
-            mir_lower::lower_body(
+            mir_lower.lower_body(
                 work.def_id,
                 hir_body,
                 type_intern.TyId.new(work.return_ty.index),
@@ -3615,12 +3615,12 @@ fn codegen_pass2(
             for ri in 0usize..mir_result.mono_requests.len() {
                 let req_ref = &mir_result.mono_requests[ri];
                 // Register the specialized name BEFORE codegen of this function
-                ctx.register_def_name(req_ref.specialized_def_id, common::make_string(req_ref.fn_name.as_str()));
+                ctx.register_def_name(req_ref.specialized_def_id, common.make_string(req_ref.fn_name.as_str()));
                 all_mono_requests.push(mir_lower_ctx.MonoRequest.new(
                     req_ref.original_def_id,
-                    driver::clone_u64_vec(&req_ref.const_values),
+                    driver.clone_u64_vec(&req_ref.const_values),
                     req_ref.specialized_def_id,
-                    common::make_string(req_ref.fn_name.as_str()),
+                    common.make_string(req_ref.fn_name.as_str()),
                 ));
             }
         }
@@ -3642,7 +3642,7 @@ fn codegen_pass2(
                 &Option.None => true,
             };
             if should_dump {
-                let mir_text = dump_mir::format_mir_body(&mir_result.body, fn_name_str);
+                let mir_text = dump_mir.format_mir_body(&mir_result.body, fn_name_str);
                 eprint_str("=== MIR: ");
                 eprint_str(fn_name_str);
                 eprint_str(" ===\n");
@@ -3654,7 +3654,7 @@ fn codegen_pass2(
         // Validate MIR if requested
         if args.validate_mir {
             let fn_name_str = work.fn_name.as_str();
-            let errors = validate_mir::validate_body(&mir_result.body, fn_name_str);
+            let errors = validate_mir.validate_body(&mir_result.body, fn_name_str);
             if errors.len() > 0 {
                 eprint_str("=== MIR VALIDATION ERRORS: ");
                 eprint_str(fn_name_str);
@@ -3686,7 +3686,7 @@ fn codegen_pass2(
         }
 
         // Codegen (no region active — all allocations in global allocator)
-        let fn_ir = codegen::generate_function_with_ctx(ctx, &mir_result.body, work.fn_name.as_str());
+        let fn_ir = codegen.generate_function_with_ctx(ctx, &mir_result.body, work.fn_name.as_str());
         file_append_string(output_path, fn_ir.as_str());
 
         // Generate closure bodies discovered during MIR lowering
@@ -3694,7 +3694,7 @@ fn codegen_pass2(
         while cli < mir_result.closure_names.len() && cli < mir_result.closure_mir.len() {
             let cname = &mir_result.closure_names[cli];
             let cbody = &mir_result.closure_mir[cli];
-            let closure_ir = codegen::generate_function_with_ctx(ctx, cbody, cname.as_str());
+            let closure_ir = codegen.generate_function_with_ctx(ctx, cbody, cname.as_str());
             file_append_string(output_path, closure_ir.as_str());
             cli += 1;
         }
@@ -3935,15 +3935,15 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     let compile_start = blood_clock_millis();
 
     // === Build cache check ===
-    let base_dir = source::parent_dir(path);
-    let cache_dir = build_cache::ensure_cache_dir(base_dir.as_str());
+    let base_dir = source.parent_dir(path);
+    let cache_dir = build_cache.ensure_cache_dir(base_dir.as_str());
     let exe_path: &str = args_get(0);
     let source_hash: u64 = if args.no_cache { 0 as u64 } else {
-        build_cache::try_cache(base_dir.as_str(), path, exe_path)
+        build_cache.try_cache(base_dir.as_str(), path, exe_path)
     };
 
     if source_hash != 0 {
-        let cached_path = build_cache::cache_ll_path(cache_dir.as_str(), source_hash);
+        let cached_path = build_cache.cache_ll_path(cache_dir.as_str(), source_hash);
         if file_exists(cached_path.as_str()) {
             // Cache hit — copy cached IR to output
             let cached_content: &str = file_read_to_string(cached_path.as_str());
@@ -3956,7 +3956,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     }
 
     // Phase 1: Read source file and compute base_dir (global allocator — small)
-    let read_result = source::read_file(path);
+    let read_result = source.read_file(path);
     if !read_result.success {
         print_error("Failed to read source file");
         return false;
@@ -3980,13 +3980,13 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     region_activate(parse_region);
 
     // Preprocess macros before parsing (source-level expansion)
-    let expanded_source = macro_expand::preprocess_macros(content);
-    let parse_result = parser::parse_file(expanded_source.as_str());
+    let expanded_source = macro_expand.preprocess_macros(content);
+    let parse_result = parser.parse_file(expanded_source.as_str());
     let parse_elapsed = blood_clock_millis() - parse_start;
     if parse_result.errors.len() > 0 {
         eprint_str(" FAILED\n");
         let error_reporter = reporter.ErrorReporter.new(expanded_source.as_str(), path);
-        let parse_errors = driver::convert_parse_errors(&parse_result.errors);
+        let parse_errors = driver.convert_parse_errors(&parse_result.errors);
         let formatted = error_reporter.format_errors(&parse_errors);
         print_str(formatted.as_str());
         region_deactivate();
@@ -4022,7 +4022,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     region_activate(hir_region);
 
     let stdlib_path = resolve_stdlib_path(args);
-    let lower_result = hir_lower::lower_program_with_base_dir(program, base_dir, expanded_source.as_str(), stdlib_path);
+    let lower_result = hir_lower.lower_program_with_base_dir(program, base_dir, expanded_source.as_str(), stdlib_path);
     let hir_elapsed = blood_clock_millis() - hir_start;
 
     // Check for HIR lowering errors
@@ -4041,7 +4041,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     if has_hir_errors {
         eprint_str(" FAILED\n");
         let error_reporter = reporter.ErrorReporter.new(expanded_source.as_str(), path);
-        let hir_errors = driver::convert_hir_diagnostics(&lower_result.diagnostics);
+        let hir_errors = driver.convert_hir_diagnostics(&lower_result.diagnostics);
         let formatted = error_reporter.format_errors(&hir_errors);
         print_str(formatted.as_str());
         region_deactivate();
@@ -4078,12 +4078,12 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
 
     region_activate(hir_region);
 
-    let typeck_result = typeck_driver::check_lower_result(&lower_result);
+    let typeck_result = typeck_driver.check_lower_result(&lower_result);
     let typeck_elapsed = blood_clock_millis() - typeck_start;
     if !typeck_result.success {
         eprint_str(" FAILED\n");
         let error_reporter = reporter.ErrorReporter.new(expanded_source.as_str(), path);
-        let type_errors = driver::convert_type_errors(&typeck_result.errors);
+        let type_errors = driver.convert_type_errors(&typeck_result.errors);
         let formatted = error_reporter.format_errors(&type_errors);
         print_str(formatted.as_str());
         region_deactivate();
@@ -4117,13 +4117,13 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     let codegen_start = blood_clock_millis();
 
     eprint_str("[begin_streaming]");
-    let mut ctx = codegen_streaming::begin_streaming_module("main", output_path, &lower_result.items);
+    let mut ctx = codegen_streaming.begin_streaming_module("main", output_path, &lower_result.items);
     ctx.trace_codegen = args.trace_codegen;
     eprint_str("[done]");
 
     // Register builtin ADT types (Vec, String, HashMap, Box, Option, Result) in the ADT registry
     eprint_str("[register_adts]");
-    codegen::register_builtin_adts(
+    codegen.register_builtin_adts(
         &mut ctx,
         &lower_result.builtin_vec_def,
         &lower_result.builtin_string_def,
@@ -4133,7 +4133,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
         &lower_result.builtin_result_def,
     );
     eprint_str("[populate_adt]");
-    codegen::populate_adt_registry(&mut ctx, &lower_result.items);
+    codegen.populate_adt_registry(&mut ctx, &lower_result.items);
     eprint_str("[done]");
 
     // Dump ADT layouts if requested (after registry is fully populated)
@@ -4157,7 +4157,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     // Pass 0: Emit static global variable declarations.
     // This must happen before any functions that reference statics.
     // Also registers static names in ctx using the interner.
-    codegen_streaming::emit_static_globals_with_names(&mut ctx, &lower_result.interner, &lower_result.items);
+    codegen_streaming.emit_static_globals_with_names(&mut ctx, &lower_result.interner, &lower_result.items);
     eprint_str("[pass0_done]");
 
     // Pass 1a: Register def_names for all function bodies (global allocator)
@@ -4165,7 +4165,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     for body_idx in 0usize..lower_result.bodies.len() {
         let body_entry = &lower_result.bodies[body_idx];
         let body_id = body_entry.body_id;
-        let fn_info = driver::find_fn_for_body(&lower_result.items, body_id);
+        let fn_info = driver.find_fn_for_body(&lower_result.items, body_id);
         let def_id = match &fn_info {
             &Option.Some(ref info) => info.def_id.index,
             &Option.None => body_idx as u32,
@@ -4183,7 +4183,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
         if !is_static {
             let fn_name = match &fn_info {
                 &Option.Some(ref info) => make_mangled_fn_name(&lower_result.interner, info),
-                &Option.None => driver::make_fn_name(body_idx),
+                &Option.None => driver.make_fn_name(body_idx),
             };
             ctx.register_def_name(def_id, fn_name);
         }
@@ -4224,7 +4224,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     let mut const_generic_fn_set: Vec<u32> = Vec.new();
     let mut const_generic_param_counts: Vec<u32> = Vec.new();
     let mut const_generic_body_ids: Vec<u32> = Vec.new();
-    driver::collect_const_generic_fns(
+    driver.collect_const_generic_fns(
         &lower_result.items,
         &mut const_generic_fn_set,
         &mut const_generic_param_counts,
@@ -4290,7 +4290,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
             let req = &pass2_result.mono_requests[mono_i];
 
             // Find the original function's body
-            let body_info = driver::find_body_for_def_id(
+            let body_info = driver.find_body_for_def_id(
                 &lower_result.bodies,
                 &lower_result.items,
                 req.original_def_id,
@@ -4301,7 +4301,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
                     let hir_body = &body_entry.body;
 
                     // Build const_bindings using Phase 4 DefIds from the BodyEntry
-                    let const_bindings = driver::build_const_bindings_from_body(
+                    let const_bindings = driver.build_const_bindings_from_body(
                         &body_entry.const_param_def_ids,
                         &req.const_values,
                     );
@@ -4309,7 +4309,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
                     // Activate MIR region for lowering
                     region_activate(mono_mir_region);
 
-                    let mono_mir = mir_lower::lower_body_with_const_info(
+                    let mono_mir = mir_lower.lower_body_with_const_info(
                         hir_def.DefId.new(req.specialized_def_id),
                         hir_body,
                         info.return_ty,
@@ -4328,10 +4328,10 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
                     region_deactivate();
 
                     // Register the specialized function name
-                    ctx.register_def_name(req.specialized_def_id, common::make_string(req.fn_name.as_str()));
+                    ctx.register_def_name(req.specialized_def_id, common.make_string(req.fn_name.as_str()));
 
                     // Codegen the specialized body
-                    let mono_ir = codegen::generate_function_with_ctx(&mut ctx, &mono_mir.body, req.fn_name.as_str());
+                    let mono_ir = codegen.generate_function_with_ctx(&mut ctx, &mono_mir.body, req.fn_name.as_str());
                     file_append_string(output_path, mono_ir.as_str());
 
                     // Reset MIR region for next mono function
@@ -4379,7 +4379,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     }
 
     // Finish: write string constants and intrinsic declarations
-    codegen_streaming::finish_streaming_module(&mut ctx);
+    codegen_streaming.finish_streaming_module(&mut ctx);
 
     // Write foreign function declarations (runtime builtins)
     let foreign_decls = generate_foreign_declarations(&lower_result.interner, &lower_result.items);
@@ -4407,7 +4407,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
 
     // === Store in cache ===
     if source_hash != 0 {
-        let cached_path = build_cache::cache_ll_path(cache_dir.as_str(), source_hash);
+        let cached_path = build_cache.cache_ll_path(cache_dir.as_str(), source_hash);
         let compiled_ir: &str = file_read_to_string(output_path);
         file_write_string(cached_path.as_str(), compiled_ir);
     }
@@ -4489,8 +4489,8 @@ fn dump_type_resolutions(typeck_result: &typeck_driver.TypeCheckResult) {
         line.push_str("  ?");
         push_usize(&mut line, subst.var_id.index as usize);
         line.push_str(" -> ");
-        let type_ty = type_intern::ty_id_to_type(subst.ty);
-        let type_str = dump_mir::format_type(&type_ty);
+        let type_ty = type_intern.ty_id_to_type(subst.ty);
+        let type_str = dump_mir.format_type(&type_ty);
         line.push_str(type_str.as_str());
         line.push('\n');
         eprint_str(line.as_str());
@@ -4525,7 +4525,7 @@ fn dump_adt_layouts(ctx: &codegen_ctx.CodegenCtx) {
     for i in 0usize..ctx.adt_registry.len() {
         match &ctx.adt_registry[i] {
             &codegen_ctx.AdtEntry.Struct(ref layout) => {
-                let total_size = codegen_size::llvm_type_size(layout.llvm_type.as_str());
+                let total_size = codegen_size.llvm_type_size(layout.llvm_type.as_str());
                 // Header: struct defN: SIZE bytes
                 let mut line = String.new();
                 line.push_str("  struct def");
@@ -4549,7 +4549,7 @@ fn dump_adt_layouts(ctx: &codegen_ctx.CodegenCtx) {
                 // Fields
                 for fi in 0usize..layout.fields.len() {
                     let field = &layout.fields[fi];
-                    let field_size = codegen_size::llvm_type_size(field.llvm_type.as_str());
+                    let field_size = codegen_size.llvm_type_size(field.llvm_type.as_str());
                     let mut fline = String.new();
                     fline.push_str("      field ");
                     push_usize(&mut fline, fi);
@@ -4560,9 +4560,9 @@ fn dump_adt_layouts(ctx: &codegen_ctx.CodegenCtx) {
                     fline.push_str(" bytes)");
                     match &field.hir_type {
                         &Option.Some(ty_id) => {
-                            let ty = type_intern::ty_id_to_type(ty_id);
+                            let ty = type_intern.ty_id_to_type(ty_id);
                             fline.push_str("  // ");
-                            let type_str = dump_mir::format_type(&ty);
+                            let type_str = dump_mir.format_type(&ty);
                             fline.push_str(type_str.as_str());
                         }
                         &Option.None => {}
@@ -4572,8 +4572,8 @@ fn dump_adt_layouts(ctx: &codegen_ctx.CodegenCtx) {
                 }
             }
             &codegen_ctx.AdtEntry.Enum(ref layout) => {
-                let total_size = codegen_size::llvm_type_size(layout.llvm_type.as_str());
-                let disc_size = codegen_size::llvm_type_size(layout.discriminant_type.as_str());
+                let total_size = codegen_size.llvm_type_size(layout.llvm_type.as_str());
+                let disc_size = codegen_size.llvm_type_size(layout.discriminant_type.as_str());
                 // Header: enum defN: SIZE bytes
                 let mut line = String.new();
                 line.push_str("  enum def");
@@ -4617,7 +4617,7 @@ fn dump_adt_layouts(ctx: &codegen_ctx.CodegenCtx) {
                     push_usize(&mut vline, variant.variant_idx as usize);
                     vline.push_str(": payload ");
                     vline.push_str(variant.payload_llvm_type.as_str());
-                    let vsize = codegen_size::llvm_type_size(variant.payload_llvm_type.as_str());
+                    let vsize = codegen_size.llvm_type_size(variant.payload_llvm_type.as_str());
                     vline.push_str(" (");
                     push_u64(&mut vline, vsize);
                     vline.push_str(" bytes)\n");
@@ -4626,7 +4626,7 @@ fn dump_adt_layouts(ctx: &codegen_ctx.CodegenCtx) {
                     // Variant fields
                     for vfi in 0usize..variant.fields.len() {
                         let field = &variant.fields[vfi];
-                        let field_size = codegen_size::llvm_type_size(field.llvm_type.as_str());
+                        let field_size = codegen_size.llvm_type_size(field.llvm_type.as_str());
                         let mut fline = String.new();
                         fline.push_str("          field ");
                         push_usize(&mut fline, vfi);
@@ -4637,9 +4637,9 @@ fn dump_adt_layouts(ctx: &codegen_ctx.CodegenCtx) {
                         fline.push_str(" bytes)");
                         match &field.hir_type {
                             &Option.Some(ty_id) => {
-                                let ty = type_intern::ty_id_to_type(ty_id);
+                                let ty = type_intern.ty_id_to_type(ty_id);
                                 fline.push_str("  // ");
-                                let type_str = dump_mir::format_type(&ty);
+                                let type_str = dump_mir.format_type(&ty);
                                 fline.push_str(type_str.as_str());
                             }
                             &Option.None => {}

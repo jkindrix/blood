@@ -121,7 +121,7 @@ pub fn is_place_unop(unary_op: common.UnaryOp) -> bool {
 
 /// Converts an HIR literal to a MIR constant.
 pub fn lower_literal(lit: &hir_expr.Literal, ty: &hir_ty.Type) -> mir_types.Constant {
-    let ty_id = type_intern::type_to_ty_id(ty);
+    let ty_id = type_intern.type_to_ty_id(ty);
     match &lit.kind {
         &hir_expr.LiteralKind.Int { val, ty: _ } => {
             // Determine if signed or unsigned based on the type
@@ -302,7 +302,7 @@ pub fn operand_from_place(place: mir_types.Place, ty: &hir_ty.Type) -> mir_types
 
 /// Creates an operand from a place using a TyId, choosing Copy or Move based on type.
 pub fn operand_from_place_id(place: mir_types.Place, ty_id: type_intern.TyId) -> mir_types.Operand {
-    let ty = type_intern::ty_id_to_type(ty_id);
+    let ty = type_intern.ty_id_to_type(ty_id);
     operand_from_place(place, &ty)
 }
 

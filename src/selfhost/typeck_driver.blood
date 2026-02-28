@@ -390,7 +390,7 @@ fn register_trait(
     // Register a synthetic ImplInfo for the trait's Self type so that
     // default method bodies can resolve calls to other trait methods.
     // Within a trait, Self = Adt { def_id: trait_def_id, args: [] }.
-    let interner = type_intern::type_interner();
+    let interner = type_intern.type_interner();
     let empty_args = interner.intern_ty_list(&Vec.new());
     let trait_self_ty = interner.mk_adt(hir_def.DefId.new(def_id.index), empty_args);
     let mut impl_methods: Vec<typeck.MethodInfo> = Vec.new();
@@ -1106,7 +1106,7 @@ fn find_def_id_for_body(
             &hir_item.ItemKind.Effect(_) => {}
             &hir_item.ItemKind.Handler(ref handler_def) => {
                 // Check return clause body
-                // Use body_id.index as the DefId to match driver::find_fn_for_body
+                // Use body_id.index as the DefId to match driver.find_fn_for_body
                 // which returns DefId.new(target_body_id.index) for return clause bodies.
                 match &handler_def.return_clause {
                     &Option.Some(ref rc) => {
@@ -1155,7 +1155,7 @@ fn check_linearity(checker: &mut typeck.TypeChecker, body: &hir_expr.Body) {
         let local = &body.locals[li];
         let local_ty_id = local.ty;
         let resolved_id = checker.resolve(local_ty_id);
-        let resolved_ty = type_intern::ty_id_to_type(resolved_id);
+        let resolved_ty = type_intern.ty_id_to_type(resolved_id);
         match &resolved_ty.kind {
             &hir_ty.TypeKind.Ownership { ref qualifier, inner: _ } => {
                 let is_lin = match qualifier {
@@ -1193,15 +1193,15 @@ fn check_linearity(checker: &mut typeck.TypeChecker, body: &hir_expr.Body) {
         if entry.is_linear {
             if entry.use_count == 0 {
                 checker.error_with_note(typeck.TypeErrorKind.LinearNotUsed, entry.def_span,
-                    common::make_string("linear values must be used exactly once"));
+                    common.make_string("linear values must be used exactly once"));
             } else if entry.use_count > 1 {
                 checker.error_with_note(typeck.TypeErrorKind.LinearUsedMultipleTimes, entry.def_span,
-                    common::make_string("linear values must be used exactly once; this value was used multiple times"));
+                    common.make_string("linear values must be used exactly once; this value was used multiple times"));
             }
         } else if entry.is_affine {
             if entry.use_count > 1 {
                 checker.error_with_note(typeck.TypeErrorKind.AffineUsedMultipleTimes, entry.def_span,
-                    common::make_string("affine values can be used at most once; this value was used multiple times"));
+                    common.make_string("affine values can be used at most once; this value was used multiple times"));
             }
         }
     }
@@ -1361,7 +1361,7 @@ fn check_body(checker: &mut typeck.TypeChecker, body: &hir_expr.Body, return_ty:
     checker.set_return_ty(return_ty);
 
     // Type check the body expression
-    let body_ty = typeck_expr::infer_expr(checker, &body.expr);
+    let body_ty = typeck_expr.infer_expr(checker, &body.expr);
 
     // Unify body type with return type
     match &checker.return_ty {
@@ -1386,7 +1386,7 @@ fn check_body(checker: &mut typeck.TypeChecker, body: &hir_expr.Body, return_ty:
             if target_idx < checker.locals.len() {
                 // checker.locals[].ty is now TyId; resolve and bridge to hir_ty for diagnostic
                 let resolved_id = checker.resolve(type_intern.TyId.new(checker.locals[target_idx].ty.index));
-                let resolved = type_intern::ty_id_to_type(resolved_id);
+                let resolved = type_intern.ty_id_to_type(resolved_id);
                 if type_contains_infer(&resolved) {
                     // Only flag let-bindings, not pattern/handler op params.
                     // Let-bindings have a name in their span and are assigned
@@ -1395,7 +1395,7 @@ fn check_body(checker: &mut typeck.TypeChecker, body: &hir_expr.Body, return_ty:
                     // be monomorphized).
                     if type_is_unresolved_fn(&resolved) {
                         checker.error_with_note(typeck_types.TypeErrorKind.CannotInfer, local.span,
-                            common::make_string("type could not be fully resolved; add a type annotation"));
+                            common.make_string("type could not be fully resolved; add a type annotation"));
                         // Only report once per body
                         li = body.locals.len();
                     }
@@ -1510,12 +1510,12 @@ fn resolve_pending_methods(checker: &mut typeck.TypeChecker) {
 
             // Try to resolve the receiver type variable
             // Create TyId for the Infer variable
-            let interner = type_intern::type_interner();
+            let interner = type_intern.type_interner();
             let infer_ty_id = interner.intern(type_intern.InternedTypeKind.Infer(
                 hir_def.TyVarId.new(receiver_var)
             ));
             let receiver_ty_id = checker.resolve(infer_ty_id);
-            let stripped_id = typeck_expr::strip_refs_id(receiver_ty_id);
+            let stripped_id = typeck_expr.strip_refs_id(receiver_ty_id);
 
             // Check if still an Infer variable
             let stripped_kind = interner.get(stripped_id);
@@ -1541,13 +1541,13 @@ fn resolve_pending_methods(checker: &mut typeck.TypeChecker) {
                         let mut subst = unify.TypeParamSubst.new();
                         if impl_num_generics > 0 {
                             // Bridge: extract_type_params_from_self_ty still takes &hir_ty.Type
-                            let impl_self_type = type_intern::ty_id_to_type(impl_self_ty_id);
-                            let stripped_type = type_intern::ty_id_to_type(stripped_id);
-                            unify::extract_type_params_from_self_ty(
+                            let impl_self_type = type_intern.ty_id_to_type(impl_self_ty_id);
+                            let stripped_type = type_intern.ty_id_to_type(stripped_id);
+                            unify.extract_type_params_from_self_ty(
                                 &impl_self_type, &stripped_type, &mut subst
                             );
                         }
-                        let actual_ret_id = unify::substitute_type_params_id(
+                        let actual_ret_id = unify.substitute_type_params_id(
                             method_return_ty_id, &subst
                         );
                         let return_infer_id = interner.intern(type_intern.InternedTypeKind.Infer(
@@ -1601,20 +1601,20 @@ fn copy_opt_def_id(opt: &Option<hir_def.DefId>) -> Option<hir_def.DefId> {
 
 /// Helper: create a reference type &T.
 fn make_ref_ty(inner: type_intern.TyId) -> type_intern.TyId {
-    let interner = type_intern::type_interner();
+    let interner = type_intern.type_interner();
     interner.intern(type_intern.InternedTypeKind.Ref { inner: inner, mutable: false })
 }
 
 /// Helper: create an ADT type with the given DefId and type args.
 fn make_adt(def_id: hir_def.DefId, args: Vec<type_intern.TyId>) -> type_intern.TyId {
-    let interner = type_intern::type_interner();
+    let interner = type_intern.type_interner();
     let args_list = interner.intern_ty_list(&args);
     interner.intern(type_intern.InternedTypeKind.Adt { def_id: def_id, args: args_list })
 }
 
 /// Helper: create a type parameter Param(n).
 fn make_param(n: u32) -> type_intern.TyId {
-    let interner = type_intern::type_interner();
+    let interner = type_intern.type_interner();
     interner.intern(type_intern.InternedTypeKind.Param(hir_def.TyVarId.new(n)))
 }
 
@@ -1639,7 +1639,7 @@ fn add_method(
     methods.push(typeck.MethodInfo.new(def_id, sym, params, ret, true, self_mut));
     // Record mapping from synthetic DefId to runtime function name for codegen
     checker.builtin_def_names.push(
-        typeck.BuiltinDefName.new(def_id.index, common::make_string(runtime_name)),
+        typeck.BuiltinDefName.new(def_id.index, common.make_string(runtime_name)),
     );
 }
 
@@ -1746,7 +1746,7 @@ fn register_string_methods(checker: &mut typeck.TypeChecker, string_def: hir_def
     add_method(checker, &mut methods, "ends_with", "string_ends_with", ew_params, type_intern.CommonTypes.bool_ty(), false, interner);
 
     // as_bytes(&self) -> &[u8]
-    let ty_interner = type_intern::type_interner();
+    let ty_interner = type_intern.type_interner();
     let u8_slice = ty_interner.intern(type_intern.InternedTypeKind.Slice { element: type_intern.CommonTypes.u8_ty() });
     add_method(checker, &mut methods, "as_bytes", "string_as_bytes", Vec.new(), make_ref_ty(u8_slice), false, interner);
 
@@ -2173,7 +2173,7 @@ fn register_str_methods(checker: &mut typeck.TypeChecker, interner: &interner.St
     add_method(checker, &mut methods, "is_empty", "str_is_empty", Vec.new(), type_intern.CommonTypes.bool_ty(), false, interner);
 
     // as_bytes(&self) -> &[u8]
-    let ty_interner = type_intern::type_interner();
+    let ty_interner = type_intern.type_interner();
     let u8_slice = ty_interner.intern(type_intern.InternedTypeKind.Slice { element: type_intern.CommonTypes.u8_ty() });
     add_method(checker, &mut methods, "as_bytes", "str_as_bytes", Vec.new(), make_ref_ty(u8_slice), false, interner);
 
@@ -2200,7 +2200,7 @@ fn register_str_methods(checker: &mut typeck.TypeChecker, interner: &interner.St
 
 /// Registers slice [T] methods: len, is_empty.
 fn register_slice_methods(checker: &mut typeck.TypeChecker, interner: &interner.StringInterner) {
-    let ty_interner = type_intern::type_interner();
+    let ty_interner = type_intern.type_interner();
     let self_ty = ty_interner.intern(type_intern.InternedTypeKind.Slice { element: make_param(0) });
     let mut methods: Vec<typeck.MethodInfo> = Vec.new();
 

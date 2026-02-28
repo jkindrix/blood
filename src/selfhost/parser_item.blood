@@ -106,14 +106,14 @@ fn parse_attribute(parser: &mut parser_base.Parser) -> ast.Attribute {
         // #[attr = "value"] - parse the actual literal value
         let lit_span = parser.current.span;
         let lit = if parser.check(token.TokenKind.StringLit) {
-            let s = parser_base::parse_string_from_span(parser, lit_span);
+            let s = parser_base.parse_string_from_span(parser, lit_span);
             parser.advance();
             ast.Literal {
                 kind: ast.LiteralKind.Str(s),
                 span: lit_span,
             }
         } else if parser.check(token.TokenKind.IntLit) {
-            let s = parser_base::parse_string_from_span(parser, lit_span);
+            let s = parser_base.parse_string_from_span(parser, lit_span);
             parser.advance();
             ast.Literal {
                 kind: ast.LiteralKind.Str(s),
@@ -150,7 +150,7 @@ fn parse_attribute_arg(parser: &mut parser_base.Parser) -> ast.AttributeArg {
 
     // Check for string literal (bare literal arg)
     if parser.check(token.TokenKind.StringLit) {
-        let s = parser_base::parse_string_from_span(parser, arg_span);
+        let s = parser_base.parse_string_from_span(parser, arg_span);
         parser.advance();
         let lit = ast.Literal {
             kind: ast.LiteralKind.Str(s),
@@ -161,7 +161,7 @@ fn parse_attribute_arg(parser: &mut parser_base.Parser) -> ast.AttributeArg {
 
     // Check for integer literal (bare literal arg)
     if parser.check(token.TokenKind.IntLit) {
-        let s = parser_base::parse_string_from_span(parser, arg_span);
+        let s = parser_base.parse_string_from_span(parser, arg_span);
         parser.advance();
         let lit = ast.Literal {
             kind: ast.LiteralKind.Str(s),
@@ -177,7 +177,7 @@ fn parse_attribute_arg(parser: &mut parser_base.Parser) -> ast.AttributeArg {
     if parser.try_consume(token.TokenKind.Eq) {
         let val_span = parser.current.span;
         let val_lit = if parser.check(token.TokenKind.StringLit) {
-            let s = parser_base::parse_string_from_span(parser, val_span);
+            let s = parser_base.parse_string_from_span(parser, val_span);
             parser.advance();
             ast.Literal {
                 kind: ast.LiteralKind.Str(s),
@@ -185,7 +185,7 @@ fn parse_attribute_arg(parser: &mut parser_base.Parser) -> ast.AttributeArg {
             }
         } else {
             // Non-string value — capture as string
-            let s = parser_base::parse_string_from_span(parser, val_span);
+            let s = parser_base.parse_string_from_span(parser, val_span);
             parser.advance();
             ast.Literal {
                 kind: ast.LiteralKind.Str(s),
@@ -200,14 +200,14 @@ fn parse_attribute_arg(parser: &mut parser_base.Parser) -> ast.AttributeArg {
         parser.advance();
         let call_span = parser.current.span;
         let call_lit = if parser.check(token.TokenKind.StringLit) {
-            let s = parser_base::parse_string_from_span(parser, call_span);
+            let s = parser_base.parse_string_from_span(parser, call_span);
             parser.advance();
             ast.Literal {
                 kind: ast.LiteralKind.Str(s),
                 span: call_span,
             }
         } else {
-            let s = parser_base::parse_string_from_span(parser, call_span);
+            let s = parser_base.parse_string_from_span(parser, call_span);
             parser.advance();
             ast.Literal {
                 kind: ast.LiteralKind.Str(s),
@@ -249,7 +249,7 @@ pub fn parse_visibility(parser: &mut parser_base.Parser) -> common.Visibility {
 
         if parser.check(token.TokenKind.In) {
             parser.advance();
-            let _path = parser_type::parse_type_path(parser);
+            let _path = parser_type.parse_type_path(parser);
             parser.expect(token.TokenKind.RParen);
             // For now, treat as public
             return common.Visibility.Public;
@@ -328,7 +328,7 @@ fn parse_generic_param(parser: &mut parser_base.Parser) -> ast.GenericParam {
         parser.advance();
         let name = parser.parse_spanned_symbol();
         parser.expect(token.TokenKind.Colon);
-        let ty = parser_type::parse_type(parser);
+        let ty = parser_type.parse_type(parser);
         let end_span = parser.previous.span;
         let const_param = ast.ConstGenericParam {
             name: name,
@@ -365,7 +365,7 @@ fn parse_generic_param(parser: &mut parser_base.Parser) -> ast.GenericParam {
 /// Parse a type bound (trait or lifetime) as a Type.
 fn parse_type_bound(parser: &mut parser_base.Parser) -> ast.Type {
     // Type bounds are just types (trait paths)
-    parser_type::parse_type(parser)
+    parser_type.parse_type(parser)
 }
 
 // ============================================================
@@ -398,7 +398,7 @@ pub fn parse_where_clause(parser: &mut parser_base.Parser) -> ast.WhereClause {
 fn parse_where_predicate(parser: &mut parser_base.Parser) -> ast.WherePredicate {
     let start = parser.current.span;
 
-    let ty = parser_type::parse_type(parser);
+    let ty = parser_type.parse_type(parser);
     parser.expect(token.TokenKind.Colon);
 
     let mut bounds: Vec<ast.Type> = Vec.new();
@@ -435,7 +435,7 @@ pub fn parse_fn_decl(parser: &mut parser_base.Parser, attrs: Vec<ast.Attribute>,
 
     // Validate function name is an identifier
     if parser.current.kind != token.TokenKind.Ident && parser.current.kind != token.TokenKind.SelfLower {
-        parser.error_at_current(common::make_string("expected identifier for function name"), parser_base.ErrorCode.ExpectedIdentifier);
+        parser.error_at_current(common.make_string("expected identifier for function name"), parser_base.ErrorCode.ExpectedIdentifier);
     }
 
     let name = parser.parse_spanned_symbol();
@@ -455,7 +455,7 @@ pub fn parse_fn_decl(parser: &mut parser_base.Parser, attrs: Vec<ast.Attribute>,
     // Parse return type if present
     let has_arrow = parser.try_consume(token.TokenKind.Arrow);
     let return_type = if has_arrow {
-        Option.Some(parser_type::parse_type(parser))
+        Option.Some(parser_type.parse_type(parser))
     } else {
         Option.None
     };
@@ -479,7 +479,7 @@ pub fn parse_fn_decl(parser: &mut parser_base.Parser, attrs: Vec<ast.Attribute>,
 
     // Parse body or semicolon
     let body: Option<ast.Block> = if parser.check(token.TokenKind.LBrace) {
-        Option.Some(parser_expr::parse_block(parser))
+        Option.Some(parser_expr.parse_block(parser))
     } else {
         parser.expect(token.TokenKind.Semi);
         Option.None
@@ -522,7 +522,7 @@ fn parse_spec_clauses(parser: &mut parser_base.Parser) -> Vec<ast.SpecClause> {
             Option.Some(k) => {
                 let start = parser.current.span;
                 parser.advance();
-                let expr = parser_expr::parse_expr_no_struct(parser);
+                let expr = parser_expr.parse_expr_no_struct(parser);
                 let end = parser.previous.span;
                 let clause = ast.SpecClause {
                     kind: k,
@@ -561,7 +561,7 @@ fn parse_fn_param(parser: &mut parser_base.Parser) -> ast.Param {
         let self_span = parser.previous.span;
 
         let ty = if parser.try_consume(token.TokenKind.Colon) {
-            parser_type::parse_type(parser)
+            parser_type.parse_type(parser)
         } else {
             make_ref_self_type(self_span, false)
         };
@@ -587,7 +587,7 @@ fn parse_fn_param(parser: &mut parser_base.Parser) -> ast.Param {
             let self_span = parser.previous.span;
 
             let ty = if parser.try_consume(token.TokenKind.Colon) {
-                parser_type::parse_type(parser)
+                parser_type.parse_type(parser)
             } else {
                 make_ref_self_type(self_span, true)
             };
@@ -603,7 +603,7 @@ fn parse_fn_param(parser: &mut parser_base.Parser) -> ast.Param {
         // Not &mut self — this is a regular parameter starting with &
         // The & was consumed speculatively; parse as reference pattern parameter.
         // This means we need to handle &pattern: Type. Construct a Ref pattern.
-        let inner_pat = parser_pattern::parse_pattern(parser);
+        let inner_pat = parser_pattern.parse_pattern(parser);
         let ref_pattern = ast.Pattern {
             kind: ast.PatternKind.Ref {
                 is_mut: false,
@@ -612,7 +612,7 @@ fn parse_fn_param(parser: &mut parser_base.Parser) -> ast.Param {
             span: common.Span { start: start.start, end: parser.previous.span.end, line: start.line, column: start.column },
         };
         parser.expect(token.TokenKind.Colon);
-        let ty = parser_type::parse_type(parser);
+        let ty = parser_type.parse_type(parser);
         let end_span = parser.previous.span;
         return ast.Param {
             qualifier: Option.None,
@@ -630,7 +630,7 @@ fn parse_fn_param(parser: &mut parser_base.Parser) -> ast.Param {
         let self_span = parser.previous.span;
 
         let ty = if parser.try_consume(token.TokenKind.Colon) {
-            parser_type::parse_type(parser)
+            parser_type.parse_type(parser)
         } else {
             make_ref_self_type(self_span, false)
         };
@@ -653,7 +653,7 @@ fn parse_fn_param(parser: &mut parser_base.Parser) -> ast.Param {
         let self_span = parser.previous.span;
 
         let ty = if parser.try_consume(token.TokenKind.Colon) {
-            parser_type::parse_type(parser)
+            parser_type.parse_type(parser)
         } else {
             make_ref_self_type(self_span, true)
         };
@@ -675,9 +675,9 @@ fn parse_fn_param(parser: &mut parser_base.Parser) -> ast.Param {
         Option.None
     };
 
-    let pattern = parser_pattern::parse_pattern(parser);
+    let pattern = parser_pattern.parse_pattern(parser);
     parser.expect(token.TokenKind.Colon);
-    let ty = parser_type::parse_type(parser);
+    let ty = parser_type.parse_type(parser);
 
     let end_span = parser.previous.span;
     ast.Param {
@@ -775,7 +775,7 @@ fn parse_effect_row(parser: &mut parser_base.Parser) -> ast.EffectRow {
                 break;
             }
 
-            let eff = parser_type::parse_type(parser);
+            let eff = parser_type.parse_type(parser);
             effects.push(eff);
 
             if !parser.try_consume(token.TokenKind.Comma) {
@@ -812,12 +812,12 @@ fn parse_effect_row(parser: &mut parser_base.Parser) -> ast.EffectRow {
     let rest: Option<common.SpannedSymbol> = Option.None;
 
     // Parse first effect (as a type)
-    let eff = parser_type::parse_type(parser);
+    let eff = parser_type.parse_type(parser);
     effects.push(eff);
 
     // Parse additional effects with +
     while parser.try_consume(token.TokenKind.Plus) {
-        let eff = parser_type::parse_type(parser);
+        let eff = parser_type.parse_type(parser);
         effects.push(eff);
     }
 
@@ -897,7 +897,7 @@ fn parse_struct_field(parser: &mut parser_base.Parser) -> ast.StructField {
     let vis = parse_visibility(parser);
     let name = parser.parse_spanned_symbol();
     parser.expect(token.TokenKind.Colon);
-    let ty = parser_type::parse_type(parser);
+    let ty = parser_type.parse_type(parser);
 
     let end_span = parser.previous.span;
     ast.StructField {
@@ -917,7 +917,7 @@ fn parse_tuple_struct_fields(parser: &mut parser_base.Parser) -> Vec<ast.Type> {
     while !parser.check(token.TokenKind.RParen) && !parser.is_at_end() {
         // Visibility is allowed but ignored for tuple fields
         let _vis = parse_visibility(parser);
-        let ty = parser_type::parse_type(parser);
+        let ty = parser_type.parse_type(parser);
         types.push(ty);
 
         if !parser.try_consume(token.TokenKind.Comma) {
@@ -1019,7 +1019,7 @@ pub fn parse_impl_block(parser: &mut parser_base.Parser, attrs: Vec<ast.Attribut
     };
 
     // Parse the type (or trait for impl)
-    let first_type = parser_type::parse_type(parser);
+    let first_type = parser_type.parse_type(parser);
 
     // Check for trait impl: impl Trait for Type
     let mut trait_ty: Option<ast.Type>;
@@ -1028,7 +1028,7 @@ pub fn parse_impl_block(parser: &mut parser_base.Parser, attrs: Vec<ast.Attribut
     if parser.try_consume(token.TokenKind.For) {
         // This is a trait impl - first_type is the trait
         trait_ty = Option.Some(first_type);
-        self_ty = parser_type::parse_type(parser);
+        self_ty = parser_type.parse_type(parser);
     } else {
         // Inherent impl
         trait_ty = Option.None;
@@ -1128,9 +1128,9 @@ pub fn parse_const_decl(parser: &mut parser_base.Parser, attrs: Vec<ast.Attribut
 
     let name = parser.parse_spanned_symbol();
     parser.expect(token.TokenKind.Colon);
-    let ty = parser_type::parse_type(parser);
+    let ty = parser_type.parse_type(parser);
     parser.expect(token.TokenKind.Eq);
-    let value = parser_expr::parse_expr(parser);
+    let value = parser_expr.parse_expr(parser);
     parser.expect(token.TokenKind.Semi);
 
     let end_span = parser.previous.span;
@@ -1152,9 +1152,9 @@ pub fn parse_static_decl(parser: &mut parser_base.Parser, attrs: Vec<ast.Attribu
     let is_mut = parser.try_consume(token.TokenKind.Mut);
     let name = parser.parse_spanned_symbol();
     parser.expect(token.TokenKind.Colon);
-    let ty = parser_type::parse_type(parser);
+    let ty = parser_type.parse_type(parser);
     parser.expect(token.TokenKind.Eq);
-    let value = parser_expr::parse_expr(parser);
+    let value = parser_expr.parse_expr(parser);
     parser.expect(token.TokenKind.Semi);
 
     let end_span = parser.previous.span;
@@ -1191,7 +1191,7 @@ pub fn parse_type_alias_decl(parser: &mut parser_base.Parser, attrs: Vec<ast.Att
     // Type alias definition: `type Item = ConcreteType;`
     let ty: Option<ast.Type> = if parser.check(token.TokenKind.Eq) {
         parser.advance(); // consume '='
-        let parsed_ty = parser_type::parse_type(parser);
+        let parsed_ty = parser_type.parse_type(parser);
         Option.Some(parsed_ty)
     } else {
         Option.None
@@ -1589,10 +1589,10 @@ fn parse_effect_decl(parser: &mut parser_base.Parser, attrs: Vec<ast.Attribute>)
     // Optional parent effects: extends Effect1, Effect2
     let mut parent_effects: Vec<ast.Type> = Vec.new();
     if parser.try_consume(token.TokenKind.Extends) {
-        let eff = parser_type::parse_type(parser);
+        let eff = parser_type.parse_type(parser);
         parent_effects.push(eff);
         while parser.try_consume(token.TokenKind.Comma) {
-            let eff = parser_type::parse_type(parser);
+            let eff = parser_type.parse_type(parser);
             parent_effects.push(eff);
         }
     }
@@ -1652,7 +1652,7 @@ fn parse_operation_decl(parser: &mut parser_base.Parser) -> ast.OperationDecl {
 
     // Return type: -> Type
     parser.expect(token.TokenKind.Arrow);
-    let return_type = parser_type::parse_type(parser);
+    let return_type = parser_type.parse_type(parser);
 
     parser.expect(token.TokenKind.Semi);
     let end_span = parser.previous.span;
@@ -1696,7 +1696,7 @@ fn parse_handler_decl(parser: &mut parser_base.Parser, attrs: Vec<ast.Attribute>
 
     // Required: for EffectType
     parser.expect(token.TokenKind.For);
-    let effect_ty = parser_type::parse_type(parser);
+    let effect_ty = parser_type.parse_type(parser);
 
     // Optional where clause
     let where_clause = if parser.check(token.TokenKind.Where) {
@@ -1724,7 +1724,7 @@ fn parse_handler_decl(parser: &mut parser_base.Parser, attrs: Vec<ast.Attribute>
     // Parse optional finally clause: finally { body }
     let finally_clause = if parser.check(token.TokenKind.Finally) {
         parser.advance(); // consume 'finally'
-        let blk = parser_expr::parse_block(parser);
+        let blk = parser_expr.parse_block(parser);
         Option.Some(Box.new(blk))
     } else {
         Option.None
@@ -1762,9 +1762,9 @@ fn parse_handler_state(parser: &mut parser_base.Parser) -> ast.HandlerState {
     let is_mut = parser.try_consume(token.TokenKind.Mut);
     let name = parser.parse_spanned_symbol();
     parser.expect(token.TokenKind.Colon);
-    let ty = parser_type::parse_type(parser);
+    let ty = parser_type.parse_type(parser);
     let default_val = if parser.try_consume(token.TokenKind.Eq) {
-        Option.Some(parser_expr::parse_expr(parser))
+        Option.Some(parser_expr.parse_expr(parser))
     } else {
         Option.None
     };
@@ -1786,7 +1786,7 @@ fn parse_return_clause(parser: &mut parser_base.Parser) -> ast.ReturnClause {
     parser.expect(token.TokenKind.LParen);
     let param = parser.parse_spanned_symbol();
     parser.expect(token.TokenKind.RParen);
-    let body = parser_expr::parse_block(parser);
+    let body = parser_expr.parse_block(parser);
     let end_span = parser.previous.span;
     ast.ReturnClause {
         param,
@@ -1803,14 +1803,14 @@ fn parse_operation_impl(parser: &mut parser_base.Parser) -> ast.OperationImpl {
     parser.expect(token.TokenKind.LParen);
     let mut params: Vec<ast.Pattern> = Vec.new();
     while !parser.check(token.TokenKind.RParen) && !parser.is_at_end() {
-        let pat = parser_pattern::parse_pattern(parser);
+        let pat = parser_pattern.parse_pattern(parser);
         params.push(pat);
         if !parser.try_consume(token.TokenKind.Comma) {
             break;
         }
     }
     parser.expect(token.TokenKind.RParen);
-    let body = parser_expr::parse_block(parser);
+    let body = parser_expr.parse_block(parser);
     let end_span = parser.previous.span;
     ast.OperationImpl {
         name,
@@ -1832,7 +1832,7 @@ fn parse_bridge_decl(parser: &mut parser_base.Parser, attrs: Vec<ast.Attribute>)
     // Parse language specifier (string literal)
     let language = if parser.check(token.TokenKind.StringLit) {
         let span = parser.current.span;
-        let text = parser_base::parse_string_from_span(parser, span);
+        let text = parser_base.parse_string_from_span(parser, span);
         parser.advance();
         common.SpannedString { value: text, span: span }
     } else {
@@ -1905,7 +1905,7 @@ fn parse_bridge_fn(parser: &mut parser_base.Parser, attrs: Vec<ast.Attribute>) -
         let p_start = parser.current.span;
         let p_name = parser.parse_spanned_symbol();
         parser.expect(token.TokenKind.Colon);
-        let p_ty = parser_type::parse_type(parser);
+        let p_ty = parser_type.parse_type(parser);
         let p_end = parser.previous.span;
         params.push(ast.BridgeParam {
             name: p_name,
@@ -1920,7 +1920,7 @@ fn parse_bridge_fn(parser: &mut parser_base.Parser, attrs: Vec<ast.Attribute>) -
     parser.expect(token.TokenKind.RParen);
 
     let return_type = if parser.try_consume(token.TokenKind.Arrow) {
-        Option.Some(parser_type::parse_type(parser))
+        Option.Some(parser_type.parse_type(parser))
     } else {
         Option.None
     };
@@ -1961,7 +1961,7 @@ fn parse_bridge_struct(parser: &mut parser_base.Parser, attrs: Vec<ast.Attribute
         let f_start = parser.current.span;
         let f_name = parser.parse_spanned_symbol();
         parser.expect(token.TokenKind.Colon);
-        let f_ty = parser_type::parse_type(parser);
+        let f_ty = parser_type.parse_type(parser);
         let f_end = parser.previous.span;
         fields.push(ast.BridgeField {
             name: f_name,
@@ -1995,8 +1995,8 @@ fn parse_bridge_enum(parser: &mut parser_base.Parser, attrs: Vec<ast.Attribute>)
         let discriminant = if parser.try_consume(token.TokenKind.Eq) {
             // Parse integer literal as discriminant
             let lit_span = parser.current.span;
-            let val = parser_base::parse_int_value_from_span(parser, lit_span);
-            let suffix = parser_base::parse_int_suffix_from_span(parser, lit_span);
+            let val = parser_base.parse_int_value_from_span(parser, lit_span);
+            let suffix = parser_base.parse_int_suffix_from_span(parser, lit_span);
             parser.advance();
             Option.Some(ast.Literal {
                 kind: ast.LiteralKind.Int { val: val, suffix: suffix },

@@ -39,12 +39,12 @@ pub fn format_mir_body(body: &mir_body.MirBody, fn_name: &str) -> String {
         out.push('_');
         push_u32(&mut out, local.id.index);
         out.push_str(": ");
-        let param_hir_ty = type_intern::ty_id_to_type(local.ty);
+        let param_hir_ty = type_intern.ty_id_to_type(local.ty);
         let ty_str = format_type(&param_hir_ty);
         out.push_str(ty_str.as_str());
     }
     out.push_str(") -> ");
-    let ret_hir_ty = type_intern::ty_id_to_type(body.locals[0].ty);
+    let ret_hir_ty = type_intern.ty_id_to_type(body.locals[0].ty);
     let ret_ty_str = format_type(&ret_hir_ty);
     out.push_str(ret_ty_str.as_str());
     out.push_str(" {\n");
@@ -109,7 +109,7 @@ pub fn format_local(local: &mir_body.MirLocal, index: usize, param_count: u32) -
     out.push('_');
     push_u32(&mut out, index as u32);
     out.push_str(": ");
-    let local_hir_ty = type_intern::ty_id_to_type(local.ty);
+    let local_hir_ty = type_intern.ty_id_to_type(local.ty);
     let ty_str = format_type(&local_hir_ty);
     out.push_str(ty_str.as_str());
 
@@ -312,8 +312,8 @@ pub fn format_type(ty: &hir_ty.Type) -> String {
             out.push(')');
             out
         }
-        &hir_ty.TypeKind.Never => common::make_string("!"),
-        &hir_ty.TypeKind.Error => common::make_string("{error}"),
+        &hir_ty.TypeKind.Never => common.make_string("!"),
+        &hir_ty.TypeKind.Error => common.make_string("{error}"),
         &hir_ty.TypeKind.Ownership { ref qualifier, ref inner } => {
             let mut out = String.new();
             match qualifier {
@@ -330,23 +330,23 @@ pub fn format_type(ty: &hir_ty.Type) -> String {
 /// Formats a primitive type name.
 pub fn format_prim(prim: &hir_ty.PrimitiveTy) -> String {
     match prim {
-        &hir_ty.PrimitiveTy.Bool => common::make_string("bool"),
-        &hir_ty.PrimitiveTy.I8 => common::make_string("i8"),
-        &hir_ty.PrimitiveTy.I16 => common::make_string("i16"),
-        &hir_ty.PrimitiveTy.I32 => common::make_string("i32"),
-        &hir_ty.PrimitiveTy.I64 => common::make_string("i64"),
-        &hir_ty.PrimitiveTy.I128 => common::make_string("i128"),
-        &hir_ty.PrimitiveTy.Isize => common::make_string("isize"),
-        &hir_ty.PrimitiveTy.U8 => common::make_string("u8"),
-        &hir_ty.PrimitiveTy.U16 => common::make_string("u16"),
-        &hir_ty.PrimitiveTy.U32 => common::make_string("u32"),
-        &hir_ty.PrimitiveTy.U64 => common::make_string("u64"),
-        &hir_ty.PrimitiveTy.U128 => common::make_string("u128"),
-        &hir_ty.PrimitiveTy.Usize => common::make_string("usize"),
-        &hir_ty.PrimitiveTy.F32 => common::make_string("f32"),
-        &hir_ty.PrimitiveTy.F64 => common::make_string("f64"),
-        &hir_ty.PrimitiveTy.Char => common::make_string("char"),
-        &hir_ty.PrimitiveTy.Str => common::make_string("str"),
+        &hir_ty.PrimitiveTy.Bool => common.make_string("bool"),
+        &hir_ty.PrimitiveTy.I8 => common.make_string("i8"),
+        &hir_ty.PrimitiveTy.I16 => common.make_string("i16"),
+        &hir_ty.PrimitiveTy.I32 => common.make_string("i32"),
+        &hir_ty.PrimitiveTy.I64 => common.make_string("i64"),
+        &hir_ty.PrimitiveTy.I128 => common.make_string("i128"),
+        &hir_ty.PrimitiveTy.Isize => common.make_string("isize"),
+        &hir_ty.PrimitiveTy.U8 => common.make_string("u8"),
+        &hir_ty.PrimitiveTy.U16 => common.make_string("u16"),
+        &hir_ty.PrimitiveTy.U32 => common.make_string("u32"),
+        &hir_ty.PrimitiveTy.U64 => common.make_string("u64"),
+        &hir_ty.PrimitiveTy.U128 => common.make_string("u128"),
+        &hir_ty.PrimitiveTy.Usize => common.make_string("usize"),
+        &hir_ty.PrimitiveTy.F32 => common.make_string("f32"),
+        &hir_ty.PrimitiveTy.F64 => common.make_string("f64"),
+        &hir_ty.PrimitiveTy.Char => common.make_string("char"),
+        &hir_ty.PrimitiveTy.Str => common.make_string("str"),
     }
 }
 
@@ -390,7 +390,7 @@ pub fn format_place(place: &mir_types.Place) -> String {
 /// Formats a single projection element.
 pub fn format_projection(elem: &mir_types.PlaceElem) -> String {
     match elem {
-        &mir_types.PlaceElem.Deref => common::make_string(".*"),
+        &mir_types.PlaceElem.Deref => common.make_string(".*"),
         &mir_types.PlaceElem.Field(idx) => {
             let mut out = String.new();
             out.push('.');
@@ -473,7 +473,7 @@ pub fn format_constant(c: &mir_types.Constant) -> String {
     let kind_str = format_constant_kind(&c.kind);
     out.push_str(kind_str.as_str());
     out.push_str(": ");
-    let c_hir_ty = type_intern::ty_id_to_type(c.ty);
+    let c_hir_ty = type_intern.ty_id_to_type(c.ty);
     let ty_str = format_type(&c_hir_ty);
     out.push_str(ty_str.as_str());
     out
@@ -510,9 +510,9 @@ pub fn format_constant_kind(kind: &mir_types.ConstantKind) -> String {
         }
         &mir_types.ConstantKind.Bool(val) => {
             if val {
-                common::make_string("true")
+                common.make_string("true")
             } else {
-                common::make_string("false")
+                common.make_string("false")
             }
         }
         &mir_types.ConstantKind.Char(val) => {
@@ -560,7 +560,7 @@ pub fn format_constant_kind(kind: &mir_types.ConstantKind) -> String {
             out.push_str(" bytes>\"");
             out
         }
-        &mir_types.ConstantKind.Unit => common::make_string("()"),
+        &mir_types.ConstantKind.Unit => common.make_string("()"),
         &mir_types.ConstantKind.FnDef(ref def_id) => {
             let mut out = String.new();
             out.push_str("fn(def");
@@ -582,7 +582,7 @@ pub fn format_constant_kind(kind: &mir_types.ConstantKind) -> String {
             out.push(')');
             out
         }
-        &mir_types.ConstantKind.ZeroSized => common::make_string("zst"),
+        &mir_types.ConstantKind.ZeroSized => common.make_string("zst"),
     }
 }
 
@@ -593,44 +593,44 @@ pub fn format_constant_kind(kind: &mir_types.ConstantKind) -> String {
 /// Formats a binary operator.
 pub fn format_binop(binop: &mir_types.MirBinOp) -> String {
     match binop {
-        &mir_types.MirBinOp.Add => common::make_string("Add"),
-        &mir_types.MirBinOp.Sub => common::make_string("Sub"),
-        &mir_types.MirBinOp.Mul => common::make_string("Mul"),
-        &mir_types.MirBinOp.Div => common::make_string("Div"),
-        &mir_types.MirBinOp.Rem => common::make_string("Rem"),
-        &mir_types.MirBinOp.Eq => common::make_string("Eq"),
-        &mir_types.MirBinOp.Ne => common::make_string("Ne"),
-        &mir_types.MirBinOp.Lt => common::make_string("Lt"),
-        &mir_types.MirBinOp.Le => common::make_string("Le"),
-        &mir_types.MirBinOp.Gt => common::make_string("Gt"),
-        &mir_types.MirBinOp.Ge => common::make_string("Ge"),
-        &mir_types.MirBinOp.BitAnd => common::make_string("BitAnd"),
-        &mir_types.MirBinOp.BitOr => common::make_string("BitOr"),
-        &mir_types.MirBinOp.BitXor => common::make_string("BitXor"),
-        &mir_types.MirBinOp.Shl => common::make_string("Shl"),
-        &mir_types.MirBinOp.Shr => common::make_string("Shr"),
-        &mir_types.MirBinOp.AddChecked => common::make_string("AddChecked"),
-        &mir_types.MirBinOp.SubChecked => common::make_string("SubChecked"),
-        &mir_types.MirBinOp.MulChecked => common::make_string("MulChecked"),
+        &mir_types.MirBinOp.Add => common.make_string("Add"),
+        &mir_types.MirBinOp.Sub => common.make_string("Sub"),
+        &mir_types.MirBinOp.Mul => common.make_string("Mul"),
+        &mir_types.MirBinOp.Div => common.make_string("Div"),
+        &mir_types.MirBinOp.Rem => common.make_string("Rem"),
+        &mir_types.MirBinOp.Eq => common.make_string("Eq"),
+        &mir_types.MirBinOp.Ne => common.make_string("Ne"),
+        &mir_types.MirBinOp.Lt => common.make_string("Lt"),
+        &mir_types.MirBinOp.Le => common.make_string("Le"),
+        &mir_types.MirBinOp.Gt => common.make_string("Gt"),
+        &mir_types.MirBinOp.Ge => common.make_string("Ge"),
+        &mir_types.MirBinOp.BitAnd => common.make_string("BitAnd"),
+        &mir_types.MirBinOp.BitOr => common.make_string("BitOr"),
+        &mir_types.MirBinOp.BitXor => common.make_string("BitXor"),
+        &mir_types.MirBinOp.Shl => common.make_string("Shl"),
+        &mir_types.MirBinOp.Shr => common.make_string("Shr"),
+        &mir_types.MirBinOp.AddChecked => common.make_string("AddChecked"),
+        &mir_types.MirBinOp.SubChecked => common.make_string("SubChecked"),
+        &mir_types.MirBinOp.MulChecked => common.make_string("MulChecked"),
     }
 }
 
 /// Formats a unary operator.
 pub fn format_unop(unop: &mir_types.MirUnOp) -> String {
     match unop {
-        &mir_types.MirUnOp.Neg => common::make_string("Neg"),
-        &mir_types.MirUnOp.Not => common::make_string("Not"),
+        &mir_types.MirUnOp.Neg => common.make_string("Neg"),
+        &mir_types.MirUnOp.Not => common.make_string("Not"),
     }
 }
 
 /// Formats an aggregate kind.
 pub fn format_aggregate_kind(kind: &mir_types.AggregateKind) -> String {
     match kind {
-        &mir_types.AggregateKind.Tuple => common::make_string("Tuple"),
+        &mir_types.AggregateKind.Tuple => common.make_string("Tuple"),
         &mir_types.AggregateKind.Array(ref elem_ty) => {
             let mut out = String.new();
             out.push_str("Array(");
-            let elem_hir_ty = type_intern::ty_id_to_type(*elem_ty);
+            let elem_hir_ty = type_intern.ty_id_to_type(*elem_ty);
             let ty_str = format_type(&elem_hir_ty);
             out.push_str(ty_str.as_str());
             out.push(')');
@@ -648,7 +648,7 @@ pub fn format_aggregate_kind(kind: &mir_types.AggregateKind) -> String {
                     if i > 0 {
                         out.push_str(", ");
                     }
-                    let ta_hir_ty = type_intern::ty_id_to_type(type_args[i]);
+                    let ta_hir_ty = type_intern.ty_id_to_type(type_args[i]);
                     let a = format_type(&ta_hir_ty);
                     out.push_str(a.as_str());
                 }
@@ -657,7 +657,7 @@ pub fn format_aggregate_kind(kind: &mir_types.AggregateKind) -> String {
             out.push(')');
             out
         }
-        &mir_types.AggregateKind.Record => common::make_string("Record"),
+        &mir_types.AggregateKind.Record => common.make_string("Record"),
         &mir_types.AggregateKind.Closure { def_id } => {
             let mut out = String.new();
             out.push_str("Closure(def");
@@ -672,7 +672,7 @@ pub fn format_aggregate_kind(kind: &mir_types.AggregateKind) -> String {
             } else {
                 out.push_str("Range(");
             }
-            let elem_hir_ty = type_intern::ty_id_to_type(*element);
+            let elem_hir_ty = type_intern.ty_id_to_type(*element);
             let ty_str = format_type(&elem_hir_ty);
             out.push_str(ty_str.as_str());
             out.push(')');
@@ -751,7 +751,7 @@ pub fn format_rvalue(rv: &mir_types.Rvalue) -> String {
             let operand_str = format_operand(operand);
             out.push_str(operand_str.as_str());
             out.push_str(" as ");
-            let target_hir_ty = type_intern::ty_id_to_type(*target_ty);
+            let target_hir_ty = type_intern.ty_id_to_type(*target_ty);
             let ty_str = format_type(&target_hir_ty);
             out.push_str(ty_str.as_str());
             out.push(')');
@@ -802,7 +802,7 @@ pub fn format_rvalue(rv: &mir_types.Rvalue) -> String {
         &mir_types.Rvalue.ZeroInit(ref ty) => {
             let mut out = String.new();
             out.push_str("ZeroInit(");
-            let zi_hir_ty = type_intern::ty_id_to_type(*ty);
+            let zi_hir_ty = type_intern.ty_id_to_type(*ty);
             let ty_str = format_type(&zi_hir_ty);
             out.push_str(ty_str.as_str());
             out.push(')');
@@ -860,7 +860,7 @@ pub fn format_statement(stmt: &mir_stmt.Statement) -> String {
             out
         }
         &mir_stmt.StatementKind.PopHandler => {
-            common::make_string("PopHandler")
+            common.make_string("PopHandler")
         }
         &mir_stmt.StatementKind.PushInlineHandler { effect_id, ref operations } => {
             let mut out = String.new();
@@ -916,7 +916,7 @@ pub fn format_statement(stmt: &mir_stmt.Statement) -> String {
             out.push(')');
             out
         }
-        &mir_stmt.StatementKind.Nop => common::make_string("Nop"),
+        &mir_stmt.StatementKind.Nop => common.make_string("Nop"),
     }
 }
 
@@ -954,7 +954,7 @@ pub fn format_terminator(term: &mir_term.Terminator) -> String {
             out
         }
         &mir_term.TerminatorKind.Return => {
-            common::make_string("return")
+            common.make_string("return")
         }
         &mir_term.TerminatorKind.Call { ref func, ref args, ref destination, ref target, ref unwind } => {
             let mut out = String.new();
@@ -1046,7 +1046,7 @@ pub fn format_terminator(term: &mir_term.Terminator) -> String {
             out
         }
         &mir_term.TerminatorKind.Unreachable => {
-            common::make_string("unreachable")
+            common.make_string("unreachable")
         }
         &mir_term.TerminatorKind.Drop { ref place, target, ref unwind } => {
             let mut out = String.new();

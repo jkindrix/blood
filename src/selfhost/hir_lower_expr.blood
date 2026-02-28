@@ -38,7 +38,7 @@ pub fn lower_expr(ctx: &mut hir_lower_ctx.LoweringCtx, expr: &ast.Expr) -> hir_e
         &ast.ExprKind.Binary { op: bin_op, ref left, ref right } => {
             let left_hir = lower_expr(ctx, left.as_ref());
             let right_hir = lower_expr(ctx, right.as_ref());
-            let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+            let ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
             hir_expr.Expr.new(
                 hir_expr.ExprKind.Binary {
                     op: bin_op,
@@ -51,7 +51,7 @@ pub fn lower_expr(ctx: &mut hir_lower_ctx.LoweringCtx, expr: &ast.Expr) -> hir_e
         }
         &ast.ExprKind.Unary { op: unary_op, ref operand } => {
             let operand_hir = lower_expr(ctx, operand.as_ref());
-            let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+            let ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
             hir_expr.Expr.new(
                 hir_expr.ExprKind.Unary {
                     op: unary_op,
@@ -73,7 +73,7 @@ pub fn lower_expr(ctx: &mut hir_lower_ctx.LoweringCtx, expr: &ast.Expr) -> hir_e
         &ast.ExprKind.Index { ref base, ref idx } => {
             let base_hir = lower_expr(ctx, base.as_ref());
             let idx_hir = lower_expr(ctx, idx.as_ref());
-            let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+            let ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
             hir_expr.Expr.new(
                 hir_expr.ExprKind.Index {
                     base: Box.new(base_hir),
@@ -101,7 +101,7 @@ pub fn lower_expr(ctx: &mut hir_lower_ctx.LoweringCtx, expr: &ast.Expr) -> hir_e
                 &Some(ref e) => Some(Box.new(lower_expr(ctx, e.as_ref()))),
                 &None => Option.None,
             };
-            let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+            let ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
             hir_expr.Expr.new(
                 hir_expr.ExprKind.Range {
                     start: start_hir,
@@ -114,13 +114,13 @@ pub fn lower_expr(ctx: &mut hir_lower_ctx.LoweringCtx, expr: &ast.Expr) -> hir_e
         }
         &ast.ExprKind.Cast { ref expr, ref ty } => {
             let expr_hir = lower_expr(ctx, expr.as_ref());
-            let cast_ty = hir_lower_type::lower_type_id(ctx, ty);
+            let cast_ty = hir_lower_type.lower_type_id(ctx, ty);
             hir_expr.Expr.new(
                 hir_expr.ExprKind.Cast {
                     expr: Box.new(expr_hir),
                     ty: cast_ty,
                 },
-                type_intern::type_interner().mk_infer(ctx.alloc_ty_var()),
+                type_intern.type_interner().mk_infer(ctx.alloc_ty_var()),
                 span,
             )
         }
@@ -221,7 +221,7 @@ pub fn lower_expr(ctx: &mut hir_lower_ctx.LoweringCtx, expr: &ast.Expr) -> hir_e
         &ast.ExprKind.WithHandle { handler: ref handler_expr, body: ref body_expr } => {
             let handler_hir = lower_expr(ctx, handler_expr.as_ref());
             let body_hir = lower_expr(ctx, body_expr.as_ref());
-            let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+            let ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
             hir_expr.Expr.new(
                 hir_expr.ExprKind.WithHandle {
                     handler: Box.new(handler_hir),
@@ -236,7 +236,7 @@ pub fn lower_expr(ctx: &mut hir_lower_ctx.LoweringCtx, expr: &ast.Expr) -> hir_e
         }
         &ast.ExprKind.Resume(ref val) => {
             let val_hir = lower_expr(ctx, val.as_ref());
-            let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+            let ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
             hir_expr.Expr.new(
                 hir_expr.ExprKind.Resume(Box.new(val_hir)),
                 ty,
@@ -245,7 +245,7 @@ pub fn lower_expr(ctx: &mut hir_lower_ctx.LoweringCtx, expr: &ast.Expr) -> hir_e
         }
         &ast.ExprKind.Try(ref inner) => {
             let inner_hir = lower_expr(ctx, inner.as_ref());
-            let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+            let ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
             hir_expr.Expr.new(
                 hir_expr.ExprKind.Try(Box.new(inner_hir)),
                 ty,
@@ -257,7 +257,7 @@ pub fn lower_expr(ctx: &mut hir_lower_ctx.LoweringCtx, expr: &ast.Expr) -> hir_e
         }
         &ast.ExprKind.Unsafe(ref block) => {
             let block_hir = lower_block_to_expr(ctx, block);
-            let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+            let ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
             hir_expr.Expr.new(
                 hir_expr.ExprKind.Unsafe(Box.new(block_hir)),
                 ty,
@@ -290,7 +290,7 @@ pub fn lower_expr(ctx: &mut hir_lower_ctx.LoweringCtx, expr: &ast.Expr) -> hir_e
                 &None => Option.None,
             };
 
-            let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+            let ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
             hir_expr.Expr.new(
                 hir_expr.ExprKind.Region {
                     name: region_name,
@@ -307,7 +307,7 @@ pub fn lower_expr(ctx: &mut hir_lower_ctx.LoweringCtx, expr: &ast.Expr) -> hir_e
         }
         &ast.ExprKind.Default => {
             // Default expression - type will be inferred from context during type checking
-            let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+            let ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
             hir_expr.Expr.new(hir_expr.ExprKind.Default, ty, span)
         }
         &ast.ExprKind.MacroCall { ref path, ref kind } => {
@@ -355,7 +355,7 @@ fn lower_literal_expr(ctx: &mut hir_lower_ctx.LoweringCtx, lit: &ast.Literal, sp
                 hir_expr.LiteralKind.Int { val: val, ty: prim_ty },
                 match prim_ty {
                     Some(p) => prim_to_ty_id(p),
-                    Option.None => type_intern::type_interner().mk_infer(ctx.alloc_ty_var()),
+                    Option.None => type_intern.type_interner().mk_infer(ctx.alloc_ty_var()),
                 },
             )
         }
@@ -368,7 +368,7 @@ fn lower_literal_expr(ctx: &mut hir_lower_ctx.LoweringCtx, lit: &ast.Literal, sp
                 hir_expr.LiteralKind.Float { bits: bits, ty: prim_ty },
                 match prim_ty {
                     Some(p) => prim_to_ty_id(p),
-                    Option.None => type_intern::type_interner().mk_infer(ctx.alloc_ty_var()),
+                    Option.None => type_intern.type_interner().mk_infer(ctx.alloc_ty_var()),
                 },
             )
         }
@@ -378,7 +378,7 @@ fn lower_literal_expr(ctx: &mut hir_lower_ctx.LoweringCtx, lit: &ast.Literal, sp
             s_copy.push_str(s.as_str());
             (
                 hir_expr.LiteralKind.Str(s_copy),
-                type_intern::type_interner().mk_ref(type_intern.CommonTypes.str_ty(), false),
+                type_intern.type_interner().mk_ref(type_intern.CommonTypes.str_ty(), false),
             )
         }
         &ast.LiteralKind.ByteStr(ref bytes) => {
@@ -389,7 +389,7 @@ fn lower_literal_expr(ctx: &mut hir_lower_ctx.LoweringCtx, lit: &ast.Literal, sp
             }
             (
                 hir_expr.LiteralKind.ByteStr(bytes_copy),
-                type_intern::type_interner().mk_infer(ctx.alloc_ty_var()), // &[u8; N]
+                type_intern.type_interner().mk_infer(ctx.alloc_ty_var()), // &[u8; N]
             )
         }
         &ast.LiteralKind.Char(c) => {
@@ -466,7 +466,7 @@ fn lower_path_expr(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.ExprPath, spa
             // Local bindings must produce ExprKind.Local, not ExprKind.Path,
             // because their def_id is a dummy value (0xFFFFFFFF).
             if binding.is_local() {
-                let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+                let ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
                 return hir_expr.Expr.new(
                     hir_expr.ExprKind.Local(binding.local_id),
                     ty,
@@ -479,7 +479,7 @@ fn lower_path_expr(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.ExprPath, spa
                 &Some(ref args) => {
                     // Record turbofish const args for monomorphization
                     record_turbofish_const_args(ctx, args, span.start as u32);
-                    hir_lower_type::lower_type_args(ctx, args)
+                    hir_lower_type.lower_type_args(ctx, args)
                 }
                 &None => Vec.new(),
             };
@@ -502,7 +502,7 @@ fn lower_path_expr(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.ExprPath, spa
                     hir_def.ResolvedPath.new(binding.def_id, type_arg_count, span)
                 }
             };
-            let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+            let ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
             return hir_expr.Expr.new(
                 hir_expr.ExprKind.Path(resolved),
                 ty,
@@ -513,13 +513,13 @@ fn lower_path_expr(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.ExprPath, spa
         // Not found
         ctx.error(
             hir.DiagnosticCode.E0102,
-            common::make_string("undefined name"),
+            common.make_string("undefined name"),
             seg.name.span,
         );
         return hir_expr.Expr.error(span);
     }
 
-    // Multi-segment paths (e.g., module::item or Type.method)
+    // Multi-segment paths (e.g., module.item or Type.method)
     // Extract the names from path segments, re-interning for consistent indices
     let mut names: Vec<common.SpannedSymbol> = Vec.new();
     for i in 0usize..path.segments.len() {
@@ -537,7 +537,7 @@ fn lower_path_expr(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.ExprPath, spa
         let type_args = match &last_seg.args {
             &Some(ref args) => {
                 record_turbofish_const_args(ctx, args, span.start as u32);
-                hir_lower_type::lower_type_args(ctx, args)
+                hir_lower_type.lower_type_args(ctx, args)
             }
             &None => Vec.new(),
         };
@@ -560,7 +560,7 @@ fn lower_path_expr(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.ExprPath, spa
                 hir_def.ResolvedPath.new(result.def_id, type_arg_count, span)
             }
         };
-        let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+        let ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
         return hir_expr.Expr.new(
             hir_expr.ExprKind.Path(resolved_path),
             ty,
@@ -569,7 +569,7 @@ fn lower_path_expr(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.ExprPath, spa
     }
 
     // Not found - report with full path text for diagnostics
-    let mut msg = common::make_string("undefined qualified path: ");
+    let mut msg = common.make_string("undefined qualified path: ");
     for j in 0usize..names.len() {
         if j > 0 {
             msg.push_str("::");
@@ -599,7 +599,7 @@ fn lower_call_expr(ctx: &mut hir_lower_ctx.LoweringCtx, callee: &ast.Expr, args:
         args_hir.push(arg_hir);
     }
 
-    let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+    let ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
     hir_expr.Expr.new(
         hir_expr.ExprKind.Call {
             callee: Box.new(callee_hir),
@@ -704,7 +704,7 @@ fn lower_method_call_expr(
                 let type_args_hir = match type_args {
                     &Some(ref ta) => {
                         record_turbofish_const_args(ctx, ta, span.start as u32);
-                        hir_lower_type::lower_type_args(ctx, ta)
+                        hir_lower_type.lower_type_args(ctx, ta)
                     }
                     &None => Vec.new(),
                 };
@@ -714,13 +714,13 @@ fn lower_method_call_expr(
                     let arg_hir = lower_expr(ctx, &args[i].val);
                     args_hir.push(arg_hir);
                 }
-                let callee_ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+                let callee_ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
                 let callee_expr = hir_expr.Expr.new(
                     hir_expr.ExprKind.Path(resolved_path),
                     callee_ty,
                     span,
                 );
-                let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+                let ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
                 return hir_expr.Expr.new(
                     hir_expr.ExprKind.Call {
                         callee: Box.new(callee_expr),
@@ -737,7 +737,7 @@ fn lower_method_call_expr(
     let receiver_hir = lower_expr(ctx, receiver);
 
     let type_args_hir = match type_args {
-        &Some(ref ta) => hir_lower_type::lower_type_args_id(ctx, ta),
+        &Some(ref ta) => hir_lower_type.lower_type_args_id(ctx, ta),
         &None => Vec.new(),
     };
 
@@ -754,7 +754,7 @@ fn lower_method_call_expr(
     let method_sym = ctx.intern(method_str.as_str());
     let re_method = common.SpannedSymbol { symbol: method_sym, span: method.span };
 
-    let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+    let ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
     hir_expr.Expr.new(
         hir_expr.ExprKind.MethodCall {
             receiver: Box.new(receiver_hir),
@@ -804,7 +804,7 @@ fn lower_field_expr(ctx: &mut hir_lower_ctx.LoweringCtx, base: &ast.Expr, field:
                                 hir_def.ResolvedPath.new(result.def_id, 0, span)
                             }
                         };
-                        let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+                        let ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
                         return hir_expr.Expr.new(
                             hir_expr.ExprKind.Path(resolved_path),
                             ty,
@@ -836,7 +836,7 @@ fn lower_field_expr(ctx: &mut hir_lower_ctx.LoweringCtx, base: &ast.Expr, field:
         }
     };
 
-    let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+    let ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
     hir_expr.Expr.new(
         hir_expr.ExprKind.Field {
             base: Box.new(base_hir),
@@ -855,7 +855,7 @@ fn lower_tuple_expr(ctx: &mut hir_lower_ctx.LoweringCtx, elems: &Vec<ast.Expr>, 
         elems_hir.push(elem_hir);
     }
 
-    let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+    let ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
     hir_expr.Expr.new(
         hir_expr.ExprKind.Tuple(elems_hir),
         ty,
@@ -876,7 +876,7 @@ fn lower_array_expr(ctx: &mut hir_lower_ctx.LoweringCtx, arr: &ast.ArrayExpr, sp
         }
         &ast.ArrayExpr.Repeat { ref val, ref count } => {
             let val_hir = lower_expr(ctx, val.as_ref());
-            let repeat_count = const_eval::eval_array_size_u64(count.as_ref());
+            let repeat_count = const_eval.eval_array_size_u64(count.as_ref());
             hir_expr.ArrayExpr.Repeat {
                 val: Box.new(val_hir),
                 count: repeat_count,
@@ -884,7 +884,7 @@ fn lower_array_expr(ctx: &mut hir_lower_ctx.LoweringCtx, arr: &ast.ArrayExpr, sp
         }
     };
 
-    let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+    let ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
     hir_expr.Expr.new(
         hir_expr.ExprKind.Array(arr_hir),
         ty,
@@ -925,7 +925,7 @@ fn lower_record_expr(
         if lookup.is_none() {
             ctx.error(
                 hir.DiagnosticCode.E0102,
-                common::make_string("unknown struct type"),
+                common.make_string("unknown struct type"),
                 p.span,
             );
             return hir_expr.Expr.error(span);
@@ -934,7 +934,7 @@ fn lower_record_expr(
         let result = lookup.unwrap();
         let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
         let args = match &seg.args {
-            &Some(ref args) => hir_lower_type::lower_type_args(ctx, args),
+            &Some(ref args) => hir_lower_type.lower_type_args(ctx, args),
             &None => Vec.new(),
         };
 
@@ -954,7 +954,7 @@ fn lower_record_expr(
         if resolved.is_none() {
             ctx.error(
                 hir.DiagnosticCode.E0102,
-                common::make_string("unknown qualified struct path"),
+                common.make_string("unknown qualified struct path"),
                 p.span,
             );
             return hir_expr.Expr.error(span);
@@ -964,7 +964,7 @@ fn lower_record_expr(
         // Get type args from last segment
         let last_seg = &p.segments[p.segments.len() - 1];
         let args = match &last_seg.args {
-            &Some(ref args) => hir_lower_type::lower_type_args(ctx, args),
+            &Some(ref args) => hir_lower_type.lower_type_args(ctx, args),
             &None => Vec.new(),
         };
         (result.def_id, args)
@@ -1015,7 +1015,7 @@ fn lower_record_expr(
                     // Local bindings must produce ExprKind.Local, not ExprKind.Path,
                     // because their def_id is a dummy value (0xFFFFFFFF).
                     if binding.is_local() {
-                        let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+                        let ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
                         hir_expr.Expr.new(
                             hir_expr.ExprKind.Local(binding.local_id),
                             ty,
@@ -1023,7 +1023,7 @@ fn lower_record_expr(
                         )
                     } else {
                         let resolved = hir_def.ResolvedPath.new(binding.def_id, 0, f.name.span);
-                        let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+                        let ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
                         hir_expr.Expr.new(
                             hir_expr.ExprKind.Path(resolved),
                             ty,
@@ -1033,7 +1033,7 @@ fn lower_record_expr(
                 } else {
                     ctx.error(
                         hir.DiagnosticCode.E0102,
-                        common::make_string("undefined field variable"),
+                        common.make_string("undefined field variable"),
                         f.name.span,
                     );
                     hir_expr.Expr.error(f.name.span)
@@ -1059,7 +1059,7 @@ fn lower_record_expr(
         &None => Option.None,
     };
 
-    let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+    let ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
     hir_expr.Expr.new(
         hir_expr.ExprKind.Struct {
             path: resolved_path,
@@ -1091,7 +1091,7 @@ fn lower_anon_record_expr(
                 match local {
                     Option.Some(result) => {
                         let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
-                        let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+                        let ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
                         hir_expr.Expr.new(
                             hir_expr.ExprKind.Local(binding.local_id),
                             ty,
@@ -1101,7 +1101,7 @@ fn lower_anon_record_expr(
                     Option.None => {
                         ctx.error(
                             hir.DiagnosticCode.E0101,
-                            common::make_string("cannot use shorthand for unresolved field"),
+                            common.make_string("cannot use shorthand for unresolved field"),
                             f.name.span,
                         );
                         hir_expr.Expr.error(f.name.span)
@@ -1121,7 +1121,7 @@ fn lower_anon_record_expr(
         fields_hir.push(field_hir);
     }
 
-    let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+    let ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
     hir_expr.Expr.new(
         hir_expr.ExprKind.AnonRecord { fields: fields_hir },
         ty,
@@ -1136,7 +1136,7 @@ fn lower_anon_record_expr(
 /// Lower a block expression.
 fn lower_block_expr(ctx: &mut hir_lower_ctx.LoweringCtx, block: &ast.Block, span: common.Span) -> hir_expr.Expr {
     let block_hir = lower_block(ctx, block);
-    let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+    let ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
     hir_expr.Expr.new(
         hir_expr.ExprKind.Block(block_hir),
         ty,
@@ -1170,7 +1170,7 @@ pub fn lower_block(ctx: &mut hir_lower_ctx.LoweringCtx, block: &ast.Block) -> hi
 /// Lower a block to an expression.
 pub fn lower_block_to_expr(ctx: &mut hir_lower_ctx.LoweringCtx, block: &ast.Block) -> hir_expr.Expr {
     let block_hir = lower_block(ctx, block);
-    let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+    let ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
     hir_expr.Expr.new(
         hir_expr.ExprKind.Block(block_hir),
         ty,
@@ -1184,7 +1184,7 @@ fn lower_stmt(ctx: &mut hir_lower_ctx.LoweringCtx, stmt: &ast.Statement) -> hir_
         &ast.Statement.Let { ref pattern, ref ty, ref init_val, span } => {
             // Lower the type annotation first (does not introduce bindings)
             let ty_hir = match ty {
-                &Some(ref t) => Some(hir_lower_type::lower_type_id(ctx, t)),
+                &Some(ref t) => Some(hir_lower_type.lower_type_id(ctx, t)),
                 &None => Option.None,
             };
             // Lower the init expression BEFORE the pattern, so the RHS is
@@ -1281,7 +1281,7 @@ fn lower_local_item(ctx: &mut hir_lower_ctx.LoweringCtx, decl: &ast.Declaration)
     if !success {
         ctx.error(
             hir.DiagnosticCode.E0102,
-            common::make_string("duplicate local item definition"),
+            common.make_string("duplicate local item definition"),
             span,
         );
     }
@@ -1316,35 +1316,35 @@ fn lower_local_item(ctx: &mut hir_lower_ctx.LoweringCtx, decl: &ast.Declaration)
         }
         &ast.Declaration.Struct(_) => {
             ctx.error(hir.DiagnosticCode.E0104,
-                common::make_string("local struct declarations not yet supported"), span);
+                common.make_string("local struct declarations not yet supported"), span);
         }
         &ast.Declaration.Enum(_) => {
             ctx.error(hir.DiagnosticCode.E0104,
-                common::make_string("local enum declarations not yet supported"), span);
+                common.make_string("local enum declarations not yet supported"), span);
         }
         &ast.Declaration.TypeAlias(_) => {
             ctx.error(hir.DiagnosticCode.E0104,
-                common::make_string("local type alias declarations not yet supported"), span);
+                common.make_string("local type alias declarations not yet supported"), span);
         }
         &ast.Declaration.Const(_) => {
             ctx.error(hir.DiagnosticCode.E0104,
-                common::make_string("local const declarations not yet supported"), span);
+                common.make_string("local const declarations not yet supported"), span);
         }
         &ast.Declaration.Static(_) => {
             ctx.error(hir.DiagnosticCode.E0104,
-                common::make_string("local static declarations not yet supported"), span);
+                common.make_string("local static declarations not yet supported"), span);
         }
         &ast.Declaration.Trait(_) => {
             ctx.error(hir.DiagnosticCode.E0104,
-                common::make_string("local trait declarations not yet supported"), span);
+                common.make_string("local trait declarations not yet supported"), span);
         }
         &ast.Declaration.Effect(_) => {
             ctx.error(hir.DiagnosticCode.E0104,
-                common::make_string("local effect declarations not yet supported"), span);
+                common.make_string("local effect declarations not yet supported"), span);
         }
         &ast.Declaration.Handler(_) => {
             ctx.error(hir.DiagnosticCode.E0104,
-                common::make_string("local handler declarations not yet supported"), span);
+                common.make_string("local handler declarations not yet supported"), span);
         }
         // Impl/Bridge/Module/Macro/Use return early above and never reach here
         &ast.Declaration.Impl(_) => {}
@@ -1364,13 +1364,13 @@ fn lower_local_fn(
     def_id: hir_def.DefId,
 ) {
     // Lower generics
-    let generics = hir_lower_type::lower_generics(ctx, &f.type_params, &f.where_clause);
+    let generics = hir_lower_type.lower_generics(ctx, &f.type_params, &f.where_clause);
 
-    // Lower parameters inline (simplified version of hir_lower_item::lower_fn_params)
+    // Lower parameters inline (simplified version of hir_lower_item.lower_fn_params)
     let mut hir_params: Vec<hir_item.FnParam> = Vec.new();
     for i in 0usize..f.params.len() {
         let param = &f.params[i];
-        let param_ty = hir_lower_type::lower_type_id(ctx, &param.ty);
+        let param_ty = hir_lower_type.lower_type_id(ctx, &param.ty);
         let param_name = extract_param_name(ctx, &param.pattern);
         let param_def_id = ctx.alloc_def_id();
         let hir_param = hir_item.FnParam.new(param_def_id, param_name, param_ty, false, false, param.span);
@@ -1379,7 +1379,7 @@ fn lower_local_fn(
 
     // Lower return type
     let return_ty = match &f.return_type {
-        &Option.Some(ref rt) => hir_lower_type::lower_type_id(ctx, rt),
+        &Option.Some(ref rt) => hir_lower_type.lower_type_id(ctx, rt),
         &Option.None => type_intern.CommonTypes.unit(),
     };
 
@@ -1436,7 +1436,7 @@ fn lower_local_fn(
                     for pi in 0usize..f.params.len() {
                         let param = &f.params[pi];
                         let local_id = ctx.alloc_local_id();
-                        let param_ty_hir = hir_lower_type::lower_type_id(ctx, &param.ty);
+                        let param_ty_hir = hir_lower_type.lower_type_id(ctx, &param.ty);
                         let pname = extract_param_name(ctx, &param.pattern);
                         let local = hir_expr.Local.new(
                             local_id, pname, param_ty_hir, false, param.span,
@@ -1506,7 +1506,7 @@ fn extract_param_name(ctx: &mut hir_lower_ctx.LoweringCtx, pattern: &ast.Pattern
 /// Lower a pattern.
 pub fn lower_pattern(ctx: &mut hir_lower_ctx.LoweringCtx, pattern: &ast.Pattern) -> hir_expr.Pattern {
     let span = pattern.span;
-    let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+    let ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
 
     let kind = match &pattern.kind {
         &ast.PatternKind.Wildcard => {
@@ -1558,7 +1558,7 @@ pub fn lower_pattern(ctx: &mut hir_lower_ctx.LoweringCtx, pattern: &ast.Pattern)
             // - ByRef: local type = &T (reference to matched value)
             // - ByMutRef: local type = &mut T
             let local_ty = if by_ref {
-                type_intern::type_interner().mk_ref(ty, is_mut)
+                type_intern.type_interner().mk_ref(ty, is_mut)
             } else {
                 ty
             };
@@ -1712,7 +1712,7 @@ fn lower_struct_pattern(
             &None => {
                 // Shorthand: field name becomes binding name
                 let local_id = ctx.alloc_local_id();
-                let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+                let ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
                 // Re-intern binding name for cross-module consistency
                 let bind_name_str = ctx.span_to_string(f.name.span);
                 let bind_name_sym = ctx.intern(bind_name_str.as_str());
@@ -1793,7 +1793,7 @@ fn resolve_type_path_for_pattern(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast
         let result = resolved.unwrap();
         let last_seg = &path.segments[path.segments.len() - 1];
         let type_args = match &last_seg.args {
-            &Some(ref args) => hir_lower_type::lower_type_args(ctx, args),
+            &Some(ref args) => hir_lower_type.lower_type_args(ctx, args),
             &None => Vec.new(),
         };
         let type_arg_count = type_args.len() as u32;
@@ -1819,7 +1819,7 @@ fn resolve_type_path_for_pattern(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast
     // Unresolved
     ctx.error(
         hir.DiagnosticCode.E0102,
-        common::make_string("cannot resolve pattern path"),
+        common.make_string("cannot resolve pattern path"),
         span,
     );
 
@@ -1857,7 +1857,7 @@ fn lower_if_expr(
         &None => Option.None,
     };
 
-    let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+    let ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
     hir_expr.Expr.new(
         hir_expr.ExprKind.If {
             condition: Box.new(cond_hir),
@@ -1915,7 +1915,7 @@ fn lower_if_let_expr(
         }
     };
 
-    let wildcard_ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+    let wildcard_ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
     let wildcard_pat = hir_expr.Pattern.wildcard(wildcard_ty, span);
     let else_arm = hir_expr.MatchArm.new(
         wildcard_pat,
@@ -1928,7 +1928,7 @@ fn lower_if_let_expr(
     arms.push(then_arm);
     arms.push(else_arm);
 
-    let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+    let ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
     hir_expr.Expr.new(
         hir_expr.ExprKind.Match {
             scrutinee: Box.new(scrutinee_hir),
@@ -1968,7 +1968,7 @@ fn lower_match_expr(
         arms_hir.push(arm_hir);
     }
 
-    let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+    let ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
     hir_expr.Expr.new(
         hir_expr.ExprKind.Match {
             scrutinee: Box.new(scrutinee_hir),
@@ -1991,7 +1991,7 @@ fn lower_loop_expr(
         &None => Option.None,
     };
     let body_hir = lower_block_to_expr(ctx, body);
-    let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+    let ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
     hir_expr.Expr.new(
         hir_expr.ExprKind.Loop {
             label: label_sym,
@@ -2040,7 +2040,7 @@ fn lower_while_expr(
         span,
     );
 
-    let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+    let ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
     hir_expr.Expr.new(
         hir_expr.ExprKind.Loop {
             label: label_sym,
@@ -2088,7 +2088,7 @@ fn lower_while_let_expr(
         span,
     );
 
-    let wildcard_ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+    let wildcard_ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
     let wildcard_pat = hir_expr.Pattern.wildcard(wildcard_ty, span);
     let break_arm = hir_expr.MatchArm.new(
         wildcard_pat,
@@ -2110,7 +2110,7 @@ fn lower_while_let_expr(
         span,
     );
 
-    let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+    let ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
     hir_expr.Expr.new(
         hir_expr.ExprKind.Loop {
             label: label_sym,
@@ -2211,7 +2211,7 @@ fn lower_for_range(
     if loop_var_local_id.is_none() {
         ctx.error(
             hir.DiagnosticCode.E0104,
-            common::make_string("for loop variable must be a simple identifier"),
+            common.make_string("for loop variable must be a simple identifier"),
             span,
         );
         return lower_block_to_expr(ctx, body);
@@ -2241,7 +2241,7 @@ fn lower_for_range(
         &None => {
             ctx.error(
                 hir.DiagnosticCode.E0104,
-                common::make_string("for loop requires an end value"),
+                common.make_string("for loop requires an end value"),
                 span,
             );
             return lower_block_to_expr(ctx, body);
@@ -2404,7 +2404,7 @@ fn lower_for_range(
             label: label_sym,
             body: Box.new(if_expr),
         },
-        type_intern::type_interner().mk_infer(ctx.alloc_ty_var()),
+        type_intern.type_interner().mk_infer(ctx.alloc_ty_var()),
         span,
     );
 
@@ -2414,7 +2414,7 @@ fn lower_for_range(
     let outer_block = hir_expr.Block.new(outer_stmts, Some(Box.new(loop_expr)), span);
     hir_expr.Expr.new(
         hir_expr.ExprKind.Block(outer_block),
-        type_intern::type_interner().mk_infer(ctx.alloc_ty_var()),
+        type_intern.type_interner().mk_infer(ctx.alloc_ty_var()),
         span,
     )
 }
@@ -2451,8 +2451,8 @@ fn lower_closure_expr(
         let p = &params[i];
         let pattern_hir = lower_pattern(ctx, &p.pattern);
         let ty_hir = match &p.ty {
-            &Some(ref t) => hir_lower_type::lower_type_id(ctx, t),
-            &None => type_intern::type_interner().mk_infer(ctx.alloc_ty_var()),
+            &Some(ref t) => hir_lower_type.lower_type_id(ctx, t),
+            &None => type_intern.type_interner().mk_infer(ctx.alloc_ty_var()),
         };
         let param_hir = hir_expr.ClosureParam.new(pattern_hir, ty_hir);
         params_hir.push(param_hir);
@@ -2460,13 +2460,13 @@ fn lower_closure_expr(
 
     // Lower return type
     let ret_ty = match return_type {
-        &Some(ref t) => hir_lower_type::lower_type_id(ctx, t),
-        &None => type_intern::type_interner().mk_infer(ctx.alloc_ty_var()),
+        &Some(ref t) => hir_lower_type.lower_type_id(ctx, t),
+        &None => type_intern.type_interner().mk_infer(ctx.alloc_ty_var()),
     };
 
     // Lower effects
     let effects_hir = match effects {
-        &Some(ref eff) => hir_lower_type::lower_effect_row(ctx, eff),
+        &Some(ref eff) => hir_lower_type.lower_effect_row(ctx, eff),
         &None => hir_ty.EffectRow.empty(),
     };
 
@@ -2476,7 +2476,7 @@ fn lower_closure_expr(
     // Captures will be determined during type checking
     let captures: Vec<hir_expr.Capture> = Vec.new();
 
-    let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+    let ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
     hir_expr.Expr.new(
         hir_expr.ExprKind.Closure {
             captures: captures,
@@ -2519,7 +2519,7 @@ fn lower_perform_expr(
                 } else {
                     ctx.error(
                         hir.DiagnosticCode.E0102,
-                        common::make_string("unknown effect"),
+                        common.make_string("unknown effect"),
                         path.span,
                     );
                     hir_def.DefId.new(0)
@@ -2527,7 +2527,7 @@ fn lower_perform_expr(
             } else {
                 ctx.error(
                     hir.DiagnosticCode.E0102,
-                    common::make_string("invalid effect path"),
+                    common.make_string("invalid effect path"),
                     span,
                 );
                 hir_def.DefId.new(0)
@@ -2536,7 +2536,7 @@ fn lower_perform_expr(
         &None => {
             ctx.error(
                 hir.DiagnosticCode.E0104,
-                common::make_string("effect must be specified"),
+                common.make_string("effect must be specified"),
                 span,
             );
             hir_def.DefId.new(0)
@@ -2557,7 +2557,7 @@ fn lower_perform_expr(
     let op_name_str = ctx.span_to_string(operation.span);
     let op_name_sym = ctx.intern(op_name_str.as_str());
 
-    let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+    let ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
     hir_expr.Expr.new(
         hir_expr.ExprKind.Perform {
             effect_def: effect_def_id,
@@ -2602,7 +2602,7 @@ fn lower_try_with_expr(
             } else {
                 ctx.error(
                     hir.DiagnosticCode.E0102,
-                    common::make_string("unknown effect in try-with handler"),
+                    common.make_string("unknown effect in try-with handler"),
                     hdlr.effect.span,
                 );
                 hir_def.DefId.new(0)
@@ -2610,7 +2610,7 @@ fn lower_try_with_expr(
         } else {
             ctx.error(
                 hir.DiagnosticCode.E0102,
-                common::make_string("invalid effect path in try-with handler"),
+                common.make_string("invalid effect path in try-with handler"),
                 hdlr.span,
             );
             hir_def.DefId.new(0)
@@ -2634,13 +2634,13 @@ fn lower_try_with_expr(
             match &_pat_hir.kind {
                 &hir_expr.PatternKind.Binding { local_id, name: _, mode: _, subpattern: _ } => {
                     param_ids.push(local_id);
-                    param_types.push(type_intern::type_interner().mk_infer(ctx.alloc_ty_var()));
+                    param_types.push(type_intern.type_interner().mk_infer(ctx.alloc_ty_var()));
                 }
                 _ => {
                     // Non-binding patterns still get a fresh local for positional tracking
                     let fresh_id = ctx.alloc_local_id();
                     param_ids.push(fresh_id);
-                    param_types.push(type_intern::type_interner().mk_infer(ctx.alloc_ty_var()));
+                    param_types.push(type_intern.type_interner().mk_infer(ctx.alloc_ty_var()));
                 }
             }
         }
@@ -2652,7 +2652,7 @@ fn lower_try_with_expr(
         ctx.resolver.pop_scope();
 
         // Return type is inferred
-        let return_ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+        let return_ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
 
         let op_handler = hir_expr.InlineOpHandler {
             effect_id: effect_def_id,
@@ -2665,7 +2665,7 @@ fn lower_try_with_expr(
         hir_handlers.push(op_handler);
     }
 
-    let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+    let ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
     hir_expr.Expr.new(
         hir_expr.ExprKind.InlineHandle {
             body: Box.new(body_hir),
@@ -2690,7 +2690,7 @@ fn make_str_literal_expr(span: common.Span, s: &str) -> hir_expr.Expr {
     );
     hir_expr.Expr.new(
         hir_expr.ExprKind.Literal(lit),
-        type_intern::type_interner().mk_ref(type_intern.CommonTypes.str_ty(), false),
+        type_intern.type_interner().mk_ref(type_intern.CommonTypes.str_ty(), false),
         span,
     )
 }
@@ -2706,10 +2706,10 @@ fn make_builtin_call_expr(ctx: &mut hir_lower_ctx.LoweringCtx, name: &str, args:
         let resolved = hir_def.ResolvedPath.new(binding.def_id, 0, span);
         let callee = hir_expr.Expr.new(
             hir_expr.ExprKind.Path(resolved),
-            type_intern::type_interner().mk_infer(ctx.alloc_ty_var()),
+            type_intern.type_interner().mk_infer(ctx.alloc_ty_var()),
             span,
         );
-        let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+        let ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
         hir_expr.Expr.new(
             hir_expr.ExprKind.Call {
                 callee: Box.new(callee),
@@ -2720,7 +2720,7 @@ fn make_builtin_call_expr(ctx: &mut hir_lower_ctx.LoweringCtx, name: &str, args:
         )
     } else {
         // Builtin not found — report error
-        let mut msg = common::make_string("format macro: builtin '");
+        let mut msg = common.make_string("format macro: builtin '");
         msg.push_str(name);
         msg.push_str("' not found");
         ctx.error(
@@ -2896,7 +2896,7 @@ fn lower_macro_call_expr(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.ExprPat
                         elems_hir.push(elem_hir);
                     }
                     let arr = hir_expr.ArrayExpr.List(elems_hir);
-                    let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+                    let ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
                     hir_expr.Expr.new(
                         hir_expr.ExprKind.Array(arr),
                         ty,
@@ -2906,12 +2906,12 @@ fn lower_macro_call_expr(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.ExprPat
                 &ast.VecMacroArgs.Repeat { ref val, ref count } => {
                     // vec![val; count] - evaluate count as constant
                     let val_hir = lower_expr(ctx, val.as_ref());
-                    let repeat_count = const_eval::eval_array_size_u64(count.as_ref());
+                    let repeat_count = const_eval.eval_array_size_u64(count.as_ref());
                     let arr = hir_expr.ArrayExpr.Repeat {
                         val: Box.new(val_hir),
                         count: repeat_count,
                     };
-                    let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+                    let ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
                     hir_expr.Expr.new(
                         hir_expr.ExprKind.Array(arr),
                         ty,
@@ -2975,7 +2975,7 @@ fn lower_macro_call_expr(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.ExprPat
             // a block that evaluates the expression, prints a debug marker,
             // and returns the value.
             let inner_hir = lower_expr(ctx, expr.as_ref());
-            let inner_ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+            let inner_ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
 
             // Create a local for the value
             let local_id = ctx.alloc_local_id();
@@ -3002,7 +3002,7 @@ fn lower_macro_call_expr(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.ExprPat
                     mode: hir_expr.BindingMode.ByValue,
                     subpattern: Option.None,
                 },
-                type_intern::type_interner().mk_infer(ctx.alloc_ty_var()),
+                type_intern.type_interner().mk_infer(ctx.alloc_ty_var()),
                 span,
             );
             let let_stmt = hir_expr.Stmt.Let {
@@ -3015,12 +3015,12 @@ fn lower_macro_call_expr(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.ExprPat
             // Print a debug marker using eprintln_str
             // Build a string literal "[dbg]"
             let dbg_str = hir_expr.Literal.new(
-                hir_expr.LiteralKind.Str(common::make_string("[dbg]")),
+                hir_expr.LiteralKind.Str(common.make_string("[dbg]")),
                 span,
             );
             let dbg_str_expr = hir_expr.Expr.new(
                 hir_expr.ExprKind.Literal(dbg_str),
-                type_intern::type_interner().mk_ref(type_intern.CommonTypes.str_ty(), false),
+                type_intern.type_interner().mk_ref(type_intern.CommonTypes.str_ty(), false),
                 span,
             );
             let print_stmt = hir_expr.Stmt.Expr {
@@ -3042,7 +3042,7 @@ fn lower_macro_call_expr(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.ExprPat
 
             hir_expr.Expr.new(
                 hir_expr.ExprKind.Block(block),
-                type_intern::type_interner().mk_infer(ctx.alloc_ty_var()),
+                type_intern.type_interner().mk_infer(ctx.alloc_ty_var()),
                 span,
             )
         }
@@ -3078,7 +3078,7 @@ fn lower_macro_call_expr(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.ExprPat
                 span,
             );
 
-            let wildcard_ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+            let wildcard_ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
             let wildcard_pat = hir_expr.Pattern.wildcard(wildcard_ty, span);
             let else_arm = hir_expr.MatchArm.new(
                 wildcard_pat,
@@ -3110,7 +3110,7 @@ fn lower_macro_call_expr(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.ExprPat
             // through the Format path by the parser.
             ctx.error(
                 hir.DiagnosticCode.E0104,
-                common::make_string("custom macros not yet supported; use built-in macros (format!, vec!, assert!, dbg!, matches!)"),
+                common.make_string("custom macros not yet supported; use built-in macros (format!, vec!, assert!, dbg!, matches!)"),
                 span,
             );
             hir_expr.Expr.error(span)
@@ -3246,7 +3246,7 @@ fn record_turbofish_const_args(
     for i in 0usize..args.args.len() {
         match &args.args[i] {
             &ast.TypeArg.Const(ref expr) => {
-                let val = const_eval::eval_const_expr(expr);
+                let val = const_eval.eval_const_expr(expr);
                 match val {
                     const_eval.ConstValue.Int(n) => {
                         values.push(n as u64);

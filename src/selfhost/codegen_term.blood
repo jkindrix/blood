@@ -28,7 +28,7 @@ pub fn emit_terminator(
 ) {
     ctx.current_span = Option.Some(term.span);
     if ctx.trace_codegen {
-        let trace = dump_mir::format_terminator(term);
+        let trace = dump_mir.format_terminator(term);
         ctx.write("    ; MIR: ");
         ctx.write_string(&trace);
         ctx.newline();
@@ -53,22 +53,22 @@ pub fn emit_terminator(
         &mir_term.TerminatorKind.Perform { effect_id, op_index, ref args, ref destination, ref target, is_tail_resumptive: _ } => {
             // Effect perform via evidence API 5-arg call:
             //   blood_perform(i64 effect_id, i32 op_index, ptr args, i64 arg_count, i64 continuation)
-            let effect_id_val = codegen_types::format_u64(effect_id.index as u64);
+            let effect_id_val = codegen_types.format_u64(effect_id.index as u64);
             // op_index in MIR is the op_name symbol index; resolve to positional index
             let resolved_op_index = ctx.resolve_op_index(effect_id.index, op_index);
             if resolved_op_index == 0 && op_index != 0 {
-                let mut err_msg = common::make_string("effect op resolution returned fallback 0 for effect_def_id ");
-                err_msg.push_str(codegen_types::format_u64(effect_id.index as u64).as_str());
+                let mut err_msg = common.make_string("effect op resolution returned fallback 0 for effect_def_id ");
+                err_msg.push_str(codegen_types.format_u64(effect_id.index as u64).as_str());
                 err_msg.push_str(" op_name_sym ");
-                err_msg.push_str(codegen_types::format_u64(op_index as u64).as_str());
+                err_msg.push_str(codegen_types.format_u64(op_index as u64).as_str());
                 ctx.codegen_error(codegen_ctx.CodegenErrorKind.EffectOpLookupFailed, err_msg);
             }
-            let op_index_val = codegen_types::format_u64(resolved_op_index as u64);
-            let dest = codegen_expr::emit_place_data_ptr(ctx, destination);
+            let op_index_val = codegen_types.format_u64(resolved_op_index as u64);
+            let dest = codegen_expr.emit_place_data_ptr(ctx, destination);
 
             // Pack arguments into [N x i64] stack array, widening each arg to i64
             let num_args = args.len();
-            let num_args_val = codegen_types::format_u64(num_args as u64);
+            let num_args_val = codegen_types.format_u64(num_args as u64);
 
             // Allocate args array on stack
             let args_alloca = ctx.fresh_temp_cg();
@@ -78,7 +78,7 @@ pub fn emit_terminator(
 
                 // Store each argument widened to i64 into the array
                 for ai in 0usize..num_args {
-                    let (arg_val, arg_ty) = codegen_expr::emit_operand_typed(ctx, &args[ai]);
+                    let (arg_val, arg_ty) = codegen_expr.emit_operand_typed(ctx, &args[ai]);
 
                     // Widen arg to i64
                     let widened_val = widen_operand_to_i64(ctx, arg_val.as_str(), arg_ty.as_str());
@@ -93,7 +93,7 @@ pub fn emit_terminator(
                         ctx.write("\n");
                     } else {
                         // Subsequent elements: GEP to index
-                        let idx_str = codegen_types::format_u64(ai as u64);
+                        let idx_str = codegen_types.format_u64(ai as u64);
                         let elem_ptr = ctx.fresh_temp_cg();
                         ctx.write_indent();
                         ctx.write_cgname(&elem_ptr);
@@ -183,7 +183,7 @@ pub fn emit_terminator(
 
             match value {
                 &Option.Some(ref v) => {
-                    let (val, ty) = codegen_expr::emit_operand_typed(ctx, v);
+                    let (val, ty) = codegen_expr.emit_operand_typed(ctx, v);
                     if str_eq(ty.as_str(), "{}") || is_void_type(ty.as_str()) {
                         // Unit-typed resume value → ret void
                         ctx.emit_ret("void", Option.None);
@@ -202,7 +202,7 @@ pub fn emit_terminator(
         }
         &mir_term.TerminatorKind.Drop { ref place, target, unwind: _ } => {
             // Drop - call destructor if needed, then continue
-            let _ptr = codegen_expr::emit_place_addr(ctx, place);
+            let _ptr = codegen_expr.emit_place_addr(ctx, place);
             // For now, just continue to target
             let label = ctx.block_label_cg(target);
             ctx.emit_br_cg(&label);
@@ -216,7 +216,7 @@ fn emit_switch_int(
     discr: &mir_types.Operand,
     switch_targets: &mir_types.SwitchTargets,
 ) {
-    let (discr_val, discr_ty) = codegen_expr::emit_operand_typed(ctx, discr);
+    let (discr_val, discr_ty) = codegen_expr.emit_operand_typed(ctx, discr);
 
     // Check if this is a simple boolean switch
     if switch_targets.targets.len() == 1 {
@@ -224,7 +224,7 @@ fn emit_switch_int(
         let default_label = ctx.block_label_cg(switch_targets.otherwise);
         let case_target = &switch_targets.targets[0];
         let case_label = ctx.block_label_cg(case_target.target);
-        let case_val = codegen_types::format_u128(case_target.value);
+        let case_val = codegen_types.format_u128(case_target.value);
 
         // Compare discriminant with case value using actual type
         let cmp_result = ctx.fresh_temp_cg();
@@ -237,7 +237,7 @@ fn emit_switch_int(
         ctx.begin_switch_str(discr_ty.as_str(), discr_val.as_str(), &default_label);
         for i in 0usize..switch_targets.targets.len() {
             let switch_target = &switch_targets.targets[i];
-            let val_str = codegen_types::format_u128(switch_target.value);
+            let val_str = codegen_types.format_u128(switch_target.value);
             let case_label = ctx.block_label_cg(switch_target.target);
             ctx.switch_case(discr_ty.as_str(), val_str.as_str(), &case_label);
         }
@@ -261,7 +261,7 @@ fn emit_handler_state_writeback(ctx: &mut codegen_ctx.CodegenCtx) {
             let field_ty = ctx.get_local_type(field_local);
             let field_idx = fi - 1;
             let field_gep = ctx.fresh_temp_cg();
-            let gep_idx_str = codegen_types::format_u64(field_idx as u64);
+            let gep_idx_str = codegen_types.format_u64(field_idx as u64);
             ctx.write("    ");
             ctx.write_cgname(&field_gep);
             ctx.write(" = getelementptr ");
@@ -329,7 +329,7 @@ fn emit_call(
         Option.Some(name) => name,
         Option.None => {
             // Fallback: emit the operand normally (may produce %tmp from a local load)
-            let func_typed = codegen_expr::emit_operand_typed(ctx, func);
+            let func_typed = codegen_expr.emit_operand_typed(ctx, func);
             let raw_func = func_typed.0;
             let func_ty = func_typed.1;
             // LLVM requires call targets to be ptr type.
@@ -473,7 +473,7 @@ fn emit_call(
     // Emit arguments with their types, applying generic call fixup if needed
     let mut llvm_args: Vec<(String, String)> = Vec.new();
     for i in 0usize..args.len() {
-        let (arg_val, arg_ty) = codegen_expr::emit_operand_typed(ctx, &args[i]);
+        let (arg_val, arg_ty) = codegen_expr.emit_operand_typed(ctx, &args[i]);
 
         // Check if this parameter needs widening for a generic function
         let mut final_val: String;
@@ -519,8 +519,8 @@ fn emit_call(
                             // General type mismatch (e.g., struct { i32, i32 } vs scalar i64)
                             // Use memory-based bitcast: alloca the LARGER of the two types
                             // to prevent buffer overflow (store of larger type into smaller alloca)
-                            let arg_size = codegen_size::llvm_type_size(arg_ty.as_str());
-                            let expected_size = codegen_size::llvm_type_size(expected_ty.as_str());
+                            let arg_size = codegen_size.llvm_type_size(arg_ty.as_str());
+                            let expected_size = codegen_size.llvm_type_size(expected_ty.as_str());
                             let cast_alloca = ctx.fresh_temp_cg();
                             if arg_size > expected_size {
                                 // Source is larger: alloca source type, store source, load as expected
@@ -558,7 +558,7 @@ fn emit_call(
         Option.Some(ref env_val) => {
             // Insert env_ptr at position 0 by building a new vec
             let mut new_args: Vec<(String, String)> = Vec.new();
-            new_args.push((common::make_string("ptr"), clone_string(env_val)));
+            new_args.push((common.make_string("ptr"), clone_string(env_val)));
             for j in 0usize..llvm_args.len() {
                 let arg_pair = &llvm_args[j];
                 new_args.push((clone_string(&arg_pair.0), clone_string(&arg_pair.1)));
@@ -569,7 +569,7 @@ fn emit_call(
     }
 
     // Get return type from destination
-    let dest_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
+    let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
     let call_site_ret_ty = ctx.get_local_type(destination.local);
 
     // Determine the actual return type to use for the call instruction
@@ -626,8 +626,8 @@ fn emit_call(
         } else if !string_eq_str(def_ret_ty.as_str(), call_site_ret_ty.as_str()) {
             // General type mismatch: use memory bitcast
             // Alloca the LARGER of source/dest to prevent overflow or uninitialized reads
-            let def_size = codegen_size::llvm_type_size(def_ret_ty.as_str());
-            let site_size = codegen_size::llvm_type_size(call_site_ret_ty.as_str());
+            let def_size = codegen_size.llvm_type_size(def_ret_ty.as_str());
+            let site_size = codegen_size.llvm_type_size(call_site_ret_ty.as_str());
             let cast_alloca = ctx.fresh_temp_cg();
             if site_size > def_size {
                 // Destination is larger: alloca dest type so load doesn't read past alloca
@@ -674,24 +674,24 @@ fn extract_direct_fn_name(
                     let remapped_id = ctx.remap_def_id(def_id.index);
                     match ctx.lookup_def_name(remapped_id) {
                         Option.Some(name) => {
-                            let mut result = common::make_string("@");
+                            let mut result = common.make_string("@");
                             result.push_str(name.as_str());
                             Option.Some(result)
                         }
                         Option.None => {
-                            let mut fallback_name = common::make_string("fn_");
-                            fallback_name.push_str(codegen_types::format_u64(remapped_id as u64).as_str());
+                            let mut fallback_name = common.make_string("fn_");
+                            fallback_name.push_str(codegen_types.format_u64(remapped_id as u64).as_str());
                             // Register the fallback name so stub generation can create a declaration
                             ctx.register_def_name(remapped_id, clone_string(&fallback_name));
-                            let mut err_msg = common::make_string("function def_id ");
-                            err_msg.push_str(codegen_types::format_u64(remapped_id as u64).as_str());
+                            let mut err_msg = common.make_string("function def_id ");
+                            err_msg.push_str(codegen_types.format_u64(remapped_id as u64).as_str());
                             err_msg.push_str(" not found in def_names, using fallback name ");
                             err_msg.push_str(fallback_name.as_str());
                             ctx.codegen_error(
                                 codegen_ctx.CodegenErrorKind.FnLookupFailed,
                                 err_msg,
                             );
-                            let mut result = common::make_string("@");
+                            let mut result = common.make_string("@");
                             result.push_str(fallback_name.as_str());
                             Option.Some(result)
                         }
@@ -779,26 +779,26 @@ fn clone_string(s: &String) -> String {
 fn cgname_to_string(name: &codegen_ctx.CgName) -> String {
     match name {
         &codegen_ctx.CgName.Temp(n) => {
-            let mut s = common::make_string("%tmp");
-            let ns = codegen_types::format_u64(n as u64);
+            let mut s = common.make_string("%tmp");
+            let ns = codegen_types.format_u64(n as u64);
             s.push_str(ns.as_str());
             s
         }
         &codegen_ctx.CgName.Local(n) => {
-            let mut s = common::make_string("%_");
-            let ns = codegen_types::format_u64(n as u64);
+            let mut s = common.make_string("%_");
+            let ns = codegen_types.format_u64(n as u64);
             s.push_str(ns.as_str());
             s
         }
         &codegen_ctx.CgName.Label(n) => {
-            let mut s = common::make_string("label");
-            let ns = codegen_types::format_u64(n as u64);
+            let mut s = common.make_string("label");
+            let ns = codegen_types.format_u64(n as u64);
             s.push_str(ns.as_str());
             s
         }
         &codegen_ctx.CgName.Block(n) => {
-            let mut s = common::make_string("bb");
-            let ns = codegen_types::format_u64(n as u64);
+            let mut s = common.make_string("bb");
+            let ns = codegen_types.format_u64(n as u64);
             s.push_str(ns.as_str());
             s
         }
@@ -918,7 +918,7 @@ fn emit_struct_widening(
         ctx.write(" ");
         ctx.write_string(src_val);
         ctx.write(", ");
-        ctx.write(codegen_types::format_u64(fi as u64).as_str());
+        ctx.write(codegen_types.format_u64(fi as u64).as_str());
         ctx.write("\n");
 
         let mut field_val: codegen_ctx.CgName;
@@ -945,8 +945,8 @@ fn emit_struct_widening(
         } else {
             // Type mismatch (e.g., struct field { i32 } vs scalar i64):
             // Use memory-based bitcast: alloca the LARGER type, zero it, store src, load as dst
-            let src_size = codegen_size::llvm_type_size(src_fields[fi].as_str());
-            let dst_size = codegen_size::llvm_type_size(dst_fields[fi].as_str());
+            let src_size = codegen_size.llvm_type_size(src_fields[fi].as_str());
+            let dst_size = codegen_size.llvm_type_size(dst_fields[fi].as_str());
             let cast_alloca = ctx.fresh_temp_cg();
             if src_size > dst_size {
                 ctx.emit_alloca_cg(&cast_alloca, src_fields[fi].as_str());
@@ -997,7 +997,7 @@ fn emit_struct_widening(
         ctx.write(", ptr ");
         ctx.write_cgname(&dst_alloca);
         ctx.write(", i64 0, i32 ");
-        ctx.write(codegen_types::format_u64(fi as u64).as_str());
+        ctx.write(codegen_types.format_u64(fi as u64).as_str());
         ctx.write("\n");
         ctx.emit_store_cg2(dst_fields[fi].as_str(), &field_val, &gep);
 
@@ -1042,7 +1042,7 @@ fn emit_struct_narrowing(
         ctx.write(" ");
         ctx.write_string(src_val);
         ctx.write(", ");
-        ctx.write(codegen_types::format_u64(fi as u64).as_str());
+        ctx.write(codegen_types.format_u64(fi as u64).as_str());
         ctx.write("\n");
 
         let mut field_val: codegen_ctx.CgName;
@@ -1066,8 +1066,8 @@ fn emit_struct_narrowing(
             // Type mismatch (e.g., scalar i64 vs struct { i32 }):
             // Use memory-based bitcast: alloca the LARGER type, store src, load as dst
             // Prevents reading past alloca boundary if dst is larger than src
-            let src_size = codegen_size::llvm_type_size(src_fields[fi].as_str());
-            let dst_size = codegen_size::llvm_type_size(dst_fields[fi].as_str());
+            let src_size = codegen_size.llvm_type_size(src_fields[fi].as_str());
+            let dst_size = codegen_size.llvm_type_size(dst_fields[fi].as_str());
             let cast_alloca = ctx.fresh_temp_cg();
             if dst_size > src_size {
                 // Destination is larger: alloca dest type, zero-init, then store source
@@ -1105,7 +1105,7 @@ fn emit_struct_narrowing(
         ctx.write(", ptr ");
         ctx.write_cgname(&dst_alloca);
         ctx.write(", i64 0, i32 ");
-        ctx.write(codegen_types::format_u64(fi as u64).as_str());
+        ctx.write(codegen_types.format_u64(fi as u64).as_str());
         ctx.write("\n");
         ctx.emit_store_cg2(dst_fields[fi].as_str(), &field_val, &gep);
 
@@ -1132,7 +1132,7 @@ fn emit_assert(
     msg: &String,
     target: mir_def.BasicBlockId,
 ) {
-    let cond_val = codegen_expr::emit_operand(ctx, cond);
+    let cond_val = codegen_expr.emit_operand(ctx, cond);
 
     // Create labels
     let success_label = ctx.block_label_cg(target);
@@ -1152,7 +1152,7 @@ fn emit_assert(
     ctx.indent();
 
     // Build the full assertion message: "Assertion failed: <msg>\n"
-    let mut full_msg = common::make_string("Assertion failed: ");
+    let mut full_msg = common.make_string("Assertion failed: ");
     full_msg.push_str(msg.as_str());
 
     // Add the message as a string constant and get its label
@@ -1177,7 +1177,7 @@ fn emit_operand_list(
 ) -> Vec<String> {
     let mut result: Vec<String> = Vec.new();
     for i in 0usize..operands.len() {
-        result.push(codegen_expr::emit_operand(ctx, &operands[i]));
+        result.push(codegen_expr.emit_operand(ctx, &operands[i]));
     }
     result
 }
@@ -1186,7 +1186,7 @@ fn emit_operand_list(
 /// Returns the SSA name of the widened value (already i64-typed).
 fn widen_operand_to_i64(ctx: &mut codegen_ctx.CodegenCtx, val: &str, ty: &str) -> codegen_ctx.CgName {
     if str_eq(ty, "i64") {
-        return codegen_ctx.CgName.Str(common::make_string(val));
+        return codegen_ctx.CgName.Str(common.make_string(val));
     }
     if str_eq(ty, "i32") || str_eq(ty, "i16") || str_eq(ty, "i8") || str_eq(ty, "i1") {
         let widened = ctx.fresh_temp_cg();
@@ -1219,7 +1219,7 @@ fn widen_operand_to_i64(ctx: &mut codegen_ctx.CodegenCtx, val: &str, ty: &str) -
     }
     if str_eq(ty, "{}") {
         // Unit type — return 0
-        return codegen_ctx.CgName.Str(common::make_string("0"));
+        return codegen_ctx.CgName.Str(common.make_string("0"));
     }
     // For aggregate types (struct, tuple, etc.): store to a temp alloca
     // and pass the alloca address as i64. The wrapper will inttoptr and load.
@@ -1248,8 +1248,8 @@ fn widen_operand_to_i64(ctx: &mut codegen_ctx.CodegenCtx, val: &str, ty: &str) -
 
 /// Makes an LLVM array type string like "[3 x i64]".
 fn make_array_type(count: usize) -> String {
-    let mut s = common::make_string("[");
-    let count_str = codegen_types::format_u64(count as u64);
+    let mut s = common.make_string("[");
+    let count_str = codegen_types.format_u64(count as u64);
     s.push_str(count_str.as_str());
     s.push_str(" x i64]");
     s
@@ -1329,7 +1329,7 @@ fn emit_vec_with_capacity_call(
     target: &Option<mir_def.BasicBlockId>,
 ) {
     // Get data pointer (handles region/persistent heap indirection)
-    let out_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
+    let out_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
 
     // Get element size from the destination's HIR type (Vec<T>)
     // Must resolve through Place projections: if destination is _0.Field(5),
@@ -1340,10 +1340,10 @@ fn emit_vec_with_capacity_call(
     };
 
     // Get capacity from first argument
-    let cap_val = codegen_expr::emit_operand(ctx, &args[0]);
+    let cap_val = codegen_expr.emit_operand(ctx, &args[0]);
 
     // Emit: call void @vec_with_capacity(i64 elem_size, i64 capacity, ptr out_ptr)
-    let elem_size_str = codegen_types::format_u64(elem_size);
+    let elem_size_str = codegen_types.format_u64(elem_size);
     ctx.begin_call(Option.None, "void", "@vec_with_capacity");
     ctx.call_arg_str(true, "i64", elem_size_str.as_str());
     ctx.call_arg_str(false, "i64", cap_val.as_str());
@@ -1364,13 +1364,13 @@ fn emit_vec_with_capacity_call(
 
 /// Extracts element size from a Vec<T> or &Vec<T> TyId (via interner, no Type tree).
 fn extract_vec_element_size_id(ctx: &mut codegen_ctx.CodegenCtx, ty_id: type_intern.TyId) -> u64 {
-    let unwrapped = type_intern::unwrap_ref_id(ty_id);
-    match type_intern::get_adt_args(unwrapped) {
+    let unwrapped = type_intern.unwrap_ref_id(ty_id);
+    match type_intern.get_adt_args(unwrapped) {
         Option.Some(args) => {
-            let interner = type_intern::type_interner();
+            let interner = type_intern.type_interner();
             if interner.ty_list_len(args) > 0 {
                 let elem_id = interner.get_ty_list_element(args, 0);
-                codegen_size::type_size_with_ctx_id(ctx, elem_id)
+                codegen_size.type_size_with_ctx_id(ctx, elem_id)
             } else {
                 8
             }
@@ -1393,8 +1393,8 @@ fn resolve_place_hir_type(
     for i in 0usize..place.projection.len() {
         match &place.projection[i] {
             &mir_types.PlaceElem.Field(idx) => {
-                let unwrapped = type_intern::unwrap_ref_id(current_ty);
-                match type_intern::get_adt_def_id(unwrapped) {
+                let unwrapped = type_intern.unwrap_ref_id(current_ty);
+                match type_intern.get_adt_def_id(unwrapped) {
                     Option.Some(def_id) => {
                         match ctx.lookup_field_hir_type(def_id.index, idx) {
                             Option.Some(field_ty) => {
@@ -1407,7 +1407,7 @@ fn resolve_place_hir_type(
                 }
             }
             &mir_types.PlaceElem.Deref => {
-                current_ty = type_intern::unwrap_ref_id(current_ty);
+                current_ty = type_intern.unwrap_ref_id(current_ty);
             }
             _ => {}
         }
@@ -1425,7 +1425,7 @@ fn emit_vec_new_call(
     target: &Option<mir_def.BasicBlockId>,
 ) {
     // Get data pointer (handles region/persistent heap indirection)
-    let out_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
+    let out_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
 
     // Get element size from the destination's HIR type (Vec<T>)
     // Must resolve through Place projections: if destination is _0.Field(5),
@@ -1436,7 +1436,7 @@ fn emit_vec_new_call(
     };
 
     // Emit: call void @vec_new(i64 elem_size, ptr out_ptr)
-    let elem_size_str = codegen_types::format_u64(elem_size);
+    let elem_size_str = codegen_types.format_u64(elem_size);
     ctx.begin_call(Option.None, "void", "@vec_new");
     ctx.call_arg_str(true, "i64", elem_size_str.as_str());
     ctx.call_arg_str(false, "ptr", out_ptr.as_str());
@@ -1470,10 +1470,10 @@ fn emit_vec_push_call(
 
     // Get vec pointer - emit_operand loads the &mut Vec reference value,
     // which is already a pointer to the Vec struct (no extra deref needed).
-    let vec_ptr = codegen_expr::emit_operand(ctx, &args[0]);
+    let vec_ptr = codegen_expr.emit_operand(ctx, &args[0]);
 
     // Get element value and type
-    let (elem_val, elem_ty) = codegen_expr::emit_operand_typed(ctx, &args[1]);
+    let (elem_val, elem_ty) = codegen_expr.emit_operand_typed(ctx, &args[1]);
 
     // Save stack pointer before alloca so we can restore after vec_push.
     // Without this, allocas inside loops cause unbounded stack growth.
@@ -1498,7 +1498,7 @@ fn emit_vec_push_call(
         &mir_types.Operand.Copy(ref place) => {
             match ctx.get_local_hir_type(place.local) {
                 Option.Some(ty_id) => {
-                    codegen_size::type_size_with_ctx_id(ctx, ty_id)
+                    codegen_size.type_size_with_ctx_id(ctx, ty_id)
                 }
                 Option.None => 8,
             }
@@ -1506,18 +1506,18 @@ fn emit_vec_push_call(
         &mir_types.Operand.Move(ref place) => {
             match ctx.get_local_hir_type(place.local) {
                 Option.Some(ty_id) => {
-                    codegen_size::type_size_with_ctx_id(ctx, ty_id)
+                    codegen_size.type_size_with_ctx_id(ctx, ty_id)
                 }
                 Option.None => 8,
             }
         }
         &mir_types.Operand.Constant(ref c) => {
-            codegen_size::type_size_with_ctx_id(ctx, c.ty)
+            codegen_size.type_size_with_ctx_id(ctx, c.ty)
         }
     };
 
     // Emit: call void @vec_push(ptr vec, ptr elem_ptr, i64 elem_size)
-    let elem_size_str = codegen_types::format_u64(elem_size);
+    let elem_size_str = codegen_types.format_u64(elem_size);
     ctx.begin_call(Option.None, "void", "@vec_push");
     ctx.call_arg_str(true, "ptr", vec_ptr.as_str());
     ctx.call_arg_cg(false, "ptr", &elem_alloca);
@@ -1559,7 +1559,7 @@ fn emit_vec_len_call(
 
     // Get vec pointer - emit_operand loads the reference value,
     // which is already a pointer to the Vec struct.
-    let vec_ptr = codegen_expr::emit_operand(ctx, &args[0]);
+    let vec_ptr = codegen_expr.emit_operand(ctx, &args[0]);
 
     // Emit: %result = call i64 @vec_len(ptr vec)
     let result = ctx.fresh_temp_cg();
@@ -1568,7 +1568,7 @@ fn emit_vec_len_call(
     ctx.end_call();
 
     // Store result to destination
-    let dest_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
+    let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
     ctx.emit_store_cg("i64", &result, dest_ptr.as_str());
 
     // Jump to continuation
@@ -1600,7 +1600,7 @@ fn emit_vec_pop_call(
 
     // Get vec pointer - emit_operand loads the reference value,
     // which is already a pointer to the Vec struct.
-    let vec_ptr = codegen_expr::emit_operand(ctx, &args[0]);
+    let vec_ptr = codegen_expr.emit_operand(ctx, &args[0]);
 
     // Get element size from destination's HIR type (Option<T>)
     // pop returns Option<T>, so we need to extract T's size
@@ -1611,7 +1611,7 @@ fn emit_vec_pop_call(
 
     // Allocate output pointer for the popped element
     let out_alloca = ctx.fresh_temp_cg();
-    let elem_size_str = codegen_types::format_u64(elem_size);
+    let elem_size_str = codegen_types.format_u64(elem_size);
     ctx.write_indent();
     ctx.write_cgname(&out_alloca);
     ctx.write(" = alloca [");
@@ -1629,7 +1629,7 @@ fn emit_vec_pop_call(
     // Build Option<T> in destination
     // Option is typically { i8 tag, T value }
     // tag = 0 for None, tag = 1 for Some
-    let dest_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
+    let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
 
     // Store the tag (result from vec_pop: 0=empty/None, 1=success/Some)
     let tag_i8 = ctx.fresh_temp_cg();
@@ -1686,7 +1686,7 @@ fn emit_vec_clear_call(
 
     // Get vec pointer - emit_operand loads the reference value,
     // which is already a pointer to the Vec struct.
-    let vec_ptr = codegen_expr::emit_operand(ctx, &args[0]);
+    let vec_ptr = codegen_expr.emit_operand(ctx, &args[0]);
 
     // Emit: call void @vec_clear(ptr vec)
     ctx.begin_call(Option.None, "void", "@vec_clear");
@@ -1756,7 +1756,7 @@ fn emit_string_new_call(
     target: &Option<mir_def.BasicBlockId>,
 ) {
     // Get data pointer (handles region/persistent heap indirection)
-    let out_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
+    let out_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
 
     // Emit: call void @string_new(ptr out_ptr)
     ctx.begin_call(Option.None, "void", "@string_new");
@@ -1789,10 +1789,10 @@ fn emit_string_push_str_call(
 
     // Get string pointer - emit_operand loads the reference value,
     // which is already a pointer to the String struct.
-    let str_ptr = codegen_expr::emit_operand(ctx, &args[0]);
+    let str_ptr = codegen_expr.emit_operand(ctx, &args[0]);
 
     // Get the &str argument (fat pointer)
-    let (arg_val, arg_ty) = codegen_expr::emit_operand_typed(ctx, &args[1]);
+    let (arg_val, arg_ty) = codegen_expr.emit_operand_typed(ctx, &args[1]);
 
     // Alloca temp for the &str fat pointer (runtime expects ptr to BloodStr)
     let str_tmp = ctx.fresh_temp_cg();
@@ -1834,7 +1834,7 @@ fn emit_string_len_call(
 
     // Get string pointer - emit_operand loads the reference value,
     // which is already a pointer to the String struct.
-    let str_ptr = codegen_expr::emit_operand(ctx, &args[0]);
+    let str_ptr = codegen_expr.emit_operand(ctx, &args[0]);
 
     // Emit: %result = call i64 @string_len(ptr self)
     let result = ctx.fresh_temp_cg();
@@ -1843,7 +1843,7 @@ fn emit_string_len_call(
     ctx.end_call();
 
     // Store result to destination
-    let dest_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
+    let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
     ctx.emit_store_cg("i64", &result, dest_ptr.as_str());
 
     // Jump to continuation
@@ -1872,10 +1872,10 @@ fn emit_string_push_call(
 
     // Get string pointer - emit_operand loads the reference value,
     // which is already a pointer to the String struct.
-    let str_ptr = codegen_expr::emit_operand(ctx, &args[0]);
+    let str_ptr = codegen_expr.emit_operand(ctx, &args[0]);
 
     // Get char argument - it may be { i32 } struct, need to extract i32
-    let (char_val, char_ty) = codegen_expr::emit_operand_typed(ctx, &args[1]);
+    let (char_val, char_ty) = codegen_expr.emit_operand_typed(ctx, &args[1]);
 
     // If char type is a struct { i32 }, extract the i32
     let char_i32 = if string_eq_str(char_ty.as_str(), "{ i32 }") {
@@ -1923,7 +1923,7 @@ fn emit_string_as_str_call(
 
     // Get string pointer - emit_operand loads the reference value,
     // which is already a pointer to the String struct.
-    let str_ptr = codegen_expr::emit_operand(ctx, &args[0]);
+    let str_ptr = codegen_expr.emit_operand(ctx, &args[0]);
 
     // Emit: %result = call { ptr, i64 } @string_as_str(ptr self)
     let result = ctx.fresh_temp_cg();
@@ -1932,7 +1932,7 @@ fn emit_string_as_str_call(
     ctx.end_call();
 
     // Store result to destination
-    let dest_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
+    let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
     ctx.emit_store_cg("{ ptr, i64 }", &result, dest_ptr.as_str());
 
     // Jump to continuation
@@ -1962,7 +1962,7 @@ fn emit_string_as_bytes_call(
 
     // Get string pointer - emit_operand loads the reference value,
     // which is already a pointer to the String struct.
-    let str_ptr = codegen_expr::emit_operand(ctx, &args[0]);
+    let str_ptr = codegen_expr.emit_operand(ctx, &args[0]);
 
     // Emit: %result = call { ptr, i64 } @string_as_bytes(ptr self)
     let result = ctx.fresh_temp_cg();
@@ -1971,7 +1971,7 @@ fn emit_string_as_bytes_call(
     ctx.end_call();
 
     // Store result to destination
-    let dest_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
+    let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
     ctx.emit_store_cg("{ ptr, i64 }", &result, dest_ptr.as_str());
 
     // Jump to continuation
@@ -2021,7 +2021,7 @@ fn is_str_concat(func_val: &String) -> bool {
 /// The generic call path for &str methods produces a pointer to the
 /// fat pointer alloca. This loads the actual { ptr, i64 } value.
 fn load_str_fat_ptr(ctx: &mut codegen_ctx.CodegenCtx, operand: &mir_types.Operand) -> codegen_ctx.CgName {
-    let (arg_val, arg_ty) = codegen_expr::emit_operand_typed(ctx, operand);
+    let (arg_val, arg_ty) = codegen_expr.emit_operand_typed(ctx, operand);
     // If it's already a { ptr, i64 }, return as-is
     if string_eq_str(arg_ty.as_str(), "{ ptr, i64 }") {
         return codegen_ctx.CgName.Str(arg_val);
@@ -2055,7 +2055,7 @@ fn emit_str_len_call(
     ctx.end_call();
 
     // Store result to destination
-    let dest_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
+    let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
     ctx.emit_store_cg("i64", &result, dest_ptr.as_str());
 
     // Jump to continuation
@@ -2095,7 +2095,7 @@ fn emit_str_eq_call(
     ctx.end_call();
 
     // Store result to destination
-    let dest_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
+    let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
     ctx.emit_store_cg("i1", &result, dest_ptr.as_str());
 
     // Jump to continuation
@@ -2135,7 +2135,7 @@ fn emit_str_concat_call(
     ctx.end_call();
 
     // Store result to destination
-    let dest_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
+    let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
     ctx.emit_store_cg("{ ptr, i64 }", &result, dest_ptr.as_str());
 
     // Jump to continuation
@@ -2199,7 +2199,7 @@ fn emit_box_new_call(
     }
 
     // Get value and its LLVM type
-    let (val, val_ty) = codegen_expr::emit_operand_typed(ctx, &args[0]);
+    let (val, val_ty) = codegen_expr.emit_operand_typed(ctx, &args[0]);
 
     // Allocate temporary storage for the value
     let val_alloca = ctx.fresh_temp_cg();
@@ -2217,7 +2217,7 @@ fn emit_box_new_call(
         &mir_types.Operand.Copy(ref place) => {
             match ctx.get_local_hir_type(place.local) {
                 Option.Some(ty_id) => {
-                    codegen_size::type_size_with_ctx_id(ctx, ty_id)
+                    codegen_size.type_size_with_ctx_id(ctx, ty_id)
                 }
                 Option.None => 8,
             }
@@ -2225,26 +2225,26 @@ fn emit_box_new_call(
         &mir_types.Operand.Move(ref place) => {
             match ctx.get_local_hir_type(place.local) {
                 Option.Some(ty_id) => {
-                    codegen_size::type_size_with_ctx_id(ctx, ty_id)
+                    codegen_size.type_size_with_ctx_id(ctx, ty_id)
                 }
                 Option.None => 8,
             }
         }
         &mir_types.Operand.Constant(ref c) => {
-            codegen_size::type_size_with_ctx_id(ctx, c.ty)
+            codegen_size.type_size_with_ctx_id(ctx, c.ty)
         }
     };
 
     // Emit: %result = call ptr @box_new(ptr val_alloca, i64 val_size)
     let result = ctx.fresh_temp_cg();
-    let val_size_str = codegen_types::format_u64(val_size);
+    let val_size_str = codegen_types.format_u64(val_size);
     ctx.begin_call(Option.Some(&result), "ptr", "@box_new");
     ctx.call_arg_cg(true, "ptr", &val_alloca);
     ctx.call_arg_str(false, "i64", val_size_str.as_str());
     ctx.end_call();
 
     // Store result pointer to destination
-    let dest_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
+    let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
     ctx.emit_store_cg("ptr", &result, dest_ptr.as_str());
 
     // Jump to continuation
@@ -2283,7 +2283,7 @@ fn emit_box_as_ref_call(
     }
 
     // Emit the operand to get the &Box<T> pointer
-    let (ref_val, _ref_ty) = codegen_expr::emit_operand_typed(ctx, &args[0]);
+    let (ref_val, _ref_ty) = codegen_expr.emit_operand_typed(ctx, &args[0]);
 
     // Load through the reference to get the Box value (the data pointer)
     let box_val = ctx.fresh_temp_cg();
@@ -2296,7 +2296,7 @@ fn emit_box_as_ref_call(
     ctx.end_call();
 
     // Store result pointer to destination
-    let dest_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
+    let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
     ctx.emit_store_cg("ptr", &result, dest_ptr.as_str());
 
     // Jump to continuation
@@ -2327,7 +2327,7 @@ fn emit_option_is_some_call(
 
     // Get option pointer - emit_operand loads the reference value,
     // which is already a pointer to the Option struct.
-    let opt_ptr = codegen_expr::emit_operand(ctx, &args[0]);
+    let opt_ptr = codegen_expr.emit_operand(ctx, &args[0]);
 
     // Load i32 discriminant (enum discriminant type is always i32)
     let disc = ctx.fresh_temp_cg();
@@ -2337,7 +2337,7 @@ fn emit_option_is_some_call(
     let cmp_result = ctx.fresh_temp_cg();
     ctx.emit_icmp_cg2(&cmp_result, "eq", "i32", &disc, "1");
 
-    let dest_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
+    let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
     ctx.emit_store_cg("i1", &cmp_result, dest_ptr.as_str());
 
     // Jump to continuation
@@ -2368,7 +2368,7 @@ fn emit_option_is_none_call(
 
     // Get option pointer - emit_operand loads the reference value,
     // which is already a pointer to the Option struct.
-    let opt_ptr = codegen_expr::emit_operand(ctx, &args[0]);
+    let opt_ptr = codegen_expr.emit_operand(ctx, &args[0]);
 
     // Load i32 discriminant (enum discriminant type is always i32)
     let disc = ctx.fresh_temp_cg();
@@ -2378,7 +2378,7 @@ fn emit_option_is_none_call(
     let cmp_result = ctx.fresh_temp_cg();
     ctx.emit_icmp_cg2(&cmp_result, "eq", "i32", &disc, "0");
 
-    let dest_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
+    let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
     ctx.emit_store_cg("i1", &cmp_result, dest_ptr.as_str());
 
     // Jump to continuation
@@ -2408,16 +2408,16 @@ fn emit_option_unwrap_call(
 
     // Get option pointer - emit_operand loads the reference value,
     // which is already a pointer to the Option struct.
-    let opt_ptr = codegen_expr::emit_operand(ctx, &args[0]);
+    let opt_ptr = codegen_expr.emit_operand(ctx, &args[0]);
 
     // Get destination pointer and its size
-    let dest_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
+    let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
     let dest_ty = ctx.get_local_type(destination.local);
 
     // Get element size from destination type
     let elem_size: u64 = match ctx.get_local_hir_type(destination.local) {
         Option.Some(ty_id) => {
-            codegen_size::type_size_with_ctx_id(ctx, ty_id)
+            codegen_size.type_size_with_ctx_id(ctx, ty_id)
         }
         Option.None => 8,
     };
@@ -2429,7 +2429,7 @@ fn emit_option_unwrap_call(
     let packed_size = (payload_align << 32) | elem_size;
 
     // Emit: call void @option_unwrap(ptr self, i64 packed_size, ptr out_ptr)
-    let elem_size_str = codegen_types::format_u64(packed_size);
+    let elem_size_str = codegen_types.format_u64(packed_size);
     ctx.begin_call(Option.None, "void", "@option_unwrap");
     ctx.call_arg_str(true, "ptr", opt_ptr.as_str());
     ctx.call_arg_str(false, "i64", elem_size_str.as_str());
@@ -2463,10 +2463,10 @@ fn emit_option_as_ref_call(
 
     // Get option pointer - emit_operand loads the reference value,
     // which is already a pointer to the Option struct.
-    let opt_ptr = codegen_expr::emit_operand(ctx, &args[0]);
+    let opt_ptr = codegen_expr.emit_operand(ctx, &args[0]);
 
     // Get destination pointer
-    let dest_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
+    let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
 
     // Get element size from destination type (Option<&T>)
     let elem_size: u64 = match ctx.get_local_hir_type(destination.local) {
@@ -2481,7 +2481,7 @@ fn emit_option_as_ref_call(
     let packed_size = (payload_align << 32) | elem_size;
 
     // Emit: call void @option_as_ref(ptr self, i64 packed_size, ptr out_ptr)
-    let elem_size_str = codegen_types::format_u64(packed_size);
+    let elem_size_str = codegen_types.format_u64(packed_size);
     ctx.begin_call(Option.None, "void", "@option_as_ref");
     ctx.call_arg_str(true, "ptr", opt_ptr.as_str());
     ctx.call_arg_str(false, "i64", elem_size_str.as_str());
@@ -2517,7 +2517,7 @@ pub fn emit_basic_block(
     // Emit statements
     ctx.indent();
     for i in 0usize..block.statements.len() {
-        codegen_stmt::emit_statement(ctx, &block.statements[i]);
+        codegen_stmt.emit_statement(ctx, &block.statements[i]);
     }
     ctx.dedent();
 

@@ -42,14 +42,14 @@ mod type_intern;
 
 /// Lower an AST Program to an HIR Crate.
 pub fn lower_program(program: &ast.Program, source: &str) -> hir_lower_ctx.LowerResult {
-    lower_program_with_base_dir(program, common::make_string("."), source, Option.None)
+    lower_program_with_base_dir(program, common.make_string("."), source, Option.None)
 }
 
 /// Lower an AST Program to an HIR Crate with a specified base directory.
 /// The base directory is used for resolving external module paths.
 /// stdlib_path optionally overrides the path for `mod std;` resolution.
 pub fn lower_program_with_base_dir(program: &ast.Program, base_dir: String, source: &str, stdlib_path: Option<String>) -> hir_lower_ctx.LowerResult {
-    let mut ctx = hir_lower_ctx.LoweringCtx.with_base_dir(base_dir, common::make_string(source));
+    let mut ctx = hir_lower_ctx.LoweringCtx.with_base_dir(base_dir, common.make_string(source));
     ctx.stdlib_path = stdlib_path;
 
     // Allocate root module DefId
@@ -87,13 +87,13 @@ pub fn lower_program_with_base_dir(program: &ast.Program, base_dir: String, sour
     // explicit `use std.prelude::*;` or individual imports for common items.
     inject_stdlib_prelude(&mut ctx);
 
-    // Phase 3a.5: Resolve use imports (e.g., `use module::item;`)
+    // Phase 3a.5: Resolve use imports (e.g., `use module.item;`)
     // This must run after external modules are loaded (Phase 3a) so that
     // lookup_in_parent can find re-exported items.
     resolve_imports(&mut ctx, &program.imports);
 
     // Phase 3b: Lower current file's declarations to HIR items
-    hir_lower_item::lower_declarations(&mut ctx, &program.declarations);
+    hir_lower_item.lower_declarations(&mut ctx, &program.declarations);
 
     // Check for errors from item lowering
     if ctx.has_errors() {
@@ -163,7 +163,7 @@ pub fn lower_program_with_base_dir(program: &ast.Program, base_dir: String, sour
 // Import Resolution
 // ============================================================
 
-/// Resolve `use module::item;` imports by creating local scope bindings.
+/// Resolve `use module.item;` imports by creating local scope bindings.
 /// For `Import.Simple { path: [module, item] }`, look up `module` then
 /// find `item` as a child and bind it in the current scope.
 fn resolve_imports(ctx: &mut hir_lower_ctx.LoweringCtx, imports: &Vec<ast.Import>) {
@@ -266,7 +266,7 @@ fn register_type_name(ctx: &mut hir_lower_ctx.LoweringCtx, decl: &ast.Declaratio
             if !success {
                 ctx.error(
                     hir.DiagnosticCode.E0101,
-                    common::make_string("duplicate definition"),
+                    common.make_string("duplicate definition"),
                     s.name.span,
                 );
             } else {
@@ -288,7 +288,7 @@ fn register_type_name(ctx: &mut hir_lower_ctx.LoweringCtx, decl: &ast.Declaratio
             if !success {
                 ctx.error(
                     hir.DiagnosticCode.E0101,
-                    common::make_string("duplicate definition"),
+                    common.make_string("duplicate definition"),
                     e.name.span,
                 );
             } else {
@@ -310,7 +310,7 @@ fn register_type_name(ctx: &mut hir_lower_ctx.LoweringCtx, decl: &ast.Declaratio
             if !success {
                 ctx.error(
                     hir.DiagnosticCode.E0101,
-                    common::make_string("duplicate definition"),
+                    common.make_string("duplicate definition"),
                     t.name.span,
                 );
             } else {
@@ -332,7 +332,7 @@ fn register_type_name(ctx: &mut hir_lower_ctx.LoweringCtx, decl: &ast.Declaratio
             if !success {
                 ctx.error(
                     hir.DiagnosticCode.E0101,
-                    common::make_string("duplicate definition"),
+                    common.make_string("duplicate definition"),
                     eff.name.span,
                 );
             } else {
@@ -354,7 +354,7 @@ fn register_type_name(ctx: &mut hir_lower_ctx.LoweringCtx, decl: &ast.Declaratio
             if !success {
                 ctx.error(
                     hir.DiagnosticCode.E0101,
-                    common::make_string("duplicate definition"),
+                    common.make_string("duplicate definition"),
                     ta.name.span,
                 );
             } else {
@@ -383,7 +383,7 @@ fn register_type_name(ctx: &mut hir_lower_ctx.LoweringCtx, decl: &ast.Declaratio
             if !success {
                 ctx.error(
                     hir.DiagnosticCode.E0101,
-                    common::make_string("duplicate definition"),
+                    common.make_string("duplicate definition"),
                     b.name.span,
                 );
             } else {
@@ -408,7 +408,7 @@ fn register_type_name(ctx: &mut hir_lower_ctx.LoweringCtx, decl: &ast.Declaratio
                     if !success {
                         ctx.error(
                             hir.DiagnosticCode.E0101,
-                            common::make_string("duplicate definition"),
+                            common.make_string("duplicate definition"),
                             m.name.span,
                         );
                     } else {
@@ -495,11 +495,11 @@ fn register_builtin_children(ctx: &mut hir_lower_ctx.LoweringCtx) {
     match ctx.builtin_string_def {
         Option.Some(parent) => {
             let d = register_builtin_child(ctx, parent, "new", hir_def.DefKind.Fn, dummy_span);
-            ctx.builtin_fn_defs.push(hir_lower_ctx.BuiltinFnDef.new(d.index, common::make_string("string_new")));
+            ctx.builtin_fn_defs.push(hir_lower_ctx.BuiltinFnDef.new(d.index, common.make_string("string_new")));
             let d2 = register_builtin_child(ctx, parent, "from", hir_def.DefKind.Fn, dummy_span);
-            ctx.builtin_fn_defs.push(hir_lower_ctx.BuiltinFnDef.new(d2.index, common::make_string("string_from")));
+            ctx.builtin_fn_defs.push(hir_lower_ctx.BuiltinFnDef.new(d2.index, common.make_string("string_from")));
             let d3 = register_builtin_child(ctx, parent, "with_capacity", hir_def.DefKind.Fn, dummy_span);
-            ctx.builtin_fn_defs.push(hir_lower_ctx.BuiltinFnDef.new(d3.index, common::make_string("string_with_capacity")));
+            ctx.builtin_fn_defs.push(hir_lower_ctx.BuiltinFnDef.new(d3.index, common.make_string("string_with_capacity")));
         }
         Option.None => {}
     }
@@ -508,9 +508,9 @@ fn register_builtin_children(ctx: &mut hir_lower_ctx.LoweringCtx) {
     match ctx.builtin_vec_def {
         Option.Some(parent) => {
             let d = register_builtin_child(ctx, parent, "new", hir_def.DefKind.Fn, dummy_span);
-            ctx.builtin_fn_defs.push(hir_lower_ctx.BuiltinFnDef.new(d.index, common::make_string("vec_new")));
+            ctx.builtin_fn_defs.push(hir_lower_ctx.BuiltinFnDef.new(d.index, common.make_string("vec_new")));
             let d2 = register_builtin_child(ctx, parent, "with_capacity", hir_def.DefKind.Fn, dummy_span);
-            ctx.builtin_fn_defs.push(hir_lower_ctx.BuiltinFnDef.new(d2.index, common::make_string("vec_with_capacity")));
+            ctx.builtin_fn_defs.push(hir_lower_ctx.BuiltinFnDef.new(d2.index, common.make_string("vec_with_capacity")));
         }
         Option.None => {}
     }
@@ -519,10 +519,10 @@ fn register_builtin_children(ctx: &mut hir_lower_ctx.LoweringCtx) {
     match ctx.builtin_option_def {
         Option.Some(parent) => {
             let none_def = register_builtin_variant(ctx, parent, "None", dummy_span, 0);
-            ctx.builtin_fn_defs.push(hir_lower_ctx.BuiltinFnDef.new(none_def.index, common::make_string("option_none_ctor")));
+            ctx.builtin_fn_defs.push(hir_lower_ctx.BuiltinFnDef.new(none_def.index, common.make_string("option_none_ctor")));
             ctx.builtin_option_none_def = Option.Some(none_def);
             let some_def = register_builtin_variant(ctx, parent, "Some", dummy_span, 1);
-            ctx.builtin_fn_defs.push(hir_lower_ctx.BuiltinFnDef.new(some_def.index, common::make_string("option_some_ctor")));
+            ctx.builtin_fn_defs.push(hir_lower_ctx.BuiltinFnDef.new(some_def.index, common.make_string("option_some_ctor")));
             ctx.builtin_option_some_def = Option.Some(some_def);
             // Also register as top-level names for bare Some/None usage
             let some_sym = ctx.intern("Some");
@@ -537,7 +537,7 @@ fn register_builtin_children(ctx: &mut hir_lower_ctx.LoweringCtx) {
     match ctx.builtin_box_def {
         Option.Some(parent) => {
             let d = register_builtin_child(ctx, parent, "new", hir_def.DefKind.Fn, dummy_span);
-            ctx.builtin_fn_defs.push(hir_lower_ctx.BuiltinFnDef.new(d.index, common::make_string("box_new")));
+            ctx.builtin_fn_defs.push(hir_lower_ctx.BuiltinFnDef.new(d.index, common.make_string("box_new")));
         }
         Option.None => {}
     }
@@ -546,7 +546,7 @@ fn register_builtin_children(ctx: &mut hir_lower_ctx.LoweringCtx) {
     match ctx.builtin_hashmap_def {
         Option.Some(parent) => {
             let d = register_builtin_child(ctx, parent, "new", hir_def.DefKind.Fn, dummy_span);
-            ctx.builtin_fn_defs.push(hir_lower_ctx.BuiltinFnDef.new(d.index, common::make_string("hashmap_new")));
+            ctx.builtin_fn_defs.push(hir_lower_ctx.BuiltinFnDef.new(d.index, common.make_string("hashmap_new")));
         }
         Option.None => {}
     }
@@ -555,10 +555,10 @@ fn register_builtin_children(ctx: &mut hir_lower_ctx.LoweringCtx) {
     match ctx.builtin_result_def {
         Option.Some(parent) => {
             let ok_def = register_builtin_variant(ctx, parent, "Ok", dummy_span, 0);
-            ctx.builtin_fn_defs.push(hir_lower_ctx.BuiltinFnDef.new(ok_def.index, common::make_string("result_ok_ctor")));
+            ctx.builtin_fn_defs.push(hir_lower_ctx.BuiltinFnDef.new(ok_def.index, common.make_string("result_ok_ctor")));
             ctx.builtin_result_ok_def = Option.Some(ok_def);
             let err_def = register_builtin_variant(ctx, parent, "Err", dummy_span, 1);
-            ctx.builtin_fn_defs.push(hir_lower_ctx.BuiltinFnDef.new(err_def.index, common::make_string("result_err_ctor")));
+            ctx.builtin_fn_defs.push(hir_lower_ctx.BuiltinFnDef.new(err_def.index, common.make_string("result_err_ctor")));
             ctx.builtin_result_err_def = Option.Some(err_def);
             // Also register as top-level names for bare Ok/Err usage
             let ok_sym = ctx.intern("Ok");
@@ -605,7 +605,7 @@ fn register_builtin_variant(
 
 /// Constructs &str type for builtin signatures.
 fn bi_ref_str() -> type_intern.TyId {
-    type_intern::type_interner().mk_ref(type_intern.CommonTypes.str_ty(), false)
+    type_intern.type_interner().mk_ref(type_intern.CommonTypes.str_ty(), false)
 }
 
 fn bi_i8() -> type_intern.TyId { type_intern.CommonTypes.i8_ty() }
@@ -622,7 +622,7 @@ fn bi_char() -> type_intern.TyId { type_intern.CommonTypes.char_ty() }
 
 /// Constructs an ADT type with no type arguments (e.g. String).
 fn bi_adt(def_id: hir_def.DefId) -> type_intern.TyId {
-    type_intern::type_interner().mk_adt(def_id, type_intern.CommonTyLists.empty())
+    type_intern.type_interner().mk_adt(def_id, type_intern.CommonTyLists.empty())
 }
 
 // ============================================================
@@ -679,7 +679,7 @@ fn register_builtin_fn(
         // Register in builtin_fn_defs so collect_resolver_fn_defs won't overwrite
         // with a mangled name. Standalone builtins use their bare name as the
         // runtime function name (e.g., "print", "panic", "file_read_to_string").
-        ctx.builtin_fn_defs.push(hir_lower_ctx.BuiltinFnDef.new(def_id.index, common::make_string(name)));
+        ctx.builtin_fn_defs.push(hir_lower_ctx.BuiltinFnDef.new(def_id.index, common.make_string(name)));
     }
 }
 
@@ -792,7 +792,7 @@ fn register_builtin_functions(ctx: &mut hir_lower_ctx.LoweringCtx) {
     // when bridge FFI is used. The Blood-level name "abs" is preserved for user code.
     if ctx.builtin_fn_defs.len() > 0 {
         let abs_idx = ctx.builtin_fn_defs.len() - 1;
-        ctx.builtin_fn_defs[abs_idx].runtime_name = common::make_string("abs_f64");
+        ctx.builtin_fn_defs[abs_idx].runtime_name = common.make_string("abs_f64");
     }
     register_builtin_fn(ctx, &mut items, "abs_f32", bi_params_1(bi_f32()), bi_f32());
     register_builtin_fn(ctx, &mut items, "floor", bi_params_1(bi_f64()), bi_f64());
@@ -942,13 +942,13 @@ fn register_bridge_functions(
                 // Convert parameter types to TyId
                 let mut param_tys: Vec<type_intern.TyId> = Vec.new();
                 for pi in 0usize..f.params.len() {
-                    let param_ty = hir_lower_type::lower_type_id(ctx, &f.params[pi].ty);
+                    let param_ty = hir_lower_type.lower_type_id(ctx, &f.params[pi].ty);
                     param_tys.push(param_ty);
                 }
 
                 // Convert return type to TyId
                 let return_ty = match &f.return_type {
-                    &Option.Some(ref rt) => hir_lower_type::lower_type_id(ctx, rt),
+                    &Option.Some(ref rt) => hir_lower_type.lower_type_id(ctx, rt),
                     &Option.None => type_intern.CommonTypes.unit(),
                 };
 
@@ -962,7 +962,7 @@ fn register_bridge_functions(
                 // Register in builtin_fn_defs with the C function name
                 // so codegen resolves this DefId to the bare C name (e.g., "abs")
                 ctx.builtin_fn_defs.push(
-                    hir_lower_ctx.BuiltinFnDef.new(fn_def_id.index, common::make_string(fn_name_str.as_str())),
+                    hir_lower_ctx.BuiltinFnDef.new(fn_def_id.index, common.make_string(fn_name_str.as_str())),
                 );
             }
             &ast.BridgeItem.Const(ref _c) => {
@@ -1224,7 +1224,7 @@ fn load_external_module(
                 p
             }
             &Option.None => {
-                let mut p = common::make_string(ctx.get_base_dir().as_str());
+                let mut p = common.make_string(ctx.get_base_dir().as_str());
                 p.push('/');
                 append_string(&mut p, &module_name);
                 p.push_str(".blood");
@@ -1232,7 +1232,7 @@ fn load_external_module(
             }
         }
     } else {
-        let mut p = common::make_string(ctx.get_base_dir().as_str());
+        let mut p = common.make_string(ctx.get_base_dir().as_str());
         p.push('/');
         append_string(&mut p, &module_name);
         p.push_str(".blood");
@@ -1252,7 +1252,7 @@ fn load_external_module(
 
     // Check if module is currently being loaded (circular import detection)
     if ctx.is_path_loading(&file_path) {
-        let mut msg = common::make_string("circular import detected for module '");
+        let mut msg = common.make_string("circular import detected for module '");
         append_string(&mut msg, &module_name);
         msg.push_str("'");
         ctx.error(hir.DiagnosticCode.E0104, msg, span);
@@ -1260,14 +1260,14 @@ fn load_external_module(
     }
 
     // Read the file; if not found, try directory module: base_dir/name/mod.blood
-    let read_result = source::read_file_string(&file_path);
+    let read_result = source.read_file_string(&file_path);
     let read_result = if !read_result.success {
         // Fallback: try base_dir/name/mod.blood (directory module)
-        let mut dir_path = common::make_string(ctx.get_base_dir().as_str());
+        let mut dir_path = common.make_string(ctx.get_base_dir().as_str());
         dir_path.push('/');
         append_string(&mut dir_path, &module_name);
         dir_path.push_str("/mod.blood");
-        let dir_result = source::read_file_string(&dir_path);
+        let dir_result = source.read_file_string(&dir_path);
         if dir_result.success {
             // Update file_path to the directory module path for base_dir tracking
             file_path = dir_path;
@@ -1280,7 +1280,7 @@ fn load_external_module(
         read_result
     };
     if !read_result.success {
-        let mut msg = common::make_string("failed to load module '");
+        let mut msg = common.make_string("failed to load module '");
         append_string(&mut msg, &module_name);
         msg.push_str("': ");
         match &read_result.error {
@@ -1296,7 +1296,7 @@ fn load_external_module(
         &Option.None => {
             ctx.error(
                 hir.DiagnosticCode.E0104,
-                common::make_string("module file has no content"),
+                common.make_string("module file has no content"),
                 span,
             );
             return;
@@ -1304,9 +1304,9 @@ fn load_external_module(
     };
 
     // Parse the file
-    let parse_result = parser::parse_file(content.as_str());
+    let parse_result = parser.parse_file(content.as_str());
     if parse_result.errors.len() > 0 {
-        let mut msg = common::make_string("parse error in module '");
+        let mut msg = common.make_string("parse error in module '");
         append_string(&mut msg, &module_name);
         msg.push_str("'");
         ctx.error(hir.DiagnosticCode.E0104, msg, span);
@@ -1318,7 +1318,7 @@ fn load_external_module(
         &Option.None => {
             ctx.error(
                 hir.DiagnosticCode.E0104,
-                common::make_string("no program produced from module file"),
+                common.make_string("no program produced from module file"),
                 span,
             );
             return;
@@ -1331,7 +1331,7 @@ fn load_external_module(
     if !success {
         ctx.error(
             hir.DiagnosticCode.E0101,
-            common::make_string("duplicate definition"),
+            common.make_string("duplicate definition"),
             name_span,
         );
         return;
@@ -1346,14 +1346,14 @@ fn load_external_module(
     );
 
     // Mark path as loading for circular import detection
-    ctx.loading_paths.push(common::make_string(file_path.as_str()));
+    ctx.loading_paths.push(common.make_string(file_path.as_str()));
 
     // Save current source and base_dir, switch to the external module's context
     // so that span_to_string() works correctly and sub-module resolution uses
     // the correct directory.
     let saved_source = ctx.source;
-    let saved_base_dir = common::make_string(ctx.base_dir.as_str());
-    ctx.source = common::make_string(content.as_str());
+    let saved_base_dir = common.make_string(ctx.base_dir.as_str());
+    ctx.source = common.make_string(content.as_str());
     // Update base_dir to the directory of the loaded module file
     ctx.base_dir = dir_of_path(&file_path);
 
@@ -1371,7 +1371,7 @@ fn load_external_module(
 
     // Add to loaded_modules AFTER sub-modules have been loaded (post-order).
     // This ensures Phase 3a processes dependencies before dependents.
-    ctx.add_loaded_module(re_interned_name, def_id, common::make_string(file_path.as_str()));
+    ctx.add_loaded_module(re_interned_name, def_id, common.make_string(file_path.as_str()));
 }
 
 /// Resolves a symbol to a string for file path construction.
@@ -1398,7 +1398,7 @@ fn dir_of_path(path: &String) -> String {
     }
     if last_slash < 0 {
         // No slash found — current directory
-        return common::make_string(".");
+        return common.make_string(".");
     }
     let end = last_slash as usize;
     let mut result = String.new();
@@ -1451,7 +1451,7 @@ struct CachedParsedModule {
 fn collect_external_modules(ctx: &mut hir_lower_ctx.LoweringCtx) -> Vec<ExternalModuleInfo> {
     let mut result: Vec<ExternalModuleInfo> = Vec.new();
     for i in 0usize..ctx.loaded_modules.len() {
-        let path = common::make_string(ctx.loaded_modules[i].path.as_str());
+        let path = common.make_string(ctx.loaded_modules[i].path.as_str());
         let def_id = hir_def.DefId.new(ctx.loaded_modules[i].def_id.index);
         result.push(ExternalModuleInfo.new(path, def_id));
     }
@@ -1469,7 +1469,7 @@ fn lower_external_module_declarations(ctx: &mut hir_lower_ctx.LoweringCtx, cache
         let def_id = modules[i].def_id;
 
         // Parse the external module (cached for Phase 4b reuse)
-        let read_result = source::read_file_string(path);
+        let read_result = source.read_file_string(path);
         if !read_result.success {
             // Skip - error should have been reported in Phase 1
             continue;
@@ -1482,7 +1482,7 @@ fn lower_external_module_declarations(ctx: &mut hir_lower_ctx.LoweringCtx, cache
             }
         };
 
-        let parse_result = parser::parse_file(content.as_str());
+        let parse_result = parser.parse_file(content.as_str());
         if parse_result.errors.len() > 0 {
             // Skip - error should have been reported in Phase 1
             continue;
@@ -1499,7 +1499,7 @@ fn lower_external_module_declarations(ctx: &mut hir_lower_ctx.LoweringCtx, cache
 
         // Save current source (struct copy — no heap allocation) and switch
         let saved_source = ctx.source;
-        ctx.source = common::make_string(content.as_str());
+        ctx.source = common.make_string(content.as_str());
 
         let program = match &parse_result.program {
             &Option.Some(ref p) => p,
@@ -1510,7 +1510,7 @@ fn lower_external_module_declarations(ctx: &mut hir_lower_ctx.LoweringCtx, cache
         };
 
         // Lower the module's declarations as if they're inside the module
-        hir_lower_item::lower_module_contents(ctx, def_id, &program.declarations);
+        hir_lower_item.lower_module_contents(ctx, def_id, &program.declarations);
 
         // Restore source
         ctx.source = saved_source;
@@ -1541,13 +1541,13 @@ fn lower_external_module_fn_bodies(ctx: &mut hir_lower_ctx.LoweringCtx, cache: &
 
         // Save current source (struct copy — no heap allocation) and switch
         let saved_source = ctx.source;
-        ctx.source = common::make_string(cached.content.as_str());
+        ctx.source = common.make_string(cached.content.as_str());
 
         // Push a Module scope so unqualified names within the module
         // (e.g. SubstTable inside unify.blood) resolve correctly.
         let def_id = cached.def_id;
         ctx.resolver.push_scope(resolve.ScopeKind.Module);
-        hir_lower_item::add_module_items_to_scope(ctx, def_id, &program.declarations);
+        hir_lower_item.add_module_items_to_scope(ctx, def_id, &program.declarations);
 
         // Lower the module's function bodies
         lower_fn_bodies(ctx, &program.declarations);
@@ -1692,7 +1692,7 @@ fn register_module_type_name(
                     // Nested external module - load recursively
                     load_external_module(ctx, m.name.symbol, m.name.span, m.vis, m.span);
                     // Also register as a child of the parent module so that
-                    // chained paths like parent::submodule.Type work.
+                    // chained paths like parent.submodule.Type work.
                     let name_str = ctx.span_to_string(m.name.span);
                     let name_sym = ctx.intern(name_str.as_str());
                     let lookup = ctx.resolver.lookup(name_sym);
@@ -1748,7 +1748,7 @@ fn register_declaration(ctx: &mut hir_lower_ctx.LoweringCtx, decl: &ast.Declarat
             if !success {
                 ctx.error(
                     hir.DiagnosticCode.E0101,
-                    common::make_string("duplicate definition"),
+                    common.make_string("duplicate definition"),
                     f.name.span,
                 );
             } else {
@@ -1774,7 +1774,7 @@ fn register_declaration(ctx: &mut hir_lower_ctx.LoweringCtx, decl: &ast.Declarat
             if !success {
                 ctx.error(
                     hir.DiagnosticCode.E0101,
-                    common::make_string("duplicate definition"),
+                    common.make_string("duplicate definition"),
                     c.name.span,
                 );
             } else {
@@ -1796,7 +1796,7 @@ fn register_declaration(ctx: &mut hir_lower_ctx.LoweringCtx, decl: &ast.Declarat
             if !success {
                 ctx.error(
                     hir.DiagnosticCode.E0101,
-                    common::make_string("duplicate definition"),
+                    common.make_string("duplicate definition"),
                     s.name.span,
                 );
             } else {
@@ -1818,7 +1818,7 @@ fn register_declaration(ctx: &mut hir_lower_ctx.LoweringCtx, decl: &ast.Declarat
             if !success {
                 ctx.error(
                     hir.DiagnosticCode.E0101,
-                    common::make_string("duplicate definition"),
+                    common.make_string("duplicate definition"),
                     h.name.span,
                 );
             } else {
@@ -2172,7 +2172,7 @@ fn lower_fn_body_if_present(ctx: &mut hir_lower_ctx.LoweringCtx, decl: &ast.Decl
                         // Push a Module scope and add items so lower_single_fn_body
                         // can resolve function names within the module
                         ctx.resolver.push_scope(resolve.ScopeKind.Module);
-                        hir_lower_item::add_module_items_to_scope(ctx, mod_def_id, declarations);
+                        hir_lower_item.add_module_items_to_scope(ctx, mod_def_id, declarations);
                         lower_fn_bodies(ctx, declarations);
                         ctx.resolver.pop_scope();
                     }
@@ -2231,13 +2231,13 @@ fn lower_single_fn_body(ctx: &mut hir_lower_ctx.LoweringCtx, f: &ast.FnDecl) {
     // Phase 3 (lower_function_decl) popped the scope after lowering the signature.
     // Phase 4 needs it active for re-lowering parameter types and any type
     // annotations within the body.
-    let _generics = hir_lower_type::lower_generics(ctx, &f.type_params, &f.where_clause);
+    let _generics = hir_lower_type.lower_generics(ctx, &f.type_params, &f.where_clause);
 
     // Lower the function parameters (for creating locals)
-    let params = hir_lower_item::lower_fn_params(ctx, &f.params);
+    let params = hir_lower_item.lower_fn_params(ctx, &f.params);
 
     // Lower the body
-    let body = hir_lower_body::lower_fn_body(
+    let body = hir_lower_body.lower_fn_body(
         ctx,
         body_id,
         &params,
@@ -2302,7 +2302,7 @@ fn collect_resolver_fn_defs(ctx: &mut hir_lower_ctx.LoweringCtx) {
             Option.Some(name_str) => {
                 let mut mangled = String.new();
                 mangled.push_str("def");
-                hir_lower_ctx::append_u32_to_string(&mut mangled, def_id_index);
+                hir_lower_ctx.append_u32_to_string(&mut mangled, def_id_index);
                 mangled.push(95 as char); // '_'
                 mangled.push_str(name_str.as_str());
                 ctx.builtin_fn_defs.push(

@@ -70,7 +70,7 @@ pub fn generate_function_to_file(
     fn_name: &str,
 ) -> bool {
     // Generate the function IR using the shared codegen logic
-    let fn_ir = codegen::generate_function_with_ctx(ctx, body, fn_name);
+    let fn_ir = codegen.generate_function_with_ctx(ctx, body, fn_name);
 
     // Buffer the function IR (auto-flushes at 64KB)
     ctx.buffer_write(fn_ir.as_str());
@@ -87,11 +87,11 @@ pub fn finish_streaming_module(
     // Emit string constants into ctx.output, then copy to avoid aliased borrow
     ctx.output = String.new();
     ctx.emit_string_constants();
-    let constants_ir = codegen_stmt::clone_string(&ctx.output);
+    let constants_ir = codegen_stmt.clone_string(&ctx.output);
     ctx.buffer_write(constants_ir.as_str());
 
     // Emit intrinsic declarations
-    let decls = codegen::intrinsic_declarations();
+    let decls = codegen.intrinsic_declarations();
     ctx.buffer_write(decls.as_str());
 
     true
@@ -129,8 +129,8 @@ pub fn emit_static_globals_with_names(
                 }
 
                 // Get LLVM type for the static's type (use codegen_stmt for generic arg handling)
-                let static_hir_ty = type_intern::ty_id_to_type(static_def.ty);
-                let llvm_type = codegen_stmt::type_to_llvm_with_ctx(ctx, &static_hir_ty);
+                let static_hir_ty = type_intern.ty_id_to_type(static_def.ty);
+                let llvm_type = codegen_stmt.type_to_llvm_with_ctx(ctx, &static_hir_ty);
 
                 // Emit global variable declaration
                 // Format: @name = global <type> zeroinitializer

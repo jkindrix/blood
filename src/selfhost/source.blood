@@ -28,8 +28,8 @@ impl SourceFile {
     /// Creates a new source file from content.
     pub fn new(path: &str, content: &str) -> SourceFile {
         let mut file = SourceFile {
-            path: common::make_string(path),
-            content: common::make_string(content),
+            path: common.make_string(path),
+            content: common.make_string(content),
             line_starts: Vec.new(),
         };
         file.compute_line_starts();
@@ -39,7 +39,7 @@ impl SourceFile {
     /// Creates an empty source file (placeholder).
     pub fn empty(path: &str) -> SourceFile {
         SourceFile {
-            path: common::make_string(path),
+            path: common.make_string(path),
             content: String.new(),
             line_starts: Vec.new(),
         }
@@ -239,7 +239,7 @@ impl ReadFileResult {
 pub fn read_file(path: &str) -> ReadFileResult {
     // Check if file exists first
     if !file_exists(path) {
-        let mut msg = common::make_string("File not found: ");
+        let mut msg = common.make_string("File not found: ");
         msg.push_str(path);
         return ReadFileResult.err(msg);
     }
@@ -248,7 +248,7 @@ pub fn read_file(path: &str) -> ReadFileResult {
     let content_ref: &str = file_read_to_string(path);
 
     // Convert &str to owned String
-    let content = common::make_string(content_ref);
+    let content = common.make_string(content_ref);
 
     // Check if read succeeded (empty file is valid, but error returns empty)
     // We already checked file_exists, so empty content means empty file
@@ -284,7 +284,7 @@ pub fn parent_dir(path: &str) -> String {
     }
 
     if last_sep < 0 {
-        common::make_string(".")
+        common.make_string(".")
     } else {
         let mut result = String.new();
         for j in 0usize..(last_sep as usize) {

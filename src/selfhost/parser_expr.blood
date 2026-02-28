@@ -271,8 +271,8 @@ fn parse_primary_expr(parser: &mut parser_base.Parser) -> ast.Expr {
     match parser.current.kind {
         // Integer literal
         token.TokenKind.IntLit => {
-            let int_val = parser_base::parse_int_value_from_span(parser, start);
-            let int_suffix = parser_base::parse_int_suffix_from_span(parser, start);
+            let int_val = parser_base.parse_int_value_from_span(parser, start);
+            let int_suffix = parser_base.parse_int_suffix_from_span(parser, start);
             parser.advance();
             let lit = ast.Literal {
                 kind: ast.LiteralKind.Int { val: int_val, suffix: int_suffix },
@@ -285,8 +285,8 @@ fn parse_primary_expr(parser: &mut parser_base.Parser) -> ast.Expr {
         }
         // Float literal
         token.TokenKind.FloatLit => {
-            let float_bits = parser_base::parse_float_bits_from_span(parser, start);
-            let float_suffix = parser_base::parse_float_suffix_from_span(parser, start);
+            let float_bits = parser_base.parse_float_bits_from_span(parser, start);
+            let float_suffix = parser_base.parse_float_suffix_from_span(parser, start);
             parser.advance();
             let lit = ast.Literal {
                 kind: ast.LiteralKind.Float { bits: float_bits, suffix: float_suffix },
@@ -299,7 +299,7 @@ fn parse_primary_expr(parser: &mut parser_base.Parser) -> ast.Expr {
         }
         // String literal
         token.TokenKind.StringLit => {
-            let str_val = parser_base::parse_string_from_span(parser, start);
+            let str_val = parser_base.parse_string_from_span(parser, start);
             parser.advance();
             let lit = ast.Literal {
                 kind: ast.LiteralKind.Str(str_val),
@@ -312,7 +312,7 @@ fn parse_primary_expr(parser: &mut parser_base.Parser) -> ast.Expr {
         }
         // Raw string literal (no escape processing)
         token.TokenKind.RawStringLit => {
-            let str_val = parser_base::parse_raw_string_from_span(parser, start);
+            let str_val = parser_base.parse_raw_string_from_span(parser, start);
             parser.advance();
             let lit = ast.Literal {
                 kind: ast.LiteralKind.Str(str_val),
@@ -325,7 +325,7 @@ fn parse_primary_expr(parser: &mut parser_base.Parser) -> ast.Expr {
         }
         // Byte string literal
         token.TokenKind.ByteStringLit => {
-            let bytes = parser_base::parse_byte_string_from_span(parser, start);
+            let bytes = parser_base.parse_byte_string_from_span(parser, start);
             parser.advance();
             let lit = ast.Literal {
                 kind: ast.LiteralKind.ByteStr(bytes),
@@ -338,7 +338,7 @@ fn parse_primary_expr(parser: &mut parser_base.Parser) -> ast.Expr {
         }
         // Char literal
         token.TokenKind.CharLit => {
-            let char_val = parser_base::parse_char_from_span(parser, start);
+            let char_val = parser_base.parse_char_from_span(parser, start);
             parser.advance();
             let lit = ast.Literal {
                 kind: ast.LiteralKind.Char(char_val),
@@ -776,7 +776,7 @@ fn parse_infix_expr(parser: &mut parser_base.Parser, left: ast.Expr, prec: u8) -
             // Check for tuple index access (e.g., expr.0, expr.1)
             if parser.check(token.TokenKind.IntLit) {
                 let idx_span = parser.current.span;
-                let idx_val = parser_base::parse_int_value_from_span(parser, idx_span) as u32;
+                let idx_val = parser_base.parse_int_value_from_span(parser, idx_span) as u32;
                 parser.advance();
                 let end_span = parser.previous.span;
                 return ast.Expr {
@@ -912,7 +912,7 @@ fn parse_infix_expr(parser: &mut parser_base.Parser, left: ast.Expr, prec: u8) -
         // Type cast
         token.TokenKind.As => {
             parser.advance();
-            let ty = parser_type::parse_type(parser);
+            let ty = parser_type.parse_type(parser);
             let end_span = parser.previous.span;
             return ast.Expr {
                 kind: ast.ExprKind.Cast {
@@ -1144,7 +1144,7 @@ fn parse_if_expr(parser: &mut parser_base.Parser) -> ast.Expr {
 
     // Check for if-let: `if let PATTERN = EXPR { } else { }`
     if parser.try_consume(token.TokenKind.Let) {
-        let pattern = parser_pattern::parse_pattern(parser);
+        let pattern = parser_pattern.parse_pattern(parser);
         parser.expect(token.TokenKind.Eq);
         let scrutinee = parse_expr_no_struct(parser);
         let then_branch = parse_block(parser);
@@ -1207,7 +1207,7 @@ fn parse_match_expr(parser: &mut parser_base.Parser) -> ast.Expr {
 
     while !parser.check(token.TokenKind.RBrace) && !parser.is_at_end() {
         let arm_start = parser.current.span;
-        let pattern = parser_pattern::parse_pattern(parser);
+        let pattern = parser_pattern.parse_pattern(parser);
 
         let guard = if parser.try_consume(token.TokenKind.If) {
             Option.Some(parse_expr(parser))
@@ -1304,7 +1304,7 @@ fn parse_while_expr(parser: &mut parser_base.Parser, label: Option<common.Spanne
 
     // Check for while-let: `while let PATTERN = EXPR { }`
     if parser.try_consume(token.TokenKind.Let) {
-        let pattern = parser_pattern::parse_pattern(parser);
+        let pattern = parser_pattern.parse_pattern(parser);
         parser.expect(token.TokenKind.Eq);
         let scrutinee = parse_expr_no_struct(parser);
         let body = parse_block(parser);
@@ -1339,7 +1339,7 @@ fn parse_for_expr(parser: &mut parser_base.Parser, label: Option<common.SpannedS
     let start = parser.current.span;
     parser.advance(); // consume 'for'
 
-    let pattern = parser_pattern::parse_pattern(parser);
+    let pattern = parser_pattern.parse_pattern(parser);
     parser.expect(token.TokenKind.In);
     let iter = parse_expr_no_struct(parser);
     let body = parse_block(parser);
@@ -1432,9 +1432,9 @@ fn parse_closure_expr(parser: &mut parser_base.Parser) -> ast.Expr {
 
         while !parser.check(token.TokenKind.Or) && !parser.is_at_end() {
             let param_start = parser.current.span;
-            let pattern = parser_pattern::parse_pattern_no_or(parser);
+            let pattern = parser_pattern.parse_pattern_no_or(parser);
             let ty = if parser.try_consume(token.TokenKind.Colon) {
-                Option.Some(parser_type::parse_type(parser))
+                Option.Some(parser_type.parse_type(parser))
             } else {
                 Option.None
             };
@@ -1457,14 +1457,14 @@ fn parse_closure_expr(parser: &mut parser_base.Parser) -> ast.Expr {
 
     // Optional return type
     let return_type = if parser.try_consume(token.TokenKind.Arrow) {
-        Option.Some(parser_type::parse_type(parser))
+        Option.Some(parser_type.parse_type(parser))
     } else {
         Option.None
     };
 
     // Optional effects clause: / {Effect1, Effect2}
     let effects: Option<ast.EffectRow> = if parser.check(token.TokenKind.Slash) {
-        Option.Some(parser_type::parse_fn_type_effect_row(parser))
+        Option.Some(parser_type.parse_fn_type_effect_row(parser))
     } else {
         Option.None
     };
@@ -1495,7 +1495,7 @@ fn parse_perform_expr(parser: &mut parser_base.Parser) -> ast.Expr {
     parser.advance(); // consume 'perform'
 
     // Parse the effect path (could be Effect.op or just op)
-    let path = parser_type::parse_type_path(parser);
+    let path = parser_type.parse_type_path(parser);
 
     let mut effect_path: Option<ast.TypePath>;
     let mut operation: common.SpannedSymbol;
@@ -1610,7 +1610,7 @@ fn parse_try_with_expr(parser: &mut parser_base.Parser) -> ast.Expr {
         let handler_start = parser.current.span;
 
         // Parse Effect.operation or Effect.operation pattern
-        let effect_path = parser_type::parse_type_path(parser);
+        let effect_path = parser_type.parse_type_path(parser);
 
         let mut handler_effect: ast.TypePath;
         let mut handler_operation: common.SpannedSymbol;
@@ -1666,7 +1666,7 @@ fn parse_try_with_expr(parser: &mut parser_base.Parser) -> ast.Expr {
         parser.expect(token.TokenKind.LParen);
         let mut params: Vec<ast.Pattern> = Vec.new();
         while !parser.check(token.TokenKind.RParen) && !parser.is_at_end() {
-            let pat = parser_pattern::parse_pattern(parser);
+            let pat = parser_pattern.parse_pattern(parser);
             params.push(pat);
             if !parser.try_consume(token.TokenKind.Comma) {
                 break;
@@ -1832,7 +1832,7 @@ fn parse_expr_path_segment(parser: &mut parser_base.Parser) -> ast.ExprPathSegme
     // Check for turbofish ::<T, U>
     let args = if parser.check(token.TokenKind.ColonColon) && parser.check_next(token.TokenKind.Lt) {
         parser.advance(); // consume ::
-        Option.Some(parser_type::parse_type_args(parser))
+        Option.Some(parser_type.parse_type_args(parser))
     } else {
         Option.None
     };
@@ -2038,9 +2038,9 @@ fn parse_local_fn_decl(parser: &mut parser_base.Parser) -> ast.Declaration {
     let mut params: Vec<ast.Param> = Vec.new();
     while !parser.check(token.TokenKind.RParen) && !parser.is_at_end() {
         let param_start = parser.current.span;
-        let param_pattern = parser_pattern::parse_pattern(parser);
+        let param_pattern = parser_pattern.parse_pattern(parser);
         let param_ty = if parser.try_consume(token.TokenKind.Colon) {
-            parser_type::parse_type(parser)
+            parser_type.parse_type(parser)
         } else {
             ast.Type { kind: ast.TypeKind.Infer, span: param_start }
         };
@@ -2060,7 +2060,7 @@ fn parse_local_fn_decl(parser: &mut parser_base.Parser) -> ast.Declaration {
 
     // Parse return type
     let return_type: Option<ast.Type> = if parser.try_consume(token.TokenKind.Arrow) {
-        Option.Some(parser_type::parse_type(parser))
+        Option.Some(parser_type.parse_type(parser))
     } else {
         Option.None
     };
@@ -2119,10 +2119,10 @@ pub fn parse_let_statement(parser: &mut parser_base.Parser) -> ast.Statement {
     let start = parser.current.span;
     parser.advance(); // consume 'let'
 
-    let pattern = parser_pattern::parse_pattern(parser);
+    let pattern = parser_pattern.parse_pattern(parser);
 
     let ty = if parser.try_consume(token.TokenKind.Colon) {
-        Option.Some(parser_type::parse_type(parser))
+        Option.Some(parser_type.parse_type(parser))
     } else {
         Option.None
     };
@@ -2263,7 +2263,7 @@ fn parse_format_macro_args(parser: &mut parser_base.Parser) -> ast.MacroCallKind
     // First argument must be a string literal (the format string)
     let fmt_span = parser.current.span;
     let fmt_str = if parser.check(token.TokenKind.StringLit) {
-        let s = parser_base::parse_string_from_span(parser, fmt_span);
+        let s = parser_base.parse_string_from_span(parser, fmt_span);
         parser.advance();
         common.SpannedString {
             value: s,
@@ -2384,7 +2384,7 @@ fn parse_matches_macro_args(parser: &mut parser_base.Parser) -> ast.MacroCallKin
     parser.expect(token.TokenKind.LParen);
     let expr = parse_expr(parser);
     parser.expect(token.TokenKind.Comma);
-    let pattern = parser_pattern::parse_pattern(parser);
+    let pattern = parser_pattern.parse_pattern(parser);
     parser.expect(token.TokenKind.RParen);
     ast.MacroCallKind.Matches {
         expr: Box.new(expr),
@@ -2456,10 +2456,10 @@ fn parse_custom_macro_args(parser: &mut parser_base.Parser) -> ast.MacroCallKind
 
 // The following functions have been moved to parser_base.blood
 // so both parser_expr and parser_pattern can use them:
-//   parser_base::parse_int_value_from_span
-//   parser_base::parse_int_suffix_from_span
-//   parser_base::parse_float_bits_from_span
-//   parser_base::parse_float_suffix_from_span
-//   parser_base::parse_string_from_span
-//   parser_base::parse_char_from_span
+//   parser_base.parse_int_value_from_span
+//   parser_base.parse_int_suffix_from_span
+//   parser_base.parse_float_bits_from_span
+//   parser_base.parse_float_suffix_from_span
+//   parser_base.parse_string_from_span
+//   parser_base.parse_char_from_span
 

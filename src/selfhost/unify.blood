@@ -181,7 +181,7 @@ impl TypeParamSubst {
         let mut subst = TypeParamSubst.new();
         for i in 0usize..types.len() {
             let vec_idx = subst.entries.len() as u32;
-            subst.entries.push(TypeParamEntry.new(i as u32, type_intern::type_to_ty_id(&types[i])));
+            subst.entries.push(TypeParamEntry.new(i as u32, type_intern.type_to_ty_id(&types[i])));
             subst.hash_index.insert(i as u64, vec_idx);
         }
         subst
@@ -189,7 +189,7 @@ impl TypeParamSubst {
 
     /// Adds a substitution entry (Type-based, converts to TyId internally).
     pub fn add(self: &mut Self, param_index: u32, ty: hir_ty.Type) {
-        let ty_id = type_intern::type_to_ty_id(&ty);
+        let ty_id = type_intern.type_to_ty_id(&ty);
         let vec_idx = self.entries.len() as u32;
         self.entries.push(TypeParamEntry.new(param_index, ty_id));
         self.hash_index.insert(param_index as u64, vec_idx);
@@ -205,7 +205,7 @@ impl TypeParamSubst {
     /// Looks up a type parameter by index (returns Type for backward compat).
     pub fn lookup(self: &Self, param_index: u32) -> Option<hir_ty.Type> {
         match self.lookup_id(param_index) {
-            Option.Some(ty_id) => Option.Some(type_intern::ty_id_to_type(ty_id)),
+            Option.Some(ty_id) => Option.Some(type_intern.ty_id_to_type(ty_id)),
             Option.None => Option.None,
         }
     }
@@ -242,11 +242,11 @@ impl TypeParamSubst {
 /// Wrapper: converts to TyId, delegates to substitute_type_params_id, converts back.
 pub fn substitute_type_params(ty: &hir_ty.Type, subst: &TypeParamSubst) -> hir_ty.Type {
     if subst.is_empty() {
-        return hir_ty::copy_type(ty);
+        return hir_ty.copy_type(ty);
     }
-    let ty_id = type_intern::type_to_ty_id(ty);
+    let ty_id = type_intern.type_to_ty_id(ty);
     let result_id = substitute_type_params_id(ty_id, subst);
-    type_intern::ty_id_to_type(result_id)
+    type_intern.ty_id_to_type(result_id)
 }
 
 /// TyId-native: substitutes type parameters in a type.
@@ -258,11 +258,11 @@ pub fn substitute_type_params_id(ty_id: type_intern.TyId, subst: &TypeParamSubst
 /// Wrapper: converts to TyId, delegates to substitute_forall_vars_id, converts back.
 fn substitute_forall_vars(ty: &hir_ty.Type, subst: &TypeParamSubst) -> hir_ty.Type {
     if subst.is_empty() {
-        return hir_ty::copy_type(ty);
+        return hir_ty.copy_type(ty);
     }
-    let ty_id = type_intern::type_to_ty_id(ty);
+    let ty_id = type_intern.type_to_ty_id(ty);
     let result_id = substitute_forall_vars_id(ty_id, subst);
-    type_intern::ty_id_to_type(result_id)
+    type_intern.ty_id_to_type(result_id)
 }
 
 /// TyId-native: substitutes forall-bound type variables.
@@ -281,7 +281,7 @@ fn substitute_params_core_id(ty_id: type_intern.TyId, subst: &TypeParamSubst, ca
     if depth > 200 {
         return ty_id;
     }
-    let interner = type_intern::type_interner();
+    let interner = type_intern.type_interner();
     let kind = interner.get(ty_id);
     match kind {
         &type_intern.InternedTypeKind.Param(var_id) => {
@@ -302,43 +302,43 @@ fn substitute_params_core_id(ty_id: type_intern.TyId, subst: &TypeParamSubst, ca
         }
         &type_intern.InternedTypeKind.Tuple(list_id) => {
             let new_list = substitute_ty_list_id(list_id, subst, capture_avoid, depth + 1);
-            type_intern::type_interner().intern(type_intern.InternedTypeKind.Tuple(new_list))
+            type_intern.type_interner().intern(type_intern.InternedTypeKind.Tuple(new_list))
         }
         &type_intern.InternedTypeKind.Array { element, size } => {
             let new_elem = substitute_params_core_id(element, subst, capture_avoid, depth + 1);
-            type_intern::type_interner().mk_array(new_elem, size)
+            type_intern.type_interner().mk_array(new_elem, size)
         }
         &type_intern.InternedTypeKind.Slice { element } => {
             let new_elem = substitute_params_core_id(element, subst, capture_avoid, depth + 1);
-            type_intern::type_interner().mk_slice(new_elem)
+            type_intern.type_interner().mk_slice(new_elem)
         }
         &type_intern.InternedTypeKind.Ref { inner, mutable } => {
             let new_inner = substitute_params_core_id(inner, subst, capture_avoid, depth + 1);
-            type_intern::type_interner().mk_ref(new_inner, mutable)
+            type_intern.type_interner().mk_ref(new_inner, mutable)
         }
         &type_intern.InternedTypeKind.Ptr { inner, mutable } => {
             let new_inner = substitute_params_core_id(inner, subst, capture_avoid, depth + 1);
-            type_intern::type_interner().mk_ptr(new_inner, mutable)
+            type_intern.type_interner().mk_ptr(new_inner, mutable)
         }
         &type_intern.InternedTypeKind.Adt { def_id, args } => {
             let new_args = substitute_ty_list_id(args, subst, capture_avoid, depth + 1);
-            type_intern::type_interner().mk_adt(def_id, new_args)
+            type_intern.type_interner().mk_adt(def_id, new_args)
         }
         &type_intern.InternedTypeKind.Fn { params, ret, effects } => {
             let new_params = substitute_ty_list_id(params, subst, capture_avoid, depth + 1);
             let new_ret = substitute_params_core_id(ret, subst, capture_avoid, depth + 1);
             let new_effects = substitute_effect_row_core_id(effects, subst, capture_avoid, depth + 1);
-            type_intern::type_interner().mk_fn(new_params, new_ret, new_effects)
+            type_intern.type_interner().mk_fn(new_params, new_ret, new_effects)
         }
         &type_intern.InternedTypeKind.Closure { def_id, params, ret } => {
             let new_params = substitute_ty_list_id(params, subst, capture_avoid, depth + 1);
             let new_ret = substitute_params_core_id(ret, subst, capture_avoid, depth + 1);
-            type_intern::type_interner().mk_closure(def_id, new_params, new_ret)
+            type_intern.type_interner().mk_closure(def_id, new_params, new_ret)
         }
         &type_intern.InternedTypeKind.Record { fields, ref row_var } => {
             let rv = *row_var;
             let new_fields = substitute_record_fields_id(fields, subst, capture_avoid, depth + 1);
-            type_intern::type_interner().intern(type_intern.InternedTypeKind.Record {
+            type_intern.type_interner().intern(type_intern.InternedTypeKind.Record {
                 fields: new_fields,
                 row_var: rv,
             })
@@ -353,7 +353,7 @@ fn substitute_params_core_id(ty_id: type_intern.TyId, subst: &TypeParamSubst, ca
             if capture_avoid {
                 // Filter out inner-bound params from subst
                 let mut filtered = TypeParamSubst.new();
-                let interner_count = type_intern::type_interner().type_count() as u32;
+                let interner_count = type_intern.type_interner().type_count() as u32;
                 for si in 0usize..subst.entries.len() {
                     let entry_idx = subst.entries[si].param_index;
                     let raw_index = subst.entries[si].ty.index;
@@ -373,13 +373,13 @@ fn substitute_params_core_id(ty_id: type_intern.TyId, subst: &TypeParamSubst, ca
                     }
                 }
                 let new_body = substitute_params_core_id(body, &filtered, capture_avoid, depth + 1);
-                type_intern::type_interner().intern(type_intern.InternedTypeKind.Forall {
+                type_intern.type_interner().intern(type_intern.InternedTypeKind.Forall {
                     params: copied_params,
                     body: new_body,
                 })
             } else {
                 let new_body = substitute_params_core_id(body, subst, capture_avoid, depth + 1);
-                type_intern::type_interner().intern(type_intern.InternedTypeKind.Forall {
+                type_intern.type_interner().intern(type_intern.InternedTypeKind.Forall {
                     params: copied_params,
                     body: new_body,
                 })
@@ -387,11 +387,11 @@ fn substitute_params_core_id(ty_id: type_intern.TyId, subst: &TypeParamSubst, ca
         }
         &type_intern.InternedTypeKind.Ownership { qualifier, inner } => {
             let new_inner = substitute_params_core_id(inner, subst, capture_avoid, depth + 1);
-            type_intern::type_interner().mk_ownership(qualifier, new_inner)
+            type_intern.type_interner().mk_ownership(qualifier, new_inner)
         }
         &type_intern.InternedTypeKind.Range { element, inclusive } => {
             let new_elem = substitute_params_core_id(element, subst, capture_avoid, depth + 1);
-            type_intern::type_interner().mk_range(new_elem, inclusive)
+            type_intern.type_interner().mk_range(new_elem, inclusive)
         }
         &type_intern.InternedTypeKind.DynTrait { trait_id, ref auto_traits } => {
             let auto_count = auto_traits.len();
@@ -399,7 +399,7 @@ fn substitute_params_core_id(ty_id: type_intern.TyId, subst: &TypeParamSubst, ca
             for i in 0usize..auto_count {
                 copied_auto.push(auto_traits[i]);
             }
-            type_intern::type_interner().intern(type_intern.InternedTypeKind.DynTrait {
+            type_intern.type_interner().intern(type_intern.InternedTypeKind.DynTrait {
                 trait_id: trait_id,
                 auto_traits: copied_auto,
             })
@@ -409,49 +409,49 @@ fn substitute_params_core_id(ty_id: type_intern.TyId, subst: &TypeParamSubst, ca
 
 /// Substitutes params in a type list, returning new TyListId.
 fn substitute_ty_list_id(list_id: type_intern.TyListId, subst: &TypeParamSubst, capture_avoid: bool, depth: i32) -> type_intern.TyListId {
-    let interner = type_intern::type_interner();
+    let interner = type_intern.type_interner();
     let len = interner.ty_list_len(list_id);
     let mut result: Vec<type_intern.TyId> = Vec.new();
     for i in 0usize..len {
-        let elem = type_intern::type_interner().get_ty_list_element(list_id, i);
+        let elem = type_intern.type_interner().get_ty_list_element(list_id, i);
         result.push(substitute_params_core_id(elem, subst, capture_avoid, depth));
     }
-    type_intern::type_interner().intern_ty_list(&result)
+    type_intern.type_interner().intern_ty_list(&result)
 }
 
 /// Substitutes params in an effect row (TyId-native).
 fn substitute_effect_row_core_id(eff_id: type_intern.EffectRowId, subst: &TypeParamSubst, capture_avoid: bool, depth: i32) -> type_intern.EffectRowId {
-    let interner = type_intern::type_interner();
+    let interner = type_intern.type_interner();
     let row = interner.get_effect_row(eff_id);
     let eff_count = row.effects.len();
     let row_var = row.row_var;
     let mut new_effects: Vec<type_intern.InternedEffectRef> = Vec.new();
     for i in 0usize..eff_count {
-        let eff = &type_intern::type_interner().get_effect_row(eff_id).effects[i];
+        let eff = &type_intern.type_interner().get_effect_row(eff_id).effects[i];
         let def_id = eff.def_id;
         let args = eff.args;
         let new_args = substitute_ty_list_id(args, subst, capture_avoid, depth);
         new_effects.push(type_intern.InternedEffectRef.new(def_id, new_args));
     }
-    type_intern::type_interner().intern_effect_row(
+    type_intern.type_interner().intern_effect_row(
         type_intern.InternedEffectRow.new(new_effects, row_var)
     )
 }
 
 /// Substitutes params in record fields (TyId-native).
 fn substitute_record_fields_id(fields_id: type_intern.RecordFieldListId, subst: &TypeParamSubst, capture_avoid: bool, depth: i32) -> type_intern.RecordFieldListId {
-    let interner = type_intern::type_interner();
+    let interner = type_intern.type_interner();
     let list = interner.get_record_field_list(fields_id);
     let field_count = list.fields.len();
     let mut new_fields: Vec<type_intern.InternedRecordField> = Vec.new();
     for i in 0usize..field_count {
-        let f = &type_intern::type_interner().get_record_field_list(fields_id).fields[i];
+        let f = &type_intern.type_interner().get_record_field_list(fields_id).fields[i];
         let name = f.name;
         let ty = f.ty;
         let new_ty = substitute_params_core_id(ty, subst, capture_avoid, depth);
         new_fields.push(type_intern.InternedRecordField.new(name, new_ty));
     }
-    type_intern::type_interner().intern_record_field_list(
+    type_intern.type_interner().intern_record_field_list(
         type_intern.InternedRecordFieldList.new(new_fields)
     )
 }
@@ -471,8 +471,8 @@ pub fn extract_type_params_from_self_ty(
     receiver: &hir_ty.Type,
     subst: &mut TypeParamSubst,
 ) {
-    let self_id = type_intern::type_to_ty_id(self_ty);
-    let recv_id = type_intern::type_to_ty_id(receiver);
+    let self_id = type_intern.type_to_ty_id(self_ty);
+    let recv_id = type_intern.type_to_ty_id(receiver);
     extract_params_recursive_id(self_id, recv_id, subst);
 }
 
@@ -482,7 +482,7 @@ fn extract_params_recursive_id(
     actual: type_intern.TyId,
     subst: &mut TypeParamSubst,
 ) {
-    let interner = type_intern::type_interner();
+    let interner = type_intern.type_interner();
     let kind = interner.get(pattern);
     match kind {
         &type_intern.InternedTypeKind.Param(var_id) => {
@@ -517,16 +517,16 @@ fn extract_params_adt_args_id(
     actual: type_intern.TyId,
     subst: &mut TypeParamSubst,
 ) {
-    let interner = type_intern::type_interner();
+    let interner = type_intern.type_interner();
     let actual_kind = interner.get(actual);
     match actual_kind {
         &type_intern.InternedTypeKind.Adt { def_id: _, args } => {
-            let p_len = type_intern::type_interner().ty_list_len(pattern_args);
-            let a_len = type_intern::type_interner().ty_list_len(args);
+            let p_len = type_intern.type_interner().ty_list_len(pattern_args);
+            let a_len = type_intern.type_interner().ty_list_len(args);
             let limit = if p_len < a_len { p_len } else { a_len };
             for i in 0usize..limit {
-                let p_elem = type_intern::type_interner().get_ty_list_element(pattern_args, i);
-                let a_elem = type_intern::type_interner().get_ty_list_element(args, i);
+                let p_elem = type_intern.type_interner().get_ty_list_element(pattern_args, i);
+                let a_elem = type_intern.type_interner().get_ty_list_element(args, i);
                 extract_params_recursive_id(p_elem, a_elem, subst);
             }
         }
@@ -540,7 +540,7 @@ fn extract_params_ref_inner_id(
     actual: type_intern.TyId,
     subst: &mut TypeParamSubst,
 ) {
-    let interner = type_intern::type_interner();
+    let interner = type_intern.type_interner();
     let actual_kind = interner.get(actual);
     match actual_kind {
         &type_intern.InternedTypeKind.Ref { inner, mutable: _ } => {
@@ -556,7 +556,7 @@ fn extract_params_ptr_inner_id(
     actual: type_intern.TyId,
     subst: &mut TypeParamSubst,
 ) {
-    let interner = type_intern::type_interner();
+    let interner = type_intern.type_interner();
     let actual_kind = interner.get(actual);
     match actual_kind {
         &type_intern.InternedTypeKind.Ptr { inner, mutable: _ } => {
@@ -572,7 +572,7 @@ fn extract_params_slice_elem_id(
     actual: type_intern.TyId,
     subst: &mut TypeParamSubst,
 ) {
-    let interner = type_intern::type_interner();
+    let interner = type_intern.type_interner();
     let actual_kind = interner.get(actual);
     match actual_kind {
         &type_intern.InternedTypeKind.Slice { element } => {
@@ -588,7 +588,7 @@ fn extract_params_array_elem_id(
     actual: type_intern.TyId,
     subst: &mut TypeParamSubst,
 ) {
-    let interner = type_intern::type_interner();
+    let interner = type_intern.type_interner();
     let actual_kind = interner.get(actual);
     match actual_kind {
         &type_intern.InternedTypeKind.Array { element, size: _ } => {
@@ -604,16 +604,16 @@ fn extract_params_tuple_elems_id(
     actual: type_intern.TyId,
     subst: &mut TypeParamSubst,
 ) {
-    let interner = type_intern::type_interner();
+    let interner = type_intern.type_interner();
     let actual_kind = interner.get(actual);
     match actual_kind {
         &type_intern.InternedTypeKind.Tuple(actual_list) => {
-            let p_len = type_intern::type_interner().ty_list_len(pattern_list);
-            let a_len = type_intern::type_interner().ty_list_len(actual_list);
+            let p_len = type_intern.type_interner().ty_list_len(pattern_list);
+            let a_len = type_intern.type_interner().ty_list_len(actual_list);
             let limit = if p_len < a_len { p_len } else { a_len };
             for i in 0usize..limit {
-                let p_elem = type_intern::type_interner().get_ty_list_element(pattern_list, i);
-                let a_elem = type_intern::type_interner().get_ty_list_element(actual_list, i);
+                let p_elem = type_intern.type_interner().get_ty_list_element(pattern_list, i);
+                let a_elem = type_intern.type_interner().get_ty_list_element(actual_list, i);
                 extract_params_recursive_id(p_elem, a_elem, subst);
             }
         }
@@ -696,7 +696,7 @@ impl Unifier {
     /// Creates a fresh inference type as TyId (zero allocation).
     pub fn fresh_infer_id(self: &mut Self) -> type_intern.TyId {
         let var_id = self.fresh_ty_var();
-        type_intern::type_interner().mk_infer(var_id)
+        type_intern.type_interner().mk_infer(var_id)
     }
 }
 
@@ -1225,7 +1225,7 @@ impl DeferredConstraint {
 impl SubstTable {
     /// Adds a type variable substitution (Type-based, converts to TyId internally).
     pub fn add_ty_subst(self: &mut Self, var_id: hir_def.TyVarId, ty: hir_ty.Type) {
-        let ty_id = type_intern::type_to_ty_id(&ty);
+        let ty_id = type_intern.type_to_ty_id(&ty);
         self.add_ty_subst_id(var_id, ty_id);
     }
 
@@ -1366,32 +1366,32 @@ fn effect_row_to_id(row: &hir_ty.EffectRow) -> type_intern.EffectRowId {
         let eff = &row.effects[i];
         let mut arg_ids: Vec<type_intern.TyId> = Vec.new();
         for j in 0usize..eff.args.len() {
-            arg_ids.push(type_intern::type_to_ty_id(&eff.args[j]));
+            arg_ids.push(type_intern.type_to_ty_id(&eff.args[j]));
         }
-        let arg_list = type_intern::type_interner().intern_ty_list(&arg_ids);
+        let arg_list = type_intern.type_interner().intern_ty_list(&arg_ids);
         effects.push(type_intern.InternedEffectRef.new(eff.def_id, arg_list));
     }
-    type_intern::type_interner().intern_effect_row(
+    type_intern.type_interner().intern_effect_row(
         type_intern.InternedEffectRow.new(effects, row.row_var)
     )
 }
 
 /// Converts EffectRowId back to hir_ty.EffectRow.
 fn effect_row_id_to_row(id: type_intern.EffectRowId) -> hir_ty.EffectRow {
-    let interner = type_intern::type_interner();
+    let interner = type_intern.type_interner();
     let row = interner.get_effect_row(id);
     let eff_count = row.effects.len();
     let row_var = row.row_var;
     let mut effects: Vec<hir_ty.EffectRef> = Vec.new();
     for i in 0usize..eff_count {
-        let eff = &type_intern::type_interner().get_effect_row(id).effects[i];
+        let eff = &type_intern.type_interner().get_effect_row(id).effects[i];
         let def_id = eff.def_id;
         let args_list = eff.args;
-        let arg_len = type_intern::type_interner().ty_list_len(args_list);
+        let arg_len = type_intern.type_interner().ty_list_len(args_list);
         let mut args: Vec<hir_ty.Type> = Vec.new();
         for j in 0usize..arg_len {
-            let arg_id = type_intern::type_interner().get_ty_list_element(args_list, j);
-            args.push(type_intern::ty_id_to_type(arg_id));
+            let arg_id = type_intern.type_interner().get_ty_list_element(args_list, j);
+            args.push(type_intern.ty_id_to_type(arg_id));
         }
         effects.push(hir_ty.EffectRef.new(def_id, args));
     }
@@ -1402,10 +1402,10 @@ fn effect_row_id_to_row(id: type_intern.EffectRowId) -> hir_ty.EffectRow {
 fn record_fields_to_id(fields: &Vec<hir_ty.RecordField>) -> type_intern.RecordFieldListId {
     let mut interned: Vec<type_intern.InternedRecordField> = Vec.new();
     for i in 0usize..fields.len() {
-        let ty_id = type_intern::type_to_ty_id(&fields[i].ty);
+        let ty_id = type_intern.type_to_ty_id(&fields[i].ty);
         interned.push(type_intern.InternedRecordField.new(fields[i].name, ty_id));
     }
-    type_intern::type_interner().intern_record_field_list(
+    type_intern.type_interner().intern_record_field_list(
         type_intern.InternedRecordFieldList.new(interned)
     )
 }
@@ -1416,7 +1416,7 @@ fn record_fields_to_id(fields: &Vec<hir_ty.RecordField>) -> type_intern.RecordFi
 
 /// TyId-native: applies substitutions to resolve type variables.
 pub fn apply_substs_id(table: &SubstTable, ty_id: type_intern.TyId) -> type_intern.TyId {
-    let interner = type_intern::type_interner();
+    let interner = type_intern.type_interner();
 
     // Phase 1: Iteratively chase Infer chains (prevents stack overflow on cycles)
     let mut current = ty_id;
@@ -1452,43 +1452,43 @@ pub fn apply_substs_id(table: &SubstTable, ty_id: type_intern.TyId) -> type_inte
         &type_intern.InternedTypeKind.Param(_) => current,
         &type_intern.InternedTypeKind.Tuple(list_id) => {
             let new_list = apply_substs_ty_list_id(table, list_id);
-            type_intern::type_interner().intern(type_intern.InternedTypeKind.Tuple(new_list))
+            type_intern.type_interner().intern(type_intern.InternedTypeKind.Tuple(new_list))
         }
         &type_intern.InternedTypeKind.Array { element, size } => {
             let new_elem = apply_substs_id(table, element);
-            type_intern::type_interner().mk_array(new_elem, size)
+            type_intern.type_interner().mk_array(new_elem, size)
         }
         &type_intern.InternedTypeKind.Slice { element } => {
             let new_elem = apply_substs_id(table, element);
-            type_intern::type_interner().mk_slice(new_elem)
+            type_intern.type_interner().mk_slice(new_elem)
         }
         &type_intern.InternedTypeKind.Ref { inner, mutable } => {
             let new_inner = apply_substs_id(table, inner);
-            type_intern::type_interner().mk_ref(new_inner, mutable)
+            type_intern.type_interner().mk_ref(new_inner, mutable)
         }
         &type_intern.InternedTypeKind.Ptr { inner, mutable } => {
             let new_inner = apply_substs_id(table, inner);
-            type_intern::type_interner().mk_ptr(new_inner, mutable)
+            type_intern.type_interner().mk_ptr(new_inner, mutable)
         }
         &type_intern.InternedTypeKind.Adt { def_id, args } => {
             let new_args = apply_substs_ty_list_id(table, args);
-            type_intern::type_interner().mk_adt(def_id, new_args)
+            type_intern.type_interner().mk_adt(def_id, new_args)
         }
         &type_intern.InternedTypeKind.Fn { params, ret, effects } => {
             let new_params = apply_substs_ty_list_id(table, params);
             let new_ret = apply_substs_id(table, ret);
             let new_effects = apply_substs_to_effect_row_id(table, effects);
-            type_intern::type_interner().mk_fn(new_params, new_ret, new_effects)
+            type_intern.type_interner().mk_fn(new_params, new_ret, new_effects)
         }
         &type_intern.InternedTypeKind.Closure { def_id, params, ret } => {
             let new_params = apply_substs_ty_list_id(table, params);
             let new_ret = apply_substs_id(table, ret);
-            type_intern::type_interner().mk_closure(def_id, new_params, new_ret)
+            type_intern.type_interner().mk_closure(def_id, new_params, new_ret)
         }
         &type_intern.InternedTypeKind.Record { fields, ref row_var } => {
             let rv = *row_var;
             let new_fields = apply_substs_record_fields_id(table, fields);
-            type_intern::type_interner().intern(type_intern.InternedTypeKind.Record {
+            type_intern.type_interner().intern(type_intern.InternedTypeKind.Record {
                 fields: new_fields,
                 row_var: rv,
             })
@@ -1500,18 +1500,18 @@ pub fn apply_substs_id(table: &SubstTable, ty_id: type_intern.TyId) -> type_inte
                 copied_params.push(params[i]);
             }
             let new_body = apply_substs_id(table, body);
-            type_intern::type_interner().intern(type_intern.InternedTypeKind.Forall {
+            type_intern.type_interner().intern(type_intern.InternedTypeKind.Forall {
                 params: copied_params,
                 body: new_body,
             })
         }
         &type_intern.InternedTypeKind.Ownership { qualifier, inner } => {
             let new_inner = apply_substs_id(table, inner);
-            type_intern::type_interner().mk_ownership(qualifier, new_inner)
+            type_intern.type_interner().mk_ownership(qualifier, new_inner)
         }
         &type_intern.InternedTypeKind.Range { element, inclusive } => {
             let new_elem = apply_substs_id(table, element);
-            type_intern::type_interner().mk_range(new_elem, inclusive)
+            type_intern.type_interner().mk_range(new_elem, inclusive)
         }
         &type_intern.InternedTypeKind.DynTrait { trait_id, ref auto_traits } => {
             let auto_count = auto_traits.len();
@@ -1519,7 +1519,7 @@ pub fn apply_substs_id(table: &SubstTable, ty_id: type_intern.TyId) -> type_inte
             for i in 0usize..auto_count {
                 copied_auto.push(auto_traits[i]);
             }
-            type_intern::type_interner().intern(type_intern.InternedTypeKind.DynTrait {
+            type_intern.type_interner().intern(type_intern.InternedTypeKind.DynTrait {
                 trait_id: trait_id,
                 auto_traits: copied_auto,
             })
@@ -1529,49 +1529,49 @@ pub fn apply_substs_id(table: &SubstTable, ty_id: type_intern.TyId) -> type_inte
 
 /// Applies substitutions to a type list (TyId-native).
 fn apply_substs_ty_list_id(table: &SubstTable, list_id: type_intern.TyListId) -> type_intern.TyListId {
-    let interner = type_intern::type_interner();
+    let interner = type_intern.type_interner();
     let len = interner.ty_list_len(list_id);
     let mut result: Vec<type_intern.TyId> = Vec.new();
     for i in 0usize..len {
-        let elem = type_intern::type_interner().get_ty_list_element(list_id, i);
+        let elem = type_intern.type_interner().get_ty_list_element(list_id, i);
         result.push(apply_substs_id(table, elem));
     }
-    type_intern::type_interner().intern_ty_list(&result)
+    type_intern.type_interner().intern_ty_list(&result)
 }
 
 /// Applies substitutions to an effect row (TyId-native).
 fn apply_substs_to_effect_row_id(table: &SubstTable, eff_id: type_intern.EffectRowId) -> type_intern.EffectRowId {
-    let interner = type_intern::type_interner();
+    let interner = type_intern.type_interner();
     let row = interner.get_effect_row(eff_id);
     let eff_count = row.effects.len();
     let row_var = row.row_var;
     let mut new_effects: Vec<type_intern.InternedEffectRef> = Vec.new();
     for i in 0usize..eff_count {
-        let eff = &type_intern::type_interner().get_effect_row(eff_id).effects[i];
+        let eff = &type_intern.type_interner().get_effect_row(eff_id).effects[i];
         let def_id = eff.def_id;
         let args = eff.args;
         let new_args = apply_substs_ty_list_id(table, args);
         new_effects.push(type_intern.InternedEffectRef.new(def_id, new_args));
     }
-    type_intern::type_interner().intern_effect_row(
+    type_intern.type_interner().intern_effect_row(
         type_intern.InternedEffectRow.new(new_effects, row_var)
     )
 }
 
 /// Applies substitutions to record fields (TyId-native).
 fn apply_substs_record_fields_id(table: &SubstTable, fields_id: type_intern.RecordFieldListId) -> type_intern.RecordFieldListId {
-    let interner = type_intern::type_interner();
+    let interner = type_intern.type_interner();
     let list = interner.get_record_field_list(fields_id);
     let field_count = list.fields.len();
     let mut new_fields: Vec<type_intern.InternedRecordField> = Vec.new();
     for i in 0usize..field_count {
-        let f = &type_intern::type_interner().get_record_field_list(fields_id).fields[i];
+        let f = &type_intern.type_interner().get_record_field_list(fields_id).fields[i];
         let name = f.name;
         let ty = f.ty;
         let new_ty = apply_substs_id(table, ty);
         new_fields.push(type_intern.InternedRecordField.new(name, new_ty));
     }
-    type_intern::type_interner().intern_record_field_list(
+    type_intern.type_interner().intern_record_field_list(
         type_intern.InternedRecordFieldList.new(new_fields)
     )
 }
@@ -1583,12 +1583,12 @@ fn apply_substs_record_fields_id(table: &SubstTable, fields_id: type_intern.Reco
 /// Checks if a type variable occurs in a type.
 /// Used to prevent infinite types like `T = Option<T>`.
 pub fn occurs_in(var_id: hir_def.TyVarId, ty: &hir_ty.Type) -> bool {
-    let ty_id = type_intern::type_to_ty_id(ty);
+    let ty_id = type_intern.type_to_ty_id(ty);
     occurs_in_id(var_id, ty_id)
 }
 
 fn occurs_in_id(var_id: hir_def.TyVarId, ty_id: type_intern.TyId) -> bool {
-    let interner = type_intern::type_interner();
+    let interner = type_intern.type_interner();
     let kind = interner.get(ty_id);
     match kind {
         &type_intern.InternedTypeKind.Infer(id) => id.index == var_id.index,
@@ -1628,7 +1628,7 @@ fn occurs_in_id(var_id: hir_def.TyVarId, ty_id: type_intern.TyId) -> bool {
             occurs_in_id(var_id, ret)
         }
         &type_intern.InternedTypeKind.Record { fields, row_var: _ } => {
-            let interner2 = type_intern::type_interner();
+            let interner2 = type_intern.type_interner();
             let field_list = interner2.get_record_field_list(fields);
             let len = field_list.fields.len();
             for i in 0usize..len {
@@ -1653,10 +1653,10 @@ fn occurs_in_id(var_id: hir_def.TyVarId, ty_id: type_intern.TyId) -> bool {
 }
 
 fn occurs_in_ty_list(var_id: hir_def.TyVarId, list_id: type_intern.TyListId) -> bool {
-    let interner = type_intern::type_interner();
+    let interner = type_intern.type_interner();
     let len = interner.ty_list_len(list_id);
     for i in 0usize..len {
-        let elem = type_intern::type_interner().get_ty_list_element(list_id, i);
+        let elem = type_intern.type_interner().get_ty_list_element(list_id, i);
         if occurs_in_id(var_id, elem) {
             return true;
         }
@@ -1677,8 +1677,8 @@ pub fn unify(
     b: &hir_ty.Type,
     span: common.Span,
 ) -> UnifyResult {
-    let a_id = type_intern::type_to_ty_id(a);
-    let b_id = type_intern::type_to_ty_id(b);
+    let a_id = type_intern.type_to_ty_id(a);
+    let b_id = type_intern.type_to_ty_id(b);
     unify_id(table, unifier, a_id, b_id, span)
 }
 
@@ -1698,7 +1698,7 @@ pub fn unify_id(
 
 /// Helper: extracts TyVarId if this TyId is an Infer type, otherwise None.
 fn extract_infer_var(ty_id: type_intern.TyId) -> Option<hir_def.TyVarId> {
-    let interner = type_intern::type_interner();
+    let interner = type_intern.type_interner();
     let kind = interner.get(ty_id);
     match kind {
         &type_intern.InternedTypeKind.Infer(var_id) => Option.Some(var_id),
@@ -1708,7 +1708,7 @@ fn extract_infer_var(ty_id: type_intern.TyId) -> Option<hir_def.TyVarId> {
 
 /// Helper: returns true if this TyId is Error.
 fn is_error_id(ty_id: type_intern.TyId) -> bool {
-    let interner = type_intern::type_interner();
+    let interner = type_intern.type_interner();
     let kind = interner.get(ty_id);
     match kind {
         &type_intern.InternedTypeKind.Error => true,
@@ -1718,7 +1718,7 @@ fn is_error_id(ty_id: type_intern.TyId) -> bool {
 
 /// Helper: returns true if this TyId is Never.
 fn is_never_id(ty_id: type_intern.TyId) -> bool {
-    let interner = type_intern::type_interner();
+    let interner = type_intern.type_interner();
     let kind = interner.get(ty_id);
     match kind {
         &type_intern.InternedTypeKind.Never => true,
@@ -1728,7 +1728,7 @@ fn is_never_id(ty_id: type_intern.TyId) -> bool {
 
 /// Helper: extracts Forall params (copied to local Vec) and body TyId.
 fn extract_forall_id(ty_id: type_intern.TyId) -> Option<(Vec<hir_def.TyVarId>, type_intern.TyId)> {
-    let interner = type_intern::type_interner();
+    let interner = type_intern.type_interner();
     let kind = interner.get(ty_id);
     match kind {
         &type_intern.InternedTypeKind.Forall { ref params, body } => {
@@ -1870,11 +1870,11 @@ fn unify_structural_id(
     b: type_intern.TyId,
     span: common.Span,
 ) -> UnifyResult {
-    let interner = type_intern::type_interner();
+    let interner = type_intern.type_interner();
     let kind_a = interner.get(a);
     match kind_a {
         &type_intern.InternedTypeKind.Primitive(prim_a) => {
-            let kind_b = type_intern::type_interner().get(b);
+            let kind_b = type_intern.type_interner().get(b);
             match kind_b {
                 &type_intern.InternedTypeKind.Primitive(prim_b) => {
                     if primitives_equal(prim_a, prim_b) {
@@ -1888,7 +1888,7 @@ fn unify_structural_id(
         }
 
         &type_intern.InternedTypeKind.Param(id_a) => {
-            let kind_b = type_intern::type_interner().get(b);
+            let kind_b = type_intern.type_interner().get(b);
             match kind_b {
                 &type_intern.InternedTypeKind.Param(id_b) => {
                     if id_a.index == id_b.index {
@@ -1902,7 +1902,7 @@ fn unify_structural_id(
         }
 
         &type_intern.InternedTypeKind.Tuple(list_a) => {
-            let kind_b = type_intern::type_interner().get(b);
+            let kind_b = type_intern.type_interner().get(b);
             match kind_b {
                 &type_intern.InternedTypeKind.Tuple(list_b) => {
                     unify_ty_lists_id(table, unifier, list_a, list_b, span)
@@ -1914,7 +1914,7 @@ fn unify_structural_id(
         &type_intern.InternedTypeKind.Array { element, size } => {
             let elem_a = element;
             let size_a = size;
-            let kind_b = type_intern::type_interner().get(b);
+            let kind_b = type_intern.type_interner().get(b);
             match kind_b {
                 &type_intern.InternedTypeKind.Array { element, size } => {
                     // Allow const-param sentinel size (u64.MAX) to match any size.
@@ -1931,7 +1931,7 @@ fn unify_structural_id(
 
         &type_intern.InternedTypeKind.Slice { element } => {
             let elem_a = element;
-            let kind_b = type_intern::type_interner().get(b);
+            let kind_b = type_intern.type_interner().get(b);
             match kind_b {
                 &type_intern.InternedTypeKind.Slice { element } => {
                     unify_id(table, unifier, elem_a, element, span)
@@ -1943,7 +1943,7 @@ fn unify_structural_id(
         &type_intern.InternedTypeKind.Ref { inner, mutable } => {
             let inner_a = inner;
             let mut_a = mutable;
-            let kind_b = type_intern::type_interner().get(b);
+            let kind_b = type_intern.type_interner().get(b);
             match kind_b {
                 &type_intern.InternedTypeKind.Ref { inner, mutable } => {
                     if mut_a != mutable {
@@ -1958,7 +1958,7 @@ fn unify_structural_id(
         &type_intern.InternedTypeKind.Ptr { inner, mutable } => {
             let inner_a = inner;
             let mut_a = mutable;
-            let kind_b = type_intern::type_interner().get(b);
+            let kind_b = type_intern.type_interner().get(b);
             match kind_b {
                 &type_intern.InternedTypeKind.Ptr { inner, mutable } => {
                     if mut_a != mutable {
@@ -1973,7 +1973,7 @@ fn unify_structural_id(
         &type_intern.InternedTypeKind.Adt { def_id, args } => {
             let def_a = def_id;
             let args_a = args;
-            let kind_b = type_intern::type_interner().get(b);
+            let kind_b = type_intern.type_interner().get(b);
             match kind_b {
                 &type_intern.InternedTypeKind.Adt { def_id, args } => {
                     if def_a.index != def_id.index {
@@ -1990,7 +1990,7 @@ fn unify_structural_id(
         &type_intern.InternedTypeKind.Fn { params, ret, effects: _ } => {
             let params_a = params;
             let ret_a = ret;
-            let kind_b = type_intern::type_interner().get(b);
+            let kind_b = type_intern.type_interner().get(b);
             match kind_b {
                 &type_intern.InternedTypeKind.Fn { params, ret, effects: _ } => {
                     match unify_ty_lists_id(table, unifier, params_a, params, span) {
@@ -2007,7 +2007,7 @@ fn unify_structural_id(
         &type_intern.InternedTypeKind.Closure { def_id: _, params, ret } => {
             let params_a = params;
             let ret_a = ret;
-            let kind_b = type_intern::type_interner().get(b);
+            let kind_b = type_intern.type_interner().get(b);
             match kind_b {
                 &type_intern.InternedTypeKind.Closure { def_id: _, params, ret } => {
                     match unify_ty_lists_id(table, unifier, params_a, params, span) {
@@ -2032,7 +2032,7 @@ fn unify_structural_id(
         &type_intern.InternedTypeKind.Record { fields, row_var } => {
             let fields_a_id = fields;
             let row_var_a = row_var;
-            let kind_b = type_intern::type_interner().get(b);
+            let kind_b = type_intern.type_interner().get(b);
             match kind_b {
                 &type_intern.InternedTypeKind.Record { fields, row_var } => {
                     let fields_b_id = fields;
@@ -2050,7 +2050,7 @@ fn unify_structural_id(
         &type_intern.InternedTypeKind.Ownership { qualifier, inner } => {
             let qualifier_a = qualifier;
             let inner_a = inner;
-            let kind_b = type_intern::type_interner().get(b);
+            let kind_b = type_intern.type_interner().get(b);
             match kind_b {
                 &type_intern.InternedTypeKind.Ownership { qualifier, inner } => {
                     if !ownership_qualifiers_equal(qualifier_a, qualifier) {
@@ -2065,7 +2065,7 @@ fn unify_structural_id(
         &type_intern.InternedTypeKind.Range { element, inclusive } => {
             let elem_a = element;
             let incl_a = inclusive;
-            let kind_b = type_intern::type_interner().get(b);
+            let kind_b = type_intern.type_interner().get(b);
             match kind_b {
                 &type_intern.InternedTypeKind.Range { element, inclusive } => {
                     if incl_a != inclusive {
@@ -2085,7 +2085,7 @@ fn unify_structural_id(
             for i in 0usize..auto_traits.len() {
                 auto_a.push(hir_def.DefId { index: auto_traits[i].index });
             }
-            let kind_b = type_intern::type_interner().get(b);
+            let kind_b = type_intern.type_interner().get(b);
             match kind_b {
                 &type_intern.InternedTypeKind.DynTrait { trait_id, ref auto_traits } => {
                     if trait_a.index != trait_id.index {
@@ -2121,15 +2121,15 @@ fn unify_ty_lists_id(
     list_b: type_intern.TyListId,
     span: common.Span,
 ) -> UnifyResult {
-    let interner = type_intern::type_interner();
+    let interner = type_intern.type_interner();
     let len_a = interner.ty_list_len(list_a);
     let len_b = interner.ty_list_len(list_b);
     if len_a != len_b {
         return UnifyResult.Err(UnifyError.arity(span));
     }
     for i in 0usize..len_a {
-        let elem_a = type_intern::type_interner().get_ty_list_element(list_a, i);
-        let elem_b = type_intern::type_interner().get_ty_list_element(list_b, i);
+        let elem_a = type_intern.type_interner().get_ty_list_element(list_a, i);
+        let elem_b = type_intern.type_interner().get_ty_list_element(list_b, i);
         match unify_id(table, unifier, elem_a, elem_b, span) {
             UnifyResult.Err(e) => { return UnifyResult.Err(e); }
             UnifyResult.Ok => {}
@@ -2140,14 +2140,14 @@ fn unify_ty_lists_id(
 
 /// Helper: converts interned record fields back to Vec<hir_ty.RecordField>.
 fn record_fields_id_to_vec(fields_id: type_intern.RecordFieldListId) -> Vec<hir_ty.RecordField> {
-    let interner = type_intern::type_interner();
+    let interner = type_intern.type_interner();
     let field_list = interner.get_record_field_list(fields_id);
     let mut result: Vec<hir_ty.RecordField> = Vec.new();
     for i in 0usize..field_list.fields.len() {
         let f = &field_list.fields[i];
         result.push(hir_ty.RecordField {
             name: f.name,
-            ty: type_intern::ty_id_to_type(f.ty),
+            ty: type_intern.ty_id_to_type(f.ty),
         });
     }
     result
@@ -2318,7 +2318,7 @@ fn merge_effect_lists(a: &Vec<hir_ty.EffectRef>, b: &Vec<hir_ty.EffectRef>) -> V
 fn copy_effect_ref(eff: &hir_ty.EffectRef) -> hir_ty.EffectRef {
     let mut args: Vec<hir_ty.Type> = Vec.new();
     for i in 0usize..eff.args.len() {
-        args.push(hir_ty::copy_type(&eff.args[i]));
+        args.push(hir_ty.copy_type(&eff.args[i]));
     }
     hir_ty.EffectRef {
         def_id: eff.def_id,
@@ -2561,7 +2561,7 @@ fn collect_fields_by_indices(
         if idx < fields.len() {
             result.push(hir_ty.RecordField {
                 name: fields[idx].name,
-                ty: hir_ty::copy_type(&fields[idx].ty),
+                ty: hir_ty.copy_type(&fields[idx].ty),
             });
         }
     }
@@ -2575,23 +2575,23 @@ fn collect_fields_by_indices(
 /// Debug: returns primitive type name.
 fn debug_prim_name(p: hir_ty.PrimitiveTy) -> String {
     match p {
-        hir_ty.PrimitiveTy.Bool => common::make_string("bool"),
-        hir_ty.PrimitiveTy.I8 => common::make_string("i8"),
-        hir_ty.PrimitiveTy.I16 => common::make_string("i16"),
-        hir_ty.PrimitiveTy.I32 => common::make_string("i32"),
-        hir_ty.PrimitiveTy.I64 => common::make_string("i64"),
-        hir_ty.PrimitiveTy.I128 => common::make_string("i128"),
-        hir_ty.PrimitiveTy.Isize => common::make_string("isize"),
-        hir_ty.PrimitiveTy.U8 => common::make_string("u8"),
-        hir_ty.PrimitiveTy.U16 => common::make_string("u16"),
-        hir_ty.PrimitiveTy.U32 => common::make_string("u32"),
-        hir_ty.PrimitiveTy.U64 => common::make_string("u64"),
-        hir_ty.PrimitiveTy.U128 => common::make_string("u128"),
-        hir_ty.PrimitiveTy.Usize => common::make_string("usize"),
-        hir_ty.PrimitiveTy.F32 => common::make_string("f32"),
-        hir_ty.PrimitiveTy.F64 => common::make_string("f64"),
-        hir_ty.PrimitiveTy.Char => common::make_string("char"),
-        hir_ty.PrimitiveTy.Str => common::make_string("str"),
+        hir_ty.PrimitiveTy.Bool => common.make_string("bool"),
+        hir_ty.PrimitiveTy.I8 => common.make_string("i8"),
+        hir_ty.PrimitiveTy.I16 => common.make_string("i16"),
+        hir_ty.PrimitiveTy.I32 => common.make_string("i32"),
+        hir_ty.PrimitiveTy.I64 => common.make_string("i64"),
+        hir_ty.PrimitiveTy.I128 => common.make_string("i128"),
+        hir_ty.PrimitiveTy.Isize => common.make_string("isize"),
+        hir_ty.PrimitiveTy.U8 => common.make_string("u8"),
+        hir_ty.PrimitiveTy.U16 => common.make_string("u16"),
+        hir_ty.PrimitiveTy.U32 => common.make_string("u32"),
+        hir_ty.PrimitiveTy.U64 => common.make_string("u64"),
+        hir_ty.PrimitiveTy.U128 => common.make_string("u128"),
+        hir_ty.PrimitiveTy.Usize => common.make_string("usize"),
+        hir_ty.PrimitiveTy.F32 => common.make_string("f32"),
+        hir_ty.PrimitiveTy.F64 => common.make_string("f64"),
+        hir_ty.PrimitiveTy.Char => common.make_string("char"),
+        hir_ty.PrimitiveTy.Str => common.make_string("str"),
     }
 }
 
@@ -2599,25 +2599,25 @@ fn debug_prim_name(p: hir_ty.PrimitiveTy) -> String {
 pub fn debug_type_kind_name(ty: &hir_ty.Type) -> String {
     match &ty.kind {
         &hir_ty.TypeKind.Primitive(p) => {
-            let mut s = common::make_string("Prim(");
+            let mut s = common.make_string("Prim(");
             s.push_str(debug_prim_name(p).as_str());
             s.push_str(")");
             s
         }
-        &hir_ty.TypeKind.Tuple(_) => common::make_string("Tuple"),
-        &hir_ty.TypeKind.Array { element: _, size: _ } => common::make_string("Array"),
-        &hir_ty.TypeKind.Slice { element: _ } => common::make_string("Slice"),
+        &hir_ty.TypeKind.Tuple(_) => common.make_string("Tuple"),
+        &hir_ty.TypeKind.Array { element: _, size: _ } => common.make_string("Array"),
+        &hir_ty.TypeKind.Slice { element: _ } => common.make_string("Slice"),
         &hir_ty.TypeKind.Ref { ref inner, mutable } => {
-            let mut s = common::make_string("&");
+            let mut s = common.make_string("&");
             if mutable { s.push_str("mut "); }
             s.push_str(debug_type_kind_name(inner.as_ref()).as_str());
             s
         }
-        &hir_ty.TypeKind.Ptr { inner: _, mutable: _ } => common::make_string("Ptr"),
-        &hir_ty.TypeKind.Fn { params: _, ret: _, effects: _ } => common::make_string("Fn"),
-        &hir_ty.TypeKind.Closure { def_id: _, params: _, ret: _ } => common::make_string("Closure"),
+        &hir_ty.TypeKind.Ptr { inner: _, mutable: _ } => common.make_string("Ptr"),
+        &hir_ty.TypeKind.Fn { params: _, ret: _, effects: _ } => common.make_string("Fn"),
+        &hir_ty.TypeKind.Closure { def_id: _, params: _, ret: _ } => common.make_string("Closure"),
         &hir_ty.TypeKind.Adt { def_id, ref args } => {
-            let mut s = common::make_string("Adt(d");
+            let mut s = common.make_string("Adt(d");
             s.push_str(usize_to_str(def_id.index as usize).as_str());
             if args.len() > 0 {
                 s.push_str("<");
@@ -2631,29 +2631,29 @@ pub fn debug_type_kind_name(ty: &hir_ty.Type) -> String {
             s
         }
         &hir_ty.TypeKind.Infer(var_id) => {
-            let mut s = common::make_string("$");
+            let mut s = common.make_string("$");
             s.push_str(usize_to_str(var_id.index as usize).as_str());
             s
         }
         &hir_ty.TypeKind.Param(param_id) => {
-            let mut s = common::make_string("P");
+            let mut s = common.make_string("P");
             s.push_str(usize_to_str(param_id.index as usize).as_str());
             s
         }
-        &hir_ty.TypeKind.Record { fields: _, row_var: _ } => common::make_string("Record"),
-        &hir_ty.TypeKind.Forall { params: _, body: _ } => common::make_string("Forall"),
-        &hir_ty.TypeKind.Ownership { qualifier: _, inner: _ } => common::make_string("Own"),
-        &hir_ty.TypeKind.Range { element: _, inclusive: _ } => common::make_string("Range"),
-        &hir_ty.TypeKind.DynTrait { trait_id: _, auto_traits: _ } => common::make_string("dyn"),
-        &hir_ty.TypeKind.Never => common::make_string("!"),
-        &hir_ty.TypeKind.Error => common::make_string("ERR"),
+        &hir_ty.TypeKind.Record { fields: _, row_var: _ } => common.make_string("Record"),
+        &hir_ty.TypeKind.Forall { params: _, body: _ } => common.make_string("Forall"),
+        &hir_ty.TypeKind.Ownership { qualifier: _, inner: _ } => common.make_string("Own"),
+        &hir_ty.TypeKind.Range { element: _, inclusive: _ } => common.make_string("Range"),
+        &hir_ty.TypeKind.DynTrait { trait_id: _, auto_traits: _ } => common.make_string("dyn"),
+        &hir_ty.TypeKind.Never => common.make_string("!"),
+        &hir_ty.TypeKind.Error => common.make_string("ERR"),
     }
 }
 
 /// Helper: convert usize to string.
 fn usize_to_str(n: usize) -> String {
     if n == 0 {
-        return common::make_string("0");
+        return common.make_string("0");
     }
     let mut val = n;
     let mut digits = String.new();
@@ -2671,7 +2671,7 @@ fn usize_to_str(n: usize) -> String {
 
 /// Debug: prints type mismatch details for the catch-all arm.
 fn debug_mismatch(a: &hir_ty.Type, b: &hir_ty.Type) {
-    let mut msg = common::make_string("[UNIFY] catch-all: ");
+    let mut msg = common.make_string("[UNIFY] catch-all: ");
     msg.push_str(debug_type_kind_name(a).as_str());
     msg.push_str(" vs ");
     msg.push_str(debug_type_kind_name(b).as_str());
@@ -2680,7 +2680,7 @@ fn debug_mismatch(a: &hir_ty.Type, b: &hir_ty.Type) {
 
 /// Debug: prints ADT def_id mismatch details.
 fn debug_adt_mismatch(def_a: hir_def.DefId, def_b: hir_def.DefId) {
-    let mut msg = common::make_string("[UNIFY] Adt def_id: d");
+    let mut msg = common.make_string("[UNIFY] Adt def_id: d");
     msg.push_str(usize_to_str(def_a.index as usize).as_str());
     msg.push_str(" vs d");
     msg.push_str(usize_to_str(def_b.index as usize).as_str());
@@ -2756,15 +2756,15 @@ fn solve_single_constraint(
             match result {
                 UnifyResult.Ok => ConstraintSolveResult.Solved,
                 UnifyResult.Err(err) => {
-                    let mut msg = common::make_string("type mismatch: expected `");
+                    let mut msg = common.make_string("type mismatch: expected `");
                     msg.push_str(debug_type_kind_name(expected).as_str());
                     msg.push_str("`, found `");
                     msg.push_str(debug_type_kind_name(actual).as_str());
                     msg.push_str("`");
                     ConstraintSolveResult.Failed(ConstraintError {
                         constraint: Constraint.TypeEqual {
-                            expected: hir_ty::copy_type(expected),
-                            actual: hir_ty::copy_type(actual),
+                            expected: hir_ty.copy_type(expected),
+                            actual: hir_ty.copy_type(actual),
                             span: span,
                         },
                         message: msg,
@@ -2803,7 +2803,7 @@ fn solve_single_constraint(
             if all_found {
                 ConstraintSolveResult.Solved
             } else {
-                let msg = common::make_string("effect not in scope");
+                let msg = common.make_string("effect not in scope");
                 ConstraintSolveResult.Failed(ConstraintError {
                     constraint: Constraint.EffectSubset {
                         subset: hir_ty.EffectRow.empty(),

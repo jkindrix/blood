@@ -541,7 +541,7 @@ impl Resolver {
         self.def_info_hash.insert(def_id.index as u64, vec_idx);
         match &parent {
             &Option.Some(p) => {
-                let combined = hashmap::combine_u32_usize(p.index, name.index as usize);
+                let combined = hashmap.combine_u32_usize(p.index, name.index as usize);
                 self.child_def_hash.insert(combined, def_id.index as u64);
             }
             &Option.None => {}
@@ -584,7 +584,7 @@ impl Resolver {
         self.def_info.push(entry);
         // Populate hash indexes
         self.def_info_hash.insert(def_id.index as u64, vec_idx);
-        let combined = hashmap::combine_u32_usize(parent.index, name.index as usize);
+        let combined = hashmap.combine_u32_usize(parent.index, name.index as usize);
         self.child_def_hash.insert(combined, def_id.index as u64);
     }
 
@@ -806,7 +806,7 @@ impl Resolver {
     /// Used for resolving qualified paths like module.Item.
     pub fn lookup_in_parent(self: &Self, parent_def: hir_def.DefId, name: common.Symbol) -> Option<hir_def.DefId> {
         // O(1) hash lookup using combined (parent, name) key
-        let combined = hashmap::combine_u32_usize(parent_def.index, name.index as usize);
+        let combined = hashmap.combine_u32_usize(parent_def.index, name.index as usize);
         match self.child_def_hash.get(combined) {
             Option.Some(def_id_index) => {
                 return Some(hir_def.DefId.new(def_id_index as u32));

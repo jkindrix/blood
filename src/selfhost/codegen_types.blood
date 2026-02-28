@@ -46,7 +46,7 @@ impl TypeLayout {
         TypeLayout {
             size: 8,
             align: 8,
-            llvm_type: common::make_string("ptr"),
+            llvm_type: common.make_string("ptr"),
         }
     }
 }
@@ -97,7 +97,7 @@ pub fn type_to_llvm_fast(ty: &hir_ty.Type) -> Option<&str> {
 pub fn type_to_llvm(ty: &hir_ty.Type) -> String {
     match &ty.kind {
         &hir_ty.TypeKind.Primitive(ref prim) => primitive_to_llvm(prim),
-        &hir_ty.TypeKind.Never => common::make_string("void"),
+        &hir_ty.TypeKind.Never => common.make_string("void"),
         &hir_ty.TypeKind.Tuple(ref elems) => tuple_to_llvm(elems),
         &hir_ty.TypeKind.Array { ref element, size } => array_to_llvm(element.as_ref(), size),
         &hir_ty.TypeKind.Slice { ref element } => slice_to_llvm(element.as_ref()),
@@ -107,16 +107,16 @@ pub fn type_to_llvm(ty: &hir_ty.Type) -> String {
         &hir_ty.TypeKind.Fn { ref params, ref ret, effects: _ } => fn_to_llvm(params, ret.as_ref()),
         &hir_ty.TypeKind.Closure { def_id: _, ref params, ref ret } => fn_to_llvm(params, ret.as_ref()),
         &hir_ty.TypeKind.Param(ref var_id) => param_to_llvm(var_id),
-        &hir_ty.TypeKind.Infer(_) => common::make_string("i64"),
+        &hir_ty.TypeKind.Infer(_) => common.make_string("i64"),
         &hir_ty.TypeKind.Record { ref fields, row_var: _ } => record_to_llvm(fields),
         // Forall types are represented as opaque pointers (polymorphic values)
-        &hir_ty.TypeKind.Forall { params: _, body: _ } => common::make_string("ptr"),
+        &hir_ty.TypeKind.Forall { params: _, body: _ } => common.make_string("ptr"),
         // Ownership qualifiers don't affect runtime representation
         &hir_ty.TypeKind.Ownership { qualifier: _, ref inner } => type_to_llvm(inner.as_ref()),
         // Range types are represented as a struct { element, element } or { element, element, bool }
         &hir_ty.TypeKind.Range { ref element, inclusive: _ } => {
             let elem_llvm = type_to_llvm(element.as_ref());
-            let mut s = common::make_string("{ ");
+            let mut s = common.make_string("{ ");
             s.push_str(elem_llvm.as_str());
             s.push_str(", ");
             s.push_str(elem_llvm.as_str());
@@ -124,8 +124,8 @@ pub fn type_to_llvm(ty: &hir_ty.Type) -> String {
             s
         }
         // Trait objects are fat pointers (data ptr + vtable ptr)
-        &hir_ty.TypeKind.DynTrait { trait_id: _, auto_traits: _ } => common::make_string("{ ptr, ptr }"),
-        &hir_ty.TypeKind.Error => common::make_string("i64"),
+        &hir_ty.TypeKind.DynTrait { trait_id: _, auto_traits: _ } => common.make_string("{ ptr, ptr }"),
+        &hir_ty.TypeKind.Error => common.make_string("i64"),
     }
 }
 
@@ -137,7 +137,7 @@ pub fn return_type_to_llvm(ty: &hir_ty.Type) -> String {
     match &ty.kind {
         &hir_ty.TypeKind.Tuple(ref elems) => {
             if elems.len() == 0 {
-                return common::make_string("void");
+                return common.make_string("void");
             }
             tuple_to_llvm(elems)
         }
@@ -148,33 +148,33 @@ pub fn return_type_to_llvm(ty: &hir_ty.Type) -> String {
 /// Converts a primitive type to LLVM IR.
 fn primitive_to_llvm(prim: &hir_ty.PrimitiveTy) -> String {
     match prim {
-        &hir_ty.PrimitiveTy.Bool => common::make_string("i1"),
-        &hir_ty.PrimitiveTy.Char => common::make_string("i32"),
-        &hir_ty.PrimitiveTy.I8 => common::make_string("i8"),
-        &hir_ty.PrimitiveTy.I16 => common::make_string("i16"),
-        &hir_ty.PrimitiveTy.I32 => common::make_string("i32"),
-        &hir_ty.PrimitiveTy.I64 => common::make_string("i64"),
-        &hir_ty.PrimitiveTy.I128 => common::make_string("i128"),
-        &hir_ty.PrimitiveTy.Isize => common::make_string("i64"),
-        &hir_ty.PrimitiveTy.U8 => common::make_string("i8"),
-        &hir_ty.PrimitiveTy.U16 => common::make_string("i16"),
-        &hir_ty.PrimitiveTy.U32 => common::make_string("i32"),
-        &hir_ty.PrimitiveTy.U64 => common::make_string("i64"),
-        &hir_ty.PrimitiveTy.U128 => common::make_string("i128"),
-        &hir_ty.PrimitiveTy.Usize => common::make_string("i64"),
-        &hir_ty.PrimitiveTy.F32 => common::make_string("float"),
-        &hir_ty.PrimitiveTy.F64 => common::make_string("double"),
-        &hir_ty.PrimitiveTy.Str => common::make_string("{ ptr, i64 }"),
+        &hir_ty.PrimitiveTy.Bool => common.make_string("i1"),
+        &hir_ty.PrimitiveTy.Char => common.make_string("i32"),
+        &hir_ty.PrimitiveTy.I8 => common.make_string("i8"),
+        &hir_ty.PrimitiveTy.I16 => common.make_string("i16"),
+        &hir_ty.PrimitiveTy.I32 => common.make_string("i32"),
+        &hir_ty.PrimitiveTy.I64 => common.make_string("i64"),
+        &hir_ty.PrimitiveTy.I128 => common.make_string("i128"),
+        &hir_ty.PrimitiveTy.Isize => common.make_string("i64"),
+        &hir_ty.PrimitiveTy.U8 => common.make_string("i8"),
+        &hir_ty.PrimitiveTy.U16 => common.make_string("i16"),
+        &hir_ty.PrimitiveTy.U32 => common.make_string("i32"),
+        &hir_ty.PrimitiveTy.U64 => common.make_string("i64"),
+        &hir_ty.PrimitiveTy.U128 => common.make_string("i128"),
+        &hir_ty.PrimitiveTy.Usize => common.make_string("i64"),
+        &hir_ty.PrimitiveTy.F32 => common.make_string("float"),
+        &hir_ty.PrimitiveTy.F64 => common.make_string("double"),
+        &hir_ty.PrimitiveTy.Str => common.make_string("{ ptr, i64 }"),
     }
 }
 
 /// Converts a tuple type to LLVM IR.
 fn tuple_to_llvm(elems: &Vec<hir_ty.Type>) -> String {
     if elems.len() == 0 {
-        return common::make_string("{}");
+        return common.make_string("{}");
     }
 
-    let mut result = common::make_string("{ ");
+    let mut result = common.make_string("{ ");
     for i in 0usize..elems.len() {
         if i > 0 {
             result.push_str(", ");
@@ -189,10 +189,10 @@ fn tuple_to_llvm(elems: &Vec<hir_ty.Type>) -> String {
 /// Converts a record type to LLVM IR: { field1_ty, field2_ty, ... }
 fn record_to_llvm(fields: &Vec<hir_ty.RecordField>) -> String {
     if fields.len() == 0 {
-        return common::make_string("{}");
+        return common.make_string("{}");
     }
 
-    let mut result = common::make_string("{ ");
+    let mut result = common.make_string("{ ");
     for i in 0usize..fields.len() {
         if i > 0 {
             result.push_str(", ");
@@ -206,7 +206,7 @@ fn record_to_llvm(fields: &Vec<hir_ty.RecordField>) -> String {
 
 /// Converts an array type to LLVM IR.
 fn array_to_llvm(elem: &hir_ty.Type, size: u64) -> String {
-    let mut result = common::make_string("[");
+    let mut result = common.make_string("[");
     let size_str = format_u64(size);
     result.push_str(size_str.as_str());
     result.push_str(" x ");
@@ -219,7 +219,7 @@ fn array_to_llvm(elem: &hir_ty.Type, size: u64) -> String {
 /// Converts a slice type to LLVM IR.
 /// Slices are fat pointers: { ptr, i64 }
 fn slice_to_llvm(_elem: &hir_ty.Type) -> String {
-    common::make_string("{ ptr, i64 }")
+    common.make_string("{ ptr, i64 }")
 }
 
 /// Checks if a type is unsized (requires fat pointer when referenced).
@@ -245,9 +245,9 @@ pub fn is_unsized_type(ty: &hir_ty.Type) -> bool {
 fn ref_to_llvm(inner: &hir_ty.Type) -> String {
     if is_unsized_type(inner) {
         // Fat pointer for unsized types
-        common::make_string("{ ptr, i64 }")
+        common.make_string("{ ptr, i64 }")
     } else {
-        common::make_string("ptr")
+        common.make_string("ptr")
     }
 }
 
@@ -256,28 +256,28 @@ fn ref_to_llvm(inner: &hir_ty.Type) -> String {
 fn ptr_to_llvm(inner: &hir_ty.Type) -> String {
     if is_unsized_type(inner) {
         // Fat pointer for unsized types
-        common::make_string("{ ptr, i64 }")
+        common.make_string("{ ptr, i64 }")
     } else {
-        common::make_string("ptr")
+        common.make_string("ptr")
     }
 }
 
 /// Converts an ADT (struct/enum) type to LLVM IR.
 /// For now, we use an opaque pointer representation.
 fn adt_to_llvm(_args: &Vec<hir_ty.Type>) -> String {
-    common::make_string("ptr")
+    common.make_string("ptr")
 }
 
 /// Converts a function type to LLVM IR.
 /// Function pointers are fat pointers { fn_ptr, env_ptr } to support closures.
 fn fn_to_llvm(_params: &Vec<hir_ty.Type>, _return_ty: &hir_ty.Type) -> String {
-    common::make_string("{ ptr, ptr }")
+    common.make_string("{ ptr, ptr }")
 }
 
 /// Converts a type parameter to LLVM IR.
 /// Type parameters should be monomorphized before codegen.
 fn param_to_llvm(_var_id: &hir_def.TyVarId) -> String {
-    common::make_string("ptr")
+    common.make_string("ptr")
 }
 
 // ============================================================
@@ -288,14 +288,14 @@ fn param_to_llvm(_var_id: &hir_def.TyVarId) -> String {
 pub fn get_layout(ty: &hir_ty.Type) -> TypeLayout {
     match &ty.kind {
         &hir_ty.TypeKind.Primitive(ref prim) => primitive_layout(prim),
-        &hir_ty.TypeKind.Never => TypeLayout.new(0, 1, common::make_string("void")),
+        &hir_ty.TypeKind.Never => TypeLayout.new(0, 1, common.make_string("void")),
         &hir_ty.TypeKind.Tuple(ref elems) => tuple_layout(elems),
         &hir_ty.TypeKind.Array { ref element, size } => array_layout(element.as_ref(), size),
-        &hir_ty.TypeKind.Slice { element: _ } => TypeLayout.new(16, 8, common::make_string("{ ptr, i64 }")),
+        &hir_ty.TypeKind.Slice { element: _ } => TypeLayout.new(16, 8, common.make_string("{ ptr, i64 }")),
         &hir_ty.TypeKind.Ref { ref inner, mutable: _ } => {
             if is_unsized_type(inner.as_ref()) {
                 // Fat pointer for references to unsized types
-                TypeLayout.new(16, 8, common::make_string("{ ptr, i64 }"))
+                TypeLayout.new(16, 8, common.make_string("{ ptr, i64 }"))
             } else {
                 TypeLayout.pointer()
             }
@@ -303,16 +303,16 @@ pub fn get_layout(ty: &hir_ty.Type) -> TypeLayout {
         &hir_ty.TypeKind.Ptr { ref inner, mutable: _ } => {
             if is_unsized_type(inner.as_ref()) {
                 // Fat pointer for pointers to unsized types
-                TypeLayout.new(16, 8, common::make_string("{ ptr, i64 }"))
+                TypeLayout.new(16, 8, common.make_string("{ ptr, i64 }"))
             } else {
                 TypeLayout.pointer()
             }
         }
         &hir_ty.TypeKind.Adt { def_id: _, args: _ } => TypeLayout.pointer(),
-        &hir_ty.TypeKind.Fn { params: _, ret: _, effects: _ } => TypeLayout.new(16, 8, common::make_string("{ ptr, ptr }")),
-        &hir_ty.TypeKind.Closure { def_id: _, params: _, ret: _ } => TypeLayout.new(16, 8, common::make_string("{ ptr, ptr }")),
+        &hir_ty.TypeKind.Fn { params: _, ret: _, effects: _ } => TypeLayout.new(16, 8, common.make_string("{ ptr, ptr }")),
+        &hir_ty.TypeKind.Closure { def_id: _, params: _, ret: _ } => TypeLayout.new(16, 8, common.make_string("{ ptr, ptr }")),
         &hir_ty.TypeKind.Param(_) => TypeLayout.pointer(),
-        &hir_ty.TypeKind.Infer(_) => TypeLayout.new(8, 8, common::make_string("i64")),
+        &hir_ty.TypeKind.Infer(_) => TypeLayout.new(8, 8, common.make_string("i64")),
         &hir_ty.TypeKind.Record { ref fields, row_var: _ } => {
             let llvm_ty = record_to_llvm(fields);
             let mut size: u64 = 0;
@@ -333,43 +333,43 @@ pub fn get_layout(ty: &hir_ty.Type) -> TypeLayout {
         &hir_ty.TypeKind.Range { ref element, inclusive: _ } => {
             let elem_layout = get_layout(element.as_ref());
             TypeLayout.new(elem_layout.size * 2, elem_layout.align, type_to_llvm(&hir_ty.Type.new(hir_ty.TypeKind.Range {
-                element: Box.new(hir_ty::copy_type(element.as_ref())),
+                element: Box.new(hir_ty.copy_type(element.as_ref())),
                 inclusive: false,
             })))
         }
         // Trait objects: fat pointer { ptr, ptr }
-        &hir_ty.TypeKind.DynTrait { trait_id: _, auto_traits: _ } => TypeLayout.new(16, 8, common::make_string("{ ptr, ptr }")),
-        &hir_ty.TypeKind.Error => TypeLayout.new(8, 8, common::make_string("i64")),
+        &hir_ty.TypeKind.DynTrait { trait_id: _, auto_traits: _ } => TypeLayout.new(16, 8, common.make_string("{ ptr, ptr }")),
+        &hir_ty.TypeKind.Error => TypeLayout.new(8, 8, common.make_string("i64")),
     }
 }
 
 /// Gets layout for a primitive type.
 fn primitive_layout(prim: &hir_ty.PrimitiveTy) -> TypeLayout {
     match prim {
-        &hir_ty.PrimitiveTy.Bool => TypeLayout.primitive(1, common::make_string("i1")),
-        &hir_ty.PrimitiveTy.Char => TypeLayout.primitive(4, common::make_string("i32")),
-        &hir_ty.PrimitiveTy.I8 => TypeLayout.primitive(1, common::make_string("i8")),
-        &hir_ty.PrimitiveTy.I16 => TypeLayout.primitive(2, common::make_string("i16")),
-        &hir_ty.PrimitiveTy.I32 => TypeLayout.primitive(4, common::make_string("i32")),
-        &hir_ty.PrimitiveTy.I64 => TypeLayout.primitive(8, common::make_string("i64")),
-        &hir_ty.PrimitiveTy.I128 => TypeLayout.primitive(16, common::make_string("i128")),
-        &hir_ty.PrimitiveTy.Isize => TypeLayout.primitive(8, common::make_string("i64")),
-        &hir_ty.PrimitiveTy.U8 => TypeLayout.primitive(1, common::make_string("i8")),
-        &hir_ty.PrimitiveTy.U16 => TypeLayout.primitive(2, common::make_string("i16")),
-        &hir_ty.PrimitiveTy.U32 => TypeLayout.primitive(4, common::make_string("i32")),
-        &hir_ty.PrimitiveTy.U64 => TypeLayout.primitive(8, common::make_string("i64")),
-        &hir_ty.PrimitiveTy.U128 => TypeLayout.primitive(16, common::make_string("i128")),
-        &hir_ty.PrimitiveTy.Usize => TypeLayout.primitive(8, common::make_string("i64")),
-        &hir_ty.PrimitiveTy.F32 => TypeLayout.primitive(4, common::make_string("float")),
-        &hir_ty.PrimitiveTy.F64 => TypeLayout.primitive(8, common::make_string("double")),
-        &hir_ty.PrimitiveTy.Str => TypeLayout.new(16, 8, common::make_string("{ ptr, i64 }")),
+        &hir_ty.PrimitiveTy.Bool => TypeLayout.primitive(1, common.make_string("i1")),
+        &hir_ty.PrimitiveTy.Char => TypeLayout.primitive(4, common.make_string("i32")),
+        &hir_ty.PrimitiveTy.I8 => TypeLayout.primitive(1, common.make_string("i8")),
+        &hir_ty.PrimitiveTy.I16 => TypeLayout.primitive(2, common.make_string("i16")),
+        &hir_ty.PrimitiveTy.I32 => TypeLayout.primitive(4, common.make_string("i32")),
+        &hir_ty.PrimitiveTy.I64 => TypeLayout.primitive(8, common.make_string("i64")),
+        &hir_ty.PrimitiveTy.I128 => TypeLayout.primitive(16, common.make_string("i128")),
+        &hir_ty.PrimitiveTy.Isize => TypeLayout.primitive(8, common.make_string("i64")),
+        &hir_ty.PrimitiveTy.U8 => TypeLayout.primitive(1, common.make_string("i8")),
+        &hir_ty.PrimitiveTy.U16 => TypeLayout.primitive(2, common.make_string("i16")),
+        &hir_ty.PrimitiveTy.U32 => TypeLayout.primitive(4, common.make_string("i32")),
+        &hir_ty.PrimitiveTy.U64 => TypeLayout.primitive(8, common.make_string("i64")),
+        &hir_ty.PrimitiveTy.U128 => TypeLayout.primitive(16, common.make_string("i128")),
+        &hir_ty.PrimitiveTy.Usize => TypeLayout.primitive(8, common.make_string("i64")),
+        &hir_ty.PrimitiveTy.F32 => TypeLayout.primitive(4, common.make_string("float")),
+        &hir_ty.PrimitiveTy.F64 => TypeLayout.primitive(8, common.make_string("double")),
+        &hir_ty.PrimitiveTy.Str => TypeLayout.new(16, 8, common.make_string("{ ptr, i64 }")),
     }
 }
 
 /// Gets layout for a tuple type.
 fn tuple_layout(elems: &Vec<hir_ty.Type>) -> TypeLayout {
     if elems.len() == 0 {
-        return TypeLayout.new(0, 1, common::make_string("{}"));
+        return TypeLayout.new(0, 1, common.make_string("{}"));
     }
 
     let mut size: u64 = 0;
@@ -412,7 +412,7 @@ pub fn type_size_bytes(ty: &hir_ty.Type) -> u64 {
 /// Converts a u64 to its string representation.
 pub fn format_u64(n: u64) -> String {
     if n == 0 {
-        return common::make_string("0");
+        return common.make_string("0");
     }
 
     let mut result = String.new();
@@ -439,7 +439,7 @@ pub fn format_u64(n: u64) -> String {
 /// Converts an i64 to its string representation (returns owned String).
 pub fn format_i64(n: i64) -> String {
     if n < 0 {
-        let mut result = common::make_string("-");
+        let mut result = common.make_string("-");
         let abs_val = (0i64 - n) as u64;
         let abs_str = format_u64(abs_val);
         result.push_str(abs_str.as_str());
@@ -452,7 +452,7 @@ pub fn format_i64(n: i64) -> String {
 /// Converts a u128 to its string representation.
 pub fn format_u128(n: u128) -> String {
     if n == 0 {
-        return common::make_string("0");
+        return common.make_string("0");
     }
 
     let mut result = String.new();
@@ -479,7 +479,7 @@ pub fn format_u128(n: u128) -> String {
 /// Converts an i128 to its string representation (returns owned String).
 pub fn format_i128(n: i128) -> String {
     if n < 0 {
-        let mut result = common::make_string("-");
+        let mut result = common.make_string("-");
         let abs_val = (0i128 - n) as u128;
         let abs_str = format_u128(abs_val);
         result.push_str(abs_str.as_str());
@@ -496,7 +496,7 @@ pub fn format_i128(n: i128) -> String {
 /// Converts an f64 (represented as bits) to its hexadecimal LLVM format.
 /// LLVM uses hexadecimal floating point for exact representation.
 pub fn f64_bits_to_llvm_hex(bits: u64) -> String {
-    let mut result = common::make_string("0x");
+    let mut result = common.make_string("0x");
     let mut i: i64 = 60;
     while i >= 0 {
         let nibble = ((bits >> (i as u64)) & 0xF) as u32;

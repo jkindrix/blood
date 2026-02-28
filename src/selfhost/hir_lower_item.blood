@@ -39,7 +39,7 @@ pub fn lower_fn_params(ctx: &mut hir_lower_ctx.LoweringCtx, params: &Vec<ast.Par
 /// Lower a single function parameter.
 /// param_index is used for generating synthetic names for complex patterns.
 fn lower_fn_param(ctx: &mut hir_lower_ctx.LoweringCtx, param: &ast.Param, param_index: u32) -> hir_item.FnParam {
-    let ty = hir_lower_type::lower_type_id(ctx, &param.ty);
+    let ty = hir_lower_type.lower_type_id(ctx, &param.ty);
 
     // Extract the parameter name from the pattern
     // For complex patterns, this generates a synthetic name
@@ -106,7 +106,7 @@ fn extract_param_name(pattern: &ast.Pattern, param_index: u32) -> (common.Spanne
 /// Lower the return type, defaulting to unit if not specified.
 pub fn lower_return_type(ctx: &mut hir_lower_ctx.LoweringCtx, return_type: &Option<ast.Type>) -> type_intern.TyId {
     match return_type {
-        &Some(ref ty) => hir_lower_type::lower_type_id(ctx, ty),
+        &Some(ref ty) => hir_lower_type.lower_type_id(ctx, ty),
         &None => type_intern.CommonTypes.unit(),
     }
 }
@@ -114,7 +114,7 @@ pub fn lower_return_type(ctx: &mut hir_lower_ctx.LoweringCtx, return_type: &Opti
 /// Lower the effect row, defaulting to empty (pure) if not specified.
 pub fn lower_effects(ctx: &mut hir_lower_ctx.LoweringCtx, effects: &Option<ast.EffectRow>) -> hir_ty.EffectRow {
     match effects {
-        &Some(ref eff) => hir_lower_type::lower_effect_row(ctx, eff),
+        &Some(ref eff) => hir_lower_type.lower_effect_row(ctx, eff),
         &None => hir_ty.EffectRow.empty(),
     }
 }
@@ -130,7 +130,7 @@ pub fn lower_struct_body(ctx: &mut hir_lower_ctx.LoweringCtx, body: &ast.StructB
         &ast.StructBody.Tuple(ref types) => {
             let mut lowered: Vec<type_intern.TyId> = Vec.new();
             for i in 0usize..types.len() {
-                let ty = hir_lower_type::lower_type_id(ctx, &types[i]);
+                let ty = hir_lower_type.lower_type_id(ctx, &types[i]);
                 lowered.push(ty);
             }
             hir_item.StructBody.Tuple(lowered)
@@ -179,7 +179,7 @@ pub fn lower_struct_body(ctx: &mut hir_lower_ctx.LoweringCtx, body: &ast.StructB
 /// Lower a struct field to HIR.
 pub fn lower_struct_field(ctx: &mut hir_lower_ctx.LoweringCtx, field: &ast.StructField) -> hir_item.StructField {
     let def_id = ctx.alloc_def_id();
-    let ty = hir_lower_type::lower_type_id(ctx, &field.ty);
+    let ty = hir_lower_type.lower_type_id(ctx, &field.ty);
     // Re-intern field name for cross-module consistency
     let name_str = ctx.span_to_string(field.name.span);
     let name_sym = ctx.intern(name_str.as_str());
@@ -257,7 +257,7 @@ fn lower_variant_kind(ctx: &mut hir_lower_ctx.LoweringCtx, body: &ast.StructBody
         &ast.StructBody.Tuple(ref types) => {
             let mut lowered: Vec<type_intern.TyId> = Vec.new();
             for i in 0usize..types.len() {
-                let ty = hir_lower_type::lower_type_id(ctx, &types[i]);
+                let ty = hir_lower_type.lower_type_id(ctx, &types[i]);
                 lowered.push(ty);
             }
             hir_item.VariantKind.Tuple(lowered)
@@ -355,7 +355,7 @@ pub fn lower_declaration(ctx: &mut hir_lower_ctx.LoweringCtx, decl: &ast.Declara
         &ast.Declaration.Macro(ref m) => {
             ctx.error(
                 hir.DiagnosticCode.E0104,
-                common::make_string("macro declarations not yet supported"),
+                common.make_string("macro declarations not yet supported"),
                 m.span,
             );
         }
@@ -378,7 +378,7 @@ fn lower_function_decl(ctx: &mut hir_lower_ctx.LoweringCtx, f: &ast.FnDecl) {
     let def_id = binding.def_id;
 
     // Lower generics (pushes a TypeParams scope internally)
-    let generics = hir_lower_type::lower_generics(ctx, &f.type_params, &f.where_clause);
+    let generics = hir_lower_type.lower_generics(ctx, &f.type_params, &f.where_clause);
 
     // Lower parameters
     let params = lower_fn_params(ctx, &f.params);
@@ -386,7 +386,7 @@ fn lower_function_decl(ctx: &mut hir_lower_ctx.LoweringCtx, f: &ast.FnDecl) {
     // Check main function signature: must have no parameters
     let main_sym = ctx.intern("main");
     if lookup_symbol.index == main_sym.index && f.params.len() > 0 {
-        ctx.error(hir.DiagnosticCode.E0300, common::make_string("main function must have no parameters"), f.span);
+        ctx.error(hir.DiagnosticCode.E0300, common.make_string("main function must have no parameters"), f.span);
     }
 
     // Lower return type
@@ -445,7 +445,7 @@ fn lower_function_decl(ctx: &mut hir_lower_ctx.LoweringCtx, f: &ast.FnDecl) {
 
 /// Checks if a type directly contains the given def_id (not behind Ref/Ptr/Box).
 fn type_directly_contains(ty_id: type_intern.TyId, target_def_id: hir_def.DefId) -> bool {
-    let ty = type_intern::ty_id_to_type(ty_id);
+    let ty = type_intern.ty_id_to_type(ty_id);
     match &ty.kind {
         &hir_ty.TypeKind.Adt { def_id, args: _ } => {
             def_id.index == target_def_id.index
@@ -547,7 +547,7 @@ fn lower_struct_decl(ctx: &mut hir_lower_ctx.LoweringCtx, s: &ast.StructDecl) {
 
     // Lower generics (structs don't have where_clause in AST)
     let no_where: Option<ast.WhereClause> = Option.None;
-    let generics = hir_lower_type::lower_generics(ctx, &s.type_params, &no_where);
+    let generics = hir_lower_type.lower_generics(ctx, &s.type_params, &no_where);
 
     // Lower struct body (field types may reference generic params)
     let struct_body = lower_struct_body(ctx, &s.body);
@@ -583,7 +583,7 @@ fn lower_enum_decl(ctx: &mut hir_lower_ctx.LoweringCtx, e: &ast.EnumDecl) {
 
     // Lower generics (enums don't have where_clause in AST)
     let no_where: Option<ast.WhereClause> = Option.None;
-    let generics = hir_lower_type::lower_generics(ctx, &e.type_params, &no_where);
+    let generics = hir_lower_type.lower_generics(ctx, &e.type_params, &no_where);
 
     // Lower variants, passing the enum's DefId as parent
     let variants = lower_enum_variants(ctx, def_id, &e.variants);
@@ -619,13 +619,13 @@ fn lower_type_alias_decl(ctx: &mut hir_lower_ctx.LoweringCtx, ta: &ast.TypeAlias
 
     // Lower generics
     let no_where: Option<ast.WhereClause> = Option.None;
-    let generics = hir_lower_type::lower_generics(ctx, &ta.type_params, &no_where);
+    let generics = hir_lower_type.lower_generics(ctx, &ta.type_params, &no_where);
 
     // Lower the aliased type (may reference generic params)
     // For associated type declarations (no `= Type`), ty is None
     let ty = match &ta.ty {
         &Option.Some(ref ast_ty) => {
-            hir_lower_type::lower_type_id(ctx, ast_ty)
+            hir_lower_type.lower_type_id(ctx, ast_ty)
         }
         &Option.None => {
             type_intern.CommonTypes.unit()
@@ -659,13 +659,13 @@ fn lower_const_decl(ctx: &mut hir_lower_ctx.LoweringCtx, c: &ast.ConstDecl) {
     let def_id = binding.def_id;
 
     // Lower the type
-    let ty = hir_lower_type::lower_type_id(ctx, &c.ty);
+    let ty = hir_lower_type.lower_type_id(ctx, &c.ty);
 
     // Allocate a body for the initializer
     let body_id = ctx.alloc_body_id();
 
     // Lower the initializer expression to HIR
-    let init_expr = hir_lower_expr::lower_expr(ctx, &c.init_value);
+    let init_expr = hir_lower_expr.lower_expr(ctx, &c.init_value);
 
     // Create the body (consts have no parameters or locals)
     let locals: Vec<hir_expr.Local> = Vec.new();
@@ -703,13 +703,13 @@ fn lower_static_decl(ctx: &mut hir_lower_ctx.LoweringCtx, s: &ast.StaticDecl) {
     let def_id = binding.def_id;
 
     // Lower the type
-    let ty = hir_lower_type::lower_type_id(ctx, &s.ty);
+    let ty = hir_lower_type.lower_type_id(ctx, &s.ty);
 
     // Allocate a body for the initializer
     let body_id = ctx.alloc_body_id();
 
     // Lower the initializer expression to HIR
-    let init_expr = hir_lower_expr::lower_expr(ctx, &s.init_value);
+    let init_expr = hir_lower_expr.lower_expr(ctx, &s.init_value);
 
     // Create the body (statics have no parameters or locals)
     let locals: Vec<hir_expr.Local> = Vec.new();
@@ -751,13 +751,13 @@ fn lower_trait_decl(ctx: &mut hir_lower_ctx.LoweringCtx, t: &ast.TraitDecl) {
     let def_id = binding.def_id;
 
     // Lower generics (pushes type param scope if generics exist)
-    let generics = hir_lower_type::lower_generics(ctx, &t.type_params, &t.where_clause);
+    let generics = hir_lower_type.lower_generics(ctx, &t.type_params, &t.where_clause);
 
     // Lower supertraits
     let mut supertraits: Vec<hir_ty.TraitRef> = Vec.new();
     let mut i: usize = 0;
     while i < t.supertraits.len() {
-        let supertrait_ty = hir_lower_type::lower_type(ctx, &t.supertraits[i]);
+        let supertrait_ty = hir_lower_type.lower_type(ctx, &t.supertraits[i]);
         let trait_ref = type_to_trait_ref(&supertrait_ty, t.supertraits[i].span);
         if trait_ref.is_some() {
             supertraits.push(trait_ref.unwrap());
@@ -768,7 +768,7 @@ fn lower_trait_decl(ctx: &mut hir_lower_ctx.LoweringCtx, t: &ast.TraitDecl) {
     // Set Self type for trait method signatures.
     // In a trait definition, Self refers to the trait's own type, analogous
     // to how impl blocks set Self to the concrete implementing type.
-    let trait_self_ty_id = type_intern::type_interner().mk_adt(hir_def.DefId.new(def_id.index), type_intern.CommonTyLists.empty());
+    let trait_self_ty_id = type_intern.type_interner().mk_adt(hir_def.DefId.new(def_id.index), type_intern.CommonTyLists.empty());
     ctx.current_self_type = Option.Some(trait_self_ty_id);
 
     // Pre-register associated types so Self.Item can be resolved in method signatures.
@@ -781,12 +781,12 @@ fn lower_trait_decl(ctx: &mut hir_lower_ctx.LoweringCtx, t: &ast.TraitDecl) {
                 let name_sym = ctx.intern(name_str.as_str());
                 let assoc_ty = match &ta.ty {
                     &Option.Some(ref ast_ty) => {
-                        hir_lower_type::lower_type_id(ctx, ast_ty)
+                        hir_lower_type.lower_type_id(ctx, ast_ty)
                     }
                     &Option.None => {
                         // Fresh inference variable for abstract associated type
                         let var_id = ctx.alloc_ty_var();
-                        type_intern::type_interner().mk_infer(var_id)
+                        type_intern.type_interner().mk_infer(var_id)
                     }
                 };
                 ctx.current_assoc_types.push(
@@ -871,7 +871,7 @@ fn lower_assoc_fn(ctx: &mut hir_lower_ctx.LoweringCtx, f: &ast.FnDecl, is_trait_
         }
         &Option.None => ctx.alloc_def_id(),
     };
-    let generics = hir_lower_type::lower_generics(ctx, &f.type_params, &f.where_clause);
+    let generics = hir_lower_type.lower_generics(ctx, &f.type_params, &f.where_clause);
     let sig = hir_item.FnSig.new(
         generics,
         lower_fn_params(ctx, &f.params),
@@ -885,7 +885,7 @@ fn lower_assoc_fn(ctx: &mut hir_lower_ctx.LoweringCtx, f: &ast.FnDecl, is_trait_
     let body_id = if f.body.is_some() {
         let bid = ctx.alloc_body_id();
         let params = lower_fn_params(ctx, &f.params);
-        let body = hir_lower_body::lower_fn_body(
+        let body = hir_lower_body.lower_fn_body(
             ctx,
             bid,
             &params,
@@ -917,13 +917,13 @@ fn lower_assoc_fn(ctx: &mut hir_lower_ctx.LoweringCtx, f: &ast.FnDecl, is_trait_
 fn lower_assoc_type(ctx: &mut hir_lower_ctx.LoweringCtx, ta: &ast.TypeAliasDecl) -> hir_item.AssocType {
     let def_id = ctx.alloc_def_id();
     let no_where: Option<ast.WhereClause> = Option.None;
-    let generics = hir_lower_type::lower_generics(ctx, &ta.type_params, &no_where);
+    let generics = hir_lower_type.lower_generics(ctx, &ta.type_params, &no_where);
 
     // For associated type declarations (`type Item;`), ty is None
     // For associated type definitions (`type Item = i32;`), ty is Some
     let default_ty: Option<type_intern.TyId> = match &ta.ty {
         &Option.Some(ref ast_ty) => {
-            Option.Some(hir_lower_type::lower_type_id(ctx, ast_ty))
+            Option.Some(hir_lower_type.lower_type_id(ctx, ast_ty))
         }
         &Option.None => {
             Option.None
@@ -940,11 +940,11 @@ fn lower_assoc_type(ctx: &mut hir_lower_ctx.LoweringCtx, ta: &ast.TypeAliasDecl)
 /// Lower an associated constant.
 fn lower_assoc_const(ctx: &mut hir_lower_ctx.LoweringCtx, c: &ast.ConstDecl) -> hir_item.AssocConst {
     let def_id = ctx.alloc_def_id();
-    let ty = hir_lower_type::lower_type_id(ctx, &c.ty);
+    let ty = hir_lower_type.lower_type_id(ctx, &c.ty);
 
     // Lower the initializer body
     let body_id = ctx.alloc_body_id();
-    let init_expr = hir_lower_expr::lower_expr(ctx, &c.init_value);
+    let init_expr = hir_lower_expr.lower_expr(ctx, &c.init_value);
     let locals: Vec<hir_expr.Local> = Vec.new();
     let body = hir_expr.Body.new(body_id, locals, 0, init_expr);
     ctx.add_body(body_id, body);
@@ -959,7 +959,7 @@ fn type_to_trait_ref(ty: &hir_ty.Type, span: common.Span) -> Option<hir_ty.Trait
             // Copy the args vector
             let mut args_copy: Vec<hir_ty.Type> = Vec.new();
             for i in 0usize..args.len() {
-                args_copy.push(hir_ty::copy_type(&args[i]));
+                args_copy.push(hir_ty.copy_type(&args[i]));
             }
             Option.Some(hir_ty.TraitRef.new(def_id, args_copy, span))
         }
@@ -984,13 +984,13 @@ fn lower_effect_decl(ctx: &mut hir_lower_ctx.LoweringCtx, e: &ast.EffectDecl) {
 
     // Lower generics (effects don't have where clauses in AST)
     let no_where: Option<ast.WhereClause> = Option.None;
-    let generics = hir_lower_type::lower_generics(ctx, &e.type_params, &no_where);
+    let generics = hir_lower_type.lower_generics(ctx, &e.type_params, &no_where);
 
     // Lower parent effects
     let mut parents: Vec<hir_ty.EffectRef> = Vec.new();
     let mut i: usize = 0;
     while i < e.parent_effects.len() {
-        let parent_ty = hir_lower_type::lower_type(ctx, &e.parent_effects[i]);
+        let parent_ty = hir_lower_type.lower_type(ctx, &e.parent_effects[i]);
         let effect_ref = type_to_effect_ref(&parent_ty);
         if effect_ref.is_some() {
             parents.push(effect_ref.unwrap());
@@ -1025,16 +1025,16 @@ fn lower_effect_decl(ctx: &mut hir_lower_ctx.LoweringCtx, e: &ast.EffectDecl) {
 fn lower_effect_op(ctx: &mut hir_lower_ctx.LoweringCtx, oper: &ast.OperationDecl) -> hir_item.EffectOp {
     let def_id = ctx.alloc_def_id();
     let no_where: Option<ast.WhereClause> = Option.None;
-    let generics = hir_lower_type::lower_generics(ctx, &oper.type_params, &no_where);
+    let generics = hir_lower_type.lower_generics(ctx, &oper.type_params, &no_where);
 
     // Lower parameter types
     let mut param_tys: Vec<type_intern.TyId> = Vec.new();
     for i in 0usize..oper.params.len() {
-        let ty = hir_lower_type::lower_type_id(ctx, &oper.params[i].ty);
+        let ty = hir_lower_type.lower_type_id(ctx, &oper.params[i].ty);
         param_tys.push(ty);
     }
 
-    let return_ty = hir_lower_type::lower_type_id(ctx, &oper.return_type);
+    let return_ty = hir_lower_type.lower_type_id(ctx, &oper.return_type);
 
     // Pop type param scope after lowering all types that reference generics
     ctx.resolver.pop_scope();
@@ -1052,7 +1052,7 @@ fn type_to_effect_ref(ty: &hir_ty.Type) -> Option<hir_ty.EffectRef> {
         &hir_ty.TypeKind.Adt { def_id, ref args } => {
             let mut args_copy: Vec<hir_ty.Type> = Vec.new();
             for i in 0usize..args.len() {
-                args_copy.push(hir_ty::copy_type(&args[i]));
+                args_copy.push(hir_ty.copy_type(&args[i]));
             }
             Option.Some(hir_ty.EffectRef.new(def_id, args_copy))
         }
@@ -1076,17 +1076,17 @@ fn lower_handler_decl(ctx: &mut hir_lower_ctx.LoweringCtx, h: &ast.HandlerDecl) 
     let def_id = binding.def_id;
 
     // Lower generics (pushes type param scope if generics exist)
-    let generics = hir_lower_type::lower_generics(ctx, &h.type_params, &h.where_clause);
+    let generics = hir_lower_type.lower_generics(ctx, &h.type_params, &h.where_clause);
 
     // Lower the handled effect
-    let effect_ty = hir_lower_type::lower_type(ctx, &h.effect);
+    let effect_ty = hir_lower_type.lower_type(ctx, &h.effect);
     let handled_effect = type_to_effect_ref(&effect_ty);
     if handled_effect.is_none() {
         // Pop scope before early return
         ctx.resolver.pop_scope();
         ctx.error(
             hir.DiagnosticCode.E0104,
-            common::make_string("invalid effect type in handler"),
+            common.make_string("invalid effect type in handler"),
             h.span,
         );
         return;
@@ -1180,12 +1180,12 @@ fn lower_handler_decl(ctx: &mut hir_lower_ctx.LoweringCtx, h: &ast.HandlerDecl) 
 /// Lower handler state field.
 fn lower_handler_state(ctx: &mut hir_lower_ctx.LoweringCtx, hs: &ast.HandlerState) -> hir_item.HandlerState {
     let def_id = ctx.alloc_def_id();
-    let ty = hir_lower_type::lower_type_id(ctx, &hs.ty);
+    let ty = hir_lower_type.lower_type_id(ctx, &hs.ty);
 
     let default_body = match &hs.default_val {
         &Some(ref expr) => {
             let body_id = ctx.alloc_body_id();
-            let init_expr = hir_lower_expr::lower_expr(ctx, expr);
+            let init_expr = hir_lower_expr.lower_expr(ctx, expr);
             let locals: Vec<hir_expr.Local> = Vec.new();
             let body = hir_expr.Body.new(body_id, locals, 0, init_expr);
             ctx.add_body(body_id, body);
@@ -1232,7 +1232,7 @@ fn lower_handler_return(
     let param_local_id = hir_def.LocalId.new(next_idx);
     let param_name_str = ctx.span_to_string(rc.param.span);
     let param_sym = ctx.intern(param_name_str.as_str());
-    let param_ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+    let param_ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
     let param_local = hir_expr.Local.new(
         param_local_id, rc.param, param_ty, false, rc.param.span,
     );
@@ -1247,7 +1247,7 @@ fn lower_handler_return(
 
     // Clear body_locals, lower body, merge accumulated locals
     ctx.body_locals = Vec.new();
-    let body_expr = hir_lower_expr::lower_block_to_expr(ctx, &rc.body);
+    let body_expr = hir_lower_expr.lower_block_to_expr(ctx, &rc.body);
 
     for bl_idx in 0usize..ctx.body_locals.len() {
         let bl = &ctx.body_locals[bl_idx];
@@ -1308,7 +1308,7 @@ fn lower_op_impl(
             let local_id = hir_def.LocalId.new(next_idx);
             let param_name_str = ctx.span_to_string(pname.span);
             let param_sym = ctx.intern(param_name_str.as_str());
-            let param_ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
+            let param_ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
             let param_local = hir_expr.Local.new(
                 local_id, pname, param_ty, false, pname.span,
             );
@@ -1326,7 +1326,7 @@ fn lower_op_impl(
     // Clear body_locals, lower body, merge accumulated locals
     ctx.body_locals = Vec.new();
     let body_id = ctx.alloc_body_id();
-    let body_expr = hir_lower_expr::lower_block_to_expr(ctx, &oper.body);
+    let body_expr = hir_lower_expr.lower_block_to_expr(ctx, &oper.body);
 
     for bl_idx in 0usize..ctx.body_locals.len() {
         let bl = &ctx.body_locals[bl_idx];
@@ -1454,19 +1454,19 @@ fn lower_impl_decl(ctx: &mut hir_lower_ctx.LoweringCtx, imp: &ast.ImplBlock) {
     let def_id = ctx.alloc_def_id();
 
     // Lower generics (pushes type param scope if generics exist)
-    let generics = hir_lower_type::lower_generics(ctx, &imp.type_params, &imp.where_clause);
+    let generics = hir_lower_type.lower_generics(ctx, &imp.type_params, &imp.where_clause);
 
     // Lower trait ref if this is a trait impl
     let trait_ref = match &imp.trait_ty {
         &Some(ref trait_ty) => {
-            let lowered_ty = hir_lower_type::lower_type(ctx, trait_ty);
+            let lowered_ty = hir_lower_type.lower_type(ctx, trait_ty);
             type_to_trait_ref(&lowered_ty, trait_ty.span)
         }
         &None => Option.None,
     };
 
     // Lower self type
-    let self_ty_id = hir_lower_type::lower_type_id(ctx, &imp.self_ty);
+    let self_ty_id = hir_lower_type.lower_type_id(ctx, &imp.self_ty);
 
     // Set the current Self type so that `Self` references resolve correctly
     ctx.current_self_type = Option.Some(self_ty_id);
@@ -1667,12 +1667,12 @@ fn lower_impl_decl(ctx: &mut hir_lower_ctx.LoweringCtx, imp: &ast.ImplBlock) {
                 let name_sym = ctx.intern(name_str.as_str());
                 let assoc_ty = match &ta.ty {
                     &Option.Some(ref ast_ty) => {
-                        hir_lower_type::lower_type_id(ctx, ast_ty)
+                        hir_lower_type.lower_type_id(ctx, ast_ty)
                     }
                     &Option.None => {
                         // Declaration without definition in impl - use fresh var
                         let var_id = ctx.alloc_ty_var();
-                        type_intern::type_interner().mk_infer(var_id)
+                        type_intern.type_interner().mk_infer(var_id)
                     }
                 };
                 ctx.current_assoc_types.push(

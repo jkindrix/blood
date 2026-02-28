@@ -172,7 +172,7 @@ pub fn collect_source_files(base_dir: &str, entry_path: &str) -> Vec<String> {
         let content_ref: &str = file_read_to_string(current.as_str());
 
         // Get directory of current file for resolving relative mod paths
-        let current_dir = source::parent_dir(current.as_str());
+        let current_dir = source.parent_dir(current.as_str());
 
         let mod_names = scan_mod_names(content_ref);
 
@@ -241,11 +241,11 @@ pub fn compute_combined_hash(files: &Vec<String>) -> u64 {
         let content_ref: &str = file_read_to_string(file_path.as_str());
 
         // Hash the file path (so renaming invalidates cache)
-        let path_hash = hashmap::hash_string(file_path);
+        let path_hash = hashmap.hash_string(file_path);
         combined = (combined ^ path_hash) * fnv_prime();
 
         // Hash the file content
-        let content_hash = hashmap::hash_str(content_ref);
+        let content_hash = hashmap.hash_str(content_ref);
         combined = (combined ^ content_hash) * fnv_prime();
 
     }
@@ -262,7 +262,7 @@ pub fn cache_ll_path(cache_dir: &str, hash: u64) -> String {
     let mut path = String.new();
     path.push_str(cache_dir);
     path.push('/');
-    let hash_str = codegen_types::format_u64(hash);
+    let hash_str = codegen_types.format_u64(hash);
     path.push_str(hash_str.as_str());
     path.push_str(".ll");
     path
@@ -328,7 +328,7 @@ fn binary_fingerprint(path: &str) -> u64 {
     if stat_str.len() == 0 {
         return 0;
     }
-    hashmap::hash_str(stat_str)
+    hashmap.hash_str(stat_str)
 }
 
 // ============================================================

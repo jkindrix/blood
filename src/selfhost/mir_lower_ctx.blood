@@ -151,12 +151,12 @@ pub fn replace_sentinel_array_size(
     ty_id: type_intern.TyId,
     bindings: &Vec<ConstBinding>,
 ) -> type_intern.TyId {
-    let kind = type_intern::type_interner().get(ty_id);
+    let kind = type_intern.type_interner().get(ty_id);
     match kind {
         &type_intern.InternedTypeKind.Array { element, size } => {
             if size == const_param_sentinel() && bindings.len() > 0 {
                 // Replace sentinel with first const binding value
-                type_intern::type_interner().mk_array(element, bindings[0].value)
+                type_intern.type_interner().mk_array(element, bindings[0].value)
             } else {
                 ty_id
             }
@@ -164,7 +164,7 @@ pub fn replace_sentinel_array_size(
         &type_intern.InternedTypeKind.Ref { inner, mutable } => {
             let replaced = replace_sentinel_array_size(inner, bindings);
             if replaced.index != inner.index {
-                type_intern::type_interner().mk_ref(replaced, mutable)
+                type_intern.type_interner().mk_ref(replaced, mutable)
             } else {
                 ty_id
             }
@@ -172,7 +172,7 @@ pub fn replace_sentinel_array_size(
         &type_intern.InternedTypeKind.Ptr { inner, mutable } => {
             let replaced = replace_sentinel_array_size(inner, bindings);
             if replaced.index != inner.index {
-                type_intern::type_interner().mk_ptr(replaced, mutable)
+                type_intern.type_interner().mk_ptr(replaced, mutable)
             } else {
                 ty_id
             }
@@ -312,7 +312,7 @@ impl MirLowerCtx {
         let mut method_hash = hashmap.HashMapU64U32.with_capacity(method_resolutions.len());
         let mut i: usize = 0;
         while i < method_resolutions.len() {
-            let key = hashmap::combine_u32_usize(
+            let key = hashmap.combine_u32_usize(
                 method_resolutions[i].body_def_id,
                 method_resolutions[i].span_start
             );
@@ -323,7 +323,7 @@ impl MirLowerCtx {
         let mut field_hash = hashmap.HashMapU64U32.with_capacity(field_resolutions.len());
         i = 0;
         while i < field_resolutions.len() {
-            let key = hashmap::combine_u32_usize(
+            let key = hashmap.combine_u32_usize(
                 field_resolutions[i].body_def_id,
                 field_resolutions[i].span_start
             );
@@ -453,11 +453,11 @@ impl MirLowerCtx {
             let err = &self.errors[i];
             let mut notes = Vec.new();
             for ni in 0usize..err.notes.len() {
-                notes.push(MirLowerNote.new(common::make_string(err.notes[ni].message.as_str())));
+                notes.push(MirLowerNote.new(common.make_string(err.notes[ni].message.as_str())));
             }
             result.push(MirLowerError {
                 kind: clone_mir_error_kind(&err.kind),
-                message: common::make_string(err.message.as_str()),
+                message: common.make_string(err.message.as_str()),
                 span: err.span,
                 notes: notes,
             });
@@ -501,22 +501,22 @@ impl MirLowerCtx {
     /// Resolves type inference variables to concrete types using the substitution table.
     /// This must be called on all types from HIR before they are used in MIR construction.
     pub fn resolve_type(self: &Self, ty: &hir_ty.Type) -> hir_ty.Type {
-        let ty_id = type_intern::type_to_ty_id(ty);
-        let mut resolved_id = unify::apply_substs_id(self.get_subst_table(), ty_id);
+        let ty_id = type_intern.type_to_ty_id(ty);
+        let mut resolved_id = unify.apply_substs_id(self.get_subst_table(), ty_id);
         if self.const_bindings.len() > 0 {
             resolved_id = replace_sentinel_array_size(resolved_id, &self.const_bindings);
         }
-        type_intern::ty_id_to_type(resolved_id)
+        type_intern.ty_id_to_type(resolved_id)
     }
 
     /// Resolves a TyId through the substitution table.
     /// Converts TyId to Type, applies substitutions, returns resolved Type.
     pub fn resolve_type_id(self: &Self, ty_id: type_intern.TyId) -> hir_ty.Type {
-        let mut resolved_id = unify::apply_substs_id(self.get_subst_table(), ty_id);
+        let mut resolved_id = unify.apply_substs_id(self.get_subst_table(), ty_id);
         if self.const_bindings.len() > 0 {
             resolved_id = replace_sentinel_array_size(resolved_id, &self.const_bindings);
         }
-        type_intern::ty_id_to_type(resolved_id)
+        type_intern.ty_id_to_type(resolved_id)
     }
 
     /// Resolves a TyId through the substitution table, returning TyId directly.
@@ -524,7 +524,7 @@ impl MirLowerCtx {
     /// When const_bindings are present, replaces sentinel array sizes with
     /// the first const binding value (for monomorphization).
     pub fn resolve_type_to_id(self: &Self, ty_id: type_intern.TyId) -> type_intern.TyId {
-        let resolved = unify::apply_substs_id(self.get_subst_table(), ty_id);
+        let resolved = unify.apply_substs_id(self.get_subst_table(), ty_id);
         if self.const_bindings.len() > 0 {
             replace_sentinel_array_size(resolved, &self.const_bindings)
         } else {
@@ -540,7 +540,7 @@ impl MirLowerCtx {
     /// (each file's spans start at byte 0, so span_start alone is not unique).
     pub fn lookup_method_def(self: &MirLowerCtx, span_start: usize) -> Option<hir_def.DefId> {
         // Fast path: hash-based lookup
-        let key = hashmap::combine_u32_usize(self.body_def_id, span_start);
+        let key = hashmap.combine_u32_usize(self.body_def_id, span_start);
         match self.method_hash.get(key) {
             Option.Some(def_id_index) => {
                 // Validate: dummy sentinel (0xFFFFFFFF) indicates corrupt resolution table
@@ -572,7 +572,7 @@ impl MirLowerCtx {
     /// Uses hash-based lookup for O(1) average case.
     pub fn lookup_field_idx(self: &MirLowerCtx, span_start: usize) -> Option<u32> {
         // Fast path: hash-based lookup using composite key (body_def_id, span_start)
-        let key = hashmap::combine_u32_usize(self.body_def_id, span_start);
+        let key = hashmap.combine_u32_usize(self.body_def_id, span_start);
         match self.field_hash.get(key) {
             Option.Some(field_idx) => {
                 return Option.Some(field_idx);
@@ -606,7 +606,7 @@ impl MirLowerCtx {
     /// The type is automatically resolved through the substitution table.
     pub fn new_temp(self: &mut MirLowerCtx, ty_id: type_intern.TyId, span: common.Span) -> mir_def.MirLocalId {
         self.temp_counter = self.temp_counter + 1;
-        let resolved = unify::apply_substs_id(self.get_subst_table(), ty_id);
+        let resolved = unify.apply_substs_id(self.get_subst_table(), ty_id);
         self.builder.new_temp(resolved, span)
     }
 
@@ -619,7 +619,7 @@ impl MirLowerCtx {
         mutable: bool,
         span: common.Span,
     ) -> mir_def.MirLocalId {
-        let resolved = unify::apply_substs_id(self.get_subst_table(), ty_id);
+        let resolved = unify.apply_substs_id(self.get_subst_table(), ty_id);
         self.builder.new_var(resolved, name, mutable, span)
     }
 
@@ -717,7 +717,7 @@ impl MirLowerCtx {
         target: mir_def.BasicBlockId,
         span: common.Span,
     ) {
-        self.builder.terminate(mir_term::call(func, args, destination, target, span));
+        self.builder.terminate(mir_term.call(func, args, destination, target, span));
     }
 
     /// Terminates with unreachable.
@@ -918,7 +918,7 @@ impl Destination {
 // These standalone functions allow cross-module use because
 // blood-rust doesn't support cross-module associated function calls
 // (e.g., mir_lower_ctx.Destination.local(...) fails).
-// Use these helpers instead: mir_lower_ctx::destination_local(...), etc.
+// Use these helpers instead: mir_lower_ctx.destination_local(...), etc.
 
 /// Creates a destination for a local variable.
 pub fn destination_local(id: mir_def.MirLocalId) -> Destination {

@@ -249,7 +249,7 @@ impl<'src> Parser<'src> {
                 self.current.span,
                 message,
                 ErrorCode.UnexpectedEof,
-                common::make_string("did you forget a closing brace or semicolon?"),
+                common.make_string("did you forget a closing brace or semicolon?"),
             );
         } else {
             self.error_at_current(message, ErrorCode.UnexpectedToken);
@@ -267,7 +267,7 @@ impl<'src> Parser<'src> {
                 self.current.span,
                 message,
                 ErrorCode.UnexpectedEof,
-                common::make_string("did you forget a closing brace or semicolon?"),
+                common.make_string("did you forget a closing brace or semicolon?"),
             );
         } else {
             self.error_at_current(message, ErrorCode.UnexpectedToken);
@@ -286,7 +286,7 @@ impl<'src> Parser<'src> {
                 self.current.span,
                 message,
                 ErrorCode.UnexpectedEof,
-                common::make_string("unexpected end of file"),
+                common.make_string("unexpected end of file"),
             );
         } else {
             self.error_at(self.current.span, message, code);
@@ -822,7 +822,7 @@ pub fn parse_float_bits_from_span(parser: &mut Parser, span: common.Span) -> u64
         }
         if pos == exp_digit_start {
             // No digits after exponent marker — invalid float
-            parser.error_at(span, common::make_string("invalid floating-point literal: incomplete exponent"), ErrorCode.InvalidFloat);
+            parser.error_at(span, common.make_string("invalid floating-point literal: incomplete exponent"), ErrorCode.InvalidFloat);
         }
         if exp_neg {
             exp = 0 - exp;
@@ -1137,7 +1137,7 @@ pub fn parse_char_from_span(parser: &mut Parser, span: common.Span) -> char {
     let pos = start + 1;
 
     if pos >= end {
-        parser.error_at(span, common::make_string("empty character literal"), ErrorCode.UnexpectedCharacter);
+        parser.error_at(span, common.make_string("empty character literal"), ErrorCode.UnexpectedCharacter);
         return '?';
     }
 
@@ -1145,7 +1145,7 @@ pub fn parse_char_from_span(parser: &mut Parser, span: common.Span) -> char {
 
     // Check for empty char literal ('')
     if b == 39 {
-        parser.error_at(span, common::make_string("empty character literal"), ErrorCode.UnexpectedCharacter);
+        parser.error_at(span, common.make_string("empty character literal"), ErrorCode.UnexpectedCharacter);
         return '?';
     }
     if b == 92 && pos + 1 < end {

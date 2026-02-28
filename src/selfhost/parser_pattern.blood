@@ -74,8 +74,8 @@ fn parse_pattern_kind(parser: &mut parser_base.Parser) -> ast.PatternKind {
             parser.advance(); // consume '-'
             if parser.check(token.TokenKind.IntLit) {
                 let pat_start = parser.current.span;
-                let int_val = parser_base::parse_int_value_from_span(parser, pat_start);
-                let int_suffix = parser_base::parse_int_suffix_from_span(parser, pat_start);
+                let int_val = parser_base.parse_int_value_from_span(parser, pat_start);
+                let int_suffix = parser_base.parse_int_suffix_from_span(parser, pat_start);
                 parser.advance();
                 let neg_span = common.Span { start: neg_start.start, end: pat_start.end, line: neg_start.line, column: neg_start.column };
                 let lit = ast.Literal {
@@ -85,8 +85,8 @@ fn parse_pattern_kind(parser: &mut parser_base.Parser) -> ast.PatternKind {
                 return maybe_range_pattern(parser, ast.PatternKind.Literal(lit), neg_span);
             } else if parser.check(token.TokenKind.FloatLit) {
                 let pat_start = parser.current.span;
-                let float_bits = parser_base::parse_float_bits_from_span(parser, pat_start);
-                let float_suffix = parser_base::parse_float_suffix_from_span(parser, pat_start);
+                let float_bits = parser_base.parse_float_bits_from_span(parser, pat_start);
+                let float_suffix = parser_base.parse_float_suffix_from_span(parser, pat_start);
                 parser.advance();
                 // Negate by flipping the sign bit (bit 63)
                 let neg_bits = float_bits ^ 9223372036854775808;
@@ -111,8 +111,8 @@ fn parse_pattern_kind(parser: &mut parser_base.Parser) -> ast.PatternKind {
         // Literal patterns (with range check: 0..5, 0..=9)
         token.TokenKind.IntLit => {
             let pat_start = parser.current.span;
-            let int_val = parser_base::parse_int_value_from_span(parser, pat_start);
-            let int_suffix = parser_base::parse_int_suffix_from_span(parser, pat_start);
+            let int_val = parser_base.parse_int_value_from_span(parser, pat_start);
+            let int_suffix = parser_base.parse_int_suffix_from_span(parser, pat_start);
             parser.advance();
             let lit = ast.Literal {
                 kind: ast.LiteralKind.Int { val: int_val, suffix: int_suffix },
@@ -122,8 +122,8 @@ fn parse_pattern_kind(parser: &mut parser_base.Parser) -> ast.PatternKind {
         }
         token.TokenKind.FloatLit => {
             let pat_start = parser.current.span;
-            let float_bits = parser_base::parse_float_bits_from_span(parser, pat_start);
-            let float_suffix = parser_base::parse_float_suffix_from_span(parser, pat_start);
+            let float_bits = parser_base.parse_float_bits_from_span(parser, pat_start);
+            let float_suffix = parser_base.parse_float_suffix_from_span(parser, pat_start);
             parser.advance();
             let lit = ast.Literal {
                 kind: ast.LiteralKind.Float { bits: float_bits, suffix: float_suffix },
@@ -133,7 +133,7 @@ fn parse_pattern_kind(parser: &mut parser_base.Parser) -> ast.PatternKind {
         }
         token.TokenKind.StringLit => {
             let pat_start = parser.current.span;
-            let str_val = parser_base::parse_string_from_span(parser, pat_start);
+            let str_val = parser_base.parse_string_from_span(parser, pat_start);
             parser.advance();
             let lit = ast.Literal {
                 kind: ast.LiteralKind.Str(str_val),
@@ -143,7 +143,7 @@ fn parse_pattern_kind(parser: &mut parser_base.Parser) -> ast.PatternKind {
         }
         token.TokenKind.CharLit => {
             let pat_start = parser.current.span;
-            let char_val = parser_base::parse_char_from_span(parser, pat_start);
+            let char_val = parser_base.parse_char_from_span(parser, pat_start);
             parser.advance();
             let lit = ast.Literal {
                 kind: ast.LiteralKind.Char(char_val),
@@ -262,7 +262,7 @@ fn parse_pattern_kind(parser: &mut parser_base.Parser) -> ast.PatternKind {
         }
 
         token.TokenKind.Error => {
-            parser.error_at(parser.current.span, common::make_string("invalid token in pattern position"), parser_base.ErrorCode.UnexpectedToken);
+            parser.error_at(parser.current.span, common.make_string("invalid token in pattern position"), parser_base.ErrorCode.UnexpectedToken);
             return ast.PatternKind.Wildcard;
         }
 
@@ -463,7 +463,7 @@ fn parse_ident_or_path_pattern(parser: &mut parser_base.Parser) -> ast.PatternKi
 }
 
 fn parse_path_pattern(parser: &mut parser_base.Parser) -> ast.PatternKind {
-    let path = parser_type::parse_type_path(parser);
+    let path = parser_type.parse_type_path(parser);
 
     // Check for struct pattern
     if parser.check(token.TokenKind.LBrace) {

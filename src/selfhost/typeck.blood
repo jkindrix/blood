@@ -591,11 +591,11 @@ impl TypeChecker {
     /// Unifies two types.
     ///
     /// Passes &mut self.subst_table and &mut self.unifier directly to
-    /// unify::unify. This is the correct implementation.
+    /// unify.unify. This is the correct implementation.
     ///
     /// BUG-005 (mutations through &mut field_of_ref) is now fixed in blood-rust.
     pub fn unify(self: &mut Self, a: type_intern.TyId, b: type_intern.TyId, span: common.Span) -> bool {
-        let result = unify::unify_id(&mut self.subst_table, &mut self.unifier, a, b, span);
+        let result = unify.unify_id(&mut self.subst_table, &mut self.unifier, a, b, span);
 
         match result {
             unify.UnifyResult.Ok => true,
@@ -619,7 +619,7 @@ impl TypeChecker {
     /// Used by check_expr to try unification before coercion,
     /// deferring error reporting until both have been attempted.
     pub fn try_unify(self: &mut Self, a: type_intern.TyId, b: type_intern.TyId, span: common.Span) -> bool {
-        let result = unify::unify_id(&mut self.subst_table, &mut self.unifier, a, b, span);
+        let result = unify.unify_id(&mut self.subst_table, &mut self.unifier, a, b, span);
         match result {
             unify.UnifyResult.Ok => true,
             unify.UnifyResult.Err(_e) => false,
@@ -629,7 +629,7 @@ impl TypeChecker {
     /// Resolves a type by applying current substitutions.
     pub fn resolve(self: &Self, ty: type_intern.TyId) -> type_intern.TyId {
         let table_ref: &unify.SubstTable = &self.subst_table;
-        unify::apply_substs_id(table_ref, ty)
+        unify.apply_substs_id(table_ref, ty)
     }
 
     /// Clears local variables (for entering a new function body).
@@ -660,7 +660,7 @@ impl TypeChecker {
         }
 
         // Extract where clause predicates
-        let where_predicates = hir_ty::copy_where_predicates(&sig.generics.where_predicates);
+        let where_predicates = hir_ty.copy_where_predicates(&sig.generics.where_predicates);
 
         // Create the info with actual param IDs, effect row, and where clauses
         let info = typeck_info.FnSigInfo.with_where_clauses(
@@ -772,7 +772,7 @@ impl TypeChecker {
         for vi in 0usize..enum_def.variants.len() {
             let var_def_id = enum_def.variants[vi].def_id;
             // Combine enum_idx and variant_idx into a single u64
-            let combined = hashmap::combine_u32_usize(def_id.index, vi);
+            let combined = hashmap.combine_u32_usize(def_id.index, vi);
             self.variant_hash.insert(var_def_id.index as u64, combined);
         }
     }
@@ -1384,7 +1384,7 @@ impl TypeChecker {
 
     /// Checks if a parameter type uses a specific Infer ID at the top level.
     fn param_type_uses_infer_id(self: &Self, ty: type_intern.TyId, target_id: u32) -> bool {
-        let interner = type_intern::type_interner();
+        let interner = type_intern.type_interner();
         let kind = interner.get(ty);
         match kind {
             &type_intern.InternedTypeKind.Infer(ref var_id) => var_id.index == target_id,
@@ -1448,7 +1448,7 @@ fn types_match_for_impl(impl_ty: &hir_ty.Type, target_ty: &hir_ty.Type) -> bool 
         }
         // Primitive types must match exactly
         (&hir_ty.TypeKind.Primitive(impl_prim), &hir_ty.TypeKind.Primitive(target_prim)) => {
-            unify::primitives_equal(impl_prim, target_prim)
+            unify.primitives_equal(impl_prim, target_prim)
         }
         // Reference types - check inner type
         (&hir_ty.TypeKind.Ref { ref inner, mutable: impl_mut }, &hir_ty.TypeKind.Ref { inner: ref target_inner, mutable: target_mut }) => {
@@ -1480,7 +1480,7 @@ fn types_match_for_impl(impl_ty: &hir_ty.Type, target_ty: &hir_ty.Type) -> bool 
 
 /// Checks if a type matches an impl's self type for method lookup, using TyId.
 fn types_match_for_impl_id(impl_ty: type_intern.TyId, target_ty: type_intern.TyId) -> bool {
-    let interner = type_intern::type_interner();
+    let interner = type_intern.type_interner();
     let impl_kind = interner.get(impl_ty);
     // Check if impl type is Infer or Param (matches anything)
     match impl_kind {
@@ -1508,7 +1508,7 @@ fn types_match_for_impl_id(impl_ty: type_intern.TyId, target_ty: type_intern.TyI
         &type_intern.InternedTypeKind.Primitive(impl_prim) => {
             match target_kind {
                 &type_intern.InternedTypeKind.Primitive(target_prim) => {
-                    unify::primitives_equal(impl_prim, target_prim)
+                    unify.primitives_equal(impl_prim, target_prim)
                 }
                 _ => false,
             }
@@ -1567,7 +1567,7 @@ fn types_match_for_impl_id(impl_ty: type_intern.TyId, target_ty: type_intern.TyI
 /// - 1: flexible match (one or both are Infer/Param — matches anything)
 /// - 2: exact match (both are concrete and structurally equal)
 fn type_match_specificity(param_ty: type_intern.TyId, arg_ty: type_intern.TyId) -> u32 {
-    let interner = type_intern::type_interner();
+    let interner = type_intern.type_interner();
     let param_kind = interner.get(param_ty);
     let arg_kind = interner.get(arg_ty);
     // If either side is Infer or Param, it's a flexible match (score 1)
@@ -1596,7 +1596,7 @@ fn types_structurally_equal(a: &hir_ty.Type, b: &hir_ty.Type) -> bool {
         (&hir_ty.TypeKind.Never, &hir_ty.TypeKind.Never) => true,
         (&hir_ty.TypeKind.Error, &hir_ty.TypeKind.Error) => true,
         (&hir_ty.TypeKind.Primitive(ref pa), &hir_ty.TypeKind.Primitive(ref pb)) => {
-            unify::primitives_equal(*pa, *pb)
+            unify.primitives_equal(*pa, *pb)
         }
         (&hir_ty.TypeKind.Tuple(ref elems_a), &hir_ty.TypeKind.Tuple(ref elems_b)) => {
             if elems_a.len() != elems_b.len() {
@@ -1656,7 +1656,7 @@ fn types_structurally_equal_id(a: type_intern.TyId, b: type_intern.TyId) -> bool
     if a.index == b.index {
         return true;
     }
-    let interner = type_intern::type_interner();
+    let interner = type_intern.type_interner();
     let a_kind = interner.get(a);
     let b_kind = interner.get(b);
     match a_kind {
@@ -1675,7 +1675,7 @@ fn types_structurally_equal_id(a: type_intern.TyId, b: type_intern.TyId) -> bool
         &type_intern.InternedTypeKind.Primitive(pa) => {
             match b_kind {
                 &type_intern.InternedTypeKind.Primitive(pb) => {
-                    unify::primitives_equal(pa, pb)
+                    unify.primitives_equal(pa, pb)
                 }
                 _ => false,
             }
@@ -2052,13 +2052,13 @@ fn get_type_constructors(checker: &mut TypeChecker, ty: &hir_ty.Type) -> Vec<Con
             match prim {
                 &hir_ty.PrimitiveTy.Bool => {
                     // Bool has two constructors: true and false
-                    ctors.push(Constructor.new(common::make_string("true")));
-                    ctors.push(Constructor.new(common::make_string("false")));
+                    ctors.push(Constructor.new(common.make_string("true")));
+                    ctors.push(Constructor.new(common.make_string("false")));
                 }
                 _ => {
                     // Other primitives (integers, etc.) have infinite constructors
                     // Treat as single wildcard constructor for simplicity
-                    ctors.push(Constructor.new(common::make_string("_")));
+                    ctors.push(Constructor.new(common.make_string("_")));
                 }
             }
         }
@@ -2069,16 +2069,16 @@ fn get_type_constructors(checker: &mut TypeChecker, ty: &hir_ty.Type) -> Vec<Con
                     // Add one constructor per variant
                     for i in 0usize..enum_info.variants.len() {
                         let variant = &enum_info.variants[i];
-                        let name = match interner::resolve(variant.name) {
+                        let name = match interner.resolve(variant.name) {
                             Option.Some(resolved) => {
                                 // Clone the resolved string
-                                let mut s = common::make_string("");
+                                let mut s = common.make_string("");
                                 s.push_str(resolved.as_str());
                                 s
                             }
                             Option.None => {
                                 // Fallback if interner resolution fails
-                                let mut s = common::make_string("Variant");
+                                let mut s = common.make_string("Variant");
                                 let idx_str = usize_to_string(i);
                                 s.push_str(idx_str.as_str());
                                 s
@@ -2089,13 +2089,13 @@ fn get_type_constructors(checker: &mut TypeChecker, ty: &hir_ty.Type) -> Vec<Con
                 }
                 Option.None => {
                     // It's a struct - single constructor
-                    ctors.push(Constructor.new(common::make_string("_")));
+                    ctors.push(Constructor.new(common.make_string("_")));
                 }
             }
         }
         &hir_ty.TypeKind.Tuple(_) => {
             // Tuple has single constructor
-            ctors.push(Constructor.new(common::make_string("(..)")));
+            ctors.push(Constructor.new(common.make_string("(..)")));
         }
         &hir_ty.TypeKind.Never => {
             // Never type has no constructors (uninhabited)
@@ -2110,7 +2110,7 @@ fn get_type_constructors(checker: &mut TypeChecker, ty: &hir_ty.Type) -> Vec<Con
         }
         _ => {
             // Other types - treat as single wildcard
-            ctors.push(Constructor.new(common::make_string("_")));
+            ctors.push(Constructor.new(common.make_string("_")));
         }
     }
 
@@ -2185,7 +2185,7 @@ fn clone_string_helper(s: &String) -> String {
 /// Converts a usize to a String.
 fn usize_to_string(n: usize) -> String {
     if n == 0 {
-        return common::make_string("0");
+        return common.make_string("0");
     }
 
     let mut result = String.new();
@@ -2255,7 +2255,7 @@ fn resolve_single_obligation(
             }
         }
         &typeck_types.Predicate.TypeEqual { left, right } => {
-            let result = unify::unify_id(
+            let result = unify.unify_id(
                 &mut checker.subst_table,
                 &mut checker.unifier,
                 left,

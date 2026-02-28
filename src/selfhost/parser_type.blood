@@ -137,7 +137,7 @@ pub fn parse_type(parser: &mut parser_base.Parser) -> ast.Type {
     }
 }
 
-/// Parse a path type like `u32`, `Vec<T>`, `std::collections.HashMap<K, V>`.
+/// Parse a path type like `u32`, `Vec<T>`, `std.collections.HashMap<K, V>`.
 pub fn parse_path_type(parser: &mut parser_base.Parser) -> ast.Type {
     let start = parser.current.span;
     let type_path = parse_type_path(parser);
@@ -213,8 +213,8 @@ pub fn parse_type_args(parser: &mut parser_base.Parser) -> ast.TypeArgs {
         } else if parser.check(token.TokenKind.IntLit) {
             // Integer literal → const generic argument
             let lit_span = parser.current.span;
-            let int_val = parser_base::parse_int_value_from_span(parser, lit_span);
-            let int_suffix = parser_base::parse_int_suffix_from_span(parser, lit_span);
+            let int_val = parser_base.parse_int_value_from_span(parser, lit_span);
+            let int_suffix = parser_base.parse_int_suffix_from_span(parser, lit_span);
             parser.advance();
             let lit = ast.Literal {
                 kind: ast.LiteralKind.Int { val: int_val, suffix: int_suffix },

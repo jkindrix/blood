@@ -22,9 +22,9 @@ mod codegen_types;
 // Cross-Module Helper Functions
 // ============================================================
 // Uses mir_lower_ctx.Destination and standalone helper functions:
-// - mir_lower_ctx::destination_local(id) - for local destinations
-// - mir_lower_ctx::destination_return_place() - for return destinations
-// - mir_lower_ctx::destination_ignore() - for ignored destinations
+// - mir_lower_ctx.destination_local(id) - for local destinations
+// - mir_lower_ctx.destination_return_place() - for return destinations
+// - mir_lower_ctx.destination_ignore() - for ignored destinations
 // - mir_lower_ctx.Destination.Place(...) - direct variant construction
 
 /// Lowers an expression, storing the result to the return place.
@@ -33,7 +33,7 @@ pub fn lower_expr_to_return(
     ctx: &mut mir_lower_ctx.MirLowerCtx,
     expr: &hir_expr.Expr,
 ) {
-    lower_expr(ctx, expr, mir_lower_ctx::destination_return_place());
+    lower_expr(ctx, expr, mir_lower_ctx.destination_return_place());
 }
 
 /// Lowers an expression, storing the result to a specific place.
@@ -52,7 +52,7 @@ pub fn lower_expr_for_effects(
     ctx: &mut mir_lower_ctx.MirLowerCtx,
     expr: &hir_expr.Expr,
 ) {
-    lower_expr(ctx, expr, mir_lower_ctx::destination_ignore());
+    lower_expr(ctx, expr, mir_lower_ctx.destination_ignore());
 }
 
 // ============================================================
@@ -79,14 +79,14 @@ pub fn lower_expr(
             // Lower the expression to a temporary with its original type (&[T; N] = ptr)
             let inner_ty_id = ctx.resolve_type_to_id(expr.ty);
             let temp = ctx.new_temp(inner_ty_id, expr.span);
-            let temp_dest = mir_lower_ctx::destination_local(temp);
+            let temp_dest = mir_lower_ctx.destination_local(temp);
 
             // Lower expression into temp (dispatches without re-checking coercion)
             lower_expr_inner(ctx, expr, temp_dest);
 
             // Compute the coerced type: &[T; N] -> &[T]
             // Extract element type from the inner array, build slice ref type.
-            let interner = type_intern::type_interner();
+            let interner = type_intern.type_interner();
             let inner_kind = interner.get(inner_ty_id);
             let mut coerced_ty_id = inner_ty_id;
             match inner_kind {
@@ -114,7 +114,7 @@ pub fn lower_expr(
 
             // Emit ArrayToSlice from temp to actual destination
             let temp_place = mir_types.Place.local(temp);
-            let arr_ref_op = mir_lower_util::operand_from_place_id(temp_place, inner_ty_id);
+            let arr_ref_op = mir_lower_util.operand_from_place_id(temp_place, inner_ty_id);
             match dest.as_place() {
                 Option.Some(dest_place) => {
                     ctx.emit_assign(
@@ -296,7 +296,7 @@ fn lower_expr_inner(
                 Option.Some(place) => {
                     ctx.emit_assign(
                         place,
-                        mir_types.Rvalue.ZeroInit(type_intern::type_to_ty_id(&resolved_ty)),
+                        mir_types.Rvalue.ZeroInit(type_intern.type_to_ty_id(&resolved_ty)),
                         expr.span,
                     );
                 }
@@ -310,7 +310,7 @@ fn lower_expr_inner(
                     let err_ty = ctx.resolve_type_id(expr.ty);
                     ctx.emit_assign(
                         place,
-                        mir_types.Rvalue.ZeroInit(type_intern::type_to_ty_id(&err_ty)),
+                        mir_types.Rvalue.ZeroInit(type_intern.type_to_ty_id(&err_ty)),
                         expr.span,
                     );
                 }
@@ -333,7 +333,7 @@ fn lower_literal_expr(
 ) {
     match dest.as_place() {
         Option.Some(place) => {
-            let constant = mir_lower_util::lower_literal(lit, ty);
+            let constant = mir_lower_util.lower_literal(lit, ty);
             ctx.emit_assign(
                 place,
                 mir_types.Rvalue.Use(mir_types.Operand.Constant(constant)),
@@ -357,17 +357,17 @@ fn lower_local_expr(
             match mir_local {
                 Option.Some(local) => {
                     let source_place = mir_types.Place.local(local);
-                    let operand = mir_lower_util::operand_from_place(source_place, ty);
+                    let operand = mir_lower_util.operand_from_place(source_place, ty);
                     ctx.emit_assign(place, mir_types.Rvalue.Use(operand), span);
                 }
                 Option.None => {
                     // Local not found - error recovery
                     ctx.mir_error(
                         mir_lower_ctx.MirLowerErrorKind.LocalNotFound,
-                        common::make_string("local variable not found in MIR local map"),
+                        common.make_string("local variable not found in MIR local map"),
                         span,
                     );
-                    ctx.emit_assign(place, mir_types.Rvalue.ZeroInit(type_intern::type_to_ty_id(ty)), span);
+                    ctx.emit_assign(place, mir_types.Rvalue.ZeroInit(type_intern.type_to_ty_id(ty)), span);
                 }
             }
         }
@@ -429,7 +429,7 @@ fn lower_path_expr(
                     Option.None => {
                         // Path is a function, constant, static, or variant constructor
                         let constant = mir_types.Constant.new(
-                            type_intern::type_to_ty_id(ty),
+                            type_intern.type_to_ty_id(ty),
                             mir_types.ConstantKind.FnDef(path.def_id),
                         );
                         ctx.emit_assign(
@@ -453,9 +453,9 @@ fn extract_adt_def_id(ctx: &mut mir_lower_ctx.MirLowerCtx, ty: &hir_ty.Type, spa
         _ => {
             ctx.mir_error_with_note(
                 mir_lower_ctx.MirLowerErrorKind.AdtExtractionFailed,
-                common::make_string("expected ADT type but found non-ADT"),
+                common.make_string("expected ADT type but found non-ADT"),
                 span,
-                common::make_string("ensure the expression type resolves to a struct or enum after type inference"),
+                common.make_string("ensure the expression type resolves to a struct or enum after type inference"),
             );
             hir_def.DefId.dummy()
         }
@@ -476,7 +476,7 @@ fn extract_type_args(ty: &hir_ty.Type) -> Vec<type_intern.TyId> {
         &hir_ty.TypeKind.Adt { def_id: _, ref args } => {
             let mut result: Vec<type_intern.TyId> = Vec.new();
             for i in 0usize..args.len() {
-                result.push(type_intern::type_to_ty_id(&args[i]));
+                result.push(type_intern.type_to_ty_id(&args[i]));
             }
             result
         }
@@ -494,31 +494,31 @@ fn lower_binary_expr(
     span: common.Span,
 ) {
     // Check for short-circuit operators
-    if mir_lower_util::is_short_circuit_op(bin_op) {
+    if mir_lower_util.is_short_circuit_op(bin_op) {
         lower_short_circuit_binary(ctx, bin_op, left, right, ty, dest, span);
         return;
     }
 
     // Normal binary operation
-    let mir_op = mir_lower_util::convert_binop(bin_op);
+    let mir_op = mir_lower_util.convert_binop(bin_op);
     match mir_op {
         Option.Some(mir_bin_op) => {
             // Evaluate operands
             let left_temp = ctx.new_temp(left.ty, span);
-            lower_expr(ctx, left, mir_lower_ctx::destination_local(left_temp));
+            lower_expr(ctx, left, mir_lower_ctx.destination_local(left_temp));
 
             let right_temp = ctx.new_temp(right.ty, span);
-            lower_expr(ctx, right, mir_lower_ctx::destination_local(right_temp));
+            lower_expr(ctx, right, mir_lower_ctx.destination_local(right_temp));
 
             match dest.as_place() {
                 Option.Some(place) => {
-                    let left_ty_hir = type_intern::ty_id_to_type(left.ty);
-                    let right_ty_hir = type_intern::ty_id_to_type(right.ty);
-                    let left_operand = mir_lower_util::operand_from_place(
+                    let left_ty_hir = type_intern.ty_id_to_type(left.ty);
+                    let right_ty_hir = type_intern.ty_id_to_type(right.ty);
+                    let left_operand = mir_lower_util.operand_from_place(
                         mir_types.Place.local(left_temp),
                         &left_ty_hir,
                     );
-                    let right_operand = mir_lower_util::operand_from_place(
+                    let right_operand = mir_lower_util.operand_from_place(
                         mir_types.Place.local(right_temp),
                         &right_ty_hir,
                     );
@@ -542,17 +542,17 @@ fn lower_binary_expr(
                 common.BinOp.Pipe => {
                     // Evaluate left side first
                     let left_temp = ctx.new_temp(left.ty, span);
-                    lower_expr(ctx, left, mir_lower_ctx::destination_local(left_temp));
+                    lower_expr(ctx, left, mir_lower_ctx.destination_local(left_temp));
 
                     // Call right with left as argument
                     let func_temp = ctx.new_temp(right.ty, span);
-                    lower_expr(ctx, right, mir_lower_ctx::destination_local(func_temp));
+                    lower_expr(ctx, right, mir_lower_ctx.destination_local(func_temp));
 
                     match dest.as_place() {
                         Option.Some(place) => {
                             let func_operand = mir_types.Operand.Copy(mir_types.Place.local(func_temp));
                             let mut args = Vec.new();
-                            args.push(mir_lower_util::operand_from_place_id(
+                            args.push(mir_lower_util.operand_from_place_id(
                                 mir_types.Place.local(left_temp),
                                 left.ty,
                             ));
@@ -585,14 +585,14 @@ fn lower_short_circuit_binary(
         Option.Some(p) => p,
         Option.None => {
             // No destination, still need to evaluate for side effects
-            let temp = ctx.new_temp(type_intern::type_to_ty_id(ty), span);
+            let temp = ctx.new_temp(type_intern.type_to_ty_id(ty), span);
             mir_types.Place.local(temp)
         }
     };
 
     // Evaluate left side
     let left_temp = ctx.new_temp(left.ty, span);
-    lower_expr(ctx, left, mir_lower_ctx::destination_local(left_temp));
+    lower_expr(ctx, left, mir_lower_ctx.destination_local(left_temp));
 
     // Create blocks
     let eval_right_block = ctx.new_block();
@@ -655,13 +655,13 @@ fn lower_unary_expr(
         common.UnaryOp.Deref => {
             // Evaluate to a place and deref
             let ptr_temp = ctx.new_temp(operand.ty, span);
-            lower_expr(ctx, operand, mir_lower_ctx::destination_local(ptr_temp));
+            lower_expr(ctx, operand, mir_lower_ctx.destination_local(ptr_temp));
 
             match dest.as_place() {
                 Option.Some(place) => {
                     let deref_place = mir_types.Place.local(ptr_temp)
                         .project(mir_types.PlaceElem.Deref);
-                    let result_operand = mir_lower_util::operand_from_place(deref_place, ty);
+                    let result_operand = mir_lower_util.operand_from_place(deref_place, ty);
                     ctx.emit_assign(place, mir_types.Rvalue.Use(result_operand), span);
                 }
                 Option.None => {}
@@ -672,7 +672,7 @@ fn lower_unary_expr(
             // For immutable borrows, copying is safe because the caller
             // cannot modify through the reference.
             let temp = ctx.new_temp(operand.ty, span);
-            lower_expr(ctx, operand, mir_lower_ctx::destination_local(temp));
+            lower_expr(ctx, operand, mir_lower_ctx.destination_local(temp));
 
             match dest.as_place() {
                 Option.Some(place) => {
@@ -725,12 +725,12 @@ fn lower_simple_unary(
     span: common.Span,
 ) {
     let temp = ctx.new_temp(operand.ty, span);
-    lower_expr(ctx, operand, mir_lower_ctx::destination_local(temp));
+    lower_expr(ctx, operand, mir_lower_ctx.destination_local(temp));
 
     match dest.as_place() {
         Option.Some(place) => {
-            let operand_ty_hir = type_intern::ty_id_to_type(operand.ty);
-            let result_operand = mir_lower_util::operand_from_place(mir_types.Place.local(temp), &operand_ty_hir);
+            let operand_ty_hir = type_intern.ty_id_to_type(operand.ty);
+            let result_operand = mir_lower_util.operand_from_place(mir_types.Place.local(temp), &operand_ty_hir);
             ctx.emit_assign(
                 place,
                 mir_types.Rvalue.UnaryOp { op: mir_op, operand: result_operand },
@@ -763,8 +763,8 @@ fn lower_call_expr(
                     for i in 0usize..args.len() {
                         let arg = &args[i];
                         let arg_temp = ctx.new_temp(arg.ty, span);
-                        lower_expr(ctx, arg, mir_lower_ctx::destination_local(arg_temp));
-                        operands.push(mir_lower_util::operand_from_place_id(
+                        lower_expr(ctx, arg, mir_lower_ctx.destination_local(arg_temp));
+                        operands.push(mir_lower_util.operand_from_place_id(
                             mir_types.Place.local(arg_temp),
                             arg.ty,
                         ));
@@ -777,7 +777,7 @@ fn lower_call_expr(
                     let dest_place = match dest.as_place() {
                         Option.Some(p) => p,
                         Option.None => {
-                            let temp = ctx.new_temp(type_intern::type_to_ty_id(ty), span);
+                            let temp = ctx.new_temp(type_intern.type_to_ty_id(ty), span);
                             mir_types.Place.local(temp)
                         }
                     };
@@ -837,7 +837,7 @@ fn lower_call_expr(
         _ => {
             // Indirect call (closure, function pointer, etc.) — evaluate callee
             let func_temp = ctx.new_temp(callee.ty, span);
-            lower_expr(ctx, callee, mir_lower_ctx::destination_local(func_temp));
+            lower_expr(ctx, callee, mir_lower_ctx.destination_local(func_temp));
             mir_types.Operand.Copy(mir_types.Place.local(func_temp))
         }
     };
@@ -847,8 +847,8 @@ fn lower_call_expr(
     for i in 0usize..args.len() {
         let arg = &args[i];
         let arg_temp = ctx.new_temp(arg.ty, span);
-        lower_expr(ctx, arg, mir_lower_ctx::destination_local(arg_temp));
-        arg_operands.push(mir_lower_util::operand_from_place_id(
+        lower_expr(ctx, arg, mir_lower_ctx.destination_local(arg_temp));
+        arg_operands.push(mir_lower_util.operand_from_place_id(
             mir_types.Place.local(arg_temp),
             arg.ty,
         ));
@@ -858,7 +858,7 @@ fn lower_call_expr(
     let dest_place = match dest.as_place() {
         Option.Some(p) => p,
         Option.None => {
-            let temp = ctx.new_temp(type_intern::type_to_ty_id(ty), span);
+            let temp = ctx.new_temp(type_intern.type_to_ty_id(ty), span);
             mir_types.Place.local(temp)
         }
     };
@@ -900,7 +900,7 @@ fn lower_method_call_expr(
     // because &alloca already points to the full fat pointer struct.
     let body = ctx.builder.body_ref();
     let local_info = body.get_local(recv_place.local);
-    let local_ty_resolved = type_intern::ty_id_to_type(local_info.ty);
+    let local_ty_resolved = type_intern.ty_id_to_type(local_info.ty);
     let local_is_thin_ref = match &local_ty_resolved.kind {
         &hir_ty.TypeKind.Ref { ref inner, mutable: _ } => {
             let inner_type = inner.as_ref();
@@ -919,7 +919,7 @@ fn lower_method_call_expr(
         recv_place
     };
 
-    let recv_ref_id = type_intern::type_interner().mk_ref(receiver.ty, false);
+    let recv_ref_id = type_intern.type_interner().mk_ref(receiver.ty, false);
     let recv_ref_temp = ctx.new_temp(recv_ref_id, span);
     ctx.emit_assign(
         mir_types.Place.local(recv_ref_temp),
@@ -929,7 +929,7 @@ fn lower_method_call_expr(
         },
         span,
     );
-    arg_operands.push(mir_lower_util::operand_from_place_id(
+    arg_operands.push(mir_lower_util.operand_from_place_id(
         mir_types.Place.local(recv_ref_temp),
         recv_ref_id,
     ));
@@ -938,8 +938,8 @@ fn lower_method_call_expr(
     for i in 0usize..args.len() {
         let arg = &args[i];
         let arg_temp = ctx.new_temp(arg.ty, span);
-        lower_expr(ctx, arg, mir_lower_ctx::destination_local(arg_temp));
-        arg_operands.push(mir_lower_util::operand_from_place_id(
+        lower_expr(ctx, arg, mir_lower_ctx.destination_local(arg_temp));
+        arg_operands.push(mir_lower_util.operand_from_place_id(
             mir_types.Place.local(arg_temp),
             arg.ty,
         ));
@@ -967,9 +967,9 @@ fn lower_method_call_expr(
                     // instead of a cryptic runtime crash from calling undef
                     ctx.mir_error_with_note(
                         mir_lower_ctx.MirLowerErrorKind.MethodNotResolved,
-                        common::make_string("method call target could not be resolved"),
+                        common.make_string("method call target could not be resolved"),
                         span,
-                        common::make_string("check that the method is defined and the type implements it"),
+                        common.make_string("check that the method is defined and the type implements it"),
                     );
                     mir_types.Operand.Constant(mir_types.Constant.new(
                         type_intern.CommonTypes.error(),
@@ -984,7 +984,7 @@ fn lower_method_call_expr(
     let dest_place = match dest.as_place() {
         Option.Some(p) => p,
         Option.None => {
-            let temp = ctx.new_temp(type_intern::type_to_ty_id(ty), span);
+            let temp = ctx.new_temp(type_intern.type_to_ty_id(ty), span);
             mir_types.Place.local(temp)
         }
     };
@@ -1004,7 +1004,7 @@ fn lower_field_expr(
 ) {
     // Evaluate base
     let base_temp = ctx.new_temp(base.ty, span);
-    lower_expr(ctx, base, mir_lower_ctx::destination_local(base_temp));
+    lower_expr(ctx, base, mir_lower_ctx.destination_local(base_temp));
 
     // Get field index — for named fields, look up from the type checker's
     // field resolution side table; fall back to HIR-stored index if present.
@@ -1023,9 +1023,9 @@ fn lower_field_expr(
                         Option.None => {
                             ctx.mir_error_with_note(
                                 mir_lower_ctx.MirLowerErrorKind.FieldNotResolved,
-                                common::make_string("field index could not be resolved; defaulting to 0"),
+                                common.make_string("field index could not be resolved; defaulting to 0"),
                                 span,
-                                common::make_string("field resolution uses (body_def_id, name_span_start) as lookup key"),
+                                common.make_string("field resolution uses (body_def_id, name_span_start) as lookup key"),
                             );
                             0
                         }
@@ -1040,7 +1040,7 @@ fn lower_field_expr(
         Option.Some(place) => {
             let field_place = mir_types.Place.local(base_temp)
                 .project(mir_types.PlaceElem.Field(field_idx));
-            let operand = mir_lower_util::operand_from_place(field_place, ty);
+            let operand = mir_lower_util.operand_from_place(field_place, ty);
             ctx.emit_assign(place, mir_types.Rvalue.Use(operand), span);
         }
         Option.None => {}
@@ -1060,23 +1060,23 @@ fn lower_index_expr(
 
     // Evaluate base
     let base_temp = ctx.new_temp(resolved_base_id, span);
-    lower_expr(ctx, base, mir_lower_ctx::destination_local(base_temp));
+    lower_expr(ctx, base, mir_lower_ctx.destination_local(base_temp));
 
     // Evaluate index
     let idx_temp = ctx.new_temp(idx.ty, span);
-    lower_expr(ctx, idx, mir_lower_ctx::destination_local(idx_temp));
+    lower_expr(ctx, idx, mir_lower_ctx.destination_local(idx_temp));
 
     match dest.as_place() {
         Option.Some(place) => {
             // Auto-deref if the base evaluates to a reference type.
             // e.g. argv[1] where argv: &Vec<String> needs Deref before Index.
             let mut base_place = mir_types.Place.local(base_temp);
-            if type_intern::is_ref_id(resolved_base_id) {
+            if type_intern.is_ref_id(resolved_base_id) {
                 base_place = base_place.project(mir_types.PlaceElem.Deref);
             }
             let indexed_place = base_place
                 .project(mir_types.PlaceElem.Index(idx_temp));
-            let operand = mir_lower_util::operand_from_place(indexed_place, ty);
+            let operand = mir_lower_util.operand_from_place(indexed_place, ty);
             ctx.emit_assign(place, mir_types.Rvalue.Use(operand), span);
         }
         Option.None => {}
@@ -1095,8 +1095,8 @@ fn lower_tuple_expr(
     for i in 0usize..elems.len() {
         let elem = &elems[i];
         let temp = ctx.new_temp(elem.ty, span);
-        lower_expr(ctx, elem, mir_lower_ctx::destination_local(temp));
-        operands.push(mir_lower_util::operand_from_place_id(
+        lower_expr(ctx, elem, mir_lower_ctx.destination_local(temp));
+        operands.push(mir_lower_util.operand_from_place_id(
             mir_types.Place.local(temp),
             elem.ty,
         ));
@@ -1132,8 +1132,8 @@ fn lower_array_expr(
             for i in 0usize..elems.len() {
                 let elem = &elems[i];
                 let temp = ctx.new_temp(elem.ty, span);
-                lower_expr(ctx, elem, mir_lower_ctx::destination_local(temp));
-                operands.push(mir_lower_util::operand_from_place_id(
+                lower_expr(ctx, elem, mir_lower_ctx.destination_local(temp));
+                operands.push(mir_lower_util.operand_from_place_id(
                     mir_types.Place.local(temp),
                     elem.ty,
                 ));
@@ -1156,7 +1156,7 @@ fn lower_array_expr(
         &hir_expr.ArrayExpr.Repeat { ref val, count } => {
             // Array repeat [val; count]
             let val_temp = ctx.new_temp(val.as_ref().ty, span);
-            lower_expr(ctx, val.as_ref(), mir_lower_ctx::destination_local(val_temp));
+            lower_expr(ctx, val.as_ref(), mir_lower_ctx.destination_local(val_temp));
 
             let mut operands = Vec.new();
             let elem_ty = val.as_ref().ty;
@@ -1183,11 +1183,11 @@ fn lower_array_expr(
 
 fn get_array_element_type(ctx: &mut mir_lower_ctx.MirLowerCtx, ty: &hir_ty.Type, span: common.Span) -> type_intern.TyId {
     match &ty.kind {
-        &hir_ty.TypeKind.Array { ref element, size: _ } => type_intern::type_to_ty_id(element.as_ref()),
+        &hir_ty.TypeKind.Array { ref element, size: _ } => type_intern.type_to_ty_id(element.as_ref()),
         _ => {
             ctx.mir_error(
                 mir_lower_ctx.MirLowerErrorKind.ArrayElementTypeUnknown,
-                common::make_string("expected array type but found non-array"),
+                common.make_string("expected array type but found non-array"),
                 span,
             );
             type_intern.CommonTypes.error()
@@ -1260,7 +1260,7 @@ fn lower_struct_expr(
                             }
                         };
                         let temp = ctx.new_temp(field.val.ty, span);
-                        lower_expr(ctx, &field.val, mir_lower_ctx::destination_local(temp));
+                        lower_expr(ctx, &field.val, mir_lower_ctx.destination_local(temp));
                         temp_locals.push(temp);
                         temp_tys.push(field.val.ty);
                         temp_field_indices.push(field_idx);
@@ -1272,7 +1272,7 @@ fn lower_struct_expr(
                     while (decl_idx as usize) < num_fields {
                         for j in 0usize..num_fields {
                             if temp_field_indices[j] == decl_idx {
-                                operands.push(mir_lower_util::operand_from_place_id(
+                                operands.push(mir_lower_util.operand_from_place_id(
                                     mir_types.Place.local(temp_locals[j]),
                                     temp_tys[j],
                                 ));
@@ -1296,7 +1296,7 @@ fn lower_struct_expr(
                         &hir_ty.TypeKind.Adt { def_id: _, ref args } => {
                             let mut cloned: Vec<type_intern.TyId> = Vec.new();
                             for ai in 0usize..args.len() {
-                                cloned.push(type_intern::type_to_ty_id(&args[ai]));
+                                cloned.push(type_intern.type_to_ty_id(&args[ai]));
                             }
                             cloned
                         }
@@ -1333,8 +1333,8 @@ fn lower_anon_record_expr(
     for i in 0usize..fields.len() {
         let field = &fields[i];
         let temp = ctx.new_temp(field.val.ty, span);
-        lower_expr(ctx, &field.val, mir_lower_ctx::destination_local(temp));
-        operands.push(mir_lower_util::operand_from_place_id(
+        lower_expr(ctx, &field.val, mir_lower_ctx.destination_local(temp));
+        operands.push(mir_lower_util.operand_from_place_id(
             mir_types.Place.local(temp),
             field.val.ty,
         ));
@@ -1370,8 +1370,8 @@ fn lower_range_expr(
     match start {
         &Option.Some(ref s) => {
             let temp = ctx.new_temp(s.as_ref().ty, span);
-            lower_expr(ctx, s.as_ref(), mir_lower_ctx::destination_local(temp));
-            operands.push(mir_lower_util::operand_from_place_id(
+            lower_expr(ctx, s.as_ref(), mir_lower_ctx.destination_local(temp));
+            operands.push(mir_lower_util.operand_from_place_id(
                 mir_types.Place.local(temp),
                 s.as_ref().ty,
             ));
@@ -1383,8 +1383,8 @@ fn lower_range_expr(
     match end_val {
         &Option.Some(ref e) => {
             let temp = ctx.new_temp(e.as_ref().ty, span);
-            lower_expr(ctx, e.as_ref(), mir_lower_ctx::destination_local(temp));
-            operands.push(mir_lower_util::operand_from_place_id(
+            lower_expr(ctx, e.as_ref(), mir_lower_ctx.destination_local(temp));
+            operands.push(mir_lower_util.operand_from_place_id(
                 mir_types.Place.local(temp),
                 e.as_ref().ty,
             ));
@@ -1426,12 +1426,12 @@ fn lower_cast_expr(
     span: common.Span,
 ) {
     let temp = ctx.new_temp(inner.ty, span);
-    lower_expr(ctx, inner, mir_lower_ctx::destination_local(temp));
+    lower_expr(ctx, inner, mir_lower_ctx.destination_local(temp));
 
     match dest.as_place() {
         Option.Some(place) => {
-            let inner_ty_hir = type_intern::ty_id_to_type(inner.ty);
-            let operand = mir_lower_util::operand_from_place(
+            let inner_ty_hir = type_intern.ty_id_to_type(inner.ty);
+            let operand = mir_lower_util.operand_from_place(
                 mir_types.Place.local(temp),
                 &inner_ty_hir,
             );
@@ -1460,10 +1460,10 @@ fn lower_assign_expr(
 
     // Evaluate value
     let val_temp = ctx.new_temp(val.ty, span);
-    lower_expr(ctx, val, mir_lower_ctx::destination_local(val_temp));
+    lower_expr(ctx, val, mir_lower_ctx.destination_local(val_temp));
 
     // Assign
-    let operand = mir_lower_util::operand_from_place_id(
+    let operand = mir_lower_util.operand_from_place_id(
         mir_types.Place.local(val_temp),
         val.ty,
     );
@@ -1486,8 +1486,8 @@ fn lower_assign_op_expr(
 
     // Read current value
     let current_temp = ctx.new_temp(target.ty, span);
-    let target_ty_hir = type_intern::ty_id_to_type(target.ty);
-    let current_operand = mir_lower_util::operand_from_place(target_place.clone(), &target_ty_hir);
+    let target_ty_hir = type_intern.ty_id_to_type(target.ty);
+    let current_operand = mir_lower_util.operand_from_place(target_place.clone(), &target_ty_hir);
     ctx.emit_assign(
         mir_types.Place.local(current_temp),
         mir_types.Rvalue.Use(current_operand),
@@ -1496,15 +1496,15 @@ fn lower_assign_op_expr(
 
     // Evaluate right side
     let val_temp = ctx.new_temp(val.ty, span);
-    lower_expr(ctx, val, mir_lower_ctx::destination_local(val_temp));
+    lower_expr(ctx, val, mir_lower_ctx.destination_local(val_temp));
 
     // Perform operation
-    let mir_op = mir_lower_util::convert_binop(bin_op);
+    let mir_op = mir_lower_util.convert_binop(bin_op);
     match mir_op {
         Option.Some(mir_bin_op) => {
             let result_temp = ctx.new_temp(target.ty, span);
             let left_op = mir_types.Operand.Copy(mir_types.Place.local(current_temp));
-            let right_op = mir_lower_util::operand_from_place_id(
+            let right_op = mir_lower_util.operand_from_place_id(
                 mir_types.Place.local(val_temp),
                 val.ty,
             );
@@ -1535,7 +1535,7 @@ fn lower_addr_of_expr(
     span: common.Span,
 ) {
     let temp = ctx.new_temp(inner.ty, span);
-    lower_expr(ctx, inner, mir_lower_ctx::destination_local(temp));
+    lower_expr(ctx, inner, mir_lower_ctx.destination_local(temp));
 
     match dest.as_place() {
         Option.Some(place) => {
@@ -1591,8 +1591,8 @@ fn lower_stmt(ctx: &mut mir_lower_ctx.MirLowerCtx, stmt: &hir_expr.Stmt) {
             match init {
                 &Option.Some(ref e) => {
                     let temp = ctx.new_temp(e.ty, span);
-                    lower_expr(ctx, e, mir_lower_ctx::destination_local(temp));
-                    mir_lower_pattern::lower_irrefutable_pattern(
+                    lower_expr(ctx, e, mir_lower_ctx.destination_local(temp));
+                    mir_lower_pattern.lower_irrefutable_pattern(
                         ctx,
                         pattern,
                         mir_types.Place.local(temp),
@@ -1605,12 +1605,12 @@ fn lower_stmt(ctx: &mut mir_lower_ctx.MirLowerCtx, stmt: &hir_expr.Stmt) {
                     // Without this, each assignment in different branches
                     // creates a fresh temp (lookup_local returns None),
                     // causing value loss across control flow joins.
-                    mir_lower_pattern::register_pattern_locals(ctx, pattern, span);
+                    mir_lower_pattern.register_pattern_locals(ctx, pattern, span);
                 }
             }
         }
         &hir_expr.Stmt.Expr { ref expr, has_semi: _ } => {
-            lower_expr(ctx, expr, mir_lower_ctx::destination_ignore());
+            lower_expr(ctx, expr, mir_lower_ctx.destination_ignore());
         }
         &hir_expr.Stmt.Item(_) => {
             // Item statements are processed separately
@@ -1634,7 +1634,7 @@ fn lower_if_expr(
 
     // Evaluate condition
     let cond_temp = ctx.new_temp(condition.ty, span);
-    lower_expr(ctx, condition, mir_lower_ctx::destination_local(cond_temp));
+    lower_expr(ctx, condition, mir_lower_ctx.destination_local(cond_temp));
 
     let cond_operand = mir_types.Operand.Copy(mir_types.Place.local(cond_temp));
     ctx.terminate_if(cond_operand, then_block, else_block, span);
@@ -1684,7 +1684,7 @@ fn lower_match_expr(
 ) {
     // Evaluate scrutinee
     let scrut_temp = ctx.new_temp(scrutinee.ty, span);
-    lower_expr(ctx, scrutinee, mir_lower_ctx::destination_local(scrut_temp));
+    lower_expr(ctx, scrutinee, mir_lower_ctx.destination_local(scrut_temp));
     let scrut_place = mir_types.Place.local(scrut_temp);
 
     let join_block = ctx.new_block();
@@ -1707,7 +1707,7 @@ fn lower_match_expr(
                 // on success, or falls through to the next alternative's test.
                 for alt_i in 0usize..alternatives.len() {
                     let alt = &alternatives[alt_i];
-                    let test = mir_lower_pattern::pattern_test(ctx, alt, &scrut_place, span);
+                    let test = mir_lower_pattern.pattern_test(ctx, alt, &scrut_place, span);
                     let fallthrough = if alt_i + 1 < alternatives.len() {
                         ctx.new_block()
                     } else {
@@ -1731,7 +1731,7 @@ fn lower_match_expr(
                 }
             }
             _ => {
-                let test = mir_lower_pattern::pattern_test(ctx, &arm.pattern, &scrut_place, span);
+                let test = mir_lower_pattern.pattern_test(ctx, &arm.pattern, &scrut_place, span);
                 match test {
                     Option.Some(t) => {
                         // Create switch for this arm
@@ -1750,7 +1750,7 @@ fn lower_match_expr(
 
         // Lower arm body
         ctx.set_current_block(arm_block);
-        mir_lower_pattern::bind_arm_pattern(ctx, &arm.pattern, scrut_place.clone(), span);
+        mir_lower_pattern.bind_arm_pattern(ctx, &arm.pattern, scrut_place.clone(), span);
         lower_expr(ctx, &arm.body, dest.clone());
         if !ctx.is_terminated() {
             ctx.terminate_goto(join_block, span);
@@ -1786,7 +1786,7 @@ fn lower_loop_expr(
 
     // Lower body
     ctx.set_current_block(loop_body);
-    lower_expr(ctx, body, mir_lower_ctx::destination_ignore());
+    lower_expr(ctx, body, mir_lower_ctx.destination_ignore());
     if !ctx.is_terminated() {
         // Loop back
         ctx.terminate_goto(loop_header, span);
@@ -1826,7 +1826,7 @@ fn lower_for_iter_expr(
 ) {
     // Resolve the iterator type to extract array element type and size
     let resolved_iter_id = ctx.resolve_type_to_id(iter.ty);
-    let interner = type_intern::type_interner();
+    let interner = type_intern.type_interner();
     let iter_kind = interner.get(resolved_iter_id);
 
     let mut array_size: u64 = 0;
@@ -1858,7 +1858,7 @@ fn lower_for_iter_expr(
     if !found_array {
         ctx.mir_error(
             mir_lower_ctx.MirLowerErrorKind.InternalError,
-            common::make_string("for-in loop: iterator type is not an array"),
+            common.make_string("for-in loop: iterator type is not an array"),
             span,
         );
         return;
@@ -1869,10 +1869,10 @@ fn lower_for_iter_expr(
 
     // Step 1: Evaluate the array into a temporary
     let arr_temp = ctx.new_temp(resolved_iter_id, span);
-    lower_expr(ctx, iter, mir_lower_ctx::destination_local(arr_temp));
+    lower_expr(ctx, iter, mir_lower_ctx.destination_local(arr_temp));
 
     // Step 2: Create a mutable index variable, initialized to 0
-    let idx_local = ctx.new_var(idx_ty_id, common::make_string("_loop_idx"), true, span);
+    let idx_local = ctx.new_var(idx_ty_id, common.make_string("_loop_idx"), true, span);
     ctx.emit_assign(
         mir_types.Place.local(idx_local),
         mir_types.Rvalue.Use(mir_types.Operand.Constant(
@@ -1942,8 +1942,8 @@ fn lower_for_iter_expr(
     let indexed_place = arr_place.project(mir_types.PlaceElem.Index(idx_local));
 
     // Emit: elem_temp = arr[idx]
-    let elem_ty_hir = type_intern::ty_id_to_type(resolved_elem_id);
-    let elem_operand = mir_lower_util::operand_from_place(indexed_place, &elem_ty_hir);
+    let elem_ty_hir = type_intern.ty_id_to_type(resolved_elem_id);
+    let elem_operand = mir_lower_util.operand_from_place(indexed_place, &elem_ty_hir);
     ctx.emit_assign(
         mir_types.Place.local(elem_temp),
         mir_types.Rvalue.Use(elem_operand),
@@ -1951,7 +1951,7 @@ fn lower_for_iter_expr(
     );
 
     // Bind pattern from elem_temp (e.g., `let item = arr[idx]`)
-    mir_lower_pattern::lower_irrefutable_pattern(
+    mir_lower_pattern.lower_irrefutable_pattern(
         ctx,
         pattern,
         mir_types.Place.local(elem_temp),
@@ -1959,7 +1959,7 @@ fn lower_for_iter_expr(
     );
 
     // Lower the body expression (result is ignored, for-loop body is unit)
-    lower_expr(ctx, body, mir_lower_ctx::destination_ignore());
+    lower_expr(ctx, body, mir_lower_ctx.destination_ignore());
 
     // After body, jump to increment block (unless body already terminated via break/return)
     if !ctx.is_terminated() {
@@ -2009,7 +2009,7 @@ fn lower_return_expr(
 ) {
     match val {
         &Option.Some(ref e) => {
-            lower_expr(ctx, e.as_ref(), mir_lower_ctx::destination_return_place());
+            lower_expr(ctx, e.as_ref(), mir_lower_ctx.destination_return_place());
         }
         &Option.None => {
             ctx.emit_assign(
@@ -2047,7 +2047,7 @@ fn lower_break_expr(
             // No enclosing loop - error
             ctx.mir_error(
                 mir_lower_ctx.MirLowerErrorKind.BreakOutsideLoop,
-                common::make_string("break outside of loop"),
+                common.make_string("break outside of loop"),
                 span,
             );
             ctx.terminate_unreachable(span);
@@ -2069,7 +2069,7 @@ fn lower_continue_expr(
             // No enclosing loop - error
             ctx.mir_error(
                 mir_lower_ctx.MirLowerErrorKind.ContinueOutsideLoop,
-                common::make_string("continue outside of loop"),
+                common.make_string("continue outside of loop"),
                 span,
             );
             ctx.terminate_unreachable(span);
@@ -2092,8 +2092,8 @@ fn lower_closure_expr(
     let closure_def_id = ctx.next_closure_def_id();
 
     // Build closure function name: "blood_closure_DEFID"
-    let mut closure_name = common::make_string("blood_closure_");
-    let id_str = codegen_types::format_u64(closure_def_id.index as u64);
+    let mut closure_name = common.make_string("blood_closure_");
+    let id_str = codegen_types.format_u64(closure_def_id.index as u64);
     closure_name.push_str(id_str.as_str());
 
     // Resolve return type through the parent's substitution table
@@ -2133,7 +2133,7 @@ fn lower_closure_expr(
     );
 
     // Add env_ptr as first parameter (ptr type, required by calling convention)
-    let env_ty = type_intern::ptr_ty();
+    let env_ty = type_intern.ptr_ty();
     let _env_local = closure_ctx.builder.add_param(env_ty, String.new(), span);
 
     // Lower closure parameters
@@ -2142,7 +2142,7 @@ fn lower_closure_expr(
         let resolved_id = closure_ctx.resolve_type_to_id(param.ty);
         let mir_local = closure_ctx.builder.add_param(resolved_id, String.new(), span);
         let source = mir_types.Place.local(mir_local);
-        mir_lower_pattern::lower_irrefutable_pattern(&mut closure_ctx, &param.pattern, source, span);
+        mir_lower_pattern.lower_irrefutable_pattern(&mut closure_ctx, &param.pattern, source, span);
     }
 
     // Register captured variables as locals in the closure context.
@@ -2219,7 +2219,7 @@ fn lower_with_handle_expr(
     // Step 1: Create state place and lower handler expression
     let state_temp = ctx.new_temp(handler_expr.ty, span);
     let state_place = mir_types.Place.local(state_temp);
-    lower_expr(ctx, handler_expr, mir_lower_ctx::destination_local(state_temp));
+    lower_expr(ctx, handler_expr, mir_lower_ctx.destination_local(state_temp));
 
     // Step 2: Resolve handler type (HIR types are Infer during MIR lowering)
     let resolved_handler_ty = ctx.resolve_type_id(handler_expr.ty);
@@ -2252,7 +2252,7 @@ fn lower_with_handle_expr(
 
     // Create temp for body result if destination is a place
     let body_result_temp = ctx.new_temp(body.ty, span);
-    lower_expr(ctx, body, mir_lower_ctx::destination_local(body_result_temp));
+    lower_expr(ctx, body, mir_lower_ctx.destination_local(body_result_temp));
 
     // Step 7: Emit PopHandler statement (only if block not terminated)
     if !ctx.is_terminated() {
@@ -2262,7 +2262,7 @@ fn lower_with_handle_expr(
         ));
 
         // Step 8: Emit CallReturnClause to transform body result via return clause
-        let body_operand = mir_lower_util::operand_from_place_id(
+        let body_operand = mir_lower_util.operand_from_place_id(
             mir_types.Place.local(body_result_temp),
             body.ty,
         );
@@ -2420,8 +2420,8 @@ fn lower_perform_expr(
     for i in 0usize..args.len() {
         let arg = &args[i];
         let temp = ctx.new_temp(arg.ty, span);
-        lower_expr(ctx, arg, mir_lower_ctx::destination_local(temp));
-        arg_operands.push(mir_lower_util::operand_from_place_id(
+        lower_expr(ctx, arg, mir_lower_ctx.destination_local(temp));
+        arg_operands.push(mir_lower_util.operand_from_place_id(
             mir_types.Place.local(temp),
             arg.ty,
         ));
@@ -2430,7 +2430,7 @@ fn lower_perform_expr(
     let dest_place = match dest.as_place() {
         Option.Some(p) => p,
         Option.None => {
-            let temp = ctx.new_temp(type_intern::type_to_ty_id(ty), span);
+            let temp = ctx.new_temp(type_intern.type_to_ty_id(ty), span);
             mir_types.Place.local(temp)
         }
     };
@@ -2438,7 +2438,7 @@ fn lower_perform_expr(
     // Store the op_name symbol index in op_index.
     // Codegen resolves (effect_def_id, op_name_sym) to positional index.
     let next_block = ctx.new_block();
-    ctx.builder.terminate(mir_term::effect_perform(
+    ctx.builder.terminate(mir_term.effect_perform(
         effect_def,
         op_name.index,
         arg_operands,
@@ -2458,9 +2458,9 @@ fn lower_resume_expr(
 ) {
     // Evaluate value
     let temp = ctx.new_temp(val.ty, span);
-    lower_expr(ctx, val, mir_lower_ctx::destination_local(temp));
+    lower_expr(ctx, val, mir_lower_ctx.destination_local(temp));
 
-    let operand = mir_lower_util::operand_from_place_id(
+    let operand = mir_lower_util.operand_from_place_id(
         mir_types.Place.local(temp),
         val.ty,
     );
@@ -2503,7 +2503,7 @@ fn expr_to_place(
                     // by evaluating the expression. Must NOT leave uninitialized,
                     // because RefMut borrows this place and reads through it.
                     let temp = ctx.new_temp(expr.ty, span);
-                    lower_expr(ctx, expr, mir_lower_ctx::destination_local(temp));
+                    lower_expr(ctx, expr, mir_lower_ctx.destination_local(temp));
                     mir_types.Place.local(temp)
                 }
             }
@@ -2524,9 +2524,9 @@ fn expr_to_place(
                                 Option.None => {
                                     ctx.mir_error_with_note(
                                         mir_lower_ctx.MirLowerErrorKind.FieldNotResolved,
-                                        common::make_string("field index could not be resolved in place expression; defaulting to 0"),
+                                        common.make_string("field index could not be resolved in place expression; defaulting to 0"),
                                         span,
-                                        common::make_string("field resolution uses (body_def_id, name_span_start) as lookup key"),
+                                        common.make_string("field resolution uses (body_def_id, name_span_start) as lookup key"),
                                     );
                                     0
                                 }
@@ -2550,7 +2550,7 @@ fn expr_to_place(
                 _ => {}
             }
             let idx_temp = ctx.new_temp(idx.as_ref().ty, span);
-            lower_expr(ctx, idx.as_ref(), mir_lower_ctx::destination_local(idx_temp));
+            lower_expr(ctx, idx.as_ref(), mir_lower_ctx.destination_local(idx_temp));
             base_place.project(mir_types.PlaceElem.Index(idx_temp))
         }
         &hir_expr.ExprKind.Path(ref path) => {
@@ -2562,7 +2562,7 @@ fn expr_to_place(
             match the_op {
                 common.UnaryOp.Deref => {
                     let ptr_temp = ctx.new_temp(operand.as_ref().ty, span);
-                    lower_expr(ctx, operand.as_ref(), mir_lower_ctx::destination_local(ptr_temp));
+                    lower_expr(ctx, operand.as_ref(), mir_lower_ctx.destination_local(ptr_temp));
                     let ptr_place = mir_types.Place.local(ptr_temp);
                     ptr_place.project(mir_types.PlaceElem.Deref)
                 }
@@ -2576,7 +2576,7 @@ fn expr_to_place(
         _ => {
             // Not a place expression - create a temp
             let temp = ctx.new_temp(expr.ty, span);
-            lower_expr(ctx, expr, mir_lower_ctx::destination_local(temp));
+            lower_expr(ctx, expr, mir_lower_ctx.destination_local(temp));
             mir_types.Place.local(temp)
         }
     }
@@ -2870,7 +2870,7 @@ fn determine_call_const_values(
     for i in 0usize..args.len() {
         let arg = &args[i];
         let resolved_ty = ctx.resolve_type_to_id(arg.ty);
-        let size = type_intern::get_array_size_from_id(resolved_ty);
+        let size = type_intern.get_array_size_from_id(resolved_ty);
         match size {
             Option.Some(s) => {
                 let sentinel: u64 = 18446744073709551615;
@@ -2891,14 +2891,14 @@ fn build_mono_fn_name(
     const_values: &Vec<u64>,
 ) -> String {
     // Look up the original function name from method resolutions or use def_id
-    let mut name = common::make_string("blood_mono$def");
-    name.push_str(codegen_types::format_u64(original_def_id as u64).as_str());
+    let mut name = common.make_string("blood_mono$def");
+    name.push_str(codegen_types.format_u64(original_def_id as u64).as_str());
     name.push_str("$");
     for i in 0usize..const_values.len() {
         if i > 0 {
             name.push_str("_");
         }
-        name.push_str(codegen_types::format_u64(const_values[i]).as_str());
+        name.push_str(codegen_types.format_u64(const_values[i]).as_str());
     }
     name
 }
