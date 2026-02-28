@@ -1,8 +1,18 @@
 # Blood Surface Syntax Grammar
 
-**Version**: 0.4.0
+**Version**: 0.5.0
 **Status**: Specification target
 **Last Updated**: 2026-02-28
+
+**Revision 0.5.0 Changes** (ADR-031 — Tier 1 Proposal Approvals):
+- Semicolons made optional on all statements with continuation rules (§5.2)
+- Formalized canonical function signature ordering (§3.2)
+- Added `UncheckedBlock` expression for granular safety control (§5.4)
+- Added `#[unchecked(...)]` and `#![default_unchecked(...)]` to standard attributes (§1.5.1)
+- Added `unchecked` to contextual keywords (§9.2)
+- Added expression-oriented design note: all block-based constructs return trailing expression value (§5.2)
+- Named arguments (`Arg ::= (Ident ':')? Expr`) formally approved (already present in v0.4.0)
+- Spec annotations (`SpecClause`) formally approved (already present in v0.4.0)
 
 **Revision 0.4.0 Changes**:
 - Replaced `::` with `.` as universal path separator; removed `::` from the language
@@ -196,6 +206,11 @@ AttributeArg ::= Ident ('=' Literal)?
 #[must_use]                        // Warn if return value unused
 #[deprecated(since = "1.0", note = "use foo instead")]
 
+// Safety control attributes (ADR-031)
+#[unchecked(bounds)]               // Disable bounds checks for this function
+#[unchecked(overflow, generation)] // Disable multiple checks
+#[unchecked(bounds, when = "release")] // Conditional: only in release builds
+
 // Type attributes
 #[repr(C)]                         // C-compatible layout
 #[repr(packed)]                    // No padding
@@ -205,6 +220,7 @@ AttributeArg ::= Ident ('=' Literal)?
 // Module attributes
 #![no_prelude]                     // Don't import prelude
 #![feature(unstable_feature)]      // Enable unstable feature
+#![default_unchecked(generation)]  // Module-level: disable generation checks by default
 
 // Test attributes
 #[test]                            // Mark as test function
@@ -296,6 +312,17 @@ SpecClause ::= 'requires' Expr
              | 'ensures' Expr
              | 'invariant' Expr
              | 'decreases' Expr
+
+(* Canonical signature ordering — all elements are optional except `fn` and Ident:
+   #[attributes]  fn name<TypeParams>(params) -> ReturnType
+                  / {Effects}
+                  requires pre_condition
+                  ensures post_condition
+                  invariant loop_invariant
+                  decreases termination_measure
+                  where T: Bound
+   { body }
+*)
 
 FnQualifier ::= 'const' | 'async' | '@unsafe'
 (* `async fn foo()` is sugar for `fn foo() / {Async}` — see §8 for the Async effect *)
@@ -673,6 +700,7 @@ ExprWithBlock ::= BlockExpr
                 | WithHandleExpr
                 | TryWithExpr
                 | UnsafeBlock
+                | UncheckedBlock
                 | RegionExpr
 
 ExprWithoutBlock ::= Literal
@@ -717,9 +745,81 @@ Statement ::= ';'
             | LetStatement
             | ExprStatement
 
-LetStatement ::= 'let' Pattern (':' Type)? ('=' Expr)? ';'
-ExprStatement ::= ExprWithoutBlock ';' | ExprWithBlock ';'?
+LetStatement ::= 'let' Pattern (':' Type)? ('=' Expr)? ';'?
+ExprStatement ::= ExprWithoutBlock ';'? | ExprWithBlock ';'?
 
+```
+
+#### 5.2.1 Semicolon Optionality and Continuation Rules
+
+Semicolons are optional on all statements. When a semicolon is omitted at the end of a line, the parser determines whether the next line continues the current expression or begins a new statement using continuation rules.
+
+**A line continues the previous expression when the current line ends with a continuation token:**
+
+```ebnf
+ContinuationToken ::= '+' | '-' | '*' | '/' | '%'
+                     | '&&' | '||'
+                     | '|>' | '.' | ',' | '(' | '[' | '{'
+                     | '&' | '|' | '^' | '<<' | '>>'
+                     | '==' | '!=' | '<' | '>' | '<=' | '>='
+                     | '=' | '+=' | '-=' | '*=' | '/=' | '%='
+                     | '&=' | '|=' | '^=' | '<<=' | '>>='
+                     | 'as' | 'in' | '..' | '..='
+```
+
+**Implicit semicolon insertion:** When a line boundary is reached and the current line does NOT end with a continuation token, and the next token is a valid statement-start token (keyword, identifier, literal, `(`, `[`, `{`, `#[`, `&`, `*`, `!`, `-`), an implicit semicolon is inserted.
+
+```blood
+// Both valid:
+let x = 42;          // with semicolon
+let x = 42           // without semicolon (implicit)
+
+// Continuation across lines:
+let result = a
+    + b               // continues (previous line ends with identifier, but this line starts with +)
+    + c
+
+let y = data
+    |> transform      // continues (previous line ends with identifier, but |> is recognized)
+    |> collect
+
+// Unambiguous new statement:
+let a = 1
+let b = 2            // new statement (previous line complete, `let` starts new statement)
+```
+
+> **Design note:** Semicolons remain valid everywhere and are never an error. Code formatters may enforce a project-specific convention (semicolons always, semicolons never, or semicolons only for disambiguation). Both styles compile identically — no semantic difference.
+
+#### 5.2.2 Expression-Oriented Design
+
+Blood is **expression-oriented**: all block-based constructs (`if`, `match`, `for`, `while`, `loop`, blocks) produce a value. A block's value is its trailing expression (the final expression without a semicolon). A trailing semicolon discards the value (the block evaluates to `()`).
+
+```blood
+// if/else as expression
+let x = if condition { 42 } else { 0 }
+
+// match as expression
+let msg = match status {
+    Ok(v) => format!("success: {}", v),
+    Err(e) => format!("error: {}", e),
+}
+
+// Block as expression
+let result = {
+    let a = compute()
+    let b = transform(a)
+    a + b  // trailing expression — this is the block's value
+}
+
+// Semicolon discards the value
+let unit_val = {
+    compute();  // semicolon: value discarded, block returns ()
+}
+```
+
+This design eliminates temporary variables and explicit `return` in many cases, yielding 5-10% token reduction. It is the foundation for optional semicolons — when every construct is an expression, the semicolon's role is purely to discard values, not to terminate statements.
+
+```ebnf
 IfExpr    ::= 'if' Expr Block ('else' 'if' Expr Block)* ('else' Block)?
 IfLetExpr ::= 'if' 'let' Pattern '=' Expr Block ('else' Block)?
 
@@ -815,9 +915,41 @@ RegionExpr ::= 'region' Lifetime? Block
 
 UnsafeBlock ::= '@unsafe' Block
 
+UncheckedBlock ::= 'unchecked' '(' UncheckedChecks ')' Block
+UncheckedChecks ::= Ident (',' Ident)* ','?
+
 AllocExpr ::= '@heap' Expr
             | '@stack' Expr
 ```
+
+**`unchecked(checks) { ... }`:** Disables specific runtime safety checks within the block while preserving all other safety guarantees. The block is an expression that returns its body's value.
+
+| Check Name | What It Disables | Use Case |
+|------------|-----------------|----------|
+| `bounds` | Array/slice bounds checking | Inner loops with proven indices |
+| `overflow` | Integer overflow checking | Wrapping arithmetic |
+| `generation` | Generational reference validation | Hot paths with provably-valid references |
+| `null` | Null pointer checking | FFI interop with known-valid pointers |
+| `alignment` | Alignment verification | Low-level memory operations |
+
+```blood
+// Disable specific checks for performance
+fn fast_sum(data: &[i32]) -> i64 {
+    let mut total: i64 = 0
+    unchecked(bounds, overflow) {
+        for i in 0..data.len() {
+            total += data[i] as i64
+        }
+    }
+    total
+}
+```
+
+**`@unsafe` vs `unchecked`:** These serve different purposes:
+- **`@unsafe`** gates fundamentally unsafe operations that the type system cannot verify: raw pointer dereference, type punning, inline assembly. It marks "the compiler cannot help you here."
+- **`unchecked(checks)`** disables specific runtime checks that the compiler normally inserts for safety. The operation itself is type-safe; only the runtime validation is skipped. It marks "I've proven this check won't fire; skip it for performance."
+
+Both are auditable via `grep`. Effects remain tracked in both contexts. Only `#[untracked_effects]` (for FFI) disables effect tracking.
 
 See §9.5 for the `@` prefix design rule.
 
@@ -838,10 +970,23 @@ ClosureBody ::= Expr | Block
 ```ebnf
 CallExpr ::= Expr '(' Args ')'
 Args ::= (Arg (',' Arg)* ','?)?
-Arg ::= (Ident ':')? Expr
+Arg ::= (Ident ':')? Expr       (* named arguments are optional at call site *)
 
 MethodCallExpr ::= Expr '.' Ident TypeArgs? '(' Args ')'
+```
 
+> **Design note (named arguments — ADR-031):** The `(Ident ':')? Expr` syntax in `Arg` allows optional named arguments at call sites. Callers may use positional arguments, named arguments, or a mix. Named arguments eliminate the "Wrong Attribute" bug category (6.9% of LLM-generated bugs per Tambon et al. 2024) by making parameter binding explicit. No ambiguity exists with other syntax — Blood's anonymous records use `#{ }`, not `{ }`, so `name: value` inside function call parentheses is always a named argument.
+>
+> ```blood
+> fn create_user(name: String, age: u32, role: Role) -> User { ... }
+>
+> // All valid:
+> create_user("Alice", 30, Role.Admin)                      // positional
+> create_user(name: "Alice", age: 30, role: Role.Admin)     // named
+> create_user("Alice", role: Role.Admin, age: 30)           // mixed (named can reorder)
+> ```
+
+```ebnf
 FieldExpr ::= Expr '.' Ident | Expr '.' IntLiteral
 
 IndexExpr ::= Expr '[' Expr ']'
@@ -1173,6 +1318,7 @@ bridge                     (* FFI declarations *)
 with handle                (* handler expressions *)
 affine                     (* ownership type qualifier *)
 default                    (* impl blocks, default expressions *)
+unchecked                  (* granular safety control — see §5.4 *)
 union                      (* bridge FFI blocks only — see §3.8; Blood uses enums for tagged unions *)
 'static '_                 (* lifetimes *)
 ```
@@ -1188,6 +1334,7 @@ fn perform(action: Action) { ... }   // OK — perform is a function name
 // These same words become keywords in their respective contexts:
 shallow handler MyHandler for MyEffect { ... }  // handler, shallow are keywords here
 fn foo() requires x > 0 { ... }                 // requires is a keyword here
+unchecked(bounds) { data[i] }                   // unchecked is a keyword here
 ```
 
 ### 9.3 Reserved for Future Use (Tier 3)
@@ -1225,7 +1372,7 @@ The `@` prefix marks operations that alter the language's default safety, alloca
 
 | Construct | Meaning | Category |
 |-----------|---------|----------|
-| `@unsafe` | Disables safety checks within block or function | Safety relaxation |
+| `@unsafe` | Permits fundamentally unsafe operations (pointer dereference, type punning) | Safety escape hatch |
 | `@heap`   | Allocates on the heap (explicit placement) | Allocation control |
 | `@stack`  | Allocates on the stack (explicit placement) | Allocation control |
 
@@ -1236,6 +1383,8 @@ The `@` prefix marks operations that alter the language's default safety, alloca
 - **Constraint qualifiers** — use bare keywords: `linear`, `affine`
 
 **Design rationale:** Constraints like `linear` and `affine` *add* safety guarantees (the compiler checks more, not less). The `@` prefix marks *relaxations* of the default safety model. This distinction is deliberate — `@` means "caution: default guarantees weakened here," not "annotation."
+
+> **`@unsafe` vs `unchecked` (ADR-031):** `@unsafe` and `unchecked(checks)` are complementary. `@unsafe` gates operations the type system fundamentally cannot verify (raw pointer dereference, type punning, inline assembly). `unchecked(bounds, overflow, ...)` disables specific runtime checks that the compiler normally inserts — the operation is type-safe, only the validation is skipped. Both are auditable; effects remain tracked in both. See §5.4 for details.
 
 ---
 

@@ -56,7 +56,7 @@ All 337/337 ground-truth tests pass. Bootstrap is stable (second_gen/third_gen b
 
 | Document | Version | Status | Gaps |
 |----------|---------|--------|------|
-| GRAMMAR.md | 0.4.0 → **0.5.0** (after Phase 0.3) | Pending proposal incorporation | Procedural macros deferred; concurrency syntax TBD |
+| GRAMMAR.md | **0.5.0** | Tier 1 proposals incorporated (ADR-031) | Procedural macros deferred; concurrency syntax TBD |
 | FORMAL_SEMANTICS.md | 0.4.0 | Core features formalized | Coq mechanization incomplete (§7); may need updates from approved proposals |
 | DISPATCH.md | 0.4.0 | Complete | None |
 | MEMORY_MODEL.md | 0.3.0 | Tiers 0/1 solid | Tier 3 designed but not implemented |
@@ -123,26 +123,18 @@ The self-hosted compiler is a monolithic pipeline. Content-addressed compilation
 
 Proposals are evaluated in three tiers based on their impact on the alignment pass.
 
-#### Tier 1: Grammar-Affecting (evaluate before alignment)
+#### Tier 1: Grammar-Affecting — **ALL APPROVED** (ADR-031)
 
-These proposals change surface syntax. If approved, they must be incorporated into GRAMMAR.md before Phase A begins. If rejected, their syntax is excluded and alignment proceeds against v0.4.0.
+All six Tier 1 proposals were evaluated and unanimously approved. GRAMMAR.md has been updated to v0.5.0.
 
-| # | Proposal | Source | Grammar Change | Already in Grammar? | Risk |
-|---|----------|--------|---------------|---------------------|------|
-| **#20** | Spec annotations (`requires`/`ensures`/`invariant`/`decreases`) | EF_III, SYNTAX_REDESIGN | New clause syntax on function signatures | **Yes** (SpecClause production, v0.4.0) | Low — additive keywords |
-| **—** | Optional semicolons | SYNTAX_REDESIGN C.1 | `Statement ::= ... ';'?` | **Yes** (v0.4.0) | Low — already specified |
-| **—** | Function signature ordering | SYNTAX_REDESIGN B.1 | attrs → sig → effects → specs → where → body | Partially | Low — ordering convention |
-| **#21a** | Named arguments | EF_III, SYNTAX_REDESIGN C.2 | `f(name: value)` call-site syntax | **No** — new production | Medium — parser change |
-| **#21b** | Expression-oriented design | EF_III #21 | Every construct returns a value; blocks are expressions | **No** — semantic change to blocks/if/match | Medium — pervasive change |
-| **RFC-S** | Granular safety controls | SAFETY_LEVELS.md | `#[unchecked(check)]` attribute, `unchecked(checks) { }` block | **No** — replaces binary `unsafe` | Low — more expressive replacement |
-
-**Decision required for each**: Approve (→ add to GRAMMAR.md v0.5.0) or Reject (→ not in scope for alignment).
-
-**Evaluation criteria**:
-- Does it align with Blood's design philosophy (Five Pillars, Priority Hierarchy)?
-- Is it well-researched with clear semantics?
-- Does deferring it create technical debt that outweighs the cost of adoption?
-- Does it have unresolved dependencies that prevent commitment?
+| # | Proposal | Source | Status | GRAMMAR.md |
+|---|----------|--------|--------|------------|
+| **#20** | Spec annotations (`requires`/`ensures`/`invariant`/`decreases`) | EF_III, SYNTAX_REDESIGN | **APPROVED** | Already present (v0.4.0 `SpecClause`) |
+| **—** | Optional semicolons | SYNTAX_REDESIGN C.1 | **APPROVED** | §5.2.1 — continuation rules added |
+| **—** | Function signature ordering | SYNTAX_REDESIGN B.1 | **APPROVED** | §3.2 — canonical ordering formalized |
+| **#21a** | Named arguments | EF_III, SYNTAX_REDESIGN C.2 | **APPROVED** | Already present (v0.4.0 `Arg` production) |
+| **#21b** | Expression-oriented design | EF_III #21 | **APPROVED** | §5.2.2 — design note added |
+| **RFC-S** | Granular safety controls | SAFETY_LEVELS.md | **APPROVED** | §5.4 — `UncheckedBlock` + `#[unchecked(...)]` |
 
 #### Tier 2: Architecture-Affecting (evaluate before alignment)
 
@@ -183,19 +175,19 @@ These depend on infrastructure that doesn't exist yet (incremental type checker,
 
 **Decision**: Acknowledge as design direction. Do not commit to implementation timeline. Revisit when blocking dependencies are resolved.
 
-### 0.3 — Grammar Update (v0.5.0)
+### 0.3 — Grammar Update (v0.5.0) — **COMPLETE**
 
-**Prerequisite**: Tier 1 proposal decisions complete.
+GRAMMAR.md has been updated to v0.5.0 incorporating all six approved Tier 1 proposals:
+- §3.2: Canonical signature ordering formalized
+- §5.2.1: Semicolon optionality with `ContinuationToken` rules
+- §5.2.2: Expression-oriented design note
+- §5.4: `UncheckedBlock` production, `@unsafe` vs `unchecked` distinction
+- §1.5.1: `#[unchecked(...)]` and `#![default_unchecked(...)]` standard attributes
+- §9.2: `unchecked` added to contextual keywords
 
-For each Tier 1 proposal approved in §0.2:
-1. Write or update the GRAMMAR.md production rules
-2. Add formal typing rules to FORMAL_SEMANTICS.md where applicable
-3. Update SPECIFICATION.md hierarchy if new companion documents are created
-4. Increment GRAMMAR.md to v0.5.0
+**Remaining**: FORMAL_SEMANTICS.md may need typing rules for `UncheckedBlock` and named argument resolution. These are non-blocking for alignment.
 
-This is the **last grammar change before alignment**. Phase A aligns to v0.5.0 and does not revisit.
-
-**Deliverable**: GRAMMAR.md v0.5.0 — the final pre-alignment grammar.
+**Deliverable**: GRAMMAR.md v0.5.0 — the final pre-alignment grammar. ✓
 
 ### 0.4 — Remaining Design Gaps
 
@@ -249,12 +241,12 @@ Phase 0 is complete when:
 - [ ] F-07 compiler-as-a-library architectural note written
 
 **Proposals:**
-- [ ] All Tier 1 proposals evaluated: approved or rejected with rationale
+- [x] All Tier 1 proposals evaluated: **all 6 approved** (ADR-031, 2026-02-28)
 - [ ] All Tier 2 proposals evaluated: approved as direction or deferred
 - [ ] Tier 3 proposals acknowledged with dependency map
 
 **Grammar:**
-- [ ] GRAMMAR.md updated to v0.5.0 incorporating all approved Tier 1 proposals
+- [x] GRAMMAR.md updated to v0.5.0 incorporating all approved Tier 1 proposals (2026-02-28)
 - [ ] FORMAL_SEMANTICS.md updated if approved proposals add typing rules
 
 **Design gaps:**

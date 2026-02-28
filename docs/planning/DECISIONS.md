@@ -1119,6 +1119,61 @@ If compile times or binary size become problematic, Blood may adopt **polymorphi
 
 ---
 
+## ADR-031: Tier 1 Proposal Approvals (Grammar v0.5.0)
+
+**Status**: Accepted
+
+**Context**: The Design Space Audit (v1.1) identified 26 proposals at "Proposed" status. Six of these affect the grammar. The Specification Work Plan (v3.0) established that grammar-affecting proposals must be evaluated before syntax alignment (Phase A) to avoid aligning every `.blood` file twice. These six proposals were triaged, evaluated against Blood's design philosophy (Five Pillars, Priority Hierarchy), and unanimously approved.
+
+**Decision**: Approve all six Tier 1 (grammar-affecting) proposals and incorporate them into GRAMMAR.md v0.5.0:
+
+| # | Proposal | Source | Decision | Grammar Impact |
+|---|----------|--------|----------|----------------|
+| #20 | Spec annotations (`requires`/`ensures`/`invariant`/`decreases`) | EF_III, SYNTAX_REDESIGN | **Approved** | Already present in v0.4.0 (`SpecClause` production) |
+| — | Optional semicolons | SYNTAX_REDESIGN C.1 | **Approved** | `Statement ::= ... ';'?` with continuation rules |
+| — | Canonical function signature ordering | SYNTAX_REDESIGN B.1 | **Approved** | Convention formalized: attrs → sig → effects → specs → where → body |
+| #21a | Named arguments | EF_III, SYNTAX_REDESIGN C.2 | **Approved** | Already present in v0.4.0 (`Arg ::= (Ident ':')? Expr`) |
+| #21b | Expression-oriented design | EF_III #21 | **Approved** | Semantic: all block-based constructs return their trailing expression's value |
+| RFC-S | Granular safety controls | SAFETY_LEVELS.md | **Approved** | New `UncheckedBlock` expression, `#[unchecked(...)]` attribute |
+
+**Evaluation criteria applied**:
+1. Alignment with Blood's design philosophy (Five Pillars, Priority Hierarchy ADR-010)
+2. Research quality and semantic clarity of each proposal
+3. Technical debt cost of deferring vs. cost of adoption
+4. Dependency analysis — no blocking dependencies exist for any Tier 1 proposal
+
+**Rationale for each approval**:
+
+1. **Spec annotations (#20)**: Blood's most strategically important syntax feature. Provides unambiguous AI generation targets (eliminates 20.77% of LLM misinterpretation bugs per Tambon et al. 2024). Participates in content-addressing (`spec_hash ‖ impl_hash → proof_key`). Already in grammar v0.4.0. Zero risk.
+
+2. **Optional semicolons**: 2-3% token reduction. Only works cleanly with expression-oriented design (#21b). Well-specified continuation rules prevent ambiguity. Already partially specified in v0.4.0 (ExprWithBlock has `';'?`). Low risk.
+
+3. **Signature ordering**: Convention codification, not new syntax. Establishes unambiguous reading order for both humans and AI. Low risk — formalizes what's already implied.
+
+4. **Named arguments (#21a)**: Eliminates "Wrong Attribute" bug category (6.9% of LLM bugs). Optional at call sites — callers choose. No ambiguity with Blood's existing syntax (anonymous records use `#{}`). Already in grammar v0.4.0 (`Arg ::= (Ident ':')? Expr`). Low risk.
+
+5. **Expression-oriented design (#21b)**: 5-10% token reduction. Every construct returns a value. Required for clean optional semicolons. Already partially implemented (`if`/`match` are expressions; `BlockExpr ::= '{' Statement* Expr? '}'` supports trailing expression). Proven in Rust, Scala, Kotlin, OCaml. Low risk.
+
+6. **Granular safety controls (RFC-S)**: Replaces binary `@unsafe` with granular `unchecked(check, ...)`. Individual checks: `bounds`, `overflow`, `generation`, `null`, `alignment`. Auditable (`grep unchecked`), composable (module defaults + function overrides), effect-preserving. `@unsafe` retained for fundamentally unsafe operations (pointer dereference, type punning). Extensible — adding new check names is backward compatible. Low risk.
+
+**Consequences**:
+- GRAMMAR.md bumped to v0.5.0 incorporating all six proposals
+- Phase A (syntax alignment) will target v0.5.0 grammar
+- `unchecked` added to contextual keywords
+- `@unsafe` retained alongside `unchecked(...)` — they serve different purposes
+- Both compilers must eventually implement these features during alignment
+- Downstream proposals (#7, #18) remain at "Proposed" — they consume spec annotations but are not gated by this ADR
+
+**References**:
+- Tambon et al. 2024: "Bugs in Large Language Models Generated Code" (LLM bug taxonomy)
+- DESIGN_SPACE_AUDIT.md v1.1 (Tier 1 proposal classification)
+- SPEC_WORK_PLAN.md v3.0 §0.2 (Proposal Triage and Approval)
+- SYNTAX_REDESIGN.md (Categories B and C)
+- EXTRAORDINARY_FEATURES_III.md (Proposals #20, #21)
+- SAFETY_LEVELS.md (RFC-S)
+
+---
+
 ## Decision Status Legend
 
 - **Proposed**: Under discussion
