@@ -635,14 +635,36 @@ impl<'src> Parser<'src> {
                     }];
                     let mut path_end = maybe_name;
 
-                    // Continue parsing path segments if we see ::
-                    // Allow contextual keywords as path segments
-                    while self.try_consume(TokenKind::ColonColon) {
+                    // Continue parsing path segments if we see :: or .
+                    // Same heuristic as parse_expr_path: accept . after TypeIdent always,
+                    // after lowercase only when followed by TypeIdent.
+                    let first_is_type = maybe_name_text.chars().next().map_or(false, |c| c.is_uppercase());
+                    let mut last_was_type_ident = first_is_type;
+                    loop {
+                        let consumed_sep = if self.try_consume(TokenKind::ColonColon) {
+                            true
+                        } else if self.check(TokenKind::Dot) {
+                            if last_was_type_ident {
+                                self.advance();
+                                true
+                            } else if self.check_next(TokenKind::TypeIdent) {
+                                self.advance();
+                                true
+                            } else {
+                                false
+                            }
+                        } else {
+                            false
+                        };
+                        if !consumed_sep {
+                            break;
+                        }
                         if self.check_ident()
                             || self.check(TokenKind::TypeIdent)
                             || self.check(TokenKind::SelfLower)
                             || self.check(TokenKind::SelfUpper)
                         {
+                            last_was_type_ident = self.check(TokenKind::TypeIdent);
                             self.advance();
                             let seg_name = self.spanned_symbol();
                             path_end = self.previous.span;
@@ -651,7 +673,7 @@ impl<'src> Parser<'src> {
                                 args: None,
                             });
                         } else {
-                            self.error_expected("identifier after `::`");
+                            self.error_expected("identifier after path separator");
                             break;
                         }
                     }
@@ -742,8 +764,8 @@ impl<'src> Parser<'src> {
             }
 
             // The `default` keyword as a standalone expression creates a default value
-            // (only when not followed by `::` indicating a path like `Default::default()`)
-            TokenKind::Default if !self.check_next(TokenKind::ColonColon) => {
+            // (only when not followed by a path separator indicating a path like `Default.default()`)
+            TokenKind::Default if !self.check_next(TokenKind::ColonColon) && !self.check_next(TokenKind::Dot) => {
                 self.advance();
                 Expr {
                     span: start.merge(self.previous.span),
@@ -1597,8 +1619,40 @@ impl<'src> Parser<'src> {
                 break;
             }
 
-            // Check for path continuation
-            if !self.try_consume(TokenKind::ColonColon) {
+            // Check for path continuation: accept `::` always, `.` conditionally.
+            //
+            // After TypeIdent (e.g., Vec, Option, HashMap): always accept `.` because
+            // TypeIdent in expression position is a type name, never a local variable.
+            // So `Vec.new()`, `Option.Some(x)`, `HashMap.Entry` are always paths.
+            //
+            // After lowercase ident (e.g., ast, token, common): accept `.` only when
+            // followed by TypeIdent, because `module.Type` is unambiguous (fields are
+            // always lowercase). This handles `ast.Attribute`, `token.TokenKind`, etc.
+            //
+            // `lowercase.lowercase` (e.g., `module.function()`) remains ambiguous with
+            // `value.field` and is NOT consumed here — it uses `::` or postfix handling.
+            if self.try_consume(TokenKind::ColonColon) {
+                // :: always continues the path
+            } else if self.check(TokenKind::Dot) {
+                let last_was_type_ident = segments.last()
+                    .map(|seg| {
+                        let name_str = self.interner_symbol_str(seg.name.node);
+                        name_str.chars().next().map_or(false, |c| c.is_uppercase())
+                    })
+                    .unwrap_or(false);
+
+                if last_was_type_ident {
+                    // After TypeIdent: always accept `.` as path continuation
+                    // (TypeIdent is always a type, never a variable)
+                    self.advance(); // consume `.`
+                } else if self.check_next(TokenKind::TypeIdent) {
+                    // After lowercase: accept `.` only when followed by TypeIdent
+                    // (e.g., `ast.Attribute`, `common.Span`)
+                    self.advance(); // consume `.`
+                } else {
+                    break;
+                }
+            } else {
                 break;
             }
         }

@@ -623,7 +623,7 @@ impl TokenKind {
             TokenKind::Yield => "reserved keyword `yield`",
             TokenKind::Try => "reserved keyword `try`",
             TokenKind::Catch => "reserved keyword `catch`",
-            TokenKind::Finally => "reserved keyword `finally`",
+            TokenKind::Finally => "keyword `finally`",
             TokenKind::Throw => "reserved keyword `throw`",
             TokenKind::Union => "contextual keyword `union`",
             TokenKind::Default => "contextual keyword `default`",

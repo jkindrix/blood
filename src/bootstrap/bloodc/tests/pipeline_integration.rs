@@ -4327,6 +4327,24 @@ fn test_use_nested_external() {
     assert_file_type_checks("tests/fixtures/modules/use_nested_external.blood");
 }
 
+/// Phase A canary: grouped import with dot-separated path `use module.{A, B}`
+#[test]
+fn test_use_group_dot() {
+    assert_file_type_checks("tests/fixtures/modules/use_group_dot.blood");
+}
+
+/// Phase A canary: glob import with dot-separated path `use module.*`
+#[test]
+fn test_use_glob_dot() {
+    assert_file_type_checks("tests/fixtures/modules/use_glob_dot.blood");
+}
+
+/// Phase A canary: combined dot-path patterns (simple, grouped, glob, nested)
+#[test]
+fn test_use_dot_combined() {
+    assert_file_type_checks("tests/fixtures/modules/use_dot_combined.blood");
+}
+
 /// Test cross-module associated functions on enums.
 #[test]
 fn test_cross_module_enum_associated_fns() {

@@ -1,0 +1,30 @@
+// Canary test: combined dot-path patterns (Phase A, D1).
+// Exercises all import forms using dot-separated paths in a single file.
+
+mod helper;
+mod outer;
+
+// Simple dot-path import
+use helper.Data;
+
+// Grouped dot-path import
+use helper.{Point, Kind, get_value};
+
+// Glob dot-path import (outer exposes OuterData)
+use outer.*;
+
+// Nested dot-path import
+use outer.inner.InnerData;
+use outer.inner.inner_fn;
+
+pub fn main() -> i32 {
+    let d: Data = Data { value: 1 };
+    let p: Point = Point::new(2, 3);
+    let k: Kind = Kind::A;
+    let v: i32 = get_value();
+    let o: OuterData = OuterData { value: 10 };
+    let inner: InnerData = InnerData { x: 20, y: 30 };
+    let iv: i32 = inner_fn();
+
+    d.value + p.x + v + o.value + inner.x + iv
+}

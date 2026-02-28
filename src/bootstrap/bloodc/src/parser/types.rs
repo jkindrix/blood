@@ -336,8 +336,20 @@ impl<'src> Parser<'src> {
 
             segments.push(TypePathSegment { name, args });
 
-            // Check for path continuation
-            if !self.try_consume(TokenKind::ColonColon) {
+            // Check for path continuation.
+            // Accept `::` always. Accept `.` only when followed by a type-like token
+            // (TypeIdent, SelfUpper, Crate, Super) to avoid consuming `.operation` in
+            // `perform Effect.operation()` as part of the type path.
+            if self.try_consume(TokenKind::ColonColon) {
+                // :: always continues the type path
+            } else if self.check(TokenKind::Dot)
+                && (self.check_next(TokenKind::TypeIdent)
+                    || self.check_next(TokenKind::SelfUpper)
+                    || self.check_next(TokenKind::Crate)
+                    || self.check_next(TokenKind::Super))
+            {
+                self.advance(); // consume .
+            } else {
                 break;
             }
         }

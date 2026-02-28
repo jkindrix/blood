@@ -956,6 +956,15 @@ impl<'src> Parser<'src> {
             None
         };
 
+        // Parse optional finally clause (GRAMMAR.md v0.6.0, ADR-036)
+        // FinallyClause ::= 'finally' Block
+        let finally_clause = if self.check(TokenKind::Finally) {
+            self.advance(); // consume 'finally'
+            Some(self.parse_block())
+        } else {
+            None
+        };
+
         // Parse operation implementations
         let mut operations = Vec::new();
         while self.check(TokenKind::Op) {
@@ -973,6 +982,7 @@ impl<'src> Parser<'src> {
             where_clause,
             state,
             return_clause,
+            finally_clause,
             operations,
             span: start.merge(self.previous.span),
         }

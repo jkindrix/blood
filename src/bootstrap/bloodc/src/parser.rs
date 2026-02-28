@@ -213,6 +213,7 @@ impl<'src> Parser<'src> {
                 | TokenKind::With
                 | TokenKind::Where
                 | TokenKind::Module
+                | TokenKind::Finally
         )
     }
 
@@ -288,6 +289,23 @@ impl<'src> Parser<'src> {
     /// Try to consume a token of the expected kind.
     fn try_consume(&mut self, kind: TokenKind) -> bool {
         if self.check(kind) {
+            self.advance();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Check if the current token is a path separator (either `::` or `.`).
+    /// Blood's grammar uses `.` as the universal path separator (GRAMMAR.md v0.4.0+),
+    /// but `::` is still accepted during the transition period.
+    fn check_path_sep(&self) -> bool {
+        self.check(TokenKind::ColonColon) || self.check(TokenKind::Dot)
+    }
+
+    /// Try to consume a path separator (either `::` or `.`).
+    fn try_consume_path_sep(&mut self) -> bool {
+        if self.check(TokenKind::ColonColon) || self.check(TokenKind::Dot) {
             self.advance();
             true
         } else {
@@ -652,24 +670,24 @@ impl<'src> Parser<'src> {
             self.error_expected("identifier");
         }
 
-        // Additional segments - accept both `.` and `::` as separators
-        // For `::`, don't consume if followed by `{` or `*` (import target markers)
+        // Additional segments - accept both `.` and `::` as path separators.
+        // Don't consume if followed by `{` or `*` (import target markers handled by caller).
         loop {
-            if self.try_consume(TokenKind::Dot) {
-                // `.` is always a path separator
-                if self.check_ident() || self.check(TokenKind::TypeIdent) {
-                    self.advance();
-                    segments.push(self.spanned_symbol());
-                } else {
-                    self.error_expected("identifier");
-                    break;
-                }
-            } else if self.check(TokenKind::ColonColon) {
-                // Don't consume `::` if it's followed by `{` or `*` (import syntax)
+            if self.check_path_sep() {
+                // Don't consume path separator if followed by `{` or `*` (import syntax)
                 if self.check_next(TokenKind::LBrace) || self.check_next(TokenKind::Star) {
                     break;
                 }
-                self.advance(); // consume `::`
+                // Also don't consume `.` if followed by a non-path-segment token
+                // (could be method call or field access in non-import contexts)
+                if self.check(TokenKind::Dot)
+                    && !self.check_next(TokenKind::Ident)
+                    && !self.check_next(TokenKind::TypeIdent)
+                    && !Self::is_contextual_keyword(self.next.kind)
+                {
+                    break;
+                }
+                self.advance(); // consume path separator
                 if self.check_ident() || self.check(TokenKind::TypeIdent) {
                     self.advance();
                     segments.push(self.spanned_symbol());
@@ -703,8 +721,9 @@ impl<'src> Parser<'src> {
 
         let path = self.parse_module_path();
 
-        // Check for `::` for grouped imports or single item imports
-        if self.try_consume(TokenKind::ColonColon) {
+        // Check for path separator before grouped imports, glob imports, or single item imports.
+        // Accepts both `::` (legacy) and `.` (spec syntax) as the separator.
+        if self.try_consume_path_sep() {
             if self.try_consume(TokenKind::Star) {
                 // Glob import
                 self.expect(TokenKind::Semi);
