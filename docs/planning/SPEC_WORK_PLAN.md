@@ -36,7 +36,7 @@ This document captures the remaining work to resolve open design questions, appr
 
 As of 2026-02-28, the specification documents have reached a mature state:
 
-- **GRAMMAR.md** (v0.4.0) is settled — the source of truth for surface syntax. Only procedural macros remain deferred (legitimate: semantic design must precede syntax).
+- **GRAMMAR.md** (v0.6.0) is settled — the source of truth for surface syntax. Only procedural macros remain deferred (legitimate: semantic design must precede syntax).
 - **FORMAL_SEMANTICS.md** (v0.4.0) now formalizes closures, regions, pattern matching, casts, and associated types. A scope statement explicitly lists what is and isn't formalized.
 - **DISPATCH.md** (v0.4.0) now includes object safety rules and dyn Trait dispatch semantics.
 - **CONTENT_ADDRESSED.md** (v0.4.0) now specifies monomorphized instance hashing (three-level cache model, ADR-030).
@@ -56,11 +56,11 @@ All 337/337 ground-truth tests pass. Bootstrap is stable (second_gen/third_gen b
 
 | Document | Version | Status | Gaps |
 |----------|---------|--------|------|
-| GRAMMAR.md | **0.5.0** | Tier 1 proposals incorporated (ADR-031) | Procedural macros deferred; concurrency syntax TBD |
+| GRAMMAR.md | **0.6.0** | Tier 1 proposals + `FinallyClause` (ADR-031, ADR-036) | Procedural macros deferred |
 | FORMAL_SEMANTICS.md | 0.4.0 | Core features formalized | Coq mechanization incomplete (§7); may need updates from approved proposals |
 | DISPATCH.md | 0.4.0 | Complete | None |
 | MEMORY_MODEL.md | 0.3.0 | Tiers 0/1 solid | Tier 3 designed but not implemented |
-| CONCURRENCY.md | 0.3.0 | Incomplete | Largest design gap (F-06) |
+| CONCURRENCY.md | **0.4.0** | Cohesive model (ADR-036) | None — all sub-decisions resolved |
 | MACROS.md | 0.1.0 | Syntax/expansion covered | Hygiene deferred (compiler semantics, not grammar) |
 | SPECIFICATION.md | 0.3.0 | Current | None |
 | FFI.md | 0.4.0 | Complete | None |
@@ -102,8 +102,8 @@ These could change what we're building. Each requires an ADR or design document.
 | # | Finding | Severity | Status | Deliverable |
 |---|---------|----------|--------|-------------|
 | F-01 | Monomorphization × Content Addressing | Architectural | **RESOLVED** (ADR-030) | Two-level content-addressed cache |
-| F-06 | Concurrency Model | Architectural | Open | Design document: effects + fibers + structured concurrency |
-| F-07 | Compiler-as-a-Library | Architectural | Open | Architectural note: query-based API boundaries |
+| F-06 | Concurrency Model | Architectural | **RESOLVED** (ADR-036) | Effect-based structured concurrency; CONCURRENCY.md v0.4.0 |
+| F-07 | Compiler-as-a-Library | Architectural | **RESOLVED** (ADR-037) | Content-hash-gated query architecture |
 
 #### F-06: Concurrency Model
 
@@ -298,9 +298,22 @@ Phase 0 is complete when:
 
 The compilers currently accept old syntax in several places where GRAMMAR.md has evolved. Every `.blood` file in the repository must be audited and updated. Because Tier 1 proposals were resolved in Phase 0, this alignment happens **once** against the **final** grammar.
 
+> **Stale Documents Warning (Phase A)**
+>
+> - **`docs/planning/SYNTAX_SUPPORT.md`** (v0.5.2, 2026-01-14) — **STALE. Do not use.** References GRAMMAR.md v0.4.0; predates user macros, glob imports, const generics, closures, and all Phase 0 grammar changes (v0.5.0, v0.6.0). Must be regenerated from GRAMMAR.md v0.6.0 before use.
+>
+> **Current design evaluations (Phase A):**
+>
+> - [docs/design/IMPL_TRAIT.md](../design/IMPL_TRAIT.md) — Current. Evaluates `impl Trait` against Blood's effect system; conclusion: not planned (effects + dispatch subsume).
+> - [docs/design/COMPARISON_CHAINING.md](../design/COMPARISON_CHAINING.md) — Current. Evaluates comparison chaining; conclusion: not planned (use `x in lo..hi`).
+
+### Deferred Items Tracking
+
+**[DEFERRED_ITEMS.md](DEFERRED_ITEMS.md)** tracks every item deferred during Phase A with rationale, severity, downstream impact, and unblocking prerequisites. Must be updated whenever work is deferred. Items are removed only when fully resolved.
+
 ### A.1 — Syntax Delta Analysis
 
-Comprehensive diff between GRAMMAR.md v0.5.0 productions and what each parser actually accepts. Covers:
+Comprehensive diff between GRAMMAR.md v0.6.0 productions and what each parser actually accepts. Covers:
 
 - Imports (grouped, glob, simple) — known `::` vs `.` gap
 - Qualified expressions and paths
@@ -314,19 +327,27 @@ Comprehensive diff between GRAMMAR.md v0.5.0 productions and what each parser ac
 - Named argument syntax (if #21a approved)
 - Safety attribute syntax (if RFC-S approved)
 
-**Inputs**: GRAMMAR.md v0.5.0, `src/bootstrap/bloodc/src/parser/`, `src/bootstrap/bloodc/src/lexer.rs`, `src/selfhost/parser_*.blood`, `src/selfhost/lexer.blood`, `src/selfhost/token.blood`
+**Inputs**: GRAMMAR.md v0.6.0, `src/bootstrap/bloodc/src/parser/`, `src/bootstrap/bloodc/src/lexer.rs`, `src/selfhost/parser_*.blood`, `src/selfhost/lexer.blood`, `src/selfhost/token.blood`
 
 **Output**: Complete list of deltas with severity (breaking vs cosmetic).
 
-### A.2 — Update Bootstrap Compiler (Rust)
+### A.2 — Update Bootstrap Compiler (Rust) — **IN PROGRESS**
 
 The bootstrap compiler defines language semantics. It must accept the spec syntax **first**.
 
-- Update lexer/parser in `src/bootstrap/bloodc/src/` to match GRAMMAR.md v0.5.0
+- Update lexer/parser in `src/bootstrap/bloodc/src/` to match GRAMMAR.md v0.6.0
 - Rebuild: `cd src/bootstrap && cargo build --release`
 - Verify: `cargo test --workspace` (unit tests must pass)
 
 **This is a Bootstrap Gate prerequisite** — nothing else moves until this is done.
+
+**Status (2026-02-28):**
+- [x] A.2.1: Import paths and type paths accept both `::` and `.`
+- [x] A.2.2: `FinallyClause` parsed in handler bodies (`finally_clause: Option<Block>` on `HandlerDecl`)
+- [x] A.2.3: `finally` reclassified as contextual keyword
+- [x] A.2.4: Release build passes, 1269 lib tests pass
+
+**Known deferral**: Expression paths (`parse_expr_path`) remain `::` only. See [DEFERRED_ITEMS.md](DEFERRED_ITEMS.md) DEF-001. The parser architecture conflict (postfix `.` for field access consumes the token before path parsing) requires name resolution changes, not just parser changes.
 
 ### A.3 — CCV Migration of Self-Hosted Compiler
 
@@ -367,6 +388,10 @@ git commit                          # Clean rollback point
 
 **Priority**: High — cheap analysis, high information value.
 **Prerequisite**: Phase A complete (syntax aligned).
+
+> **Stale Documents Warning (Phase B)**
+>
+> - **`docs/planning/IMPLEMENTATION_STATUS.md`** (v0.5.3, 2026-01-29) — **STALE. Do not use.** Missing all 337 ground-truth tests, closures, array-to-slice coercion, MIR region fixes, self-hosted compiler progress, and ADR-001 through ADR-037. Must be regenerated from current compiler state before use.
 
 Audit whether compiler behavior matches the formal semantics we've specified:
 
@@ -598,8 +623,8 @@ The full design space audit is at [docs/design/DESIGN_SPACE_AUDIT.md](../design/
 **Top findings by severity:**
 
 1. **F-01**: Monomorphization × content addressing — **RESOLVED** (ADR-030)
-2. **F-06**: Concurrency model — largest undecided area; effects + fibers not composed
-3. **F-07**: Compiler-as-a-library — monolithic pipeline; retrofit is expensive
+2. **F-06**: Concurrency model — **RESOLVED** (ADR-036); effect-based structured concurrency
+3. **F-07**: Compiler-as-a-library — **RESOLVED** (ADR-037); content-hash-gated query architecture
 
 **Proposal critical path** (from PROPOSAL_ANALYSIS.md):
 
@@ -615,7 +640,7 @@ Tier 1 triage (Phase 0.2) evaluates #20 and the other grammar-affecting proposal
 
 | Phase | Items | Nature |
 |-------|-------|--------|
-| 0.1: Architectural findings | 2 remaining (F-06, F-07) | Design documents |
+| 0.1: Architectural findings | 3 resolved (F-01, F-06, F-07) | Design documents |
 | 0.2: Proposal triage | 6 Tier 1 + 5 Tier 2 + 16 Tier 3 = **27** evaluations | Decision records |
 | 0.3: Grammar update | 1 (GRAMMAR.md v0.5.0) | Specification |
 | 0.4: Design gaps | 7 findings (F-02–F-10, minus F-01) | ADRs / design notes |
