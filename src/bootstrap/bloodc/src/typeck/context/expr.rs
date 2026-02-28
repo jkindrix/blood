@@ -8772,7 +8772,8 @@ impl<'a> TypeContext<'a> {
         // Look up first segment - must be a module
         let module_def_id = match self.resolver.lookup(first_name) {
             Some(Binding::Def(def_id)) => def_id,
-            _ => return None,
+            Some(_) => return None,
+            None => return None,
         };
 
         let module_info = match self.module_defs.get(&module_def_id).cloned() {
@@ -8908,23 +8909,39 @@ impl<'a> TypeContext<'a> {
             let method_name = self.symbol_to_string(*method);
             segments.push(method_name);
             if let Some(callee_result) = self.try_resolve_qualified_chain(&segments, span) {
-                // If we resolved the callee, infer args and build a Call expression
+                // If we resolved the callee, type-check args and build a Call expression
                 match callee_result {
                     Ok(callee_expr) => {
+                        // Extract param and return types from the callee's function type
+                        let callee_ty = self.unifier.resolve(&callee_expr.ty);
+                        let (param_types, return_type) = match callee_ty.kind() {
+                            TypeKind::Fn { params, ret, .. } => (params.clone(), ret.clone()),
+                            _ => {
+                                // Callee resolved but isn't a function — fall through to method call
+                                return None;
+                            }
+                        };
+
+                        // Infer argument expressions and unify with parameter types
                         let mut hir_args = Vec::with_capacity(args.len());
-                        for arg in args {
+                        for (i, arg) in args.iter().enumerate() {
                             match self.infer_expr(&arg.value) {
-                                Ok(arg_expr) => hir_args.push(arg_expr),
+                                Ok(arg_expr) => {
+                                    if i < param_types.len() {
+                                        let _ = self.unifier.unify(&arg_expr.ty, &param_types[i], span);
+                                    }
+                                    hir_args.push(arg_expr);
+                                }
                                 Err(e) => return Some(Err(e)),
                             }
                         }
-                        let ret_ty = self.unifier.fresh_var();
+
                         return Some(Ok(hir::Expr::new(
                             hir::ExprKind::Call {
                                 callee: Box::new(callee_expr),
                                 args: hir_args,
                             },
-                            ret_ty,
+                            return_type,
                             span,
                         )));
                     }
