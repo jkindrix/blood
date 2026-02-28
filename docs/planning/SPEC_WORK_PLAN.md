@@ -1,10 +1,11 @@
 # Specification Work Plan
 
-**Version**: 1.0
+**Version**: 2.0
 **Established**: 2026-02-28
+**Last Updated**: 2026-02-28
 **Status**: Active
 
-This document captures the remaining work to bring Blood's specifications and compilers into full alignment, complete the formal verification, and close all known gaps.
+This document captures the remaining work to resolve open design questions, bring Blood's specifications and compilers into full alignment, complete formal verification, and close all known gaps.
 
 ---
 
@@ -12,14 +13,16 @@ This document captures the remaining work to bring Blood's specifications and co
 
 1. [Context](#1-context)
 2. [Spec Maturity Summary](#2-spec-maturity-summary)
-3. [Phase A: Syntax Alignment](#3-phase-a-syntax-alignment)
-4. [Phase B: Semantic Alignment Audit](#4-phase-b-semantic-alignment-audit)
-5. [Phase C: Semantic Alignment Fixes](#5-phase-c-semantic-alignment-fixes)
-6. [Phase D: Coq Mechanization](#6-phase-d-coq-mechanization)
-7. [Phase E: Tier 3 Implementation](#7-phase-e-tier-3-implementation-pre-10)
-8. [Phase F: Performance Validation](#8-phase-f-performance-validation-pre-10)
-9. [Sequencing Rationale](#9-sequencing-rationale)
-10. [Decisions Made](#10-decisions-made)
+3. [Phase 0: Design Space Resolution](#3-phase-0-design-space-resolution)
+4. [Phase A: Syntax Alignment](#4-phase-a-syntax-alignment)
+5. [Phase B: Semantic Alignment Audit](#5-phase-b-semantic-alignment-audit)
+6. [Phase C: Semantic Alignment Fixes](#6-phase-c-semantic-alignment-fixes)
+7. [Phase D: Coq Mechanization](#7-phase-d-coq-mechanization)
+8. [Phase E: Tier 3 Implementation](#8-phase-e-tier-3-implementation-pre-10)
+9. [Phase F: Performance Validation](#9-phase-f-performance-validation-pre-10)
+10. [Sequencing Rationale](#10-sequencing-rationale)
+11. [Decisions Made](#11-decisions-made)
+12. [Design Space Audit Reference](#12-design-space-audit-reference)
 
 ---
 
@@ -34,7 +37,7 @@ As of 2026-02-28, the specification documents have reached a mature state:
 
 All 337/337 ground-truth tests pass. Bootstrap is stable (second_gen/third_gen byte-identical). The compilers work correctly but use **old syntax** in places where GRAMMAR.md has evolved.
 
-The specs are now the **source of truth**. The compilers must be brought into conformance.
+**However**, a comprehensive design space audit ([DESIGN_SPACE_AUDIT.md](../design/DESIGN_SPACE_AUDIT.md)) identified 30 accidental defaults and several architectural tensions that must be resolved **before** committing to compiler alignment work. Syntax and semantic alignment are premature if unresolved design questions could change the language.
 
 ---
 
@@ -42,11 +45,11 @@ The specs are now the **source of truth**. The compilers must be brought into co
 
 | Document | Version | Status | Gaps |
 |----------|---------|--------|------|
-| GRAMMAR.md | 0.4.0 | Settled | Procedural macros deferred |
-| FORMAL_SEMANTICS.md | 0.4.0 | Core features formalized | Coq mechanization incomplete (§6) |
+| GRAMMAR.md | 0.4.0 | Settled (pending Phase 0 outcomes) | Procedural macros deferred; concurrency syntax TBD |
+| FORMAL_SEMANTICS.md | 0.4.0 | Core features formalized | Coq mechanization incomplete (§7) |
 | DISPATCH.md | 0.4.0 | Complete | None |
 | MEMORY_MODEL.md | 0.3.0 | Tiers 0/1 solid | Tier 3 designed but not implemented |
-| CONCURRENCY.md | 0.3.0 | Stable | None |
+| CONCURRENCY.md | 0.3.0 | Incomplete | Largest design gap (see Phase 0) |
 | MACROS.md | 0.1.0 | Syntax/expansion covered | Hygiene deferred (compiler semantics, not grammar) |
 | SPECIFICATION.md | 0.3.0 | Current | None |
 | FFI.md | 0.4.0 | Complete | None |
@@ -54,12 +57,139 @@ The specs are now the **source of truth**. The compilers must be brought into co
 
 ---
 
-## 3. Phase A: Syntax Alignment
+## 3. Phase 0: Design Space Resolution
 
-**Priority**: Highest — blocks all other phases.
+**Priority**: Highest — unresolved design questions could change syntax, semantics, and compiler architecture. Alignment work is premature until these are settled.
+
+**Input**: [DESIGN_SPACE_AUDIT.md](../design/DESIGN_SPACE_AUDIT.md) — 98 design axes evaluated, 10 findings.
+
+### 0.1 — Architectural Findings (must resolve first)
+
+These findings could change what we're building. Each requires an ADR or design document.
+
+#### F-01: Monomorphization × Content Addressing
+
+**Severity**: Architectural — latent tension between two core innovations.
+
+Blood uses content-addressed compilation (each definition identified by hash) and monomorphization (each generic instantiation produces a specialized copy). Undocumented interactions:
+
+1. Hash space explosion (50 type instantiations × 1 generic = 50 hashes)
+2. Incremental invalidation cascading (type change invalidates all monomorphized uses)
+3. Caching efficiency (nominal types prevent structural sharing)
+4. Dictionary passing as alternative (one hash per generic, runtime dispatch cost)
+
+**Deliverable**: ADR documenting the hashing strategy for monomorphized instances, the invalidation model, and whether dictionary passing was evaluated.
+
+**Impact if answer changes**: Could change codegen, caching model, CONTENT_ADDRESSED.md, and performance characteristics.
+
+#### F-06: Concurrency Model
+
+**Severity**: Architectural — largest undecided area.
+
+Blood has the pieces (effects for async, fiber runtime, handler scoping) but hasn't assembled them into a cohesive concurrency model. Eight sub-decisions are defaulted:
+
+| Sub-decision | Status |
+|-------------|--------|
+| Structured concurrency (task scoping) | Defaulted |
+| Cancellation mechanism | Deferred (DECISIONS.md) |
+| Cancellation safety guarantees | Defaulted |
+| Async drop / cleanup | Defaulted |
+| Thread-safety markers (Send/Sync) | Defaulted |
+| Async iterators / streams | Defaulted |
+| Runtime-provided vs. library concurrency | Defaulted |
+| Fiber ↔ OS thread interaction | Defaulted |
+
+**Deliverable**: Design document composing effects + fibers + handlers into a cohesive concurrency model. Define structured concurrency via effect handler scoping, cancellation as an effect, thread-safety as effect-based or trait-based constraints.
+
+**Impact if answer changes**: Could add new syntax (GRAMMAR.md), new effects (FORMAL_SEMANTICS.md), new runtime contracts (CONCURRENCY.md), and new typing rules.
+
+**Risk**: If the fiber runtime calcifies before the language-level model is designed, the runtime constrains the language rather than serving it.
+
+#### F-07: Compiler-as-a-Library
+
+**Severity**: Architectural — expensive to retrofit.
+
+The self-hosted compiler is a monolithic pipeline. Content-addressed compilation is naturally query-based (each definition independently hashable and cacheable), but the compiler doesn't exploit this. Every CCV cluster that adds code to the monolithic pipeline makes a query-based retrofit more expensive.
+
+**Deliverable**: Architectural note evaluating query-based internal architecture aligned with content addressing. This constrains the compiler's internal API boundaries — it does not require immediate implementation.
+
+**Impact if answer changes**: Could restructure self-hosted compiler modules, change how CCV clusters are organized.
+
+### 0.2 — Ecosystem Coherence (resolve before alignment)
+
+These don't change the core language but affect how it's used. Short ADRs.
+
+#### F-05: Result/Option × Effects
+
+**Severity**: Ecosystem coherence.
+
+Blood has effects as primary error handling AND `Result<T, E>` / `Option<T>` inherited from Rust. Without guidance, the ecosystem will split: some libraries use effects, others use `Result`, composing them requires boilerplate.
+
+**Deliverable**: ADR specifying the intended role of `Result` and `Option` alongside effects, when each is appropriate, and how they interconvert.
+
+### 0.3 — Design Gaps (resolve with short ADRs)
+
+These require evaluation but likely confirm existing direction.
+
+| # | Finding | Recommended Resolution |
+|---|---------|----------------------|
+| F-02 | Higher-kinded types | Evaluate whether row poly + effects + dispatch cover HKT use cases; document conclusion |
+| F-03 | Variance | Document "all type parameters invariant by default" with future relaxation path |
+| F-04 | String representation × 128-bit pointers | Document concrete `&str` and `&[T]` representation under Blood's memory model |
+| F-08 | Stdlib scope / freestanding split | Document core/alloc/std tier mapping strategy |
+| F-09 | Testing as language feature | Evaluate effect-based test declarations as differentiator |
+| F-10 | ABI stability | Document "explicitly unstable until further notice" + content-hash-based ABI concept |
+
+### 0.4 — Minimal-Effort Defaults (batch resolve)
+
+One-paragraph decision records each:
+
+1. **Cyclic imports**: Allowed or forbidden? (Likely: forbidden, matches content-addressed DAG)
+2. **Interior mutability**: Supported or not? (Likely: defer, document as not-yet-designed)
+3. **Dead code detection**: Planned or not? (Likely: yes, as compiler warning)
+4. **Definite initialization**: Statically enforced? (Likely: yes, via MIR analysis)
+5. **Doc comment syntax**: `///` or other? (Decide before stdlib grows)
+6. **Frame pointer preservation**: Default on or off? (Likely: on, for profiling)
+7. **Variance**: Invariant by default? (Likely: yes)
+
+### 0.5 — Inherited Decisions to Confirm
+
+These were adopted from Rust without documented independent evaluation. Each needs at minimum a brief ADR confirming the choice in Blood's context:
+
+| Decision | Why It Warrants Evaluation |
+|----------|---------------------------|
+| Monomorphization | Interacts with content addressing (F-01) |
+| `Option<T>` / `Result<T, E>` | Coexists with effects (F-05) |
+| UTF-8 strings | Interacts with 128-bit pointers (F-04) |
+| File-based module hierarchy | Content addressing decouples identity from files |
+| `pub` visibility (Rust-style) | Row polymorphism introduces structural subtyping |
+| Call-by-value evaluation | Natural for effects but undocumented |
+| No runtime type information | Multiple dispatch uses 24-bit type fingerprints — this IS RTTI |
+| `&T` / `&mut T` reference syntax | Blood's references are generational, not borrowed |
+
+### Phase 0 Exit Criteria
+
+Phase 0 is complete when:
+- [ ] F-01 ADR written and accepted
+- [ ] F-06 design document written and accepted
+- [ ] F-07 architectural note written
+- [ ] F-05 ADR written
+- [ ] F-02, F-03, F-04, F-08, F-09, F-10 resolved (ADRs or design notes)
+- [ ] All 7 minimal-effort defaults documented
+- [ ] All 8 inherited decisions confirmed or revised
+- [ ] GRAMMAR.md updated if any Phase 0 outcome changes syntax
+- [ ] FORMAL_SEMANTICS.md updated if any Phase 0 outcome changes typing rules
+- [ ] CONCURRENCY.md updated with cohesive concurrency model
+
+---
+
+## 4. Phase A: Syntax Alignment
+
+**Priority**: High — blocks compiler alignment.
+**Prerequisite**: Phase 0 complete (design is stable).
 **Method**: CCV (Canary-Cluster-Verify) per DEVELOPMENT.md.
 
-The compilers currently accept old syntax in several places where GRAMMAR.md v0.4.0 has evolved. Every `.blood` file in the repository must be audited and updated.
+The compilers currently accept old syntax in several places where GRAMMAR.md has evolved. Every `.blood` file in the repository must be audited and updated.
 
 ### A.1 — Syntax Delta Analysis
 
@@ -73,6 +203,7 @@ Comprehensive diff between GRAMMAR.md productions and what each parser actually 
 - Bridge/FFI syntax
 - Effect/handler syntax
 - Macro syntax
+- Any new syntax from Phase 0 outcomes
 
 **Inputs**: GRAMMAR.md, `src/bootstrap/bloodc/src/parser/`, `src/bootstrap/bloodc/src/lexer.rs`, `src/selfhost/parser_*.blood`, `src/selfhost/lexer.blood`, `src/selfhost/token.blood`
 
@@ -123,7 +254,7 @@ git commit                          # Clean rollback point
 
 ---
 
-## 4. Phase B: Semantic Alignment Audit
+## 5. Phase B: Semantic Alignment Audit
 
 **Priority**: High — cheap analysis, high information value.
 **Prerequisite**: Phase A complete (syntax aligned).
@@ -144,7 +275,7 @@ Audit whether compiler behavior matches the formal semantics we've specified:
 
 ---
 
-## 5. Phase C: Semantic Alignment Fixes
+## 6. Phase C: Semantic Alignment Fixes
 
 **Priority**: High — depends on Phase B findings.
 **Prerequisite**: Phase B complete.
@@ -153,7 +284,7 @@ Fix any semantic gaps discovered in Phase B. Scope is unknown until audit comple
 
 ---
 
-## 6. Phase D: Coq Mechanization
+## 7. Phase D: Coq Mechanization
 
 **Priority**: Medium-high — validates soundness claims.
 **Prerequisite**: Phases A-C complete (rules are stable before proving them).
@@ -230,7 +361,7 @@ Fix any semantic gaps discovered in Phase B. Scope is unknown until audit comple
 
 ---
 
-## 7. Phase E: Tier 3 Implementation (Pre-1.0)
+## 8. Phase E: Tier 3 Implementation (Pre-1.0)
 
 **Priority**: Low — designed but not yet needed by any user code.
 **Prerequisite**: Phases A-C complete.
@@ -248,7 +379,7 @@ Fix any semantic gaps discovered in Phase B. Scope is unknown until audit comple
 
 ---
 
-## 8. Phase F: Performance Validation (Pre-1.0)
+## 9. Phase F: Performance Validation (Pre-1.0)
 
 **Priority**: Lowest — explicitly marked pre-1.0 in SPECIFICATION.md §11.7.
 **Prerequisite**: Tier 3 implemented (for memory benchmarks).
@@ -264,33 +395,41 @@ Fix any semantic gaps discovered in Phase B. Scope is unknown until audit comple
 
 ---
 
-## 9. Sequencing Rationale
+## 10. Sequencing Rationale
 
 ```
-Phase A  ──►  Phase B  ──►  Phase C  ──►  Phase D
-(syntax)      (semantic      (semantic      (Coq proofs)
-              audit)         fixes)
-                                           ──► Phase E ──► Phase F
-                                               (Tier 3)    (benchmarks)
+Phase 0  ──►  Phase A  ──►  Phase B  ──►  Phase C  ──►  Phase D
+(design)      (syntax)      (semantic      (semantic      (Coq proofs)
+                            audit)         fixes)
+                                                         ──► Phase E ──► Phase F
+                                                             (Tier 3)    (benchmarks)
 ```
 
-**Why this order:**
+**Why Phase 0 comes first:**
 
-1. **Phase A first**: Specs are useless as source of truth if the compilers don't match. The `::` vs `.` gap is known; there may be others. Every `.blood` file is potentially affected. This is also the only phase that follows the full CCV protocol with bootstrap verification.
+The design space audit ([DESIGN_SPACE_AUDIT.md](../design/DESIGN_SPACE_AUDIT.md)) identified 30 accidental defaults, 3 architectural tensions (F-01, F-06, F-07), and 18 inherited decisions without independent evaluation. If any of these change the language — particularly F-01 (monomorphization strategy) or F-06 (concurrency model adding new syntax/effects) — then syntax alignment work done before resolution would need to be redone.
 
-2. **Phase B before C**: Cheap analysis before expensive implementation. If the compilers already match most formal rules, that validates both the specs and the compilers. If gaps exist, they're bugs — finding them early prevents proving incorrect rules in Coq.
+Phase 0 is design work: ADRs, design documents, architectural notes. It produces documents, not code. But those documents determine what the code should look like.
 
-3. **Phase D after A-C**: Coq proofs are only as good as the rules they formalize. If Phase B/C reveals a typing rule doesn't match the working compiler, we'd have to redo Coq work. Align first, then prove.
+**Why Phase A after Phase 0:**
 
-4. **Phase E/F deferred**: Tier 3 is fully designed but no code exercises it. Performance benchmarks don't affect correctness. Both are explicitly pre-1.0 work.
+Once design questions are settled, the specs become truly stable. Only then does it make sense to spend CCV cycles (expensive, meticulous) aligning every `.blood` file with the spec. The `::` vs `.` syntax gap is known; Phase 0 may reveal others.
 
-**Within Phase A**: The bootstrap compiler (Rust) must be updated first — it defines language semantics. Then self-hosted compiler files via CCV. Then tests/stdlib/examples. This is the Bootstrap Gate protocol from DEVELOPMENT.md.
+**Why Phase B/C after A:**
 
-**Within Phase D**: Substitution lemma (D.2) blocks everything. Core theorems (D.3) unlock safety theorems (D.4) and composition (D.5). New typing rules (D.6) can be added in parallel but their Progress/Preservation cases (D.6.7) depend on D.3.
+Semantic audit is meaningless until syntax is aligned — you can't test whether the compiler implements the spec if the compiler can't parse the spec's syntax.
+
+**Why Phase D after A-C:**
+
+Coq proofs formalize typing rules. If Phase 0 changes a typing rule, or Phase B/C reveals a rule is wrong, we'd have to redo Coq work. Align first, then prove.
+
+**Why Phase E/F deferred:**
+
+Tier 3 is fully designed but no code exercises it. Performance benchmarks don't affect correctness. Both are explicitly pre-1.0 work.
 
 ---
 
-## 10. Decisions Made
+## 11. Decisions Made
 
 The following semantic decisions were made during the 2026-02-28 specification session, derived from Blood's design philosophy documents (SPECIFICATION.md, DECISIONS.md, MEMORY_MODEL.md, DISPATCH.md, FORMAL_SEMANTICS.md):
 
@@ -336,14 +475,36 @@ The following semantic decisions were made during the 2026-02-28 specification s
 
 ---
 
+## 12. Design Space Audit Reference
+
+The full design space audit is at [docs/design/DESIGN_SPACE_AUDIT.md](../design/DESIGN_SPACE_AUDIT.md). Key statistics:
+
+| Category | Count | Percentage |
+|----------|-------|------------|
+| Consciously Decided | 42 | 43% |
+| Inherited from Rust | 18 | 18% |
+| Accidentally Defaulted | 30 | 31% |
+| Explicitly Deferred | 8 | 8% |
+
+**Top 3 findings by severity:**
+
+1. **F-01**: Monomorphization × content addressing — latent tension between two core innovations
+2. **F-06**: Concurrency model — largest undecided area; effects + fibers not composed
+3. **F-07**: Compiler-as-a-library — monolithic pipeline; retrofit is expensive
+
+**Phase 0 resolves all findings before alignment work begins.**
+
+---
+
 ## Work Item Counts
 
 | Phase | Items | Nature |
 |-------|-------|--------|
+| 0: Design resolution | 3 architectural + 1 ecosystem + 6 design gaps + 7 defaults + 8 inherited = **25** | Design / ADRs |
 | A: Syntax alignment | 4 major steps (A.1-A.4), 9 CCV clusters in A.3 | Implementation |
 | B: Semantic audit | 7 checks | Analysis |
 | C: Semantic fixes | Unknown (depends on B) | Implementation |
 | D: Coq mechanization | 31 items across 7 sub-phases | Formal proofs |
 | E: Tier 3 | 8 items | Implementation |
 | F: Performance | 6 items | Measurement |
-| **Total** | **56+ items** | |
+| **Total** | **80+ items** | |
