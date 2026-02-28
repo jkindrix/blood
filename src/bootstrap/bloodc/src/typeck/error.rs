@@ -298,6 +298,10 @@ impl TypeError {
                 "E0238",
                 format!("cannot assign twice to immutable variable `{name}`"),
             ),
+            TypeErrorKind::InvalidCast { source, target } => (
+                "E0239",
+                format!("casting `{source}` as `{target}` is invalid"),
+            ),
 
             // Linearity errors (E08xx)
             TypeErrorKind::UnusedLinearValue { name, ty } => (
@@ -624,6 +628,11 @@ pub enum TypeErrorKind {
     /// Assignment to immutable variable.
     ImmutableAssign {
         name: String,
+    },
+    /// Invalid cast expression.
+    InvalidCast {
+        source: Type,
+        target: Type,
     },
 
     // Linearity errors (E08xx)

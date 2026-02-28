@@ -9075,6 +9075,19 @@ impl<'a> TypeContext<'a> {
         let inner_expr = self.infer_expr(inner)?;
         let target_ty = self.ast_type_to_hir_type(ty)?;
 
+        // Validate the cast is legal
+        let source_ty = self.unifier.resolve(&inner_expr.ty);
+        let resolved_target = self.unifier.resolve(&target_ty);
+        if !Self::is_cast_compatible(&source_ty, &resolved_target) {
+            return Err(Box::new(TypeError::new(
+                TypeErrorKind::InvalidCast {
+                    source: source_ty,
+                    target: resolved_target,
+                },
+                span,
+            )));
+        }
+
         Ok(hir::Expr::new(
             hir::ExprKind::Cast {
                 expr: Box::new(inner_expr),
@@ -9083,6 +9096,74 @@ impl<'a> TypeContext<'a> {
             target_ty,
             span,
         ))
+    }
+
+    /// Check whether casting from `source` to `target` is valid.
+    fn is_cast_compatible(source: &Type, target: &Type) -> bool {
+        use crate::hir::{PrimitiveTy, TypeKind};
+
+        match (source.kind(), target.kind()) {
+            // Unresolved inference variables — defer to later resolution
+            (TypeKind::Infer(_), _) | (_, TypeKind::Infer(_)) => true,
+            // Error types can be cast to/from anything
+            (TypeKind::Error, _) | (_, TypeKind::Error) => true,
+
+            // Primitive → Primitive
+            (TypeKind::Primitive(src), TypeKind::Primitive(dst)) => {
+                let is_numeric = |p: &PrimitiveTy| matches!(p,
+                    PrimitiveTy::Int(_) | PrimitiveTy::Uint(_) | PrimitiveTy::Float(_));
+                // Numeric ↔ numeric (widening, narrowing, int↔float, sign reinterpret)
+                if is_numeric(src) && is_numeric(dst) { return true; }
+                // Bool → numeric
+                if matches!(src, PrimitiveTy::Bool) && is_numeric(dst) { return true; }
+                // Char ↔ numeric
+                if matches!(src, PrimitiveTy::Char) && is_numeric(dst) { return true; }
+                if is_numeric(src) && matches!(dst, PrimitiveTy::Char) { return true; }
+                false
+            }
+
+            // Ptr → usize/isize
+            (TypeKind::Ptr { .. }, TypeKind::Primitive(dst)) => {
+                matches!(dst, PrimitiveTy::Uint(UintTy::Usize) | PrimitiveTy::Int(IntTy::Isize))
+            }
+            // usize/isize → Ptr
+            (TypeKind::Primitive(src), TypeKind::Ptr { .. }) => {
+                matches!(src, PrimitiveTy::Uint(UintTy::Usize) | PrimitiveTy::Int(IntTy::Isize))
+            }
+
+            // Ref → Ptr (&T → *const T, &mut T → *mut T, &mut T → *const T)
+            (TypeKind::Ref { mutable: src_mut, .. }, TypeKind::Ptr { mutable: dst_mut, .. }) => {
+                !dst_mut || *src_mut
+            }
+            // Ref → numeric (pointer packing, used in self-hosted compiler)
+            (TypeKind::Ref { .. }, TypeKind::Primitive(dst)) => {
+                matches!(dst,
+                    PrimitiveTy::Uint(_) | PrimitiveTy::Int(_))
+            }
+            // Numeric → Ref (pointer unpacking, used in self-hosted compiler)
+            (TypeKind::Primitive(src), TypeKind::Ref { .. }) => {
+                matches!(src,
+                    PrimitiveTy::Uint(_) | PrimitiveTy::Int(_))
+            }
+
+            // Ptr → Ptr (pointer coercion, respects mutability)
+            (TypeKind::Ptr { mutable: src_mut, .. }, TypeKind::Ptr { mutable: dst_mut, .. }) => {
+                !dst_mut || *src_mut
+            }
+
+            // Fn → numeric (function pointer packing)
+            (TypeKind::Fn { .. }, TypeKind::Primitive(dst)) => {
+                matches!(dst,
+                    PrimitiveTy::Uint(_) | PrimitiveTy::Int(_))
+            }
+
+            // Ownership wrappers — check inner type
+            (TypeKind::Ownership { inner, .. }, _) => Self::is_cast_compatible(inner, target),
+            (_, TypeKind::Ownership { inner, .. }) => Self::is_cast_compatible(source, inner),
+
+            // Everything else is invalid
+            _ => false,
+        }
     }
 
     /// Infer type of a compound assignment.
