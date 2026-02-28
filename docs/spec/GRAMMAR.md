@@ -1,9 +1,26 @@
 # Blood Surface Syntax Grammar
 
-**Version**: 0.3.0
-**Status**: Implemented
-**Implementation**: ✅ Implemented (lexer and parser complete)
-**Last Updated**: 2026-01-10
+**Version**: 0.4.0
+**Status**: Specification target
+**Last Updated**: 2026-02-28
+
+**Revision 0.4.0 Changes**:
+- Replaced `::` with `.` as universal path separator; removed `::` from the language
+- Removed turbofish syntax; Blood uses type ascription instead of call-site type arguments
+- Added `ModDecl`, `BridgeDecl`, `MacroDecl` to Declaration grammar
+- Added `if let`, `while let`, `try/with`, postfix `?`, `default`, macro call expressions
+- Added `forall` (higher-rank) and `dyn Trait` (trait object) types
+- Added const generic parameters (`const N: usize` in TypeParam)
+- Fixed `RegionExpr` to use `Lifetime` (not `Ident`), removed `Box::new` from `AllocExpr`
+- Added `pub use` and allowed imports anywhere among declarations
+- Added variadic parameter syntax in bridge FFI declarations
+- Keyword reclassification: three-tier system (strict, contextual, reserved)
+- Fixed pipe/assign operator precedence (pipe now binds tighter than assignment)
+- Added `isize`/`usize` integer suffixes, byte string literals, doc comments
+- Added raw identifier syntax (`r#keyword`)
+- Added `@` prefix design rule documentation
+- Added path disambiguation rule (Appendix B.2), replacing turbofish section
+- Added comparison chaining design note
 
 **Revision 0.3.0 Changes**:
 - Added cross-references to FORMAL_SEMANTICS.md for effect syntax (§4.2, §8)
@@ -54,12 +71,13 @@ This document uses **surface syntax** notation. For **formal semantics** notatio
 ```ebnf
 Whitespace ::= ' ' | '\t' | '\n' | '\r'
 
-Comment ::= LineComment | BlockComment
+Comment ::= LineComment | DocComment | BlockComment
 LineComment ::= '//' [^\n]* '\n'
+DocComment ::= '///' [^\n]* '\n'
 BlockComment ::= '/*' (BlockComment | [^*] | '*' [^/])* '*/'
 ```
 
-Comments nest (unlike C/Java).
+Comments nest (unlike C/Java). Doc comments (`///`) are distinct from regular line comments and are preserved for documentation tooling.
 
 ### 1.2 Identifiers
 
@@ -85,14 +103,15 @@ OctInt ::= '0o' [0-7_]+
 BinInt ::= '0b' [01_]+
 
 (* Integer type suffixes *)
-IntSuffix ::= 'i8' | 'i16' | 'i32' | 'i64' | 'i128'
-            | 'u8' | 'u16' | 'u32' | 'u64' | 'u128'
+IntSuffix ::= 'i8' | 'i16' | 'i32' | 'i64' | 'i128' | 'isize'
+            | 'u8' | 'u16' | 'u32' | 'u64' | 'u128' | 'usize'
 
 FloatLiteral ::= DecInt '.' DecInt FloatExponent? FloatSuffix?
 FloatExponent ::= [eE] [+-]? DecInt
 FloatSuffix ::= 'f32' | 'f64'
 
-StringLiteral ::= '"' StringChar* '"' | RawStringLiteral
+StringLiteral ::= '"' StringChar* '"' | RawStringLiteral | ByteStringLiteral
+ByteStringLiteral ::= 'b"' StringChar* '"'
 StringChar ::= [^"\\] | EscapeSeq
 EscapeSeq ::= '\\' ([nrt\\'"0] | 'x' HexDigit HexDigit | 'u{' HexDigit+ '}')
 
@@ -110,10 +129,13 @@ BoolLiteral ::= 'true' | 'false'
 ```ebnf
 (* Single-character *)
 Punct1 ::= '(' | ')' | '{' | '}' | '[' | ']'
-         | ',' | ';' | ':' | '.' | '@' | '#'
+         | ',' | ';' | ':' | '.' | '@' | '#' | '!'
+
+(* `!` serves dual roles: logical NOT (prefix operator, §7.1 level 14)
+   and macro invocation sigil (`name!(args)`, see §5.6 MacroCallExpr). *)
 
 (* Multi-character *)
-Punct2 ::= '->' | '=>' | '::' | '..' | '..=' | '|>'
+Punct2 ::= '->' | '=>' | '..' | '..=' | '|>'
 
 (* Operators - see Section 7 for precedence *)
 ```
@@ -128,7 +150,7 @@ OuterAttribute ::= '#[' AttributeContent ']'
 InnerAttribute ::= '#![' AttributeContent ']'
 
 AttributeContent ::= AttributePath AttributeInput?
-AttributePath ::= Ident ('::' Ident)*
+AttributePath ::= Ident ('.' Ident)*
 AttributeInput ::= '(' AttributeArgs ')'
                  | '=' Literal
 
@@ -180,16 +202,21 @@ AttributeArg ::= Ident ('=' Literal)?
 ### 2.1 Compilation Unit
 
 ```ebnf
-Program ::= ModuleDecl? Import* Declaration*
+Program ::= ModuleDecl? Item*
+Item    ::= Import | Declaration
 
 ModuleDecl ::= 'module' ModulePath ';'
 ModulePath ::= Ident ('.' Ident)*
 
-Import ::= 'use' ImportPath ('as' Ident)? ';'
-         | 'use' ImportPath '::' '{' ImportList '}' ';'
-ImportPath ::= ModulePath ('::' '*')?
-ImportList ::= Ident (',' Ident)* ','?
+Import ::= Visibility? 'use' ImportPath ('as' Ident)? ';'
+         | Visibility? 'use' ImportPath '.{' ImportList '}' ';'
+         | Visibility? 'use' ImportPath '.*' ';'
+ImportPath ::= ModulePath ('.' Ident)?
+ImportList ::= ImportItem (',' ImportItem)* ','?
+ImportItem ::= Ident ('as' Ident)?
 ```
+
+Imports can appear anywhere among declarations (not restricted to a file preamble). The `pub` visibility modifier enables re-exports.
 
 ### 2.2 Module System
 
@@ -197,9 +224,21 @@ ImportList ::= Ident (',' Ident)* ','?
 module std.collections.vec;
 
 use std.mem.allocate;
-use std.iter::{Iterator, IntoIterator};
-use std.ops::*;
+use std.iter.{Iterator, IntoIterator};
+use std.ops.*;
+
+// Re-exports
+pub use std.collections.hashmap.HashMap;
+pub use std.iter.*;
+
+// Sub-module declarations
+mod lexer;                     // loads lexer.blood from same directory
+mod utils { fn helper() { } } // inline sub-module
 ```
+
+**Path separator rule:** Blood uses `.` (dot) as the universal path separator — for module paths, qualified types, enum constructors, and imports. Blood does not use `::` anywhere.
+
+**Disambiguation:** Types start with uppercase (`TypeIdent`), values start with lowercase (`ValueIdent`). This convention makes `collections.HashMap` (module-qualified type) visually distinct from `my_struct.field` (value field access) without needing a separate operator. See Appendix B.2.
 
 ---
 
@@ -219,6 +258,9 @@ Declaration ::=
     | StaticDecl
     | ImplBlock
     | TraitDecl
+    | ModDecl
+    | BridgeDecl
+    | MacroDecl
 ```
 
 ### 3.2 Function Declaration
@@ -234,12 +276,15 @@ SpecClause ::= 'requires' Expr
 
 FnQualifier ::= 'const' | 'async' | '@unsafe'
 (* `async fn foo()` is sugar for `fn foo() / {Async}` — see §8 for the Async effect *)
+(* `unsafe` is a keyword but only valid with the `@` prefix. Bare `unsafe` is a compile error
+   with a diagnostic suggesting `@unsafe`. See §9.5 for the `@` prefix design rule. *)
 
 Visibility ::= 'pub' ('(' VisScope ')')?
 VisScope ::= 'crate' | 'super' | 'self' | ModulePath
 
 TypeParams ::= '<' TypeParam (',' TypeParam)* ','? '>'
 TypeParam ::= Ident (':' TypeBound)?
+            | 'const' Ident ':' Type        (* const generic parameter *)
 TypeBound ::= Type ('+' Type)*
 
 Params ::= (Param (',' Param)* ','?)?
@@ -332,6 +377,67 @@ ConstDecl ::= Visibility? 'const' Ident ':' Type '=' Expr ';'
 StaticDecl ::= Visibility? 'static' 'mut'? Ident ':' Type '=' Expr ';'
 ```
 
+### 3.7 Module Declarations
+
+```ebnf
+ModDecl ::= Visibility? 'mod' Ident ';'                    (* external file *)
+          | Visibility? 'mod' Ident '{' Item* '}'           (* inline module *)
+```
+
+External `mod` declarations load the corresponding file from the same directory:
+
+```blood
+mod lexer;          // loads ./lexer.blood
+mod parser;         // loads ./parser.blood
+mod utils {         // inline module
+    pub fn helper() -> i32 { 42 }
+}
+```
+
+### 3.8 Bridge FFI Declarations
+
+```ebnf
+BridgeDecl ::= 'bridge' StringLiteral Ident '{' BridgeItem* '}'
+BridgeItem ::= BridgeFn | BridgeConst | BridgeTypeDecl | BridgeStruct
+
+BridgeFn    ::= Attribute* 'fn' Ident '(' BridgeParams ')' ('->' Type)? ';'
+BridgeConst ::= 'const' Ident ':' Type '=' Literal ';'
+BridgeTypeDecl ::= 'type' Ident ';'
+                 | 'type' Ident '=' Type ';'
+BridgeStruct ::= Attribute* 'struct' Ident '{' StructFields '}'
+
+BridgeParams ::= (BridgeParam (',' BridgeParam)* (',' '...')?)? (* variadic via ... *)
+BridgeParam  ::= Ident ':' Type
+```
+
+```blood
+bridge "C" libc {
+    fn malloc(size: usize) -> *mut u8;
+    fn free(ptr: *mut u8);
+    fn printf(format: *const u8, ...) -> i32;    // variadic
+
+    const EOF: i32 = -1;
+
+    type FILE;                                    // opaque type
+
+    #[repr(C)]
+    struct TimeSpec {
+        tv_sec: i64,
+        tv_nsec: i64,
+    }
+}
+```
+
+See [FFI.md](./FFI.md) for full FFI specification including callbacks, safety annotations, and ABI details.
+
+### 3.9 Macro Declarations
+
+```ebnf
+MacroDecl ::= Visibility? 'macro' Ident MacroBody
+```
+
+**Design status:** The macro system syntax is under active design. See `docs/spec/MACROS.md` for the full macro system design, including definition syntax, capture kinds, hygiene model, and invocation rules.
+
 ---
 
 ## 4. Types
@@ -348,12 +454,14 @@ Type ::= TypePath
        | FunctionType
        | RecordType
        | OwnershipType
+       | ForallType
+       | DynType
        | '!' (* never type *)
        | '_' (* inferred type *)
        | '(' Type ')'
 
 TypePath ::= TypeIdent TypeArgs?
-           | ModulePath '::' TypeIdent TypeArgs?
+           | ModulePath '.' TypeIdent TypeArgs?
 TypeArgs ::= '<' TypeArg (',' TypeArg)* ','? '>'
 TypeArg ::= Type | Lifetime | Const
 Const ::= Literal | '-' Literal | Ident | BlockExpr
@@ -371,8 +479,29 @@ FunctionType ::= 'fn' '(' (Type (',' Type)*)? ')' '->' Type ('/' EffectRow)?
 RecordType ::= '{' (RecordField (',' RecordField)*)? ('|' TypeVar)? '}'
 RecordField ::= Ident ':' Type
 
-OwnershipType ::= 'linear' Type | 'affine' Type | 'Box' TypeArgs
+OwnershipType ::= 'linear' Type | 'affine' Type
+
+ForallType ::= 'forall' '<' TypeParam (',' TypeParam)* '>' '.' Type
+DynType ::= 'dyn' TypeBound
 ```
+
+**`forall` types** enable higher-rank polymorphism, which is needed for properly typing effect-polymorphic callbacks:
+
+```blood
+fn apply(f: forall<T>. fn(T) -> T, x: i32, y: bool) -> (i32, bool) {
+    (f(x), f(y))
+}
+```
+
+**`dyn Trait`** creates a trait object type for dynamic dispatch:
+
+```blood
+fn draw_all(shapes: &[&dyn Drawable]) / {IO} {
+    for shape in shapes { shape.draw() }
+}
+```
+
+> **Design note:** `impl Trait` in argument position is **rejected** — Blood's multiple dispatch already subsumes this use case. Return-position opaque types are **deferred** until real-world pain points are documented; if eventually needed, `opaque` type aliases are preferred over `impl Trait` syntax. See `docs/design/IMPL_TRAIT.md` for the full evaluation.
 
 ### 4.2 Effect Types
 
@@ -444,11 +573,14 @@ Expr ::= ExprWithBlock | ExprWithoutBlock
 
 ExprWithBlock ::= BlockExpr
                 | IfExpr
+                | IfLetExpr
                 | MatchExpr
                 | LoopExpr
                 | ForExpr
                 | WhileExpr
+                | WhileLetExpr
                 | WithHandleExpr
+                | TryWithExpr
                 | UnsafeBlock
                 | RegionExpr
 
@@ -465,20 +597,23 @@ ExprWithoutBlock ::= Literal
                    | UnaryExpr
                    | BinaryExpr
                    | CastExpr
+                   | TryExpr
                    | AssignExpr
                    | AllocExpr
+                   | DefaultExpr
                    | ReturnExpr
                    | BreakExpr
                    | ContinueExpr
                    | ClosureExpr
                    | PerformExpr
                    | ResumeExpr
+                   | MacroCallExpr
                    | '(' Expr ')'
 
-PathExpr ::= Ident | ModulePath '::' Ident
+PathExpr ::= Ident | ModulePath '.' Ident
 ```
 
-**Note:** `BinaryExpr` and `UnaryExpr` are disambiguated by the precedence and associativity rules in §7. The parser uses precedence climbing (Pratt parsing).
+**Note:** `BinaryExpr` and `UnaryExpr` are disambiguated by the precedence and associativity rules in §7. The parser uses precedence climbing (Pratt parsing). Path disambiguation relies on the uppercase/lowercase convention — see Appendix B.2.
 
 ### 5.2 Block and Control Flow
 
@@ -493,14 +628,16 @@ Statement ::= ';'
 LetStatement ::= 'let' Pattern (':' Type)? ('=' Expr)? ';'
 ExprStatement ::= ExprWithoutBlock ';' | ExprWithBlock ';'?
 
-IfExpr ::= 'if' Expr Block ('else' 'if' Expr Block)* ('else' Block)?
+IfExpr    ::= 'if' Expr Block ('else' 'if' Expr Block)* ('else' Block)?
+IfLetExpr ::= 'if' 'let' Pattern '=' Expr Block ('else' Block)?
 
 MatchExpr ::= 'match' Expr '{' MatchArm* '}'
 MatchArm ::= Pattern ('if' Expr)? '=>' Expr ','?
 
-LoopExpr ::= Label? 'loop' Block
-ForExpr ::= Label? 'for' Pattern 'in' Expr Block
-WhileExpr ::= Label? 'while' Expr Block
+LoopExpr     ::= Label? 'loop' Block
+ForExpr      ::= Label? 'for' Pattern 'in' Expr Block
+WhileExpr    ::= Label? 'while' Expr Block
+WhileLetExpr ::= Label? 'while' 'let' Pattern '=' Expr Block
 
 Label ::= LifetimeIdent ':'
 ```
@@ -510,10 +647,34 @@ Label ::= LifetimeIdent ':'
 ```ebnf
 WithHandleExpr ::= 'with' Expr 'handle' Block
 
+TryWithExpr ::= 'try' Block 'with' '{' TryWithArm* '}'
+TryWithArm  ::= TypePath '.' Ident '(' Params ')' '=>' Block ','?
+
 PerformExpr ::= 'perform' TypePath '.' Ident '(' Args ')'
               | 'perform' Ident '(' Args ')'  (* when unambiguous *)
 
 ResumeExpr ::= 'resume' '(' Expr ')'
+```
+
+Blood provides two handler expression syntaxes:
+
+- **`with handler_expr handle { body }`** — for reusable, named handlers
+- **`try { body } with { arms }`** — for inline, one-off effect handling
+
+```blood
+// Named handler (reusable)
+let result = with LocalState { state: 0 } handle {
+    counter()
+}
+
+// Inline handler (one-off)
+let result = try {
+    let data = read_file("config.txt")
+    parse(data)
+} with {
+    IO.read(path) => { resume(default_data) }
+    Error.raise(e) => { log(e); resume(fallback) }
+}
 ```
 
 #### 5.3.1 Implicit Perform (Desugaring)
@@ -556,20 +717,15 @@ fn ambiguous() / {State<i32>, MyEffect} {
 ### 5.4 Memory Expressions
 
 ```ebnf
-RegionExpr ::= 'region' Ident? Block
+RegionExpr ::= 'region' Lifetime? Block
 
-(* @unsafe is the canonical syntax - distinctive and grep-able *)
 UnsafeBlock ::= '@unsafe' Block
 
 AllocExpr ::= '@heap' Expr
             | '@stack' Expr
-            | 'Box' '::' 'new' '(' Expr ')'
 ```
 
-**Note:** Blood uses `@unsafe` (with the `@` prefix) rather than bare `unsafe` to:
-1. Make unsafe blocks visually distinctive and easy to audit
-2. Enable simple text search (`grep @unsafe`) for security review
-3. Distinguish from potential future `unsafe` type modifiers
+See §9.5 for the `@` prefix design rule.
 
 ### 5.5 Closures
 
@@ -601,8 +757,31 @@ BinaryExpr ::= Expr BinaryOp Expr
 
 CastExpr ::= Expr 'as' Type
 
+TryExpr ::= Expr '?'
+
 AssignExpr ::= Expr '=' Expr
              | Expr AssignOp Expr
+
+DefaultExpr ::= 'default'
+
+MacroCallExpr ::= Ident '!' '(' Args? ')'
+                | Ident '!' '[' Args? ']'
+                | Ident '!' '{' Args? '}'
+```
+
+**`?` (try operator):** Propagates errors from `Result` types. `expr?` evaluates `expr`; if it is `Err(e)`, the enclosing function returns `Err(e)`. Use `?` for Result-based error propagation (especially FFI interop). Use algebraic effects for structured error handling with resumption.
+
+**`default`:** Produces the default value for a type, inferred from context.
+
+**Explicit type arguments at call sites:** Blood relies on type inference and type ascription rather than providing call-site type argument syntax. When inference cannot determine a type, annotate the binding:
+
+```blood
+// Preferred: type ascription on binding
+let values: Vec<i32> = input.split(",").map(parse).collect();
+let n: i32 = "42".parse();
+
+// NOT supported: no turbofish or call-site type arguments
+// let values = collect::<Vec<i32>>();  // ERROR
 ```
 
 ### 5.7 Data Construction
@@ -701,11 +880,9 @@ From highest to lowest precedence:
 
 | Precedence | Category | Operators | Associativity |
 |------------|----------|-----------|---------------|
-| 18 | Path | `::` | Left |
 | 17 | Method call | `.method()` | Left |
 | 16 | Field access | `.field` | Left |
-| 15 | Function call | `()` | Left |
-| 15 | Index | `[]` | Left |
+| 15 | Postfix | `()` `[]` `?` | Left |
 | 14 | Unary | `!` `-` `*` `&` `&mut` | Right |
 | 13 | Cast | `as` | Left |
 | 12 | Multiply | `*` `/` `%` | Left |
@@ -718,9 +895,16 @@ From highest to lowest precedence:
 | 5 | Logical AND | `&&` | Left |
 | 4 | Logical OR | `\|\|` | Left |
 | 3 | Range | `..` `..=` | Non-assoc |
-| 2 | Assign | `=` `+=` `-=` `*=` `/=` `%=` `&=` `\|=` `^=` `<<=` `>>=` | Right |
-| 1 | Pipe | `\|>` | Left |
+| 2 | Pipe | `\|>` | Left |
+| 1 | Assign | `=` `+=` `-=` `*=` `/=` `%=` `&=` `\|=` `^=` `<<=` `>>=` | Right |
 | 0 | Return/Break | `return` `break` `continue` | Right |
+
+**Design notes:**
+
+- **Pipe binds tighter than assignment** so `x = data |> transform |> collect` parses as `x = (data |> transform |> collect)`.
+- **Comparison operators are non-associative.** `a < b < c` is a parse error. Comparison chaining is **not planned** — hidden temporaries conflict with linear types, and short-circuit evaluation creates ambiguous effect ordering. Range containment (`x in lo..hi`) is the recommended alternative for the dominant use case. See `docs/design/COMPARISON_CHAINING.md` for the full evaluation.
+- **Postfix `?`** is the try operator for error propagation (see §5.6).
+- **Path (`.`)** is handled during postfix parsing, not as a binary operator in the precedence table.
 
 ### 7.2 Unary Operators
 
@@ -827,38 +1011,98 @@ fn main() / {IO} {
 
 ## 9. Reserved Words
 
-### 9.1 Keywords
+Blood uses a three-tier keyword system to balance language expressiveness with identifier availability.
+
+### 9.1 Strict Keywords (Tier 1)
+
+These words cannot be used as identifiers (except via raw identifiers, see §9.4).
 
 ```
-as async await break const continue crate
-decreases deep dyn effect else ensures enum
-extends extern false fn for handler if
-impl in invariant let linear loop match
-mod move mut perform pub ref region
-requires resume return self Self shallow static
-struct super trait true type use where while
+as async await break const continue crate dyn effect else enum
+extern false fn for forall if impl in let linear loop macro
+match mod move mut op pub pure ref region return self Self
+static struct super trait true try type unsafe use where while
 ```
 
-**Note:** `unsafe` is not a keyword in Blood. Use `@unsafe` block syntax instead (see Section 5.4).
+**Note:** `unsafe` is only valid with the `@` prefix (`@unsafe`). Bare `unsafe` is a compile error with a diagnostic suggesting `@unsafe`. See §9.5.
 
-### 9.2 Reserved for Future Use
+### 9.2 Contextual Keywords (Tier 2)
 
-```
-abstract become box do final macro
-override priv typeof unsized virtual yield
-try catch finally throw
-```
-
-### 9.3 Contextual Keywords
-
-These have special meaning only in specific contexts:
+These have special meaning only in specific syntactic positions. They can be used as identifiers elsewhere.
 
 ```
-union     (* only in type declarations *)
-default   (* only in impl blocks *)
-'static   (* lifetime *)
-'_        (* inferred lifetime *)
+handler perform resume     (* effect/handler declarations and expressions *)
+shallow deep               (* handler kind qualifiers *)
+requires ensures           (* specification clauses — see §3.2 *)
+invariant decreases        (* specification clauses — see §3.2 *)
+extends                    (* trait/effect extension *)
+bridge                     (* FFI declarations *)
+with handle                (* handler expressions *)
+affine                     (* ownership type qualifier *)
+default                    (* impl blocks, default expressions *)
+union                      (* type declarations *)
+'static '_                 (* lifetimes *)
 ```
+
+Examples of contextual keywords used as identifiers:
+
+```blood
+let handler = create_handler();      // OK — handler is a variable name
+let resume = checkpoint.resume();    // OK — resume is a method name
+let shallow = false;                 // OK — shallow is a variable name
+fn perform(action: Action) { ... }   // OK — perform is a function name
+
+// These same words become keywords in their respective contexts:
+shallow handler MyHandler for MyEffect { ... }  // handler, shallow are keywords here
+fn foo() requires x > 0 { ... }                 // requires is a keyword here
+```
+
+### 9.3 Reserved for Future Use (Tier 3)
+
+These cannot be used as identifiers but have no current meaning. They are reserved to prevent identifier conflicts if Blood adopts these features later.
+
+```
+abstract become box catch defer do final finally
+gen override priv raw select spawn throw typeof
+unsized virtual yield
+```
+
+### 9.4 Raw Identifiers
+
+Any strict or reserved keyword can be used as an identifier by prefixing with `r#`. This is primarily useful for FFI interop and serialization where field names collide with keywords.
+
+```ebnf
+RawIdent ::= 'r#' Ident
+```
+
+```blood
+struct JsonPayload {
+    r#type: String,          // field named "type"
+    r#match: bool,           // field named "match"
+}
+
+bridge "C" lib {
+    fn r#continue() -> i32;  // C function named "continue"
+}
+```
+
+### 9.5 The `@` Prefix
+
+The `@` prefix marks operations that alter the language's default safety, allocation, or execution model. These are operations a reviewer should be able to find with `grep @`.
+
+| Construct | Meaning | Category |
+|-----------|---------|----------|
+| `@unsafe` | Disables safety checks within block or function | Safety relaxation |
+| `@heap`   | Allocates on the heap (explicit placement) | Allocation control |
+| `@stack`  | Allocates on the stack (explicit placement) | Allocation control |
+
+**`@` is NOT used for:**
+
+- **Optimization hints** — use attributes: `#[inline]`, `#[cold]`
+- **Metadata/annotations** — use attributes: `#[deprecated]`, `#[test]`
+- **Constraint qualifiers** — use bare keywords: `linear`, `affine`
+
+**Design rationale:** Constraints like `linear` and `affine` *add* safety guarantees (the compiler checks more, not less). The `@` prefix marks *relaxations* of the default safety model. This distinction is deliberate — `@` means "caution: default guarantees weakened here," not "annotation."
 
 ---
 
@@ -917,16 +1161,37 @@ let x = { compute() };  // Block is expression, value assigned to x
 { compute() }           // Block is expression (final expression in block)
 ```
 
-### B.2 Turbofish
+### B.2 Path Disambiguation
 
-When `<` is ambiguous between comparison and type arguments, use turbofish `::< >`:
+Blood uses `.` as the universal path separator. Disambiguation between field access and module-qualified paths relies on the uppercase/lowercase naming convention:
 
 ```blood
-// Ambiguous: is this less-than or type args?
-foo(bar<T, U>(x))
+// Uppercase left side → type/module qualified access
+Option.Some(42)              // enum constructor (Option is uppercase = type)
+collections.HashMap.new()   // module-qualified type constructor
 
-// Clear: turbofish for type args
-foo(bar::<T, U>(x))
+// Lowercase left side → value field/method access
+my_struct.field              // field access (my_struct is lowercase = value)
+list.len()                   // method call
+
+// In type positions, `.` is always a module path
+let map: collections.HashMap<K, V> = ...;
+
+// In import positions, `.` is always a module path
+use std.collections.hashmap.HashMap;
+```
+
+**Scope-based resolution:** When the left side is lowercase and could be either a local variable or a module name, local variables take priority. If a module access is intended, use the full module path or rename the local variable.
+
+```blood
+let io = 42;
+// io.read()  — field/method access on the variable `io`, NOT module access
+```
+
+**Generic type arguments:** In type positions, `<` after a type name is always a type argument list (no ambiguity with comparison). In expression positions, `<` is always the less-than operator. Use type ascription on bindings when the compiler needs explicit type information:
+
+```blood
+let x: Vec<i32> = items.collect();    // type ascription resolves the type
 ```
 
 ### B.3 Closure vs Or-Pattern
@@ -935,4 +1200,4 @@ foo(bar::<T, U>(x))
 
 ---
 
-*Last updated: 2026-01-09*
+*Last updated: 2026-02-28*
