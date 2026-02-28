@@ -161,6 +161,10 @@ impl<'a> TypeContext<'a> {
                 self.infer_record(path.as_ref(), fields, base.as_deref(), expr.span)
             }
             ast::ExprKind::Field { base: field_base, field } => {
+                // DEF-001: Try to resolve module.item as a qualified path
+                if let Some(result) = self.try_resolve_dot_as_qualified_path(field_base, field, expr.span) {
+                    return result;
+                }
                 self.infer_field_access(field_base, field, expr.span)
             }
             ast::ExprKind::Closure { is_move, params, return_type, effects, body } => {
@@ -179,6 +183,10 @@ impl<'a> TypeContext<'a> {
                 self.infer_resume(value, expr.span)
             }
             ast::ExprKind::MethodCall { receiver, method, type_args: _, args } => {
+                // DEF-001: Try to resolve module.func(args) as a qualified call
+                if let Some(result) = self.try_resolve_dot_call_as_qualified(receiver, &method.node, args, expr.span) {
+                    return result;
+                }
                 self.infer_method_call(receiver, &method.node, args, expr.span)
             }
             ast::ExprKind::Index { base, index } => {
@@ -8715,6 +8723,216 @@ impl<'a> TypeContext<'a> {
             result_ty,
             span,
         ))
+    }
+
+    /// DEF-001: Extract a chain of module path segments from an expression.
+    /// Returns None if the expression isn't a chain of field accesses on a path,
+    /// or if the base resolves to a local variable.
+    fn try_extract_module_chain(&self, expr: &ast::Expr) -> Option<Vec<String>> {
+        match &expr.kind {
+            ast::ExprKind::Path(path) => {
+                if path.segments.len() == 1 {
+                    let name = self.symbol_to_string(path.segments[0].name.node);
+                    // Guard: skip if name resolves to a local variable
+                    if let Some(Binding::Local { .. }) = self.resolver.lookup(&name) {
+                        return None;
+                    }
+                    Some(vec![name])
+                } else {
+                    None
+                }
+            }
+            ast::ExprKind::Field { base, field } => {
+                if let ast::FieldAccess::Named(field_name) = field {
+                    if let Some(mut segments) = self.try_extract_module_chain(base) {
+                        let fname = self.symbol_to_string(field_name.node);
+                        segments.push(fname);
+                        Some(segments)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// DEF-001: Try to resolve a qualified path from module chain segments.
+    /// Returns Some(hir::Expr) if the chain resolves to a module item.
+    fn try_resolve_qualified_chain(&mut self, segments: &[String], span: Span) -> Option<Result<hir::Expr, Box<TypeError>>> {
+        if segments.len() < 2 {
+            return None;
+        }
+
+        // Walk the module chain
+        let first_name = &segments[0];
+
+        // Look up first segment - must be a module
+        let module_def_id = match self.resolver.lookup(first_name) {
+            Some(Binding::Def(def_id)) => def_id,
+            _ => return None,
+        };
+
+        let module_info = match self.module_defs.get(&module_def_id).cloned() {
+            Some(info) => info,
+            None => return None,
+        };
+
+        // For two-segment paths: module.item
+        if segments.len() == 2 {
+            let item_name = &segments[1];
+            for &item_def_id in &module_info.items {
+                if let Some(def_info) = self.resolver.def_info.get(&item_def_id) {
+                    if def_info.name == *item_name {
+                        if let Some(sig) = self.fn_sigs.get(&item_def_id).cloned() {
+                            let fn_ty = if sig.generics.is_empty() {
+                                Type::function(sig.inputs.clone(), sig.output.clone())
+                            } else {
+                                self.instantiate_fn_sig(&sig)
+                            };
+                            return Some(Ok(hir::Expr::new(
+                                hir::ExprKind::Def(item_def_id),
+                                fn_ty,
+                                span,
+                            )));
+                        } else if let Some(ty) = &def_info.ty {
+                            return Some(Ok(hir::Expr::new(
+                                hir::ExprKind::Def(item_def_id),
+                                ty.clone(),
+                                span,
+                            )));
+                        }
+                    }
+                }
+            }
+            // Check if it's a nested module
+            for &item_def_id in &module_info.items {
+                if let Some(def_info) = self.resolver.def_info.get(&item_def_id) {
+                    if def_info.name == *item_name && self.module_defs.contains_key(&item_def_id) {
+                        // It's a sub-module - return as a Def
+                        return Some(Ok(hir::Expr::new(
+                            hir::ExprKind::Def(item_def_id),
+                            self.unifier.fresh_var(),
+                            span,
+                        )));
+                    }
+                }
+            }
+            return None;
+        }
+
+        // For longer chains: module.submodule...item
+        // Walk through intermediate modules
+        let mut current_items = module_info.items.clone();
+        for i in 1..segments.len() - 1 {
+            let seg_name = &segments[i];
+            let mut found_submod = false;
+            for &item_def_id in &current_items {
+                if let Some(def_info) = self.resolver.def_info.get(&item_def_id) {
+                    if def_info.name == *seg_name {
+                        if let Some(sub_info) = self.module_defs.get(&item_def_id).cloned() {
+                            current_items = sub_info.items;
+                            found_submod = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            if !found_submod {
+                return None;
+            }
+        }
+
+        // Resolve the last segment in the final module
+        let last_name = &segments[segments.len() - 1];
+        for &item_def_id in &current_items {
+            if let Some(def_info) = self.resolver.def_info.get(&item_def_id) {
+                if def_info.name == *last_name {
+                    if let Some(sig) = self.fn_sigs.get(&item_def_id).cloned() {
+                        let fn_ty = if sig.generics.is_empty() {
+                            Type::function(sig.inputs.clone(), sig.output.clone())
+                        } else {
+                            self.instantiate_fn_sig(&sig)
+                        };
+                        return Some(Ok(hir::Expr::new(
+                            hir::ExprKind::Def(item_def_id),
+                            fn_ty,
+                            span,
+                        )));
+                    } else if let Some(ty) = &def_info.ty {
+                        return Some(Ok(hir::Expr::new(
+                            hir::ExprKind::Def(item_def_id),
+                            ty.clone(),
+                            span,
+                        )));
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    /// DEF-001: Try to resolve module.field as a qualified path.
+    fn try_resolve_dot_as_qualified_path(
+        &mut self,
+        base: &ast::Expr,
+        field: &ast::FieldAccess,
+        span: Span,
+    ) -> Option<Result<hir::Expr, Box<TypeError>>> {
+        if let ast::FieldAccess::Named(_) = field {
+            if let Some(segments) = self.try_extract_module_chain(base) {
+                let mut full_segments = segments;
+                if let ast::FieldAccess::Named(field_name) = field {
+                    let fname = self.symbol_to_string(field_name.node);
+                    full_segments.push(fname);
+                }
+                return self.try_resolve_qualified_chain(&full_segments, span);
+            }
+        }
+        None
+    }
+
+    /// DEF-001: Try to resolve module.func(args) as a qualified call.
+    fn try_resolve_dot_call_as_qualified(
+        &mut self,
+        receiver: &ast::Expr,
+        method: &ast::Symbol,
+        args: &[ast::CallArg],
+        span: Span,
+    ) -> Option<Result<hir::Expr, Box<TypeError>>> {
+        let chain = self.try_extract_module_chain(receiver);
+        if let Some(mut segments) = chain {
+            let method_name = self.symbol_to_string(*method);
+            segments.push(method_name);
+            if let Some(callee_result) = self.try_resolve_qualified_chain(&segments, span) {
+                // If we resolved the callee, infer args and build a Call expression
+                match callee_result {
+                    Ok(callee_expr) => {
+                        let mut hir_args = Vec::with_capacity(args.len());
+                        for arg in args {
+                            match self.infer_expr(&arg.value) {
+                                Ok(arg_expr) => hir_args.push(arg_expr),
+                                Err(e) => return Some(Err(e)),
+                            }
+                        }
+                        let ret_ty = self.unifier.fresh_var();
+                        return Some(Ok(hir::Expr::new(
+                            hir::ExprKind::Call {
+                                callee: Box::new(callee_expr),
+                                args: hir_args,
+                            },
+                            ret_ty,
+                            span,
+                        )));
+                    }
+                    Err(e) => return Some(Err(e)),
+                }
+            }
+        }
+        None
     }
 
     /// Infer type of a field access expression.
