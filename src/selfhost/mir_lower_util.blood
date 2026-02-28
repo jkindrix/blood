@@ -18,14 +18,14 @@ mod type_intern;
 
 /// Clones a String.
 fn clone_string(s: &String) -> String {
-    let mut result = String::new();
+    let mut result = String.new();
     result.push_str(s.as_str());
     result
 }
 
 /// Clones a Vec<u8>.
 fn clone_bytes(bytes: &Vec<u8>) -> Vec<u8> {
-    let mut result = Vec::new();
+    let mut result = Vec.new();
     for i in 0usize..bytes.len() {
         result.push(bytes[i]);
     }
@@ -39,79 +39,79 @@ fn clone_bytes(bytes: &Vec<u8>) -> Vec<u8> {
 /// Converts an HIR binary operator to a MIR binary operator.
 ///
 /// Returns None for operators that need special handling (And, Or, Pipe).
-pub fn convert_binop(bin_op: common::BinOp) -> Option<mir_types::MirBinOp> {
+pub fn convert_binop(bin_op: common.BinOp) -> Option<mir_types.MirBinOp> {
     match bin_op {
-        common::BinOp::Add => Option::Some(mir_types::MirBinOp::Add),
-        common::BinOp::Sub => Option::Some(mir_types::MirBinOp::Sub),
-        common::BinOp::Mul => Option::Some(mir_types::MirBinOp::Mul),
-        common::BinOp::Div => Option::Some(mir_types::MirBinOp::Div),
-        common::BinOp::Rem => Option::Some(mir_types::MirBinOp::Rem),
-        common::BinOp::Eq => Option::Some(mir_types::MirBinOp::Eq),
-        common::BinOp::Ne => Option::Some(mir_types::MirBinOp::Ne),
-        common::BinOp::Lt => Option::Some(mir_types::MirBinOp::Lt),
-        common::BinOp::Le => Option::Some(mir_types::MirBinOp::Le),
-        common::BinOp::Gt => Option::Some(mir_types::MirBinOp::Gt),
-        common::BinOp::Ge => Option::Some(mir_types::MirBinOp::Ge),
-        common::BinOp::BitAnd => Option::Some(mir_types::MirBinOp::BitAnd),
-        common::BinOp::BitOr => Option::Some(mir_types::MirBinOp::BitOr),
-        common::BinOp::BitXor => Option::Some(mir_types::MirBinOp::BitXor),
-        common::BinOp::Shl => Option::Some(mir_types::MirBinOp::Shl),
-        common::BinOp::Shr => Option::Some(mir_types::MirBinOp::Shr),
+        common.BinOp.Add => Option.Some(mir_types.MirBinOp.Add),
+        common.BinOp.Sub => Option.Some(mir_types.MirBinOp.Sub),
+        common.BinOp.Mul => Option.Some(mir_types.MirBinOp.Mul),
+        common.BinOp.Div => Option.Some(mir_types.MirBinOp.Div),
+        common.BinOp.Rem => Option.Some(mir_types.MirBinOp.Rem),
+        common.BinOp.Eq => Option.Some(mir_types.MirBinOp.Eq),
+        common.BinOp.Ne => Option.Some(mir_types.MirBinOp.Ne),
+        common.BinOp.Lt => Option.Some(mir_types.MirBinOp.Lt),
+        common.BinOp.Le => Option.Some(mir_types.MirBinOp.Le),
+        common.BinOp.Gt => Option.Some(mir_types.MirBinOp.Gt),
+        common.BinOp.Ge => Option.Some(mir_types.MirBinOp.Ge),
+        common.BinOp.BitAnd => Option.Some(mir_types.MirBinOp.BitAnd),
+        common.BinOp.BitOr => Option.Some(mir_types.MirBinOp.BitOr),
+        common.BinOp.BitXor => Option.Some(mir_types.MirBinOp.BitXor),
+        common.BinOp.Shl => Option.Some(mir_types.MirBinOp.Shl),
+        common.BinOp.Shr => Option.Some(mir_types.MirBinOp.Shr),
         // These need special handling for short-circuit evaluation
-        common::BinOp::And => Option::None,
-        common::BinOp::Or => Option::None,
+        common.BinOp.And => Option.None,
+        common.BinOp.Or => Option.None,
         // Pipe operator needs special handling
-        common::BinOp::Pipe => Option::None,
+        common.BinOp.Pipe => Option.None,
     }
 }
 
 /// Converts an HIR unary operator to a MIR unary operator.
 ///
 /// Returns None for operators that need special handling (Ref, RefMut, Deref).
-pub fn convert_unop(unary_op: common::UnaryOp) -> Option<mir_types::MirUnOp> {
+pub fn convert_unop(unary_op: common.UnaryOp) -> Option<mir_types.MirUnOp> {
     match unary_op {
-        common::UnaryOp::Neg => Option::Some(mir_types::MirUnOp::Neg),
-        common::UnaryOp::Not => Option::Some(mir_types::MirUnOp::Not),
+        common.UnaryOp.Neg => Option.Some(mir_types.MirUnOp.Neg),
+        common.UnaryOp.Not => Option.Some(mir_types.MirUnOp.Not),
         // These need place-based handling
-        common::UnaryOp::Deref => Option::None,
-        common::UnaryOp::Ref => Option::None,
-        common::UnaryOp::RefMut => Option::None,
+        common.UnaryOp.Deref => Option.None,
+        common.UnaryOp.Ref => Option.None,
+        common.UnaryOp.RefMut => Option.None,
     }
 }
 
 /// Returns true if a binary operator requires short-circuit evaluation.
-pub fn is_short_circuit_op(bin_op: common::BinOp) -> bool {
+pub fn is_short_circuit_op(bin_op: common.BinOp) -> bool {
     match bin_op {
-        common::BinOp::And => true,
-        common::BinOp::Or => true,
-        common::BinOp::Add => false,
-        common::BinOp::Sub => false,
-        common::BinOp::Mul => false,
-        common::BinOp::Div => false,
-        common::BinOp::Rem => false,
-        common::BinOp::Eq => false,
-        common::BinOp::Ne => false,
-        common::BinOp::Lt => false,
-        common::BinOp::Le => false,
-        common::BinOp::Gt => false,
-        common::BinOp::Ge => false,
-        common::BinOp::BitAnd => false,
-        common::BinOp::BitOr => false,
-        common::BinOp::BitXor => false,
-        common::BinOp::Shl => false,
-        common::BinOp::Shr => false,
-        common::BinOp::Pipe => false,
+        common.BinOp.And => true,
+        common.BinOp.Or => true,
+        common.BinOp.Add => false,
+        common.BinOp.Sub => false,
+        common.BinOp.Mul => false,
+        common.BinOp.Div => false,
+        common.BinOp.Rem => false,
+        common.BinOp.Eq => false,
+        common.BinOp.Ne => false,
+        common.BinOp.Lt => false,
+        common.BinOp.Le => false,
+        common.BinOp.Gt => false,
+        common.BinOp.Ge => false,
+        common.BinOp.BitAnd => false,
+        common.BinOp.BitOr => false,
+        common.BinOp.BitXor => false,
+        common.BinOp.Shl => false,
+        common.BinOp.Shr => false,
+        common.BinOp.Pipe => false,
     }
 }
 
 /// Returns true if a unary operator produces a place (not a value).
-pub fn is_place_unop(unary_op: common::UnaryOp) -> bool {
+pub fn is_place_unop(unary_op: common.UnaryOp) -> bool {
     match unary_op {
-        common::UnaryOp::Deref => true,
-        common::UnaryOp::Ref => false,
-        common::UnaryOp::RefMut => false,
-        common::UnaryOp::Neg => false,
-        common::UnaryOp::Not => false,
+        common.UnaryOp.Deref => true,
+        common.UnaryOp.Ref => false,
+        common.UnaryOp.RefMut => false,
+        common.UnaryOp.Neg => false,
+        common.UnaryOp.Not => false,
     }
 }
 
@@ -120,107 +120,107 @@ pub fn is_place_unop(unary_op: common::UnaryOp) -> bool {
 // ============================================================
 
 /// Converts an HIR literal to a MIR constant.
-pub fn lower_literal(lit: &hir_expr::Literal, ty: &hir_ty::Type) -> mir_types::Constant {
+pub fn lower_literal(lit: &hir_expr.Literal, ty: &hir_ty.Type) -> mir_types.Constant {
     let ty_id = type_intern::type_to_ty_id(ty);
     match &lit.kind {
-        &hir_expr::LiteralKind::Int { val, ty: _ } => {
+        &hir_expr.LiteralKind.Int { val, ty: _ } => {
             // Determine if signed or unsigned based on the type
             match &ty.kind {
-                &hir_ty::TypeKind::Primitive(ref prim) => {
+                &hir_ty.TypeKind.Primitive(ref prim) => {
                     match prim {
-                        &hir_ty::PrimitiveTy::I8 => mir_types::Constant::new(
+                        &hir_ty.PrimitiveTy.I8 => mir_types.Constant.new(
                             ty_id,
-                            mir_types::ConstantKind::Int(val as i128),
+                            mir_types.ConstantKind.Int(val as i128),
                         ),
-                        &hir_ty::PrimitiveTy::I16 => mir_types::Constant::new(
+                        &hir_ty.PrimitiveTy.I16 => mir_types.Constant.new(
                             ty_id,
-                            mir_types::ConstantKind::Int(val as i128),
+                            mir_types.ConstantKind.Int(val as i128),
                         ),
-                        &hir_ty::PrimitiveTy::I32 => mir_types::Constant::new(
+                        &hir_ty.PrimitiveTy.I32 => mir_types.Constant.new(
                             ty_id,
-                            mir_types::ConstantKind::Int(val as i128),
+                            mir_types.ConstantKind.Int(val as i128),
                         ),
-                        &hir_ty::PrimitiveTy::I64 => mir_types::Constant::new(
+                        &hir_ty.PrimitiveTy.I64 => mir_types.Constant.new(
                             ty_id,
-                            mir_types::ConstantKind::Int(val as i128),
+                            mir_types.ConstantKind.Int(val as i128),
                         ),
-                        &hir_ty::PrimitiveTy::I128 => mir_types::Constant::new(
+                        &hir_ty.PrimitiveTy.I128 => mir_types.Constant.new(
                             ty_id,
-                            mir_types::ConstantKind::Int(val as i128),
+                            mir_types.ConstantKind.Int(val as i128),
                         ),
-                        &hir_ty::PrimitiveTy::Isize => mir_types::Constant::new(
+                        &hir_ty.PrimitiveTy.Isize => mir_types.Constant.new(
                             ty_id,
-                            mir_types::ConstantKind::Int(val as i128),
+                            mir_types.ConstantKind.Int(val as i128),
                         ),
-                        &hir_ty::PrimitiveTy::U8 => mir_types::Constant::new(
+                        &hir_ty.PrimitiveTy.U8 => mir_types.Constant.new(
                             ty_id,
-                            mir_types::ConstantKind::Uint(val),
+                            mir_types.ConstantKind.Uint(val),
                         ),
-                        &hir_ty::PrimitiveTy::U16 => mir_types::Constant::new(
+                        &hir_ty.PrimitiveTy.U16 => mir_types.Constant.new(
                             ty_id,
-                            mir_types::ConstantKind::Uint(val),
+                            mir_types.ConstantKind.Uint(val),
                         ),
-                        &hir_ty::PrimitiveTy::U32 => mir_types::Constant::new(
+                        &hir_ty.PrimitiveTy.U32 => mir_types.Constant.new(
                             ty_id,
-                            mir_types::ConstantKind::Uint(val),
+                            mir_types.ConstantKind.Uint(val),
                         ),
-                        &hir_ty::PrimitiveTy::U64 => mir_types::Constant::new(
+                        &hir_ty.PrimitiveTy.U64 => mir_types.Constant.new(
                             ty_id,
-                            mir_types::ConstantKind::Uint(val),
+                            mir_types.ConstantKind.Uint(val),
                         ),
-                        &hir_ty::PrimitiveTy::U128 => mir_types::Constant::new(
+                        &hir_ty.PrimitiveTy.U128 => mir_types.Constant.new(
                             ty_id,
-                            mir_types::ConstantKind::Uint(val),
+                            mir_types.ConstantKind.Uint(val),
                         ),
-                        &hir_ty::PrimitiveTy::Usize => mir_types::Constant::new(
+                        &hir_ty.PrimitiveTy.Usize => mir_types.Constant.new(
                             ty_id,
-                            mir_types::ConstantKind::Uint(val),
+                            mir_types.ConstantKind.Uint(val),
                         ),
-                        &hir_ty::PrimitiveTy::Bool => mir_types::Constant::new(
+                        &hir_ty.PrimitiveTy.Bool => mir_types.Constant.new(
                             ty_id,
-                            mir_types::ConstantKind::Bool(val != 0),
+                            mir_types.ConstantKind.Bool(val != 0),
                         ),
-                        &hir_ty::PrimitiveTy::Char => mir_types::Constant::new(
+                        &hir_ty.PrimitiveTy.Char => mir_types.Constant.new(
                             ty_id,
-                            mir_types::ConstantKind::Uint(val),
+                            mir_types.ConstantKind.Uint(val),
                         ),
-                        &hir_ty::PrimitiveTy::F32 => mir_types::Constant::new(
+                        &hir_ty.PrimitiveTy.F32 => mir_types.Constant.new(
                             ty_id,
-                            mir_types::ConstantKind::Float(val as u64),
+                            mir_types.ConstantKind.Float(val as u64),
                         ),
-                        &hir_ty::PrimitiveTy::F64 => mir_types::Constant::new(
+                        &hir_ty.PrimitiveTy.F64 => mir_types.Constant.new(
                             ty_id,
-                            mir_types::ConstantKind::Float(val as u64),
+                            mir_types.ConstantKind.Float(val as u64),
                         ),
-                        &hir_ty::PrimitiveTy::Str => mir_types::Constant::new(
+                        &hir_ty.PrimitiveTy.Str => mir_types.Constant.new(
                             ty_id,
-                            mir_types::ConstantKind::Int(val as i128),
+                            mir_types.ConstantKind.Int(val as i128),
                         ),
                     }
                 }
                 _ => {
                     // Default to signed interpretation
-                    mir_types::Constant::new(
+                    mir_types.Constant.new(
                         ty_id,
-                        mir_types::ConstantKind::Int(val as i128),
+                        mir_types.ConstantKind.Int(val as i128),
                     )
                 }
             }
         }
-        &hir_expr::LiteralKind::Float { bits, ty: _ } => {
-            mir_types::Constant::new(ty_id, mir_types::ConstantKind::Float(bits))
+        &hir_expr.LiteralKind.Float { bits, ty: _ } => {
+            mir_types.Constant.new(ty_id, mir_types.ConstantKind.Float(bits))
         }
-        &hir_expr::LiteralKind::Str(ref s) => {
-            mir_types::Constant::new(ty_id, mir_types::ConstantKind::String(clone_string(s)))
+        &hir_expr.LiteralKind.Str(ref s) => {
+            mir_types.Constant.new(ty_id, mir_types.ConstantKind.String(clone_string(s)))
         }
-        &hir_expr::LiteralKind::ByteStr(ref bytes) => {
-            mir_types::Constant::new(ty_id, mir_types::ConstantKind::ByteString(clone_bytes(bytes)))
+        &hir_expr.LiteralKind.ByteStr(ref bytes) => {
+            mir_types.Constant.new(ty_id, mir_types.ConstantKind.ByteString(clone_bytes(bytes)))
         }
-        &hir_expr::LiteralKind::Char(c) => {
-            mir_types::Constant::new(ty_id, mir_types::ConstantKind::Char(c))
+        &hir_expr.LiteralKind.Char(c) => {
+            mir_types.Constant.new(ty_id, mir_types.ConstantKind.Char(c))
         }
-        &hir_expr::LiteralKind::Bool(b) => {
-            mir_types::Constant::new(ty_id, mir_types::ConstantKind::Bool(b))
+        &hir_expr.LiteralKind.Bool(b) => {
+            mir_types.Constant.new(ty_id, mir_types.ConstantKind.Bool(b))
         }
     }
 }
@@ -259,12 +259,12 @@ pub fn lower_literal(lit: &hir_expr::Literal, ty: &hir_ty::Type) -> mir_types::C
 /// 1. Add lang items system in typeck or resolver
 /// 2. Thread TypeContext through MIR lowering
 /// 3. Query type_implements_trait(ty, copy_trait_def_id)
-pub fn is_copy_type(ty: &hir_ty::Type) -> bool {
+pub fn is_copy_type(ty: &hir_ty.Type) -> bool {
     match &ty.kind {
-        &hir_ty::TypeKind::Primitive(_) => true,
-        &hir_ty::TypeKind::Ref { inner: _, mutable: _ } => true,
-        &hir_ty::TypeKind::Ptr { inner: _, mutable: _ } => true,
-        &hir_ty::TypeKind::Tuple(ref elems) => {
+        &hir_ty.TypeKind.Primitive(_) => true,
+        &hir_ty.TypeKind.Ref { inner: _, mutable: _ } => true,
+        &hir_ty.TypeKind.Ptr { inner: _, mutable: _ } => true,
+        &hir_ty.TypeKind.Tuple(ref elems) => {
             for i in 0usize..elems.len() {
                 if !is_copy_type(&elems[i]) {
                     return false;
@@ -272,36 +272,36 @@ pub fn is_copy_type(ty: &hir_ty::Type) -> bool {
             }
             true
         }
-        &hir_ty::TypeKind::Array { ref element, size: _ } => is_copy_type(element.as_ref()),
-        &hir_ty::TypeKind::Never => true,
+        &hir_ty.TypeKind.Array { ref element, size: _ } => is_copy_type(element.as_ref()),
+        &hir_ty.TypeKind.Never => true,
         // Other types are not Copy by default.
         // ADT types would need TypeContext access to check Copy trait impl.
-        &hir_ty::TypeKind::Slice { element: _ } => false,
-        &hir_ty::TypeKind::Fn { params: _, ret: _, effects: _ } => false,
-        &hir_ty::TypeKind::Closure { def_id: _, params: _, ret: _ } => false,
-        &hir_ty::TypeKind::Adt { def_id: _, args: _ } => false,
-        &hir_ty::TypeKind::Infer(_) => false,
-        &hir_ty::TypeKind::Param(_) => false,
-        &hir_ty::TypeKind::Record { fields: _, row_var: _ } => false,
-        &hir_ty::TypeKind::Forall { params: _, body: _ } => false,
-        &hir_ty::TypeKind::Ownership { qualifier: _, inner: _ } => false, // Linear/affine types are not Copy
-        &hir_ty::TypeKind::Range { element: _, inclusive: _ } => true, // Range types are Copy if element is Copy
-        &hir_ty::TypeKind::DynTrait { trait_id: _, auto_traits: _ } => false, // Trait objects are not Copy
-        &hir_ty::TypeKind::Error => true,
+        &hir_ty.TypeKind.Slice { element: _ } => false,
+        &hir_ty.TypeKind.Fn { params: _, ret: _, effects: _ } => false,
+        &hir_ty.TypeKind.Closure { def_id: _, params: _, ret: _ } => false,
+        &hir_ty.TypeKind.Adt { def_id: _, args: _ } => false,
+        &hir_ty.TypeKind.Infer(_) => false,
+        &hir_ty.TypeKind.Param(_) => false,
+        &hir_ty.TypeKind.Record { fields: _, row_var: _ } => false,
+        &hir_ty.TypeKind.Forall { params: _, body: _ } => false,
+        &hir_ty.TypeKind.Ownership { qualifier: _, inner: _ } => false, // Linear/affine types are not Copy
+        &hir_ty.TypeKind.Range { element: _, inclusive: _ } => true, // Range types are Copy if element is Copy
+        &hir_ty.TypeKind.DynTrait { trait_id: _, auto_traits: _ } => false, // Trait objects are not Copy
+        &hir_ty.TypeKind.Error => true,
     }
 }
 
 /// Creates an operand from a place, choosing Copy or Move based on type.
-pub fn operand_from_place(place: mir_types::Place, ty: &hir_ty::Type) -> mir_types::Operand {
+pub fn operand_from_place(place: mir_types.Place, ty: &hir_ty.Type) -> mir_types.Operand {
     if is_copy_type(ty) {
-        mir_types::Operand::Copy(place)
+        mir_types.Operand.Copy(place)
     } else {
-        mir_types::Operand::Move(place)
+        mir_types.Operand.Move(place)
     }
 }
 
 /// Creates an operand from a place using a TyId, choosing Copy or Move based on type.
-pub fn operand_from_place_id(place: mir_types::Place, ty_id: type_intern::TyId) -> mir_types::Operand {
+pub fn operand_from_place_id(place: mir_types.Place, ty_id: type_intern.TyId) -> mir_types.Operand {
     let ty = type_intern::ty_id_to_type(ty_id);
     operand_from_place(place, &ty)
 }
@@ -318,18 +318,18 @@ pub fn operand_from_place_id(place: mir_types::Place, ty_id: type_intern::TyId) 
 /// - Some(operand) if the place is valid to use
 /// - None if the place has been moved (use-after-move)
 pub fn operand_from_place_tracked(
-    ctx: &mut mir_lower_ctx::MirLowerCtx,
-    place: mir_types::Place,
-    ty: &hir_ty::Type,
-    span: common::Span,
-) -> Option<mir_types::Operand> {
+    ctx: &mut mir_lower_ctx.MirLowerCtx,
+    place: mir_types.Place,
+    ty: &hir_ty.Type,
+    span: common.Span,
+) -> Option<mir_types.Operand> {
     // If the place is just a local (no projection), check move status
     if place.projection.len() == 0 {
         // Check if already moved
         let moved_span = ctx.move_tracker.check_moved(place.local);
         if moved_span.is_some() {
             // Place has been moved - caller should report error
-            return Option::None;
+            return Option.None;
         }
     }
 
@@ -338,29 +338,29 @@ pub fn operand_from_place_tracked(
 
     // If it's a Move operand and the place is a local, track the move
     match &operand {
-        &mir_types::Operand::Move(ref p) => {
+        &mir_types.Operand.Move(ref p) => {
             if p.projection.len() == 0 {
                 ctx.move_tracker.track_move(p.local, span);
             }
         }
-        &mir_types::Operand::Copy(_) => {
+        &mir_types.Operand.Copy(_) => {
             // Copy doesn't consume the place
         }
-        &mir_types::Operand::Constant(_) => {
+        &mir_types.Operand.Constant(_) => {
             // Constants don't have places
         }
     }
 
-    Option::Some(operand)
+    Option.Some(operand)
 }
 
 /// Creates a copy of a Place.
-fn copy_place(place: &mir_types::Place) -> mir_types::Place {
-    let mut proj_copy: Vec<mir_types::PlaceElem> = Vec::new();
+fn copy_place(place: &mir_types.Place) -> mir_types.Place {
+    let mut proj_copy: Vec<mir_types.PlaceElem> = Vec.new();
     for i in 0usize..place.projection.len() {
         proj_copy.push(copy_place_elem(&place.projection[i]));
     }
-    mir_types::Place {
+    mir_types.Place {
         local: place.local,
         projection: proj_copy,
         static_def_id: place.static_def_id,
@@ -368,62 +368,62 @@ fn copy_place(place: &mir_types::Place) -> mir_types::Place {
 }
 
 /// Creates a copy of a PlaceElem.
-fn copy_place_elem(elem: &mir_types::PlaceElem) -> mir_types::PlaceElem {
+fn copy_place_elem(elem: &mir_types.PlaceElem) -> mir_types.PlaceElem {
     match elem {
-        &mir_types::PlaceElem::Deref => mir_types::PlaceElem::Deref,
-        &mir_types::PlaceElem::Field(idx) => mir_types::PlaceElem::Field(idx),
-        &mir_types::PlaceElem::Index(local) => mir_types::PlaceElem::Index(local),
-        &mir_types::PlaceElem::ConstantIndex { offset, min_length, from_end } => {
-            mir_types::PlaceElem::ConstantIndex { offset, min_length, from_end }
+        &mir_types.PlaceElem.Deref => mir_types.PlaceElem.Deref,
+        &mir_types.PlaceElem.Field(idx) => mir_types.PlaceElem.Field(idx),
+        &mir_types.PlaceElem.Index(local) => mir_types.PlaceElem.Index(local),
+        &mir_types.PlaceElem.ConstantIndex { offset, min_length, from_end } => {
+            mir_types.PlaceElem.ConstantIndex { offset, min_length, from_end }
         }
-        &mir_types::PlaceElem::Subslice { from, to, from_end } => {
-            mir_types::PlaceElem::Subslice { from, to, from_end }
+        &mir_types.PlaceElem.Subslice { from, to, from_end } => {
+            mir_types.PlaceElem.Subslice { from, to, from_end }
         }
-        &mir_types::PlaceElem::Downcast(idx) => mir_types::PlaceElem::Downcast(idx),
+        &mir_types.PlaceElem.Downcast(idx) => mir_types.PlaceElem.Downcast(idx),
     }
 }
 
 /// Creates a copy of an Operand.
-fn copy_operand(operand: &mir_types::Operand) -> mir_types::Operand {
+fn copy_operand(operand: &mir_types.Operand) -> mir_types.Operand {
     match operand {
-        &mir_types::Operand::Copy(ref p) => mir_types::Operand::Copy(copy_place(p)),
-        &mir_types::Operand::Move(ref p) => mir_types::Operand::Move(copy_place(p)),
-        &mir_types::Operand::Constant(ref c) => mir_types::Operand::Constant(copy_constant(c)),
+        &mir_types.Operand.Copy(ref p) => mir_types.Operand.Copy(copy_place(p)),
+        &mir_types.Operand.Move(ref p) => mir_types.Operand.Move(copy_place(p)),
+        &mir_types.Operand.Constant(ref c) => mir_types.Operand.Constant(copy_constant(c)),
     }
 }
 
 /// Creates a copy of a Constant.
-fn copy_constant(c: &mir_types::Constant) -> mir_types::Constant {
-    mir_types::Constant {
+fn copy_constant(c: &mir_types.Constant) -> mir_types.Constant {
+    mir_types.Constant {
         ty: c.ty,
         kind: copy_constant_kind(&c.kind),
     }
 }
 
 /// Creates a copy of a ConstantKind.
-fn copy_constant_kind(k: &mir_types::ConstantKind) -> mir_types::ConstantKind {
+fn copy_constant_kind(k: &mir_types.ConstantKind) -> mir_types.ConstantKind {
     match k {
-        &mir_types::ConstantKind::Int(i) => mir_types::ConstantKind::Int(i),
-        &mir_types::ConstantKind::Uint(u) => mir_types::ConstantKind::Uint(u),
-        &mir_types::ConstantKind::Float(f) => mir_types::ConstantKind::Float(f),
-        &mir_types::ConstantKind::Bool(b) => mir_types::ConstantKind::Bool(b),
-        &mir_types::ConstantKind::Char(c) => mir_types::ConstantKind::Char(c),
-        &mir_types::ConstantKind::String(ref s) => mir_types::ConstantKind::String(clone_string(s)),
-        &mir_types::ConstantKind::ByteString(ref bytes) => {
-            mir_types::ConstantKind::ByteString(clone_bytes(bytes))
+        &mir_types.ConstantKind.Int(i) => mir_types.ConstantKind.Int(i),
+        &mir_types.ConstantKind.Uint(u) => mir_types.ConstantKind.Uint(u),
+        &mir_types.ConstantKind.Float(f) => mir_types.ConstantKind.Float(f),
+        &mir_types.ConstantKind.Bool(b) => mir_types.ConstantKind.Bool(b),
+        &mir_types.ConstantKind.Char(c) => mir_types.ConstantKind.Char(c),
+        &mir_types.ConstantKind.String(ref s) => mir_types.ConstantKind.String(clone_string(s)),
+        &mir_types.ConstantKind.ByteString(ref bytes) => {
+            mir_types.ConstantKind.ByteString(clone_bytes(bytes))
         }
-        &mir_types::ConstantKind::Unit => mir_types::ConstantKind::Unit,
-        &mir_types::ConstantKind::FnDef(def_id) => mir_types::ConstantKind::FnDef(def_id),
-        &mir_types::ConstantKind::ConstDef(def_id) => mir_types::ConstantKind::ConstDef(def_id),
-        &mir_types::ConstantKind::StaticDef(def_id) => mir_types::ConstantKind::StaticDef(def_id),
-        &mir_types::ConstantKind::ZeroSized => mir_types::ConstantKind::ZeroSized,
+        &mir_types.ConstantKind.Unit => mir_types.ConstantKind.Unit,
+        &mir_types.ConstantKind.FnDef(def_id) => mir_types.ConstantKind.FnDef(def_id),
+        &mir_types.ConstantKind.ConstDef(def_id) => mir_types.ConstantKind.ConstDef(def_id),
+        &mir_types.ConstantKind.StaticDef(def_id) => mir_types.ConstantKind.StaticDef(def_id),
+        &mir_types.ConstantKind.ZeroSized => mir_types.ConstantKind.ZeroSized,
     }
 }
 
 /// Clears the move status of a local after reassignment.
 ///
 /// Call this after assigning to a local to allow it to be used again.
-pub fn clear_move_on_assign(ctx: &mut mir_lower_ctx::MirLowerCtx, local: mir_def::MirLocalId) {
+pub fn clear_move_on_assign(ctx: &mut mir_lower_ctx.MirLowerCtx, local: mir_def.MirLocalId) {
     ctx.move_tracker.clear_move(local);
 }
 
@@ -432,17 +432,17 @@ pub fn clear_move_on_assign(ctx: &mut mir_lower_ctx::MirLowerCtx, local: mir_def
 // ============================================================
 
 /// Returns true if a pattern is irrefutable (always matches).
-pub fn is_irrefutable_pattern(pattern: &hir_expr::Pattern) -> bool {
+pub fn is_irrefutable_pattern(pattern: &hir_expr.Pattern) -> bool {
     match &pattern.kind {
-        &hir_expr::PatternKind::Wildcard => true,
-        &hir_expr::PatternKind::Rest => true,
-        &hir_expr::PatternKind::Binding { local_id: _, name: _, mode: _, ref subpattern } => {
+        &hir_expr.PatternKind.Wildcard => true,
+        &hir_expr.PatternKind.Rest => true,
+        &hir_expr.PatternKind.Binding { local_id: _, name: _, mode: _, ref subpattern } => {
             match subpattern {
-                &Option::Some(ref sub) => is_irrefutable_pattern(sub.as_ref()),
-                &Option::None => true,
+                &Option.Some(ref sub) => is_irrefutable_pattern(sub.as_ref()),
+                &Option.None => true,
             }
         }
-        &hir_expr::PatternKind::Tuple(ref pats) => {
+        &hir_expr.PatternKind.Tuple(ref pats) => {
             for i in 0usize..pats.len() {
                 if !is_irrefutable_pattern(&pats[i]) {
                     return false;
@@ -450,7 +450,7 @@ pub fn is_irrefutable_pattern(pattern: &hir_expr::Pattern) -> bool {
             }
             true
         }
-        &hir_expr::PatternKind::Struct { path: _, ref fields, has_rest } => {
+        &hir_expr.PatternKind.Struct { path: _, ref fields, has_rest } => {
             if has_rest {
                 for i in 0usize..fields.len() {
                     if !is_irrefutable_pattern(&fields[i].pattern) {
@@ -462,17 +462,17 @@ pub fn is_irrefutable_pattern(pattern: &hir_expr::Pattern) -> bool {
                 false
             }
         }
-        &hir_expr::PatternKind::Ref { mutable: _, ref inner } => {
+        &hir_expr.PatternKind.Ref { mutable: _, ref inner } => {
             is_irrefutable_pattern(inner.as_ref())
         }
         // Refutable patterns
-        &hir_expr::PatternKind::Literal(_) => false,
-        &hir_expr::PatternKind::TupleStruct { path: _, fields: _ } => false,
-        &hir_expr::PatternKind::Slice { prefix: _, rest: _, suffix: _ } => false,
-        &hir_expr::PatternKind::Or(_) => false,
-        &hir_expr::PatternKind::Range { start: _, end_val: _, inclusive: _ } => false,
-        &hir_expr::PatternKind::Path(_) => false,
-        &hir_expr::PatternKind::Error => true,
+        &hir_expr.PatternKind.Literal(_) => false,
+        &hir_expr.PatternKind.TupleStruct { path: _, fields: _ } => false,
+        &hir_expr.PatternKind.Slice { prefix: _, rest: _, suffix: _ } => false,
+        &hir_expr.PatternKind.Or(_) => false,
+        &hir_expr.PatternKind.Range { start: _, end_val: _, inclusive: _ } => false,
+        &hir_expr.PatternKind.Path(_) => false,
+        &hir_expr.PatternKind.Error => true,
     }
 }
 
@@ -480,122 +480,122 @@ pub fn is_irrefutable_pattern(pattern: &hir_expr::Pattern) -> bool {
 // Type Clone Implementation
 // ============================================================
 
-impl hir_ty::Type {
+impl hir_ty.Type {
     /// Clones a type.
-    pub fn clone(self: &hir_ty::Type) -> hir_ty::Type {
-        hir_ty::Type::new(self.kind.clone())
+    pub fn clone(self: &hir_ty.Type) -> hir_ty.Type {
+        hir_ty.Type.new(self.kind.clone())
     }
 }
 
-impl hir_ty::TypeKind {
+impl hir_ty.TypeKind {
     /// Clones a type kind.
-    pub fn clone(self: &hir_ty::TypeKind) -> hir_ty::TypeKind {
+    pub fn clone(self: &hir_ty.TypeKind) -> hir_ty.TypeKind {
         match self {
-            &hir_ty::TypeKind::Primitive(ref p) => hir_ty::TypeKind::Primitive(p.clone()),
-            &hir_ty::TypeKind::Tuple(ref elems) => {
-                let mut cloned = Vec::new();
+            &hir_ty.TypeKind.Primitive(ref p) => hir_ty.TypeKind.Primitive(p.clone()),
+            &hir_ty.TypeKind.Tuple(ref elems) => {
+                let mut cloned = Vec.new();
                 for i in 0usize..elems.len() {
                     cloned.push(elems[i].clone());
                 }
-                hir_ty::TypeKind::Tuple(cloned)
+                hir_ty.TypeKind.Tuple(cloned)
             }
-            &hir_ty::TypeKind::Array { ref element, size } => {
-                hir_ty::TypeKind::Array {
-                    element: { let el_ref = element.as_ref(); Box::new(el_ref.clone()) },
+            &hir_ty.TypeKind.Array { ref element, size } => {
+                hir_ty.TypeKind.Array {
+                    element: { let el_ref = element.as_ref(); Box.new(el_ref.clone()) },
                     size: size,
                 }
             }
-            &hir_ty::TypeKind::Slice { ref element } => {
-                hir_ty::TypeKind::Slice {
-                    element: { let el_ref = element.as_ref(); Box::new(el_ref.clone()) },
+            &hir_ty.TypeKind.Slice { ref element } => {
+                hir_ty.TypeKind.Slice {
+                    element: { let el_ref = element.as_ref(); Box.new(el_ref.clone()) },
                 }
             }
-            &hir_ty::TypeKind::Ref { ref inner, mutable } => {
-                hir_ty::TypeKind::Ref {
-                    inner: { let in_ref = inner.as_ref(); Box::new(in_ref.clone()) },
+            &hir_ty.TypeKind.Ref { ref inner, mutable } => {
+                hir_ty.TypeKind.Ref {
+                    inner: { let in_ref = inner.as_ref(); Box.new(in_ref.clone()) },
                     mutable: mutable,
                 }
             }
-            &hir_ty::TypeKind::Ptr { ref inner, mutable } => {
-                hir_ty::TypeKind::Ptr {
-                    inner: { let in_ref = inner.as_ref(); Box::new(in_ref.clone()) },
+            &hir_ty.TypeKind.Ptr { ref inner, mutable } => {
+                hir_ty.TypeKind.Ptr {
+                    inner: { let in_ref = inner.as_ref(); Box.new(in_ref.clone()) },
                     mutable: mutable,
                 }
             }
-            &hir_ty::TypeKind::Fn { ref params, ref ret, ref effects } => {
-                let mut cloned_params = Vec::new();
+            &hir_ty.TypeKind.Fn { ref params, ref ret, ref effects } => {
+                let mut cloned_params = Vec.new();
                 for i in 0usize..params.len() {
                     cloned_params.push(params[i].clone());
                 }
-                hir_ty::TypeKind::Fn {
+                hir_ty.TypeKind.Fn {
                     params: cloned_params,
-                    ret: { let ret_ref = ret.as_ref(); Box::new(ret_ref.clone()) },
+                    ret: { let ret_ref = ret.as_ref(); Box.new(ret_ref.clone()) },
                     effects: effects.clone(),
                 }
             }
-            &hir_ty::TypeKind::Closure { def_id, ref params, ref ret } => {
-                let mut cloned_params = Vec::new();
+            &hir_ty.TypeKind.Closure { def_id, ref params, ref ret } => {
+                let mut cloned_params = Vec.new();
                 for i in 0usize..params.len() {
                     cloned_params.push(params[i].clone());
                 }
-                hir_ty::TypeKind::Closure {
+                hir_ty.TypeKind.Closure {
                     def_id: def_id,
                     params: cloned_params,
-                    ret: { let ret_ref = ret.as_ref(); Box::new(ret_ref.clone()) },
+                    ret: { let ret_ref = ret.as_ref(); Box.new(ret_ref.clone()) },
                 }
             }
-            &hir_ty::TypeKind::Adt { ref def_id, ref args } => {
-                let mut cloned_args = Vec::new();
+            &hir_ty.TypeKind.Adt { ref def_id, ref args } => {
+                let mut cloned_args = Vec.new();
                 for i in 0usize..args.len() {
                     cloned_args.push(args[i].clone());
                 }
-                hir_ty::TypeKind::Adt {
+                hir_ty.TypeKind.Adt {
                     def_id: *def_id,
                     args: cloned_args,
                 }
             }
-            &hir_ty::TypeKind::Infer(ref v) => hir_ty::TypeKind::Infer(*v),
-            &hir_ty::TypeKind::Param(ref v) => hir_ty::TypeKind::Param(*v),
-            &hir_ty::TypeKind::Record { ref fields, ref row_var } => {
-                let mut cloned_fields = Vec::new();
+            &hir_ty.TypeKind.Infer(ref v) => hir_ty.TypeKind.Infer(*v),
+            &hir_ty.TypeKind.Param(ref v) => hir_ty.TypeKind.Param(*v),
+            &hir_ty.TypeKind.Record { ref fields, ref row_var } => {
+                let mut cloned_fields = Vec.new();
                 for i in 0usize..fields.len() {
                     cloned_fields.push(fields[i].clone());
                 }
-                hir_ty::TypeKind::Record {
+                hir_ty.TypeKind.Record {
                     fields: cloned_fields,
                     row_var: *row_var,
                 }
             }
-            &hir_ty::TypeKind::Forall { ref params, ref body } => {
-                let mut cloned_params = Vec::new();
+            &hir_ty.TypeKind.Forall { ref params, ref body } => {
+                let mut cloned_params = Vec.new();
                 for i in 0usize..params.len() {
                     cloned_params.push(params[i]);
                 }
-                hir_ty::TypeKind::Forall {
+                hir_ty.TypeKind.Forall {
                     params: cloned_params,
-                    body: { let body_ref = body.as_ref(); Box::new(body_ref.clone()) },
+                    body: { let body_ref = body.as_ref(); Box.new(body_ref.clone()) },
                 }
             }
-            &hir_ty::TypeKind::Never => hir_ty::TypeKind::Never,
-            &hir_ty::TypeKind::Error => hir_ty::TypeKind::Error,
-            &hir_ty::TypeKind::Ownership { ref qualifier, ref inner } => {
-                hir_ty::TypeKind::Ownership {
+            &hir_ty.TypeKind.Never => hir_ty.TypeKind.Never,
+            &hir_ty.TypeKind.Error => hir_ty.TypeKind.Error,
+            &hir_ty.TypeKind.Ownership { ref qualifier, ref inner } => {
+                hir_ty.TypeKind.Ownership {
                     qualifier: qualifier.clone(),
-                    inner: { let in_ref = inner.as_ref(); Box::new(in_ref.clone()) },
+                    inner: { let in_ref = inner.as_ref(); Box.new(in_ref.clone()) },
                 }
             }
-            &hir_ty::TypeKind::Range { ref element, inclusive } => {
-                hir_ty::TypeKind::Range {
-                    element: { let el_ref = element.as_ref(); Box::new(el_ref.clone()) },
+            &hir_ty.TypeKind.Range { ref element, inclusive } => {
+                hir_ty.TypeKind.Range {
+                    element: { let el_ref = element.as_ref(); Box.new(el_ref.clone()) },
                     inclusive: inclusive,
                 }
             }
-            &hir_ty::TypeKind::DynTrait { trait_id, ref auto_traits } => {
-                let mut cloned_auto = Vec::new();
+            &hir_ty.TypeKind.DynTrait { trait_id, ref auto_traits } => {
+                let mut cloned_auto = Vec.new();
                 for i in 0usize..auto_traits.len() {
                     cloned_auto.push(auto_traits[i]);
                 }
-                hir_ty::TypeKind::DynTrait {
+                hir_ty.TypeKind.DynTrait {
                     trait_id: trait_id,
                     auto_traits: cloned_auto,
                 }
@@ -604,59 +604,59 @@ impl hir_ty::TypeKind {
     }
 }
 
-impl hir_ty::PrimitiveTy {
-    pub fn clone(self: &hir_ty::PrimitiveTy) -> hir_ty::PrimitiveTy {
+impl hir_ty.PrimitiveTy {
+    pub fn clone(self: &hir_ty.PrimitiveTy) -> hir_ty.PrimitiveTy {
         match self {
-            &hir_ty::PrimitiveTy::Bool => hir_ty::PrimitiveTy::Bool,
-            &hir_ty::PrimitiveTy::I8 => hir_ty::PrimitiveTy::I8,
-            &hir_ty::PrimitiveTy::I16 => hir_ty::PrimitiveTy::I16,
-            &hir_ty::PrimitiveTy::I32 => hir_ty::PrimitiveTy::I32,
-            &hir_ty::PrimitiveTy::I64 => hir_ty::PrimitiveTy::I64,
-            &hir_ty::PrimitiveTy::I128 => hir_ty::PrimitiveTy::I128,
-            &hir_ty::PrimitiveTy::Isize => hir_ty::PrimitiveTy::Isize,
-            &hir_ty::PrimitiveTy::U8 => hir_ty::PrimitiveTy::U8,
-            &hir_ty::PrimitiveTy::U16 => hir_ty::PrimitiveTy::U16,
-            &hir_ty::PrimitiveTy::U32 => hir_ty::PrimitiveTy::U32,
-            &hir_ty::PrimitiveTy::U64 => hir_ty::PrimitiveTy::U64,
-            &hir_ty::PrimitiveTy::U128 => hir_ty::PrimitiveTy::U128,
-            &hir_ty::PrimitiveTy::Usize => hir_ty::PrimitiveTy::Usize,
-            &hir_ty::PrimitiveTy::F32 => hir_ty::PrimitiveTy::F32,
-            &hir_ty::PrimitiveTy::F64 => hir_ty::PrimitiveTy::F64,
-            &hir_ty::PrimitiveTy::Char => hir_ty::PrimitiveTy::Char,
-            &hir_ty::PrimitiveTy::Str => hir_ty::PrimitiveTy::Str,
+            &hir_ty.PrimitiveTy.Bool => hir_ty.PrimitiveTy.Bool,
+            &hir_ty.PrimitiveTy.I8 => hir_ty.PrimitiveTy.I8,
+            &hir_ty.PrimitiveTy.I16 => hir_ty.PrimitiveTy.I16,
+            &hir_ty.PrimitiveTy.I32 => hir_ty.PrimitiveTy.I32,
+            &hir_ty.PrimitiveTy.I64 => hir_ty.PrimitiveTy.I64,
+            &hir_ty.PrimitiveTy.I128 => hir_ty.PrimitiveTy.I128,
+            &hir_ty.PrimitiveTy.Isize => hir_ty.PrimitiveTy.Isize,
+            &hir_ty.PrimitiveTy.U8 => hir_ty.PrimitiveTy.U8,
+            &hir_ty.PrimitiveTy.U16 => hir_ty.PrimitiveTy.U16,
+            &hir_ty.PrimitiveTy.U32 => hir_ty.PrimitiveTy.U32,
+            &hir_ty.PrimitiveTy.U64 => hir_ty.PrimitiveTy.U64,
+            &hir_ty.PrimitiveTy.U128 => hir_ty.PrimitiveTy.U128,
+            &hir_ty.PrimitiveTy.Usize => hir_ty.PrimitiveTy.Usize,
+            &hir_ty.PrimitiveTy.F32 => hir_ty.PrimitiveTy.F32,
+            &hir_ty.PrimitiveTy.F64 => hir_ty.PrimitiveTy.F64,
+            &hir_ty.PrimitiveTy.Char => hir_ty.PrimitiveTy.Char,
+            &hir_ty.PrimitiveTy.Str => hir_ty.PrimitiveTy.Str,
         }
     }
 }
 
-impl hir_ty::EffectRow {
-    pub fn clone(self: &hir_ty::EffectRow) -> hir_ty::EffectRow {
-        let mut cloned_effects = Vec::new();
+impl hir_ty.EffectRow {
+    pub fn clone(self: &hir_ty.EffectRow) -> hir_ty.EffectRow {
+        let mut cloned_effects = Vec.new();
         for i in 0usize..self.effects.len() {
             cloned_effects.push(self.effects[i].clone());
         }
-        hir_ty::EffectRow {
+        hir_ty.EffectRow {
             effects: cloned_effects,
             row_var: self.row_var,
         }
     }
 }
 
-impl hir_ty::EffectRef {
-    pub fn clone(self: &hir_ty::EffectRef) -> hir_ty::EffectRef {
-        let mut cloned_args = Vec::new();
+impl hir_ty.EffectRef {
+    pub fn clone(self: &hir_ty.EffectRef) -> hir_ty.EffectRef {
+        let mut cloned_args = Vec.new();
         for i in 0usize..self.args.len() {
             cloned_args.push(self.args[i].clone());
         }
-        hir_ty::EffectRef {
+        hir_ty.EffectRef {
             def_id: self.def_id,
             args: cloned_args,
         }
     }
 }
 
-impl hir_ty::RecordField {
-    pub fn clone(self: &hir_ty::RecordField) -> hir_ty::RecordField {
-        hir_ty::RecordField {
+impl hir_ty.RecordField {
+    pub fn clone(self: &hir_ty.RecordField) -> hir_ty.RecordField {
+        hir_ty.RecordField {
             name: self.name,
             ty: self.ty.clone(),
         }

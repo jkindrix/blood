@@ -27,15 +27,15 @@ mod type_intern;
 /// Result of MIR lowering for a single function body.
 pub struct MirLowerResult {
     /// The lowered MIR body.
-    pub body: mir_body::MirBody,
+    pub body: mir_body.MirBody,
     /// Errors encountered during lowering.
-    pub errors: Vec<mir_lower_ctx::MirLowerError>,
+    pub errors: Vec<mir_lower_ctx.MirLowerError>,
     /// Closure function names discovered during lowering.
     pub closure_names: Vec<String>,
     /// Closure MIR bodies (parallel to closure_names).
-    pub closure_mir: Vec<mir_body::MirBody>,
+    pub closure_mir: Vec<mir_body.MirBody>,
     /// Monomorphization requests from const-generic call interception.
-    pub mono_requests: Vec<mir_lower_ctx::MonoRequest>,
+    pub mono_requests: Vec<mir_lower_ctx.MonoRequest>,
     /// Next mono DefId counter (after allocations in this lowering).
     pub next_mono_def_id: u32,
 }
@@ -52,14 +52,14 @@ pub struct MirLowerResult {
 /// The method_resolutions parameter carries resolved method DefIds from
 /// the type checker for method call expressions.
 pub fn lower_body(
-    def_id: hir_def::DefId,
-    body: &hir_expr::Body,
-    return_ty: type_intern::TyId,
-    span: common::Span,
-    subst_table: &unify::SubstTable,
-    method_resolutions: &Vec<common::MethodResEntry>,
-    field_resolutions: &Vec<common::FieldResEntry>,
-    coercion_entries: &Vec<common::CoercionEntry>,
+    def_id: hir_def.DefId,
+    body: &hir_expr.Body,
+    return_ty: type_intern.TyId,
+    span: common.Span,
+    subst_table: &unify.SubstTable,
+    method_resolutions: &Vec<common.MethodResEntry>,
+    field_resolutions: &Vec<common.FieldResEntry>,
+    coercion_entries: &Vec<common.CoercionEntry>,
 ) -> MirLowerResult {
     // Resolve the return type through the substitution table (TyId-native)
     let resolved_return_id = unify::apply_substs_id(subst_table, return_ty);
@@ -77,7 +77,7 @@ pub fn lower_body(
     let cloned_coercions = clone_coercion_entries(coercion_entries);
 
     // Create lowering context with the substitution table address, method and field resolutions
-    let mut ctx = mir_lower_ctx::MirLowerCtx::new(def_id, resolved_return_id, span, subst_table_addr, cloned_resolutions, cloned_field_res, cloned_coercions);
+    let mut ctx = mir_lower_ctx.MirLowerCtx.new(def_id, resolved_return_id, span, subst_table_addr, cloned_resolutions, cloned_field_res, cloned_coercions);
 
     // Lower parameters (first param_count locals are parameters)
     lower_params_from_body(&mut ctx, body, span);
@@ -95,7 +95,7 @@ pub fn lower_body(
 
     // Directly copy the closure Vecs (bitwise copy of Vec struct).
     // Blood has no destructors — both copies point to the same buffer,
-    // but the original is consumed by finish(). We do NOT use Vec::pop()
+    // but the original is consumed by finish(). We do NOT use Vec.pop()
     // because blood-rust has a bug with pop() on Vecs allocated in regions.
     let closure_names = ctx.closure_names;
     let closure_mir = ctx.closure_mir;
@@ -121,17 +121,17 @@ pub fn lower_body(
 /// - Normal bodies that may call const-generic functions (pass const_generic_fn_set)
 /// - Specialized bodies where const params are bound to concrete values (pass const_bindings)
 pub fn lower_body_with_const_info(
-    def_id: hir_def::DefId,
-    body: &hir_expr::Body,
-    return_ty: type_intern::TyId,
-    span: common::Span,
-    subst_table: &unify::SubstTable,
-    method_resolutions: &Vec<common::MethodResEntry>,
-    field_resolutions: &Vec<common::FieldResEntry>,
-    coercion_entries: &Vec<common::CoercionEntry>,
-    const_bindings: Vec<mir_lower_ctx::ConstBinding>,
+    def_id: hir_def.DefId,
+    body: &hir_expr.Body,
+    return_ty: type_intern.TyId,
+    span: common.Span,
+    subst_table: &unify.SubstTable,
+    method_resolutions: &Vec<common.MethodResEntry>,
+    field_resolutions: &Vec<common.FieldResEntry>,
+    coercion_entries: &Vec<common.CoercionEntry>,
+    const_bindings: Vec<mir_lower_ctx.ConstBinding>,
     const_generic_fn_set: Vec<u32>,
-    turbofish_const_args: Vec<mir_lower_ctx::TurbofishConstArg>,
+    turbofish_const_args: Vec<mir_lower_ctx.TurbofishConstArg>,
     const_generic_param_counts: Vec<u32>,
     next_mono_def_id: u32,
 ) -> MirLowerResult {
@@ -141,7 +141,7 @@ pub fn lower_body_with_const_info(
     let cloned_field_res = clone_field_resolutions(field_resolutions);
     let cloned_coercions = clone_coercion_entries(coercion_entries);
 
-    let mut ctx = mir_lower_ctx::MirLowerCtx::new(def_id, resolved_return_id, span, subst_table_addr, cloned_resolutions, cloned_field_res, cloned_coercions);
+    let mut ctx = mir_lower_ctx.MirLowerCtx.new(def_id, resolved_return_id, span, subst_table_addr, cloned_resolutions, cloned_field_res, cloned_coercions);
 
     // Set const-generic fields
     ctx.const_bindings = const_bindings;
@@ -177,9 +177,9 @@ pub fn lower_body_with_const_info(
 ///
 /// In HIR, the first `param_count` locals in the body are the function parameters.
 fn lower_params_from_body(
-    ctx: &mut mir_lower_ctx::MirLowerCtx,
-    body: &hir_expr::Body,
-    span: common::Span,
+    ctx: &mut mir_lower_ctx.MirLowerCtx,
+    body: &hir_expr.Body,
+    span: common.Span,
 ) {
     for i in 0u32..body.param_count {
         let local = &body.locals[i as usize];
@@ -189,7 +189,7 @@ fn lower_params_from_body(
         // correctly increments param_count (new_local does not).
         let mir_local = ctx.builder.add_param(
             resolved_id,
-            String::new(),
+            String.new(),
             local.span,
         );
         // Register mapping from HIR local to MIR local
@@ -206,17 +206,17 @@ fn lower_params_from_body(
 /// Closures are similar to functions but may capture variables from
 /// their environment.
 pub fn lower_closure(
-    def_id: hir_def::DefId,
-    params: &Vec<hir_expr::ClosureParam>,
-    return_ty: type_intern::TyId,
-    body_expr: &hir_expr::Expr,
-    span: common::Span,
-    subst_table: &unify::SubstTable,
-) -> mir_body::MirBody {
+    def_id: hir_def.DefId,
+    params: &Vec<hir_expr.ClosureParam>,
+    return_ty: type_intern.TyId,
+    body_expr: &hir_expr.Expr,
+    span: common.Span,
+    subst_table: &unify.SubstTable,
+) -> mir_body.MirBody {
     // Resolve return type (TyId-native) and create lowering context
     let resolved_return_id = unify::apply_substs_id(subst_table, return_ty);
     let subst_table_addr = subst_table as u64;
-    let mut ctx = mir_lower_ctx::MirLowerCtx::new(def_id, resolved_return_id, span, subst_table_addr, Vec::new(), Vec::new(), Vec::new());
+    let mut ctx = mir_lower_ctx.MirLowerCtx.new(def_id, resolved_return_id, span, subst_table_addr, Vec.new(), Vec.new(), Vec.new());
 
     // Lower closure parameters
     lower_closure_params(&mut ctx, params, span);
@@ -234,9 +234,9 @@ pub fn lower_closure(
 
 /// Lowers closure parameters.
 fn lower_closure_params(
-    ctx: &mut mir_lower_ctx::MirLowerCtx,
-    params: &Vec<hir_expr::ClosureParam>,
-    span: common::Span,
+    ctx: &mut mir_lower_ctx.MirLowerCtx,
+    params: &Vec<hir_expr.ClosureParam>,
+    span: common.Span,
 ) {
     for i in 0usize..params.len() {
         let param = &params[i];
@@ -244,11 +244,11 @@ fn lower_closure_params(
         let resolved_id = ctx.resolve_type_to_id(param.ty);
         let mir_local = ctx.builder.add_param(
             resolved_id,
-            String::new(),
+            String.new(),
             span,
         );
         // Pattern binding for closure params
-        let source = mir_types::Place::local(mir_local);
+        let source = mir_types.Place.local(mir_local);
         mir_lower_pattern::lower_irrefutable_pattern(ctx, &param.pattern, source, span);
     }
 }
@@ -259,16 +259,16 @@ fn lower_closure_params(
 
 /// Lowers a static initializer to MIR.
 pub fn lower_static(
-    def_id: hir_def::DefId,
-    ty: type_intern::TyId,
-    init: &hir_expr::Expr,
-    span: common::Span,
-    subst_table: &unify::SubstTable,
-) -> mir_body::MirBody {
+    def_id: hir_def.DefId,
+    ty: type_intern.TyId,
+    init: &hir_expr.Expr,
+    span: common.Span,
+    subst_table: &unify.SubstTable,
+) -> mir_body.MirBody {
     // Resolve type (TyId-native) and create context
     let resolved_id = unify::apply_substs_id(subst_table, ty);
     let subst_table_addr = subst_table as u64;
-    let mut ctx = mir_lower_ctx::MirLowerCtx::new(def_id, resolved_id, span, subst_table_addr, Vec::new(), Vec::new(), Vec::new());
+    let mut ctx = mir_lower_ctx.MirLowerCtx.new(def_id, resolved_id, span, subst_table_addr, Vec.new(), Vec.new(), Vec.new());
 
     // Lower initializer expression
     mir_lower_expr::lower_expr_to_return(&mut ctx, init);
@@ -283,12 +283,12 @@ pub fn lower_static(
 
 /// Lowers a const initializer to MIR.
 pub fn lower_const(
-    def_id: hir_def::DefId,
-    ty: type_intern::TyId,
-    init: &hir_expr::Expr,
-    span: common::Span,
-    subst_table: &unify::SubstTable,
-) -> mir_body::MirBody {
+    def_id: hir_def.DefId,
+    ty: type_intern.TyId,
+    init: &hir_expr.Expr,
+    span: common.Span,
+    subst_table: &unify.SubstTable,
+) -> mir_body.MirBody {
     // Constants are lowered the same way as statics
     lower_static(def_id, ty, init, span, subst_table)
 }
@@ -300,35 +300,35 @@ pub fn lower_const(
 /// Result of lowering an entire module to MIR.
 pub struct MirModule {
     /// MIR bodies for all functions.
-    pub functions: Vec<mir_body::MirBody>,
+    pub functions: Vec<mir_body.MirBody>,
     /// MIR bodies for all statics.
-    pub statics: Vec<mir_body::MirBody>,
+    pub statics: Vec<mir_body.MirBody>,
     /// MIR bodies for all constants.
-    pub constants: Vec<mir_body::MirBody>,
+    pub constants: Vec<mir_body.MirBody>,
 }
 
 impl MirModule {
     /// Creates a new empty MIR module.
     pub fn new() -> MirModule {
         MirModule {
-            functions: Vec::new(),
-            statics: Vec::new(),
-            constants: Vec::new(),
+            functions: Vec.new(),
+            statics: Vec.new(),
+            constants: Vec.new(),
         }
     }
 
     /// Adds a function body.
-    pub fn add_function(self: &mut MirModule, body: mir_body::MirBody) {
+    pub fn add_function(self: &mut MirModule, body: mir_body.MirBody) {
         self.functions.push(body);
     }
 
     /// Adds a static body.
-    pub fn add_static(self: &mut MirModule, body: mir_body::MirBody) {
+    pub fn add_static(self: &mut MirModule, body: mir_body.MirBody) {
         self.statics.push(body);
     }
 
     /// Adds a constant body.
-    pub fn add_constant(self: &mut MirModule, body: mir_body::MirBody) {
+    pub fn add_constant(self: &mut MirModule, body: mir_body.MirBody) {
         self.constants.push(body);
     }
 
@@ -343,68 +343,68 @@ impl MirModule {
 // ============================================================
 
 /// Checks if a MIR body has any unreachable code.
-pub fn has_unreachable_code(body: &mir_body::MirBody) -> bool {
+pub fn has_unreachable_code(body: &mir_body.MirBody) -> bool {
     // Simple check: any block with unreachable terminator
     for i in 0usize..body.basic_blocks.len() {
         let block = &body.basic_blocks[i];
         match &block.terminator {
-            &Option::Some(ref term) => {
+            &Option.Some(ref term) => {
                 match &term.kind {
-                    &mir_term::TerminatorKind::Unreachable => {
+                    &mir_term.TerminatorKind.Unreachable => {
                         return true;
                     }
                     _ => {}
                 }
             }
-            &Option::None => {}
+            &Option.None => {}
         }
     }
     false
 }
 
 /// Counts the number of basic blocks in a MIR body.
-pub fn block_count(body: &mir_body::MirBody) -> usize {
+pub fn block_count(body: &mir_body.MirBody) -> usize {
     body.basic_blocks.len()
 }
 
 /// Counts the number of locals in a MIR body.
-pub fn local_count(body: &mir_body::MirBody) -> usize {
+pub fn local_count(body: &mir_body.MirBody) -> usize {
     body.locals.len()
 }
 
 /// Gets the return type of a MIR body.
 /// The return type is stored in the first local (_0).
-pub fn get_return_type(body: &mir_body::MirBody) -> hir_ty::Type {
+pub fn get_return_type(body: &mir_body.MirBody) -> hir_ty.Type {
     if body.locals.len() > 0 {
         type_intern::ty_id_to_type(body.locals[0].ty)
     } else {
-        hir_ty::Type::unit()
+        hir_ty.Type.unit()
     }
 }
 
 /// Clones a method resolution table for passing to a new MirLowerCtx.
-fn clone_method_resolutions(src: &Vec<common::MethodResEntry>) -> Vec<common::MethodResEntry> {
-    let mut result: Vec<common::MethodResEntry> = Vec::new();
+fn clone_method_resolutions(src: &Vec<common.MethodResEntry>) -> Vec<common.MethodResEntry> {
+    let mut result: Vec<common.MethodResEntry> = Vec.new();
     for i in 0usize..src.len() {
-        result.push(common::MethodResEntry::new(src[i].body_def_id, src[i].span_start, src[i].def_id_index));
+        result.push(common.MethodResEntry.new(src[i].body_def_id, src[i].span_start, src[i].def_id_index));
     }
     result
 }
 
 /// Clones a field resolution table for passing to a new MirLowerCtx.
-fn clone_field_resolutions(src: &Vec<common::FieldResEntry>) -> Vec<common::FieldResEntry> {
-    let mut result: Vec<common::FieldResEntry> = Vec::new();
+fn clone_field_resolutions(src: &Vec<common.FieldResEntry>) -> Vec<common.FieldResEntry> {
+    let mut result: Vec<common.FieldResEntry> = Vec.new();
     for i in 0usize..src.len() {
-        result.push(common::FieldResEntry::new(src[i].body_def_id, src[i].span_start, src[i].field_idx));
+        result.push(common.FieldResEntry.new(src[i].body_def_id, src[i].span_start, src[i].field_idx));
     }
     result
 }
 
 /// Clones a coercion entry table for passing to a new MirLowerCtx.
-fn clone_coercion_entries(src: &Vec<common::CoercionEntry>) -> Vec<common::CoercionEntry> {
-    let mut result: Vec<common::CoercionEntry> = Vec::new();
+fn clone_coercion_entries(src: &Vec<common.CoercionEntry>) -> Vec<common.CoercionEntry> {
+    let mut result: Vec<common.CoercionEntry> = Vec.new();
     for i in 0usize..src.len() {
-        result.push(common::CoercionEntry::new(src[i].body_def_id, src[i].span_start, src[i].array_len));
+        result.push(common.CoercionEntry.new(src[i].body_def_id, src[i].span_start, src[i].array_len));
     }
     result
 }

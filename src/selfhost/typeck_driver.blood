@@ -37,42 +37,42 @@ pub struct TypeCheckResult {
     /// Whether type checking succeeded.
     pub success: bool,
     /// Type errors encountered.
-    pub errors: Vec<typeck::TypeError>,
+    pub errors: Vec<typeck.TypeError>,
     /// The substitution table from type inference.
     /// Contains resolved type variables that must be applied during MIR lowering.
-    pub subst_table: unify::SubstTable,
+    pub subst_table: unify.SubstTable,
     /// Builtin DefId-to-runtime-name mapping for codegen.
     /// Maps synthetic type checker DefIds to runtime function names.
-    pub builtin_def_names: Vec<typeck::BuiltinDefName>,
+    pub builtin_def_names: Vec<typeck.BuiltinDefName>,
     /// Method resolution side table from type checking.
     /// Maps expression span starts to resolved method DefIds for MIR lowering.
-    pub method_resolutions: Vec<common::MethodResEntry>,
+    pub method_resolutions: Vec<common.MethodResEntry>,
     /// Field resolution side table from type checking.
     /// Maps field access expression span starts to resolved field indices.
-    pub field_resolutions: Vec<common::FieldResEntry>,
+    pub field_resolutions: Vec<common.FieldResEntry>,
     /// Trait default method remappings for codegen.
     /// When a trait default method is used by an impl, calls within the body
     /// targeting abstract trait methods must be redirected to concrete impl methods.
-    pub default_method_remaps: Vec<common::DefaultMethodRemap>,
+    pub default_method_remaps: Vec<common.DefaultMethodRemap>,
     /// Array-to-slice coercion side table from type checking.
     /// Records expressions that need &[T; N] to &[T] conversion during MIR lowering.
-    pub coercion_entries: Vec<common::CoercionEntry>,
+    pub coercion_entries: Vec<common.CoercionEntry>,
 }
 
 impl TypeCheckResult {
     /// Creates a successful result with a substitution table, builtin name mappings,
     /// and method resolution side table.
     pub fn ok(
-        subst_table: unify::SubstTable,
-        builtin_def_names: Vec<typeck::BuiltinDefName>,
-        method_resolutions: Vec<common::MethodResEntry>,
-        field_resolutions: Vec<common::FieldResEntry>,
-        default_method_remaps: Vec<common::DefaultMethodRemap>,
-        coercion_entries: Vec<common::CoercionEntry>,
+        subst_table: unify.SubstTable,
+        builtin_def_names: Vec<typeck.BuiltinDefName>,
+        method_resolutions: Vec<common.MethodResEntry>,
+        field_resolutions: Vec<common.FieldResEntry>,
+        default_method_remaps: Vec<common.DefaultMethodRemap>,
+        coercion_entries: Vec<common.CoercionEntry>,
     ) -> TypeCheckResult {
         TypeCheckResult {
             success: true,
-            errors: Vec::new(),
+            errors: Vec.new(),
             subst_table: subst_table,
             builtin_def_names: builtin_def_names,
             method_resolutions: method_resolutions,
@@ -84,20 +84,20 @@ impl TypeCheckResult {
 
     /// Creates a failed result with errors, a substitution table, and method resolutions.
     pub fn failed(
-        errors: Vec<typeck::TypeError>,
-        subst_table: unify::SubstTable,
-        method_resolutions: Vec<common::MethodResEntry>,
-        field_resolutions: Vec<common::FieldResEntry>,
+        errors: Vec<typeck.TypeError>,
+        subst_table: unify.SubstTable,
+        method_resolutions: Vec<common.MethodResEntry>,
+        field_resolutions: Vec<common.FieldResEntry>,
     ) -> TypeCheckResult {
         TypeCheckResult {
             success: false,
             errors: errors,
             subst_table: subst_table,
-            builtin_def_names: Vec::new(),
+            builtin_def_names: Vec.new(),
             method_resolutions: method_resolutions,
             field_resolutions: field_resolutions,
-            default_method_remaps: Vec::new(),
-            coercion_entries: Vec::new(),
+            default_method_remaps: Vec.new(),
+            coercion_entries: Vec.new(),
         }
     }
 
@@ -120,8 +120,8 @@ impl TypeCheckResult {
 ///
 /// Takes the lowering context which contains all items and bodies,
 /// and returns a TypeCheckResult indicating success or failure.
-pub fn check_types(ctx: &hir_lower_ctx::LoweringCtx) -> TypeCheckResult {
-    let mut checker = typeck::TypeChecker::new();
+pub fn check_types(ctx: &hir_lower_ctx.LoweringCtx) -> TypeCheckResult {
+    let mut checker = typeck.TypeChecker.new();
 
     // Phase 1: Collect type information from items
     // (For now, we skip this since we don't have item signatures stored separately)
@@ -145,9 +145,9 @@ pub fn check_types(ctx: &hir_lower_ctx::LoweringCtx) -> TypeCheckResult {
 
     // Return result with substitution table for type resolution in MIR lowering
     if checker.has_errors() {
-        TypeCheckResult::failed(checker.errors, checker.subst_table, checker.method_resolutions, checker.field_resolutions)
+        TypeCheckResult.failed(checker.errors, checker.subst_table, checker.method_resolutions, checker.field_resolutions)
     } else {
-        TypeCheckResult::ok(checker.subst_table, checker.builtin_def_names, checker.method_resolutions, checker.field_resolutions, checker.default_method_remaps, checker.coercion_entries)
+        TypeCheckResult.ok(checker.subst_table, checker.builtin_def_names, checker.method_resolutions, checker.field_resolutions, checker.default_method_remaps, checker.coercion_entries)
     }
 }
 
@@ -155,10 +155,10 @@ pub fn check_types(ctx: &hir_lower_ctx::LoweringCtx) -> TypeCheckResult {
 ///
 /// This is the preferred entry point when integrating with the driver,
 /// since the driver has LowerResult not LoweringCtx.
-pub fn check_lower_result(result: &hir_lower_ctx::LowerResult) -> TypeCheckResult {
+pub fn check_lower_result(result: &hir_lower_ctx.LowerResult) -> TypeCheckResult {
     // Start the type checker's TyVarId counter where HIR lowering left off
     // to avoid collisions between HIR inference variables and type checker variables.
-    let mut checker = typeck::TypeChecker::new_from(result.next_ty_var);
+    let mut checker = typeck.TypeChecker.new_from(result.next_ty_var);
 
     // Pass builtin type info from HIR lowering
     checker.next_def_id = result.next_def_id;
@@ -176,7 +176,7 @@ pub fn check_lower_result(result: &hir_lower_ctx::LowerResult) -> TypeCheckResul
     // Pass the interner from HIR lowering so method name symbols match.
     register_builtin_signatures(&mut checker, &result.interner);
 
-    // Phase 1b2: Register builtin constructor signatures (String::new, Vec::new, etc.)
+    // Phase 1b2: Register builtin constructor signatures (String.new, Vec.new, etc.)
     // This enables type inference to resolve return types for constructor calls.
     register_builtin_constructor_signatures(&mut checker, &result.builtin_fn_defs);
 
@@ -239,9 +239,9 @@ pub fn check_lower_result(result: &hir_lower_ctx::LowerResult) -> TypeCheckResul
 
     // Return result with substitution table for type resolution in MIR lowering
     if checker.has_errors() {
-        TypeCheckResult::failed(checker.errors, checker.subst_table, checker.method_resolutions, checker.field_resolutions)
+        TypeCheckResult.failed(checker.errors, checker.subst_table, checker.method_resolutions, checker.field_resolutions)
     } else {
-        TypeCheckResult::ok(checker.subst_table, checker.builtin_def_names, checker.method_resolutions, checker.field_resolutions, checker.default_method_remaps, checker.coercion_entries)
+        TypeCheckResult.ok(checker.subst_table, checker.builtin_def_names, checker.method_resolutions, checker.field_resolutions, checker.default_method_remaps, checker.coercion_entries)
     }
 }
 
@@ -250,48 +250,48 @@ pub fn check_lower_result(result: &hir_lower_ctx::LowerResult) -> TypeCheckResul
 /// This populates the type checker with information about struct, enum,
 /// and function definitions so it can resolve types during body checking.
 fn collect_item_signatures(
-    checker: &mut typeck::TypeChecker,
-    items: &Vec<hir_lower_ctx::ItemEntry>,
+    checker: &mut typeck.TypeChecker,
+    items: &Vec<hir_lower_ctx.ItemEntry>,
 ) {
     for i in 0usize..items.len() {
         let entry = &items[i];
         match &entry.item.kind {
-            &hir_item::ItemKind::Fn(ref fn_def) => {
+            &hir_item.ItemKind.Fn(ref fn_def) => {
                 // Register function signature
                 checker.register_fn_sig(entry.def_id, &fn_def.sig);
             }
-            &hir_item::ItemKind::Struct(ref struct_def) => {
+            &hir_item.ItemKind.Struct(ref struct_def) => {
                 // Register struct definition
                 checker.register_struct(entry.def_id, entry.item.name.symbol, struct_def);
             }
-            &hir_item::ItemKind::Enum(ref enum_def) => {
+            &hir_item.ItemKind.Enum(ref enum_def) => {
                 // Register enum definition
                 checker.register_enum(entry.def_id, entry.item.name.symbol, enum_def);
             }
-            &hir_item::ItemKind::Const(ref const_def) => {
+            &hir_item.ItemKind.Const(ref const_def) => {
                 // Register constant definition
                 checker.register_const(entry.def_id, entry.item.name.symbol, const_def.ty);
             }
-            &hir_item::ItemKind::Static(ref static_def) => {
+            &hir_item.ItemKind.Static(ref static_def) => {
                 // Register static definition
                 checker.register_static(entry.def_id, entry.item.name.symbol, static_def.ty, static_def.mutable);
             }
-            &hir_item::ItemKind::Impl(ref impl_def) => {
+            &hir_item.ItemKind.Impl(ref impl_def) => {
                 // Register impl block for method resolution
                 register_impl(checker, entry.def_id, impl_def, items);
             }
             // Other items don't need registration for basic type checking
-            &hir_item::ItemKind::TypeAlias(_) => {}
-            &hir_item::ItemKind::Trait(ref trait_def) => {
+            &hir_item.ItemKind.TypeAlias(_) => {}
+            &hir_item.ItemKind.Trait(ref trait_def) => {
                 register_trait(checker, entry.def_id, entry.item.name.symbol, trait_def);
             }
-            &hir_item::ItemKind::Effect(ref effect_def) => {
+            &hir_item.ItemKind.Effect(ref effect_def) => {
                 register_effect(checker, entry.def_id, entry.item.name.symbol, effect_def);
             }
-            &hir_item::ItemKind::Handler(_) => {}
-            &hir_item::ItemKind::Module(_) => {}
-            &hir_item::ItemKind::Macro(_) => {}
-            &hir_item::ItemKind::Foreign(ref foreign_def) => {
+            &hir_item.ItemKind.Handler(_) => {}
+            &hir_item.ItemKind.Module(_) => {}
+            &hir_item.ItemKind.Macro(_) => {}
+            &hir_item.ItemKind.Foreign(ref foreign_def) => {
                 register_foreign_fns(checker, foreign_def);
             }
         }
@@ -303,15 +303,15 @@ fn collect_item_signatures(
 /// This processes ForeignFn items and registers their typed signatures
 /// so the type checker can validate calls to builtin/FFI functions.
 fn register_foreign_fns(
-    checker: &mut typeck::TypeChecker,
-    foreign_def: &hir_item::ForeignDef,
+    checker: &mut typeck.TypeChecker,
+    foreign_def: &hir_item.ForeignDef,
 ) {
     for i in 0usize..foreign_def.items.len() {
         match &foreign_def.items[i] {
-            &hir_item::ForeignItem::Fn(ref foreign_fn) => {
-                let mut param_tys: Vec<type_intern::TyId> = Vec::new();
+            &hir_item.ForeignItem.Fn(ref foreign_fn) => {
+                let mut param_tys: Vec<type_intern.TyId> = Vec.new();
                 for j in 0usize..foreign_fn.param_tys.len() {
-                    param_tys.push(type_intern::TyId::new(foreign_fn.param_tys[j].index));
+                    param_tys.push(type_intern.TyId.new(foreign_fn.param_tys[j].index));
                 }
                 checker.register_fn_sig_direct(
                     foreign_fn.def_id,
@@ -320,7 +320,7 @@ fn register_foreign_fns(
                     0,
                 );
             }
-            &hir_item::ForeignItem::Static(ref foreign_static) => {
+            &hir_item.ForeignItem.Static(ref foreign_static) => {
                 checker.register_static(
                     foreign_static.def_id,
                     foreign_static.name.symbol,
@@ -328,26 +328,26 @@ fn register_foreign_fns(
                     foreign_static.mutable,
                 );
             }
-            &hir_item::ForeignItem::OpaqueType(_) => {}
+            &hir_item.ForeignItem.OpaqueType(_) => {}
         }
     }
 }
 
 /// Registers a trait definition for type checking.
 fn register_trait(
-    checker: &mut typeck::TypeChecker,
-    def_id: hir_def::DefId,
-    name: common::Symbol,
-    trait_def: &hir_item::TraitDef,
+    checker: &mut typeck.TypeChecker,
+    def_id: hir_def.DefId,
+    name: common.Symbol,
+    trait_def: &hir_item.TraitDef,
 ) {
     let num_generics = count_type_params(&trait_def.generics.params);
-    let mut methods: Vec<typeck::TraitMethodInfo> = Vec::new();
-    let mut assoc_types: Vec<common::Symbol> = Vec::new();
+    let mut methods: Vec<typeck.TraitMethodInfo> = Vec.new();
+    let mut assoc_types: Vec<common.Symbol> = Vec.new();
 
     for i in 0usize..trait_def.items.len() {
         match &trait_def.items[i] {
-            &hir_item::AssocItem::Fn(ref assoc_fn) => {
-                let mut param_tys: Vec<type_intern::TyId> = Vec::new();
+            &hir_item.AssocItem.Fn(ref assoc_fn) => {
+                let mut param_tys: Vec<type_intern.TyId> = Vec.new();
                 let mut takes_self_ref = false;
                 let mut takes_self_mut = false;
 
@@ -360,7 +360,7 @@ fn register_trait(
                     }
                 }
 
-                let method_info = typeck::TraitMethodInfo::new(
+                let method_info = typeck.TraitMethodInfo.new(
                     assoc_fn.def_id,
                     assoc_fn.name.symbol,
                     param_tys,
@@ -377,27 +377,27 @@ fn register_trait(
                     checker.register_fn_sig(assoc_fn.def_id, &assoc_fn.sig);
                 }
             }
-            &hir_item::AssocItem::Type(ref assoc_type) => {
+            &hir_item.AssocItem.Type(ref assoc_type) => {
                 assoc_types.push(assoc_type.name.symbol);
             }
-            &hir_item::AssocItem::Const(_) => {}
+            &hir_item.AssocItem.Const(_) => {}
         }
     }
 
-    let trait_info = typeck::TraitInfo::new(def_id, name, num_generics, methods, assoc_types);
+    let trait_info = typeck.TraitInfo.new(def_id, name, num_generics, methods, assoc_types);
     checker.register_trait(def_id, trait_info);
 
     // Register a synthetic ImplInfo for the trait's Self type so that
     // default method bodies can resolve calls to other trait methods.
     // Within a trait, Self = Adt { def_id: trait_def_id, args: [] }.
     let interner = type_intern::type_interner();
-    let empty_args = interner.intern_ty_list(&Vec::new());
-    let trait_self_ty = interner.mk_adt(hir_def::DefId::new(def_id.index), empty_args);
-    let mut impl_methods: Vec<typeck::MethodInfo> = Vec::new();
+    let empty_args = interner.intern_ty_list(&Vec.new());
+    let trait_self_ty = interner.mk_adt(hir_def.DefId.new(def_id.index), empty_args);
+    let mut impl_methods: Vec<typeck.MethodInfo> = Vec.new();
     for k in 0usize..trait_def.items.len() {
         match &trait_def.items[k] {
-            &hir_item::AssocItem::Fn(ref assoc_fn) => {
-                let mut pm_tys: Vec<type_intern::TyId> = Vec::new();
+            &hir_item.AssocItem.Fn(ref assoc_fn) => {
+                let mut pm_tys: Vec<type_intern.TyId> = Vec.new();
                 let mut takes_sr = false;
                 let mut takes_sm = false;
                 for pj in 0usize..assoc_fn.sig.params.len() {
@@ -408,7 +408,7 @@ fn register_trait(
                         pm_tys.push(assoc_fn.sig.params[pj].ty);
                     }
                 }
-                let mi = typeck::MethodInfo::new(
+                let mi = typeck.MethodInfo.new(
                     assoc_fn.def_id,
                     assoc_fn.name.symbol,
                     pm_tys,
@@ -418,11 +418,11 @@ fn register_trait(
                 );
                 impl_methods.push(mi);
             }
-            &hir_item::AssocItem::Type(_) => {}
-            &hir_item::AssocItem::Const(_) => {}
+            &hir_item.AssocItem.Type(_) => {}
+            &hir_item.AssocItem.Const(_) => {}
         }
     }
-    let trait_impl = typeck::ImplInfo::new(
+    let trait_impl = typeck.ImplInfo.new(
         def_id,
         trait_self_ty,
         num_generics,
@@ -433,18 +433,18 @@ fn register_trait(
 
 /// Registers an impl block for method resolution.
 fn register_impl(
-    checker: &mut typeck::TypeChecker,
-    def_id: hir_def::DefId,
-    impl_def: &hir_item::ImplDef,
-    items: &Vec<hir_lower_ctx::ItemEntry>,
+    checker: &mut typeck.TypeChecker,
+    def_id: hir_def.DefId,
+    impl_def: &hir_item.ImplDef,
+    items: &Vec<hir_lower_ctx.ItemEntry>,
 ) {
     // Extract method info from associated items
-    let mut methods: Vec<typeck::MethodInfo> = Vec::new();
+    let mut methods: Vec<typeck.MethodInfo> = Vec.new();
     for i in 0usize..impl_def.items.len() {
         match &impl_def.items[i] {
-            &hir_item::AssocItem::Fn(ref assoc_fn) => {
+            &hir_item.AssocItem.Fn(ref assoc_fn) => {
                 // Extract parameter types from signature (skipping self param)
-                let mut param_tys: Vec<type_intern::TyId> = Vec::new();
+                let mut param_tys: Vec<type_intern.TyId> = Vec.new();
                 let mut takes_self_ref = false;
                 let mut takes_self_mut = false;
 
@@ -464,7 +464,7 @@ fn register_impl(
                     }
                 }
 
-                let method_info = typeck::MethodInfo::new(
+                let method_info = typeck.MethodInfo.new(
                     assoc_fn.def_id,
                     assoc_fn.name.symbol,
                     param_tys,
@@ -476,14 +476,14 @@ fn register_impl(
 
                 // Also register the full function signature in fn_sigs so that
                 // infer_path can find associated functions by DefId. Without this,
-                // calls like Counter::new(10) would fail to resolve the return type,
+                // calls like Counter.new(10) would fail to resolve the return type,
                 // leaving downstream method call receivers as Infer variables.
                 checker.register_fn_sig(assoc_fn.def_id, &assoc_fn.sig);
             }
-            &hir_item::AssocItem::Type(_) => {
+            &hir_item.AssocItem.Type(_) => {
                 // Associated types don't need registration for basic method resolution
             }
-            &hir_item::AssocItem::Const(_) => {
+            &hir_item.AssocItem.Const(_) => {
                 // Associated consts don't need registration for basic method resolution
             }
         }
@@ -491,15 +491,15 @@ fn register_impl(
 
     // If this impl is for a trait, inject default methods not overridden in the impl
     match &impl_def.trait_ref {
-        &Option::Some(ref trait_ref) => {
+        &Option.Some(ref trait_ref) => {
             inject_default_methods(checker, &mut methods, trait_ref, items);
         }
-        &Option::None => {}
+        &Option.None => {}
     }
 
     // Create and register impl info
     let num_generics = count_type_params(&impl_def.generics.params);
-    let impl_info = typeck::ImplInfo::new(
+    let impl_info = typeck.ImplInfo.new(
         def_id,
         impl_def.self_ty,
         num_generics,
@@ -517,14 +517,14 @@ fn register_impl(
 /// trait's abstract method DefId. At codegen time, these must be redirected
 /// to the concrete impl's method DefIds.
 fn inject_default_methods(
-    checker: &mut typeck::TypeChecker,
-    methods: &mut Vec<typeck::MethodInfo>,
-    trait_ref: &hir_ty::TraitRef,
-    items: &Vec<hir_lower_ctx::ItemEntry>,
+    checker: &mut typeck.TypeChecker,
+    methods: &mut Vec<typeck.MethodInfo>,
+    trait_ref: &hir_ty.TraitRef,
+    items: &Vec<hir_lower_ctx.ItemEntry>,
 ) {
     // Look up the trait definition
     match checker.get_trait(trait_ref.def_id) {
-        Option::Some(trait_info) => {
+        Option.Some(trait_info) => {
             // For each trait method with a default implementation
             for ti in 0usize..trait_info.methods.len() {
                 let trait_method = &trait_info.methods[ti];
@@ -539,17 +539,17 @@ fn inject_default_methods(
 
                     if !already_overridden {
                         // Copy parameter types (TyId — trivial u32 copy)
-                        let mut param_tys: Vec<type_intern::TyId> = Vec::new();
+                        let mut param_tys: Vec<type_intern.TyId> = Vec.new();
                         for pi in 0usize..trait_method.param_tys.len() {
-                            param_tys.push(type_intern::TyId::new(trait_method.param_tys[pi].index));
+                            param_tys.push(type_intern.TyId.new(trait_method.param_tys[pi].index));
                         }
 
                         // Create a MethodInfo for the default method
-                        let method_info = typeck::MethodInfo::new(
+                        let method_info = typeck.MethodInfo.new(
                             trait_method.def_id,
                             trait_method.name,
                             param_tys,
-                            type_intern::TyId::new(trait_method.return_ty.index),
+                            type_intern.TyId.new(trait_method.return_ty.index),
                             trait_method.takes_self_ref,
                             trait_method.takes_self_mut,
                         );
@@ -558,7 +558,7 @@ fn inject_default_methods(
                         // Build call remapping table for this default method.
                         // For each trait method that IS overridden in the impl,
                         // map the trait method DefId to the impl method DefId.
-                        let mut call_remaps: Vec<common::CallRemapEntry> = Vec::new();
+                        let mut call_remaps: Vec<common.CallRemapEntry> = Vec.new();
                         for ri in 0usize..trait_info.methods.len() {
                             let other_trait_method = &trait_info.methods[ri];
                             // Find the impl method that overrides this trait method
@@ -567,7 +567,7 @@ fn inject_default_methods(
                                     && methods[imi].def_id.index != other_trait_method.def_id.index
                                 {
                                     // This impl method overrides the trait method
-                                    call_remaps.push(common::CallRemapEntry::new(
+                                    call_remaps.push(common.CallRemapEntry.new(
                                         other_trait_method.def_id.index,
                                         methods[imi].def_id.index,
                                     ));
@@ -577,7 +577,7 @@ fn inject_default_methods(
 
                         if call_remaps.len() > 0 {
                             checker.default_method_remaps.push(
-                                common::DefaultMethodRemap::new(
+                                common.DefaultMethodRemap.new(
                                     trait_method.def_id.index,
                                     call_remaps,
                                 ),
@@ -587,7 +587,7 @@ fn inject_default_methods(
                 }
             }
         }
-        Option::None => {
+        Option.None => {
             // Trait not found — can happen if trait is in external module
         }
     }
@@ -595,28 +595,28 @@ fn inject_default_methods(
 
 /// Registers an effect definition for type checking.
 fn register_effect(
-    checker: &mut typeck::TypeChecker,
-    def_id: hir_def::DefId,
-    name: common::Symbol,
-    effect_def: &hir_item::EffectDef,
+    checker: &mut typeck.TypeChecker,
+    def_id: hir_def.DefId,
+    name: common.Symbol,
+    effect_def: &hir_item.EffectDef,
 ) {
     let num_generics = count_type_params(&effect_def.generics.params);
 
     // Collect operation names
-    let mut op_names: Vec<common::Symbol> = Vec::new();
-    let mut operations: Vec<typeck::EffectOpInfo> = Vec::new();
+    let mut op_names: Vec<common.Symbol> = Vec.new();
+    let mut operations: Vec<typeck.EffectOpInfo> = Vec.new();
 
     for i in 0usize..effect_def.operations.len() {
         let effect_op = &effect_def.operations[i];
         op_names.push(effect_op.name.symbol);
 
         // Convert parameter types at HIR boundary
-        let mut param_tys: Vec<type_intern::TyId> = Vec::new();
+        let mut param_tys: Vec<type_intern.TyId> = Vec.new();
         for j in 0usize..effect_op.param_tys.len() {
-            param_tys.push(type_intern::TyId::new(effect_op.param_tys[j].index));
+            param_tys.push(type_intern.TyId.new(effect_op.param_tys[j].index));
         }
 
-        let op_info = typeck::EffectOpInfo::new(
+        let op_info = typeck.EffectOpInfo.new(
             effect_op.def_id,
             effect_op.name.symbol,
             param_tys,
@@ -625,7 +625,7 @@ fn register_effect(
         operations.push(op_info);
     }
 
-    let info = typeck::EffectInfo::new(
+    let info = typeck.EffectInfo.new(
         def_id,
         name,
         num_generics,
@@ -641,15 +641,15 @@ fn register_effect(
 
 /// Counts only type parameters in a generics param list, excluding
 /// lifetime parameters and const parameters.
-fn count_type_params(params: &Vec<hir_ty::GenericParam>) -> u32 {
+fn count_type_params(params: &Vec<hir_ty.GenericParam>) -> u32 {
     let mut count: u32 = 0;
     for i in 0usize..params.len() {
         match &params[i] {
-            &hir_ty::GenericParam::TypeParam(_) => {
+            &hir_ty.GenericParam.TypeParam(_) => {
                 count += 1;
             }
-            &hir_ty::GenericParam::LifetimeParam(_) => {}
-            &hir_ty::GenericParam::ConstParam(_) => {}
+            &hir_ty.GenericParam.LifetimeParam(_) => {}
+            &hir_ty.GenericParam.ConstParam(_) => {}
         }
     }
     count
@@ -666,93 +666,93 @@ fn count_type_params(params: &Vec<hir_ty::GenericParam>) -> u32 {
 /// TypeParam nodes unify naturally through the type checker).
 /// Falls back to unit type if no matching function is found.
 fn find_return_type_for_body(
-    items: &Vec<hir_lower_ctx::ItemEntry>,
-    target_body_id: hir_def::BodyId,
-) -> type_intern::TyId {
+    items: &Vec<hir_lower_ctx.ItemEntry>,
+    target_body_id: hir_def.BodyId,
+) -> type_intern.TyId {
     for i in 0usize..items.len() {
         let entry = &items[i];
         match &entry.item.kind {
-            &hir_item::ItemKind::Fn(ref fn_def) => {
+            &hir_item.ItemKind.Fn(ref fn_def) => {
                 match &fn_def.body_id {
-                    &Option::Some(ref bid) => {
+                    &Option.Some(ref bid) => {
                         if bid.index == target_body_id.index {
                             return fn_def.sig.return_ty;
                         }
                     }
-                    &Option::None => {}
+                    &Option.None => {}
                 }
             }
-            &hir_item::ItemKind::Impl(ref impl_def) => {
+            &hir_item.ItemKind.Impl(ref impl_def) => {
                 // Check associated functions in impl blocks
                 for j in 0usize..impl_def.items.len() {
                     match &impl_def.items[j] {
-                        &hir_item::AssocItem::Fn(ref assoc_fn) => {
+                        &hir_item.AssocItem.Fn(ref assoc_fn) => {
                             match &assoc_fn.body_id {
-                                &Option::Some(ref bid) => {
+                                &Option.Some(ref bid) => {
                                     if bid.index == target_body_id.index {
                                         return assoc_fn.sig.return_ty;
                                     }
                                 }
-                                &Option::None => {}
+                                &Option.None => {}
                             }
                         }
-                        &hir_item::AssocItem::Type(_) => {}
-                        &hir_item::AssocItem::Const(ref assoc_const) => {
+                        &hir_item.AssocItem.Type(_) => {}
+                        &hir_item.AssocItem.Const(ref assoc_const) => {
                             match &assoc_const.body_id {
-                                &Option::Some(ref bid) => {
+                                &Option.Some(ref bid) => {
                                     if bid.index == target_body_id.index {
                                         return assoc_const.ty;
                                     }
                                 }
-                                &Option::None => {}
+                                &Option.None => {}
                             }
                         }
                     }
                 }
             }
             // Other item kinds don't have function bodies
-            &hir_item::ItemKind::Struct(_) => {}
-            &hir_item::ItemKind::Enum(_) => {}
-            &hir_item::ItemKind::TypeAlias(_) => {}
-            &hir_item::ItemKind::Const(ref const_def) => {
+            &hir_item.ItemKind.Struct(_) => {}
+            &hir_item.ItemKind.Enum(_) => {}
+            &hir_item.ItemKind.TypeAlias(_) => {}
+            &hir_item.ItemKind.Const(ref const_def) => {
                 if const_def.body_id.index == target_body_id.index {
                     return const_def.ty;
                 }
             }
-            &hir_item::ItemKind::Static(ref static_def) => {
+            &hir_item.ItemKind.Static(ref static_def) => {
                 if static_def.body_id.index == target_body_id.index {
                     return static_def.ty;
                 }
             }
-            &hir_item::ItemKind::Trait(ref trait_def) => {
+            &hir_item.ItemKind.Trait(ref trait_def) => {
                 // Check default method bodies in trait definitions
                 for j in 0usize..trait_def.items.len() {
                     match &trait_def.items[j] {
-                        &hir_item::AssocItem::Fn(ref assoc_fn) => {
+                        &hir_item.AssocItem.Fn(ref assoc_fn) => {
                             match &assoc_fn.body_id {
-                                &Option::Some(ref bid) => {
+                                &Option.Some(ref bid) => {
                                     if bid.index == target_body_id.index {
                                         return assoc_fn.sig.return_ty;
                                     }
                                 }
-                                &Option::None => {}
+                                &Option.None => {}
                             }
                         }
-                        &hir_item::AssocItem::Type(_) => {}
-                        &hir_item::AssocItem::Const(_) => {}
+                        &hir_item.AssocItem.Type(_) => {}
+                        &hir_item.AssocItem.Const(_) => {}
                     }
                 }
             }
-            &hir_item::ItemKind::Effect(_) => {}
-            &hir_item::ItemKind::Handler(ref handler_def) => {
+            &hir_item.ItemKind.Effect(_) => {}
+            &hir_item.ItemKind.Handler(ref handler_def) => {
                 // Check return clause body
                 match &handler_def.return_clause {
-                    &Option::Some(ref rc) => {
+                    &Option.Some(ref rc) => {
                         if rc.body_id.index == target_body_id.index {
-                            return type_intern::CommonTypes::unit();
+                            return type_intern.CommonTypes.unit();
                         }
                     }
-                    &Option::None => {}
+                    &Option.None => {}
                 }
                 // Check op implementation bodies — look up effect op return type
                 for j in 0usize..handler_def.op_impls.len() {
@@ -762,15 +762,15 @@ fn find_return_type_for_body(
                     }
                 }
             }
-            &hir_item::ItemKind::Module(_) => {}
-            &hir_item::ItemKind::Macro(_) => {}
-            &hir_item::ItemKind::Foreign(_) => {}
+            &hir_item.ItemKind.Module(_) => {}
+            &hir_item.ItemKind.Macro(_) => {}
+            &hir_item.ItemKind.Foreign(_) => {}
         }
     }
     // No matching function found. This can occur for extern functions or
     // functions not yet lowered. Default to unit — the caller relies on
     // type inference to unify the actual return type later.
-    type_intern::CommonTypes::unit()
+    type_intern.CommonTypes.unit()
 }
 
 /// Looks up the return type of an effect operation by its DefId.
@@ -778,12 +778,12 @@ fn find_return_type_for_body(
 /// can mask missing effect definitions — callers should verify the
 /// operation exists before relying on this return type.
 fn find_effect_op_return_type(
-    items: &Vec<hir_lower_ctx::ItemEntry>,
-    op_def_id: hir_def::DefId,
-) -> type_intern::TyId {
+    items: &Vec<hir_lower_ctx.ItemEntry>,
+    op_def_id: hir_def.DefId,
+) -> type_intern.TyId {
     for i in 0usize..items.len() {
         match &items[i].item.kind {
-            &hir_item::ItemKind::Effect(ref effect_def) => {
+            &hir_item.ItemKind.Effect(ref effect_def) => {
                 for j in 0usize..effect_def.operations.len() {
                     let effect_op = &effect_def.operations[j];
                     if effect_op.def_id.index == op_def_id.index {
@@ -797,57 +797,57 @@ fn find_effect_op_return_type(
     // Effect operation not found. This may indicate a missing effect
     // definition or an incorrect DefId. Default to unit — typeck will
     // catch any resulting type mismatch at the call site.
-    type_intern::CommonTypes::unit()
+    type_intern.CommonTypes.unit()
 }
 
 /// Looks up the parameter types of an effect operation for a handler op body.
 /// Returns None if not a handler op body, or Some(Vec of param types).
 fn find_op_param_types_for_body(
-    items: &Vec<hir_lower_ctx::ItemEntry>,
-    target_body_id: hir_def::BodyId,
-) -> Option<Vec<type_intern::TyId>> {
+    items: &Vec<hir_lower_ctx.ItemEntry>,
+    target_body_id: hir_def.BodyId,
+) -> Option<Vec<type_intern.TyId>> {
     for i in 0usize..items.len() {
         match &items[i].item.kind {
-            &hir_item::ItemKind::Handler(ref handler_def) => {
+            &hir_item.ItemKind.Handler(ref handler_def) => {
                 for j in 0usize..handler_def.op_impls.len() {
                     if handler_def.op_impls[j].body_id.index == target_body_id.index {
                         let op_def_id = handler_def.op_impls[j].op_def_id;
                         // Find the effect op param types
                         for ei in 0usize..items.len() {
                             match &items[ei].item.kind {
-                                &hir_item::ItemKind::Effect(ref effect_def) => {
+                                &hir_item.ItemKind.Effect(ref effect_def) => {
                                     for k in 0usize..effect_def.operations.len() {
                                         let effect_op = &effect_def.operations[k];
                                         if effect_op.def_id.index == op_def_id.index {
-                                            let mut param_tys: Vec<type_intern::TyId> = Vec::new();
+                                            let mut param_tys: Vec<type_intern.TyId> = Vec.new();
                                             for p in 0usize..effect_op.param_tys.len() {
-                                                param_tys.push(type_intern::TyId::new(effect_op.param_tys[p].index));
+                                                param_tys.push(type_intern.TyId.new(effect_op.param_tys[p].index));
                                             }
-                                            return Option::Some(param_tys);
+                                            return Option.Some(param_tys);
                                         }
                                     }
                                 }
                                 _ => {}
                             }
                         }
-                        return Option::None;
+                        return Option.None;
                     }
                 }
             }
             _ => {}
         }
     }
-    Option::None
+    Option.None
 }
 
 /// Returns the number of handler state fields for a handler op body.
 fn find_handler_state_count_for_body(
-    items: &Vec<hir_lower_ctx::ItemEntry>,
-    target_body_id: hir_def::BodyId,
+    items: &Vec<hir_lower_ctx.ItemEntry>,
+    target_body_id: hir_def.BodyId,
 ) -> usize {
     for i in 0usize..items.len() {
         match &items[i].item.kind {
-            &hir_item::ItemKind::Handler(ref handler_def) => {
+            &hir_item.ItemKind.Handler(ref handler_def) => {
                 for j in 0usize..handler_def.op_impls.len() {
                     if handler_def.op_impls[j].body_id.index == target_body_id.index {
                         return handler_def.state.len();
@@ -861,16 +861,16 @@ fn find_handler_state_count_for_body(
 }
 
 /// Unify handler op parameter types with their effect-declared types.
-/// This resolves the `Type::infer()` variables created in `lower_op_impl`
+/// This resolves the `Type.infer()` variables created in `lower_op_impl`
 /// so that the op body's parameter locals have correct types during type checking.
 fn unify_handler_op_params(
-    checker: &mut typeck::TypeChecker,
-    items: &Vec<hir_lower_ctx::ItemEntry>,
-    body: &hir_expr::Body,
-    body_id: hir_def::BodyId,
+    checker: &mut typeck.TypeChecker,
+    items: &Vec<hir_lower_ctx.ItemEntry>,
+    body: &hir_expr.Body,
+    body_id: hir_def.BodyId,
 ) {
     match find_op_param_types_for_body(items, body_id) {
-        Option::Some(ref param_tys) => {
+        Option.Some(ref param_tys) => {
             let state_count = find_handler_state_count_for_body(items, body_id);
             for k in 0usize..param_tys.len() {
                 let local_idx = state_count + k;
@@ -878,11 +878,11 @@ fn unify_handler_op_params(
                     let span = body.locals[local_idx].span;
                     // body.locals[].ty is now TyId
                     let local_ty_id = body.locals[local_idx].ty;
-                    checker.unify(local_ty_id, type_intern::TyId::new(param_tys[k].index), span);
+                    checker.unify(local_ty_id, type_intern.TyId.new(param_tys[k].index), span);
                 }
             }
         }
-        Option::None => {}
+        Option.None => {}
     }
 }
 
@@ -890,20 +890,20 @@ fn unify_handler_op_params(
 /// Handler return clause bodies should not be constrained to return unit —
 /// they determine the overall type of the `with ... handle` expression.
 fn is_handler_return_body(
-    items: &Vec<hir_lower_ctx::ItemEntry>,
-    target_body_id: hir_def::BodyId,
+    items: &Vec<hir_lower_ctx.ItemEntry>,
+    target_body_id: hir_def.BodyId,
 ) -> bool {
     for i in 0usize..items.len() {
         let entry = &items[i];
         match &entry.item.kind {
-            &hir_item::ItemKind::Handler(ref handler_def) => {
+            &hir_item.ItemKind.Handler(ref handler_def) => {
                 match &handler_def.return_clause {
-                    &Option::Some(ref rc) => {
+                    &Option.Some(ref rc) => {
                         if rc.body_id.index == target_body_id.index {
                             return true;
                         }
                     }
-                    &Option::None => {}
+                    &Option.None => {}
                 }
             }
             _ => {}
@@ -915,44 +915,44 @@ fn is_handler_return_body(
 /// Finds the effect row DefIds for the function containing a given body.
 /// Returns a Vec<u32> of effect DefIds declared in the function's effect row.
 fn find_effect_row_for_body(
-    items: &Vec<hir_lower_ctx::ItemEntry>,
-    target_body_id: hir_def::BodyId,
+    items: &Vec<hir_lower_ctx.ItemEntry>,
+    target_body_id: hir_def.BodyId,
 ) -> Vec<u32> {
     for i in 0usize..items.len() {
         let entry = &items[i];
         match &entry.item.kind {
-            &hir_item::ItemKind::Fn(ref fn_def) => {
+            &hir_item.ItemKind.Fn(ref fn_def) => {
                 match &fn_def.body_id {
-                    &Option::Some(ref bid) => {
+                    &Option.Some(ref bid) => {
                         if bid.index == target_body_id.index {
                             return collect_effect_def_ids(&fn_def.sig.effects);
                         }
                     }
-                    &Option::None => {}
+                    &Option.None => {}
                 }
             }
-            &hir_item::ItemKind::Impl(ref impl_def) => {
+            &hir_item.ItemKind.Impl(ref impl_def) => {
                 for j in 0usize..impl_def.items.len() {
                     match &impl_def.items[j] {
-                        &hir_item::AssocItem::Fn(ref assoc_fn) => {
+                        &hir_item.AssocItem.Fn(ref assoc_fn) => {
                             match &assoc_fn.body_id {
-                                &Option::Some(ref bid) => {
+                                &Option.Some(ref bid) => {
                                     if bid.index == target_body_id.index {
                                         return collect_effect_def_ids(&assoc_fn.sig.effects);
                                     }
                                 }
-                                &Option::None => {}
+                                &Option.None => {}
                             }
                         }
-                        &hir_item::AssocItem::Type(_) => {}
-                        &hir_item::AssocItem::Const(_) => {}
+                        &hir_item.AssocItem.Type(_) => {}
+                        &hir_item.AssocItem.Const(_) => {}
                     }
                 }
             }
             _ => {}
         }
     }
-    Vec::new()
+    Vec.new()
 }
 
 /// Sets up the type checker's resume context for a handler op body.
@@ -962,27 +962,27 @@ fn find_effect_row_for_body(
 ///   - resume_count: 0 (reset for each body)
 /// For non-handler bodies, this resets all three fields.
 fn setup_handler_op_context(
-    checker: &mut typeck::TypeChecker,
-    items: &Vec<hir_lower_ctx::ItemEntry>,
-    target_body_id: hir_def::BodyId,
+    checker: &mut typeck.TypeChecker,
+    items: &Vec<hir_lower_ctx.ItemEntry>,
+    target_body_id: hir_def.BodyId,
 ) {
     // Reset to defaults
-    checker.resume_ty = Option::None;
+    checker.resume_ty = Option.None;
     checker.in_shallow_handler = false;
     checker.resume_count = 0;
 
     // Search for handler that owns this body
     for i in 0usize..items.len() {
         match &items[i].item.kind {
-            &hir_item::ItemKind::Handler(ref handler_def) => {
+            &hir_item.ItemKind.Handler(ref handler_def) => {
                 for j in 0usize..handler_def.op_impls.len() {
                     if handler_def.op_impls[j].body_id.index == target_body_id.index {
                         // Found the handler op body — set shallow flag
                         match &handler_def.kind {
-                            &common::HandlerKind::Shallow => {
+                            &common.HandlerKind.Shallow => {
                                 checker.in_shallow_handler = true;
                             }
-                            &common::HandlerKind::Deep => {
+                            &common.HandlerKind.Deep => {
                                 checker.in_shallow_handler = false;
                             }
                         }
@@ -991,11 +991,11 @@ fn setup_handler_op_context(
                         let op_def_id = handler_def.op_impls[j].op_def_id;
                         for ei in 0usize..items.len() {
                             match &items[ei].item.kind {
-                                &hir_item::ItemKind::Effect(ref effect_def) => {
+                                &hir_item.ItemKind.Effect(ref effect_def) => {
                                     for k in 0usize..effect_def.operations.len() {
                                         let effect_op = &effect_def.operations[k];
                                         if effect_op.def_id.index == op_def_id.index {
-                                            checker.resume_ty = Option::Some(effect_op.return_ty);
+                                            checker.resume_ty = Option.Some(effect_op.return_ty);
                                             return;
                                         }
                                     }
@@ -1015,8 +1015,8 @@ fn setup_handler_op_context(
 }
 
 /// Helper to extract effect DefIds from an EffectRow.
-fn collect_effect_def_ids(row: &hir_ty::EffectRow) -> Vec<u32> {
-    let mut result: Vec<u32> = Vec::new();
+fn collect_effect_def_ids(row: &hir_ty.EffectRow) -> Vec<u32> {
+    let mut result: Vec<u32> = Vec.new();
     for i in 0usize..row.effects.len() {
         result.push(row.effects[i].def_id.index);
     }
@@ -1026,95 +1026,95 @@ fn collect_effect_def_ids(row: &hir_ty::EffectRow) -> Vec<u32> {
 /// Finds the DefId for the function containing a given body.
 /// Returns 0 if no matching function found.
 fn find_def_id_for_body(
-    items: &Vec<hir_lower_ctx::ItemEntry>,
-    target_body_id: hir_def::BodyId,
+    items: &Vec<hir_lower_ctx.ItemEntry>,
+    target_body_id: hir_def.BodyId,
 ) -> u32 {
     for i in 0usize..items.len() {
         let entry = &items[i];
         match &entry.item.kind {
-            &hir_item::ItemKind::Fn(ref fn_def) => {
+            &hir_item.ItemKind.Fn(ref fn_def) => {
                 match &fn_def.body_id {
-                    &Option::Some(ref bid) => {
+                    &Option.Some(ref bid) => {
                         if bid.index == target_body_id.index {
                             return entry.item.def_id.index;
                         }
                     }
-                    &Option::None => {}
+                    &Option.None => {}
                 }
             }
-            &hir_item::ItemKind::Impl(ref impl_def) => {
+            &hir_item.ItemKind.Impl(ref impl_def) => {
                 // Check associated functions in impl blocks
                 for j in 0usize..impl_def.items.len() {
                     match &impl_def.items[j] {
-                        &hir_item::AssocItem::Fn(ref assoc_fn) => {
+                        &hir_item.AssocItem.Fn(ref assoc_fn) => {
                             match &assoc_fn.body_id {
-                                &Option::Some(ref bid) => {
+                                &Option.Some(ref bid) => {
                                     if bid.index == target_body_id.index {
                                         return assoc_fn.def_id.index;
                                     }
                                 }
-                                &Option::None => {}
+                                &Option.None => {}
                             }
                         }
-                        &hir_item::AssocItem::Type(_) => {}
-                        &hir_item::AssocItem::Const(ref assoc_const) => {
+                        &hir_item.AssocItem.Type(_) => {}
+                        &hir_item.AssocItem.Const(ref assoc_const) => {
                             match &assoc_const.body_id {
-                                &Option::Some(ref bid) => {
+                                &Option.Some(ref bid) => {
                                     if bid.index == target_body_id.index {
                                         return assoc_const.def_id.index;
                                     }
                                 }
-                                &Option::None => {}
+                                &Option.None => {}
                             }
                         }
                     }
                 }
             }
             // Other item kinds don't have function bodies
-            &hir_item::ItemKind::Struct(_) => {}
-            &hir_item::ItemKind::Enum(_) => {}
-            &hir_item::ItemKind::TypeAlias(_) => {}
-            &hir_item::ItemKind::Const(ref const_def) => {
+            &hir_item.ItemKind.Struct(_) => {}
+            &hir_item.ItemKind.Enum(_) => {}
+            &hir_item.ItemKind.TypeAlias(_) => {}
+            &hir_item.ItemKind.Const(ref const_def) => {
                 if const_def.body_id.index == target_body_id.index {
                     return entry.item.def_id.index;
                 }
             }
-            &hir_item::ItemKind::Static(ref static_def) => {
+            &hir_item.ItemKind.Static(ref static_def) => {
                 if static_def.body_id.index == target_body_id.index {
                     return entry.item.def_id.index;
                 }
             }
-            &hir_item::ItemKind::Trait(ref trait_def) => {
+            &hir_item.ItemKind.Trait(ref trait_def) => {
                 // Check default method bodies in trait definitions
                 for j in 0usize..trait_def.items.len() {
                     match &trait_def.items[j] {
-                        &hir_item::AssocItem::Fn(ref assoc_fn) => {
+                        &hir_item.AssocItem.Fn(ref assoc_fn) => {
                             match &assoc_fn.body_id {
-                                &Option::Some(ref bid) => {
+                                &Option.Some(ref bid) => {
                                     if bid.index == target_body_id.index {
                                         return assoc_fn.def_id.index;
                                     }
                                 }
-                                &Option::None => {}
+                                &Option.None => {}
                             }
                         }
-                        &hir_item::AssocItem::Type(_) => {}
-                        &hir_item::AssocItem::Const(_) => {}
+                        &hir_item.AssocItem.Type(_) => {}
+                        &hir_item.AssocItem.Const(_) => {}
                     }
                 }
             }
-            &hir_item::ItemKind::Effect(_) => {}
-            &hir_item::ItemKind::Handler(ref handler_def) => {
+            &hir_item.ItemKind.Effect(_) => {}
+            &hir_item.ItemKind.Handler(ref handler_def) => {
                 // Check return clause body
                 // Use body_id.index as the DefId to match driver::find_fn_for_body
-                // which returns DefId::new(target_body_id.index) for return clause bodies.
+                // which returns DefId.new(target_body_id.index) for return clause bodies.
                 match &handler_def.return_clause {
-                    &Option::Some(ref rc) => {
+                    &Option.Some(ref rc) => {
                         if rc.body_id.index == target_body_id.index {
                             return rc.body_id.index;
                         }
                     }
-                    &Option::None => {}
+                    &Option.None => {}
                 }
                 // Check op implementation bodies
                 for j in 0usize..handler_def.op_impls.len() {
@@ -1123,9 +1123,9 @@ fn find_def_id_for_body(
                     }
                 }
             }
-            &hir_item::ItemKind::Module(_) => {}
-            &hir_item::ItemKind::Macro(_) => {}
-            &hir_item::ItemKind::Foreign(_) => {}
+            &hir_item.ItemKind.Module(_) => {}
+            &hir_item.ItemKind.Macro(_) => {}
+            &hir_item.ItemKind.Foreign(_) => {}
         }
     }
     // Default to body_id's index if no matching function found.
@@ -1144,27 +1144,27 @@ struct LinearEntry {
     is_linear: bool,
     is_affine: bool,
     use_count: u32,
-    def_span: common::Span,
+    def_span: common.Span,
 }
 
 /// Checks linearity constraints on a function body after type checking.
-fn check_linearity(checker: &mut typeck::TypeChecker, body: &hir_expr::Body) {
+fn check_linearity(checker: &mut typeck.TypeChecker, body: &hir_expr.Body) {
     // Collect locals with ownership qualifiers
-    let mut entries: Vec<LinearEntry> = Vec::new();
+    let mut entries: Vec<LinearEntry> = Vec.new();
     for li in 0usize..body.locals.len() {
         let local = &body.locals[li];
         let local_ty_id = local.ty;
         let resolved_id = checker.resolve(local_ty_id);
         let resolved_ty = type_intern::ty_id_to_type(resolved_id);
         match &resolved_ty.kind {
-            &hir_ty::TypeKind::Ownership { ref qualifier, inner: _ } => {
+            &hir_ty.TypeKind.Ownership { ref qualifier, inner: _ } => {
                 let is_lin = match qualifier {
-                    &hir_ty::OwnershipQualifier::Linear => true,
-                    &hir_ty::OwnershipQualifier::Affine => false,
+                    &hir_ty.OwnershipQualifier.Linear => true,
+                    &hir_ty.OwnershipQualifier.Affine => false,
                 };
                 let is_aff = match qualifier {
-                    &hir_ty::OwnershipQualifier::Linear => false,
-                    &hir_ty::OwnershipQualifier::Affine => true,
+                    &hir_ty.OwnershipQualifier.Linear => false,
+                    &hir_ty.OwnershipQualifier.Affine => true,
                 };
                 let entry = LinearEntry {
                     local_idx: local.id.index,
@@ -1192,15 +1192,15 @@ fn check_linearity(checker: &mut typeck::TypeChecker, body: &hir_expr::Body) {
         let entry = &entries[ei];
         if entry.is_linear {
             if entry.use_count == 0 {
-                checker.error_with_note(typeck::TypeErrorKind::LinearNotUsed, entry.def_span,
+                checker.error_with_note(typeck.TypeErrorKind.LinearNotUsed, entry.def_span,
                     common::make_string("linear values must be used exactly once"));
             } else if entry.use_count > 1 {
-                checker.error_with_note(typeck::TypeErrorKind::LinearUsedMultipleTimes, entry.def_span,
+                checker.error_with_note(typeck.TypeErrorKind.LinearUsedMultipleTimes, entry.def_span,
                     common::make_string("linear values must be used exactly once; this value was used multiple times"));
             }
         } else if entry.is_affine {
             if entry.use_count > 1 {
-                checker.error_with_note(typeck::TypeErrorKind::AffineUsedMultipleTimes, entry.def_span,
+                checker.error_with_note(typeck.TypeErrorKind.AffineUsedMultipleTimes, entry.def_span,
                     common::make_string("affine values can be used at most once; this value was used multiple times"));
             }
         }
@@ -1218,75 +1218,75 @@ fn record_linear_use(entries: &mut Vec<LinearEntry>, local_idx: u32) {
 }
 
 /// Counts usages of tracked locals in an expression.
-fn count_usages_expr(entries: &mut Vec<LinearEntry>, expr: &hir_expr::Expr) {
+fn count_usages_expr(entries: &mut Vec<LinearEntry>, expr: &hir_expr.Expr) {
     match &expr.kind {
-        &hir_expr::ExprKind::Local(ref local_id) => {
+        &hir_expr.ExprKind.Local(ref local_id) => {
             record_linear_use(entries, local_id.index);
         }
-        &hir_expr::ExprKind::Binary { ref left, ref right, op: _ } => {
+        &hir_expr.ExprKind.Binary { ref left, ref right, op: _ } => {
             count_usages_expr(entries, left.as_ref());
             count_usages_expr(entries, right.as_ref());
         }
-        &hir_expr::ExprKind::Unary { ref operand, op: _ } => {
+        &hir_expr.ExprKind.Unary { ref operand, op: _ } => {
             count_usages_expr(entries, operand.as_ref());
         }
-        &hir_expr::ExprKind::Call { ref callee, ref args } => {
+        &hir_expr.ExprKind.Call { ref callee, ref args } => {
             count_usages_expr(entries, callee.as_ref());
             for i in 0usize..args.len() {
                 count_usages_expr(entries, &args[i]);
             }
         }
-        &hir_expr::ExprKind::MethodCall { ref receiver, method: _, method_def: _, type_args: _, ref args } => {
+        &hir_expr.ExprKind.MethodCall { ref receiver, method: _, method_def: _, type_args: _, ref args } => {
             count_usages_expr(entries, receiver.as_ref());
             for i in 0usize..args.len() {
                 count_usages_expr(entries, &args[i]);
             }
         }
-        &hir_expr::ExprKind::If { ref condition, ref then_branch, ref else_branch } => {
+        &hir_expr.ExprKind.If { ref condition, ref then_branch, ref else_branch } => {
             count_usages_expr(entries, condition.as_ref());
             count_usages_expr(entries, then_branch.as_ref());
             match else_branch {
-                &Option::Some(ref eb) => {
+                &Option.Some(ref eb) => {
                     count_usages_expr(entries, eb.as_ref());
                 }
-                &Option::None => {}
+                &Option.None => {}
             }
         }
-        &hir_expr::ExprKind::Block(ref block) => {
+        &hir_expr.ExprKind.Block(ref block) => {
             count_usages_block(entries, block);
         }
-        &hir_expr::ExprKind::Match { ref scrutinee, ref arms } => {
+        &hir_expr.ExprKind.Match { ref scrutinee, ref arms } => {
             count_usages_expr(entries, scrutinee.as_ref());
             for i in 0usize..arms.len() {
                 count_usages_expr(entries, &arms[i].body);
             }
         }
-        &hir_expr::ExprKind::Assign { ref target, ref val } => {
+        &hir_expr.ExprKind.Assign { ref target, ref val } => {
             count_usages_expr(entries, target.as_ref());
             count_usages_expr(entries, val.as_ref());
         }
-        &hir_expr::ExprKind::Return(ref opt_val) => {
+        &hir_expr.ExprKind.Return(ref opt_val) => {
             match opt_val {
-                &Option::Some(ref v) => {
+                &Option.Some(ref v) => {
                     count_usages_expr(entries, v.as_ref());
                 }
-                &Option::None => {}
+                &Option.None => {}
             }
         }
-        &hir_expr::ExprKind::Field { ref base, field: _ } => {
+        &hir_expr.ExprKind.Field { ref base, field: _ } => {
             count_usages_expr(entries, base.as_ref());
         }
-        &hir_expr::ExprKind::Index { ref base, ref idx } => {
+        &hir_expr.ExprKind.Index { ref base, ref idx } => {
             count_usages_expr(entries, base.as_ref());
             count_usages_expr(entries, idx.as_ref());
         }
-        &hir_expr::ExprKind::AddrOf { mutable: _, ref expr } => {
+        &hir_expr.ExprKind.AddrOf { mutable: _, ref expr } => {
             count_usages_expr(entries, expr.as_ref());
         }
-        &hir_expr::ExprKind::Cast { ref expr, ty: _ } => {
+        &hir_expr.ExprKind.Cast { ref expr, ty: _ } => {
             count_usages_expr(entries, expr.as_ref());
         }
-        &hir_expr::ExprKind::Loop { label: _, ref body } => {
+        &hir_expr.ExprKind.Loop { label: _, ref body } => {
             count_usages_expr(entries, body.as_ref());
         }
         _ => {
@@ -1296,28 +1296,28 @@ fn count_usages_expr(entries: &mut Vec<LinearEntry>, expr: &hir_expr::Expr) {
 }
 
 /// Counts usages of tracked locals in a block.
-fn count_usages_block(entries: &mut Vec<LinearEntry>, block: &hir_expr::Block) {
+fn count_usages_block(entries: &mut Vec<LinearEntry>, block: &hir_expr.Block) {
     for i in 0usize..block.stmts.len() {
         match &block.stmts[i] {
-            &hir_expr::Stmt::Expr { ref expr, has_semi: _ } => {
+            &hir_expr.Stmt.Expr { ref expr, has_semi: _ } => {
                 count_usages_expr(entries, expr);
             }
-            &hir_expr::Stmt::Let { pattern: _, ty: _, ref init, span: _ } => {
+            &hir_expr.Stmt.Let { pattern: _, ty: _, ref init, span: _ } => {
                 match init {
-                    &Option::Some(ref init_expr) => {
+                    &Option.Some(ref init_expr) => {
                         count_usages_expr(entries, init_expr);
                     }
-                    &Option::None => {}
+                    &Option.None => {}
                 }
             }
-            &hir_expr::Stmt::Item(_) => {}
+            &hir_expr.Stmt.Item(_) => {}
         }
     }
     match &block.expr {
-        &Option::Some(ref e) => {
+        &Option.Some(ref e) => {
             count_usages_expr(entries, e.as_ref());
         }
-        &Option::None => {}
+        &Option.None => {}
     }
 }
 
@@ -1328,7 +1328,7 @@ fn count_usages_block(entries: &mut Vec<LinearEntry>, block: &hir_expr::Block) {
 /// Type checks a single function body.
 ///
 /// The return_ty comes from the function signature (not from body locals).
-fn check_body(checker: &mut typeck::TypeChecker, body: &hir_expr::Body, return_ty: type_intern::TyId) {
+fn check_body(checker: &mut typeck.TypeChecker, body: &hir_expr.Body, return_ty: type_intern.TyId) {
     // Clear locals for this body
     checker.clear_locals();
 
@@ -1344,13 +1344,13 @@ fn check_body(checker: &mut typeck::TypeChecker, body: &hir_expr::Body, return_t
         while checker.locals.len() <= target_idx {
             // Pad with dummy locals (will not be accessed for valid programs)
             checker.add_local(
-                type_intern::CommonTypes::error(),
+                type_intern.CommonTypes.error(),
                 false,
-                common::Span::new(0, 0, 1, 1),
+                common.Span.new(0, 0, 1, 1),
             );
         }
         // Overwrite with the real local's type (already TyId)
-        checker.locals[target_idx] = typeck::LocalInfo::new(
+        checker.locals[target_idx] = typeck.LocalInfo.new(
             local.ty,
             local.mutable,
             local.span,
@@ -1366,7 +1366,7 @@ fn check_body(checker: &mut typeck::TypeChecker, body: &hir_expr::Body, return_t
     // Unify body type with return type
     match &checker.return_ty {
         &Some(ret_ty) => {
-            checker.unify(body_ty, type_intern::TyId::new(ret_ty.index), body.expr.span);
+            checker.unify(body_ty, type_intern.TyId.new(ret_ty.index), body.expr.span);
         }
         &None => {}
     }
@@ -1385,7 +1385,7 @@ fn check_body(checker: &mut typeck::TypeChecker, body: &hir_expr::Body, return_t
             let target_idx = local.id.index as usize;
             if target_idx < checker.locals.len() {
                 // checker.locals[].ty is now TyId; resolve and bridge to hir_ty for diagnostic
-                let resolved_id = checker.resolve(type_intern::TyId::new(checker.locals[target_idx].ty.index));
+                let resolved_id = checker.resolve(type_intern.TyId.new(checker.locals[target_idx].ty.index));
                 let resolved = type_intern::ty_id_to_type(resolved_id);
                 if type_contains_infer(&resolved) {
                     // Only flag let-bindings, not pattern/handler op params.
@@ -1394,7 +1394,7 @@ fn check_body(checker: &mut typeck::TypeChecker, body: &hir_expr::Body, return_t
                     // resolved type is a function type (fn pointer that couldn't
                     // be monomorphized).
                     if type_is_unresolved_fn(&resolved) {
-                        checker.error_with_note(typeck_types::TypeErrorKind::CannotInfer, local.span,
+                        checker.error_with_note(typeck_types.TypeErrorKind.CannotInfer, local.span,
                             common::make_string("type could not be fully resolved; add a type annotation"));
                         // Only report once per body
                         li = body.locals.len();
@@ -1418,18 +1418,18 @@ fn check_body(checker: &mut typeck::TypeChecker, body: &hir_expr::Body, return_t
 /// 0 = not a known function (handler body, unknown body — skip check)
 /// 1 = non-generic function (check for unresolved infer vars)
 /// 2 = generic function (skip check — infer vars expected)
-fn get_fn_generic_status(checker: &mut typeck::TypeChecker) -> i32 {
+fn get_fn_generic_status(checker: &mut typeck.TypeChecker) -> i32 {
     let def_idx = checker.current_body_def_id as usize;
     if def_idx < checker.fn_sigs.len() {
         match &checker.fn_sigs[def_idx] {
-            &Option::Some(ref sig) => {
+            &Option.Some(ref sig) => {
                 if sig.num_generics > 0 {
                     return 2;
                 } else {
                     return 1;
                 }
             }
-            &Option::None => {}
+            &Option.None => {}
         }
     }
     // No fn_sig found — this is a handler body, const body, or other non-function body
@@ -1437,11 +1437,11 @@ fn get_fn_generic_status(checker: &mut typeck::TypeChecker) -> i32 {
 }
 
 /// Checks if a resolved type still contains Infer variables.
-fn type_contains_infer(ty: &hir_ty::Type) -> bool {
+fn type_contains_infer(ty: &hir_ty.Type) -> bool {
     match &ty.kind {
-        &hir_ty::TypeKind::Infer(_) => true,
-        &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => type_contains_infer(inner.as_ref()),
-        &hir_ty::TypeKind::Adt { def_id: _, ref args } => {
+        &hir_ty.TypeKind.Infer(_) => true,
+        &hir_ty.TypeKind.Ref { ref inner, mutable: _ } => type_contains_infer(inner.as_ref()),
+        &hir_ty.TypeKind.Adt { def_id: _, ref args } => {
             for i in 0usize..args.len() {
                 if type_contains_infer(&args[i]) {
                     return true;
@@ -1449,7 +1449,7 @@ fn type_contains_infer(ty: &hir_ty::Type) -> bool {
             }
             false
         }
-        &hir_ty::TypeKind::Tuple(ref types) => {
+        &hir_ty.TypeKind.Tuple(ref types) => {
             for i in 0usize..types.len() {
                 if type_contains_infer(&types[i]) {
                     return true;
@@ -1457,7 +1457,7 @@ fn type_contains_infer(ty: &hir_ty::Type) -> bool {
             }
             false
         }
-        &hir_ty::TypeKind::Fn { ref params, ref ret, effects: _ } => {
+        &hir_ty.TypeKind.Fn { ref params, ref ret, effects: _ } => {
             for i in 0usize..params.len() {
                 if type_contains_infer(&params[i]) {
                     return true;
@@ -1471,9 +1471,9 @@ fn type_contains_infer(ty: &hir_ty::Type) -> bool {
 
 /// Checks if a type is an unresolved function type (fn with Infer params/return).
 /// This is the specific pattern from `id(id)` where T in fn(T)->T can't be inferred.
-fn type_is_unresolved_fn(ty: &hir_ty::Type) -> bool {
+fn type_is_unresolved_fn(ty: &hir_ty.Type) -> bool {
     match &ty.kind {
-        &hir_ty::TypeKind::Fn { ref params, ref ret, effects: _ } => {
+        &hir_ty.TypeKind.Fn { ref params, ref ret, effects: _ } => {
             for i in 0usize..params.len() {
                 if type_contains_infer(&params[i]) {
                     return true;
@@ -1492,7 +1492,7 @@ fn type_is_unresolved_fn(ty: &hir_ty::Type) -> bool {
 /// Resolves pending method calls whose receivers were Infer variables.
 /// Uses a fixpoint loop: resolving one call may produce a return type
 /// that allows another receiver to become concrete.
-fn resolve_pending_methods(checker: &mut typeck::TypeChecker) {
+fn resolve_pending_methods(checker: &mut typeck.TypeChecker) {
     let mut resolved_count: usize = 1;
     while resolved_count > 0 {
         resolved_count = 0;
@@ -1511,8 +1511,8 @@ fn resolve_pending_methods(checker: &mut typeck::TypeChecker) {
             // Try to resolve the receiver type variable
             // Create TyId for the Infer variable
             let interner = type_intern::type_interner();
-            let infer_ty_id = interner.intern(type_intern::InternedTypeKind::Infer(
-                hir_def::TyVarId::new(receiver_var)
+            let infer_ty_id = interner.intern(type_intern.InternedTypeKind.Infer(
+                hir_def.TyVarId.new(receiver_var)
             ));
             let receiver_ty_id = checker.resolve(infer_ty_id);
             let stripped_id = typeck_expr::strip_refs_id(receiver_ty_id);
@@ -1520,27 +1520,27 @@ fn resolve_pending_methods(checker: &mut typeck::TypeChecker) {
             // Check if still an Infer variable
             let stripped_kind = interner.get(stripped_id);
             let still_infer = match stripped_kind {
-                &type_intern::InternedTypeKind::Infer(_) => true,
+                &type_intern.InternedTypeKind.Infer(_) => true,
                 _ => false,
             };
 
             if !still_infer {
                 // Receiver is now concrete - look up the method
                 match checker.lookup_method(stripped_id, method_symbol) {
-                    Option::Some(ref lookup_result) => {
+                    Option.Some(ref lookup_result) => {
                         let method_def_id_index = checker.get_method_from_lookup(lookup_result).def_id.index;
-                        let method_return_ty_id = type_intern::TyId::new(checker.get_method_from_lookup(lookup_result).return_ty.index);
+                        let method_return_ty_id = type_intern.TyId.new(checker.get_method_from_lookup(lookup_result).return_ty.index);
                         let impl_num_generics = checker.get_impl_from_lookup(lookup_result).num_generics;
-                        let impl_self_ty_id = type_intern::TyId::new(checker.get_impl_from_lookup(lookup_result).self_ty.index);
+                        let impl_self_ty_id = type_intern.TyId.new(checker.get_impl_from_lookup(lookup_result).self_ty.index);
 
                         // Record the resolution with the body's DefId for scoping
                         checker.current_body_def_id = body_def_id;
                         checker.record_method_resolution(span_start, method_def_id_index);
 
                         // Unify return type with actual method return type
-                        let mut subst = unify::TypeParamSubst::new();
+                        let mut subst = unify.TypeParamSubst.new();
                         if impl_num_generics > 0 {
-                            // Bridge: extract_type_params_from_self_ty still takes &hir_ty::Type
+                            // Bridge: extract_type_params_from_self_ty still takes &hir_ty.Type
                             let impl_self_type = type_intern::ty_id_to_type(impl_self_ty_id);
                             let stripped_type = type_intern::ty_id_to_type(stripped_id);
                             unify::extract_type_params_from_self_ty(
@@ -1550,14 +1550,14 @@ fn resolve_pending_methods(checker: &mut typeck::TypeChecker) {
                         let actual_ret_id = unify::substitute_type_params_id(
                             method_return_ty_id, &subst
                         );
-                        let return_infer_id = interner.intern(type_intern::InternedTypeKind::Infer(
-                            hir_def::TyVarId::new(return_ty_var)
+                        let return_infer_id = interner.intern(type_intern.InternedTypeKind.Infer(
+                            hir_def.TyVarId.new(return_ty_var)
                         ));
-                        checker.unify(return_infer_id, actual_ret_id, common::Span::dummy());
+                        checker.unify(return_infer_id, actual_ret_id, common.Span.dummy());
 
                         resolved_count += 1;
                     }
-                    Option::None => {
+                    Option.None => {
                         // Method not found even with concrete receiver — skip
                     }
                 }
@@ -1577,7 +1577,7 @@ fn resolve_pending_methods(checker: &mut typeck::TypeChecker) {
 }
 
 /// Checks if a method call at the given span_start has already been resolved.
-fn is_already_resolved(checker: &mut typeck::TypeChecker, body_def_id: u32, span_start: usize) -> bool {
+fn is_already_resolved(checker: &mut typeck.TypeChecker, body_def_id: u32, span_start: usize) -> bool {
     for i in 0usize..checker.method_resolutions.len() {
         if checker.method_resolutions[i].body_def_id == body_def_id &&
            checker.method_resolutions[i].span_start == span_start {
@@ -1592,107 +1592,107 @@ fn is_already_resolved(checker: &mut typeck::TypeChecker, body_def_id: u32, span
 // ============================================================
 
 /// Copies an Option<DefId> by value (for passing through references).
-fn copy_opt_def_id(opt: &Option<hir_def::DefId>) -> Option<hir_def::DefId> {
+fn copy_opt_def_id(opt: &Option<hir_def.DefId>) -> Option<hir_def.DefId> {
     match opt {
-        &Option::Some(ref d) => Option::Some(hir_def::DefId::new(d.index)),
-        &Option::None => Option::None,
+        &Option.Some(ref d) => Option.Some(hir_def.DefId.new(d.index)),
+        &Option.None => Option.None,
     }
 }
 
 /// Helper: create a reference type &T.
-fn make_ref_ty(inner: type_intern::TyId) -> type_intern::TyId {
+fn make_ref_ty(inner: type_intern.TyId) -> type_intern.TyId {
     let interner = type_intern::type_interner();
-    interner.intern(type_intern::InternedTypeKind::Ref { inner: inner, mutable: false })
+    interner.intern(type_intern.InternedTypeKind.Ref { inner: inner, mutable: false })
 }
 
 /// Helper: create an ADT type with the given DefId and type args.
-fn make_adt(def_id: hir_def::DefId, args: Vec<type_intern::TyId>) -> type_intern::TyId {
+fn make_adt(def_id: hir_def.DefId, args: Vec<type_intern.TyId>) -> type_intern.TyId {
     let interner = type_intern::type_interner();
     let args_list = interner.intern_ty_list(&args);
-    interner.intern(type_intern::InternedTypeKind::Adt { def_id: def_id, args: args_list })
+    interner.intern(type_intern.InternedTypeKind.Adt { def_id: def_id, args: args_list })
 }
 
 /// Helper: create a type parameter Param(n).
-fn make_param(n: u32) -> type_intern::TyId {
+fn make_param(n: u32) -> type_intern.TyId {
     let interner = type_intern::type_interner();
-    interner.intern(type_intern::InternedTypeKind::Param(hir_def::TyVarId::new(n)))
+    interner.intern(type_intern.InternedTypeKind.Param(hir_def.TyVarId.new(n)))
 }
 
 /// Helper: add a method to the methods list and record its runtime function name.
 /// The interner must be the same interner used during HIR lowering so that
 /// method name symbols match.
 fn add_method(
-    checker: &mut typeck::TypeChecker,
-    methods: &mut Vec<typeck::MethodInfo>,
+    checker: &mut typeck.TypeChecker,
+    methods: &mut Vec<typeck.MethodInfo>,
     name: &str,
     runtime_name: &str,
-    params: Vec<type_intern::TyId>,
-    ret: type_intern::TyId,
+    params: Vec<type_intern.TyId>,
+    ret: type_intern.TyId,
     self_mut: bool,
-    interner: &interner::StringInterner,
+    interner: &interner.StringInterner,
 ) {
     let def_id = checker.alloc_def_id();
     // Use the same interner as HIR lowering to get matching Symbol indices.
     // All builtin method names are pre-interned, so find() will always succeed.
     let found = interner.find(name);
     let sym = found.unwrap();
-    methods.push(typeck::MethodInfo::new(def_id, sym, params, ret, true, self_mut));
+    methods.push(typeck.MethodInfo.new(def_id, sym, params, ret, true, self_mut));
     // Record mapping from synthetic DefId to runtime function name for codegen
     checker.builtin_def_names.push(
-        typeck::BuiltinDefName::new(def_id.index, common::make_string(runtime_name)),
+        typeck.BuiltinDefName.new(def_id.index, common::make_string(runtime_name)),
     );
 }
 
 /// Registers builtin method signatures for all builtin types.
 /// The interner parameter must be the same interner used during HIR lowering
 /// so that method name symbols match between HIR and type checking.
-fn register_builtin_signatures(checker: &mut typeck::TypeChecker, interner: &interner::StringInterner) {
+fn register_builtin_signatures(checker: &mut typeck.TypeChecker, interner: &interner.StringInterner) {
     // String methods
     match checker.builtin_string_def {
-        Option::Some(def_id) => {
+        Option.Some(def_id) => {
             register_string_methods(checker, def_id, interner);
         }
-        Option::None => {}
+        Option.None => {}
     }
 
     // Vec methods
     match checker.builtin_vec_def {
-        Option::Some(def_id) => {
+        Option.Some(def_id) => {
             register_vec_methods(checker, def_id, interner);
         }
-        Option::None => {}
+        Option.None => {}
     }
 
     // Option methods
     match checker.builtin_option_def {
-        Option::Some(def_id) => {
+        Option.Some(def_id) => {
             register_option_methods(checker, def_id, interner);
         }
-        Option::None => {}
+        Option.None => {}
     }
 
     // Box methods
     match checker.builtin_box_def {
-        Option::Some(def_id) => {
+        Option.Some(def_id) => {
             register_box_methods(checker, def_id, interner);
         }
-        Option::None => {}
+        Option.None => {}
     }
 
     // HashMap methods
     match checker.builtin_hashmap_def {
-        Option::Some(def_id) => {
+        Option.Some(def_id) => {
             register_hashmap_methods(checker, def_id, interner);
         }
-        Option::None => {}
+        Option.None => {}
     }
 
     // Result methods
     match checker.builtin_result_def {
-        Option::Some(def_id) => {
+        Option.Some(def_id) => {
             register_result_methods(checker, def_id, interner);
         }
-        Option::None => {}
+        Option.None => {}
     }
 
     // Primitive str methods
@@ -1704,333 +1704,333 @@ fn register_builtin_signatures(checker: &mut typeck::TypeChecker, interner: &int
 
 /// Registers String methods: len, is_empty, push_str, push, as_str, clone,
 /// contains, starts_with, ends_with, as_bytes.
-fn register_string_methods(checker: &mut typeck::TypeChecker, string_def: hir_def::DefId, interner: &interner::StringInterner) {
-    let self_ty = make_adt(string_def, Vec::new());
-    let mut methods: Vec<typeck::MethodInfo> = Vec::new();
+fn register_string_methods(checker: &mut typeck.TypeChecker, string_def: hir_def.DefId, interner: &interner.StringInterner) {
+    let self_ty = make_adt(string_def, Vec.new());
+    let mut methods: Vec<typeck.MethodInfo> = Vec.new();
 
     // len(&self) -> usize
-    add_method(checker, &mut methods, "len", "string_len", Vec::new(), type_intern::CommonTypes::usize_ty(), false, interner);
+    add_method(checker, &mut methods, "len", "string_len", Vec.new(), type_intern.CommonTypes.usize_ty(), false, interner);
 
     // is_empty(&self) -> bool
-    add_method(checker, &mut methods, "is_empty", "string_is_empty", Vec::new(), type_intern::CommonTypes::bool_ty(), false, interner);
+    add_method(checker, &mut methods, "is_empty", "string_is_empty", Vec.new(), type_intern.CommonTypes.bool_ty(), false, interner);
 
     // push_str(&mut self, &str) -> ()
-    let mut push_str_params: Vec<type_intern::TyId> = Vec::new();
-    push_str_params.push(make_ref_ty(type_intern::CommonTypes::str_ty()));
-    add_method(checker, &mut methods, "push_str", "string_push_str", push_str_params, type_intern::CommonTypes::unit(), true, interner);
+    let mut push_str_params: Vec<type_intern.TyId> = Vec.new();
+    push_str_params.push(make_ref_ty(type_intern.CommonTypes.str_ty()));
+    add_method(checker, &mut methods, "push_str", "string_push_str", push_str_params, type_intern.CommonTypes.unit(), true, interner);
 
     // push(&mut self, char) -> ()
-    let mut push_params: Vec<type_intern::TyId> = Vec::new();
-    push_params.push(type_intern::CommonTypes::char_ty());
-    add_method(checker, &mut methods, "push", "string_push", push_params, type_intern::CommonTypes::unit(), true, interner);
+    let mut push_params: Vec<type_intern.TyId> = Vec.new();
+    push_params.push(type_intern.CommonTypes.char_ty());
+    add_method(checker, &mut methods, "push", "string_push", push_params, type_intern.CommonTypes.unit(), true, interner);
 
     // as_str(&self) -> &str
-    add_method(checker, &mut methods, "as_str", "string_as_str", Vec::new(), make_ref_ty(type_intern::CommonTypes::str_ty()), false, interner);
+    add_method(checker, &mut methods, "as_str", "string_as_str", Vec.new(), make_ref_ty(type_intern.CommonTypes.str_ty()), false, interner);
 
     // clone(&self) -> String
-    add_method(checker, &mut methods, "clone", "string_clone", Vec::new(), make_adt(string_def, Vec::new()), false, interner);
+    add_method(checker, &mut methods, "clone", "string_clone", Vec.new(), make_adt(string_def, Vec.new()), false, interner);
 
     // contains(&self, &str) -> bool
-    let mut contains_params: Vec<type_intern::TyId> = Vec::new();
-    contains_params.push(make_ref_ty(type_intern::CommonTypes::str_ty()));
-    add_method(checker, &mut methods, "contains", "string_contains", contains_params, type_intern::CommonTypes::bool_ty(), false, interner);
+    let mut contains_params: Vec<type_intern.TyId> = Vec.new();
+    contains_params.push(make_ref_ty(type_intern.CommonTypes.str_ty()));
+    add_method(checker, &mut methods, "contains", "string_contains", contains_params, type_intern.CommonTypes.bool_ty(), false, interner);
 
     // starts_with(&self, &str) -> bool
-    let mut sw_params: Vec<type_intern::TyId> = Vec::new();
-    sw_params.push(make_ref_ty(type_intern::CommonTypes::str_ty()));
-    add_method(checker, &mut methods, "starts_with", "string_starts_with", sw_params, type_intern::CommonTypes::bool_ty(), false, interner);
+    let mut sw_params: Vec<type_intern.TyId> = Vec.new();
+    sw_params.push(make_ref_ty(type_intern.CommonTypes.str_ty()));
+    add_method(checker, &mut methods, "starts_with", "string_starts_with", sw_params, type_intern.CommonTypes.bool_ty(), false, interner);
 
     // ends_with(&self, &str) -> bool
-    let mut ew_params: Vec<type_intern::TyId> = Vec::new();
-    ew_params.push(make_ref_ty(type_intern::CommonTypes::str_ty()));
-    add_method(checker, &mut methods, "ends_with", "string_ends_with", ew_params, type_intern::CommonTypes::bool_ty(), false, interner);
+    let mut ew_params: Vec<type_intern.TyId> = Vec.new();
+    ew_params.push(make_ref_ty(type_intern.CommonTypes.str_ty()));
+    add_method(checker, &mut methods, "ends_with", "string_ends_with", ew_params, type_intern.CommonTypes.bool_ty(), false, interner);
 
     // as_bytes(&self) -> &[u8]
     let ty_interner = type_intern::type_interner();
-    let u8_slice = ty_interner.intern(type_intern::InternedTypeKind::Slice { element: type_intern::CommonTypes::u8_ty() });
-    add_method(checker, &mut methods, "as_bytes", "string_as_bytes", Vec::new(), make_ref_ty(u8_slice), false, interner);
+    let u8_slice = ty_interner.intern(type_intern.InternedTypeKind.Slice { element: type_intern.CommonTypes.u8_ty() });
+    add_method(checker, &mut methods, "as_bytes", "string_as_bytes", Vec.new(), make_ref_ty(u8_slice), false, interner);
 
     // Register the impl
     let impl_def = checker.alloc_def_id();
-    let impl_info = typeck::ImplInfo::new(impl_def, self_ty, 0, methods);
+    let impl_info = typeck.ImplInfo.new(impl_def, self_ty, 0, methods);
     checker.register_impl(impl_info);
 }
 
 /// Registers Vec<T> methods: push, pop, len, is_empty, get, last, clear,
 /// remove, insert, contains, clone.
-fn register_vec_methods(checker: &mut typeck::TypeChecker, vec_def: hir_def::DefId, interner: &interner::StringInterner) {
-    let mut self_args: Vec<type_intern::TyId> = Vec::new();
+fn register_vec_methods(checker: &mut typeck.TypeChecker, vec_def: hir_def.DefId, interner: &interner.StringInterner) {
+    let mut self_args: Vec<type_intern.TyId> = Vec.new();
     self_args.push(make_param(0));
     let self_ty = make_adt(vec_def, self_args);
-    let mut methods: Vec<typeck::MethodInfo> = Vec::new();
+    let mut methods: Vec<typeck.MethodInfo> = Vec.new();
 
     // push(&mut self, T) -> ()
-    let mut push_params: Vec<type_intern::TyId> = Vec::new();
+    let mut push_params: Vec<type_intern.TyId> = Vec.new();
     push_params.push(make_param(0));
-    add_method(checker, &mut methods, "push", "vec_push", push_params, type_intern::CommonTypes::unit(), true, interner);
+    add_method(checker, &mut methods, "push", "vec_push", push_params, type_intern.CommonTypes.unit(), true, interner);
 
     // pop(&mut self) -> Option<T>
     let option_def = checker.builtin_option_def;
     match option_def {
-        Option::Some(opt_def) => {
-            let mut opt_args: Vec<type_intern::TyId> = Vec::new();
+        Option.Some(opt_def) => {
+            let mut opt_args: Vec<type_intern.TyId> = Vec.new();
             opt_args.push(make_param(0));
-            add_method(checker, &mut methods, "pop", "vec_pop", Vec::new(), make_adt(opt_def, opt_args), true, interner);
+            add_method(checker, &mut methods, "pop", "vec_pop", Vec.new(), make_adt(opt_def, opt_args), true, interner);
         }
-        Option::None => {
-            add_method(checker, &mut methods, "pop", "vec_pop", Vec::new(), make_param(0), true, interner);
+        Option.None => {
+            add_method(checker, &mut methods, "pop", "vec_pop", Vec.new(), make_param(0), true, interner);
         }
     }
 
     // len(&self) -> usize
-    add_method(checker, &mut methods, "len", "vec_len", Vec::new(), type_intern::CommonTypes::usize_ty(), false, interner);
+    add_method(checker, &mut methods, "len", "vec_len", Vec.new(), type_intern.CommonTypes.usize_ty(), false, interner);
 
     // is_empty(&self) -> bool
-    add_method(checker, &mut methods, "is_empty", "vec_is_empty", Vec::new(), type_intern::CommonTypes::bool_ty(), false, interner);
+    add_method(checker, &mut methods, "is_empty", "vec_is_empty", Vec.new(), type_intern.CommonTypes.bool_ty(), false, interner);
 
     // get(&self, usize) -> Option<&T>
     match option_def {
-        Option::Some(opt_def) => {
-            let mut get_params: Vec<type_intern::TyId> = Vec::new();
-            get_params.push(type_intern::CommonTypes::usize_ty());
-            let mut opt_args: Vec<type_intern::TyId> = Vec::new();
+        Option.Some(opt_def) => {
+            let mut get_params: Vec<type_intern.TyId> = Vec.new();
+            get_params.push(type_intern.CommonTypes.usize_ty());
+            let mut opt_args: Vec<type_intern.TyId> = Vec.new();
             opt_args.push(make_ref_ty(make_param(0)));
             add_method(checker, &mut methods, "get", "vec_get", get_params, make_adt(opt_def, opt_args), false, interner);
         }
-        Option::None => {
-            let mut get_params: Vec<type_intern::TyId> = Vec::new();
-            get_params.push(type_intern::CommonTypes::usize_ty());
+        Option.None => {
+            let mut get_params: Vec<type_intern.TyId> = Vec.new();
+            get_params.push(type_intern.CommonTypes.usize_ty());
             add_method(checker, &mut methods, "get", "vec_get", get_params, make_ref_ty(make_param(0)), false, interner);
         }
     }
 
     // last(&self) -> Option<&T>
     match option_def {
-        Option::Some(opt_def) => {
-            let mut opt_args: Vec<type_intern::TyId> = Vec::new();
+        Option.Some(opt_def) => {
+            let mut opt_args: Vec<type_intern.TyId> = Vec.new();
             opt_args.push(make_ref_ty(make_param(0)));
-            add_method(checker, &mut methods, "last", "vec_last", Vec::new(), make_adt(opt_def, opt_args), false, interner);
+            add_method(checker, &mut methods, "last", "vec_last", Vec.new(), make_adt(opt_def, opt_args), false, interner);
         }
-        Option::None => {
-            add_method(checker, &mut methods, "last", "vec_last", Vec::new(), make_ref_ty(make_param(0)), false, interner);
+        Option.None => {
+            add_method(checker, &mut methods, "last", "vec_last", Vec.new(), make_ref_ty(make_param(0)), false, interner);
         }
     }
 
     // clear(&mut self) -> ()
-    add_method(checker, &mut methods, "clear", "vec_clear", Vec::new(), type_intern::CommonTypes::unit(), true, interner);
+    add_method(checker, &mut methods, "clear", "vec_clear", Vec.new(), type_intern.CommonTypes.unit(), true, interner);
 
     // remove(&mut self, usize) -> T
-    let mut remove_params: Vec<type_intern::TyId> = Vec::new();
-    remove_params.push(type_intern::CommonTypes::usize_ty());
+    let mut remove_params: Vec<type_intern.TyId> = Vec.new();
+    remove_params.push(type_intern.CommonTypes.usize_ty());
     add_method(checker, &mut methods, "remove", "vec_remove", remove_params, make_param(0), true, interner);
 
     // insert(&mut self, usize, T) -> ()
-    let mut insert_params: Vec<type_intern::TyId> = Vec::new();
-    insert_params.push(type_intern::CommonTypes::usize_ty());
+    let mut insert_params: Vec<type_intern.TyId> = Vec.new();
+    insert_params.push(type_intern.CommonTypes.usize_ty());
     insert_params.push(make_param(0));
-    add_method(checker, &mut methods, "insert", "vec_insert", insert_params, type_intern::CommonTypes::unit(), true, interner);
+    add_method(checker, &mut methods, "insert", "vec_insert", insert_params, type_intern.CommonTypes.unit(), true, interner);
 
     // contains(&self, &T) -> bool
-    let mut contains_params: Vec<type_intern::TyId> = Vec::new();
+    let mut contains_params: Vec<type_intern.TyId> = Vec.new();
     contains_params.push(make_ref_ty(make_param(0)));
-    add_method(checker, &mut methods, "contains", "vec_contains", contains_params, type_intern::CommonTypes::bool_ty(), false, interner);
+    add_method(checker, &mut methods, "contains", "vec_contains", contains_params, type_intern.CommonTypes.bool_ty(), false, interner);
 
     // clone(&self) -> Vec<T>
-    let mut clone_args: Vec<type_intern::TyId> = Vec::new();
+    let mut clone_args: Vec<type_intern.TyId> = Vec.new();
     clone_args.push(make_param(0));
-    add_method(checker, &mut methods, "clone", "vec_clone", Vec::new(), make_adt(vec_def, clone_args), false, interner);
+    add_method(checker, &mut methods, "clone", "vec_clone", Vec.new(), make_adt(vec_def, clone_args), false, interner);
 
     // Register the impl
     let impl_def = checker.alloc_def_id();
-    let impl_info = typeck::ImplInfo::new(impl_def, self_ty, 1, methods);
+    let impl_info = typeck.ImplInfo.new(impl_def, self_ty, 1, methods);
     checker.register_impl(impl_info);
 }
 
 /// Registers Option<T> methods: is_some, is_none, unwrap, unwrap_or, expect, as_ref, clone.
-fn register_option_methods(checker: &mut typeck::TypeChecker, option_def: hir_def::DefId, interner: &interner::StringInterner) {
-    let mut self_args: Vec<type_intern::TyId> = Vec::new();
+fn register_option_methods(checker: &mut typeck.TypeChecker, option_def: hir_def.DefId, interner: &interner.StringInterner) {
+    let mut self_args: Vec<type_intern.TyId> = Vec.new();
     self_args.push(make_param(0));
     let self_ty = make_adt(option_def, self_args);
-    let mut methods: Vec<typeck::MethodInfo> = Vec::new();
+    let mut methods: Vec<typeck.MethodInfo> = Vec.new();
 
     // is_some(&self) -> bool
-    add_method(checker, &mut methods, "is_some", "option_is_some", Vec::new(), type_intern::CommonTypes::bool_ty(), false, interner);
+    add_method(checker, &mut methods, "is_some", "option_is_some", Vec.new(), type_intern.CommonTypes.bool_ty(), false, interner);
 
     // is_none(&self) -> bool
-    add_method(checker, &mut methods, "is_none", "option_is_none", Vec::new(), type_intern::CommonTypes::bool_ty(), false, interner);
+    add_method(checker, &mut methods, "is_none", "option_is_none", Vec.new(), type_intern.CommonTypes.bool_ty(), false, interner);
 
     // unwrap(self) -> T
-    add_method(checker, &mut methods, "unwrap", "option_unwrap", Vec::new(), make_param(0), false, interner);
+    add_method(checker, &mut methods, "unwrap", "option_unwrap", Vec.new(), make_param(0), false, interner);
 
     // unwrap_or(self, T) -> T
-    let mut unwrap_or_params: Vec<type_intern::TyId> = Vec::new();
+    let mut unwrap_or_params: Vec<type_intern.TyId> = Vec.new();
     unwrap_or_params.push(make_param(0));
     add_method(checker, &mut methods, "unwrap_or", "option_unwrap_or", unwrap_or_params, make_param(0), false, interner);
 
     // expect(self, &str) -> T
-    let mut expect_params: Vec<type_intern::TyId> = Vec::new();
-    expect_params.push(make_ref_ty(type_intern::CommonTypes::str_ty()));
+    let mut expect_params: Vec<type_intern.TyId> = Vec.new();
+    expect_params.push(make_ref_ty(type_intern.CommonTypes.str_ty()));
     add_method(checker, &mut methods, "expect", "option_expect", expect_params, make_param(0), false, interner);
 
     // as_ref(&self) -> Option<&T>
-    let mut as_ref_args: Vec<type_intern::TyId> = Vec::new();
+    let mut as_ref_args: Vec<type_intern.TyId> = Vec.new();
     as_ref_args.push(make_ref_ty(make_param(0)));
-    add_method(checker, &mut methods, "as_ref", "option_as_ref", Vec::new(), make_adt(option_def, as_ref_args), false, interner);
+    add_method(checker, &mut methods, "as_ref", "option_as_ref", Vec.new(), make_adt(option_def, as_ref_args), false, interner);
 
     // clone(&self) -> Option<T>
-    let mut clone_args: Vec<type_intern::TyId> = Vec::new();
+    let mut clone_args: Vec<type_intern.TyId> = Vec.new();
     clone_args.push(make_param(0));
-    add_method(checker, &mut methods, "clone", "option_clone", Vec::new(), make_adt(option_def, clone_args), false, interner);
+    add_method(checker, &mut methods, "clone", "option_clone", Vec.new(), make_adt(option_def, clone_args), false, interner);
 
     // Register the impl
     let impl_def = checker.alloc_def_id();
-    let impl_info = typeck::ImplInfo::new(impl_def, self_ty, 1, methods);
+    let impl_info = typeck.ImplInfo.new(impl_def, self_ty, 1, methods);
     checker.register_impl(impl_info);
 }
 
 /// Registers Box<T> methods: as_ref.
-fn register_box_methods(checker: &mut typeck::TypeChecker, box_def: hir_def::DefId, interner: &interner::StringInterner) {
-    let mut self_args: Vec<type_intern::TyId> = Vec::new();
+fn register_box_methods(checker: &mut typeck.TypeChecker, box_def: hir_def.DefId, interner: &interner.StringInterner) {
+    let mut self_args: Vec<type_intern.TyId> = Vec.new();
     self_args.push(make_param(0));
     let self_ty = make_adt(box_def, self_args);
-    let mut methods: Vec<typeck::MethodInfo> = Vec::new();
+    let mut methods: Vec<typeck.MethodInfo> = Vec.new();
 
     // as_ref(&self) -> &T
-    add_method(checker, &mut methods, "as_ref", "box_as_ref", Vec::new(), make_ref_ty(make_param(0)), false, interner);
+    add_method(checker, &mut methods, "as_ref", "box_as_ref", Vec.new(), make_ref_ty(make_param(0)), false, interner);
 
     // Register the impl
     let impl_def = checker.alloc_def_id();
-    let impl_info = typeck::ImplInfo::new(impl_def, self_ty, 1, methods);
+    let impl_info = typeck.ImplInfo.new(impl_def, self_ty, 1, methods);
     checker.register_impl(impl_info);
 }
 
 /// Registers HashMap<K, V> methods: insert, get, contains_key, len, is_empty, remove, clone.
-fn register_hashmap_methods(checker: &mut typeck::TypeChecker, hashmap_def: hir_def::DefId, interner: &interner::StringInterner) {
-    let mut self_args: Vec<type_intern::TyId> = Vec::new();
+fn register_hashmap_methods(checker: &mut typeck.TypeChecker, hashmap_def: hir_def.DefId, interner: &interner.StringInterner) {
+    let mut self_args: Vec<type_intern.TyId> = Vec.new();
     self_args.push(make_param(0));
     self_args.push(make_param(1));
     let self_ty = make_adt(hashmap_def, self_args);
-    let mut methods: Vec<typeck::MethodInfo> = Vec::new();
+    let mut methods: Vec<typeck.MethodInfo> = Vec.new();
 
     // insert(&mut self, K, V) -> Option<V>
     let option_def = checker.builtin_option_def;
-    let mut insert_params: Vec<type_intern::TyId> = Vec::new();
+    let mut insert_params: Vec<type_intern.TyId> = Vec.new();
     insert_params.push(make_param(0));
     insert_params.push(make_param(1));
     match option_def {
-        Option::Some(opt_def) => {
-            let mut opt_args: Vec<type_intern::TyId> = Vec::new();
+        Option.Some(opt_def) => {
+            let mut opt_args: Vec<type_intern.TyId> = Vec.new();
             opt_args.push(make_param(1));
             add_method(checker, &mut methods, "insert", "hashmap_insert", insert_params, make_adt(opt_def, opt_args), true, interner);
         }
-        Option::None => {
+        Option.None => {
             add_method(checker, &mut methods, "insert", "hashmap_insert", insert_params, make_param(1), true, interner);
         }
     }
 
     // get(&self, &K) -> Option<&V>
-    let mut get_params: Vec<type_intern::TyId> = Vec::new();
+    let mut get_params: Vec<type_intern.TyId> = Vec.new();
     get_params.push(make_ref_ty(make_param(0)));
     match option_def {
-        Option::Some(opt_def) => {
-            let mut opt_args: Vec<type_intern::TyId> = Vec::new();
+        Option.Some(opt_def) => {
+            let mut opt_args: Vec<type_intern.TyId> = Vec.new();
             opt_args.push(make_ref_ty(make_param(1)));
             add_method(checker, &mut methods, "get", "hashmap_get", get_params, make_adt(opt_def, opt_args), false, interner);
         }
-        Option::None => {
+        Option.None => {
             add_method(checker, &mut methods, "get", "hashmap_get", get_params, make_ref_ty(make_param(1)), false, interner);
         }
     }
 
     // contains_key(&self, &K) -> bool
-    let mut ck_params: Vec<type_intern::TyId> = Vec::new();
+    let mut ck_params: Vec<type_intern.TyId> = Vec.new();
     ck_params.push(make_ref_ty(make_param(0)));
-    add_method(checker, &mut methods, "contains_key", "hashmap_contains_key", ck_params, type_intern::CommonTypes::bool_ty(), false, interner);
+    add_method(checker, &mut methods, "contains_key", "hashmap_contains_key", ck_params, type_intern.CommonTypes.bool_ty(), false, interner);
 
     // len(&self) -> usize
-    add_method(checker, &mut methods, "len", "hashmap_len", Vec::new(), type_intern::CommonTypes::usize_ty(), false, interner);
+    add_method(checker, &mut methods, "len", "hashmap_len", Vec.new(), type_intern.CommonTypes.usize_ty(), false, interner);
 
     // is_empty(&self) -> bool
-    add_method(checker, &mut methods, "is_empty", "hashmap_is_empty", Vec::new(), type_intern::CommonTypes::bool_ty(), false, interner);
+    add_method(checker, &mut methods, "is_empty", "hashmap_is_empty", Vec.new(), type_intern.CommonTypes.bool_ty(), false, interner);
 
     // remove(&mut self, &K) -> Option<V>
-    let mut remove_params: Vec<type_intern::TyId> = Vec::new();
+    let mut remove_params: Vec<type_intern.TyId> = Vec.new();
     remove_params.push(make_ref_ty(make_param(0)));
     match option_def {
-        Option::Some(opt_def) => {
-            let mut opt_args: Vec<type_intern::TyId> = Vec::new();
+        Option.Some(opt_def) => {
+            let mut opt_args: Vec<type_intern.TyId> = Vec.new();
             opt_args.push(make_param(1));
             add_method(checker, &mut methods, "remove", "hashmap_remove", remove_params, make_adt(opt_def, opt_args), true, interner);
         }
-        Option::None => {
+        Option.None => {
             add_method(checker, &mut methods, "remove", "hashmap_remove", remove_params, make_param(1), true, interner);
         }
     }
 
     // clone(&self) -> HashMap<K, V>
-    let mut clone_args: Vec<type_intern::TyId> = Vec::new();
+    let mut clone_args: Vec<type_intern.TyId> = Vec.new();
     clone_args.push(make_param(0));
     clone_args.push(make_param(1));
-    add_method(checker, &mut methods, "clone", "hashmap_clone", Vec::new(), make_adt(hashmap_def, clone_args), false, interner);
+    add_method(checker, &mut methods, "clone", "hashmap_clone", Vec.new(), make_adt(hashmap_def, clone_args), false, interner);
 
     // Register the impl
     let impl_def = checker.alloc_def_id();
-    let impl_info = typeck::ImplInfo::new(impl_def, self_ty, 2, methods);
+    let impl_info = typeck.ImplInfo.new(impl_def, self_ty, 2, methods);
     checker.register_impl(impl_info);
 }
 
 /// Registers Result<T, E> methods: is_ok, is_err, unwrap, unwrap_or, expect.
-fn register_result_methods(checker: &mut typeck::TypeChecker, result_def: hir_def::DefId, interner: &interner::StringInterner) {
-    let mut self_args: Vec<type_intern::TyId> = Vec::new();
+fn register_result_methods(checker: &mut typeck.TypeChecker, result_def: hir_def.DefId, interner: &interner.StringInterner) {
+    let mut self_args: Vec<type_intern.TyId> = Vec.new();
     self_args.push(make_param(0));
     self_args.push(make_param(1));
     let self_ty = make_adt(result_def, self_args);
-    let mut methods: Vec<typeck::MethodInfo> = Vec::new();
+    let mut methods: Vec<typeck.MethodInfo> = Vec.new();
 
     // is_ok(&self) -> bool
-    add_method(checker, &mut methods, "is_ok", "result_is_ok", Vec::new(), type_intern::CommonTypes::bool_ty(), false, interner);
+    add_method(checker, &mut methods, "is_ok", "result_is_ok", Vec.new(), type_intern.CommonTypes.bool_ty(), false, interner);
 
     // is_err(&self) -> bool
-    add_method(checker, &mut methods, "is_err", "result_is_err", Vec::new(), type_intern::CommonTypes::bool_ty(), false, interner);
+    add_method(checker, &mut methods, "is_err", "result_is_err", Vec.new(), type_intern.CommonTypes.bool_ty(), false, interner);
 
     // unwrap(self) -> T
-    add_method(checker, &mut methods, "unwrap", "result_unwrap", Vec::new(), make_param(0), false, interner);
+    add_method(checker, &mut methods, "unwrap", "result_unwrap", Vec.new(), make_param(0), false, interner);
 
     // unwrap_or(self, T) -> T
-    let mut unwrap_or_params: Vec<type_intern::TyId> = Vec::new();
+    let mut unwrap_or_params: Vec<type_intern.TyId> = Vec.new();
     unwrap_or_params.push(make_param(0));
     add_method(checker, &mut methods, "unwrap_or", "result_unwrap_or", unwrap_or_params, make_param(0), false, interner);
 
     // expect(self, &str) -> T
-    let mut expect_params: Vec<type_intern::TyId> = Vec::new();
-    expect_params.push(make_ref_ty(type_intern::CommonTypes::str_ty()));
+    let mut expect_params: Vec<type_intern.TyId> = Vec.new();
+    expect_params.push(make_ref_ty(type_intern.CommonTypes.str_ty()));
     add_method(checker, &mut methods, "expect", "result_expect", expect_params, make_param(0), false, interner);
 
     // Register the impl
     let impl_def = checker.alloc_def_id();
-    let impl_info = typeck::ImplInfo::new(impl_def, self_ty, 2, methods);
+    let impl_info = typeck.ImplInfo.new(impl_def, self_ty, 2, methods);
     checker.register_impl(impl_info);
 }
 
 /// Registers builtin enum definitions (Option, Result) for exhaustiveness checking.
 /// These enums may come from external modules and not be present in the HIR items list.
 fn register_builtin_enums(
-    checker: &mut typeck::TypeChecker,
-    interner: &interner::StringInterner,
-    option_some_def: &Option<hir_def::DefId>,
-    option_none_def: &Option<hir_def::DefId>,
-    result_ok_def: &Option<hir_def::DefId>,
-    result_err_def: &Option<hir_def::DefId>,
+    checker: &mut typeck.TypeChecker,
+    interner: &interner.StringInterner,
+    option_some_def: &Option<hir_def.DefId>,
+    option_none_def: &Option<hir_def.DefId>,
+    result_ok_def: &Option<hir_def.DefId>,
+    result_err_def: &Option<hir_def.DefId>,
 ) {
     // Register Option<T> enum: Some(T), None
     match checker.builtin_option_def {
-        Option::Some(option_def) => {
+        Option.Some(option_def) => {
             // Only register if not already registered from HIR items
             let def_idx = option_def.index as usize;
             let already = if def_idx < checker.enums.len() {
                 match &checker.enums[def_idx] {
-                    &Option::Some(_) => true,
-                    &Option::None => false,
+                    &Option.Some(_) => true,
+                    &Option.None => false,
                 }
             } else {
                 false
@@ -2042,65 +2042,65 @@ fn register_builtin_enums(
                 let some_opt = interner.find("Some");
                 let none_opt = interner.find("None");
                 match &name_opt {
-                    &Option::Some(name_sym) => {
+                    &Option.Some(name_sym) => {
                         let some_sym = match &some_opt {
-                            &Option::Some(s) => s,
-                            &Option::None => name_sym, // fallback, won't be used
+                            &Option.Some(s) => s,
+                            &Option.None => name_sym, // fallback, won't be used
                         };
                         let none_sym = match &none_opt {
-                            &Option::Some(s) => s,
-                            &Option::None => name_sym, // fallback, won't be used
+                            &Option.Some(s) => s,
+                            &Option.None => name_sym, // fallback, won't be used
                         };
-                        let mut variant_names: Vec<common::Symbol> = Vec::new();
+                        let mut variant_names: Vec<common.Symbol> = Vec.new();
                         variant_names.push(some_sym);
                         variant_names.push(none_sym);
 
-                        let mut variants: Vec<typeck::VariantInfo> = Vec::new();
+                        let mut variants: Vec<typeck.VariantInfo> = Vec.new();
                         // Some(T) - has one field of type Param(0)
-                        let mut some_fields: Vec<type_intern::TyId> = Vec::new();
+                        let mut some_fields: Vec<type_intern.TyId> = Vec.new();
                         some_fields.push(make_param(0));
                         // Use actual DefId for Some variant if available
                         match option_some_def {
-                            &Option::Some(some_def) => {
-                                variants.push(typeck::VariantInfo::with_def_id(some_sym, some_fields, 0, some_def));
+                            &Option.Some(some_def) => {
+                                variants.push(typeck.VariantInfo.with_def_id(some_sym, some_fields, 0, some_def));
                             }
-                            &Option::None => {
-                                variants.push(typeck::VariantInfo::new(some_sym, some_fields, 0));
+                            &Option.None => {
+                                variants.push(typeck.VariantInfo.new(some_sym, some_fields, 0));
                             }
                         }
                         // None - no fields
                         match option_none_def {
-                            &Option::Some(none_def) => {
-                                variants.push(typeck::VariantInfo::with_def_id(none_sym, Vec::new(), 1, none_def));
+                            &Option.Some(none_def) => {
+                                variants.push(typeck.VariantInfo.with_def_id(none_sym, Vec.new(), 1, none_def));
                             }
-                            &Option::None => {
-                                variants.push(typeck::VariantInfo::new(none_sym, Vec::new(), 1));
+                            &Option.None => {
+                                variants.push(typeck.VariantInfo.new(none_sym, Vec.new(), 1));
                             }
                         }
 
-                        let info = typeck::EnumInfo::new(option_def, name_sym, 1, variant_names, variants);
+                        let info = typeck.EnumInfo.new(option_def, name_sym, 1, variant_names, variants);
                         while checker.enums.len() <= def_idx {
-                            checker.enums.push(Option::None);
+                            checker.enums.push(Option.None);
                         }
                         checker.enums[def_idx] = Some(info);
                     }
-                    &Option::None => {
+                    &Option.None => {
                         // "Option" not interned — skip builtin enum registration
                     }
                 }
             }
         }
-        Option::None => {}
+        Option.None => {}
     }
 
     // Register Result<T, E> enum: Ok(T), Err(E)
     match checker.builtin_result_def {
-        Option::Some(result_def) => {
+        Option.Some(result_def) => {
             let def_idx = result_def.index as usize;
             let already = if def_idx < checker.enums.len() {
                 match &checker.enums[def_idx] {
-                    &Option::Some(_) => true,
-                    &Option::None => false,
+                    &Option.Some(_) => true,
+                    &Option.None => false,
                 }
             } else {
                 false
@@ -2110,203 +2110,203 @@ fn register_builtin_enums(
                 let ok_result = interner.find("Ok");
                 let err_result = interner.find("Err");
                 let name_sym = match &name_result {
-                    &Option::Some(s) => s,
-                    &Option::None => { return; } // "Result" not interned, skip
+                    &Option.Some(s) => s,
+                    &Option.None => { return; } // "Result" not interned, skip
                 };
                 let ok_sym = match &ok_result {
-                    &Option::Some(s) => s,
-                    &Option::None => { return; }
+                    &Option.Some(s) => s,
+                    &Option.None => { return; }
                 };
                 let err_sym = match &err_result {
-                    &Option::Some(s) => s,
-                    &Option::None => { return; }
+                    &Option.Some(s) => s,
+                    &Option.None => { return; }
                 };
-                let mut variant_names: Vec<common::Symbol> = Vec::new();
+                let mut variant_names: Vec<common.Symbol> = Vec.new();
                 variant_names.push(ok_sym);
                 variant_names.push(err_sym);
 
-                let mut variants: Vec<typeck::VariantInfo> = Vec::new();
+                let mut variants: Vec<typeck.VariantInfo> = Vec.new();
                 // Ok(T) - one field of type Param(0)
-                let mut ok_fields: Vec<type_intern::TyId> = Vec::new();
+                let mut ok_fields: Vec<type_intern.TyId> = Vec.new();
                 ok_fields.push(make_param(0));
                 match result_ok_def {
-                    &Option::Some(ok_def) => {
-                        variants.push(typeck::VariantInfo::with_def_id(ok_sym, ok_fields, 0, ok_def));
+                    &Option.Some(ok_def) => {
+                        variants.push(typeck.VariantInfo.with_def_id(ok_sym, ok_fields, 0, ok_def));
                     }
-                    &Option::None => {
-                        variants.push(typeck::VariantInfo::new(ok_sym, ok_fields, 0));
+                    &Option.None => {
+                        variants.push(typeck.VariantInfo.new(ok_sym, ok_fields, 0));
                     }
                 }
                 // Err(E) - one field of type Param(1)
-                let mut err_fields: Vec<type_intern::TyId> = Vec::new();
+                let mut err_fields: Vec<type_intern.TyId> = Vec.new();
                 err_fields.push(make_param(1));
                 match result_err_def {
-                    &Option::Some(err_def) => {
-                        variants.push(typeck::VariantInfo::with_def_id(err_sym, err_fields, 1, err_def));
+                    &Option.Some(err_def) => {
+                        variants.push(typeck.VariantInfo.with_def_id(err_sym, err_fields, 1, err_def));
                     }
-                    &Option::None => {
-                        variants.push(typeck::VariantInfo::new(err_sym, err_fields, 1));
+                    &Option.None => {
+                        variants.push(typeck.VariantInfo.new(err_sym, err_fields, 1));
                     }
                 }
 
-                let info = typeck::EnumInfo::new(result_def, name_sym, 2, variant_names, variants);
+                let info = typeck.EnumInfo.new(result_def, name_sym, 2, variant_names, variants);
                 while checker.enums.len() <= def_idx {
-                    checker.enums.push(Option::None);
+                    checker.enums.push(Option.None);
                 }
                 checker.enums[def_idx] = Some(info);
             }
         }
-        Option::None => {}
+        Option.None => {}
     }
 }
 
 /// Registers primitive str methods: len, is_empty, as_bytes, contains,
 /// starts_with, ends_with.
-fn register_str_methods(checker: &mut typeck::TypeChecker, interner: &interner::StringInterner) {
-    let self_ty = type_intern::CommonTypes::str_ty();
-    let mut methods: Vec<typeck::MethodInfo> = Vec::new();
+fn register_str_methods(checker: &mut typeck.TypeChecker, interner: &interner.StringInterner) {
+    let self_ty = type_intern.CommonTypes.str_ty();
+    let mut methods: Vec<typeck.MethodInfo> = Vec.new();
 
     // len(&self) -> usize
-    add_method(checker, &mut methods, "len", "str_len", Vec::new(), type_intern::CommonTypes::usize_ty(), false, interner);
+    add_method(checker, &mut methods, "len", "str_len", Vec.new(), type_intern.CommonTypes.usize_ty(), false, interner);
 
     // is_empty(&self) -> bool
-    add_method(checker, &mut methods, "is_empty", "str_is_empty", Vec::new(), type_intern::CommonTypes::bool_ty(), false, interner);
+    add_method(checker, &mut methods, "is_empty", "str_is_empty", Vec.new(), type_intern.CommonTypes.bool_ty(), false, interner);
 
     // as_bytes(&self) -> &[u8]
     let ty_interner = type_intern::type_interner();
-    let u8_slice = ty_interner.intern(type_intern::InternedTypeKind::Slice { element: type_intern::CommonTypes::u8_ty() });
-    add_method(checker, &mut methods, "as_bytes", "str_as_bytes", Vec::new(), make_ref_ty(u8_slice), false, interner);
+    let u8_slice = ty_interner.intern(type_intern.InternedTypeKind.Slice { element: type_intern.CommonTypes.u8_ty() });
+    add_method(checker, &mut methods, "as_bytes", "str_as_bytes", Vec.new(), make_ref_ty(u8_slice), false, interner);
 
     // contains(&self, &str) -> bool
-    let mut contains_params: Vec<type_intern::TyId> = Vec::new();
-    contains_params.push(make_ref_ty(type_intern::CommonTypes::str_ty()));
-    add_method(checker, &mut methods, "contains", "str_contains", contains_params, type_intern::CommonTypes::bool_ty(), false, interner);
+    let mut contains_params: Vec<type_intern.TyId> = Vec.new();
+    contains_params.push(make_ref_ty(type_intern.CommonTypes.str_ty()));
+    add_method(checker, &mut methods, "contains", "str_contains", contains_params, type_intern.CommonTypes.bool_ty(), false, interner);
 
     // starts_with(&self, &str) -> bool
-    let mut sw_params: Vec<type_intern::TyId> = Vec::new();
-    sw_params.push(make_ref_ty(type_intern::CommonTypes::str_ty()));
-    add_method(checker, &mut methods, "starts_with", "str_starts_with", sw_params, type_intern::CommonTypes::bool_ty(), false, interner);
+    let mut sw_params: Vec<type_intern.TyId> = Vec.new();
+    sw_params.push(make_ref_ty(type_intern.CommonTypes.str_ty()));
+    add_method(checker, &mut methods, "starts_with", "str_starts_with", sw_params, type_intern.CommonTypes.bool_ty(), false, interner);
 
     // ends_with(&self, &str) -> bool
-    let mut ew_params: Vec<type_intern::TyId> = Vec::new();
-    ew_params.push(make_ref_ty(type_intern::CommonTypes::str_ty()));
-    add_method(checker, &mut methods, "ends_with", "str_ends_with", ew_params, type_intern::CommonTypes::bool_ty(), false, interner);
+    let mut ew_params: Vec<type_intern.TyId> = Vec.new();
+    ew_params.push(make_ref_ty(type_intern.CommonTypes.str_ty()));
+    add_method(checker, &mut methods, "ends_with", "str_ends_with", ew_params, type_intern.CommonTypes.bool_ty(), false, interner);
 
     // Register the impl
     let impl_def = checker.alloc_def_id();
-    let impl_info = typeck::ImplInfo::new(impl_def, self_ty, 0, methods);
+    let impl_info = typeck.ImplInfo.new(impl_def, self_ty, 0, methods);
     checker.register_impl(impl_info);
 }
 
 /// Registers slice [T] methods: len, is_empty.
-fn register_slice_methods(checker: &mut typeck::TypeChecker, interner: &interner::StringInterner) {
+fn register_slice_methods(checker: &mut typeck.TypeChecker, interner: &interner.StringInterner) {
     let ty_interner = type_intern::type_interner();
-    let self_ty = ty_interner.intern(type_intern::InternedTypeKind::Slice { element: make_param(0) });
-    let mut methods: Vec<typeck::MethodInfo> = Vec::new();
+    let self_ty = ty_interner.intern(type_intern.InternedTypeKind.Slice { element: make_param(0) });
+    let mut methods: Vec<typeck.MethodInfo> = Vec.new();
 
     // len(&self) -> usize
-    add_method(checker, &mut methods, "len", "slice_len", Vec::new(), type_intern::CommonTypes::usize_ty(), false, interner);
+    add_method(checker, &mut methods, "len", "slice_len", Vec.new(), type_intern.CommonTypes.usize_ty(), false, interner);
 
     // is_empty(&self) -> bool
-    add_method(checker, &mut methods, "is_empty", "slice_is_empty", Vec::new(), type_intern::CommonTypes::bool_ty(), false, interner);
+    add_method(checker, &mut methods, "is_empty", "slice_is_empty", Vec.new(), type_intern.CommonTypes.bool_ty(), false, interner);
 
     // Register the impl
     let impl_def = checker.alloc_def_id();
-    let impl_info = typeck::ImplInfo::new(impl_def, self_ty, 1, methods);
+    let impl_info = typeck.ImplInfo.new(impl_def, self_ty, 1, methods);
     checker.register_impl(impl_info);
 }
 
-/// Registers function signatures for builtin constructors (String::new, Vec::new, etc.).
-/// This enables type inference to work correctly for calls like `let s = String::new()`.
+/// Registers function signatures for builtin constructors (String.new, Vec.new, etc.).
+/// This enables type inference to work correctly for calls like `let s = String.new()`.
 fn register_builtin_constructor_signatures(
-    checker: &mut typeck::TypeChecker,
-    builtin_fn_defs: &Vec<hir_lower_ctx::BuiltinFnDef>,
+    checker: &mut typeck.TypeChecker,
+    builtin_fn_defs: &Vec<hir_lower_ctx.BuiltinFnDef>,
 ) {
     for i in 0usize..builtin_fn_defs.len() {
         let entry = &builtin_fn_defs[i];
-        let def_id = hir_def::DefId::new(entry.def_id_index);
+        let def_id = hir_def.DefId.new(entry.def_id_index);
         let name = &entry.runtime_name;
 
         // Match on runtime name to determine signature
         if string_eq(name, "string_new") {
-            // String::new() -> String
+            // String.new() -> String
             match checker.builtin_string_def {
-                Option::Some(string_def) => {
-                    let ret_ty = make_adt(string_def, Vec::new());
-                    checker.register_fn_sig_direct(def_id, Vec::new(), ret_ty, 0);
+                Option.Some(string_def) => {
+                    let ret_ty = make_adt(string_def, Vec.new());
+                    checker.register_fn_sig_direct(def_id, Vec.new(), ret_ty, 0);
                 }
-                Option::None => {}
+                Option.None => {}
             }
         } else if string_eq(name, "string_from") {
-            // String::from(&str) -> String
+            // String.from(&str) -> String
             match checker.builtin_string_def {
-                Option::Some(string_def) => {
-                    let mut params: Vec<type_intern::TyId> = Vec::new();
-                    params.push(make_ref_ty(type_intern::CommonTypes::str_ty()));
-                    let ret_ty = make_adt(string_def, Vec::new());
+                Option.Some(string_def) => {
+                    let mut params: Vec<type_intern.TyId> = Vec.new();
+                    params.push(make_ref_ty(type_intern.CommonTypes.str_ty()));
+                    let ret_ty = make_adt(string_def, Vec.new());
                     checker.register_fn_sig_direct(def_id, params, ret_ty, 0);
                 }
-                Option::None => {}
+                Option.None => {}
             }
         } else if string_eq(name, "string_with_capacity") {
-            // String::with_capacity(usize) -> String
+            // String.with_capacity(usize) -> String
             match checker.builtin_string_def {
-                Option::Some(string_def) => {
-                    let mut params: Vec<type_intern::TyId> = Vec::new();
-                    params.push(type_intern::CommonTypes::usize_ty());
-                    let ret_ty = make_adt(string_def, Vec::new());
+                Option.Some(string_def) => {
+                    let mut params: Vec<type_intern.TyId> = Vec.new();
+                    params.push(type_intern.CommonTypes.usize_ty());
+                    let ret_ty = make_adt(string_def, Vec.new());
                     checker.register_fn_sig_direct(def_id, params, ret_ty, 0);
                 }
-                Option::None => {}
+                Option.None => {}
             }
         } else if string_eq(name, "vec_new") {
-            // Vec::new() -> Vec<T> (generic, 1 type param)
+            // Vec.new() -> Vec<T> (generic, 1 type param)
             match checker.builtin_vec_def {
-                Option::Some(vec_def) => {
-                    let mut type_args: Vec<type_intern::TyId> = Vec::new();
+                Option.Some(vec_def) => {
+                    let mut type_args: Vec<type_intern.TyId> = Vec.new();
                     type_args.push(make_param(0));
                     let ret_ty = make_adt(vec_def, type_args);
-                    checker.register_fn_sig_direct(def_id, Vec::new(), ret_ty, 1);
+                    checker.register_fn_sig_direct(def_id, Vec.new(), ret_ty, 1);
                 }
-                Option::None => {}
+                Option.None => {}
             }
         } else if string_eq(name, "vec_with_capacity") {
-            // Vec::with_capacity(usize) -> Vec<T> (generic, 1 type param)
+            // Vec.with_capacity(usize) -> Vec<T> (generic, 1 type param)
             match checker.builtin_vec_def {
-                Option::Some(vec_def) => {
-                    let mut params: Vec<type_intern::TyId> = Vec::new();
-                    params.push(type_intern::CommonTypes::usize_ty());
-                    let mut type_args: Vec<type_intern::TyId> = Vec::new();
+                Option.Some(vec_def) => {
+                    let mut params: Vec<type_intern.TyId> = Vec.new();
+                    params.push(type_intern.CommonTypes.usize_ty());
+                    let mut type_args: Vec<type_intern.TyId> = Vec.new();
                     type_args.push(make_param(0));
                     let ret_ty = make_adt(vec_def, type_args);
                     checker.register_fn_sig_direct(def_id, params, ret_ty, 1);
                 }
-                Option::None => {}
+                Option.None => {}
             }
         } else if string_eq(name, "box_new") {
-            // Box::new(T) -> Box<T> (generic, 1 type param)
+            // Box.new(T) -> Box<T> (generic, 1 type param)
             match checker.builtin_box_def {
-                Option::Some(box_def) => {
-                    let mut params: Vec<type_intern::TyId> = Vec::new();
+                Option.Some(box_def) => {
+                    let mut params: Vec<type_intern.TyId> = Vec.new();
                     params.push(make_param(0));
-                    let mut type_args: Vec<type_intern::TyId> = Vec::new();
+                    let mut type_args: Vec<type_intern.TyId> = Vec.new();
                     type_args.push(make_param(0));
                     let ret_ty = make_adt(box_def, type_args);
                     checker.register_fn_sig_direct(def_id, params, ret_ty, 1);
                 }
-                Option::None => {}
+                Option.None => {}
             }
         } else if string_eq(name, "hashmap_new") {
-            // HashMap::new() -> HashMap<K, V> (generic, 2 type params)
+            // HashMap.new() -> HashMap<K, V> (generic, 2 type params)
             match checker.builtin_hashmap_def {
-                Option::Some(hashmap_def) => {
-                    let mut type_args: Vec<type_intern::TyId> = Vec::new();
+                Option.Some(hashmap_def) => {
+                    let mut type_args: Vec<type_intern.TyId> = Vec.new();
                     type_args.push(make_param(0));
                     type_args.push(make_param(1));
                     let ret_ty = make_adt(hashmap_def, type_args);
-                    checker.register_fn_sig_direct(def_id, Vec::new(), ret_ty, 2);
+                    checker.register_fn_sig_direct(def_id, Vec.new(), ret_ty, 2);
                 }
-                Option::None => {}
+                Option.None => {}
             }
         }
         // Note: option_some_ctor, option_none_ctor, result_ok_ctor, result_err_ctor

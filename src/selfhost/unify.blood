@@ -31,12 +31,12 @@ pub struct UnifyError {
     /// The kind of unification error.
     pub kind: UnifyErrorKind,
     /// The span where the error occurred.
-    pub span: common::Span,
+    pub span: common.Span,
 }
 
 impl UnifyError {
     /// Creates a new unification error.
-    pub fn new(kind: UnifyErrorKind, span: common::Span) -> UnifyError {
+    pub fn new(kind: UnifyErrorKind, span: common.Span) -> UnifyError {
         UnifyError {
             kind: kind,
             span: span,
@@ -44,18 +44,18 @@ impl UnifyError {
     }
 
     /// Creates a type mismatch error.
-    pub fn mismatch(span: common::Span) -> UnifyError {
-        UnifyError::new(UnifyErrorKind::TypeMismatch, span)
+    pub fn mismatch(span: common.Span) -> UnifyError {
+        UnifyError.new(UnifyErrorKind.TypeMismatch, span)
     }
 
     /// Creates an occurs check error.
-    pub fn occurs(span: common::Span) -> UnifyError {
-        UnifyError::new(UnifyErrorKind::OccursCheck, span)
+    pub fn occurs(span: common.Span) -> UnifyError {
+        UnifyError.new(UnifyErrorKind.OccursCheck, span)
     }
 
     /// Creates an arity mismatch error.
-    pub fn arity(span: common::Span) -> UnifyError {
-        UnifyError::new(UnifyErrorKind::ArityMismatch, span)
+    pub fn arity(span: common.Span) -> UnifyError {
+        UnifyError.new(UnifyErrorKind.ArityMismatch, span)
     }
 }
 
@@ -80,14 +80,14 @@ pub enum UnifyErrorKind {
 /// A substitution entry mapping a type variable to its interned value.
 pub struct TySubst {
     /// The type variable being substituted.
-    pub var_id: hir_def::TyVarId,
+    pub var_id: hir_def.TyVarId,
     /// The interned type it maps to.
-    pub ty: type_intern::TyId,
+    pub ty: type_intern.TyId,
 }
 
 impl TySubst {
     /// Creates a new type substitution.
-    pub fn new(var_id: hir_def::TyVarId, ty: type_intern::TyId) -> TySubst {
+    pub fn new(var_id: hir_def.TyVarId, ty: type_intern.TyId) -> TySubst {
         TySubst {
             var_id: var_id,
             ty: ty,
@@ -98,14 +98,14 @@ impl TySubst {
 /// A substitution entry for effect row variables.
 pub struct EffectRowSubst {
     /// The effect row variable being substituted.
-    pub var_id: hir_def::EffectRowVarId,
+    pub var_id: hir_def.EffectRowVarId,
     /// The interned effect row it maps to.
-    pub row: type_intern::EffectRowId,
+    pub row: type_intern.EffectRowId,
 }
 
 impl EffectRowSubst {
     /// Creates a new effect row substitution.
-    pub fn new(var_id: hir_def::EffectRowVarId, row: type_intern::EffectRowId) -> EffectRowSubst {
+    pub fn new(var_id: hir_def.EffectRowVarId, row: type_intern.EffectRowId) -> EffectRowSubst {
         EffectRowSubst {
             var_id: var_id,
             row: row,
@@ -116,19 +116,19 @@ impl EffectRowSubst {
 /// A substitution entry for record row variables.
 pub struct RecordRowSubst {
     /// The record row variable being substituted.
-    pub var_id: hir_def::RecordRowVarId,
+    pub var_id: hir_def.RecordRowVarId,
     /// The interned record fields it maps to.
-    pub fields: type_intern::RecordFieldListId,
+    pub fields: type_intern.RecordFieldListId,
     /// Optional remaining row variable.
-    pub rest: Option<hir_def::RecordRowVarId>,
+    pub rest: Option<hir_def.RecordRowVarId>,
 }
 
 impl RecordRowSubst {
     /// Creates a new record row substitution.
     pub fn new(
-        var_id: hir_def::RecordRowVarId,
-        fields: type_intern::RecordFieldListId,
-        rest: Option<hir_def::RecordRowVarId>,
+        var_id: hir_def.RecordRowVarId,
+        fields: type_intern.RecordFieldListId,
+        rest: Option<hir_def.RecordRowVarId>,
     ) -> RecordRowSubst {
         RecordRowSubst {
             var_id: var_id,
@@ -143,17 +143,17 @@ impl RecordRowSubst {
 // ============================================================
 
 /// A substitution entry mapping a type parameter index to a concrete interned type.
-/// This is used during generic instantiation (e.g., calling Vec::new::<i32>()).
+/// This is used during generic instantiation (e.g., calling Vec.new::<i32>()).
 pub struct TypeParamEntry {
     /// The index of the type parameter (0 for T, 1 for U, etc.)
     pub param_index: u32,
     /// The concrete interned type to substitute.
-    pub ty: type_intern::TyId,
+    pub ty: type_intern.TyId,
 }
 
 impl TypeParamEntry {
     /// Creates a new type parameter entry.
-    pub fn new(param_index: u32, ty: type_intern::TyId) -> TypeParamEntry {
+    pub fn new(param_index: u32, ty: type_intern.TyId) -> TypeParamEntry {
         TypeParamEntry { param_index, ty }
     }
 }
@@ -164,71 +164,71 @@ pub struct TypeParamSubst {
     /// The substitution entries.
     pub entries: Vec<TypeParamEntry>,
     /// Hash index for O(1) param lookup (param_index → vec index).
-    pub hash_index: hashmap::HashMapU64U32,
+    pub hash_index: hashmap.HashMapU64U32,
 }
 
 impl TypeParamSubst {
     /// Creates an empty type parameter substitution.
     pub fn new() -> TypeParamSubst {
         TypeParamSubst {
-            entries: Vec::new(),
-            hash_index: hashmap::HashMapU64U32::new(),
+            entries: Vec.new(),
+            hash_index: hashmap.HashMapU64U32.new(),
         }
     }
 
     /// Creates a substitution from a list of types (indexed 0, 1, 2, ...).
-    pub fn from_types(types: &Vec<hir_ty::Type>) -> TypeParamSubst {
-        let mut subst = TypeParamSubst::new();
+    pub fn from_types(types: &Vec<hir_ty.Type>) -> TypeParamSubst {
+        let mut subst = TypeParamSubst.new();
         for i in 0usize..types.len() {
             let vec_idx = subst.entries.len() as u32;
-            subst.entries.push(TypeParamEntry::new(i as u32, type_intern::type_to_ty_id(&types[i])));
+            subst.entries.push(TypeParamEntry.new(i as u32, type_intern::type_to_ty_id(&types[i])));
             subst.hash_index.insert(i as u64, vec_idx);
         }
         subst
     }
 
     /// Adds a substitution entry (Type-based, converts to TyId internally).
-    pub fn add(self: &mut Self, param_index: u32, ty: hir_ty::Type) {
+    pub fn add(self: &mut Self, param_index: u32, ty: hir_ty.Type) {
         let ty_id = type_intern::type_to_ty_id(&ty);
         let vec_idx = self.entries.len() as u32;
-        self.entries.push(TypeParamEntry::new(param_index, ty_id));
+        self.entries.push(TypeParamEntry.new(param_index, ty_id));
         self.hash_index.insert(param_index as u64, vec_idx);
     }
 
     /// Adds a substitution entry (TyId-based, zero conversion).
-    pub fn add_id(self: &mut Self, param_index: u32, ty_id: type_intern::TyId) {
+    pub fn add_id(self: &mut Self, param_index: u32, ty_id: type_intern.TyId) {
         let vec_idx = self.entries.len() as u32;
-        self.entries.push(TypeParamEntry::new(param_index, ty_id));
+        self.entries.push(TypeParamEntry.new(param_index, ty_id));
         self.hash_index.insert(param_index as u64, vec_idx);
     }
 
     /// Looks up a type parameter by index (returns Type for backward compat).
-    pub fn lookup(self: &Self, param_index: u32) -> Option<hir_ty::Type> {
+    pub fn lookup(self: &Self, param_index: u32) -> Option<hir_ty.Type> {
         match self.lookup_id(param_index) {
-            Option::Some(ty_id) => Option::Some(type_intern::ty_id_to_type(ty_id)),
-            Option::None => Option::None,
+            Option.Some(ty_id) => Option.Some(type_intern::ty_id_to_type(ty_id)),
+            Option.None => Option.None,
         }
     }
 
     /// Looks up a type parameter by index (returns TyId, zero copy).
-    pub fn lookup_id(self: &Self, param_index: u32) -> Option<type_intern::TyId> {
+    pub fn lookup_id(self: &Self, param_index: u32) -> Option<type_intern.TyId> {
         // O(1) hash lookup
         match self.hash_index.get(param_index as u64) {
-            Option::Some(vec_idx) => {
+            Option.Some(vec_idx) => {
                 let idx = vec_idx as usize;
                 if idx < self.entries.len() {
-                    return Option::Some(type_intern::TyId::new(self.entries[idx].ty.index));
+                    return Option.Some(type_intern.TyId.new(self.entries[idx].ty.index));
                 }
             }
-            Option::None => {}
+            Option.None => {}
         }
         // Fallback to linear scan for collision handling
         for i in 0usize..self.entries.len() {
             if self.entries[i].param_index == param_index {
-                return Some(type_intern::TyId::new(self.entries[i].ty.index));
+                return Some(type_intern.TyId.new(self.entries[i].ty.index));
             }
         }
-        Option::None
+        Option.None
     }
 
     /// Returns true if this substitution is empty.
@@ -240,7 +240,7 @@ impl TypeParamSubst {
 /// Substitutes type parameters in a type according to the given substitution.
 /// This is used to instantiate generic types with concrete type arguments.
 /// Wrapper: converts to TyId, delegates to substitute_type_params_id, converts back.
-pub fn substitute_type_params(ty: &hir_ty::Type, subst: &TypeParamSubst) -> hir_ty::Type {
+pub fn substitute_type_params(ty: &hir_ty.Type, subst: &TypeParamSubst) -> hir_ty.Type {
     if subst.is_empty() {
         return hir_ty::copy_type(ty);
     }
@@ -250,13 +250,13 @@ pub fn substitute_type_params(ty: &hir_ty::Type, subst: &TypeParamSubst) -> hir_
 }
 
 /// TyId-native: substitutes type parameters in a type.
-pub fn substitute_type_params_id(ty_id: type_intern::TyId, subst: &TypeParamSubst) -> type_intern::TyId {
+pub fn substitute_type_params_id(ty_id: type_intern.TyId, subst: &TypeParamSubst) -> type_intern.TyId {
     substitute_params_core_id(ty_id, subst, false, 0)
 }
 
 /// Substitutes forall-bound type variables in a type.
 /// Wrapper: converts to TyId, delegates to substitute_forall_vars_id, converts back.
-fn substitute_forall_vars(ty: &hir_ty::Type, subst: &TypeParamSubst) -> hir_ty::Type {
+fn substitute_forall_vars(ty: &hir_ty.Type, subst: &TypeParamSubst) -> hir_ty.Type {
     if subst.is_empty() {
         return hir_ty::copy_type(ty);
     }
@@ -266,14 +266,14 @@ fn substitute_forall_vars(ty: &hir_ty::Type, subst: &TypeParamSubst) -> hir_ty::
 }
 
 /// TyId-native: substitutes forall-bound type variables.
-fn substitute_forall_vars_id(ty_id: type_intern::TyId, subst: &TypeParamSubst) -> type_intern::TyId {
+fn substitute_forall_vars_id(ty_id: type_intern.TyId, subst: &TypeParamSubst) -> type_intern.TyId {
     substitute_params_core_id(ty_id, subst, true, 0)
 }
 
 /// Shared core for substitute_type_params_id and substitute_forall_vars_id.
 /// If capture_avoid is true, Forall arms filter out inner-bound params.
 /// depth tracks recursion depth to prevent stack overflow on pathological types.
-fn substitute_params_core_id(ty_id: type_intern::TyId, subst: &TypeParamSubst, capture_avoid: bool, depth: i32) -> type_intern::TyId {
+fn substitute_params_core_id(ty_id: type_intern.TyId, subst: &TypeParamSubst, capture_avoid: bool, depth: i32) -> type_intern.TyId {
     if subst.is_empty() {
         return ty_id;
     }
@@ -284,75 +284,75 @@ fn substitute_params_core_id(ty_id: type_intern::TyId, subst: &TypeParamSubst, c
     let interner = type_intern::type_interner();
     let kind = interner.get(ty_id);
     match kind {
-        &type_intern::InternedTypeKind::Param(var_id) => {
+        &type_intern.InternedTypeKind.Param(var_id) => {
             match subst.lookup_id(var_id.index) {
-                Option::Some(concrete_id) => concrete_id,
-                Option::None => ty_id,
+                Option.Some(concrete_id) => concrete_id,
+                Option.None => ty_id,
             }
         }
-        &type_intern::InternedTypeKind::Primitive(_) => ty_id,
-        &type_intern::InternedTypeKind::Never => ty_id,
-        &type_intern::InternedTypeKind::Error => ty_id,
-        &type_intern::InternedTypeKind::Infer(var_id) => {
+        &type_intern.InternedTypeKind.Primitive(_) => ty_id,
+        &type_intern.InternedTypeKind.Never => ty_id,
+        &type_intern.InternedTypeKind.Error => ty_id,
+        &type_intern.InternedTypeKind.Infer(var_id) => {
             // Also substitute Infer variables — Blood HIR uses Infer for type parameters
             match subst.lookup_id(var_id.index) {
-                Option::Some(concrete_id) => concrete_id,
-                Option::None => ty_id,
+                Option.Some(concrete_id) => concrete_id,
+                Option.None => ty_id,
             }
         }
-        &type_intern::InternedTypeKind::Tuple(list_id) => {
+        &type_intern.InternedTypeKind.Tuple(list_id) => {
             let new_list = substitute_ty_list_id(list_id, subst, capture_avoid, depth + 1);
-            type_intern::type_interner().intern(type_intern::InternedTypeKind::Tuple(new_list))
+            type_intern::type_interner().intern(type_intern.InternedTypeKind.Tuple(new_list))
         }
-        &type_intern::InternedTypeKind::Array { element, size } => {
+        &type_intern.InternedTypeKind.Array { element, size } => {
             let new_elem = substitute_params_core_id(element, subst, capture_avoid, depth + 1);
             type_intern::type_interner().mk_array(new_elem, size)
         }
-        &type_intern::InternedTypeKind::Slice { element } => {
+        &type_intern.InternedTypeKind.Slice { element } => {
             let new_elem = substitute_params_core_id(element, subst, capture_avoid, depth + 1);
             type_intern::type_interner().mk_slice(new_elem)
         }
-        &type_intern::InternedTypeKind::Ref { inner, mutable } => {
+        &type_intern.InternedTypeKind.Ref { inner, mutable } => {
             let new_inner = substitute_params_core_id(inner, subst, capture_avoid, depth + 1);
             type_intern::type_interner().mk_ref(new_inner, mutable)
         }
-        &type_intern::InternedTypeKind::Ptr { inner, mutable } => {
+        &type_intern.InternedTypeKind.Ptr { inner, mutable } => {
             let new_inner = substitute_params_core_id(inner, subst, capture_avoid, depth + 1);
             type_intern::type_interner().mk_ptr(new_inner, mutable)
         }
-        &type_intern::InternedTypeKind::Adt { def_id, args } => {
+        &type_intern.InternedTypeKind.Adt { def_id, args } => {
             let new_args = substitute_ty_list_id(args, subst, capture_avoid, depth + 1);
             type_intern::type_interner().mk_adt(def_id, new_args)
         }
-        &type_intern::InternedTypeKind::Fn { params, ret, effects } => {
+        &type_intern.InternedTypeKind.Fn { params, ret, effects } => {
             let new_params = substitute_ty_list_id(params, subst, capture_avoid, depth + 1);
             let new_ret = substitute_params_core_id(ret, subst, capture_avoid, depth + 1);
             let new_effects = substitute_effect_row_core_id(effects, subst, capture_avoid, depth + 1);
             type_intern::type_interner().mk_fn(new_params, new_ret, new_effects)
         }
-        &type_intern::InternedTypeKind::Closure { def_id, params, ret } => {
+        &type_intern.InternedTypeKind.Closure { def_id, params, ret } => {
             let new_params = substitute_ty_list_id(params, subst, capture_avoid, depth + 1);
             let new_ret = substitute_params_core_id(ret, subst, capture_avoid, depth + 1);
             type_intern::type_interner().mk_closure(def_id, new_params, new_ret)
         }
-        &type_intern::InternedTypeKind::Record { fields, ref row_var } => {
+        &type_intern.InternedTypeKind.Record { fields, ref row_var } => {
             let rv = *row_var;
             let new_fields = substitute_record_fields_id(fields, subst, capture_avoid, depth + 1);
-            type_intern::type_interner().intern(type_intern::InternedTypeKind::Record {
+            type_intern::type_interner().intern(type_intern.InternedTypeKind.Record {
                 fields: new_fields,
                 row_var: rv,
             })
         }
-        &type_intern::InternedTypeKind::Forall { ref params, body } => {
+        &type_intern.InternedTypeKind.Forall { ref params, body } => {
             // Copy params vec before dropping interner borrow
             let param_count = params.len();
-            let mut copied_params: Vec<hir_def::TyVarId> = Vec::new();
+            let mut copied_params: Vec<hir_def.TyVarId> = Vec.new();
             for i in 0usize..param_count {
                 copied_params.push(params[i]);
             }
             if capture_avoid {
                 // Filter out inner-bound params from subst
-                let mut filtered = TypeParamSubst::new();
+                let mut filtered = TypeParamSubst.new();
                 let interner_count = type_intern::type_interner().type_count() as u32;
                 for si in 0usize..subst.entries.len() {
                     let entry_idx = subst.entries[si].param_index;
@@ -361,7 +361,7 @@ fn substitute_params_core_id(ty_id: type_intern::TyId, subst: &TypeParamSubst, c
                     if raw_index >= interner_count {
                         panic("ICE: Forall substitution entry has TyId index out of bounds");
                     }
-                    let entry_ty = type_intern::TyId::new(raw_index);
+                    let entry_ty = type_intern.TyId.new(raw_index);
                     let mut is_bound: bool = false;
                     for j in 0usize..copied_params.len() {
                         if copied_params[j].index == entry_idx {
@@ -373,33 +373,33 @@ fn substitute_params_core_id(ty_id: type_intern::TyId, subst: &TypeParamSubst, c
                     }
                 }
                 let new_body = substitute_params_core_id(body, &filtered, capture_avoid, depth + 1);
-                type_intern::type_interner().intern(type_intern::InternedTypeKind::Forall {
+                type_intern::type_interner().intern(type_intern.InternedTypeKind.Forall {
                     params: copied_params,
                     body: new_body,
                 })
             } else {
                 let new_body = substitute_params_core_id(body, subst, capture_avoid, depth + 1);
-                type_intern::type_interner().intern(type_intern::InternedTypeKind::Forall {
+                type_intern::type_interner().intern(type_intern.InternedTypeKind.Forall {
                     params: copied_params,
                     body: new_body,
                 })
             }
         }
-        &type_intern::InternedTypeKind::Ownership { qualifier, inner } => {
+        &type_intern.InternedTypeKind.Ownership { qualifier, inner } => {
             let new_inner = substitute_params_core_id(inner, subst, capture_avoid, depth + 1);
             type_intern::type_interner().mk_ownership(qualifier, new_inner)
         }
-        &type_intern::InternedTypeKind::Range { element, inclusive } => {
+        &type_intern.InternedTypeKind.Range { element, inclusive } => {
             let new_elem = substitute_params_core_id(element, subst, capture_avoid, depth + 1);
             type_intern::type_interner().mk_range(new_elem, inclusive)
         }
-        &type_intern::InternedTypeKind::DynTrait { trait_id, ref auto_traits } => {
+        &type_intern.InternedTypeKind.DynTrait { trait_id, ref auto_traits } => {
             let auto_count = auto_traits.len();
-            let mut copied_auto: Vec<hir_def::DefId> = Vec::new();
+            let mut copied_auto: Vec<hir_def.DefId> = Vec.new();
             for i in 0usize..auto_count {
                 copied_auto.push(auto_traits[i]);
             }
-            type_intern::type_interner().intern(type_intern::InternedTypeKind::DynTrait {
+            type_intern::type_interner().intern(type_intern.InternedTypeKind.DynTrait {
                 trait_id: trait_id,
                 auto_traits: copied_auto,
             })
@@ -408,10 +408,10 @@ fn substitute_params_core_id(ty_id: type_intern::TyId, subst: &TypeParamSubst, c
 }
 
 /// Substitutes params in a type list, returning new TyListId.
-fn substitute_ty_list_id(list_id: type_intern::TyListId, subst: &TypeParamSubst, capture_avoid: bool, depth: i32) -> type_intern::TyListId {
+fn substitute_ty_list_id(list_id: type_intern.TyListId, subst: &TypeParamSubst, capture_avoid: bool, depth: i32) -> type_intern.TyListId {
     let interner = type_intern::type_interner();
     let len = interner.ty_list_len(list_id);
-    let mut result: Vec<type_intern::TyId> = Vec::new();
+    let mut result: Vec<type_intern.TyId> = Vec.new();
     for i in 0usize..len {
         let elem = type_intern::type_interner().get_ty_list_element(list_id, i);
         result.push(substitute_params_core_id(elem, subst, capture_avoid, depth));
@@ -420,45 +420,45 @@ fn substitute_ty_list_id(list_id: type_intern::TyListId, subst: &TypeParamSubst,
 }
 
 /// Substitutes params in an effect row (TyId-native).
-fn substitute_effect_row_core_id(eff_id: type_intern::EffectRowId, subst: &TypeParamSubst, capture_avoid: bool, depth: i32) -> type_intern::EffectRowId {
+fn substitute_effect_row_core_id(eff_id: type_intern.EffectRowId, subst: &TypeParamSubst, capture_avoid: bool, depth: i32) -> type_intern.EffectRowId {
     let interner = type_intern::type_interner();
     let row = interner.get_effect_row(eff_id);
     let eff_count = row.effects.len();
     let row_var = row.row_var;
-    let mut new_effects: Vec<type_intern::InternedEffectRef> = Vec::new();
+    let mut new_effects: Vec<type_intern.InternedEffectRef> = Vec.new();
     for i in 0usize..eff_count {
         let eff = &type_intern::type_interner().get_effect_row(eff_id).effects[i];
         let def_id = eff.def_id;
         let args = eff.args;
         let new_args = substitute_ty_list_id(args, subst, capture_avoid, depth);
-        new_effects.push(type_intern::InternedEffectRef::new(def_id, new_args));
+        new_effects.push(type_intern.InternedEffectRef.new(def_id, new_args));
     }
     type_intern::type_interner().intern_effect_row(
-        type_intern::InternedEffectRow::new(new_effects, row_var)
+        type_intern.InternedEffectRow.new(new_effects, row_var)
     )
 }
 
 /// Substitutes params in record fields (TyId-native).
-fn substitute_record_fields_id(fields_id: type_intern::RecordFieldListId, subst: &TypeParamSubst, capture_avoid: bool, depth: i32) -> type_intern::RecordFieldListId {
+fn substitute_record_fields_id(fields_id: type_intern.RecordFieldListId, subst: &TypeParamSubst, capture_avoid: bool, depth: i32) -> type_intern.RecordFieldListId {
     let interner = type_intern::type_interner();
     let list = interner.get_record_field_list(fields_id);
     let field_count = list.fields.len();
-    let mut new_fields: Vec<type_intern::InternedRecordField> = Vec::new();
+    let mut new_fields: Vec<type_intern.InternedRecordField> = Vec.new();
     for i in 0usize..field_count {
         let f = &type_intern::type_interner().get_record_field_list(fields_id).fields[i];
         let name = f.name;
         let ty = f.ty;
         let new_ty = substitute_params_core_id(ty, subst, capture_avoid, depth);
-        new_fields.push(type_intern::InternedRecordField::new(name, new_ty));
+        new_fields.push(type_intern.InternedRecordField.new(name, new_ty));
     }
     type_intern::type_interner().intern_record_field_list(
-        type_intern::InternedRecordFieldList::new(new_fields)
+        type_intern.InternedRecordFieldList.new(new_fields)
     )
 }
 
 /// Substitutes forall-bound type variables in an effect row.
 /// Wrapper: converts to EffectRowId, delegates, converts back.
-fn substitute_forall_effect_row(row: &hir_ty::EffectRow, subst: &TypeParamSubst) -> hir_ty::EffectRow {
+fn substitute_forall_effect_row(row: &hir_ty.EffectRow, subst: &TypeParamSubst) -> hir_ty.EffectRow {
     let eff_id = effect_row_to_id(row);
     let result_id = substitute_effect_row_core_id(eff_id, subst, true, 0);
     effect_row_id_to_row(result_id)
@@ -467,8 +467,8 @@ fn substitute_forall_effect_row(row: &hir_ty::EffectRow, subst: &TypeParamSubst)
 /// Extracts type parameter bindings by matching an impl's self_ty against
 /// the actual receiver type. Wrapper: converts to TyId and delegates.
 pub fn extract_type_params_from_self_ty(
-    self_ty: &hir_ty::Type,
-    receiver: &hir_ty::Type,
+    self_ty: &hir_ty.Type,
+    receiver: &hir_ty.Type,
     subst: &mut TypeParamSubst,
 ) {
     let self_id = type_intern::type_to_ty_id(self_ty);
@@ -478,32 +478,32 @@ pub fn extract_type_params_from_self_ty(
 
 /// TyId-native: recursive type parameter extraction.
 fn extract_params_recursive_id(
-    pattern: type_intern::TyId,
-    actual: type_intern::TyId,
+    pattern: type_intern.TyId,
+    actual: type_intern.TyId,
     subst: &mut TypeParamSubst,
 ) {
     let interner = type_intern::type_interner();
     let kind = interner.get(pattern);
     match kind {
-        &type_intern::InternedTypeKind::Param(var_id) => {
+        &type_intern.InternedTypeKind.Param(var_id) => {
             subst.add_id(var_id.index, actual);
         }
-        &type_intern::InternedTypeKind::Adt { def_id: _, args } => {
+        &type_intern.InternedTypeKind.Adt { def_id: _, args } => {
             extract_params_adt_args_id(args, actual, subst);
         }
-        &type_intern::InternedTypeKind::Ref { inner, mutable: _ } => {
+        &type_intern.InternedTypeKind.Ref { inner, mutable: _ } => {
             extract_params_ref_inner_id(inner, actual, subst);
         }
-        &type_intern::InternedTypeKind::Ptr { inner, mutable: _ } => {
+        &type_intern.InternedTypeKind.Ptr { inner, mutable: _ } => {
             extract_params_ptr_inner_id(inner, actual, subst);
         }
-        &type_intern::InternedTypeKind::Slice { element } => {
+        &type_intern.InternedTypeKind.Slice { element } => {
             extract_params_slice_elem_id(element, actual, subst);
         }
-        &type_intern::InternedTypeKind::Array { element, size: _ } => {
+        &type_intern.InternedTypeKind.Array { element, size: _ } => {
             extract_params_array_elem_id(element, actual, subst);
         }
-        &type_intern::InternedTypeKind::Tuple(list_id) => {
+        &type_intern.InternedTypeKind.Tuple(list_id) => {
             extract_params_tuple_elems_id(list_id, actual, subst);
         }
         // Primitive, Never, Error, Infer, etc. — no type params to extract
@@ -513,14 +513,14 @@ fn extract_params_recursive_id(
 
 /// Helper: extract params from ADT type arguments (TyId-native).
 fn extract_params_adt_args_id(
-    pattern_args: type_intern::TyListId,
-    actual: type_intern::TyId,
+    pattern_args: type_intern.TyListId,
+    actual: type_intern.TyId,
     subst: &mut TypeParamSubst,
 ) {
     let interner = type_intern::type_interner();
     let actual_kind = interner.get(actual);
     match actual_kind {
-        &type_intern::InternedTypeKind::Adt { def_id: _, args } => {
+        &type_intern.InternedTypeKind.Adt { def_id: _, args } => {
             let p_len = type_intern::type_interner().ty_list_len(pattern_args);
             let a_len = type_intern::type_interner().ty_list_len(args);
             let limit = if p_len < a_len { p_len } else { a_len };
@@ -536,14 +536,14 @@ fn extract_params_adt_args_id(
 
 /// Helper: extract params from reference inner type (TyId-native).
 fn extract_params_ref_inner_id(
-    pattern_inner: type_intern::TyId,
-    actual: type_intern::TyId,
+    pattern_inner: type_intern.TyId,
+    actual: type_intern.TyId,
     subst: &mut TypeParamSubst,
 ) {
     let interner = type_intern::type_interner();
     let actual_kind = interner.get(actual);
     match actual_kind {
-        &type_intern::InternedTypeKind::Ref { inner, mutable: _ } => {
+        &type_intern.InternedTypeKind.Ref { inner, mutable: _ } => {
             extract_params_recursive_id(pattern_inner, inner, subst);
         }
         _ => {}
@@ -552,14 +552,14 @@ fn extract_params_ref_inner_id(
 
 /// Helper: extract params from pointer inner type (TyId-native).
 fn extract_params_ptr_inner_id(
-    pattern_inner: type_intern::TyId,
-    actual: type_intern::TyId,
+    pattern_inner: type_intern.TyId,
+    actual: type_intern.TyId,
     subst: &mut TypeParamSubst,
 ) {
     let interner = type_intern::type_interner();
     let actual_kind = interner.get(actual);
     match actual_kind {
-        &type_intern::InternedTypeKind::Ptr { inner, mutable: _ } => {
+        &type_intern.InternedTypeKind.Ptr { inner, mutable: _ } => {
             extract_params_recursive_id(pattern_inner, inner, subst);
         }
         _ => {}
@@ -568,14 +568,14 @@ fn extract_params_ptr_inner_id(
 
 /// Helper: extract params from slice element type (TyId-native).
 fn extract_params_slice_elem_id(
-    pattern_elem: type_intern::TyId,
-    actual: type_intern::TyId,
+    pattern_elem: type_intern.TyId,
+    actual: type_intern.TyId,
     subst: &mut TypeParamSubst,
 ) {
     let interner = type_intern::type_interner();
     let actual_kind = interner.get(actual);
     match actual_kind {
-        &type_intern::InternedTypeKind::Slice { element } => {
+        &type_intern.InternedTypeKind.Slice { element } => {
             extract_params_recursive_id(pattern_elem, element, subst);
         }
         _ => {}
@@ -584,14 +584,14 @@ fn extract_params_slice_elem_id(
 
 /// Helper: extract params from array element type (TyId-native).
 fn extract_params_array_elem_id(
-    pattern_elem: type_intern::TyId,
-    actual: type_intern::TyId,
+    pattern_elem: type_intern.TyId,
+    actual: type_intern.TyId,
     subst: &mut TypeParamSubst,
 ) {
     let interner = type_intern::type_interner();
     let actual_kind = interner.get(actual);
     match actual_kind {
-        &type_intern::InternedTypeKind::Array { element, size: _ } => {
+        &type_intern.InternedTypeKind.Array { element, size: _ } => {
             extract_params_recursive_id(pattern_elem, element, subst);
         }
         _ => {}
@@ -600,14 +600,14 @@ fn extract_params_array_elem_id(
 
 /// Helper: extract params from tuple element types (TyId-native).
 fn extract_params_tuple_elems_id(
-    pattern_list: type_intern::TyListId,
-    actual: type_intern::TyId,
+    pattern_list: type_intern.TyListId,
+    actual: type_intern.TyId,
     subst: &mut TypeParamSubst,
 ) {
     let interner = type_intern::type_interner();
     let actual_kind = interner.get(actual);
     match actual_kind {
-        &type_intern::InternedTypeKind::Tuple(actual_list) => {
+        &type_intern.InternedTypeKind.Tuple(actual_list) => {
             let p_len = type_intern::type_interner().ty_list_len(pattern_list);
             let a_len = type_intern::type_interner().ty_list_len(actual_list);
             let limit = if p_len < a_len { p_len } else { a_len };
@@ -623,7 +623,7 @@ fn extract_params_tuple_elems_id(
 
 /// Substitutes type parameters in an effect row.
 /// Wrapper: converts to EffectRowId, delegates, converts back.
-fn substitute_effect_row_params(row: &hir_ty::EffectRow, subst: &TypeParamSubst) -> hir_ty::EffectRow {
+fn substitute_effect_row_params(row: &hir_ty.EffectRow, subst: &TypeParamSubst) -> hir_ty.EffectRow {
     let eff_id = effect_row_to_id(row);
     let result_id = substitute_effect_row_core_id(eff_id, subst, false, 0);
     effect_row_id_to_row(result_id)
@@ -668,33 +668,33 @@ impl Unifier {
     }
 
     /// Generates a fresh type variable.
-    pub fn fresh_ty_var(self: &mut Self) -> hir_def::TyVarId {
-        let id = hir_def::TyVarId::new(self.next_ty_var);
+    pub fn fresh_ty_var(self: &mut Self) -> hir_def.TyVarId {
+        let id = hir_def.TyVarId.new(self.next_ty_var);
         self.next_ty_var = self.next_ty_var + 1;
         id
     }
 
     /// Generates a fresh effect row variable.
-    pub fn fresh_effect_var(self: &mut Self) -> hir_def::EffectRowVarId {
-        let id = hir_def::EffectRowVarId::new(self.next_effect_var);
+    pub fn fresh_effect_var(self: &mut Self) -> hir_def.EffectRowVarId {
+        let id = hir_def.EffectRowVarId.new(self.next_effect_var);
         self.next_effect_var = self.next_effect_var + 1;
         id
     }
 
     /// Generates a fresh record row variable.
-    pub fn fresh_record_var(self: &mut Self) -> hir_def::RecordRowVarId {
-        let id = hir_def::RecordRowVarId::new(self.next_record_var);
+    pub fn fresh_record_var(self: &mut Self) -> hir_def.RecordRowVarId {
+        let id = hir_def.RecordRowVarId.new(self.next_record_var);
         self.next_record_var = self.next_record_var + 1;
         id
     }
 
     /// Creates a fresh inference type.
-    pub fn fresh_infer(self: &mut Self) -> hir_ty::Type {
-        hir_ty::Type::infer(self.fresh_ty_var())
+    pub fn fresh_infer(self: &mut Self) -> hir_ty.Type {
+        hir_ty.Type.infer(self.fresh_ty_var())
     }
 
     /// Creates a fresh inference type as TyId (zero allocation).
-    pub fn fresh_infer_id(self: &mut Self) -> type_intern::TyId {
+    pub fn fresh_infer_id(self: &mut Self) -> type_intern.TyId {
         let var_id = self.fresh_ty_var();
         type_intern::type_interner().mk_infer(var_id)
     }
@@ -726,23 +726,23 @@ pub struct SubstTable {
     /// Record row variable substitutions.
     pub record_substs: Vec<RecordRowSubst>,
     /// Hash index for O(1) type variable lookup (var_id.index → vec index).
-    pub ty_hash: hashmap::HashMapU64U32,
+    pub ty_hash: hashmap.HashMapU64U32,
     /// Hash index for O(1) effect variable lookup.
-    pub effect_hash: hashmap::HashMapU64U32,
+    pub effect_hash: hashmap.HashMapU64U32,
     /// Hash index for O(1) record variable lookup.
-    pub record_hash: hashmap::HashMapU64U32,
+    pub record_hash: hashmap.HashMapU64U32,
 }
 
 impl SubstTable {
     /// Creates an empty substitution table.
     pub fn new() -> SubstTable {
         SubstTable {
-            ty_substs: Vec::new(),
-            effect_substs: Vec::new(),
-            record_substs: Vec::new(),
-            ty_hash: hashmap::HashMapU64U32::new(),
-            effect_hash: hashmap::HashMapU64U32::new(),
-            record_hash: hashmap::HashMapU64U32::new(),
+            ty_substs: Vec.new(),
+            effect_substs: Vec.new(),
+            record_substs: Vec.new(),
+            ty_hash: hashmap.HashMapU64U32.new(),
+            effect_hash: hashmap.HashMapU64U32.new(),
+            record_hash: hashmap.HashMapU64U32.new(),
         }
     }
 }
@@ -752,16 +752,16 @@ impl SubstTable {
 /// With TyId storage, this is trivial: all fields are u32 indices, so
 /// cloning is just copying Vec<u32-sized-struct> — zero deep cloning.
 pub fn clone_subst_table(table: &SubstTable) -> SubstTable {
-    let mut new_table = SubstTable::new();
+    let mut new_table = SubstTable.new();
 
     // Clone type substitutions (TyId is u32 — trivial copy)
     let mut i: usize = 0;
     while i < table.ty_substs.len() {
         let vec_idx = new_table.ty_substs.len() as u32;
         let var_id = table.ty_substs[i].var_id;
-        new_table.ty_substs.push(TySubst::new(
+        new_table.ty_substs.push(TySubst.new(
             var_id,
-            type_intern::TyId::new(table.ty_substs[i].ty.index),
+            type_intern.TyId.new(table.ty_substs[i].ty.index),
         ));
         new_table.ty_hash.insert(var_id.index as u64, vec_idx);
         i += 1;
@@ -772,9 +772,9 @@ pub fn clone_subst_table(table: &SubstTable) -> SubstTable {
     while i < table.effect_substs.len() {
         let vec_idx = new_table.effect_substs.len() as u32;
         let var_id = table.effect_substs[i].var_id;
-        new_table.effect_substs.push(EffectRowSubst::new(
+        new_table.effect_substs.push(EffectRowSubst.new(
             var_id,
-            type_intern::EffectRowId::new(table.effect_substs[i].row.index),
+            type_intern.EffectRowId.new(table.effect_substs[i].row.index),
         ));
         new_table.effect_hash.insert(var_id.index as u64, vec_idx);
         i += 1;
@@ -784,9 +784,9 @@ pub fn clone_subst_table(table: &SubstTable) -> SubstTable {
     for i in 0usize..table.record_substs.len() {
         let vec_idx = new_table.record_substs.len() as u32;
         let var_id = table.record_substs[i].var_id;
-        new_table.record_substs.push(RecordRowSubst::new(
+        new_table.record_substs.push(RecordRowSubst.new(
             var_id,
-            type_intern::RecordFieldListId::new(table.record_substs[i].fields.index),
+            type_intern.RecordFieldListId.new(table.record_substs[i].fields.index),
             table.record_substs[i].rest,
         ));
         new_table.record_hash.insert(var_id.index as u64, vec_idx);
@@ -812,363 +812,363 @@ pub enum MatchResult {
 }
 
 /// Checks if two primitive types are the same.
-pub fn primitives_equal(a: hir_ty::PrimitiveTy, b: hir_ty::PrimitiveTy) -> bool {
+pub fn primitives_equal(a: hir_ty.PrimitiveTy, b: hir_ty.PrimitiveTy) -> bool {
     match a {
-        hir_ty::PrimitiveTy::Bool => {
+        hir_ty.PrimitiveTy.Bool => {
             match b {
-                hir_ty::PrimitiveTy::Bool => true,
-                hir_ty::PrimitiveTy::I8 => false,
-                hir_ty::PrimitiveTy::I16 => false,
-                hir_ty::PrimitiveTy::I32 => false,
-                hir_ty::PrimitiveTy::I64 => false,
-                hir_ty::PrimitiveTy::I128 => false,
-                hir_ty::PrimitiveTy::Isize => false,
-                hir_ty::PrimitiveTy::U8 => false,
-                hir_ty::PrimitiveTy::U16 => false,
-                hir_ty::PrimitiveTy::U32 => false,
-                hir_ty::PrimitiveTy::U64 => false,
-                hir_ty::PrimitiveTy::U128 => false,
-                hir_ty::PrimitiveTy::Usize => false,
-                hir_ty::PrimitiveTy::F32 => false,
-                hir_ty::PrimitiveTy::F64 => false,
-                hir_ty::PrimitiveTy::Char => false,
-                hir_ty::PrimitiveTy::Str => false,
+                hir_ty.PrimitiveTy.Bool => true,
+                hir_ty.PrimitiveTy.I8 => false,
+                hir_ty.PrimitiveTy.I16 => false,
+                hir_ty.PrimitiveTy.I32 => false,
+                hir_ty.PrimitiveTy.I64 => false,
+                hir_ty.PrimitiveTy.I128 => false,
+                hir_ty.PrimitiveTy.Isize => false,
+                hir_ty.PrimitiveTy.U8 => false,
+                hir_ty.PrimitiveTy.U16 => false,
+                hir_ty.PrimitiveTy.U32 => false,
+                hir_ty.PrimitiveTy.U64 => false,
+                hir_ty.PrimitiveTy.U128 => false,
+                hir_ty.PrimitiveTy.Usize => false,
+                hir_ty.PrimitiveTy.F32 => false,
+                hir_ty.PrimitiveTy.F64 => false,
+                hir_ty.PrimitiveTy.Char => false,
+                hir_ty.PrimitiveTy.Str => false,
             }
         }
-        hir_ty::PrimitiveTy::I8 => {
+        hir_ty.PrimitiveTy.I8 => {
             match b {
-                hir_ty::PrimitiveTy::I8 => true,
-                hir_ty::PrimitiveTy::Bool => false,
-                hir_ty::PrimitiveTy::I16 => false,
-                hir_ty::PrimitiveTy::I32 => false,
-                hir_ty::PrimitiveTy::I64 => false,
-                hir_ty::PrimitiveTy::I128 => false,
-                hir_ty::PrimitiveTy::Isize => false,
-                hir_ty::PrimitiveTy::U8 => false,
-                hir_ty::PrimitiveTy::U16 => false,
-                hir_ty::PrimitiveTy::U32 => false,
-                hir_ty::PrimitiveTy::U64 => false,
-                hir_ty::PrimitiveTy::U128 => false,
-                hir_ty::PrimitiveTy::Usize => false,
-                hir_ty::PrimitiveTy::F32 => false,
-                hir_ty::PrimitiveTy::F64 => false,
-                hir_ty::PrimitiveTy::Char => false,
-                hir_ty::PrimitiveTy::Str => false,
+                hir_ty.PrimitiveTy.I8 => true,
+                hir_ty.PrimitiveTy.Bool => false,
+                hir_ty.PrimitiveTy.I16 => false,
+                hir_ty.PrimitiveTy.I32 => false,
+                hir_ty.PrimitiveTy.I64 => false,
+                hir_ty.PrimitiveTy.I128 => false,
+                hir_ty.PrimitiveTy.Isize => false,
+                hir_ty.PrimitiveTy.U8 => false,
+                hir_ty.PrimitiveTy.U16 => false,
+                hir_ty.PrimitiveTy.U32 => false,
+                hir_ty.PrimitiveTy.U64 => false,
+                hir_ty.PrimitiveTy.U128 => false,
+                hir_ty.PrimitiveTy.Usize => false,
+                hir_ty.PrimitiveTy.F32 => false,
+                hir_ty.PrimitiveTy.F64 => false,
+                hir_ty.PrimitiveTy.Char => false,
+                hir_ty.PrimitiveTy.Str => false,
             }
         }
-        hir_ty::PrimitiveTy::I16 => {
+        hir_ty.PrimitiveTy.I16 => {
             match b {
-                hir_ty::PrimitiveTy::I16 => true,
-                hir_ty::PrimitiveTy::Bool => false,
-                hir_ty::PrimitiveTy::I8 => false,
-                hir_ty::PrimitiveTy::I32 => false,
-                hir_ty::PrimitiveTy::I64 => false,
-                hir_ty::PrimitiveTy::I128 => false,
-                hir_ty::PrimitiveTy::Isize => false,
-                hir_ty::PrimitiveTy::U8 => false,
-                hir_ty::PrimitiveTy::U16 => false,
-                hir_ty::PrimitiveTy::U32 => false,
-                hir_ty::PrimitiveTy::U64 => false,
-                hir_ty::PrimitiveTy::U128 => false,
-                hir_ty::PrimitiveTy::Usize => false,
-                hir_ty::PrimitiveTy::F32 => false,
-                hir_ty::PrimitiveTy::F64 => false,
-                hir_ty::PrimitiveTy::Char => false,
-                hir_ty::PrimitiveTy::Str => false,
+                hir_ty.PrimitiveTy.I16 => true,
+                hir_ty.PrimitiveTy.Bool => false,
+                hir_ty.PrimitiveTy.I8 => false,
+                hir_ty.PrimitiveTy.I32 => false,
+                hir_ty.PrimitiveTy.I64 => false,
+                hir_ty.PrimitiveTy.I128 => false,
+                hir_ty.PrimitiveTy.Isize => false,
+                hir_ty.PrimitiveTy.U8 => false,
+                hir_ty.PrimitiveTy.U16 => false,
+                hir_ty.PrimitiveTy.U32 => false,
+                hir_ty.PrimitiveTy.U64 => false,
+                hir_ty.PrimitiveTy.U128 => false,
+                hir_ty.PrimitiveTy.Usize => false,
+                hir_ty.PrimitiveTy.F32 => false,
+                hir_ty.PrimitiveTy.F64 => false,
+                hir_ty.PrimitiveTy.Char => false,
+                hir_ty.PrimitiveTy.Str => false,
             }
         }
-        hir_ty::PrimitiveTy::I32 => {
+        hir_ty.PrimitiveTy.I32 => {
             match b {
-                hir_ty::PrimitiveTy::I32 => true,
-                hir_ty::PrimitiveTy::Bool => false,
-                hir_ty::PrimitiveTy::I8 => false,
-                hir_ty::PrimitiveTy::I16 => false,
-                hir_ty::PrimitiveTy::I64 => false,
-                hir_ty::PrimitiveTy::I128 => false,
-                hir_ty::PrimitiveTy::Isize => false,
-                hir_ty::PrimitiveTy::U8 => false,
-                hir_ty::PrimitiveTy::U16 => false,
-                hir_ty::PrimitiveTy::U32 => false,
-                hir_ty::PrimitiveTy::U64 => false,
-                hir_ty::PrimitiveTy::U128 => false,
-                hir_ty::PrimitiveTy::Usize => false,
-                hir_ty::PrimitiveTy::F32 => false,
-                hir_ty::PrimitiveTy::F64 => false,
-                hir_ty::PrimitiveTy::Char => false,
-                hir_ty::PrimitiveTy::Str => false,
+                hir_ty.PrimitiveTy.I32 => true,
+                hir_ty.PrimitiveTy.Bool => false,
+                hir_ty.PrimitiveTy.I8 => false,
+                hir_ty.PrimitiveTy.I16 => false,
+                hir_ty.PrimitiveTy.I64 => false,
+                hir_ty.PrimitiveTy.I128 => false,
+                hir_ty.PrimitiveTy.Isize => false,
+                hir_ty.PrimitiveTy.U8 => false,
+                hir_ty.PrimitiveTy.U16 => false,
+                hir_ty.PrimitiveTy.U32 => false,
+                hir_ty.PrimitiveTy.U64 => false,
+                hir_ty.PrimitiveTy.U128 => false,
+                hir_ty.PrimitiveTy.Usize => false,
+                hir_ty.PrimitiveTy.F32 => false,
+                hir_ty.PrimitiveTy.F64 => false,
+                hir_ty.PrimitiveTy.Char => false,
+                hir_ty.PrimitiveTy.Str => false,
             }
         }
-        hir_ty::PrimitiveTy::I64 => {
+        hir_ty.PrimitiveTy.I64 => {
             match b {
-                hir_ty::PrimitiveTy::I64 => true,
-                hir_ty::PrimitiveTy::Bool => false,
-                hir_ty::PrimitiveTy::I8 => false,
-                hir_ty::PrimitiveTy::I16 => false,
-                hir_ty::PrimitiveTy::I32 => false,
-                hir_ty::PrimitiveTy::I128 => false,
-                hir_ty::PrimitiveTy::Isize => false,
-                hir_ty::PrimitiveTy::U8 => false,
-                hir_ty::PrimitiveTy::U16 => false,
-                hir_ty::PrimitiveTy::U32 => false,
-                hir_ty::PrimitiveTy::U64 => false,
-                hir_ty::PrimitiveTy::U128 => false,
-                hir_ty::PrimitiveTy::Usize => false,
-                hir_ty::PrimitiveTy::F32 => false,
-                hir_ty::PrimitiveTy::F64 => false,
-                hir_ty::PrimitiveTy::Char => false,
-                hir_ty::PrimitiveTy::Str => false,
+                hir_ty.PrimitiveTy.I64 => true,
+                hir_ty.PrimitiveTy.Bool => false,
+                hir_ty.PrimitiveTy.I8 => false,
+                hir_ty.PrimitiveTy.I16 => false,
+                hir_ty.PrimitiveTy.I32 => false,
+                hir_ty.PrimitiveTy.I128 => false,
+                hir_ty.PrimitiveTy.Isize => false,
+                hir_ty.PrimitiveTy.U8 => false,
+                hir_ty.PrimitiveTy.U16 => false,
+                hir_ty.PrimitiveTy.U32 => false,
+                hir_ty.PrimitiveTy.U64 => false,
+                hir_ty.PrimitiveTy.U128 => false,
+                hir_ty.PrimitiveTy.Usize => false,
+                hir_ty.PrimitiveTy.F32 => false,
+                hir_ty.PrimitiveTy.F64 => false,
+                hir_ty.PrimitiveTy.Char => false,
+                hir_ty.PrimitiveTy.Str => false,
             }
         }
-        hir_ty::PrimitiveTy::I128 => {
+        hir_ty.PrimitiveTy.I128 => {
             match b {
-                hir_ty::PrimitiveTy::I128 => true,
-                hir_ty::PrimitiveTy::Bool => false,
-                hir_ty::PrimitiveTy::I8 => false,
-                hir_ty::PrimitiveTy::I16 => false,
-                hir_ty::PrimitiveTy::I32 => false,
-                hir_ty::PrimitiveTy::I64 => false,
-                hir_ty::PrimitiveTy::Isize => false,
-                hir_ty::PrimitiveTy::U8 => false,
-                hir_ty::PrimitiveTy::U16 => false,
-                hir_ty::PrimitiveTy::U32 => false,
-                hir_ty::PrimitiveTy::U64 => false,
-                hir_ty::PrimitiveTy::U128 => false,
-                hir_ty::PrimitiveTy::Usize => false,
-                hir_ty::PrimitiveTy::F32 => false,
-                hir_ty::PrimitiveTy::F64 => false,
-                hir_ty::PrimitiveTy::Char => false,
-                hir_ty::PrimitiveTy::Str => false,
+                hir_ty.PrimitiveTy.I128 => true,
+                hir_ty.PrimitiveTy.Bool => false,
+                hir_ty.PrimitiveTy.I8 => false,
+                hir_ty.PrimitiveTy.I16 => false,
+                hir_ty.PrimitiveTy.I32 => false,
+                hir_ty.PrimitiveTy.I64 => false,
+                hir_ty.PrimitiveTy.Isize => false,
+                hir_ty.PrimitiveTy.U8 => false,
+                hir_ty.PrimitiveTy.U16 => false,
+                hir_ty.PrimitiveTy.U32 => false,
+                hir_ty.PrimitiveTy.U64 => false,
+                hir_ty.PrimitiveTy.U128 => false,
+                hir_ty.PrimitiveTy.Usize => false,
+                hir_ty.PrimitiveTy.F32 => false,
+                hir_ty.PrimitiveTy.F64 => false,
+                hir_ty.PrimitiveTy.Char => false,
+                hir_ty.PrimitiveTy.Str => false,
             }
         }
-        hir_ty::PrimitiveTy::Isize => {
+        hir_ty.PrimitiveTy.Isize => {
             match b {
-                hir_ty::PrimitiveTy::Isize => true,
-                hir_ty::PrimitiveTy::Bool => false,
-                hir_ty::PrimitiveTy::I8 => false,
-                hir_ty::PrimitiveTy::I16 => false,
-                hir_ty::PrimitiveTy::I32 => false,
-                hir_ty::PrimitiveTy::I64 => false,
-                hir_ty::PrimitiveTy::I128 => false,
-                hir_ty::PrimitiveTy::U8 => false,
-                hir_ty::PrimitiveTy::U16 => false,
-                hir_ty::PrimitiveTy::U32 => false,
-                hir_ty::PrimitiveTy::U64 => false,
-                hir_ty::PrimitiveTy::U128 => false,
-                hir_ty::PrimitiveTy::Usize => false,
-                hir_ty::PrimitiveTy::F32 => false,
-                hir_ty::PrimitiveTy::F64 => false,
-                hir_ty::PrimitiveTy::Char => false,
-                hir_ty::PrimitiveTy::Str => false,
+                hir_ty.PrimitiveTy.Isize => true,
+                hir_ty.PrimitiveTy.Bool => false,
+                hir_ty.PrimitiveTy.I8 => false,
+                hir_ty.PrimitiveTy.I16 => false,
+                hir_ty.PrimitiveTy.I32 => false,
+                hir_ty.PrimitiveTy.I64 => false,
+                hir_ty.PrimitiveTy.I128 => false,
+                hir_ty.PrimitiveTy.U8 => false,
+                hir_ty.PrimitiveTy.U16 => false,
+                hir_ty.PrimitiveTy.U32 => false,
+                hir_ty.PrimitiveTy.U64 => false,
+                hir_ty.PrimitiveTy.U128 => false,
+                hir_ty.PrimitiveTy.Usize => false,
+                hir_ty.PrimitiveTy.F32 => false,
+                hir_ty.PrimitiveTy.F64 => false,
+                hir_ty.PrimitiveTy.Char => false,
+                hir_ty.PrimitiveTy.Str => false,
             }
         }
-        hir_ty::PrimitiveTy::U8 => {
+        hir_ty.PrimitiveTy.U8 => {
             match b {
-                hir_ty::PrimitiveTy::U8 => true,
-                hir_ty::PrimitiveTy::Bool => false,
-                hir_ty::PrimitiveTy::I8 => false,
-                hir_ty::PrimitiveTy::I16 => false,
-                hir_ty::PrimitiveTy::I32 => false,
-                hir_ty::PrimitiveTy::I64 => false,
-                hir_ty::PrimitiveTy::I128 => false,
-                hir_ty::PrimitiveTy::Isize => false,
-                hir_ty::PrimitiveTy::U16 => false,
-                hir_ty::PrimitiveTy::U32 => false,
-                hir_ty::PrimitiveTy::U64 => false,
-                hir_ty::PrimitiveTy::U128 => false,
-                hir_ty::PrimitiveTy::Usize => false,
-                hir_ty::PrimitiveTy::F32 => false,
-                hir_ty::PrimitiveTy::F64 => false,
-                hir_ty::PrimitiveTy::Char => false,
-                hir_ty::PrimitiveTy::Str => false,
+                hir_ty.PrimitiveTy.U8 => true,
+                hir_ty.PrimitiveTy.Bool => false,
+                hir_ty.PrimitiveTy.I8 => false,
+                hir_ty.PrimitiveTy.I16 => false,
+                hir_ty.PrimitiveTy.I32 => false,
+                hir_ty.PrimitiveTy.I64 => false,
+                hir_ty.PrimitiveTy.I128 => false,
+                hir_ty.PrimitiveTy.Isize => false,
+                hir_ty.PrimitiveTy.U16 => false,
+                hir_ty.PrimitiveTy.U32 => false,
+                hir_ty.PrimitiveTy.U64 => false,
+                hir_ty.PrimitiveTy.U128 => false,
+                hir_ty.PrimitiveTy.Usize => false,
+                hir_ty.PrimitiveTy.F32 => false,
+                hir_ty.PrimitiveTy.F64 => false,
+                hir_ty.PrimitiveTy.Char => false,
+                hir_ty.PrimitiveTy.Str => false,
             }
         }
-        hir_ty::PrimitiveTy::U16 => {
+        hir_ty.PrimitiveTy.U16 => {
             match b {
-                hir_ty::PrimitiveTy::U16 => true,
-                hir_ty::PrimitiveTy::Bool => false,
-                hir_ty::PrimitiveTy::I8 => false,
-                hir_ty::PrimitiveTy::I16 => false,
-                hir_ty::PrimitiveTy::I32 => false,
-                hir_ty::PrimitiveTy::I64 => false,
-                hir_ty::PrimitiveTy::I128 => false,
-                hir_ty::PrimitiveTy::Isize => false,
-                hir_ty::PrimitiveTy::U8 => false,
-                hir_ty::PrimitiveTy::U32 => false,
-                hir_ty::PrimitiveTy::U64 => false,
-                hir_ty::PrimitiveTy::U128 => false,
-                hir_ty::PrimitiveTy::Usize => false,
-                hir_ty::PrimitiveTy::F32 => false,
-                hir_ty::PrimitiveTy::F64 => false,
-                hir_ty::PrimitiveTy::Char => false,
-                hir_ty::PrimitiveTy::Str => false,
+                hir_ty.PrimitiveTy.U16 => true,
+                hir_ty.PrimitiveTy.Bool => false,
+                hir_ty.PrimitiveTy.I8 => false,
+                hir_ty.PrimitiveTy.I16 => false,
+                hir_ty.PrimitiveTy.I32 => false,
+                hir_ty.PrimitiveTy.I64 => false,
+                hir_ty.PrimitiveTy.I128 => false,
+                hir_ty.PrimitiveTy.Isize => false,
+                hir_ty.PrimitiveTy.U8 => false,
+                hir_ty.PrimitiveTy.U32 => false,
+                hir_ty.PrimitiveTy.U64 => false,
+                hir_ty.PrimitiveTy.U128 => false,
+                hir_ty.PrimitiveTy.Usize => false,
+                hir_ty.PrimitiveTy.F32 => false,
+                hir_ty.PrimitiveTy.F64 => false,
+                hir_ty.PrimitiveTy.Char => false,
+                hir_ty.PrimitiveTy.Str => false,
             }
         }
-        hir_ty::PrimitiveTy::U32 => {
+        hir_ty.PrimitiveTy.U32 => {
             match b {
-                hir_ty::PrimitiveTy::U32 => true,
-                hir_ty::PrimitiveTy::Bool => false,
-                hir_ty::PrimitiveTy::I8 => false,
-                hir_ty::PrimitiveTy::I16 => false,
-                hir_ty::PrimitiveTy::I32 => false,
-                hir_ty::PrimitiveTy::I64 => false,
-                hir_ty::PrimitiveTy::I128 => false,
-                hir_ty::PrimitiveTy::Isize => false,
-                hir_ty::PrimitiveTy::U8 => false,
-                hir_ty::PrimitiveTy::U16 => false,
-                hir_ty::PrimitiveTy::U64 => false,
-                hir_ty::PrimitiveTy::U128 => false,
-                hir_ty::PrimitiveTy::Usize => false,
-                hir_ty::PrimitiveTy::F32 => false,
-                hir_ty::PrimitiveTy::F64 => false,
-                hir_ty::PrimitiveTy::Char => false,
-                hir_ty::PrimitiveTy::Str => false,
+                hir_ty.PrimitiveTy.U32 => true,
+                hir_ty.PrimitiveTy.Bool => false,
+                hir_ty.PrimitiveTy.I8 => false,
+                hir_ty.PrimitiveTy.I16 => false,
+                hir_ty.PrimitiveTy.I32 => false,
+                hir_ty.PrimitiveTy.I64 => false,
+                hir_ty.PrimitiveTy.I128 => false,
+                hir_ty.PrimitiveTy.Isize => false,
+                hir_ty.PrimitiveTy.U8 => false,
+                hir_ty.PrimitiveTy.U16 => false,
+                hir_ty.PrimitiveTy.U64 => false,
+                hir_ty.PrimitiveTy.U128 => false,
+                hir_ty.PrimitiveTy.Usize => false,
+                hir_ty.PrimitiveTy.F32 => false,
+                hir_ty.PrimitiveTy.F64 => false,
+                hir_ty.PrimitiveTy.Char => false,
+                hir_ty.PrimitiveTy.Str => false,
             }
         }
-        hir_ty::PrimitiveTy::U64 => {
+        hir_ty.PrimitiveTy.U64 => {
             match b {
-                hir_ty::PrimitiveTy::U64 => true,
-                hir_ty::PrimitiveTy::Bool => false,
-                hir_ty::PrimitiveTy::I8 => false,
-                hir_ty::PrimitiveTy::I16 => false,
-                hir_ty::PrimitiveTy::I32 => false,
-                hir_ty::PrimitiveTy::I64 => false,
-                hir_ty::PrimitiveTy::I128 => false,
-                hir_ty::PrimitiveTy::Isize => false,
-                hir_ty::PrimitiveTy::U8 => false,
-                hir_ty::PrimitiveTy::U16 => false,
-                hir_ty::PrimitiveTy::U32 => false,
-                hir_ty::PrimitiveTy::U128 => false,
-                hir_ty::PrimitiveTy::Usize => false,
-                hir_ty::PrimitiveTy::F32 => false,
-                hir_ty::PrimitiveTy::F64 => false,
-                hir_ty::PrimitiveTy::Char => false,
-                hir_ty::PrimitiveTy::Str => false,
+                hir_ty.PrimitiveTy.U64 => true,
+                hir_ty.PrimitiveTy.Bool => false,
+                hir_ty.PrimitiveTy.I8 => false,
+                hir_ty.PrimitiveTy.I16 => false,
+                hir_ty.PrimitiveTy.I32 => false,
+                hir_ty.PrimitiveTy.I64 => false,
+                hir_ty.PrimitiveTy.I128 => false,
+                hir_ty.PrimitiveTy.Isize => false,
+                hir_ty.PrimitiveTy.U8 => false,
+                hir_ty.PrimitiveTy.U16 => false,
+                hir_ty.PrimitiveTy.U32 => false,
+                hir_ty.PrimitiveTy.U128 => false,
+                hir_ty.PrimitiveTy.Usize => false,
+                hir_ty.PrimitiveTy.F32 => false,
+                hir_ty.PrimitiveTy.F64 => false,
+                hir_ty.PrimitiveTy.Char => false,
+                hir_ty.PrimitiveTy.Str => false,
             }
         }
-        hir_ty::PrimitiveTy::U128 => {
+        hir_ty.PrimitiveTy.U128 => {
             match b {
-                hir_ty::PrimitiveTy::U128 => true,
-                hir_ty::PrimitiveTy::Bool => false,
-                hir_ty::PrimitiveTy::I8 => false,
-                hir_ty::PrimitiveTy::I16 => false,
-                hir_ty::PrimitiveTy::I32 => false,
-                hir_ty::PrimitiveTy::I64 => false,
-                hir_ty::PrimitiveTy::I128 => false,
-                hir_ty::PrimitiveTy::Isize => false,
-                hir_ty::PrimitiveTy::U8 => false,
-                hir_ty::PrimitiveTy::U16 => false,
-                hir_ty::PrimitiveTy::U32 => false,
-                hir_ty::PrimitiveTy::U64 => false,
-                hir_ty::PrimitiveTy::Usize => false,
-                hir_ty::PrimitiveTy::F32 => false,
-                hir_ty::PrimitiveTy::F64 => false,
-                hir_ty::PrimitiveTy::Char => false,
-                hir_ty::PrimitiveTy::Str => false,
+                hir_ty.PrimitiveTy.U128 => true,
+                hir_ty.PrimitiveTy.Bool => false,
+                hir_ty.PrimitiveTy.I8 => false,
+                hir_ty.PrimitiveTy.I16 => false,
+                hir_ty.PrimitiveTy.I32 => false,
+                hir_ty.PrimitiveTy.I64 => false,
+                hir_ty.PrimitiveTy.I128 => false,
+                hir_ty.PrimitiveTy.Isize => false,
+                hir_ty.PrimitiveTy.U8 => false,
+                hir_ty.PrimitiveTy.U16 => false,
+                hir_ty.PrimitiveTy.U32 => false,
+                hir_ty.PrimitiveTy.U64 => false,
+                hir_ty.PrimitiveTy.Usize => false,
+                hir_ty.PrimitiveTy.F32 => false,
+                hir_ty.PrimitiveTy.F64 => false,
+                hir_ty.PrimitiveTy.Char => false,
+                hir_ty.PrimitiveTy.Str => false,
             }
         }
-        hir_ty::PrimitiveTy::Usize => {
+        hir_ty.PrimitiveTy.Usize => {
             match b {
-                hir_ty::PrimitiveTy::Usize => true,
-                hir_ty::PrimitiveTy::Bool => false,
-                hir_ty::PrimitiveTy::I8 => false,
-                hir_ty::PrimitiveTy::I16 => false,
-                hir_ty::PrimitiveTy::I32 => false,
-                hir_ty::PrimitiveTy::I64 => false,
-                hir_ty::PrimitiveTy::I128 => false,
-                hir_ty::PrimitiveTy::Isize => false,
-                hir_ty::PrimitiveTy::U8 => false,
-                hir_ty::PrimitiveTy::U16 => false,
-                hir_ty::PrimitiveTy::U32 => false,
-                hir_ty::PrimitiveTy::U64 => false,
-                hir_ty::PrimitiveTy::U128 => false,
-                hir_ty::PrimitiveTy::F32 => false,
-                hir_ty::PrimitiveTy::F64 => false,
-                hir_ty::PrimitiveTy::Char => false,
-                hir_ty::PrimitiveTy::Str => false,
+                hir_ty.PrimitiveTy.Usize => true,
+                hir_ty.PrimitiveTy.Bool => false,
+                hir_ty.PrimitiveTy.I8 => false,
+                hir_ty.PrimitiveTy.I16 => false,
+                hir_ty.PrimitiveTy.I32 => false,
+                hir_ty.PrimitiveTy.I64 => false,
+                hir_ty.PrimitiveTy.I128 => false,
+                hir_ty.PrimitiveTy.Isize => false,
+                hir_ty.PrimitiveTy.U8 => false,
+                hir_ty.PrimitiveTy.U16 => false,
+                hir_ty.PrimitiveTy.U32 => false,
+                hir_ty.PrimitiveTy.U64 => false,
+                hir_ty.PrimitiveTy.U128 => false,
+                hir_ty.PrimitiveTy.F32 => false,
+                hir_ty.PrimitiveTy.F64 => false,
+                hir_ty.PrimitiveTy.Char => false,
+                hir_ty.PrimitiveTy.Str => false,
             }
         }
-        hir_ty::PrimitiveTy::F32 => {
+        hir_ty.PrimitiveTy.F32 => {
             match b {
-                hir_ty::PrimitiveTy::F32 => true,
-                hir_ty::PrimitiveTy::Bool => false,
-                hir_ty::PrimitiveTy::I8 => false,
-                hir_ty::PrimitiveTy::I16 => false,
-                hir_ty::PrimitiveTy::I32 => false,
-                hir_ty::PrimitiveTy::I64 => false,
-                hir_ty::PrimitiveTy::I128 => false,
-                hir_ty::PrimitiveTy::Isize => false,
-                hir_ty::PrimitiveTy::U8 => false,
-                hir_ty::PrimitiveTy::U16 => false,
-                hir_ty::PrimitiveTy::U32 => false,
-                hir_ty::PrimitiveTy::U64 => false,
-                hir_ty::PrimitiveTy::U128 => false,
-                hir_ty::PrimitiveTy::Usize => false,
-                hir_ty::PrimitiveTy::F64 => false,
-                hir_ty::PrimitiveTy::Char => false,
-                hir_ty::PrimitiveTy::Str => false,
+                hir_ty.PrimitiveTy.F32 => true,
+                hir_ty.PrimitiveTy.Bool => false,
+                hir_ty.PrimitiveTy.I8 => false,
+                hir_ty.PrimitiveTy.I16 => false,
+                hir_ty.PrimitiveTy.I32 => false,
+                hir_ty.PrimitiveTy.I64 => false,
+                hir_ty.PrimitiveTy.I128 => false,
+                hir_ty.PrimitiveTy.Isize => false,
+                hir_ty.PrimitiveTy.U8 => false,
+                hir_ty.PrimitiveTy.U16 => false,
+                hir_ty.PrimitiveTy.U32 => false,
+                hir_ty.PrimitiveTy.U64 => false,
+                hir_ty.PrimitiveTy.U128 => false,
+                hir_ty.PrimitiveTy.Usize => false,
+                hir_ty.PrimitiveTy.F64 => false,
+                hir_ty.PrimitiveTy.Char => false,
+                hir_ty.PrimitiveTy.Str => false,
             }
         }
-        hir_ty::PrimitiveTy::F64 => {
+        hir_ty.PrimitiveTy.F64 => {
             match b {
-                hir_ty::PrimitiveTy::F64 => true,
-                hir_ty::PrimitiveTy::Bool => false,
-                hir_ty::PrimitiveTy::I8 => false,
-                hir_ty::PrimitiveTy::I16 => false,
-                hir_ty::PrimitiveTy::I32 => false,
-                hir_ty::PrimitiveTy::I64 => false,
-                hir_ty::PrimitiveTy::I128 => false,
-                hir_ty::PrimitiveTy::Isize => false,
-                hir_ty::PrimitiveTy::U8 => false,
-                hir_ty::PrimitiveTy::U16 => false,
-                hir_ty::PrimitiveTy::U32 => false,
-                hir_ty::PrimitiveTy::U64 => false,
-                hir_ty::PrimitiveTy::U128 => false,
-                hir_ty::PrimitiveTy::Usize => false,
-                hir_ty::PrimitiveTy::F32 => false,
-                hir_ty::PrimitiveTy::Char => false,
-                hir_ty::PrimitiveTy::Str => false,
+                hir_ty.PrimitiveTy.F64 => true,
+                hir_ty.PrimitiveTy.Bool => false,
+                hir_ty.PrimitiveTy.I8 => false,
+                hir_ty.PrimitiveTy.I16 => false,
+                hir_ty.PrimitiveTy.I32 => false,
+                hir_ty.PrimitiveTy.I64 => false,
+                hir_ty.PrimitiveTy.I128 => false,
+                hir_ty.PrimitiveTy.Isize => false,
+                hir_ty.PrimitiveTy.U8 => false,
+                hir_ty.PrimitiveTy.U16 => false,
+                hir_ty.PrimitiveTy.U32 => false,
+                hir_ty.PrimitiveTy.U64 => false,
+                hir_ty.PrimitiveTy.U128 => false,
+                hir_ty.PrimitiveTy.Usize => false,
+                hir_ty.PrimitiveTy.F32 => false,
+                hir_ty.PrimitiveTy.Char => false,
+                hir_ty.PrimitiveTy.Str => false,
             }
         }
-        hir_ty::PrimitiveTy::Char => {
+        hir_ty.PrimitiveTy.Char => {
             match b {
-                hir_ty::PrimitiveTy::Char => true,
-                hir_ty::PrimitiveTy::Bool => false,
-                hir_ty::PrimitiveTy::I8 => false,
-                hir_ty::PrimitiveTy::I16 => false,
-                hir_ty::PrimitiveTy::I32 => false,
-                hir_ty::PrimitiveTy::I64 => false,
-                hir_ty::PrimitiveTy::I128 => false,
-                hir_ty::PrimitiveTy::Isize => false,
-                hir_ty::PrimitiveTy::U8 => false,
-                hir_ty::PrimitiveTy::U16 => false,
-                hir_ty::PrimitiveTy::U32 => false,
-                hir_ty::PrimitiveTy::U64 => false,
-                hir_ty::PrimitiveTy::U128 => false,
-                hir_ty::PrimitiveTy::Usize => false,
-                hir_ty::PrimitiveTy::F32 => false,
-                hir_ty::PrimitiveTy::F64 => false,
-                hir_ty::PrimitiveTy::Str => false,
+                hir_ty.PrimitiveTy.Char => true,
+                hir_ty.PrimitiveTy.Bool => false,
+                hir_ty.PrimitiveTy.I8 => false,
+                hir_ty.PrimitiveTy.I16 => false,
+                hir_ty.PrimitiveTy.I32 => false,
+                hir_ty.PrimitiveTy.I64 => false,
+                hir_ty.PrimitiveTy.I128 => false,
+                hir_ty.PrimitiveTy.Isize => false,
+                hir_ty.PrimitiveTy.U8 => false,
+                hir_ty.PrimitiveTy.U16 => false,
+                hir_ty.PrimitiveTy.U32 => false,
+                hir_ty.PrimitiveTy.U64 => false,
+                hir_ty.PrimitiveTy.U128 => false,
+                hir_ty.PrimitiveTy.Usize => false,
+                hir_ty.PrimitiveTy.F32 => false,
+                hir_ty.PrimitiveTy.F64 => false,
+                hir_ty.PrimitiveTy.Str => false,
             }
         }
-        hir_ty::PrimitiveTy::Str => {
+        hir_ty.PrimitiveTy.Str => {
             match b {
-                hir_ty::PrimitiveTy::Str => true,
-                hir_ty::PrimitiveTy::Bool => false,
-                hir_ty::PrimitiveTy::I8 => false,
-                hir_ty::PrimitiveTy::I16 => false,
-                hir_ty::PrimitiveTy::I32 => false,
-                hir_ty::PrimitiveTy::I64 => false,
-                hir_ty::PrimitiveTy::I128 => false,
-                hir_ty::PrimitiveTy::Isize => false,
-                hir_ty::PrimitiveTy::U8 => false,
-                hir_ty::PrimitiveTy::U16 => false,
-                hir_ty::PrimitiveTy::U32 => false,
-                hir_ty::PrimitiveTy::U64 => false,
-                hir_ty::PrimitiveTy::U128 => false,
-                hir_ty::PrimitiveTy::Usize => false,
-                hir_ty::PrimitiveTy::F32 => false,
-                hir_ty::PrimitiveTy::F64 => false,
-                hir_ty::PrimitiveTy::Char => false,
+                hir_ty.PrimitiveTy.Str => true,
+                hir_ty.PrimitiveTy.Bool => false,
+                hir_ty.PrimitiveTy.I8 => false,
+                hir_ty.PrimitiveTy.I16 => false,
+                hir_ty.PrimitiveTy.I32 => false,
+                hir_ty.PrimitiveTy.I64 => false,
+                hir_ty.PrimitiveTy.I128 => false,
+                hir_ty.PrimitiveTy.Isize => false,
+                hir_ty.PrimitiveTy.U8 => false,
+                hir_ty.PrimitiveTy.U16 => false,
+                hir_ty.PrimitiveTy.U32 => false,
+                hir_ty.PrimitiveTy.U64 => false,
+                hir_ty.PrimitiveTy.U128 => false,
+                hir_ty.PrimitiveTy.Usize => false,
+                hir_ty.PrimitiveTy.F32 => false,
+                hir_ty.PrimitiveTy.F64 => false,
+                hir_ty.PrimitiveTy.Char => false,
             }
         }
     }
@@ -1182,21 +1182,21 @@ pub fn primitives_equal(a: hir_ty::PrimitiveTy, b: hir_ty::PrimitiveTy) -> bool 
 pub enum Constraint {
     /// Two types must be equal.
     TypeEqual {
-        expected: hir_ty::Type,
-        actual: hir_ty::Type,
-        span: common::Span,
+        expected: hir_ty.Type,
+        actual: hir_ty.Type,
+        span: common.Span,
     },
     /// A type must implement a trait.
     TraitBound {
-        ty: hir_ty::Type,
-        trait_ref: hir_ty::TraitRef,
-        span: common::Span,
+        ty: hir_ty.Type,
+        trait_ref: hir_ty.TraitRef,
+        span: common.Span,
     },
     /// An effect row must be a subset of another.
     EffectSubset {
-        subset: hir_ty::EffectRow,
-        superset: hir_ty::EffectRow,
-        span: common::Span,
+        subset: hir_ty.EffectRow,
+        superset: hir_ty.EffectRow,
+        span: common.Span,
     },
 }
 
@@ -1224,89 +1224,89 @@ impl DeferredConstraint {
 
 impl SubstTable {
     /// Adds a type variable substitution (Type-based, converts to TyId internally).
-    pub fn add_ty_subst(self: &mut Self, var_id: hir_def::TyVarId, ty: hir_ty::Type) {
+    pub fn add_ty_subst(self: &mut Self, var_id: hir_def.TyVarId, ty: hir_ty.Type) {
         let ty_id = type_intern::type_to_ty_id(&ty);
         self.add_ty_subst_id(var_id, ty_id);
     }
 
     /// Adds a type variable substitution (TyId-based, zero conversion).
-    pub fn add_ty_subst_id(self: &mut Self, var_id: hir_def::TyVarId, ty_id: type_intern::TyId) {
+    pub fn add_ty_subst_id(self: &mut Self, var_id: hir_def.TyVarId, ty_id: type_intern.TyId) {
         let vec_idx = self.ty_substs.len() as u32;
-        let subst = TySubst::new(var_id, ty_id);
+        let subst = TySubst.new(var_id, ty_id);
         self.ty_substs.push(subst);
         self.ty_hash.insert(var_id.index as u64, vec_idx);
     }
 
     /// Looks up a type variable (returns TyId, zero copy).
-    pub fn lookup_ty_id(self: &Self, var_id: hir_def::TyVarId) -> Option<type_intern::TyId> {
+    pub fn lookup_ty_id(self: &Self, var_id: hir_def.TyVarId) -> Option<type_intern.TyId> {
         // O(1) hash lookup
         match self.ty_hash.get(var_id.index as u64) {
-            Option::Some(vec_idx) => {
+            Option.Some(vec_idx) => {
                 let idx = vec_idx as usize;
                 if idx < self.ty_substs.len() {
-                    return Option::Some(type_intern::TyId::new(self.ty_substs[idx].ty.index));
+                    return Option.Some(type_intern.TyId.new(self.ty_substs[idx].ty.index));
                 }
             }
-            Option::None => {}
+            Option.None => {}
         }
         // Fallback to linear scan for collision handling
         for i in 0usize..self.ty_substs.len() {
             if self.ty_substs[i].var_id.index == var_id.index {
-                return Some(type_intern::TyId::new(self.ty_substs[i].ty.index));
+                return Some(type_intern.TyId.new(self.ty_substs[i].ty.index));
             }
         }
-        Option::None
+        Option.None
     }
 
     /// Adds an effect row variable substitution (EffectRow-based, converts internally).
-    pub fn add_effect_subst(self: &mut Self, var_id: hir_def::EffectRowVarId, row: hir_ty::EffectRow) {
+    pub fn add_effect_subst(self: &mut Self, var_id: hir_def.EffectRowVarId, row: hir_ty.EffectRow) {
         let eff_id = effect_row_to_id(&row);
         self.add_effect_subst_id(var_id, eff_id);
     }
 
     /// Adds an effect row variable substitution (EffectRowId-based, zero conversion).
-    pub fn add_effect_subst_id(self: &mut Self, var_id: hir_def::EffectRowVarId, eff_id: type_intern::EffectRowId) {
+    pub fn add_effect_subst_id(self: &mut Self, var_id: hir_def.EffectRowVarId, eff_id: type_intern.EffectRowId) {
         let vec_idx = self.effect_substs.len() as u32;
-        let subst = EffectRowSubst::new(var_id, eff_id);
+        let subst = EffectRowSubst.new(var_id, eff_id);
         self.effect_substs.push(subst);
         self.effect_hash.insert(var_id.index as u64, vec_idx);
     }
 
     /// Looks up an effect row variable (returns EffectRow for backward compat).
-    pub fn lookup_effect(self: &Self, var_id: hir_def::EffectRowVarId) -> Option<hir_ty::EffectRow> {
+    pub fn lookup_effect(self: &Self, var_id: hir_def.EffectRowVarId) -> Option<hir_ty.EffectRow> {
         match self.lookup_effect_id(var_id) {
-            Option::Some(eff_id) => Option::Some(effect_row_id_to_row(eff_id)),
-            Option::None => Option::None,
+            Option.Some(eff_id) => Option.Some(effect_row_id_to_row(eff_id)),
+            Option.None => Option.None,
         }
     }
 
     /// Looks up an effect row variable (returns EffectRowId, zero copy).
-    pub fn lookup_effect_id(self: &Self, var_id: hir_def::EffectRowVarId) -> Option<type_intern::EffectRowId> {
+    pub fn lookup_effect_id(self: &Self, var_id: hir_def.EffectRowVarId) -> Option<type_intern.EffectRowId> {
         // O(1) hash lookup
         match self.effect_hash.get(var_id.index as u64) {
-            Option::Some(vec_idx) => {
+            Option.Some(vec_idx) => {
                 let idx = vec_idx as usize;
                 if idx < self.effect_substs.len() {
-                    return Option::Some(type_intern::EffectRowId::new(self.effect_substs[idx].row.index));
+                    return Option.Some(type_intern.EffectRowId.new(self.effect_substs[idx].row.index));
                 }
             }
-            Option::None => {}
+            Option.None => {}
         }
         // Fallback to linear scan for collision handling
         for i in 0usize..self.effect_substs.len() {
             if self.effect_substs[i].var_id.index == var_id.index {
-                return Some(type_intern::EffectRowId::new(self.effect_substs[i].row.index));
+                return Some(type_intern.EffectRowId.new(self.effect_substs[i].row.index));
             }
         }
-        Option::None
+        Option.None
     }
 
     /// Adds a record row variable substitution (Vec<RecordField>-based, converts internally).
     pub fn add_record_subst(
         self: &mut Self,
-        var_id: hir_def::RecordRowVarId,
-        fields: Vec<hir_ty::RecordField>,
-        rest: Option<hir_def::RecordRowVarId>,
+        var_id: hir_def.RecordRowVarId,
+        fields: Vec<hir_ty.RecordField>,
+        rest: Option<hir_def.RecordRowVarId>,
     ) {
         let fields_id = record_fields_to_id(&fields);
         self.add_record_subst_id(var_id, fields_id, rest);
@@ -1315,43 +1315,43 @@ impl SubstTable {
     /// Adds a record row variable substitution (RecordFieldListId-based, zero conversion).
     pub fn add_record_subst_id(
         self: &mut Self,
-        var_id: hir_def::RecordRowVarId,
-        fields_id: type_intern::RecordFieldListId,
-        rest: Option<hir_def::RecordRowVarId>,
+        var_id: hir_def.RecordRowVarId,
+        fields_id: type_intern.RecordFieldListId,
+        rest: Option<hir_def.RecordRowVarId>,
     ) {
         let vec_idx = self.record_substs.len() as u32;
-        let subst = RecordRowSubst::new(var_id, fields_id, rest);
+        let subst = RecordRowSubst.new(var_id, fields_id, rest);
         self.record_substs.push(subst);
         self.record_hash.insert(var_id.index as u64, vec_idx);
     }
 
     /// Looks up a record row variable (returns RecordRowSubst with RecordFieldListId).
-    pub fn lookup_record(self: &Self, var_id: hir_def::RecordRowVarId) -> Option<RecordRowSubst> {
+    pub fn lookup_record(self: &Self, var_id: hir_def.RecordRowVarId) -> Option<RecordRowSubst> {
         // O(1) hash lookup
         match self.record_hash.get(var_id.index as u64) {
-            Option::Some(vec_idx) => {
+            Option.Some(vec_idx) => {
                 let idx = vec_idx as usize;
                 if idx < self.record_substs.len() {
-                    return Option::Some(RecordRowSubst {
+                    return Option.Some(RecordRowSubst {
                         var_id: self.record_substs[idx].var_id,
-                        fields: type_intern::RecordFieldListId::new(self.record_substs[idx].fields.index),
+                        fields: type_intern.RecordFieldListId.new(self.record_substs[idx].fields.index),
                         rest: self.record_substs[idx].rest,
                     });
                 }
             }
-            Option::None => {}
+            Option.None => {}
         }
         // Fallback to linear scan for collision handling
         for i in 0usize..self.record_substs.len() {
             if self.record_substs[i].var_id.index == var_id.index {
-                return Option::Some(RecordRowSubst {
+                return Option.Some(RecordRowSubst {
                     var_id: self.record_substs[i].var_id,
-                    fields: type_intern::RecordFieldListId::new(self.record_substs[i].fields.index),
+                    fields: type_intern.RecordFieldListId.new(self.record_substs[i].fields.index),
                     rest: self.record_substs[i].rest,
                 });
             }
         }
-        Option::None
+        Option.None
     }
 }
 
@@ -1359,54 +1359,54 @@ impl SubstTable {
 // Type/EffectRow Conversion Helpers
 // ============================================================
 
-/// Converts hir_ty::EffectRow to EffectRowId.
-fn effect_row_to_id(row: &hir_ty::EffectRow) -> type_intern::EffectRowId {
-    let mut effects: Vec<type_intern::InternedEffectRef> = Vec::new();
+/// Converts hir_ty.EffectRow to EffectRowId.
+fn effect_row_to_id(row: &hir_ty.EffectRow) -> type_intern.EffectRowId {
+    let mut effects: Vec<type_intern.InternedEffectRef> = Vec.new();
     for i in 0usize..row.effects.len() {
         let eff = &row.effects[i];
-        let mut arg_ids: Vec<type_intern::TyId> = Vec::new();
+        let mut arg_ids: Vec<type_intern.TyId> = Vec.new();
         for j in 0usize..eff.args.len() {
             arg_ids.push(type_intern::type_to_ty_id(&eff.args[j]));
         }
         let arg_list = type_intern::type_interner().intern_ty_list(&arg_ids);
-        effects.push(type_intern::InternedEffectRef::new(eff.def_id, arg_list));
+        effects.push(type_intern.InternedEffectRef.new(eff.def_id, arg_list));
     }
     type_intern::type_interner().intern_effect_row(
-        type_intern::InternedEffectRow::new(effects, row.row_var)
+        type_intern.InternedEffectRow.new(effects, row.row_var)
     )
 }
 
-/// Converts EffectRowId back to hir_ty::EffectRow.
-fn effect_row_id_to_row(id: type_intern::EffectRowId) -> hir_ty::EffectRow {
+/// Converts EffectRowId back to hir_ty.EffectRow.
+fn effect_row_id_to_row(id: type_intern.EffectRowId) -> hir_ty.EffectRow {
     let interner = type_intern::type_interner();
     let row = interner.get_effect_row(id);
     let eff_count = row.effects.len();
     let row_var = row.row_var;
-    let mut effects: Vec<hir_ty::EffectRef> = Vec::new();
+    let mut effects: Vec<hir_ty.EffectRef> = Vec.new();
     for i in 0usize..eff_count {
         let eff = &type_intern::type_interner().get_effect_row(id).effects[i];
         let def_id = eff.def_id;
         let args_list = eff.args;
         let arg_len = type_intern::type_interner().ty_list_len(args_list);
-        let mut args: Vec<hir_ty::Type> = Vec::new();
+        let mut args: Vec<hir_ty.Type> = Vec.new();
         for j in 0usize..arg_len {
             let arg_id = type_intern::type_interner().get_ty_list_element(args_list, j);
             args.push(type_intern::ty_id_to_type(arg_id));
         }
-        effects.push(hir_ty::EffectRef::new(def_id, args));
+        effects.push(hir_ty.EffectRef.new(def_id, args));
     }
-    hir_ty::EffectRow { effects: effects, row_var: row_var }
+    hir_ty.EffectRow { effects: effects, row_var: row_var }
 }
 
 /// Converts Vec<RecordField> to RecordFieldListId.
-fn record_fields_to_id(fields: &Vec<hir_ty::RecordField>) -> type_intern::RecordFieldListId {
-    let mut interned: Vec<type_intern::InternedRecordField> = Vec::new();
+fn record_fields_to_id(fields: &Vec<hir_ty.RecordField>) -> type_intern.RecordFieldListId {
+    let mut interned: Vec<type_intern.InternedRecordField> = Vec.new();
     for i in 0usize..fields.len() {
         let ty_id = type_intern::type_to_ty_id(&fields[i].ty);
-        interned.push(type_intern::InternedRecordField::new(fields[i].name, ty_id));
+        interned.push(type_intern.InternedRecordField.new(fields[i].name, ty_id));
     }
     type_intern::type_interner().intern_record_field_list(
-        type_intern::InternedRecordFieldList::new(interned)
+        type_intern.InternedRecordFieldList.new(interned)
     )
 }
 
@@ -1415,7 +1415,7 @@ fn record_fields_to_id(fields: &Vec<hir_ty::RecordField>) -> type_intern::Record
 // ============================================================
 
 /// TyId-native: applies substitutions to resolve type variables.
-pub fn apply_substs_id(table: &SubstTable, ty_id: type_intern::TyId) -> type_intern::TyId {
+pub fn apply_substs_id(table: &SubstTable, ty_id: type_intern.TyId) -> type_intern.TyId {
     let interner = type_intern::type_interner();
 
     // Phase 1: Iteratively chase Infer chains (prevents stack overflow on cycles)
@@ -1425,9 +1425,9 @@ pub fn apply_substs_id(table: &SubstTable, ty_id: type_intern::TyId) -> type_int
     while chase {
         let k = interner.get(current);
         match k {
-            &type_intern::InternedTypeKind::Infer(var_id) => {
+            &type_intern.InternedTypeKind.Infer(var_id) => {
                 match table.lookup_ty_id(var_id) {
-                    Option::Some(resolved_id) => {
+                    Option.Some(resolved_id) => {
                         depth += 1;
                         if depth > 1000 {
                             chase = false;
@@ -1435,7 +1435,7 @@ pub fn apply_substs_id(table: &SubstTable, ty_id: type_intern::TyId) -> type_int
                             current = resolved_id;
                         }
                     }
-                    Option::None => { chase = false; }
+                    Option.None => { chase = false; }
                 }
             }
             _ => { chase = false; }
@@ -1445,81 +1445,81 @@ pub fn apply_substs_id(table: &SubstTable, ty_id: type_intern::TyId) -> type_int
     // Phase 2: Structural substitution on the resolved type
     let kind = interner.get(current);
     match kind {
-        &type_intern::InternedTypeKind::Infer(_) => current,
-        &type_intern::InternedTypeKind::Primitive(_) => current,
-        &type_intern::InternedTypeKind::Never => current,
-        &type_intern::InternedTypeKind::Error => current,
-        &type_intern::InternedTypeKind::Param(_) => current,
-        &type_intern::InternedTypeKind::Tuple(list_id) => {
+        &type_intern.InternedTypeKind.Infer(_) => current,
+        &type_intern.InternedTypeKind.Primitive(_) => current,
+        &type_intern.InternedTypeKind.Never => current,
+        &type_intern.InternedTypeKind.Error => current,
+        &type_intern.InternedTypeKind.Param(_) => current,
+        &type_intern.InternedTypeKind.Tuple(list_id) => {
             let new_list = apply_substs_ty_list_id(table, list_id);
-            type_intern::type_interner().intern(type_intern::InternedTypeKind::Tuple(new_list))
+            type_intern::type_interner().intern(type_intern.InternedTypeKind.Tuple(new_list))
         }
-        &type_intern::InternedTypeKind::Array { element, size } => {
+        &type_intern.InternedTypeKind.Array { element, size } => {
             let new_elem = apply_substs_id(table, element);
             type_intern::type_interner().mk_array(new_elem, size)
         }
-        &type_intern::InternedTypeKind::Slice { element } => {
+        &type_intern.InternedTypeKind.Slice { element } => {
             let new_elem = apply_substs_id(table, element);
             type_intern::type_interner().mk_slice(new_elem)
         }
-        &type_intern::InternedTypeKind::Ref { inner, mutable } => {
+        &type_intern.InternedTypeKind.Ref { inner, mutable } => {
             let new_inner = apply_substs_id(table, inner);
             type_intern::type_interner().mk_ref(new_inner, mutable)
         }
-        &type_intern::InternedTypeKind::Ptr { inner, mutable } => {
+        &type_intern.InternedTypeKind.Ptr { inner, mutable } => {
             let new_inner = apply_substs_id(table, inner);
             type_intern::type_interner().mk_ptr(new_inner, mutable)
         }
-        &type_intern::InternedTypeKind::Adt { def_id, args } => {
+        &type_intern.InternedTypeKind.Adt { def_id, args } => {
             let new_args = apply_substs_ty_list_id(table, args);
             type_intern::type_interner().mk_adt(def_id, new_args)
         }
-        &type_intern::InternedTypeKind::Fn { params, ret, effects } => {
+        &type_intern.InternedTypeKind.Fn { params, ret, effects } => {
             let new_params = apply_substs_ty_list_id(table, params);
             let new_ret = apply_substs_id(table, ret);
             let new_effects = apply_substs_to_effect_row_id(table, effects);
             type_intern::type_interner().mk_fn(new_params, new_ret, new_effects)
         }
-        &type_intern::InternedTypeKind::Closure { def_id, params, ret } => {
+        &type_intern.InternedTypeKind.Closure { def_id, params, ret } => {
             let new_params = apply_substs_ty_list_id(table, params);
             let new_ret = apply_substs_id(table, ret);
             type_intern::type_interner().mk_closure(def_id, new_params, new_ret)
         }
-        &type_intern::InternedTypeKind::Record { fields, ref row_var } => {
+        &type_intern.InternedTypeKind.Record { fields, ref row_var } => {
             let rv = *row_var;
             let new_fields = apply_substs_record_fields_id(table, fields);
-            type_intern::type_interner().intern(type_intern::InternedTypeKind::Record {
+            type_intern::type_interner().intern(type_intern.InternedTypeKind.Record {
                 fields: new_fields,
                 row_var: rv,
             })
         }
-        &type_intern::InternedTypeKind::Forall { ref params, body } => {
+        &type_intern.InternedTypeKind.Forall { ref params, body } => {
             let param_count = params.len();
-            let mut copied_params: Vec<hir_def::TyVarId> = Vec::new();
+            let mut copied_params: Vec<hir_def.TyVarId> = Vec.new();
             for i in 0usize..param_count {
                 copied_params.push(params[i]);
             }
             let new_body = apply_substs_id(table, body);
-            type_intern::type_interner().intern(type_intern::InternedTypeKind::Forall {
+            type_intern::type_interner().intern(type_intern.InternedTypeKind.Forall {
                 params: copied_params,
                 body: new_body,
             })
         }
-        &type_intern::InternedTypeKind::Ownership { qualifier, inner } => {
+        &type_intern.InternedTypeKind.Ownership { qualifier, inner } => {
             let new_inner = apply_substs_id(table, inner);
             type_intern::type_interner().mk_ownership(qualifier, new_inner)
         }
-        &type_intern::InternedTypeKind::Range { element, inclusive } => {
+        &type_intern.InternedTypeKind.Range { element, inclusive } => {
             let new_elem = apply_substs_id(table, element);
             type_intern::type_interner().mk_range(new_elem, inclusive)
         }
-        &type_intern::InternedTypeKind::DynTrait { trait_id, ref auto_traits } => {
+        &type_intern.InternedTypeKind.DynTrait { trait_id, ref auto_traits } => {
             let auto_count = auto_traits.len();
-            let mut copied_auto: Vec<hir_def::DefId> = Vec::new();
+            let mut copied_auto: Vec<hir_def.DefId> = Vec.new();
             for i in 0usize..auto_count {
                 copied_auto.push(auto_traits[i]);
             }
-            type_intern::type_interner().intern(type_intern::InternedTypeKind::DynTrait {
+            type_intern::type_interner().intern(type_intern.InternedTypeKind.DynTrait {
                 trait_id: trait_id,
                 auto_traits: copied_auto,
             })
@@ -1528,10 +1528,10 @@ pub fn apply_substs_id(table: &SubstTable, ty_id: type_intern::TyId) -> type_int
 }
 
 /// Applies substitutions to a type list (TyId-native).
-fn apply_substs_ty_list_id(table: &SubstTable, list_id: type_intern::TyListId) -> type_intern::TyListId {
+fn apply_substs_ty_list_id(table: &SubstTable, list_id: type_intern.TyListId) -> type_intern.TyListId {
     let interner = type_intern::type_interner();
     let len = interner.ty_list_len(list_id);
-    let mut result: Vec<type_intern::TyId> = Vec::new();
+    let mut result: Vec<type_intern.TyId> = Vec.new();
     for i in 0usize..len {
         let elem = type_intern::type_interner().get_ty_list_element(list_id, i);
         result.push(apply_substs_id(table, elem));
@@ -1540,39 +1540,39 @@ fn apply_substs_ty_list_id(table: &SubstTable, list_id: type_intern::TyListId) -
 }
 
 /// Applies substitutions to an effect row (TyId-native).
-fn apply_substs_to_effect_row_id(table: &SubstTable, eff_id: type_intern::EffectRowId) -> type_intern::EffectRowId {
+fn apply_substs_to_effect_row_id(table: &SubstTable, eff_id: type_intern.EffectRowId) -> type_intern.EffectRowId {
     let interner = type_intern::type_interner();
     let row = interner.get_effect_row(eff_id);
     let eff_count = row.effects.len();
     let row_var = row.row_var;
-    let mut new_effects: Vec<type_intern::InternedEffectRef> = Vec::new();
+    let mut new_effects: Vec<type_intern.InternedEffectRef> = Vec.new();
     for i in 0usize..eff_count {
         let eff = &type_intern::type_interner().get_effect_row(eff_id).effects[i];
         let def_id = eff.def_id;
         let args = eff.args;
         let new_args = apply_substs_ty_list_id(table, args);
-        new_effects.push(type_intern::InternedEffectRef::new(def_id, new_args));
+        new_effects.push(type_intern.InternedEffectRef.new(def_id, new_args));
     }
     type_intern::type_interner().intern_effect_row(
-        type_intern::InternedEffectRow::new(new_effects, row_var)
+        type_intern.InternedEffectRow.new(new_effects, row_var)
     )
 }
 
 /// Applies substitutions to record fields (TyId-native).
-fn apply_substs_record_fields_id(table: &SubstTable, fields_id: type_intern::RecordFieldListId) -> type_intern::RecordFieldListId {
+fn apply_substs_record_fields_id(table: &SubstTable, fields_id: type_intern.RecordFieldListId) -> type_intern.RecordFieldListId {
     let interner = type_intern::type_interner();
     let list = interner.get_record_field_list(fields_id);
     let field_count = list.fields.len();
-    let mut new_fields: Vec<type_intern::InternedRecordField> = Vec::new();
+    let mut new_fields: Vec<type_intern.InternedRecordField> = Vec.new();
     for i in 0usize..field_count {
         let f = &type_intern::type_interner().get_record_field_list(fields_id).fields[i];
         let name = f.name;
         let ty = f.ty;
         let new_ty = apply_substs_id(table, ty);
-        new_fields.push(type_intern::InternedRecordField::new(name, new_ty));
+        new_fields.push(type_intern.InternedRecordField.new(name, new_ty));
     }
     type_intern::type_interner().intern_record_field_list(
-        type_intern::InternedRecordFieldList::new(new_fields)
+        type_intern.InternedRecordFieldList.new(new_fields)
     )
 }
 
@@ -1582,52 +1582,52 @@ fn apply_substs_record_fields_id(table: &SubstTable, fields_id: type_intern::Rec
 
 /// Checks if a type variable occurs in a type.
 /// Used to prevent infinite types like `T = Option<T>`.
-pub fn occurs_in(var_id: hir_def::TyVarId, ty: &hir_ty::Type) -> bool {
+pub fn occurs_in(var_id: hir_def.TyVarId, ty: &hir_ty.Type) -> bool {
     let ty_id = type_intern::type_to_ty_id(ty);
     occurs_in_id(var_id, ty_id)
 }
 
-fn occurs_in_id(var_id: hir_def::TyVarId, ty_id: type_intern::TyId) -> bool {
+fn occurs_in_id(var_id: hir_def.TyVarId, ty_id: type_intern.TyId) -> bool {
     let interner = type_intern::type_interner();
     let kind = interner.get(ty_id);
     match kind {
-        &type_intern::InternedTypeKind::Infer(id) => id.index == var_id.index,
-        &type_intern::InternedTypeKind::Primitive(_) => false,
-        &type_intern::InternedTypeKind::Never => false,
-        &type_intern::InternedTypeKind::Error => false,
-        &type_intern::InternedTypeKind::Param(_) => false,
-        &type_intern::InternedTypeKind::DynTrait { trait_id: _, auto_traits: _ } => false,
-        &type_intern::InternedTypeKind::Tuple(list_id) => {
+        &type_intern.InternedTypeKind.Infer(id) => id.index == var_id.index,
+        &type_intern.InternedTypeKind.Primitive(_) => false,
+        &type_intern.InternedTypeKind.Never => false,
+        &type_intern.InternedTypeKind.Error => false,
+        &type_intern.InternedTypeKind.Param(_) => false,
+        &type_intern.InternedTypeKind.DynTrait { trait_id: _, auto_traits: _ } => false,
+        &type_intern.InternedTypeKind.Tuple(list_id) => {
             occurs_in_ty_list(var_id, list_id)
         }
-        &type_intern::InternedTypeKind::Array { element, size: _ } => {
+        &type_intern.InternedTypeKind.Array { element, size: _ } => {
             occurs_in_id(var_id, element)
         }
-        &type_intern::InternedTypeKind::Slice { element } => {
+        &type_intern.InternedTypeKind.Slice { element } => {
             occurs_in_id(var_id, element)
         }
-        &type_intern::InternedTypeKind::Ref { inner, mutable: _ } => {
+        &type_intern.InternedTypeKind.Ref { inner, mutable: _ } => {
             occurs_in_id(var_id, inner)
         }
-        &type_intern::InternedTypeKind::Ptr { inner, mutable: _ } => {
+        &type_intern.InternedTypeKind.Ptr { inner, mutable: _ } => {
             occurs_in_id(var_id, inner)
         }
-        &type_intern::InternedTypeKind::Adt { def_id: _, args } => {
+        &type_intern.InternedTypeKind.Adt { def_id: _, args } => {
             occurs_in_ty_list(var_id, args)
         }
-        &type_intern::InternedTypeKind::Fn { params, ret, effects: _ } => {
+        &type_intern.InternedTypeKind.Fn { params, ret, effects: _ } => {
             if occurs_in_ty_list(var_id, params) {
                 return true;
             }
             occurs_in_id(var_id, ret)
         }
-        &type_intern::InternedTypeKind::Closure { def_id: _, params, ret } => {
+        &type_intern.InternedTypeKind.Closure { def_id: _, params, ret } => {
             if occurs_in_ty_list(var_id, params) {
                 return true;
             }
             occurs_in_id(var_id, ret)
         }
-        &type_intern::InternedTypeKind::Record { fields, row_var: _ } => {
+        &type_intern.InternedTypeKind.Record { fields, row_var: _ } => {
             let interner2 = type_intern::type_interner();
             let field_list = interner2.get_record_field_list(fields);
             let len = field_list.fields.len();
@@ -1639,20 +1639,20 @@ fn occurs_in_id(var_id: hir_def::TyVarId, ty_id: type_intern::TyId) -> bool {
             }
             false
         }
-        &type_intern::InternedTypeKind::Forall { ref params, body } => {
+        &type_intern.InternedTypeKind.Forall { ref params, body } => {
             let _ = params;
             occurs_in_id(var_id, body)
         }
-        &type_intern::InternedTypeKind::Ownership { qualifier: _, inner } => {
+        &type_intern.InternedTypeKind.Ownership { qualifier: _, inner } => {
             occurs_in_id(var_id, inner)
         }
-        &type_intern::InternedTypeKind::Range { element, inclusive: _ } => {
+        &type_intern.InternedTypeKind.Range { element, inclusive: _ } => {
             occurs_in_id(var_id, element)
         }
     }
 }
 
-fn occurs_in_ty_list(var_id: hir_def::TyVarId, list_id: type_intern::TyListId) -> bool {
+fn occurs_in_ty_list(var_id: hir_def.TyVarId, list_id: type_intern.TyListId) -> bool {
     let interner = type_intern::type_interner();
     let len = interner.ty_list_len(list_id);
     for i in 0usize..len {
@@ -1673,9 +1673,9 @@ fn occurs_in_ty_list(var_id: hir_def::TyVarId, list_id: type_intern::TyListId) -
 pub fn unify(
     table: &mut SubstTable,
     unifier: &mut Unifier,
-    a: &hir_ty::Type,
-    b: &hir_ty::Type,
-    span: common::Span,
+    a: &hir_ty.Type,
+    b: &hir_ty.Type,
+    span: common.Span,
 ) -> UnifyResult {
     let a_id = type_intern::type_to_ty_id(a);
     let b_id = type_intern::type_to_ty_id(b);
@@ -1686,9 +1686,9 @@ pub fn unify(
 pub fn unify_id(
     table: &mut SubstTable,
     unifier: &mut Unifier,
-    a: type_intern::TyId,
-    b: type_intern::TyId,
-    span: common::Span,
+    a: type_intern.TyId,
+    b: type_intern.TyId,
+    span: common.Span,
 ) -> UnifyResult {
     let table_ref: &SubstTable = &*table;
     let a_resolved = apply_substs_id(table_ref, a);
@@ -1697,48 +1697,48 @@ pub fn unify_id(
 }
 
 /// Helper: extracts TyVarId if this TyId is an Infer type, otherwise None.
-fn extract_infer_var(ty_id: type_intern::TyId) -> Option<hir_def::TyVarId> {
+fn extract_infer_var(ty_id: type_intern.TyId) -> Option<hir_def.TyVarId> {
     let interner = type_intern::type_interner();
     let kind = interner.get(ty_id);
     match kind {
-        &type_intern::InternedTypeKind::Infer(var_id) => Option::Some(var_id),
-        _ => Option::None,
+        &type_intern.InternedTypeKind.Infer(var_id) => Option.Some(var_id),
+        _ => Option.None,
     }
 }
 
 /// Helper: returns true if this TyId is Error.
-fn is_error_id(ty_id: type_intern::TyId) -> bool {
+fn is_error_id(ty_id: type_intern.TyId) -> bool {
     let interner = type_intern::type_interner();
     let kind = interner.get(ty_id);
     match kind {
-        &type_intern::InternedTypeKind::Error => true,
+        &type_intern.InternedTypeKind.Error => true,
         _ => false,
     }
 }
 
 /// Helper: returns true if this TyId is Never.
-fn is_never_id(ty_id: type_intern::TyId) -> bool {
+fn is_never_id(ty_id: type_intern.TyId) -> bool {
     let interner = type_intern::type_interner();
     let kind = interner.get(ty_id);
     match kind {
-        &type_intern::InternedTypeKind::Never => true,
+        &type_intern.InternedTypeKind.Never => true,
         _ => false,
     }
 }
 
 /// Helper: extracts Forall params (copied to local Vec) and body TyId.
-fn extract_forall_id(ty_id: type_intern::TyId) -> Option<(Vec<hir_def::TyVarId>, type_intern::TyId)> {
+fn extract_forall_id(ty_id: type_intern.TyId) -> Option<(Vec<hir_def.TyVarId>, type_intern.TyId)> {
     let interner = type_intern::type_interner();
     let kind = interner.get(ty_id);
     match kind {
-        &type_intern::InternedTypeKind::Forall { ref params, body } => {
-            let mut local_params: Vec<hir_def::TyVarId> = Vec::new();
+        &type_intern.InternedTypeKind.Forall { ref params, body } => {
+            let mut local_params: Vec<hir_def.TyVarId> = Vec.new();
             for i in 0usize..params.len() {
-                local_params.push(hir_def::TyVarId { index: params[i].index });
+                local_params.push(hir_def.TyVarId { index: params[i].index });
             }
-            Option::Some((local_params, body))
+            Option.Some((local_params, body))
         }
-        _ => Option::None,
+        _ => Option.None,
     }
 }
 
@@ -1746,13 +1746,13 @@ fn extract_forall_id(ty_id: type_intern::TyId) -> Option<(Vec<hir_def::TyVarId>,
 fn unify_resolved_id(
     table: &mut SubstTable,
     unifier: &mut Unifier,
-    a: type_intern::TyId,
-    b: type_intern::TyId,
-    span: common::Span,
+    a: type_intern.TyId,
+    b: type_intern.TyId,
+    span: common.Span,
 ) -> UnifyResult {
     // Shortcut: same TyId means same type
     if a.index == b.index {
-        return UnifyResult::Ok;
+        return UnifyResult.Ok;
     }
 
     // Phase 1: Handle inference variables on either side
@@ -1760,33 +1760,33 @@ fn unify_resolved_id(
     let b_var = extract_infer_var(b);
 
     match a_var {
-        Option::Some(var_a) => {
+        Option.Some(var_a) => {
             match b_var {
-                Option::Some(var_b) => {
+                Option.Some(var_b) => {
                     // (Infer, Infer) — same var already handled by index check above
                     // Bind one to the other
                     table.add_ty_subst_id(var_a, b);
-                    return UnifyResult::Ok;
+                    return UnifyResult.Ok;
                 }
-                Option::None => {
+                Option.None => {
                     if occurs_in_id(var_a, b) {
-                        return UnifyResult::Err(UnifyError::occurs(span));
+                        return UnifyResult.Err(UnifyError.occurs(span));
                     }
                     table.add_ty_subst_id(var_a, b);
-                    return UnifyResult::Ok;
+                    return UnifyResult.Ok;
                 }
             }
         }
-        Option::None => {
+        Option.None => {
             match b_var {
-                Option::Some(var_b) => {
+                Option.Some(var_b) => {
                     if occurs_in_id(var_b, a) {
-                        return UnifyResult::Err(UnifyError::occurs(span));
+                        return UnifyResult.Err(UnifyError.occurs(span));
                     }
                     table.add_ty_subst_id(var_b, a);
-                    return UnifyResult::Ok;
+                    return UnifyResult.Ok;
                 }
-                Option::None => {
+                Option.None => {
                     // Continue to structural unification
                 }
             }
@@ -1795,27 +1795,27 @@ fn unify_resolved_id(
 
     // Phase 2: Error/Never wildcards
     if is_error_id(a) || is_error_id(b) {
-        return UnifyResult::Ok;
+        return UnifyResult.Ok;
     }
     if is_never_id(a) || is_never_id(b) {
-        return UnifyResult::Ok;
+        return UnifyResult.Ok;
     }
 
     // Phase 3: Forall handling
     let a_forall = extract_forall_id(a);
     match a_forall {
-        Option::Some(a_forall_data) => {
+        Option.Some(a_forall_data) => {
             let (params_a, body_a) = a_forall_data;
             let b_forall = extract_forall_id(b);
             match b_forall {
-                Option::Some(b_forall_data) => {
+                Option.Some(b_forall_data) => {
                     let (params_b, body_b) = b_forall_data;
                     // Forall-Forall: alpha-rename and unify bodies
                     if params_a.len() != params_b.len() {
-                        return UnifyResult::Err(UnifyError::mismatch(span));
+                        return UnifyResult.Err(UnifyError.mismatch(span));
                     }
-                    let mut subst_a = TypeParamSubst::new();
-                    let mut subst_b = TypeParamSubst::new();
+                    let mut subst_a = TypeParamSubst.new();
+                    let mut subst_b = TypeParamSubst.new();
                     for i in 0usize..params_a.len() {
                         let fresh = unifier.fresh_infer_id();
                         subst_a.add_id(params_a[i].index, fresh);
@@ -1825,9 +1825,9 @@ fn unify_resolved_id(
                     let body_b_inst = substitute_forall_vars_id(body_b, &subst_b);
                     return unify_id(table, unifier, body_a_inst, body_b_inst, span);
                 }
-                Option::None => {
+                Option.None => {
                     // Forall-NonForall: instantiate forall
-                    let mut subst_a = TypeParamSubst::new();
+                    let mut subst_a = TypeParamSubst.new();
                     for i in 0usize..params_a.len() {
                         let fresh = unifier.fresh_infer_id();
                         subst_a.add_id(params_a[i].index, fresh);
@@ -1837,13 +1837,13 @@ fn unify_resolved_id(
                 }
             }
         }
-        Option::None => {
+        Option.None => {
             let b_forall = extract_forall_id(b);
             match b_forall {
-                Option::Some(b_forall_data) => {
+                Option.Some(b_forall_data) => {
                     let (params_b, body_b) = b_forall_data;
                     // NonForall-Forall: instantiate forall
-                    let mut subst_b = TypeParamSubst::new();
+                    let mut subst_b = TypeParamSubst.new();
                     for i in 0usize..params_b.len() {
                         let fresh = unifier.fresh_infer_id();
                         subst_b.add_id(params_b[i].index, fresh);
@@ -1851,7 +1851,7 @@ fn unify_resolved_id(
                     let body_inst = substitute_forall_vars_id(body_b, &subst_b);
                     return unify_id(table, unifier, a, body_inst, span);
                 }
-                Option::None => {
+                Option.None => {
                     // Neither is Forall; continue to structural
                 }
             }
@@ -1866,175 +1866,175 @@ fn unify_resolved_id(
 fn unify_structural_id(
     table: &mut SubstTable,
     unifier: &mut Unifier,
-    a: type_intern::TyId,
-    b: type_intern::TyId,
-    span: common::Span,
+    a: type_intern.TyId,
+    b: type_intern.TyId,
+    span: common.Span,
 ) -> UnifyResult {
     let interner = type_intern::type_interner();
     let kind_a = interner.get(a);
     match kind_a {
-        &type_intern::InternedTypeKind::Primitive(prim_a) => {
+        &type_intern.InternedTypeKind.Primitive(prim_a) => {
             let kind_b = type_intern::type_interner().get(b);
             match kind_b {
-                &type_intern::InternedTypeKind::Primitive(prim_b) => {
+                &type_intern.InternedTypeKind.Primitive(prim_b) => {
                     if primitives_equal(prim_a, prim_b) {
-                        UnifyResult::Ok
+                        UnifyResult.Ok
                     } else {
-                        UnifyResult::Err(UnifyError::mismatch(span))
+                        UnifyResult.Err(UnifyError.mismatch(span))
                     }
                 }
-                _ => UnifyResult::Err(UnifyError::mismatch(span))
+                _ => UnifyResult.Err(UnifyError.mismatch(span))
             }
         }
 
-        &type_intern::InternedTypeKind::Param(id_a) => {
+        &type_intern.InternedTypeKind.Param(id_a) => {
             let kind_b = type_intern::type_interner().get(b);
             match kind_b {
-                &type_intern::InternedTypeKind::Param(id_b) => {
+                &type_intern.InternedTypeKind.Param(id_b) => {
                     if id_a.index == id_b.index {
-                        UnifyResult::Ok
+                        UnifyResult.Ok
                     } else {
-                        UnifyResult::Err(UnifyError::mismatch(span))
+                        UnifyResult.Err(UnifyError.mismatch(span))
                     }
                 }
-                _ => UnifyResult::Err(UnifyError::mismatch(span))
+                _ => UnifyResult.Err(UnifyError.mismatch(span))
             }
         }
 
-        &type_intern::InternedTypeKind::Tuple(list_a) => {
+        &type_intern.InternedTypeKind.Tuple(list_a) => {
             let kind_b = type_intern::type_interner().get(b);
             match kind_b {
-                &type_intern::InternedTypeKind::Tuple(list_b) => {
+                &type_intern.InternedTypeKind.Tuple(list_b) => {
                     unify_ty_lists_id(table, unifier, list_a, list_b, span)
                 }
-                _ => UnifyResult::Err(UnifyError::mismatch(span))
+                _ => UnifyResult.Err(UnifyError.mismatch(span))
             }
         }
 
-        &type_intern::InternedTypeKind::Array { element, size } => {
+        &type_intern.InternedTypeKind.Array { element, size } => {
             let elem_a = element;
             let size_a = size;
             let kind_b = type_intern::type_interner().get(b);
             match kind_b {
-                &type_intern::InternedTypeKind::Array { element, size } => {
-                    // Allow const-param sentinel size (u64::MAX) to match any size.
+                &type_intern.InternedTypeKind.Array { element, size } => {
+                    // Allow const-param sentinel size (u64.MAX) to match any size.
                     // This enables `[i32; N]` to unify with `[i32; 5]`.
                     let sentinel: u64 = 18446744073709551615;
                     if size_a != size && size_a != sentinel && size != sentinel {
-                        return UnifyResult::Err(UnifyError::mismatch(span));
+                        return UnifyResult.Err(UnifyError.mismatch(span));
                     }
                     unify_id(table, unifier, elem_a, element, span)
                 }
-                _ => UnifyResult::Err(UnifyError::mismatch(span))
+                _ => UnifyResult.Err(UnifyError.mismatch(span))
             }
         }
 
-        &type_intern::InternedTypeKind::Slice { element } => {
+        &type_intern.InternedTypeKind.Slice { element } => {
             let elem_a = element;
             let kind_b = type_intern::type_interner().get(b);
             match kind_b {
-                &type_intern::InternedTypeKind::Slice { element } => {
+                &type_intern.InternedTypeKind.Slice { element } => {
                     unify_id(table, unifier, elem_a, element, span)
                 }
-                _ => UnifyResult::Err(UnifyError::mismatch(span))
+                _ => UnifyResult.Err(UnifyError.mismatch(span))
             }
         }
 
-        &type_intern::InternedTypeKind::Ref { inner, mutable } => {
+        &type_intern.InternedTypeKind.Ref { inner, mutable } => {
             let inner_a = inner;
             let mut_a = mutable;
             let kind_b = type_intern::type_interner().get(b);
             match kind_b {
-                &type_intern::InternedTypeKind::Ref { inner, mutable } => {
+                &type_intern.InternedTypeKind.Ref { inner, mutable } => {
                     if mut_a != mutable {
-                        return UnifyResult::Err(UnifyError::mismatch(span));
+                        return UnifyResult.Err(UnifyError.mismatch(span));
                     }
                     unify_id(table, unifier, inner_a, inner, span)
                 }
-                _ => UnifyResult::Err(UnifyError::mismatch(span))
+                _ => UnifyResult.Err(UnifyError.mismatch(span))
             }
         }
 
-        &type_intern::InternedTypeKind::Ptr { inner, mutable } => {
+        &type_intern.InternedTypeKind.Ptr { inner, mutable } => {
             let inner_a = inner;
             let mut_a = mutable;
             let kind_b = type_intern::type_interner().get(b);
             match kind_b {
-                &type_intern::InternedTypeKind::Ptr { inner, mutable } => {
+                &type_intern.InternedTypeKind.Ptr { inner, mutable } => {
                     if mut_a != mutable {
-                        return UnifyResult::Err(UnifyError::mismatch(span));
+                        return UnifyResult.Err(UnifyError.mismatch(span));
                     }
                     unify_id(table, unifier, inner_a, inner, span)
                 }
-                _ => UnifyResult::Err(UnifyError::mismatch(span))
+                _ => UnifyResult.Err(UnifyError.mismatch(span))
             }
         }
 
-        &type_intern::InternedTypeKind::Adt { def_id, args } => {
+        &type_intern.InternedTypeKind.Adt { def_id, args } => {
             let def_a = def_id;
             let args_a = args;
             let kind_b = type_intern::type_interner().get(b);
             match kind_b {
-                &type_intern::InternedTypeKind::Adt { def_id, args } => {
+                &type_intern.InternedTypeKind.Adt { def_id, args } => {
                     if def_a.index != def_id.index {
-                        return UnifyResult::Err(UnifyError::mismatch(span));
+                        return UnifyResult.Err(UnifyError.mismatch(span));
                     }
                     unify_ty_lists_id(table, unifier, args_a, args, span)
                 }
-                _ => UnifyResult::Err(UnifyError::mismatch(span))
+                _ => UnifyResult.Err(UnifyError.mismatch(span))
             }
         }
 
         // Function types: unify params and return type.
         // Effects are NOT unified here — checked at call sites.
-        &type_intern::InternedTypeKind::Fn { params, ret, effects: _ } => {
+        &type_intern.InternedTypeKind.Fn { params, ret, effects: _ } => {
             let params_a = params;
             let ret_a = ret;
             let kind_b = type_intern::type_interner().get(b);
             match kind_b {
-                &type_intern::InternedTypeKind::Fn { params, ret, effects: _ } => {
+                &type_intern.InternedTypeKind.Fn { params, ret, effects: _ } => {
                     match unify_ty_lists_id(table, unifier, params_a, params, span) {
-                        UnifyResult::Err(e) => { return UnifyResult::Err(e); }
-                        UnifyResult::Ok => {}
+                        UnifyResult.Err(e) => { return UnifyResult.Err(e); }
+                        UnifyResult.Ok => {}
                     }
                     unify_id(table, unifier, ret_a, ret, span)
                 }
-                _ => UnifyResult::Err(UnifyError::mismatch(span))
+                _ => UnifyResult.Err(UnifyError.mismatch(span))
             }
         }
 
         // Closure types: unify with other closures or coerce to Fn
-        &type_intern::InternedTypeKind::Closure { def_id: _, params, ret } => {
+        &type_intern.InternedTypeKind.Closure { def_id: _, params, ret } => {
             let params_a = params;
             let ret_a = ret;
             let kind_b = type_intern::type_interner().get(b);
             match kind_b {
-                &type_intern::InternedTypeKind::Closure { def_id: _, params, ret } => {
+                &type_intern.InternedTypeKind.Closure { def_id: _, params, ret } => {
                     match unify_ty_lists_id(table, unifier, params_a, params, span) {
-                        UnifyResult::Err(e) => { return UnifyResult::Err(e); }
-                        UnifyResult::Ok => {}
+                        UnifyResult.Err(e) => { return UnifyResult.Err(e); }
+                        UnifyResult.Ok => {}
                     }
                     unify_id(table, unifier, ret_a, ret, span)
                 }
-                &type_intern::InternedTypeKind::Fn { params, ret, effects: _ } => {
+                &type_intern.InternedTypeKind.Fn { params, ret, effects: _ } => {
                     // Closure coerces to Fn type
                     match unify_ty_lists_id(table, unifier, params_a, params, span) {
-                        UnifyResult::Err(e) => { return UnifyResult::Err(e); }
-                        UnifyResult::Ok => {}
+                        UnifyResult.Err(e) => { return UnifyResult.Err(e); }
+                        UnifyResult.Ok => {}
                     }
                     unify_id(table, unifier, ret_a, ret, span)
                 }
-                _ => UnifyResult::Err(UnifyError::mismatch(span))
+                _ => UnifyResult.Err(UnifyError.mismatch(span))
             }
         }
 
         // Record types: convert back to hir_ty for row unification
-        &type_intern::InternedTypeKind::Record { fields, row_var } => {
+        &type_intern.InternedTypeKind.Record { fields, row_var } => {
             let fields_a_id = fields;
             let row_var_a = row_var;
             let kind_b = type_intern::type_interner().get(b);
             match kind_b {
-                &type_intern::InternedTypeKind::Record { fields, row_var } => {
+                &type_intern.InternedTypeKind.Record { fields, row_var } => {
                     let fields_b_id = fields;
                     let row_var_b = row_var;
                     // Convert interned record fields back to hir_ty for row unification
@@ -2042,73 +2042,73 @@ fn unify_structural_id(
                     let fields_b_vec = record_fields_id_to_vec(fields_b_id);
                     unify_record_rows(table, unifier, &fields_a_vec, &row_var_a, &fields_b_vec, &row_var_b, span)
                 }
-                _ => UnifyResult::Err(UnifyError::mismatch(span))
+                _ => UnifyResult.Err(UnifyError.mismatch(span))
             }
         }
 
         // Ownership types: same qualifier, unify inner types
-        &type_intern::InternedTypeKind::Ownership { qualifier, inner } => {
+        &type_intern.InternedTypeKind.Ownership { qualifier, inner } => {
             let qualifier_a = qualifier;
             let inner_a = inner;
             let kind_b = type_intern::type_interner().get(b);
             match kind_b {
-                &type_intern::InternedTypeKind::Ownership { qualifier, inner } => {
+                &type_intern.InternedTypeKind.Ownership { qualifier, inner } => {
                     if !ownership_qualifiers_equal(qualifier_a, qualifier) {
-                        return UnifyResult::Err(UnifyError::mismatch(span));
+                        return UnifyResult.Err(UnifyError.mismatch(span));
                     }
                     unify_id(table, unifier, inner_a, inner, span)
                 }
-                _ => UnifyResult::Err(UnifyError::mismatch(span))
+                _ => UnifyResult.Err(UnifyError.mismatch(span))
             }
         }
 
-        &type_intern::InternedTypeKind::Range { element, inclusive } => {
+        &type_intern.InternedTypeKind.Range { element, inclusive } => {
             let elem_a = element;
             let incl_a = inclusive;
             let kind_b = type_intern::type_interner().get(b);
             match kind_b {
-                &type_intern::InternedTypeKind::Range { element, inclusive } => {
+                &type_intern.InternedTypeKind.Range { element, inclusive } => {
                     if incl_a != inclusive {
-                        return UnifyResult::Err(UnifyError::mismatch(span));
+                        return UnifyResult.Err(UnifyError.mismatch(span));
                     }
                     unify_id(table, unifier, elem_a, element, span)
                 }
-                _ => UnifyResult::Err(UnifyError::mismatch(span))
+                _ => UnifyResult.Err(UnifyError.mismatch(span))
             }
         }
 
-        &type_intern::InternedTypeKind::DynTrait { trait_id, ref auto_traits } => {
+        &type_intern.InternedTypeKind.DynTrait { trait_id, ref auto_traits } => {
             let trait_a = trait_id;
             let auto_a_len = auto_traits.len();
             // Copy auto_traits to local vec before dropping borrow
-            let mut auto_a: Vec<hir_def::DefId> = Vec::new();
+            let mut auto_a: Vec<hir_def.DefId> = Vec.new();
             for i in 0usize..auto_traits.len() {
-                auto_a.push(hir_def::DefId { index: auto_traits[i].index });
+                auto_a.push(hir_def.DefId { index: auto_traits[i].index });
             }
             let kind_b = type_intern::type_interner().get(b);
             match kind_b {
-                &type_intern::InternedTypeKind::DynTrait { trait_id, ref auto_traits } => {
+                &type_intern.InternedTypeKind.DynTrait { trait_id, ref auto_traits } => {
                     if trait_a.index != trait_id.index {
-                        return UnifyResult::Err(UnifyError::mismatch(span));
+                        return UnifyResult.Err(UnifyError.mismatch(span));
                     }
                     if auto_a_len != auto_traits.len() {
-                        return UnifyResult::Err(UnifyError::mismatch(span));
+                        return UnifyResult.Err(UnifyError.mismatch(span));
                     }
                     // Check all auto traits match
                     for j in 0usize..auto_a.len() {
                         if auto_a[j].index != auto_traits[j].index {
-                            return UnifyResult::Err(UnifyError::mismatch(span));
+                            return UnifyResult.Err(UnifyError.mismatch(span));
                         }
                     }
-                    UnifyResult::Ok
+                    UnifyResult.Ok
                 }
-                _ => UnifyResult::Err(UnifyError::mismatch(span))
+                _ => UnifyResult.Err(UnifyError.mismatch(span))
             }
         }
 
         // Catch-all: any other combination is a type mismatch
         _ => {
-            UnifyResult::Err(UnifyError::mismatch(span))
+            UnifyResult.Err(UnifyError.mismatch(span))
         }
     }
 }
@@ -2117,35 +2117,35 @@ fn unify_structural_id(
 fn unify_ty_lists_id(
     table: &mut SubstTable,
     unifier: &mut Unifier,
-    list_a: type_intern::TyListId,
-    list_b: type_intern::TyListId,
-    span: common::Span,
+    list_a: type_intern.TyListId,
+    list_b: type_intern.TyListId,
+    span: common.Span,
 ) -> UnifyResult {
     let interner = type_intern::type_interner();
     let len_a = interner.ty_list_len(list_a);
     let len_b = interner.ty_list_len(list_b);
     if len_a != len_b {
-        return UnifyResult::Err(UnifyError::arity(span));
+        return UnifyResult.Err(UnifyError.arity(span));
     }
     for i in 0usize..len_a {
         let elem_a = type_intern::type_interner().get_ty_list_element(list_a, i);
         let elem_b = type_intern::type_interner().get_ty_list_element(list_b, i);
         match unify_id(table, unifier, elem_a, elem_b, span) {
-            UnifyResult::Err(e) => { return UnifyResult::Err(e); }
-            UnifyResult::Ok => {}
+            UnifyResult.Err(e) => { return UnifyResult.Err(e); }
+            UnifyResult.Ok => {}
         }
     }
-    UnifyResult::Ok
+    UnifyResult.Ok
 }
 
-/// Helper: converts interned record fields back to Vec<hir_ty::RecordField>.
-fn record_fields_id_to_vec(fields_id: type_intern::RecordFieldListId) -> Vec<hir_ty::RecordField> {
+/// Helper: converts interned record fields back to Vec<hir_ty.RecordField>.
+fn record_fields_id_to_vec(fields_id: type_intern.RecordFieldListId) -> Vec<hir_ty.RecordField> {
     let interner = type_intern::type_interner();
     let field_list = interner.get_record_field_list(fields_id);
-    let mut result: Vec<hir_ty::RecordField> = Vec::new();
+    let mut result: Vec<hir_ty.RecordField> = Vec.new();
     for i in 0usize..field_list.fields.len() {
         let f = &field_list.fields[i];
-        result.push(hir_ty::RecordField {
+        result.push(hir_ty.RecordField {
             name: f.name,
             ty: type_intern::ty_id_to_type(f.ty),
         });
@@ -2154,10 +2154,10 @@ fn record_fields_id_to_vec(fields_id: type_intern::RecordFieldListId) -> Vec<hir
 }
 
 /// Checks if two ownership qualifiers are equal.
-fn ownership_qualifiers_equal(a: hir_ty::OwnershipQualifier, b: hir_ty::OwnershipQualifier) -> bool {
+fn ownership_qualifiers_equal(a: hir_ty.OwnershipQualifier, b: hir_ty.OwnershipQualifier) -> bool {
     match (a, b) {
-        (hir_ty::OwnershipQualifier::Linear, hir_ty::OwnershipQualifier::Linear) => true,
-        (hir_ty::OwnershipQualifier::Affine, hir_ty::OwnershipQualifier::Affine) => true,
+        (hir_ty.OwnershipQualifier.Linear, hir_ty.OwnershipQualifier.Linear) => true,
+        (hir_ty.OwnershipQualifier.Affine, hir_ty.OwnershipQualifier.Affine) => true,
         _ => false,
     }
 }
@@ -2175,9 +2175,9 @@ fn ownership_qualifiers_equal(a: hir_ty::OwnershipQualifier, b: hir_ty::Ownershi
 pub fn unify_effect_rows(
     table: &mut SubstTable,
     unifier: &mut Unifier,
-    a: &hir_ty::EffectRow,
-    b: &hir_ty::EffectRow,
-    span: common::Span,
+    a: &hir_ty.EffectRow,
+    b: &hir_ty.EffectRow,
+    span: common.Span,
 ) -> UnifyResult {
     // Check if both rows are closed (no row variables)
     let a_closed = a.row_var.is_none();
@@ -2186,9 +2186,9 @@ pub fn unify_effect_rows(
     if a_closed && b_closed {
         // Both closed: effects must match exactly
         if !effect_sets_equal(&a.effects, &b.effects) {
-            return UnifyResult::Err(UnifyError::new(UnifyErrorKind::EffectMismatch, span));
+            return UnifyResult.Err(UnifyError.new(UnifyErrorKind.EffectMismatch, span));
         }
-        return UnifyResult::Ok;
+        return UnifyResult.Ok;
     }
 
     // At least one row is open (has a row variable)
@@ -2203,37 +2203,37 @@ pub fn unify_effect_rows(
 
     // If a is closed but doesn't have all of b's effects, fail
     if a_closed && !a_has_all_b {
-        return UnifyResult::Err(UnifyError::new(UnifyErrorKind::EffectMismatch, span));
+        return UnifyResult.Err(UnifyError.new(UnifyErrorKind.EffectMismatch, span));
     }
 
     // If b is closed but doesn't have all of a's effects, fail
     if b_closed && !b_has_all_a {
-        return UnifyResult::Err(UnifyError::new(UnifyErrorKind::EffectMismatch, span));
+        return UnifyResult.Err(UnifyError.new(UnifyErrorKind.EffectMismatch, span));
     }
 
     // Now bind row variables to capture the differences
     match (a.row_var, b.row_var) {
-        (Option::Some(a_var), Option::None) => {
+        (Option.Some(a_var), Option.None) => {
             // a is open, b is closed
             // Bind a_var to the effects in b that aren't in a
             let diff = compute_effect_difference(&b.effects, &a.effects);
-            let bound_row = hir_ty::EffectRow {
+            let bound_row = hir_ty.EffectRow {
                 effects: diff,
-                row_var: Option::None, // The difference has no row var (closed)
+                row_var: Option.None, // The difference has no row var (closed)
             };
             table.add_effect_subst(a_var, bound_row);
         }
-        (Option::None, Option::Some(b_var)) => {
+        (Option.None, Option.Some(b_var)) => {
             // b is open, a is closed
             // Bind b_var to the effects in a that aren't in b
             let diff = compute_effect_difference(&a.effects, &b.effects);
-            let bound_row = hir_ty::EffectRow {
+            let bound_row = hir_ty.EffectRow {
                 effects: diff,
-                row_var: Option::None,
+                row_var: Option.None,
             };
             table.add_effect_subst(b_var, bound_row);
         }
-        (Option::Some(a_var), Option::Some(b_var)) => {
+        (Option.Some(a_var), Option.Some(b_var)) => {
             // Both are open - create a fresh row variable for the unified row
             // This is the most complex case
             let fresh_var = unifier.fresh_effect_var();
@@ -2242,40 +2242,40 @@ pub fn unify_effect_rows(
             let merged = merge_effect_lists(&a.effects, &b.effects);
 
             // Bind both row vars to the merged effects + fresh var
-            let merged_row = hir_ty::EffectRow {
+            let merged_row = hir_ty.EffectRow {
                 effects: merged,
-                row_var: Option::Some(fresh_var),
+                row_var: Option.Some(fresh_var),
             };
 
             // For the original vars, bind them to what they need to add
             // a_var should provide: (b.effects - a.effects) + fresh_var
             let a_needs = compute_effect_difference(&b.effects, &a.effects);
-            let a_bound = hir_ty::EffectRow {
+            let a_bound = hir_ty.EffectRow {
                 effects: a_needs,
-                row_var: Option::Some(fresh_var),
+                row_var: Option.Some(fresh_var),
             };
             table.add_effect_subst(a_var, a_bound);
 
             // b_var should provide: (a.effects - b.effects) + fresh_var
             let b_needs = compute_effect_difference(&a.effects, &b.effects);
-            let b_bound = hir_ty::EffectRow {
+            let b_bound = hir_ty.EffectRow {
                 effects: b_needs,
-                row_var: Option::Some(fresh_var),
+                row_var: Option.Some(fresh_var),
             };
             table.add_effect_subst(b_var, b_bound);
 
             let _ = merged_row; // Document that this represents the unified row
         }
-        (Option::None, Option::None) => {
+        (Option.None, Option.None) => {
             // Both closed - already handled above
         }
     }
 
-    UnifyResult::Ok
+    UnifyResult.Ok
 }
 
 /// Checks if all effects in `subset` are present in `superset`.
-fn contains_all_effects(superset: &Vec<hir_ty::EffectRef>, subset: &Vec<hir_ty::EffectRef>) -> bool {
+fn contains_all_effects(superset: &Vec<hir_ty.EffectRef>, subset: &Vec<hir_ty.EffectRef>) -> bool {
     for i in 0usize..subset.len() {
         if !effect_list_contains(superset, &subset[i]) {
             return false;
@@ -2285,8 +2285,8 @@ fn contains_all_effects(superset: &Vec<hir_ty::EffectRef>, subset: &Vec<hir_ty::
 }
 
 /// Computes effects in `from` that are not in `subtract`.
-fn compute_effect_difference(from: &Vec<hir_ty::EffectRef>, subtract: &Vec<hir_ty::EffectRef>) -> Vec<hir_ty::EffectRef> {
-    let mut result: Vec<hir_ty::EffectRef> = Vec::new();
+fn compute_effect_difference(from: &Vec<hir_ty.EffectRef>, subtract: &Vec<hir_ty.EffectRef>) -> Vec<hir_ty.EffectRef> {
+    let mut result: Vec<hir_ty.EffectRef> = Vec.new();
     for i in 0usize..from.len() {
         if !effect_list_contains(subtract, &from[i]) {
             result.push(copy_effect_ref(&from[i]));
@@ -2296,8 +2296,8 @@ fn compute_effect_difference(from: &Vec<hir_ty::EffectRef>, subtract: &Vec<hir_t
 }
 
 /// Merges two effect lists, eliminating duplicates.
-fn merge_effect_lists(a: &Vec<hir_ty::EffectRef>, b: &Vec<hir_ty::EffectRef>) -> Vec<hir_ty::EffectRef> {
-    let mut result: Vec<hir_ty::EffectRef> = Vec::new();
+fn merge_effect_lists(a: &Vec<hir_ty.EffectRef>, b: &Vec<hir_ty.EffectRef>) -> Vec<hir_ty.EffectRef> {
+    let mut result: Vec<hir_ty.EffectRef> = Vec.new();
 
     // Add all from a
     for i in 0usize..a.len() {
@@ -2315,19 +2315,19 @@ fn merge_effect_lists(a: &Vec<hir_ty::EffectRef>, b: &Vec<hir_ty::EffectRef>) ->
 }
 
 /// Creates a copy of an EffectRef.
-fn copy_effect_ref(eff: &hir_ty::EffectRef) -> hir_ty::EffectRef {
-    let mut args: Vec<hir_ty::Type> = Vec::new();
+fn copy_effect_ref(eff: &hir_ty.EffectRef) -> hir_ty.EffectRef {
+    let mut args: Vec<hir_ty.Type> = Vec.new();
     for i in 0usize..eff.args.len() {
         args.push(hir_ty::copy_type(&eff.args[i]));
     }
-    hir_ty::EffectRef {
+    hir_ty.EffectRef {
         def_id: eff.def_id,
         args: args,
     }
 }
 
 /// Checks if two effect sets are equal (ignoring order).
-fn effect_sets_equal(a: &Vec<hir_ty::EffectRef>, b: &Vec<hir_ty::EffectRef>) -> bool {
+fn effect_sets_equal(a: &Vec<hir_ty.EffectRef>, b: &Vec<hir_ty.EffectRef>) -> bool {
     if a.len() != b.len() {
         return false;
     }
@@ -2343,7 +2343,7 @@ fn effect_sets_equal(a: &Vec<hir_ty::EffectRef>, b: &Vec<hir_ty::EffectRef>) -> 
 }
 
 /// Checks if an effect list contains a specific effect.
-fn effect_list_contains(list: &Vec<hir_ty::EffectRef>, eff_ref: &hir_ty::EffectRef) -> bool {
+fn effect_list_contains(list: &Vec<hir_ty.EffectRef>, eff_ref: &hir_ty.EffectRef) -> bool {
     for i in 0usize..list.len() {
         if effects_equal(&list[i], eff_ref) {
             return true;
@@ -2353,7 +2353,7 @@ fn effect_list_contains(list: &Vec<hir_ty::EffectRef>, eff_ref: &hir_ty::EffectR
 }
 
 /// Checks if two effect references are equal.
-fn effects_equal(a: &hir_ty::EffectRef, b: &hir_ty::EffectRef) -> bool {
+fn effects_equal(a: &hir_ty.EffectRef, b: &hir_ty.EffectRef) -> bool {
     // Check DefIds match
     if a.def_id.index != b.def_id.index {
         return false;
@@ -2374,18 +2374,18 @@ fn effects_equal(a: &hir_ty::EffectRef, b: &hir_ty::EffectRef) -> bool {
 }
 
 /// Simple structural type equality check.
-fn types_equal(a: &hir_ty::Type, b: &hir_ty::Type) -> bool {
+fn types_equal(a: &hir_ty.Type, b: &hir_ty.Type) -> bool {
     match (&a.kind, &b.kind) {
-        (&hir_ty::TypeKind::Primitive(pa), &hir_ty::TypeKind::Primitive(pb)) => {
+        (&hir_ty.TypeKind.Primitive(pa), &hir_ty.TypeKind.Primitive(pb)) => {
             primitives_equal(pa, pb)
         }
-        (&hir_ty::TypeKind::Never, &hir_ty::TypeKind::Never) => true,
-        (&hir_ty::TypeKind::Error, &hir_ty::TypeKind::Error) => true,
-        (&hir_ty::TypeKind::Infer(va), &hir_ty::TypeKind::Infer(vb)) => {
+        (&hir_ty.TypeKind.Never, &hir_ty.TypeKind.Never) => true,
+        (&hir_ty.TypeKind.Error, &hir_ty.TypeKind.Error) => true,
+        (&hir_ty.TypeKind.Infer(va), &hir_ty.TypeKind.Infer(vb)) => {
             va.index == vb.index
         }
-        (&hir_ty::TypeKind::Ownership { qualifier: qa, ref inner },
-         &hir_ty::TypeKind::Ownership { qualifier: qb, inner: ref inner_b }) => {
+        (&hir_ty.TypeKind.Ownership { qualifier: qa, ref inner },
+         &hir_ty.TypeKind.Ownership { qualifier: qb, inner: ref inner_b }) => {
             ownership_qualifiers_equal(qa, qb) && types_equal(inner.as_ref(), inner_b.as_ref())
         }
         _ => false // Conservative: non-primitive types need unification
@@ -2408,11 +2408,11 @@ fn types_equal(a: &hir_ty::Type, b: &hir_ty::Type) -> bool {
 pub fn unify_record_rows(
     table: &mut SubstTable,
     unifier: &mut Unifier,
-    fields_a: &Vec<hir_ty::RecordField>,
-    row_var_a: &Option<hir_def::RecordRowVarId>,
-    fields_b: &Vec<hir_ty::RecordField>,
-    row_var_b: &Option<hir_def::RecordRowVarId>,
-    span: common::Span,
+    fields_a: &Vec<hir_ty.RecordField>,
+    row_var_a: &Option<hir_def.RecordRowVarId>,
+    fields_b: &Vec<hir_ty.RecordField>,
+    row_var_b: &Option<hir_def.RecordRowVarId>,
+    span: common.Span,
 ) -> UnifyResult {
     // Check if rows are closed (no row variables)
     let a_closed = row_var_a.is_none();
@@ -2421,7 +2421,7 @@ pub fn unify_record_rows(
     // Case 1: Both closed - require exact field match
     if a_closed && b_closed {
         if fields_a.len() != fields_b.len() {
-            return UnifyResult::Err(UnifyError::new(UnifyErrorKind::RecordMismatch, span));
+            return UnifyResult.Err(UnifyError.new(UnifyErrorKind.RecordMismatch, span));
         }
         return unify_record_fields_exact(table, unifier, fields_a, fields_b, span);
     }
@@ -2430,18 +2430,18 @@ pub fn unify_record_rows(
     // Common fields must unify; different fields go into row variables
 
     // Collect field names from both records
-    let mut common: Vec<(usize, usize)> = Vec::new(); // (a_idx, b_idx)
-    let mut only_in_a: Vec<usize> = Vec::new();
-    let mut only_in_b: Vec<usize> = Vec::new();
+    let mut common: Vec<(usize, usize)> = Vec.new(); // (a_idx, b_idx)
+    let mut only_in_a: Vec<usize> = Vec.new();
+    let mut only_in_b: Vec<usize> = Vec.new();
 
     // Find common fields and fields only in a
     for i in 0usize..fields_a.len() {
         let found = find_field_by_name(fields_b, fields_a[i].name);
         match found {
-            Option::Some(b_idx) => {
+            Option.Some(b_idx) => {
                 common.push((i, b_idx));
             }
-            Option::None => {
+            Option.None => {
                 only_in_a.push(i);
             }
         }
@@ -2459,73 +2459,73 @@ pub fn unify_record_rows(
     for k in 0usize..common.len() {
         let (a_idx, b_idx) = common[k];
         match unify(table, unifier, &fields_a[a_idx].ty, &fields_b[b_idx].ty, span) {
-            UnifyResult::Err(e) => { return UnifyResult::Err(e); }
-            UnifyResult::Ok => {}
+            UnifyResult.Err(e) => { return UnifyResult.Err(e); }
+            UnifyResult.Ok => {}
         }
     }
 
     // Handle different fields based on row variable availability
     match (row_var_a, row_var_b) {
-        (&Option::Some(var_a), &Option::None) => {
+        (&Option.Some(var_a), &Option.None) => {
             // A is open, B is closed
             // A must not have any extra fields, and A's row var binds to B's extras
             if only_in_a.len() > 0 {
-                return UnifyResult::Err(UnifyError::new(UnifyErrorKind::RecordMismatch, span));
+                return UnifyResult.Err(UnifyError.new(UnifyErrorKind.RecordMismatch, span));
             }
             // Bind var_a to fields only in B
             let extra_fields = collect_fields_by_indices(fields_b, &only_in_b);
-            table.add_record_subst(var_a, extra_fields, Option::None);
+            table.add_record_subst(var_a, extra_fields, Option.None);
         }
-        (&Option::None, &Option::Some(var_b)) => {
+        (&Option.None, &Option.Some(var_b)) => {
             // B is open, A is closed
             // B must not have any extra fields, and B's row var binds to A's extras
             if only_in_b.len() > 0 {
-                return UnifyResult::Err(UnifyError::new(UnifyErrorKind::RecordMismatch, span));
+                return UnifyResult.Err(UnifyError.new(UnifyErrorKind.RecordMismatch, span));
             }
             // Bind var_b to fields only in A
             let extra_fields = collect_fields_by_indices(fields_a, &only_in_a);
-            table.add_record_subst(var_b, extra_fields, Option::None);
+            table.add_record_subst(var_b, extra_fields, Option.None);
         }
-        (&Option::Some(var_a), &Option::Some(var_b)) => {
+        (&Option.Some(var_a), &Option.Some(var_b)) => {
             // Both open - create fresh row variable for unified extension
             let fresh_var = unifier.fresh_record_var();
 
             // A's row var binds to B's extra fields + fresh
             let a_extra = collect_fields_by_indices(fields_b, &only_in_b);
-            table.add_record_subst(var_a, a_extra, Option::Some(fresh_var));
+            table.add_record_subst(var_a, a_extra, Option.Some(fresh_var));
 
             // B's row var binds to A's extra fields + fresh
             let b_extra = collect_fields_by_indices(fields_a, &only_in_a);
-            table.add_record_subst(var_b, b_extra, Option::Some(fresh_var));
+            table.add_record_subst(var_b, b_extra, Option.Some(fresh_var));
         }
-        (&Option::None, &Option::None) => {
+        (&Option.None, &Option.None) => {
             // Both closed - already handled above
         }
     }
 
-    UnifyResult::Ok
+    UnifyResult.Ok
 }
 
 /// Unifies record fields exactly (for closed records).
 fn unify_record_fields_exact(
     table: &mut SubstTable,
     unifier: &mut Unifier,
-    fields_a: &Vec<hir_ty::RecordField>,
-    fields_b: &Vec<hir_ty::RecordField>,
-    span: common::Span,
+    fields_a: &Vec<hir_ty.RecordField>,
+    fields_b: &Vec<hir_ty.RecordField>,
+    span: common.Span,
 ) -> UnifyResult {
     // Check that field sets match (order-independent)
     for i in 0usize..fields_a.len() {
         let found = find_field_by_name(fields_b, fields_a[i].name);
         match found {
-            Option::Some(b_idx) => {
+            Option.Some(b_idx) => {
                 match unify(table, unifier, &fields_a[i].ty, &fields_b[b_idx].ty, span) {
-                    UnifyResult::Err(e) => { return UnifyResult::Err(e); }
-                    UnifyResult::Ok => {}
+                    UnifyResult.Err(e) => { return UnifyResult.Err(e); }
+                    UnifyResult.Ok => {}
                 }
             }
-            Option::None => {
-                return UnifyResult::Err(UnifyError::new(UnifyErrorKind::RecordMismatch, span));
+            Option.None => {
+                return UnifyResult.Err(UnifyError.new(UnifyErrorKind.RecordMismatch, span));
             }
         }
     }
@@ -2533,33 +2533,33 @@ fn unify_record_fields_exact(
     // Verify b doesn't have extra fields not in a
     for j in 0usize..fields_b.len() {
         if find_field_by_name(fields_a, fields_b[j].name).is_none() {
-            return UnifyResult::Err(UnifyError::new(UnifyErrorKind::RecordMismatch, span));
+            return UnifyResult.Err(UnifyError.new(UnifyErrorKind.RecordMismatch, span));
         }
     }
 
-    UnifyResult::Ok
+    UnifyResult.Ok
 }
 
 /// Finds a field by name and returns its index.
-fn find_field_by_name(fields: &Vec<hir_ty::RecordField>, name: common::Symbol) -> Option<usize> {
+fn find_field_by_name(fields: &Vec<hir_ty.RecordField>, name: common.Symbol) -> Option<usize> {
     for i in 0usize..fields.len() {
         if fields[i].name.index == name.index {
-            return Option::Some(i);
+            return Option.Some(i);
         }
     }
-    Option::None
+    Option.None
 }
 
 /// Collects fields at the given indices.
 fn collect_fields_by_indices(
-    fields: &Vec<hir_ty::RecordField>,
+    fields: &Vec<hir_ty.RecordField>,
     indices: &Vec<usize>,
-) -> Vec<hir_ty::RecordField> {
-    let mut result: Vec<hir_ty::RecordField> = Vec::new();
+) -> Vec<hir_ty.RecordField> {
+    let mut result: Vec<hir_ty.RecordField> = Vec.new();
     for i in 0usize..indices.len() {
         let idx = indices[i];
         if idx < fields.len() {
-            result.push(hir_ty::RecordField {
+            result.push(hir_ty.RecordField {
                 name: fields[idx].name,
                 ty: hir_ty::copy_type(&fields[idx].ty),
             });
@@ -2573,50 +2573,50 @@ fn collect_fields_by_indices(
 // ============================================================
 
 /// Debug: returns primitive type name.
-fn debug_prim_name(p: hir_ty::PrimitiveTy) -> String {
+fn debug_prim_name(p: hir_ty.PrimitiveTy) -> String {
     match p {
-        hir_ty::PrimitiveTy::Bool => common::make_string("bool"),
-        hir_ty::PrimitiveTy::I8 => common::make_string("i8"),
-        hir_ty::PrimitiveTy::I16 => common::make_string("i16"),
-        hir_ty::PrimitiveTy::I32 => common::make_string("i32"),
-        hir_ty::PrimitiveTy::I64 => common::make_string("i64"),
-        hir_ty::PrimitiveTy::I128 => common::make_string("i128"),
-        hir_ty::PrimitiveTy::Isize => common::make_string("isize"),
-        hir_ty::PrimitiveTy::U8 => common::make_string("u8"),
-        hir_ty::PrimitiveTy::U16 => common::make_string("u16"),
-        hir_ty::PrimitiveTy::U32 => common::make_string("u32"),
-        hir_ty::PrimitiveTy::U64 => common::make_string("u64"),
-        hir_ty::PrimitiveTy::U128 => common::make_string("u128"),
-        hir_ty::PrimitiveTy::Usize => common::make_string("usize"),
-        hir_ty::PrimitiveTy::F32 => common::make_string("f32"),
-        hir_ty::PrimitiveTy::F64 => common::make_string("f64"),
-        hir_ty::PrimitiveTy::Char => common::make_string("char"),
-        hir_ty::PrimitiveTy::Str => common::make_string("str"),
+        hir_ty.PrimitiveTy.Bool => common::make_string("bool"),
+        hir_ty.PrimitiveTy.I8 => common::make_string("i8"),
+        hir_ty.PrimitiveTy.I16 => common::make_string("i16"),
+        hir_ty.PrimitiveTy.I32 => common::make_string("i32"),
+        hir_ty.PrimitiveTy.I64 => common::make_string("i64"),
+        hir_ty.PrimitiveTy.I128 => common::make_string("i128"),
+        hir_ty.PrimitiveTy.Isize => common::make_string("isize"),
+        hir_ty.PrimitiveTy.U8 => common::make_string("u8"),
+        hir_ty.PrimitiveTy.U16 => common::make_string("u16"),
+        hir_ty.PrimitiveTy.U32 => common::make_string("u32"),
+        hir_ty.PrimitiveTy.U64 => common::make_string("u64"),
+        hir_ty.PrimitiveTy.U128 => common::make_string("u128"),
+        hir_ty.PrimitiveTy.Usize => common::make_string("usize"),
+        hir_ty.PrimitiveTy.F32 => common::make_string("f32"),
+        hir_ty.PrimitiveTy.F64 => common::make_string("f64"),
+        hir_ty.PrimitiveTy.Char => common::make_string("char"),
+        hir_ty.PrimitiveTy.Str => common::make_string("str"),
     }
 }
 
 /// Debug: returns a string describing a type kind.
-pub fn debug_type_kind_name(ty: &hir_ty::Type) -> String {
+pub fn debug_type_kind_name(ty: &hir_ty.Type) -> String {
     match &ty.kind {
-        &hir_ty::TypeKind::Primitive(p) => {
+        &hir_ty.TypeKind.Primitive(p) => {
             let mut s = common::make_string("Prim(");
             s.push_str(debug_prim_name(p).as_str());
             s.push_str(")");
             s
         }
-        &hir_ty::TypeKind::Tuple(_) => common::make_string("Tuple"),
-        &hir_ty::TypeKind::Array { element: _, size: _ } => common::make_string("Array"),
-        &hir_ty::TypeKind::Slice { element: _ } => common::make_string("Slice"),
-        &hir_ty::TypeKind::Ref { ref inner, mutable } => {
+        &hir_ty.TypeKind.Tuple(_) => common::make_string("Tuple"),
+        &hir_ty.TypeKind.Array { element: _, size: _ } => common::make_string("Array"),
+        &hir_ty.TypeKind.Slice { element: _ } => common::make_string("Slice"),
+        &hir_ty.TypeKind.Ref { ref inner, mutable } => {
             let mut s = common::make_string("&");
             if mutable { s.push_str("mut "); }
             s.push_str(debug_type_kind_name(inner.as_ref()).as_str());
             s
         }
-        &hir_ty::TypeKind::Ptr { inner: _, mutable: _ } => common::make_string("Ptr"),
-        &hir_ty::TypeKind::Fn { params: _, ret: _, effects: _ } => common::make_string("Fn"),
-        &hir_ty::TypeKind::Closure { def_id: _, params: _, ret: _ } => common::make_string("Closure"),
-        &hir_ty::TypeKind::Adt { def_id, ref args } => {
+        &hir_ty.TypeKind.Ptr { inner: _, mutable: _ } => common::make_string("Ptr"),
+        &hir_ty.TypeKind.Fn { params: _, ret: _, effects: _ } => common::make_string("Fn"),
+        &hir_ty.TypeKind.Closure { def_id: _, params: _, ret: _ } => common::make_string("Closure"),
+        &hir_ty.TypeKind.Adt { def_id, ref args } => {
             let mut s = common::make_string("Adt(d");
             s.push_str(usize_to_str(def_id.index as usize).as_str());
             if args.len() > 0 {
@@ -2630,23 +2630,23 @@ pub fn debug_type_kind_name(ty: &hir_ty::Type) -> String {
             s.push_str(")");
             s
         }
-        &hir_ty::TypeKind::Infer(var_id) => {
+        &hir_ty.TypeKind.Infer(var_id) => {
             let mut s = common::make_string("$");
             s.push_str(usize_to_str(var_id.index as usize).as_str());
             s
         }
-        &hir_ty::TypeKind::Param(param_id) => {
+        &hir_ty.TypeKind.Param(param_id) => {
             let mut s = common::make_string("P");
             s.push_str(usize_to_str(param_id.index as usize).as_str());
             s
         }
-        &hir_ty::TypeKind::Record { fields: _, row_var: _ } => common::make_string("Record"),
-        &hir_ty::TypeKind::Forall { params: _, body: _ } => common::make_string("Forall"),
-        &hir_ty::TypeKind::Ownership { qualifier: _, inner: _ } => common::make_string("Own"),
-        &hir_ty::TypeKind::Range { element: _, inclusive: _ } => common::make_string("Range"),
-        &hir_ty::TypeKind::DynTrait { trait_id: _, auto_traits: _ } => common::make_string("dyn"),
-        &hir_ty::TypeKind::Never => common::make_string("!"),
-        &hir_ty::TypeKind::Error => common::make_string("ERR"),
+        &hir_ty.TypeKind.Record { fields: _, row_var: _ } => common::make_string("Record"),
+        &hir_ty.TypeKind.Forall { params: _, body: _ } => common::make_string("Forall"),
+        &hir_ty.TypeKind.Ownership { qualifier: _, inner: _ } => common::make_string("Own"),
+        &hir_ty.TypeKind.Range { element: _, inclusive: _ } => common::make_string("Range"),
+        &hir_ty.TypeKind.DynTrait { trait_id: _, auto_traits: _ } => common::make_string("dyn"),
+        &hir_ty.TypeKind.Never => common::make_string("!"),
+        &hir_ty.TypeKind.Error => common::make_string("ERR"),
     }
 }
 
@@ -2656,11 +2656,11 @@ fn usize_to_str(n: usize) -> String {
         return common::make_string("0");
     }
     let mut val = n;
-    let mut digits = String::new();
+    let mut digits = String.new();
     while val > 0 {
         let d = val % 10;
         let c = (d as u8 + 48) as char;
-        let mut tmp = String::new();
+        let mut tmp = String.new();
         tmp.push(c);
         tmp.push_str(digits.as_str());
         digits = tmp;
@@ -2670,7 +2670,7 @@ fn usize_to_str(n: usize) -> String {
 }
 
 /// Debug: prints type mismatch details for the catch-all arm.
-fn debug_mismatch(a: &hir_ty::Type, b: &hir_ty::Type) {
+fn debug_mismatch(a: &hir_ty.Type, b: &hir_ty.Type) {
     let mut msg = common::make_string("[UNIFY] catch-all: ");
     msg.push_str(debug_type_kind_name(a).as_str());
     msg.push_str(" vs ");
@@ -2679,7 +2679,7 @@ fn debug_mismatch(a: &hir_ty::Type, b: &hir_ty::Type) {
 }
 
 /// Debug: prints ADT def_id mismatch details.
-fn debug_adt_mismatch(def_a: hir_def::DefId, def_b: hir_def::DefId) {
+fn debug_adt_mismatch(def_a: hir_def.DefId, def_b: hir_def.DefId) {
     let mut msg = common::make_string("[UNIFY] Adt def_id: d");
     msg.push_str(usize_to_str(def_a.index as usize).as_str());
     msg.push_str(" vs d");
@@ -2722,7 +2722,7 @@ pub fn solve_constraints(
     subst: &mut SubstTable,
     unifier: &mut Unifier,
 ) -> Vec<ConstraintError> {
-    let mut errors: Vec<ConstraintError> = Vec::new();
+    let mut errors: Vec<ConstraintError> = Vec.new();
 
     // Process constraints in priority order (lower priority value = higher priority)
     // Since we can't sort in Blood easily, iterate multiple times by priority level
@@ -2731,11 +2731,11 @@ pub fn solve_constraints(
             if constraints[i].priority == priority {
                 let result = solve_single_constraint(&constraints[i].constraint, subst, unifier);
                 match result {
-                    ConstraintSolveResult::Failed(err) => {
+                    ConstraintSolveResult.Failed(err) => {
                         errors.push(err);
                     }
-                    ConstraintSolveResult::Solved => {}
-                    ConstraintSolveResult::Deferred => {}
+                    ConstraintSolveResult.Solved => {}
+                    ConstraintSolveResult.Deferred => {}
                 }
             }
         }
@@ -2751,18 +2751,18 @@ fn solve_single_constraint(
     unifier: &mut Unifier,
 ) -> ConstraintSolveResult {
     match constraint {
-        &Constraint::TypeEqual { ref expected, ref actual, span } => {
+        &Constraint.TypeEqual { ref expected, ref actual, span } => {
             let result = unify(subst, unifier, expected, actual, span);
             match result {
-                UnifyResult::Ok => ConstraintSolveResult::Solved,
-                UnifyResult::Err(err) => {
+                UnifyResult.Ok => ConstraintSolveResult.Solved,
+                UnifyResult.Err(err) => {
                     let mut msg = common::make_string("type mismatch: expected `");
                     msg.push_str(debug_type_kind_name(expected).as_str());
                     msg.push_str("`, found `");
                     msg.push_str(debug_type_kind_name(actual).as_str());
                     msg.push_str("`");
-                    ConstraintSolveResult::Failed(ConstraintError {
-                        constraint: Constraint::TypeEqual {
+                    ConstraintSolveResult.Failed(ConstraintError {
+                        constraint: Constraint.TypeEqual {
                             expected: hir_ty::copy_type(expected),
                             actual: hir_ty::copy_type(actual),
                             span: span,
@@ -2772,13 +2772,13 @@ fn solve_single_constraint(
                 }
             }
         }
-        &Constraint::TraitBound { ref ty, ref trait_ref, span } => {
+        &Constraint.TraitBound { ref ty, ref trait_ref, span } => {
             // Trait bound checking is deferred to the type checker,
             // which has access to the impl registry.
             // For now, defer — the type checker will handle this.
-            ConstraintSolveResult::Deferred
+            ConstraintSolveResult.Deferred
         }
-        &Constraint::EffectSubset { ref subset, ref superset, span } => {
+        &Constraint.EffectSubset { ref subset, ref superset, span } => {
             // Check that every effect in subset appears in superset
             let mut all_found = true;
             for ei in 0usize..subset.effects.len() {
@@ -2791,23 +2791,23 @@ fn solve_single_constraint(
                 }
                 // If superset has an open row variable, effects can flow through
                 match &superset.row_var {
-                    &Option::Some(_) => {
+                    &Option.Some(_) => {
                         found = true;
                     }
-                    &Option::None => {}
+                    &Option.None => {}
                 }
                 if !found {
                     all_found = false;
                 }
             }
             if all_found {
-                ConstraintSolveResult::Solved
+                ConstraintSolveResult.Solved
             } else {
                 let msg = common::make_string("effect not in scope");
-                ConstraintSolveResult::Failed(ConstraintError {
-                    constraint: Constraint::EffectSubset {
-                        subset: hir_ty::EffectRow::empty(),
-                        superset: hir_ty::EffectRow::empty(),
+                ConstraintSolveResult.Failed(ConstraintError {
+                    constraint: Constraint.EffectSubset {
+                        subset: hir_ty.EffectRow.empty(),
+                        superset: hir_ty.EffectRow.empty(),
                         span: span,
                     },
                     message: msg,

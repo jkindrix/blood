@@ -32,17 +32,17 @@ impl Manifest {
             name: common::make_string(""),
             version: common::make_string("0.1.0"),
             edition: common::make_string("2026"),
-            dependencies: Vec::new(),
-            bin_targets: Vec::new(),
-            lib_target: Option::None,
+            dependencies: Vec.new(),
+            bin_targets: Vec.new(),
+            lib_target: Option.None,
         }
     }
 
     /// Returns true if the manifest has a library target.
     pub fn has_lib(self: &Manifest) -> bool {
         match &self.lib_target {
-            &Option::Some(_) => true,
-            &Option::None => false,
+            &Option.Some(_) => true,
+            &Option.None => false,
         }
     }
 
@@ -70,7 +70,7 @@ impl Dependency {
         Dependency {
             name: name,
             version_req: version_req,
-            path: Option::None,
+            path: Option.None,
             is_dev: false,
         }
     }
@@ -80,7 +80,7 @@ impl Dependency {
         Dependency {
             name: name,
             version_req: common::make_string("*"),
-            path: Option::Some(dep_path),
+            path: Option.Some(dep_path),
             is_dev: false,
         }
     }
@@ -157,13 +157,13 @@ impl ModuleFile {
 /// for a Blood.toml file. Returns the directory containing it.
 pub fn discover_project_root(start_dir: &str) -> Option<String> {
     // Start from the given directory and walk up
-    let mut current = String::new();
+    let mut current = String.new();
     current.push_str(start_dir);
 
     // Limit search depth to prevent infinite loops
     for depth in 0u32..20 {
         // Check if Blood.toml exists in current directory
-        let mut manifest_path = String::new();
+        let mut manifest_path = String.new();
         manifest_path.push_str(current.as_str());
         manifest_path.push_str("/Blood.toml");
 
@@ -171,19 +171,19 @@ pub fn discover_project_root(start_dir: &str) -> Option<String> {
         // so return the path for the caller to verify
         // In practice, the driver would call this and then try to read the file
         if depth == 0 {
-            return Option::Some(current);
+            return Option.Some(current);
         }
 
         // Move to parent directory
         let parent = parent_dir(current.as_str());
         match parent {
-            Option::Some(p) => { current = p; }
-            Option::None => { return Option::None; }
+            Option.Some(p) => { current = p; }
+            Option.None => { return Option.None; }
         }
 
     }
 
-    Option::None
+    Option.None
 }
 
 /// Extracts the parent directory from a path.
@@ -200,14 +200,14 @@ fn parent_dir(path: &str) -> Option<String> {
     }
 
     if last_sep <= 0 {
-        return Option::None;
+        return Option.None;
     }
 
-    let mut result = String::new();
+    let mut result = String.new();
     for j in 0usize..last_sep as usize {
         result.push(bytes[j] as char);
     }
-    Option::Some(result)
+    Option.Some(result)
 }
 
 // ============================================================
@@ -221,8 +221,8 @@ fn parent_dir(path: &str) -> Option<String> {
 /// - [section] headers
 /// - [[array]] sections
 pub fn parse_manifest(content: &str) -> Manifest {
-    let mut manifest = Manifest::new();
-    let mut current_section = String::new();
+    let mut manifest = Manifest.new();
+    let mut current_section = String.new();
 
     let lines = split_lines(content);
     for line_idx in 0usize..lines.len() {
@@ -253,10 +253,10 @@ pub fn parse_manifest(content: &str) -> Manifest {
         // Parse key = value
         let kv = parse_key_value(line.as_str());
         match kv {
-            Option::Some(pair) => {
+            Option.Some(pair) => {
                 apply_key_value(&mut manifest, current_section.as_str(), pair.0.as_str(), pair.1.as_str());
             }
-            Option::None => {}
+            Option.None => {}
         }
 
     }
@@ -284,7 +284,7 @@ fn apply_key_value(manifest: &mut Manifest, section: &str, key: &str, value: &st
 
     // [dependencies] section
     if sec_len == 12 && sec_bytes[0] == 100 { // "dependencies"
-        let dep = Dependency::new(make_string_copy(key), make_string_copy(value));
+        let dep = Dependency.new(make_string_copy(key), make_string_copy(value));
         manifest.dependencies.push(dep);
     }
 }
@@ -295,30 +295,30 @@ fn apply_key_value(manifest: &mut Manifest, section: &str, key: &str, value: &st
 
 /// Resolves all module files in a project.
 pub fn resolve_modules(manifest: &Manifest, root: &str) -> Vec<ModuleFile> {
-    let mut modules: Vec<ModuleFile> = Vec::new();
+    let mut modules: Vec<ModuleFile> = Vec.new();
 
     // Add library target if present
     match &manifest.lib_target {
-        &Option::Some(ref lib) => {
-            let mut path = String::new();
+        &Option.Some(ref lib) => {
+            let mut path = String.new();
             path.push_str(root);
             path.push_str("/");
             path.push_str(lib.src_path.as_str());
-            let mut mf = ModuleFile::new(make_string_copy(lib.name.as_str()), path);
+            let mut mf = ModuleFile.new(make_string_copy(lib.name.as_str()), path);
             mf.is_root = true;
             modules.push(mf);
         }
-        &Option::None => {}
+        &Option.None => {}
     }
 
     // Add binary targets
     for i in 0usize..manifest.bin_targets.len() {
         let bin = &manifest.bin_targets[i];
-        let mut path = String::new();
+        let mut path = String.new();
         path.push_str(root);
         path.push_str("/");
         path.push_str(bin.src_path.as_str());
-        let mf = ModuleFile::new(make_string_copy(bin.name.as_str()), path);
+        let mf = ModuleFile.new(make_string_copy(bin.name.as_str()), path);
         modules.push(mf);
     }
 
@@ -331,21 +331,21 @@ pub fn resolve_modules(manifest: &Manifest, root: &str) -> Vec<ModuleFile> {
 
 /// Copies a string.
 fn make_string_copy(s: &str) -> String {
-    let mut result = String::new();
+    let mut result = String.new();
     result.push_str(s);
     result
 }
 
 /// Splits content into lines.
 fn split_lines(content: &str) -> Vec<String> {
-    let mut lines: Vec<String> = Vec::new();
+    let mut lines: Vec<String> = Vec.new();
     let bytes = content.as_bytes();
     let len = content.len();
     let mut start: usize = 0;
 
     for i in 0usize..len {
         if bytes[i] == 10 { // '\n'
-            let mut line = String::new();
+            let mut line = String.new();
             let mut j: usize = start;
             while j < i {
                 line.push(bytes[j] as char);
@@ -358,7 +358,7 @@ fn split_lines(content: &str) -> Vec<String> {
 
     // Handle last line (no trailing newline)
     if start < len {
-        let mut line = String::new();
+        let mut line = String.new();
         let mut j: usize = start;
         while j < len {
             line.push(bytes[j] as char);
@@ -385,7 +385,7 @@ fn trim_str(s: &str) -> String {
         end_pos -= 1;
     }
 
-    let mut result = String::new();
+    let mut result = String.new();
     let mut i: usize = start;
     while i < end_pos {
         result.push(bytes[i] as char);
@@ -401,7 +401,7 @@ fn extract_section_name(line: &str, is_array: bool) -> String {
     let start = if is_array { 2 } else { 1 }; // Skip [[ or [
     let end_marker: u8 = 93; // ']'
 
-    let mut result = String::new();
+    let mut result = String.new();
     let mut i: usize = start;
     while i < len {
         if bytes[i] == end_marker {
@@ -432,11 +432,11 @@ fn parse_key_value(line: &str) -> Option<(String, String)> {
     }
 
     if !found {
-        return Option::None;
+        return Option.None;
     }
 
     // Extract key (before =)
-    let mut key = String::new();
+    let mut key = String.new();
     for k in 0usize..eq_pos {
         if bytes[k] != 32 && bytes[k] != 9 { // not whitespace
             key.push(bytes[k] as char);
@@ -444,7 +444,7 @@ fn parse_key_value(line: &str) -> Option<(String, String)> {
     }
 
     // Extract value (after =), removing quotes
-    let mut val = String::new();
+    let mut val = String.new();
     let mut v: usize = eq_pos + 1;
     while v < len && (bytes[v] == 32 || bytes[v] == 9) {
         v += 1; // skip whitespace after =
@@ -465,5 +465,5 @@ fn parse_key_value(line: &str) -> Option<(String, String)> {
         }
     }
 
-    Option::Some((key, val))
+    Option.Some((key, val))
 }

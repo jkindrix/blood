@@ -21,17 +21,17 @@ mod type_intern;
 
 /// Generates LLVM IR for an operand, returning the value name.
 pub fn emit_operand(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    operand: &mir_types::Operand,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    operand: &mir_types.Operand,
 ) -> String {
     match operand {
-        &mir_types::Operand::Copy(ref place) => {
+        &mir_types.Operand.Copy(ref place) => {
             emit_place_load(ctx, place)
         }
-        &mir_types::Operand::Move(ref place) => {
+        &mir_types.Operand.Move(ref place) => {
             emit_place_load(ctx, place)
         }
-        &mir_types::Operand::Constant(ref constant) => {
+        &mir_types.Operand.Constant(ref constant) => {
             emit_constant(ctx, constant)
         }
     }
@@ -39,32 +39,32 @@ pub fn emit_operand(
 
 /// Generates LLVM IR for an operand with type information, returning (value, llvm_type).
 pub fn emit_operand_typed(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    operand: &mir_types::Operand,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    operand: &mir_types.Operand,
 ) -> (String, String) {
     match operand {
-        &mir_types::Operand::Copy(ref place) => {
+        &mir_types.Operand.Copy(ref place) => {
             emit_place_load_with_type(ctx, place)
         }
-        &mir_types::Operand::Move(ref place) => {
+        &mir_types.Operand.Move(ref place) => {
             emit_place_load_with_type(ctx, place)
         }
-        &mir_types::Operand::Constant(ref constant) => {
+        &mir_types.Operand.Constant(ref constant) => {
             let val = emit_constant(ctx, constant);
             let const_hir_ty = type_intern::ty_id_to_type(constant.ty);
             // Check if this FnDef is actually a const or static item
             // (MIR lowering produces FnDef for all path expressions)
             let fn_def_id = match &constant.kind {
-                &mir_types::ConstantKind::FnDef(ref did) => Option::Some(did.index),
-                _ => Option::None,
+                &mir_types.ConstantKind.FnDef(ref did) => Option.Some(did.index),
+                _ => Option.None,
             };
             let is_const_item = match fn_def_id {
-                Option::Some(did) => ctx.is_const(did),
-                Option::None => false,
+                Option.Some(did) => ctx.is_const(did),
+                Option.None => false,
             };
             let is_static_item = match fn_def_id {
-                Option::Some(did) => ctx.is_static(did),
-                Option::None => false,
+                Option.Some(did) => ctx.is_static(did),
+                Option.None => false,
             };
             if is_const_item {
                 // Const item: call the const body function to get the value
@@ -85,20 +85,20 @@ pub fn emit_operand_typed(
                 let load_result = ctx.fresh_temp_cg();
                 ctx.emit_load_cg(&load_result, load_ty.as_str(), val.as_str());
                 (cgname_to_string(&load_result), load_ty)
-            } else if match fn_def_id { Option::Some(_) => true, Option::None => false } {
+            } else if match fn_def_id { Option.Some(_) => true, Option.None => false } {
                 // Regular function reference — construct { fn_ptr, env_ptr } fat pointer.
                 // Named functions need a wrapper with (ptr env, params...) -> ret signature.
-                let did = match fn_def_id { Option::Some(d) => d, Option::None => 0 };
+                let did = match fn_def_id { Option.Some(d) => d, Option.None => 0 };
                 let wrapper_name = match ctx.get_or_create_fn_wrapper(did) {
-                    Option::Some(name) => name,
-                    Option::None => {
+                    Option.Some(name) => name,
+                    Option.None => {
                         // Fallback: use original name directly
-                        let mut fallback = String::new();
+                        let mut fallback = String.new();
                         fallback.push_str(val.as_str());
                         // Strip leading @ if present
                         let vb = fallback.as_bytes();
                         if vb.len() > 0 && vb[0] == 64 {
-                            let mut stripped = String::new();
+                            let mut stripped = String.new();
                             for si in 1usize..vb.len() {
                                 stripped.push(vb[si] as char);
                             }
@@ -124,13 +124,13 @@ pub fn emit_operand_typed(
                 ctx.write_cgname(&ins1);
                 ctx.write(", ptr null, 1\n");
                 (cgname_to_string(&ins2), common::make_string("{ ptr, ptr }"))
-            } else if match &constant.kind { &mir_types::ConstantKind::Float(_) => true, _ => false } {
+            } else if match &constant.kind { &mir_types.ConstantKind.Float(_) => true, _ => false } {
                 // Use TyId-native type resolution to determine f32 vs f64.
                 // Avoids ty_id_to_type copy path which second_gen miscompiles
                 // for PrimitiveTy enum values (F64 reads as F32).
                 let float_ty = match codegen_size::type_to_llvm_fast_id(constant.ty) {
-                    Option::Some(s) => common::make_string(s),
-                    Option::None => common::make_string("double"),
+                    Option.Some(s) => common::make_string(s),
+                    Option.None => common::make_string("double"),
                 };
                 (val, float_ty)
             } else {
@@ -143,14 +143,14 @@ pub fn emit_operand_typed(
                 // For unsized types (&str, &[T]), the constant is already a
                 // fat pointer { ptr, i64 } and should NOT be wrapped.
                 let is_sized_ref = match &const_hir_ty.kind {
-                    &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => {
+                    &hir_ty.TypeKind.Ref { ref inner, mutable: _ } => {
                         !codegen_types::is_unsized_type(inner.as_ref())
                     }
                     _ => false,
                 };
                 if is_sized_ref {
                     let inner_ty = match &const_hir_ty.kind {
-                        &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => {
+                        &hir_ty.TypeKind.Ref { ref inner, mutable: _ } => {
                             codegen_size::type_to_llvm_with_ctx(ctx, inner.as_ref())
                         }
                         _ => common::make_string("i64"),
@@ -171,25 +171,25 @@ pub fn emit_operand_typed(
 
 /// Generates LLVM IR for a constant, returning the value.
 fn emit_constant(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    constant: &mir_types::Constant,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    constant: &mir_types.Constant,
 ) -> String {
     match &constant.kind {
-        &mir_types::ConstantKind::Int(v) => codegen_types::format_i128(v),
-        &mir_types::ConstantKind::Uint(v) => codegen_types::format_u128(v),
-        &mir_types::ConstantKind::Bool(b) => {
+        &mir_types.ConstantKind.Int(v) => codegen_types::format_i128(v),
+        &mir_types.ConstantKind.Uint(v) => codegen_types::format_u128(v),
+        &mir_types.ConstantKind.Bool(b) => {
             if b { common::make_string("1") } else { common::make_string("0") }
         }
-        &mir_types::ConstantKind::Char(c) => {
+        &mir_types.ConstantKind.Char(c) => {
             codegen_types::format_u64(c as u64)
         }
-        &mir_types::ConstantKind::Float(bits) => {
+        &mir_types.ConstantKind.Float(bits) => {
             // MIR always stores float bits as f64 representation (u64).
             // LLVM accepts double-precision hex for both float and double types,
             // converting to the target precision automatically.
             codegen_types::f64_bits_to_llvm_hex(bits)
         }
-        &mir_types::ConstantKind::String(ref s) => {
+        &mir_types.ConstantKind.String(ref s) => {
             // Build fat pointer: { ptr @.str.N, i64 len }
             let label = ctx.add_string_constant(s);
             let mut result = common::make_string("{ ptr ");
@@ -200,9 +200,9 @@ fn emit_constant(
             result.push_str(" }");
             result
         }
-        &mir_types::ConstantKind::ByteString(ref bytes) => {
+        &mir_types.ConstantKind.ByteString(ref bytes) => {
             // Convert byte string to regular string for storage
-            let mut s = String::new();
+            let mut s = String.new();
             for i in 0usize..bytes.len() {
                 s.push(bytes[i] as char);
             }
@@ -216,22 +216,22 @@ fn emit_constant(
             result.push_str(" }");
             result
         }
-        &mir_types::ConstantKind::Unit => common::make_string("undef"),
-        &mir_types::ConstantKind::FnDef(ref def_id) => {
+        &mir_types.ConstantKind.Unit => common::make_string("undef"),
+        &mir_types.ConstantKind.FnDef(ref def_id) => {
             // Function pointer - look up the function name
             match ctx.lookup_def_name(def_id.index) {
-                Option::Some(name) => {
+                Option.Some(name) => {
                     let mut result = common::make_string("@");
                     result.push_str(name.as_str());
                     result
                 }
-                Option::None => {
+                Option.None => {
                     // Fallback: generate a placeholder name
                     let mut err_msg = common::make_string("function def_id ");
                     err_msg.push_str(codegen_types::format_u64(def_id.index as u64).as_str());
                     err_msg.push_str(" not found in def_names table");
                     ctx.codegen_error(
-                        codegen_ctx::CodegenErrorKind::FnLookupFailed,
+                        codegen_ctx.CodegenErrorKind.FnLookupFailed,
                         err_msg,
                     );
                     let mut result = common::make_string("@fn_");
@@ -240,22 +240,22 @@ fn emit_constant(
                 }
             }
         }
-        &mir_types::ConstantKind::ConstDef(ref def_id) => {
+        &mir_types.ConstantKind.ConstDef(ref def_id) => {
             // Const reference - look up and inline the const value
             // For now, generate a reference (full const eval would inline the value)
             match ctx.lookup_def_name(def_id.index) {
-                Option::Some(name) => {
+                Option.Some(name) => {
                     let mut result = common::make_string("@");
                     result.push_str(name.as_str());
                     result
                 }
-                Option::None => {
+                Option.None => {
                     // Fallback: generate a placeholder
                     let mut err_msg = common::make_string("const def_id ");
                     err_msg.push_str(codegen_types::format_u64(def_id.index as u64).as_str());
                     err_msg.push_str(" not found in def_names table");
                     ctx.codegen_error(
-                        codegen_ctx::CodegenErrorKind::FnLookupFailed,
+                        codegen_ctx.CodegenErrorKind.FnLookupFailed,
                         err_msg,
                     );
                     let mut result = common::make_string("@const_");
@@ -264,21 +264,21 @@ fn emit_constant(
                 }
             }
         }
-        &mir_types::ConstantKind::StaticDef(ref def_id) => {
+        &mir_types.ConstantKind.StaticDef(ref def_id) => {
             // Static reference - look up the static name
             match ctx.lookup_def_name(def_id.index) {
-                Option::Some(name) => {
+                Option.Some(name) => {
                     let mut result = common::make_string("@");
                     result.push_str(name.as_str());
                     result
                 }
-                Option::None => {
+                Option.None => {
                     // Fallback: generate a placeholder name
                     let mut err_msg = common::make_string("static def_id ");
                     err_msg.push_str(codegen_types::format_u64(def_id.index as u64).as_str());
                     err_msg.push_str(" not found in def_names table");
                     ctx.codegen_error(
-                        codegen_ctx::CodegenErrorKind::StaticLookupFailed,
+                        codegen_ctx.CodegenErrorKind.StaticLookupFailed,
                         err_msg,
                     );
                     let mut result = common::make_string("@static_");
@@ -287,14 +287,14 @@ fn emit_constant(
                 }
             }
         }
-        &mir_types::ConstantKind::ZeroSized => common::make_string("undef"),
+        &mir_types.ConstantKind.ZeroSized => common::make_string("undef"),
     }
 }
 
 /// Loads a value from a place, returning the value name.
 fn emit_place_load(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    place: &mir_types::Place,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    place: &mir_types.Place,
 ) -> String {
     let ptr = emit_place_data_ptr(ctx, place);
     // Use the projected type (accounts for field access, deref, etc.)
@@ -320,8 +320,8 @@ fn emit_place_load(
 /// to heap memory. This function dereferences to return the heap pointer where
 /// the actual data lives. For stack locals, returns the alloca directly.
 pub fn emit_place_data_ptr(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    place: &mir_types::Place,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    place: &mir_types.Place,
 ) -> String {
     let ptr = emit_place_addr(ctx, place);
     if place.projection.len() == 0
@@ -337,8 +337,8 @@ pub fn emit_place_data_ptr(
 
 /// Loads a value from a place, returning (value, llvm_type).
 fn emit_place_load_with_type(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    place: &mir_types::Place,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    place: &mir_types.Place,
 ) -> (String, String) {
     let ptr = emit_place_data_ptr(ctx, place);
     // Use the projected type (accounts for field access, deref, etc.)
@@ -362,88 +362,88 @@ fn emit_place_load_with_type(
 /// Walks through ALL place projections to determine the final TyId.
 /// Returns None if any intermediate type cannot be resolved (triggers legacy fallback).
 fn walk_all_projections(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    place: &mir_types::Place,
-) -> Option<type_intern::TyId> {
+    ctx: &mut codegen_ctx.CodegenCtx,
+    place: &mir_types.Place,
+) -> Option<type_intern.TyId> {
     let mut current_ty = match ctx.get_local_hir_type(place.local) {
-        Option::Some(ty_id) => ty_id,
-        Option::None => { return Option::None; }
+        Option.Some(ty_id) => ty_id,
+        Option.None => { return Option.None; }
     };
-    let mut variant_ctx: Option<u32> = Option::None;
+    let mut variant_ctx: Option<u32> = Option.None;
     for i in 0usize..place.projection.len() {
         match &place.projection[i] {
-            &mir_types::PlaceElem::Deref => {
+            &mir_types.PlaceElem.Deref => {
                 match apply_deref_to_type(current_ty) {
-                    Option::Some(inner) => { current_ty = inner; }
-                    Option::None => { return Option::None; }
+                    Option.Some(inner) => { current_ty = inner; }
+                    Option.None => { return Option.None; }
                 }
             }
-            &mir_types::PlaceElem::Field(field_idx) => {
+            &mir_types.PlaceElem.Field(field_idx) => {
                 match resolve_field_ty_id(ctx, current_ty, variant_ctx, field_idx) {
-                    Option::Some(ty) => { current_ty = ty; }
-                    Option::None => { return Option::None; }
+                    Option.Some(ty) => { current_ty = ty; }
+                    Option.None => { return Option.None; }
                 }
-                variant_ctx = Option::None;
+                variant_ctx = Option.None;
             }
-            &mir_types::PlaceElem::Downcast(v) => {
-                variant_ctx = Option::Some(v);
+            &mir_types.PlaceElem.Downcast(v) => {
+                variant_ctx = Option.Some(v);
             }
-            &mir_types::PlaceElem::Index(_) => {
+            &mir_types.PlaceElem.Index(_) => {
                 match extract_element_type_id(current_ty) {
-                    Option::Some(elem_ty) => { current_ty = elem_ty; }
-                    Option::None => { return Option::None; }
+                    Option.Some(elem_ty) => { current_ty = elem_ty; }
+                    Option.None => { return Option.None; }
                 }
             }
-            &mir_types::PlaceElem::ConstantIndex { offset: _, min_length: _, from_end: _ } => {
+            &mir_types.PlaceElem.ConstantIndex { offset: _, min_length: _, from_end: _ } => {
                 match extract_element_type_id(current_ty) {
-                    Option::Some(elem_ty) => { current_ty = elem_ty; }
-                    Option::None => { return Option::None; }
+                    Option.Some(elem_ty) => { current_ty = elem_ty; }
+                    Option.None => { return Option.None; }
                 }
             }
-            &mir_types::PlaceElem::Subslice { from: _, to: _, from_end: _ } => {
+            &mir_types.PlaceElem.Subslice { from: _, to: _, from_end: _ } => {
                 // Subslice preserves container type
             }
         }
     }
-    Option::Some(current_ty)
+    Option.Some(current_ty)
 }
 
 /// Resolves a field's TyId given the current type, optional enum variant context, and field index.
 /// Handles tuple fields, struct fields (via ADT registry), and enum variant fields.
 /// Looks through Ref/Ptr for implicit auto-deref cases.
 fn resolve_field_ty_id(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    current_ty: type_intern::TyId,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    current_ty: type_intern.TyId,
     variant_ctx: Option<u32>,
     field_idx: u32,
-) -> Option<type_intern::TyId> {
+) -> Option<type_intern.TyId> {
     // Look through references for implicit deref
     let unwrapped = unwrap_ref_type(current_ty);
 
     // Try tuple field extraction first (tuples have no ADT def_id)
     match extract_field_type_from_hir(unwrapped, field_idx) {
-        Option::Some(field_ty) => { return Option::Some(field_ty); }
-        Option::None => {}
+        Option.Some(field_ty) => { return Option.Some(field_ty); }
+        Option.None => {}
     }
 
     // Get ADT def_id from current type
     match type_intern::get_adt_def_id(unwrapped) {
-        Option::Some(def_id) => {
+        Option.Some(def_id) => {
             match variant_ctx {
-                Option::Some(vi) => {
+                Option.Some(vi) => {
                     // Enum variant field
                     match ctx.lookup_enum(def_id.index) {
-                        Option::Some(layout) => {
+                        Option.Some(layout) => {
                             for k in 0usize..layout.variants.len() {
                                 if layout.variants[k].variant_idx == vi {
                                     if (field_idx as usize) < layout.variants[k].fields.len() {
                                         match &layout.variants[k].fields[field_idx as usize].hir_type {
-                                            &Option::Some(ht_id) => {
+                                            &Option.Some(ht_id) => {
                                                 if !type_intern::is_param_or_infer_id(ht_id) {
-                                                    return Option::Some(ht_id);
+                                                    return Option.Some(ht_id);
                                                 }
                                             }
-                                            &Option::None => {}
+                                            &Option.None => {}
                                         }
                                     }
                                     // Generic or missing field type — use type args
@@ -453,90 +453,90 @@ fn resolve_field_ty_id(
                             // Variant not found — try type args
                             substitute_enum_field_from_args(unwrapped, field_idx)
                         }
-                        Option::None => {
+                        Option.None => {
                             // Enum not in registry — try type args
                             substitute_enum_field_from_args(unwrapped, field_idx)
                         }
                     }
                 }
-                Option::None => {
+                Option.None => {
                     // Struct field
                     match ctx.lookup_struct(def_id.index) {
-                        Option::Some(layout) => {
+                        Option.Some(layout) => {
                             if (field_idx as usize) < layout.fields.len() {
                                 match &layout.fields[field_idx as usize].hir_type {
-                                    &Option::Some(ht_id) => {
+                                    &Option.Some(ht_id) => {
                                         if type_intern::is_param_or_infer_id(ht_id) {
                                             substitute_struct_field_param(unwrapped, layout, field_idx as usize)
                                         } else {
-                                            Option::Some(ht_id)
+                                            Option.Some(ht_id)
                                         }
                                     }
-                                    &Option::None => Option::None,
+                                    &Option.None => Option.None,
                                 }
                             } else {
-                                Option::None
+                                Option.None
                             }
                         }
-                        Option::None => Option::None,
+                        Option.None => Option.None,
                     }
                 }
             }
         }
-        Option::None => Option::None,
+        Option.None => Option.None,
     }
 }
 
 /// Substitutes a generic struct field's type parameter with the concrete type arg.
 /// Scans fields to count which param index corresponds to the target field.
 fn substitute_struct_field_param(
-    adt_ty: type_intern::TyId,
-    layout: &codegen_ctx::StructLayout,
+    adt_ty: type_intern.TyId,
+    layout: &codegen_ctx.StructLayout,
     field_idx: usize,
-) -> Option<type_intern::TyId> {
+) -> Option<type_intern.TyId> {
     let adt_args = match type_intern::get_adt_args(adt_ty) {
-        Option::Some(args) => args,
-        Option::None => { return Option::None; }
+        Option.Some(args) => args,
+        Option.None => { return Option.None; }
     };
     let interner = type_intern::type_interner();
     let args_len = interner.ty_list_len(adt_args);
-    if args_len == 0 { return Option::None; }
+    if args_len == 0 { return Option.None; }
     let mut param_idx: usize = 0;
     for fi in 0usize..layout.fields.len() {
         let is_param = match &layout.fields[fi].hir_type {
-            &Option::Some(ht_id) => type_intern::is_param_or_infer_id(ht_id),
-            &Option::None => false,
+            &Option.Some(ht_id) => type_intern::is_param_or_infer_id(ht_id),
+            &Option.None => false,
         };
         if fi == field_idx {
             if is_param && param_idx < args_len {
-                return Option::Some(interner.get_ty_list_element(adt_args, param_idx));
+                return Option.Some(interner.get_ty_list_element(adt_args, param_idx));
             }
-            return Option::None;
+            return Option.None;
         }
         if is_param {
             param_idx += 1;
         }
     }
-    Option::None
+    Option.None
 }
 
 /// Resolves a generic enum variant field type from the ADT's type args.
 /// Maps field_idx to type arg index (e.g., Option<T>.Some.0 → T = args[0]).
 fn substitute_enum_field_from_args(
-    adt_ty: type_intern::TyId,
+    adt_ty: type_intern.TyId,
     field_idx: u32,
-) -> Option<type_intern::TyId> {
+) -> Option<type_intern.TyId> {
     match type_intern::get_adt_args(adt_ty) {
-        Option::Some(args) => {
+        Option.Some(args) => {
             let interner = type_intern::type_interner();
             let args_len = interner.ty_list_len(args);
             if (field_idx as usize) < args_len {
-                Option::Some(interner.get_ty_list_element(args, field_idx as usize))
+                Option.Some(interner.get_ty_list_element(args, field_idx as usize))
             } else {
-                Option::None
+                Option.None
             }
         }
-        Option::None => Option::None,
+        Option.None => Option.None,
     }
 }
 
@@ -548,19 +548,19 @@ fn substitute_enum_field_from_args(
 /// Primary path: walks the full projection chain via TyId tracking.
 /// Fallback path: legacy last-projection-based resolution (if walk fails).
 fn resolve_place_elem_type(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    place: &mir_types::Place,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    place: &mir_types.Place,
 ) -> String {
     // For static places, use the registered static LLVM type
     if place.is_static() {
         match place.get_static_def_id() {
-            Option::Some(def_id) => {
+            Option.Some(def_id) => {
                 match ctx.get_static_type(def_id.index) {
-                    Option::Some(ty) => { return ty; }
-                    Option::None => {}
+                    Option.Some(ty) => { return ty; }
+                    Option.None => {}
                 }
             }
-            Option::None => {}
+            Option.None => {}
         }
     }
 
@@ -572,28 +572,28 @@ fn resolve_place_elem_type(
     // Primary path: walk the full projection chain to determine the final type.
     // This correctly handles multi-projection chains through tuples, enums, etc.
     match walk_all_projections(ctx, place) {
-        Option::Some(resolved_ty) => {
+        Option.Some(resolved_ty) => {
             return codegen_size::type_to_llvm_with_ctx_id(ctx, resolved_ty);
         }
-        Option::None => {}
+        Option.None => {}
     }
 
     // Fallback: legacy last-projection-based resolution.
     // Used when the walk fails (e.g., field hir_type missing from ADT registry).
     let last_idx = place.projection.len() - 1;
     match &place.projection[last_idx] {
-        &mir_types::PlaceElem::Field(field_idx) => {
+        &mir_types.PlaceElem.Field(field_idx) => {
             // Field access: look up the field's type from the struct/enum layout.
             // Count Deref projections and check for Downcast before this field.
             let mut deref_count: usize = 0;
-            let mut downcast_variant: Option<u32> = Option::None;
+            let mut downcast_variant: Option<u32> = Option.None;
             for j in 0usize..last_idx {
                 match &place.projection[j] {
-                    &mir_types::PlaceElem::Deref => {
+                    &mir_types.PlaceElem.Deref => {
                         deref_count += 1;
                     }
-                    &mir_types::PlaceElem::Downcast(vi) => {
-                        downcast_variant = Option::Some(vi);
+                    &mir_types.PlaceElem.Downcast(vi) => {
+                        downcast_variant = Option.Some(vi);
                     }
                     _ => {}
                 }
@@ -604,28 +604,28 @@ fn resolve_place_elem_type(
                 resolve_deref_adt_def_id(ctx, place.local, deref_count - 1)
             } else {
                 match ctx.get_local_hir_type(place.local) {
-                    Option::Some(ty_id) => {
+                    Option.Some(ty_id) => {
                         type_intern::resolve_adt_def_id_id(ty_id)
                     }
-                    Option::None => Option::None,
+                    Option.None => Option.None,
                 }
             };
 
             match &adt_def_id {
-                &Option::Some(def_id) => {
+                &Option.Some(def_id) => {
                     match &downcast_variant {
-                        &Option::Some(vi) => {
+                        &Option.Some(vi) => {
                             // Enum variant field
                             let mut found_field = false;
                             match ctx.lookup_enum(def_id) {
-                                Option::Some(layout) => {
+                                Option.Some(layout) => {
                                     for k in 0usize..layout.variants.len() {
                                         if layout.variants[k].variant_idx == vi {
                                             if (field_idx as usize) < layout.variants[k].fields.len() {
                                                 let fty = &layout.variants[k].fields[field_idx as usize].llvm_type;
                                                 let field_is_param = match &layout.variants[k].fields[field_idx as usize].hir_type {
-                                                    &Option::Some(ht_id) => type_intern::is_param_or_infer_id(ht_id),
-                                                    &Option::None => false,
+                                                    &Option.Some(ht_id) => type_intern::is_param_or_infer_id(ht_id),
+                                                    &Option.None => false,
                                                 };
                                                 if !field_is_param {
                                                     return clone_string(fty);
@@ -638,16 +638,16 @@ fn resolve_place_elem_type(
                                         }
                                     }
                                 }
-                                Option::None => {
+                                Option.None => {
                                     found_field = true;
                                 }
                             }
                             if found_field {
                                 match ctx.get_local_hir_type(place.local) {
-                                    Option::Some(ty_id) => {
+                                    Option.Some(ty_id) => {
                                         let unwrapped = unwrap_ref_type(ty_id);
                                         match type_intern::get_adt_args(unwrapped) {
-                                            Option::Some(args) => {
+                                            Option.Some(args) => {
                                                 let interner = type_intern::type_interner();
                                                 let args_len = interner.ty_list_len(args);
                                                 if (field_idx as usize) < args_len {
@@ -655,49 +655,49 @@ fn resolve_place_elem_type(
                                                     return codegen_size::type_to_llvm_with_ctx_id(ctx, arg_ty_id);
                                                 }
                                             }
-                                            Option::None => {}
+                                            Option.None => {}
                                         }
                                     }
-                                    Option::None => {}
+                                    Option.None => {}
                                 }
                             }
                         }
-                        &Option::None => {
+                        &Option.None => {
                             // Struct field
                             match ctx.lookup_struct(def_id) {
-                                Option::Some(layout) => {
+                                Option.Some(layout) => {
                                     if (field_idx as usize) < layout.fields.len() {
                                         let field_is_param = match &layout.fields[field_idx as usize].hir_type {
-                                            &Option::Some(ht_id) => {
+                                            &Option.Some(ht_id) => {
                                                 type_intern::is_param_or_infer_id(ht_id)
                                             }
-                                            &Option::None => false,
+                                            &Option.None => false,
                                         };
                                         if field_is_param {
                                             let resolved = resolve_generic_field_type(ctx, place.local, layout, field_idx as usize);
                                             match resolved {
-                                                Option::Some(ty) => { return ty; }
-                                                Option::None => {}
+                                                Option.Some(ty) => { return ty; }
+                                                Option.None => {}
                                             }
                                         }
                                         return clone_string(&layout.fields[field_idx as usize].llvm_type);
                                     }
                                 }
-                                Option::None => {}
+                                Option.None => {}
                             }
                         }
                     }
                 }
-                &Option::None => {}
+                &Option.None => {}
             }
 
             // Tuple field extraction from local's type
             match ctx.get_local_hir_type(place.local) {
-                Option::Some(ty_id) => {
+                Option.Some(ty_id) => {
                     let unwrapped = unwrap_ref_type(ty_id);
                     let kind = type_intern::type_interner().get(unwrapped);
                     match kind {
-                        &type_intern::InternedTypeKind::Tuple(list_id) => {
+                        &type_intern.InternedTypeKind.Tuple(list_id) => {
                             let interner = type_intern::type_interner();
                             let len = interner.ty_list_len(list_id);
                             if (field_idx as usize) < len {
@@ -708,60 +708,60 @@ fn resolve_place_elem_type(
                         _ => {}
                     }
                 }
-                Option::None => {}
+                Option.None => {}
             }
 
             ctx.get_local_type(place.local)
         }
-        &mir_types::PlaceElem::Index(_) => {
+        &mir_types.PlaceElem.Index(_) => {
             match ctx.get_local_hir_type(place.local) {
-                Option::Some(ty_id) => {
+                Option.Some(ty_id) => {
                     let hir_type = type_intern::ty_id_to_type(ty_id);
                     resolve_index_element_type(ctx, &hir_type)
                 }
-                Option::None => ctx.get_local_type(place.local),
+                Option.None => ctx.get_local_type(place.local),
             }
         }
-        &mir_types::PlaceElem::ConstantIndex { offset: _, min_length: _, from_end: _ } => {
+        &mir_types.PlaceElem.ConstantIndex { offset: _, min_length: _, from_end: _ } => {
             match ctx.get_local_hir_type(place.local) {
-                Option::Some(ty_id) => {
+                Option.Some(ty_id) => {
                     let hir_type = type_intern::ty_id_to_type(ty_id);
                     resolve_index_element_type(ctx, &hir_type)
                 }
-                Option::None => ctx.get_local_type(place.local),
+                Option.None => ctx.get_local_type(place.local),
             }
         }
-        &mir_types::PlaceElem::Deref => {
+        &mir_types.PlaceElem.Deref => {
             match ctx.get_local_hir_type(place.local) {
-                Option::Some(hir_type) => {
+                Option.Some(hir_type) => {
                     let mut deref_count: usize = 0;
                     for di in 0usize..place.projection.len() {
                         match &place.projection[di] {
-                            &mir_types::PlaceElem::Deref => {
+                            &mir_types.PlaceElem.Deref => {
                                 deref_count += 1;
                             }
                             _ => {}
                         }
                     }
                     match apply_deref_to_type(hir_type) {
-                        Option::Some(inner_ty) => {
+                        Option.Some(inner_ty) => {
                             let mut final_ty = inner_ty;
                             let mut applied: usize = 1;
                             while applied < deref_count {
                                 match apply_deref_to_type(final_ty) {
-                                    Option::Some(next) => {
+                                    Option.Some(next) => {
                                         final_ty = next;
                                         applied += 1;
                                     }
-                                    Option::None => { break; }
+                                    Option.None => { break; }
                                 }
                             }
                             codegen_size::type_to_llvm_with_ctx_id(ctx, final_ty)
                         }
-                        Option::None => ctx.get_local_type(place.local),
+                        Option.None => ctx.get_local_type(place.local),
                     }
                 }
-                Option::None => ctx.get_local_type(place.local),
+                Option.None => ctx.get_local_type(place.local),
             }
         }
         _ => {
@@ -772,48 +772,48 @@ fn resolve_place_elem_type(
 
 /// Emits the address of a place, returning the pointer value.
 pub fn emit_place_addr(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    place: &mir_types::Place,
-) -> codegen_ctx::CgName {
+    ctx: &mut codegen_ctx.CodegenCtx,
+    place: &mir_types.Place,
+) -> codegen_ctx.CgName {
     // Check if this is a static place - use global variable address directly
     if place.is_static() {
         match place.get_static_def_id() {
-            Option::Some(def_id) => {
+            Option.Some(def_id) => {
                 // Look up the global variable name for this static
                 match ctx.lookup_def_name(def_id.index) {
-                    Option::Some(name) => {
+                    Option.Some(name) => {
                         // Return the global variable name with @ prefix.
                         // Static global variables are already addresses.
                         // Convention: names are stored without @, add it here.
                         let mut result = common::make_string("@");
                         result.push_str(name.as_str());
-                        return codegen_ctx::CgName::Str(result);
+                        return codegen_ctx.CgName.Str(result);
                     }
-                    Option::None => {
+                    Option.None => {
                         // BUG: Static def_id has no name mapping — emit trap instead of null
                         // to avoid silent null pointer dereference in generated code
                         let mut err_msg = common::make_string("static def_name lookup failed for def_id ");
                         err_msg.push_str(codegen_types::format_u64(def_id.index as u64).as_str());
-                        ctx.codegen_error(codegen_ctx::CodegenErrorKind::StaticLookupFailed, err_msg);
+                        ctx.codegen_error(codegen_ctx.CodegenErrorKind.StaticLookupFailed, err_msg);
                         ctx.write("    ; BUG: static def_name lookup failed for def_id ");
                         ctx.write(codegen_types::format_u64(def_id.index as u64).as_str());
                         ctx.write("\n");
                         ctx.write("    call void @llvm.trap()\n");
                         ctx.emit_unreachable();
-                        return codegen_ctx::CgName::Str(common::make_string("null"));
+                        return codegen_ctx.CgName.Str(common::make_string("null"));
                     }
                 }
             }
-            Option::None => {
+            Option.None => {
                 // BUG: Static place has no def_id — emit trap instead of null
                 ctx.codegen_error(
-                    codegen_ctx::CodegenErrorKind::StaticLookupFailed,
+                    codegen_ctx.CodegenErrorKind.StaticLookupFailed,
                     common::make_string("static place missing def_id"),
                 );
                 ctx.write("    ; BUG: static place missing def_id\n");
                 ctx.write("    call void @llvm.trap()\n");
                 ctx.emit_unreachable();
-                return codegen_ctx::CgName::Str(common::make_string("null"));
+                return codegen_ctx.CgName.Str(common::make_string("null"));
             }
         }
     }
@@ -828,12 +828,12 @@ pub fn emit_place_addr(
     // Track the current base type string through projections
     let mut current_base = base_type;
     // Track variant index after Downcast
-    let mut downcast_variant: Option<u32> = Option::None;
+    let mut downcast_variant: Option<u32> = Option.None;
     // Track the ADT def_id for field lookups
     let mut current_adt_def_id: Option<u32> = resolve_local_adt_def_id(ctx, place.local);
     // Track the current HIR type for proper indexing element size calculation.
     // Keep the full type including references - projections will unwrap as needed.
-    let mut current_hir_type: Option<type_intern::TyId> = ctx.get_local_hir_type(place.local);
+    let mut current_hir_type: Option<type_intern.TyId> = ctx.get_local_hir_type(place.local);
 
     // Region/persistent auto-deref: if the local is heap-allocated via region/persistent
     // and there are projections, load the heap pointer first. The alloca only holds a ptr
@@ -853,8 +853,8 @@ pub fn emit_place_addr(
     // with `Some(ref entry)` produces &&T with no Deref in the projection list).
     if place.projection.len() > 0 && is_local_ref_type(ctx, place.local) {
         let first_is_field = match &place.projection[0] {
-            &mir_types::PlaceElem::Field(_) => true,
-            &mir_types::PlaceElem::Downcast(_) => true,
+            &mir_types.PlaceElem.Field(_) => true,
+            &mir_types.PlaceElem.Downcast(_) => true,
             _ => false,
         };
         if first_is_field {
@@ -866,13 +866,13 @@ pub fn emit_place_addr(
                 current = loaded;
                 // Update HIR type through implicit deref
                 current_hir_type = match &current_hir_type {
-                    &Option::Some(ty_id) => apply_deref_to_type(ty_id),
-                    &Option::None => Option::None,
+                    &Option.Some(ty_id) => apply_deref_to_type(ty_id),
+                    &Option.None => Option.None,
                 };
                 // Check if the inner type is still a reference that needs peeling
                 keep_peeling = match &current_hir_type {
-                    &Option::Some(ty_id) => type_intern::is_ref_id(ty_id),
-                    &Option::None => false,
+                    &Option.Some(ty_id) => type_intern::is_ref_id(ty_id),
+                    &Option.None => false,
                 };
             }
         }
@@ -881,7 +881,7 @@ pub fn emit_place_addr(
     while i < place.projection.len() {
         let proj = &place.projection[i];
         match proj {
-            &mir_types::PlaceElem::Deref => {
+            &mir_types.PlaceElem.Deref => {
                 // Load the pointer value
                 let result = ctx.fresh_temp_cg();
                 ctx.emit_load_cg2(&result, "ptr", &current);
@@ -891,14 +891,14 @@ pub fn emit_place_addr(
                 // After deref, try to get the inner type's ADT info
                 current_adt_def_id = resolve_deref_adt_def_id(ctx, place.local, i);
                 current_base = match &current_adt_def_id {
-                    &Option::Some(def_id) => ctx.adt_llvm_type(def_id),
-                    &Option::None => common::make_string("{ i64 }"),
+                    &Option.Some(def_id) => ctx.adt_llvm_type(def_id),
+                    &Option.None => common::make_string("{ i64 }"),
                 };
-                downcast_variant = Option::None;
+                downcast_variant = Option.None;
                 // Track HIR type through deref
                 current_hir_type = match &current_hir_type {
-                    &Option::Some(ty_id) => apply_deref_to_type(ty_id),
-                    &Option::None => Option::None,
+                    &Option.Some(ty_id) => apply_deref_to_type(ty_id),
+                    &Option.None => Option.None,
                 };
                 // If current_base is still the fallback "{ i64 }" but we have a
                 // valid HIR type after deref that is an ADT, use it to resolve the
@@ -908,33 +908,33 @@ pub fn emit_place_addr(
                 // { ptr, i64 } which would incorrectly trigger Vec-like detection.
                 if string_eq_str(current_base.as_str(), "{ i64 }") {
                     match &current_hir_type {
-                        &Option::Some(ty_id) => {
+                        &Option.Some(ty_id) => {
                             match type_intern::get_adt_def_id(ty_id) {
-                                Option::Some(def_id) => {
+                                Option.Some(def_id) => {
                                     let resolved_ty = codegen_size::type_to_llvm_with_ctx_id(ctx, ty_id);
                                     let rfc = count_struct_fields(&resolved_ty);
                                     if rfc >= 2 {
                                         current_base = resolved_ty;
                                     }
-                                    current_adt_def_id = Option::Some(def_id.index);
+                                    current_adt_def_id = Option.Some(def_id.index);
                                 }
-                                Option::None => {}
+                                Option.None => {}
                             }
                         }
-                        &Option::None => {}
+                        &Option.None => {}
                     }
                 }
             }
-            &mir_types::PlaceElem::Field(idx) => {
+            &mir_types.PlaceElem.Field(idx) => {
                 let result = ctx.fresh_temp_cg();
 
                 // Determine the GEP base type from context
                 let gep_type = match &downcast_variant {
-                    &Option::Some(vi) => {
+                    &Option.Some(vi) => {
                         // After Downcast: use variant payload type
                         resolve_variant_payload_type(ctx, &current_adt_def_id, vi)
                     }
-                    &Option::None => {
+                    &Option.None => {
                         // Direct field access: use the struct/tuple LLVM type
                         clone_string(&current_base)
                     }
@@ -947,7 +947,7 @@ pub fn emit_place_addr(
                 // count, fall back to byte-offset GEP.
                 let field_count = count_struct_fields(&gep_type);
                 if is_struct_or_array_type(&gep_type) && (idx as u64) < (field_count as u64) {
-                    let mut indices: Vec<String> = Vec::new();
+                    let mut indices: Vec<String> = Vec.new();
                     indices.push(common::make_string("0"));
                     indices.push(codegen_types::format_u64(idx as u64));
                     ctx.emit_gep_cg(&result, gep_type.as_str(), &current, &indices);
@@ -973,15 +973,15 @@ pub fn emit_place_addr(
                 // For ADTs: look up the field type from the ADT registry.
                 // For non-ADT composites (tuples): extract field type directly from HIR.
                 current_hir_type = match &current_adt_def_id {
-                    &Option::Some(def_id) => ctx.lookup_field_hir_type(def_id, idx),
-                    &Option::None => {
+                    &Option.Some(def_id) => ctx.lookup_field_hir_type(def_id, idx),
+                    &Option.None => {
                         match &current_hir_type {
-                            &Option::Some(ty_id) => extract_field_type_from_hir(ty_id, idx),
-                            &Option::None => Option::None,
+                            &Option.Some(ty_id) => extract_field_type_from_hir(ty_id, idx),
+                            &Option.None => Option.None,
                         }
                     }
                 };
-                current_adt_def_id = Option::None;
+                current_adt_def_id = Option.None;
                 current_base = common::make_string("{ i64 }");
                 // If the field type is an ADT, update current_base and current_adt_def_id
                 // to reflect the field's actual LLVM layout. This is critical for
@@ -989,20 +989,20 @@ pub fn emit_place_addr(
                 // is_vec_like_type correctly detects Vec-like types and loads the
                 // data pointer before indexing.
                 match &current_hir_type {
-                    &Option::Some(ty_id) => {
+                    &Option.Some(ty_id) => {
                         match type_intern::get_adt_def_id(ty_id) {
-                            Option::Some(def_id) => {
+                            Option.Some(def_id) => {
                                 current_base = ctx.adt_llvm_type(def_id.index);
-                                current_adt_def_id = Option::Some(def_id.index);
+                                current_adt_def_id = Option.Some(def_id.index);
                             }
-                            Option::None => {}
+                            Option.None => {}
                         }
                     }
-                    &Option::None => {}
+                    &Option.None => {}
                 }
-                downcast_variant = Option::None;
+                downcast_variant = Option.None;
             }
-            &mir_types::PlaceElem::Index(ref local) => {
+            &mir_types.PlaceElem.Index(ref local) => {
                 // For Vec/container indexing, the current address points to the Vec struct
                 // { ptr, i64, i64 } where the first field is the data pointer. We need to
                 // load the data pointer before indexing into the heap-allocated array.
@@ -1038,10 +1038,10 @@ pub fn emit_place_addr(
 
                 // Get the element size using tracked HIR type for proper byte-offset calculation
                 let elem_size = match &current_hir_type {
-                    &Option::Some(ty_id) => {
+                    &Option.Some(ty_id) => {
                         get_element_size_from_hir_id(ctx, ty_id)
                     }
-                    &Option::None => get_indexing_element_size(ctx, place.local),
+                    &Option.None => get_indexing_element_size(ctx, place.local),
                 };
 
                 // Load the index value with its actual type, then sext to i64 if needed.
@@ -1070,7 +1070,7 @@ pub fn emit_place_addr(
 
                 // Use byte-offset GEP with i8 element type
                 let result = ctx.fresh_temp_cg();
-                let mut indices: Vec<String> = Vec::new();
+                let mut indices: Vec<String> = Vec.new();
                 indices.push(cgname_to_string(&byte_offset));
                 ctx.emit_gep_cg(&result, "i8", &current, &indices);
                 current = result;
@@ -1079,24 +1079,24 @@ pub fn emit_place_addr(
                 // e.g. for Vec<BindingEntry>[i].binding.mutable, after [i]
                 // current_hir_type should be BindingEntry, not Vec<BindingEntry>.
                 current_hir_type = match &current_hir_type {
-                    &Option::Some(ty_id) => extract_element_type_id(ty_id),
-                    &Option::None => Option::None,
+                    &Option.Some(ty_id) => extract_element_type_id(ty_id),
+                    &Option.None => Option.None,
                 };
                 current_adt_def_id = match &current_hir_type {
-                    &Option::Some(ty_id) => {
+                    &Option.Some(ty_id) => {
                         match type_intern::get_adt_def_id(ty_id) {
-                            Option::Some(def_id) => {
+                            Option.Some(def_id) => {
                                 current_base = ctx.adt_llvm_type(def_id.index);
-                                Option::Some(def_id.index)
+                                Option.Some(def_id.index)
                             }
-                            Option::None => Option::None,
+                            Option.None => Option.None,
                         }
                     }
-                    &Option::None => Option::None,
+                    &Option.None => Option.None,
                 };
-                downcast_variant = Option::None;
+                downcast_variant = Option.None;
             }
-            &mir_types::PlaceElem::ConstantIndex { offset, min_length: _, from_end } => {
+            &mir_types.PlaceElem.ConstantIndex { offset, min_length: _, from_end } => {
                 // For Vec/container indexing, load the data pointer first
                 if is_vec_like_type(&current_base) {
                     // Handle reference-to-Vec (same as Index case above)
@@ -1127,10 +1127,10 @@ pub fn emit_place_addr(
 
                 // Get the element size using tracked HIR type for proper byte-offset calculation
                 let elem_size = match &current_hir_type {
-                    &Option::Some(ty_id) => {
+                    &Option.Some(ty_id) => {
                         get_element_size_from_hir_id(ctx, ty_id)
                     }
-                    &Option::None => get_indexing_element_size(ctx, place.local),
+                    &Option.None => get_indexing_element_size(ctx, place.local),
                 };
 
                 // Calculate byte offset = offset * element_size
@@ -1141,50 +1141,50 @@ pub fn emit_place_addr(
                 };
 
                 let result = ctx.fresh_temp_cg();
-                let mut indices: Vec<String> = Vec::new();
+                let mut indices: Vec<String> = Vec.new();
                 indices.push(codegen_types::format_u64(byte_offset));
                 ctx.emit_gep_cg(&result, "i8", &current, &indices);
                 current = result;
                 // After ConstantIndex, update current_hir_type to the element type
                 current_hir_type = match &current_hir_type {
-                    &Option::Some(ty_id) => extract_element_type_id(ty_id),
-                    &Option::None => Option::None,
+                    &Option.Some(ty_id) => extract_element_type_id(ty_id),
+                    &Option.None => Option.None,
                 };
                 current_adt_def_id = match &current_hir_type {
-                    &Option::Some(ty_id) => {
+                    &Option.Some(ty_id) => {
                         match type_intern::get_adt_def_id(ty_id) {
-                            Option::Some(def_id) => {
+                            Option.Some(def_id) => {
                                 current_base = ctx.adt_llvm_type(def_id.index);
-                                Option::Some(def_id.index)
+                                Option.Some(def_id.index)
                             }
-                            Option::None => Option::None,
+                            Option.None => Option.None,
                         }
                     }
-                    &Option::None => Option::None,
+                    &Option.None => Option.None,
                 };
-                downcast_variant = Option::None;
+                downcast_variant = Option.None;
             }
-            &mir_types::PlaceElem::Subslice { from, to: _, from_end: _ } => {
+            &mir_types.PlaceElem.Subslice { from, to: _, from_end: _ } => {
                 // Get the element size using tracked HIR type for proper byte-offset calculation
                 let elem_size = match &current_hir_type {
-                    &Option::Some(ty_id) => {
+                    &Option.Some(ty_id) => {
                         get_element_size_from_hir_id(ctx, ty_id)
                     }
-                    &Option::None => get_indexing_element_size(ctx, place.local),
+                    &Option.None => get_indexing_element_size(ctx, place.local),
                 };
 
                 // Calculate byte offset = from * element_size
                 let byte_offset = from * elem_size;
 
                 let result = ctx.fresh_temp_cg();
-                let mut indices: Vec<String> = Vec::new();
+                let mut indices: Vec<String> = Vec.new();
                 indices.push(codegen_types::format_u64(byte_offset));
                 ctx.emit_gep_cg(&result, "i8", &current, &indices);
                 current = result;
-                current_adt_def_id = Option::None;
-                downcast_variant = Option::None;
+                current_adt_def_id = Option.None;
+                downcast_variant = Option.None;
             }
-            &mir_types::PlaceElem::Downcast(variant_idx) => {
+            &mir_types.PlaceElem.Downcast(variant_idx) => {
                 // Enum downcast: project into variant data for a specific variant.
                 ctx.write("    ; downcast to variant ");
                 ctx.write_string(&codegen_types::format_u64(variant_idx as u64));
@@ -1196,7 +1196,7 @@ pub fn emit_place_addr(
                 // Fallback types like { i64 } from Deref need byte-offset GEP.
                 let fc = count_struct_fields(&current_base);
                 if is_struct_or_array_type(&current_base) && fc >= 2 {
-                    let mut indices: Vec<String> = Vec::new();
+                    let mut indices: Vec<String> = Vec.new();
                     indices.push(common::make_string("0"));
                     // Skip discriminant at index 0, variant data at index 1
                     indices.push(common::make_string("1"));
@@ -1207,18 +1207,18 @@ pub fn emit_place_addr(
                     // from the HIR type so we can use struct GEP with proper alignment.
                     let mut resolved = false;
                     match &current_hir_type {
-                        &Option::Some(ty_id) => {
+                        &Option.Some(ty_id) => {
                             let actual_ty = codegen_size::type_to_llvm_with_ctx_id(ctx, ty_id);
                             let afc = count_struct_fields(&actual_ty);
                             if is_struct_or_array_type(&actual_ty) && afc >= 2 {
-                                let mut indices: Vec<String> = Vec::new();
+                                let mut indices: Vec<String> = Vec.new();
                                 indices.push(common::make_string("0"));
                                 indices.push(common::make_string("1"));
                                 ctx.emit_gep_cg(&result, actual_ty.as_str(), &current, &indices);
                                 resolved = true;
                             }
                         }
-                        &Option::None => {}
+                        &Option.None => {}
                     }
                     if !resolved {
                         // ICE: Enum downcast failed — could not determine variant
@@ -1236,7 +1236,7 @@ pub fn emit_place_addr(
                     }
                 }
                 current = result;
-                downcast_variant = Option::Some(variant_idx);
+                downcast_variant = Option.Some(variant_idx);
                 // Keep current_adt_def_id for field resolution after downcast
             }
         }
@@ -1251,14 +1251,14 @@ pub fn emit_place_addr(
 /// validates that the pointer's generation matches the expected generation.
 /// No-ops for stack-allocated locals or locals without generation tracking.
 fn emit_generation_check(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    local: mir_def::MirLocalId,
-    ptr_name: &codegen_ctx::CgName,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    local: mir_def.MirLocalId,
+    ptr_name: &codegen_ctx.CgName,
 ) {
     // Only emit check for locals with tracked generations
     let gen_alloca = match ctx.get_local_generation(local) {
-        Option::Some(name) => name,
-        Option::None => { return; }
+        Option.Some(name) => name,
+        Option.None => { return; }
     };
 
     // Load expected generation from stack alloca
@@ -1273,7 +1273,7 @@ fn emit_generation_check(
     // Call blood_validate_generation(address, expected_generation) -> i32
     // Returns 0 if valid, 1 if stale
     let gen_result = ctx.fresh_temp_cg();
-    ctx.begin_call(Option::Some(&gen_result), "i32", "@blood_validate_generation");
+    ctx.begin_call(Option.Some(&gen_result), "i32", "@blood_validate_generation");
     ctx.call_arg_cg(true, "i64", &ptr_addr);
     ctx.call_arg_cg(false, "i32", &expected_gen);
     ctx.end_call();
@@ -1290,10 +1290,10 @@ fn emit_generation_check(
     // Stale path: get actual generation for diagnostic, then panic
     ctx.emit_label_cg(&stale_label);
     let actual_gen = ctx.fresh_temp_cg();
-    ctx.begin_call(Option::Some(&actual_gen), "i32", "@blood_get_generation");
+    ctx.begin_call(Option.Some(&actual_gen), "i32", "@blood_get_generation");
     ctx.call_arg_cg(true, "i64", &ptr_addr);
     ctx.end_call();
-    ctx.begin_call(Option::None, "void", "@blood_stale_reference_panic");
+    ctx.begin_call(Option.None, "void", "@blood_stale_reference_panic");
     ctx.call_arg_cg(true, "i32", &expected_gen);
     ctx.call_arg_cg(false, "i32", &actual_gen);
     ctx.end_call();
@@ -1306,58 +1306,58 @@ fn emit_generation_check(
 /// For a generic struct field, resolves the concrete LLVM type by matching
 /// param/infer fields with the local's type args.
 fn resolve_generic_field_type(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    local: mir_def::MirLocalId,
-    layout: &codegen_ctx::StructLayout,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    local: mir_def.MirLocalId,
+    layout: &codegen_ctx.StructLayout,
     field_idx: usize,
 ) -> Option<String> {
     // Get the local's HIR type to find type args
     let hir_type_id = match ctx.get_local_hir_type(local) {
-        Option::Some(ty_id) => ty_id,
-        Option::None => { return Option::None; }
+        Option.Some(ty_id) => ty_id,
+        Option.None => { return Option.None; }
     };
     // Walk through Ref/Ptr to find the ADT
     let adt_type_id = unwrap_ref_type(hir_type_id);
     let adt_args = match type_intern::get_adt_args(adt_type_id) {
-        Option::Some(args) => args,
-        Option::None => { return Option::None; }
+        Option.Some(args) => args,
+        Option.None => { return Option.None; }
     };
     let interner = type_intern::type_interner();
     let args_len = interner.ty_list_len(adt_args);
     if args_len == 0 {
-        return Option::None;
+        return Option.None;
     }
     // Count which param index this field corresponds to
     let mut param_idx: usize = 0;
     for fi in 0usize..layout.fields.len() {
         let is_param = match &layout.fields[fi].hir_type {
-            &Option::Some(ht_id) => {
+            &Option.Some(ht_id) => {
                 type_intern::is_param_or_infer_id(ht_id)
             }
-            &Option::None => false,
+            &Option.None => false,
         };
         if fi == field_idx {
             if is_param && param_idx < args_len {
                 let arg_id = interner.get_ty_list_element(adt_args, param_idx);
-                return Option::Some(codegen_size::type_to_llvm_with_ctx_id(ctx, arg_id));
+                return Option.Some(codegen_size::type_to_llvm_with_ctx_id(ctx, arg_id));
             }
-            return Option::None;
+            return Option.None;
         }
         if is_param {
             param_idx += 1;
         }
     }
-    Option::None
+    Option.None
 }
 
 /// Resolves the LLVM base type for a MIR local.
 /// Returns the ADT's LLVM type if the local is a struct/enum, or a fallback type.
 fn resolve_local_base_type(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    local: mir_def::MirLocalId,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    local: mir_def.MirLocalId,
 ) -> String {
     match ctx.get_local_hir_type(local) {
-        Option::Some(ty_id) => {
+        Option.Some(ty_id) => {
             let hir_type = type_intern::ty_id_to_type(ty_id);
             let result = resolve_base_type_from_hir(ctx, &hir_type);
             // If resolve returned "ptr" (fallback for unknown ADT), the local might
@@ -1375,10 +1375,10 @@ fn resolve_local_base_type(
             // computed with concrete types (e.g., { i32 }). Prefer the alloca type
             // when they differ and the alloca is a struct type.
             let is_generic_adt = match &hir_type.kind {
-                &hir_ty::TypeKind::Adt { def_id: _, ref args } => args.len() > 0,
-                &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => {
+                &hir_ty.TypeKind.Adt { def_id: _, ref args } => args.len() > 0,
+                &hir_ty.TypeKind.Ref { ref inner, mutable: _ } => {
                     match &inner.as_ref().kind {
-                        &hir_ty::TypeKind::Adt { def_id: _, ref args } => args.len() > 0,
+                        &hir_ty.TypeKind.Adt { def_id: _, ref args } => args.len() > 0,
                         _ => false,
                     }
                 }
@@ -1392,12 +1392,12 @@ fn resolve_local_base_type(
             }
             result
         }
-        Option::None => {
+        Option.None => {
             let mut err_msg = common::make_string("local _");
             err_msg.push_str(codegen_types::format_u64(local.index as u64).as_str());
             err_msg.push_str(" has no HIR type, using fallback { i64 }");
             ctx.codegen_error(
-                codegen_ctx::CodegenErrorKind::InternalError,
+                codegen_ctx.CodegenErrorKind.InternalError,
                 err_msg,
             );
             common::make_string("{ i64 }")
@@ -1407,21 +1407,21 @@ fn resolve_local_base_type(
 
 /// Resolves the LLVM base type for a given HIR type, looking through references.
 fn resolve_base_type_from_hir(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    hir_type: &hir_ty::Type,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    hir_type: &hir_ty.Type,
 ) -> String {
     match &hir_type.kind {
-        &hir_ty::TypeKind::Adt { def_id, args: _ } => {
+        &hir_ty.TypeKind.Adt { def_id, args: _ } => {
             ctx.adt_llvm_type(def_id.index)
         }
-        &hir_ty::TypeKind::Tuple(ref _elems) => {
+        &hir_ty.TypeKind.Tuple(ref _elems) => {
             ctx.type_to_llvm_with_ctx(hir_type)
         }
-        &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => {
+        &hir_ty.TypeKind.Ref { ref inner, mutable: _ } => {
             // Look through reference to get the pointed-to type
             resolve_base_type_from_hir(ctx, inner.as_ref())
         }
-        &hir_ty::TypeKind::Ptr { ref inner, mutable: _ } => {
+        &hir_ty.TypeKind.Ptr { ref inner, mutable: _ } => {
             resolve_base_type_from_hir(ctx, inner.as_ref())
         }
         _ => {
@@ -1432,112 +1432,112 @@ fn resolve_base_type_from_hir(
 
 /// Resolves the ADT def_id for a MIR local, if it's an ADT type.
 fn resolve_local_adt_def_id(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    local: mir_def::MirLocalId,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    local: mir_def.MirLocalId,
 ) -> Option<u32> {
     match ctx.get_local_hir_type(local) {
-        Option::Some(ty_id) => {
+        Option.Some(ty_id) => {
             type_intern::resolve_adt_def_id_id(ty_id)
         }
-        Option::None => Option::None,
+        Option.None => Option.None,
     }
 }
 
 /// Returns true if the local's HIR type is a reference (Ref or Ptr).
 fn is_local_ref_type(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    local: mir_def::MirLocalId,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    local: mir_def.MirLocalId,
 ) -> bool {
     match ctx.get_local_hir_type(local) {
-        Option::Some(ty_id) => {
+        Option.Some(ty_id) => {
             let kind = type_intern::type_interner().get(ty_id);
             match kind {
-                &type_intern::InternedTypeKind::Ref { inner: _, mutable: _ } => true,
-                &type_intern::InternedTypeKind::Ptr { inner: _, mutable: _ } => true,
+                &type_intern.InternedTypeKind.Ref { inner: _, mutable: _ } => true,
+                &type_intern.InternedTypeKind.Ptr { inner: _, mutable: _ } => true,
                 _ => false,
             }
         }
-        Option::None => false,
+        Option.None => false,
     }
 }
 
 /// Extracts the ADT def_id from an HIR type, looking through references.
-fn resolve_adt_def_id_from_hir(hir_type: &hir_ty::Type) -> Option<u32> {
+fn resolve_adt_def_id_from_hir(hir_type: &hir_ty.Type) -> Option<u32> {
     match &hir_type.kind {
-        &hir_ty::TypeKind::Adt { def_id, args: _ } => {
-            Option::Some(def_id.index)
+        &hir_ty.TypeKind.Adt { def_id, args: _ } => {
+            Option.Some(def_id.index)
         }
-        &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => {
+        &hir_ty.TypeKind.Ref { ref inner, mutable: _ } => {
             resolve_adt_def_id_from_hir(inner.as_ref())
         }
-        &hir_ty::TypeKind::Ptr { ref inner, mutable: _ } => {
+        &hir_ty.TypeKind.Ptr { ref inner, mutable: _ } => {
             resolve_adt_def_id_from_hir(inner.as_ref())
         }
-        _ => Option::None,
+        _ => Option.None,
     }
 }
 
 /// Unwraps a reference type to get the inner type (TyId version).
 /// Uses direct interner query — no Type tree reconstruction.
-fn unwrap_ref_type(ty_id: type_intern::TyId) -> type_intern::TyId {
+fn unwrap_ref_type(ty_id: type_intern.TyId) -> type_intern.TyId {
     type_intern::unwrap_ref_id(ty_id)
 }
 
 /// Applies a Deref projection to an HIR type, returning the inner type (TyId version).
 /// Uses direct interner query — no Type tree reconstruction.
-fn apply_deref_to_type(ty_id: type_intern::TyId) -> Option<type_intern::TyId> {
+fn apply_deref_to_type(ty_id: type_intern.TyId) -> Option<type_intern.TyId> {
     type_intern::deref_id(ty_id)
 }
 
 /// Resolves the ADT def_id for a deref'd local (Ref<Adt>).
 fn resolve_deref_adt_def_id(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    local: mir_def::MirLocalId,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    local: mir_def.MirLocalId,
     deref_depth: usize,
 ) -> Option<u32> {
     match ctx.get_local_hir_type(local) {
-        Option::Some(ty_id) => {
+        Option.Some(ty_id) => {
             let hir_type = type_intern::ty_id_to_type(ty_id);
             // Walk through Ref types
-            let mut ty: &hir_ty::Type = &hir_type;
+            let mut ty: &hir_ty.Type = &hir_type;
             let mut depth: usize = 0;
             while depth <= deref_depth {
                 match &ty.kind {
-                    &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => {
+                    &hir_ty.TypeKind.Ref { ref inner, mutable: _ } => {
                         ty = inner.as_ref();
                         depth += 1;
                     }
-                    &hir_ty::TypeKind::Ptr { ref inner, mutable: _ } => {
+                    &hir_ty.TypeKind.Ptr { ref inner, mutable: _ } => {
                         ty = inner.as_ref();
                         depth += 1;
                     }
                     _ => {
-                        return Option::None;
+                        return Option.None;
                     }
                 }
             }
             // Now check if the dereferenced type is an ADT
             match &ty.kind {
-                &hir_ty::TypeKind::Adt { def_id, args: _ } => {
-                    Option::Some(def_id.index)
+                &hir_ty.TypeKind.Adt { def_id, args: _ } => {
+                    Option.Some(def_id.index)
                 }
-                _ => Option::None,
+                _ => Option.None,
             }
         }
-        Option::None => Option::None,
+        Option.None => Option.None,
     }
 }
 
 /// Resolves the LLVM type for a variant's payload.
 fn resolve_variant_payload_type(
-    ctx: &mut codegen_ctx::CodegenCtx,
+    ctx: &mut codegen_ctx.CodegenCtx,
     adt_def_id: &Option<u32>,
     variant_idx: u32,
 ) -> String {
     match adt_def_id {
-        &Option::Some(def_id) => {
+        &Option.Some(def_id) => {
             match ctx.lookup_enum(def_id) {
-                Option::Some(enum_layout) => {
+                Option.Some(enum_layout) => {
                     // Find the variant layout
                     for i in 0usize..enum_layout.variants.len() {
                         if enum_layout.variants[i].variant_idx == variant_idx {
@@ -1549,46 +1549,46 @@ fn resolve_variant_payload_type(
                     err_msg.push_str(codegen_types::format_u64(variant_idx as u64).as_str());
                     err_msg.push_str(" not found in enum def_id ");
                     err_msg.push_str(codegen_types::format_u64(def_id as u64).as_str());
-                    ctx.codegen_error(codegen_ctx::CodegenErrorKind::VariantLookupFailed, err_msg);
+                    ctx.codegen_error(codegen_ctx.CodegenErrorKind.VariantLookupFailed, err_msg);
                     common::make_string("{ i64 }")
                 }
-                Option::None => {
+                Option.None => {
                     let mut err_msg = common::make_string("enum def_id ");
                     err_msg.push_str(codegen_types::format_u64(def_id as u64).as_str());
                     err_msg.push_str(" not found in ADT registry");
-                    ctx.codegen_error(codegen_ctx::CodegenErrorKind::AdtLookupFailed, err_msg);
+                    ctx.codegen_error(codegen_ctx.CodegenErrorKind.AdtLookupFailed, err_msg);
                     common::make_string("{ i64 }")
                 }
             }
         }
-        &Option::None => common::make_string("{ i64 }"),
+        &Option.None => common::make_string("{ i64 }"),
     }
 }
 
 /// Returns the size of the element type if known, or 8 (pointer size) as default.
 fn get_indexing_element_size(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    local: mir_def::MirLocalId,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    local: mir_def.MirLocalId,
 ) -> u64 {
     match ctx.get_local_hir_type(local) {
-        Option::Some(ty_id) => {
+        Option.Some(ty_id) => {
             get_element_size_from_hir_id(ctx, ty_id)
         }
-        Option::None => 8, // Default to pointer size
+        Option.None => 8, // Default to pointer size
     }
 }
 
 /// Extracts the element size from an HIR type (TyId) that can be indexed.
-fn get_element_size_from_hir_id(ctx: &mut codegen_ctx::CodegenCtx, ty_id: type_intern::TyId) -> u64 {
+fn get_element_size_from_hir_id(ctx: &mut codegen_ctx.CodegenCtx, ty_id: type_intern.TyId) -> u64 {
     let kind = type_intern::type_interner().get(ty_id);
     match kind {
-        &type_intern::InternedTypeKind::Array { element, size: _ } => {
+        &type_intern.InternedTypeKind.Array { element, size: _ } => {
             codegen_size::type_size_with_ctx_id(ctx, element)
         }
-        &type_intern::InternedTypeKind::Slice { element } => {
+        &type_intern.InternedTypeKind.Slice { element } => {
             codegen_size::type_size_with_ctx_id(ctx, element)
         }
-        &type_intern::InternedTypeKind::Adt { def_id: _, args } => {
+        &type_intern.InternedTypeKind.Adt { def_id: _, args } => {
             // Vec<T> has T as first type argument
             let interner = type_intern::type_interner();
             let arg_len = interner.ty_list_len(args);
@@ -1599,15 +1599,15 @@ fn get_element_size_from_hir_id(ctx: &mut codegen_ctx::CodegenCtx, ty_id: type_i
                 8 // Default to pointer size
             }
         }
-        &type_intern::InternedTypeKind::Ref { inner, mutable: _ } => {
+        &type_intern.InternedTypeKind.Ref { inner, mutable: _ } => {
             // Look through reference
             get_element_size_from_hir_id(ctx, inner)
         }
-        &type_intern::InternedTypeKind::Ptr { inner, mutable: _ } => {
+        &type_intern.InternedTypeKind.Ptr { inner, mutable: _ } => {
             // Look through pointer
             get_element_size_from_hir_id(ctx, inner)
         }
-        &type_intern::InternedTypeKind::Primitive(hir_ty::PrimitiveTy::Str) => {
+        &type_intern.InternedTypeKind.Primitive(hir_ty.PrimitiveTy.Str) => {
             // &str indexing accesses individual bytes
             1
         }
@@ -1618,32 +1618,32 @@ fn get_element_size_from_hir_id(ctx: &mut codegen_ctx::CodegenCtx, ty_id: type_i
 /// Extracts the element type from a container TyId.
 /// Vec<T> → T, Array<T, N> → T, Slice<T> → T, Ref<C> → recurse on C.
 /// Returns None if the type is not a container.
-fn extract_element_type_id(ty_id: type_intern::TyId) -> Option<type_intern::TyId> {
+fn extract_element_type_id(ty_id: type_intern.TyId) -> Option<type_intern.TyId> {
     let kind = type_intern::type_interner().get(ty_id);
     match kind {
-        &type_intern::InternedTypeKind::Array { element, size: _ } => {
-            Option::Some(element)
+        &type_intern.InternedTypeKind.Array { element, size: _ } => {
+            Option.Some(element)
         }
-        &type_intern::InternedTypeKind::Slice { element } => {
-            Option::Some(element)
+        &type_intern.InternedTypeKind.Slice { element } => {
+            Option.Some(element)
         }
-        &type_intern::InternedTypeKind::Adt { def_id: _, args } => {
+        &type_intern.InternedTypeKind.Adt { def_id: _, args } => {
             // Vec<T> — element type is the first type arg
             let interner = type_intern::type_interner();
             let arg_len = interner.ty_list_len(args);
             if arg_len > 0 {
-                Option::Some(interner.get_ty_list_element(args, 0))
+                Option.Some(interner.get_ty_list_element(args, 0))
             } else {
-                Option::None
+                Option.None
             }
         }
-        &type_intern::InternedTypeKind::Ref { inner, mutable: _ } => {
+        &type_intern.InternedTypeKind.Ref { inner, mutable: _ } => {
             extract_element_type_id(inner)
         }
-        &type_intern::InternedTypeKind::Ptr { inner, mutable: _ } => {
+        &type_intern.InternedTypeKind.Ptr { inner, mutable: _ } => {
             extract_element_type_id(inner)
         }
-        _ => Option::None,
+        _ => Option.None,
     }
 }
 
@@ -1651,70 +1651,70 @@ fn extract_element_type_id(ty_id: type_intern::TyId) -> Option<type_intern::TyId
 /// For Tuple types, returns the element at the given field index.
 /// For Ref/Ptr types, looks through to the inner type.
 /// Returns None if the type doesn't support field access or index is out of bounds.
-fn extract_field_type_from_hir(ty_id: type_intern::TyId, field_idx: u32) -> Option<type_intern::TyId> {
+fn extract_field_type_from_hir(ty_id: type_intern.TyId, field_idx: u32) -> Option<type_intern.TyId> {
     let interner = type_intern::type_interner();
     let kind = interner.get(ty_id);
     match kind {
-        &type_intern::InternedTypeKind::Tuple(list_id) => {
+        &type_intern.InternedTypeKind.Tuple(list_id) => {
             let len = interner.ty_list_len(list_id);
             if (field_idx as usize) < len {
-                Option::Some(interner.get_ty_list_element(list_id, field_idx as usize))
+                Option.Some(interner.get_ty_list_element(list_id, field_idx as usize))
             } else {
-                Option::None
+                Option.None
             }
         }
-        &type_intern::InternedTypeKind::Ref { inner, mutable: _ } => {
+        &type_intern.InternedTypeKind.Ref { inner, mutable: _ } => {
             extract_field_type_from_hir(inner, field_idx)
         }
-        &type_intern::InternedTypeKind::Ptr { inner, mutable: _ } => {
+        &type_intern.InternedTypeKind.Ptr { inner, mutable: _ } => {
             extract_field_type_from_hir(inner, field_idx)
         }
-        _ => Option::None,
+        _ => Option.None,
     }
 }
 
 /// Returns true if the given place is an Index projection into a &str type.
 /// Used to determine when byte→char zero-extension is needed after loading.
-fn is_str_index_place(ctx: &mut codegen_ctx::CodegenCtx, place: &mir_types::Place) -> bool {
+fn is_str_index_place(ctx: &mut codegen_ctx.CodegenCtx, place: &mir_types.Place) -> bool {
     // Check if any projection is an Index
     let mut has_index = false;
     for pi in 0usize..place.projection.len() {
         match &place.projection[pi] {
-            &mir_types::PlaceElem::Index(_) => { has_index = true; }
+            &mir_types.PlaceElem.Index(_) => { has_index = true; }
             _ => {}
         }
     }
     if !has_index { return false; }
     // Check if the local's HIR type is &str or str
     match ctx.get_local_hir_type(place.local) {
-        Option::Some(ty_id) => {
+        Option.Some(ty_id) => {
             is_str_ty_id(ty_id)
         }
-        Option::None => false,
+        Option.None => false,
     }
 }
 
 /// Returns true if the TyId is &str or str (looking through references).
-fn is_str_ty_id(ty_id: type_intern::TyId) -> bool {
+fn is_str_ty_id(ty_id: type_intern.TyId) -> bool {
     let kind = type_intern::type_interner().get(ty_id);
     match kind {
-        &type_intern::InternedTypeKind::Primitive(hir_ty::PrimitiveTy::Str) => true,
-        &type_intern::InternedTypeKind::Ref { inner, mutable: _ } => is_str_ty_id(inner),
+        &type_intern.InternedTypeKind.Primitive(hir_ty.PrimitiveTy.Str) => true,
+        &type_intern.InternedTypeKind.Ref { inner, mutable: _ } => is_str_ty_id(inner),
         _ => false,
     }
 }
 
 /// Resolves the LLVM element type for an indexing operation on a container HIR type.
 /// For Vec<T>, returns the LLVM type of T. For Array/Slice, returns element type.
-fn resolve_index_element_type(ctx: &mut codegen_ctx::CodegenCtx, container_ty: &hir_ty::Type) -> String {
+fn resolve_index_element_type(ctx: &mut codegen_ctx.CodegenCtx, container_ty: &hir_ty.Type) -> String {
     match &container_ty.kind {
-        &hir_ty::TypeKind::Array { ref element, size: _ } => {
+        &hir_ty.TypeKind.Array { ref element, size: _ } => {
             codegen_size::type_to_llvm_with_ctx(ctx, element.as_ref())
         }
-        &hir_ty::TypeKind::Slice { ref element } => {
+        &hir_ty.TypeKind.Slice { ref element } => {
             codegen_size::type_to_llvm_with_ctx(ctx, element.as_ref())
         }
-        &hir_ty::TypeKind::Adt { def_id: _, ref args } => {
+        &hir_ty.TypeKind.Adt { def_id: _, ref args } => {
             // Vec<T> has T as first type argument
             if args.len() > 0 {
                 codegen_size::type_to_llvm_with_ctx(ctx, &args[0])
@@ -1722,13 +1722,13 @@ fn resolve_index_element_type(ctx: &mut codegen_ctx::CodegenCtx, container_ty: &
                 common::make_string("i64")
             }
         }
-        &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => {
+        &hir_ty.TypeKind.Ref { ref inner, mutable: _ } => {
             resolve_index_element_type(ctx, inner.as_ref())
         }
-        &hir_ty::TypeKind::Ptr { ref inner, mutable: _ } => {
+        &hir_ty.TypeKind.Ptr { ref inner, mutable: _ } => {
             resolve_index_element_type(ctx, inner.as_ref())
         }
-        &hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::Str) => {
+        &hir_ty.TypeKind.Primitive(hir_ty.PrimitiveTy.Str) => {
             // &str indexing accesses individual bytes (i8)
             common::make_string("i8")
         }
@@ -1742,23 +1742,23 @@ fn resolve_index_element_type(ctx: &mut codegen_ctx::CodegenCtx, container_ty: &
 
 /// Generates LLVM IR for an rvalue, storing result at dest.
 pub fn emit_rvalue(
-    ctx: &mut codegen_ctx::CodegenCtx,
+    ctx: &mut codegen_ctx.CodegenCtx,
     dest: &str,
-    rvalue: &mir_types::Rvalue,
+    rvalue: &mir_types.Rvalue,
 ) {
     match rvalue {
-        &mir_types::Rvalue::Use(ref operand) => {
+        &mir_types.Rvalue.Use(ref operand) => {
             let (val, ty) = emit_operand_typed(ctx, operand);
             // Skip store for unit type {} — it has zero size in LLVM
             if !str_eq(ty.as_str(), "{}") {
                 ctx.emit_store(ty.as_str(), val.as_str(), dest);
             }
         }
-        &mir_types::Rvalue::Ref { ref place, mutable: _ } => {
+        &mir_types.Rvalue.Ref { ref place, mutable: _ } => {
             let addr = emit_place_data_ptr(ctx, place);
             ctx.emit_store("ptr", addr.as_str(), dest);
         }
-        &mir_types::Rvalue::BinaryOp { op: ref bin_op, ref left, ref right } => {
+        &mir_types.Rvalue.BinaryOp { op: ref bin_op, ref left, ref right } => {
             // Get typed operands
             let (left_val, left_ty) = emit_operand_typed(ctx, left);
             let (right_val, right_ty) = emit_operand_typed(ctx, right);
@@ -1796,16 +1796,16 @@ pub fn emit_rvalue(
                 ctx.emit_store_cg(left_ty.as_str(), &result, dest);
             }
         }
-        &mir_types::Rvalue::UnaryOp { op: ref un_op, ref operand } => {
+        &mir_types.Rvalue.UnaryOp { op: ref un_op, ref operand } => {
             let (val, ty) = emit_operand_typed(ctx, operand);
             let result = emit_unop_typed(ctx, un_op, &val, ty.as_str());
             ctx.emit_store_cg(ty.as_str(), &result, dest);
         }
-        &mir_types::Rvalue::AddressOf { ref place, mutable: _ } => {
+        &mir_types.Rvalue.AddressOf { ref place, mutable: _ } => {
             let addr = emit_place_data_ptr(ctx, place);
             ctx.emit_store("ptr", addr.as_str(), dest);
         }
-        &mir_types::Rvalue::ArrayToSlice { ref array_ref, array_len } => {
+        &mir_types.Rvalue.ArrayToSlice { ref array_ref, array_len } => {
             // Convert array ref to fat pointer (ptr + len).
             // Slices are represented as { ptr, i64 } in LLVM IR.
             let arr_val = emit_operand(ctx, array_ref);
@@ -1827,7 +1827,7 @@ pub fn emit_rvalue(
             let len_val = codegen_types::format_u64(array_len);
             ctx.emit_store_str_cg("i64", len_val.as_str(), &len_field);
         }
-        &mir_types::Rvalue::ZeroInit(ref ty) => {
+        &mir_types.Rvalue.ZeroInit(ref ty) => {
             // Zero-initialize the destination
             let llvm_ty = codegen_size::type_to_llvm_with_ctx_id(ctx, *ty);
             // Skip store for unit type {} — it has zero size in LLVM
@@ -1836,15 +1836,15 @@ pub fn emit_rvalue(
                 ctx.emit_store(llvm_ty.as_str(), zero.as_str(), dest);
             }
         }
-        &mir_types::Rvalue::Cast { ref operand, ref target_ty } => {
+        &mir_types.Rvalue.Cast { ref operand, ref target_ty } => {
             // Special case: FnDef constant cast to integer. Use the raw function
             // pointer (not the fat-pointer wrapper) so that `fn as u64` gives
             // the direct function address expected by low-level APIs like thread_spawn.
             let mut handled = false;
             match operand {
-                &mir_types::Operand::Constant(ref constant) => {
+                &mir_types.Operand.Constant(ref constant) => {
                     match &constant.kind {
-                        &mir_types::ConstantKind::FnDef(ref def_id) => {
+                        &mir_types.ConstantKind.FnDef(ref def_id) => {
                             let tgt_llvm = codegen_size::type_to_llvm_with_ctx_id(ctx, *target_ty);
                             let tgt_is_int = !string_starts_with(tgt_llvm.as_str(), "ptr") &&
                                              !string_starts_with(tgt_llvm.as_str(), "{") &&
@@ -1872,24 +1872,24 @@ pub fn emit_rvalue(
                 // For Copy/Move operands, look up the local's HIR type so we get
                 // correct sign-awareness (zext for unsigned, sext for signed).
                 let src_ty_opt = match operand {
-                    &mir_types::Operand::Constant(ref constant) => Option::Some(type_intern::ty_id_to_type(constant.ty)),
-                    &mir_types::Operand::Copy(ref place) => {
+                    &mir_types.Operand.Constant(ref constant) => Option.Some(type_intern::ty_id_to_type(constant.ty)),
+                    &mir_types.Operand.Copy(ref place) => {
                         match ctx.get_local_hir_type(place.local) {
-                            Option::Some(ty_id) => Option::Some(type_intern::ty_id_to_type(ty_id)),
-                            Option::None => Option::None,
+                            Option.Some(ty_id) => Option.Some(type_intern::ty_id_to_type(ty_id)),
+                            Option.None => Option.None,
                         }
                     }
-                    &mir_types::Operand::Move(ref place) => {
+                    &mir_types.Operand.Move(ref place) => {
                         match ctx.get_local_hir_type(place.local) {
-                            Option::Some(ty_id) => Option::Some(type_intern::ty_id_to_type(ty_id)),
-                            Option::None => Option::None,
+                            Option.Some(ty_id) => Option.Some(type_intern::ty_id_to_type(ty_id)),
+                            Option.None => Option.None,
                         }
                     }
                 };
                 let target_hir_ty = type_intern::ty_id_to_type(*target_ty);
                 let result = match src_ty_opt {
-                    Option::Some(ref src_type) => emit_cast_with_types(ctx, &val, src_type, &target_hir_ty),
-                    Option::None => {
+                    Option.Some(ref src_type) => emit_cast_with_types(ctx, &val, src_type, &target_hir_ty),
+                    Option.None => {
                         // Fallback: construct approximate source type from LLVM type
                         emit_cast_from_llvm_types(ctx, &val, src_ty.as_str(), tgt_llvm.as_str())
                     }
@@ -1897,24 +1897,24 @@ pub fn emit_rvalue(
                 ctx.emit_store_cg(tgt_llvm.as_str(), &result, dest);
             }
         }
-        &mir_types::Rvalue::Aggregate { ref kind, ref operands } => {
+        &mir_types.Rvalue.Aggregate { ref kind, ref operands } => {
             emit_aggregate(ctx, dest, kind, operands);
         }
-        &mir_types::Rvalue::Len(ref place) => {
+        &mir_types.Rvalue.Len(ref place) => {
             // For slices - load the length field
             let mut ptr = emit_place_data_ptr(ctx, place);
             // Auto-deref for Ref-typed locals: the alloca (or heap slot) holds a pointer
             // to the actual data, not the data itself. Load through the pointer first.
             if place.projection.len() == 0 {
                 match ctx.get_local_hir_type(place.local) {
-                    Option::Some(ty_id) => {
+                    Option.Some(ty_id) => {
                         if type_intern::is_ref_id(ty_id) {
                             let deref = ctx.fresh_temp_cg();
                             ctx.emit_load_cg(&deref, "ptr", ptr.as_str());
                             ptr = cgname_to_string(&deref);
                         }
                     }
-                    Option::None => {}
+                    Option.None => {}
                 }
             }
             let len_ptr = ctx.fresh_temp_cg();
@@ -1926,21 +1926,21 @@ pub fn emit_rvalue(
             ctx.emit_load_cg2(&len_val, "i64", &len_ptr);
             ctx.emit_store_cg("i64", &len_val, dest);
         }
-        &mir_types::Rvalue::Discriminant(ref place) => {
+        &mir_types.Rvalue.Discriminant(ref place) => {
             // Load discriminant field of enum
             let mut ptr = emit_place_data_ptr(ctx, place);
             // Auto-deref for Ref-typed locals: the alloca (or heap slot) holds a pointer
             // to the actual enum data, not the enum itself. Load through the pointer first.
             if place.projection.len() == 0 {
                 match ctx.get_local_hir_type(place.local) {
-                    Option::Some(ty_id) => {
+                    Option.Some(ty_id) => {
                         if type_intern::is_ref_id(ty_id) {
                             let deref = ctx.fresh_temp_cg();
                             ctx.emit_load_cg(&deref, "ptr", ptr.as_str());
                             ptr = cgname_to_string(&deref);
                         }
                     }
-                    Option::None => {}
+                    Option.None => {}
                 }
             }
 
@@ -1953,32 +1953,32 @@ pub fn emit_rvalue(
 
             let place_ty_id = if place.projection.len() > 0 {
                 match walk_all_projections(ctx, place) {
-                    Option::Some(ty_id) => Option::Some(ty_id),
-                    Option::None => ctx.get_local_hir_type(place.local),
+                    Option.Some(ty_id) => Option.Some(ty_id),
+                    Option.None => ctx.get_local_hir_type(place.local),
                 }
             } else {
                 ctx.get_local_hir_type(place.local)
             };
 
             match place_ty_id {
-                Option::Some(ty_id) => {
+                Option.Some(ty_id) => {
                     // Extract the enum DefId, unwrapping through Ref/Ptr via interner.
                     let enum_def_idx = type_intern::resolve_adt_def_id_id(ty_id);
                     match enum_def_idx {
-                        Option::Some(def_idx) => {
+                        Option.Some(def_idx) => {
                             match ctx.lookup_enum(def_idx) {
-                                Option::Some(layout) => {
+                                Option.Some(layout) => {
                                     discr_ty = clone_string(&layout.discriminant_type);
                                     enum_llvm_ty = clone_string(&layout.llvm_type);
                                     found_enum = true;
                                 }
-                                Option::None => {}
+                                Option.None => {}
                             }
                         }
-                        Option::None => {}
+                        Option.None => {}
                     }
                 }
-                Option::None => {}
+                Option.None => {}
             }
 
             if found_enum {
@@ -2034,14 +2034,14 @@ fn get_zero_value(llvm_ty: &str) -> String {
 
 /// Emits a cast based only on LLVM type strings.
 fn emit_cast_from_llvm_types(
-    ctx: &mut codegen_ctx::CodegenCtx,
+    ctx: &mut codegen_ctx.CodegenCtx,
     val: &String,
     src_ty: &str,
     tgt_ty: &str,
-) -> codegen_ctx::CgName {
+) -> codegen_ctx.CgName {
     // Quick check: if same type, just return value
     if string_eq_str(src_ty, tgt_ty) {
-        return codegen_ctx::CgName::Str(clone_string(val));
+        return codegen_ctx.CgName.Str(clone_string(val));
     }
 
     let result = ctx.fresh_temp_cg();
@@ -2062,7 +2062,7 @@ fn emit_cast_from_llvm_types(
         } else if tgt_size > src_size {
             ctx.emit_cast_cg(&result, "fpext", src_ty, val.as_str(), tgt_ty);
         } else {
-            return codegen_ctx::CgName::Str(clone_string(val));
+            return codegen_ctx.CgName.Str(clone_string(val));
         }
     } else if !src_is_float && tgt_is_float {
         // Int to float (default signed)
@@ -2109,7 +2109,7 @@ fn emit_cast_from_llvm_types(
             // Default to sign extend
             ctx.emit_cast_cg(&result, "sext", src_ty, val.as_str(), tgt_ty);
         } else {
-            return codegen_ctx::CgName::Str(clone_string(val));
+            return codegen_ctx.CgName.Str(clone_string(val));
         }
     }
 
@@ -2220,7 +2220,7 @@ fn extract_first_field_type(struct_ty: &str) -> String {
         end -= 1;
     }
     if end > start {
-        let mut result = String::new();
+        let mut result = String.new();
         let mut j: usize = start;
         while j < end {
             result.push(bytes[j] as char);
@@ -2285,11 +2285,11 @@ fn string_eq_str(s: &str, other: &str) -> bool {
 /// Emits a binary operation, returning the result value.
 /// Uses i64 as the default type and assumes signed (legacy behavior).
 fn emit_binop(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    bin_op: &mir_types::MirBinOp,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    bin_op: &mir_types.MirBinOp,
     left: &String,
     right: &String,
-) -> codegen_ctx::CgName {
+) -> codegen_ctx.CgName {
     emit_binop_typed(ctx, bin_op, left, right, "i64", true)
 }
 
@@ -2298,13 +2298,13 @@ fn emit_binop(
 /// The `signed` parameter indicates whether the operands are signed integers
 /// (used for choosing sdiv vs udiv, srem vs urem, slt vs ult, etc.).
 pub fn emit_binop_typed(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    bin_op: &mir_types::MirBinOp,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    bin_op: &mir_types.MirBinOp,
     left: &String,
     right: &String,
     llvm_ty: &str,
     signed: bool,
-) -> codegen_ctx::CgName {
+) -> codegen_ctx.CgName {
     // If the type is an aggregate (struct), extract the first field for comparison.
     // LLVM icmp/binops don't work on aggregate types.
     let ty_bytes = llvm_ty.as_bytes();
@@ -2342,116 +2342,116 @@ pub fn emit_binop_typed(
     if is_float {
         // Floating-point operations
         match bin_op {
-            &mir_types::MirBinOp::Add => ctx.emit_binop_cg(&result, "fadd", llvm_ty, l, r),
-            &mir_types::MirBinOp::Sub => ctx.emit_binop_cg(&result, "fsub", llvm_ty, l, r),
-            &mir_types::MirBinOp::Mul => ctx.emit_binop_cg(&result, "fmul", llvm_ty, l, r),
-            &mir_types::MirBinOp::Div => ctx.emit_binop_cg(&result, "fdiv", llvm_ty, l, r),
-            &mir_types::MirBinOp::Rem => ctx.emit_binop_cg(&result, "frem", llvm_ty, l, r),
+            &mir_types.MirBinOp.Add => ctx.emit_binop_cg(&result, "fadd", llvm_ty, l, r),
+            &mir_types.MirBinOp.Sub => ctx.emit_binop_cg(&result, "fsub", llvm_ty, l, r),
+            &mir_types.MirBinOp.Mul => ctx.emit_binop_cg(&result, "fmul", llvm_ty, l, r),
+            &mir_types.MirBinOp.Div => ctx.emit_binop_cg(&result, "fdiv", llvm_ty, l, r),
+            &mir_types.MirBinOp.Rem => ctx.emit_binop_cg(&result, "frem", llvm_ty, l, r),
             // Floating-point comparisons use ordered comparisons (NaN returns false)
-            &mir_types::MirBinOp::Eq => ctx.emit_fcmp_cg(&result, "oeq", llvm_ty, l, r),
-            &mir_types::MirBinOp::Ne => ctx.emit_fcmp_cg(&result, "one", llvm_ty, l, r),
-            &mir_types::MirBinOp::Lt => ctx.emit_fcmp_cg(&result, "olt", llvm_ty, l, r),
-            &mir_types::MirBinOp::Le => ctx.emit_fcmp_cg(&result, "ole", llvm_ty, l, r),
-            &mir_types::MirBinOp::Gt => ctx.emit_fcmp_cg(&result, "ogt", llvm_ty, l, r),
-            &mir_types::MirBinOp::Ge => ctx.emit_fcmp_cg(&result, "oge", llvm_ty, l, r),
+            &mir_types.MirBinOp.Eq => ctx.emit_fcmp_cg(&result, "oeq", llvm_ty, l, r),
+            &mir_types.MirBinOp.Ne => ctx.emit_fcmp_cg(&result, "one", llvm_ty, l, r),
+            &mir_types.MirBinOp.Lt => ctx.emit_fcmp_cg(&result, "olt", llvm_ty, l, r),
+            &mir_types.MirBinOp.Le => ctx.emit_fcmp_cg(&result, "ole", llvm_ty, l, r),
+            &mir_types.MirBinOp.Gt => ctx.emit_fcmp_cg(&result, "ogt", llvm_ty, l, r),
+            &mir_types.MirBinOp.Ge => ctx.emit_fcmp_cg(&result, "oge", llvm_ty, l, r),
             // Bitwise operations don't apply to floats - emit error
-            &mir_types::MirBinOp::BitAnd => {
+            &mir_types.MirBinOp.BitAnd => {
                 ctx.codegen_error_with_note(
-                    codegen_ctx::CodegenErrorKind::UnsupportedOperation,
+                    codegen_ctx.CodegenErrorKind.UnsupportedOperation,
                     common::make_string("bitwise AND on float type"),
                     common::make_string("bitwise operations require integer operands; cast to integer first"),
                 );
                 ctx.write("    ; ERROR: bitwise AND on float\n");
                 ctx.emit_binop_cg(&result, "fadd", llvm_ty, l, "0.0");
             }
-            &mir_types::MirBinOp::BitOr => {
+            &mir_types.MirBinOp.BitOr => {
                 ctx.codegen_error_with_note(
-                    codegen_ctx::CodegenErrorKind::UnsupportedOperation,
+                    codegen_ctx.CodegenErrorKind.UnsupportedOperation,
                     common::make_string("bitwise OR on float type"),
                     common::make_string("bitwise operations require integer operands; cast to integer first"),
                 );
                 ctx.write("    ; ERROR: bitwise OR on float\n");
                 ctx.emit_binop_cg(&result, "fadd", llvm_ty, l, "0.0");
             }
-            &mir_types::MirBinOp::BitXor => {
+            &mir_types.MirBinOp.BitXor => {
                 ctx.codegen_error_with_note(
-                    codegen_ctx::CodegenErrorKind::UnsupportedOperation,
+                    codegen_ctx.CodegenErrorKind.UnsupportedOperation,
                     common::make_string("bitwise XOR on float type"),
                     common::make_string("bitwise operations require integer operands; cast to integer first"),
                 );
                 ctx.write("    ; ERROR: bitwise XOR on float\n");
                 ctx.emit_binop_cg(&result, "fadd", llvm_ty, l, "0.0");
             }
-            &mir_types::MirBinOp::Shl => {
+            &mir_types.MirBinOp.Shl => {
                 ctx.write("    ; ERROR: shift left on float\n");
                 ctx.emit_binop_cg(&result, "fadd", llvm_ty, l, "0.0");
             }
-            &mir_types::MirBinOp::Shr => {
+            &mir_types.MirBinOp.Shr => {
                 ctx.write("    ; ERROR: shift right on float\n");
                 ctx.emit_binop_cg(&result, "fadd", llvm_ty, l, "0.0");
             }
             // Checked operations - floats don't have overflow, treat as unchecked
-            &mir_types::MirBinOp::AddChecked => ctx.emit_binop_cg(&result, "fadd", llvm_ty, l, r),
-            &mir_types::MirBinOp::SubChecked => ctx.emit_binop_cg(&result, "fsub", llvm_ty, l, r),
-            &mir_types::MirBinOp::MulChecked => ctx.emit_binop_cg(&result, "fmul", llvm_ty, l, r),
+            &mir_types.MirBinOp.AddChecked => ctx.emit_binop_cg(&result, "fadd", llvm_ty, l, r),
+            &mir_types.MirBinOp.SubChecked => ctx.emit_binop_cg(&result, "fsub", llvm_ty, l, r),
+            &mir_types.MirBinOp.MulChecked => ctx.emit_binop_cg(&result, "fmul", llvm_ty, l, r),
         }
     } else {
         // Integer operations with correct signedness
         let is_unsigned = !signed;
 
         match bin_op {
-            &mir_types::MirBinOp::Add => ctx.emit_binop_cg(&result, "add", llvm_ty, l, r),
-            &mir_types::MirBinOp::Sub => ctx.emit_binop_cg(&result, "sub", llvm_ty, l, r),
-            &mir_types::MirBinOp::Mul => ctx.emit_binop_cg(&result, "mul", llvm_ty, l, r),
-            &mir_types::MirBinOp::Div => {
+            &mir_types.MirBinOp.Add => ctx.emit_binop_cg(&result, "add", llvm_ty, l, r),
+            &mir_types.MirBinOp.Sub => ctx.emit_binop_cg(&result, "sub", llvm_ty, l, r),
+            &mir_types.MirBinOp.Mul => ctx.emit_binop_cg(&result, "mul", llvm_ty, l, r),
+            &mir_types.MirBinOp.Div => {
                 if is_unsigned {
                     ctx.emit_binop_cg(&result, "udiv", llvm_ty, l, r);
                 } else {
                     ctx.emit_binop_cg(&result, "sdiv", llvm_ty, l, r);
                 }
             }
-            &mir_types::MirBinOp::Rem => {
+            &mir_types.MirBinOp.Rem => {
                 if is_unsigned {
                     ctx.emit_binop_cg(&result, "urem", llvm_ty, l, r);
                 } else {
                     ctx.emit_binop_cg(&result, "srem", llvm_ty, l, r);
                 }
             }
-            &mir_types::MirBinOp::BitAnd => ctx.emit_binop_cg(&result, "and", llvm_ty, l, r),
-            &mir_types::MirBinOp::BitOr => ctx.emit_binop_cg(&result, "or", llvm_ty, l, r),
-            &mir_types::MirBinOp::BitXor => ctx.emit_binop_cg(&result, "xor", llvm_ty, l, r),
-            &mir_types::MirBinOp::Shl => ctx.emit_binop_cg(&result, "shl", llvm_ty, l, r),
-            &mir_types::MirBinOp::Shr => {
+            &mir_types.MirBinOp.BitAnd => ctx.emit_binop_cg(&result, "and", llvm_ty, l, r),
+            &mir_types.MirBinOp.BitOr => ctx.emit_binop_cg(&result, "or", llvm_ty, l, r),
+            &mir_types.MirBinOp.BitXor => ctx.emit_binop_cg(&result, "xor", llvm_ty, l, r),
+            &mir_types.MirBinOp.Shl => ctx.emit_binop_cg(&result, "shl", llvm_ty, l, r),
+            &mir_types.MirBinOp.Shr => {
                 if is_unsigned {
                     ctx.emit_binop_cg(&result, "lshr", llvm_ty, l, r);
                 } else {
                     ctx.emit_binop_cg(&result, "ashr", llvm_ty, l, r);
                 }
             }
-            &mir_types::MirBinOp::Eq => ctx.emit_icmp_cg(&result, "eq", llvm_ty, l, r),
-            &mir_types::MirBinOp::Ne => ctx.emit_icmp_cg(&result, "ne", llvm_ty, l, r),
-            &mir_types::MirBinOp::Lt => {
+            &mir_types.MirBinOp.Eq => ctx.emit_icmp_cg(&result, "eq", llvm_ty, l, r),
+            &mir_types.MirBinOp.Ne => ctx.emit_icmp_cg(&result, "ne", llvm_ty, l, r),
+            &mir_types.MirBinOp.Lt => {
                 if is_unsigned {
                     ctx.emit_icmp_cg(&result, "ult", llvm_ty, l, r);
                 } else {
                     ctx.emit_icmp_cg(&result, "slt", llvm_ty, l, r);
                 }
             }
-            &mir_types::MirBinOp::Le => {
+            &mir_types.MirBinOp.Le => {
                 if is_unsigned {
                     ctx.emit_icmp_cg(&result, "ule", llvm_ty, l, r);
                 } else {
                     ctx.emit_icmp_cg(&result, "sle", llvm_ty, l, r);
                 }
             }
-            &mir_types::MirBinOp::Gt => {
+            &mir_types.MirBinOp.Gt => {
                 if is_unsigned {
                     ctx.emit_icmp_cg(&result, "ugt", llvm_ty, l, r);
                 } else {
                     ctx.emit_icmp_cg(&result, "sgt", llvm_ty, l, r);
                 }
             }
-            &mir_types::MirBinOp::Ge => {
+            &mir_types.MirBinOp.Ge => {
                 if is_unsigned {
                     ctx.emit_icmp_cg(&result, "uge", llvm_ty, l, r);
                 } else {
@@ -2459,21 +2459,21 @@ pub fn emit_binop_typed(
                 }
             }
             // Checked operations - use LLVM overflow intrinsics and trap on overflow
-            &mir_types::MirBinOp::AddChecked => {
+            &mir_types.MirBinOp.AddChecked => {
                 if is_unsigned {
                     emit_checked_binop(ctx, &result, "uadd", llvm_ty, l, r);
                 } else {
                     emit_checked_binop(ctx, &result, "sadd", llvm_ty, l, r);
                 }
             }
-            &mir_types::MirBinOp::SubChecked => {
+            &mir_types.MirBinOp.SubChecked => {
                 if is_unsigned {
                     emit_checked_binop(ctx, &result, "usub", llvm_ty, l, r);
                 } else {
                     emit_checked_binop(ctx, &result, "ssub", llvm_ty, l, r);
                 }
             }
-            &mir_types::MirBinOp::MulChecked => {
+            &mir_types.MirBinOp.MulChecked => {
                 if is_unsigned {
                     emit_checked_binop(ctx, &result, "umul", llvm_ty, l, r);
                 } else {
@@ -2492,8 +2492,8 @@ pub fn emit_binop_typed(
 /// Uses intrinsics like @llvm.sadd.with.overflow.i64, @llvm.ssub.with.overflow.i64, etc.
 /// These return { iN, i1 } where the second element is the overflow flag.
 fn emit_checked_binop(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    result: &codegen_ctx::CgName,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    result: &codegen_ctx.CgName,
     intrinsic_base: &str,
     llvm_ty: &str,
     left: &str,
@@ -2582,17 +2582,17 @@ fn string_starts_with(s: &str, prefix: &str) -> bool {
 /// Determines whether an operand is signed, using local signedness tracking
 /// for Copy/Move operands and HIR type info for constants.
 fn operand_is_signed(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    operand: &mir_types::Operand,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    operand: &mir_types.Operand,
 ) -> bool {
     match operand {
-        &mir_types::Operand::Copy(ref place) => {
+        &mir_types.Operand.Copy(ref place) => {
             ctx.is_local_signed(place.local)
         }
-        &mir_types::Operand::Move(ref place) => {
+        &mir_types.Operand.Move(ref place) => {
             ctx.is_local_signed(place.local)
         }
-        &mir_types::Operand::Constant(ref constant) => {
+        &mir_types.Operand.Constant(ref constant) => {
             let const_hir_ty = type_intern::ty_id_to_type(constant.ty);
             codegen_types::is_signed(&const_hir_ty)
         }
@@ -2601,21 +2601,21 @@ fn operand_is_signed(
 
 /// Emits a unary operation, returning the result value.
 fn emit_unop(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    un_op: &mir_types::MirUnOp,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    un_op: &mir_types.MirUnOp,
     operand: &String,
-) -> codegen_ctx::CgName {
+) -> codegen_ctx.CgName {
     emit_unop_typed(ctx, un_op, operand, "i64")
 }
 
 /// Emits a unary operation with explicit type, returning the result value.
 /// Handles both integer and floating-point operations.
 fn emit_unop_typed(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    un_op: &mir_types::MirUnOp,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    un_op: &mir_types.MirUnOp,
     operand: &String,
     llvm_ty: &str,
-) -> codegen_ctx::CgName {
+) -> codegen_ctx.CgName {
     let result = ctx.fresh_temp_cg();
     let v = operand.as_str();
 
@@ -2623,7 +2623,7 @@ fn emit_unop_typed(
     let is_float = string_starts_with(llvm_ty, "float") || string_starts_with(llvm_ty, "double");
 
     match un_op {
-        &mir_types::MirUnOp::Neg => {
+        &mir_types.MirUnOp.Neg => {
             if is_float {
                 // fneg is a unary op: %res = fneg <ty> <val>
                 ctx.write_indent();
@@ -2637,11 +2637,11 @@ fn emit_unop_typed(
                 ctx.emit_binop_cg(&result, "sub", llvm_ty, "0", v);
             }
         }
-        &mir_types::MirUnOp::Not => {
+        &mir_types.MirUnOp.Not => {
             if is_float {
                 // Not doesn't make sense for floats - emit error
                 ctx.codegen_error_with_note(
-                    codegen_ctx::CodegenErrorKind::UnsupportedOperation,
+                    codegen_ctx.CodegenErrorKind.UnsupportedOperation,
                     common::make_string("bitwise NOT on float type"),
                     common::make_string("bitwise operations require integer operands; cast to integer first"),
                 );
@@ -2659,11 +2659,11 @@ fn emit_unop_typed(
 /// Emits a cast operation, returning the result value.
 /// Takes the source type and target type to determine the correct cast instruction.
 fn emit_cast_with_types(
-    ctx: &mut codegen_ctx::CodegenCtx,
+    ctx: &mut codegen_ctx.CodegenCtx,
     val: &String,
-    source_ty: &hir_ty::Type,
-    target_ty: &hir_ty::Type,
-) -> codegen_ctx::CgName {
+    source_ty: &hir_ty.Type,
+    target_ty: &hir_ty.Type,
+) -> codegen_ctx.CgName {
     let src_llvm = ctx.type_to_llvm_with_ctx(source_ty);
     let tgt_llvm = ctx.type_to_llvm_with_ctx(target_ty);
     let result = ctx.fresh_temp_cg();
@@ -2692,7 +2692,7 @@ fn emit_cast_with_types(
             }
         } else {
             // Same size - bitcast or just copy
-            return codegen_ctx::CgName::Str(clone_string(val));
+            return codegen_ctx.CgName.Str(clone_string(val));
         }
     } else if src_is_float && tgt_is_float {
         // Float to float cast
@@ -2701,7 +2701,7 @@ fn emit_cast_with_types(
         } else if tgt_size > src_size {
             ctx.emit_cast_cg(&result, "fpext", src_llvm.as_str(), val.as_str(), tgt_llvm.as_str());
         } else {
-            return codegen_ctx::CgName::Str(clone_string(val));
+            return codegen_ctx.CgName.Str(clone_string(val));
         }
     } else if src_is_int && tgt_is_float {
         // Integer to float
@@ -2758,11 +2758,11 @@ fn emit_cast_with_types(
             ctx.write(", 0\n");
         } else if src_is_fat {
             // Fat pointer to fat pointer: just copy
-            return codegen_ctx::CgName::Str(clone_string(val));
+            return codegen_ctx.CgName.Str(clone_string(val));
         } else {
             // Thin pointer to pointer: bitcast or just copy if same
             if string_eq_str(src_llvm.as_str(), tgt_llvm.as_str()) {
-                return codegen_ctx::CgName::Str(clone_string(val));
+                return codegen_ctx.CgName.Str(clone_string(val));
             } else {
                 ctx.emit_cast_cg(&result, "bitcast", src_llvm.as_str(), val.as_str(), tgt_llvm.as_str());
             }
@@ -2779,17 +2779,17 @@ fn emit_cast_with_types(
 
 /// Gets the LLVM type string for an operand without emitting any IR.
 fn operand_llvm_type(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    operand: &mir_types::Operand,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    operand: &mir_types.Operand,
 ) -> String {
     match operand {
-        &mir_types::Operand::Copy(ref place) => {
+        &mir_types.Operand.Copy(ref place) => {
             ctx.get_local_type(place.local)
         }
-        &mir_types::Operand::Move(ref place) => {
+        &mir_types.Operand.Move(ref place) => {
             ctx.get_local_type(place.local)
         }
-        &mir_types::Operand::Constant(ref constant) => {
+        &mir_types.Operand.Constant(ref constant) => {
             codegen_size::type_to_llvm_with_ctx_id(ctx, constant.ty)
         }
     }
@@ -2798,8 +2798,8 @@ fn operand_llvm_type(
 /// Builds an LLVM struct type string from operand types (for tuples, records, closures).
 /// Returns e.g. "{ i32, i64, ptr }".
 fn build_tuple_llvm_type(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    operands: &Vec<mir_types::Operand>,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    operands: &Vec<mir_types.Operand>,
 ) -> String {
     let mut result = common::make_string("{ ");
     for i in 0usize..operands.len() {
@@ -2832,20 +2832,20 @@ fn llvm_type_size_estimate(ty: &str) -> u64 {
 
 /// Emits an ADT aggregate (struct or enum variant) using the ADT registry.
 fn emit_aggregate_adt(
-    ctx: &mut codegen_ctx::CodegenCtx,
+    ctx: &mut codegen_ctx.CodegenCtx,
     dest: &str,
     def_id: u32,
     variant_idx: u32,
-    operands: &Vec<mir_types::Operand>,
-    type_args: &Vec<hir_ty::Type>,
+    operands: &Vec<mir_types.Operand>,
+    type_args: &Vec<hir_ty.Type>,
 ) {
     // Try struct first
     match ctx.lookup_struct(def_id) {
-        Option::Some(layout) => {
+        Option.Some(layout) => {
             // Check if any field has an unresolved Param/Infer HIR type
             let has_params = layout_has_param_fields(layout);
             // Collect base field types from registry
-            let mut field_types: Vec<String> = Vec::new();
+            let mut field_types: Vec<String> = Vec.new();
             for fi in 0usize..layout.fields.len() {
                 field_types.push(clone_string(&layout.fields[fi].llvm_type));
             }
@@ -2856,10 +2856,10 @@ fn emit_aggregate_adt(
                 let mut param_idx: usize = 0;
                 for fj in 0usize..layout.fields.len() {
                     let is_param = match &layout.fields[fj].hir_type {
-                        &Option::Some(ht_id) => {
+                        &Option.Some(ht_id) => {
                             type_intern::is_param_or_infer_id(ht_id)
                         }
-                        &Option::None => false,
+                        &Option.None => false,
                     };
                     if is_param && param_idx < type_args.len() {
                         field_types[fj] = codegen_types::type_to_llvm(&type_args[param_idx]);
@@ -2945,16 +2945,16 @@ fn emit_aggregate_adt(
             }
             return;
         }
-        Option::None => {}
+        Option.None => {}
     }
     // Try enum
     match ctx.lookup_enum(def_id) {
-        Option::Some(layout) => {
+        Option.Some(layout) => {
             let enum_ty = clone_string(&layout.llvm_type);
             let discr_ty = clone_string(&layout.discriminant_type);
             // Find the variant's payload type and field types
             let mut payload_ty = common::make_string("{}");
-            let mut variant_field_types: Vec<String> = Vec::new();
+            let mut variant_field_types: Vec<String> = Vec.new();
             for vi in 0usize..layout.variants.len() {
                 if layout.variants[vi].variant_idx == variant_idx {
                     payload_ty = clone_string(&layout.variants[vi].payload_llvm_type);
@@ -3034,12 +3034,12 @@ fn emit_aggregate_adt(
             }
             return;
         }
-        Option::None => {}
+        Option.None => {}
     }
     // Fallback: ADT not in registry (builtin generic enum like Option<T>, Result<T,E>).
     // Emit as enum: store i32 discriminant, then payload at alignment-correct offset.
-    let mut vals: Vec<String> = Vec::new();
-    let mut tys: Vec<String> = Vec::new();
+    let mut vals: Vec<String> = Vec.new();
+    let mut tys: Vec<String> = Vec.new();
     for k in 0usize..operands.len() {
         let typed = emit_operand_typed(ctx, &operands[k]);
         vals.push(typed.0);
@@ -3085,15 +3085,15 @@ fn emit_aggregate_adt(
 }
 
 /// Checks if any field in a struct layout has a Param or Infer HIR type.
-fn layout_has_param_fields(layout: &codegen_ctx::StructLayout) -> bool {
+fn layout_has_param_fields(layout: &codegen_ctx.StructLayout) -> bool {
     for i in 0usize..layout.fields.len() {
         match &layout.fields[i].hir_type {
-            &Option::Some(ht_id) => {
+            &Option.Some(ht_id) => {
                 if type_intern::is_param_or_infer_id(ht_id) {
                     return true;
                 }
             }
-            &Option::None => {}
+            &Option.None => {}
         }
     }
     false
@@ -3101,13 +3101,13 @@ fn layout_has_param_fields(layout: &codegen_ctx::StructLayout) -> bool {
 
 /// Emits an aggregate construction.
 fn emit_aggregate(
-    ctx: &mut codegen_ctx::CodegenCtx,
+    ctx: &mut codegen_ctx.CodegenCtx,
     dest: &str,
-    kind: &mir_types::AggregateKind,
-    operands: &Vec<mir_types::Operand>,
+    kind: &mir_types.AggregateKind,
+    operands: &Vec<mir_types.Operand>,
 ) {
     match kind {
-        &mir_types::AggregateKind::Tuple => {
+        &mir_types.AggregateKind.Tuple => {
             // Build the tuple LLVM type from operand types
             let tuple_llvm = build_tuple_llvm_type(ctx, operands);
             for i in 0usize..operands.len() {
@@ -3122,7 +3122,7 @@ fn emit_aggregate(
                 ctx.emit_store_str_cg(field_ty.as_str(), field_val.as_str(), &field_ptr);
             }
         }
-        &mir_types::AggregateKind::Array(ref elem_ty) => {
+        &mir_types.AggregateKind.Array(ref elem_ty) => {
             let mut elem_llvm = codegen_size::type_to_llvm_with_ctx_id(ctx, *elem_ty);
             // If the element type is unresolved (Infer → i64 fallback), use
             // the actual type from the first operand instead.
@@ -3146,16 +3146,16 @@ fn emit_aggregate(
                 ctx.emit_store_str_cg(elem_llvm.as_str(), elem_val.as_str(), &elem_ptr);
             }
         }
-        &mir_types::AggregateKind::Adt { ref def_id, variant_idx, ref type_args } => {
-            // Convert TyId type_args to hir_ty::Type for emit_aggregate_adt
-            let mut hir_type_args: Vec<hir_ty::Type> = Vec::new();
+        &mir_types.AggregateKind.Adt { ref def_id, variant_idx, ref type_args } => {
+            // Convert TyId type_args to hir_ty.Type for emit_aggregate_adt
+            let mut hir_type_args: Vec<hir_ty.Type> = Vec.new();
             for ta in 0usize..type_args.len() {
                 hir_type_args.push(type_intern::ty_id_to_type(type_args[ta]));
             }
             // Look up the ADT in the registry to determine if it's a struct or enum
             emit_aggregate_adt(ctx, dest, def_id.index, variant_idx, operands, &hir_type_args);
         }
-        &mir_types::AggregateKind::Record => {
+        &mir_types.AggregateKind.Record => {
             // Extensible records - store fields with actual types
             let record_llvm = build_tuple_llvm_type(ctx, operands);
             for i in 0usize..operands.len() {
@@ -3170,7 +3170,7 @@ fn emit_aggregate(
                 ctx.emit_store_str_cg(field_ty.as_str(), field_val.as_str(), &field_ptr);
             }
         }
-        &mir_types::AggregateKind::Closure { ref def_id } => {
+        &mir_types.AggregateKind.Closure { ref def_id } => {
             // Closures: construct { ptr fn_ptr, ptr env_ptr } fat pointer
             // Build closure function name from def_id
             let mut closure_fn_name = common::make_string("blood_closure_");
@@ -3217,7 +3217,7 @@ fn emit_aggregate(
 
                 // Allocate env struct on heap: %alloc_i64 = call i64 @alloc(i64 size)
                 let alloc_i64 = ctx.fresh_temp_cg();
-                ctx.begin_call(Option::Some(&alloc_i64), "i64", "@alloc");
+                ctx.begin_call(Option.Some(&alloc_i64), "i64", "@alloc");
                 ctx.call_arg_str(true, "i64", size_str.as_str());
                 ctx.end_call();
 
@@ -3258,7 +3258,7 @@ fn emit_aggregate(
                 ctx.emit_store("{ ptr, ptr }", ins2_str.as_str(), dest);
             }
         }
-        &mir_types::AggregateKind::Range { ref element, inclusive: _ } => {
+        &mir_types.AggregateKind.Range { ref element, inclusive: _ } => {
             // Ranges: store start and end with element type
             let elem_llvm = codegen_size::type_to_llvm_with_ctx_id(ctx, *element);
             // Range struct is { elem_type, elem_type } (start, end)
@@ -3290,39 +3290,39 @@ fn emit_aggregate(
 
 /// Clones a String.
 fn clone_string(s: &String) -> String {
-    let mut result = String::new();
+    let mut result = String.new();
     result.push_str(s.as_str());
     result
 }
 
 /// Converts a CgName to String for use at boundaries where String is required.
-fn cgname_to_string(name: &codegen_ctx::CgName) -> String {
+fn cgname_to_string(name: &codegen_ctx.CgName) -> String {
     match name {
-        &codegen_ctx::CgName::Temp(n) => {
+        &codegen_ctx.CgName.Temp(n) => {
             let mut s = common::make_string("%tmp");
             let ns = codegen_types::format_u64(n as u64);
             s.push_str(ns.as_str());
             s
         }
-        &codegen_ctx::CgName::Local(n) => {
+        &codegen_ctx.CgName.Local(n) => {
             let mut s = common::make_string("%_");
             let ns = codegen_types::format_u64(n as u64);
             s.push_str(ns.as_str());
             s
         }
-        &codegen_ctx::CgName::Label(n) => {
+        &codegen_ctx.CgName.Label(n) => {
             let mut s = common::make_string("label");
             let ns = codegen_types::format_u64(n as u64);
             s.push_str(ns.as_str());
             s
         }
-        &codegen_ctx::CgName::Block(n) => {
+        &codegen_ctx.CgName.Block(n) => {
             let mut s = common::make_string("bb");
             let ns = codegen_types::format_u64(n as u64);
             s.push_str(ns.as_str());
             s
         }
-        &codegen_ctx::CgName::Str(ref s) => {
+        &codegen_ctx.CgName.Str(ref s) => {
             clone_string(s)
         }
     }

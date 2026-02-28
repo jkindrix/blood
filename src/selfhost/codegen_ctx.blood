@@ -46,7 +46,7 @@ pub struct CodegenNote {
     /// The note message.
     pub message: String,
     /// Optional source span for the note.
-    pub span: Option<common::Span>,
+    pub span: Option<common.Span>,
 }
 
 impl CodegenNote {
@@ -54,15 +54,15 @@ impl CodegenNote {
     pub fn new(message: String) -> CodegenNote {
         CodegenNote {
             message: message,
-            span: Option::None,
+            span: Option.None,
         }
     }
 
     /// Creates a note with a source span.
-    pub fn with_span(message: String, span: common::Span) -> CodegenNote {
+    pub fn with_span(message: String, span: common.Span) -> CodegenNote {
         CodegenNote {
             message: message,
-            span: Option::Some(span),
+            span: Option.Some(span),
         }
     }
 }
@@ -76,7 +76,7 @@ pub struct CodegenError {
     /// The function being generated when the error occurred (if known).
     pub fn_name: Option<String>,
     /// Source span where the error occurred (if known).
-    pub span: Option<common::Span>,
+    pub span: Option<common.Span>,
     /// Additional contextual notes.
     pub notes: Vec<CodegenNote>,
 }
@@ -87,9 +87,9 @@ impl CodegenError {
         CodegenError {
             kind: kind,
             message: message,
-            fn_name: Option::None,
-            span: Option::None,
-            notes: Vec::new(),
+            fn_name: Option.None,
+            span: Option.None,
+            notes: Vec.new(),
         }
     }
 
@@ -98,9 +98,9 @@ impl CodegenError {
         CodegenError {
             kind: kind,
             message: message,
-            fn_name: Option::Some(fn_name),
-            span: Option::None,
-            notes: Vec::new(),
+            fn_name: Option.Some(fn_name),
+            span: Option.None,
+            notes: Vec.new(),
         }
     }
 }
@@ -134,7 +134,7 @@ pub struct AdtFieldInfo {
     /// The LLVM type string for this field (e.g., "i32", "ptr", "{ i32, i64 }").
     pub llvm_type: String,
     /// The HIR type for this field, if known (interned). Used for computing element sizes during indexing.
-    pub hir_type: Option<type_intern::TyId>,
+    pub hir_type: Option<type_intern.TyId>,
 }
 
 /// Layout of a struct type.
@@ -215,36 +215,36 @@ pub struct CodegenCtx {
     pub adt_registry: Vec<AdtEntry>,
     // Hash indexes for O(1) lookups
     /// Hash index for def_names: def_id -> index in def_names vec
-    def_names_hash: hashmap::HashMapU64U32,
+    def_names_hash: hashmap.HashMapU64U32,
     /// Hash index for local_names: local_id -> index in local_names vec
-    local_names_hash: hashmap::HashMapU64U32,
+    local_names_hash: hashmap.HashMapU64U32,
     /// Hash index for local_types: local_id -> index in local_types vec
-    local_types_hash: hashmap::HashMapU64U32,
+    local_types_hash: hashmap.HashMapU64U32,
     /// Hash index for local_signedness: local_id -> index in local_signedness vec
-    local_signedness_hash: hashmap::HashMapU64U32,
+    local_signedness_hash: hashmap.HashMapU64U32,
     /// Hash index for local_hir_types: local_id -> index in local_hir_types vec
-    local_hir_types_hash: hashmap::HashMapU64U32,
+    local_hir_types_hash: hashmap.HashMapU64U32,
     /// Hash set for region_locals: local_id -> 1 if present
-    region_locals_hash: hashmap::HashMapU64U32,
+    region_locals_hash: hashmap.HashMapU64U32,
     /// Hash set for persistent_locals: local_id -> 1 if present
-    persistent_locals_hash: hashmap::HashMapU64U32,
+    persistent_locals_hash: hashmap.HashMapU64U32,
     /// Hash index for generation allocas: local_id -> index in local_generations vec
-    local_generations_hash: hashmap::HashMapU64U32,
+    local_generations_hash: hashmap.HashMapU64U32,
     /// Generation alloca SSA names for region-allocated locals.
     local_generations: Vec<LocalGeneration>,
     /// Hash index for string_table: string content hash -> index in string_table vec
-    string_table_hash: hashmap::HashMapU64U32,
+    string_table_hash: hashmap.HashMapU64U32,
     /// Hash set for static def_ids: def_id -> 1 if static
-    static_defs_hash: hashmap::HashMapU64U32,
+    static_defs_hash: hashmap.HashMapU64U32,
     /// LLVM types for static variables: def_id -> index in static_types vec
-    static_types_hash: hashmap::HashMapU64U32,
+    static_types_hash: hashmap.HashMapU64U32,
     /// LLVM type strings for static variables.
     static_types: Vec<String>,
     /// Hash set for const def_ids: def_id -> 1 if const
-    const_defs_hash: hashmap::HashMapU64U32,
+    const_defs_hash: hashmap.HashMapU64U32,
     /// Function signatures for generic call fixup: def_id -> index in fn_signatures vec
     fn_signatures: Vec<FnSigEntry>,
-    fn_sigs_hash: hashmap::HashMapU64U32,
+    fn_sigs_hash: hashmap.HashMapU64U32,
     /// Write buffer for batching file I/O during streaming codegen.
     write_buffer: String,
     /// Output file path for streaming codegen.
@@ -254,18 +254,18 @@ pub struct CodegenCtx {
     /// Per-function call remapping for trait default methods.
     /// When generating a default method body, calls to trait abstract method
     /// DefIds are redirected to concrete impl method DefIds.
-    pub call_remaps: Vec<common::CallRemapEntry>,
+    pub call_remaps: Vec<common.CallRemapEntry>,
     /// Mapping from handler DefId to effect DefId for evidence API calls.
     /// Vec entries allow iteration for cloning; hash for O(1) lookup.
     pub handler_effect_entries: Vec<HandlerEffectEntry>,
-    handler_effect_hash: hashmap::HashMapU64U32,
+    handler_effect_hash: hashmap.HashMapU64U32,
     /// Mapping from handler DefId to state field count.
     /// Used during PushHandler codegen to determine if handler is truly stateless.
-    handler_state_count_hash: hashmap::HashMapU64U32,
+    handler_state_count_hash: hashmap.HashMapU64U32,
     /// Mapping from handler DefId to total state byte size.
     /// Used during PushHandler codegen to allocate correctly-sized state shadow allocas.
     /// Accounts for aggregate types like String (24 bytes) that need more than 8 bytes.
-    handler_state_byte_size_hash: hashmap::HashMapU64U32,
+    handler_state_byte_size_hash: hashmap.HashMapU64U32,
     /// Whether the current function being generated is a handler op body.
     /// When true, Resume terminators emit `ret i64` instead of blood_resume calls.
     pub is_handler_op: bool,
@@ -282,12 +282,12 @@ pub struct CodegenCtx {
     /// When > 1, locals 2..1+count are state fields accessed via GEP into the state pointer.
     pub handler_op_state_field_count: u32,
     /// Hash set of handler op body DefIds.  Value 1 = is a handler op body.
-    handler_op_body_hash: hashmap::HashMapU64U32,
+    handler_op_body_hash: hashmap.HashMapU64U32,
     /// Vec of handler op body DefIds (for cloning to worker contexts).
     pub handler_op_body_ids: Vec<u32>,
     /// Mapping from op DefId → positional op_index within its effect.
     /// MIR stores op_def.index as op_index; codegen resolves via this table.
-    op_def_index_hash: hashmap::HashMapU64U32,
+    op_def_index_hash: hashmap.HashMapU64U32,
     /// Vec of (op_def_id, positional_index) for cloning to worker contexts.
     pub op_def_index_entries: Vec<OpDefIndexEntry>,
     /// Per-handler state shadow alloca names.
@@ -300,9 +300,9 @@ pub struct CodegenCtx {
     pub codegen_warnings: Vec<String>,
     /// The span of the MIR statement/terminator currently being compiled.
     /// Set before each statement/terminator codegen, used by codegen_error().
-    pub current_span: Option<common::Span>,
+    pub current_span: Option<common.Span>,
     /// Cache of fn pointer wrapper: def_id → index into fn_ptr_wrapper_names/defs.
-    fn_ptr_wrapper_hash: hashmap::HashMapU64U32,
+    fn_ptr_wrapper_hash: hashmap.HashMapU64U32,
     /// Wrapper function names (e.g., "fn_name$fnptr"), indexed by wrapper hash value.
     fn_ptr_wrapper_names: Vec<String>,
     /// Deferred fn pointer wrapper function LLVM IR definitions.
@@ -338,7 +338,7 @@ struct LocalType {
 /// Mapping from a MIR local to its HIR type (for ADT layout lookups).
 struct LocalHirType {
     local_id: u32,
-    hir_type: type_intern::TyId,
+    hir_type: type_intern.TyId,
 }
 
 /// Mapping from a MIR local to its signedness.
@@ -405,130 +405,130 @@ impl CodegenCtx {
         CodegenCtx {
             // Pre-allocate output buffer (1 MB) and write buffer (64 KB)
             // to reduce realloc frequency during codegen
-            output: String::new(),
+            output: String.new(),
             indent_level: 0,
             value_counter: 0,
             label_counter: 0,
             // Per-function Vecs: pre-allocate for typical function size (~64 locals)
-            local_names: Vec::with_capacity(64),
-            local_types: Vec::with_capacity(64),
-            local_signedness: Vec::with_capacity(64),
-            local_hir_types: Vec::with_capacity(64),
-            region_locals: Vec::with_capacity(16),
-            persistent_locals: Vec::with_capacity(16),
-            current_fn: Option::None,
+            local_names: Vec.with_capacity(64),
+            local_types: Vec.with_capacity(64),
+            local_signedness: Vec.with_capacity(64),
+            local_hir_types: Vec.with_capacity(64),
+            region_locals: Vec.with_capacity(16),
+            persistent_locals: Vec.with_capacity(16),
+            current_fn: Option.None,
             // Persistent cross-function Vecs: pre-allocate for typical compiler size
-            string_table: Vec::with_capacity(512),
+            string_table: Vec.with_capacity(512),
             string_counter: 0,
-            def_names: Vec::with_capacity(2048),
-            adt_registry: Vec::with_capacity(256),
-            def_names_hash: hashmap::HashMapU64U32::with_capacity(2048),
-            local_names_hash: hashmap::HashMapU64U32::with_capacity(64),
-            local_types_hash: hashmap::HashMapU64U32::with_capacity(64),
-            local_signedness_hash: hashmap::HashMapU64U32::with_capacity(64),
-            local_hir_types_hash: hashmap::HashMapU64U32::with_capacity(64),
-            region_locals_hash: hashmap::HashMapU64U32::with_capacity(16),
-            persistent_locals_hash: hashmap::HashMapU64U32::with_capacity(16),
-            local_generations_hash: hashmap::HashMapU64U32::with_capacity(32),
-            local_generations: Vec::with_capacity(32),
-            string_table_hash: hashmap::HashMapU64U32::with_capacity(512),
-            static_defs_hash: hashmap::HashMapU64U32::with_capacity(64),
-            static_types_hash: hashmap::HashMapU64U32::with_capacity(64),
-            static_types: Vec::with_capacity(64),
-            const_defs_hash: hashmap::HashMapU64U32::with_capacity(64),
-            fn_signatures: Vec::with_capacity(512),
-            fn_sigs_hash: hashmap::HashMapU64U32::with_capacity(512),
-            write_buffer: String::new(),
-            output_path: String::new(),
+            def_names: Vec.with_capacity(2048),
+            adt_registry: Vec.with_capacity(256),
+            def_names_hash: hashmap.HashMapU64U32.with_capacity(2048),
+            local_names_hash: hashmap.HashMapU64U32.with_capacity(64),
+            local_types_hash: hashmap.HashMapU64U32.with_capacity(64),
+            local_signedness_hash: hashmap.HashMapU64U32.with_capacity(64),
+            local_hir_types_hash: hashmap.HashMapU64U32.with_capacity(64),
+            region_locals_hash: hashmap.HashMapU64U32.with_capacity(16),
+            persistent_locals_hash: hashmap.HashMapU64U32.with_capacity(16),
+            local_generations_hash: hashmap.HashMapU64U32.with_capacity(32),
+            local_generations: Vec.with_capacity(32),
+            string_table_hash: hashmap.HashMapU64U32.with_capacity(512),
+            static_defs_hash: hashmap.HashMapU64U32.with_capacity(64),
+            static_types_hash: hashmap.HashMapU64U32.with_capacity(64),
+            static_types: Vec.with_capacity(64),
+            const_defs_hash: hashmap.HashMapU64U32.with_capacity(64),
+            fn_signatures: Vec.with_capacity(512),
+            fn_sigs_hash: hashmap.HashMapU64U32.with_capacity(512),
+            write_buffer: String.new(),
+            output_path: String.new(),
             trace_codegen: false,
-            call_remaps: Vec::new(),
-            handler_effect_entries: Vec::with_capacity(32),
-            handler_effect_hash: hashmap::HashMapU64U32::with_capacity(32),
-            handler_state_count_hash: hashmap::HashMapU64U32::with_capacity(16),
-            handler_state_byte_size_hash: hashmap::HashMapU64U32::with_capacity(16),
+            call_remaps: Vec.new(),
+            handler_effect_entries: Vec.with_capacity(32),
+            handler_effect_hash: hashmap.HashMapU64U32.with_capacity(32),
+            handler_state_count_hash: hashmap.HashMapU64U32.with_capacity(16),
+            handler_state_byte_size_hash: hashmap.HashMapU64U32.with_capacity(16),
             is_handler_op: false,
-            inline_stubs: Vec::with_capacity(128),
+            inline_stubs: Vec.with_capacity(128),
             inline_stub_count: 0,
             handler_op_state_local: -1,
             handler_op_state_field_count: 0,
-            handler_op_body_hash: hashmap::HashMapU64U32::with_capacity(16),
-            handler_op_body_ids: Vec::with_capacity(16),
-            op_def_index_hash: hashmap::HashMapU64U32::with_capacity(16),
-            op_def_index_entries: Vec::with_capacity(16),
-            handler_state_shadows: Vec::with_capacity(8),
-            codegen_errors: Vec::new(),
-            codegen_warnings: Vec::new(),
-            current_span: Option::None,
-            fn_ptr_wrapper_hash: hashmap::HashMapU64U32::with_capacity(32),
-            fn_ptr_wrapper_names: Vec::with_capacity(32),
-            fn_ptr_wrapper_defs: Vec::with_capacity(32),
+            handler_op_body_hash: hashmap.HashMapU64U32.with_capacity(16),
+            handler_op_body_ids: Vec.with_capacity(16),
+            op_def_index_hash: hashmap.HashMapU64U32.with_capacity(16),
+            op_def_index_entries: Vec.with_capacity(16),
+            handler_state_shadows: Vec.with_capacity(8),
+            codegen_errors: Vec.new(),
+            codegen_warnings: Vec.new(),
+            current_span: Option.None,
+            fn_ptr_wrapper_hash: hashmap.HashMapU64U32.with_capacity(32),
+            fn_ptr_wrapper_names: Vec.with_capacity(32),
+            fn_ptr_wrapper_defs: Vec.with_capacity(32),
         }
     }
 
     /// Creates a new codegen context with pre-populated def names.
     pub fn with_def_names(def_names: Vec<DefNameEntry>) -> CodegenCtx {
         // Build hash index for def_names
-        let mut def_names_hash = hashmap::HashMapU64U32::with_capacity(def_names.len());
+        let mut def_names_hash = hashmap.HashMapU64U32.with_capacity(def_names.len());
         for i in 0usize..def_names.len() {
             def_names_hash.insert(def_names[i].def_id as u64, i as u32);
         }
 
         CodegenCtx {
-            output: String::new(),
+            output: String.new(),
             indent_level: 0,
             value_counter: 0,
             label_counter: 0,
-            local_names: Vec::with_capacity(64),
-            local_types: Vec::with_capacity(64),
-            local_signedness: Vec::with_capacity(64),
-            local_hir_types: Vec::with_capacity(64),
-            region_locals: Vec::with_capacity(16),
-            persistent_locals: Vec::with_capacity(16),
-            current_fn: Option::None,
-            string_table: Vec::with_capacity(512),
+            local_names: Vec.with_capacity(64),
+            local_types: Vec.with_capacity(64),
+            local_signedness: Vec.with_capacity(64),
+            local_hir_types: Vec.with_capacity(64),
+            region_locals: Vec.with_capacity(16),
+            persistent_locals: Vec.with_capacity(16),
+            current_fn: Option.None,
+            string_table: Vec.with_capacity(512),
             string_counter: 0,
             def_names: def_names,
-            adt_registry: Vec::with_capacity(256),
+            adt_registry: Vec.with_capacity(256),
             def_names_hash: def_names_hash,
-            local_names_hash: hashmap::HashMapU64U32::with_capacity(64),
-            local_types_hash: hashmap::HashMapU64U32::with_capacity(64),
-            local_signedness_hash: hashmap::HashMapU64U32::with_capacity(64),
-            local_hir_types_hash: hashmap::HashMapU64U32::with_capacity(64),
-            region_locals_hash: hashmap::HashMapU64U32::with_capacity(16),
-            persistent_locals_hash: hashmap::HashMapU64U32::with_capacity(16),
-            local_generations_hash: hashmap::HashMapU64U32::with_capacity(32),
-            local_generations: Vec::with_capacity(32),
-            string_table_hash: hashmap::HashMapU64U32::with_capacity(512),
-            static_defs_hash: hashmap::HashMapU64U32::with_capacity(64),
-            static_types_hash: hashmap::HashMapU64U32::with_capacity(64),
-            static_types: Vec::with_capacity(64),
-            const_defs_hash: hashmap::HashMapU64U32::with_capacity(64),
-            fn_signatures: Vec::with_capacity(512),
-            fn_sigs_hash: hashmap::HashMapU64U32::with_capacity(512),
-            write_buffer: String::new(),
-            output_path: String::new(),
+            local_names_hash: hashmap.HashMapU64U32.with_capacity(64),
+            local_types_hash: hashmap.HashMapU64U32.with_capacity(64),
+            local_signedness_hash: hashmap.HashMapU64U32.with_capacity(64),
+            local_hir_types_hash: hashmap.HashMapU64U32.with_capacity(64),
+            region_locals_hash: hashmap.HashMapU64U32.with_capacity(16),
+            persistent_locals_hash: hashmap.HashMapU64U32.with_capacity(16),
+            local_generations_hash: hashmap.HashMapU64U32.with_capacity(32),
+            local_generations: Vec.with_capacity(32),
+            string_table_hash: hashmap.HashMapU64U32.with_capacity(512),
+            static_defs_hash: hashmap.HashMapU64U32.with_capacity(64),
+            static_types_hash: hashmap.HashMapU64U32.with_capacity(64),
+            static_types: Vec.with_capacity(64),
+            const_defs_hash: hashmap.HashMapU64U32.with_capacity(64),
+            fn_signatures: Vec.with_capacity(512),
+            fn_sigs_hash: hashmap.HashMapU64U32.with_capacity(512),
+            write_buffer: String.new(),
+            output_path: String.new(),
             trace_codegen: false,
-            call_remaps: Vec::new(),
-            handler_effect_entries: Vec::with_capacity(32),
-            handler_effect_hash: hashmap::HashMapU64U32::with_capacity(32),
-            handler_state_count_hash: hashmap::HashMapU64U32::with_capacity(16),
-            handler_state_byte_size_hash: hashmap::HashMapU64U32::with_capacity(16),
+            call_remaps: Vec.new(),
+            handler_effect_entries: Vec.with_capacity(32),
+            handler_effect_hash: hashmap.HashMapU64U32.with_capacity(32),
+            handler_state_count_hash: hashmap.HashMapU64U32.with_capacity(16),
+            handler_state_byte_size_hash: hashmap.HashMapU64U32.with_capacity(16),
             is_handler_op: false,
-            inline_stubs: Vec::with_capacity(128),
+            inline_stubs: Vec.with_capacity(128),
             inline_stub_count: 0,
             handler_op_state_local: -1,
             handler_op_state_field_count: 0,
-            handler_op_body_hash: hashmap::HashMapU64U32::with_capacity(16),
-            handler_op_body_ids: Vec::with_capacity(16),
-            op_def_index_hash: hashmap::HashMapU64U32::with_capacity(16),
-            op_def_index_entries: Vec::with_capacity(16),
-            handler_state_shadows: Vec::with_capacity(8),
-            codegen_errors: Vec::new(),
-            codegen_warnings: Vec::new(),
-            current_span: Option::None,
-            fn_ptr_wrapper_hash: hashmap::HashMapU64U32::with_capacity(32),
-            fn_ptr_wrapper_names: Vec::with_capacity(32),
-            fn_ptr_wrapper_defs: Vec::with_capacity(32),
+            handler_op_body_hash: hashmap.HashMapU64U32.with_capacity(16),
+            handler_op_body_ids: Vec.with_capacity(16),
+            op_def_index_hash: hashmap.HashMapU64U32.with_capacity(16),
+            op_def_index_entries: Vec.with_capacity(16),
+            handler_state_shadows: Vec.with_capacity(8),
+            codegen_errors: Vec.new(),
+            codegen_warnings: Vec.new(),
+            current_span: Option.None,
+            fn_ptr_wrapper_hash: hashmap.HashMapU64U32.with_capacity(32),
+            fn_ptr_wrapper_names: Vec.with_capacity(32),
+            fn_ptr_wrapper_defs: Vec.with_capacity(32),
         }
     }
 
@@ -543,36 +543,36 @@ impl CodegenCtx {
     pub fn lookup_def_name(self: &CodegenCtx, def_id: u32) -> Option<String> {
         // Fast path: hash lookup
         match self.def_names_hash.get(def_id as u64) {
-            Option::Some(idx) => {
-                return Option::Some(clone_string(&self.def_names[idx as usize].name));
+            Option.Some(idx) => {
+                return Option.Some(clone_string(&self.def_names[idx as usize].name));
             }
-            Option::None => {}
+            Option.None => {}
         }
         // Fallback: linear scan (should not happen)
         for i in 0usize..self.def_names.len() {
             if self.def_names[i].def_id == def_id {
-                return Option::Some(clone_string(&self.def_names[i].name));
+                return Option.Some(clone_string(&self.def_names[i].name));
             }
         }
-        Option::None
+        Option.None
     }
 
     /// Gets a reference to a def name. Zero allocation.
     /// Returns None if not found.
     pub fn lookup_def_name_ref(self: &CodegenCtx, def_id: u32) -> Option<&String> {
         match self.def_names_hash.get(def_id as u64) {
-            Option::Some(idx) => {
-                return Option::Some(&self.def_names[idx as usize].name);
+            Option.Some(idx) => {
+                return Option.Some(&self.def_names[idx as usize].name);
             }
-            Option::None => {}
+            Option.None => {}
         }
         // Fallback: linear scan
         for i in 0usize..self.def_names.len() {
             if self.def_names[i].def_id == def_id {
-                return Option::Some(&self.def_names[i].name);
+                return Option.Some(&self.def_names[i].name);
             }
         }
-        Option::None
+        Option.None
     }
 
     /// Registers LLVM function signature for a compiled function (keyed by def_id).
@@ -586,25 +586,25 @@ impl CodegenCtx {
     /// Returns the parameter types and return type if found.
     pub fn lookup_fn_param_type(self: &CodegenCtx, def_id: u32, param_idx: usize) -> Option<String> {
         match self.fn_sigs_hash.get(def_id as u64) {
-            Option::Some(idx) => {
+            Option.Some(idx) => {
                 let entry = &self.fn_signatures[idx as usize];
                 if param_idx < entry.param_types.len() {
-                    return Option::Some(clone_string(&entry.param_types[param_idx]));
+                    return Option.Some(clone_string(&entry.param_types[param_idx]));
                 }
-                Option::None
+                Option.None
             }
-            Option::None => Option::None,
+            Option.None => Option.None,
         }
     }
 
     /// Looks up the LLVM return type for a given def_id.
     pub fn lookup_fn_ret_type(self: &CodegenCtx, def_id: u32) -> Option<String> {
         match self.fn_sigs_hash.get(def_id as u64) {
-            Option::Some(idx) => {
+            Option.Some(idx) => {
                 let entry = &self.fn_signatures[idx as usize];
-                Option::Some(clone_string(&entry.return_type))
+                Option.Some(clone_string(&entry.return_type))
             }
-            Option::None => Option::None,
+            Option.None => Option.None,
         }
     }
 
@@ -626,16 +626,16 @@ impl CodegenCtx {
     pub fn get_or_create_fn_wrapper(self: &mut CodegenCtx, def_id: u32) -> Option<String> {
         // Check cache first
         match self.fn_ptr_wrapper_hash.get(def_id as u64) {
-            Option::Some(idx) => {
-                return Option::Some(clone_string(&self.fn_ptr_wrapper_names[idx as usize]));
+            Option.Some(idx) => {
+                return Option.Some(clone_string(&self.fn_ptr_wrapper_names[idx as usize]));
             }
-            Option::None => {}
+            Option.None => {}
         }
 
         // Get the original function name
         let fn_name = match self.lookup_def_name(def_id) {
-            Option::Some(name) => name,
-            Option::None => { return Option::None; }
+            Option.Some(name) => name,
+            Option.None => { return Option.None; }
         };
 
         // Build wrapper name
@@ -644,18 +644,18 @@ impl CodegenCtx {
 
         // Get parameter types and return type from fn_signatures
         let has_sig = match self.fn_sigs_hash.get(def_id as u64) {
-            Option::Some(_) => true,
-            Option::None => false,
+            Option.Some(_) => true,
+            Option.None => false,
         };
 
         // Build wrapper function definition
-        let mut def = String::new();
+        let mut def = String.new();
         def.push_str("define linkonce_odr ");
 
         if has_sig {
             let sig_idx = match self.fn_sigs_hash.get(def_id as u64) {
-                Option::Some(idx) => idx as usize,
-                Option::None => 0,
+                Option.Some(idx) => idx as usize,
+                Option.None => 0,
             };
             let ret_ty_str = clone_string(&self.fn_signatures[sig_idx].return_type);
             let param_count = self.fn_signatures[sig_idx].param_types.len();
@@ -726,7 +726,7 @@ impl CodegenCtx {
         self.fn_ptr_wrapper_defs.push(def);
         self.fn_ptr_wrapper_hash.insert(def_id as u64, idx);
 
-        Option::Some(wrapper_name)
+        Option.Some(wrapper_name)
     }
 
     /// Registers a DefId as a static variable.
@@ -744,18 +744,18 @@ impl CodegenCtx {
     /// Returns the LLVM type for a static variable, if registered.
     pub fn get_static_type(self: &CodegenCtx, def_id: u32) -> Option<String> {
         match self.static_types_hash.get(def_id as u64) {
-            Option::Some(idx) => {
-                Option::Some(clone_string(&self.static_types[idx as usize]))
+            Option.Some(idx) => {
+                Option.Some(clone_string(&self.static_types[idx as usize]))
             }
-            Option::None => Option::None,
+            Option.None => Option.None,
         }
     }
 
     /// Returns true if the given DefId is a static variable.
     pub fn is_static(self: &CodegenCtx, def_id: u32) -> bool {
         match self.static_defs_hash.get(def_id as u64) {
-            Option::Some(_) => true,
-            Option::None => false,
+            Option.Some(_) => true,
+            Option.None => false,
         }
     }
 
@@ -767,8 +767,8 @@ impl CodegenCtx {
     /// Returns true if the given DefId is a const item.
     pub fn is_const(self: &CodegenCtx, def_id: u32) -> bool {
         match self.const_defs_hash.get(def_id as u64) {
-            Option::Some(_) => true,
-            Option::None => false,
+            Option.Some(_) => true,
+            Option.None => false,
         }
     }
 
@@ -793,8 +793,8 @@ impl CodegenCtx {
     /// Looks up the effect DefId for a handler DefId.
     pub fn lookup_handler_effect(self: &CodegenCtx, handler_def_id: u32) -> Option<u32> {
         match self.handler_effect_hash.get(handler_def_id as u64) {
-            Option::Some(v) => Option::Some(v),
-            Option::None => Option::None,
+            Option.Some(v) => Option.Some(v),
+            Option.None => Option.None,
         }
     }
 
@@ -807,8 +807,8 @@ impl CodegenCtx {
     /// Returns 0 if not registered.
     pub fn lookup_handler_state_count(self: &CodegenCtx, handler_def_id: u32) -> u32 {
         match self.handler_state_count_hash.get(handler_def_id as u64) {
-            Option::Some(v) => v,
-            Option::None => 0,
+            Option.Some(v) => v,
+            Option.None => 0,
         }
     }
 
@@ -821,8 +821,8 @@ impl CodegenCtx {
     /// Returns 0 if not registered.
     pub fn lookup_handler_state_byte_size(self: &CodegenCtx, handler_def_id: u32) -> u32 {
         match self.handler_state_byte_size_hash.get(handler_def_id as u64) {
-            Option::Some(v) => v,
-            Option::None => 0,
+            Option.Some(v) => v,
+            Option.None => 0,
         }
     }
 
@@ -838,23 +838,23 @@ impl CodegenCtx {
     pub fn get_handler_state_shadow(self: &CodegenCtx, handler_def_id: u32) -> Option<&String> {
         for i in 0usize..self.handler_state_shadows.len() {
             if self.handler_state_shadows[i].handler_def_id == handler_def_id {
-                return Option::Some(&self.handler_state_shadows[i].shadow_name);
+                return Option.Some(&self.handler_state_shadows[i].shadow_name);
             }
         }
-        Option::None
+        Option.None
     }
 
     /// Resets per-function state while keeping global state (def_names).
     pub fn reset_function_state(self: &mut CodegenCtx) {
-        self.output = String::new();
+        self.output = String.new();
         self.indent_level = 0;
         self.value_counter = 0;
         self.label_counter = 0;
-        self.local_names = Vec::new();
-        self.local_types = Vec::new();
-        self.local_signedness = Vec::new();
-        self.current_fn = Option::None;
-        self.current_span = Option::None;
+        self.local_names = Vec.new();
+        self.local_types = Vec.new();
+        self.local_signedness = Vec.new();
+        self.current_fn = Option.None;
+        self.current_span = Option.None;
         // Note: string_table and def_names are preserved
     }
 
@@ -928,23 +928,23 @@ impl CodegenCtx {
     /// Writes a CgName to the output without allocating any String.
     pub fn write_cgname(self: &mut CodegenCtx, name: &CgName) {
         match name {
-            &CgName::Temp(n) => {
+            &CgName.Temp(n) => {
                 self.write("%tmp");
                 self.write_u64(n as u64);
             }
-            &CgName::Local(n) => {
+            &CgName.Local(n) => {
                 self.write("%_");
                 self.write_u64(n as u64);
             }
-            &CgName::Label(n) => {
+            &CgName.Label(n) => {
                 self.write("label");
                 self.write_u64(n as u64);
             }
-            &CgName::Block(n) => {
+            &CgName.Block(n) => {
                 self.write("bb");
                 self.write_u64(n as u64);
             }
-            &CgName::Str(ref s) => {
+            &CgName.Str(ref s) => {
                 self.write(s.as_str());
             }
         }
@@ -954,31 +954,31 @@ impl CodegenCtx {
     /// where String is required (e.g., llvm_args vectors).
     pub fn cgname_to_string(name: &CgName) -> String {
         match name {
-            &CgName::Temp(n) => {
+            &CgName.Temp(n) => {
                 let mut s = common::make_string("%tmp");
                 let ns = codegen_types::format_u64(n as u64);
                 s.push_str(ns.as_str());
                 s
             }
-            &CgName::Local(n) => {
+            &CgName.Local(n) => {
                 let mut s = common::make_string("%_");
                 let ns = codegen_types::format_u64(n as u64);
                 s.push_str(ns.as_str());
                 s
             }
-            &CgName::Label(n) => {
+            &CgName.Label(n) => {
                 let mut s = common::make_string("label");
                 let ns = codegen_types::format_u64(n as u64);
                 s.push_str(ns.as_str());
                 s
             }
-            &CgName::Block(n) => {
+            &CgName.Block(n) => {
                 let mut s = common::make_string("bb");
                 let ns = codegen_types::format_u64(n as u64);
                 s.push_str(ns.as_str());
                 s
             }
-            &CgName::Str(ref s) => {
+            &CgName.Str(ref s) => {
                 clone_string(s)
             }
         }
@@ -988,7 +988,7 @@ impl CodegenCtx {
 
     /// Sets the output file path for buffered streaming writes.
     pub fn set_output_path(self: &mut CodegenCtx, path: &str) {
-        self.output_path = String::new();
+        self.output_path = String.new();
         self.output_path.push_str(path);
     }
 
@@ -1004,17 +1004,17 @@ impl CodegenCtx {
     pub fn flush_write_buffer(self: &mut CodegenCtx) {
         if self.write_buffer.len() > 0 {
             file_append_string(self.output_path.as_str(), self.write_buffer.as_str());
-            self.write_buffer = String::new();
+            self.write_buffer = String.new();
         }
     }
 
     /// Writes an HIR type as LLVM IR directly to the output buffer.
     /// Uses the fast path (no String allocation) for common types,
     /// falls back to type_to_llvm for compound types.
-    pub fn write_type(self: &mut CodegenCtx, ty: &hir_ty::Type) {
+    pub fn write_type(self: &mut CodegenCtx, ty: &hir_ty.Type) {
         match codegen_types::type_to_llvm_fast(ty) {
-            Option::Some(s) => self.write(s),
-            Option::None => {
+            Option.Some(s) => self.write(s),
+            Option.None => {
                 let s = codegen_types::type_to_llvm(ty);
                 self.write(s.as_str());
             }
@@ -1023,9 +1023,9 @@ impl CodegenCtx {
 
     /// Writes an HIR type as LLVM IR directly to the output buffer,
     /// using ADT registry lookups. No String allocation for common types.
-    pub fn write_type_with_ctx(self: &mut CodegenCtx, ty: &hir_ty::Type) {
+    pub fn write_type_with_ctx(self: &mut CodegenCtx, ty: &hir_ty.Type) {
         match &ty.kind {
-            &hir_ty::TypeKind::Adt { def_id, args: _ } => {
+            &hir_ty.TypeKind.Adt { def_id, args: _ } => {
                 let s = self.adt_llvm_type(def_id.index);
                 self.write(s.as_str());
             }
@@ -1039,41 +1039,41 @@ impl CodegenCtx {
     pub fn fresh_temp_cg(self: &mut CodegenCtx) -> CgName {
         let n = self.value_counter;
         self.value_counter = self.value_counter + 1;
-        CgName::Temp(n)
+        CgName.Temp(n)
     }
 
     /// Generates a new unique label CgName. Zero allocation.
     pub fn fresh_label_cg(self: &mut CodegenCtx) -> CgName {
         let n = self.label_counter;
         self.label_counter = self.label_counter + 1;
-        CgName::Label(n)
+        CgName.Label(n)
     }
 
     /// Returns a CgName for a basic block label. Zero allocation.
-    pub fn block_label_cg(self: &CodegenCtx, block: mir_def::BasicBlockId) -> CgName {
-        CgName::Block(block.index)
+    pub fn block_label_cg(self: &CodegenCtx, block: mir_def.BasicBlockId) -> CgName {
+        CgName.Block(block.index)
     }
 
     /// Returns a CgName for a MIR local alloca. Zero allocation.
-    pub fn local_cg(self: &CodegenCtx, local: mir_def::MirLocalId) -> CgName {
-        CgName::Local(local.index)
+    pub fn local_cg(self: &CodegenCtx, local: mir_def.MirLocalId) -> CgName {
+        CgName.Local(local.index)
     }
 
     /// Gets the LLVM name for a MIR local.
     /// Gets a reference to the local's LLVM name. Zero allocation.
     /// Returns None if the local has no registered name (use local_cg() for %_N fallback).
-    pub fn local_name_ref(self: &CodegenCtx, local: mir_def::MirLocalId) -> Option<&String> {
+    pub fn local_name_ref(self: &CodegenCtx, local: mir_def.MirLocalId) -> Option<&String> {
         match self.local_names_hash.get(local.index as u64) {
-            Option::Some(idx) => {
-                return Option::Some(&self.local_names[idx as usize].name);
+            Option.Some(idx) => {
+                return Option.Some(&self.local_names[idx as usize].name);
             }
-            Option::None => {}
+            Option.None => {}
         }
-        Option::None
+        Option.None
     }
 
     /// Registers a local with its LLVM name.
-    pub fn register_local(self: &mut CodegenCtx, local: mir_def::MirLocalId, name: String) {
+    pub fn register_local(self: &mut CodegenCtx, local: mir_def.MirLocalId, name: String) {
         let idx = self.local_names.len() as u32;
         self.local_names.push(LocalName {
             local_id: local.index,
@@ -1083,7 +1083,7 @@ impl CodegenCtx {
     }
 
     /// Registers a local with its LLVM type.
-    pub fn register_local_type(self: &mut CodegenCtx, local: mir_def::MirLocalId, llvm_type: String) {
+    pub fn register_local_type(self: &mut CodegenCtx, local: mir_def.MirLocalId, llvm_type: String) {
         let idx = self.local_types.len() as u32;
         self.local_types.push(LocalType {
             local_id: local.index,
@@ -1093,13 +1093,13 @@ impl CodegenCtx {
     }
 
     /// Gets the LLVM type for a MIR local.
-    pub fn get_local_type(self: &CodegenCtx, local: mir_def::MirLocalId) -> String {
+    pub fn get_local_type(self: &CodegenCtx, local: mir_def.MirLocalId) -> String {
         // Fast path: hash lookup
         match self.local_types_hash.get(local.index as u64) {
-            Option::Some(idx) => {
+            Option.Some(idx) => {
                 return clone_string(&self.local_types[idx as usize].llvm_type);
             }
-            Option::None => {}
+            Option.None => {}
         }
         // Fallback: return i64 if type not found
         common::make_string("i64")
@@ -1107,18 +1107,18 @@ impl CodegenCtx {
 
     /// Gets a reference to the local's LLVM type string. Zero allocation.
     /// Returns None if the local has no registered type.
-    pub fn get_local_type_ref(self: &CodegenCtx, local: mir_def::MirLocalId) -> Option<&String> {
+    pub fn get_local_type_ref(self: &CodegenCtx, local: mir_def.MirLocalId) -> Option<&String> {
         match self.local_types_hash.get(local.index as u64) {
-            Option::Some(idx) => {
-                return Option::Some(&self.local_types[idx as usize].llvm_type);
+            Option.Some(idx) => {
+                return Option.Some(&self.local_types[idx as usize].llvm_type);
             }
-            Option::None => {}
+            Option.None => {}
         }
-        Option::None
+        Option.None
     }
 
     /// Registers a local with its signedness (true = signed, false = unsigned).
-    pub fn register_local_signedness(self: &mut CodegenCtx, local: mir_def::MirLocalId, is_signed: bool) {
+    pub fn register_local_signedness(self: &mut CodegenCtx, local: mir_def.MirLocalId, is_signed: bool) {
         let idx = self.local_signedness.len() as u32;
         self.local_signedness.push(LocalSignedness {
             local_id: local.index,
@@ -1128,20 +1128,20 @@ impl CodegenCtx {
     }
 
     /// Returns whether a local is signed. Defaults to true if not found.
-    pub fn is_local_signed(self: &CodegenCtx, local: mir_def::MirLocalId) -> bool {
+    pub fn is_local_signed(self: &CodegenCtx, local: mir_def.MirLocalId) -> bool {
         // Fast path: hash lookup
         match self.local_signedness_hash.get(local.index as u64) {
-            Option::Some(idx) => {
+            Option.Some(idx) => {
                 return self.local_signedness[idx as usize].is_signed;
             }
-            Option::None => {}
+            Option.None => {}
         }
         // Default to signed if not found
         true
     }
 
     /// Registers a local with its HIR type.
-    pub fn register_local_hir_type(self: &mut CodegenCtx, local: mir_def::MirLocalId, hir_type: type_intern::TyId) {
+    pub fn register_local_hir_type(self: &mut CodegenCtx, local: mir_def.MirLocalId, hir_type: type_intern.TyId) {
         let idx = self.local_hir_types.len() as u32;
         self.local_hir_types.push(LocalHirType {
             local_id: local.index,
@@ -1151,50 +1151,50 @@ impl CodegenCtx {
     }
 
     /// Gets the HIR type for a MIR local.
-    pub fn get_local_hir_type(self: &CodegenCtx, local: mir_def::MirLocalId) -> Option<type_intern::TyId> {
+    pub fn get_local_hir_type(self: &CodegenCtx, local: mir_def.MirLocalId) -> Option<type_intern.TyId> {
         // Fast path: hash lookup
         match self.local_hir_types_hash.get(local.index as u64) {
-            Option::Some(idx) => {
-                return Option::Some(self.local_hir_types[idx as usize].hir_type);
+            Option.Some(idx) => {
+                return Option.Some(self.local_hir_types[idx as usize].hir_type);
             }
-            Option::None => {}
+            Option.None => {}
         }
-        Option::None
+        Option.None
     }
 
     /// Marks a local as region-allocated (will be unregistered on StorageDead).
-    pub fn mark_region_allocated(self: &mut CodegenCtx, local: mir_def::MirLocalId) {
+    pub fn mark_region_allocated(self: &mut CodegenCtx, local: mir_def.MirLocalId) {
         self.region_locals.push(RegionLocalEntry { local_id: local.index });
         self.region_locals_hash.insert(local.index as u64, 1);
     }
 
     /// Marks a local as persistent-allocated (will be decremented on StorageDead).
-    pub fn mark_persistent_allocated(self: &mut CodegenCtx, local: mir_def::MirLocalId) {
+    pub fn mark_persistent_allocated(self: &mut CodegenCtx, local: mir_def.MirLocalId) {
         self.persistent_locals.push(PersistentLocalEntry { local_id: local.index });
         self.persistent_locals_hash.insert(local.index as u64, 1);
     }
 
     /// Returns true if a local is region-allocated.
-    pub fn is_region_allocated(self: &CodegenCtx, local: mir_def::MirLocalId) -> bool {
+    pub fn is_region_allocated(self: &CodegenCtx, local: mir_def.MirLocalId) -> bool {
         self.region_locals_hash.contains_key(local.index as u64)
     }
 
     /// Returns true if a local is persistent-allocated.
-    pub fn is_persistent_allocated(self: &CodegenCtx, local: mir_def::MirLocalId) -> bool {
+    pub fn is_persistent_allocated(self: &CodegenCtx, local: mir_def.MirLocalId) -> bool {
         self.persistent_locals_hash.contains_key(local.index as u64)
     }
 
     /// Returns true if a local is the handler op state pointer.
     /// When true, the local's alloca holds a `ptr` (not the value directly),
     /// and all loads/stores must go through the pointer indirection.
-    pub fn is_handler_state_ptr(self: &CodegenCtx, local: mir_def::MirLocalId) -> bool {
+    pub fn is_handler_state_ptr(self: &CodegenCtx, local: mir_def.MirLocalId) -> bool {
         self.handler_op_state_local >= 0 && local.index == (self.handler_op_state_local as u32)
     }
 
     /// Returns true if a local is a handler state field (not the state pointer itself,
     /// but a secondary field accessed via GEP into the state struct).
     /// For state_field_count=2, locals 2 through 2 are state fields (local 2 is field index 1).
-    pub fn is_handler_state_field(self: &CodegenCtx, local: mir_def::MirLocalId) -> bool {
+    pub fn is_handler_state_field(self: &CodegenCtx, local: mir_def.MirLocalId) -> bool {
         if self.handler_op_state_field_count <= 1 {
             return false;
         }
@@ -1205,7 +1205,7 @@ impl CodegenCtx {
 
     /// Returns the GEP field index for a handler state field local.
     /// Local 2 = field index 1, local 3 = field index 2, etc.
-    pub fn handler_state_field_gep_index(self: &CodegenCtx, local: mir_def::MirLocalId) -> u32 {
+    pub fn handler_state_field_gep_index(self: &CodegenCtx, local: mir_def.MirLocalId) -> u32 {
         local.index - 1
     }
 
@@ -1225,8 +1225,8 @@ impl CodegenCtx {
     /// Returns 0 if the handler has no state or the DefId is not a handler op.
     pub fn handler_op_state_count(self: &CodegenCtx, def_id: u32) -> u32 {
         match self.handler_op_body_hash.get(def_id as u64) {
-            Option::Some(v) => v,
-            Option::None => 0,
+            Option.Some(v) => v,
+            Option.None => 0,
         }
     }
 
@@ -1242,13 +1242,13 @@ impl CodegenCtx {
     pub fn resolve_op_index(self: &CodegenCtx, effect_def_id: u32, op_name_sym: u32) -> u32 {
         let key = ((effect_def_id as u64) << 32) | (op_name_sym as u64);
         match self.op_def_index_hash.get(key) {
-            Option::Some(idx) => idx,
-            Option::None => 0,
+            Option.Some(idx) => idx,
+            Option.None => 0,
         }
     }
 
     /// Records the generation alloca SSA name for a region-allocated local.
-    pub fn set_local_generation(self: &mut CodegenCtx, local: mir_def::MirLocalId, gen_name: String) {
+    pub fn set_local_generation(self: &mut CodegenCtx, local: mir_def.MirLocalId, gen_name: String) {
         let idx = self.local_generations.len() as u32;
         self.local_generations.push(LocalGeneration {
             local_id: local.index,
@@ -1258,12 +1258,12 @@ impl CodegenCtx {
     }
 
     /// Gets the generation alloca SSA name for a local, if it has one.
-    pub fn get_local_generation(self: &CodegenCtx, local: mir_def::MirLocalId) -> Option<String> {
+    pub fn get_local_generation(self: &CodegenCtx, local: mir_def.MirLocalId) -> Option<String> {
         match self.local_generations_hash.get(local.index as u64) {
-            Option::Some(idx) => {
-                Option::Some(clone_string(&self.local_generations[idx as usize].gen_name))
+            Option.Some(idx) => {
+                Option.Some(clone_string(&self.local_generations[idx as usize].gen_name))
             }
-            Option::None => Option::None,
+            Option.None => Option.None,
         }
     }
 
@@ -1276,14 +1276,14 @@ impl CodegenCtx {
         self.region_locals.clear();
         self.persistent_locals.clear();
         // Clear hash indexes too
-        self.local_names_hash = hashmap::HashMapU64U32::new();
-        self.local_types_hash = hashmap::HashMapU64U32::new();
-        self.local_signedness_hash = hashmap::HashMapU64U32::new();
-        self.local_hir_types_hash = hashmap::HashMapU64U32::new();
-        self.region_locals_hash = hashmap::HashMapU64U32::new();
-        self.persistent_locals_hash = hashmap::HashMapU64U32::new();
+        self.local_names_hash = hashmap.HashMapU64U32.new();
+        self.local_types_hash = hashmap.HashMapU64U32.new();
+        self.local_signedness_hash = hashmap.HashMapU64U32.new();
+        self.local_hir_types_hash = hashmap.HashMapU64U32.new();
+        self.region_locals_hash = hashmap.HashMapU64U32.new();
+        self.persistent_locals_hash = hashmap.HashMapU64U32.new();
         self.local_generations.clear();
-        self.local_generations_hash = hashmap::HashMapU64U32::new();
+        self.local_generations_hash = hashmap.HashMapU64U32.new();
     }
 
     // ======== Error Reporting ========
@@ -1291,34 +1291,34 @@ impl CodegenCtx {
     /// Records a codegen error with the current function and span context.
     pub fn codegen_error(self: &mut CodegenCtx, kind: CodegenErrorKind, message: String) {
         let fn_name = match &self.current_fn {
-            &Option::Some(ref name) => Option::Some(clone_string(name)),
-            &Option::None => Option::None,
+            &Option.Some(ref name) => Option.Some(clone_string(name)),
+            &Option.None => Option.None,
         };
         let span = match &self.current_span {
-            &Option::Some(ref s) => Option::Some(*s),
-            &Option::None => Option::None,
+            &Option.Some(ref s) => Option.Some(*s),
+            &Option.None => Option.None,
         };
         self.codegen_errors.push(CodegenError {
             kind: kind,
             message: message,
             fn_name: fn_name,
             span: span,
-            notes: Vec::new(),
+            notes: Vec.new(),
         });
     }
 
     /// Records a codegen error with the current context and an attached note.
     pub fn codegen_error_with_note(self: &mut CodegenCtx, kind: CodegenErrorKind, message: String, note: String) {
         let fn_name = match &self.current_fn {
-            &Option::Some(ref name) => Option::Some(clone_string(name)),
-            &Option::None => Option::None,
+            &Option.Some(ref name) => Option.Some(clone_string(name)),
+            &Option.None => Option.None,
         };
         let span = match &self.current_span {
-            &Option::Some(ref s) => Option::Some(*s),
-            &Option::None => Option::None,
+            &Option.Some(ref s) => Option.Some(*s),
+            &Option.None => Option.None,
         };
-        let mut notes = Vec::new();
-        notes.push(CodegenNote::new(note));
+        let mut notes = Vec.new();
+        notes.push(CodegenNote.new(note));
         self.codegen_errors.push(CodegenError {
             kind: kind,
             message: message,
@@ -1335,22 +1335,22 @@ impl CodegenCtx {
 
     /// Takes ownership of accumulated errors, leaving the error list empty.
     pub fn take_errors(self: &mut CodegenCtx) -> Vec<CodegenError> {
-        let mut errors: Vec<CodegenError> = Vec::new();
+        let mut errors: Vec<CodegenError> = Vec.new();
         for i in 0usize..self.codegen_errors.len() {
             let err = &self.codegen_errors[i];
             let fn_name = match &err.fn_name {
-                &Option::Some(ref name) => Option::Some(clone_string(name)),
-                &Option::None => Option::None,
+                &Option.Some(ref name) => Option.Some(clone_string(name)),
+                &Option.None => Option.None,
             };
             let span = match &err.span {
-                &Option::Some(ref s) => Option::Some(*s),
-                &Option::None => Option::None,
+                &Option.Some(ref s) => Option.Some(*s),
+                &Option.None => Option.None,
             };
-            let mut notes = Vec::new();
+            let mut notes = Vec.new();
             for ni in 0usize..err.notes.len() {
                 let note_span = match &err.notes[ni].span {
-                    &Option::Some(ref s) => Option::Some(*s),
-                    &Option::None => Option::None,
+                    &Option.Some(ref s) => Option.Some(*s),
+                    &Option.None => Option.None,
                 };
                 notes.push(CodegenNote {
                     message: clone_string(&err.notes[ni].message),
@@ -1371,7 +1371,7 @@ impl CodegenCtx {
 
     /// Takes ownership of accumulated warnings, leaving the warning list empty.
     pub fn take_warnings(self: &mut CodegenCtx) -> Vec<String> {
-        let mut warnings: Vec<String> = Vec::new();
+        let mut warnings: Vec<String> = Vec.new();
         for i in 0usize..self.codegen_warnings.len() {
             warnings.push(clone_string(&self.codegen_warnings[i]));
         }
@@ -1383,12 +1383,12 @@ impl CodegenCtx {
 
     /// Registers a struct layout in the ADT registry.
     pub fn register_struct(self: &mut CodegenCtx, layout: StructLayout) {
-        self.adt_registry.push(AdtEntry::Struct(layout));
+        self.adt_registry.push(AdtEntry.Struct(layout));
     }
 
     /// Registers an enum layout in the ADT registry.
     pub fn register_enum(self: &mut CodegenCtx, layout: EnumLayout) {
-        self.adt_registry.push(AdtEntry::Enum(layout));
+        self.adt_registry.push(AdtEntry.Enum(layout));
     }
 
     /// Looks up a struct layout by DefId.
@@ -1399,15 +1399,15 @@ impl CodegenCtx {
         while i > 0 {
             i -= 1;
             match &self.adt_registry[i] {
-                &AdtEntry::Struct(ref layout) => {
+                &AdtEntry.Struct(ref layout) => {
                     if layout.def_id == def_id {
-                        return Option::Some(layout);
+                        return Option.Some(layout);
                     }
                 }
-                &AdtEntry::Enum(_) => {}
+                &AdtEntry.Enum(_) => {}
             }
         }
-        Option::None
+        Option.None
     }
 
     /// Looks up an enum layout by DefId.
@@ -1417,31 +1417,31 @@ impl CodegenCtx {
         while i > 0 {
             i -= 1;
             match &self.adt_registry[i] {
-                &AdtEntry::Struct(_) => {}
-                &AdtEntry::Enum(ref layout) => {
+                &AdtEntry.Struct(_) => {}
+                &AdtEntry.Enum(ref layout) => {
                     if layout.def_id == def_id {
-                        return Option::Some(layout);
+                        return Option.Some(layout);
                     }
                 }
             }
         }
-        Option::None
+        Option.None
     }
 
     /// Looks up a struct field's HIR type by struct DefId and field index.
-    pub fn lookup_field_hir_type(self: &CodegenCtx, def_id: u32, field_idx: u32) -> Option<type_intern::TyId> {
+    pub fn lookup_field_hir_type(self: &CodegenCtx, def_id: u32, field_idx: u32) -> Option<type_intern.TyId> {
         match self.lookup_struct(def_id) {
-            Option::Some(layout) => {
+            Option.Some(layout) => {
                 if (field_idx as usize) < layout.fields.len() {
                     match &layout.fields[field_idx as usize].hir_type {
-                        &Option::Some(ty_id) => Option::Some(ty_id),
-                        &Option::None => Option::None,
+                        &Option.Some(ty_id) => Option.Some(ty_id),
+                        &Option.None => Option.None,
                     }
                 } else {
-                    Option::None
+                    Option.None
                 }
             }
-            Option::None => Option::None,
+            Option.None => Option.None,
         }
     }
 
@@ -1454,12 +1454,12 @@ impl CodegenCtx {
         while i > 0 {
             i -= 1;
             match &self.adt_registry[i] {
-                &AdtEntry::Struct(ref layout) => {
+                &AdtEntry.Struct(ref layout) => {
                     if layout.def_id == def_id {
                         return clone_string(&layout.llvm_type);
                     }
                 }
-                &AdtEntry::Enum(ref layout) => {
+                &AdtEntry.Enum(ref layout) => {
                     if layout.def_id == def_id {
                         return clone_string(&layout.llvm_type);
                     }
@@ -1468,7 +1468,7 @@ impl CodegenCtx {
         }
         // Fallback: check if this is a known builtin ADT
         match self.lookup_def_name(def_id) {
-            Option::Some(name) => {
+            Option.Some(name) => {
                 let name_bytes = name.as_bytes();
                 // Vec -> { ptr, i64, i64 }
                 if name_bytes.len() == 3 && name_bytes[0] == 86 && name_bytes[1] == 101 && name_bytes[2] == 99 {
@@ -1488,19 +1488,19 @@ impl CodegenCtx {
                 }
                 common::make_string("ptr")
             }
-            Option::None => common::make_string("ptr"),
+            Option.None => common::make_string("ptr"),
         }
     }
 
     /// Converts a type to LLVM IR, using the ADT registry for struct/enum types.
     /// This is the context-aware version that properly resolves ADT types.
     /// Falls back to `codegen_types::type_to_llvm` for non-ADT types.
-    pub fn type_to_llvm_with_ctx(self: &CodegenCtx, ty: &hir_ty::Type) -> String {
+    pub fn type_to_llvm_with_ctx(self: &CodegenCtx, ty: &hir_ty.Type) -> String {
         match &ty.kind {
-            &hir_ty::TypeKind::Adt { def_id, args: _ } => {
+            &hir_ty.TypeKind.Adt { def_id, args: _ } => {
                 self.adt_llvm_type(def_id.index)
             }
-            &hir_ty::TypeKind::Tuple(ref elems) => {
+            &hir_ty.TypeKind.Tuple(ref elems) => {
                 if elems.len() == 0 {
                     common::make_string("{}")
                 } else {
@@ -1521,7 +1521,7 @@ impl CodegenCtx {
     }
 
     /// Generates the name for a MIR local alloca.
-    pub fn local_alloca_name(self: &mut CodegenCtx, local: mir_def::MirLocalId) -> String {
+    pub fn local_alloca_name(self: &mut CodegenCtx, local: mir_def.MirLocalId) -> String {
         let mut name = common::make_string("%_");
         let num_str = codegen_types::format_u64(local.index as u64);
         name.push_str(num_str.as_str());
@@ -1534,23 +1534,23 @@ impl CodegenCtx {
 
     /// Begins generating a new function.
     pub fn begin_function(self: &mut CodegenCtx, name: String) {
-        self.current_fn = Option::Some(clone_string(&name));
-        self.current_span = Option::None;
+        self.current_fn = Option.Some(clone_string(&name));
+        self.current_span = Option.None;
         self.value_counter = 0;
         self.local_names.clear();
     }
 
     /// Ends the current function.
     pub fn end_function(self: &mut CodegenCtx) {
-        self.current_fn = Option::None;
-        self.current_span = Option::None;
+        self.current_fn = Option.None;
+        self.current_span = Option.None;
     }
 
     /// Returns the current function name, or empty string if none.
     pub fn current_function(self: &CodegenCtx) -> String {
         match &self.current_fn {
-            &Option::Some(ref name) => clone_string(name),
-            &Option::None => common::make_string(""),
+            &Option.Some(ref name) => clone_string(name),
+            &Option.None => common::make_string(""),
         }
     }
 
@@ -1561,14 +1561,14 @@ impl CodegenCtx {
         // Fast path: check hash index
         let hash = hashmap::hash_string(content);
         match self.string_table_hash.get(hash) {
-            Option::Some(idx) => {
+            Option.Some(idx) => {
                 // Verify it's the same string (handle hash collisions)
                 if string_equal(&self.string_table[idx as usize].content, content) {
                     return clone_string(&self.string_table[idx as usize].label);
                 }
                 // Hash collision - fall through to linear scan
             }
-            Option::None => {
+            Option.None => {
                 // Definitely new, add it
                 let n = self.string_counter;
                 self.string_counter = self.string_counter + 1;
@@ -1753,11 +1753,11 @@ impl CodegenCtx {
         self.write("ret ");
         self.write(ty);
         match val {
-            Option::Some(v) => {
+            Option.Some(v) => {
                 self.write(" ");
                 self.write(v);
             }
-            Option::None => {}
+            Option.None => {}
         }
         self.write("\n");
     }
@@ -2061,11 +2061,11 @@ impl CodegenCtx {
     pub fn begin_call(self: &mut CodegenCtx, result: Option<&CgName>, ret_ty: &str, func: &str) {
         self.write_indent();
         match result {
-            Option::Some(r) => {
+            Option.Some(r) => {
                 self.write_cgname(r);
                 self.write(" = ");
             }
-            Option::None => {}
+            Option.None => {}
         }
         self.write("call ");
         self.write(ret_ty);
@@ -2078,11 +2078,11 @@ impl CodegenCtx {
     pub fn begin_call_str(self: &mut CodegenCtx, result: Option<&str>, ret_ty: &str, func: &str) {
         self.write_indent();
         match result {
-            Option::Some(r) => {
+            Option.Some(r) => {
                 self.write(r);
                 self.write(" = ");
             }
-            Option::None => {}
+            Option.None => {}
         }
         self.write("call ");
         self.write(ret_ty);
@@ -2226,20 +2226,20 @@ impl CodegenCtx {
     /// then string tables are merged back into the parent.
     pub fn create_worker_ctx(self: &CodegenCtx) -> CodegenCtx {
         // Clone def_names (read-only during codegen)
-        let mut worker_def_names: Vec<DefNameEntry> = Vec::new();
-        let mut worker_def_hash = hashmap::HashMapU64U32::with_capacity(self.def_names.len());
+        let mut worker_def_names: Vec<DefNameEntry> = Vec.new();
+        let mut worker_def_hash = hashmap.HashMapU64U32.with_capacity(self.def_names.len());
         for i in 0usize..self.def_names.len() {
             let entry = &self.def_names[i];
-            worker_def_names.push(DefNameEntry::new(entry.def_id, clone_string(&entry.name)));
+            worker_def_names.push(DefNameEntry.new(entry.def_id, clone_string(&entry.name)));
             worker_def_hash.insert(entry.def_id as u64, i as u32);
         }
 
         // Deep-clone adt_registry (read-only during codegen, but each thread needs its own copy)
-        let mut worker_adt_registry: Vec<AdtEntry> = Vec::new();
+        let mut worker_adt_registry: Vec<AdtEntry> = Vec.new();
         for ai in 0usize..self.adt_registry.len() {
             match &self.adt_registry[ai] {
-                &AdtEntry::Struct(ref sl) => {
-                    let mut cloned_fields: Vec<AdtFieldInfo> = Vec::new();
+                &AdtEntry.Struct(ref sl) => {
+                    let mut cloned_fields: Vec<AdtFieldInfo> = Vec.new();
                     for fi in 0usize..sl.fields.len() {
                         let field = &sl.fields[fi];
                         cloned_fields.push(AdtFieldInfo {
@@ -2247,17 +2247,17 @@ impl CodegenCtx {
                             hir_type: field.hir_type,
                         });
                     }
-                    worker_adt_registry.push(AdtEntry::Struct(StructLayout {
+                    worker_adt_registry.push(AdtEntry.Struct(StructLayout {
                         def_id: sl.def_id,
                         fields: cloned_fields,
                         llvm_type: clone_string(&sl.llvm_type),
                     }));
                 }
-                &AdtEntry::Enum(ref el) => {
-                    let mut cloned_variants: Vec<VariantLayout> = Vec::new();
+                &AdtEntry.Enum(ref el) => {
+                    let mut cloned_variants: Vec<VariantLayout> = Vec.new();
                     for vi in 0usize..el.variants.len() {
                         let variant = &el.variants[vi];
-                        let mut cloned_vfields: Vec<AdtFieldInfo> = Vec::new();
+                        let mut cloned_vfields: Vec<AdtFieldInfo> = Vec.new();
                         for vfi in 0usize..variant.fields.len() {
                             let vf = &variant.fields[vfi];
                             cloned_vfields.push(AdtFieldInfo {
@@ -2271,7 +2271,7 @@ impl CodegenCtx {
                             payload_llvm_type: clone_string(&variant.payload_llvm_type),
                         });
                     }
-                    worker_adt_registry.push(AdtEntry::Enum(EnumLayout {
+                    worker_adt_registry.push(AdtEntry.Enum(EnumLayout {
                         def_id: el.def_id,
                         discriminant_type: clone_string(&el.discriminant_type),
                         variants: cloned_variants,
@@ -2283,61 +2283,61 @@ impl CodegenCtx {
         }
 
         let mut worker = CodegenCtx {
-            output: String::new(),
+            output: String.new(),
             indent_level: 0,
             value_counter: 0,
             label_counter: 0,
-            local_names: Vec::new(),
-            local_types: Vec::new(),
-            local_signedness: Vec::new(),
-            local_hir_types: Vec::new(),
-            region_locals: Vec::new(),
-            persistent_locals: Vec::new(),
-            current_fn: Option::None,
-            string_table: Vec::new(),
+            local_names: Vec.new(),
+            local_types: Vec.new(),
+            local_signedness: Vec.new(),
+            local_hir_types: Vec.new(),
+            region_locals: Vec.new(),
+            persistent_locals: Vec.new(),
+            current_fn: Option.None,
+            string_table: Vec.new(),
             string_counter: 0,
             def_names: worker_def_names,
             adt_registry: worker_adt_registry,
             def_names_hash: worker_def_hash,
-            local_names_hash: hashmap::HashMapU64U32::new(),
-            local_types_hash: hashmap::HashMapU64U32::new(),
-            local_signedness_hash: hashmap::HashMapU64U32::new(),
-            local_hir_types_hash: hashmap::HashMapU64U32::new(),
-            region_locals_hash: hashmap::HashMapU64U32::new(),
-            persistent_locals_hash: hashmap::HashMapU64U32::new(),
-            local_generations_hash: hashmap::HashMapU64U32::new(),
-            local_generations: Vec::new(),
-            string_table_hash: hashmap::HashMapU64U32::new(),
-            static_defs_hash: hashmap::HashMapU64U32::new(),
-            static_types_hash: hashmap::HashMapU64U32::new(),
-            static_types: Vec::new(),
-            const_defs_hash: hashmap::HashMapU64U32::new(),
-            fn_signatures: Vec::new(),
-            fn_sigs_hash: hashmap::HashMapU64U32::new(),
-            write_buffer: String::new(),
-            output_path: String::new(),
+            local_names_hash: hashmap.HashMapU64U32.new(),
+            local_types_hash: hashmap.HashMapU64U32.new(),
+            local_signedness_hash: hashmap.HashMapU64U32.new(),
+            local_hir_types_hash: hashmap.HashMapU64U32.new(),
+            region_locals_hash: hashmap.HashMapU64U32.new(),
+            persistent_locals_hash: hashmap.HashMapU64U32.new(),
+            local_generations_hash: hashmap.HashMapU64U32.new(),
+            local_generations: Vec.new(),
+            string_table_hash: hashmap.HashMapU64U32.new(),
+            static_defs_hash: hashmap.HashMapU64U32.new(),
+            static_types_hash: hashmap.HashMapU64U32.new(),
+            static_types: Vec.new(),
+            const_defs_hash: hashmap.HashMapU64U32.new(),
+            fn_signatures: Vec.new(),
+            fn_sigs_hash: hashmap.HashMapU64U32.new(),
+            write_buffer: String.new(),
+            output_path: String.new(),
             trace_codegen: self.trace_codegen,
-            call_remaps: Vec::new(),
-            handler_effect_entries: Vec::new(),
-            handler_effect_hash: hashmap::HashMapU64U32::new(),
-            handler_state_count_hash: hashmap::HashMapU64U32::new(),
-            handler_state_byte_size_hash: hashmap::HashMapU64U32::new(),
+            call_remaps: Vec.new(),
+            handler_effect_entries: Vec.new(),
+            handler_effect_hash: hashmap.HashMapU64U32.new(),
+            handler_state_count_hash: hashmap.HashMapU64U32.new(),
+            handler_state_byte_size_hash: hashmap.HashMapU64U32.new(),
             is_handler_op: false,
-            inline_stubs: Vec::new(),
+            inline_stubs: Vec.new(),
             inline_stub_count: 0,
             handler_op_state_local: -1,
             handler_op_state_field_count: 0,
-            handler_op_body_hash: hashmap::HashMapU64U32::new(),
-            handler_op_body_ids: Vec::new(),
-            op_def_index_hash: hashmap::HashMapU64U32::new(),
-            op_def_index_entries: Vec::new(),
-            handler_state_shadows: Vec::new(),
-            codegen_errors: Vec::new(),
-            codegen_warnings: Vec::new(),
-            current_span: Option::None,
-            fn_ptr_wrapper_hash: hashmap::HashMapU64U32::with_capacity(32),
-            fn_ptr_wrapper_names: Vec::with_capacity(32),
-            fn_ptr_wrapper_defs: Vec::with_capacity(32),
+            handler_op_body_hash: hashmap.HashMapU64U32.new(),
+            handler_op_body_ids: Vec.new(),
+            op_def_index_hash: hashmap.HashMapU64U32.new(),
+            op_def_index_entries: Vec.new(),
+            handler_state_shadows: Vec.new(),
+            codegen_errors: Vec.new(),
+            codegen_warnings: Vec.new(),
+            current_span: Option.None,
+            fn_ptr_wrapper_hash: hashmap.HashMapU64U32.with_capacity(32),
+            fn_ptr_wrapper_names: Vec.with_capacity(32),
+            fn_ptr_wrapper_defs: Vec.with_capacity(32),
         };
 
         // Copy handler_op_body_ids with state counts (read-only, needed to flag handler op bodies)
@@ -2364,13 +2364,13 @@ impl CodegenCtx {
         // Copy function signatures (read-only, needed at call sites)
         for fi in 0usize..self.fn_signatures.len() {
             let sig = &self.fn_signatures[fi];
-            let mut cloned_params: Vec<String> = Vec::new();
+            let mut cloned_params: Vec<String> = Vec.new();
             for pi in 0usize..sig.param_types.len() {
-                let mut p = String::new();
+                let mut p = String.new();
                 p.push_str(sig.param_types[pi].as_str());
                 cloned_params.push(p);
             }
-            let mut cloned_ret = String::new();
+            let mut cloned_ret = String.new();
             cloned_ret.push_str(sig.return_type.as_str());
             worker.register_fn_signature(sig.def_id, cloned_params, cloned_ret);
         }
@@ -2381,10 +2381,10 @@ impl CodegenCtx {
             if self.is_static(entry.def_id) {
                 worker.register_static(entry.def_id);
                 match self.get_static_type(entry.def_id) {
-                    Option::Some(ty) => {
+                    Option.Some(ty) => {
                         worker.register_static_type(entry.def_id, ty);
                     }
-                    Option::None => {}
+                    Option.None => {}
                 }
             }
             if self.is_const(entry.def_id) {
@@ -2426,7 +2426,7 @@ pub fn merge_string_tables(
     main_ctx: &mut CodegenCtx,
     worker_ctx: &CodegenCtx,
 ) -> Vec<StringRemap> {
-    let mut remaps: Vec<StringRemap> = Vec::new();
+    let mut remaps: Vec<StringRemap> = Vec.new();
 
     for i in 0usize..worker_ctx.string_table_len() {
         let content = worker_ctx.string_content_at(i);
@@ -2482,7 +2482,7 @@ fn string_replace(s: &String, from: &String, to: &String) -> String {
         return clone_string(s);
     }
 
-    let mut result = String::new();
+    let mut result = String.new();
     let mut i: usize = 0;
 
     while i < s_len {
@@ -2520,51 +2520,51 @@ fn string_replace(s: &String, from: &String, to: &String) -> String {
 /// Clones a CodegenErrorKind.
 pub fn clone_error_kind(kind: &CodegenErrorKind) -> CodegenErrorKind {
     match kind {
-        &CodegenErrorKind::AdtLookupFailed => CodegenErrorKind::AdtLookupFailed,
-        &CodegenErrorKind::FnLookupFailed => CodegenErrorKind::FnLookupFailed,
-        &CodegenErrorKind::StaticLookupFailed => CodegenErrorKind::StaticLookupFailed,
-        &CodegenErrorKind::TypeSubstitutionFailed => CodegenErrorKind::TypeSubstitutionFailed,
-        &CodegenErrorKind::VariantLookupFailed => CodegenErrorKind::VariantLookupFailed,
-        &CodegenErrorKind::EffectOpLookupFailed => CodegenErrorKind::EffectOpLookupFailed,
-        &CodegenErrorKind::UnsupportedOperation => CodegenErrorKind::UnsupportedOperation,
-        &CodegenErrorKind::TypeParseFailed => CodegenErrorKind::TypeParseFailed,
-        &CodegenErrorKind::InternalError => CodegenErrorKind::InternalError,
+        &CodegenErrorKind.AdtLookupFailed => CodegenErrorKind.AdtLookupFailed,
+        &CodegenErrorKind.FnLookupFailed => CodegenErrorKind.FnLookupFailed,
+        &CodegenErrorKind.StaticLookupFailed => CodegenErrorKind.StaticLookupFailed,
+        &CodegenErrorKind.TypeSubstitutionFailed => CodegenErrorKind.TypeSubstitutionFailed,
+        &CodegenErrorKind.VariantLookupFailed => CodegenErrorKind.VariantLookupFailed,
+        &CodegenErrorKind.EffectOpLookupFailed => CodegenErrorKind.EffectOpLookupFailed,
+        &CodegenErrorKind.UnsupportedOperation => CodegenErrorKind.UnsupportedOperation,
+        &CodegenErrorKind.TypeParseFailed => CodegenErrorKind.TypeParseFailed,
+        &CodegenErrorKind.InternalError => CodegenErrorKind.InternalError,
     }
 }
 
 /// Converts a CodegenErrorKind to a human-readable category string.
 pub fn error_kind_label(kind: &CodegenErrorKind) -> &str {
     match kind {
-        &CodegenErrorKind::AdtLookupFailed => "ADT lookup failed",
-        &CodegenErrorKind::FnLookupFailed => "function lookup failed",
-        &CodegenErrorKind::StaticLookupFailed => "static lookup failed",
-        &CodegenErrorKind::TypeSubstitutionFailed => "type substitution failed",
-        &CodegenErrorKind::VariantLookupFailed => "variant lookup failed",
-        &CodegenErrorKind::EffectOpLookupFailed => "effect operation lookup failed",
-        &CodegenErrorKind::UnsupportedOperation => "unsupported operation",
-        &CodegenErrorKind::TypeParseFailed => "type parse failed",
-        &CodegenErrorKind::InternalError => "internal codegen error",
+        &CodegenErrorKind.AdtLookupFailed => "ADT lookup failed",
+        &CodegenErrorKind.FnLookupFailed => "function lookup failed",
+        &CodegenErrorKind.StaticLookupFailed => "static lookup failed",
+        &CodegenErrorKind.TypeSubstitutionFailed => "type substitution failed",
+        &CodegenErrorKind.VariantLookupFailed => "variant lookup failed",
+        &CodegenErrorKind.EffectOpLookupFailed => "effect operation lookup failed",
+        &CodegenErrorKind.UnsupportedOperation => "unsupported operation",
+        &CodegenErrorKind.TypeParseFailed => "type parse failed",
+        &CodegenErrorKind.InternalError => "internal codegen error",
     }
 }
 
 /// Returns the error code string for a CodegenErrorKind.
 pub fn error_kind_code(kind: &CodegenErrorKind) -> &str {
     match kind {
-        &CodegenErrorKind::AdtLookupFailed => "E0800",
-        &CodegenErrorKind::FnLookupFailed => "E0801",
-        &CodegenErrorKind::StaticLookupFailed => "E0802",
-        &CodegenErrorKind::TypeSubstitutionFailed => "E0803",
-        &CodegenErrorKind::VariantLookupFailed => "E0804",
-        &CodegenErrorKind::EffectOpLookupFailed => "E0805",
-        &CodegenErrorKind::UnsupportedOperation => "E0806",
-        &CodegenErrorKind::TypeParseFailed => "E0807",
-        &CodegenErrorKind::InternalError => "E0808",
+        &CodegenErrorKind.AdtLookupFailed => "E0800",
+        &CodegenErrorKind.FnLookupFailed => "E0801",
+        &CodegenErrorKind.StaticLookupFailed => "E0802",
+        &CodegenErrorKind.TypeSubstitutionFailed => "E0803",
+        &CodegenErrorKind.VariantLookupFailed => "E0804",
+        &CodegenErrorKind.EffectOpLookupFailed => "E0805",
+        &CodegenErrorKind.UnsupportedOperation => "E0806",
+        &CodegenErrorKind.TypeParseFailed => "E0807",
+        &CodegenErrorKind.InternalError => "E0808",
     }
 }
 
 /// Clones a String.
 fn clone_string(s: &String) -> String {
-    let mut result = String::new();
+    let mut result = String.new();
     result.push_str(s.as_str());
     result
 }
@@ -2586,7 +2586,7 @@ fn string_equal(a: &String, b: &String) -> bool {
 
 /// Converts a byte to a two-character hex string.
 fn byte_to_hex(b: u8) -> String {
-    let mut result = String::new();
+    let mut result = String.new();
     let high = (b >> 4) & 0xF;
     let low = b & 0xF;
     result.push(nibble_to_hex(high));

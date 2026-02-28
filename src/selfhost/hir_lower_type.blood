@@ -25,30 +25,30 @@ mod type_intern;
 // ============================================================
 
 /// Lower an AST type directly to an interned TyId.
-pub fn lower_type_id(ctx: &mut hir_lower_ctx::LoweringCtx, ty: &ast::Type) -> type_intern::TyId {
+pub fn lower_type_id(ctx: &mut hir_lower_ctx.LoweringCtx, ty: &ast.Type) -> type_intern.TyId {
     match &ty.kind {
-        &ast::TypeKind::Path(ref path) => {
+        &ast.TypeKind.Path(ref path) => {
             lower_type_path_id(ctx, path)
         }
-        &ast::TypeKind::Reference { lifetime: _, is_mut, ref inner } => {
+        &ast.TypeKind.Reference { lifetime: _, is_mut, ref inner } => {
             let inner_id = lower_type_id(ctx, inner.as_ref());
             type_intern::type_interner().mk_ref(inner_id, is_mut)
         }
-        &ast::TypeKind::Pointer { is_mut, ref inner } => {
+        &ast.TypeKind.Pointer { is_mut, ref inner } => {
             let inner_id = lower_type_id(ctx, inner.as_ref());
             type_intern::type_interner().mk_ptr(inner_id, is_mut)
         }
-        &ast::TypeKind::Array { ref element, ref size } => {
+        &ast.TypeKind.Array { ref element, ref size } => {
             let elem_id = lower_type_id(ctx, element.as_ref());
             let array_size = eval_array_size_or_const_param(ctx, size.as_ref());
             type_intern::type_interner().mk_array(elem_id, array_size)
         }
-        &ast::TypeKind::Slice { ref element } => {
+        &ast.TypeKind.Slice { ref element } => {
             let elem_id = lower_type_id(ctx, element.as_ref());
             type_intern::type_interner().mk_slice(elem_id)
         }
-        &ast::TypeKind::Tuple(ref types) => {
-            let mut ids: Vec<type_intern::TyId> = Vec::new();
+        &ast.TypeKind.Tuple(ref types) => {
+            let mut ids: Vec<type_intern.TyId> = Vec.new();
             for i in 0usize..types.len() {
                 let t = lower_type_id(ctx, &types[i]);
                 ids.push(t);
@@ -56,8 +56,8 @@ pub fn lower_type_id(ctx: &mut hir_lower_ctx::LoweringCtx, ty: &ast::Type) -> ty
             let list_id = type_intern::type_interner().intern_ty_list(&ids);
             type_intern::type_interner().mk_tuple(list_id)
         }
-        &ast::TypeKind::Function { ref params, ref return_type, ref effects } => {
-            let mut param_ids: Vec<type_intern::TyId> = Vec::new();
+        &ast.TypeKind.Function { ref params, ref return_type, ref effects } => {
+            let mut param_ids: Vec<type_intern.TyId> = Vec.new();
             for i in 0usize..params.len() {
                 let t = lower_type_id(ctx, &params[i]);
                 param_ids.push(t);
@@ -68,43 +68,43 @@ pub fn lower_type_id(ctx: &mut hir_lower_ctx::LoweringCtx, ty: &ast::Type) -> ty
                     let row = lower_effect_row(ctx, eff);
                     type_intern::intern_effect_row(&row)
                 }
-                &None => type_intern::EffectRowId::new(0),
+                &None => type_intern.EffectRowId.new(0),
             };
             let param_list = type_intern::type_interner().intern_ty_list(&param_ids);
             type_intern::type_interner().mk_fn(param_list, ret_id, effect_row_id)
         }
-        &ast::TypeKind::Record { ref fields, ref rest } => {
-            let mut interned_fields: Vec<type_intern::InternedRecordField> = Vec::new();
+        &ast.TypeKind.Record { ref fields, ref rest } => {
+            let mut interned_fields: Vec<type_intern.InternedRecordField> = Vec.new();
             for i in 0usize..fields.len() {
                 let f = &fields[i];
                 let field_id = lower_type_id(ctx, &f.ty);
                 // Re-intern field name for cross-interner consistency (AST → HIR interner)
                 let fname_str = ctx.span_to_string(f.name.span);
                 let fname_sym = ctx.intern(fname_str.as_str());
-                interned_fields.push(type_intern::InternedRecordField::new(fname_sym, field_id));
+                interned_fields.push(type_intern.InternedRecordField.new(fname_sym, field_id));
             }
             let row_var = match rest {
-                &Option::Some(ref _row_var_name) => {
-                    Option::Some(ctx.alloc_record_row_var())
+                &Option.Some(ref _row_var_name) => {
+                    Option.Some(ctx.alloc_record_row_var())
                 }
-                &Option::None => Option::None,
+                &Option.None => Option.None,
             };
-            let field_list = type_intern::InternedRecordFieldList::new(interned_fields);
+            let field_list = type_intern.InternedRecordFieldList.new(interned_fields);
             let field_list_id = type_intern::type_interner().intern_record_field_list(field_list);
-            type_intern::type_interner().intern(type_intern::InternedTypeKind::Record { fields: field_list_id, row_var: row_var })
+            type_intern::type_interner().intern(type_intern.InternedTypeKind.Record { fields: field_list_id, row_var: row_var })
         }
-        &ast::TypeKind::Ownership { ref qualifier, ref inner } => {
+        &ast.TypeKind.Ownership { ref qualifier, ref inner } => {
             let hir_qualifier = match qualifier {
-                &ast::OwnershipQualifier::Linear => hir_ty::OwnershipQualifier::Linear,
-                &ast::OwnershipQualifier::Affine => hir_ty::OwnershipQualifier::Affine,
+                &ast.OwnershipQualifier.Linear => hir_ty.OwnershipQualifier.Linear,
+                &ast.OwnershipQualifier.Affine => hir_ty.OwnershipQualifier.Affine,
             };
             let inner_id = lower_type_id(ctx, inner.as_ref());
             type_intern::type_interner().mk_ownership(hir_qualifier, inner_id)
         }
-        &ast::TypeKind::Forall { ref params, ref body } => {
-            ctx.resolver.push_scope(resolve::ScopeKind::TypeParams);
+        &ast.TypeKind.Forall { ref params, ref body } => {
+            ctx.resolver.push_scope(resolve.ScopeKind.TypeParams);
 
-            let mut param_ids: Vec<hir_def::TyVarId> = Vec::new();
+            let mut param_ids: Vec<hir_def.TyVarId> = Vec.new();
             for i in 0usize..params.len() {
                 let var_id = ctx.alloc_ty_var();
                 param_ids.push(var_id);
@@ -116,65 +116,65 @@ pub fn lower_type_id(ctx: &mut hir_lower_ctx::LoweringCtx, ty: &ast::Type) -> ty
 
             ctx.resolver.pop_scope();
 
-            type_intern::type_interner().intern(type_intern::InternedTypeKind::Forall { params: param_ids, body: body_id })
+            type_intern::type_interner().intern(type_intern.InternedTypeKind.Forall { params: param_ids, body: body_id })
         }
-        &ast::TypeKind::Never => {
-            type_intern::CommonTypes::never()
+        &ast.TypeKind.Never => {
+            type_intern.CommonTypes.never()
         }
-        &ast::TypeKind::Infer => {
+        &ast.TypeKind.Infer => {
             let var_id = ctx.alloc_ty_var();
             type_intern::type_interner().mk_infer(var_id)
         }
-        &ast::TypeKind::Paren(ref inner) => {
+        &ast.TypeKind.Paren(ref inner) => {
             lower_type_id(ctx, inner.as_ref())
         }
     }
 }
 
 /// Lower an AST type to an HIR type.
-pub fn lower_type(ctx: &mut hir_lower_ctx::LoweringCtx, ty: &ast::Type) -> hir_ty::Type {
+pub fn lower_type(ctx: &mut hir_lower_ctx.LoweringCtx, ty: &ast.Type) -> hir_ty.Type {
     match &ty.kind {
-        &ast::TypeKind::Path(ref path) => {
+        &ast.TypeKind.Path(ref path) => {
             lower_type_path(ctx, path)
         }
-        &ast::TypeKind::Reference { lifetime: _, is_mut, ref inner } => {
+        &ast.TypeKind.Reference { lifetime: _, is_mut, ref inner } => {
             let inner_ty = lower_type(ctx, inner.as_ref());
-            hir_ty::Type::new(hir_ty::TypeKind::Ref {
-                inner: Box::new(inner_ty),
+            hir_ty.Type.new(hir_ty.TypeKind.Ref {
+                inner: Box.new(inner_ty),
                 mutable: is_mut,
             })
         }
-        &ast::TypeKind::Pointer { is_mut, ref inner } => {
+        &ast.TypeKind.Pointer { is_mut, ref inner } => {
             let inner_ty = lower_type(ctx, inner.as_ref());
-            hir_ty::Type::new(hir_ty::TypeKind::Ptr {
-                inner: Box::new(inner_ty),
+            hir_ty.Type.new(hir_ty.TypeKind.Ptr {
+                inner: Box.new(inner_ty),
                 mutable: is_mut,
             })
         }
-        &ast::TypeKind::Array { ref element, ref size } => {
+        &ast.TypeKind.Array { ref element, ref size } => {
             let elem_ty = lower_type(ctx, element.as_ref());
             let array_size = eval_array_size_or_const_param(ctx, size.as_ref());
-            hir_ty::Type::new(hir_ty::TypeKind::Array {
-                element: Box::new(elem_ty),
+            hir_ty.Type.new(hir_ty.TypeKind.Array {
+                element: Box.new(elem_ty),
                 size: array_size,
             })
         }
-        &ast::TypeKind::Slice { ref element } => {
+        &ast.TypeKind.Slice { ref element } => {
             let elem_ty = lower_type(ctx, element.as_ref());
-            hir_ty::Type::new(hir_ty::TypeKind::Slice {
-                element: Box::new(elem_ty),
+            hir_ty.Type.new(hir_ty.TypeKind.Slice {
+                element: Box.new(elem_ty),
             })
         }
-        &ast::TypeKind::Tuple(ref types) => {
-            let mut lowered: Vec<hir_ty::Type> = Vec::new();
+        &ast.TypeKind.Tuple(ref types) => {
+            let mut lowered: Vec<hir_ty.Type> = Vec.new();
             for i in 0usize..types.len() {
                 let t = lower_type(ctx, &types[i]);
                 lowered.push(t);
             }
-            hir_ty::Type::new(hir_ty::TypeKind::Tuple(lowered))
+            hir_ty.Type.new(hir_ty.TypeKind.Tuple(lowered))
         }
-        &ast::TypeKind::Function { ref params, ref return_type, ref effects } => {
-            let mut param_tys: Vec<hir_ty::Type> = Vec::new();
+        &ast.TypeKind.Function { ref params, ref return_type, ref effects } => {
+            let mut param_tys: Vec<hir_ty.Type> = Vec.new();
             for i in 0usize..params.len() {
                 let t = lower_type(ctx, &params[i]);
                 param_tys.push(t);
@@ -182,51 +182,51 @@ pub fn lower_type(ctx: &mut hir_lower_ctx::LoweringCtx, ty: &ast::Type) -> hir_t
             let ret_ty = lower_type(ctx, return_type.as_ref());
             let effect_row = match effects {
                 &Some(ref eff) => lower_effect_row(ctx, eff),
-                &None => hir_ty::EffectRow::empty(),
+                &None => hir_ty.EffectRow.empty(),
             };
-            hir_ty::Type::new(hir_ty::TypeKind::Fn {
+            hir_ty.Type.new(hir_ty.TypeKind.Fn {
                 params: param_tys,
-                ret: Box::new(ret_ty),
+                ret: Box.new(ret_ty),
                 effects: effect_row,
             })
         }
-        &ast::TypeKind::Record { ref fields, ref rest } => {
-            let mut hir_fields: Vec<hir_ty::RecordField> = Vec::new();
+        &ast.TypeKind.Record { ref fields, ref rest } => {
+            let mut hir_fields: Vec<hir_ty.RecordField> = Vec.new();
             for i in 0usize..fields.len() {
                 let f = &fields[i];
                 let field_ty = lower_type(ctx, &f.ty);
                 // Re-intern field name for cross-interner consistency (AST → HIR interner)
                 let fname_str = ctx.span_to_string(f.name.span);
                 let fname_sym = ctx.intern(fname_str.as_str());
-                let hir_field = hir_ty::RecordField::new(fname_sym, field_ty);
+                let hir_field = hir_ty.RecordField.new(fname_sym, field_ty);
                 hir_fields.push(hir_field);
             }
             let row_var = match rest {
-                &Option::Some(ref _row_var_name) => {
-                    Option::Some(ctx.alloc_record_row_var())
+                &Option.Some(ref _row_var_name) => {
+                    Option.Some(ctx.alloc_record_row_var())
                 }
-                &Option::None => Option::None,
+                &Option.None => Option.None,
             };
-            hir_ty::Type::new(hir_ty::TypeKind::Record {
+            hir_ty.Type.new(hir_ty.TypeKind.Record {
                 fields: hir_fields,
                 row_var: row_var,
             })
         }
-        &ast::TypeKind::Ownership { ref qualifier, ref inner } => {
+        &ast.TypeKind.Ownership { ref qualifier, ref inner } => {
             let hir_qualifier = match qualifier {
-                &ast::OwnershipQualifier::Linear => hir_ty::OwnershipQualifier::Linear,
-                &ast::OwnershipQualifier::Affine => hir_ty::OwnershipQualifier::Affine,
+                &ast.OwnershipQualifier.Linear => hir_ty.OwnershipQualifier.Linear,
+                &ast.OwnershipQualifier.Affine => hir_ty.OwnershipQualifier.Affine,
             };
             let inner_ty = lower_type(ctx, inner.as_ref());
-            hir_ty::Type::new(hir_ty::TypeKind::Ownership {
+            hir_ty.Type.new(hir_ty.TypeKind.Ownership {
                 qualifier: hir_qualifier,
-                inner: Box::new(inner_ty),
+                inner: Box.new(inner_ty),
             })
         }
-        &ast::TypeKind::Forall { ref params, ref body } => {
-            ctx.resolver.push_scope(resolve::ScopeKind::TypeParams);
+        &ast.TypeKind.Forall { ref params, ref body } => {
+            ctx.resolver.push_scope(resolve.ScopeKind.TypeParams);
 
-            let mut param_ids: Vec<hir_def::TyVarId> = Vec::new();
+            let mut param_ids: Vec<hir_def.TyVarId> = Vec.new();
             for i in 0usize..params.len() {
                 let var_id = ctx.alloc_ty_var();
                 param_ids.push(var_id);
@@ -238,19 +238,19 @@ pub fn lower_type(ctx: &mut hir_lower_ctx::LoweringCtx, ty: &ast::Type) -> hir_t
 
             ctx.resolver.pop_scope();
 
-            hir_ty::Type::new(hir_ty::TypeKind::Forall {
+            hir_ty.Type.new(hir_ty.TypeKind.Forall {
                 params: param_ids,
-                body: Box::new(body_ty),
+                body: Box.new(body_ty),
             })
         }
-        &ast::TypeKind::Never => {
-            hir_ty::Type::never()
+        &ast.TypeKind.Never => {
+            hir_ty.Type.never()
         }
-        &ast::TypeKind::Infer => {
+        &ast.TypeKind.Infer => {
             let var_id = ctx.alloc_ty_var();
-            hir_ty::Type::infer(var_id)
+            hir_ty.Type.infer(var_id)
         }
-        &ast::TypeKind::Paren(ref inner) => {
+        &ast.TypeKind.Paren(ref inner) => {
             lower_type(ctx, inner.as_ref())
         }
     }
@@ -261,7 +261,7 @@ pub fn lower_type(ctx: &mut hir_lower_ctx::LoweringCtx, ty: &ast::Type) -> hir_t
 // ============================================================
 
 /// Lower a type path directly to an interned TyId.
-fn lower_type_path_id(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::TypePath) -> type_intern::TyId {
+fn lower_type_path_id(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.TypePath) -> type_intern.TyId {
     // Handle built-in primitive types
     if path.segments.len() == 1 {
         let seg = &path.segments[0];
@@ -280,16 +280,16 @@ fn lower_type_path_id(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::TypePath
             let name_str = ctx.span_to_string(seg.name.span);
             if str_eq(&name_str, "Self") || str_eq(&name_str, "self") {
                 match &ctx.current_self_type {
-                    &Option::Some(ref self_ty) => {
+                    &Option.Some(ref self_ty) => {
                         return *self_ty;
                     }
-                    &Option::None => {
+                    &Option.None => {
                         ctx.error(
-                            hir::DiagnosticCode::E0102,
+                            hir.DiagnosticCode.E0102,
                             common::make_string("Self used outside of impl block"),
                             seg.name.span,
                         );
-                        return type_intern::CommonTypes::error();
+                        return type_intern.CommonTypes.error();
                     }
                 }
             }
@@ -336,28 +336,28 @@ fn lower_type_path_id(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::TypePath
             // Also validate that the DefKind is appropriate for type position
             let def_info_opt = ctx.resolver.get_def_info(def_id);
             match &def_info_opt {
-                &Option::Some(ref info) => {
+                &Option.Some(ref info) => {
                     match info.kind {
-                        hir_def::DefKind::TypeAlias => {
+                        hir_def.DefKind.TypeAlias => {
                             let item_entry = ctx.get_item(def_id);
                             match &item_entry {
-                                &Option::Some(ref entry) => {
+                                &Option.Some(ref entry) => {
                                     match &entry.item.kind {
-                                        &hir_item::ItemKind::TypeAlias(ref alias_def) => {
+                                        &hir_item.ItemKind.TypeAlias(ref alias_def) => {
                                             return alias_def.ty;
                                         }
                                         _ => {}
                                     }
                                 }
-                                &Option::None => {}
+                                &Option.None => {}
                             }
                         }
-                        hir_def::DefKind::Struct => {}
-                        hir_def::DefKind::Enum => {}
-                        hir_def::DefKind::Trait => {}
-                        hir_def::DefKind::Effect => {}
-                        hir_def::DefKind::TypeParam => {}
-                        hir_def::DefKind::AssocType => {}
+                        hir_def.DefKind.Struct => {}
+                        hir_def.DefKind.Enum => {}
+                        hir_def.DefKind.Trait => {}
+                        hir_def.DefKind.Effect => {}
+                        hir_def.DefKind.TypeParam => {}
+                        hir_def.DefKind.AssocType => {}
                         _ => {
                             // Not a valid type — report error
                             let mut tmsg = common::make_string("not a type: `");
@@ -365,21 +365,21 @@ fn lower_type_path_id(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::TypePath
                             tmsg.push_str(tname_str.as_str());
                             tmsg.push_str("` is not a type");
                             ctx.error(
-                                hir::DiagnosticCode::E0102,
+                                hir.DiagnosticCode.E0102,
                                 tmsg,
                                 seg.name.span,
                             );
-                            return type_intern::CommonTypes::error();
+                            return type_intern.CommonTypes.error();
                         }
                     }
                 }
-                &Option::None => {}
+                &Option.None => {}
             }
 
             // Lower type arguments if present
             let type_arg_ids = match &seg.args {
                 &Some(ref args) => lower_type_args_id(ctx, args),
-                &None => Vec::new(),
+                &None => Vec.new(),
             };
             let arg_list = type_intern::type_interner().intern_ty_list(&type_arg_ids);
             return type_intern::type_interner().mk_adt(def_id, arg_list);
@@ -388,21 +388,21 @@ fn lower_type_path_id(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::TypePath
             let tname_str = ctx.span_to_string(seg.name.span);
             tmsg.push_str(tname_str.as_str());
             ctx.error(
-                hir::DiagnosticCode::E0102,
+                hir.DiagnosticCode.E0102,
                 tmsg,
                 seg.name.span,
             );
-            return type_intern::CommonTypes::error();
+            return type_intern.CommonTypes.error();
         }
     }
 
-    // Check for Self::AssocType paths (2-segment, first is Self)
+    // Check for Self.AssocType paths (2-segment, first is Self)
     if path.segments.len() == 2 {
         let first_seg = &path.segments[0];
         let first_name = ctx.span_to_string(first_seg.name.span);
         if str_eq(&first_name, "Self") {
             match &ctx.current_self_type {
-                &Option::Some(ref _self_ty) => {
+                &Option.Some(ref _self_ty) => {
                     // Look up the associated type name in current_assoc_types
                     let second_seg = &path.segments[1];
                     let assoc_name_str = ctx.span_to_string(second_seg.name.span);
@@ -415,21 +415,21 @@ fn lower_type_path_id(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::TypePath
                     }
                     // Not found — fall through to qualified path resolution
                 }
-                &Option::None => {
+                &Option.None => {
                     // Not in trait/impl context — fall through
                 }
             }
         }
     }
 
-    // Multi-segment paths (e.g., module::Type)
+    // Multi-segment paths (e.g., module.Type)
     // Extract the names from path segments, re-interning for consistent indices
-    let mut names: Vec<common::SpannedSymbol> = Vec::new();
+    let mut names: Vec<common.SpannedSymbol> = Vec.new();
     for i in 0usize..path.segments.len() {
         let seg = &path.segments[i];
         let name_str = ctx.span_to_string(seg.name.span);
         let re_interned = ctx.intern(name_str.as_str());
-        names.push(common::SpannedSymbol { symbol: re_interned, span: seg.name.span });
+        names.push(common.SpannedSymbol { symbol: re_interned, span: seg.name.span });
     }
 
     let resolved = ctx.resolver.resolve_qualified_path(&names);
@@ -439,7 +439,7 @@ fn lower_type_path_id(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::TypePath
         let last_seg = &path.segments[path.segments.len() - 1];
         let type_arg_ids = match &last_seg.args {
             &Some(ref args) => lower_type_args_id(ctx, args),
-            &None => Vec::new(),
+            &None => Vec.new(),
         };
         let arg_list = type_intern::type_interner().intern_ty_list(&type_arg_ids);
         return type_intern::type_interner().mk_adt(result.def_id, arg_list);
@@ -455,15 +455,15 @@ fn lower_type_path_id(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::TypePath
         msg.push_str(seg_str.as_str());
     }
     ctx.error(
-        hir::DiagnosticCode::E0102,
+        hir.DiagnosticCode.E0102,
         msg,
         path.span,
     );
-    type_intern::CommonTypes::error()
+    type_intern.CommonTypes.error()
 }
 
 /// Lower a type path to an HIR type.
-fn lower_type_path(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::TypePath) -> hir_ty::Type {
+fn lower_type_path(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.TypePath) -> hir_ty.Type {
     // Handle built-in primitive types
     if path.segments.len() == 1 {
         let seg = &path.segments[0];
@@ -483,16 +483,16 @@ fn lower_type_path(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::TypePath) -
             let name_str = ctx.span_to_string(seg.name.span);
             if str_eq(&name_str, "Self") || str_eq(&name_str, "self") {
                 match &ctx.current_self_type {
-                    &Option::Some(ref self_ty) => {
+                    &Option.Some(ref self_ty) => {
                         return type_intern::ty_id_to_type(*self_ty);
                     }
-                    &Option::None => {
+                    &Option.None => {
                         ctx.error(
-                            hir::DiagnosticCode::E0102,
+                            hir.DiagnosticCode.E0102,
                             common::make_string("Self used outside of impl block"),
                             seg.name.span,
                         );
-                        return hir_ty::Type::error();
+                        return hir_ty.Type.error();
                     }
                 }
             }
@@ -507,7 +507,7 @@ fn lower_type_path(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::TypePath) -
             let type_param = ctx.resolver.lookup_type_param(seg.name.symbol);
             if type_param.is_some() {
                 let ty_var_id = type_param.unwrap();
-                return hir_ty::Type::new(hir_ty::TypeKind::Infer(ty_var_id));
+                return hir_ty.Type.new(hir_ty.TypeKind.Infer(ty_var_id));
             }
             // Then try re-interned symbol
             let tp_name_str = ctx.span_to_string(seg.name.span);
@@ -515,7 +515,7 @@ fn lower_type_path(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::TypePath) -
             let type_param2 = ctx.resolver.lookup_type_param(tp_symbol);
             if type_param2.is_some() {
                 let ty_var_id2 = type_param2.unwrap();
-                return hir_ty::Type::new(hir_ty::TypeKind::Infer(ty_var_id2));
+                return hir_ty.Type.new(hir_ty.TypeKind.Infer(ty_var_id2));
             }
         }
     }
@@ -535,28 +535,28 @@ fn lower_type_path(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::TypePath) -
             // Check if this is a type alias — resolve to the underlying type
             let def_info_opt = ctx.resolver.get_def_info(def_id);
             match &def_info_opt {
-                &Option::Some(ref info) => {
+                &Option.Some(ref info) => {
                     match info.kind {
-                        hir_def::DefKind::TypeAlias => {
+                        hir_def.DefKind.TypeAlias => {
                             let item_entry = ctx.get_item(def_id);
                             match &item_entry {
-                                &Option::Some(ref entry) => {
+                                &Option.Some(ref entry) => {
                                     match &entry.item.kind {
-                                        &hir_item::ItemKind::TypeAlias(ref alias_def) => {
+                                        &hir_item.ItemKind.TypeAlias(ref alias_def) => {
                                             return type_intern::ty_id_to_type(alias_def.ty);
                                         }
                                         _ => {}
                                     }
                                 }
-                                &Option::None => {}
+                                &Option.None => {}
                             }
                         }
-                        hir_def::DefKind::Struct => {}
-                        hir_def::DefKind::Enum => {}
-                        hir_def::DefKind::Trait => {}
-                        hir_def::DefKind::Effect => {}
-                        hir_def::DefKind::TypeParam => {}
-                        hir_def::DefKind::AssocType => {}
+                        hir_def.DefKind.Struct => {}
+                        hir_def.DefKind.Enum => {}
+                        hir_def.DefKind.Trait => {}
+                        hir_def.DefKind.Effect => {}
+                        hir_def.DefKind.TypeParam => {}
+                        hir_def.DefKind.AssocType => {}
                         _ => {
                             // Not a valid type — report error
                             let mut tmsg = common::make_string("not a type: `");
@@ -564,24 +564,24 @@ fn lower_type_path(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::TypePath) -
                             tmsg.push_str(tname_str.as_str());
                             tmsg.push_str("` is not a type");
                             ctx.error(
-                                hir::DiagnosticCode::E0102,
+                                hir.DiagnosticCode.E0102,
                                 tmsg,
                                 seg.name.span,
                             );
-                            return hir_ty::Type::error();
+                            return hir_ty.Type.error();
                         }
                     }
                 }
-                &Option::None => {}
+                &Option.None => {}
             }
 
             // Lower type arguments if present
             let type_args = match &seg.args {
                 &Some(ref args) => lower_type_args(ctx, args),
-                &None => Vec::new(),
+                &None => Vec.new(),
             };
 
-            return hir_ty::Type::new(hir_ty::TypeKind::Adt {
+            return hir_ty.Type.new(hir_ty.TypeKind.Adt {
                 def_id: def_id,
                 args: type_args,
             });
@@ -590,21 +590,21 @@ fn lower_type_path(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::TypePath) -
             let tname_str = ctx.span_to_string(seg.name.span);
             tmsg.push_str(tname_str.as_str());
             ctx.error(
-                hir::DiagnosticCode::E0102,
+                hir.DiagnosticCode.E0102,
                 tmsg,
                 seg.name.span,
             );
-            return hir_ty::Type::error();
+            return hir_ty.Type.error();
         }
     }
 
-    // Multi-segment paths (e.g., module::Type)
-    let mut names: Vec<common::SpannedSymbol> = Vec::new();
+    // Multi-segment paths (e.g., module.Type)
+    let mut names: Vec<common.SpannedSymbol> = Vec.new();
     for i in 0usize..path.segments.len() {
         let seg = &path.segments[i];
         let name_str = ctx.span_to_string(seg.name.span);
         let re_interned = ctx.intern(name_str.as_str());
-        names.push(common::SpannedSymbol { symbol: re_interned, span: seg.name.span });
+        names.push(common.SpannedSymbol { symbol: re_interned, span: seg.name.span });
     }
 
     let resolved = ctx.resolver.resolve_qualified_path(&names);
@@ -614,10 +614,10 @@ fn lower_type_path(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::TypePath) -
         let last_seg = &path.segments[path.segments.len() - 1];
         let type_args = match &last_seg.args {
             &Some(ref args) => lower_type_args(ctx, args),
-            &None => Vec::new(),
+            &None => Vec.new(),
         };
 
-        return hir_ty::Type::new(hir_ty::TypeKind::Adt {
+        return hir_ty.Type.new(hir_ty.TypeKind.Adt {
             def_id: result.def_id,
             args: type_args,
         });
@@ -633,11 +633,11 @@ fn lower_type_path(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::TypePath) -
         msg.push_str(seg_str.as_str());
     }
     ctx.error(
-        hir::DiagnosticCode::E0102,
+        hir.DiagnosticCode.E0102,
         msg,
         path.span,
     );
-    hir_ty::Type::error()
+    hir_ty.Type.error()
 }
 
 // ============================================================
@@ -645,87 +645,87 @@ fn lower_type_path(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::TypePath) -
 // ============================================================
 
 /// Try to convert a span to a primitive TyId.
-fn try_primitive_type_by_span_id(ctx: &mut hir_lower_ctx::LoweringCtx, span: common::Span) -> Option<type_intern::TyId> {
+fn try_primitive_type_by_span_id(ctx: &mut hir_lower_ctx.LoweringCtx, span: common.Span) -> Option<type_intern.TyId> {
     let name = ctx.span_to_string(span);
 
-    if str_eq(&name, "bool") { return Option::Some(type_intern::CommonTypes::bool_ty()); }
-    if str_eq(&name, "i8") { return Option::Some(type_intern::CommonTypes::i8_ty()); }
-    if str_eq(&name, "i16") { return Option::Some(type_intern::CommonTypes::i16_ty()); }
-    if str_eq(&name, "i32") { return Option::Some(type_intern::CommonTypes::i32_ty()); }
-    if str_eq(&name, "i64") { return Option::Some(type_intern::CommonTypes::i64_ty()); }
-    if str_eq(&name, "i128") { return Option::Some(type_intern::CommonTypes::i128_ty()); }
-    if str_eq(&name, "isize") { return Option::Some(type_intern::CommonTypes::isize_ty()); }
-    if str_eq(&name, "u8") { return Option::Some(type_intern::CommonTypes::u8_ty()); }
-    if str_eq(&name, "u16") { return Option::Some(type_intern::CommonTypes::u16_ty()); }
-    if str_eq(&name, "u32") { return Option::Some(type_intern::CommonTypes::u32_ty()); }
-    if str_eq(&name, "u64") { return Option::Some(type_intern::CommonTypes::u64_ty()); }
-    if str_eq(&name, "u128") { return Option::Some(type_intern::CommonTypes::u128_ty()); }
-    if str_eq(&name, "usize") { return Option::Some(type_intern::CommonTypes::usize_ty()); }
-    if str_eq(&name, "f32") { return Option::Some(type_intern::CommonTypes::f32_ty()); }
-    if str_eq(&name, "f64") { return Option::Some(type_intern::CommonTypes::f64_ty()); }
-    if str_eq(&name, "char") { return Option::Some(type_intern::CommonTypes::char_ty()); }
-    if str_eq(&name, "str") { return Option::Some(type_intern::CommonTypes::str_ty()); }
+    if str_eq(&name, "bool") { return Option.Some(type_intern.CommonTypes.bool_ty()); }
+    if str_eq(&name, "i8") { return Option.Some(type_intern.CommonTypes.i8_ty()); }
+    if str_eq(&name, "i16") { return Option.Some(type_intern.CommonTypes.i16_ty()); }
+    if str_eq(&name, "i32") { return Option.Some(type_intern.CommonTypes.i32_ty()); }
+    if str_eq(&name, "i64") { return Option.Some(type_intern.CommonTypes.i64_ty()); }
+    if str_eq(&name, "i128") { return Option.Some(type_intern.CommonTypes.i128_ty()); }
+    if str_eq(&name, "isize") { return Option.Some(type_intern.CommonTypes.isize_ty()); }
+    if str_eq(&name, "u8") { return Option.Some(type_intern.CommonTypes.u8_ty()); }
+    if str_eq(&name, "u16") { return Option.Some(type_intern.CommonTypes.u16_ty()); }
+    if str_eq(&name, "u32") { return Option.Some(type_intern.CommonTypes.u32_ty()); }
+    if str_eq(&name, "u64") { return Option.Some(type_intern.CommonTypes.u64_ty()); }
+    if str_eq(&name, "u128") { return Option.Some(type_intern.CommonTypes.u128_ty()); }
+    if str_eq(&name, "usize") { return Option.Some(type_intern.CommonTypes.usize_ty()); }
+    if str_eq(&name, "f32") { return Option.Some(type_intern.CommonTypes.f32_ty()); }
+    if str_eq(&name, "f64") { return Option.Some(type_intern.CommonTypes.f64_ty()); }
+    if str_eq(&name, "char") { return Option.Some(type_intern.CommonTypes.char_ty()); }
+    if str_eq(&name, "str") { return Option.Some(type_intern.CommonTypes.str_ty()); }
 
-    Option::None
+    Option.None
 }
 
 /// Try to convert a span to a primitive type by looking up the actual string content.
-fn try_primitive_type_by_span(ctx: &mut hir_lower_ctx::LoweringCtx, span: common::Span) -> Option<hir_ty::Type> {
+fn try_primitive_type_by_span(ctx: &mut hir_lower_ctx.LoweringCtx, span: common.Span) -> Option<hir_ty.Type> {
     let name = ctx.span_to_string(span);
 
     if str_eq(&name, "bool") {
-        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::Bool)));
+        return Option.Some(hir_ty.Type.new(hir_ty.TypeKind.Primitive(hir_ty.PrimitiveTy.Bool)));
     }
     if str_eq(&name, "i8") {
-        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::I8)));
+        return Option.Some(hir_ty.Type.new(hir_ty.TypeKind.Primitive(hir_ty.PrimitiveTy.I8)));
     }
     if str_eq(&name, "i16") {
-        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::I16)));
+        return Option.Some(hir_ty.Type.new(hir_ty.TypeKind.Primitive(hir_ty.PrimitiveTy.I16)));
     }
     if str_eq(&name, "i32") {
-        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::I32)));
+        return Option.Some(hir_ty.Type.new(hir_ty.TypeKind.Primitive(hir_ty.PrimitiveTy.I32)));
     }
     if str_eq(&name, "i64") {
-        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::I64)));
+        return Option.Some(hir_ty.Type.new(hir_ty.TypeKind.Primitive(hir_ty.PrimitiveTy.I64)));
     }
     if str_eq(&name, "i128") {
-        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::I128)));
+        return Option.Some(hir_ty.Type.new(hir_ty.TypeKind.Primitive(hir_ty.PrimitiveTy.I128)));
     }
     if str_eq(&name, "isize") {
-        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::Isize)));
+        return Option.Some(hir_ty.Type.new(hir_ty.TypeKind.Primitive(hir_ty.PrimitiveTy.Isize)));
     }
     if str_eq(&name, "u8") {
-        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::U8)));
+        return Option.Some(hir_ty.Type.new(hir_ty.TypeKind.Primitive(hir_ty.PrimitiveTy.U8)));
     }
     if str_eq(&name, "u16") {
-        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::U16)));
+        return Option.Some(hir_ty.Type.new(hir_ty.TypeKind.Primitive(hir_ty.PrimitiveTy.U16)));
     }
     if str_eq(&name, "u32") {
-        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::U32)));
+        return Option.Some(hir_ty.Type.new(hir_ty.TypeKind.Primitive(hir_ty.PrimitiveTy.U32)));
     }
     if str_eq(&name, "u64") {
-        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::U64)));
+        return Option.Some(hir_ty.Type.new(hir_ty.TypeKind.Primitive(hir_ty.PrimitiveTy.U64)));
     }
     if str_eq(&name, "u128") {
-        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::U128)));
+        return Option.Some(hir_ty.Type.new(hir_ty.TypeKind.Primitive(hir_ty.PrimitiveTy.U128)));
     }
     if str_eq(&name, "usize") {
-        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::Usize)));
+        return Option.Some(hir_ty.Type.new(hir_ty.TypeKind.Primitive(hir_ty.PrimitiveTy.Usize)));
     }
     if str_eq(&name, "f32") {
-        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::F32)));
+        return Option.Some(hir_ty.Type.new(hir_ty.TypeKind.Primitive(hir_ty.PrimitiveTy.F32)));
     }
     if str_eq(&name, "f64") {
-        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::F64)));
+        return Option.Some(hir_ty.Type.new(hir_ty.TypeKind.Primitive(hir_ty.PrimitiveTy.F64)));
     }
     if str_eq(&name, "char") {
-        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::Char)));
+        return Option.Some(hir_ty.Type.new(hir_ty.TypeKind.Primitive(hir_ty.PrimitiveTy.Char)));
     }
     if str_eq(&name, "str") {
-        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::Str)));
+        return Option.Some(hir_ty.Type.new(hir_ty.TypeKind.Primitive(hir_ty.PrimitiveTy.Str)));
     }
 
-    Option::None
+    Option.None
 }
 
 /// Helper function to compare a String with a &str.
@@ -747,64 +747,64 @@ fn str_eq(s: &String, other: &str) -> bool {
 ///
 /// Compares the symbol index against pre-interned primitive type names.
 /// Returns the corresponding HIR type if the symbol is a primitive, None otherwise.
-fn try_primitive_type(sym: common::Symbol) -> Option<hir_ty::Type> {
+fn try_primitive_type(sym: common.Symbol) -> Option<hir_ty.Type> {
     let index = sym.index;
 
     // Check against pre-interned primitive type indices (41-57)
-    if index == interner::Primitives::bool_sym().index {
-        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::Bool)));
+    if index == interner.Primitives.bool_sym().index {
+        return Option.Some(hir_ty.Type.new(hir_ty.TypeKind.Primitive(hir_ty.PrimitiveTy.Bool)));
     }
-    if index == interner::Primitives::i8_sym().index {
-        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::I8)));
+    if index == interner.Primitives.i8_sym().index {
+        return Option.Some(hir_ty.Type.new(hir_ty.TypeKind.Primitive(hir_ty.PrimitiveTy.I8)));
     }
-    if index == interner::Primitives::i16_sym().index {
-        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::I16)));
+    if index == interner.Primitives.i16_sym().index {
+        return Option.Some(hir_ty.Type.new(hir_ty.TypeKind.Primitive(hir_ty.PrimitiveTy.I16)));
     }
-    if index == interner::Primitives::i32_sym().index {
-        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::I32)));
+    if index == interner.Primitives.i32_sym().index {
+        return Option.Some(hir_ty.Type.new(hir_ty.TypeKind.Primitive(hir_ty.PrimitiveTy.I32)));
     }
-    if index == interner::Primitives::i64_sym().index {
-        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::I64)));
+    if index == interner.Primitives.i64_sym().index {
+        return Option.Some(hir_ty.Type.new(hir_ty.TypeKind.Primitive(hir_ty.PrimitiveTy.I64)));
     }
-    if index == interner::Primitives::i128_sym().index {
-        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::I128)));
+    if index == interner.Primitives.i128_sym().index {
+        return Option.Some(hir_ty.Type.new(hir_ty.TypeKind.Primitive(hir_ty.PrimitiveTy.I128)));
     }
-    if index == interner::Primitives::isize_sym().index {
-        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::Isize)));
+    if index == interner.Primitives.isize_sym().index {
+        return Option.Some(hir_ty.Type.new(hir_ty.TypeKind.Primitive(hir_ty.PrimitiveTy.Isize)));
     }
-    if index == interner::Primitives::u8_sym().index {
-        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::U8)));
+    if index == interner.Primitives.u8_sym().index {
+        return Option.Some(hir_ty.Type.new(hir_ty.TypeKind.Primitive(hir_ty.PrimitiveTy.U8)));
     }
-    if index == interner::Primitives::u16_sym().index {
-        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::U16)));
+    if index == interner.Primitives.u16_sym().index {
+        return Option.Some(hir_ty.Type.new(hir_ty.TypeKind.Primitive(hir_ty.PrimitiveTy.U16)));
     }
-    if index == interner::Primitives::u32_sym().index {
-        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::U32)));
+    if index == interner.Primitives.u32_sym().index {
+        return Option.Some(hir_ty.Type.new(hir_ty.TypeKind.Primitive(hir_ty.PrimitiveTy.U32)));
     }
-    if index == interner::Primitives::u64_sym().index {
-        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::U64)));
+    if index == interner.Primitives.u64_sym().index {
+        return Option.Some(hir_ty.Type.new(hir_ty.TypeKind.Primitive(hir_ty.PrimitiveTy.U64)));
     }
-    if index == interner::Primitives::u128_sym().index {
-        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::U128)));
+    if index == interner.Primitives.u128_sym().index {
+        return Option.Some(hir_ty.Type.new(hir_ty.TypeKind.Primitive(hir_ty.PrimitiveTy.U128)));
     }
-    if index == interner::Primitives::usize_sym().index {
-        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::Usize)));
+    if index == interner.Primitives.usize_sym().index {
+        return Option.Some(hir_ty.Type.new(hir_ty.TypeKind.Primitive(hir_ty.PrimitiveTy.Usize)));
     }
-    if index == interner::Primitives::f32_sym().index {
-        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::F32)));
+    if index == interner.Primitives.f32_sym().index {
+        return Option.Some(hir_ty.Type.new(hir_ty.TypeKind.Primitive(hir_ty.PrimitiveTy.F32)));
     }
-    if index == interner::Primitives::f64_sym().index {
-        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::F64)));
+    if index == interner.Primitives.f64_sym().index {
+        return Option.Some(hir_ty.Type.new(hir_ty.TypeKind.Primitive(hir_ty.PrimitiveTy.F64)));
     }
-    if index == interner::Primitives::char_sym().index {
-        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::Char)));
+    if index == interner.Primitives.char_sym().index {
+        return Option.Some(hir_ty.Type.new(hir_ty.TypeKind.Primitive(hir_ty.PrimitiveTy.Char)));
     }
-    if index == interner::Primitives::str_sym().index {
-        return Option::Some(hir_ty::Type::new(hir_ty::TypeKind::Primitive(hir_ty::PrimitiveTy::Str)));
+    if index == interner.Primitives.str_sym().index {
+        return Option.Some(hir_ty.Type.new(hir_ty.TypeKind.Primitive(hir_ty.PrimitiveTy.Str)));
     }
 
     // Not a primitive type
-    Option::None
+    Option.None
 }
 
 // ============================================================
@@ -812,18 +812,18 @@ fn try_primitive_type(sym: common::Symbol) -> Option<hir_ty::Type> {
 // ============================================================
 
 /// Lower type arguments directly to Vec<TyId>.
-pub fn lower_type_args_id(ctx: &mut hir_lower_ctx::LoweringCtx, args: &ast::TypeArgs) -> Vec<type_intern::TyId> {
-    let mut result: Vec<type_intern::TyId> = Vec::new();
+pub fn lower_type_args_id(ctx: &mut hir_lower_ctx.LoweringCtx, args: &ast.TypeArgs) -> Vec<type_intern.TyId> {
+    let mut result: Vec<type_intern.TyId> = Vec.new();
     for i in 0usize..args.args.len() {
         match &args.args[i] {
-            &ast::TypeArg::Type(ref ty) => {
+            &ast.TypeArg.Type(ref ty) => {
                 let t = lower_type_id(ctx, ty);
                 result.push(t);
             }
-            &ast::TypeArg::Lifetime(_) => {
+            &ast.TypeArg.Lifetime(_) => {
                 // Lifetimes don't produce types in our representation
             }
-            &ast::TypeArg::Const(ref expr) => {
+            &ast.TypeArg.Const(ref expr) => {
                 let _value = const_eval::eval_const_expr(expr);
             }
         }
@@ -832,18 +832,18 @@ pub fn lower_type_args_id(ctx: &mut hir_lower_ctx::LoweringCtx, args: &ast::Type
 }
 
 /// Lower type arguments to a Vec of HIR types.
-pub fn lower_type_args(ctx: &mut hir_lower_ctx::LoweringCtx, args: &ast::TypeArgs) -> Vec<hir_ty::Type> {
-    let mut result: Vec<hir_ty::Type> = Vec::new();
+pub fn lower_type_args(ctx: &mut hir_lower_ctx.LoweringCtx, args: &ast.TypeArgs) -> Vec<hir_ty.Type> {
+    let mut result: Vec<hir_ty.Type> = Vec.new();
     for i in 0usize..args.args.len() {
         match &args.args[i] {
-            &ast::TypeArg::Type(ref ty) => {
+            &ast.TypeArg.Type(ref ty) => {
                 let t = lower_type(ctx, ty);
                 result.push(t);
             }
-            &ast::TypeArg::Lifetime(_) => {
+            &ast.TypeArg.Lifetime(_) => {
                 // Lifetimes don't produce types in our representation
             }
-            &ast::TypeArg::Const(ref expr) => {
+            &ast.TypeArg.Const(ref expr) => {
                 let _value = const_eval::eval_const_expr(expr);
             }
         }
@@ -858,17 +858,17 @@ pub fn lower_type_args(ctx: &mut hir_lower_ctx::LoweringCtx, args: &ast::TypeArg
 /// Sentinel value for array sizes that depend on a const generic parameter.
 /// During unification, arrays with this size match any concrete size.
 pub fn const_param_array_sentinel() -> u64 {
-    // u64::MAX — no real array will ever have this size
+    // u64.MAX — no real array will ever have this size
     18446744073709551615
 }
 
 /// Evaluates an array size expression, handling const param references.
 /// If the size is a simple path to a const generic parameter, returns
 /// the sentinel value. Otherwise delegates to const_eval.
-fn eval_array_size_or_const_param(ctx: &mut hir_lower_ctx::LoweringCtx, size_expr: &ast::Expr) -> u64 {
+fn eval_array_size_or_const_param(ctx: &mut hir_lower_ctx.LoweringCtx, size_expr: &ast.Expr) -> u64 {
     // Check if the size expression is a simple path (single identifier)
     match &size_expr.kind {
-        &ast::ExprKind::Path(ref path) => {
+        &ast.ExprKind.Path(ref path) => {
             if path.segments.len() == 1 {
                 // Check if this name matches a const param in scope
                 let seg = &path.segments[0];
@@ -896,13 +896,13 @@ fn eval_array_size_or_const_param(ctx: &mut hir_lower_ctx::LoweringCtx, size_exp
 // ============================================================
 
 /// Lower an effect row.
-pub fn lower_effect_row(ctx: &mut hir_lower_ctx::LoweringCtx, row: &ast::EffectRow) -> hir_ty::EffectRow {
+pub fn lower_effect_row(ctx: &mut hir_lower_ctx.LoweringCtx, row: &ast.EffectRow) -> hir_ty.EffectRow {
     match &row.kind {
-        &ast::EffectRowKind::Pure => {
-            hir_ty::EffectRow::empty()
+        &ast.EffectRowKind.Pure => {
+            hir_ty.EffectRow.empty()
         }
-        &ast::EffectRowKind::Effects { ref effects, ref rest } => {
-            let mut hir_effects: Vec<hir_ty::EffectRef> = Vec::new();
+        &ast.EffectRowKind.Effects { ref effects, ref rest } => {
+            let mut hir_effects: Vec<hir_ty.EffectRef> = Vec.new();
             for i in 0usize..effects.len() {
                 let eff = lower_effect_ref(ctx, &effects[i]);
                 if eff.is_some() {
@@ -912,29 +912,29 @@ pub fn lower_effect_row(ctx: &mut hir_lower_ctx::LoweringCtx, row: &ast::EffectR
             // Handle row polymorphism: if `rest` is Some, this is an open effect row
             // with a row variable (e.g., Read, Write | r)
             match rest {
-                &Option::Some(ref _row_var_name) => {
+                &Option.Some(ref _row_var_name) => {
                     // Allocate a fresh effect row variable
                     let row_var = ctx.alloc_effect_row_var();
-                    hir_ty::EffectRow::with_effects_and_var(hir_effects, row_var)
+                    hir_ty.EffectRow.with_effects_and_var(hir_effects, row_var)
                 }
-                &Option::None => {
-                    hir_ty::EffectRow::with_effects(hir_effects)
+                &Option.None => {
+                    hir_ty.EffectRow.with_effects(hir_effects)
                 }
             }
         }
-        &ast::EffectRowKind::Var(ref _var_name) => {
+        &ast.EffectRowKind.Var(ref _var_name) => {
             // Effect row variable reference (e.g., just `e` in a type)
             // Allocate a fresh effect row variable
             let row_var = ctx.alloc_effect_row_var();
-            hir_ty::EffectRow::polymorphic(row_var)
+            hir_ty.EffectRow.polymorphic(row_var)
         }
     }
 }
 
 /// Lower an effect reference from a type.
-fn lower_effect_ref(ctx: &mut hir_lower_ctx::LoweringCtx, ty: &ast::Type) -> Option<hir_ty::EffectRef> {
+fn lower_effect_ref(ctx: &mut hir_lower_ctx.LoweringCtx, ty: &ast.Type) -> Option<hir_ty.EffectRef> {
     match &ty.kind {
-        &ast::TypeKind::Path(ref path) => {
+        &ast.TypeKind.Path(ref path) => {
             if path.segments.len() == 1 {
                 let seg = &path.segments[0];
                 // Re-intern from span for consistent symbol indices
@@ -948,23 +948,23 @@ fn lower_effect_ref(ctx: &mut hir_lower_ctx::LoweringCtx, ty: &ast::Type) -> Opt
 
                     // Check if the resolved item is definitely NOT an effect
                     match ctx.get_item(def_id) {
-                        Option::Some(ref entry) => {
+                        Option.Some(ref entry) => {
                             match &entry.item.kind {
-                                &hir_item::ItemKind::Effect(_) => {
+                                &hir_item.ItemKind.Effect(_) => {
                                     // Good — this is an effect
                                 }
                                 _ => {
                                     // Not an effect — report error
                                     ctx.error(
-                                        hir::DiagnosticCode::E0102,
+                                        hir.DiagnosticCode.E0102,
                                         common::make_string("not an effect type"),
                                         ty.span,
                                     );
-                                    return Option::None;
+                                    return Option.None;
                                 }
                             }
                         }
-                        Option::None => {
+                        Option.None => {
                             // Forward reference: item not yet lowered in this
                             // single-pass HIR lowering. Assume it is an effect
                             // definition — type checking will validate this
@@ -976,26 +976,26 @@ fn lower_effect_ref(ctx: &mut hir_lower_ctx::LoweringCtx, ty: &ast::Type) -> Opt
 
                     let type_args = match &seg.args {
                         &Some(ref args) => lower_type_args(ctx, args),
-                        &None => Vec::new(),
+                        &None => Vec.new(),
                     };
 
-                    return Some(hir_ty::EffectRef::new(def_id, type_args));
+                    return Some(hir_ty.EffectRef.new(def_id, type_args));
                 }
             }
             ctx.error(
-                hir::DiagnosticCode::E0102,
+                hir.DiagnosticCode.E0102,
                 common::make_string("unknown effect"),
                 ty.span,
             );
-            Option::None
+            Option.None
         }
         _ => {
             ctx.error(
-                hir::DiagnosticCode::E0102,
+                hir.DiagnosticCode.E0102,
                 common::make_string("invalid effect type"),
                 ty.span,
             );
-            Option::None
+            Option.None
         }
     }
 }
@@ -1008,26 +1008,26 @@ fn lower_effect_ref(ctx: &mut hir_lower_ctx::LoweringCtx, ty: &ast::Type) -> Opt
 /// Always pushes a TypeParams scope that the caller MUST pop
 /// by calling ctx.resolver.pop_scope() after lowering all
 /// types that may reference the generic parameters.
-pub fn lower_generics(ctx: &mut hir_lower_ctx::LoweringCtx, type_params: &Option<ast::TypeParams>, where_clause: &Option<ast::WhereClause>) -> hir_ty::Generics {
-    let mut params: Vec<hir_ty::GenericParam> = Vec::new();
-    let mut where_predicates: Vec<hir_ty::WherePredicate> = Vec::new();
+pub fn lower_generics(ctx: &mut hir_lower_ctx.LoweringCtx, type_params: &Option<ast.TypeParams>, where_clause: &Option<ast.WhereClause>) -> hir_ty.Generics {
+    let mut params: Vec<hir_ty.GenericParam> = Vec.new();
+    let mut where_predicates: Vec<hir_ty.WherePredicate> = Vec.new();
 
     // Always push a type parameter scope. Even for items without generics,
     // an empty scope is harmless and simplifies the caller contract.
-    ctx.resolver.push_scope(resolve::ScopeKind::TypeParams);
+    ctx.resolver.push_scope(resolve.ScopeKind.TypeParams);
 
     match type_params {
         &Some(ref tp) => {
             for i in 0usize..tp.params.len() {
                 match &tp.params[i] {
-                    &ast::GenericParam::Type(ref type_param) => {
+                    &ast.GenericParam.Type(ref type_param) => {
                         let var_id = ctx.alloc_ty_var();
-                        let type_param_def = hir_ty::TypeParamDef::new(
+                        let type_param_def = hir_ty.TypeParamDef.new(
                             type_param.name.symbol,
                             var_id,
                             type_param.span,
                         );
-                        let param = hir_ty::GenericParam::TypeParam(type_param_def);
+                        let param = hir_ty.GenericParam.TypeParam(type_param_def);
                         params.push(param);
 
                         // Register type param in resolver scope so it can be looked up.
@@ -1042,8 +1042,8 @@ pub fn lower_generics(ctx: &mut hir_lower_ctx::LoweringCtx, type_params: &Option
 
                         // If there are bounds, add them as where predicates
                         if type_param.bounds.len() > 0 {
-                            let param_ty = hir_ty::Type::new(hir_ty::TypeKind::Param(var_id));
-                            let mut trait_refs: Vec<hir_ty::TraitRef> = Vec::new();
+                            let param_ty = hir_ty.Type.new(hir_ty.TypeKind.Param(var_id));
+                            let mut trait_refs: Vec<hir_ty.TraitRef> = Vec.new();
                             for j in 0usize..type_param.bounds.len() {
                                 let bound_ty = lower_type(ctx, &type_param.bounds[j]);
                                 // Convert the bound type to a TraitRef
@@ -1053,7 +1053,7 @@ pub fn lower_generics(ctx: &mut hir_lower_ctx::LoweringCtx, type_params: &Option
                                 }
                             }
                             if trait_refs.len() > 0 {
-                                let pred = hir_ty::WherePredicate::TypeBound {
+                                let pred = hir_ty.WherePredicate.TypeBound {
                                     ty: param_ty,
                                     bounds: trait_refs,
                                     span: type_param.span,
@@ -1062,38 +1062,38 @@ pub fn lower_generics(ctx: &mut hir_lower_ctx::LoweringCtx, type_params: &Option
                             }
                         }
                     }
-                    &ast::GenericParam::Lifetime(ref lifetime_param) => {
-                        let lifetime_def = hir_ty::LifetimeParamDef::new(
+                    &ast.GenericParam.Lifetime(ref lifetime_param) => {
+                        let lifetime_def = hir_ty.LifetimeParamDef.new(
                             lifetime_param.name.symbol,
                             lifetime_param.span,
                         );
-                        let param = hir_ty::GenericParam::LifetimeParam(lifetime_def);
+                        let param = hir_ty.GenericParam.LifetimeParam(lifetime_def);
                         params.push(param);
                     }
-                    &ast::GenericParam::Const(ref const_param) => {
+                    &ast.GenericParam.Const(ref const_param) => {
                         // Allocate DefId for const param first so it can be stored in HIR
                         let cp_def_id = ctx.alloc_def_id();
                         let ty = lower_type(ctx, &const_param.ty);
-                        let const_def = hir_ty::ConstParamDef::new(
+                        let const_def = hir_ty.ConstParamDef.new(
                             const_param.name.symbol,
                             ty,
                             const_param.span,
                             cp_def_id,
                         );
-                        let param = hir_ty::GenericParam::ConstParam(const_def);
+                        let param = hir_ty.GenericParam.ConstParam(const_def);
                         params.push(param);
 
                         // Register const param as a Def binding so it can be used
                         // as an expression in the function body (e.g., `N as i32`).
-                        let _ = ctx.resolver.define(const_param.name.symbol, resolve::Binding::def(cp_def_id));
+                        let _ = ctx.resolver.define(const_param.name.symbol, resolve.Binding.def(cp_def_id));
                         // Also define with re-interned symbol for consistent lookup
                         let cp_name_str = ctx.span_to_string(const_param.name.span);
                         let cp_symbol = ctx.intern(cp_name_str.as_str());
                         if cp_symbol.index != const_param.name.symbol.index {
-                            let _ = ctx.resolver.define(cp_symbol, resolve::Binding::def(cp_def_id));
+                            let _ = ctx.resolver.define(cp_symbol, resolve.Binding.def(cp_def_id));
                         }
                         // Track the const param for array size resolution and codegen
-                        ctx.const_param_defs.push(hir_lower_ctx::ConstParamEntry::new(cp_def_id, cp_symbol));
+                        ctx.const_param_defs.push(hir_lower_ctx.ConstParamEntry.new(cp_def_id, cp_symbol));
                     }
                 }
             }
@@ -1108,9 +1108,9 @@ pub fn lower_generics(ctx: &mut hir_lower_ctx::LoweringCtx, type_params: &Option
         {
             for i in 0usize..pred_len {
                 match &wc.predicates[i] {
-                    &ast::WherePredicate::TypeBound { ref ty, ref bounds, span } => {
+                    &ast.WherePredicate.TypeBound { ref ty, ref bounds, span } => {
                         let lowered_ty = lower_type(ctx, ty);
-                        let mut trait_refs: Vec<hir_ty::TraitRef> = Vec::new();
+                        let mut trait_refs: Vec<hir_ty.TraitRef> = Vec.new();
                         for j in 0usize..bounds.len() {
                             let bound_ty = lower_type(ctx, &bounds[j]);
                             let trait_ref = type_to_trait_ref(&bound_ty, bounds[j].span);
@@ -1119,7 +1119,7 @@ pub fn lower_generics(ctx: &mut hir_lower_ctx::LoweringCtx, type_params: &Option
                             }
                         }
                         if trait_refs.len() > 0 {
-                            let pred = hir_ty::WherePredicate::TypeBound {
+                            let pred = hir_ty.WherePredicate.TypeBound {
                                 ty: lowered_ty,
                                 bounds: trait_refs,
                                 span,
@@ -1127,8 +1127,8 @@ pub fn lower_generics(ctx: &mut hir_lower_ctx::LoweringCtx, type_params: &Option
                             where_predicates.push(pred);
                         }
                     }
-                    &ast::WherePredicate::Lifetime { ref lifetime, ref bound, span } => {
-                        let pred = hir_ty::WherePredicate::LifetimeBound {
+                    &ast.WherePredicate.Lifetime { ref lifetime, ref bound, span } => {
+                        let pred = hir_ty.WherePredicate.LifetimeBound {
                             lifetime: lifetime.symbol,
                             bound: bound.symbol,
                             span,
@@ -1140,23 +1140,23 @@ pub fn lower_generics(ctx: &mut hir_lower_ctx::LoweringCtx, type_params: &Option
         }
     }
 
-    hir_ty::Generics { params, where_predicates }
+    hir_ty.Generics { params, where_predicates }
 }
 
 /// Convert a type to a TraitRef if it's a path type referring to a trait.
-fn type_to_trait_ref(ty: &hir_ty::Type, span: common::Span) -> Option<hir_ty::TraitRef> {
+fn type_to_trait_ref(ty: &hir_ty.Type, span: common.Span) -> Option<hir_ty.TraitRef> {
     match &ty.kind {
-        &hir_ty::TypeKind::Adt { def_id, ref args } => {
+        &hir_ty.TypeKind.Adt { def_id, ref args } => {
             // Manually copy the args vector since Blood doesn't have clone
-            let mut args_copy: Vec<hir_ty::Type> = Vec::new();
+            let mut args_copy: Vec<hir_ty.Type> = Vec.new();
             for i in 0usize..args.len() {
                 args_copy.push(hir_ty::copy_type(&args[i]));
             }
-            Some(hir_ty::TraitRef::new(def_id, args_copy, span))
+            Some(hir_ty.TraitRef.new(def_id, args_copy, span))
         }
         _ => {
             // Other types can't be used as trait bounds directly
-            Option::None
+            Option.None
         }
     }
 }

@@ -46,7 +46,7 @@ impl HashMapU64U32 {
     /// Create a new empty hash map.
     pub fn new() -> HashMapU64U32 {
         HashMapU64U32 {
-            buckets: Vec::new(),
+            buckets: Vec.new(),
             len: 0,
             capacity: 0,
         }
@@ -55,9 +55,9 @@ impl HashMapU64U32 {
     /// Create a hash map with initial capacity.
     pub fn with_capacity(cap: usize) -> HashMapU64U32 {
         let actual_cap = if cap < 16 { 16 as usize } else { cap };
-        let mut buckets: Vec<BucketU32> = Vec::new();
+        let mut buckets: Vec<BucketU32> = Vec.new();
         for i in 0usize..actual_cap {
-            buckets.push(BucketU32::Empty);
+            buckets.push(BucketU32.Empty);
         }
         HashMapU64U32 {
             buckets,
@@ -76,7 +76,7 @@ impl HashMapU64U32 {
         if self.capacity == 0 {
             self.capacity = 16;
             for i in 0usize..self.capacity {
-                self.buckets.push(BucketU32::Empty);
+                self.buckets.push(BucketU32.Empty);
             }
             return;
         }
@@ -88,24 +88,24 @@ impl HashMapU64U32 {
     /// Double capacity and rehash.
     fn resize(self: &mut Self) {
         let new_cap = self.capacity * 2;
-        let mut new_buckets: Vec<BucketU32> = Vec::new();
+        let mut new_buckets: Vec<BucketU32> = Vec.new();
         let mut i: usize = 0;
         while i < new_cap {
-            new_buckets.push(BucketU32::Empty);
+            new_buckets.push(BucketU32.Empty);
             i += 1;
         }
 
         i = 0;
         while i < self.capacity {
             match &self.buckets[i] {
-                BucketU32::Occupied { key, value } => {
+                BucketU32.Occupied { key, value } => {
                     let hash = hash_u64(&key);
                     let mut idx = (hash as usize) % new_cap;
                     let mut found = false;
                     while !found {
                         match &new_buckets[idx] {
-                            BucketU32::Empty => {
-                                new_buckets[idx] = BucketU32::Occupied { key: key, value: value };
+                            BucketU32.Empty => {
+                                new_buckets[idx] = BucketU32.Occupied { key: key, value: value };
                                 found = true;
                             }
                             _ => {
@@ -130,19 +130,19 @@ impl HashMapU64U32 {
 
         for probes in 0usize..self.capacity {
             match &self.buckets[idx] {
-                BucketU32::Empty => {
-                    self.buckets[idx] = BucketU32::Occupied { key, value };
+                BucketU32.Empty => {
+                    self.buckets[idx] = BucketU32.Occupied { key, value };
                     self.len = self.len + 1;
                     return;
                 }
-                BucketU32::Deleted => {
-                    self.buckets[idx] = BucketU32::Occupied { key, value };
+                BucketU32.Deleted => {
+                    self.buckets[idx] = BucketU32.Occupied { key, value };
                     self.len = self.len + 1;
                     return;
                 }
-                BucketU32::Occupied { key: existing_key, value: _ } => {
+                BucketU32.Occupied { key: existing_key, value: _ } => {
                     if existing_key == key {
-                        self.buckets[idx] = BucketU32::Occupied { key, value };
+                        self.buckets[idx] = BucketU32.Occupied { key, value };
                         return;
                     }
                 }
@@ -154,33 +154,33 @@ impl HashMapU64U32 {
     /// Get a value by key.
     pub fn get(self: &Self, key: u64) -> Option<u32> {
         if self.capacity == 0 {
-            return Option::None;
+            return Option.None;
         }
         let hash = hash_u64(&key);
         let mut idx = (hash as usize) % self.capacity;
 
         for probes in 0usize..self.capacity {
             match &self.buckets[idx] {
-                BucketU32::Empty => {
-                    return Option::None;
+                BucketU32.Empty => {
+                    return Option.None;
                 }
-                BucketU32::Deleted => {}
-                BucketU32::Occupied { key: existing_key, value } => {
+                BucketU32.Deleted => {}
+                BucketU32.Occupied { key: existing_key, value } => {
                     if existing_key == key {
-                        return Option::Some(value);
+                        return Option.Some(value);
                     }
                 }
             }
             idx = (idx + 1) % self.capacity;
         }
-        Option::None
+        Option.None
     }
 
     /// Check if key exists.
     pub fn contains_key(self: &Self, key: u64) -> bool {
         match self.get(key) {
-            Option::Some(_) => true,
-            Option::None => false,
+            Option.Some(_) => true,
+            Option.None => false,
         }
     }
 
@@ -194,13 +194,13 @@ impl HashMapU64U32 {
 
         for probes in 0usize..self.capacity {
             match &self.buckets[idx] {
-                BucketU32::Empty => {
+                BucketU32.Empty => {
                     return false;
                 }
-                BucketU32::Deleted => {}
-                BucketU32::Occupied { key: existing_key, value: _ } => {
+                BucketU32.Deleted => {}
+                BucketU32.Occupied { key: existing_key, value: _ } => {
                     if existing_key == key {
-                        self.buckets[idx] = BucketU32::Deleted;
+                        self.buckets[idx] = BucketU32.Deleted;
                         self.len = self.len - 1;
                         return true;
                     }
@@ -219,7 +219,7 @@ impl HashMapU64U32 {
     /// Remove all entries from the map.
     pub fn clear(self: &mut Self) {
         for i in 0usize..self.capacity {
-            self.buckets[i] = BucketU32::Empty;
+            self.buckets[i] = BucketU32.Empty;
         }
         self.len = 0;
     }
@@ -240,7 +240,7 @@ impl HashMapU64U64 {
     /// Create a new empty hash map.
     pub fn new() -> HashMapU64U64 {
         HashMapU64U64 {
-            buckets: Vec::new(),
+            buckets: Vec.new(),
             len: 0,
             capacity: 0,
         }
@@ -249,9 +249,9 @@ impl HashMapU64U64 {
     /// Create a hash map with initial capacity.
     pub fn with_capacity(cap: usize) -> HashMapU64U64 {
         let actual_cap = if cap < 16 { 16 as usize } else { cap };
-        let mut buckets: Vec<BucketU64> = Vec::new();
+        let mut buckets: Vec<BucketU64> = Vec.new();
         for i in 0usize..actual_cap {
-            buckets.push(BucketU64::Empty);
+            buckets.push(BucketU64.Empty);
         }
         HashMapU64U64 {
             buckets,
@@ -270,7 +270,7 @@ impl HashMapU64U64 {
         if self.capacity == 0 {
             self.capacity = 16;
             for i in 0usize..self.capacity {
-                self.buckets.push(BucketU64::Empty);
+                self.buckets.push(BucketU64.Empty);
             }
             return;
         }
@@ -282,24 +282,24 @@ impl HashMapU64U64 {
     /// Double capacity and rehash.
     fn resize(self: &mut Self) {
         let new_cap = self.capacity * 2;
-        let mut new_buckets: Vec<BucketU64> = Vec::new();
+        let mut new_buckets: Vec<BucketU64> = Vec.new();
         let mut i: usize = 0;
         while i < new_cap {
-            new_buckets.push(BucketU64::Empty);
+            new_buckets.push(BucketU64.Empty);
             i += 1;
         }
 
         i = 0;
         while i < self.capacity {
             match &self.buckets[i] {
-                BucketU64::Occupied { key, value } => {
+                BucketU64.Occupied { key, value } => {
                     let hash = hash_u64(&key);
                     let mut idx = (hash as usize) % new_cap;
                     let mut found = false;
                     while !found {
                         match &new_buckets[idx] {
-                            BucketU64::Empty => {
-                                new_buckets[idx] = BucketU64::Occupied { key: key, value: value };
+                            BucketU64.Empty => {
+                                new_buckets[idx] = BucketU64.Occupied { key: key, value: value };
                                 found = true;
                             }
                             _ => {
@@ -324,19 +324,19 @@ impl HashMapU64U64 {
 
         for probes in 0usize..self.capacity {
             match &self.buckets[idx] {
-                BucketU64::Empty => {
-                    self.buckets[idx] = BucketU64::Occupied { key, value };
+                BucketU64.Empty => {
+                    self.buckets[idx] = BucketU64.Occupied { key, value };
                     self.len = self.len + 1;
                     return;
                 }
-                BucketU64::Deleted => {
-                    self.buckets[idx] = BucketU64::Occupied { key, value };
+                BucketU64.Deleted => {
+                    self.buckets[idx] = BucketU64.Occupied { key, value };
                     self.len = self.len + 1;
                     return;
                 }
-                BucketU64::Occupied { key: existing_key, value: _ } => {
+                BucketU64.Occupied { key: existing_key, value: _ } => {
                     if existing_key == key {
-                        self.buckets[idx] = BucketU64::Occupied { key, value };
+                        self.buckets[idx] = BucketU64.Occupied { key, value };
                         return;
                     }
                 }
@@ -348,33 +348,33 @@ impl HashMapU64U64 {
     /// Get a value by key.
     pub fn get(self: &Self, key: u64) -> Option<u64> {
         if self.capacity == 0 {
-            return Option::None;
+            return Option.None;
         }
         let hash = hash_u64(&key);
         let mut idx = (hash as usize) % self.capacity;
 
         for probes in 0usize..self.capacity {
             match &self.buckets[idx] {
-                BucketU64::Empty => {
-                    return Option::None;
+                BucketU64.Empty => {
+                    return Option.None;
                 }
-                BucketU64::Deleted => {}
-                BucketU64::Occupied { key: existing_key, value } => {
+                BucketU64.Deleted => {}
+                BucketU64.Occupied { key: existing_key, value } => {
                     if existing_key == key {
-                        return Option::Some(value);
+                        return Option.Some(value);
                     }
                 }
             }
             idx = (idx + 1) % self.capacity;
         }
-        Option::None
+        Option.None
     }
 
     /// Check if key exists.
     pub fn contains_key(self: &Self, key: u64) -> bool {
         match self.get(key) {
-            Option::Some(_) => true,
-            Option::None => false,
+            Option.Some(_) => true,
+            Option.None => false,
         }
     }
 
@@ -388,13 +388,13 @@ impl HashMapU64U64 {
 
         for probes in 0usize..self.capacity {
             match &self.buckets[idx] {
-                BucketU64::Empty => {
+                BucketU64.Empty => {
                     return false;
                 }
-                BucketU64::Deleted => {}
-                BucketU64::Occupied { key: existing_key, value: _ } => {
+                BucketU64.Deleted => {}
+                BucketU64.Occupied { key: existing_key, value: _ } => {
                     if existing_key == key {
-                        self.buckets[idx] = BucketU64::Deleted;
+                        self.buckets[idx] = BucketU64.Deleted;
                         self.len = self.len - 1;
                         return true;
                     }
@@ -413,7 +413,7 @@ impl HashMapU64U64 {
     /// Remove all entries from the map.
     pub fn clear(self: &mut Self) {
         for i in 0usize..self.capacity {
-            self.buckets[i] = BucketU64::Empty;
+            self.buckets[i] = BucketU64.Empty;
         }
         self.len = 0;
     }
@@ -498,7 +498,7 @@ impl HashMapU32U32 {
     /// Create a new empty hash map.
     pub fn new() -> HashMapU32U32 {
         HashMapU32U32 {
-            buckets: Vec::new(),
+            buckets: Vec.new(),
             len: 0,
             capacity: 0,
         }
@@ -507,9 +507,9 @@ impl HashMapU32U32 {
     /// Create a hash map with initial capacity.
     pub fn with_capacity(cap: usize) -> HashMapU32U32 {
         let actual_cap = if cap < 16 { 16 as usize } else { cap };
-        let mut buckets: Vec<BucketU32U32> = Vec::new();
+        let mut buckets: Vec<BucketU32U32> = Vec.new();
         for i in 0usize..actual_cap {
-            buckets.push(BucketU32U32::Empty);
+            buckets.push(BucketU32U32.Empty);
         }
         HashMapU32U32 {
             buckets,
@@ -533,7 +533,7 @@ impl HashMapU32U32 {
         if self.capacity == 0 {
             self.capacity = 16;
             for i in 0usize..self.capacity {
-                self.buckets.push(BucketU32U32::Empty);
+                self.buckets.push(BucketU32U32.Empty);
             }
             return;
         }
@@ -545,24 +545,24 @@ impl HashMapU32U32 {
     /// Double capacity and rehash.
     fn resize(self: &mut Self) {
         let new_cap = self.capacity * 2;
-        let mut new_buckets: Vec<BucketU32U32> = Vec::new();
+        let mut new_buckets: Vec<BucketU32U32> = Vec.new();
         let mut i: usize = 0;
         while i < new_cap {
-            new_buckets.push(BucketU32U32::Empty);
+            new_buckets.push(BucketU32U32.Empty);
             i += 1;
         }
 
         i = 0;
         while i < self.capacity {
             match &self.buckets[i] {
-                BucketU32U32::Occupied { key, value } => {
+                BucketU32U32.Occupied { key, value } => {
                     let hash = hash_u32(&key);
                     let mut idx = (hash as usize) % new_cap;
                     let mut found = false;
                     while !found {
                         match &new_buckets[idx] {
-                            BucketU32U32::Empty => {
-                                new_buckets[idx] = BucketU32U32::Occupied { key: key, value: value };
+                            BucketU32U32.Empty => {
+                                new_buckets[idx] = BucketU32U32.Occupied { key: key, value: value };
                                 found = true;
                             }
                             _ => {
@@ -571,8 +571,8 @@ impl HashMapU32U32 {
                         }
                     }
                 }
-                BucketU32U32::Deleted => {}
-                BucketU32U32::Empty => {}
+                BucketU32U32.Deleted => {}
+                BucketU32U32.Empty => {}
             }
             i += 1;
         }
@@ -588,19 +588,19 @@ impl HashMapU32U32 {
 
         for probes in 0usize..self.capacity {
             match &self.buckets[idx] {
-                BucketU32U32::Empty => {
-                    self.buckets[idx] = BucketU32U32::Occupied { key, value };
+                BucketU32U32.Empty => {
+                    self.buckets[idx] = BucketU32U32.Occupied { key, value };
                     self.len = self.len + 1;
                     return;
                 }
-                BucketU32U32::Deleted => {
-                    self.buckets[idx] = BucketU32U32::Occupied { key, value };
+                BucketU32U32.Deleted => {
+                    self.buckets[idx] = BucketU32U32.Occupied { key, value };
                     self.len = self.len + 1;
                     return;
                 }
-                BucketU32U32::Occupied { key: existing_key, value: _ } => {
+                BucketU32U32.Occupied { key: existing_key, value: _ } => {
                     if existing_key == key {
-                        self.buckets[idx] = BucketU32U32::Occupied { key, value };
+                        self.buckets[idx] = BucketU32U32.Occupied { key, value };
                         return;
                     }
                 }
@@ -612,33 +612,33 @@ impl HashMapU32U32 {
     /// Get a value by key.
     pub fn get(self: &Self, key: u32) -> Option<u32> {
         if self.capacity == 0 {
-            return Option::None;
+            return Option.None;
         }
         let hash = hash_u32(&key);
         let mut idx = (hash as usize) % self.capacity;
 
         for probes in 0usize..self.capacity {
             match &self.buckets[idx] {
-                BucketU32U32::Empty => {
-                    return Option::None;
+                BucketU32U32.Empty => {
+                    return Option.None;
                 }
-                BucketU32U32::Deleted => {}
-                BucketU32U32::Occupied { key: existing_key, value } => {
+                BucketU32U32.Deleted => {}
+                BucketU32U32.Occupied { key: existing_key, value } => {
                     if existing_key == key {
-                        return Option::Some(value);
+                        return Option.Some(value);
                     }
                 }
             }
             idx = (idx + 1) % self.capacity;
         }
-        Option::None
+        Option.None
     }
 
     /// Check if key exists.
     pub fn contains_key(self: &Self, key: u32) -> bool {
         match self.get(key) {
-            Option::Some(_) => true,
-            Option::None => false,
+            Option.Some(_) => true,
+            Option.None => false,
         }
     }
 
@@ -652,13 +652,13 @@ impl HashMapU32U32 {
 
         for probes in 0usize..self.capacity {
             match &self.buckets[idx] {
-                BucketU32U32::Empty => {
+                BucketU32U32.Empty => {
                     return false;
                 }
-                BucketU32U32::Deleted => {}
-                BucketU32U32::Occupied { key: existing_key, value: _ } => {
+                BucketU32U32.Deleted => {}
+                BucketU32U32.Occupied { key: existing_key, value: _ } => {
                     if existing_key == key {
-                        self.buckets[idx] = BucketU32U32::Deleted;
+                        self.buckets[idx] = BucketU32U32.Deleted;
                         self.len = self.len - 1;
                         return true;
                     }
@@ -672,7 +672,7 @@ impl HashMapU32U32 {
     /// Remove all entries from the map.
     pub fn clear(self: &mut Self) {
         for i in 0usize..self.capacity {
-            self.buckets[i] = BucketU32U32::Empty;
+            self.buckets[i] = BucketU32U32.Empty;
         }
         self.len = 0;
     }

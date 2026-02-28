@@ -29,7 +29,7 @@ impl ErrorReporter {
     pub fn new(source: &str, filename: &str) -> ErrorReporter {
         let mut reporter = ErrorReporter {
             source: common::make_string(source),
-            line_starts: Vec::new(),
+            line_starts: Vec.new(),
             filename: common::make_string(filename),
             use_colors: false,
         };
@@ -39,7 +39,7 @@ impl ErrorReporter {
 
     /// Creates a new reporter with colors enabled.
     pub fn with_colors(source: &str, filename: &str) -> ErrorReporter {
-        let mut reporter = ErrorReporter::new(source, filename);
+        let mut reporter = ErrorReporter.new(source, filename);
         reporter.use_colors = true;
         reporter
     }
@@ -78,7 +78,7 @@ impl ErrorReporter {
     /// Gets the content of a specific line (1-indexed).
     pub fn get_line(self: &ErrorReporter, line_num: u32) -> String {
         if line_num == 0 || (line_num as usize) > self.line_starts.len() {
-            return String::new();
+            return String.new();
         }
 
         let start = self.line_starts[(line_num as usize) - 1];
@@ -92,8 +92,8 @@ impl ErrorReporter {
     }
 
     /// Formats a compile error as a string.
-    pub fn format_error(self: &ErrorReporter, error: &error::CompileError) -> String {
-        let mut output = String::new();
+    pub fn format_error(self: &ErrorReporter, error: &error.CompileError) -> String {
+        let mut output = String.new();
 
         // Error header
         if self.use_colors {
@@ -104,12 +104,12 @@ impl ErrorReporter {
 
         // Add error code if present
         match &error.code {
-            &Option::Some(ref code) => {
+            &Option.Some(ref code) => {
                 output.push('[');
                 output.push_str(code.as_str());
                 output.push(']');
             }
-            &Option::None => {}
+            &Option.None => {}
         }
 
         output.push_str(": ");
@@ -118,7 +118,7 @@ impl ErrorReporter {
 
         // Location
         match &error.span {
-            &Option::Some(ref span) => {
+            &Option.Some(ref span) => {
                 output.push_str("  --> ");
                 output.push_str(self.filename.as_str());
                 output.push(':');
@@ -131,7 +131,7 @@ impl ErrorReporter {
                 // Source context
                 self.append_source_context(&mut output, span, line);
             }
-            &Option::None => {}
+            &Option.None => {}
         }
 
         // Structured notes
@@ -145,7 +145,7 @@ impl ErrorReporter {
     }
 
     /// Appends source context showing the error location.
-    fn append_source_context(self: &ErrorReporter, output: &mut String, span: &common::Span, line: u32) {
+    fn append_source_context(self: &ErrorReporter, output: &mut String, span: &common.Span, line: u32) {
         let line_content = self.get_line(line);
         let (_, start_col) = self.offset_to_line_col(span.start);
         let (end_line, end_col) = self.offset_to_line_col(span.end);
@@ -184,8 +184,8 @@ impl ErrorReporter {
     }
 
     /// Formats multiple errors.
-    pub fn format_errors(self: &ErrorReporter, errors: &Vec<error::CompileError>) -> String {
-        let mut output = String::new();
+    pub fn format_errors(self: &ErrorReporter, errors: &Vec<error.CompileError>) -> String {
+        let mut output = String.new();
         for i in 0usize..errors.len() {
             let formatted = self.format_error(&errors[i]);
             output.push_str(formatted.as_str());
@@ -197,8 +197,8 @@ impl ErrorReporter {
     }
 
     /// Formats a compile result (errors and warnings).
-    pub fn format_result(self: &ErrorReporter, result: &driver::CompileResult) -> String {
-        let mut output = String::new();
+    pub fn format_result(self: &ErrorReporter, result: &driver.CompileResult) -> String {
+        let mut output = String.new();
 
         // Format errors
         if result.errors.len() > 0 {
@@ -230,12 +230,12 @@ impl ErrorReporter {
                 output.push_str("warning");
             }
             match &warning.code {
-                &Option::Some(ref code) => {
+                &Option.Some(ref code) => {
                     output.push('[');
                     output.push_str(code.as_str());
                     output.push(']');
                 }
-                &Option::None => {}
+                &Option.None => {}
             }
             output.push_str(": ");
             output.push_str(warning.message.as_str());
@@ -251,18 +251,18 @@ impl ErrorReporter {
 // ============================================================
 
 /// Formats an error without source context.
-pub fn format_error_simple(error: &error::CompileError) -> String {
-    let mut output = String::new();
+pub fn format_error_simple(error: &error.CompileError) -> String {
+    let mut output = String.new();
     output.push_str("error");
 
     // Add error code if present
     match &error.code {
-        &Option::Some(ref code) => {
+        &Option.Some(ref code) => {
             output.push('[');
             output.push_str(code.as_str());
             output.push(']');
         }
-        &Option::None => {}
+        &Option.None => {}
     }
 
     output.push_str(": ");
@@ -270,13 +270,13 @@ pub fn format_error_simple(error: &error::CompileError) -> String {
 
     // Add location if present
     match &error.span {
-        &Option::Some(ref span) => {
+        &Option.Some(ref span) => {
             output.push_str(" at ");
             append_u32(&mut output, span.line);
             output.push(':');
             append_u32(&mut output, span.column);
         }
-        &Option::None => {}
+        &Option.None => {}
     }
 
     // Structured notes
@@ -289,8 +289,8 @@ pub fn format_error_simple(error: &error::CompileError) -> String {
 }
 
 /// Formats multiple errors without source context.
-pub fn format_errors_simple(errors: &Vec<error::CompileError>) -> String {
-    let mut output = String::new();
+pub fn format_errors_simple(errors: &Vec<error.CompileError>) -> String {
+    let mut output = String.new();
     for i in 0usize..errors.len() {
         let formatted = format_error_simple(&errors[i]);
         output.push_str(formatted.as_str());
@@ -304,15 +304,15 @@ pub fn format_errors_simple(errors: &Vec<error::CompileError>) -> String {
 // ============================================================
 
 /// Formats a check result.
-pub fn format_check_result(result: &driver::CheckResult, source: &str, filename: &str) -> String {
+pub fn format_check_result(result: &driver.CheckResult, source: &str, filename: &str) -> String {
     if result.success {
-        let mut output = String::new();
+        let mut output = String.new();
         output.push_str("Check successful: ");
         output.push_str(filename);
         output.push('\n');
         output
     } else {
-        let reporter = ErrorReporter::new(source, filename);
+        let reporter = ErrorReporter.new(source, filename);
         reporter.format_errors(&result.errors)
     }
 }
@@ -324,7 +324,7 @@ pub fn format_check_result(result: &driver::CheckResult, source: &str, filename:
 /// Extracts a substring.
 fn substring(s: &String, start: usize, end: usize) -> String {
     let bytes = s.as_bytes();
-    let mut result = String::new();
+    let mut result = String.new();
 
     let actual_end = if end > bytes.len() { bytes.len() } else { end };
     let mut i = start;
@@ -343,7 +343,7 @@ fn append_u32(s: &mut String, n: u32) {
         return;
     }
 
-    let mut digits: Vec<char> = Vec::new();
+    let mut digits: Vec<char> = Vec.new();
     let mut val = n;
     while val > 0 {
         let digit = (val % 10) as u8;

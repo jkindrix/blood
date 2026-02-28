@@ -23,10 +23,10 @@ mod codegen_size;
 
 /// Generates LLVM IR for a terminator.
 pub fn emit_terminator(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    term: &mir_term::Terminator,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    term: &mir_term.Terminator,
 ) {
-    ctx.current_span = Option::Some(term.span);
+    ctx.current_span = Option.Some(term.span);
     if ctx.trace_codegen {
         let trace = dump_mir::format_terminator(term);
         ctx.write("    ; MIR: ");
@@ -34,23 +34,23 @@ pub fn emit_terminator(
         ctx.newline();
     }
     match &term.kind {
-        &mir_term::TerminatorKind::Goto { target } => {
+        &mir_term.TerminatorKind.Goto { target } => {
             let label = ctx.block_label_cg(target);
             ctx.emit_br_cg(&label);
         }
-        &mir_term::TerminatorKind::SwitchInt { ref discr, ref targets } => {
+        &mir_term.TerminatorKind.SwitchInt { ref discr, ref targets } => {
             emit_switch_int(ctx, discr, targets);
         }
-        &mir_term::TerminatorKind::Return => {
+        &mir_term.TerminatorKind.Return => {
             emit_return(ctx);
         }
-        &mir_term::TerminatorKind::Call { ref func, ref args, ref destination, ref target, unwind: _ } => {
+        &mir_term.TerminatorKind.Call { ref func, ref args, ref destination, ref target, unwind: _ } => {
             emit_call(ctx, func, args, destination, target);
         }
-        &mir_term::TerminatorKind::Assert { ref cond, expected, ref msg, target, unwind: _ } => {
+        &mir_term.TerminatorKind.Assert { ref cond, expected, ref msg, target, unwind: _ } => {
             emit_assert(ctx, cond, expected, msg, target);
         }
-        &mir_term::TerminatorKind::Perform { effect_id, op_index, ref args, ref destination, ref target, is_tail_resumptive: _ } => {
+        &mir_term.TerminatorKind.Perform { effect_id, op_index, ref args, ref destination, ref target, is_tail_resumptive: _ } => {
             // Effect perform via evidence API 5-arg call:
             //   blood_perform(i64 effect_id, i32 op_index, ptr args, i64 arg_count, i64 continuation)
             let effect_id_val = codegen_types::format_u64(effect_id.index as u64);
@@ -61,7 +61,7 @@ pub fn emit_terminator(
                 err_msg.push_str(codegen_types::format_u64(effect_id.index as u64).as_str());
                 err_msg.push_str(" op_name_sym ");
                 err_msg.push_str(codegen_types::format_u64(op_index as u64).as_str());
-                ctx.codegen_error(codegen_ctx::CodegenErrorKind::EffectOpLookupFailed, err_msg);
+                ctx.codegen_error(codegen_ctx.CodegenErrorKind.EffectOpLookupFailed, err_msg);
             }
             let op_index_val = codegen_types::format_u64(resolved_op_index as u64);
             let dest = codegen_expr::emit_place_data_ptr(ctx, destination);
@@ -164,16 +164,16 @@ pub fn emit_terminator(
             }
 
             match target {
-                &Option::Some(t) => {
+                &Option.Some(t) => {
                     let label = ctx.block_label_cg(t);
                     ctx.emit_br_cg(&label);
                 }
-                &Option::None => {
+                &Option.None => {
                     ctx.emit_unreachable();
                 }
             }
         }
-        &mir_term::TerminatorKind::Resume { ref value } => {
+        &mir_term.TerminatorKind.Resume { ref value } => {
             // Resume from handler op body.
             // The inner body returns the resume value in its natural return type.
             // The wrapper function handles widening to i64 and continuation resume.
@@ -182,25 +182,25 @@ pub fn emit_terminator(
             emit_handler_state_writeback(ctx);
 
             match value {
-                &Option::Some(ref v) => {
+                &Option.Some(ref v) => {
                     let (val, ty) = codegen_expr::emit_operand_typed(ctx, v);
                     if str_eq(ty.as_str(), "{}") || is_void_type(ty.as_str()) {
                         // Unit-typed resume value → ret void
-                        ctx.emit_ret("void", Option::None);
+                        ctx.emit_ret("void", Option.None);
                     } else {
-                        ctx.emit_ret(ty.as_str(), Option::Some(val.as_str()));
+                        ctx.emit_ret(ty.as_str(), Option.Some(val.as_str()));
                     }
                 }
-                &Option::None => {
+                &Option.None => {
                     // Unit-resume: ret void
-                    ctx.emit_ret("void", Option::None);
+                    ctx.emit_ret("void", Option.None);
                 }
             }
         }
-        &mir_term::TerminatorKind::Unreachable => {
+        &mir_term.TerminatorKind.Unreachable => {
             ctx.emit_unreachable();
         }
-        &mir_term::TerminatorKind::Drop { ref place, target, unwind: _ } => {
+        &mir_term.TerminatorKind.Drop { ref place, target, unwind: _ } => {
             // Drop - call destructor if needed, then continue
             let _ptr = codegen_expr::emit_place_addr(ctx, place);
             // For now, just continue to target
@@ -212,9 +212,9 @@ pub fn emit_terminator(
 
 /// Emits a switch on an integer value.
 fn emit_switch_int(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    discr: &mir_types::Operand,
-    switch_targets: &mir_types::SwitchTargets,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    discr: &mir_types.Operand,
+    switch_targets: &mir_types.SwitchTargets,
 ) {
     let (discr_val, discr_ty) = codegen_expr::emit_operand_typed(ctx, discr);
 
@@ -248,15 +248,15 @@ fn emit_switch_int(
 /// Emits a return from the function.
 /// Writes back handler state fields from local allocas to the state pointer.
 /// Called before any return/resume from a handler op body with multiple state fields.
-fn emit_handler_state_writeback(ctx: &mut codegen_ctx::CodegenCtx) {
+fn emit_handler_state_writeback(ctx: &mut codegen_ctx.CodegenCtx) {
     if ctx.handler_op_state_field_count > 1 {
-        let state_local = mir_def::MirLocalId::new(1);
+        let state_local = mir_def.MirLocalId.new(1);
         let state_alloca = ctx.local_alloca_name(state_local);
         let state_ptr = ctx.fresh_temp_cg();
         ctx.emit_load_cg(&state_ptr, "ptr", state_alloca.as_str());
 
         for fi in 2u32..= ctx.handler_op_state_field_count {
-            let field_local = mir_def::MirLocalId::new(fi);
+            let field_local = mir_def.MirLocalId.new(fi);
             let field_alloca = ctx.local_alloca_name(field_local);
             let field_ty = ctx.get_local_type(field_local);
             let field_idx = fi - 1;
@@ -280,13 +280,13 @@ fn emit_handler_state_writeback(ctx: &mut codegen_ctx::CodegenCtx) {
     }
 }
 
-fn emit_return(ctx: &mut codegen_ctx::CodegenCtx) {
+fn emit_return(ctx: &mut codegen_ctx.CodegenCtx) {
     // For handler op bodies with multiple state fields: write back field values
     // from local allocas to the state pointer before returning.
     emit_handler_state_writeback(ctx);
 
     // Load return value from _0
-    let ret_local = mir_def::MirLocalId::new(0);
+    let ret_local = mir_def.MirLocalId.new(0);
     let ret_name = ctx.local_cg(ret_local);
     let ret_ty = ctx.get_local_type(ret_local);
 
@@ -294,7 +294,7 @@ fn emit_return(ctx: &mut codegen_ctx::CodegenCtx) {
     let is_void = is_void_type(ret_ty.as_str());
 
     if is_void {
-        ctx.emit_ret("void", Option::None);
+        ctx.emit_ret("void", Option.None);
     } else {
         // For heap-allocated locals (_0 can be region/persistent allocated),
         // the alloca holds a ptr to the heap buffer. Dereference it first.
@@ -314,20 +314,20 @@ fn emit_return(ctx: &mut codegen_ctx::CodegenCtx) {
 
 /// Emits a function call.
 fn emit_call(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    func: &mir_types::Operand,
-    args: &Vec<mir_types::Operand>,
-    destination: &mir_types::Place,
-    target: &Option<mir_def::BasicBlockId>,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    func: &mir_types.Operand,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
 ) {
     // Try to extract a direct function name from the operand to avoid
     // unnecessary store/load indirection for known function references.
     // For indirect calls through fat pointers { fn_ptr, env_ptr }, we also
     // extract the env_ptr to prepend as the first argument.
-    let mut indirect_env_ptr: Option<String> = Option::None;
+    let mut indirect_env_ptr: Option<String> = Option.None;
     let func_val = match extract_direct_fn_name(ctx, func) {
-        Option::Some(name) => name,
-        Option::None => {
+        Option.Some(name) => name,
+        Option.None => {
             // Fallback: emit the operand normally (may produce %tmp from a local load)
             let func_typed = codegen_expr::emit_operand_typed(ctx, func);
             let raw_func = func_typed.0;
@@ -357,7 +357,7 @@ fn emit_call(
                     ctx.write(" ");
                     ctx.write_string(&raw_func);
                     ctx.write(", 1\n");
-                    indirect_env_ptr = Option::Some(cgname_to_string(&env_extracted));
+                    indirect_env_ptr = Option.Some(cgname_to_string(&env_extracted));
                     cgname_to_string(&extracted)
                 } else {
                     // Integer type: use inttoptr
@@ -471,7 +471,7 @@ fn emit_call(
     let target_def_id: Option<u32> = extract_call_def_id(func);
 
     // Emit arguments with their types, applying generic call fixup if needed
-    let mut llvm_args: Vec<(String, String)> = Vec::new();
+    let mut llvm_args: Vec<(String, String)> = Vec.new();
     for i in 0usize..args.len() {
         let (arg_val, arg_ty) = codegen_expr::emit_operand_typed(ctx, &args[i]);
 
@@ -479,9 +479,9 @@ fn emit_call(
         let mut final_val: String;
         let mut final_ty: String;
         match target_def_id {
-            Option::Some(did) => {
+            Option.Some(did) => {
                 match ctx.lookup_fn_param_type(did, i) {
-                    Option::Some(expected_ty) => {
+                    Option.Some(expected_ty) => {
                         if !string_eq_str(expected_ty.as_str(), arg_ty.as_str()) && needs_int_cast(arg_ty.as_str(), expected_ty.as_str()) {
                             // Type mismatch: widen the argument to match the definition
                             let widened = ctx.fresh_temp_cg();
@@ -538,13 +538,13 @@ fn emit_call(
                             final_ty = arg_ty;
                         }
                     }
-                    Option::None => {
+                    Option.None => {
                         final_val = arg_val;
                         final_ty = arg_ty;
                     }
                 }
             }
-            Option::None => {
+            Option.None => {
                 final_val = arg_val;
                 final_ty = arg_ty;
             }
@@ -555,9 +555,9 @@ fn emit_call(
     // For indirect calls through fat pointers, prepend env_ptr as the first argument.
     // All fn() values use the calling convention (ptr env, params...) -> ret.
     match indirect_env_ptr {
-        Option::Some(ref env_val) => {
+        Option.Some(ref env_val) => {
             // Insert env_ptr at position 0 by building a new vec
-            let mut new_args: Vec<(String, String)> = Vec::new();
+            let mut new_args: Vec<(String, String)> = Vec.new();
             new_args.push((common::make_string("ptr"), clone_string(env_val)));
             for j in 0usize..llvm_args.len() {
                 let arg_pair = &llvm_args[j];
@@ -565,7 +565,7 @@ fn emit_call(
             }
             llvm_args = new_args;
         }
-        Option::None => {}
+        Option.None => {}
     }
 
     // Get return type from destination
@@ -575,13 +575,13 @@ fn emit_call(
     // Determine the actual return type to use for the call instruction
     // If the function definition has a different return type (generic), use the definition's type
     let def_ret_ty: String = match target_def_id {
-        Option::Some(did) => {
+        Option.Some(did) => {
             match ctx.lookup_fn_ret_type(did) {
-                Option::Some(drt) => drt,
-                Option::None => clone_string(&call_site_ret_ty),
+                Option.Some(drt) => drt,
+                Option.None => clone_string(&call_site_ret_ty),
             }
         }
-        Option::None => clone_string(&call_site_ret_ty),
+        Option.None => clone_string(&call_site_ret_ty),
     };
 
     // Check if return type is void (unit type)
@@ -589,7 +589,7 @@ fn emit_call(
 
     if is_void {
         // Void function - no return value
-        ctx.begin_call_str(Option::None, "void", func_val.as_str());
+        ctx.begin_call_str(Option.None, "void", func_val.as_str());
         for vi in 0usize..llvm_args.len() {
             let arg = &llvm_args[vi];
             ctx.call_arg_str(vi == 0, arg.0.as_str(), arg.1.as_str());
@@ -598,7 +598,7 @@ fn emit_call(
     } else {
         // Non-void function - capture return value
         let result = ctx.fresh_temp_cg();
-        ctx.begin_call(Option::Some(&result), def_ret_ty.as_str(), func_val.as_str());
+        ctx.begin_call(Option.Some(&result), def_ret_ty.as_str(), func_val.as_str());
         for ai in 0usize..llvm_args.len() {
             let arg = &llvm_args[ai];
             ctx.call_arg_str(ai == 0, arg.0.as_str(), arg.1.as_str());
@@ -647,11 +647,11 @@ fn emit_call(
 
     // Jump to continuation
     match target {
-        &Option::Some(t) => {
+        &Option.Some(t) => {
             let label = ctx.block_label_cg(t);
             ctx.emit_br_cg(&label);
         }
-        &Option::None => {
+        &Option.None => {
             ctx.emit_unreachable();
         }
     }
@@ -661,24 +661,24 @@ fn emit_call(
 /// Returns Some("@fn_name") if the operand is a Constant(FnDef(...)),
 /// None otherwise (for Copy/Move of locals, which need the load path).
 fn extract_direct_fn_name(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    operand: &mir_types::Operand,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    operand: &mir_types.Operand,
 ) -> Option<String> {
     match operand {
-        &mir_types::Operand::Constant(ref constant) => {
+        &mir_types.Operand.Constant(ref constant) => {
             match &constant.kind {
-                &mir_types::ConstantKind::FnDef(ref def_id) => {
+                &mir_types.ConstantKind.FnDef(ref def_id) => {
                     // Apply call remapping for trait default methods.
                     // If this call targets an abstract trait method DefId,
                     // redirect to the concrete impl method DefId.
                     let remapped_id = ctx.remap_def_id(def_id.index);
                     match ctx.lookup_def_name(remapped_id) {
-                        Option::Some(name) => {
+                        Option.Some(name) => {
                             let mut result = common::make_string("@");
                             result.push_str(name.as_str());
-                            Option::Some(result)
+                            Option.Some(result)
                         }
-                        Option::None => {
+                        Option.None => {
                             let mut fallback_name = common::make_string("fn_");
                             fallback_name.push_str(codegen_types::format_u64(remapped_id as u64).as_str());
                             // Register the fallback name so stub generation can create a declaration
@@ -688,34 +688,34 @@ fn extract_direct_fn_name(
                             err_msg.push_str(" not found in def_names, using fallback name ");
                             err_msg.push_str(fallback_name.as_str());
                             ctx.codegen_error(
-                                codegen_ctx::CodegenErrorKind::FnLookupFailed,
+                                codegen_ctx.CodegenErrorKind.FnLookupFailed,
                                 err_msg,
                             );
                             let mut result = common::make_string("@");
                             result.push_str(fallback_name.as_str());
-                            Option::Some(result)
+                            Option.Some(result)
                         }
                     }
                 }
-                _ => Option::None,
+                _ => Option.None,
             }
         }
-        _ => Option::None,
+        _ => Option.None,
     }
 }
 
 /// Extracts the DefId from a MIR call operand (for signature lookup).
-fn extract_call_def_id(operand: &mir_types::Operand) -> Option<u32> {
+fn extract_call_def_id(operand: &mir_types.Operand) -> Option<u32> {
     match operand {
-        &mir_types::Operand::Constant(ref constant) => {
+        &mir_types.Operand.Constant(ref constant) => {
             match &constant.kind {
-                &mir_types::ConstantKind::FnDef(ref def_id) => {
-                    Option::Some(def_id.index)
+                &mir_types.ConstantKind.FnDef(ref def_id) => {
+                    Option.Some(def_id.index)
                 }
-                _ => Option::None,
+                _ => Option.None,
             }
         }
-        _ => Option::None,
+        _ => Option.None,
     }
 }
 
@@ -770,39 +770,39 @@ fn parse_int_bits(ty: &str) -> u32 {
 
 /// Clone a string.
 fn clone_string(s: &String) -> String {
-    let mut result = String::new();
+    let mut result = String.new();
     result.push_str(s.as_str());
     result
 }
 
 /// Converts a CgName to String for use at boundaries where String is required.
-fn cgname_to_string(name: &codegen_ctx::CgName) -> String {
+fn cgname_to_string(name: &codegen_ctx.CgName) -> String {
     match name {
-        &codegen_ctx::CgName::Temp(n) => {
+        &codegen_ctx.CgName.Temp(n) => {
             let mut s = common::make_string("%tmp");
             let ns = codegen_types::format_u64(n as u64);
             s.push_str(ns.as_str());
             s
         }
-        &codegen_ctx::CgName::Local(n) => {
+        &codegen_ctx.CgName.Local(n) => {
             let mut s = common::make_string("%_");
             let ns = codegen_types::format_u64(n as u64);
             s.push_str(ns.as_str());
             s
         }
-        &codegen_ctx::CgName::Label(n) => {
+        &codegen_ctx.CgName.Label(n) => {
             let mut s = common::make_string("label");
             let ns = codegen_types::format_u64(n as u64);
             s.push_str(ns.as_str());
             s
         }
-        &codegen_ctx::CgName::Block(n) => {
+        &codegen_ctx.CgName.Block(n) => {
             let mut s = common::make_string("bb");
             let ns = codegen_types::format_u64(n as u64);
             s.push_str(ns.as_str());
             s
         }
-        &codegen_ctx::CgName::Str(ref s) => {
+        &codegen_ctx.CgName.Str(ref s) => {
             clone_string(s)
         }
     }
@@ -839,7 +839,7 @@ fn is_struct_type(ty: &str) -> bool {
 /// Parses the field types from a struct type string like "{ i64, i32 }".
 /// Returns a Vec of field type strings.
 fn parse_struct_fields(ty: &str) -> Vec<String> {
-    let mut fields: Vec<String> = Vec::new();
+    let mut fields: Vec<String> = Vec.new();
     let bytes = ty.as_bytes();
     if bytes.len() < 4 {
         return fields;
@@ -875,7 +875,7 @@ fn parse_struct_fields(ty: &str) -> Vec<String> {
             field_end -= 1;
         }
         if field_end > start {
-            let mut field = String::new();
+            let mut field = String.new();
             let mut fi: usize = start;
             while fi < field_end {
                 field.push(bytes[fi] as char);
@@ -894,11 +894,11 @@ fn parse_struct_fields(ty: &str) -> Vec<String> {
 /// Emits struct widening: converts a struct with smaller fields to one with larger fields.
 /// E.g., { i1, i32 } -> { i64, i64 } by extracting each field and sign-extending.
 fn emit_struct_widening(
-    ctx: &mut codegen_ctx::CodegenCtx,
+    ctx: &mut codegen_ctx.CodegenCtx,
     src_val: &String,
     src_ty: &str,
     dst_ty: &str,
-) -> codegen_ctx::CgName {
+) -> codegen_ctx.CgName {
     let src_fields = parse_struct_fields(src_ty);
     let dst_fields = parse_struct_fields(dst_ty);
 
@@ -921,7 +921,7 @@ fn emit_struct_widening(
         ctx.write(codegen_types::format_u64(fi as u64).as_str());
         ctx.write("\n");
 
-        let mut field_val: codegen_ctx::CgName;
+        let mut field_val: codegen_ctx.CgName;
         if string_eq_str(src_fields[fi].as_str(), dst_fields[fi].as_str()) {
             // Same type, no conversion needed
             field_val = extracted;
@@ -1019,11 +1019,11 @@ fn emit_struct_widening(
 /// Emits struct narrowing: converts a struct with larger fields to one with smaller fields.
 /// E.g., { i64, i64 } -> { i32, i1 } by extracting each field and truncating.
 fn emit_struct_narrowing(
-    ctx: &mut codegen_ctx::CodegenCtx,
+    ctx: &mut codegen_ctx.CodegenCtx,
     src_val: &String,
     src_ty: &str,
     dst_ty: &str,
-) -> codegen_ctx::CgName {
+) -> codegen_ctx.CgName {
     let src_fields = parse_struct_fields(src_ty);
     let dst_fields = parse_struct_fields(dst_ty);
 
@@ -1045,7 +1045,7 @@ fn emit_struct_narrowing(
         ctx.write(codegen_types::format_u64(fi as u64).as_str());
         ctx.write("\n");
 
-        let mut field_val: codegen_ctx::CgName;
+        let mut field_val: codegen_ctx.CgName;
         if string_eq_str(src_fields[fi].as_str(), dst_fields[fi].as_str()) {
             // Same type, no conversion needed
             field_val = extracted;
@@ -1126,11 +1126,11 @@ fn emit_struct_narrowing(
 /// Emits an assertion.
 /// On failure, prints the assertion message and traps.
 fn emit_assert(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    cond: &mir_types::Operand,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    cond: &mir_types.Operand,
     expected: bool,
     msg: &String,
-    target: mir_def::BasicBlockId,
+    target: mir_def.BasicBlockId,
 ) {
     let cond_val = codegen_expr::emit_operand(ctx, cond);
 
@@ -1172,10 +1172,10 @@ fn emit_assert(
 
 /// Emits a list of operands and returns their values.
 fn emit_operand_list(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    operands: &Vec<mir_types::Operand>,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    operands: &Vec<mir_types.Operand>,
 ) -> Vec<String> {
-    let mut result: Vec<String> = Vec::new();
+    let mut result: Vec<String> = Vec.new();
     for i in 0usize..operands.len() {
         result.push(codegen_expr::emit_operand(ctx, &operands[i]));
     }
@@ -1184,9 +1184,9 @@ fn emit_operand_list(
 
 /// Widens an operand value to i64 if needed.
 /// Returns the SSA name of the widened value (already i64-typed).
-fn widen_operand_to_i64(ctx: &mut codegen_ctx::CodegenCtx, val: &str, ty: &str) -> codegen_ctx::CgName {
+fn widen_operand_to_i64(ctx: &mut codegen_ctx.CodegenCtx, val: &str, ty: &str) -> codegen_ctx.CgName {
     if str_eq(ty, "i64") {
-        return codegen_ctx::CgName::Str(common::make_string(val));
+        return codegen_ctx.CgName.Str(common::make_string(val));
     }
     if str_eq(ty, "i32") || str_eq(ty, "i16") || str_eq(ty, "i8") || str_eq(ty, "i1") {
         let widened = ctx.fresh_temp_cg();
@@ -1219,7 +1219,7 @@ fn widen_operand_to_i64(ctx: &mut codegen_ctx::CodegenCtx, val: &str, ty: &str) 
     }
     if str_eq(ty, "{}") {
         // Unit type — return 0
-        return codegen_ctx::CgName::Str(common::make_string("0"));
+        return codegen_ctx.CgName.Str(common::make_string("0"));
     }
     // For aggregate types (struct, tuple, etc.): store to a temp alloca
     // and pass the alloca address as i64. The wrapper will inttoptr and load.
@@ -1323,10 +1323,10 @@ fn is_vec_with_capacity(func_val: &String) -> bool {
 ///
 /// Uses emit_place_data_ptr to handle region/persistent indirection.
 fn emit_vec_with_capacity_call(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    args: &Vec<mir_types::Operand>,
-    destination: &mir_types::Place,
-    target: &Option<mir_def::BasicBlockId>,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
 ) {
     // Get data pointer (handles region/persistent heap indirection)
     let out_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
@@ -1335,8 +1335,8 @@ fn emit_vec_with_capacity_call(
     // Must resolve through Place projections: if destination is _0.Field(5),
     // the local's type is the struct, not Vec<T>. We need the field's type.
     let elem_size: u64 = match resolve_place_hir_type(ctx, destination) {
-        Option::Some(ty_id) => extract_vec_element_size_id(ctx, ty_id),
-        Option::None => 8,
+        Option.Some(ty_id) => extract_vec_element_size_id(ctx, ty_id),
+        Option.None => 8,
     };
 
     // Get capacity from first argument
@@ -1344,7 +1344,7 @@ fn emit_vec_with_capacity_call(
 
     // Emit: call void @vec_with_capacity(i64 elem_size, i64 capacity, ptr out_ptr)
     let elem_size_str = codegen_types::format_u64(elem_size);
-    ctx.begin_call(Option::None, "void", "@vec_with_capacity");
+    ctx.begin_call(Option.None, "void", "@vec_with_capacity");
     ctx.call_arg_str(true, "i64", elem_size_str.as_str());
     ctx.call_arg_str(false, "i64", cap_val.as_str());
     ctx.call_arg_str(false, "ptr", out_ptr.as_str());
@@ -1352,21 +1352,21 @@ fn emit_vec_with_capacity_call(
 
     // Jump to continuation
     match target {
-        &Option::Some(t) => {
+        &Option.Some(t) => {
             let label = ctx.block_label_cg(t);
             ctx.emit_br_cg(&label);
         }
-        &Option::None => {
+        &Option.None => {
             ctx.emit_unreachable();
         }
     }
 }
 
 /// Extracts element size from a Vec<T> or &Vec<T> TyId (via interner, no Type tree).
-fn extract_vec_element_size_id(ctx: &mut codegen_ctx::CodegenCtx, ty_id: type_intern::TyId) -> u64 {
+fn extract_vec_element_size_id(ctx: &mut codegen_ctx.CodegenCtx, ty_id: type_intern.TyId) -> u64 {
     let unwrapped = type_intern::unwrap_ref_id(ty_id);
     match type_intern::get_adt_args(unwrapped) {
-        Option::Some(args) => {
+        Option.Some(args) => {
             let interner = type_intern::type_interner();
             if interner.ty_list_len(args) > 0 {
                 let elem_id = interner.get_ty_list_element(args, 0);
@@ -1375,7 +1375,7 @@ fn extract_vec_element_size_id(ctx: &mut codegen_ctx::CodegenCtx, ty_id: type_in
                 8
             }
         }
-        Option::None => 8,
+        Option.None => 8,
     }
 }
 
@@ -1383,36 +1383,36 @@ fn extract_vec_element_size_id(ctx: &mut codegen_ctx::CodegenCtx, ty_id: type_in
 /// For `_local.Field(5)`, returns the type of field 5 of the local's struct.
 /// Falls back to the local's direct type if no projections or resolution fails.
 fn resolve_place_hir_type(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    place: &mir_types::Place,
-) -> Option<type_intern::TyId> {
+    ctx: &mut codegen_ctx.CodegenCtx,
+    place: &mir_types.Place,
+) -> Option<type_intern.TyId> {
     let mut current_ty = match ctx.get_local_hir_type(place.local) {
-        Option::Some(ty_id) => ty_id,
-        Option::None => { return Option::None; }
+        Option.Some(ty_id) => ty_id,
+        Option.None => { return Option.None; }
     };
     for i in 0usize..place.projection.len() {
         match &place.projection[i] {
-            &mir_types::PlaceElem::Field(idx) => {
+            &mir_types.PlaceElem.Field(idx) => {
                 let unwrapped = type_intern::unwrap_ref_id(current_ty);
                 match type_intern::get_adt_def_id(unwrapped) {
-                    Option::Some(def_id) => {
+                    Option.Some(def_id) => {
                         match ctx.lookup_field_hir_type(def_id.index, idx) {
-                            Option::Some(field_ty) => {
+                            Option.Some(field_ty) => {
                                 current_ty = field_ty;
                             }
-                            Option::None => { return Option::Some(current_ty); }
+                            Option.None => { return Option.Some(current_ty); }
                         }
                     }
-                    Option::None => { return Option::Some(current_ty); }
+                    Option.None => { return Option.Some(current_ty); }
                 }
             }
-            &mir_types::PlaceElem::Deref => {
+            &mir_types.PlaceElem.Deref => {
                 current_ty = type_intern::unwrap_ref_id(current_ty);
             }
             _ => {}
         }
     }
-    Option::Some(current_ty)
+    Option.Some(current_ty)
 }
 
 /// Emits a vec_new call with correct calling convention.
@@ -1420,9 +1420,9 @@ fn resolve_place_hir_type(
 ///
 /// Uses emit_place_data_ptr to handle region/persistent indirection.
 fn emit_vec_new_call(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    destination: &mir_types::Place,
-    target: &Option<mir_def::BasicBlockId>,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
 ) {
     // Get data pointer (handles region/persistent heap indirection)
     let out_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
@@ -1431,24 +1431,24 @@ fn emit_vec_new_call(
     // Must resolve through Place projections: if destination is _0.Field(5),
     // the local's type is the struct, not Vec<T>. We need the field's type.
     let elem_size: u64 = match resolve_place_hir_type(ctx, destination) {
-        Option::Some(ty_id) => extract_vec_element_size_id(ctx, ty_id),
-        Option::None => 8,
+        Option.Some(ty_id) => extract_vec_element_size_id(ctx, ty_id),
+        Option.None => 8,
     };
 
     // Emit: call void @vec_new(i64 elem_size, ptr out_ptr)
     let elem_size_str = codegen_types::format_u64(elem_size);
-    ctx.begin_call(Option::None, "void", "@vec_new");
+    ctx.begin_call(Option.None, "void", "@vec_new");
     ctx.call_arg_str(true, "i64", elem_size_str.as_str());
     ctx.call_arg_str(false, "ptr", out_ptr.as_str());
     ctx.end_call();
 
     // Jump to continuation
     match target {
-        &Option::Some(t) => {
+        &Option.Some(t) => {
             let label = ctx.block_label_cg(t);
             ctx.emit_br_cg(&label);
         }
-        &Option::None => {
+        &Option.None => {
             ctx.emit_unreachable();
         }
     }
@@ -1457,9 +1457,9 @@ fn emit_vec_new_call(
 /// Emits a vec_push call with correct calling convention.
 /// Runtime signature: void @vec_push(ptr vec, ptr elem_ptr, i64 elem_size)
 fn emit_vec_push_call(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    args: &Vec<mir_types::Operand>,
-    target: &Option<mir_def::BasicBlockId>,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    target: &Option<mir_def.BasicBlockId>,
 ) {
     // args[0] is the vec (&mut Vec<T>)
     // args[1] is the element (T)
@@ -1495,30 +1495,30 @@ fn emit_vec_push_call(
 
     // Get element size from the element's HIR type
     let elem_size: u64 = match &args[1] {
-        &mir_types::Operand::Copy(ref place) => {
+        &mir_types.Operand.Copy(ref place) => {
             match ctx.get_local_hir_type(place.local) {
-                Option::Some(ty_id) => {
+                Option.Some(ty_id) => {
                     codegen_size::type_size_with_ctx_id(ctx, ty_id)
                 }
-                Option::None => 8,
+                Option.None => 8,
             }
         }
-        &mir_types::Operand::Move(ref place) => {
+        &mir_types.Operand.Move(ref place) => {
             match ctx.get_local_hir_type(place.local) {
-                Option::Some(ty_id) => {
+                Option.Some(ty_id) => {
                     codegen_size::type_size_with_ctx_id(ctx, ty_id)
                 }
-                Option::None => 8,
+                Option.None => 8,
             }
         }
-        &mir_types::Operand::Constant(ref c) => {
+        &mir_types.Operand.Constant(ref c) => {
             codegen_size::type_size_with_ctx_id(ctx, c.ty)
         }
     };
 
     // Emit: call void @vec_push(ptr vec, ptr elem_ptr, i64 elem_size)
     let elem_size_str = codegen_types::format_u64(elem_size);
-    ctx.begin_call(Option::None, "void", "@vec_push");
+    ctx.begin_call(Option.None, "void", "@vec_push");
     ctx.call_arg_str(true, "ptr", vec_ptr.as_str());
     ctx.call_arg_cg(false, "ptr", &elem_alloca);
     ctx.call_arg_str(false, "i64", elem_size_str.as_str());
@@ -1533,11 +1533,11 @@ fn emit_vec_push_call(
 
     // Jump to continuation
     match target {
-        &Option::Some(t) => {
+        &Option.Some(t) => {
             let label = ctx.block_label_cg(t);
             ctx.emit_br_cg(&label);
         }
-        &Option::None => {
+        &Option.None => {
             ctx.emit_unreachable();
         }
     }
@@ -1546,10 +1546,10 @@ fn emit_vec_push_call(
 /// Emits a vec_len call with correct calling convention.
 /// Runtime signature: i64 @vec_len(ptr vec)
 fn emit_vec_len_call(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    args: &Vec<mir_types::Operand>,
-    destination: &mir_types::Place,
-    target: &Option<mir_def::BasicBlockId>,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
 ) {
     // args[0] is the vec (&Vec<T>)
     if args.len() < 1 {
@@ -1563,7 +1563,7 @@ fn emit_vec_len_call(
 
     // Emit: %result = call i64 @vec_len(ptr vec)
     let result = ctx.fresh_temp_cg();
-    ctx.begin_call(Option::Some(&result), "i64", "@vec_len");
+    ctx.begin_call(Option.Some(&result), "i64", "@vec_len");
     ctx.call_arg_str(true, "ptr", vec_ptr.as_str());
     ctx.end_call();
 
@@ -1573,11 +1573,11 @@ fn emit_vec_len_call(
 
     // Jump to continuation
     match target {
-        &Option::Some(t) => {
+        &Option.Some(t) => {
             let label = ctx.block_label_cg(t);
             ctx.emit_br_cg(&label);
         }
-        &Option::None => {
+        &Option.None => {
             ctx.emit_unreachable();
         }
     }
@@ -1587,10 +1587,10 @@ fn emit_vec_len_call(
 /// Runtime signature: i32 @vec_pop(ptr vec, i64 elem_size, ptr out_ptr)
 /// Returns 1 on success (element popped), 0 if vec was empty.
 fn emit_vec_pop_call(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    args: &Vec<mir_types::Operand>,
-    destination: &mir_types::Place,
-    target: &Option<mir_def::BasicBlockId>,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
 ) {
     // args[0] is the vec (&mut Vec<T>)
     if args.len() < 1 {
@@ -1605,8 +1605,8 @@ fn emit_vec_pop_call(
     // Get element size from destination's HIR type (Option<T>)
     // pop returns Option<T>, so we need to extract T's size
     let elem_size: u64 = match ctx.get_local_hir_type(destination.local) {
-        Option::Some(ty_id) => extract_vec_element_size_id(ctx, ty_id),
-        Option::None => 8,
+        Option.Some(ty_id) => extract_vec_element_size_id(ctx, ty_id),
+        Option.None => 8,
     };
 
     // Allocate output pointer for the popped element
@@ -1620,7 +1620,7 @@ fn emit_vec_pop_call(
 
     // Emit: %result = call i32 @vec_pop(ptr vec, i64 elem_size, ptr out_ptr)
     let result = ctx.fresh_temp_cg();
-    ctx.begin_call(Option::Some(&result), "i32", "@vec_pop");
+    ctx.begin_call(Option.Some(&result), "i32", "@vec_pop");
     ctx.call_arg_str(true, "ptr", vec_ptr.as_str());
     ctx.call_arg_str(false, "i64", elem_size_str.as_str());
     ctx.call_arg_cg(false, "ptr", &out_alloca);
@@ -1661,11 +1661,11 @@ fn emit_vec_pop_call(
 
     // Jump to continuation
     match target {
-        &Option::Some(t) => {
+        &Option.Some(t) => {
             let label = ctx.block_label_cg(t);
             ctx.emit_br_cg(&label);
         }
-        &Option::None => {
+        &Option.None => {
             ctx.emit_unreachable();
         }
     }
@@ -1674,9 +1674,9 @@ fn emit_vec_pop_call(
 /// Emits a vec_clear call with correct calling convention.
 /// Runtime signature: void @vec_clear(ptr vec)
 fn emit_vec_clear_call(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    args: &Vec<mir_types::Operand>,
-    target: &Option<mir_def::BasicBlockId>,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    target: &Option<mir_def.BasicBlockId>,
 ) {
     // args[0] is the vec (&mut Vec<T>)
     if args.len() < 1 {
@@ -1689,17 +1689,17 @@ fn emit_vec_clear_call(
     let vec_ptr = codegen_expr::emit_operand(ctx, &args[0]);
 
     // Emit: call void @vec_clear(ptr vec)
-    ctx.begin_call(Option::None, "void", "@vec_clear");
+    ctx.begin_call(Option.None, "void", "@vec_clear");
     ctx.call_arg_str(true, "ptr", vec_ptr.as_str());
     ctx.end_call();
 
     // Jump to continuation
     match target {
-        &Option::Some(t) => {
+        &Option.Some(t) => {
             let label = ctx.block_label_cg(t);
             ctx.emit_br_cg(&label);
         }
-        &Option::None => {
+        &Option.None => {
             ctx.emit_unreachable();
         }
     }
@@ -1751,25 +1751,25 @@ fn is_string_as_bytes(func_val: &String) -> bool {
 ///
 /// Emits a string_new call. Uses emit_place_data_ptr for region/persistent indirection.
 fn emit_string_new_call(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    destination: &mir_types::Place,
-    target: &Option<mir_def::BasicBlockId>,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
 ) {
     // Get data pointer (handles region/persistent heap indirection)
     let out_ptr = codegen_expr::emit_place_data_ptr(ctx, destination);
 
     // Emit: call void @string_new(ptr out_ptr)
-    ctx.begin_call(Option::None, "void", "@string_new");
+    ctx.begin_call(Option.None, "void", "@string_new");
     ctx.call_arg_str(true, "ptr", out_ptr.as_str());
     ctx.end_call();
 
     // Jump to continuation
     match target {
-        &Option::Some(t) => {
+        &Option.Some(t) => {
             let label = ctx.block_label_cg(t);
             ctx.emit_br_cg(&label);
         }
-        &Option::None => {
+        &Option.None => {
             ctx.emit_unreachable();
         }
     }
@@ -1778,9 +1778,9 @@ fn emit_string_new_call(
 /// Emits a string_push_str call with correct calling convention.
 /// Runtime signature: void @string_push_str(ptr self, ptr str_ref)
 fn emit_string_push_str_call(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    args: &Vec<mir_types::Operand>,
-    target: &Option<mir_def::BasicBlockId>,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    target: &Option<mir_def.BasicBlockId>,
 ) {
     if args.len() < 2 {
         ctx.emit_unreachable();
@@ -1802,18 +1802,18 @@ fn emit_string_push_str_call(
     ctx.emit_store_str_cg("{ ptr, i64 }", arg_val.as_str(), &str_tmp);
 
     // Emit: call void @string_push_str(ptr self, ptr str_ptr)
-    ctx.begin_call(Option::None, "void", "@string_push_str");
+    ctx.begin_call(Option.None, "void", "@string_push_str");
     ctx.call_arg_str(true, "ptr", str_ptr.as_str());
     ctx.call_arg_cg(false, "ptr", &str_tmp);
     ctx.end_call();
 
     // Jump to continuation
     match target {
-        &Option::Some(t) => {
+        &Option.Some(t) => {
             let label = ctx.block_label_cg(t);
             ctx.emit_br_cg(&label);
         }
-        &Option::None => {
+        &Option.None => {
             ctx.emit_unreachable();
         }
     }
@@ -1822,10 +1822,10 @@ fn emit_string_push_str_call(
 /// Emits a string_len call with correct calling convention.
 /// Runtime signature: i64 @string_len(ptr self)
 fn emit_string_len_call(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    args: &Vec<mir_types::Operand>,
-    destination: &mir_types::Place,
-    target: &Option<mir_def::BasicBlockId>,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
 ) {
     if args.len() < 1 {
         ctx.emit_unreachable();
@@ -1838,7 +1838,7 @@ fn emit_string_len_call(
 
     // Emit: %result = call i64 @string_len(ptr self)
     let result = ctx.fresh_temp_cg();
-    ctx.begin_call(Option::Some(&result), "i64", "@string_len");
+    ctx.begin_call(Option.Some(&result), "i64", "@string_len");
     ctx.call_arg_str(true, "ptr", str_ptr.as_str());
     ctx.end_call();
 
@@ -1848,11 +1848,11 @@ fn emit_string_len_call(
 
     // Jump to continuation
     match target {
-        &Option::Some(t) => {
+        &Option.Some(t) => {
             let label = ctx.block_label_cg(t);
             ctx.emit_br_cg(&label);
         }
-        &Option::None => {
+        &Option.None => {
             ctx.emit_unreachable();
         }
     }
@@ -1861,9 +1861,9 @@ fn emit_string_len_call(
 /// Emits a string_push call with correct calling convention.
 /// Runtime signature: void @string_push(ptr self, i32 char)
 fn emit_string_push_call(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    args: &Vec<mir_types::Operand>,
-    target: &Option<mir_def::BasicBlockId>,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    target: &Option<mir_def.BasicBlockId>,
 ) {
     if args.len() < 2 {
         ctx.emit_unreachable();
@@ -1891,18 +1891,18 @@ fn emit_string_push_call(
     };
 
     // Emit: call void @string_push(ptr self, i32 char)
-    ctx.begin_call(Option::None, "void", "@string_push");
+    ctx.begin_call(Option.None, "void", "@string_push");
     ctx.call_arg_str(true, "ptr", str_ptr.as_str());
     ctx.call_arg_str(false, "i32", char_i32.as_str());
     ctx.end_call();
 
     // Jump to continuation
     match target {
-        &Option::Some(t) => {
+        &Option.Some(t) => {
             let label = ctx.block_label_cg(t);
             ctx.emit_br_cg(&label);
         }
-        &Option::None => {
+        &Option.None => {
             ctx.emit_unreachable();
         }
     }
@@ -1911,10 +1911,10 @@ fn emit_string_push_call(
 /// Emits a string_as_str call with correct calling convention.
 /// Runtime signature: { ptr, i64 } @string_as_str(ptr self)
 fn emit_string_as_str_call(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    args: &Vec<mir_types::Operand>,
-    destination: &mir_types::Place,
-    target: &Option<mir_def::BasicBlockId>,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
 ) {
     if args.len() < 1 {
         ctx.emit_unreachable();
@@ -1927,7 +1927,7 @@ fn emit_string_as_str_call(
 
     // Emit: %result = call { ptr, i64 } @string_as_str(ptr self)
     let result = ctx.fresh_temp_cg();
-    ctx.begin_call(Option::Some(&result), "{ ptr, i64 }", "@string_as_str");
+    ctx.begin_call(Option.Some(&result), "{ ptr, i64 }", "@string_as_str");
     ctx.call_arg_str(true, "ptr", str_ptr.as_str());
     ctx.end_call();
 
@@ -1937,11 +1937,11 @@ fn emit_string_as_str_call(
 
     // Jump to continuation
     match target {
-        &Option::Some(t) => {
+        &Option.Some(t) => {
             let label = ctx.block_label_cg(t);
             ctx.emit_br_cg(&label);
         }
-        &Option::None => {
+        &Option.None => {
             ctx.emit_unreachable();
         }
     }
@@ -1950,10 +1950,10 @@ fn emit_string_as_str_call(
 /// Emits a string_as_bytes call with correct calling convention.
 /// Runtime signature: { ptr, i64 } @string_as_bytes(ptr self)
 fn emit_string_as_bytes_call(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    args: &Vec<mir_types::Operand>,
-    destination: &mir_types::Place,
-    target: &Option<mir_def::BasicBlockId>,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
 ) {
     if args.len() < 1 {
         ctx.emit_unreachable();
@@ -1966,7 +1966,7 @@ fn emit_string_as_bytes_call(
 
     // Emit: %result = call { ptr, i64 } @string_as_bytes(ptr self)
     let result = ctx.fresh_temp_cg();
-    ctx.begin_call(Option::Some(&result), "{ ptr, i64 }", "@string_as_bytes");
+    ctx.begin_call(Option.Some(&result), "{ ptr, i64 }", "@string_as_bytes");
     ctx.call_arg_str(true, "ptr", str_ptr.as_str());
     ctx.end_call();
 
@@ -1976,11 +1976,11 @@ fn emit_string_as_bytes_call(
 
     // Jump to continuation
     match target {
-        &Option::Some(t) => {
+        &Option.Some(t) => {
             let label = ctx.block_label_cg(t);
             ctx.emit_br_cg(&label);
         }
-        &Option::None => {
+        &Option.None => {
             ctx.emit_unreachable();
         }
     }
@@ -2020,11 +2020,11 @@ fn is_str_concat(func_val: &String) -> bool {
 /// Helper: load a { ptr, i64 } fat pointer from a pointer operand.
 /// The generic call path for &str methods produces a pointer to the
 /// fat pointer alloca. This loads the actual { ptr, i64 } value.
-fn load_str_fat_ptr(ctx: &mut codegen_ctx::CodegenCtx, operand: &mir_types::Operand) -> codegen_ctx::CgName {
+fn load_str_fat_ptr(ctx: &mut codegen_ctx.CodegenCtx, operand: &mir_types.Operand) -> codegen_ctx.CgName {
     let (arg_val, arg_ty) = codegen_expr::emit_operand_typed(ctx, operand);
     // If it's already a { ptr, i64 }, return as-is
     if string_eq_str(arg_ty.as_str(), "{ ptr, i64 }") {
-        return codegen_ctx::CgName::Str(arg_val);
+        return codegen_ctx.CgName.Str(arg_val);
     }
     // Otherwise it's a ptr — load the { ptr, i64 } from it
     let loaded = ctx.fresh_temp_cg();
@@ -2035,10 +2035,10 @@ fn load_str_fat_ptr(ctx: &mut codegen_ctx::CodegenCtx, operand: &mir_types::Oper
 /// Emits a str_len call with correct calling convention.
 /// Runtime signature: i64 @str_len({ ptr, i64 })
 fn emit_str_len_call(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    args: &Vec<mir_types::Operand>,
-    destination: &mir_types::Place,
-    target: &Option<mir_def::BasicBlockId>,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
 ) {
     if args.len() < 1 {
         ctx.emit_unreachable();
@@ -2050,7 +2050,7 @@ fn emit_str_len_call(
 
     // Emit: %result = call i64 @str_len({ ptr, i64 } %str_val)
     let result = ctx.fresh_temp_cg();
-    ctx.begin_call(Option::Some(&result), "i64", "@str_len");
+    ctx.begin_call(Option.Some(&result), "i64", "@str_len");
     ctx.call_arg_cg(true, "{ ptr, i64 }", &str_val);
     ctx.end_call();
 
@@ -2060,11 +2060,11 @@ fn emit_str_len_call(
 
     // Jump to continuation
     match target {
-        &Option::Some(t) => {
+        &Option.Some(t) => {
             let label = ctx.block_label_cg(t);
             ctx.emit_br_cg(&label);
         }
-        &Option::None => {
+        &Option.None => {
             ctx.emit_unreachable();
         }
     }
@@ -2073,10 +2073,10 @@ fn emit_str_len_call(
 /// Emits a str_eq call with correct calling convention.
 /// Runtime signature: i1 @str_eq({ ptr, i64 }, { ptr, i64 })
 fn emit_str_eq_call(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    args: &Vec<mir_types::Operand>,
-    destination: &mir_types::Place,
-    target: &Option<mir_def::BasicBlockId>,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
 ) {
     if args.len() < 2 {
         ctx.emit_unreachable();
@@ -2089,7 +2089,7 @@ fn emit_str_eq_call(
 
     // Emit: %result = call i1 @str_eq({ ptr, i64 } %a, { ptr, i64 } %b)
     let result = ctx.fresh_temp_cg();
-    ctx.begin_call(Option::Some(&result), "i1", "@str_eq");
+    ctx.begin_call(Option.Some(&result), "i1", "@str_eq");
     ctx.call_arg_cg(true, "{ ptr, i64 }", &str_a);
     ctx.call_arg_cg(false, "{ ptr, i64 }", &str_b);
     ctx.end_call();
@@ -2100,11 +2100,11 @@ fn emit_str_eq_call(
 
     // Jump to continuation
     match target {
-        &Option::Some(t) => {
+        &Option.Some(t) => {
             let label = ctx.block_label_cg(t);
             ctx.emit_br_cg(&label);
         }
-        &Option::None => {
+        &Option.None => {
             ctx.emit_unreachable();
         }
     }
@@ -2113,10 +2113,10 @@ fn emit_str_eq_call(
 /// Emits a str_concat call with correct calling convention.
 /// Runtime signature: { ptr, i64 } @str_concat({ ptr, i64 }, { ptr, i64 })
 fn emit_str_concat_call(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    args: &Vec<mir_types::Operand>,
-    destination: &mir_types::Place,
-    target: &Option<mir_def::BasicBlockId>,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
 ) {
     if args.len() < 2 {
         ctx.emit_unreachable();
@@ -2129,7 +2129,7 @@ fn emit_str_concat_call(
 
     // Emit: %result = call { ptr, i64 } @str_concat({ ptr, i64 } %a, { ptr, i64 } %b)
     let result = ctx.fresh_temp_cg();
-    ctx.begin_call(Option::Some(&result), "{ ptr, i64 }", "@str_concat");
+    ctx.begin_call(Option.Some(&result), "{ ptr, i64 }", "@str_concat");
     ctx.call_arg_cg(true, "{ ptr, i64 }", &str_a);
     ctx.call_arg_cg(false, "{ ptr, i64 }", &str_b);
     ctx.end_call();
@@ -2140,11 +2140,11 @@ fn emit_str_concat_call(
 
     // Jump to continuation
     match target {
-        &Option::Some(t) => {
+        &Option.Some(t) => {
             let label = ctx.block_label_cg(t);
             ctx.emit_br_cg(&label);
         }
-        &Option::None => {
+        &Option.None => {
             ctx.emit_unreachable();
         }
     }
@@ -2187,10 +2187,10 @@ fn is_box_new(func_val: &String) -> bool {
 /// a pointer to the value and its size. This handler stores the value to a
 /// temp alloca and passes (ptr, i64) correctly.
 fn emit_box_new_call(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    args: &Vec<mir_types::Operand>,
-    destination: &mir_types::Place,
-    target: &Option<mir_def::BasicBlockId>,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
 ) {
     // args[0] is the value to box (type T)
     if args.len() < 1 {
@@ -2214,23 +2214,23 @@ fn emit_box_new_call(
 
     // Get value size from HIR type
     let val_size: u64 = match &args[0] {
-        &mir_types::Operand::Copy(ref place) => {
+        &mir_types.Operand.Copy(ref place) => {
             match ctx.get_local_hir_type(place.local) {
-                Option::Some(ty_id) => {
+                Option.Some(ty_id) => {
                     codegen_size::type_size_with_ctx_id(ctx, ty_id)
                 }
-                Option::None => 8,
+                Option.None => 8,
             }
         }
-        &mir_types::Operand::Move(ref place) => {
+        &mir_types.Operand.Move(ref place) => {
             match ctx.get_local_hir_type(place.local) {
-                Option::Some(ty_id) => {
+                Option.Some(ty_id) => {
                     codegen_size::type_size_with_ctx_id(ctx, ty_id)
                 }
-                Option::None => 8,
+                Option.None => 8,
             }
         }
-        &mir_types::Operand::Constant(ref c) => {
+        &mir_types.Operand.Constant(ref c) => {
             codegen_size::type_size_with_ctx_id(ctx, c.ty)
         }
     };
@@ -2238,7 +2238,7 @@ fn emit_box_new_call(
     // Emit: %result = call ptr @box_new(ptr val_alloca, i64 val_size)
     let result = ctx.fresh_temp_cg();
     let val_size_str = codegen_types::format_u64(val_size);
-    ctx.begin_call(Option::Some(&result), "ptr", "@box_new");
+    ctx.begin_call(Option.Some(&result), "ptr", "@box_new");
     ctx.call_arg_cg(true, "ptr", &val_alloca);
     ctx.call_arg_str(false, "i64", val_size_str.as_str());
     ctx.end_call();
@@ -2249,11 +2249,11 @@ fn emit_box_new_call(
 
     // Jump to continuation
     match target {
-        &Option::Some(t) => {
+        &Option.Some(t) => {
             let label = ctx.block_label_cg(t);
             ctx.emit_br_cg(&label);
         }
-        &Option::None => {
+        &Option.None => {
             ctx.emit_unreachable();
         }
     }
@@ -2271,10 +2271,10 @@ fn is_box_as_ref(func_val: &String) -> bool {
 /// to the variable holding the Box pointer). We must load through it once to get
 /// the actual Box value (the data pointer) before passing to box_as_ref.
 fn emit_box_as_ref_call(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    args: &Vec<mir_types::Operand>,
-    destination: &mir_types::Place,
-    target: &Option<mir_def::BasicBlockId>,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
 ) {
     // args[0] is &Box<T> — a reference to the Box variable
     if args.len() < 1 {
@@ -2287,11 +2287,11 @@ fn emit_box_as_ref_call(
 
     // Load through the reference to get the Box value (the data pointer)
     let box_val = ctx.fresh_temp_cg();
-    ctx.emit_load_cg2(&box_val, "ptr", &codegen_ctx::CgName::Str(ref_val));
+    ctx.emit_load_cg2(&box_val, "ptr", &codegen_ctx.CgName.Str(ref_val));
 
     // Emit: %result = call ptr @box_as_ref(ptr box_val)
     let result = ctx.fresh_temp_cg();
-    ctx.begin_call(Option::Some(&result), "ptr", "@box_as_ref");
+    ctx.begin_call(Option.Some(&result), "ptr", "@box_as_ref");
     ctx.call_arg_cg(true, "ptr", &box_val);
     ctx.end_call();
 
@@ -2301,11 +2301,11 @@ fn emit_box_as_ref_call(
 
     // Jump to continuation
     match target {
-        &Option::Some(t) => {
+        &Option.Some(t) => {
             let label = ctx.block_label_cg(t);
             ctx.emit_br_cg(&label);
         }
-        &Option::None => {
+        &Option.None => {
             ctx.emit_unreachable();
         }
     }
@@ -2315,10 +2315,10 @@ fn emit_box_as_ref_call(
 /// Standard enum convention: None = discriminant 0, Some = discriminant 1.
 /// Discriminant type is i32, matching the enum layout (codegen.blood:662).
 fn emit_option_is_some_call(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    args: &Vec<mir_types::Operand>,
-    destination: &mir_types::Place,
-    target: &Option<mir_def::BasicBlockId>,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
 ) {
     if args.len() < 1 {
         ctx.emit_unreachable();
@@ -2342,11 +2342,11 @@ fn emit_option_is_some_call(
 
     // Jump to continuation
     match target {
-        &Option::Some(t) => {
+        &Option.Some(t) => {
             let label = ctx.block_label_cg(t);
             ctx.emit_br_cg(&label);
         }
-        &Option::None => {
+        &Option.None => {
             ctx.emit_unreachable();
         }
     }
@@ -2356,10 +2356,10 @@ fn emit_option_is_some_call(
 /// Standard enum convention: None = discriminant 0, Some = discriminant 1.
 /// Discriminant type is i32, matching the enum layout (codegen.blood:662).
 fn emit_option_is_none_call(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    args: &Vec<mir_types::Operand>,
-    destination: &mir_types::Place,
-    target: &Option<mir_def::BasicBlockId>,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
 ) {
     if args.len() < 1 {
         ctx.emit_unreachable();
@@ -2383,11 +2383,11 @@ fn emit_option_is_none_call(
 
     // Jump to continuation
     match target {
-        &Option::Some(t) => {
+        &Option.Some(t) => {
             let label = ctx.block_label_cg(t);
             ctx.emit_br_cg(&label);
         }
-        &Option::None => {
+        &Option.None => {
             ctx.emit_unreachable();
         }
     }
@@ -2396,10 +2396,10 @@ fn emit_option_is_none_call(
 /// Emits an option_unwrap call with correct calling convention.
 /// Runtime signature: void @option_unwrap(ptr self, i64 elem_size, ptr out_ptr)
 fn emit_option_unwrap_call(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    args: &Vec<mir_types::Operand>,
-    destination: &mir_types::Place,
-    target: &Option<mir_def::BasicBlockId>,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
 ) {
     if args.len() < 1 {
         ctx.emit_unreachable();
@@ -2416,10 +2416,10 @@ fn emit_option_unwrap_call(
 
     // Get element size from destination type
     let elem_size: u64 = match ctx.get_local_hir_type(destination.local) {
-        Option::Some(ty_id) => {
+        Option.Some(ty_id) => {
             codegen_size::type_size_with_ctx_id(ctx, ty_id)
         }
-        Option::None => 8,
+        Option.None => 8,
     };
 
     // Encode payload alignment in upper 32 bits.
@@ -2430,7 +2430,7 @@ fn emit_option_unwrap_call(
 
     // Emit: call void @option_unwrap(ptr self, i64 packed_size, ptr out_ptr)
     let elem_size_str = codegen_types::format_u64(packed_size);
-    ctx.begin_call(Option::None, "void", "@option_unwrap");
+    ctx.begin_call(Option.None, "void", "@option_unwrap");
     ctx.call_arg_str(true, "ptr", opt_ptr.as_str());
     ctx.call_arg_str(false, "i64", elem_size_str.as_str());
     ctx.call_arg_str(false, "ptr", dest_ptr.as_str());
@@ -2438,11 +2438,11 @@ fn emit_option_unwrap_call(
 
     // Jump to continuation
     match target {
-        &Option::Some(t) => {
+        &Option.Some(t) => {
             let label = ctx.block_label_cg(t);
             ctx.emit_br_cg(&label);
         }
-        &Option::None => {
+        &Option.None => {
             ctx.emit_unreachable();
         }
     }
@@ -2451,10 +2451,10 @@ fn emit_option_unwrap_call(
 /// Emits an option_as_ref call with correct calling convention.
 /// Runtime signature: void @option_as_ref(ptr self, i64 elem_size, ptr out_ptr)
 fn emit_option_as_ref_call(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    args: &Vec<mir_types::Operand>,
-    destination: &mir_types::Place,
-    target: &Option<mir_def::BasicBlockId>,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
 ) {
     if args.len() < 1 {
         ctx.emit_unreachable();
@@ -2470,8 +2470,8 @@ fn emit_option_as_ref_call(
 
     // Get element size from destination type (Option<&T>)
     let elem_size: u64 = match ctx.get_local_hir_type(destination.local) {
-        Option::Some(ty_id) => extract_vec_element_size_id(ctx, ty_id),
-        Option::None => 8,
+        Option.Some(ty_id) => extract_vec_element_size_id(ctx, ty_id),
+        Option.None => 8,
     };
 
     // Encode payload alignment in upper 32 bits.
@@ -2482,7 +2482,7 @@ fn emit_option_as_ref_call(
 
     // Emit: call void @option_as_ref(ptr self, i64 packed_size, ptr out_ptr)
     let elem_size_str = codegen_types::format_u64(packed_size);
-    ctx.begin_call(Option::None, "void", "@option_as_ref");
+    ctx.begin_call(Option.None, "void", "@option_as_ref");
     ctx.call_arg_str(true, "ptr", opt_ptr.as_str());
     ctx.call_arg_str(false, "i64", elem_size_str.as_str());
     ctx.call_arg_str(false, "ptr", dest_ptr.as_str());
@@ -2490,11 +2490,11 @@ fn emit_option_as_ref_call(
 
     // Jump to continuation
     match target {
-        &Option::Some(t) => {
+        &Option.Some(t) => {
             let label = ctx.block_label_cg(t);
             ctx.emit_br_cg(&label);
         }
-        &Option::None => {
+        &Option.None => {
             ctx.emit_unreachable();
         }
     }
@@ -2506,9 +2506,9 @@ fn emit_option_as_ref_call(
 
 /// Emits a complete basic block.
 pub fn emit_basic_block(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    block_id: mir_def::BasicBlockId,
-    block: &mir_body::BasicBlockData,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    block_id: mir_def.BasicBlockId,
+    block: &mir_body.BasicBlockData,
 ) {
     // Emit label
     let label = ctx.block_label_cg(block_id);
@@ -2524,10 +2524,10 @@ pub fn emit_basic_block(
     // Emit terminator
     ctx.indent();
     match &block.terminator {
-        &Option::Some(ref term) => {
+        &Option.Some(ref term) => {
             emit_terminator(ctx, term);
         }
-        &Option::None => {
+        &Option.None => {
             ctx.emit_unreachable();
         }
     }

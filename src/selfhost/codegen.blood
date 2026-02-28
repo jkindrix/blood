@@ -33,7 +33,7 @@ pub struct CodegenResult {
     /// The generated LLVM IR as a string.
     pub llvm_ir: String,
     /// Structured errors collected during codegen.
-    pub errors: Vec<codegen_ctx::CodegenError>,
+    pub errors: Vec<codegen_ctx.CodegenError>,
     /// Any warnings generated during codegen.
     pub warnings: Vec<String>,
     /// Whether codegen was successful.
@@ -45,8 +45,8 @@ impl CodegenResult {
     pub fn ok(llvm_ir: String) -> CodegenResult {
         CodegenResult {
             llvm_ir: llvm_ir,
-            errors: Vec::new(),
-            warnings: Vec::new(),
+            errors: Vec.new(),
+            warnings: Vec.new(),
             success: true,
         }
     }
@@ -54,7 +54,7 @@ impl CodegenResult {
     /// Creates a successful result that carries non-fatal errors/warnings from codegen.
     pub fn ok_with_diagnostics(
         llvm_ir: String,
-        errors: Vec<codegen_ctx::CodegenError>,
+        errors: Vec<codegen_ctx.CodegenError>,
         warnings: Vec<String>,
     ) -> CodegenResult {
         CodegenResult {
@@ -67,15 +67,15 @@ impl CodegenResult {
 
     /// Creates a failed result with a single error message.
     pub fn error(msg: String) -> CodegenResult {
-        let mut errors = Vec::new();
-        errors.push(codegen_ctx::CodegenError::new(
-            codegen_ctx::CodegenErrorKind::InternalError,
+        let mut errors = Vec.new();
+        errors.push(codegen_ctx.CodegenError.new(
+            codegen_ctx.CodegenErrorKind.InternalError,
             msg,
         ));
         CodegenResult {
-            llvm_ir: String::new(),
+            llvm_ir: String.new(),
             errors: errors,
-            warnings: Vec::new(),
+            warnings: Vec.new(),
             success: false,
         }
     }
@@ -89,24 +89,24 @@ impl CodegenResult {
 /// Generates LLVM IR for a module with multiple functions.
 pub fn generate_module(
     module_name: &str,
-    functions: &Vec<(String, mir_body::MirBody)>,
+    functions: &Vec<(String, mir_body.MirBody)>,
 ) -> CodegenResult {
     // Empty items list and no remaps for backward compatibility
-    let empty_items: Vec<hir_lower_ctx::ItemEntry> = Vec::new();
-    let empty_remaps: Vec<common::DefaultMethodRemap> = Vec::new();
+    let empty_items: Vec<hir_lower_ctx.ItemEntry> = Vec.new();
+    let empty_remaps: Vec<common.DefaultMethodRemap> = Vec.new();
     generate_module_with_items(module_name, functions, &empty_items, &empty_remaps)
 }
 
 /// Finds call remapping entries for a given default method DefId.
 fn find_call_remaps(
-    remaps: &Vec<common::DefaultMethodRemap>,
+    remaps: &Vec<common.DefaultMethodRemap>,
     def_id: u32,
-) -> Vec<common::CallRemapEntry> {
-    let mut result: Vec<common::CallRemapEntry> = Vec::new();
+) -> Vec<common.CallRemapEntry> {
+    let mut result: Vec<common.CallRemapEntry> = Vec.new();
     for i in 0usize..remaps.len() {
         if remaps[i].body_def_id == def_id {
             for j in 0usize..remaps[i].call_remaps.len() {
-                result.push(common::CallRemapEntry::new(
+                result.push(common.CallRemapEntry.new(
                     remaps[i].call_remaps[j].from_def_id,
                     remaps[i].call_remaps[j].to_def_id,
                 ));
@@ -120,24 +120,24 @@ fn find_call_remaps(
 /// Generates LLVM IR for a module with multiple functions and ADT item info.
 pub fn generate_module_with_items(
     module_name: &str,
-    functions: &Vec<(String, mir_body::MirBody)>,
-    items: &Vec<hir_lower_ctx::ItemEntry>,
-    default_method_remaps: &Vec<common::DefaultMethodRemap>,
+    functions: &Vec<(String, mir_body.MirBody)>,
+    items: &Vec<hir_lower_ctx.ItemEntry>,
+    default_method_remaps: &Vec<common.DefaultMethodRemap>,
 ) -> CodegenResult {
-    let mut output = String::new();
+    let mut output = String.new();
 
     // Build the DefId to name mapping for all functions
-    let mut def_names: Vec<codegen_ctx::DefNameEntry> = Vec::new();
+    let mut def_names: Vec<codegen_ctx.DefNameEntry> = Vec.new();
     for idx in 0usize..functions.len() {
         let (ref name, ref body) = functions[idx];
-        def_names.push(codegen_ctx::DefNameEntry::new(
+        def_names.push(codegen_ctx.DefNameEntry.new(
             body.def_id.index,
             clone_string(name),
         ));
     }
 
     // Create the shared codegen context with def names
-    let mut ctx = codegen_ctx::CodegenCtx::new();
+    let mut ctx = codegen_ctx.CodegenCtx.new();
     for di in 0usize..def_names.len() {
         ctx.register_def_name(def_names[di].def_id, clone_string(&def_names[di].name));
     }
@@ -159,22 +159,22 @@ pub fn generate_module_with_items(
     // Generate each function using the shared context
     // Skip duplicate function definitions (keep only the first one with each name)
     // This is a workaround for missing proper monomorphization
-    let mut generated_set = hashmap::HashMapU64U32::with_capacity(functions.len());
+    let mut generated_set = hashmap.HashMapU64U32.with_capacity(functions.len());
     let mut skip_count: usize = 0;
     for i in 0usize..functions.len() {
         let (ref name, ref body) = functions[i];
         // Check if this function name has already been generated (O(1) hash lookup)
         let name_hash = hashmap::hash_str(name.as_str());
         let already_generated = match generated_set.get(name_hash) {
-            Option::Some(_) => true,
-            Option::None => false,
+            Option.Some(_) => true,
+            Option.None => false,
         };
         if !already_generated {
             // Set up call remapping for trait default methods
             ctx.call_remaps = find_call_remaps(default_method_remaps, body.def_id.index);
             let fn_ir = generate_function_with_ctx(&mut ctx, body, name.as_str());
             output.push_str(fn_ir.as_str());
-            ctx.call_remaps = Vec::new();
+            ctx.call_remaps = Vec.new();
             generated_set.insert(name_hash, 1);
         } else {
             skip_count += 1;
@@ -209,20 +209,20 @@ pub fn generate_module_with_items(
     let errors = ctx.take_errors();
     let warnings = ctx.take_warnings();
     if errors.len() > 0 || warnings.len() > 0 {
-        CodegenResult::ok_with_diagnostics(output, errors, warnings)
+        CodegenResult.ok_with_diagnostics(output, errors, warnings)
     } else {
-        CodegenResult::ok(output)
+        CodegenResult.ok(output)
     }
 }
 
 /// Generates LLVM IR for a function with access to def names table.
 /// Legacy function for backward compatibility.
 pub fn generate_function_with_defs(
-    body: &mir_body::MirBody,
+    body: &mir_body.MirBody,
     fn_name: &str,
-    def_names: &Vec<codegen_ctx::DefNameEntry>,
+    def_names: &Vec<codegen_ctx.DefNameEntry>,
 ) -> String {
-    let mut ctx = codegen_ctx::CodegenCtx::new();
+    let mut ctx = codegen_ctx.CodegenCtx.new();
 
     // Register all def names in the context
     for i in 0usize..def_names.len() {
@@ -234,25 +234,25 @@ pub fn generate_function_with_defs(
 
 /// Generates LLVM IR for a single function using a shared codegen context.
 pub fn generate_function_with_ctx(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    body: &mir_body::MirBody,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    body: &mir_body.MirBody,
     fn_name: &str,
 ) -> String {
     // Reset per-function state but keep global state (def_names, adt_registry, string_table)
     ctx.clear_locals();
-    ctx.output = String::new();
+    ctx.output = String.new();
     ctx.begin_function(common::make_string(fn_name));
 
     // Build parameter list (skip first local which is return place)
     // For handler op bodies with multiple state fields, skip the state field
     // locals (2..1+state_count) — they are loaded from the state pointer, not passed as args.
-    let mut params: Vec<(String, String)> = Vec::new();
+    let mut params: Vec<(String, String)> = Vec.new();
     let mut arg_idx: usize = 0;
     let mut p: usize = 1; // Start at 1 to skip return place
     let param_end: usize = 1usize + (body.param_count as usize);
     while p < param_end && p < body.locals.len() {
         let local = &body.locals[p];
-        let local_id = mir_def::MirLocalId::new(p as u32);
+        let local_id = mir_def.MirLocalId.new(p as u32);
         // Skip handler state field locals — they're accessed via GEP into state ptr
         if ctx.is_handler_state_field(local_id) {
             p += 1;
@@ -286,7 +286,7 @@ pub fn generate_function_with_ctx(
     };
 
     // Store function signature for generic call fixup at call sites
-    let mut sig_param_types: Vec<String> = Vec::new();
+    let mut sig_param_types: Vec<String> = Vec.new();
     for sp in 0usize..params.len() {
         sig_param_types.push(clone_string(&params[sp].0));
     }
@@ -314,7 +314,7 @@ pub fn generate_function_with_ctx(
 
     // Jump to first basic block if there are any
     if body.basic_blocks.len() > 0 {
-        let first_label = ctx.block_label_cg(mir_def::BasicBlockId::new(0));
+        let first_label = ctx.block_label_cg(mir_def.BasicBlockId.new(0));
         ctx.indent();
         ctx.emit_br_cg(&first_label);
         ctx.dedent();
@@ -326,7 +326,7 @@ pub fn generate_function_with_ctx(
 
     // Emit all basic blocks
     for block_idx in 0usize..body.basic_blocks.len() {
-        let block_id = mir_def::BasicBlockId::new(block_idx as u32);
+        let block_id = mir_def.BasicBlockId.new(block_idx as u32);
         codegen_term::emit_basic_block(ctx, block_id, &body.basic_blocks[block_idx]);
     }
 
@@ -335,7 +335,7 @@ pub fn generate_function_with_ctx(
 
     // Extract and return the function IR
     let result = clone_string(&ctx.output);
-    ctx.output = String::new();
+    ctx.output = String.new();
     result
 }
 
@@ -348,10 +348,10 @@ pub fn generate_function_with_ctx(
 ///   Locals (1+param_count)..(1+param_count+capture_count): capture locals
 ///
 /// The env struct has the same layout as the capture operands in the
-/// AggregateKind::Closure aggregate that constructed this closure.
+/// AggregateKind.Closure aggregate that constructed this closure.
 fn emit_capture_loads(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    body: &mir_body::MirBody,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    body: &mir_body.MirBody,
 ) {
     // Build env struct LLVM type from capture types
     let mut env_llvm = common::make_string("{ ");
@@ -366,7 +366,7 @@ fn emit_capture_loads(
 
     // Load env_ptr from local 1's alloca
     let env_load = ctx.fresh_temp_cg();
-    let local1_name = ctx.local_cg(mir_def::MirLocalId::new(1));
+    let local1_name = ctx.local_cg(mir_def.MirLocalId.new(1));
     ctx.write("    ");
     ctx.write_cgname(&env_load);
     ctx.write(" = load ptr, ptr ");
@@ -402,7 +402,7 @@ fn emit_capture_loads(
         ctx.write("\n");
 
         // Store into the capture local's alloca
-        let cap_local = ctx.local_cg(mir_def::MirLocalId::new(local_idx));
+        let cap_local = ctx.local_cg(mir_def.MirLocalId.new(local_idx));
         ctx.write("    ");
         ctx.write("store ");
         ctx.write_string(&cap_ty_llvm);
@@ -424,36 +424,36 @@ fn emit_capture_loads(
 /// Uses a two-pass approach: first register all ADTs with placeholder field types,
 /// then rebuild layouts using the now-populated registry for correct nested ADT types.
 pub fn populate_adt_registry(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    items: &Vec<hir_lower_ctx::ItemEntry>,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    items: &Vec<hir_lower_ctx.ItemEntry>,
 ) {
     // Pass 1: Register all ADTs with basic (possibly ptr) field types.
     // This ensures all ADT def_ids are known before resolving nested types.
     for i in 0usize..items.len() {
         let entry = &items[i];
         match &entry.item.kind {
-            &hir_item::ItemKind::Struct(ref struct_def) => {
+            &hir_item.ItemKind.Struct(ref struct_def) => {
                 let layout = build_struct_layout_basic(entry.def_id.index, struct_def);
                 ctx.register_struct(layout);
             }
-            &hir_item::ItemKind::Enum(ref enum_def) => {
+            &hir_item.ItemKind.Enum(ref enum_def) => {
                 let layout = build_enum_layout_with_ctx(ctx, entry.def_id.index, enum_def);
                 ctx.register_enum(layout);
             }
-            &hir_item::ItemKind::Fn(_) => {}
-            &hir_item::ItemKind::TypeAlias(_) => {}
-            &hir_item::ItemKind::Const(_) => {}
-            &hir_item::ItemKind::Static(_) => {}
-            &hir_item::ItemKind::Trait(_) => {}
-            &hir_item::ItemKind::Effect(_) => {}
-            &hir_item::ItemKind::Handler(ref handler_def) => {
+            &hir_item.ItemKind.Fn(_) => {}
+            &hir_item.ItemKind.TypeAlias(_) => {}
+            &hir_item.ItemKind.Const(_) => {}
+            &hir_item.ItemKind.Static(_) => {}
+            &hir_item.ItemKind.Trait(_) => {}
+            &hir_item.ItemKind.Effect(_) => {}
+            &hir_item.ItemKind.Handler(ref handler_def) => {
                 let layout = build_handler_enum_layout(ctx, entry.def_id.index, handler_def);
                 ctx.register_enum(layout);
             }
-            &hir_item::ItemKind::Module(_) => {}
-            &hir_item::ItemKind::Impl(_) => {}
-            &hir_item::ItemKind::Macro(_) => {}
-            &hir_item::ItemKind::Foreign(_) => {}
+            &hir_item.ItemKind.Module(_) => {}
+            &hir_item.ItemKind.Impl(_) => {}
+            &hir_item.ItemKind.Macro(_) => {}
+            &hir_item.ItemKind.Foreign(_) => {}
         }
     }
 
@@ -474,7 +474,7 @@ pub fn populate_adt_registry(
         for j in 0usize..items.len() {
             let entry = &items[j];
             match &entry.item.kind {
-                &hir_item::ItemKind::Struct(ref struct_def) => {
+                &hir_item.ItemKind.Struct(ref struct_def) => {
                     let layout = build_struct_layout_with_ctx(ctx, entry.def_id.index, struct_def);
                     // Check if this layout differs from the last registered one
                     let old_type = ctx.adt_llvm_type(entry.def_id.index);
@@ -483,7 +483,7 @@ pub fn populate_adt_registry(
                     }
                     ctx.register_struct(layout);
                 }
-                &hir_item::ItemKind::Enum(ref enum_def) => {
+                &hir_item.ItemKind.Enum(ref enum_def) => {
                     let layout = build_enum_layout_with_ctx(ctx, entry.def_id.index, enum_def);
                     let old_type = ctx.adt_llvm_type(entry.def_id.index);
                     if !string_eq_str(old_type.as_str(), layout.llvm_type.as_str()) {
@@ -508,71 +508,71 @@ pub fn populate_adt_registry(
 /// user-defined structs containing these types resolve to the correct LLVM layout
 /// (e.g., `{ ptr, i64, i64 }` instead of `ptr`).
 pub fn register_builtin_adts(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    builtin_vec_def: &Option<hir_def::DefId>,
-    builtin_string_def: &Option<hir_def::DefId>,
-    builtin_hashmap_def: &Option<hir_def::DefId>,
-    builtin_box_def: &Option<hir_def::DefId>,
-    builtin_option_def: &Option<hir_def::DefId>,
-    builtin_result_def: &Option<hir_def::DefId>,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    builtin_vec_def: &Option<hir_def.DefId>,
+    builtin_string_def: &Option<hir_def.DefId>,
+    builtin_hashmap_def: &Option<hir_def.DefId>,
+    builtin_box_def: &Option<hir_def.DefId>,
+    builtin_option_def: &Option<hir_def.DefId>,
+    builtin_result_def: &Option<hir_def.DefId>,
 ) {
     // Vec<T> = { ptr, i64, i64 } (data pointer, length, capacity)
     match builtin_vec_def {
-        &Option::Some(ref def_id) => {
+        &Option.Some(ref def_id) => {
             let layout = make_builtin_struct_layout(def_id.index, "{ ptr, i64, i64 }");
             ctx.register_struct(layout);
         }
-        &Option::None => {}
+        &Option.None => {}
     }
     // String = { ptr, i64, i64 } (same as Vec<u8>)
     match builtin_string_def {
-        &Option::Some(ref def_id) => {
+        &Option.Some(ref def_id) => {
             let layout = make_builtin_struct_layout(def_id.index, "{ ptr, i64, i64 }");
             ctx.register_struct(layout);
         }
-        &Option::None => {}
+        &Option.None => {}
     }
     // HashMap<K,V> = { ptr, i64, i64 } (runtime representation)
     match builtin_hashmap_def {
-        &Option::Some(ref def_id) => {
+        &Option.Some(ref def_id) => {
             let layout = make_builtin_struct_layout(def_id.index, "{ ptr, i64, i64 }");
             ctx.register_struct(layout);
         }
-        &Option::None => {}
+        &Option.None => {}
     }
     // Box<T> = ptr (single heap pointer)
     match builtin_box_def {
-        &Option::Some(ref def_id) => {
+        &Option.Some(ref def_id) => {
             let layout = make_builtin_struct_layout(def_id.index, "ptr");
             ctx.register_struct(layout);
         }
-        &Option::None => {}
+        &Option.None => {}
     }
     // Option<T> = { i32, [1 x i64] } — discriminant i32, generic payload
     // Variant 0 = None (no payload), Variant 1 = Some(T) (one field)
     match builtin_option_def {
-        &Option::Some(ref def_id) => {
+        &Option.Some(ref def_id) => {
             let layout = make_builtin_enum_layout(def_id.index, 2, true);
             ctx.register_enum(layout);
         }
-        &Option::None => {}
+        &Option.None => {}
     }
     // Result<T, E> = { i32, [1 x i64] } — discriminant i32, generic payload
     // Variant 0 = Ok(T) (one field), Variant 1 = Err(E) (one field)
     match builtin_result_def {
-        &Option::Some(ref def_id) => {
+        &Option.Some(ref def_id) => {
             let layout = make_builtin_enum_layout(def_id.index, 2, false);
             ctx.register_enum(layout);
         }
-        &Option::None => {}
+        &Option.None => {}
     }
 }
 
 /// Creates a synthetic StructLayout for a builtin type with the given LLVM type string.
-fn make_builtin_struct_layout(def_id: u32, llvm_type_str: &str) -> codegen_ctx::StructLayout {
-    codegen_ctx::StructLayout {
+fn make_builtin_struct_layout(def_id: u32, llvm_type_str: &str) -> codegen_ctx.StructLayout {
+    codegen_ctx.StructLayout {
         def_id: def_id,
-        fields: Vec::new(),
+        fields: Vec.new(),
         llvm_type: common::make_string(llvm_type_str),
     }
 }
@@ -580,23 +580,23 @@ fn make_builtin_struct_layout(def_id: u32, llvm_type_str: &str) -> codegen_ctx::
 /// Creates a synthetic EnumLayout for a builtin enum (Option or Result).
 /// Generic enums use i64 as the payload slot size (sufficient for pointers and i64 values).
 /// `num_variants` is the number of variants (2 for Option, 2 for Result).
-/// `first_is_unit` indicates whether variant 0 has no payload (true for Option::None).
-fn make_builtin_enum_layout(def_id: u32, num_variants: u32, first_is_unit: bool) -> codegen_ctx::EnumLayout {
-    let mut variants: Vec<codegen_ctx::VariantLayout> = Vec::new();
+/// `first_is_unit` indicates whether variant 0 has no payload (true for Option.None).
+fn make_builtin_enum_layout(def_id: u32, num_variants: u32, first_is_unit: bool) -> codegen_ctx.EnumLayout {
+    let mut variants: Vec<codegen_ctx.VariantLayout> = Vec.new();
     for vi in 0u32..num_variants {
-        let fields: Vec<codegen_ctx::AdtFieldInfo> = Vec::new();
+        let fields: Vec<codegen_ctx.AdtFieldInfo> = Vec.new();
         let payload_ty = if first_is_unit && vi == 0 {
             common::make_string("{}")
         } else {
             common::make_string("{ i64 }")
         };
-        variants.push(codegen_ctx::VariantLayout {
+        variants.push(codegen_ctx.VariantLayout {
             variant_idx: vi,
             fields: fields,
             payload_llvm_type: payload_ty,
         });
     }
-    codegen_ctx::EnumLayout {
+    codegen_ctx.EnumLayout {
         def_id: def_id,
         discriminant_type: common::make_string("i32"),
         variants: variants,
@@ -609,18 +609,18 @@ fn make_builtin_enum_layout(def_id: u32, num_variants: u32, first_is_unit: bool)
 /// Call this after registering builtin ADTs and before code generation
 /// to ensure all struct fields containing Vec/String/HashMap resolve to correct sizes.
 pub fn rebuild_adt_layouts(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    items: &Vec<hir_lower_ctx::ItemEntry>,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    items: &Vec<hir_lower_ctx.ItemEntry>,
 ) {
     for pass in 0u32..4 {
         for j in 0usize..items.len() {
             let entry = &items[j];
             match &entry.item.kind {
-                &hir_item::ItemKind::Struct(ref struct_def) => {
+                &hir_item.ItemKind.Struct(ref struct_def) => {
                     let layout = build_struct_layout_with_ctx(ctx, entry.def_id.index, struct_def);
                     ctx.register_struct(layout);
                 }
-                &hir_item::ItemKind::Enum(ref enum_def) => {
+                &hir_item.ItemKind.Enum(ref enum_def) => {
                     let layout = build_enum_layout_with_ctx(ctx, entry.def_id.index, enum_def);
                     ctx.register_enum(layout);
                 }
@@ -632,12 +632,12 @@ pub fn rebuild_adt_layouts(
 
 /// Builds a StructLayout using basic type resolution (no ADT registry lookups).
 /// Used in pass 1 to get all ADTs registered before resolving nested types.
-fn build_struct_layout_basic(def_id: u32, struct_def: &hir_item::StructDef) -> codegen_ctx::StructLayout {
-    let mut fields: Vec<codegen_ctx::AdtFieldInfo> = Vec::new();
+fn build_struct_layout_basic(def_id: u32, struct_def: &hir_item.StructDef) -> codegen_ctx.StructLayout {
+    let mut fields: Vec<codegen_ctx.AdtFieldInfo> = Vec.new();
     let mut llvm_type = common::make_string("{ ");
 
     match &struct_def.body {
-        &hir_item::StructBody::Record(ref struct_fields) => {
+        &hir_item.StructBody.Record(ref struct_fields) => {
             for fi in 0usize..struct_fields.len() {
                 if fi > 0 {
                     llvm_type.push_str(", ");
@@ -646,28 +646,28 @@ fn build_struct_layout_basic(def_id: u32, struct_def: &hir_item::StructDef) -> c
                 let field_ty = codegen_types::type_to_llvm(&field_ty_hir);
                 llvm_type.push_str(field_ty.as_str());
                 // Store HIR type for indexing element size calculation
-                fields.push(codegen_ctx::AdtFieldInfo {
+                fields.push(codegen_ctx.AdtFieldInfo {
                     llvm_type: field_ty,
-                    hir_type: Option::Some(struct_fields[fi].ty),
+                    hir_type: Option.Some(struct_fields[fi].ty),
                 });
             }
         }
-        &hir_item::StructBody::Tuple(ref tuple_fields) => {
+        &hir_item.StructBody.Tuple(ref tuple_fields) => {
             for fi in 0usize..tuple_fields.len() {
                 if fi > 0 {
                     llvm_type.push_str(", ");
                 }
-                let tuple_field_hir = type_intern::ty_id_to_type(type_intern::TyId::new(tuple_fields[fi].index));
+                let tuple_field_hir = type_intern::ty_id_to_type(type_intern.TyId.new(tuple_fields[fi].index));
                 let field_ty = codegen_types::type_to_llvm(&tuple_field_hir);
                 llvm_type.push_str(field_ty.as_str());
                 // Store HIR type for indexing element size calculation
-                fields.push(codegen_ctx::AdtFieldInfo {
+                fields.push(codegen_ctx.AdtFieldInfo {
                     llvm_type: field_ty,
-                    hir_type: Option::Some(type_intern::TyId::new(tuple_fields[fi].index)),
+                    hir_type: Option.Some(type_intern.TyId.new(tuple_fields[fi].index)),
                 });
             }
         }
-        &hir_item::StructBody::Unit => {
+        &hir_item.StructBody.Unit => {
             // Unit struct: empty
         }
     }
@@ -679,7 +679,7 @@ fn build_struct_layout_basic(def_id: u32, struct_def: &hir_item::StructDef) -> c
         llvm_type = common::make_string("{}");
     }
 
-    codegen_ctx::StructLayout {
+    codegen_ctx.StructLayout {
         def_id: def_id,
         fields: fields,
         llvm_type: llvm_type,
@@ -691,11 +691,11 @@ fn build_struct_layout_basic(def_id: u32, struct_def: &hir_item::StructDef) -> c
 /// where N is computed from the actual byte sizes of state fields (ceil(total_bytes / 8)),
 /// not simply the number of fields. This ensures aggregate types like String (24 bytes)
 /// get enough payload slots.
-fn build_handler_enum_layout(ctx: &mut codegen_ctx::CodegenCtx, def_id: u32, handler_def: &hir_item::HandlerDef) -> codegen_ctx::EnumLayout {
+fn build_handler_enum_layout(ctx: &mut codegen_ctx.CodegenCtx, def_id: u32, handler_def: &hir_item.HandlerDef) -> codegen_ctx.EnumLayout {
     let state_count = handler_def.state.len();
 
     // Build variant payload fields using actual LLVM types
-    let mut fields: Vec<codegen_ctx::AdtFieldInfo> = Vec::new();
+    let mut fields: Vec<codegen_ctx.AdtFieldInfo> = Vec.new();
     let mut payload_type = common::make_string("{ ");
     let mut total_state_bytes: u64 = 0;
     for si in 0usize..state_count {
@@ -707,16 +707,16 @@ fn build_handler_enum_layout(ctx: &mut codegen_ctx::CodegenCtx, def_id: u32, han
             payload_type.push_str(", ");
         }
         payload_type.push_str(field_llvm_ty.as_str());
-        fields.push(codegen_ctx::AdtFieldInfo {
+        fields.push(codegen_ctx.AdtFieldInfo {
             llvm_type: field_llvm_ty,
-            hir_type: Option::Some(field_ty_id),
+            hir_type: Option.Some(field_ty_id),
         });
     }
     payload_type.push_str(" }");
 
     // Single variant (variant_idx = 0) holding all state fields
-    let mut variants: Vec<codegen_ctx::VariantLayout> = Vec::new();
-    variants.push(codegen_ctx::VariantLayout {
+    let mut variants: Vec<codegen_ctx.VariantLayout> = Vec.new();
+    variants.push(codegen_ctx.VariantLayout {
         variant_idx: 0,
         fields: fields,
         payload_llvm_type: if state_count > 0 { payload_type } else { common::make_string("{}") },
@@ -739,7 +739,7 @@ fn build_handler_enum_layout(ctx: &mut codegen_ctx::CodegenCtx, def_id: u32, han
     // Register total state byte size for PushHandler shadow alloca sizing
     ctx.register_handler_state_byte_size(def_id, total_state_bytes as u32);
 
-    codegen_ctx::EnumLayout {
+    codegen_ctx.EnumLayout {
         def_id: def_id,
         discriminant_type: common::make_string("i32"),
         variants: variants,
@@ -751,15 +751,15 @@ fn build_handler_enum_layout(ctx: &mut codegen_ctx::CodegenCtx, def_id: u32, han
 /// Builds a StructLayout using context-aware type resolution.
 /// ADT fields resolve to their actual struct/enum types from the registry.
 fn build_struct_layout_with_ctx(
-    ctx: &mut codegen_ctx::CodegenCtx,
+    ctx: &mut codegen_ctx.CodegenCtx,
     def_id: u32,
-    struct_def: &hir_item::StructDef,
-) -> codegen_ctx::StructLayout {
-    let mut fields: Vec<codegen_ctx::AdtFieldInfo> = Vec::new();
+    struct_def: &hir_item.StructDef,
+) -> codegen_ctx.StructLayout {
+    let mut fields: Vec<codegen_ctx.AdtFieldInfo> = Vec.new();
     let mut llvm_type = common::make_string("{ ");
 
     match &struct_def.body {
-        &hir_item::StructBody::Record(ref struct_fields) => {
+        &hir_item.StructBody.Record(ref struct_fields) => {
             for fi in 0usize..struct_fields.len() {
                 if fi > 0 {
                     llvm_type.push_str(", ");
@@ -767,27 +767,27 @@ fn build_struct_layout_with_ctx(
                 let field_ty = codegen_size::type_to_llvm_with_ctx_id(ctx, struct_fields[fi].ty);
                 llvm_type.push_str(field_ty.as_str());
                 // Store HIR type for indexing element size calculation
-                fields.push(codegen_ctx::AdtFieldInfo {
+                fields.push(codegen_ctx.AdtFieldInfo {
                     llvm_type: field_ty,
-                    hir_type: Option::Some(struct_fields[fi].ty),
+                    hir_type: Option.Some(struct_fields[fi].ty),
                 });
             }
         }
-        &hir_item::StructBody::Tuple(ref tuple_fields) => {
+        &hir_item.StructBody.Tuple(ref tuple_fields) => {
             for fi in 0usize..tuple_fields.len() {
                 if fi > 0 {
                     llvm_type.push_str(", ");
                 }
-                let field_ty = codegen_size::type_to_llvm_with_ctx_id(ctx, type_intern::TyId::new(tuple_fields[fi].index));
+                let field_ty = codegen_size::type_to_llvm_with_ctx_id(ctx, type_intern.TyId.new(tuple_fields[fi].index));
                 llvm_type.push_str(field_ty.as_str());
                 // Store HIR type for indexing element size calculation
-                fields.push(codegen_ctx::AdtFieldInfo {
+                fields.push(codegen_ctx.AdtFieldInfo {
                     llvm_type: field_ty,
-                    hir_type: Option::Some(type_intern::TyId::new(tuple_fields[fi].index)),
+                    hir_type: Option.Some(type_intern.TyId.new(tuple_fields[fi].index)),
                 });
             }
         }
-        &hir_item::StructBody::Unit => {
+        &hir_item.StructBody.Unit => {
             // Unit struct: empty
         }
     }
@@ -798,7 +798,7 @@ fn build_struct_layout_with_ctx(
         llvm_type = common::make_string("{}");
     }
 
-    codegen_ctx::StructLayout {
+    codegen_ctx.StructLayout {
         def_id: def_id,
         fields: fields,
         llvm_type: llvm_type,
@@ -808,36 +808,36 @@ fn build_struct_layout_with_ctx(
 /// Builds an EnumLayout using context-aware type resolution.
 /// ADT fields in enum payloads resolve to their actual struct/enum types from the registry.
 fn build_enum_layout_with_ctx(
-    ctx: &mut codegen_ctx::CodegenCtx,
+    ctx: &mut codegen_ctx.CodegenCtx,
     def_id: u32,
-    enum_def: &hir_item::EnumDef,
-) -> codegen_ctx::EnumLayout {
-    let mut variants: Vec<codegen_ctx::VariantLayout> = Vec::new();
+    enum_def: &hir_item.EnumDef,
+) -> codegen_ctx.EnumLayout {
+    let mut variants: Vec<codegen_ctx.VariantLayout> = Vec.new();
     let mut max_payload_size: u64 = 0;
     let mut max_alignment: u64 = 1;
     let mut has_payload: bool = false;
 
     for vi in 0usize..enum_def.variants.len() {
         let variant = &enum_def.variants[vi];
-        let mut fields: Vec<codegen_ctx::AdtFieldInfo> = Vec::new();
+        let mut fields: Vec<codegen_ctx.AdtFieldInfo> = Vec.new();
         let mut payload_type = common::make_string("{}");
 
         match &variant.kind {
-            &hir_item::VariantKind::Unit => {
+            &hir_item.VariantKind.Unit => {
                 // No payload
             }
-            &hir_item::VariantKind::Tuple(ref tuple_fields) => {
+            &hir_item.VariantKind.Tuple(ref tuple_fields) => {
                 let mut pt = common::make_string("{ ");
                 for fi in 0usize..tuple_fields.len() {
                     if fi > 0 {
                         pt.push_str(", ");
                     }
-                    let tuple_ty_id = type_intern::TyId::new(tuple_fields[fi].index);
+                    let tuple_ty_id = type_intern.TyId.new(tuple_fields[fi].index);
                     let field_ty = codegen_size::type_to_llvm_with_ctx_id(ctx, tuple_ty_id);
                     pt.push_str(field_ty.as_str());
-                    fields.push(codegen_ctx::AdtFieldInfo {
+                    fields.push(codegen_ctx.AdtFieldInfo {
                         llvm_type: field_ty,
-                        hir_type: Option::Some(type_intern::TyId::new(tuple_fields[fi].index)),
+                        hir_type: Option.Some(type_intern.TyId.new(tuple_fields[fi].index)),
                     });
                 }
                 pt.push_str(" }");
@@ -846,7 +846,7 @@ fn build_enum_layout_with_ctx(
                     payload_type = pt;
                 }
             }
-            &hir_item::VariantKind::Record(ref record_fields) => {
+            &hir_item.VariantKind.Record(ref record_fields) => {
                 let mut pt = common::make_string("{ ");
                 for fi in 0usize..record_fields.len() {
                     if fi > 0 {
@@ -854,9 +854,9 @@ fn build_enum_layout_with_ctx(
                     }
                     let field_ty = codegen_size::type_to_llvm_with_ctx_id(ctx, record_fields[fi].ty);
                     pt.push_str(field_ty.as_str());
-                    fields.push(codegen_ctx::AdtFieldInfo {
+                    fields.push(codegen_ctx.AdtFieldInfo {
                         llvm_type: field_ty,
-                        hir_type: Option::Some(record_fields[fi].ty),
+                        hir_type: Option.Some(record_fields[fi].ty),
                     });
                 }
                 pt.push_str(" }");
@@ -877,7 +877,7 @@ fn build_enum_layout_with_ctx(
             max_alignment = variant_align;
         }
 
-        variants.push(codegen_ctx::VariantLayout {
+        variants.push(codegen_ctx.VariantLayout {
             variant_idx: variant.discriminant,
             fields: fields,
             payload_llvm_type: payload_type,
@@ -923,7 +923,7 @@ fn build_enum_layout_with_ctx(
     }
     llvm_type.push_str(" }");
 
-    codegen_ctx::EnumLayout {
+    codegen_ctx.EnumLayout {
         def_id: def_id,
         discriminant_type: discriminant_type,
         variants: variants,
@@ -938,7 +938,7 @@ fn build_enum_layout_with_ctx(
 
 /// Generates a simple function that returns a constant.
 pub fn generate_constant_function(name: &str, value: i64) -> String {
-    let mut output = String::new();
+    let mut output = String.new();
     output.push_str("define i64 @");
     output.push_str(name);
     output.push_str("() {\n");
@@ -956,7 +956,7 @@ pub fn generate_constant_function(name: &str, value: i64) -> String {
 
 /// Generates the standard module preamble.
 pub fn module_preamble(module_name: &str) -> String {
-    let mut output = String::new();
+    let mut output = String.new();
     output.push_str("; ModuleID = '");
     output.push_str(module_name);
     output.push_str("'\n");
@@ -970,7 +970,7 @@ pub fn module_preamble(module_name: &str) -> String {
 
 /// Generates standard intrinsic declarations.
 pub fn intrinsic_declarations() -> String {
-    let mut output = String::new();
+    let mut output = String.new();
     output.push_str("\n; Intrinsic declarations\n");
     output.push_str("declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)\n");
     output.push_str("declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)\n");
@@ -1202,7 +1202,7 @@ pub fn intrinsic_declarations() -> String {
 
 /// Generates an external function declaration.
 pub fn extern_function(name: &str, params: &Vec<String>, ret_ty: &str) -> String {
-    let mut output = String::new();
+    let mut output = String.new();
     output.push_str("declare ");
     output.push_str(ret_ty);
     output.push_str(" @");
@@ -1234,7 +1234,7 @@ fn is_empty_struct_type(ty: &str) -> bool {
 
 /// Clones a String.
 fn clone_string(s: &String) -> String {
-    let mut result = String::new();
+    let mut result = String.new();
     result.push_str(s.as_str());
     result
 }
@@ -1282,7 +1282,7 @@ fn append_u32(s: &mut String, n: u32) {
 
 /// Generates a minimal test module to verify codegen works.
 pub fn generate_test_module() -> String {
-    let mut output = String::new();
+    let mut output = String.new();
 
     // Module header
     output.push_str("; Test module for Blood codegen\n");

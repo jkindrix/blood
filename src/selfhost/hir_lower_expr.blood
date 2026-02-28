@@ -25,85 +25,85 @@ mod type_intern;
 // ============================================================
 
 /// Lower an AST expression to an HIR expression.
-pub fn lower_expr(ctx: &mut hir_lower_ctx::LoweringCtx, expr: &ast::Expr) -> hir_expr::Expr {
+pub fn lower_expr(ctx: &mut hir_lower_ctx.LoweringCtx, expr: &ast.Expr) -> hir_expr.Expr {
     let span = expr.span;
 
     match &expr.kind {
-        &ast::ExprKind::Literal(ref lit) => {
+        &ast.ExprKind.Literal(ref lit) => {
             lower_literal_expr(ctx, lit, span)
         }
-        &ast::ExprKind::Path(ref path) => {
+        &ast.ExprKind.Path(ref path) => {
             lower_path_expr(ctx, path, span)
         }
-        &ast::ExprKind::Binary { op: bin_op, ref left, ref right } => {
+        &ast.ExprKind.Binary { op: bin_op, ref left, ref right } => {
             let left_hir = lower_expr(ctx, left.as_ref());
             let right_hir = lower_expr(ctx, right.as_ref());
             let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
-            hir_expr::Expr::new(
-                hir_expr::ExprKind::Binary {
+            hir_expr.Expr.new(
+                hir_expr.ExprKind.Binary {
                     op: bin_op,
-                    left: Box::new(left_hir),
-                    right: Box::new(right_hir),
+                    left: Box.new(left_hir),
+                    right: Box.new(right_hir),
                 },
                 ty,
                 span,
             )
         }
-        &ast::ExprKind::Unary { op: unary_op, ref operand } => {
+        &ast.ExprKind.Unary { op: unary_op, ref operand } => {
             let operand_hir = lower_expr(ctx, operand.as_ref());
             let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
-            hir_expr::Expr::new(
-                hir_expr::ExprKind::Unary {
+            hir_expr.Expr.new(
+                hir_expr.ExprKind.Unary {
                     op: unary_op,
-                    operand: Box::new(operand_hir),
+                    operand: Box.new(operand_hir),
                 },
                 ty,
                 span,
             )
         }
-        &ast::ExprKind::Call { ref callee, ref args } => {
+        &ast.ExprKind.Call { ref callee, ref args } => {
             lower_call_expr(ctx, callee.as_ref(), args, span)
         }
-        &ast::ExprKind::MethodCall { ref receiver, ref method, ref type_args, ref args } => {
+        &ast.ExprKind.MethodCall { ref receiver, ref method, ref type_args, ref args } => {
             lower_method_call_expr(ctx, receiver.as_ref(), method, type_args, args, span)
         }
-        &ast::ExprKind::Field { ref base, ref field } => {
+        &ast.ExprKind.Field { ref base, ref field } => {
             lower_field_expr(ctx, base.as_ref(), field, span)
         }
-        &ast::ExprKind::Index { ref base, ref idx } => {
+        &ast.ExprKind.Index { ref base, ref idx } => {
             let base_hir = lower_expr(ctx, base.as_ref());
             let idx_hir = lower_expr(ctx, idx.as_ref());
             let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
-            hir_expr::Expr::new(
-                hir_expr::ExprKind::Index {
-                    base: Box::new(base_hir),
-                    idx: Box::new(idx_hir),
+            hir_expr.Expr.new(
+                hir_expr.ExprKind.Index {
+                    base: Box.new(base_hir),
+                    idx: Box.new(idx_hir),
                 },
                 ty,
                 span,
             )
         }
-        &ast::ExprKind::Tuple(ref elems) => {
+        &ast.ExprKind.Tuple(ref elems) => {
             lower_tuple_expr(ctx, elems, span)
         }
-        &ast::ExprKind::Array(ref arr) => {
+        &ast.ExprKind.Array(ref arr) => {
             lower_array_expr(ctx, arr, span)
         }
-        &ast::ExprKind::Record { ref path, ref fields, ref base } => {
+        &ast.ExprKind.Record { ref path, ref fields, ref base } => {
             lower_record_expr(ctx, path, fields, base, span)
         }
-        &ast::ExprKind::Range { ref start, ref end_val, inclusive } => {
+        &ast.ExprKind.Range { ref start, ref end_val, inclusive } => {
             let start_hir = match start {
-                &Some(ref e) => Some(Box::new(lower_expr(ctx, e.as_ref()))),
-                &None => Option::None,
+                &Some(ref e) => Some(Box.new(lower_expr(ctx, e.as_ref()))),
+                &None => Option.None,
             };
             let end_hir = match end_val {
-                &Some(ref e) => Some(Box::new(lower_expr(ctx, e.as_ref()))),
-                &None => Option::None,
+                &Some(ref e) => Some(Box.new(lower_expr(ctx, e.as_ref()))),
+                &None => Option.None,
             };
             let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
-            hir_expr::Expr::new(
-                hir_expr::ExprKind::Range {
+            hir_expr.Expr.new(
+                hir_expr.ExprKind.Range {
                     start: start_hir,
                     end_val: end_hir,
                     inclusive: inclusive,
@@ -112,163 +112,163 @@ pub fn lower_expr(ctx: &mut hir_lower_ctx::LoweringCtx, expr: &ast::Expr) -> hir
                 span,
             )
         }
-        &ast::ExprKind::Cast { ref expr, ref ty } => {
+        &ast.ExprKind.Cast { ref expr, ref ty } => {
             let expr_hir = lower_expr(ctx, expr.as_ref());
             let cast_ty = hir_lower_type::lower_type_id(ctx, ty);
-            hir_expr::Expr::new(
-                hir_expr::ExprKind::Cast {
-                    expr: Box::new(expr_hir),
+            hir_expr.Expr.new(
+                hir_expr.ExprKind.Cast {
+                    expr: Box.new(expr_hir),
                     ty: cast_ty,
                 },
                 type_intern::type_interner().mk_infer(ctx.alloc_ty_var()),
                 span,
             )
         }
-        &ast::ExprKind::Assign { ref target, ref val } => {
+        &ast.ExprKind.Assign { ref target, ref val } => {
             let target_hir = lower_expr(ctx, target.as_ref());
             let val_hir = lower_expr(ctx, val.as_ref());
-            hir_expr::Expr::new(
-                hir_expr::ExprKind::Assign {
-                    target: Box::new(target_hir),
-                    val: Box::new(val_hir),
+            hir_expr.Expr.new(
+                hir_expr.ExprKind.Assign {
+                    target: Box.new(target_hir),
+                    val: Box.new(val_hir),
                 },
-                type_intern::CommonTypes::unit(),
+                type_intern.CommonTypes.unit(),
                 span,
             )
         }
-        &ast::ExprKind::AssignOp { op: assign_op, ref target, ref val } => {
+        &ast.ExprKind.AssignOp { op: assign_op, ref target, ref val } => {
             let target_hir = lower_expr(ctx, target.as_ref());
             let val_hir = lower_expr(ctx, val.as_ref());
-            hir_expr::Expr::new(
-                hir_expr::ExprKind::AssignOp {
+            hir_expr.Expr.new(
+                hir_expr.ExprKind.AssignOp {
                     op: assign_op,
-                    target: Box::new(target_hir),
-                    val: Box::new(val_hir),
+                    target: Box.new(target_hir),
+                    val: Box.new(val_hir),
                 },
-                type_intern::CommonTypes::unit(),
+                type_intern.CommonTypes.unit(),
                 span,
             )
         }
-        &ast::ExprKind::Block(ref block) => {
+        &ast.ExprKind.Block(ref block) => {
             lower_block_expr(ctx, block, span)
         }
-        &ast::ExprKind::If { ref condition, ref then_branch, ref else_branch } => {
+        &ast.ExprKind.If { ref condition, ref then_branch, ref else_branch } => {
             lower_if_expr(ctx, condition.as_ref(), then_branch, else_branch, span)
         }
-        &ast::ExprKind::IfLet { ref pattern, ref scrutinee, ref then_branch, ref else_branch } => {
+        &ast.ExprKind.IfLet { ref pattern, ref scrutinee, ref then_branch, ref else_branch } => {
             lower_if_let_expr(ctx, pattern, scrutinee.as_ref(), then_branch, else_branch, span)
         }
-        &ast::ExprKind::Match { ref scrutinee, ref arms } => {
+        &ast.ExprKind.Match { ref scrutinee, ref arms } => {
             lower_match_expr(ctx, scrutinee.as_ref(), arms, span)
         }
-        &ast::ExprKind::Loop { ref label, ref body } => {
+        &ast.ExprKind.Loop { ref label, ref body } => {
             lower_loop_expr(ctx, label, body, span)
         }
-        &ast::ExprKind::While { ref label, ref condition, ref body } => {
+        &ast.ExprKind.While { ref label, ref condition, ref body } => {
             lower_while_expr(ctx, label, condition.as_ref(), body, span)
         }
-        &ast::ExprKind::WhileLet { ref label, ref pattern, ref scrutinee, ref body } => {
+        &ast.ExprKind.WhileLet { ref label, ref pattern, ref scrutinee, ref body } => {
             lower_while_let_expr(ctx, label, pattern, scrutinee.as_ref(), body, span)
         }
-        &ast::ExprKind::For { ref label, ref pattern, ref iter, ref body } => {
+        &ast.ExprKind.For { ref label, ref pattern, ref iter, ref body } => {
             lower_for_expr(ctx, label, pattern, iter.as_ref(), body, span)
         }
-        &ast::ExprKind::Return(ref val) => {
+        &ast.ExprKind.Return(ref val) => {
             let val_hir = match val {
-                &Some(ref e) => Some(Box::new(lower_expr(ctx, e.as_ref()))),
-                &None => Option::None,
+                &Some(ref e) => Some(Box.new(lower_expr(ctx, e.as_ref()))),
+                &None => Option.None,
             };
-            hir_expr::Expr::new(
-                hir_expr::ExprKind::Return(val_hir),
-                type_intern::CommonTypes::never(),
+            hir_expr.Expr.new(
+                hir_expr.ExprKind.Return(val_hir),
+                type_intern.CommonTypes.never(),
                 span,
             )
         }
-        &ast::ExprKind::Break { ref label, ref val } => {
+        &ast.ExprKind.Break { ref label, ref val } => {
             let label_sym = match label {
                 &Some(ref l) => Some(l.symbol),
-                &None => Option::None,
+                &None => Option.None,
             };
             let val_hir = match val {
-                &Some(ref e) => Some(Box::new(lower_expr(ctx, e.as_ref()))),
-                &None => Option::None,
+                &Some(ref e) => Some(Box.new(lower_expr(ctx, e.as_ref()))),
+                &None => Option.None,
             };
-            hir_expr::Expr::new(
-                hir_expr::ExprKind::Break {
+            hir_expr.Expr.new(
+                hir_expr.ExprKind.Break {
                     label: label_sym,
                     val: val_hir,
                 },
-                type_intern::CommonTypes::never(),
+                type_intern.CommonTypes.never(),
                 span,
             )
         }
-        &ast::ExprKind::Continue { ref label } => {
+        &ast.ExprKind.Continue { ref label } => {
             let label_sym = match label {
                 &Some(ref l) => Some(l.symbol),
-                &None => Option::None,
+                &None => Option.None,
             };
-            hir_expr::Expr::new(
-                hir_expr::ExprKind::Continue {
+            hir_expr.Expr.new(
+                hir_expr.ExprKind.Continue {
                     label: label_sym,
                 },
-                type_intern::CommonTypes::never(),
+                type_intern.CommonTypes.never(),
                 span,
             )
         }
-        &ast::ExprKind::Closure { is_move: _, ref params, ref return_type, ref effects, ref body } => {
+        &ast.ExprKind.Closure { is_move: _, ref params, ref return_type, ref effects, ref body } => {
             lower_closure_expr(ctx, params, return_type, effects, body.as_ref(), span)
         }
-        &ast::ExprKind::WithHandle { handler: ref handler_expr, body: ref body_expr } => {
+        &ast.ExprKind.WithHandle { handler: ref handler_expr, body: ref body_expr } => {
             let handler_hir = lower_expr(ctx, handler_expr.as_ref());
             let body_hir = lower_expr(ctx, body_expr.as_ref());
             let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
-            hir_expr::Expr::new(
-                hir_expr::ExprKind::WithHandle {
-                    handler: Box::new(handler_hir),
-                    body: Box::new(body_hir),
+            hir_expr.Expr.new(
+                hir_expr.ExprKind.WithHandle {
+                    handler: Box.new(handler_hir),
+                    body: Box.new(body_hir),
                 },
                 ty,
                 span,
             )
         }
-        &ast::ExprKind::Perform { effect: ref eff_path, ref operation, ref args } => {
+        &ast.ExprKind.Perform { effect: ref eff_path, ref operation, ref args } => {
             lower_perform_expr(ctx, eff_path, operation, args, span)
         }
-        &ast::ExprKind::Resume(ref val) => {
+        &ast.ExprKind.Resume(ref val) => {
             let val_hir = lower_expr(ctx, val.as_ref());
             let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
-            hir_expr::Expr::new(
-                hir_expr::ExprKind::Resume(Box::new(val_hir)),
+            hir_expr.Expr.new(
+                hir_expr.ExprKind.Resume(Box.new(val_hir)),
                 ty,
                 span,
             )
         }
-        &ast::ExprKind::Try(ref inner) => {
+        &ast.ExprKind.Try(ref inner) => {
             let inner_hir = lower_expr(ctx, inner.as_ref());
             let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
-            hir_expr::Expr::new(
-                hir_expr::ExprKind::Try(Box::new(inner_hir)),
+            hir_expr.Expr.new(
+                hir_expr.ExprKind.Try(Box.new(inner_hir)),
                 ty,
                 span,
             )
         }
-        &ast::ExprKind::TryWith { ref body, ref handlers } => {
+        &ast.ExprKind.TryWith { ref body, ref handlers } => {
             lower_try_with_expr(ctx, body, handlers, span)
         }
-        &ast::ExprKind::Unsafe(ref block) => {
+        &ast.ExprKind.Unsafe(ref block) => {
             let block_hir = lower_block_to_expr(ctx, block);
             let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
-            hir_expr::Expr::new(
-                hir_expr::ExprKind::Unsafe(Box::new(block_hir)),
+            hir_expr.Expr.new(
+                hir_expr.ExprKind.Unsafe(Box.new(block_hir)),
                 ty,
                 span,
             )
         }
-        &ast::ExprKind::Region { ref name, ref body } => {
+        &ast.ExprKind.Region { ref name, ref body } => {
             // Lower region block preserving region semantics
-            ctx.resolver.push_scope(resolve::ScopeKind::Block);
+            ctx.resolver.push_scope(resolve.ScopeKind.Block);
 
-            let mut stmts_hir: Vec<hir_expr::Stmt> = Vec::new();
+            let mut stmts_hir: Vec<hir_expr.Stmt> = Vec.new();
             for i in 0usize..body.statements.len() {
                 let stmt_hir = lower_stmt(ctx, &body.statements[i]);
                 stmts_hir.push(stmt_hir);
@@ -276,23 +276,23 @@ pub fn lower_expr(ctx: &mut hir_lower_ctx::LoweringCtx, expr: &ast::Expr) -> hir
 
             let expr_hir = match &body.expr {
                 &Some(ref e) => {
-                    Some(Box::new(lower_expr(ctx, e.as_ref())))
+                    Some(Box.new(lower_expr(ctx, e.as_ref())))
                 }
                 &None => {
-                    Option::None
+                    Option.None
                 }
             };
 
             ctx.resolver.pop_scope();
 
             let region_name = match name {
-                &Some(ref sym) => Option::Some(sym.symbol),
-                &None => Option::None,
+                &Some(ref sym) => Option.Some(sym.symbol),
+                &None => Option.None,
             };
 
             let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
-            hir_expr::Expr::new(
-                hir_expr::ExprKind::Region {
+            hir_expr.Expr.new(
+                hir_expr.ExprKind.Region {
                     name: region_name,
                     stmts: stmts_hir,
                     expr: expr_hir,
@@ -301,16 +301,16 @@ pub fn lower_expr(ctx: &mut hir_lower_ctx::LoweringCtx, expr: &ast::Expr) -> hir
                 span,
             )
         }
-        &ast::ExprKind::Paren(ref inner) => {
+        &ast.ExprKind.Paren(ref inner) => {
             // Parentheses are purely syntactic
             lower_expr(ctx, inner.as_ref())
         }
-        &ast::ExprKind::Default => {
+        &ast.ExprKind.Default => {
             // Default expression - type will be inferred from context during type checking
             let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
-            hir_expr::Expr::new(hir_expr::ExprKind::Default, ty, span)
+            hir_expr.Expr.new(hir_expr.ExprKind.Default, ty, span)
         }
-        &ast::ExprKind::MacroCall { ref path, ref kind } => {
+        &ast.ExprKind.MacroCall { ref path, ref kind } => {
             lower_macro_call_expr(ctx, path, kind, span)
         }
     }
@@ -321,122 +321,122 @@ pub fn lower_expr(ctx: &mut hir_lower_ctx::LoweringCtx, expr: &ast::Expr) -> hir
 // ============================================================
 
 /// Convert a PrimitiveTy to a TyId via CommonTypes.
-fn prim_to_ty_id(p: hir_ty::PrimitiveTy) -> type_intern::TyId {
+fn prim_to_ty_id(p: hir_ty.PrimitiveTy) -> type_intern.TyId {
     match p {
-        hir_ty::PrimitiveTy::Bool => type_intern::CommonTypes::bool_ty(),
-        hir_ty::PrimitiveTy::I8 => type_intern::CommonTypes::i8_ty(),
-        hir_ty::PrimitiveTy::I16 => type_intern::CommonTypes::i16_ty(),
-        hir_ty::PrimitiveTy::I32 => type_intern::CommonTypes::i32_ty(),
-        hir_ty::PrimitiveTy::I64 => type_intern::CommonTypes::i64_ty(),
-        hir_ty::PrimitiveTy::I128 => type_intern::CommonTypes::i128_ty(),
-        hir_ty::PrimitiveTy::Isize => type_intern::CommonTypes::isize_ty(),
-        hir_ty::PrimitiveTy::U8 => type_intern::CommonTypes::u8_ty(),
-        hir_ty::PrimitiveTy::U16 => type_intern::CommonTypes::u16_ty(),
-        hir_ty::PrimitiveTy::U32 => type_intern::CommonTypes::u32_ty(),
-        hir_ty::PrimitiveTy::U64 => type_intern::CommonTypes::u64_ty(),
-        hir_ty::PrimitiveTy::U128 => type_intern::CommonTypes::u128_ty(),
-        hir_ty::PrimitiveTy::Usize => type_intern::CommonTypes::usize_ty(),
-        hir_ty::PrimitiveTy::F32 => type_intern::CommonTypes::f32_ty(),
-        hir_ty::PrimitiveTy::F64 => type_intern::CommonTypes::f64_ty(),
-        hir_ty::PrimitiveTy::Char => type_intern::CommonTypes::char_ty(),
-        hir_ty::PrimitiveTy::Str => type_intern::CommonTypes::str_ty(),
+        hir_ty.PrimitiveTy.Bool => type_intern.CommonTypes.bool_ty(),
+        hir_ty.PrimitiveTy.I8 => type_intern.CommonTypes.i8_ty(),
+        hir_ty.PrimitiveTy.I16 => type_intern.CommonTypes.i16_ty(),
+        hir_ty.PrimitiveTy.I32 => type_intern.CommonTypes.i32_ty(),
+        hir_ty.PrimitiveTy.I64 => type_intern.CommonTypes.i64_ty(),
+        hir_ty.PrimitiveTy.I128 => type_intern.CommonTypes.i128_ty(),
+        hir_ty.PrimitiveTy.Isize => type_intern.CommonTypes.isize_ty(),
+        hir_ty.PrimitiveTy.U8 => type_intern.CommonTypes.u8_ty(),
+        hir_ty.PrimitiveTy.U16 => type_intern.CommonTypes.u16_ty(),
+        hir_ty.PrimitiveTy.U32 => type_intern.CommonTypes.u32_ty(),
+        hir_ty.PrimitiveTy.U64 => type_intern.CommonTypes.u64_ty(),
+        hir_ty.PrimitiveTy.U128 => type_intern.CommonTypes.u128_ty(),
+        hir_ty.PrimitiveTy.Usize => type_intern.CommonTypes.usize_ty(),
+        hir_ty.PrimitiveTy.F32 => type_intern.CommonTypes.f32_ty(),
+        hir_ty.PrimitiveTy.F64 => type_intern.CommonTypes.f64_ty(),
+        hir_ty.PrimitiveTy.Char => type_intern.CommonTypes.char_ty(),
+        hir_ty.PrimitiveTy.Str => type_intern.CommonTypes.str_ty(),
     }
 }
 
 /// Lower a literal expression.
-fn lower_literal_expr(ctx: &mut hir_lower_ctx::LoweringCtx, lit: &ast::Literal, span: common::Span) -> hir_expr::Expr {
+fn lower_literal_expr(ctx: &mut hir_lower_ctx.LoweringCtx, lit: &ast.Literal, span: common.Span) -> hir_expr.Expr {
     let (kind, ty) = match &lit.kind {
-        &ast::LiteralKind::Int { val, ref suffix } => {
+        &ast.LiteralKind.Int { val, ref suffix } => {
             let prim_ty = match suffix {
                 &Some(ref s) => int_suffix_to_prim(s),
-                &None => Option::None,
+                &None => Option.None,
             };
             (
-                hir_expr::LiteralKind::Int { val: val, ty: prim_ty },
+                hir_expr.LiteralKind.Int { val: val, ty: prim_ty },
                 match prim_ty {
                     Some(p) => prim_to_ty_id(p),
-                    Option::None => type_intern::type_interner().mk_infer(ctx.alloc_ty_var()),
+                    Option.None => type_intern::type_interner().mk_infer(ctx.alloc_ty_var()),
                 },
             )
         }
-        &ast::LiteralKind::Float { bits, ref suffix } => {
+        &ast.LiteralKind.Float { bits, ref suffix } => {
             let prim_ty = match suffix {
                 &Some(ref s) => float_suffix_to_prim(s),
-                &None => Option::None,
+                &None => Option.None,
             };
             (
-                hir_expr::LiteralKind::Float { bits: bits, ty: prim_ty },
+                hir_expr.LiteralKind.Float { bits: bits, ty: prim_ty },
                 match prim_ty {
                     Some(p) => prim_to_ty_id(p),
-                    Option::None => type_intern::type_interner().mk_infer(ctx.alloc_ty_var()),
+                    Option.None => type_intern::type_interner().mk_infer(ctx.alloc_ty_var()),
                 },
             )
         }
-        &ast::LiteralKind::Str(ref s) => {
+        &ast.LiteralKind.Str(ref s) => {
             // Clone the string
-            let mut s_copy = String::new();
+            let mut s_copy = String.new();
             s_copy.push_str(s.as_str());
             (
-                hir_expr::LiteralKind::Str(s_copy),
-                type_intern::type_interner().mk_ref(type_intern::CommonTypes::str_ty(), false),
+                hir_expr.LiteralKind.Str(s_copy),
+                type_intern::type_interner().mk_ref(type_intern.CommonTypes.str_ty(), false),
             )
         }
-        &ast::LiteralKind::ByteStr(ref bytes) => {
+        &ast.LiteralKind.ByteStr(ref bytes) => {
             // Copy the bytes
-            let mut bytes_copy: Vec<u8> = Vec::new();
+            let mut bytes_copy: Vec<u8> = Vec.new();
             for i in 0usize..bytes.len() {
                 bytes_copy.push(bytes[i]);
             }
             (
-                hir_expr::LiteralKind::ByteStr(bytes_copy),
+                hir_expr.LiteralKind.ByteStr(bytes_copy),
                 type_intern::type_interner().mk_infer(ctx.alloc_ty_var()), // &[u8; N]
             )
         }
-        &ast::LiteralKind::Char(c) => {
+        &ast.LiteralKind.Char(c) => {
             (
-                hir_expr::LiteralKind::Char(c),
-                type_intern::CommonTypes::char_ty(),
+                hir_expr.LiteralKind.Char(c),
+                type_intern.CommonTypes.char_ty(),
             )
         }
-        &ast::LiteralKind::Bool(b) => {
+        &ast.LiteralKind.Bool(b) => {
             (
-                hir_expr::LiteralKind::Bool(b),
-                type_intern::CommonTypes::bool_ty(),
+                hir_expr.LiteralKind.Bool(b),
+                type_intern.CommonTypes.bool_ty(),
             )
         }
     };
 
-    let hir_lit = hir_expr::Literal::new(kind, lit.span);
-    hir_expr::Expr::new(
-        hir_expr::ExprKind::Literal(hir_lit),
+    let hir_lit = hir_expr.Literal.new(kind, lit.span);
+    hir_expr.Expr.new(
+        hir_expr.ExprKind.Literal(hir_lit),
         ty,
         span,
     )
 }
 
 /// Convert an integer suffix to a primitive type.
-fn int_suffix_to_prim(suffix: &ast::IntSuffix) -> Option<hir_ty::PrimitiveTy> {
+fn int_suffix_to_prim(suffix: &ast.IntSuffix) -> Option<hir_ty.PrimitiveTy> {
     match suffix {
-        &ast::IntSuffix::I8 => Some(hir_ty::PrimitiveTy::I8),
-        &ast::IntSuffix::I16 => Some(hir_ty::PrimitiveTy::I16),
-        &ast::IntSuffix::I32 => Some(hir_ty::PrimitiveTy::I32),
-        &ast::IntSuffix::I64 => Some(hir_ty::PrimitiveTy::I64),
-        &ast::IntSuffix::I128 => Some(hir_ty::PrimitiveTy::I128),
-        &ast::IntSuffix::Isize => Some(hir_ty::PrimitiveTy::Isize),
-        &ast::IntSuffix::U8 => Some(hir_ty::PrimitiveTy::U8),
-        &ast::IntSuffix::U16 => Some(hir_ty::PrimitiveTy::U16),
-        &ast::IntSuffix::U32 => Some(hir_ty::PrimitiveTy::U32),
-        &ast::IntSuffix::U64 => Some(hir_ty::PrimitiveTy::U64),
-        &ast::IntSuffix::U128 => Some(hir_ty::PrimitiveTy::U128),
-        &ast::IntSuffix::Usize => Some(hir_ty::PrimitiveTy::Usize),
+        &ast.IntSuffix.I8 => Some(hir_ty.PrimitiveTy.I8),
+        &ast.IntSuffix.I16 => Some(hir_ty.PrimitiveTy.I16),
+        &ast.IntSuffix.I32 => Some(hir_ty.PrimitiveTy.I32),
+        &ast.IntSuffix.I64 => Some(hir_ty.PrimitiveTy.I64),
+        &ast.IntSuffix.I128 => Some(hir_ty.PrimitiveTy.I128),
+        &ast.IntSuffix.Isize => Some(hir_ty.PrimitiveTy.Isize),
+        &ast.IntSuffix.U8 => Some(hir_ty.PrimitiveTy.U8),
+        &ast.IntSuffix.U16 => Some(hir_ty.PrimitiveTy.U16),
+        &ast.IntSuffix.U32 => Some(hir_ty.PrimitiveTy.U32),
+        &ast.IntSuffix.U64 => Some(hir_ty.PrimitiveTy.U64),
+        &ast.IntSuffix.U128 => Some(hir_ty.PrimitiveTy.U128),
+        &ast.IntSuffix.Usize => Some(hir_ty.PrimitiveTy.Usize),
     }
 }
 
 /// Convert a float suffix to a primitive type.
-fn float_suffix_to_prim(suffix: &ast::FloatSuffix) -> Option<hir_ty::PrimitiveTy> {
+fn float_suffix_to_prim(suffix: &ast.FloatSuffix) -> Option<hir_ty.PrimitiveTy> {
     match suffix {
-        &ast::FloatSuffix::F32 => Some(hir_ty::PrimitiveTy::F32),
-        &ast::FloatSuffix::F64 => Some(hir_ty::PrimitiveTy::F64),
+        &ast.FloatSuffix.F32 => Some(hir_ty.PrimitiveTy.F32),
+        &ast.FloatSuffix.F64 => Some(hir_ty.PrimitiveTy.F64),
     }
 }
 
@@ -445,7 +445,7 @@ fn float_suffix_to_prim(suffix: &ast::FloatSuffix) -> Option<hir_ty::PrimitiveTy
 // ============================================================
 
 /// Lower a path expression to HIR.
-fn lower_path_expr(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::ExprPath, span: common::Span) -> hir_expr::Expr {
+fn lower_path_expr(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.ExprPath, span: common.Span) -> hir_expr.Expr {
     // Single-segment paths: could be local variable or global definition
     if path.segments.len() == 1 {
         let seg = &path.segments[0];
@@ -463,12 +463,12 @@ fn lower_path_expr(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::ExprPath, s
             let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
 
             // Check if this is a local variable binding (parameter, let, etc.)
-            // Local bindings must produce ExprKind::Local, not ExprKind::Path,
+            // Local bindings must produce ExprKind.Local, not ExprKind.Path,
             // because their def_id is a dummy value (0xFFFFFFFF).
             if binding.is_local() {
                 let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
-                return hir_expr::Expr::new(
-                    hir_expr::ExprKind::Local(binding.local_id),
+                return hir_expr.Expr.new(
+                    hir_expr.ExprKind.Local(binding.local_id),
                     ty,
                     span,
                 );
@@ -481,30 +481,30 @@ fn lower_path_expr(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::ExprPath, s
                     record_turbofish_const_args(ctx, args, span.start as u32);
                     hir_lower_type::lower_type_args(ctx, args)
                 }
-                &None => Vec::new(),
+                &None => Vec.new(),
             };
             let type_arg_count = type_args.len() as u32;
 
             // Check if the resolved def is a variant - set variant_index if so
             let def_info = ctx.resolver.get_def_info(binding.def_id);
             let resolved = match def_info {
-                Option::Some(info) => {
+                Option.Some(info) => {
                     match info.variant_index {
-                        Option::Some(vi) => {
-                            hir_def::ResolvedPath::variant(binding.def_id, span, vi)
+                        Option.Some(vi) => {
+                            hir_def.ResolvedPath.variant(binding.def_id, span, vi)
                         }
-                        Option::None => {
-                            hir_def::ResolvedPath::new(binding.def_id, type_arg_count, span)
+                        Option.None => {
+                            hir_def.ResolvedPath.new(binding.def_id, type_arg_count, span)
                         }
                     }
                 }
-                Option::None => {
-                    hir_def::ResolvedPath::new(binding.def_id, type_arg_count, span)
+                Option.None => {
+                    hir_def.ResolvedPath.new(binding.def_id, type_arg_count, span)
                 }
             };
             let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
-            return hir_expr::Expr::new(
-                hir_expr::ExprKind::Path(resolved),
+            return hir_expr.Expr.new(
+                hir_expr.ExprKind.Path(resolved),
                 ty,
                 span,
             );
@@ -512,21 +512,21 @@ fn lower_path_expr(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::ExprPath, s
 
         // Not found
         ctx.error(
-            hir::DiagnosticCode::E0102,
+            hir.DiagnosticCode.E0102,
             common::make_string("undefined name"),
             seg.name.span,
         );
-        return hir_expr::Expr::error(span);
+        return hir_expr.Expr.error(span);
     }
 
-    // Multi-segment paths (e.g., module::item or Type::method)
+    // Multi-segment paths (e.g., module::item or Type.method)
     // Extract the names from path segments, re-interning for consistent indices
-    let mut names: Vec<common::SpannedSymbol> = Vec::new();
+    let mut names: Vec<common.SpannedSymbol> = Vec.new();
     for i in 0usize..path.segments.len() {
         let seg = &path.segments[i];
         let name_str = ctx.span_to_string(seg.name.span);
         let re_interned = ctx.intern(name_str.as_str());
-        names.push(common::SpannedSymbol { symbol: re_interned, span: seg.name.span });
+        names.push(common.SpannedSymbol { symbol: re_interned, span: seg.name.span });
     }
 
     let resolved = ctx.resolver.resolve_qualified_path(&names);
@@ -539,30 +539,30 @@ fn lower_path_expr(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::ExprPath, s
                 record_turbofish_const_args(ctx, args, span.start as u32);
                 hir_lower_type::lower_type_args(ctx, args)
             }
-            &None => Vec::new(),
+            &None => Vec.new(),
         };
         let type_arg_count = type_args.len() as u32;
 
         // Check if the resolved def is a variant - set variant_index if so
         let def_info = ctx.resolver.get_def_info(result.def_id);
         let resolved_path = match def_info {
-            Option::Some(info) => {
+            Option.Some(info) => {
                 match info.variant_index {
-                    Option::Some(vi) => {
-                        hir_def::ResolvedPath::variant(result.def_id, span, vi)
+                    Option.Some(vi) => {
+                        hir_def.ResolvedPath.variant(result.def_id, span, vi)
                     }
-                    Option::None => {
-                        hir_def::ResolvedPath::new(result.def_id, type_arg_count, span)
+                    Option.None => {
+                        hir_def.ResolvedPath.new(result.def_id, type_arg_count, span)
                     }
                 }
             }
-            Option::None => {
-                hir_def::ResolvedPath::new(result.def_id, type_arg_count, span)
+            Option.None => {
+                hir_def.ResolvedPath.new(result.def_id, type_arg_count, span)
             }
         };
         let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
-        return hir_expr::Expr::new(
-            hir_expr::ExprKind::Path(resolved_path),
+        return hir_expr.Expr.new(
+            hir_expr.ExprKind.Path(resolved_path),
             ty,
             span,
         );
@@ -578,11 +578,11 @@ fn lower_path_expr(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::ExprPath, s
         msg.push_str(seg_str.as_str());
     }
     ctx.error(
-        hir::DiagnosticCode::E0102,
+        hir.DiagnosticCode.E0102,
         msg,
         span,
     );
-    hir_expr::Expr::error(span)
+    hir_expr.Expr.error(span)
 }
 
 // ============================================================
@@ -590,19 +590,19 @@ fn lower_path_expr(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::ExprPath, s
 // ============================================================
 
 /// Lower a call expression.
-fn lower_call_expr(ctx: &mut hir_lower_ctx::LoweringCtx, callee: &ast::Expr, args: &Vec<ast::CallArg>, span: common::Span) -> hir_expr::Expr {
+fn lower_call_expr(ctx: &mut hir_lower_ctx.LoweringCtx, callee: &ast.Expr, args: &Vec<ast.CallArg>, span: common.Span) -> hir_expr.Expr {
     let callee_hir = lower_expr(ctx, callee);
 
-    let mut args_hir: Vec<hir_expr::Expr> = Vec::new();
+    let mut args_hir: Vec<hir_expr.Expr> = Vec.new();
     for i in 0usize..args.len() {
         let arg_hir = lower_expr(ctx, &args[i].val);
         args_hir.push(arg_hir);
     }
 
     let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
-    hir_expr::Expr::new(
-        hir_expr::ExprKind::Call {
-            callee: Box::new(callee_hir),
+    hir_expr.Expr.new(
+        hir_expr.ExprKind.Call {
+            callee: Box.new(callee_hir),
             args: args_hir,
         },
         ty,
@@ -612,21 +612,21 @@ fn lower_call_expr(ctx: &mut hir_lower_ctx::LoweringCtx, callee: &ast::Expr, arg
 
 /// Lower a method call expression.
 fn lower_method_call_expr(
-    ctx: &mut hir_lower_ctx::LoweringCtx,
-    receiver: &ast::Expr,
-    method: &common::SpannedSymbol,
-    type_args: &Option<ast::TypeArgs>,
-    args: &Vec<ast::CallArg>,
-    span: common::Span,
-) -> hir_expr::Expr {
+    ctx: &mut hir_lower_ctx.LoweringCtx,
+    receiver: &ast.Expr,
+    method: &common.SpannedSymbol,
+    type_args: &Option<ast.TypeArgs>,
+    args: &Vec<ast.CallArg>,
+    span: common.Span,
+) -> hir_expr.Expr {
     let receiver_hir = lower_expr(ctx, receiver);
 
     let type_args_hir = match type_args {
         &Some(ref ta) => hir_lower_type::lower_type_args_id(ctx, ta),
-        &None => Vec::new(),
+        &None => Vec.new(),
     };
 
-    let mut args_hir: Vec<hir_expr::Expr> = Vec::new();
+    let mut args_hir: Vec<hir_expr.Expr> = Vec.new();
     for i in 0usize..args.len() {
         let arg_hir = lower_expr(ctx, &args[i].val);
         args_hir.push(arg_hir);
@@ -637,14 +637,14 @@ fn lower_method_call_expr(
     // (Parser has its own span-based interning producing different symbol indices.)
     let method_str = ctx.span_to_string(method.span);
     let method_sym = ctx.intern(method_str.as_str());
-    let re_method = common::SpannedSymbol { symbol: method_sym, span: method.span };
+    let re_method = common.SpannedSymbol { symbol: method_sym, span: method.span };
 
     let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
-    hir_expr::Expr::new(
-        hir_expr::ExprKind::MethodCall {
-            receiver: Box::new(receiver_hir),
+    hir_expr.Expr.new(
+        hir_expr.ExprKind.MethodCall {
+            receiver: Box.new(receiver_hir),
             method: re_method,
-            method_def: Option::None, // Resolved during type checking
+            method_def: Option.None, // Resolved during type checking
             type_args: type_args_hir,
             args: args_hir,
         },
@@ -658,29 +658,29 @@ fn lower_method_call_expr(
 // ============================================================
 
 /// Lower a field access expression.
-fn lower_field_expr(ctx: &mut hir_lower_ctx::LoweringCtx, base: &ast::Expr, field: &ast::FieldAccess, span: common::Span) -> hir_expr::Expr {
+fn lower_field_expr(ctx: &mut hir_lower_ctx.LoweringCtx, base: &ast.Expr, field: &ast.FieldAccess, span: common.Span) -> hir_expr.Expr {
     let base_hir = lower_expr(ctx, base);
 
     let field_hir = match field {
-        &ast::FieldAccess::Named(ref name) => {
+        &ast.FieldAccess.Named(ref name) => {
             // Re-intern field name for cross-module consistency
             let fname_str = ctx.span_to_string(name.span);
             let fname_sym = ctx.intern(fname_str.as_str());
-            let re_name = common::SpannedSymbol { symbol: fname_sym, span: name.span };
-            hir_expr::FieldAccess::Named {
+            let re_name = common.SpannedSymbol { symbol: fname_sym, span: name.span };
+            hir_expr.FieldAccess.Named {
                 name: re_name,
-                field_idx: Option::None, // Resolved during type checking
+                field_idx: Option.None, // Resolved during type checking
             }
         }
-        &ast::FieldAccess::Index(idx, _) => {
-            hir_expr::FieldAccess::Index(idx)
+        &ast.FieldAccess.Index(idx, _) => {
+            hir_expr.FieldAccess.Index(idx)
         }
     };
 
     let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
-    hir_expr::Expr::new(
-        hir_expr::ExprKind::Field {
-            base: Box::new(base_hir),
+    hir_expr.Expr.new(
+        hir_expr.ExprKind.Field {
+            base: Box.new(base_hir),
             field: field_hir,
         },
         ty,
@@ -689,45 +689,45 @@ fn lower_field_expr(ctx: &mut hir_lower_ctx::LoweringCtx, base: &ast::Expr, fiel
 }
 
 /// Lower a tuple expression.
-fn lower_tuple_expr(ctx: &mut hir_lower_ctx::LoweringCtx, elems: &Vec<ast::Expr>, span: common::Span) -> hir_expr::Expr {
-    let mut elems_hir: Vec<hir_expr::Expr> = Vec::new();
+fn lower_tuple_expr(ctx: &mut hir_lower_ctx.LoweringCtx, elems: &Vec<ast.Expr>, span: common.Span) -> hir_expr.Expr {
+    let mut elems_hir: Vec<hir_expr.Expr> = Vec.new();
     for i in 0usize..elems.len() {
         let elem_hir = lower_expr(ctx, &elems[i]);
         elems_hir.push(elem_hir);
     }
 
     let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
-    hir_expr::Expr::new(
-        hir_expr::ExprKind::Tuple(elems_hir),
+    hir_expr.Expr.new(
+        hir_expr.ExprKind.Tuple(elems_hir),
         ty,
         span,
     )
 }
 
 /// Lower an array expression.
-fn lower_array_expr(ctx: &mut hir_lower_ctx::LoweringCtx, arr: &ast::ArrayExpr, span: common::Span) -> hir_expr::Expr {
+fn lower_array_expr(ctx: &mut hir_lower_ctx.LoweringCtx, arr: &ast.ArrayExpr, span: common.Span) -> hir_expr.Expr {
     let arr_hir = match arr {
-        &ast::ArrayExpr::List(ref elems) => {
-            let mut elems_hir: Vec<hir_expr::Expr> = Vec::new();
+        &ast.ArrayExpr.List(ref elems) => {
+            let mut elems_hir: Vec<hir_expr.Expr> = Vec.new();
             for i in 0usize..elems.len() {
                 let elem_hir = lower_expr(ctx, &elems[i]);
                 elems_hir.push(elem_hir);
             }
-            hir_expr::ArrayExpr::List(elems_hir)
+            hir_expr.ArrayExpr.List(elems_hir)
         }
-        &ast::ArrayExpr::Repeat { ref val, ref count } => {
+        &ast.ArrayExpr.Repeat { ref val, ref count } => {
             let val_hir = lower_expr(ctx, val.as_ref());
             let repeat_count = const_eval::eval_array_size_u64(count.as_ref());
-            hir_expr::ArrayExpr::Repeat {
-                val: Box::new(val_hir),
+            hir_expr.ArrayExpr.Repeat {
+                val: Box.new(val_hir),
                 count: repeat_count,
             }
         }
     };
 
     let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
-    hir_expr::Expr::new(
-        hir_expr::ExprKind::Array(arr_hir),
+    hir_expr.Expr.new(
+        hir_expr.ExprKind.Array(arr_hir),
         ty,
         span,
     )
@@ -739,12 +739,12 @@ fn lower_array_expr(ctx: &mut hir_lower_ctx::LoweringCtx, arr: &ast::ArrayExpr, 
 
 /// Lower a record/struct expression.
 fn lower_record_expr(
-    ctx: &mut hir_lower_ctx::LoweringCtx,
-    path: &Option<ast::TypePath>,
-    fields: &Vec<ast::RecordExprField>,
-    base: &Option<Box<ast::Expr>>,
-    span: common::Span,
-) -> hir_expr::Expr {
+    ctx: &mut hir_lower_ctx.LoweringCtx,
+    path: &Option<ast.TypePath>,
+    fields: &Vec<ast.RecordExprField>,
+    base: &Option<Box<ast.Expr>>,
+    span: common.Span,
+) -> hir_expr.Expr {
     // Resolve the struct type path
     let p = match path {
         &Some(ref p) => p,
@@ -765,40 +765,40 @@ fn lower_record_expr(
 
         if lookup.is_none() {
             ctx.error(
-                hir::DiagnosticCode::E0102,
+                hir.DiagnosticCode.E0102,
                 common::make_string("unknown struct type"),
                 p.span,
             );
-            return hir_expr::Expr::error(span);
+            return hir_expr.Expr.error(span);
         }
 
         let result = lookup.unwrap();
         let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
         let args = match &seg.args {
             &Some(ref args) => hir_lower_type::lower_type_args(ctx, args),
-            &None => Vec::new(),
+            &None => Vec.new(),
         };
 
         (binding.def_id, args)
     } else {
-        // Multi-segment path (e.g., module::StructName): use qualified path resolution
+        // Multi-segment path (e.g., module.StructName): use qualified path resolution
         // Re-intern all segment names from their spans
-        let mut names: Vec<common::SpannedSymbol> = Vec::new();
+        let mut names: Vec<common.SpannedSymbol> = Vec.new();
         for i in 0usize..p.segments.len() {
             let seg = &p.segments[i];
             let name_str = ctx.span_to_string(seg.name.span);
             let re_interned = ctx.intern(name_str.as_str());
-            names.push(common::SpannedSymbol { symbol: re_interned, span: seg.name.span });
+            names.push(common.SpannedSymbol { symbol: re_interned, span: seg.name.span });
         }
 
         let resolved = ctx.resolver.resolve_qualified_path(&names);
         if resolved.is_none() {
             ctx.error(
-                hir::DiagnosticCode::E0102,
+                hir.DiagnosticCode.E0102,
                 common::make_string("unknown qualified struct path"),
                 p.span,
             );
-            return hir_expr::Expr::error(span);
+            return hir_expr.Expr.error(span);
         }
 
         let result = resolved.unwrap();
@@ -806,38 +806,38 @@ fn lower_record_expr(
         let last_seg = &p.segments[p.segments.len() - 1];
         let args = match &last_seg.args {
             &Some(ref args) => hir_lower_type::lower_type_args(ctx, args),
-            &None => Vec::new(),
+            &None => Vec.new(),
         };
         (result.def_id, args)
     };
 
     let type_arg_count = type_args.len() as u32;
     // Check if the resolved def is a variant — set variant_index for enum variant
-    // struct expressions (e.g., Bucket::Occupied { key, value }).
+    // struct expressions (e.g., Bucket.Occupied { key, value }).
     // Without this, variant_index defaults to None and MIR lowering uses
     // discriminant 0 for ALL struct enum variants, breaking hash maps and
     // any enum with payload variants.
     let def_info = ctx.resolver.get_def_info(def_id);
     let resolved_path = match def_info {
-        Option::Some(info) => {
+        Option.Some(info) => {
             match info.variant_index {
-                Option::Some(vi) => {
-                    let mut rp = hir_def::ResolvedPath::variant(def_id, p.span, vi);
+                Option.Some(vi) => {
+                    let mut rp = hir_def.ResolvedPath.variant(def_id, p.span, vi);
                     rp.type_arg_count = type_arg_count;
                     rp
                 }
-                Option::None => {
-                    hir_def::ResolvedPath::new(def_id, type_arg_count, p.span)
+                Option.None => {
+                    hir_def.ResolvedPath.new(def_id, type_arg_count, p.span)
                 }
             }
         }
-        Option::None => {
-            hir_def::ResolvedPath::new(def_id, type_arg_count, p.span)
+        Option.None => {
+            hir_def.ResolvedPath.new(def_id, type_arg_count, p.span)
         }
     };
 
     // Lower fields
-    let mut fields_hir: Vec<hir_expr::FieldExpr> = Vec::new();
+    let mut fields_hir: Vec<hir_expr.FieldExpr> = Vec.new();
     for i in 0usize..fields.len() {
         let f = &fields[i];
         // Handle shorthand fields (e.g., `Foo { bar }` where bar is a variable)
@@ -853,41 +853,41 @@ fn lower_record_expr(
                 if lookup.is_some() {
                     let result = lookup.unwrap();
                     let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
-                    // Local bindings must produce ExprKind::Local, not ExprKind::Path,
+                    // Local bindings must produce ExprKind.Local, not ExprKind.Path,
                     // because their def_id is a dummy value (0xFFFFFFFF).
                     if binding.is_local() {
                         let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
-                        hir_expr::Expr::new(
-                            hir_expr::ExprKind::Local(binding.local_id),
+                        hir_expr.Expr.new(
+                            hir_expr.ExprKind.Local(binding.local_id),
                             ty,
                             f.name.span,
                         )
                     } else {
-                        let resolved = hir_def::ResolvedPath::new(binding.def_id, 0, f.name.span);
+                        let resolved = hir_def.ResolvedPath.new(binding.def_id, 0, f.name.span);
                         let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
-                        hir_expr::Expr::new(
-                            hir_expr::ExprKind::Path(resolved),
+                        hir_expr.Expr.new(
+                            hir_expr.ExprKind.Path(resolved),
                             ty,
                             f.name.span,
                         )
                     }
                 } else {
                     ctx.error(
-                        hir::DiagnosticCode::E0102,
+                        hir.DiagnosticCode.E0102,
                         common::make_string("undefined field variable"),
                         f.name.span,
                     );
-                    hir_expr::Expr::error(f.name.span)
+                    hir_expr.Expr.error(f.name.span)
                 }
             }
         };
         // Re-intern field name for cross-module consistency
         let flit_name_str = ctx.span_to_string(f.name.span);
         let flit_name_sym = ctx.intern(flit_name_str.as_str());
-        let re_flit_name = common::SpannedSymbol { symbol: flit_name_sym, span: f.name.span };
-        let field_hir = hir_expr::FieldExpr::new(
+        let re_flit_name = common.SpannedSymbol { symbol: flit_name_sym, span: f.name.span };
+        let field_hir = hir_expr.FieldExpr.new(
             re_flit_name,
-            Option::None, // Field index resolved during type checking
+            Option.None, // Field index resolved during type checking
             val_hir,
             f.span,
         );
@@ -896,13 +896,13 @@ fn lower_record_expr(
 
     // Lower base expression if present
     let base_hir = match base {
-        &Some(ref b) => Some(Box::new(lower_expr(ctx, b.as_ref()))),
-        &None => Option::None,
+        &Some(ref b) => Some(Box.new(lower_expr(ctx, b.as_ref()))),
+        &None => Option.None,
     };
 
     let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
-    hir_expr::Expr::new(
-        hir_expr::ExprKind::Struct {
+    hir_expr.Expr.new(
+        hir_expr.ExprKind.Struct {
             path: resolved_path,
             fields: fields_hir,
             base: base_hir,
@@ -914,11 +914,11 @@ fn lower_record_expr(
 
 /// Lower an anonymous record expression: { field: value, ... }
 fn lower_anon_record_expr(
-    ctx: &mut hir_lower_ctx::LoweringCtx,
-    fields: &Vec<ast::RecordExprField>,
-    span: common::Span,
-) -> hir_expr::Expr {
-    let mut fields_hir: Vec<hir_expr::AnonRecordField> = Vec::new();
+    ctx: &mut hir_lower_ctx.LoweringCtx,
+    fields: &Vec<ast.RecordExprField>,
+    span: common.Span,
+) -> hir_expr.Expr {
+    let mut fields_hir: Vec<hir_expr.AnonRecordField> = Vec.new();
     for i in 0usize..fields.len() {
         let f = &fields[i];
         let val_hir = match &f.val {
@@ -930,22 +930,22 @@ fn lower_anon_record_expr(
                 let lookup_symbol = ctx.intern(name_str.as_str());
                 let local = ctx.resolver.lookup(lookup_symbol);
                 match local {
-                    Option::Some(result) => {
+                    Option.Some(result) => {
                         let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
                         let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
-                        hir_expr::Expr::new(
-                            hir_expr::ExprKind::Local(binding.local_id),
+                        hir_expr.Expr.new(
+                            hir_expr.ExprKind.Local(binding.local_id),
                             ty,
                             f.name.span,
                         )
                     }
-                    Option::None => {
+                    Option.None => {
                         ctx.error(
-                            hir::DiagnosticCode::E0101,
+                            hir.DiagnosticCode.E0101,
                             common::make_string("cannot use shorthand for unresolved field"),
                             f.name.span,
                         );
-                        hir_expr::Expr::error(f.name.span)
+                        hir_expr.Expr.error(f.name.span)
                     }
                 }
             }
@@ -953,8 +953,8 @@ fn lower_anon_record_expr(
         // Re-intern field name for cross-interner consistency (AST → HIR interner)
         let fname_str = ctx.span_to_string(f.name.span);
         let fname_sym = ctx.intern(fname_str.as_str());
-        let re_name = common::SpannedSymbol { symbol: fname_sym, span: f.name.span };
-        let field_hir = hir_expr::AnonRecordField::new(
+        let re_name = common.SpannedSymbol { symbol: fname_sym, span: f.name.span };
+        let field_hir = hir_expr.AnonRecordField.new(
             re_name,
             val_hir,
             f.span,
@@ -963,8 +963,8 @@ fn lower_anon_record_expr(
     }
 
     let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
-    hir_expr::Expr::new(
-        hir_expr::ExprKind::AnonRecord { fields: fields_hir },
+    hir_expr.Expr.new(
+        hir_expr.ExprKind.AnonRecord { fields: fields_hir },
         ty,
         span,
     )
@@ -975,21 +975,21 @@ fn lower_anon_record_expr(
 // ============================================================
 
 /// Lower a block expression.
-fn lower_block_expr(ctx: &mut hir_lower_ctx::LoweringCtx, block: &ast::Block, span: common::Span) -> hir_expr::Expr {
+fn lower_block_expr(ctx: &mut hir_lower_ctx.LoweringCtx, block: &ast.Block, span: common.Span) -> hir_expr.Expr {
     let block_hir = lower_block(ctx, block);
     let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
-    hir_expr::Expr::new(
-        hir_expr::ExprKind::Block(block_hir),
+    hir_expr.Expr.new(
+        hir_expr.ExprKind.Block(block_hir),
         ty,
         span,
     )
 }
 
 /// Lower a block to HIR Block.
-pub fn lower_block(ctx: &mut hir_lower_ctx::LoweringCtx, block: &ast::Block) -> hir_expr::Block {
-    ctx.resolver.push_scope(resolve::ScopeKind::Block);
+pub fn lower_block(ctx: &mut hir_lower_ctx.LoweringCtx, block: &ast.Block) -> hir_expr.Block {
+    ctx.resolver.push_scope(resolve.ScopeKind.Block);
 
-    let mut stmts_hir: Vec<hir_expr::Stmt> = Vec::new();
+    let mut stmts_hir: Vec<hir_expr.Stmt> = Vec.new();
     for i in 0usize..block.statements.len() {
         let stmt_hir = lower_stmt(ctx, &block.statements[i]);
         stmts_hir.push(stmt_hir);
@@ -997,68 +997,68 @@ pub fn lower_block(ctx: &mut hir_lower_ctx::LoweringCtx, block: &ast::Block) -> 
 
     let expr_hir = match &block.expr {
         &Some(ref e) => {
-            Some(Box::new(lower_expr(ctx, e.as_ref())))
+            Some(Box.new(lower_expr(ctx, e.as_ref())))
         }
         &None => {
-            Option::None
+            Option.None
         }
     };
 
     ctx.resolver.pop_scope();
-    hir_expr::Block::new(stmts_hir, expr_hir, block.span)
+    hir_expr.Block.new(stmts_hir, expr_hir, block.span)
 }
 
 /// Lower a block to an expression.
-pub fn lower_block_to_expr(ctx: &mut hir_lower_ctx::LoweringCtx, block: &ast::Block) -> hir_expr::Expr {
+pub fn lower_block_to_expr(ctx: &mut hir_lower_ctx.LoweringCtx, block: &ast.Block) -> hir_expr.Expr {
     let block_hir = lower_block(ctx, block);
     let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
-    hir_expr::Expr::new(
-        hir_expr::ExprKind::Block(block_hir),
+    hir_expr.Expr.new(
+        hir_expr.ExprKind.Block(block_hir),
         ty,
         block.span,
     )
 }
 
 /// Lower a statement.
-fn lower_stmt(ctx: &mut hir_lower_ctx::LoweringCtx, stmt: &ast::Statement) -> hir_expr::Stmt {
+fn lower_stmt(ctx: &mut hir_lower_ctx.LoweringCtx, stmt: &ast.Statement) -> hir_expr.Stmt {
     match stmt {
-        &ast::Statement::Let { ref pattern, ref ty, ref init_val, span } => {
+        &ast.Statement.Let { ref pattern, ref ty, ref init_val, span } => {
             // Lower the type annotation first (does not introduce bindings)
             let ty_hir = match ty {
                 &Some(ref t) => Some(hir_lower_type::lower_type_id(ctx, t)),
-                &None => Option::None,
+                &None => Option.None,
             };
             // Lower the init expression BEFORE the pattern, so the RHS is
             // resolved in the scope without the new local binding. This prevents
-            // `let lexer = lexer::Lexer::new(...)` from shadowing the module.
+            // `let lexer = lexer.Lexer.new(...)` from shadowing the module.
             let init_hir = match init_val {
                 &Some(ref e) => Some(lower_expr(ctx, e)),
-                &None => Option::None,
+                &None => Option.None,
             };
             // Now lower the pattern (which registers bindings in scope)
             let pattern_hir = lower_pattern(ctx, pattern);
-            hir_expr::Stmt::Let {
+            hir_expr.Stmt.Let {
                 pattern: pattern_hir,
                 ty: ty_hir,
                 init: init_hir,
                 span: span,
             }
         }
-        &ast::Statement::Expr { ref expr, has_semi } => {
+        &ast.Statement.Expr { ref expr, has_semi } => {
             let expr_hir = lower_expr(ctx, expr);
-            hir_expr::Stmt::Expr {
+            hir_expr.Stmt.Expr {
                 expr: expr_hir,
                 has_semi: has_semi,
             }
         }
-        &ast::Statement::Item(ref decl) => {
+        &ast.Statement.Item(ref decl) => {
             // Local items: register and lower inline
             // 1. Extract the name from the declaration
             // 2. Allocate a DefId
             // 3. Register in current scope
             // 4. Lower the declaration
             let def_id = lower_local_item(ctx, decl);
-            hir_expr::Stmt::Item(def_id)
+            hir_expr.Stmt.Item(def_id)
         }
     }
 }
@@ -1076,35 +1076,35 @@ fn lower_stmt(ctx: &mut hir_lower_ctx::LoweringCtx, stmt: &ast::Statement) -> hi
 /// Note: Local items currently register for name resolution but their
 /// bodies are not lowered. Full local item support would require
 /// collecting local items and lowering them in a separate pass.
-fn lower_local_item(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declaration) -> hir_def::DefId {
+fn lower_local_item(ctx: &mut hir_lower_ctx.LoweringCtx, decl: &ast.Declaration) -> hir_def.DefId {
     // Extract name and span from the declaration
     let (name, span) = match decl {
-        &ast::Declaration::Function(ref f) => (f.name, f.span),
-        &ast::Declaration::Struct(ref s) => (s.name, s.span),
-        &ast::Declaration::Enum(ref e) => (e.name, e.span),
-        &ast::Declaration::TypeAlias(ref t) => (t.name, t.span),
-        &ast::Declaration::Const(ref c) => (c.name, c.span),
-        &ast::Declaration::Static(ref s) => (s.name, s.span),
-        &ast::Declaration::Trait(ref t) => (t.name, t.span),
-        &ast::Declaration::Effect(ref e) => (e.name, e.span),
-        &ast::Declaration::Handler(ref h) => (h.name, h.span),
-        &ast::Declaration::Impl(_) => {
+        &ast.Declaration.Function(ref f) => (f.name, f.span),
+        &ast.Declaration.Struct(ref s) => (s.name, s.span),
+        &ast.Declaration.Enum(ref e) => (e.name, e.span),
+        &ast.Declaration.TypeAlias(ref t) => (t.name, t.span),
+        &ast.Declaration.Const(ref c) => (c.name, c.span),
+        &ast.Declaration.Static(ref s) => (s.name, s.span),
+        &ast.Declaration.Trait(ref t) => (t.name, t.span),
+        &ast.Declaration.Effect(ref e) => (e.name, e.span),
+        &ast.Declaration.Handler(ref h) => (h.name, h.span),
+        &ast.Declaration.Impl(_) => {
             // Impl blocks don't have a name, allocate anonymous DefId
             return ctx.alloc_def_id();
         }
-        &ast::Declaration::Bridge(_) => {
+        &ast.Declaration.Bridge(_) => {
             // Not yet supported
             return ctx.alloc_def_id();
         }
-        &ast::Declaration::Module(_) => {
+        &ast.Declaration.Module(_) => {
             // Not yet supported in local scope
             return ctx.alloc_def_id();
         }
-        &ast::Declaration::Macro(_) => {
+        &ast.Declaration.Macro(_) => {
             // Not yet supported
             return ctx.alloc_def_id();
         }
-        &ast::Declaration::Use(_) => {
+        &ast.Declaration.Use(_) => {
             // Not applicable in local scope
             return ctx.alloc_def_id();
         }
@@ -1121,7 +1121,7 @@ fn lower_local_item(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declaratio
     let success = ctx.resolver.define_local_item(re_interned_sym, def_id);
     if !success {
         ctx.error(
-            hir::DiagnosticCode::E0102,
+            hir.DiagnosticCode.E0102,
             common::make_string("duplicate local item definition"),
             span,
         );
@@ -1130,69 +1130,69 @@ fn lower_local_item(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declaratio
     // Register DefInfo with the enclosing function as parent.
     // Note: Impl/Bridge/Module/Macro/Use all return early above and never reach here.
     let def_kind = match decl {
-        &ast::Declaration::Function(_) => hir_def::DefKind::Fn,
-        &ast::Declaration::Struct(_) => hir_def::DefKind::Struct,
-        &ast::Declaration::Enum(_) => hir_def::DefKind::Enum,
-        &ast::Declaration::TypeAlias(_) => hir_def::DefKind::TypeAlias,
-        &ast::Declaration::Const(_) => hir_def::DefKind::Const,
-        &ast::Declaration::Static(_) => hir_def::DefKind::Static,
-        &ast::Declaration::Trait(_) => hir_def::DefKind::Trait,
-        &ast::Declaration::Effect(_) => hir_def::DefKind::Effect,
-        &ast::Declaration::Handler(_) => hir_def::DefKind::Handler,
-        &ast::Declaration::Impl(_) => hir_def::DefKind::Fn,
-        &ast::Declaration::Bridge(_) => hir_def::DefKind::Fn,
-        &ast::Declaration::Module(_) => hir_def::DefKind::Fn,
-        &ast::Declaration::Macro(_) => hir_def::DefKind::Fn,
-        &ast::Declaration::Use(_) => hir_def::DefKind::Fn,
+        &ast.Declaration.Function(_) => hir_def.DefKind.Fn,
+        &ast.Declaration.Struct(_) => hir_def.DefKind.Struct,
+        &ast.Declaration.Enum(_) => hir_def.DefKind.Enum,
+        &ast.Declaration.TypeAlias(_) => hir_def.DefKind.TypeAlias,
+        &ast.Declaration.Const(_) => hir_def.DefKind.Const,
+        &ast.Declaration.Static(_) => hir_def.DefKind.Static,
+        &ast.Declaration.Trait(_) => hir_def.DefKind.Trait,
+        &ast.Declaration.Effect(_) => hir_def.DefKind.Effect,
+        &ast.Declaration.Handler(_) => hir_def.DefKind.Handler,
+        &ast.Declaration.Impl(_) => hir_def.DefKind.Fn,
+        &ast.Declaration.Bridge(_) => hir_def.DefKind.Fn,
+        &ast.Declaration.Module(_) => hir_def.DefKind.Fn,
+        &ast.Declaration.Macro(_) => hir_def.DefKind.Fn,
+        &ast.Declaration.Use(_) => hir_def.DefKind.Fn,
     };
-    ctx.resolver.register_def_info(def_id, def_kind, re_interned_sym, span, Option::None);
+    ctx.resolver.register_def_info(def_id, def_kind, re_interned_sym, span, Option.None);
 
     // Lower the declaration body based on its kind.
     // Currently only Function declarations are fully lowered in local scope.
     // Other declaration kinds are registered for name resolution but their
     // bodies are not yet lowered — emit a diagnostic so users know why.
     match decl {
-        &ast::Declaration::Function(ref fn_decl) => {
+        &ast.Declaration.Function(ref fn_decl) => {
             lower_local_fn(ctx, fn_decl, def_id);
         }
-        &ast::Declaration::Struct(_) => {
-            ctx.error(hir::DiagnosticCode::E0104,
+        &ast.Declaration.Struct(_) => {
+            ctx.error(hir.DiagnosticCode.E0104,
                 common::make_string("local struct declarations not yet supported"), span);
         }
-        &ast::Declaration::Enum(_) => {
-            ctx.error(hir::DiagnosticCode::E0104,
+        &ast.Declaration.Enum(_) => {
+            ctx.error(hir.DiagnosticCode.E0104,
                 common::make_string("local enum declarations not yet supported"), span);
         }
-        &ast::Declaration::TypeAlias(_) => {
-            ctx.error(hir::DiagnosticCode::E0104,
+        &ast.Declaration.TypeAlias(_) => {
+            ctx.error(hir.DiagnosticCode.E0104,
                 common::make_string("local type alias declarations not yet supported"), span);
         }
-        &ast::Declaration::Const(_) => {
-            ctx.error(hir::DiagnosticCode::E0104,
+        &ast.Declaration.Const(_) => {
+            ctx.error(hir.DiagnosticCode.E0104,
                 common::make_string("local const declarations not yet supported"), span);
         }
-        &ast::Declaration::Static(_) => {
-            ctx.error(hir::DiagnosticCode::E0104,
+        &ast.Declaration.Static(_) => {
+            ctx.error(hir.DiagnosticCode.E0104,
                 common::make_string("local static declarations not yet supported"), span);
         }
-        &ast::Declaration::Trait(_) => {
-            ctx.error(hir::DiagnosticCode::E0104,
+        &ast.Declaration.Trait(_) => {
+            ctx.error(hir.DiagnosticCode.E0104,
                 common::make_string("local trait declarations not yet supported"), span);
         }
-        &ast::Declaration::Effect(_) => {
-            ctx.error(hir::DiagnosticCode::E0104,
+        &ast.Declaration.Effect(_) => {
+            ctx.error(hir.DiagnosticCode.E0104,
                 common::make_string("local effect declarations not yet supported"), span);
         }
-        &ast::Declaration::Handler(_) => {
-            ctx.error(hir::DiagnosticCode::E0104,
+        &ast.Declaration.Handler(_) => {
+            ctx.error(hir.DiagnosticCode.E0104,
                 common::make_string("local handler declarations not yet supported"), span);
         }
         // Impl/Bridge/Module/Macro/Use return early above and never reach here
-        &ast::Declaration::Impl(_) => {}
-        &ast::Declaration::Bridge(_) => {}
-        &ast::Declaration::Module(_) => {}
-        &ast::Declaration::Macro(_) => {}
-        &ast::Declaration::Use(_) => {}
+        &ast.Declaration.Impl(_) => {}
+        &ast.Declaration.Bridge(_) => {}
+        &ast.Declaration.Module(_) => {}
+        &ast.Declaration.Macro(_) => {}
+        &ast.Declaration.Use(_) => {}
     }
 
     def_id
@@ -1200,78 +1200,78 @@ fn lower_local_item(ctx: &mut hir_lower_ctx::LoweringCtx, decl: &ast::Declaratio
 
 /// Lower a local function declaration fully (params, signature, body).
 fn lower_local_fn(
-    ctx: &mut hir_lower_ctx::LoweringCtx,
-    f: &ast::FnDecl,
-    def_id: hir_def::DefId,
+    ctx: &mut hir_lower_ctx.LoweringCtx,
+    f: &ast.FnDecl,
+    def_id: hir_def.DefId,
 ) {
     // Lower generics
     let generics = hir_lower_type::lower_generics(ctx, &f.type_params, &f.where_clause);
 
     // Lower parameters inline (simplified version of hir_lower_item::lower_fn_params)
-    let mut hir_params: Vec<hir_item::FnParam> = Vec::new();
+    let mut hir_params: Vec<hir_item.FnParam> = Vec.new();
     for i in 0usize..f.params.len() {
         let param = &f.params[i];
         let param_ty = hir_lower_type::lower_type_id(ctx, &param.ty);
         let param_name = extract_param_name(ctx, &param.pattern);
         let param_def_id = ctx.alloc_def_id();
-        let hir_param = hir_item::FnParam::new(param_def_id, param_name, param_ty, false, false, param.span);
+        let hir_param = hir_item.FnParam.new(param_def_id, param_name, param_ty, false, false, param.span);
         hir_params.push(hir_param);
     }
 
     // Lower return type
     let return_ty = match &f.return_type {
-        &Option::Some(ref rt) => hir_lower_type::lower_type_id(ctx, rt),
-        &Option::None => type_intern::CommonTypes::unit(),
+        &Option.Some(ref rt) => hir_lower_type::lower_type_id(ctx, rt),
+        &Option.None => type_intern.CommonTypes.unit(),
     };
 
     // Pop the TypeParams scope pushed by lower_generics
     ctx.resolver.pop_scope();
 
     // Create function signature
-    let sig = hir_item::FnSig::new(
+    let sig = hir_item.FnSig.new(
         generics,
         hir_params,
         return_ty,
-        hir_ty::EffectRow::empty(),
+        hir_ty.EffectRow.empty(),
         f.qualifiers,
         f.span,
     );
 
     // Pre-allocate body_id
     let body_id_opt = match &f.body {
-        &Option::Some(_) => {
+        &Option.Some(_) => {
             let bid = ctx.alloc_body_id();
-            Option::Some(bid)
+            Option.Some(bid)
         }
-        &Option::None => Option::None,
+        &Option.None => Option.None,
     };
 
     // Create function definition and add as item
-    let fn_def = hir_item::FnDef::new(sig, body_id_opt);
-    let item_kind = hir_item::ItemKind::Fn(fn_def);
+    let fn_def = hir_item.FnDef.new(sig, body_id_opt);
+    let item_kind = hir_item.ItemKind.Fn(fn_def);
     // Re-intern the function name from AST interner to HIR interner
     let name_str = ctx.span_to_string(f.name.span);
     let re_interned_sym = ctx.intern(name_str.as_str());
-    let hir_name = common::SpannedSymbol { symbol: re_interned_sym, span: f.name.span };
-    let item = hir_item::Item::new(
+    let hir_name = common.SpannedSymbol { symbol: re_interned_sym, span: f.name.span };
+    let item = hir_item.Item.new(
         def_id,
         hir_name,
         item_kind,
-        common::Visibility::Private,
+        common.Visibility.Private,
         f.span,
     );
     ctx.add_item(def_id, item);
 
     // Lower body if present
     match &f.body {
-        &Option::Some(ref body_block) => {
+        &Option.Some(ref body_block) => {
             match &body_id_opt {
-                &Option::Some(ref bid) => {
+                &Option.Some(ref bid) => {
                     // Push function scope for body
-                    ctx.resolver.push_scope(resolve::ScopeKind::Function);
+                    ctx.resolver.push_scope(resolve.ScopeKind.Function);
 
                     // Register parameters as locals
-                    let mut locals: Vec<hir_expr::Local> = Vec::new();
+                    let mut locals: Vec<hir_expr.Local> = Vec.new();
                     let mut param_count: u32 = 0;
 
                     for pi in 0usize..f.params.len() {
@@ -1279,7 +1279,7 @@ fn lower_local_fn(
                         let local_id = ctx.alloc_local_id();
                         let param_ty_hir = hir_lower_type::lower_type_id(ctx, &param.ty);
                         let pname = extract_param_name(ctx, &param.pattern);
-                        let local = hir_expr::Local::new(
+                        let local = hir_expr.Local.new(
                             local_id, pname, param_ty_hir, false, param.span,
                         );
                         locals.push(local);
@@ -1291,14 +1291,14 @@ fn lower_local_fn(
                     }
 
                     // Save and clear body_locals
-                    let mut saved_body_locals: Vec<hir_expr::Local> = Vec::new();
+                    let mut saved_body_locals: Vec<hir_expr.Local> = Vec.new();
                     for si in 0usize..ctx.body_locals.len() {
                         let saved_local = &ctx.body_locals[si];
-                        saved_body_locals.push(hir_expr::Local::new(
+                        saved_body_locals.push(hir_expr.Local.new(
                             saved_local.id, saved_local.name, saved_local.ty, saved_local.mutable, saved_local.span,
                         ));
                     }
-                    ctx.body_locals = Vec::new();
+                    ctx.body_locals = Vec.new();
 
                     // Lower body
                     let body_expr = lower_block_to_expr(ctx, body_block);
@@ -1306,7 +1306,7 @@ fn lower_local_fn(
                     // Merge accumulated locals
                     for bl_idx in 0usize..ctx.body_locals.len() {
                         let bl = &ctx.body_locals[bl_idx];
-                        locals.push(hir_expr::Local::new(
+                        locals.push(hir_expr.Local.new(
                             bl.id, bl.name, bl.ty, bl.mutable, bl.span,
                         ));
                     }
@@ -1314,28 +1314,28 @@ fn lower_local_fn(
 
                     ctx.resolver.pop_scope();
 
-                    let body = hir_expr::Body::new(*bid, locals, param_count, body_expr);
+                    let body = hir_expr.Body.new(*bid, locals, param_count, body_expr);
                     ctx.add_body(*bid, body);
                 }
-                &Option::None => {}
+                &Option.None => {}
             }
         }
-        &Option::None => {}
+        &Option.None => {}
     }
 }
 
 /// Extract a parameter name as SpannedSymbol from a pattern.
-fn extract_param_name(ctx: &mut hir_lower_ctx::LoweringCtx, pattern: &ast::Pattern) -> common::SpannedSymbol {
+fn extract_param_name(ctx: &mut hir_lower_ctx.LoweringCtx, pattern: &ast.Pattern) -> common.SpannedSymbol {
     match &pattern.kind {
-        &ast::PatternKind::Ident { by_ref: _, is_mut: _, ref name, subpattern: _ } => {
+        &ast.PatternKind.Ident { by_ref: _, is_mut: _, ref name, subpattern: _ } => {
             let name_str = ctx.span_to_string(name.span);
             let sym = ctx.intern(name_str.as_str());
-            common::SpannedSymbol { symbol: sym, span: name.span }
+            common.SpannedSymbol { symbol: sym, span: name.span }
         }
         _ => {
             // Fallback: use pattern span
             let sym = ctx.intern("_");
-            common::SpannedSymbol { symbol: sym, span: pattern.span }
+            common.SpannedSymbol { symbol: sym, span: pattern.span }
         }
     }
 }
@@ -1345,22 +1345,22 @@ fn extract_param_name(ctx: &mut hir_lower_ctx::LoweringCtx, pattern: &ast::Patte
 // ============================================================
 
 /// Lower a pattern.
-pub fn lower_pattern(ctx: &mut hir_lower_ctx::LoweringCtx, pattern: &ast::Pattern) -> hir_expr::Pattern {
+pub fn lower_pattern(ctx: &mut hir_lower_ctx.LoweringCtx, pattern: &ast.Pattern) -> hir_expr.Pattern {
     let span = pattern.span;
     let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
 
     let kind = match &pattern.kind {
-        &ast::PatternKind::Wildcard => {
-            hir_expr::PatternKind::Wildcard
+        &ast.PatternKind.Wildcard => {
+            hir_expr.PatternKind.Wildcard
         }
-        &ast::PatternKind::Rest => {
-            hir_expr::PatternKind::Rest
+        &ast.PatternKind.Rest => {
+            hir_expr.PatternKind.Rest
         }
-        &ast::PatternKind::Literal(ref lit) => {
+        &ast.PatternKind.Literal(ref lit) => {
             let lit_hir = lower_pattern_literal(ctx, lit);
-            hir_expr::PatternKind::Literal(lit_hir)
+            hir_expr.PatternKind.Literal(lit_hir)
         }
-        &ast::PatternKind::Ident { by_ref, is_mut, ref name, ref subpattern } => {
+        &ast.PatternKind.Ident { by_ref, is_mut, ref name, ref subpattern } => {
             // Allocate a local ID for this binding
             let local_id = ctx.alloc_local_id();
 
@@ -1375,21 +1375,21 @@ pub fn lower_pattern(ctx: &mut hir_lower_ctx::LoweringCtx, pattern: &ast::Patter
 
             let mode = if by_ref {
                 if is_mut {
-                    hir_expr::BindingMode::ByMutRef
+                    hir_expr.BindingMode.ByMutRef
                 } else {
-                    hir_expr::BindingMode::ByRef
+                    hir_expr.BindingMode.ByRef
                 }
             } else {
-                hir_expr::BindingMode::ByValue
+                hir_expr.BindingMode.ByValue
             };
 
             let subpat_hir = match subpattern {
-                &Some(ref sp) => Some(Box::new(lower_pattern(ctx, sp.as_ref()))),
-                &None => Option::None,
+                &Some(ref sp) => Some(Box.new(lower_pattern(ctx, sp.as_ref()))),
+                &None => Option.None,
             };
 
             // Create SpannedSymbol with the re-interned symbol
-            let hir_name = common::SpannedSymbol {
+            let hir_name = common.SpannedSymbol {
                 symbol: re_interned_symbol,
                 span: name.span,
             };
@@ -1407,7 +1407,7 @@ pub fn lower_pattern(ctx: &mut hir_lower_ctx::LoweringCtx, pattern: &ast::Patter
             // Add this binding to the body_locals accumulator so it gets
             // included in the Body's locals Vec. Without this, the type
             // checker cannot find the local's type.
-            let body_local = hir_expr::Local::new(
+            let body_local = hir_expr.Local.new(
                 local_id,
                 hir_name,
                 local_ty,
@@ -1416,135 +1416,135 @@ pub fn lower_pattern(ctx: &mut hir_lower_ctx::LoweringCtx, pattern: &ast::Patter
             );
             ctx.body_locals.push(body_local);
 
-            hir_expr::PatternKind::Binding {
+            hir_expr.PatternKind.Binding {
                 local_id: local_id,
                 name: hir_name,
                 mode: mode,
                 subpattern: subpat_hir,
             }
         }
-        &ast::PatternKind::Ref { is_mut, ref inner } => {
+        &ast.PatternKind.Ref { is_mut, ref inner } => {
             let inner_hir = lower_pattern(ctx, inner.as_ref());
-            hir_expr::PatternKind::Ref {
+            hir_expr.PatternKind.Ref {
                 mutable: is_mut,
-                inner: Box::new(inner_hir),
+                inner: Box.new(inner_hir),
             }
         }
-        &ast::PatternKind::Struct { ref path, ref fields, has_rest } => {
+        &ast.PatternKind.Struct { ref path, ref fields, has_rest } => {
             lower_struct_pattern(ctx, path, fields, has_rest, span)
         }
-        &ast::PatternKind::TupleStruct { ref path, ref fields, rest_pos: _ } => {
+        &ast.PatternKind.TupleStruct { ref path, ref fields, rest_pos: _ } => {
             lower_tuple_struct_pattern(ctx, path, fields, span)
         }
-        &ast::PatternKind::Tuple { ref fields, rest_pos: _ } => {
-            let mut fields_hir: Vec<hir_expr::Pattern> = Vec::new();
+        &ast.PatternKind.Tuple { ref fields, rest_pos: _ } => {
+            let mut fields_hir: Vec<hir_expr.Pattern> = Vec.new();
             for i in 0usize..fields.len() {
                 let f_hir = lower_pattern(ctx, &fields[i]);
                 fields_hir.push(f_hir);
             }
-            hir_expr::PatternKind::Tuple(fields_hir)
+            hir_expr.PatternKind.Tuple(fields_hir)
         }
-        &ast::PatternKind::Slice { ref elements, rest_pos: _ } => {
-            let mut elements_hir: Vec<hir_expr::Pattern> = Vec::new();
+        &ast.PatternKind.Slice { ref elements, rest_pos: _ } => {
+            let mut elements_hir: Vec<hir_expr.Pattern> = Vec.new();
             for i in 0usize..elements.len() {
                 elements_hir.push(lower_pattern(ctx, &elements[i]));
             }
 
             // Simplified slice pattern - just convert all elements
-            hir_expr::PatternKind::Slice {
+            hir_expr.PatternKind.Slice {
                 prefix: elements_hir,
-                rest: Option::None,
-                suffix: Vec::new(),
+                rest: Option.None,
+                suffix: Vec.new(),
             }
         }
-        &ast::PatternKind::Or(ref patterns) => {
-            let mut pats_hir: Vec<hir_expr::Pattern> = Vec::new();
+        &ast.PatternKind.Or(ref patterns) => {
+            let mut pats_hir: Vec<hir_expr.Pattern> = Vec.new();
             for i in 0usize..patterns.len() {
                 let p_hir = lower_pattern(ctx, &patterns[i]);
                 pats_hir.push(p_hir);
             }
-            hir_expr::PatternKind::Or(pats_hir)
+            hir_expr.PatternKind.Or(pats_hir)
         }
-        &ast::PatternKind::Range { ref start, ref end_val, inclusive } => {
+        &ast.PatternKind.Range { ref start, ref end_val, inclusive } => {
             let start_hir = match start {
-                &Some(ref s) => Some(Box::new(lower_pattern(ctx, s.as_ref()))),
-                &None => Option::None,
+                &Some(ref s) => Some(Box.new(lower_pattern(ctx, s.as_ref()))),
+                &None => Option.None,
             };
             let end_hir = match end_val {
-                &Some(ref e) => Some(Box::new(lower_pattern(ctx, e.as_ref()))),
-                &None => Option::None,
+                &Some(ref e) => Some(Box.new(lower_pattern(ctx, e.as_ref()))),
+                &None => Option.None,
             };
-            hir_expr::PatternKind::Range {
+            hir_expr.PatternKind.Range {
                 start: start_hir,
                 end_val: end_hir,
                 inclusive: inclusive,
             }
         }
-        &ast::PatternKind::Path(ref path) => {
+        &ast.PatternKind.Path(ref path) => {
             lower_path_pattern(ctx, path, span)
         }
-        &ast::PatternKind::Paren(ref inner) => {
+        &ast.PatternKind.Paren(ref inner) => {
             // Parentheses are purely syntactic - recurse on inner pattern
             return lower_pattern(ctx, inner.as_ref());
         }
     };
 
-    hir_expr::Pattern::new(kind, ty, span)
+    hir_expr.Pattern.new(kind, ty, span)
 }
 
 /// Lower a literal in a pattern context.
-fn lower_pattern_literal(ctx: &mut hir_lower_ctx::LoweringCtx, lit: &ast::Literal) -> hir_expr::Literal {
+fn lower_pattern_literal(ctx: &mut hir_lower_ctx.LoweringCtx, lit: &ast.Literal) -> hir_expr.Literal {
     let kind = match &lit.kind {
-        &ast::LiteralKind::Int { val, ref suffix } => {
+        &ast.LiteralKind.Int { val, ref suffix } => {
             let prim_ty = match suffix {
                 &Some(ref s) => int_suffix_to_prim(s),
-                &None => Option::None,
+                &None => Option.None,
             };
-            hir_expr::LiteralKind::Int { val: val, ty: prim_ty }
+            hir_expr.LiteralKind.Int { val: val, ty: prim_ty }
         }
-        &ast::LiteralKind::Float { bits, ref suffix } => {
+        &ast.LiteralKind.Float { bits, ref suffix } => {
             let prim_ty = match suffix {
                 &Some(ref s) => float_suffix_to_prim(s),
-                &None => Option::None,
+                &None => Option.None,
             };
-            hir_expr::LiteralKind::Float { bits: bits, ty: prim_ty }
+            hir_expr.LiteralKind.Float { bits: bits, ty: prim_ty }
         }
-        &ast::LiteralKind::Str(ref s) => {
-            let mut s_copy = String::new();
+        &ast.LiteralKind.Str(ref s) => {
+            let mut s_copy = String.new();
             s_copy.push_str(s.as_str());
-            hir_expr::LiteralKind::Str(s_copy)
+            hir_expr.LiteralKind.Str(s_copy)
         }
-        &ast::LiteralKind::ByteStr(ref bytes) => {
-            let mut bytes_copy: Vec<u8> = Vec::new();
+        &ast.LiteralKind.ByteStr(ref bytes) => {
+            let mut bytes_copy: Vec<u8> = Vec.new();
             for i in 0usize..bytes.len() {
                 bytes_copy.push(bytes[i]);
             }
-            hir_expr::LiteralKind::ByteStr(bytes_copy)
+            hir_expr.LiteralKind.ByteStr(bytes_copy)
         }
-        &ast::LiteralKind::Char(c) => {
-            hir_expr::LiteralKind::Char(c)
+        &ast.LiteralKind.Char(c) => {
+            hir_expr.LiteralKind.Char(c)
         }
-        &ast::LiteralKind::Bool(b) => {
-            hir_expr::LiteralKind::Bool(b)
+        &ast.LiteralKind.Bool(b) => {
+            hir_expr.LiteralKind.Bool(b)
         }
     };
 
-    hir_expr::Literal::new(kind, lit.span)
+    hir_expr.Literal.new(kind, lit.span)
 }
 
 /// Lower a struct pattern.
 fn lower_struct_pattern(
-    ctx: &mut hir_lower_ctx::LoweringCtx,
-    path: &ast::TypePath,
-    fields: &Vec<ast::StructPatternField>,
+    ctx: &mut hir_lower_ctx.LoweringCtx,
+    path: &ast.TypePath,
+    fields: &Vec<ast.StructPatternField>,
     has_rest: bool,
-    span: common::Span,
-) -> hir_expr::PatternKind {
+    span: common.Span,
+) -> hir_expr.PatternKind {
     // Resolve the path
     let resolved = resolve_type_path_for_pattern(ctx, path, span);
 
     // Lower field patterns
-    let mut fields_hir: Vec<hir_expr::FieldPattern> = Vec::new();
+    let mut fields_hir: Vec<hir_expr.FieldPattern> = Vec.new();
     for i in 0usize..fields.len() {
         let f = &fields[i];
         // Handle shorthand patterns (Foo { bar } binds to variable named bar)
@@ -1557,13 +1557,13 @@ fn lower_struct_pattern(
                 // Re-intern binding name for cross-module consistency
                 let bind_name_str = ctx.span_to_string(f.name.span);
                 let bind_name_sym = ctx.intern(bind_name_str.as_str());
-                let re_bind_name = common::SpannedSymbol { symbol: bind_name_sym, span: f.name.span };
-                hir_expr::Pattern::new(
-                    hir_expr::PatternKind::Binding {
+                let re_bind_name = common.SpannedSymbol { symbol: bind_name_sym, span: f.name.span };
+                hir_expr.Pattern.new(
+                    hir_expr.PatternKind.Binding {
                         local_id: local_id,
                         name: re_bind_name,
-                        mode: hir_expr::BindingMode::ByValue,
-                        subpattern: Option::None,
+                        mode: hir_expr.BindingMode.ByValue,
+                        subpattern: Option.None,
                     },
                     ty,
                     f.span,
@@ -1573,17 +1573,17 @@ fn lower_struct_pattern(
         // Re-intern field pattern name for cross-module consistency
         let fpat_name_str = ctx.span_to_string(f.name.span);
         let fpat_name_sym = ctx.intern(fpat_name_str.as_str());
-        let re_fpat_name = common::SpannedSymbol { symbol: fpat_name_sym, span: f.name.span };
-        let field_hir = hir_expr::FieldPattern::new(
+        let re_fpat_name = common.SpannedSymbol { symbol: fpat_name_sym, span: f.name.span };
+        let field_hir = hir_expr.FieldPattern.new(
             re_fpat_name,
-            Option::None, // Field index resolved during type checking
+            Option.None, // Field index resolved during type checking
             pat_hir,
             f.span,
         );
         fields_hir.push(field_hir);
     }
 
-    hir_expr::PatternKind::Struct {
+    hir_expr.PatternKind.Struct {
         path: resolved,
         fields: fields_hir,
         has_rest: has_rest,
@@ -1592,40 +1592,40 @@ fn lower_struct_pattern(
 
 /// Lower a tuple struct pattern.
 fn lower_tuple_struct_pattern(
-    ctx: &mut hir_lower_ctx::LoweringCtx,
-    path: &ast::TypePath,
-    fields: &Vec<ast::Pattern>,
-    span: common::Span,
-) -> hir_expr::PatternKind {
+    ctx: &mut hir_lower_ctx.LoweringCtx,
+    path: &ast.TypePath,
+    fields: &Vec<ast.Pattern>,
+    span: common.Span,
+) -> hir_expr.PatternKind {
     let resolved = resolve_type_path_for_pattern(ctx, path, span);
 
-    let mut fields_hir: Vec<hir_expr::Pattern> = Vec::new();
+    let mut fields_hir: Vec<hir_expr.Pattern> = Vec.new();
     for i in 0usize..fields.len() {
         let f_hir = lower_pattern(ctx, &fields[i]);
         fields_hir.push(f_hir);
     }
 
-    hir_expr::PatternKind::TupleStruct {
+    hir_expr.PatternKind.TupleStruct {
         path: resolved,
         fields: fields_hir,
     }
 }
 
 /// Lower a path pattern (unit variant or constant).
-fn lower_path_pattern(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::TypePath, span: common::Span) -> hir_expr::PatternKind {
+fn lower_path_pattern(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.TypePath, span: common.Span) -> hir_expr.PatternKind {
     let resolved = resolve_type_path_for_pattern(ctx, path, span);
-    hir_expr::PatternKind::Path(resolved)
+    hir_expr.PatternKind.Path(resolved)
 }
 
 /// Resolve a type path for use in a pattern.
-fn resolve_type_path_for_pattern(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::TypePath, span: common::Span) -> hir_def::ResolvedPath {
+fn resolve_type_path_for_pattern(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.TypePath, span: common.Span) -> hir_def.ResolvedPath {
     // Extract the names from path segments, re-interning for consistent indices
-    let mut names: Vec<common::SpannedSymbol> = Vec::new();
+    let mut names: Vec<common.SpannedSymbol> = Vec.new();
     for i in 0usize..path.segments.len() {
         let seg = &path.segments[i];
         let name_str = ctx.span_to_string(seg.name.span);
         let re_interned = ctx.intern(name_str.as_str());
-        names.push(common::SpannedSymbol { symbol: re_interned, span: seg.name.span });
+        names.push(common.SpannedSymbol { symbol: re_interned, span: seg.name.span });
     }
 
     // Try qualified path resolution
@@ -1635,38 +1635,38 @@ fn resolve_type_path_for_pattern(ctx: &mut hir_lower_ctx::LoweringCtx, path: &as
         let last_seg = &path.segments[path.segments.len() - 1];
         let type_args = match &last_seg.args {
             &Some(ref args) => hir_lower_type::lower_type_args(ctx, args),
-            &None => Vec::new(),
+            &None => Vec.new(),
         };
         let type_arg_count = type_args.len() as u32;
         // Check if the resolved def is a variant - set variant_index if so
         let def_info = ctx.resolver.get_def_info(result.def_id);
         match def_info {
-            Option::Some(info) => {
+            Option.Some(info) => {
                 match info.variant_index {
-                    Option::Some(vi) => {
-                        return hir_def::ResolvedPath::variant(result.def_id, span, vi);
+                    Option.Some(vi) => {
+                        return hir_def.ResolvedPath.variant(result.def_id, span, vi);
                     }
-                    Option::None => {
-                        return hir_def::ResolvedPath::new(result.def_id, type_arg_count, span);
+                    Option.None => {
+                        return hir_def.ResolvedPath.new(result.def_id, type_arg_count, span);
                     }
                 }
             }
-            Option::None => {
-                return hir_def::ResolvedPath::new(result.def_id, type_arg_count, span);
+            Option.None => {
+                return hir_def.ResolvedPath.new(result.def_id, type_arg_count, span);
             }
         }
     }
 
     // Unresolved
     ctx.error(
-        hir::DiagnosticCode::E0102,
+        hir.DiagnosticCode.E0102,
         common::make_string("cannot resolve pattern path"),
         span,
     );
 
     // Return error path
-    let error_def_id = hir_def::DefId::new(0);
-    hir_def::ResolvedPath::new(error_def_id, 0, span)
+    let error_def_id = hir_def.DefId.new(0);
+    hir_def.ResolvedPath.new(error_def_id, 0, span)
 }
 
 // ============================================================
@@ -1675,34 +1675,34 @@ fn resolve_type_path_for_pattern(ctx: &mut hir_lower_ctx::LoweringCtx, path: &as
 
 /// Lower an if expression.
 fn lower_if_expr(
-    ctx: &mut hir_lower_ctx::LoweringCtx,
-    condition: &ast::Expr,
-    then_branch: &ast::Block,
-    else_branch: &Option<ast::ElseBranch>,
-    span: common::Span,
-) -> hir_expr::Expr {
+    ctx: &mut hir_lower_ctx.LoweringCtx,
+    condition: &ast.Expr,
+    then_branch: &ast.Block,
+    else_branch: &Option<ast.ElseBranch>,
+    span: common.Span,
+) -> hir_expr.Expr {
     let cond_hir = lower_expr(ctx, condition);
     let then_hir = lower_block_to_expr(ctx, then_branch);
 
     let else_hir = match else_branch {
         &Some(ref eb) => {
             match eb {
-                &ast::ElseBranch::Block(ref block) => {
-                    Some(Box::new(lower_block_to_expr(ctx, block)))
+                &ast.ElseBranch.Block(ref block) => {
+                    Some(Box.new(lower_block_to_expr(ctx, block)))
                 }
-                &ast::ElseBranch::If(ref if_expr) => {
-                    Some(Box::new(lower_expr(ctx, if_expr.as_ref())))
+                &ast.ElseBranch.If(ref if_expr) => {
+                    Some(Box.new(lower_expr(ctx, if_expr.as_ref())))
                 }
             }
         }
-        &None => Option::None,
+        &None => Option.None,
     };
 
     let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
-    hir_expr::Expr::new(
-        hir_expr::ExprKind::If {
-            condition: Box::new(cond_hir),
-            then_branch: Box::new(then_hir),
+    hir_expr.Expr.new(
+        hir_expr.ExprKind.If {
+            condition: Box.new(cond_hir),
+            then_branch: Box.new(then_hir),
             else_branch: else_hir,
         },
         ty,
@@ -1712,13 +1712,13 @@ fn lower_if_expr(
 
 /// Lower an if-let expression (desugar to match).
 fn lower_if_let_expr(
-    ctx: &mut hir_lower_ctx::LoweringCtx,
-    pattern: &ast::Pattern,
-    scrutinee: &ast::Expr,
-    then_branch: &ast::Block,
-    else_branch: &Option<ast::ElseBranch>,
-    span: common::Span,
-) -> hir_expr::Expr {
+    ctx: &mut hir_lower_ctx.LoweringCtx,
+    pattern: &ast.Pattern,
+    scrutinee: &ast.Expr,
+    then_branch: &ast.Block,
+    else_branch: &Option<ast.ElseBranch>,
+    span: common.Span,
+) -> hir_expr.Expr {
     // Desugar if let to match:
     // if let pat = expr { then } else { else }
     // becomes:
@@ -1728,9 +1728,9 @@ fn lower_if_let_expr(
     let pattern_hir = lower_pattern(ctx, pattern);
     let then_hir = lower_block_to_expr(ctx, then_branch);
 
-    let then_arm = hir_expr::MatchArm::new(
+    let then_arm = hir_expr.MatchArm.new(
         pattern_hir,
-        Option::None,
+        Option.None,
         then_hir,
         then_branch.span,
     );
@@ -1738,41 +1738,41 @@ fn lower_if_let_expr(
     let else_hir = match else_branch {
         &Some(ref eb) => {
             match eb {
-                &ast::ElseBranch::Block(ref block) => {
+                &ast.ElseBranch.Block(ref block) => {
                     lower_block_to_expr(ctx, block)
                 }
-                &ast::ElseBranch::If(ref if_expr) => {
+                &ast.ElseBranch.If(ref if_expr) => {
                     lower_expr(ctx, if_expr.as_ref())
                 }
             }
         }
         &None => {
             // No else branch, use unit
-            hir_expr::Expr::new(
-                hir_expr::ExprKind::Tuple(Vec::new()),
-                type_intern::CommonTypes::unit(),
+            hir_expr.Expr.new(
+                hir_expr.ExprKind.Tuple(Vec.new()),
+                type_intern.CommonTypes.unit(),
                 span,
             )
         }
     };
 
     let wildcard_ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
-    let wildcard_pat = hir_expr::Pattern::wildcard(wildcard_ty, span);
-    let else_arm = hir_expr::MatchArm::new(
+    let wildcard_pat = hir_expr.Pattern.wildcard(wildcard_ty, span);
+    let else_arm = hir_expr.MatchArm.new(
         wildcard_pat,
-        Option::None,
+        Option.None,
         else_hir,
         span,
     );
 
-    let mut arms: Vec<hir_expr::MatchArm> = Vec::new();
+    let mut arms: Vec<hir_expr.MatchArm> = Vec.new();
     arms.push(then_arm);
     arms.push(else_arm);
 
     let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
-    hir_expr::Expr::new(
-        hir_expr::ExprKind::Match {
-            scrutinee: Box::new(scrutinee_hir),
+    hir_expr.Expr.new(
+        hir_expr.ExprKind.Match {
+            scrutinee: Box.new(scrutinee_hir),
             arms: arms,
         },
         ty,
@@ -1782,25 +1782,25 @@ fn lower_if_let_expr(
 
 /// Lower a match expression.
 fn lower_match_expr(
-    ctx: &mut hir_lower_ctx::LoweringCtx,
-    scrutinee: &ast::Expr,
-    arms: &Vec<ast::MatchArm>,
-    span: common::Span,
-) -> hir_expr::Expr {
+    ctx: &mut hir_lower_ctx.LoweringCtx,
+    scrutinee: &ast.Expr,
+    arms: &Vec<ast.MatchArm>,
+    span: common.Span,
+) -> hir_expr.Expr {
     let scrutinee_hir = lower_expr(ctx, scrutinee);
 
-    let mut arms_hir: Vec<hir_expr::MatchArm> = Vec::new();
+    let mut arms_hir: Vec<hir_expr.MatchArm> = Vec.new();
     for i in 0usize..arms.len() {
         let arm = &arms[i];
-        ctx.resolver.push_scope(resolve::ScopeKind::MatchArm);
+        ctx.resolver.push_scope(resolve.ScopeKind.MatchArm);
         let pattern_hir = lower_pattern(ctx, &arm.pattern);
         let guard_hir = match &arm.guard {
             &Some(ref g) => Some(lower_expr(ctx, g)),
-            &None => Option::None,
+            &None => Option.None,
         };
         let body_hir = lower_expr(ctx, &arm.body);
         ctx.resolver.pop_scope();
-        let arm_hir = hir_expr::MatchArm::new(
+        let arm_hir = hir_expr.MatchArm.new(
             pattern_hir,
             guard_hir,
             body_hir,
@@ -1810,9 +1810,9 @@ fn lower_match_expr(
     }
 
     let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
-    hir_expr::Expr::new(
-        hir_expr::ExprKind::Match {
-            scrutinee: Box::new(scrutinee_hir),
+    hir_expr.Expr.new(
+        hir_expr.ExprKind.Match {
+            scrutinee: Box.new(scrutinee_hir),
             arms: arms_hir,
         },
         ty,
@@ -1822,21 +1822,21 @@ fn lower_match_expr(
 
 /// Lower a loop expression.
 fn lower_loop_expr(
-    ctx: &mut hir_lower_ctx::LoweringCtx,
-    label: &Option<common::SpannedSymbol>,
-    body: &ast::Block,
-    span: common::Span,
-) -> hir_expr::Expr {
+    ctx: &mut hir_lower_ctx.LoweringCtx,
+    label: &Option<common.SpannedSymbol>,
+    body: &ast.Block,
+    span: common.Span,
+) -> hir_expr.Expr {
     let label_sym = match label {
         &Some(ref l) => Some(l.symbol),
-        &None => Option::None,
+        &None => Option.None,
     };
     let body_hir = lower_block_to_expr(ctx, body);
     let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
-    hir_expr::Expr::new(
-        hir_expr::ExprKind::Loop {
+    hir_expr.Expr.new(
+        hir_expr.ExprKind.Loop {
             label: label_sym,
-            body: Box::new(body_hir),
+            body: Box.new(body_hir),
         },
         ty,
         span,
@@ -1845,47 +1845,47 @@ fn lower_loop_expr(
 
 /// Lower a while expression (desugar to loop + if).
 fn lower_while_expr(
-    ctx: &mut hir_lower_ctx::LoweringCtx,
-    label: &Option<common::SpannedSymbol>,
-    condition: &ast::Expr,
-    body: &ast::Block,
-    span: common::Span,
-) -> hir_expr::Expr {
+    ctx: &mut hir_lower_ctx.LoweringCtx,
+    label: &Option<common.SpannedSymbol>,
+    condition: &ast.Expr,
+    body: &ast.Block,
+    span: common.Span,
+) -> hir_expr.Expr {
     // Desugar: while cond { body }
     // to: loop { if cond { body } else { break } }
 
     let label_sym = match label {
         &Some(ref l) => Some(l.symbol),
-        &None => Option::None,
+        &None => Option.None,
     };
 
     let cond_hir = lower_expr(ctx, condition);
     let body_hir = lower_block_to_expr(ctx, body);
 
-    let break_expr = hir_expr::Expr::new(
-        hir_expr::ExprKind::Break {
+    let break_expr = hir_expr.Expr.new(
+        hir_expr.ExprKind.Break {
             label: label_sym,
-            val: Option::None,
+            val: Option.None,
         },
-        type_intern::CommonTypes::never(),
+        type_intern.CommonTypes.never(),
         span,
     );
 
-    let if_expr = hir_expr::Expr::new(
-        hir_expr::ExprKind::If {
-            condition: Box::new(cond_hir),
-            then_branch: Box::new(body_hir),
-            else_branch: Some(Box::new(break_expr)),
+    let if_expr = hir_expr.Expr.new(
+        hir_expr.ExprKind.If {
+            condition: Box.new(cond_hir),
+            then_branch: Box.new(body_hir),
+            else_branch: Some(Box.new(break_expr)),
         },
-        type_intern::CommonTypes::unit(),
+        type_intern.CommonTypes.unit(),
         span,
     );
 
     let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
-    hir_expr::Expr::new(
-        hir_expr::ExprKind::Loop {
+    hir_expr.Expr.new(
+        hir_expr.ExprKind.Loop {
             label: label_sym,
-            body: Box::new(if_expr),
+            body: Box.new(if_expr),
         },
         ty,
         span,
@@ -1894,68 +1894,68 @@ fn lower_while_expr(
 
 /// Lower a while-let expression (desugar to loop + match).
 fn lower_while_let_expr(
-    ctx: &mut hir_lower_ctx::LoweringCtx,
-    label: &Option<common::SpannedSymbol>,
-    pattern: &ast::Pattern,
-    scrutinee: &ast::Expr,
-    body: &ast::Block,
-    span: common::Span,
-) -> hir_expr::Expr {
+    ctx: &mut hir_lower_ctx.LoweringCtx,
+    label: &Option<common.SpannedSymbol>,
+    pattern: &ast.Pattern,
+    scrutinee: &ast.Expr,
+    body: &ast.Block,
+    span: common.Span,
+) -> hir_expr.Expr {
     // Desugar: while let pat = expr { body }
     // to: loop { match expr { pat => body, _ => break } }
 
     let label_sym = match label {
         &Some(ref l) => Some(l.symbol),
-        &None => Option::None,
+        &None => Option.None,
     };
 
     let scrutinee_hir = lower_expr(ctx, scrutinee);
     let pattern_hir = lower_pattern(ctx, pattern);
     let body_hir = lower_block_to_expr(ctx, body);
 
-    let match_arm = hir_expr::MatchArm::new(
+    let match_arm = hir_expr.MatchArm.new(
         pattern_hir,
-        Option::None,
+        Option.None,
         body_hir,
         body.span,
     );
 
-    let break_expr = hir_expr::Expr::new(
-        hir_expr::ExprKind::Break {
+    let break_expr = hir_expr.Expr.new(
+        hir_expr.ExprKind.Break {
             label: label_sym,
-            val: Option::None,
+            val: Option.None,
         },
-        type_intern::CommonTypes::never(),
+        type_intern.CommonTypes.never(),
         span,
     );
 
     let wildcard_ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
-    let wildcard_pat = hir_expr::Pattern::wildcard(wildcard_ty, span);
-    let break_arm = hir_expr::MatchArm::new(
+    let wildcard_pat = hir_expr.Pattern.wildcard(wildcard_ty, span);
+    let break_arm = hir_expr.MatchArm.new(
         wildcard_pat,
-        Option::None,
+        Option.None,
         break_expr,
         span,
     );
 
-    let mut arms: Vec<hir_expr::MatchArm> = Vec::new();
+    let mut arms: Vec<hir_expr.MatchArm> = Vec.new();
     arms.push(match_arm);
     arms.push(break_arm);
 
-    let match_expr = hir_expr::Expr::new(
-        hir_expr::ExprKind::Match {
-            scrutinee: Box::new(scrutinee_hir),
+    let match_expr = hir_expr.Expr.new(
+        hir_expr.ExprKind.Match {
+            scrutinee: Box.new(scrutinee_hir),
             arms: arms,
         },
-        type_intern::CommonTypes::unit(),
+        type_intern.CommonTypes.unit(),
         span,
     );
 
     let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
-    hir_expr::Expr::new(
-        hir_expr::ExprKind::Loop {
+    hir_expr.Expr.new(
+        hir_expr.ExprKind.Loop {
             label: label_sym,
-            body: Box::new(match_expr),
+            body: Box.new(match_expr),
         },
         ty,
         span,
@@ -1965,16 +1965,16 @@ fn lower_while_let_expr(
 /// Lower a for expression (desugar to loop + match over iterator).
 /// Currently supports range iteration: for i in start..end { body }
 fn lower_for_expr(
-    ctx: &mut hir_lower_ctx::LoweringCtx,
-    label: &Option<common::SpannedSymbol>,
-    pattern: &ast::Pattern,
-    iter: &ast::Expr,
-    body: &ast::Block,
-    span: common::Span,
-) -> hir_expr::Expr {
+    ctx: &mut hir_lower_ctx.LoweringCtx,
+    label: &Option<common.SpannedSymbol>,
+    pattern: &ast.Pattern,
+    iter: &ast.Expr,
+    body: &ast.Block,
+    span: common.Span,
+) -> hir_expr.Expr {
     // Check if iter is a range expression
     match &iter.kind {
-        &ast::ExprKind::Range { ref start, ref end_val, inclusive } => {
+        &ast.ExprKind.Range { ref start, ref end_val, inclusive } => {
             // Desugar: for pattern in start..end { body }
             // to: { let mut pattern = start; loop { if pattern < end { body; pattern += 1; } else { break } } }
             lower_for_range(ctx, label, pattern, start, end_val, inclusive, body, span)
@@ -1984,7 +1984,7 @@ fn lower_for_expr(
             // node that will be desugared during MIR lowering when types are resolved.
             let label_sym = match label {
                 &Some(ref l) => Some(l.symbol),
-                &None => Option::None,
+                &None => Option.None,
             };
 
             // Lower the iterator expression
@@ -1996,14 +1996,14 @@ fn lower_for_expr(
             // Lower the body
             let body_hir = lower_block_to_expr(ctx, body);
 
-            hir_expr::Expr::new(
-                hir_expr::ExprKind::ForIter {
+            hir_expr.Expr.new(
+                hir_expr.ExprKind.ForIter {
                     label: label_sym,
-                    pattern: Box::new(pattern_hir),
-                    iter: Box::new(iter_hir),
-                    body: Box::new(body_hir),
+                    pattern: Box.new(pattern_hir),
+                    iter: Box.new(iter_hir),
+                    body: Box.new(body_hir),
                 },
-                type_intern::CommonTypes::unit(),
+                type_intern.CommonTypes.unit(),
                 span,
             )
         }
@@ -2030,18 +2030,18 @@ fn lower_for_expr(
 /// The increment is placed before the body so that `continue` in the body
 /// (which jumps to the loop header) doesn't skip the index advancement.
 fn lower_for_range(
-    ctx: &mut hir_lower_ctx::LoweringCtx,
-    label: &Option<common::SpannedSymbol>,
-    pattern: &ast::Pattern,
-    start: &Option<Box<ast::Expr>>,
-    end_val: &Option<Box<ast::Expr>>,
+    ctx: &mut hir_lower_ctx.LoweringCtx,
+    label: &Option<common.SpannedSymbol>,
+    pattern: &ast.Pattern,
+    start: &Option<Box<ast.Expr>>,
+    end_val: &Option<Box<ast.Expr>>,
     inclusive: bool,
-    body: &ast::Block,
-    span: common::Span,
-) -> hir_expr::Expr {
+    body: &ast.Block,
+    span: common.Span,
+) -> hir_expr.Expr {
     let label_sym = match label {
         &Some(ref l) => Some(l.symbol),
-        &None => Option::None,
+        &None => Option.None,
     };
 
     // Lower the pattern to get the user's loop variable
@@ -2051,7 +2051,7 @@ fn lower_for_range(
     let loop_var_local_id = extract_binding_local_id(&pattern_hir);
     if loop_var_local_id.is_none() {
         ctx.error(
-            hir::DiagnosticCode::E0104,
+            hir.DiagnosticCode.E0104,
             common::make_string("for loop variable must be a simple identifier"),
             span,
         );
@@ -2065,12 +2065,12 @@ fn lower_for_range(
         &Some(ref e) => lower_expr(ctx, e.as_ref()),
         &None => {
             // Default to 0
-            hir_expr::Expr::new(
-                hir_expr::ExprKind::Literal(hir_expr::Literal::new(
-                    hir_expr::LiteralKind::Int { val: 0, ty: Some(hir_ty::PrimitiveTy::I32) },
+            hir_expr.Expr.new(
+                hir_expr.ExprKind.Literal(hir_expr.Literal.new(
+                    hir_expr.LiteralKind.Int { val: 0, ty: Some(hir_ty.PrimitiveTy.I32) },
                     span,
                 )),
-                type_intern::CommonTypes::i32_ty(),
+                type_intern.CommonTypes.i32_ty(),
                 span,
             )
         }
@@ -2081,7 +2081,7 @@ fn lower_for_range(
         &Some(ref e) => lower_expr(ctx, e.as_ref()),
         &None => {
             ctx.error(
-                hir::DiagnosticCode::E0104,
+                hir.DiagnosticCode.E0104,
                 common::make_string("for loop requires an end value"),
                 span,
             );
@@ -2095,8 +2095,8 @@ fn lower_for_range(
     // Create internal index variable: _for_idx (mutable)
     let idx_local_id = ctx.alloc_local_id();
     let idx_sym = ctx.intern("_for_idx");
-    let idx_name = common::SpannedSymbol::new(idx_sym, span);
-    ctx.body_locals.push(hir_expr::Local::new(
+    let idx_name = common.SpannedSymbol.new(idx_sym, span);
+    ctx.body_locals.push(hir_expr.Local.new(
         idx_local_id,
         idx_name,
         loop_var_ty,
@@ -2105,18 +2105,18 @@ fn lower_for_range(
     ));
 
     // Create: let mut _for_idx = start;
-    let idx_pattern = hir_expr::Pattern::new(
-        hir_expr::PatternKind::Binding {
+    let idx_pattern = hir_expr.Pattern.new(
+        hir_expr.PatternKind.Binding {
             local_id: idx_local_id,
             name: idx_name,
-            mode: hir_expr::BindingMode::ByValue,
-            subpattern: Option::None,
+            mode: hir_expr.BindingMode.ByValue,
+            subpattern: Option.None,
         },
         loop_var_ty,
         span,
     );
 
-    let init_let = hir_expr::Stmt::Let {
+    let init_let = hir_expr.Stmt.Let {
         pattern: idx_pattern,
         ty: Some(loop_var_ty),
         init: Some(start_expr),
@@ -2124,25 +2124,25 @@ fn lower_for_range(
     };
 
     // Create condition: _for_idx < end (or _for_idx <= end for inclusive)
-    let idx_ref_for_cond = hir_expr::Expr::new(
-        hir_expr::ExprKind::Local(idx_local_id),
+    let idx_ref_for_cond = hir_expr.Expr.new(
+        hir_expr.ExprKind.Local(idx_local_id),
         loop_var_ty,
         span,
     );
 
     let cmp_op = if inclusive {
-        common::BinOp::Le
+        common.BinOp.Le
     } else {
-        common::BinOp::Lt
+        common.BinOp.Lt
     };
 
-    let condition = hir_expr::Expr::new(
-        hir_expr::ExprKind::Binary {
+    let condition = hir_expr.Expr.new(
+        hir_expr.ExprKind.Binary {
             op: cmp_op,
-            left: Box::new(idx_ref_for_cond),
-            right: Box::new(end_expr),
+            left: Box.new(idx_ref_for_cond),
+            right: Box.new(end_expr),
         },
-        type_intern::CommonTypes::bool_ty(),
+        type_intern.CommonTypes.bool_ty(),
         span,
     );
 
@@ -2150,13 +2150,13 @@ fn lower_for_range(
     let body_hir = lower_block_to_expr(ctx, body);
 
     // Create bind: let i = _for_idx; (immutable snapshot for user variable)
-    let idx_ref_for_bind = hir_expr::Expr::new(
-        hir_expr::ExprKind::Local(idx_local_id),
+    let idx_ref_for_bind = hir_expr.Expr.new(
+        hir_expr.ExprKind.Local(idx_local_id),
         loop_var_ty,
         span,
     );
 
-    let bind_user_var = hir_expr::Stmt::Let {
+    let bind_user_var = hir_expr.Stmt.Let {
         pattern: pattern_hir,
         ty: Some(loop_var_ty),
         init: Some(idx_ref_for_bind),
@@ -2164,109 +2164,109 @@ fn lower_for_range(
     };
 
     // Create increment: _for_idx = _for_idx + 1
-    let idx_ref_for_add = hir_expr::Expr::new(
-        hir_expr::ExprKind::Local(idx_local_id),
+    let idx_ref_for_add = hir_expr.Expr.new(
+        hir_expr.ExprKind.Local(idx_local_id),
         loop_var_ty,
         span,
     );
 
-    let one_lit = hir_expr::Expr::new(
-        hir_expr::ExprKind::Literal(hir_expr::Literal::new(
-            hir_expr::LiteralKind::Int { val: 1, ty: Option::None },
+    let one_lit = hir_expr.Expr.new(
+        hir_expr.ExprKind.Literal(hir_expr.Literal.new(
+            hir_expr.LiteralKind.Int { val: 1, ty: Option.None },
             span,
         )),
         loop_var_ty,
         span,
     );
 
-    let add_expr = hir_expr::Expr::new(
-        hir_expr::ExprKind::Binary {
-            op: common::BinOp::Add,
-            left: Box::new(idx_ref_for_add),
-            right: Box::new(one_lit),
+    let add_expr = hir_expr.Expr.new(
+        hir_expr.ExprKind.Binary {
+            op: common.BinOp.Add,
+            left: Box.new(idx_ref_for_add),
+            right: Box.new(one_lit),
         },
         loop_var_ty,
         span,
     );
 
-    let idx_place = hir_expr::Expr::new(
-        hir_expr::ExprKind::Local(idx_local_id),
+    let idx_place = hir_expr.Expr.new(
+        hir_expr.ExprKind.Local(idx_local_id),
         loop_var_ty,
         span,
     );
 
-    let increment_assign = hir_expr::Expr::new(
-        hir_expr::ExprKind::Assign {
-            target: Box::new(idx_place),
-            val: Box::new(add_expr),
+    let increment_assign = hir_expr.Expr.new(
+        hir_expr.ExprKind.Assign {
+            target: Box.new(idx_place),
+            val: Box.new(add_expr),
         },
-        type_intern::CommonTypes::unit(),
+        type_intern.CommonTypes.unit(),
         span,
     );
 
     // Create body block: { let i = _for_idx; _for_idx += 1; body; }
     // Increment BEFORE body so that `continue` (which jumps to loop header)
     // doesn't skip the index advancement. User var `i` is already bound.
-    let mut body_stmts: Vec<hir_expr::Stmt> = Vec::new();
+    let mut body_stmts: Vec<hir_expr.Stmt> = Vec.new();
     body_stmts.push(bind_user_var);
-    body_stmts.push(hir_expr::Stmt::Expr { expr: increment_assign, has_semi: true });
-    body_stmts.push(hir_expr::Stmt::Expr { expr: body_hir, has_semi: true });
-    let body_block = hir_expr::Block::new(body_stmts, Option::None, span);
-    let body_with_increment = hir_expr::Expr::new(
-        hir_expr::ExprKind::Block(body_block),
-        type_intern::CommonTypes::unit(),
+    body_stmts.push(hir_expr.Stmt.Expr { expr: increment_assign, has_semi: true });
+    body_stmts.push(hir_expr.Stmt.Expr { expr: body_hir, has_semi: true });
+    let body_block = hir_expr.Block.new(body_stmts, Option.None, span);
+    let body_with_increment = hir_expr.Expr.new(
+        hir_expr.ExprKind.Block(body_block),
+        type_intern.CommonTypes.unit(),
         span,
     );
 
     // Create break expression
-    let break_expr = hir_expr::Expr::new(
-        hir_expr::ExprKind::Break {
+    let break_expr = hir_expr.Expr.new(
+        hir_expr.ExprKind.Break {
             label: label_sym,
-            val: Option::None,
+            val: Option.None,
         },
-        type_intern::CommonTypes::never(),
+        type_intern.CommonTypes.never(),
         span,
     );
 
     // Create if expression: if cond { bind; increment; body; } else { break }
-    let if_expr = hir_expr::Expr::new(
-        hir_expr::ExprKind::If {
-            condition: Box::new(condition),
-            then_branch: Box::new(body_with_increment),
-            else_branch: Some(Box::new(break_expr)),
+    let if_expr = hir_expr.Expr.new(
+        hir_expr.ExprKind.If {
+            condition: Box.new(condition),
+            then_branch: Box.new(body_with_increment),
+            else_branch: Some(Box.new(break_expr)),
         },
-        type_intern::CommonTypes::unit(),
+        type_intern.CommonTypes.unit(),
         span,
     );
 
     // Create loop: loop { if_expr }
-    let loop_expr = hir_expr::Expr::new(
-        hir_expr::ExprKind::Loop {
+    let loop_expr = hir_expr.Expr.new(
+        hir_expr.ExprKind.Loop {
             label: label_sym,
-            body: Box::new(if_expr),
+            body: Box.new(if_expr),
         },
         type_intern::type_interner().mk_infer(ctx.alloc_ty_var()),
         span,
     );
 
     // Wrap in block with init: { let mut _for_idx = start; loop { ... } }
-    let mut outer_stmts: Vec<hir_expr::Stmt> = Vec::new();
+    let mut outer_stmts: Vec<hir_expr.Stmt> = Vec.new();
     outer_stmts.push(init_let);
-    let outer_block = hir_expr::Block::new(outer_stmts, Some(Box::new(loop_expr)), span);
-    hir_expr::Expr::new(
-        hir_expr::ExprKind::Block(outer_block),
+    let outer_block = hir_expr.Block.new(outer_stmts, Some(Box.new(loop_expr)), span);
+    hir_expr.Expr.new(
+        hir_expr.ExprKind.Block(outer_block),
         type_intern::type_interner().mk_infer(ctx.alloc_ty_var()),
         span,
     )
 }
 
 /// Extract the LocalId from a binding pattern.
-fn extract_binding_local_id(pattern: &hir_expr::Pattern) -> Option<hir_def::LocalId> {
+fn extract_binding_local_id(pattern: &hir_expr.Pattern) -> Option<hir_def.LocalId> {
     match &pattern.kind {
-        &hir_expr::PatternKind::Binding { local_id, name: _, mode: _, subpattern: _ } => {
+        &hir_expr.PatternKind.Binding { local_id, name: _, mode: _, subpattern: _ } => {
             Some(local_id)
         }
-        _ => Option::None
+        _ => Option.None
     }
 }
 
@@ -2276,18 +2276,18 @@ fn extract_binding_local_id(pattern: &hir_expr::Pattern) -> Option<hir_def::Loca
 
 /// Lower a closure expression.
 fn lower_closure_expr(
-    ctx: &mut hir_lower_ctx::LoweringCtx,
-    params: &Vec<ast::ClosureParam>,
-    return_type: &Option<ast::Type>,
-    effects: &Option<ast::EffectRow>,
-    body: &ast::Expr,
-    span: common::Span,
-) -> hir_expr::Expr {
+    ctx: &mut hir_lower_ctx.LoweringCtx,
+    params: &Vec<ast.ClosureParam>,
+    return_type: &Option<ast.Type>,
+    effects: &Option<ast.EffectRow>,
+    body: &ast.Expr,
+    span: common.Span,
+) -> hir_expr.Expr {
     // Allocate a BodyId for the closure
     let body_id = ctx.alloc_body_id();
 
     // Lower parameters
-    let mut params_hir: Vec<hir_expr::ClosureParam> = Vec::new();
+    let mut params_hir: Vec<hir_expr.ClosureParam> = Vec.new();
     for i in 0usize..params.len() {
         let p = &params[i];
         let pattern_hir = lower_pattern(ctx, &p.pattern);
@@ -2295,7 +2295,7 @@ fn lower_closure_expr(
             &Some(ref t) => hir_lower_type::lower_type_id(ctx, t),
             &None => type_intern::type_interner().mk_infer(ctx.alloc_ty_var()),
         };
-        let param_hir = hir_expr::ClosureParam::new(pattern_hir, ty_hir);
+        let param_hir = hir_expr.ClosureParam.new(pattern_hir, ty_hir);
         params_hir.push(param_hir);
     }
 
@@ -2308,23 +2308,23 @@ fn lower_closure_expr(
     // Lower effects
     let effects_hir = match effects {
         &Some(ref eff) => hir_lower_type::lower_effect_row(ctx, eff),
-        &None => hir_ty::EffectRow::empty(),
+        &None => hir_ty.EffectRow.empty(),
     };
 
     // Lower body
     let body_hir = lower_expr(ctx, body);
 
     // Captures will be determined during type checking
-    let captures: Vec<hir_expr::Capture> = Vec::new();
+    let captures: Vec<hir_expr.Capture> = Vec.new();
 
     let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
-    hir_expr::Expr::new(
-        hir_expr::ExprKind::Closure {
+    hir_expr.Expr.new(
+        hir_expr.ExprKind.Closure {
             captures: captures,
             params: params_hir,
             return_ty: ret_ty,
             effects: effects_hir,
-            body: Box::new(body_hir),
+            body: Box.new(body_hir),
             body_id: body_id,
         },
         ty,
@@ -2338,12 +2338,12 @@ fn lower_closure_expr(
 
 /// Lower a perform expression.
 fn lower_perform_expr(
-    ctx: &mut hir_lower_ctx::LoweringCtx,
-    effect_path: &Option<ast::TypePath>,
-    operation: &common::SpannedSymbol,
-    args: &Vec<ast::Expr>,
-    span: common::Span,
-) -> hir_expr::Expr {
+    ctx: &mut hir_lower_ctx.LoweringCtx,
+    effect_path: &Option<ast.TypePath>,
+    operation: &common.SpannedSymbol,
+    args: &Vec<ast.Expr>,
+    span: common.Span,
+) -> hir_expr.Expr {
     // Resolve the effect
     let effect_def_id = match effect_path {
         &Some(ref path) => {
@@ -2359,48 +2359,48 @@ fn lower_perform_expr(
                     binding.def_id
                 } else {
                     ctx.error(
-                        hir::DiagnosticCode::E0102,
+                        hir.DiagnosticCode.E0102,
                         common::make_string("unknown effect"),
                         path.span,
                     );
-                    hir_def::DefId::new(0)
+                    hir_def.DefId.new(0)
                 }
             } else {
                 ctx.error(
-                    hir::DiagnosticCode::E0102,
+                    hir.DiagnosticCode.E0102,
                     common::make_string("invalid effect path"),
                     span,
                 );
-                hir_def::DefId::new(0)
+                hir_def.DefId.new(0)
             }
         }
         &None => {
             ctx.error(
-                hir::DiagnosticCode::E0104,
+                hir.DiagnosticCode.E0104,
                 common::make_string("effect must be specified"),
                 span,
             );
-            hir_def::DefId::new(0)
+            hir_def.DefId.new(0)
         }
     };
 
     // Lower arguments
-    let mut args_hir: Vec<hir_expr::Expr> = Vec::new();
+    let mut args_hir: Vec<hir_expr.Expr> = Vec.new();
     for i in 0usize..args.len() {
         let arg_hir = lower_expr(ctx, &args[i]);
         args_hir.push(arg_hir);
     }
 
     // Operation DefId will be resolved during type checking
-    let op_def_id = hir_def::DefId::new(0);
+    let op_def_id = hir_def.DefId.new(0);
 
     // Re-intern operation name from span for consistent symbol indices
     let op_name_str = ctx.span_to_string(operation.span);
     let op_name_sym = ctx.intern(op_name_str.as_str());
 
     let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
-    hir_expr::Expr::new(
-        hir_expr::ExprKind::Perform {
+    hir_expr.Expr.new(
+        hir_expr.ExprKind.Perform {
             effect_def: effect_def_id,
             op_def: op_def_id,
             op_name: op_name_sym,
@@ -2417,16 +2417,16 @@ fn lower_perform_expr(
 
 /// Lower a try-with expression to an InlineHandle HIR node.
 fn lower_try_with_expr(
-    ctx: &mut hir_lower_ctx::LoweringCtx,
-    body: &ast::Block,
-    handlers: &Vec<ast::TryWithHandler>,
-    span: common::Span,
-) -> hir_expr::Expr {
+    ctx: &mut hir_lower_ctx.LoweringCtx,
+    body: &ast.Block,
+    handlers: &Vec<ast.TryWithHandler>,
+    span: common.Span,
+) -> hir_expr.Expr {
     // Lower the body block
     let body_hir = lower_block_to_expr(ctx, body);
 
     // Lower each handler
-    let mut hir_handlers: Vec<hir_expr::InlineOpHandler> = Vec::new();
+    let mut hir_handlers: Vec<hir_expr.InlineOpHandler> = Vec.new();
     for i in 0usize..handlers.len() {
         let hdlr = &handlers[i];
 
@@ -2442,19 +2442,19 @@ fn lower_try_with_expr(
                 binding.def_id
             } else {
                 ctx.error(
-                    hir::DiagnosticCode::E0102,
+                    hir.DiagnosticCode.E0102,
                     common::make_string("unknown effect in try-with handler"),
                     hdlr.effect.span,
                 );
-                hir_def::DefId::new(0)
+                hir_def.DefId.new(0)
             }
         } else {
             ctx.error(
-                hir::DiagnosticCode::E0102,
+                hir.DiagnosticCode.E0102,
                 common::make_string("invalid effect path in try-with handler"),
                 hdlr.span,
             );
-            hir_def::DefId::new(0)
+            hir_def.DefId.new(0)
         };
 
         // Re-intern operation name
@@ -2462,18 +2462,18 @@ fn lower_try_with_expr(
         let op_name_sym = ctx.intern(op_name_str.as_str());
 
         // Push a scope for handler parameters
-        ctx.resolver.push_scope(resolve::ScopeKind::Block);
+        ctx.resolver.push_scope(resolve.ScopeKind.Block);
 
         // Allocate locals for handler parameters
-        let mut param_ids: Vec<hir_def::LocalId> = Vec::new();
-        let mut param_types: Vec<type_intern::TyId> = Vec::new();
+        let mut param_ids: Vec<hir_def.LocalId> = Vec.new();
+        let mut param_types: Vec<type_intern.TyId> = Vec.new();
         for j in 0usize..hdlr.params.len() {
             let param = &hdlr.params[j];
             // Lower the pattern (which allocates local IDs and registers bindings)
             let _pat_hir = lower_pattern(ctx, param);
             // Extract the local ID from the pattern if it's a binding
             match &_pat_hir.kind {
-                &hir_expr::PatternKind::Binding { local_id, name: _, mode: _, subpattern: _ } => {
+                &hir_expr.PatternKind.Binding { local_id, name: _, mode: _, subpattern: _ } => {
                     param_ids.push(local_id);
                     param_types.push(type_intern::type_interner().mk_infer(ctx.alloc_ty_var()));
                 }
@@ -2495,7 +2495,7 @@ fn lower_try_with_expr(
         // Return type is inferred
         let return_ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
 
-        let op_handler = hir_expr::InlineOpHandler {
+        let op_handler = hir_expr.InlineOpHandler {
             effect_id: effect_def_id,
             op_name: op_name_sym,
             params: param_ids,
@@ -2507,9 +2507,9 @@ fn lower_try_with_expr(
     }
 
     let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
-    hir_expr::Expr::new(
-        hir_expr::ExprKind::InlineHandle {
-            body: Box::new(body_hir),
+    hir_expr.Expr.new(
+        hir_expr.ExprKind.InlineHandle {
+            body: Box.new(body_hir),
             handlers: hir_handlers,
         },
         ty,
@@ -2522,38 +2522,38 @@ fn lower_try_with_expr(
 // ============================================================
 
 /// Create a &str literal HIR expression.
-fn make_str_literal_expr(span: common::Span, s: &str) -> hir_expr::Expr {
-    let mut str_copy = String::new();
+fn make_str_literal_expr(span: common.Span, s: &str) -> hir_expr.Expr {
+    let mut str_copy = String.new();
     str_copy.push_str(s);
-    let lit = hir_expr::Literal::new(
-        hir_expr::LiteralKind::Str(str_copy),
+    let lit = hir_expr.Literal.new(
+        hir_expr.LiteralKind.Str(str_copy),
         span,
     );
-    hir_expr::Expr::new(
-        hir_expr::ExprKind::Literal(lit),
-        type_intern::type_interner().mk_ref(type_intern::CommonTypes::str_ty(), false),
+    hir_expr.Expr.new(
+        hir_expr.ExprKind.Literal(lit),
+        type_intern::type_interner().mk_ref(type_intern.CommonTypes.str_ty(), false),
         span,
     )
 }
 
 /// Generate a Call expression to a named builtin function.
 /// Resolves the name through the resolver to get its DefId.
-fn make_builtin_call_expr(ctx: &mut hir_lower_ctx::LoweringCtx, name: &str, args: Vec<hir_expr::Expr>, span: common::Span) -> hir_expr::Expr {
+fn make_builtin_call_expr(ctx: &mut hir_lower_ctx.LoweringCtx, name: &str, args: Vec<hir_expr.Expr>, span: common.Span) -> hir_expr.Expr {
     let sym = ctx.intern(name);
     let lookup = ctx.resolver.lookup(sym);
     if lookup.is_some() {
         let result = lookup.unwrap();
         let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
-        let resolved = hir_def::ResolvedPath::new(binding.def_id, 0, span);
-        let callee = hir_expr::Expr::new(
-            hir_expr::ExprKind::Path(resolved),
+        let resolved = hir_def.ResolvedPath.new(binding.def_id, 0, span);
+        let callee = hir_expr.Expr.new(
+            hir_expr.ExprKind.Path(resolved),
             type_intern::type_interner().mk_infer(ctx.alloc_ty_var()),
             span,
         );
         let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
-        hir_expr::Expr::new(
-            hir_expr::ExprKind::Call {
-                callee: Box::new(callee),
+        hir_expr.Expr.new(
+            hir_expr.ExprKind.Call {
+                callee: Box.new(callee),
                 args: args,
             },
             ty,
@@ -2565,20 +2565,20 @@ fn make_builtin_call_expr(ctx: &mut hir_lower_ctx::LoweringCtx, name: &str, args
         msg.push_str(name);
         msg.push_str("' not found");
         ctx.error(
-            hir::DiagnosticCode::E0102,
+            hir.DiagnosticCode.E0102,
             msg,
             span,
         );
-        hir_expr::Expr::error(span)
+        hir_expr.Expr.error(span)
     }
 }
 
 /// Check if an AST expression is a string literal.
-fn ast_expr_is_str_literal(expr: &ast::Expr) -> bool {
+fn ast_expr_is_str_literal(expr: &ast.Expr) -> bool {
     match &expr.kind {
-        &ast::ExprKind::Literal(ref lit) => {
+        &ast.ExprKind.Literal(ref lit) => {
             match &lit.kind {
-                &ast::LiteralKind::Str(_) => true,
+                &ast.LiteralKind.Str(_) => true,
                 _ => false,
             }
         }
@@ -2591,16 +2591,16 @@ fn ast_expr_is_str_literal(expr: &ast::Expr) -> bool {
 // ============================================================
 
 /// Lower a macro call expression.
-fn lower_macro_call_expr(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::ExprPath, kind: &ast::MacroCallKind, span: common::Span) -> hir_expr::Expr {
+fn lower_macro_call_expr(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.ExprPath, kind: &ast.MacroCallKind, span: common.Span) -> hir_expr.Expr {
     // Extract the macro name from the path
     let macro_name: String = if path.segments.len() > 0 {
         ctx.span_to_string(path.segments[path.segments.len() - 1].name.span)
     } else {
-        String::new()
+        String.new()
     };
 
     match kind {
-        &ast::MacroCallKind::Format { ref format_str, ref args, ref named_args } => {
+        &ast.MacroCallKind.Format { ref format_str, ref args, ref named_args } => {
             let _ = named_args;
             // Parse format string into segments
             let segments = parse_format_segments(format_str.value.as_str());
@@ -2609,37 +2609,37 @@ fn lower_macro_call_expr(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::ExprP
             if args.len() == 0 {
                 let mn = macro_name.as_str();
                 if str_eq(mn, "println") {
-                    let mut a: Vec<hir_expr::Expr> = Vec::new();
+                    let mut a: Vec<hir_expr.Expr> = Vec.new();
                     a.push(make_str_literal_expr(span, format_str.value.as_str()));
                     return make_builtin_call_expr(ctx, "println_str", a, span);
                 }
                 if str_eq(mn, "print") {
-                    let mut a: Vec<hir_expr::Expr> = Vec::new();
+                    let mut a: Vec<hir_expr.Expr> = Vec.new();
                     a.push(make_str_literal_expr(span, format_str.value.as_str()));
                     return make_builtin_call_expr(ctx, "print_str", a, span);
                 }
                 if str_eq(mn, "eprintln") {
-                    let mut a: Vec<hir_expr::Expr> = Vec::new();
+                    let mut a: Vec<hir_expr.Expr> = Vec.new();
                     a.push(make_str_literal_expr(span, format_str.value.as_str()));
                     return make_builtin_call_expr(ctx, "eprintln_str", a, span);
                 }
                 if str_eq(mn, "eprint") {
-                    let mut a: Vec<hir_expr::Expr> = Vec::new();
+                    let mut a: Vec<hir_expr.Expr> = Vec.new();
                     a.push(make_str_literal_expr(span, format_str.value.as_str()));
                     return make_builtin_call_expr(ctx, "eprint_str", a, span);
                 }
                 if str_eq(mn, "panic") {
-                    let mut a: Vec<hir_expr::Expr> = Vec::new();
+                    let mut a: Vec<hir_expr.Expr> = Vec.new();
                     a.push(make_str_literal_expr(span, format_str.value.as_str()));
                     return make_builtin_call_expr(ctx, "panic", a, span);
                 }
                 if str_eq(mn, "todo") {
-                    let mut a: Vec<hir_expr::Expr> = Vec::new();
+                    let mut a: Vec<hir_expr.Expr> = Vec.new();
                     a.push(make_str_literal_expr(span, "not yet implemented"));
                     return make_builtin_call_expr(ctx, "panic", a, span);
                 }
                 if str_eq(mn, "unreachable") {
-                    let mut a: Vec<hir_expr::Expr> = Vec::new();
+                    let mut a: Vec<hir_expr.Expr> = Vec.new();
                     a.push(make_str_literal_expr(span, "internal error: entered unreachable code"));
                     return make_builtin_call_expr(ctx, "panic", a, span);
                 }
@@ -2649,14 +2649,14 @@ fn lower_macro_call_expr(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::ExprP
 
             // === With-args case ===
             // Lower all format args to HIR
-            let mut args_hir: Vec<hir_expr::Expr> = Vec::new();
+            let mut args_hir: Vec<hir_expr.Expr> = Vec.new();
             for ai in 0usize..args.len() {
                 let arg_hir = lower_expr(ctx, &args[ai]);
                 args_hir.push(arg_hir);
             }
 
             // Build string parts: literal segments as &str, placeholder args converted to &str
-            let mut parts: Vec<hir_expr::Expr> = Vec::new();
+            let mut parts: Vec<hir_expr.Expr> = Vec.new();
             let mut placeholder_idx: usize = 0;
             for si in 0usize..segments.len() {
                 let seg = &segments[si];
@@ -2667,7 +2667,7 @@ fn lower_macro_call_expr(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::ExprP
                             parts.push(args_hir[placeholder_idx]);
                         } else {
                             // Non-string arg: convert via int_to_string (handles i32)
-                            let mut conv_args: Vec<hir_expr::Expr> = Vec::new();
+                            let mut conv_args: Vec<hir_expr.Expr> = Vec.new();
                             conv_args.push(args_hir[placeholder_idx]);
                             let converted = make_builtin_call_expr(ctx, "int_to_string", conv_args, span);
                             parts.push(converted);
@@ -2682,14 +2682,14 @@ fn lower_macro_call_expr(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::ExprP
             }
 
             // Concatenate all parts using str_concat
-            let formatted: hir_expr::Expr = if parts.len() == 0 {
+            let formatted: hir_expr.Expr = if parts.len() == 0 {
                 make_str_literal_expr(span, "")
             } else if parts.len() == 1 {
                 parts[0]
             } else {
-                let mut result: hir_expr::Expr = parts[0];
+                let mut result: hir_expr.Expr = parts[0];
                 for pi in 1usize..parts.len() {
-                    let mut concat_args: Vec<hir_expr::Expr> = Vec::new();
+                    let mut concat_args: Vec<hir_expr.Expr> = Vec.new();
                     concat_args.push(result);
                     concat_args.push(parts[pi]);
                     result = make_builtin_call_expr(ctx, "str_concat", concat_args, span);
@@ -2700,116 +2700,116 @@ fn lower_macro_call_expr(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::ExprP
             // Dispatch based on macro name
             let mn = macro_name.as_str();
             if str_eq(mn, "println") {
-                let mut print_args: Vec<hir_expr::Expr> = Vec::new();
+                let mut print_args: Vec<hir_expr.Expr> = Vec.new();
                 print_args.push(formatted);
                 return make_builtin_call_expr(ctx, "println_str", print_args, span);
             }
             if str_eq(mn, "print") {
-                let mut print_args: Vec<hir_expr::Expr> = Vec::new();
+                let mut print_args: Vec<hir_expr.Expr> = Vec.new();
                 print_args.push(formatted);
                 return make_builtin_call_expr(ctx, "print_str", print_args, span);
             }
             if str_eq(mn, "eprintln") {
-                let mut print_args: Vec<hir_expr::Expr> = Vec::new();
+                let mut print_args: Vec<hir_expr.Expr> = Vec.new();
                 print_args.push(formatted);
                 return make_builtin_call_expr(ctx, "eprintln_str", print_args, span);
             }
             if str_eq(mn, "eprint") {
-                let mut print_args: Vec<hir_expr::Expr> = Vec::new();
+                let mut print_args: Vec<hir_expr.Expr> = Vec.new();
                 print_args.push(formatted);
                 return make_builtin_call_expr(ctx, "eprint_str", print_args, span);
             }
             if str_eq(mn, "panic") {
-                let mut panic_args: Vec<hir_expr::Expr> = Vec::new();
+                let mut panic_args: Vec<hir_expr.Expr> = Vec.new();
                 panic_args.push(formatted);
                 return make_builtin_call_expr(ctx, "panic", panic_args, span);
             }
             // Default (format!): return the formatted string
             formatted
         }
-        &ast::MacroCallKind::VecMacro(ref vec_args) => {
+        &ast.MacroCallKind.VecMacro(ref vec_args) => {
             match vec_args {
-                &ast::VecMacroArgs::List(ref elems) => {
+                &ast.VecMacroArgs.List(ref elems) => {
                     // Lower each element into HIR
-                    let mut elems_hir: Vec<hir_expr::Expr> = Vec::new();
+                    let mut elems_hir: Vec<hir_expr.Expr> = Vec.new();
                     for i in 0usize..elems.len() {
                         let elem_hir = lower_expr(ctx, &elems[i]);
                         elems_hir.push(elem_hir);
                     }
-                    let arr = hir_expr::ArrayExpr::List(elems_hir);
+                    let arr = hir_expr.ArrayExpr.List(elems_hir);
                     let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
-                    hir_expr::Expr::new(
-                        hir_expr::ExprKind::Array(arr),
+                    hir_expr.Expr.new(
+                        hir_expr.ExprKind.Array(arr),
                         ty,
                         span,
                     )
                 }
-                &ast::VecMacroArgs::Repeat { ref val, ref count } => {
+                &ast.VecMacroArgs.Repeat { ref val, ref count } => {
                     // vec![val; count] - evaluate count as constant
                     let val_hir = lower_expr(ctx, val.as_ref());
                     let repeat_count = const_eval::eval_array_size_u64(count.as_ref());
-                    let arr = hir_expr::ArrayExpr::Repeat {
-                        val: Box::new(val_hir),
+                    let arr = hir_expr.ArrayExpr.Repeat {
+                        val: Box.new(val_hir),
                         count: repeat_count,
                     };
                     let ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
-                    hir_expr::Expr::new(
-                        hir_expr::ExprKind::Array(arr),
+                    hir_expr.Expr.new(
+                        hir_expr.ExprKind.Array(arr),
                         ty,
                         span,
                     )
                 }
             }
         }
-        &ast::MacroCallKind::Assert { ref condition, ref message } => {
+        &ast.MacroCallKind.Assert { ref condition, ref message } => {
             // Desugar assert!(cond) to: if !cond { @llvm.trap() }
             // Desugar assert!(cond, msg) to: if !cond { @llvm.trap() }
             let cond_hir = lower_expr(ctx, condition.as_ref());
 
             // Build !cond
-            let not_cond = hir_expr::Expr::new(
-                hir_expr::ExprKind::Unary {
-                    op: common::UnaryOp::Not,
-                    operand: Box::new(cond_hir),
+            let not_cond = hir_expr.Expr.new(
+                hir_expr.ExprKind.Unary {
+                    op: common.UnaryOp.Not,
+                    operand: Box.new(cond_hir),
                 },
-                type_intern::CommonTypes::bool_ty(),
+                type_intern.CommonTypes.bool_ty(),
                 span,
             );
 
             // Build the trap call as Unreachable (codegen emits @llvm.trap)
-            let trap_expr = hir_expr::Expr::new(
-                hir_expr::ExprKind::Block(hir_expr::Block::new(
-                    Vec::new(),
-                    Option::Some(Box::new(hir_expr::Expr::new(
-                        hir_expr::ExprKind::Error,
-                        type_intern::CommonTypes::never(),
+            let trap_expr = hir_expr.Expr.new(
+                hir_expr.ExprKind.Block(hir_expr.Block.new(
+                    Vec.new(),
+                    Option.Some(Box.new(hir_expr.Expr.new(
+                        hir_expr.ExprKind.Error,
+                        type_intern.CommonTypes.never(),
                         span,
                     ))),
                     span,
                 )),
-                type_intern::CommonTypes::never(),
+                type_intern.CommonTypes.never(),
                 span,
             );
 
             // Build the unit else branch
-            let unit_expr = hir_expr::Expr::new(
-                hir_expr::ExprKind::Tuple(Vec::new()),
-                type_intern::CommonTypes::unit(),
+            let unit_expr = hir_expr.Expr.new(
+                hir_expr.ExprKind.Tuple(Vec.new()),
+                type_intern.CommonTypes.unit(),
                 span,
             );
 
             // if !cond { trap } else { () }
-            hir_expr::Expr::new(
-                hir_expr::ExprKind::If {
-                    condition: Box::new(not_cond),
-                    then_branch: Box::new(trap_expr),
-                    else_branch: Option::Some(Box::new(unit_expr)),
+            hir_expr.Expr.new(
+                hir_expr.ExprKind.If {
+                    condition: Box.new(not_cond),
+                    then_branch: Box.new(trap_expr),
+                    else_branch: Option.Some(Box.new(unit_expr)),
                 },
-                type_intern::CommonTypes::unit(),
+                type_intern.CommonTypes.unit(),
                 span,
             )
         }
-        &ast::MacroCallKind::Dbg(ref expr) => {
+        &ast.MacroCallKind.Dbg(ref expr) => {
             // dbg!(expr) desugars to:
             //   { let __dbg_val = expr; eprintln("[dbg]"); __dbg_val }
             // Since we can't easily stringify arbitrary types, we emit
@@ -2820,13 +2820,13 @@ fn lower_macro_call_expr(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::ExprP
 
             // Create a local for the value
             let local_id = ctx.alloc_local_id();
-            let local_sym = common::SpannedSymbol {
-                symbol: common::Symbol { index: 0 },
+            let local_sym = common.SpannedSymbol {
+                symbol: common.Symbol { index: 0 },
                 span: span,
             };
 
             // Register synthetic local in body_locals so the type checker can find it
-            let dbg_local = hir_expr::Local::new(
+            let dbg_local = hir_expr.Local.new(
                 local_id,
                 local_sym,
                 inner_ty,
@@ -2836,112 +2836,112 @@ fn lower_macro_call_expr(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::ExprP
             ctx.body_locals.push(dbg_local);
 
             // Let statement: let __dbg_val = expr;
-            let let_pat = hir_expr::Pattern::new(
-                hir_expr::PatternKind::Binding {
+            let let_pat = hir_expr.Pattern.new(
+                hir_expr.PatternKind.Binding {
                     local_id: local_id,
                     name: local_sym,
-                    mode: hir_expr::BindingMode::ByValue,
-                    subpattern: Option::None,
+                    mode: hir_expr.BindingMode.ByValue,
+                    subpattern: Option.None,
                 },
                 type_intern::type_interner().mk_infer(ctx.alloc_ty_var()),
                 span,
             );
-            let let_stmt = hir_expr::Stmt::Let {
+            let let_stmt = hir_expr.Stmt.Let {
                 pattern: let_pat,
-                ty: Option::None,
-                init: Option::Some(inner_hir),
+                ty: Option.None,
+                init: Option.Some(inner_hir),
                 span: span,
             };
 
             // Print a debug marker using eprintln_str
             // Build a string literal "[dbg]"
-            let dbg_str = hir_expr::Literal::new(
-                hir_expr::LiteralKind::Str(common::make_string("[dbg]")),
+            let dbg_str = hir_expr.Literal.new(
+                hir_expr.LiteralKind.Str(common::make_string("[dbg]")),
                 span,
             );
-            let dbg_str_expr = hir_expr::Expr::new(
-                hir_expr::ExprKind::Literal(dbg_str),
-                type_intern::type_interner().mk_ref(type_intern::CommonTypes::str_ty(), false),
+            let dbg_str_expr = hir_expr.Expr.new(
+                hir_expr.ExprKind.Literal(dbg_str),
+                type_intern::type_interner().mk_ref(type_intern.CommonTypes.str_ty(), false),
                 span,
             );
-            let print_stmt = hir_expr::Stmt::Expr {
+            let print_stmt = hir_expr.Stmt.Expr {
                 expr: dbg_str_expr,
                 has_semi: true,
             };
 
             // Return the local
-            let local_ref = hir_expr::Expr::new(
-                hir_expr::ExprKind::Local(local_id),
+            let local_ref = hir_expr.Expr.new(
+                hir_expr.ExprKind.Local(local_id),
                 inner_ty,
                 span,
             );
 
-            let mut stmts: Vec<hir_expr::Stmt> = Vec::new();
+            let mut stmts: Vec<hir_expr.Stmt> = Vec.new();
             stmts.push(let_stmt);
             stmts.push(print_stmt);
-            let block = hir_expr::Block::new(stmts, Option::Some(Box::new(local_ref)), span);
+            let block = hir_expr.Block.new(stmts, Option.Some(Box.new(local_ref)), span);
 
-            hir_expr::Expr::new(
-                hir_expr::ExprKind::Block(block),
+            hir_expr.Expr.new(
+                hir_expr.ExprKind.Block(block),
                 type_intern::type_interner().mk_infer(ctx.alloc_ty_var()),
                 span,
             )
         }
-        &ast::MacroCallKind::Matches { ref expr, ref pattern } => {
+        &ast.MacroCallKind.Matches { ref expr, ref pattern } => {
             // matches!(expr, pattern) desugars to match expr { pattern => true, _ => false }
             let expr_hir = lower_expr(ctx, expr.as_ref());
             let pattern_hir = lower_pattern(ctx, pattern.as_ref());
 
-            let true_lit = hir_expr::Literal::new(
-                hir_expr::LiteralKind::Bool(true),
+            let true_lit = hir_expr.Literal.new(
+                hir_expr.LiteralKind.Bool(true),
                 span,
             );
-            let true_expr = hir_expr::Expr::new(
-                hir_expr::ExprKind::Literal(true_lit),
-                type_intern::CommonTypes::bool_ty(),
-                span,
-            );
-
-            let false_lit = hir_expr::Literal::new(
-                hir_expr::LiteralKind::Bool(false),
-                span,
-            );
-            let false_expr = hir_expr::Expr::new(
-                hir_expr::ExprKind::Literal(false_lit),
-                type_intern::CommonTypes::bool_ty(),
+            let true_expr = hir_expr.Expr.new(
+                hir_expr.ExprKind.Literal(true_lit),
+                type_intern.CommonTypes.bool_ty(),
                 span,
             );
 
-            let match_arm = hir_expr::MatchArm::new(
+            let false_lit = hir_expr.Literal.new(
+                hir_expr.LiteralKind.Bool(false),
+                span,
+            );
+            let false_expr = hir_expr.Expr.new(
+                hir_expr.ExprKind.Literal(false_lit),
+                type_intern.CommonTypes.bool_ty(),
+                span,
+            );
+
+            let match_arm = hir_expr.MatchArm.new(
                 pattern_hir,
-                Option::None,
+                Option.None,
                 true_expr,
                 span,
             );
 
             let wildcard_ty = type_intern::type_interner().mk_infer(ctx.alloc_ty_var());
-            let wildcard_pat = hir_expr::Pattern::wildcard(wildcard_ty, span);
-            let else_arm = hir_expr::MatchArm::new(
+            let wildcard_pat = hir_expr.Pattern.wildcard(wildcard_ty, span);
+            let else_arm = hir_expr.MatchArm.new(
                 wildcard_pat,
-                Option::None,
+                Option.None,
                 false_expr,
                 span,
             );
 
-            let mut arms: Vec<hir_expr::MatchArm> = Vec::new();
+            let mut arms: Vec<hir_expr.MatchArm> = Vec.new();
             arms.push(match_arm);
             arms.push(else_arm);
 
-            hir_expr::Expr::new(
-                hir_expr::ExprKind::Match {
-                    scrutinee: Box::new(expr_hir),
+            hir_expr.Expr.new(
+                hir_expr.ExprKind.Match {
+                    scrutinee: Box.new(expr_hir),
                     arms: arms,
                 },
-                type_intern::CommonTypes::bool_ty(),
+                type_intern.CommonTypes.bool_ty(),
                 span,
             )
         }
-        &ast::MacroCallKind::Custom { ref delim, ref content } => {
+        &ast.MacroCallKind.Custom { ref delim, ref content } => {
             let _ = delim;
             let _ = content;
             // Custom macros are not yet supported.
@@ -2950,11 +2950,11 @@ fn lower_macro_call_expr(ctx: &mut hir_lower_ctx::LoweringCtx, path: &ast::ExprP
             // todo!, unreachable!, unimplemented!, panic! are routed
             // through the Format path by the parser.
             ctx.error(
-                hir::DiagnosticCode::E0104,
+                hir.DiagnosticCode.E0104,
                 common::make_string("custom macros not yet supported; use built-in macros (format!, vec!, assert!, dbg!, matches!)"),
                 span,
             );
-            hir_expr::Expr::error(span)
+            hir_expr.Expr.error(span)
         }
     }
 }
@@ -2975,11 +2975,11 @@ pub struct FormatSegment {
 /// Segments are either literal text or {} placeholders.
 /// Supports {{ and }} as literal braces.
 fn parse_format_segments(fmt: &str) -> Vec<FormatSegment> {
-    let mut segments: Vec<FormatSegment> = Vec::new();
+    let mut segments: Vec<FormatSegment> = Vec.new();
     let bytes = fmt.as_bytes();
     let len = bytes.len();
     let mut pos: usize = 0;
-    let mut current_text = String::new();
+    let mut current_text = String.new();
 
     while pos < len {
         let b = bytes[pos];
@@ -2998,7 +2998,7 @@ fn parse_format_segments(fmt: &str) -> Vec<FormatSegment> {
                         is_placeholder: false,
                     };
                     segments.push(seg);
-                    current_text = String::new();
+                    current_text = String.new();
                 }
                 // Skip everything until closing }
                 pos += 1;
@@ -3009,7 +3009,7 @@ fn parse_format_segments(fmt: &str) -> Vec<FormatSegment> {
                     pos += 1; // skip '}'
                 }
                 let placeholder_seg = FormatSegment {
-                    text: String::new(),
+                    text: String.new(),
                     is_placeholder: true,
                 };
                 segments.push(placeholder_seg);
@@ -3075,36 +3075,36 @@ fn parse_format_segments(fmt: &str) -> Vec<FormatSegment> {
 }
 
 /// Records turbofish const arg values from type arguments.
-/// If any TypeArg::Const entries exist, evaluates them and stores in the lowering context
+/// If any TypeArg.Const entries exist, evaluates them and stores in the lowering context
 /// keyed by span_start so MIR lowering can recover the values for monomorphization.
 fn record_turbofish_const_args(
-    ctx: &mut hir_lower_ctx::LoweringCtx,
-    args: &ast::TypeArgs,
+    ctx: &mut hir_lower_ctx.LoweringCtx,
+    args: &ast.TypeArgs,
     span_start: u32,
 ) {
-    let mut values: Vec<u64> = Vec::new();
+    let mut values: Vec<u64> = Vec.new();
     let mut has_const: bool = false;
     for i in 0usize..args.args.len() {
         match &args.args[i] {
-            &ast::TypeArg::Const(ref expr) => {
+            &ast.TypeArg.Const(ref expr) => {
                 let val = const_eval::eval_const_expr(expr);
                 match val {
-                    const_eval::ConstValue::Int(n) => {
+                    const_eval.ConstValue.Int(n) => {
                         values.push(n as u64);
                         has_const = true;
                     }
-                    const_eval::ConstValue::Uint(n) => {
+                    const_eval.ConstValue.Uint(n) => {
                         values.push(n);
                         has_const = true;
                     }
-                    const_eval::ConstValue::Error => {}
+                    const_eval.ConstValue.Error => {}
                 }
             }
             _ => {}
         }
     }
     if has_const {
-        ctx.turbofish_const_entries.push(hir_lower_ctx::TurbofishEntry::new(span_start, values));
+        ctx.turbofish_const_entries.push(hir_lower_ctx.TurbofishEntry.new(span_start, values));
     }
 }
 

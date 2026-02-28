@@ -172,7 +172,7 @@ impl RecordRowVarId {
 
 /// A fully resolved path to a definition.
 ///
-/// After name resolution, paths like `std::vec::Vec<T>` are converted to
+/// After name resolution, paths like `std::vec.Vec<T>` are converted to
 /// ResolvedPaths that contain the DefId of the referenced item and any
 /// type arguments.
 pub struct ResolvedPath {
@@ -182,7 +182,7 @@ pub struct ResolvedPath {
     /// Note: We use a simple Vec here; proper type args need hir_ty.
     pub type_arg_count: u32,
     /// The span of the path in source code.
-    pub span: common::Span,
+    pub span: common.Span,
     /// For enum variant paths, the variant index within the parent enum.
     /// None for non-variant paths.
     pub variant_index: Option<u32>,
@@ -190,22 +190,22 @@ pub struct ResolvedPath {
 
 impl ResolvedPath {
     /// Creates a new ResolvedPath.
-    pub fn new(def_id: DefId, type_arg_count: u32, span: common::Span) -> ResolvedPath {
-        ResolvedPath { def_id, type_arg_count, span, variant_index: Option::None }
+    pub fn new(def_id: DefId, type_arg_count: u32, span: common.Span) -> ResolvedPath {
+        ResolvedPath { def_id, type_arg_count, span, variant_index: Option.None }
     }
 
     /// Creates a ResolvedPath with no type arguments.
-    pub fn simple(def_id: DefId, span: common::Span) -> ResolvedPath {
-        ResolvedPath { def_id, type_arg_count: 0, span, variant_index: Option::None }
+    pub fn simple(def_id: DefId, span: common.Span) -> ResolvedPath {
+        ResolvedPath { def_id, type_arg_count: 0, span, variant_index: Option.None }
     }
 
     /// Creates a ResolvedPath for an enum variant with its index.
-    pub fn variant(def_id: DefId, span: common::Span, variant_index: u32) -> ResolvedPath {
+    pub fn variant(def_id: DefId, span: common.Span, variant_index: u32) -> ResolvedPath {
         ResolvedPath {
             def_id: def_id,
             type_arg_count: 0,
             span: span,
-            variant_index: Option::Some(variant_index),
+            variant_index: Option.Some(variant_index),
         }
     }
 }
@@ -271,33 +271,33 @@ pub struct DefInfo {
     /// The kind of definition.
     pub kind: DefKind,
     /// The name of the definition (as a symbol index).
-    pub name: common::Symbol,
+    pub name: common.Symbol,
     /// The span where this definition was declared.
-    pub span: common::Span,
+    pub span: common.Span,
     /// The parent definition (for nested items).
     pub parent: Option<DefId>,
     /// For Variant definitions, the index within the parent enum.
     /// None for non-variant definitions.
     pub variant_index: Option<u32>,
     /// The visibility of this definition.
-    pub visibility: common::Visibility,
+    pub visibility: common.Visibility,
 }
 
 impl DefInfo {
     /// Creates a new DefInfo.
-    pub fn new(kind: DefKind, name: common::Symbol, span: common::Span, parent: Option<DefId>) -> DefInfo {
-        DefInfo { kind, name, span, parent, variant_index: Option::None, visibility: common::Visibility::Private }
+    pub fn new(kind: DefKind, name: common.Symbol, span: common.Span, parent: Option<DefId>) -> DefInfo {
+        DefInfo { kind, name, span, parent, variant_index: Option.None, visibility: common.Visibility.Private }
     }
 
     /// Creates a new DefInfo for an enum variant with its index.
-    pub fn variant(name: common::Symbol, span: common::Span, parent: DefId, variant_index: u32) -> DefInfo {
+    pub fn variant(name: common.Symbol, span: common.Span, parent: DefId, variant_index: u32) -> DefInfo {
         DefInfo {
-            kind: DefKind::Variant,
+            kind: DefKind.Variant,
             name: name,
             span: span,
-            parent: Option::Some(parent),
-            variant_index: Option::Some(variant_index),
-            visibility: common::Visibility::Public,
+            parent: Option.Some(parent),
+            variant_index: Option.Some(variant_index),
+            visibility: common.Visibility.Public,
         }
     }
 }

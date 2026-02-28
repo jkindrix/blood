@@ -68,7 +68,7 @@ impl HandlerStack {
     /// Creates a new empty handler stack.
     pub fn new() -> HandlerStack {
         HandlerStack {
-            entries: Vec::new(),
+            entries: Vec.new(),
             next_marker: 1,
         }
     }
@@ -77,7 +77,7 @@ impl HandlerStack {
     pub fn push(self: &mut HandlerStack, effect_id: u32, state_ptr: usize, op_count: u32) -> u64 {
         let marker = self.next_marker;
         self.next_marker = self.next_marker + 1;
-        self.entries.push(HandlerEntry::new(marker, effect_id, state_ptr, op_count));
+        self.entries.push(HandlerEntry.new(marker, effect_id, state_ptr, op_count));
         marker
     }
 
@@ -86,7 +86,7 @@ impl HandlerStack {
         if self.entries.len() > 0 {
             self.entries.pop()
         } else {
-            Option::None
+            Option.None
         }
     }
 
@@ -98,18 +98,18 @@ impl HandlerStack {
         while i > 0 {
             i -= 1;
             if self.entries[i].effect_id == effect_id {
-                return Option::Some(i);
+                return Option.Some(i);
             }
         }
-        Option::None
+        Option.None
     }
 
     /// Gets a handler entry by index.
     pub fn get(self: &HandlerStack, index: usize) -> Option<&HandlerEntry> {
         if index < self.entries.len() {
-            Option::Some(&self.entries[index])
+            Option.Some(&self.entries[index])
         } else {
-            Option::None
+            Option.None
         }
     }
 
@@ -187,8 +187,8 @@ impl EffectRuntime {
     /// Creates a new effect runtime.
     pub fn new() -> EffectRuntime {
         EffectRuntime {
-            handler_stack: HandlerStack::new(),
-            active_continuation: Option::None,
+            handler_stack: HandlerStack.new(),
+            active_continuation: Option.None,
             last_result: 0,
         }
     }
@@ -221,17 +221,17 @@ impl EffectRuntime {
     ) -> i64 {
         // Find the handler for this effect
         match self.handler_stack.find_handler(effect_id) {
-            Option::Some(handler_idx) => {
+            Option.Some(handler_idx) => {
                 // Get the handler
                 match self.handler_stack.get(handler_idx) {
-                    Option::Some(hndl_entry) => {
+                    Option.Some(hndl_entry) => {
                         // Capture the continuation
-                        let cont = Continuation::new(
+                        let cont = Continuation.new(
                             hndl_entry.marker_id,
                             op_index,
                             self.handler_stack.depth(),
                         );
-                        self.active_continuation = Option::Some(cont);
+                        self.active_continuation = Option.Some(cont);
 
                         // For now, return a simple result
                         // Full implementation would invoke the handler
@@ -239,13 +239,13 @@ impl EffectRuntime {
                         self.last_result = arg;
                         arg
                     }
-                    Option::None => {
+                    Option.None => {
                         // Handler not found (internal error)
                         0
                     }
                 }
             }
-            Option::None => {
+            Option.None => {
                 // No handler for this effect - unhandled effect error
                 // In a real implementation, this would panic or return an error
                 0
@@ -258,15 +258,15 @@ impl EffectRuntime {
     /// This continues the suspended computation with the given result.
     pub fn do_resume(self: &mut EffectRuntime, value: i64) {
         match &mut self.active_continuation {
-            &mut Option::Some(ref mut cont) => {
+            &mut Option.Some(ref mut cont) => {
                 cont.mark_resumed();
                 self.last_result = value;
             }
-            &mut Option::None => {
+            &mut Option.None => {
                 // No active continuation - resume without suspend error
             }
         }
-        self.active_continuation = Option::None;
+        self.active_continuation = Option.None;
     }
 
     /// Gets the result from the last operation.
@@ -277,8 +277,8 @@ impl EffectRuntime {
     /// Returns true if there's an active continuation.
     pub fn has_active_continuation(self: &EffectRuntime) -> bool {
         match &self.active_continuation {
-            &Option::Some(_) => true,
-            &Option::None => false,
+            &Option.Some(_) => true,
+            &Option.None => false,
         }
     }
 }
@@ -291,7 +291,7 @@ impl EffectRuntime {
 ///
 /// This is a placeholder for the actual global state management.
 /// In production, this would use proper thread-local storage.
-static mut EFFECT_RUNTIME: Option<EffectRuntime> = Option::None;
+static mut EFFECT_RUNTIME: Option<EffectRuntime> = Option.None;
 
 /// Initializes the global effect runtime.
 pub fn init_runtime() {
@@ -345,7 +345,7 @@ pub fn get_runtime() -> &'static mut EffectRuntime {
 /// These stubs provide minimal implementations that can be used
 /// for testing or as a starting point for real implementations.
 pub fn generate_runtime_stubs() -> String {
-    let mut ir = String::new();
+    let mut ir = String.new();
 
     // Global handler stack (simplified)
     ir.push_str("; Effect runtime globals\n");
@@ -417,7 +417,7 @@ pub fn generate_runtime_stubs() -> String {
 
 /// Generates the initialization code for the effect runtime.
 pub fn generate_runtime_init() -> String {
-    let mut ir = String::new();
+    let mut ir = String.new();
 
     ir.push_str("; Initialize effect runtime\n");
     ir.push_str("define void @blood_runtime_init() {\n");
@@ -438,7 +438,7 @@ pub fn generate_runtime_init() -> String {
 
 /// Generates LLVM IR for finding a handler.
 pub fn generate_find_handler() -> String {
-    let mut ir = String::new();
+    let mut ir = String.new();
 
     ir.push_str("; Find a handler for the given effect_id\n");
     ir.push_str("; Returns the handler index or -1 if not found\n");

@@ -18,11 +18,11 @@ mod type_intern;
 /// A method candidate found during resolution.
 pub struct MethodCandidate {
     /// The DefId of the method.
-    pub def_id: hir_def::DefId,
+    pub def_id: hir_def.DefId,
     /// The DefId of the impl block containing this method.
-    pub impl_id: hir_def::DefId,
+    pub impl_id: hir_def.DefId,
     /// The self type of the impl block.
-    pub self_ty: type_intern::TyId,
+    pub self_ty: type_intern.TyId,
     /// Specificity score (higher = more specific).
     pub specificity: u32,
     /// Whether this is from a trait impl.
@@ -32,9 +32,9 @@ pub struct MethodCandidate {
 impl MethodCandidate {
     /// Creates a new method candidate.
     pub fn new(
-        def_id: hir_def::DefId,
-        impl_id: hir_def::DefId,
-        self_ty: type_intern::TyId,
+        def_id: hir_def.DefId,
+        impl_id: hir_def.DefId,
+        self_ty: type_intern.TyId,
         specificity: u32,
         is_trait_impl: bool,
     ) -> MethodCandidate {
@@ -78,7 +78,7 @@ impl DispatchResolver {
     /// Creates a new resolver.
     pub fn new() -> DispatchResolver {
         DispatchResolver {
-            candidates: Vec::new(),
+            candidates: Vec.new(),
         }
     }
 
@@ -90,16 +90,16 @@ impl DispatchResolver {
     /// Resolves to the best candidate.
     pub fn resolve(self: &Self) -> DispatchResult {
         if self.candidates.len() == 0 {
-            return DispatchResult::NotFound;
+            return DispatchResult.NotFound;
         }
 
         if self.candidates.len() == 1 {
             // Single candidate — return it directly
             let c = &self.candidates[0];
-            return DispatchResult::Found(MethodCandidate::new(
-                hir_def::DefId::new(c.def_id.index),
-                hir_def::DefId::new(c.impl_id.index),
-                type_intern::TyId::new(c.self_ty.index),
+            return DispatchResult.Found(MethodCandidate.new(
+                hir_def.DefId.new(c.def_id.index),
+                hir_def.DefId.new(c.impl_id.index),
+                type_intern.TyId.new(c.self_ty.index),
                 c.specificity,
                 c.is_trait_impl,
             ));
@@ -122,26 +122,26 @@ impl DispatchResolver {
 
         if tie_count > 1 {
             // Ambiguous — collect all tied candidates
-            let mut tied: Vec<MethodCandidate> = Vec::new();
+            let mut tied: Vec<MethodCandidate> = Vec.new();
             for j in 0usize..self.candidates.len() {
                 if self.candidates[j].specificity == best_specificity {
                     let c = &self.candidates[j];
-                    tied.push(MethodCandidate::new(
-                        hir_def::DefId::new(c.def_id.index),
-                        hir_def::DefId::new(c.impl_id.index),
-                        type_intern::TyId::new(c.self_ty.index),
+                    tied.push(MethodCandidate.new(
+                        hir_def.DefId.new(c.def_id.index),
+                        hir_def.DefId.new(c.impl_id.index),
+                        type_intern.TyId.new(c.self_ty.index),
                         c.specificity,
                         c.is_trait_impl,
                     ));
                 }
             }
-            DispatchResult::Ambiguous { candidates: tied }
+            DispatchResult.Ambiguous { candidates: tied }
         } else {
             let c = &self.candidates[best_idx];
-            DispatchResult::Found(MethodCandidate::new(
-                hir_def::DefId::new(c.def_id.index),
-                hir_def::DefId::new(c.impl_id.index),
-                type_intern::TyId::new(c.self_ty.index),
+            DispatchResult.Found(MethodCandidate.new(
+                hir_def.DefId.new(c.def_id.index),
+                hir_def.DefId.new(c.impl_id.index),
+                type_intern.TyId.new(c.self_ty.index),
                 c.specificity,
                 c.is_trait_impl,
             ))
@@ -157,33 +157,33 @@ impl DispatchResolver {
 /// Concrete types are more specific than generic ones.
 /// Scores: 10 = most specific (concrete primitive/never),
 ///         0 = least specific (unresolved inference variable or error).
-pub fn compute_specificity(ty: type_intern::TyId) -> u32 {
+pub fn compute_specificity(ty: type_intern.TyId) -> u32 {
     let interner = type_intern::type_interner();
     let kind = interner.get(ty);
     match kind {
-        &type_intern::InternedTypeKind::Primitive(_) => 10,
-        &type_intern::InternedTypeKind::Never => 10,
-        &type_intern::InternedTypeKind::Adt { def_id: _, args: _ } => 8,
-        &type_intern::InternedTypeKind::Array { element: _, size: _ } => 9,
-        &type_intern::InternedTypeKind::Slice { element: _ } => 9,
-        &type_intern::InternedTypeKind::Range { element: _, inclusive: _ } => 9,
-        &type_intern::InternedTypeKind::Tuple(_) => 7,
-        &type_intern::InternedTypeKind::Record { fields: _, row_var: _ } => 7,
-        &type_intern::InternedTypeKind::Fn { params: _, ret: _, effects: _ } => 6,
-        &type_intern::InternedTypeKind::Closure { def_id: _, params: _, ret: _ } => 6,
-        &type_intern::InternedTypeKind::Ref { inner, mutable: _ } => {
+        &type_intern.InternedTypeKind.Primitive(_) => 10,
+        &type_intern.InternedTypeKind.Never => 10,
+        &type_intern.InternedTypeKind.Adt { def_id: _, args: _ } => 8,
+        &type_intern.InternedTypeKind.Array { element: _, size: _ } => 9,
+        &type_intern.InternedTypeKind.Slice { element: _ } => 9,
+        &type_intern.InternedTypeKind.Range { element: _, inclusive: _ } => 9,
+        &type_intern.InternedTypeKind.Tuple(_) => 7,
+        &type_intern.InternedTypeKind.Record { fields: _, row_var: _ } => 7,
+        &type_intern.InternedTypeKind.Fn { params: _, ret: _, effects: _ } => 6,
+        &type_intern.InternedTypeKind.Closure { def_id: _, params: _, ret: _ } => 6,
+        &type_intern.InternedTypeKind.Ref { inner, mutable: _ } => {
             compute_specificity(inner)
         }
-        &type_intern::InternedTypeKind::Ptr { inner, mutable: _ } => {
+        &type_intern.InternedTypeKind.Ptr { inner, mutable: _ } => {
             compute_specificity(inner)
         }
-        &type_intern::InternedTypeKind::Ownership { qualifier: _, inner } => {
+        &type_intern.InternedTypeKind.Ownership { qualifier: _, inner } => {
             compute_specificity(inner)
         }
-        &type_intern::InternedTypeKind::DynTrait { trait_id: _, auto_traits: _ } => 3,
-        &type_intern::InternedTypeKind::Forall { params: _, body: _ } => 2,
-        &type_intern::InternedTypeKind::Param(_) => 1,
-        &type_intern::InternedTypeKind::Infer(_) => 0,
-        &type_intern::InternedTypeKind::Error => 0,
+        &type_intern.InternedTypeKind.DynTrait { trait_id: _, auto_traits: _ } => 3,
+        &type_intern.InternedTypeKind.Forall { params: _, body: _ } => 2,
+        &type_intern.InternedTypeKind.Param(_) => 1,
+        &type_intern.InternedTypeKind.Infer(_) => 0,
+        &type_intern.InternedTypeKind.Error => 0,
     }
 }

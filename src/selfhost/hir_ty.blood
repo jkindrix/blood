@@ -28,52 +28,52 @@ impl Type {
 
     /// Creates an error type for error recovery.
     pub fn error() -> Type {
-        Type::new(TypeKind::Error)
+        Type.new(TypeKind.Error)
     }
 
     /// Creates a never type (!).
     pub fn never() -> Type {
-        Type::new(TypeKind::Never)
+        Type.new(TypeKind.Never)
     }
 
     /// Creates a unit type ().
     pub fn unit() -> Type {
-        Type::new(TypeKind::Tuple(Vec::new()))
+        Type.new(TypeKind.Tuple(Vec.new()))
     }
 
     /// Creates a boolean type.
     pub fn bool_ty() -> Type {
-        Type::new(TypeKind::Primitive(PrimitiveTy::Bool))
+        Type.new(TypeKind.Primitive(PrimitiveTy.Bool))
     }
 
     /// Creates an i32 type.
     pub fn i32_ty() -> Type {
-        Type::new(TypeKind::Primitive(PrimitiveTy::I32))
+        Type.new(TypeKind.Primitive(PrimitiveTy.I32))
     }
 
     /// Creates a u8 type.
     pub fn u8_ty() -> Type {
-        Type::new(TypeKind::Primitive(PrimitiveTy::U8))
+        Type.new(TypeKind.Primitive(PrimitiveTy.U8))
     }
 
     /// Creates a usize type.
     pub fn usize_ty() -> Type {
-        Type::new(TypeKind::Primitive(PrimitiveTy::Usize))
+        Type.new(TypeKind.Primitive(PrimitiveTy.Usize))
     }
 
     /// Creates a str type.
     pub fn str_ty() -> Type {
-        Type::new(TypeKind::Primitive(PrimitiveTy::Str))
+        Type.new(TypeKind.Primitive(PrimitiveTy.Str))
     }
 
     /// Creates an inference variable type.
-    pub fn infer(var_id: hir_def::TyVarId) -> Type {
-        Type::new(TypeKind::Infer(var_id))
+    pub fn infer(var_id: hir_def.TyVarId) -> Type {
+        Type.new(TypeKind.Infer(var_id))
     }
 
     /// Creates a type parameter type.
-    pub fn param(var_id: hir_def::TyVarId) -> Type {
-        Type::new(TypeKind::Param(var_id))
+    pub fn param(var_id: hir_def.TyVarId) -> Type {
+        Type.new(TypeKind.Param(var_id))
     }
 }
 
@@ -114,23 +114,23 @@ pub enum TypeKind {
     },
     /// A closure type: |T1, T2| -> R with captured environment.
     Closure {
-        def_id: hir_def::DefId,
+        def_id: hir_def.DefId,
         params: Vec<Type>,
         ret: Box<Type>,
     },
     /// An algebraic data type (struct, enum): Name<T1, T2>
     Adt {
-        def_id: hir_def::DefId,
+        def_id: hir_def.DefId,
         args: Vec<Type>,
     },
     /// A type inference variable (to be resolved during type checking)
-    Infer(hir_def::TyVarId),
+    Infer(hir_def.TyVarId),
     /// A type parameter (generic type variable)
-    Param(hir_def::TyVarId),
+    Param(hir_def.TyVarId),
     /// An extensible record type: { field: T, ... | r }
     Record {
         fields: Vec<RecordField>,
-        row_var: Option<hir_def::RecordRowVarId>,
+        row_var: Option<hir_def.RecordRowVarId>,
     },
     /// A universally quantified type: forall<T, U> Body
     ///
@@ -151,7 +151,7 @@ pub enum TypeKind {
     /// - Subsumption checking for higher-rank polymorphism
     Forall {
         /// The type parameters being quantified.
-        params: Vec<hir_def::TyVarId>,
+        params: Vec<hir_def.TyVarId>,
         /// The body type (may reference the params).
         body: Box<Type>,
     },
@@ -162,8 +162,8 @@ pub enum TypeKind {
     },
     /// A trait object type: dyn Trait
     DynTrait {
-        trait_id: hir_def::DefId,
-        auto_traits: Vec<hir_def::DefId>,
+        trait_id: hir_def.DefId,
+        auto_traits: Vec<hir_def.DefId>,
     },
     /// The never type (!)
     Never,
@@ -188,8 +188,8 @@ impl OwnershipQualifier {
     /// Clones an ownership qualifier.
     pub fn clone(self: &OwnershipQualifier) -> OwnershipQualifier {
         match self {
-            &OwnershipQualifier::Linear => OwnershipQualifier::Linear,
-            &OwnershipQualifier::Affine => OwnershipQualifier::Affine,
+            &OwnershipQualifier.Linear => OwnershipQualifier.Linear,
+            &OwnershipQualifier.Affine => OwnershipQualifier.Affine,
         }
     }
 }
@@ -243,14 +243,14 @@ pub enum PrimitiveTy {
 /// A field in a record type.
 pub struct RecordField {
     /// The name of the field (as a symbol).
-    pub name: common::Symbol,
+    pub name: common.Symbol,
     /// The type of the field.
     pub ty: Type,
 }
 
 impl RecordField {
     /// Creates a new record field.
-    pub fn new(name: common::Symbol, ty: Type) -> RecordField {
+    pub fn new(name: common.Symbol, ty: Type) -> RecordField {
         RecordField { name, ty }
     }
 }
@@ -267,13 +267,13 @@ pub struct EffectRow {
     /// The known effects in this row.
     pub effects: Vec<EffectRef>,
     /// An optional row variable for polymorphism.
-    pub row_var: Option<hir_def::EffectRowVarId>,
+    pub row_var: Option<hir_def.EffectRowVarId>,
 }
 
 impl EffectRow {
     /// Creates an empty (pure) effect row.
     pub fn empty() -> EffectRow {
-        EffectRow { effects: Vec::new(), row_var: None }
+        EffectRow { effects: Vec.new(), row_var: None }
     }
 
     /// Creates an effect row with the given effects.
@@ -282,12 +282,12 @@ impl EffectRow {
     }
 
     /// Creates a polymorphic effect row.
-    pub fn polymorphic(row_var: hir_def::EffectRowVarId) -> EffectRow {
-        EffectRow { effects: Vec::new(), row_var: Some(row_var) }
+    pub fn polymorphic(row_var: hir_def.EffectRowVarId) -> EffectRow {
+        EffectRow { effects: Vec.new(), row_var: Some(row_var) }
     }
 
     /// Creates an effect row with both effects and a row variable.
-    pub fn with_effects_and_var(effects: Vec<EffectRef>, row_var: hir_def::EffectRowVarId) -> EffectRow {
+    pub fn with_effects_and_var(effects: Vec<EffectRef>, row_var: hir_def.EffectRowVarId) -> EffectRow {
         EffectRow { effects, row_var: Some(row_var) }
     }
 
@@ -300,20 +300,20 @@ impl EffectRow {
 /// A reference to an effect definition.
 pub struct EffectRef {
     /// The DefId of the effect.
-    pub def_id: hir_def::DefId,
+    pub def_id: hir_def.DefId,
     /// Type arguments if the effect is generic.
     pub args: Vec<Type>,
 }
 
 impl EffectRef {
     /// Creates a new effect reference.
-    pub fn new(def_id: hir_def::DefId, args: Vec<Type>) -> EffectRef {
+    pub fn new(def_id: hir_def.DefId, args: Vec<Type>) -> EffectRef {
         EffectRef { def_id, args }
     }
 
     /// Creates an effect reference with no type arguments.
-    pub fn simple(def_id: hir_def::DefId) -> EffectRef {
-        EffectRef { def_id, args: Vec::new() }
+    pub fn simple(def_id: hir_def.DefId) -> EffectRef {
+        EffectRef { def_id, args: Vec.new() }
     }
 }
 
@@ -332,12 +332,12 @@ pub struct Generics {
 impl Generics {
     /// Creates empty generics.
     pub fn empty() -> Generics {
-        Generics { params: Vec::new(), where_predicates: Vec::new() }
+        Generics { params: Vec.new(), where_predicates: Vec.new() }
     }
 
     /// Creates generics with the given parameters.
     pub fn with_params(params: Vec<GenericParam>) -> Generics {
-        Generics { params, where_predicates: Vec::new() }
+        Generics { params, where_predicates: Vec.new() }
     }
 
     /// Returns true if there are no generic parameters.
@@ -359,18 +359,18 @@ pub enum GenericParam {
 /// A type parameter definition.
 pub struct TypeParamDef {
     /// The name of the type parameter.
-    pub name: common::Symbol,
+    pub name: common.Symbol,
     /// The TyVarId assigned to this parameter.
-    pub var_id: hir_def::TyVarId,
+    pub var_id: hir_def.TyVarId,
     /// Default type (if any).
     pub default_ty: Option<Type>,
     /// Span where this parameter was declared.
-    pub span: common::Span,
+    pub span: common.Span,
 }
 
 impl TypeParamDef {
     /// Creates a new type parameter definition.
-    pub fn new(name: common::Symbol, var_id: hir_def::TyVarId, span: common::Span) -> TypeParamDef {
+    pub fn new(name: common.Symbol, var_id: hir_def.TyVarId, span: common.Span) -> TypeParamDef {
         TypeParamDef { name, var_id, default_ty: None, span }
     }
 }
@@ -378,14 +378,14 @@ impl TypeParamDef {
 /// A lifetime parameter definition.
 pub struct LifetimeParamDef {
     /// The name of the lifetime (without the leading ').
-    pub name: common::Symbol,
+    pub name: common.Symbol,
     /// Span where this parameter was declared.
-    pub span: common::Span,
+    pub span: common.Span,
 }
 
 impl LifetimeParamDef {
     /// Creates a new lifetime parameter definition.
-    pub fn new(name: common::Symbol, span: common::Span) -> LifetimeParamDef {
+    pub fn new(name: common.Symbol, span: common.Span) -> LifetimeParamDef {
         LifetimeParamDef { name, span }
     }
 }
@@ -393,19 +393,19 @@ impl LifetimeParamDef {
 /// A const generic parameter definition.
 pub struct ConstParamDef {
     /// The name of the const parameter.
-    pub name: common::Symbol,
+    pub name: common.Symbol,
     /// The type of the const parameter.
     pub ty: Type,
     /// Span where this parameter was declared.
-    pub span: common::Span,
+    pub span: common.Span,
     /// DefId assigned to this const param during HIR lowering.
     /// Used by the driver for monomorphization: maps const param DefIds to concrete values.
-    pub def_id: hir_def::DefId,
+    pub def_id: hir_def.DefId,
 }
 
 impl ConstParamDef {
     /// Creates a new const parameter definition.
-    pub fn new(name: common::Symbol, ty: Type, span: common::Span, def_id: hir_def::DefId) -> ConstParamDef {
+    pub fn new(name: common.Symbol, ty: Type, span: common.Span, def_id: hir_def.DefId) -> ConstParamDef {
         ConstParamDef { name, ty, span, def_id }
     }
 }
@@ -416,35 +416,35 @@ pub enum WherePredicate {
     TypeBound {
         ty: Type,
         bounds: Vec<TraitRef>,
-        span: common::Span,
+        span: common.Span,
     },
     /// A lifetime bound: 'a: 'b
     LifetimeBound {
-        lifetime: common::Symbol,
-        bound: common::Symbol,
-        span: common::Span,
+        lifetime: common.Symbol,
+        bound: common.Symbol,
+        span: common.Span,
     },
     /// An effect bound: E: EffectSet
     EffectBound {
-        effect_var: hir_def::EffectRowVarId,
+        effect_var: hir_def.EffectRowVarId,
         bounds: Vec<EffectRef>,
-        span: common::Span,
+        span: common.Span,
     },
 }
 
 /// A reference to a trait.
 pub struct TraitRef {
     /// The DefId of the trait.
-    pub def_id: hir_def::DefId,
+    pub def_id: hir_def.DefId,
     /// Type arguments for the trait.
     pub args: Vec<Type>,
     /// Span of this trait reference.
-    pub span: common::Span,
+    pub span: common.Span,
 }
 
 impl TraitRef {
     /// Creates a new trait reference.
-    pub fn new(def_id: hir_def::DefId, args: Vec<Type>, span: common::Span) -> TraitRef {
+    pub fn new(def_id: hir_def.DefId, args: Vec<Type>, span: common.Span) -> TraitRef {
         TraitRef { def_id, args, span }
     }
 }
@@ -461,12 +461,12 @@ pub struct FnEffect {
     /// The effect reference.
     pub eff_ref: EffectRef,
     /// The span of this effect in the source.
-    pub span: common::Span,
+    pub span: common.Span,
 }
 
 impl FnEffect {
     /// Creates a new function effect annotation.
-    pub fn new(eff_ref: EffectRef, span: common::Span) -> FnEffect {
+    pub fn new(eff_ref: EffectRef, span: common.Span) -> FnEffect {
         FnEffect { eff_ref, span }
     }
 }
@@ -487,114 +487,114 @@ pub fn copy_type(ty: &Type) -> Type {
 /// Creates a copy of a TypeKind.
 fn copy_type_kind(kind: &TypeKind) -> TypeKind {
     match kind {
-        &TypeKind::Primitive(prim) => TypeKind::Primitive(prim),
-        &TypeKind::Never => TypeKind::Never,
-        &TypeKind::Error => TypeKind::Error,
-        &TypeKind::Infer(var_id) => TypeKind::Infer(var_id),
-        &TypeKind::Param(var_id) => TypeKind::Param(var_id),
-        &TypeKind::Tuple(ref types) => {
-            let mut copied: Vec<Type> = Vec::new();
+        &TypeKind.Primitive(prim) => TypeKind.Primitive(prim),
+        &TypeKind.Never => TypeKind.Never,
+        &TypeKind.Error => TypeKind.Error,
+        &TypeKind.Infer(var_id) => TypeKind.Infer(var_id),
+        &TypeKind.Param(var_id) => TypeKind.Param(var_id),
+        &TypeKind.Tuple(ref types) => {
+            let mut copied: Vec<Type> = Vec.new();
             for i in 0usize..types.len() {
                 copied.push(copy_type(&types[i]));
             }
-            TypeKind::Tuple(copied)
+            TypeKind.Tuple(copied)
         }
-        &TypeKind::Array { ref element, size } => {
-            TypeKind::Array {
-                element: Box::new(copy_type(element.as_ref())),
+        &TypeKind.Array { ref element, size } => {
+            TypeKind.Array {
+                element: Box.new(copy_type(element.as_ref())),
                 size: size,
             }
         }
-        &TypeKind::Slice { ref element } => {
-            TypeKind::Slice {
-                element: Box::new(copy_type(element.as_ref())),
+        &TypeKind.Slice { ref element } => {
+            TypeKind.Slice {
+                element: Box.new(copy_type(element.as_ref())),
             }
         }
-        &TypeKind::Ref { ref inner, mutable } => {
-            TypeKind::Ref {
-                inner: Box::new(copy_type(inner.as_ref())),
+        &TypeKind.Ref { ref inner, mutable } => {
+            TypeKind.Ref {
+                inner: Box.new(copy_type(inner.as_ref())),
                 mutable: mutable,
             }
         }
-        &TypeKind::Ptr { ref inner, mutable } => {
-            TypeKind::Ptr {
-                inner: Box::new(copy_type(inner.as_ref())),
+        &TypeKind.Ptr { ref inner, mutable } => {
+            TypeKind.Ptr {
+                inner: Box.new(copy_type(inner.as_ref())),
                 mutable: mutable,
             }
         }
-        &TypeKind::Adt { def_id, ref args } => {
-            let mut copied_args: Vec<Type> = Vec::new();
+        &TypeKind.Adt { def_id, ref args } => {
+            let mut copied_args: Vec<Type> = Vec.new();
             for i in 0usize..args.len() {
                 copied_args.push(copy_type(&args[i]));
             }
-            TypeKind::Adt {
+            TypeKind.Adt {
                 def_id: def_id,
                 args: copied_args,
             }
         }
-        &TypeKind::Fn { ref params, ref ret, ref effects } => {
-            let mut copied_params: Vec<Type> = Vec::new();
+        &TypeKind.Fn { ref params, ref ret, ref effects } => {
+            let mut copied_params: Vec<Type> = Vec.new();
             for i in 0usize..params.len() {
                 copied_params.push(copy_type(&params[i]));
             }
-            TypeKind::Fn {
+            TypeKind.Fn {
                 params: copied_params,
-                ret: Box::new(copy_type(ret.as_ref())),
+                ret: Box.new(copy_type(ret.as_ref())),
                 effects: copy_effect_row(effects),
             }
         }
-        &TypeKind::Closure { def_id, ref params, ref ret } => {
-            let mut copied_params: Vec<Type> = Vec::new();
+        &TypeKind.Closure { def_id, ref params, ref ret } => {
+            let mut copied_params: Vec<Type> = Vec.new();
             for i in 0usize..params.len() {
                 copied_params.push(copy_type(&params[i]));
             }
-            TypeKind::Closure {
+            TypeKind.Closure {
                 def_id: def_id,
                 params: copied_params,
-                ret: Box::new(copy_type(ret.as_ref())),
+                ret: Box.new(copy_type(ret.as_ref())),
             }
         }
-        &TypeKind::Record { ref fields, ref row_var } => {
-            let mut copied_fields: Vec<RecordField> = Vec::new();
+        &TypeKind.Record { ref fields, ref row_var } => {
+            let mut copied_fields: Vec<RecordField> = Vec.new();
             for i in 0usize..fields.len() {
-                copied_fields.push(RecordField::new(
+                copied_fields.push(RecordField.new(
                     fields[i].name,
                     copy_type(&fields[i].ty),
                 ));
             }
-            TypeKind::Record {
+            TypeKind.Record {
                 fields: copied_fields,
                 row_var: *row_var,
             }
         }
-        &TypeKind::Forall { ref params, ref body } => {
-            let mut copied_params: Vec<hir_def::TyVarId> = Vec::new();
+        &TypeKind.Forall { ref params, ref body } => {
+            let mut copied_params: Vec<hir_def.TyVarId> = Vec.new();
             for i in 0usize..params.len() {
                 copied_params.push(params[i]);
             }
-            TypeKind::Forall {
+            TypeKind.Forall {
                 params: copied_params,
-                body: Box::new(copy_type(body.as_ref())),
+                body: Box.new(copy_type(body.as_ref())),
             }
         }
-        &TypeKind::Ownership { qualifier, ref inner } => {
-            TypeKind::Ownership {
+        &TypeKind.Ownership { qualifier, ref inner } => {
+            TypeKind.Ownership {
                 qualifier: qualifier,
-                inner: Box::new(copy_type(inner.as_ref())),
+                inner: Box.new(copy_type(inner.as_ref())),
             }
         }
-        &TypeKind::Range { ref element, inclusive } => {
-            TypeKind::Range {
-                element: Box::new(copy_type(element.as_ref())),
+        &TypeKind.Range { ref element, inclusive } => {
+            TypeKind.Range {
+                element: Box.new(copy_type(element.as_ref())),
                 inclusive: inclusive,
             }
         }
-        &TypeKind::DynTrait { trait_id, ref auto_traits } => {
-            let mut copied_auto: Vec<hir_def::DefId> = Vec::new();
+        &TypeKind.DynTrait { trait_id, ref auto_traits } => {
+            let mut copied_auto: Vec<hir_def.DefId> = Vec.new();
             for i in 0usize..auto_traits.len() {
                 copied_auto.push(auto_traits[i]);
             }
-            TypeKind::DynTrait {
+            TypeKind.DynTrait {
                 trait_id: trait_id,
                 auto_traits: copied_auto,
             }
@@ -604,10 +604,10 @@ fn copy_type_kind(kind: &TypeKind) -> TypeKind {
 
 /// Creates a copy of an EffectRow.
 pub fn copy_effect_row(row: &EffectRow) -> EffectRow {
-    let mut copied_effects: Vec<EffectRef> = Vec::new();
+    let mut copied_effects: Vec<EffectRef> = Vec.new();
     for i in 0usize..row.effects.len() {
         let eff = &row.effects[i];
-        let mut copied_args: Vec<Type> = Vec::new();
+        let mut copied_args: Vec<Type> = Vec.new();
         for j in 0usize..eff.args.len() {
             copied_args.push(copy_type(&eff.args[j]));
         }
@@ -624,7 +624,7 @@ pub fn copy_effect_row(row: &EffectRow) -> EffectRow {
 
 /// Creates a copy of a TraitRef.
 pub fn copy_trait_ref(tr: &TraitRef) -> TraitRef {
-    let mut copied_args: Vec<Type> = Vec::new();
+    let mut copied_args: Vec<Type> = Vec.new();
     for i in 0usize..tr.args.len() {
         copied_args.push(copy_type(&tr.args[i]));
     }
@@ -638,31 +638,31 @@ pub fn copy_trait_ref(tr: &TraitRef) -> TraitRef {
 /// Creates a copy of a WherePredicate.
 pub fn copy_where_predicate(pred: &WherePredicate) -> WherePredicate {
     match pred {
-        &WherePredicate::TypeBound { ref ty, ref bounds, span } => {
-            let mut copied_bounds: Vec<TraitRef> = Vec::new();
+        &WherePredicate.TypeBound { ref ty, ref bounds, span } => {
+            let mut copied_bounds: Vec<TraitRef> = Vec.new();
             for i in 0usize..bounds.len() {
                 copied_bounds.push(copy_trait_ref(&bounds[i]));
             }
-            WherePredicate::TypeBound {
+            WherePredicate.TypeBound {
                 ty: copy_type(ty),
                 bounds: copied_bounds,
                 span: span,
             }
         }
-        &WherePredicate::LifetimeBound { lifetime, bound, span } => {
+        &WherePredicate.LifetimeBound { lifetime, bound, span } => {
             // Symbol is Copy (just a u32 wrapper), so no copying needed
-            WherePredicate::LifetimeBound {
+            WherePredicate.LifetimeBound {
                 lifetime: lifetime,
                 bound: bound,
                 span: span,
             }
         }
-        &WherePredicate::EffectBound { effect_var, ref bounds, span } => {
+        &WherePredicate.EffectBound { effect_var, ref bounds, span } => {
             // Copy effect bounds
-            let mut copied_bounds: Vec<EffectRef> = Vec::new();
+            let mut copied_bounds: Vec<EffectRef> = Vec.new();
             for i in 0usize..bounds.len() {
                 let eff = &bounds[i];
-                let mut copied_args: Vec<Type> = Vec::new();
+                let mut copied_args: Vec<Type> = Vec.new();
                 for j in 0usize..eff.args.len() {
                     copied_args.push(copy_type(&eff.args[j]));
                 }
@@ -671,7 +671,7 @@ pub fn copy_where_predicate(pred: &WherePredicate) -> WherePredicate {
                     args: copied_args,
                 });
             }
-            WherePredicate::EffectBound {
+            WherePredicate.EffectBound {
                 effect_var: effect_var,
                 bounds: copied_bounds,
                 span: span,
@@ -682,7 +682,7 @@ pub fn copy_where_predicate(pred: &WherePredicate) -> WherePredicate {
 
 /// Copies a vector of where predicates.
 pub fn copy_where_predicates(preds: &Vec<WherePredicate>) -> Vec<WherePredicate> {
-    let mut result: Vec<WherePredicate> = Vec::new();
+    let mut result: Vec<WherePredicate> = Vec.new();
     for i in 0usize..preds.len() {
         result.push(copy_where_predicate(&preds[i]));
     }

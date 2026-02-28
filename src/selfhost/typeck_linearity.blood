@@ -17,26 +17,26 @@ mod hir_expr;
 /// Tracks usage of a local variable for linearity checking.
 pub struct UsageEntry {
     /// The local variable id.
-    pub local_id: hir_def::LocalId,
+    pub local_id: hir_def.LocalId,
     /// The type of the local.
-    pub ty: hir_ty::Type,
+    pub ty: hir_ty.Type,
     /// Ownership qualifier, if any.
-    pub qualifier: Option<hir_ty::OwnershipQualifier>,
+    pub qualifier: Option<hir_ty.OwnershipQualifier>,
     /// Number of times this local has been used.
     pub use_count: u32,
     /// Span where the local was defined.
-    pub def_span: common::Span,
+    pub def_span: common.Span,
     /// Spans of each use.
-    pub use_spans: Vec<common::Span>,
+    pub use_spans: Vec<common.Span>,
 }
 
 impl UsageEntry {
     /// Creates a new usage entry.
     pub fn new(
-        local_id: hir_def::LocalId,
-        ty: hir_ty::Type,
-        qualifier: Option<hir_ty::OwnershipQualifier>,
-        def_span: common::Span,
+        local_id: hir_def.LocalId,
+        ty: hir_ty.Type,
+        qualifier: Option<hir_ty.OwnershipQualifier>,
+        def_span: common.Span,
     ) -> UsageEntry {
         UsageEntry {
             local_id: local_id,
@@ -44,12 +44,12 @@ impl UsageEntry {
             qualifier: qualifier,
             use_count: 0,
             def_span: def_span,
-            use_spans: Vec::new(),
+            use_spans: Vec.new(),
         }
     }
 
     /// Records a use of this local.
-    pub fn record_use(self: &mut Self, span: common::Span) {
+    pub fn record_use(self: &mut Self, span: common.Span) {
         self.use_count = self.use_count + 1;
         self.use_spans.push(span);
     }
@@ -64,29 +64,29 @@ pub struct LinearityError {
     /// The kind of error.
     pub kind: LinearityErrorKind,
     /// The primary span.
-    pub span: common::Span,
+    pub span: common.Span,
 }
 
 /// Kinds of linearity errors.
 pub enum LinearityErrorKind {
     /// A linear type was used more than once.
     LinearUsedMultipleTimes {
-        local_id: hir_def::LocalId,
+        local_id: hir_def.LocalId,
         use_count: u32,
     },
     /// A linear type was never used.
     LinearNotUsed {
-        local_id: hir_def::LocalId,
+        local_id: hir_def.LocalId,
     },
     /// An affine type was used more than once.
     AffineUsedMultipleTimes {
-        local_id: hir_def::LocalId,
+        local_id: hir_def.LocalId,
         use_count: u32,
     },
     /// A value was used after being moved.
     MovedAfterUse {
-        local_id: hir_def::LocalId,
-        first_use: common::Span,
+        local_id: hir_def.LocalId,
+        first_use: common.Span,
     },
 }
 
@@ -106,26 +106,26 @@ impl LinearityChecker {
     /// Creates a new linearity checker.
     pub fn new() -> LinearityChecker {
         LinearityChecker {
-            entries: Vec::new(),
-            errors: Vec::new(),
+            entries: Vec.new(),
+            errors: Vec.new(),
         }
     }
 
     /// Registers a local variable for tracking.
     pub fn register_local(
         self: &mut Self,
-        local_id: hir_def::LocalId,
-        ty: hir_ty::Type,
-        def_span: common::Span,
+        local_id: hir_def.LocalId,
+        ty: hir_ty.Type,
+        def_span: common.Span,
     ) {
         // Extract ownership qualifier from the type
         let qualifier = extract_qualifier(&ty);
-        let entry = UsageEntry::new(local_id, ty, qualifier, def_span);
+        let entry = UsageEntry.new(local_id, ty, qualifier, def_span);
         self.entries.push(entry);
     }
 
     /// Records a use of a local variable.
-    pub fn record_use(self: &mut Self, local_id: hir_def::LocalId, span: common::Span) {
+    pub fn record_use(self: &mut Self, local_id: hir_def.LocalId, span: common.Span) {
         for i in 0usize..self.entries.len() {
             if self.entries[i].local_id.index == local_id.index {
                 self.entries[i].record_use(span);
@@ -139,21 +139,21 @@ impl LinearityChecker {
         for i in 0usize..self.entries.len() {
             let entry = &self.entries[i];
             match &entry.qualifier {
-                &Option::Some(ref q) => {
+                &Option.Some(ref q) => {
                     match q {
-                        &hir_ty::OwnershipQualifier::Linear => {
+                        &hir_ty.OwnershipQualifier.Linear => {
                             if entry.use_count == 0 {
                                 let err = LinearityError {
-                                    kind: LinearityErrorKind::LinearNotUsed {
-                                        local_id: hir_def::LocalId::new(entry.local_id.index),
+                                    kind: LinearityErrorKind.LinearNotUsed {
+                                        local_id: hir_def.LocalId.new(entry.local_id.index),
                                     },
                                     span: entry.def_span,
                                 };
                                 self.errors.push(err);
                             } else if entry.use_count > 1 {
                                 let err = LinearityError {
-                                    kind: LinearityErrorKind::LinearUsedMultipleTimes {
-                                        local_id: hir_def::LocalId::new(entry.local_id.index),
+                                    kind: LinearityErrorKind.LinearUsedMultipleTimes {
+                                        local_id: hir_def.LocalId.new(entry.local_id.index),
                                         use_count: entry.use_count,
                                     },
                                     span: entry.def_span,
@@ -161,11 +161,11 @@ impl LinearityChecker {
                                 self.errors.push(err);
                             }
                         }
-                        &hir_ty::OwnershipQualifier::Affine => {
+                        &hir_ty.OwnershipQualifier.Affine => {
                             if entry.use_count > 1 {
                                 let err = LinearityError {
-                                    kind: LinearityErrorKind::AffineUsedMultipleTimes {
-                                        local_id: hir_def::LocalId::new(entry.local_id.index),
+                                    kind: LinearityErrorKind.AffineUsedMultipleTimes {
+                                        local_id: hir_def.LocalId.new(entry.local_id.index),
                                         use_count: entry.use_count,
                                     },
                                     span: entry.def_span,
@@ -175,7 +175,7 @@ impl LinearityChecker {
                         }
                     }
                 }
-                &Option::None => {
+                &Option.None => {
                     // No ownership qualifier — no linearity constraints
                 }
             }
@@ -188,75 +188,75 @@ impl LinearityChecker {
 // ============================================================
 
 /// Walk an expression tree and collect variable usages.
-pub fn collect_usages(checker: &mut LinearityChecker, expr: &hir_expr::Expr) {
+pub fn collect_usages(checker: &mut LinearityChecker, expr: &hir_expr.Expr) {
     match &expr.kind {
-        &hir_expr::ExprKind::Local(ref local_id) => {
-            checker.record_use(hir_def::LocalId::new(local_id.index), expr.span);
+        &hir_expr.ExprKind.Local(ref local_id) => {
+            checker.record_use(hir_def.LocalId.new(local_id.index), expr.span);
         }
-        &hir_expr::ExprKind::Binary { ref left, ref right, op: _ } => {
+        &hir_expr.ExprKind.Binary { ref left, ref right, op: _ } => {
             collect_usages(checker, left.as_ref());
             collect_usages(checker, right.as_ref());
         }
-        &hir_expr::ExprKind::Unary { ref operand, op: _ } => {
+        &hir_expr.ExprKind.Unary { ref operand, op: _ } => {
             collect_usages(checker, operand.as_ref());
         }
-        &hir_expr::ExprKind::Call { ref callee, ref args } => {
+        &hir_expr.ExprKind.Call { ref callee, ref args } => {
             collect_usages(checker, callee.as_ref());
             for i in 0usize..args.len() {
                 collect_usages(checker, &args[i]);
             }
         }
-        &hir_expr::ExprKind::MethodCall { ref receiver, method: _, method_def: _, type_args: _, ref args } => {
+        &hir_expr.ExprKind.MethodCall { ref receiver, method: _, method_def: _, type_args: _, ref args } => {
             collect_usages(checker, receiver.as_ref());
             for i in 0usize..args.len() {
                 collect_usages(checker, &args[i]);
             }
         }
-        &hir_expr::ExprKind::If { ref condition, ref then_branch, ref else_branch } => {
+        &hir_expr.ExprKind.If { ref condition, ref then_branch, ref else_branch } => {
             collect_usages(checker, condition.as_ref());
             collect_usages(checker, then_branch.as_ref());
             match else_branch {
-                &Option::Some(ref eb) => {
+                &Option.Some(ref eb) => {
                     collect_usages(checker, eb.as_ref());
                 }
-                &Option::None => {}
+                &Option.None => {}
             }
         }
-        &hir_expr::ExprKind::Block(ref block) => {
+        &hir_expr.ExprKind.Block(ref block) => {
             collect_usages_block(checker, block);
         }
-        &hir_expr::ExprKind::Match { ref scrutinee, ref arms } => {
+        &hir_expr.ExprKind.Match { ref scrutinee, ref arms } => {
             collect_usages(checker, scrutinee.as_ref());
             for i in 0usize..arms.len() {
                 collect_usages(checker, &arms[i].body);
             }
         }
-        &hir_expr::ExprKind::Assign { ref target, ref val } => {
+        &hir_expr.ExprKind.Assign { ref target, ref val } => {
             collect_usages(checker, target.as_ref());
             collect_usages(checker, val.as_ref());
         }
-        &hir_expr::ExprKind::Return(ref opt_val) => {
+        &hir_expr.ExprKind.Return(ref opt_val) => {
             match opt_val {
-                &Option::Some(ref v) => {
+                &Option.Some(ref v) => {
                     collect_usages(checker, v.as_ref());
                 }
-                &Option::None => {}
+                &Option.None => {}
             }
         }
-        &hir_expr::ExprKind::Field { ref base, field: _ } => {
+        &hir_expr.ExprKind.Field { ref base, field: _ } => {
             collect_usages(checker, base.as_ref());
         }
-        &hir_expr::ExprKind::Index { ref base, ref idx } => {
+        &hir_expr.ExprKind.Index { ref base, ref idx } => {
             collect_usages(checker, base.as_ref());
             collect_usages(checker, idx.as_ref());
         }
-        &hir_expr::ExprKind::AddrOf { mutable: _, ref expr } => {
+        &hir_expr.ExprKind.AddrOf { mutable: _, ref expr } => {
             collect_usages(checker, expr.as_ref());
         }
-        &hir_expr::ExprKind::Cast { ref expr, ty: _ } => {
+        &hir_expr.ExprKind.Cast { ref expr, ty: _ } => {
             collect_usages(checker, expr.as_ref());
         }
-        &hir_expr::ExprKind::Loop { label: _, ref body } => {
+        &hir_expr.ExprKind.Loop { label: _, ref body } => {
             collect_usages(checker, body.as_ref());
         }
         _ => {
@@ -266,28 +266,28 @@ pub fn collect_usages(checker: &mut LinearityChecker, expr: &hir_expr::Expr) {
 }
 
 /// Walk a block and collect usages.
-fn collect_usages_block(checker: &mut LinearityChecker, block: &hir_expr::Block) {
+fn collect_usages_block(checker: &mut LinearityChecker, block: &hir_expr.Block) {
     for i in 0usize..block.stmts.len() {
         match &block.stmts[i] {
-            &hir_expr::Stmt::Expr { ref expr, has_semi: _ } => {
+            &hir_expr.Stmt.Expr { ref expr, has_semi: _ } => {
                 collect_usages(checker, expr);
             }
-            &hir_expr::Stmt::Let { pattern: _, ty: _, ref init, span: _ } => {
+            &hir_expr.Stmt.Let { pattern: _, ty: _, ref init, span: _ } => {
                 match init {
-                    &Option::Some(ref init_expr) => {
+                    &Option.Some(ref init_expr) => {
                         collect_usages(checker, init_expr);
                     }
-                    &Option::None => {}
+                    &Option.None => {}
                 }
             }
-            &hir_expr::Stmt::Item(_) => {}
+            &hir_expr.Stmt.Item(_) => {}
         }
     }
     match &block.expr {
-        &Option::Some(ref e) => {
+        &Option.Some(ref e) => {
             collect_usages(checker, e.as_ref());
         }
-        &Option::None => {}
+        &Option.None => {}
     }
 }
 
@@ -296,11 +296,11 @@ fn collect_usages_block(checker: &mut LinearityChecker, block: &hir_expr::Block)
 // ============================================================
 
 /// Extracts the ownership qualifier from a type, if present.
-fn extract_qualifier(ty: &hir_ty::Type) -> Option<hir_ty::OwnershipQualifier> {
+fn extract_qualifier(ty: &hir_ty.Type) -> Option<hir_ty.OwnershipQualifier> {
     match &ty.kind {
-        &hir_ty::TypeKind::Ownership { ref qualifier, inner: _ } => {
-            Option::Some(qualifier.clone())
+        &hir_ty.TypeKind.Ownership { ref qualifier, inner: _ } => {
+            Option.Some(qualifier.clone())
         }
-        _ => Option::None,
+        _ => Option.None,
     }
 }

@@ -52,17 +52,17 @@ pub fn preprocess_macros(source: &String) -> String {
     let len = bytes.len();
 
     // Find macro declarations
-    let mut macros: Vec<MacroDef> = Vec::new();
+    let mut macros: Vec<MacroDef> = Vec.new();
     let mut pos: usize = 0;
     while pos < len {
         if matches_keyword(bytes, pos, len) {
             match parse_macro_def(bytes, pos, len) {
-                Option::Some(m) => {
+                Option.Some(m) => {
                     macros.push(m);
                     let last_idx = macros.len() - 1;
                     pos = macros[last_idx].decl_end;
                 }
-                Option::None => {
+                Option.None => {
                     pos += 1;
                 }
             }
@@ -72,7 +72,7 @@ pub fn preprocess_macros(source: &String) -> String {
     }
 
     if macros.is_empty() {
-        let mut result = String::new();
+        let mut result = String.new();
         result.push_str(source.as_str());
         return result;
     }
@@ -99,7 +99,7 @@ pub fn preprocess_macros(source: &String) -> String {
 fn remove_macro_decls(source: &String, macros: &Vec<MacroDef>) -> String {
     let bytes = source.as_bytes();
     let len = bytes.len();
-    let mut result = String::new();
+    let mut result = String.new();
     let mut prev_end: usize = 0;
     for mi in 0usize..macros.len() {
         let mut ci: usize = prev_end;
@@ -123,7 +123,7 @@ fn remove_macro_decls(source: &String, macros: &Vec<MacroDef>) -> String {
 fn expand_all_invocations(source: &String, macros: &Vec<MacroDef>) -> String {
     let bytes = source.as_bytes();
     let len = bytes.len();
-    let mut result = String::new();
+    let mut result = String.new();
     let mut pos: usize = 0;
 
     while pos < len {
@@ -153,7 +153,7 @@ fn expand_all_invocations(source: &String, macros: &Vec<MacroDef>) -> String {
                             }
                             let arg_end = arg_pos;
 
-                            let mut args = String::new();
+                            let mut args = String.new();
                             let mut ai: usize = arg_start;
                             while ai < arg_end {
                                 args.push(bytes[ai] as char);
@@ -162,7 +162,7 @@ fn expand_all_invocations(source: &String, macros: &Vec<MacroDef>) -> String {
 
                             // Try each rule in order (first match wins)
                             match try_match_macro(&args, &macros[mi]) {
-                                Option::Some(expanded) => {
+                                Option.Some(expanded) => {
                                     result.push(123 as char); // '{'
                                     result.push(32 as char);  // ' '
                                     result.push_str(expanded.as_str());
@@ -171,7 +171,7 @@ fn expand_all_invocations(source: &String, macros: &Vec<MacroDef>) -> String {
                                     pos = arg_end + 1; // +1 for closing ')'
                                     matched = true;
                                 }
-                                Option::None => {}
+                                Option.None => {}
                             }
                         }
                     }
@@ -193,14 +193,14 @@ fn expand_all_invocations(source: &String, macros: &Vec<MacroDef>) -> String {
 fn try_match_macro(args: &String, macro_def: &MacroDef) -> Option<String> {
     for ri in 0usize..macro_def.rules.len() {
         match try_match_rule(args, &macro_def.rules[ri]) {
-            Option::Some(captures) => {
+            Option.Some(captures) => {
                 let expanded = substitute_multi(&macro_def.rules[ri].expansion, &captures);
-                return Option::Some(expanded);
+                return Option.Some(expanded);
             }
-            Option::None => {}
+            Option.None => {}
         }
     }
-    Option::None
+    Option.None
 }
 
 /// Try matching args text against a single rule's pattern.
@@ -209,14 +209,14 @@ fn try_match_rule(args: &String, rule: &MacroRule) -> Option<Vec<CapturedArg>> {
     let bytes = args.as_bytes();
     let len = bytes.len();
     let mut pos: usize = 0;
-    let mut captures: Vec<CapturedArg> = Vec::new();
+    let mut captures: Vec<CapturedArg> = Vec.new();
 
     // Empty pattern matches empty args
     if rule.parts.is_empty() {
         if len == 0 {
-            return Option::Some(captures);
+            return Option.Some(captures);
         } else {
-            return Option::None;
+            return Option.None;
         }
     }
 
@@ -225,13 +225,13 @@ fn try_match_rule(args: &String, rule: &MacroRule) -> Option<Vec<CapturedArg>> {
             // Find the terminator: next Literal part after this capture
             let terminator = find_next_literal(rule, pi + 1);
             match terminator {
-                Option::Some(term_idx) => {
+                Option.Some(term_idx) => {
                     let lit_bytes = rule.parts[term_idx].literal.as_bytes();
                     let lit_len = lit_bytes.len();
                     // Find literal in args with balanced delimiters
                     match find_literal_balanced(bytes, pos, len, lit_bytes, lit_len) {
-                        Option::Some(found_pos) => {
-                            let mut value = String::new();
+                        Option.Some(found_pos) => {
+                            let mut value = String.new();
                             let mut vi: usize = pos;
                             while vi < found_pos {
                                 value.push(bytes[vi] as char);
@@ -243,14 +243,14 @@ fn try_match_rule(args: &String, rule: &MacroRule) -> Option<Vec<CapturedArg>> {
                             });
                             pos = found_pos;
                         }
-                        Option::None => {
-                            return Option::None;
+                        Option.None => {
+                            return Option.None;
                         }
                     }
                 }
-                Option::None => {
+                Option.None => {
                     // No following literal — capture everything remaining
-                    let mut value = String::new();
+                    let mut value = String.new();
                     let mut vi: usize = pos;
                     while vi < len {
                         value.push(bytes[vi] as char);
@@ -268,10 +268,10 @@ fn try_match_rule(args: &String, rule: &MacroRule) -> Option<Vec<CapturedArg>> {
             let lit_bytes = rule.parts[pi].literal.as_bytes();
             let lit_len = lit_bytes.len();
             if pos + lit_len > len {
-                return Option::None;
+                return Option.None;
             }
             if !matches_bytes_at(bytes, pos, lit_bytes, lit_len) {
-                return Option::None;
+                return Option.None;
             }
             pos += lit_len;
         }
@@ -279,10 +279,10 @@ fn try_match_rule(args: &String, rule: &MacroRule) -> Option<Vec<CapturedArg>> {
 
     // Must have consumed all args
     if pos != len {
-        return Option::None;
+        return Option.None;
     }
 
-    Option::Some(captures)
+    Option.Some(captures)
 }
 
 /// Find the index of the next Literal pattern part starting from `from`.
@@ -290,11 +290,11 @@ fn find_next_literal(rule: &MacroRule, from: usize) -> Option<usize> {
     let mut i: usize = from;
     while i < rule.parts.len() {
         if !rule.parts[i].is_capture {
-            return Option::Some(i);
+            return Option.Some(i);
         }
         i += 1;
     }
-    Option::None
+    Option.None
 }
 
 /// Find literal bytes in text starting at pos, respecting balanced delimiters.
@@ -343,7 +343,7 @@ fn find_literal_balanced(bytes: &[u8], start: usize, len: usize,
         // At depth 0, check for literal match BEFORE updating depth
         if paren == 0 && bracket == 0 && brace == 0 {
             if matches_bytes_at(bytes, pos, lit_bytes, lit_len) {
-                return Option::Some(pos);
+                return Option.Some(pos);
             }
         }
 
@@ -358,7 +358,7 @@ fn find_literal_balanced(bytes: &[u8], start: usize, len: usize,
         pos += 1;
     }
 
-    Option::None
+    Option.None
 }
 
 // ---- Substitution ----
@@ -367,7 +367,7 @@ fn find_literal_balanced(bytes: &[u8], start: usize, len: usize,
 fn substitute_multi(template: &String, captures: &Vec<CapturedArg>) -> String {
     let bytes = template.as_bytes();
     let len = bytes.len();
-    let mut result = String::new();
+    let mut result = String.new();
     let mut pos: usize = 0;
 
     while pos < len {
@@ -435,8 +435,8 @@ fn parse_macro_def(bytes: &[u8], start: usize, len: usize) -> Option<MacroDef> {
     while pos < len && is_ident_char(bytes[pos]) {
         pos += 1;
     }
-    if pos == name_start { return Option::None; }
-    let mut name = String::new();
+    if pos == name_start { return Option.None; }
+    let mut name = String.new();
     let mut ni: usize = name_start;
     while ni < pos {
         name.push(bytes[ni] as char);
@@ -449,11 +449,11 @@ fn parse_macro_def(bytes: &[u8], start: usize, len: usize) -> Option<MacroDef> {
     }
 
     // Expect outer opening brace
-    if pos >= len || bytes[pos] != 123 { return Option::None; } // '{'
+    if pos >= len || bytes[pos] != 123 { return Option.None; } // '{'
     pos += 1;
 
     // Parse rules until outer closing '}'
-    let mut rules: Vec<MacroRule> = Vec::new();
+    let mut rules: Vec<MacroRule> = Vec.new();
     let mut done = false;
     while !done && pos < len {
         // Skip whitespace
@@ -467,12 +467,12 @@ fn parse_macro_def(bytes: &[u8], start: usize, len: usize) -> Option<MacroDef> {
         } else {
             // Parse one rule: (pattern) => { expansion }
             match parse_one_rule(bytes, pos, len) {
-                Option::Some(rr) => {
+                Option.Some(rr) => {
                     pos = rr.end_pos;
                     rules.push(rr.rule);
                 }
-                Option::None => {
-                    return Option::None;
+                Option.None => {
+                    return Option.None;
                 }
             }
 
@@ -486,7 +486,7 @@ fn parse_macro_def(bytes: &[u8], start: usize, len: usize) -> Option<MacroDef> {
         }
     }
 
-    if rules.is_empty() { return Option::None; }
+    if rules.is_empty() { return Option.None; }
 
     // Skip outer closing '}'
     if pos < len && bytes[pos] == 125 { // '}'
@@ -498,7 +498,7 @@ fn parse_macro_def(bytes: &[u8], start: usize, len: usize) -> Option<MacroDef> {
         pos += 1;
     }
 
-    Option::Some(MacroDef {
+    Option.Some(MacroDef {
         name: name,
         rules: rules,
         decl_start: start,
@@ -511,7 +511,7 @@ fn parse_one_rule(bytes: &[u8], start: usize, len: usize) -> Option<RuleParseRes
     let mut pos: usize = start;
 
     // Expect '('
-    if pos >= len || bytes[pos] != 40 { return Option::None; } // '('
+    if pos >= len || bytes[pos] != 40 { return Option.None; } // '('
     pos += 1;
     let pattern_start = pos;
 
@@ -523,7 +523,7 @@ fn parse_one_rule(bytes: &[u8], start: usize, len: usize) -> Option<RuleParseRes
         if depth > 0 { pos += 1; }
     }
     let pattern_end = pos;
-    if pos >= len { return Option::None; }
+    if pos >= len { return Option.None; }
     pos += 1; // skip ')'
 
     // Parse pattern parts from content between ( and )
@@ -535,8 +535,8 @@ fn parse_one_rule(bytes: &[u8], start: usize, len: usize) -> Option<RuleParseRes
     }
 
     // Expect '=>'
-    if pos + 1 >= len { return Option::None; }
-    if bytes[pos] != 61 || bytes[pos + 1] != 62 { return Option::None; }
+    if pos + 1 >= len { return Option.None; }
+    if bytes[pos] != 61 || bytes[pos + 1] != 62 { return Option.None; }
     pos += 2;
 
     // Skip whitespace
@@ -545,7 +545,7 @@ fn parse_one_rule(bytes: &[u8], start: usize, len: usize) -> Option<RuleParseRes
     }
 
     // Expect '{' for expansion body
-    if pos >= len || bytes[pos] != 123 { return Option::None; } // '{'
+    if pos >= len || bytes[pos] != 123 { return Option.None; } // '{'
     pos += 1;
     let expansion_start = pos;
 
@@ -557,18 +557,18 @@ fn parse_one_rule(bytes: &[u8], start: usize, len: usize) -> Option<RuleParseRes
         if brace_depth > 0 { pos += 1; }
     }
     let expansion_end = pos;
-    if pos >= len { return Option::None; }
+    if pos >= len { return Option.None; }
     pos += 1; // skip '}'
 
     // Extract expansion text
-    let mut expansion = String::new();
+    let mut expansion = String.new();
     let mut ei: usize = expansion_start;
     while ei < expansion_end {
         expansion.push(bytes[ei] as char);
         ei += 1;
     }
 
-    Option::Some(RuleParseResult {
+    Option.Some(RuleParseResult {
         rule: MacroRule {
             parts: parts,
             expansion: expansion,
@@ -580,9 +580,9 @@ fn parse_one_rule(bytes: &[u8], start: usize, len: usize) -> Option<RuleParseRes
 /// Parse pattern parts between ( and ) into Vec<PatternPart>.
 /// Handles $name:kind captures and literal text between them.
 fn parse_pattern_parts(bytes: &[u8], start: usize, end: usize) -> Vec<PatternPart> {
-    let mut parts: Vec<PatternPart> = Vec::new();
+    let mut parts: Vec<PatternPart> = Vec.new();
     let mut pos: usize = start;
-    let mut literal = String::new();
+    let mut literal = String.new();
 
     while pos < end {
         if bytes[pos] == 36 { // '$'
@@ -594,7 +594,7 @@ fn parse_pattern_parts(bytes: &[u8], start: usize, end: usize) -> Vec<PatternPar
             }
             if cap_pos > cap_start && cap_pos < end && bytes[cap_pos] == 58 { // ':'
                 // Found $name: — skip past :kind
-                let mut capture_name = String::new();
+                let mut capture_name = String.new();
                 let mut ci: usize = cap_start;
                 while ci < cap_pos {
                     capture_name.push(bytes[ci] as char);
@@ -611,15 +611,15 @@ fn parse_pattern_parts(bytes: &[u8], start: usize, end: usize) -> Vec<PatternPar
                     parts.push(PatternPart {
                         is_capture: false,
                         literal: literal,
-                        capture_name: String::new(),
+                        capture_name: String.new(),
                     });
-                    literal = String::new();
+                    literal = String.new();
                 }
 
                 // Add capture part
                 parts.push(PatternPart {
                     is_capture: true,
-                    literal: String::new(),
+                    literal: String.new(),
                     capture_name: capture_name,
                 });
 
@@ -638,7 +638,7 @@ fn parse_pattern_parts(bytes: &[u8], start: usize, end: usize) -> Vec<PatternPar
         parts.push(PatternPart {
             is_capture: false,
             literal: literal,
-            capture_name: String::new(),
+            capture_name: String.new(),
         });
     }
 
@@ -678,7 +678,7 @@ fn strings_equal(a: &String, b: &String) -> bool {
 
 /// Clone a string.
 fn clone_string(s: &String) -> String {
-    let mut result = String::new();
+    let mut result = String.new();
     result.push_str(s.as_str());
     result
 }

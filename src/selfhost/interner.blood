@@ -25,15 +25,15 @@ pub struct StringInterner {
     strings: Vec<String>,
     /// Hash-based reverse lookup (string hash → symbol index).
     /// Multiple strings may hash to the same value; we verify with str_equals.
-    hash_index: hashmap::HashMapU64U32,
+    hash_index: hashmap.HashMapU64U32,
 }
 
 impl StringInterner {
     /// Creates a new empty string interner.
     pub fn new() -> StringInterner {
         let mut interner = StringInterner {
-            strings: Vec::new(),
-            hash_index: hashmap::HashMapU64U32::with_capacity(256),
+            strings: Vec.new(),
+            hash_index: hashmap.HashMapU64U32.with_capacity(256),
         };
         // Pre-intern common strings at known indices
         interner.intern_keywords();
@@ -157,24 +157,24 @@ impl StringInterner {
     /// Otherwise, adds the string and returns a new index.
     ///
     /// Uses hash-based lookup for O(1) average case instead of O(n) linear scan.
-    pub fn intern(self: &mut StringInterner, s: &str) -> common::Symbol {
+    pub fn intern(self: &mut StringInterner, s: &str) -> common.Symbol {
         let hash = hashmap::hash_str(s);
 
         // Fast path: check hash index for existing entry
         match self.hash_index.get(hash) {
-            Option::Some(idx) => {
+            Option.Some(idx) => {
                 // Found a candidate - verify it's the same string (handle collisions)
                 if str_equals(&self.strings[idx as usize], s) {
-                    return common::Symbol::new(idx);
+                    return common.Symbol.new(idx);
                 }
                 // Hash collision - fall through to linear scan for this rare case
             }
-            Option::None => {
+            Option.None => {
                 // Not in hash index - definitely new, add it
                 let index = self.strings.len() as u32;
                 self.strings.push(common::make_string(s));
                 self.hash_index.insert(hash, index);
-                return common::Symbol::new(index);
+                return common.Symbol.new(index);
             }
         }
 
@@ -182,7 +182,7 @@ impl StringInterner {
         // This is rare with good hash function
         for i in 0usize..self.strings.len() {
             if str_equals(&self.strings[i], s) {
-                return common::Symbol::new(i as u32);
+                return common.Symbol.new(i as u32);
             }
         }
 
@@ -190,31 +190,31 @@ impl StringInterner {
         let index = self.strings.len() as u32;
         self.strings.push(common::make_string(s));
         // Note: We don't overwrite the hash_index entry since another string has this hash
-        common::Symbol::new(index)
+        common.Symbol.new(index)
     }
 
     /// Interns a String, returning its symbol index.
-    pub fn intern_string(self: &mut StringInterner, s: &String) -> common::Symbol {
+    pub fn intern_string(self: &mut StringInterner, s: &String) -> common.Symbol {
         self.intern(s.as_str())
     }
 
     /// Resolves a symbol back to its string.
     ///
     /// Returns None if the symbol index is out of bounds.
-    pub fn resolve(self: &StringInterner, symbol: common::Symbol) -> Option<&String> {
+    pub fn resolve(self: &StringInterner, symbol: common.Symbol) -> Option<&String> {
         let index = symbol.index as usize;
         if index < self.strings.len() {
-            Option::Some(&self.strings[index])
+            Option.Some(&self.strings[index])
         } else {
-            Option::None
+            Option.None
         }
     }
 
     /// Resolves a symbol, returning an empty string if not found.
-    pub fn resolve_or_empty(self: &StringInterner, symbol: common::Symbol) -> &String {
+    pub fn resolve_or_empty(self: &StringInterner, symbol: common.Symbol) -> &String {
         match self.resolve(symbol) {
-            Option::Some(s) => s,
-            Option::None => &self.strings[0], // Empty string at index 0
+            Option.Some(s) => s,
+            Option.None => &self.strings[0], // Empty string at index 0
         }
     }
 
@@ -233,39 +233,39 @@ impl StringInterner {
     /// Unlike intern(), this does not modify the interner.
     ///
     /// Uses hash-based lookup for O(1) average case.
-    pub fn find(self: &StringInterner, s: &str) -> Option<common::Symbol> {
+    pub fn find(self: &StringInterner, s: &str) -> Option<common.Symbol> {
         let hash = hashmap::hash_str(s);
 
         // Fast path: check hash index
         match self.hash_index.get(hash) {
-            Option::Some(idx) => {
+            Option.Some(idx) => {
                 // Verify it's the same string (handle collisions)
                 if str_equals(&self.strings[idx as usize], s) {
-                    return Option::Some(common::Symbol::new(idx));
+                    return Option.Some(common.Symbol.new(idx));
                 }
                 // Hash collision - fall through to linear scan
             }
-            Option::None => {
-                return Option::None;
+            Option.None => {
+                return Option.None;
             }
         }
 
         // Hash collision case: linear scan
         for i in 0usize..self.strings.len() {
             if str_equals(&self.strings[i], s) {
-                return Option::Some(common::Symbol::new(i as u32));
+                return Option.Some(common.Symbol.new(i as u32));
             }
         }
-        Option::None
+        Option.None
     }
 
     /// Gets the string at a specific index (for debugging).
     pub fn get(self: &StringInterner, index: u32) -> Option<&String> {
         let idx = index as usize;
         if idx < self.strings.len() {
-            Option::Some(&self.strings[idx])
+            Option.Some(&self.strings[idx])
         } else {
-            Option::None
+            Option.None
         }
     }
 }
@@ -279,46 +279,46 @@ impl StringInterner {
 pub struct Keywords {}
 
 impl Keywords {
-    pub fn empty() -> common::Symbol { common::Symbol::new(0) }
-    pub fn fn_kw() -> common::Symbol { common::Symbol::new(1) }
-    pub fn let_kw() -> common::Symbol { common::Symbol::new(2) }
-    pub fn mut_kw() -> common::Symbol { common::Symbol::new(3) }
-    pub fn if_kw() -> common::Symbol { common::Symbol::new(4) }
-    pub fn else_kw() -> common::Symbol { common::Symbol::new(5) }
-    pub fn while_kw() -> common::Symbol { common::Symbol::new(6) }
-    pub fn for_kw() -> common::Symbol { common::Symbol::new(7) }
-    pub fn in_kw() -> common::Symbol { common::Symbol::new(8) }
-    pub fn return_kw() -> common::Symbol { common::Symbol::new(9) }
-    pub fn break_kw() -> common::Symbol { common::Symbol::new(10) }
-    pub fn continue_kw() -> common::Symbol { common::Symbol::new(11) }
-    pub fn match_kw() -> common::Symbol { common::Symbol::new(12) }
-    pub fn struct_kw() -> common::Symbol { common::Symbol::new(13) }
-    pub fn enum_kw() -> common::Symbol { common::Symbol::new(14) }
-    pub fn impl_kw() -> common::Symbol { common::Symbol::new(15) }
-    pub fn trait_kw() -> common::Symbol { common::Symbol::new(16) }
-    pub fn type_kw() -> common::Symbol { common::Symbol::new(17) }
-    pub fn pub_kw() -> common::Symbol { common::Symbol::new(18) }
-    pub fn self_kw() -> common::Symbol { common::Symbol::new(19) }
-    pub fn self_ty() -> common::Symbol { common::Symbol::new(20) }
-    pub fn true_kw() -> common::Symbol { common::Symbol::new(21) }
-    pub fn false_kw() -> common::Symbol { common::Symbol::new(22) }
-    pub fn mod_kw() -> common::Symbol { common::Symbol::new(23) }
-    pub fn use_kw() -> common::Symbol { common::Symbol::new(24) }
-    pub fn as_kw() -> common::Symbol { common::Symbol::new(25) }
-    pub fn const_kw() -> common::Symbol { common::Symbol::new(26) }
-    pub fn static_kw() -> common::Symbol { common::Symbol::new(27) }
-    pub fn unsafe_kw() -> common::Symbol { common::Symbol::new(28) }
-    pub fn extern_kw() -> common::Symbol { common::Symbol::new(29) }
-    pub fn where_kw() -> common::Symbol { common::Symbol::new(30) }
-    pub fn loop_kw() -> common::Symbol { common::Symbol::new(31) }
-    pub fn async_kw() -> common::Symbol { common::Symbol::new(32) }
-    pub fn await_kw() -> common::Symbol { common::Symbol::new(33) }
-    pub fn effect_kw() -> common::Symbol { common::Symbol::new(34) }
-    pub fn handler_kw() -> common::Symbol { common::Symbol::new(35) }
-    pub fn perform_kw() -> common::Symbol { common::Symbol::new(36) }
-    pub fn resume_kw() -> common::Symbol { common::Symbol::new(37) }
-    pub fn with_kw() -> common::Symbol { common::Symbol::new(38) }
-    pub fn module_kw() -> common::Symbol { common::Symbol::new(39) }
+    pub fn empty() -> common.Symbol { common.Symbol.new(0) }
+    pub fn fn_kw() -> common.Symbol { common.Symbol.new(1) }
+    pub fn let_kw() -> common.Symbol { common.Symbol.new(2) }
+    pub fn mut_kw() -> common.Symbol { common.Symbol.new(3) }
+    pub fn if_kw() -> common.Symbol { common.Symbol.new(4) }
+    pub fn else_kw() -> common.Symbol { common.Symbol.new(5) }
+    pub fn while_kw() -> common.Symbol { common.Symbol.new(6) }
+    pub fn for_kw() -> common.Symbol { common.Symbol.new(7) }
+    pub fn in_kw() -> common.Symbol { common.Symbol.new(8) }
+    pub fn return_kw() -> common.Symbol { common.Symbol.new(9) }
+    pub fn break_kw() -> common.Symbol { common.Symbol.new(10) }
+    pub fn continue_kw() -> common.Symbol { common.Symbol.new(11) }
+    pub fn match_kw() -> common.Symbol { common.Symbol.new(12) }
+    pub fn struct_kw() -> common.Symbol { common.Symbol.new(13) }
+    pub fn enum_kw() -> common.Symbol { common.Symbol.new(14) }
+    pub fn impl_kw() -> common.Symbol { common.Symbol.new(15) }
+    pub fn trait_kw() -> common.Symbol { common.Symbol.new(16) }
+    pub fn type_kw() -> common.Symbol { common.Symbol.new(17) }
+    pub fn pub_kw() -> common.Symbol { common.Symbol.new(18) }
+    pub fn self_kw() -> common.Symbol { common.Symbol.new(19) }
+    pub fn self_ty() -> common.Symbol { common.Symbol.new(20) }
+    pub fn true_kw() -> common.Symbol { common.Symbol.new(21) }
+    pub fn false_kw() -> common.Symbol { common.Symbol.new(22) }
+    pub fn mod_kw() -> common.Symbol { common.Symbol.new(23) }
+    pub fn use_kw() -> common.Symbol { common.Symbol.new(24) }
+    pub fn as_kw() -> common.Symbol { common.Symbol.new(25) }
+    pub fn const_kw() -> common.Symbol { common.Symbol.new(26) }
+    pub fn static_kw() -> common.Symbol { common.Symbol.new(27) }
+    pub fn unsafe_kw() -> common.Symbol { common.Symbol.new(28) }
+    pub fn extern_kw() -> common.Symbol { common.Symbol.new(29) }
+    pub fn where_kw() -> common.Symbol { common.Symbol.new(30) }
+    pub fn loop_kw() -> common.Symbol { common.Symbol.new(31) }
+    pub fn async_kw() -> common.Symbol { common.Symbol.new(32) }
+    pub fn await_kw() -> common.Symbol { common.Symbol.new(33) }
+    pub fn effect_kw() -> common.Symbol { common.Symbol.new(34) }
+    pub fn handler_kw() -> common.Symbol { common.Symbol.new(35) }
+    pub fn perform_kw() -> common.Symbol { common.Symbol.new(36) }
+    pub fn resume_kw() -> common.Symbol { common.Symbol.new(37) }
+    pub fn with_kw() -> common.Symbol { common.Symbol.new(38) }
+    pub fn module_kw() -> common.Symbol { common.Symbol.new(39) }
 }
 
 // ============================================================
@@ -330,7 +330,7 @@ pub struct SpecialIdents {}
 
 impl SpecialIdents {
     /// Symbol for "main" - the entry point function.
-    pub fn main_sym() -> common::Symbol { common::Symbol::new(40) }
+    pub fn main_sym() -> common.Symbol { common.Symbol.new(40) }
 }
 
 // ============================================================
@@ -342,27 +342,27 @@ impl SpecialIdents {
 pub struct Primitives {}
 
 impl Primitives {
-    pub fn bool_sym() -> common::Symbol { common::Symbol::new(41) }
-    pub fn i8_sym() -> common::Symbol { common::Symbol::new(42) }
-    pub fn i16_sym() -> common::Symbol { common::Symbol::new(43) }
-    pub fn i32_sym() -> common::Symbol { common::Symbol::new(44) }
-    pub fn i64_sym() -> common::Symbol { common::Symbol::new(45) }
-    pub fn i128_sym() -> common::Symbol { common::Symbol::new(46) }
-    pub fn isize_sym() -> common::Symbol { common::Symbol::new(47) }
-    pub fn u8_sym() -> common::Symbol { common::Symbol::new(48) }
-    pub fn u16_sym() -> common::Symbol { common::Symbol::new(49) }
-    pub fn u32_sym() -> common::Symbol { common::Symbol::new(50) }
-    pub fn u64_sym() -> common::Symbol { common::Symbol::new(51) }
-    pub fn u128_sym() -> common::Symbol { common::Symbol::new(52) }
-    pub fn usize_sym() -> common::Symbol { common::Symbol::new(53) }
-    pub fn f32_sym() -> common::Symbol { common::Symbol::new(54) }
-    pub fn f64_sym() -> common::Symbol { common::Symbol::new(55) }
-    pub fn char_sym() -> common::Symbol { common::Symbol::new(56) }
-    pub fn str_sym() -> common::Symbol { common::Symbol::new(57) }
+    pub fn bool_sym() -> common.Symbol { common.Symbol.new(41) }
+    pub fn i8_sym() -> common.Symbol { common.Symbol.new(42) }
+    pub fn i16_sym() -> common.Symbol { common.Symbol.new(43) }
+    pub fn i32_sym() -> common.Symbol { common.Symbol.new(44) }
+    pub fn i64_sym() -> common.Symbol { common.Symbol.new(45) }
+    pub fn i128_sym() -> common.Symbol { common.Symbol.new(46) }
+    pub fn isize_sym() -> common.Symbol { common.Symbol.new(47) }
+    pub fn u8_sym() -> common.Symbol { common.Symbol.new(48) }
+    pub fn u16_sym() -> common.Symbol { common.Symbol.new(49) }
+    pub fn u32_sym() -> common.Symbol { common.Symbol.new(50) }
+    pub fn u64_sym() -> common.Symbol { common.Symbol.new(51) }
+    pub fn u128_sym() -> common.Symbol { common.Symbol.new(52) }
+    pub fn usize_sym() -> common.Symbol { common.Symbol.new(53) }
+    pub fn f32_sym() -> common.Symbol { common.Symbol.new(54) }
+    pub fn f64_sym() -> common.Symbol { common.Symbol.new(55) }
+    pub fn char_sym() -> common.Symbol { common.Symbol.new(56) }
+    pub fn str_sym() -> common.Symbol { common.Symbol.new(57) }
 
     /// Checks if a symbol is a primitive type name.
     /// Returns true if the symbol index is in the primitive range (41-57).
-    pub fn is_primitive(sym: common::Symbol) -> bool {
+    pub fn is_primitive(sym: common.Symbol) -> bool {
         sym.index >= 41 && sym.index <= 57
     }
 }
@@ -376,31 +376,31 @@ impl Primitives {
 pub struct BuiltinMethods {}
 
 impl BuiltinMethods {
-    pub fn len_sym() -> common::Symbol { common::Symbol::new(58) }
-    pub fn is_empty_sym() -> common::Symbol { common::Symbol::new(59) }
-    pub fn push_str_sym() -> common::Symbol { common::Symbol::new(60) }
-    pub fn push_sym() -> common::Symbol { common::Symbol::new(61) }
-    pub fn as_str_sym() -> common::Symbol { common::Symbol::new(62) }
-    pub fn clone_sym() -> common::Symbol { common::Symbol::new(63) }
-    pub fn contains_sym() -> common::Symbol { common::Symbol::new(64) }
-    pub fn starts_with_sym() -> common::Symbol { common::Symbol::new(65) }
-    pub fn ends_with_sym() -> common::Symbol { common::Symbol::new(66) }
-    pub fn as_bytes_sym() -> common::Symbol { common::Symbol::new(67) }
-    pub fn pop_sym() -> common::Symbol { common::Symbol::new(68) }
-    pub fn get_sym() -> common::Symbol { common::Symbol::new(69) }
-    pub fn last_sym() -> common::Symbol { common::Symbol::new(70) }
-    pub fn clear_sym() -> common::Symbol { common::Symbol::new(71) }
-    pub fn remove_sym() -> common::Symbol { common::Symbol::new(72) }
-    pub fn insert_sym() -> common::Symbol { common::Symbol::new(73) }
-    pub fn is_some_sym() -> common::Symbol { common::Symbol::new(74) }
-    pub fn is_none_sym() -> common::Symbol { common::Symbol::new(75) }
-    pub fn unwrap_sym() -> common::Symbol { common::Symbol::new(76) }
-    pub fn unwrap_or_sym() -> common::Symbol { common::Symbol::new(77) }
-    pub fn expect_sym() -> common::Symbol { common::Symbol::new(78) }
-    pub fn as_ref_sym() -> common::Symbol { common::Symbol::new(79) }
-    pub fn contains_key_sym() -> common::Symbol { common::Symbol::new(80) }
-    pub fn is_ok_sym() -> common::Symbol { common::Symbol::new(81) }
-    pub fn is_err_sym() -> common::Symbol { common::Symbol::new(82) }
+    pub fn len_sym() -> common.Symbol { common.Symbol.new(58) }
+    pub fn is_empty_sym() -> common.Symbol { common.Symbol.new(59) }
+    pub fn push_str_sym() -> common.Symbol { common.Symbol.new(60) }
+    pub fn push_sym() -> common.Symbol { common.Symbol.new(61) }
+    pub fn as_str_sym() -> common.Symbol { common.Symbol.new(62) }
+    pub fn clone_sym() -> common.Symbol { common.Symbol.new(63) }
+    pub fn contains_sym() -> common.Symbol { common.Symbol.new(64) }
+    pub fn starts_with_sym() -> common.Symbol { common.Symbol.new(65) }
+    pub fn ends_with_sym() -> common.Symbol { common.Symbol.new(66) }
+    pub fn as_bytes_sym() -> common.Symbol { common.Symbol.new(67) }
+    pub fn pop_sym() -> common.Symbol { common.Symbol.new(68) }
+    pub fn get_sym() -> common.Symbol { common.Symbol.new(69) }
+    pub fn last_sym() -> common.Symbol { common.Symbol.new(70) }
+    pub fn clear_sym() -> common.Symbol { common.Symbol.new(71) }
+    pub fn remove_sym() -> common.Symbol { common.Symbol.new(72) }
+    pub fn insert_sym() -> common.Symbol { common.Symbol.new(73) }
+    pub fn is_some_sym() -> common.Symbol { common.Symbol.new(74) }
+    pub fn is_none_sym() -> common.Symbol { common.Symbol.new(75) }
+    pub fn unwrap_sym() -> common.Symbol { common.Symbol.new(76) }
+    pub fn unwrap_or_sym() -> common.Symbol { common.Symbol.new(77) }
+    pub fn expect_sym() -> common.Symbol { common.Symbol.new(78) }
+    pub fn as_ref_sym() -> common.Symbol { common.Symbol.new(79) }
+    pub fn contains_key_sym() -> common.Symbol { common.Symbol.new(80) }
+    pub fn is_ok_sym() -> common.Symbol { common.Symbol.new(81) }
+    pub fn is_err_sym() -> common.Symbol { common.Symbol.new(82) }
 }
 
 // ============================================================
@@ -409,13 +409,13 @@ impl BuiltinMethods {
 
 /// Global interner instance.
 /// In a multi-threaded context, this would need synchronization.
-static mut GLOBAL_INTERNER: Option<StringInterner> = Option::None;
+static mut GLOBAL_INTERNER: Option<StringInterner> = Option.None;
 
 /// Initializes the global interner.
 /// Must be called before any interning operations.
 pub fn init_global_interner() {
     @unsafe {
-        GLOBAL_INTERNER = Option::Some(StringInterner::new());
+        GLOBAL_INTERNER = Option.Some(StringInterner.new());
     }
 }
 
@@ -424,13 +424,13 @@ pub fn init_global_interner() {
 pub fn global_interner() -> &mut StringInterner {
     @unsafe {
         match &mut GLOBAL_INTERNER {
-            &mut Option::Some(ref mut interner) => interner,
-            &mut Option::None => {
+            &mut Option.Some(ref mut interner) => interner,
+            &mut Option.None => {
                 // Auto-initialize if not done
-                GLOBAL_INTERNER = Option::Some(StringInterner::new());
+                GLOBAL_INTERNER = Option.Some(StringInterner.new());
                 match &mut GLOBAL_INTERNER {
-                    &mut Option::Some(ref mut interner) => interner,
-                    &mut Option::None => {
+                    &mut Option.Some(ref mut interner) => interner,
+                    &mut Option.None => {
                         // This should never happen
                         panic("Global interner initialization failed");
                     }
@@ -441,17 +441,17 @@ pub fn global_interner() -> &mut StringInterner {
 }
 
 /// Interns a string using the global interner.
-pub fn intern(s: &str) -> common::Symbol {
+pub fn intern(s: &str) -> common.Symbol {
     global_interner().intern(s)
 }
 
 /// Resolves a symbol using the global interner.
-pub fn resolve(symbol: common::Symbol) -> Option<&String> {
+pub fn resolve(symbol: common.Symbol) -> Option<&String> {
     // Note: This is unsafe due to static mut, but necessary for global access
     @unsafe {
         match &GLOBAL_INTERNER {
-            &Option::Some(ref interner) => interner.resolve(symbol),
-            &Option::None => Option::None,
+            &Option.Some(ref interner) => interner.resolve(symbol),
+            &Option.None => Option.None,
         }
     }
 }

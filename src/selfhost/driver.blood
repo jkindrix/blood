@@ -41,9 +41,9 @@ pub struct CompileResult {
     /// Generated LLVM IR (if successful).
     pub llvm_ir: Option<String>,
     /// All errors collected during compilation.
-    pub errors: Vec<error::CompileError>,
+    pub errors: Vec<error.CompileError>,
     /// All warnings collected during compilation.
-    pub warnings: Vec<error::CompileWarning>,
+    pub warnings: Vec<error.CompileWarning>,
 }
 
 impl CompileResult {
@@ -51,19 +51,19 @@ impl CompileResult {
     pub fn ok(llvm_ir: String) -> CompileResult {
         CompileResult {
             success: true,
-            llvm_ir: Option::Some(llvm_ir),
-            errors: Vec::new(),
-            warnings: Vec::new(),
+            llvm_ir: Option.Some(llvm_ir),
+            errors: Vec.new(),
+            warnings: Vec.new(),
         }
     }
 
     /// Creates a failed result.
-    pub fn err(errors: Vec<error::CompileError>) -> CompileResult {
+    pub fn err(errors: Vec<error.CompileError>) -> CompileResult {
         CompileResult {
             success: false,
-            llvm_ir: Option::None,
+            llvm_ir: Option.None,
             errors: errors,
-            warnings: Vec::new(),
+            warnings: Vec.new(),
         }
     }
 
@@ -80,14 +80,14 @@ impl CompileResult {
 /// The main compiler driver.
 pub struct Compiler {
     /// String interner for symbols.
-    interner: interner::StringInterner,
+    interner: interner.StringInterner,
 }
 
 impl Compiler {
     /// Creates a new compiler.
     pub fn new() -> Compiler {
         Compiler {
-            interner: interner::StringInterner::new(),
+            interner: interner.StringInterner.new(),
         }
     }
 
@@ -112,7 +112,7 @@ impl Compiler {
             let errors = convert_parse_errors(&parse_result.errors);
             return ParseOnlyResult {
                 success: false,
-                program: Option::None,
+                program: Option.None,
                 errors: errors,
             };
         }
@@ -120,7 +120,7 @@ impl Compiler {
         ParseOnlyResult {
             success: true,
             program: parse_result.program,
-            errors: Vec::new(),
+            errors: Vec.new(),
         }
     }
 
@@ -139,11 +139,11 @@ impl Compiler {
         }
 
         let program = match &parse_result.program {
-            &Option::Some(ref p) => p,
-            &Option::None => {
-                let mut errors = Vec::new();
-                errors.push(error::CompileError::new(
-                    error::CompilePhase::Parse,
+            &Option.Some(ref p) => p,
+            &Option.None => {
+                let mut errors = Vec.new();
+                errors.push(error.CompileError.new(
+                    error.CompilePhase.Parse,
                     common::make_string("No program produced by parser"),
                 ));
                 return CheckResult {
@@ -176,7 +176,7 @@ impl Compiler {
         // Check succeeded
         CheckResult {
             success: true,
-            errors: Vec::new(),
+            errors: Vec.new(),
         }
     }
 
@@ -186,37 +186,37 @@ impl Compiler {
         let parse_result = parser::parse_file(source);
         if parse_result.errors.len() > 0 {
             let errors = convert_parse_errors(&parse_result.errors);
-            return CompileResult::err(errors);
+            return CompileResult.err(errors);
         }
 
         let program = match &parse_result.program {
-            &Option::Some(ref p) => p,
-            &Option::None => {
-                let mut errors = Vec::new();
-                errors.push(error::CompileError::new(
-                    error::CompilePhase::Parse,
+            &Option.Some(ref p) => p,
+            &Option.None => {
+                let mut errors = Vec.new();
+                errors.push(error.CompileError.new(
+                    error.CompilePhase.Parse,
                     common::make_string("No program produced by parser"),
                 ));
-                return CompileResult::err(errors);
+                return CompileResult.err(errors);
             }
         };
 
         // Phase 2: Lower to HIR with base_dir
-        let lower_result = hir_lower::lower_program_with_base_dir(program, base_dir, source, Option::None);
+        let lower_result = hir_lower::lower_program_with_base_dir(program, base_dir, source, Option.None);
         if has_error_diagnostics(&lower_result.diagnostics) {
             let errors = convert_hir_diagnostics(&lower_result.diagnostics);
-            return CompileResult::err(errors);
+            return CompileResult.err(errors);
         }
 
         let crate_data = match &lower_result.crate_data {
-            &Option::Some(ref c) => c,
-            &Option::None => {
-                let mut errors = Vec::new();
-                errors.push(error::CompileError::new(
-                    error::CompilePhase::Lower,
+            &Option.Some(ref c) => c,
+            &Option.None => {
+                let mut errors = Vec.new();
+                errors.push(error.CompileError.new(
+                    error.CompilePhase.Lower,
                     common::make_string("No HIR crate produced"),
                 ));
-                return CompileResult::err(errors);
+                return CompileResult.err(errors);
             }
         };
 
@@ -224,13 +224,13 @@ impl Compiler {
         let typeck_result = typeck_driver::check_lower_result(&lower_result);
         if !typeck_result.success {
             let errors = convert_type_errors(&typeck_result.errors);
-            return CompileResult::err(errors);
+            return CompileResult.err(errors);
         }
 
         // Phase 4a: Pre-analysis — identify const-generic functions
-        let mut const_generic_fn_set: Vec<u32> = Vec::new();
-        let mut const_generic_param_counts: Vec<u32> = Vec::new();
-        let mut const_generic_body_ids: Vec<u32> = Vec::new();
+        let mut const_generic_fn_set: Vec<u32> = Vec.new();
+        let mut const_generic_param_counts: Vec<u32> = Vec.new();
+        let mut const_generic_body_ids: Vec<u32> = Vec.new();
         collect_const_generic_fns(
             &lower_result.items,
             &mut const_generic_fn_set,
@@ -239,15 +239,15 @@ impl Compiler {
         );
 
         // Convert turbofish entries from HIR to MIR format
-        let mut turbofish_const_args: Vec<mir_lower_ctx::TurbofishConstArg> = Vec::new();
+        let mut turbofish_const_args: Vec<mir_lower_ctx.TurbofishConstArg> = Vec.new();
         {
             for ti in 0usize..lower_result.turbofish_const_entries.len() {
                 let entry = &lower_result.turbofish_const_entries[ti];
-                let mut vals: Vec<u64> = Vec::new();
+                let mut vals: Vec<u64> = Vec.new();
                 for vi in 0usize..entry.values.len() {
                     vals.push(entry.values[vi]);
                 }
-                turbofish_const_args.push(mir_lower_ctx::TurbofishConstArg::new(
+                turbofish_const_args.push(mir_lower_ctx.TurbofishConstArg.new(
                     entry.span_start,
                     vals,
                 ));
@@ -255,9 +255,9 @@ impl Compiler {
         }
 
         // Phase 4b: Lower HIR bodies to MIR
-        let mut mir_functions: Vec<(String, mir_body::MirBody)> = Vec::new();
-        let mut mir_errors: Vec<error::CompileError> = Vec::new();
-        let mut all_mono_requests: Vec<mir_lower_ctx::MonoRequest> = Vec::new();
+        let mut mir_functions: Vec<(String, mir_body.MirBody)> = Vec.new();
+        let mut mir_errors: Vec<error.CompileError> = Vec.new();
+        let mut all_mono_requests: Vec<mir_lower_ctx.MonoRequest> = Vec.new();
         let mut next_mono_def_id: u32 = 0;
         let has_const_generics: bool = const_generic_fn_set.len() > 0;
 
@@ -271,26 +271,26 @@ impl Compiler {
 
             // Get return type from function signature, or default to unit
             let return_ty = match &fn_info {
-                &Option::Some(ref info) => type_intern::TyId::new(info.return_ty.index),
-                &Option::None => type_intern::CommonTypes::unit(),
+                &Option.Some(ref info) => type_intern.TyId.new(info.return_ty.index),
+                &Option.None => type_intern.CommonTypes.unit(),
             };
 
             // Get span from function item, or use dummy span
             let span = match &fn_info {
-                &Option::Some(ref info) => info.span,
-                &Option::None => common::Span::new(0, 0, 1, 1),
+                &Option.Some(ref info) => info.span,
+                &Option.None => common.Span.new(0, 0, 1, 1),
             };
 
             // Get function name or generate one
             let fn_name = match &fn_info {
-                &Option::Some(ref info) => resolve_fn_name(source, info),
-                &Option::None => make_fn_name(body_idx),
+                &Option.Some(ref info) => resolve_fn_name(source, info),
+                &Option.None => make_fn_name(body_idx),
             };
 
             // Get DefId from function info or use body_id's index as fallback.
             let def_id = match &fn_info {
-                &Option::Some(ref info) => info.def_id,
-                &Option::None => hir_def::DefId::new(body_id.index),
+                &Option.Some(ref info) => info.def_id,
+                &Option.None => hir_def.DefId.new(body_id.index),
             };
 
             // Skip const-generic function bodies — they'll be re-lowered per specialization
@@ -309,7 +309,7 @@ impl Compiler {
                     &typeck_result.method_resolutions,
                     &typeck_result.field_resolutions,
                     &typeck_result.coercion_entries,
-                    Vec::new(), // No const_bindings for non-specialized bodies
+                    Vec.new(), // No const_bindings for non-specialized bodies
                     clone_u32_vec(&const_generic_fn_set),
                     clone_turbofish_args(&turbofish_const_args),
                     clone_u32_vec(&const_generic_param_counts),
@@ -336,7 +336,7 @@ impl Compiler {
             // Collect mono requests
             {
                 for ri in 0usize..mir_result.mono_requests.len() {
-                    all_mono_requests.push(mir_lower_ctx::MonoRequest::new(
+                    all_mono_requests.push(mir_lower_ctx.MonoRequest.new(
                         mir_result.mono_requests[ri].original_def_id,
                         clone_u64_vec(&mir_result.mono_requests[ri].const_values),
                         mir_result.mono_requests[ri].specialized_def_id,
@@ -355,15 +355,15 @@ impl Compiler {
             // Collect closure bodies discovered during MIR lowering
             while mir_result.closure_names.len() > 0 {
                 match mir_result.closure_names.pop() {
-                    Option::Some(cname) => {
+                    Option.Some(cname) => {
                         match mir_result.closure_mir.pop() {
-                            Option::Some(cbody) => {
+                            Option.Some(cbody) => {
                                 mir_functions.push((cname, cbody));
                             }
-                            Option::None => {}
+                            Option.None => {}
                         }
                     }
-                    Option::None => {}
+                    Option.None => {}
                 }
             }
 
@@ -379,7 +379,7 @@ impl Compiler {
                 // Find the HIR body and FnInfo for the original const-generic function
                 let body_and_info = find_body_for_def_id(&lower_result.bodies, &lower_result.items, req.original_def_id);
                 match body_and_info {
-                    Option::Some(ref binfo) => {
+                    Option.Some(ref binfo) => {
                         // Build const_bindings using Phase 4 DefIds from BodyEntry
                         let body_entry = &lower_result.bodies[binfo.body_index];
                         let const_bindings = build_const_bindings_from_body(
@@ -389,7 +389,7 @@ impl Compiler {
 
                         // Lower the body with const_bindings
                         let mut spec_result = mir_lower::lower_body_with_const_info(
-                            hir_def::DefId::new(req.specialized_def_id),
+                            hir_def.DefId.new(req.specialized_def_id),
                             &lower_result.bodies[binfo.body_index].body,
                             binfo.return_ty,
                             binfo.span,
@@ -398,9 +398,9 @@ impl Compiler {
                             &typeck_result.field_resolutions,
                             &typeck_result.coercion_entries,
                             const_bindings,
-                            Vec::new(), // No const_generic_fn_set for specialized bodies
-                            Vec::new(), // No turbofish for specialized bodies
-                            Vec::new(), // No param counts for specialized bodies
+                            Vec.new(), // No const_generic_fn_set for specialized bodies
+                            Vec.new(), // No turbofish for specialized bodies
+                            Vec.new(), // No param counts for specialized bodies
                             0,          // No mono alloc needed
                         );
 
@@ -412,7 +412,7 @@ impl Compiler {
                         // Add specialized function
                         mir_functions.push((common::make_string(req.fn_name.as_str()), spec_result.body));
                     }
-                    Option::None => {}
+                    Option.None => {}
                 }
 
             }
@@ -420,24 +420,24 @@ impl Compiler {
 
         // Halt before codegen if MIR lowering produced errors
         if mir_errors.len() > 0 {
-            return CompileResult::err(mir_errors);
+            return CompileResult.err(mir_errors);
         }
 
         // Phase 5: Generate LLVM IR from MIR
         let codegen_result = codegen::generate_module_with_items("main", &mir_functions, &lower_result.items, &typeck_result.default_method_remaps);
         if !codegen_result.success {
             let errors = convert_codegen_errors(&codegen_result.errors);
-            return CompileResult::err(errors);
+            return CompileResult.err(errors);
         }
 
         // Propagate codegen warnings and non-fatal errors
-        let mut result = CompileResult::ok(codegen_result.llvm_ir);
+        let mut result = CompileResult.ok(codegen_result.llvm_ir);
         if codegen_result.errors.len() > 0 {
             result.warnings = convert_codegen_errors_to_warnings(&codegen_result.errors);
         }
         for wi in 0usize..codegen_result.warnings.len() {
-            result.warnings.push(error::CompileWarning::new(
-                error::CompilePhase::Codegen,
+            result.warnings.push(error.CompileWarning.new(
+                error.CompilePhase.Codegen,
                 clone_string(&codegen_result.warnings[wi]),
             ));
         }
@@ -457,11 +457,11 @@ impl Compiler {
         }
 
         let program = match &parse_result.program {
-            &Option::Some(ref p) => p,
-            &Option::None => {
-                let mut errors = Vec::new();
-                errors.push(error::CompileError::new(
-                    error::CompilePhase::Parse,
+            &Option.Some(ref p) => p,
+            &Option.None => {
+                let mut errors = Vec.new();
+                errors.push(error.CompileError.new(
+                    error.CompilePhase.Parse,
                     common::make_string("No program produced by parser"),
                 ));
                 return CheckResult {
@@ -494,9 +494,9 @@ impl Compiler {
         // Post-typeck validation: check that a main function exists
         let has_main = has_main_function(&lower_result);
         if !has_main {
-            let mut errors: Vec<error::CompileError> = Vec::new();
-            errors.push(error::CompileError::new(
-                error::CompilePhase::TypeCheck,
+            let mut errors: Vec<error.CompileError> = Vec.new();
+            errors.push(error.CompileError.new(
+                error.CompilePhase.TypeCheck,
                 common::make_string("main function not found"),
             ));
             return CheckResult {
@@ -508,7 +508,7 @@ impl Compiler {
         // Check succeeded
         CheckResult {
             success: true,
-            errors: Vec::new(),
+            errors: Vec.new(),
         }
     }
 
@@ -541,11 +541,11 @@ impl Compiler {
         }
 
         let program = match &parse_result.program {
-            &Option::Some(ref p) => p,
-            &Option::None => {
-                let mut errors = Vec::new();
-                errors.push(error::CompileError::new(
-                    error::CompilePhase::Parse,
+            &Option.Some(ref p) => p,
+            &Option.None => {
+                let mut errors = Vec.new();
+                errors.push(error.CompileError.new(
+                    error.CompilePhase.Parse,
                     common::make_string("No program produced by parser"),
                 ));
                 return CheckResult {
@@ -592,9 +592,9 @@ impl Compiler {
         // Post-typeck validation: check that a main function exists
         let has_main = has_main_function(&lower_result);
         if !has_main {
-            let mut errors: Vec<error::CompileError> = Vec::new();
-            errors.push(error::CompileError::new(
-                error::CompilePhase::TypeCheck,
+            let mut errors: Vec<error.CompileError> = Vec.new();
+            errors.push(error.CompileError.new(
+                error.CompilePhase.TypeCheck,
                 common::make_string("main function not found"),
             ));
             return CheckResult {
@@ -606,17 +606,17 @@ impl Compiler {
         // Check succeeded
         CheckResult {
             success: true,
-            errors: Vec::new(),
+            errors: Vec.new(),
         }
     }
 
     /// Gets a reference to the string interner.
-    pub fn interner(self: &Self) -> &interner::StringInterner {
+    pub fn interner(self: &Self) -> &interner.StringInterner {
         &self.interner
     }
 
     /// Gets a mutable reference to the string interner.
-    pub fn interner_mut(self: &mut Self) -> &mut interner::StringInterner {
+    pub fn interner_mut(self: &mut Self) -> &mut interner.StringInterner {
         &mut self.interner
     }
 }
@@ -628,14 +628,14 @@ impl Compiler {
 /// Result of parse-only operation.
 pub struct ParseOnlyResult {
     pub success: bool,
-    pub program: Option<ast::Program>,
-    pub errors: Vec<error::CompileError>,
+    pub program: Option<ast.Program>,
+    pub errors: Vec<error.CompileError>,
 }
 
 /// Result of check-only operation.
 pub struct CheckResult {
     pub success: bool,
-    pub errors: Vec<error::CompileError>,
+    pub errors: Vec<error.CompileError>,
 }
 
 // ============================================================
@@ -643,12 +643,12 @@ pub struct CheckResult {
 // ============================================================
 
 /// Converts parser diagnostics to compile errors.
-pub fn convert_parse_errors(diagnostics: &Vec<parser_base::Diagnostic>) -> Vec<error::CompileError> {
-    let mut errors = Vec::new();
+pub fn convert_parse_errors(diagnostics: &Vec<parser_base.Diagnostic>) -> Vec<error.CompileError> {
+    let mut errors = Vec.new();
     for i in 0usize..diagnostics.len() {
         let diag = &diagnostics[i];
-        let mut ce = error::CompileError::with_code(
-            error::CompilePhase::Parse,
+        let mut ce = error.CompileError.with_code(
+            error.CompilePhase.Parse,
             clone_string(&diag.message),
             diag.span,
             common::make_string(parser_error_code(&diag.code)),
@@ -662,12 +662,12 @@ pub fn convert_parse_errors(diagnostics: &Vec<parser_base::Diagnostic>) -> Vec<e
 }
 
 /// Converts HIR diagnostics to compile errors.
-pub fn convert_hir_diagnostics(diagnostics: &Vec<hir::Diagnostic>) -> Vec<error::CompileError> {
-    let mut errors = Vec::new();
+pub fn convert_hir_diagnostics(diagnostics: &Vec<hir.Diagnostic>) -> Vec<error.CompileError> {
+    let mut errors = Vec.new();
     for i in 0usize..diagnostics.len() {
         let diag = &diagnostics[i];
-        errors.push(error::CompileError::with_code(
-            error::CompilePhase::Lower,
+        errors.push(error.CompileError.with_code(
+            error.CompilePhase.Lower,
             clone_string(&diag.message),
             diag.span,
             common::make_string(hir_diagnostic_code(&diag.code)),
@@ -677,26 +677,26 @@ pub fn convert_hir_diagnostics(diagnostics: &Vec<hir::Diagnostic>) -> Vec<error:
 }
 
 /// Checks if any diagnostic is an error (not just a warning).
-fn has_error_diagnostics(diagnostics: &Vec<hir::Diagnostic>) -> bool {
+fn has_error_diagnostics(diagnostics: &Vec<hir.Diagnostic>) -> bool {
     for i in 0usize..diagnostics.len() {
         let diag = &diagnostics[i];
         match &diag.level {
-            &hir::DiagnosticLevel::Error => return true,
-            &hir::DiagnosticLevel::Warning => {}
-            &hir::DiagnosticLevel::Note => {}
-            &hir::DiagnosticLevel::Help => {}
+            &hir.DiagnosticLevel.Error => return true,
+            &hir.DiagnosticLevel.Warning => {}
+            &hir.DiagnosticLevel.Note => {}
+            &hir.DiagnosticLevel.Help => {}
         }
     }
     false
 }
 
 /// Converts type errors to compile errors.
-pub fn convert_type_errors(type_errors: &Vec<typeck::TypeError>) -> Vec<error::CompileError> {
-    let mut errors = Vec::new();
+pub fn convert_type_errors(type_errors: &Vec<typeck.TypeError>) -> Vec<error.CompileError> {
+    let mut errors = Vec.new();
     for i in 0usize..type_errors.len() {
         let te = &type_errors[i];
-        let mut ce = error::CompileError::with_code(
-            error::CompilePhase::TypeCheck,
+        let mut ce = error.CompileError.with_code(
+            error.CompilePhase.TypeCheck,
             type_error_message(&te.kind),
             te.span,
             common::make_string(type_error_code(&te.kind)),
@@ -710,12 +710,12 @@ pub fn convert_type_errors(type_errors: &Vec<typeck::TypeError>) -> Vec<error::C
 }
 
 /// Converts a single MIR lowering error to a compile error.
-fn convert_mir_error(err: &mir_lower_ctx::MirLowerError) -> error::CompileError {
+fn convert_mir_error(err: &mir_lower_ctx.MirLowerError) -> error.CompileError {
     let mut message = common::make_string(mir_lower_ctx::mir_error_kind_label(&err.kind));
     message.push_str(": ");
     message.push_str(err.message.as_str());
-    let mut ce = error::CompileError::with_code(
-        error::CompilePhase::MirLower,
+    let mut ce = error.CompileError.with_code(
+        error.CompilePhase.MirLower,
         message,
         err.span,
         common::make_string(mir_lower_ctx::mir_error_code(&err.kind)),
@@ -727,8 +727,8 @@ fn convert_mir_error(err: &mir_lower_ctx::MirLowerError) -> error::CompileError 
 }
 
 /// Converts codegen errors to compile errors.
-fn convert_codegen_errors(codegen_errors: &Vec<codegen::codegen_ctx::CodegenError>) -> Vec<error::CompileError> {
-    let mut errors = Vec::new();
+fn convert_codegen_errors(codegen_errors: &Vec<codegen::codegen_ctx.CodegenError>) -> Vec<error.CompileError> {
+    let mut errors = Vec.new();
     for i in 0usize..codegen_errors.len() {
         let cge = &codegen_errors[i];
         let code_str = codegen::codegen_ctx::error_kind_code(&cge.kind);
@@ -736,18 +736,18 @@ fn convert_codegen_errors(codegen_errors: &Vec<codegen::codegen_ctx::CodegenErro
         message.push_str(": ");
         message.push_str(cge.message.as_str());
         match &cge.fn_name {
-            &Option::Some(ref name) => {
+            &Option.Some(ref name) => {
                 message.push_str(" (in function ");
                 message.push_str(name.as_str());
                 message.push(')');
             }
-            &Option::None => {}
+            &Option.None => {}
         }
         // Use with_code when span is available, embed code in message otherwise
         match &cge.span {
-            &Option::Some(ref span) => {
-                let mut ce = error::CompileError::with_code(
-                    error::CompilePhase::Codegen,
+            &Option.Some(ref span) => {
+                let mut ce = error.CompileError.with_code(
+                    error.CompilePhase.Codegen,
                     message,
                     *span,
                     common::make_string(code_str),
@@ -757,13 +757,13 @@ fn convert_codegen_errors(codegen_errors: &Vec<codegen::codegen_ctx::CodegenErro
                 }
                 errors.push(ce);
             }
-            &Option::None => {
+            &Option.None => {
                 let mut coded_msg = common::make_string("[");
                 coded_msg.push_str(code_str);
                 coded_msg.push_str("] ");
                 coded_msg.push_str(message.as_str());
-                let mut ce = error::CompileError::new(
-                    error::CompilePhase::Codegen,
+                let mut ce = error.CompileError.new(
+                    error.CompilePhase.Codegen,
                     coded_msg,
                 );
                 for ni in 0usize..cge.notes.len() {
@@ -777,8 +777,8 @@ fn convert_codegen_errors(codegen_errors: &Vec<codegen::codegen_ctx::CodegenErro
 }
 
 /// Converts codegen errors to compile warnings (for non-fatal errors that didn't prevent codegen).
-fn convert_codegen_errors_to_warnings(codegen_errors: &Vec<codegen::codegen_ctx::CodegenError>) -> Vec<error::CompileWarning> {
-    let mut warnings = Vec::new();
+fn convert_codegen_errors_to_warnings(codegen_errors: &Vec<codegen::codegen_ctx.CodegenError>) -> Vec<error.CompileWarning> {
+    let mut warnings = Vec.new();
     for i in 0usize..codegen_errors.len() {
         let ce = &codegen_errors[i];
         let code_str = codegen::codegen_ctx::error_kind_code(&ce.kind);
@@ -786,12 +786,12 @@ fn convert_codegen_errors_to_warnings(codegen_errors: &Vec<codegen::codegen_ctx:
         message.push_str(": ");
         message.push_str(ce.message.as_str());
         match &ce.fn_name {
-            &Option::Some(ref name) => {
+            &Option.Some(ref name) => {
                 message.push_str(" (in function ");
                 message.push_str(name.as_str());
                 message.push(')');
             }
-            &Option::None => {}
+            &Option.None => {}
         }
         // Append contextual notes
         for ni in 0usize..ce.notes.len() {
@@ -800,22 +800,22 @@ fn convert_codegen_errors_to_warnings(codegen_errors: &Vec<codegen::codegen_ctx:
         }
         // Use code-aware constructor when span is available
         match &ce.span {
-            &Option::Some(ref span) => {
-                warnings.push(error::CompileWarning::with_code(
-                    error::CompilePhase::Codegen,
+            &Option.Some(ref span) => {
+                warnings.push(error.CompileWarning.with_code(
+                    error.CompilePhase.Codegen,
                     message,
                     *span,
                     common::make_string(code_str),
                 ));
             }
-            &Option::None => {
+            &Option.None => {
                 // No span — embed code in message as fallback
                 let mut coded_message = common::make_string("[");
                 coded_message.push_str(code_str);
                 coded_message.push_str("] ");
                 coded_message.push_str(message.as_str());
-                warnings.push(error::CompileWarning::new(
-                    error::CompilePhase::Codegen,
+                warnings.push(error.CompileWarning.new(
+                    error.CompilePhase.Codegen,
                     coded_message,
                 ));
             }
@@ -825,32 +825,32 @@ fn convert_codegen_errors_to_warnings(codegen_errors: &Vec<codegen::codegen_ctx:
 }
 
 /// Converts a TypeErrorKind to a human-readable message.
-pub fn type_error_message(kind: &typeck::TypeErrorKind) -> String {
+pub fn type_error_message(kind: &typeck.TypeErrorKind) -> String {
     match kind {
-        &typeck::TypeErrorKind::TypeMismatch => common::make_string("type mismatch"),
-        &typeck::TypeErrorKind::CannotInfer => common::make_string("cannot infer type"),
-        &typeck::TypeErrorKind::UndefinedVariable => common::make_string("undefined variable"),
-        &typeck::TypeErrorKind::UndefinedFunction => common::make_string("undefined function"),
-        &typeck::TypeErrorKind::ArityMismatch => common::make_string("wrong number of arguments"),
-        &typeck::TypeErrorKind::NotCallable => common::make_string("expression is not callable"),
-        &typeck::TypeErrorKind::NotIndexable => common::make_string("expression is not indexable"),
-        &typeck::TypeErrorKind::NoSuchField => common::make_string("field does not exist"),
-        &typeck::TypeErrorKind::NoSuchMethod => common::make_string("method does not exist"),
-        &typeck::TypeErrorKind::CannotMutate => common::make_string("cannot mutate immutable value"),
-        &typeck::TypeErrorKind::InvalidLValue => common::make_string("invalid assignment target"),
-        &typeck::TypeErrorKind::MissingReturn => common::make_string("missing return value"),
-        &typeck::TypeErrorKind::TraitNotImplemented => common::make_string("type does not implement trait"),
-        &typeck::TypeErrorKind::UnhandledEffect => common::make_string("unhandled effect"),
-        &typeck::TypeErrorKind::InvalidControl => common::make_string("invalid break/continue"),
-        &typeck::TypeErrorKind::PatternMismatch => common::make_string("pattern type mismatch"),
-        &typeck::TypeErrorKind::NonExhaustive => common::make_string("non-exhaustive patterns"),
-        &typeck::TypeErrorKind::InfiniteType => common::make_string("infinite type (recursive without indirection)"),
-        &typeck::TypeErrorKind::InvalidCast => common::make_string("invalid cast"),
-        &typeck::TypeErrorKind::UnreachablePattern => common::make_string("unreachable pattern"),
-        &typeck::TypeErrorKind::LinearNotUsed => common::make_string("linear value not consumed"),
-        &typeck::TypeErrorKind::LinearUsedMultipleTimes => common::make_string("linear value used more than once"),
-        &typeck::TypeErrorKind::AffineUsedMultipleTimes => common::make_string("affine value used more than once"),
-        &typeck::TypeErrorKind::UndeclaredEffect => common::make_string("undeclared effect"),
+        &typeck.TypeErrorKind.TypeMismatch => common::make_string("type mismatch"),
+        &typeck.TypeErrorKind.CannotInfer => common::make_string("cannot infer type"),
+        &typeck.TypeErrorKind.UndefinedVariable => common::make_string("undefined variable"),
+        &typeck.TypeErrorKind.UndefinedFunction => common::make_string("undefined function"),
+        &typeck.TypeErrorKind.ArityMismatch => common::make_string("wrong number of arguments"),
+        &typeck.TypeErrorKind.NotCallable => common::make_string("expression is not callable"),
+        &typeck.TypeErrorKind.NotIndexable => common::make_string("expression is not indexable"),
+        &typeck.TypeErrorKind.NoSuchField => common::make_string("field does not exist"),
+        &typeck.TypeErrorKind.NoSuchMethod => common::make_string("method does not exist"),
+        &typeck.TypeErrorKind.CannotMutate => common::make_string("cannot mutate immutable value"),
+        &typeck.TypeErrorKind.InvalidLValue => common::make_string("invalid assignment target"),
+        &typeck.TypeErrorKind.MissingReturn => common::make_string("missing return value"),
+        &typeck.TypeErrorKind.TraitNotImplemented => common::make_string("type does not implement trait"),
+        &typeck.TypeErrorKind.UnhandledEffect => common::make_string("unhandled effect"),
+        &typeck.TypeErrorKind.InvalidControl => common::make_string("invalid break/continue"),
+        &typeck.TypeErrorKind.PatternMismatch => common::make_string("pattern type mismatch"),
+        &typeck.TypeErrorKind.NonExhaustive => common::make_string("non-exhaustive patterns"),
+        &typeck.TypeErrorKind.InfiniteType => common::make_string("infinite type (recursive without indirection)"),
+        &typeck.TypeErrorKind.InvalidCast => common::make_string("invalid cast"),
+        &typeck.TypeErrorKind.UnreachablePattern => common::make_string("unreachable pattern"),
+        &typeck.TypeErrorKind.LinearNotUsed => common::make_string("linear value not consumed"),
+        &typeck.TypeErrorKind.LinearUsedMultipleTimes => common::make_string("linear value used more than once"),
+        &typeck.TypeErrorKind.AffineUsedMultipleTimes => common::make_string("affine value used more than once"),
+        &typeck.TypeErrorKind.UndeclaredEffect => common::make_string("undeclared effect"),
     }
 }
 
@@ -859,86 +859,86 @@ pub fn type_error_message(kind: &typeck::TypeErrorKind) -> String {
 // ============================================================
 
 /// Returns the error code string for a parser ErrorCode.
-pub fn parser_error_code(code: &parser_base::ErrorCode) -> &str {
+pub fn parser_error_code(code: &parser_base.ErrorCode) -> &str {
     match code {
-        &parser_base::ErrorCode::UnexpectedToken => "E0001",
-        &parser_base::ErrorCode::UnexpectedEof => "E0002",
-        &parser_base::ErrorCode::UnexpectedCharacter => "E0003",
-        &parser_base::ErrorCode::InvalidInteger => "E0004",
-        &parser_base::ErrorCode::InvalidFloat => "E0005",
-        &parser_base::ErrorCode::ExpectedExpression => "E0006",
-        &parser_base::ErrorCode::ExpectedType => "E0007",
-        &parser_base::ErrorCode::ExpectedPattern => "E0008",
-        &parser_base::ErrorCode::ExpectedIdentifier => "E0009",
-        &parser_base::ErrorCode::ExpectedDeclaration => "E0010",
+        &parser_base.ErrorCode.UnexpectedToken => "E0001",
+        &parser_base.ErrorCode.UnexpectedEof => "E0002",
+        &parser_base.ErrorCode.UnexpectedCharacter => "E0003",
+        &parser_base.ErrorCode.InvalidInteger => "E0004",
+        &parser_base.ErrorCode.InvalidFloat => "E0005",
+        &parser_base.ErrorCode.ExpectedExpression => "E0006",
+        &parser_base.ErrorCode.ExpectedType => "E0007",
+        &parser_base.ErrorCode.ExpectedPattern => "E0008",
+        &parser_base.ErrorCode.ExpectedIdentifier => "E0009",
+        &parser_base.ErrorCode.ExpectedDeclaration => "E0010",
     }
 }
 
 /// Returns the error code string for an HIR DiagnosticCode.
-pub fn hir_diagnostic_code(code: &hir::DiagnosticCode) -> &str {
+pub fn hir_diagnostic_code(code: &hir.DiagnosticCode) -> &str {
     match code {
-        &hir::DiagnosticCode::E0100 => "E0100",
-        &hir::DiagnosticCode::E0101 => "E0101",
-        &hir::DiagnosticCode::E0102 => "E0102",
-        &hir::DiagnosticCode::E0103 => "E0103",
-        &hir::DiagnosticCode::E0104 => "E0104",
-        &hir::DiagnosticCode::E0200 => "E0200",
-        &hir::DiagnosticCode::E0201 => "E0201",
-        &hir::DiagnosticCode::E0202 => "E0202",
-        &hir::DiagnosticCode::E0203 => "E0203",
-        &hir::DiagnosticCode::E0204 => "E0204",
-        &hir::DiagnosticCode::E0205 => "E0205",
-        &hir::DiagnosticCode::E0206 => "E0206",
-        &hir::DiagnosticCode::E0300 => "E0300",
-        &hir::DiagnosticCode::E0301 => "E0301",
-        &hir::DiagnosticCode::E0302 => "E0302",
-        &hir::DiagnosticCode::E0303 => "E0303",
-        &hir::DiagnosticCode::E0304 => "E0304",
-        &hir::DiagnosticCode::E0305 => "E0305",
-        &hir::DiagnosticCode::E0400 => "E0400",
-        &hir::DiagnosticCode::E0401 => "E0401",
-        &hir::DiagnosticCode::E0402 => "E0402",
-        &hir::DiagnosticCode::E0403 => "E0403",
-        &hir::DiagnosticCode::E0500 => "E0500",
-        &hir::DiagnosticCode::E0501 => "E0501",
-        &hir::DiagnosticCode::E0502 => "E0502",
-        &hir::DiagnosticCode::E0503 => "E0503",
-        &hir::DiagnosticCode::E0600 => "E0600",
-        &hir::DiagnosticCode::E0601 => "E0601",
-        &hir::DiagnosticCode::E0602 => "E0602",
-        &hir::DiagnosticCode::E0603 => "E0603",
-        &hir::DiagnosticCode::E0604 => "E0604",
-        &hir::DiagnosticCode::E0900 => "E0900",
+        &hir.DiagnosticCode.E0100 => "E0100",
+        &hir.DiagnosticCode.E0101 => "E0101",
+        &hir.DiagnosticCode.E0102 => "E0102",
+        &hir.DiagnosticCode.E0103 => "E0103",
+        &hir.DiagnosticCode.E0104 => "E0104",
+        &hir.DiagnosticCode.E0200 => "E0200",
+        &hir.DiagnosticCode.E0201 => "E0201",
+        &hir.DiagnosticCode.E0202 => "E0202",
+        &hir.DiagnosticCode.E0203 => "E0203",
+        &hir.DiagnosticCode.E0204 => "E0204",
+        &hir.DiagnosticCode.E0205 => "E0205",
+        &hir.DiagnosticCode.E0206 => "E0206",
+        &hir.DiagnosticCode.E0300 => "E0300",
+        &hir.DiagnosticCode.E0301 => "E0301",
+        &hir.DiagnosticCode.E0302 => "E0302",
+        &hir.DiagnosticCode.E0303 => "E0303",
+        &hir.DiagnosticCode.E0304 => "E0304",
+        &hir.DiagnosticCode.E0305 => "E0305",
+        &hir.DiagnosticCode.E0400 => "E0400",
+        &hir.DiagnosticCode.E0401 => "E0401",
+        &hir.DiagnosticCode.E0402 => "E0402",
+        &hir.DiagnosticCode.E0403 => "E0403",
+        &hir.DiagnosticCode.E0500 => "E0500",
+        &hir.DiagnosticCode.E0501 => "E0501",
+        &hir.DiagnosticCode.E0502 => "E0502",
+        &hir.DiagnosticCode.E0503 => "E0503",
+        &hir.DiagnosticCode.E0600 => "E0600",
+        &hir.DiagnosticCode.E0601 => "E0601",
+        &hir.DiagnosticCode.E0602 => "E0602",
+        &hir.DiagnosticCode.E0603 => "E0603",
+        &hir.DiagnosticCode.E0604 => "E0604",
+        &hir.DiagnosticCode.E0900 => "E0900",
     }
 }
 
 /// Returns the error code string for a TypeErrorKind.
-pub fn type_error_code(kind: &typeck::TypeErrorKind) -> &str {
+pub fn type_error_code(kind: &typeck.TypeErrorKind) -> &str {
     match kind {
-        &typeck::TypeErrorKind::TypeMismatch => "E0201",
-        &typeck::TypeErrorKind::CannotInfer => "E0202",
-        &typeck::TypeErrorKind::UndefinedVariable => "E0203",
-        &typeck::TypeErrorKind::UndefinedFunction => "E0204",
-        &typeck::TypeErrorKind::ArityMismatch => "E0205",
-        &typeck::TypeErrorKind::NotCallable => "E0206",
-        &typeck::TypeErrorKind::NotIndexable => "E0207",
-        &typeck::TypeErrorKind::NoSuchField => "E0208",
-        &typeck::TypeErrorKind::NoSuchMethod => "E0209",
-        &typeck::TypeErrorKind::CannotMutate => "E0210",
-        &typeck::TypeErrorKind::InvalidLValue => "E0211",
-        &typeck::TypeErrorKind::MissingReturn => "E0212",
-        &typeck::TypeErrorKind::TraitNotImplemented => "E0213",
-        &typeck::TypeErrorKind::UnhandledEffect => "E0214",
-        &typeck::TypeErrorKind::InvalidControl => "E0215",
-        &typeck::TypeErrorKind::PatternMismatch => "E0216",
-        &typeck::TypeErrorKind::NonExhaustive => "E0217",
-        &typeck::TypeErrorKind::InfiniteType => "E0218",
-        &typeck::TypeErrorKind::InvalidCast => "E0219",
-        &typeck::TypeErrorKind::UnreachablePattern => "E0220",
-        &typeck::TypeErrorKind::LinearNotUsed => "E0221",
-        &typeck::TypeErrorKind::LinearUsedMultipleTimes => "E0222",
-        &typeck::TypeErrorKind::AffineUsedMultipleTimes => "E0223",
-        &typeck::TypeErrorKind::UndeclaredEffect => "E0224",
+        &typeck.TypeErrorKind.TypeMismatch => "E0201",
+        &typeck.TypeErrorKind.CannotInfer => "E0202",
+        &typeck.TypeErrorKind.UndefinedVariable => "E0203",
+        &typeck.TypeErrorKind.UndefinedFunction => "E0204",
+        &typeck.TypeErrorKind.ArityMismatch => "E0205",
+        &typeck.TypeErrorKind.NotCallable => "E0206",
+        &typeck.TypeErrorKind.NotIndexable => "E0207",
+        &typeck.TypeErrorKind.NoSuchField => "E0208",
+        &typeck.TypeErrorKind.NoSuchMethod => "E0209",
+        &typeck.TypeErrorKind.CannotMutate => "E0210",
+        &typeck.TypeErrorKind.InvalidLValue => "E0211",
+        &typeck.TypeErrorKind.MissingReturn => "E0212",
+        &typeck.TypeErrorKind.TraitNotImplemented => "E0213",
+        &typeck.TypeErrorKind.UnhandledEffect => "E0214",
+        &typeck.TypeErrorKind.InvalidControl => "E0215",
+        &typeck.TypeErrorKind.PatternMismatch => "E0216",
+        &typeck.TypeErrorKind.NonExhaustive => "E0217",
+        &typeck.TypeErrorKind.InfiniteType => "E0218",
+        &typeck.TypeErrorKind.InvalidCast => "E0219",
+        &typeck.TypeErrorKind.UnreachablePattern => "E0220",
+        &typeck.TypeErrorKind.LinearNotUsed => "E0221",
+        &typeck.TypeErrorKind.LinearUsedMultipleTimes => "E0222",
+        &typeck.TypeErrorKind.AffineUsedMultipleTimes => "E0223",
+        &typeck.TypeErrorKind.UndeclaredEffect => "E0224",
     }
 }
 
@@ -949,30 +949,30 @@ pub fn type_error_code(kind: &typeck::TypeErrorKind) -> &str {
 /// Information extracted from a function item.
 pub struct FnInfo {
     /// The DefId of the function.
-    pub def_id: hir_def::DefId,
+    pub def_id: hir_def.DefId,
     /// The function name (as Symbol).
-    pub name: common::Symbol,
+    pub name: common.Symbol,
     /// The span of the function name (for extracting name from source).
-    pub name_span: common::Span,
+    pub name_span: common.Span,
     /// The return type.
-    pub return_ty: type_intern::TyId,
+    pub return_ty: type_intern.TyId,
     /// The span of the function.
-    pub span: common::Span,
+    pub span: common.Span,
 }
 
 /// Finds the function Item that corresponds to a given BodyId.
 pub fn find_fn_for_body(
-    items: &Vec<hir_lower_ctx::ItemEntry>,
-    target_body_id: hir_def::BodyId,
+    items: &Vec<hir_lower_ctx.ItemEntry>,
+    target_body_id: hir_def.BodyId,
 ) -> Option<FnInfo> {
     for i in 0usize..items.len() {
         let entry = &items[i];
         match &entry.item.kind {
-            &hir_item::ItemKind::Fn(ref fn_def) => {
+            &hir_item.ItemKind.Fn(ref fn_def) => {
                 match &fn_def.body_id {
-                    &Option::Some(ref bid) => {
+                    &Option.Some(ref bid) => {
                         if bid.index == target_body_id.index {
-                            return Option::Some(FnInfo {
+                            return Option.Some(FnInfo {
                                 def_id: entry.item.def_id,
                                 name: entry.item.name.symbol,
                                 name_span: entry.item.name.span,
@@ -981,18 +981,18 @@ pub fn find_fn_for_body(
                             });
                         }
                     }
-                    &Option::None => {}
+                    &Option.None => {}
                 }
             }
-            &hir_item::ItemKind::Impl(ref impl_def) => {
+            &hir_item.ItemKind.Impl(ref impl_def) => {
                 // Check associated functions in impl blocks
                 for j in 0usize..impl_def.items.len() {
                     match &impl_def.items[j] {
-                        &hir_item::AssocItem::Fn(ref assoc_fn) => {
+                        &hir_item.AssocItem.Fn(ref assoc_fn) => {
                             match &assoc_fn.body_id {
-                                &Option::Some(ref bid) => {
+                                &Option.Some(ref bid) => {
                                     if bid.index == target_body_id.index {
-                                        return Option::Some(FnInfo {
+                                        return Option.Some(FnInfo {
                                             def_id: assoc_fn.def_id,
                                             name: assoc_fn.name.symbol,
                                             name_span: assoc_fn.name.span,
@@ -1001,15 +1001,15 @@ pub fn find_fn_for_body(
                                         });
                                     }
                                 }
-                                &Option::None => {}
+                                &Option.None => {}
                             }
                         }
-                        &hir_item::AssocItem::Type(_) => {}
-                        &hir_item::AssocItem::Const(ref assoc_const) => {
+                        &hir_item.AssocItem.Type(_) => {}
+                        &hir_item.AssocItem.Const(ref assoc_const) => {
                             match &assoc_const.body_id {
-                                &Option::Some(ref bid) => {
+                                &Option.Some(ref bid) => {
                                     if bid.index == target_body_id.index {
-                                        return Option::Some(FnInfo {
+                                        return Option.Some(FnInfo {
                                             def_id: assoc_const.def_id,
                                             name: assoc_const.name.symbol,
                                             name_span: assoc_const.name.span,
@@ -1018,19 +1018,19 @@ pub fn find_fn_for_body(
                                         });
                                     }
                                 }
-                                &Option::None => {}
+                                &Option.None => {}
                             }
                         }
                     }
                 }
             }
             // Other item kinds don't have function bodies
-            &hir_item::ItemKind::Struct(_) => {}
-            &hir_item::ItemKind::Enum(_) => {}
-            &hir_item::ItemKind::TypeAlias(_) => {}
-            &hir_item::ItemKind::Const(ref const_def) => {
+            &hir_item.ItemKind.Struct(_) => {}
+            &hir_item.ItemKind.Enum(_) => {}
+            &hir_item.ItemKind.TypeAlias(_) => {}
+            &hir_item.ItemKind.Const(ref const_def) => {
                 if const_def.body_id.index == target_body_id.index {
-                    return Option::Some(FnInfo {
+                    return Option.Some(FnInfo {
                         def_id: entry.item.def_id,
                         name: entry.item.name.symbol,
                         name_span: entry.item.name.span,
@@ -1039,9 +1039,9 @@ pub fn find_fn_for_body(
                     });
                 }
             }
-            &hir_item::ItemKind::Static(ref static_def) => {
+            &hir_item.ItemKind.Static(ref static_def) => {
                 if static_def.body_id.index == target_body_id.index {
-                    return Option::Some(FnInfo {
+                    return Option.Some(FnInfo {
                         def_id: entry.item.def_id,
                         name: entry.item.name.symbol,
                         name_span: entry.item.name.span,
@@ -1050,15 +1050,15 @@ pub fn find_fn_for_body(
                     });
                 }
             }
-            &hir_item::ItemKind::Trait(ref trait_def) => {
+            &hir_item.ItemKind.Trait(ref trait_def) => {
                 // Check associated functions in trait definitions (default method bodies)
                 for j in 0usize..trait_def.items.len() {
                     match &trait_def.items[j] {
-                        &hir_item::AssocItem::Fn(ref assoc_fn) => {
+                        &hir_item.AssocItem.Fn(ref assoc_fn) => {
                             match &assoc_fn.body_id {
-                                &Option::Some(ref bid) => {
+                                &Option.Some(ref bid) => {
                                     if bid.index == target_body_id.index {
-                                        return Option::Some(FnInfo {
+                                        return Option.Some(FnInfo {
                                             def_id: assoc_fn.def_id,
                                             name: assoc_fn.name.symbol,
                                             name_span: assoc_fn.name.span,
@@ -1067,15 +1067,15 @@ pub fn find_fn_for_body(
                                         });
                                     }
                                 }
-                                &Option::None => {}
+                                &Option.None => {}
                             }
                         }
-                        &hir_item::AssocItem::Type(_) => {}
-                        &hir_item::AssocItem::Const(ref assoc_const) => {
+                        &hir_item.AssocItem.Type(_) => {}
+                        &hir_item.AssocItem.Const(ref assoc_const) => {
                             match &assoc_const.body_id {
-                                &Option::Some(ref bid) => {
+                                &Option.Some(ref bid) => {
                                     if bid.index == target_body_id.index {
-                                        return Option::Some(FnInfo {
+                                        return Option.Some(FnInfo {
                                             def_id: assoc_const.def_id,
                                             name: assoc_const.name.symbol,
                                             name_span: assoc_const.name.span,
@@ -1084,30 +1084,30 @@ pub fn find_fn_for_body(
                                         });
                                     }
                                 }
-                                &Option::None => {}
+                                &Option.None => {}
                             }
                         }
                     }
                 }
             }
-            &hir_item::ItemKind::Effect(_) => {}
-            &hir_item::ItemKind::Handler(ref handler_def) => {
+            &hir_item.ItemKind.Effect(_) => {}
+            &hir_item.ItemKind.Handler(ref handler_def) => {
                 // Check return clause body
                 match &handler_def.return_clause {
-                    &Option::Some(ref ret_clause) => {
+                    &Option.Some(ref ret_clause) => {
                         if ret_clause.body_id.index == target_body_id.index {
                             // Return clause: return type is the computation result type
                             // We don't have the exact type here, use a placeholder
-                            return Option::Some(FnInfo {
-                                def_id: hir_def::DefId::new(target_body_id.index),
+                            return Option.Some(FnInfo {
+                                def_id: hir_def.DefId.new(target_body_id.index),
                                 name: ret_clause.param_name.symbol,
                                 name_span: ret_clause.param_name.span,
-                                return_ty: type_intern::CommonTypes::unit(),
+                                return_ty: type_intern.CommonTypes.unit(),
                                 span: ret_clause.param_name.span,
                             });
                         }
                     }
-                    &Option::None => {}
+                    &Option.None => {}
                 }
                 // Check operation implementation bodies
                 for j in 0usize..handler_def.op_impls.len() {
@@ -1115,7 +1115,7 @@ pub fn find_fn_for_body(
                     if impl_entry.body_id.index == target_body_id.index {
                         // Find the effect operation return type by searching Effect items
                         let ret_ty = find_effect_op_return_ty(items, impl_entry.op_def_id);
-                        return Option::Some(FnInfo {
+                        return Option.Some(FnInfo {
                             def_id: impl_entry.op_def_id,
                             name: impl_entry.name.symbol,
                             name_span: impl_entry.name.span,
@@ -1125,22 +1125,22 @@ pub fn find_fn_for_body(
                     }
                 }
             }
-            &hir_item::ItemKind::Module(_) => {}
-            &hir_item::ItemKind::Macro(_) => {}
-            &hir_item::ItemKind::Foreign(_) => {}
+            &hir_item.ItemKind.Module(_) => {}
+            &hir_item.ItemKind.Macro(_) => {}
+            &hir_item.ItemKind.Foreign(_) => {}
         }
     }
-    Option::None
+    Option.None
 }
 
 /// Finds the return type of an effect operation by its DefId.
 fn find_effect_op_return_ty(
-    items: &Vec<hir_lower_ctx::ItemEntry>,
-    op_def_id: hir_def::DefId,
-) -> type_intern::TyId {
+    items: &Vec<hir_lower_ctx.ItemEntry>,
+    op_def_id: hir_def.DefId,
+) -> type_intern.TyId {
     for i in 0usize..items.len() {
         match &items[i].item.kind {
-            &hir_item::ItemKind::Effect(ref effect_def) => {
+            &hir_item.ItemKind.Effect(ref effect_def) => {
                 for j in 0usize..effect_def.operations.len() {
                     let effect_op = &effect_def.operations[j];
                     if effect_op.def_id.index == op_def_id.index {
@@ -1152,21 +1152,21 @@ fn find_effect_op_return_ty(
         }
     }
     // Fallback: couldn't find the op definition
-    type_intern::CommonTypes::unit()
+    type_intern.CommonTypes.unit()
 }
 
 /// Resolves a Symbol to a String using the interner.
-pub fn resolve_symbol(interner: &interner::StringInterner, symbol: common::Symbol) -> String {
+pub fn resolve_symbol(interner: &interner.StringInterner, symbol: common.Symbol) -> String {
     match interner.resolve(symbol) {
-        Option::Some(s) => clone_string(s),
-        Option::None => make_fn_name(symbol.index as usize),
+        Option.Some(s) => clone_string(s),
+        Option.None => make_fn_name(symbol.index as usize),
     }
 }
 
 /// Extracts a string from source text given a span.
-pub fn span_to_string(source: &str, span: common::Span) -> String {
+pub fn span_to_string(source: &str, span: common.Span) -> String {
     let src_bytes = source.as_bytes();
-    let mut result = String::new();
+    let mut result = String.new();
     let mut i = span.start;
     while i < span.end && i < src_bytes.len() {
         result.push(src_bytes[i] as char);
@@ -1190,11 +1190,11 @@ pub fn resolve_fn_name(source: &str, info: &FnInfo) -> String {
 // ============================================================
 
 /// Checks if the lowered program contains a main function.
-fn has_main_function(lower_result: &hir_lower_ctx::LowerResult) -> bool {
+fn has_main_function(lower_result: &hir_lower_ctx.LowerResult) -> bool {
     for i in 0usize..lower_result.items.len() {
         let entry = &lower_result.items[i];
         match &entry.item.kind {
-            &hir_item::ItemKind::Fn(_) => {
+            &hir_item.ItemKind.Fn(_) => {
                 let name = resolve_symbol(&lower_result.interner, entry.item.name.symbol);
                 if str_equals(&name, "main") {
                     return true;
@@ -1240,7 +1240,7 @@ fn append_usize(s: &mut String, n: usize) {
         return;
     }
 
-    let mut digits: Vec<char> = Vec::new();
+    let mut digits: Vec<char> = Vec.new();
     let mut val = n;
     while val > 0 {
         let digit = (val % 10) as u8;
@@ -1261,19 +1261,19 @@ fn append_usize(s: &mut String, n: usize) {
 
 /// Compiles source code to LLVM IR using a fresh compiler.
 pub fn compile(source: &str) -> CompileResult {
-    let mut compiler = Compiler::new();
+    let mut compiler = Compiler.new();
     compiler.compile(source)
 }
 
 /// Checks source code without generating code.
 pub fn check(source: &str) -> CheckResult {
-    let mut compiler = Compiler::new();
+    let mut compiler = Compiler.new();
     compiler.check(source)
 }
 
 /// Parses source code and returns the AST.
 pub fn parse(source: &str) -> ParseOnlyResult {
-    let mut compiler = Compiler::new();
+    let mut compiler = Compiler.new();
     compiler.parse(source)
 }
 
@@ -1286,24 +1286,24 @@ pub fn compile_file(path: &str) -> CompileResult {
     // Read the file
     let read_result = source::read_file(path);
     if !read_result.success {
-        let mut errors: Vec<error::CompileError> = Vec::new();
+        let mut errors: Vec<error.CompileError> = Vec.new();
         let msg = match &read_result.error {
-            &Option::Some(ref e) => clone_string_from_ref(e),
-            &Option::None => common::make_string("Unknown file read error"),
+            &Option.Some(ref e) => clone_string_from_ref(e),
+            &Option.None => common::make_string("Unknown file read error"),
         };
-        errors.push(error::CompileError::new(error::CompilePhase::Parse, msg));
-        return CompileResult::err(errors);
+        errors.push(error.CompileError.new(error.CompilePhase.Parse, msg));
+        return CompileResult.err(errors);
     }
 
     let content = match &read_result.content {
-        &Option::Some(ref c) => c,
-        &Option::None => {
-            let mut errors: Vec<error::CompileError> = Vec::new();
-            errors.push(error::CompileError::new(
-                error::CompilePhase::Parse,
+        &Option.Some(ref c) => c,
+        &Option.None => {
+            let mut errors: Vec<error.CompileError> = Vec.new();
+            errors.push(error.CompileError.new(
+                error.CompilePhase.Parse,
                 common::make_string("No content in file"),
             ));
-            return CompileResult::err(errors);
+            return CompileResult.err(errors);
         }
     };
 
@@ -1311,7 +1311,7 @@ pub fn compile_file(path: &str) -> CompileResult {
     let base_dir = source::parent_dir(path);
 
     // Create compiler and compile with base_dir
-    let mut compiler = Compiler::new();
+    let mut compiler = Compiler.new();
     compiler.compile_with_base_dir(content.as_str(), base_dir)
 }
 
@@ -1320,12 +1320,12 @@ pub fn check_file(path: &str, stdlib_path: Option<String>) -> CheckResult {
     // Read the file
     let read_result = source::read_file(path);
     if !read_result.success {
-        let mut errors: Vec<error::CompileError> = Vec::new();
+        let mut errors: Vec<error.CompileError> = Vec.new();
         let msg = match &read_result.error {
-            &Option::Some(ref e) => clone_string_from_ref(e),
-            &Option::None => common::make_string("Unknown file read error"),
+            &Option.Some(ref e) => clone_string_from_ref(e),
+            &Option.None => common::make_string("Unknown file read error"),
         };
-        errors.push(error::CompileError::new(error::CompilePhase::Parse, msg));
+        errors.push(error.CompileError.new(error.CompilePhase.Parse, msg));
         return CheckResult {
             success: false,
             errors: errors,
@@ -1333,11 +1333,11 @@ pub fn check_file(path: &str, stdlib_path: Option<String>) -> CheckResult {
     }
 
     let content = match &read_result.content {
-        &Option::Some(ref c) => c,
-        &Option::None => {
-            let mut errors: Vec<error::CompileError> = Vec::new();
-            errors.push(error::CompileError::new(
-                error::CompilePhase::Parse,
+        &Option.Some(ref c) => c,
+        &Option.None => {
+            let mut errors: Vec<error.CompileError> = Vec.new();
+            errors.push(error.CompileError.new(
+                error.CompilePhase.Parse,
                 common::make_string("No content in file"),
             ));
             return CheckResult {
@@ -1355,7 +1355,7 @@ pub fn check_file(path: &str, stdlib_path: Option<String>) -> CheckResult {
     let base_dir = source::parent_dir(path);
 
     // Create compiler and check with base_dir
-    let mut compiler = Compiler::new();
+    let mut compiler = Compiler.new();
     compiler.check_with_base_dir(source_str, base_dir, stdlib_path)
 }
 
@@ -1364,12 +1364,12 @@ pub fn check_file_traced(path: &str, stdlib_path: Option<String>, region_id: u64
     // Read the file
     let read_result = source::read_file(path);
     if !read_result.success {
-        let mut errors: Vec<error::CompileError> = Vec::new();
+        let mut errors: Vec<error.CompileError> = Vec.new();
         let msg = match &read_result.error {
-            &Option::Some(ref e) => clone_string_from_ref(e),
-            &Option::None => common::make_string("Unknown file read error"),
+            &Option.Some(ref e) => clone_string_from_ref(e),
+            &Option.None => common::make_string("Unknown file read error"),
         };
-        errors.push(error::CompileError::new(error::CompilePhase::Parse, msg));
+        errors.push(error.CompileError.new(error.CompilePhase.Parse, msg));
         return CheckResult {
             success: false,
             errors: errors,
@@ -1377,11 +1377,11 @@ pub fn check_file_traced(path: &str, stdlib_path: Option<String>, region_id: u64
     }
 
     let content = match &read_result.content {
-        &Option::Some(ref c) => c,
-        &Option::None => {
-            let mut errors: Vec<error::CompileError> = Vec::new();
-            errors.push(error::CompileError::new(
-                error::CompilePhase::Parse,
+        &Option.Some(ref c) => c,
+        &Option.None => {
+            let mut errors: Vec<error.CompileError> = Vec.new();
+            errors.push(error.CompileError.new(
+                error.CompilePhase.Parse,
                 common::make_string("No content in file"),
             ));
             return CheckResult {
@@ -1395,7 +1395,7 @@ pub fn check_file_traced(path: &str, stdlib_path: Option<String>, region_id: u64
     let base_dir = source::parent_dir(path);
 
     // Create compiler and check with base_dir (traced)
-    let mut compiler = Compiler::new();
+    let mut compiler = Compiler.new();
     compiler.check_with_base_dir_traced(content.as_str(), base_dir, stdlib_path, region_id)
 }
 
@@ -1411,7 +1411,7 @@ fn clone_string_from_ref(s: &String) -> String {
 /// Scans HIR items for const-generic functions and collects their DefIds,
 /// param counts, and body IDs.
 pub fn collect_const_generic_fns(
-    items: &Vec<hir_lower_ctx::ItemEntry>,
+    items: &Vec<hir_lower_ctx.ItemEntry>,
     fn_set: &mut Vec<u32>,
     param_counts: &mut Vec<u32>,
     body_ids: &mut Vec<u32>,
@@ -1419,16 +1419,16 @@ pub fn collect_const_generic_fns(
     for i in 0usize..items.len() {
         let entry = &items[i];
         match &entry.item.kind {
-            &hir_item::ItemKind::Fn(ref fn_def) => {
+            &hir_item.ItemKind.Fn(ref fn_def) => {
                 let count = count_const_params(&fn_def.sig.generics);
                 if count > 0 {
                     fn_set.push(entry.item.def_id.index);
                     param_counts.push(count);
                     match &fn_def.body_id {
-                        &Option::Some(ref bid) => {
+                        &Option.Some(ref bid) => {
                             body_ids.push(bid.index);
                         }
-                        &Option::None => {}
+                        &Option.None => {}
                     }
                 }
             }
@@ -1438,15 +1438,15 @@ pub fn collect_const_generic_fns(
 }
 
 /// Counts the number of const generic parameters in a Generics.
-fn count_const_params(generics: &hir_ty::Generics) -> u32 {
+fn count_const_params(generics: &hir_ty.Generics) -> u32 {
     let mut count: u32 = 0;
     for i in 0usize..generics.params.len() {
         match &generics.params[i] {
-            &hir_ty::GenericParam::ConstParam(_) => {
+            &hir_ty.GenericParam.ConstParam(_) => {
                 count += 1;
             }
-            &hir_ty::GenericParam::TypeParam(_) => {}
-            &hir_ty::GenericParam::LifetimeParam(_) => {}
+            &hir_ty.GenericParam.TypeParam(_) => {}
+            &hir_ty.GenericParam.LifetimeParam(_) => {}
         }
     }
     count
@@ -1465,28 +1465,28 @@ pub fn is_const_generic_body(body_id_index: u32, const_generic_body_ids: &Vec<u3
 /// Information about a body needed for monomorphization.
 pub struct BodyInfo {
     pub body_index: usize,
-    pub return_ty: type_intern::TyId,
-    pub span: common::Span,
+    pub return_ty: type_intern.TyId,
+    pub span: common.Span,
 }
 
 /// Finds the HIR body index and info for a function given its DefId.
 pub fn find_body_for_def_id(
-    bodies: &Vec<hir_lower_ctx::BodyEntry>,
-    items: &Vec<hir_lower_ctx::ItemEntry>,
+    bodies: &Vec<hir_lower_ctx.BodyEntry>,
+    items: &Vec<hir_lower_ctx.ItemEntry>,
     def_id_index: u32,
 ) -> Option<BodyInfo> {
     // Find the function item to get its body_id and return type
     for i in 0usize..items.len() {
         let entry = &items[i];
         match &entry.item.kind {
-            &hir_item::ItemKind::Fn(ref fn_def) => {
+            &hir_item.ItemKind.Fn(ref fn_def) => {
                 if entry.item.def_id.index == def_id_index {
                     match &fn_def.body_id {
-                        &Option::Some(ref bid) => {
+                        &Option.Some(ref bid) => {
                             // Find the body index
                             for bi in 0usize..bodies.len() {
                                 if bodies[bi].body_id.index == bid.index {
-                                    return Option::Some(BodyInfo {
+                                    return Option.Some(BodyInfo {
                                         body_index: bi,
                                         return_ty: fn_def.sig.return_ty,
                                         span: entry.item.span,
@@ -1494,14 +1494,14 @@ pub fn find_body_for_def_id(
                                 }
                             }
                         }
-                        &Option::None => {}
+                        &Option.None => {}
                     }
                 }
             }
             _ => {}
         }
     }
-    Option::None
+    Option.None
 }
 
 /// Builds const_bindings for a specialized body by mapping const param DefIds to values.
@@ -1510,11 +1510,11 @@ pub fn find_body_for_def_id(
 pub fn build_const_bindings_from_body(
     const_param_def_ids: &Vec<u32>,
     const_values: &Vec<u64>,
-) -> Vec<mir_lower_ctx::ConstBinding> {
-    let mut bindings: Vec<mir_lower_ctx::ConstBinding> = Vec::new();
+) -> Vec<mir_lower_ctx.ConstBinding> {
+    let mut bindings: Vec<mir_lower_ctx.ConstBinding> = Vec.new();
     let mut i: usize = 0;
     while i < const_param_def_ids.len() && i < const_values.len() {
-        bindings.push(mir_lower_ctx::ConstBinding::new(
+        bindings.push(mir_lower_ctx.ConstBinding.new(
             const_param_def_ids[i],
             const_values[i],
         ));
@@ -1525,7 +1525,7 @@ pub fn build_const_bindings_from_body(
 
 /// Clones a Vec<u32>.
 pub fn clone_u32_vec(v: &Vec<u32>) -> Vec<u32> {
-    let mut result: Vec<u32> = Vec::new();
+    let mut result: Vec<u32> = Vec.new();
     for i in 0usize..v.len() {
         result.push(v[i]);
     }
@@ -1534,7 +1534,7 @@ pub fn clone_u32_vec(v: &Vec<u32>) -> Vec<u32> {
 
 /// Clones a Vec<u64>.
 pub fn clone_u64_vec(v: &Vec<u64>) -> Vec<u64> {
-    let mut result: Vec<u64> = Vec::new();
+    let mut result: Vec<u64> = Vec.new();
     for i in 0usize..v.len() {
         result.push(v[i]);
     }
@@ -1543,15 +1543,15 @@ pub fn clone_u64_vec(v: &Vec<u64>) -> Vec<u64> {
 
 /// Clones turbofish const arg entries.
 pub fn clone_turbofish_args(
-    args: &Vec<mir_lower_ctx::TurbofishConstArg>,
-) -> Vec<mir_lower_ctx::TurbofishConstArg> {
-    let mut result: Vec<mir_lower_ctx::TurbofishConstArg> = Vec::new();
+    args: &Vec<mir_lower_ctx.TurbofishConstArg>,
+) -> Vec<mir_lower_ctx.TurbofishConstArg> {
+    let mut result: Vec<mir_lower_ctx.TurbofishConstArg> = Vec.new();
     for i in 0usize..args.len() {
-        let mut vals: Vec<u64> = Vec::new();
+        let mut vals: Vec<u64> = Vec.new();
         for vi in 0usize..args[i].values.len() {
             vals.push(args[i].values[vi]);
         }
-        result.push(mir_lower_ctx::TurbofishConstArg::new(
+        result.push(mir_lower_ctx.TurbofishConstArg.new(
             args[i].span_start,
             vals,
         ));

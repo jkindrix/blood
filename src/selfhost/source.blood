@@ -30,7 +30,7 @@ impl SourceFile {
         let mut file = SourceFile {
             path: common::make_string(path),
             content: common::make_string(content),
-            line_starts: Vec::new(),
+            line_starts: Vec.new(),
         };
         file.compute_line_starts();
         file
@@ -40,8 +40,8 @@ impl SourceFile {
     pub fn empty(path: &str) -> SourceFile {
         SourceFile {
             path: common::make_string(path),
-            content: String::new(),
-            line_starts: Vec::new(),
+            content: String.new(),
+            line_starts: Vec.new(),
         }
     }
 
@@ -80,7 +80,7 @@ impl SourceFile {
     /// Gets the content of a specific line (1-indexed).
     pub fn get_line(self: &SourceFile, line_num: u32) -> String {
         if line_num == 0 || (line_num as usize) > self.line_starts.len() {
-            return String::new();
+            return String.new();
         }
 
         let start = self.line_starts[(line_num as usize) - 1];
@@ -142,13 +142,13 @@ impl FileId {
 impl SourceMap {
     /// Creates a new empty source map.
     pub fn new() -> SourceMap {
-        SourceMap { files: Vec::new() }
+        SourceMap { files: Vec.new() }
     }
 
     /// Adds a source file and returns its FileId.
     pub fn add_file(self: &mut SourceMap, path: &str, content: &str) -> FileId {
-        let id = FileId::new(self.files.len() as u32);
-        self.files.push(SourceFile::new(path, content));
+        let id = FileId.new(self.files.len() as u32);
+        self.files.push(SourceFile.new(path, content));
         id
     }
 
@@ -156,9 +156,9 @@ impl SourceMap {
     pub fn get_file(self: &SourceMap, id: FileId) -> Option<&SourceFile> {
         let idx = id.index as usize;
         if idx < self.files.len() {
-            Option::Some(&self.files[idx])
+            Option.Some(&self.files[idx])
         } else {
-            Option::None
+            Option.None
         }
     }
 
@@ -166,10 +166,10 @@ impl SourceMap {
     pub fn find_by_path(self: &SourceMap, path: &str) -> Option<FileId> {
         for i in 0usize..self.files.len() {
             if str_equals(&self.files[i].path, path) {
-                return Option::Some(FileId::new(i as u32));
+                return Option.Some(FileId.new(i as u32));
             }
         }
-        Option::None
+        Option.None
     }
 
     /// Returns the number of files.
@@ -187,12 +187,12 @@ pub struct SourceLocation {
     /// The file containing this location.
     pub file_id: FileId,
     /// The span within the file.
-    pub span: common::Span,
+    pub span: common.Span,
 }
 
 impl SourceLocation {
     /// Creates a new source location.
-    pub fn new(file_id: FileId, span: common::Span) -> SourceLocation {
+    pub fn new(file_id: FileId, span: common.Span) -> SourceLocation {
         SourceLocation { file_id, span }
     }
 }
@@ -216,8 +216,8 @@ impl ReadFileResult {
     pub fn ok(content: String) -> ReadFileResult {
         ReadFileResult {
             success: true,
-            content: Option::Some(content),
-            error: Option::None,
+            content: Option.Some(content),
+            error: Option.None,
         }
     }
 
@@ -225,8 +225,8 @@ impl ReadFileResult {
     pub fn err(message: String) -> ReadFileResult {
         ReadFileResult {
             success: false,
-            content: Option::None,
-            error: Option::Some(message),
+            content: Option.None,
+            error: Option.Some(message),
         }
     }
 }
@@ -241,7 +241,7 @@ pub fn read_file(path: &str) -> ReadFileResult {
     if !file_exists(path) {
         let mut msg = common::make_string("File not found: ");
         msg.push_str(path);
-        return ReadFileResult::err(msg);
+        return ReadFileResult.err(msg);
     }
 
     // Read the file content using blood-rust builtin
@@ -252,7 +252,7 @@ pub fn read_file(path: &str) -> ReadFileResult {
 
     // Check if read succeeded (empty file is valid, but error returns empty)
     // We already checked file_exists, so empty content means empty file
-    ReadFileResult::ok(content)
+    ReadFileResult.ok(content)
 }
 
 /// Reads a file from a String path.
@@ -286,7 +286,7 @@ pub fn parent_dir(path: &str) -> String {
     if last_sep < 0 {
         common::make_string(".")
     } else {
-        let mut result = String::new();
+        let mut result = String.new();
         for j in 0usize..(last_sep as usize) {
             result.push(bytes[j] as char);
         }
@@ -306,7 +306,7 @@ pub fn file_name(path: &str) -> String {
     }
 
     let start = if last_sep < 0 { 0usize } else { (last_sep as usize) + 1 };
-    let mut result = String::new();
+    let mut result = String.new();
     let mut j = start;
     while j < bytes.len() {
         result.push(bytes[j] as char);
@@ -318,7 +318,7 @@ pub fn file_name(path: &str) -> String {
 /// Joins two path components.
 pub fn join_path(base: &str, name: &str) -> String {
     let base_bytes = base.as_bytes();
-    let mut result = String::new();
+    let mut result = String.new();
     result.push_str(base);
 
     // Add separator if needed
@@ -340,7 +340,7 @@ pub fn join_path(base: &str, name: &str) -> String {
 /// Extracts a substring.
 fn substring(s: &String, start: usize, end: usize) -> String {
     let bytes = s.as_bytes();
-    let mut result = String::new();
+    let mut result = String.new();
 
     let actual_end = if end > bytes.len() { bytes.len() } else { end };
     let mut i = start;

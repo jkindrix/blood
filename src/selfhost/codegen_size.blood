@@ -18,11 +18,11 @@ mod type_intern;
 /// Converts a type to LLVM IR, using the ADT registry for struct/enum types.
 /// Falls back to `codegen_types::type_to_llvm` for non-ADT types.
 pub fn type_to_llvm_with_ctx(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    ty: &hir_ty::Type,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    ty: &hir_ty.Type,
 ) -> String {
     match &ty.kind {
-        &hir_ty::TypeKind::Adt { def_id, ref args } => {
+        &hir_ty.TypeKind.Adt { def_id, ref args } => {
             let result = ctx.adt_llvm_type(def_id.index);
             // Generic builtin enum not in registry (Option<T>, Result<T,E>)?
             // adt_llvm_type returns "ptr" (3 bytes) as fallback for unknown ADTs.
@@ -56,8 +56,8 @@ pub fn type_to_llvm_with_ctx(
             // but registered Option has max_payload_size = 8.
             if args.len() > 0 {
                 let registered_max = match ctx.lookup_enum(def_id.index) {
-                    Option::Some(layout) => layout.max_payload_size,
-                    Option::None => 0,
+                    Option.Some(layout) => layout.max_payload_size,
+                    Option.None => 0,
                 };
                 if registered_max > 0 {
                     let mut payload_size: u64 = 0;
@@ -77,7 +77,7 @@ pub fn type_to_llvm_with_ctx(
             }
             result
         }
-        &hir_ty::TypeKind::Tuple(ref elems) => {
+        &hir_ty.TypeKind.Tuple(ref elems) => {
             // Resolve tuple elements with ADT registry context
             if elems.len() == 0 {
                 common::make_string("{}")
@@ -100,9 +100,9 @@ pub fn type_to_llvm_with_ctx(
 
 /// Gets the size of a type in bytes, using the ADT registry for struct/enum types.
 /// This is context-aware and returns correct sizes for user-defined ADTs.
-pub fn type_size_with_ctx(ctx: &mut codegen_ctx::CodegenCtx, ty: &hir_ty::Type) -> u64 {
+pub fn type_size_with_ctx(ctx: &mut codegen_ctx.CodegenCtx, ty: &hir_ty.Type) -> u64 {
     match &ty.kind {
-        &hir_ty::TypeKind::Adt { def_id, ref args } => {
+        &hir_ty.TypeKind.Adt { def_id, ref args } => {
             let base = adt_size_bytes(ctx, def_id.index);
             if base == 8 && args.len() > 0 && !is_adt_registered(ctx, def_id.index) {
                 let mut payload_size: u64 = 0;
@@ -123,8 +123,8 @@ pub fn type_size_with_ctx(ctx: &mut codegen_ctx::CodegenCtx, ty: &hir_ty::Type) 
             // For registered generic enums, check if concrete payload exceeds registered size.
             if args.len() > 0 {
                 let registered_max = match ctx.lookup_enum(def_id.index) {
-                    Option::Some(layout) => layout.max_payload_size,
-                    Option::None => 0,
+                    Option.Some(layout) => layout.max_payload_size,
+                    Option.None => 0,
                 };
                 if registered_max > 0 {
                     let mut payload_size: u64 = 0;
@@ -156,81 +156,81 @@ pub fn type_size_with_ctx(ctx: &mut codegen_ctx::CodegenCtx, ty: &hir_ty::Type) 
 /// Fast path: returns a static &str for common LLVM types from TyId without
 /// String allocation. Returns None for compound types that need dynamic construction.
 /// Matches on InternedTypeKind directly — no Type tree reconstruction.
-pub fn type_to_llvm_fast_id(ty_id: type_intern::TyId) -> Option<&str> {
+pub fn type_to_llvm_fast_id(ty_id: type_intern.TyId) -> Option<&str> {
     let kind = type_intern::type_interner().get(ty_id);
     match kind {
-        &type_intern::InternedTypeKind::Primitive(ref prim) => {
+        &type_intern.InternedTypeKind.Primitive(ref prim) => {
             match prim {
-                &hir_ty::PrimitiveTy::Bool => Option::Some("i1"),
-                &hir_ty::PrimitiveTy::Char => Option::Some("i32"),
-                &hir_ty::PrimitiveTy::I8 => Option::Some("i8"),
-                &hir_ty::PrimitiveTy::I16 => Option::Some("i16"),
-                &hir_ty::PrimitiveTy::I32 => Option::Some("i32"),
-                &hir_ty::PrimitiveTy::I64 => Option::Some("i64"),
-                &hir_ty::PrimitiveTy::I128 => Option::Some("i128"),
-                &hir_ty::PrimitiveTy::Isize => Option::Some("i64"),
-                &hir_ty::PrimitiveTy::U8 => Option::Some("i8"),
-                &hir_ty::PrimitiveTy::U16 => Option::Some("i16"),
-                &hir_ty::PrimitiveTy::U32 => Option::Some("i32"),
-                &hir_ty::PrimitiveTy::U64 => Option::Some("i64"),
-                &hir_ty::PrimitiveTy::U128 => Option::Some("i128"),
-                &hir_ty::PrimitiveTy::Usize => Option::Some("i64"),
-                &hir_ty::PrimitiveTy::F32 => Option::Some("float"),
-                &hir_ty::PrimitiveTy::F64 => Option::Some("double"),
-                &hir_ty::PrimitiveTy::Str => Option::Some("{ ptr, i64 }"),
+                &hir_ty.PrimitiveTy.Bool => Option.Some("i1"),
+                &hir_ty.PrimitiveTy.Char => Option.Some("i32"),
+                &hir_ty.PrimitiveTy.I8 => Option.Some("i8"),
+                &hir_ty.PrimitiveTy.I16 => Option.Some("i16"),
+                &hir_ty.PrimitiveTy.I32 => Option.Some("i32"),
+                &hir_ty.PrimitiveTy.I64 => Option.Some("i64"),
+                &hir_ty.PrimitiveTy.I128 => Option.Some("i128"),
+                &hir_ty.PrimitiveTy.Isize => Option.Some("i64"),
+                &hir_ty.PrimitiveTy.U8 => Option.Some("i8"),
+                &hir_ty.PrimitiveTy.U16 => Option.Some("i16"),
+                &hir_ty.PrimitiveTy.U32 => Option.Some("i32"),
+                &hir_ty.PrimitiveTy.U64 => Option.Some("i64"),
+                &hir_ty.PrimitiveTy.U128 => Option.Some("i128"),
+                &hir_ty.PrimitiveTy.Usize => Option.Some("i64"),
+                &hir_ty.PrimitiveTy.F32 => Option.Some("float"),
+                &hir_ty.PrimitiveTy.F64 => Option.Some("double"),
+                &hir_ty.PrimitiveTy.Str => Option.Some("{ ptr, i64 }"),
             }
         }
-        &type_intern::InternedTypeKind::Never => Option::Some("void"),
-        &type_intern::InternedTypeKind::Ref { inner, mutable: _ } => {
+        &type_intern.InternedTypeKind.Never => Option.Some("void"),
+        &type_intern.InternedTypeKind.Ref { inner, mutable: _ } => {
             // Fat pointer for unsized types (&str, &[T], &dyn Trait)
             let inner_kind = type_intern::type_interner().get(inner);
             match inner_kind {
-                &type_intern::InternedTypeKind::Primitive(ref p) => {
+                &type_intern.InternedTypeKind.Primitive(ref p) => {
                     match p {
-                        &hir_ty::PrimitiveTy::Str => Option::Some("{ ptr, i64 }"),
-                        _ => Option::Some("ptr"),
+                        &hir_ty.PrimitiveTy.Str => Option.Some("{ ptr, i64 }"),
+                        _ => Option.Some("ptr"),
                     }
                 }
-                &type_intern::InternedTypeKind::Slice { element: _ } => Option::Some("{ ptr, i64 }"),
-                &type_intern::InternedTypeKind::DynTrait { trait_id: _, auto_traits: _ } => Option::Some("{ ptr, ptr }"),
-                _ => Option::Some("ptr"),
+                &type_intern.InternedTypeKind.Slice { element: _ } => Option.Some("{ ptr, i64 }"),
+                &type_intern.InternedTypeKind.DynTrait { trait_id: _, auto_traits: _ } => Option.Some("{ ptr, ptr }"),
+                _ => Option.Some("ptr"),
             }
         }
-        &type_intern::InternedTypeKind::Ptr { inner, mutable: _ } => {
+        &type_intern.InternedTypeKind.Ptr { inner, mutable: _ } => {
             // Fat pointer for unsized types (*const str, *const [T], *const dyn Trait)
             let inner_kind = type_intern::type_interner().get(inner);
             match inner_kind {
-                &type_intern::InternedTypeKind::Primitive(ref p) => {
+                &type_intern.InternedTypeKind.Primitive(ref p) => {
                     match p {
-                        &hir_ty::PrimitiveTy::Str => Option::Some("{ ptr, i64 }"),
-                        _ => Option::Some("ptr"),
+                        &hir_ty.PrimitiveTy.Str => Option.Some("{ ptr, i64 }"),
+                        _ => Option.Some("ptr"),
                     }
                 }
-                &type_intern::InternedTypeKind::Slice { element: _ } => Option::Some("{ ptr, i64 }"),
-                &type_intern::InternedTypeKind::DynTrait { trait_id: _, auto_traits: _ } => Option::Some("{ ptr, ptr }"),
-                _ => Option::Some("ptr"),
+                &type_intern.InternedTypeKind.Slice { element: _ } => Option.Some("{ ptr, i64 }"),
+                &type_intern.InternedTypeKind.DynTrait { trait_id: _, auto_traits: _ } => Option.Some("{ ptr, ptr }"),
+                _ => Option.Some("ptr"),
             }
         }
-        &type_intern::InternedTypeKind::Fn { params: _, ret: _, effects: _ } => Option::Some("{ ptr, ptr }"),
-        &type_intern::InternedTypeKind::Closure { def_id: _, params: _, ret: _ } => Option::Some("{ ptr, ptr }"),
-        &type_intern::InternedTypeKind::Infer(_) => Option::Some("i64"),
-        &type_intern::InternedTypeKind::Record { fields: _, row_var: _ } => Option::None, // needs slow path to build struct
-        &type_intern::InternedTypeKind::Forall { params: _, body: _ } => Option::Some("ptr"),
-        &type_intern::InternedTypeKind::Error => Option::Some("i64"),
-        _ => Option::None,
+        &type_intern.InternedTypeKind.Fn { params: _, ret: _, effects: _ } => Option.Some("{ ptr, ptr }"),
+        &type_intern.InternedTypeKind.Closure { def_id: _, params: _, ret: _ } => Option.Some("{ ptr, ptr }"),
+        &type_intern.InternedTypeKind.Infer(_) => Option.Some("i64"),
+        &type_intern.InternedTypeKind.Record { fields: _, row_var: _ } => Option.None, // needs slow path to build struct
+        &type_intern.InternedTypeKind.Forall { params: _, body: _ } => Option.Some("ptr"),
+        &type_intern.InternedTypeKind.Error => Option.Some("i64"),
+        _ => Option.None,
     }
 }
 
 /// Converts a TyId to LLVM IR, using the ADT registry for struct/enum types.
 /// Uses fast path for common types, falls back to ty_id_to_type for compounds.
 pub fn type_to_llvm_with_ctx_id(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    ty_id: type_intern::TyId,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    ty_id: type_intern.TyId,
 ) -> String {
     // Fast path: check for Adt first (needs registry lookup)
     let kind = type_intern::type_interner().get(ty_id);
     match kind {
-        &type_intern::InternedTypeKind::Adt { def_id, args } => {
+        &type_intern.InternedTypeKind.Adt { def_id, args } => {
             let result = ctx.adt_llvm_type(def_id.index);
             let interner = type_intern::type_interner();
             let arg_len = interner.ty_list_len(args);
@@ -261,8 +261,8 @@ pub fn type_to_llvm_with_ctx_id(
             // check if the concrete payload exceeds the registered max_payload_size.
             if arg_len > 0 {
                 let registered_max = match ctx.lookup_enum(def_id.index) {
-                    Option::Some(layout) => layout.max_payload_size,
-                    Option::None => 0,
+                    Option.Some(layout) => layout.max_payload_size,
+                    Option.None => 0,
                 };
                 if registered_max > 0 {
                     let interner2 = type_intern::type_interner();
@@ -286,8 +286,8 @@ pub fn type_to_llvm_with_ctx_id(
             // This handles user-defined generic structs like Pair<i32, i32>.
             if arg_len > 0 {
                 let needs_rebuild = match ctx.lookup_struct(def_id.index) {
-                    Option::Some(layout) => struct_layout_has_param_fields(layout),
-                    Option::None => false,
+                    Option.Some(layout) => struct_layout_has_param_fields(layout),
+                    Option.None => false,
                 };
                 if needs_rebuild {
                     return rebuild_struct_with_args_id(ctx, def_id.index, args);
@@ -295,7 +295,7 @@ pub fn type_to_llvm_with_ctx_id(
             }
             result
         }
-        &type_intern::InternedTypeKind::Tuple(list_id) => {
+        &type_intern.InternedTypeKind.Tuple(list_id) => {
             // Resolve tuple elements with ADT registry context.
             // Without this, ADT elements resolve to "ptr" instead of their
             // actual struct/enum LLVM types, causing alloca size mismatches.
@@ -317,7 +317,7 @@ pub fn type_to_llvm_with_ctx_id(
                 result
             }
         }
-        &type_intern::InternedTypeKind::Record { fields, row_var: _ } => {
+        &type_intern.InternedTypeKind.Record { fields, row_var: _ } => {
             // Build LLVM struct type from record fields: { field1_ty, field2_ty, ... }
             let interner = type_intern::type_interner();
             let field_list = interner.get_record_field_list(fields);
@@ -341,8 +341,8 @@ pub fn type_to_llvm_with_ctx_id(
         _ => {
             // Fast path for non-ADT types
             match type_to_llvm_fast_id(ty_id) {
-                Option::Some(s) => common::make_string(s),
-                Option::None => {
+                Option.Some(s) => common::make_string(s),
+                Option.None => {
                     // Slow path: reconstruct Type for compound types
                     let ty = type_intern::ty_id_to_type(ty_id);
                     codegen_types::type_to_llvm(&ty)
@@ -353,10 +353,10 @@ pub fn type_to_llvm_with_ctx_id(
 }
 
 /// Gets the size of a type in bytes from TyId, using the ADT registry.
-pub fn type_size_with_ctx_id(ctx: &mut codegen_ctx::CodegenCtx, ty_id: type_intern::TyId) -> u64 {
+pub fn type_size_with_ctx_id(ctx: &mut codegen_ctx.CodegenCtx, ty_id: type_intern.TyId) -> u64 {
     let kind = type_intern::type_interner().get(ty_id);
     match kind {
-        &type_intern::InternedTypeKind::Adt { def_id, args } => {
+        &type_intern.InternedTypeKind.Adt { def_id, args } => {
             let base = adt_size_bytes(ctx, def_id.index);
             let arg_len = type_intern::type_interner().ty_list_len(args);
             if base == 8 && arg_len > 0 && !is_adt_registered(ctx, def_id.index) {
@@ -379,8 +379,8 @@ pub fn type_size_with_ctx_id(ctx: &mut codegen_ctx::CodegenCtx, ty_id: type_inte
             // For registered generic enums, check if concrete payload exceeds registered size.
             if arg_len > 0 {
                 let registered_max = match ctx.lookup_enum(def_id.index) {
-                    Option::Some(layout) => layout.max_payload_size,
-                    Option::None => 0,
+                    Option.Some(layout) => layout.max_payload_size,
+                    Option.None => 0,
                 };
                 if registered_max > 0 {
                     let mut payload_size: u64 = 0;
@@ -403,8 +403,8 @@ pub fn type_size_with_ctx_id(ctx: &mut codegen_ctx::CodegenCtx, ty_id: type_inte
             // For registered generic structs, compute size from rebuilt LLVM type
             if arg_len > 0 {
                 let needs_rebuild = match ctx.lookup_struct(def_id.index) {
-                    Option::Some(layout) => struct_layout_has_param_fields(layout),
-                    Option::None => false,
+                    Option.Some(layout) => struct_layout_has_param_fields(layout),
+                    Option.None => false,
                 };
                 if needs_rebuild {
                     let rebuilt = rebuild_struct_with_args_id(ctx, def_id.index, args);
@@ -413,7 +413,7 @@ pub fn type_size_with_ctx_id(ctx: &mut codegen_ctx::CodegenCtx, ty_id: type_inte
             }
             base
         }
-        &type_intern::InternedTypeKind::Tuple(list_id) => {
+        &type_intern.InternedTypeKind.Tuple(list_id) => {
             // Compute tuple size with ADT-aware element resolution
             let interner = type_intern::type_interner();
             let len = interner.ty_list_len(list_id);
@@ -427,8 +427,8 @@ pub fn type_size_with_ctx_id(ctx: &mut codegen_ctx::CodegenCtx, ty_id: type_inte
         _ => {
             // Fast path: use fast_id to get LLVM type string, then compute size
             match type_to_llvm_fast_id(ty_id) {
-                Option::Some(s) => llvm_type_size(s),
-                Option::None => {
+                Option.Some(s) => llvm_type_size(s),
+                Option.None => {
                     let ty = type_intern::ty_id_to_type(ty_id);
                     codegen_types::type_size_bytes(&ty)
                 }
@@ -443,27 +443,27 @@ pub fn type_size_with_ctx_id(ctx: &mut codegen_ctx::CodegenCtx, ty_id: type_inte
 
 /// Checks if a struct layout has any fields with Param or Infer types
 /// that need substitution with concrete type args.
-fn struct_layout_has_param_fields(layout: &codegen_ctx::StructLayout) -> bool {
+fn struct_layout_has_param_fields(layout: &codegen_ctx.StructLayout) -> bool {
     for i in 0usize..layout.fields.len() {
         match &layout.fields[i].hir_type {
-            &Option::Some(ty_id) => {
+            &Option.Some(ty_id) => {
                 if ty_id_contains_param(ty_id) {
                     return true;
                 }
             }
-            &Option::None => {}
+            &Option.None => {}
         }
     }
     false
 }
 
 /// Checks if a TyId is or contains a Param or Infer type.
-fn ty_id_contains_param(ty_id: type_intern::TyId) -> bool {
+fn ty_id_contains_param(ty_id: type_intern.TyId) -> bool {
     let kind = type_intern::type_interner().get(ty_id);
     match kind {
-        &type_intern::InternedTypeKind::Param(_) => true,
-        &type_intern::InternedTypeKind::Infer(_) => true,
-        &type_intern::InternedTypeKind::Ref { inner, mutable: _ } => ty_id_contains_param(inner),
+        &type_intern.InternedTypeKind.Param(_) => true,
+        &type_intern.InternedTypeKind.Infer(_) => true,
+        &type_intern.InternedTypeKind.Ref { inner, mutable: _ } => ty_id_contains_param(inner),
         _ => false,
     }
 }
@@ -471,21 +471,21 @@ fn ty_id_contains_param(ty_id: type_intern::TyId) -> bool {
 /// Rebuilds a struct's LLVM type with concrete type args from a TyListId.
 /// Substitutes Param/Infer field types with the corresponding arg from `args`.
 fn rebuild_struct_with_args_id(
-    ctx: &mut codegen_ctx::CodegenCtx,
+    ctx: &mut codegen_ctx.CodegenCtx,
     def_id: u32,
-    args: type_intern::TyListId,
+    args: type_intern.TyListId,
 ) -> String {
     // Collect field info to avoid holding reference into ctx
-    let mut field_hir_types: Vec<Option<type_intern::TyId>> = Vec::new();
-    let mut field_llvm_types: Vec<String> = Vec::new();
+    let mut field_hir_types: Vec<Option<type_intern.TyId>> = Vec.new();
+    let mut field_llvm_types: Vec<String> = Vec.new();
     match ctx.lookup_struct(def_id) {
-        Option::Some(layout) => {
+        Option.Some(layout) => {
             for i in 0usize..layout.fields.len() {
                 field_hir_types.push(layout.fields[i].hir_type);
                 field_llvm_types.push(common::make_string(layout.fields[i].llvm_type.as_str()));
             }
         }
-        Option::None => {}
+        Option.None => {}
     }
 
     let interner = type_intern::type_interner();
@@ -497,10 +497,10 @@ fn rebuild_struct_with_args_id(
             result.push_str(", ");
         }
         let field_ty = match &field_hir_types[fi] {
-            &Option::Some(ty_id) => {
+            &Option.Some(ty_id) => {
                 substitute_param_type_id(ctx, ty_id, args, arg_len, &mut param_idx)
             }
-            &Option::None => {
+            &Option.None => {
                 common::make_string(field_llvm_types[fi].as_str())
             }
         };
@@ -512,15 +512,15 @@ fn rebuild_struct_with_args_id(
 
 /// Substitutes Param/Infer types with concrete args from a TyListId.
 fn substitute_param_type_id(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    ty_id: type_intern::TyId,
-    args: type_intern::TyListId,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    ty_id: type_intern.TyId,
+    args: type_intern.TyListId,
     arg_len: usize,
     param_idx: &mut usize,
 ) -> String {
     let kind = type_intern::type_interner().get(ty_id);
     match kind {
-        &type_intern::InternedTypeKind::Param(_) => {
+        &type_intern.InternedTypeKind.Param(_) => {
             let idx = *param_idx;
             if idx < arg_len {
                 *param_idx = idx + 1;
@@ -532,11 +532,11 @@ fn substitute_param_type_id(
                 err_msg.push_str(" exceeds available type args (");
                 err_msg.push_str(codegen_types::format_u64(arg_len as u64).as_str());
                 err_msg.push(')');
-                ctx.codegen_error(codegen_ctx::CodegenErrorKind::TypeSubstitutionFailed, err_msg);
+                ctx.codegen_error(codegen_ctx.CodegenErrorKind.TypeSubstitutionFailed, err_msg);
                 common::make_string("ptr")
             }
         }
-        &type_intern::InternedTypeKind::Infer(_) => {
+        &type_intern.InternedTypeKind.Infer(_) => {
             let idx = *param_idx;
             if idx < arg_len {
                 *param_idx = idx + 1;
@@ -548,7 +548,7 @@ fn substitute_param_type_id(
                 err_msg.push_str(" exceeds available type args (");
                 err_msg.push_str(codegen_types::format_u64(arg_len as u64).as_str());
                 err_msg.push(')');
-                ctx.codegen_error(codegen_ctx::CodegenErrorKind::TypeSubstitutionFailed, err_msg);
+                ctx.codegen_error(codegen_ctx.CodegenErrorKind.TypeSubstitutionFailed, err_msg);
                 common::make_string("ptr")
             }
         }
@@ -562,17 +562,17 @@ fn substitute_param_type_id(
 
 /// Checks whether an ADT is registered in the struct/enum registry or is a known
 /// builtin ADT (Vec, String, HashMap, Box).
-fn is_adt_registered(ctx: &mut codegen_ctx::CodegenCtx, def_id: u32) -> bool {
+fn is_adt_registered(ctx: &mut codegen_ctx.CodegenCtx, def_id: u32) -> bool {
     match ctx.lookup_struct(def_id) {
-        Option::Some(_) => { return true; }
-        Option::None => {}
+        Option.Some(_) => { return true; }
+        Option.None => {}
     }
     match ctx.lookup_enum(def_id) {
-        Option::Some(_) => { return true; }
-        Option::None => {}
+        Option.Some(_) => { return true; }
+        Option.None => {}
     }
     match ctx.lookup_def_name(def_id) {
-        Option::Some(name) => {
+        Option.Some(name) => {
             let nb = name.as_bytes();
             // Vec
             if nb.len() == 3 && nb[0] == 86 && nb[1] == 101 && nb[2] == 99 {
@@ -592,30 +592,30 @@ fn is_adt_registered(ctx: &mut codegen_ctx::CodegenCtx, def_id: u32) -> bool {
             }
             false
         }
-        Option::None => false,
+        Option.None => false,
     }
 }
 
 /// Gets the size of an ADT type from the registry.
-fn adt_size_bytes(ctx: &mut codegen_ctx::CodegenCtx, def_id: u32) -> u64 {
+fn adt_size_bytes(ctx: &mut codegen_ctx.CodegenCtx, def_id: u32) -> u64 {
     match ctx.lookup_struct(def_id) {
-        Option::Some(layout) => {
+        Option.Some(layout) => {
             return compute_struct_size(layout);
         }
-        Option::None => {}
+        Option.None => {}
     }
     match ctx.lookup_enum(def_id) {
-        Option::Some(layout) => {
+        Option.Some(layout) => {
             return compute_enum_size(layout);
         }
-        Option::None => {}
+        Option.None => {}
     }
     let llvm_ty = ctx.adt_llvm_type(def_id);
     llvm_type_size(llvm_ty.as_str())
 }
 
 /// Computes size of a struct from its layout, using proper field alignment.
-fn compute_struct_size(layout: &codegen_ctx::StructLayout) -> u64 {
+fn compute_struct_size(layout: &codegen_ctx.StructLayout) -> u64 {
     let mut size: u64 = 0;
     let mut max_align: u64 = 1;
     for i in 0usize..layout.fields.len() {
@@ -643,7 +643,7 @@ fn compute_struct_size(layout: &codegen_ctx::StructLayout) -> u64 {
 
 /// Computes size of an enum from its layout.
 /// The layout's llvm_type is the correct struct type (e.g. { i32, [3 x i64] }).
-fn compute_enum_size(layout: &codegen_ctx::EnumLayout) -> u64 {
+fn compute_enum_size(layout: &codegen_ctx.EnumLayout) -> u64 {
     llvm_type_size(layout.llvm_type.as_str())
 }
 
@@ -967,7 +967,7 @@ fn parse_array_alignment(ty: &str) -> u64 {
 
 fn substring(s: &str, start: usize, end: usize) -> String {
     let bytes = s.as_bytes();
-    let mut result = String::new();
+    let mut result = String.new();
     let mut i = start;
     while i < end && i < bytes.len() {
         result.push(bytes[i] as char);

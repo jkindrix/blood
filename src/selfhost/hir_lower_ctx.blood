@@ -22,8 +22,8 @@ mod type_intern;
 // ============================================================
 
 /// Maps a builtin function's DefId to its runtime function name.
-/// Used for constructors like Vec::new(), String::new(), Box::new()
-/// and variant constructors like Option::Some, Option::None.
+/// Used for constructors like Vec.new(), String.new(), Box.new()
+/// and variant constructors like Option.Some, Option.None.
 pub struct BuiltinFnDef {
     pub def_id_index: u32,
     pub runtime_name: String,
@@ -40,14 +40,14 @@ impl BuiltinFnDef {
 // ============================================================
 
 /// Maps an associated type name to its resolved TyId.
-/// Used for resolving Self::AssocType paths in trait/impl contexts.
+/// Used for resolving Self.AssocType paths in trait/impl contexts.
 pub struct AssocTypeEntry {
-    pub name: common::Symbol,
-    pub ty_id: type_intern::TyId,
+    pub name: common.Symbol,
+    pub ty_id: type_intern.TyId,
 }
 
 impl AssocTypeEntry {
-    pub fn new(name: common::Symbol, ty_id: type_intern::TyId) -> AssocTypeEntry {
+    pub fn new(name: common.Symbol, ty_id: type_intern.TyId) -> AssocTypeEntry {
         AssocTypeEntry { name: name, ty_id: ty_id }
     }
 }
@@ -59,9 +59,9 @@ impl AssocTypeEntry {
 /// Result of lowering an AST to HIR.
 pub struct LowerResult {
     /// The lowered HIR crate, if successful.
-    pub crate_data: Option<hir::Crate>,
+    pub crate_data: Option<hir.Crate>,
     /// Any diagnostics (errors, warnings) from lowering.
-    pub diagnostics: Vec<hir::Diagnostic>,
+    pub diagnostics: Vec<hir.Diagnostic>,
     /// Lowered items (available when successful).
     pub items: Vec<ItemEntry>,
     /// Index from DefId.index to items Vec index for O(1) lookup.
@@ -79,24 +79,24 @@ pub struct LowerResult {
     /// Next DefId index for allocating new DefIds (avoids collisions with HIR-allocated ones).
     pub next_def_id: u32,
     /// Builtin type DefIds for type checker registration.
-    pub builtin_string_def: Option<hir_def::DefId>,
-    pub builtin_vec_def: Option<hir_def::DefId>,
-    pub builtin_option_def: Option<hir_def::DefId>,
-    pub builtin_box_def: Option<hir_def::DefId>,
-    pub builtin_hashmap_def: Option<hir_def::DefId>,
-    pub builtin_result_def: Option<hir_def::DefId>,
+    pub builtin_string_def: Option<hir_def.DefId>,
+    pub builtin_vec_def: Option<hir_def.DefId>,
+    pub builtin_option_def: Option<hir_def.DefId>,
+    pub builtin_box_def: Option<hir_def.DefId>,
+    pub builtin_hashmap_def: Option<hir_def.DefId>,
+    pub builtin_result_def: Option<hir_def.DefId>,
     /// Builtin variant DefIds for type checker variant resolution.
-    pub builtin_option_some_def: Option<hir_def::DefId>,
-    pub builtin_option_none_def: Option<hir_def::DefId>,
-    pub builtin_result_ok_def: Option<hir_def::DefId>,
-    pub builtin_result_err_def: Option<hir_def::DefId>,
+    pub builtin_option_some_def: Option<hir_def.DefId>,
+    pub builtin_option_none_def: Option<hir_def.DefId>,
+    pub builtin_result_ok_def: Option<hir_def.DefId>,
+    pub builtin_result_err_def: Option<hir_def.DefId>,
     /// The string interner from the lowering context.
     /// Contains all symbol-to-string mappings created during lowering.
     /// Codegen uses this to resolve function names from Symbol indices.
-    pub interner: interner::StringInterner,
+    pub interner: interner.StringInterner,
     /// Builtin function DefId-to-runtime-name mappings.
-    /// Covers constructors (String::new, Vec::new, Box::new, HashMap::new)
-    /// and variant constructors (Option::Some, Option::None, Result::Ok, Result::Err).
+    /// Covers constructors (String.new, Vec.new, Box.new, HashMap.new)
+    /// and variant constructors (Option.Some, Option.None, Result.Ok, Result.Err).
     pub builtin_fn_defs: Vec<BuiltinFnDef>,
     /// Turbofish const arg entries from HIR lowering.
     /// Used by the driver to pass explicit const values to MIR lowering for monomorphization.
@@ -106,29 +106,29 @@ pub struct LowerResult {
 impl LowerResult {
     /// Creates a successful result with items, item_index, and bodies.
     pub fn success_with_data(
-        crate_data: hir::Crate,
+        crate_data: hir.Crate,
         items: Vec<ItemEntry>,
         item_index: Vec<Option<usize>>,
         bodies: Vec<BodyEntry>,
         main_body_count: usize,
         next_ty_var: u32,
         next_def_id: u32,
-        builtin_string_def: Option<hir_def::DefId>,
-        builtin_vec_def: Option<hir_def::DefId>,
-        builtin_option_def: Option<hir_def::DefId>,
-        builtin_box_def: Option<hir_def::DefId>,
-        builtin_hashmap_def: Option<hir_def::DefId>,
-        builtin_result_def: Option<hir_def::DefId>,
-        builtin_option_some_def: Option<hir_def::DefId>,
-        builtin_option_none_def: Option<hir_def::DefId>,
-        builtin_result_ok_def: Option<hir_def::DefId>,
-        builtin_result_err_def: Option<hir_def::DefId>,
-        interner: interner::StringInterner,
+        builtin_string_def: Option<hir_def.DefId>,
+        builtin_vec_def: Option<hir_def.DefId>,
+        builtin_option_def: Option<hir_def.DefId>,
+        builtin_box_def: Option<hir_def.DefId>,
+        builtin_hashmap_def: Option<hir_def.DefId>,
+        builtin_result_def: Option<hir_def.DefId>,
+        builtin_option_some_def: Option<hir_def.DefId>,
+        builtin_option_none_def: Option<hir_def.DefId>,
+        builtin_result_ok_def: Option<hir_def.DefId>,
+        builtin_result_err_def: Option<hir_def.DefId>,
+        interner: interner.StringInterner,
         builtin_fn_defs: Vec<BuiltinFnDef>,
     ) -> LowerResult {
         LowerResult {
-            crate_data: Option::Some(crate_data),
-            diagnostics: Vec::new(),
+            crate_data: Option.Some(crate_data),
+            diagnostics: Vec.new(),
             items: items,
             item_index: item_index,
             bodies: bodies,
@@ -147,61 +147,61 @@ impl LowerResult {
             builtin_result_err_def: builtin_result_err_def,
             interner: interner,
             builtin_fn_defs: builtin_fn_defs,
-            turbofish_const_entries: Vec::new(),
+            turbofish_const_entries: Vec.new(),
         }
     }
 
     /// Creates a successful result (legacy, no items/bodies).
-    pub fn success(crate_data: hir::Crate) -> LowerResult {
+    pub fn success(crate_data: hir.Crate) -> LowerResult {
         LowerResult {
-            crate_data: Option::Some(crate_data),
-            diagnostics: Vec::new(),
-            items: Vec::new(),
-            item_index: Vec::new(),
-            bodies: Vec::new(),
+            crate_data: Option.Some(crate_data),
+            diagnostics: Vec.new(),
+            items: Vec.new(),
+            item_index: Vec.new(),
+            bodies: Vec.new(),
             main_body_count: 0,
             next_ty_var: 0,
             next_def_id: 0,
-            builtin_string_def: Option::None,
-            builtin_vec_def: Option::None,
-            builtin_option_def: Option::None,
-            builtin_box_def: Option::None,
-            builtin_hashmap_def: Option::None,
-            builtin_result_def: Option::None,
-            builtin_option_some_def: Option::None,
-            builtin_option_none_def: Option::None,
-            builtin_result_ok_def: Option::None,
-            builtin_result_err_def: Option::None,
-            interner: interner::StringInterner::new(),
-            builtin_fn_defs: Vec::new(),
-            turbofish_const_entries: Vec::new(),
+            builtin_string_def: Option.None,
+            builtin_vec_def: Option.None,
+            builtin_option_def: Option.None,
+            builtin_box_def: Option.None,
+            builtin_hashmap_def: Option.None,
+            builtin_result_def: Option.None,
+            builtin_option_some_def: Option.None,
+            builtin_option_none_def: Option.None,
+            builtin_result_ok_def: Option.None,
+            builtin_result_err_def: Option.None,
+            interner: interner.StringInterner.new(),
+            builtin_fn_defs: Vec.new(),
+            turbofish_const_entries: Vec.new(),
         }
     }
 
     /// Creates a failure result with diagnostics.
-    pub fn failure(diagnostics: Vec<hir::Diagnostic>) -> LowerResult {
+    pub fn failure(diagnostics: Vec<hir.Diagnostic>) -> LowerResult {
         LowerResult {
-            crate_data: Option::None,
+            crate_data: Option.None,
             diagnostics: diagnostics,
-            items: Vec::new(),
-            item_index: Vec::new(),
-            bodies: Vec::new(),
+            items: Vec.new(),
+            item_index: Vec.new(),
+            bodies: Vec.new(),
             main_body_count: 0,
             next_ty_var: 0,
             next_def_id: 0,
-            builtin_string_def: Option::None,
-            builtin_vec_def: Option::None,
-            builtin_option_def: Option::None,
-            builtin_box_def: Option::None,
-            builtin_hashmap_def: Option::None,
-            builtin_result_def: Option::None,
-            builtin_option_some_def: Option::None,
-            builtin_option_none_def: Option::None,
-            builtin_result_ok_def: Option::None,
-            builtin_result_err_def: Option::None,
-            interner: interner::StringInterner::new(),
-            builtin_fn_defs: Vec::new(),
-            turbofish_const_entries: Vec::new(),
+            builtin_string_def: Option.None,
+            builtin_vec_def: Option.None,
+            builtin_option_def: Option.None,
+            builtin_box_def: Option.None,
+            builtin_hashmap_def: Option.None,
+            builtin_result_def: Option.None,
+            builtin_option_some_def: Option.None,
+            builtin_option_none_def: Option.None,
+            builtin_result_ok_def: Option.None,
+            builtin_result_err_def: Option.None,
+            interner: interner.StringInterner.new(),
+            builtin_fn_defs: Vec.new(),
+            turbofish_const_entries: Vec.new(),
         }
     }
 
@@ -218,22 +218,22 @@ impl LowerResult {
     /// Gets a body by index.
     pub fn get_body(self: &Self, index: usize) -> Option<&BodyEntry> {
         if index < self.bodies.len() {
-            Option::Some(&self.bodies[index])
+            Option.Some(&self.bodies[index])
         } else {
-            Option::None
+            Option.None
         }
     }
 
     /// Gets an item by DefId in O(1) time.
     /// Returns None if the DefId doesn't correspond to an item.
-    pub fn get_item(self: &Self, def_id: hir_def::DefId) -> Option<&ItemEntry> {
+    pub fn get_item(self: &Self, def_id: hir_def.DefId) -> Option<&ItemEntry> {
         let def_idx = def_id.index as usize;
         if def_idx >= self.item_index.len() {
-            return Option::None;
+            return Option.None;
         }
         match &self.item_index[def_idx] {
             &Some(idx) => Some(&self.items[idx]),
-            &None => Option::None,
+            &None => Option.None,
         }
     }
 }
@@ -248,9 +248,9 @@ impl LowerResult {
 /// lowered items and bodies.
 pub struct LoweringCtx {
     /// The name resolver.
-    pub resolver: resolve::Resolver,
+    pub resolver: resolve.Resolver,
     /// The string interner for symbol resolution.
-    pub interner: interner::StringInterner,
+    pub interner: interner.StringInterner,
     /// Counter for allocating DefIds.
     pub next_def_id: u32,
     /// Counter for allocating BodyIds.
@@ -264,7 +264,7 @@ pub struct LoweringCtx {
     /// Counter for allocating record row variables.
     pub next_record_row_var: u32,
     /// Collected diagnostics.
-    pub diagnostics: Vec<hir::Diagnostic>,
+    pub diagnostics: Vec<hir.Diagnostic>,
     /// Lowered items.
     pub items: Vec<ItemEntry>,
     /// Index from DefId.index to items Vec index for O(1) lookup.
@@ -272,7 +272,7 @@ pub struct LoweringCtx {
     /// Bodies by BodyId index.
     pub bodies: Vec<BodyEntry>,
     /// The entry point DefId (main function), if found.
-    pub entry_point: Option<hir_def::DefId>,
+    pub entry_point: Option<hir_def.DefId>,
     /// Base directory for resolving external modules.
     pub base_dir: String,
     /// Loaded modules for circular import prevention.
@@ -283,24 +283,24 @@ pub struct LoweringCtx {
     /// Accumulated body locals from let-binding patterns during body lowering.
     /// This is populated by lower_pattern when it creates binding patterns,
     /// and drained by lower_fn_body to add them to the Body's locals Vec.
-    pub body_locals: Vec<hir_expr::Local>,
+    pub body_locals: Vec<hir_expr.Local>,
     /// The current Self type when lowering inside an impl block (interned).
-    pub current_self_type: Option<type_intern::TyId>,
+    pub current_self_type: Option<type_intern.TyId>,
     /// Associated type mappings in the current trait/impl context.
-    /// Each entry is (name_symbol, TyId) for resolving Self::AssocType paths.
+    /// Each entry is (name_symbol, TyId) for resolving Self.AssocType paths.
     pub current_assoc_types: Vec<AssocTypeEntry>,
     /// DefIds for builtin types (set during register_builtin_types).
-    pub builtin_string_def: Option<hir_def::DefId>,
-    pub builtin_vec_def: Option<hir_def::DefId>,
-    pub builtin_option_def: Option<hir_def::DefId>,
-    pub builtin_box_def: Option<hir_def::DefId>,
-    pub builtin_hashmap_def: Option<hir_def::DefId>,
-    pub builtin_result_def: Option<hir_def::DefId>,
+    pub builtin_string_def: Option<hir_def.DefId>,
+    pub builtin_vec_def: Option<hir_def.DefId>,
+    pub builtin_option_def: Option<hir_def.DefId>,
+    pub builtin_box_def: Option<hir_def.DefId>,
+    pub builtin_hashmap_def: Option<hir_def.DefId>,
+    pub builtin_result_def: Option<hir_def.DefId>,
     /// DefIds for builtin enum variants (set during register_builtin_children).
-    pub builtin_option_some_def: Option<hir_def::DefId>,
-    pub builtin_option_none_def: Option<hir_def::DefId>,
-    pub builtin_result_ok_def: Option<hir_def::DefId>,
-    pub builtin_result_err_def: Option<hir_def::DefId>,
+    pub builtin_option_some_def: Option<hir_def.DefId>,
+    pub builtin_option_none_def: Option<hir_def.DefId>,
+    pub builtin_result_ok_def: Option<hir_def.DefId>,
+    pub builtin_result_err_def: Option<hir_def.DefId>,
     /// Paths currently being loaded (for circular import detection during recursive loading).
     /// Separates circular-import detection from loaded_modules ordering.
     pub loading_paths: Vec<String>,
@@ -322,12 +322,12 @@ pub struct LoweringCtx {
 
 /// Tracks a const generic parameter during HIR lowering.
 pub struct ConstParamEntry {
-    pub def_id: hir_def::DefId,
-    pub name: common::Symbol,
+    pub def_id: hir_def.DefId,
+    pub name: common.Symbol,
 }
 
 impl ConstParamEntry {
-    pub fn new(def_id: hir_def::DefId, name: common::Symbol) -> ConstParamEntry {
+    pub fn new(def_id: hir_def.DefId, name: common.Symbol) -> ConstParamEntry {
         ConstParamEntry { def_id, name }
     }
 }
@@ -348,29 +348,29 @@ impl TurbofishEntry {
 /// Tracks a loaded external module to prevent circular imports.
 pub struct LoadedModule {
     /// The module name symbol.
-    pub name: common::Symbol,
+    pub name: common.Symbol,
     /// The DefId assigned to this module.
-    pub def_id: hir_def::DefId,
+    pub def_id: hir_def.DefId,
     /// The file path that was loaded.
     pub path: String,
 }
 
 /// Entry storing a DefId and its corresponding Item.
 pub struct ItemEntry {
-    pub def_id: hir_def::DefId,
-    pub item: hir_item::Item,
+    pub def_id: hir_def.DefId,
+    pub item: hir_item.Item,
 }
 
 impl ItemEntry {
-    pub fn new(def_id: hir_def::DefId, item: hir_item::Item) -> ItemEntry {
+    pub fn new(def_id: hir_def.DefId, item: hir_item.Item) -> ItemEntry {
         ItemEntry { def_id, item }
     }
 }
 
 /// Entry storing a BodyId and its corresponding Body.
 pub struct BodyEntry {
-    pub body_id: hir_def::BodyId,
-    pub body: hir_expr::Body,
+    pub body_id: hir_def.BodyId,
+    pub body: hir_expr.Body,
     /// DefIds assigned to const generic params during Phase 4 body lowering.
     /// Empty for non-const-generic functions. Used by monomorphization to
     /// build const_bindings mapping DefId → concrete value.
@@ -378,14 +378,14 @@ pub struct BodyEntry {
 }
 
 impl BodyEntry {
-    pub fn new(body_id: hir_def::BodyId, body: hir_expr::Body) -> BodyEntry {
-        BodyEntry { body_id, body, const_param_def_ids: Vec::new() }
+    pub fn new(body_id: hir_def.BodyId, body: hir_expr.Body) -> BodyEntry {
+        BodyEntry { body_id, body, const_param_def_ids: Vec.new() }
     }
 }
 
 impl LoadedModule {
     /// Creates a new LoadedModule.
-    pub fn new(name: common::Symbol, def_id: hir_def::DefId, path: String) -> LoadedModule {
+    pub fn new(name: common.Symbol, def_id: hir_def.DefId, path: String) -> LoadedModule {
         LoadedModule { name, def_id, path }
     }
 }
@@ -394,136 +394,136 @@ impl LoweringCtx {
     /// Creates a new lowering context with current directory as base.
     pub fn new(source: String) -> LoweringCtx {
         LoweringCtx {
-            resolver: resolve::Resolver::new(),
-            interner: interner::StringInterner::new(),
+            resolver: resolve.Resolver.new(),
+            interner: interner.StringInterner.new(),
             next_def_id: 0,
             next_body_id: 0,
             next_local_id: 0,
             next_ty_var: 0,
             next_effect_row_var: 0,
             next_record_row_var: 0,
-            diagnostics: Vec::new(),
-            items: Vec::new(),
-            item_index: Vec::new(),
-            bodies: Vec::new(),
-            entry_point: Option::None,
+            diagnostics: Vec.new(),
+            items: Vec.new(),
+            item_index: Vec.new(),
+            bodies: Vec.new(),
+            entry_point: Option.None,
             base_dir: common::make_string("."),
-            loaded_modules: Vec::new(),
+            loaded_modules: Vec.new(),
             source: source,
-            body_locals: Vec::new(),
-            current_self_type: Option::None,
-            current_assoc_types: Vec::new(),
-            builtin_string_def: Option::None,
-            builtin_vec_def: Option::None,
-            builtin_option_def: Option::None,
-            builtin_box_def: Option::None,
-            builtin_hashmap_def: Option::None,
-            builtin_result_def: Option::None,
-            builtin_option_some_def: Option::None,
-            builtin_option_none_def: Option::None,
-            builtin_result_ok_def: Option::None,
-            builtin_result_err_def: Option::None,
-            loading_paths: Vec::new(),
-            builtin_fn_defs: Vec::new(),
-            seen_trait_impls: Vec::new(),
-            stdlib_path: Option::None,
-            const_param_defs: Vec::new(),
-            turbofish_const_entries: Vec::new(),
+            body_locals: Vec.new(),
+            current_self_type: Option.None,
+            current_assoc_types: Vec.new(),
+            builtin_string_def: Option.None,
+            builtin_vec_def: Option.None,
+            builtin_option_def: Option.None,
+            builtin_box_def: Option.None,
+            builtin_hashmap_def: Option.None,
+            builtin_result_def: Option.None,
+            builtin_option_some_def: Option.None,
+            builtin_option_none_def: Option.None,
+            builtin_result_ok_def: Option.None,
+            builtin_result_err_def: Option.None,
+            loading_paths: Vec.new(),
+            builtin_fn_defs: Vec.new(),
+            seen_trait_impls: Vec.new(),
+            stdlib_path: Option.None,
+            const_param_defs: Vec.new(),
+            turbofish_const_entries: Vec.new(),
         }
     }
 
     /// Creates a new lowering context with a specified base directory.
     pub fn with_base_dir(base_dir: String, source: String) -> LoweringCtx {
         LoweringCtx {
-            resolver: resolve::Resolver::new(),
-            interner: interner::StringInterner::new(),
+            resolver: resolve.Resolver.new(),
+            interner: interner.StringInterner.new(),
             next_def_id: 0,
             next_body_id: 0,
             next_local_id: 0,
             next_ty_var: 0,
             next_effect_row_var: 0,
             next_record_row_var: 0,
-            diagnostics: Vec::new(),
-            items: Vec::new(),
-            item_index: Vec::new(),
-            bodies: Vec::new(),
-            entry_point: Option::None,
+            diagnostics: Vec.new(),
+            items: Vec.new(),
+            item_index: Vec.new(),
+            bodies: Vec.new(),
+            entry_point: Option.None,
             base_dir: base_dir,
-            loaded_modules: Vec::new(),
+            loaded_modules: Vec.new(),
             source: source,
-            body_locals: Vec::new(),
-            current_self_type: Option::None,
-            current_assoc_types: Vec::new(),
-            builtin_string_def: Option::None,
-            builtin_vec_def: Option::None,
-            builtin_option_def: Option::None,
-            builtin_box_def: Option::None,
-            builtin_hashmap_def: Option::None,
-            builtin_result_def: Option::None,
-            builtin_option_some_def: Option::None,
-            builtin_option_none_def: Option::None,
-            builtin_result_ok_def: Option::None,
-            builtin_result_err_def: Option::None,
-            loading_paths: Vec::new(),
-            builtin_fn_defs: Vec::new(),
-            seen_trait_impls: Vec::new(),
-            stdlib_path: Option::None,
-            const_param_defs: Vec::new(),
-            turbofish_const_entries: Vec::new(),
+            body_locals: Vec.new(),
+            current_self_type: Option.None,
+            current_assoc_types: Vec.new(),
+            builtin_string_def: Option.None,
+            builtin_vec_def: Option.None,
+            builtin_option_def: Option.None,
+            builtin_box_def: Option.None,
+            builtin_hashmap_def: Option.None,
+            builtin_result_def: Option.None,
+            builtin_option_some_def: Option.None,
+            builtin_option_none_def: Option.None,
+            builtin_result_ok_def: Option.None,
+            builtin_result_err_def: Option.None,
+            loading_paths: Vec.new(),
+            builtin_fn_defs: Vec.new(),
+            seen_trait_impls: Vec.new(),
+            stdlib_path: Option.None,
+            const_param_defs: Vec.new(),
+            turbofish_const_entries: Vec.new(),
         }
     }
 
     /// Allocates a fresh DefId.
-    pub fn alloc_def_id(self: &mut Self) -> hir_def::DefId {
-        let id = hir_def::DefId::new(self.next_def_id);
+    pub fn alloc_def_id(self: &mut Self) -> hir_def.DefId {
+        let id = hir_def.DefId.new(self.next_def_id);
         self.next_def_id = self.next_def_id + 1;
         id
     }
 
     /// Allocates a fresh BodyId.
-    pub fn alloc_body_id(self: &mut Self) -> hir_def::BodyId {
-        let id = hir_def::BodyId::new(self.next_body_id);
+    pub fn alloc_body_id(self: &mut Self) -> hir_def.BodyId {
+        let id = hir_def.BodyId.new(self.next_body_id);
         self.next_body_id = self.next_body_id + 1;
         id
     }
 
     /// Allocates a fresh LocalId.
-    pub fn alloc_local_id(self: &mut Self) -> hir_def::LocalId {
-        let id = hir_def::LocalId::new(self.next_local_id);
+    pub fn alloc_local_id(self: &mut Self) -> hir_def.LocalId {
+        let id = hir_def.LocalId.new(self.next_local_id);
         self.next_local_id = self.next_local_id + 1;
         id
     }
 
     /// Allocates a fresh TyVarId.
-    pub fn alloc_ty_var(self: &mut Self) -> hir_def::TyVarId {
-        let id = hir_def::TyVarId::new(self.next_ty_var);
+    pub fn alloc_ty_var(self: &mut Self) -> hir_def.TyVarId {
+        let id = hir_def.TyVarId.new(self.next_ty_var);
         self.next_ty_var = self.next_ty_var + 1;
         id
     }
 
     /// Allocates a fresh EffectRowVarId.
-    pub fn alloc_effect_row_var(self: &mut Self) -> hir_def::EffectRowVarId {
-        let id = hir_def::EffectRowVarId::new(self.next_effect_row_var);
+    pub fn alloc_effect_row_var(self: &mut Self) -> hir_def.EffectRowVarId {
+        let id = hir_def.EffectRowVarId.new(self.next_effect_row_var);
         self.next_effect_row_var = self.next_effect_row_var + 1;
         id
     }
 
     /// Allocates a fresh RecordRowVarId.
-    pub fn alloc_record_row_var(self: &mut Self) -> hir_def::RecordRowVarId {
-        let id = hir_def::RecordRowVarId::new(self.next_record_row_var);
+    pub fn alloc_record_row_var(self: &mut Self) -> hir_def.RecordRowVarId {
+        let id = hir_def.RecordRowVarId.new(self.next_record_row_var);
         self.next_record_row_var = self.next_record_row_var + 1;
         id
     }
 
     /// Reports an error diagnostic.
-    pub fn error(self: &mut Self, code: hir::DiagnosticCode, message: String, span: common::Span) {
-        let diag = hir::Diagnostic::error(code, message, span);
+    pub fn error(self: &mut Self, code: hir.DiagnosticCode, message: String, span: common.Span) {
+        let diag = hir.Diagnostic.error(code, message, span);
         self.diagnostics.push(diag);
     }
 
     /// Reports a warning diagnostic.
-    pub fn warning(self: &mut Self, code: hir::DiagnosticCode, message: String, span: common::Span) {
-        let diag = hir::Diagnostic::warning(code, message, span);
+    pub fn warning(self: &mut Self, code: hir.DiagnosticCode, message: String, span: common.Span) {
+        let diag = hir.Diagnostic.warning(code, message, span);
         self.diagnostics.push(diag);
     }
 
@@ -531,67 +531,67 @@ impl LoweringCtx {
     pub fn has_errors(self: &Self) -> bool {
         for i in 0usize..self.diagnostics.len() {
             match self.diagnostics[i].level {
-                hir::DiagnosticLevel::Error => { return true; }
-                hir::DiagnosticLevel::Warning => {}
-                hir::DiagnosticLevel::Note => {}
-                hir::DiagnosticLevel::Help => {}
+                hir.DiagnosticLevel.Error => { return true; }
+                hir.DiagnosticLevel.Warning => {}
+                hir.DiagnosticLevel.Note => {}
+                hir.DiagnosticLevel.Help => {}
             }
         }
         false
     }
 
     /// Adds an item to the lowered items.
-    pub fn add_item(self: &mut Self, def_id: hir_def::DefId, item: hir_item::Item) {
+    pub fn add_item(self: &mut Self, def_id: hir_def.DefId, item: hir_item.Item) {
         let idx = self.items.len();
-        let entry = ItemEntry::new(def_id, item);
+        let entry = ItemEntry.new(def_id, item);
         self.items.push(entry);
 
         // Ensure item_index is large enough
         let def_idx = def_id.index as usize;
         while self.item_index.len() <= def_idx {
-            self.item_index.push(Option::None);
+            self.item_index.push(Option.None);
         }
         self.item_index[def_idx] = Some(idx);
     }
 
     /// Gets an item by DefId in O(1) time.
     /// Returns None if the DefId doesn't correspond to an item.
-    pub fn get_item(self: &Self, def_id: hir_def::DefId) -> Option<&ItemEntry> {
+    pub fn get_item(self: &Self, def_id: hir_def.DefId) -> Option<&ItemEntry> {
         let def_idx = def_id.index as usize;
         if def_idx >= self.item_index.len() {
-            return Option::None;
+            return Option.None;
         }
         match &self.item_index[def_idx] {
             &Some(idx) => Some(&self.items[idx]),
-            &None => Option::None,
+            &None => Option.None,
         }
     }
 
     /// Adds a body to the lowered bodies.
-    pub fn add_body(self: &mut Self, body_id: hir_def::BodyId, body: hir_expr::Body) {
-        let entry = BodyEntry::new(body_id, body);
+    pub fn add_body(self: &mut Self, body_id: hir_def.BodyId, body: hir_expr.Body) {
+        let entry = BodyEntry.new(body_id, body);
         self.bodies.push(entry);
     }
 
     /// Checks if a module has already been loaded (by file path).
     /// Returns the DefId if found, None otherwise.
-    pub fn find_loaded_module(self: &Self, path: &String) -> Option<hir_def::DefId> {
+    pub fn find_loaded_module(self: &Self, path: &String) -> Option<hir_def.DefId> {
         for i in 0usize..self.loaded_modules.len() {
             if string_eq(&self.loaded_modules[i].path, path) {
-                return Option::Some(self.loaded_modules[i].def_id);
+                return Option.Some(self.loaded_modules[i].def_id);
             }
         }
-        Option::None
+        Option.None
     }
 
     /// Adds a loaded module to the tracking list.
     pub fn add_loaded_module(
         self: &mut Self,
-        name: common::Symbol,
-        def_id: hir_def::DefId,
+        name: common.Symbol,
+        def_id: hir_def.DefId,
         path: String,
     ) {
-        let entry = LoadedModule::new(name, def_id, path);
+        let entry = LoadedModule.new(name, def_id, path);
         self.loaded_modules.push(entry);
     }
 
@@ -614,12 +614,12 @@ impl LoweringCtx {
 
     /// Resolves a symbol to its string representation.
     /// Returns a copy of the interned string, or a fallback if not found.
-    pub fn resolve_symbol(self: &Self, symbol: common::Symbol) -> String {
+    pub fn resolve_symbol(self: &Self, symbol: common.Symbol) -> String {
         match self.interner.resolve(symbol) {
-            Option::Some(s) => clone_str(s),
-            Option::None => {
+            Option.Some(s) => clone_str(s),
+            Option.None => {
                 // Fallback: generate a name from the index
-                let mut result = String::new();
+                let mut result = String.new();
                 result.push_str("sym_");
                 append_u32_to_string(&mut result, symbol.index);
                 result
@@ -628,16 +628,16 @@ impl LoweringCtx {
     }
 
     /// Interns a string and returns its symbol.
-    pub fn intern(self: &mut Self, s: &str) -> common::Symbol {
+    pub fn intern(self: &mut Self, s: &str) -> common.Symbol {
         self.interner.intern(s)
     }
 
     /// Extracts a string from source text given a span.
-    pub fn span_to_string(self: &Self, span: common::Span) -> String {
+    pub fn span_to_string(self: &Self, span: common.Span) -> String {
         let start = span.start;
         let end = span.end;
         let src_bytes = self.source.as_bytes();
-        let mut result = String::new();
+        let mut result = String.new();
         let mut i = start;
         while i < end && i < src_bytes.len() {
             result.push(src_bytes[i] as char);
@@ -693,7 +693,7 @@ pub fn append_u32_to_string(s: &mut String, n: u32) {
         s.push('0');
         return;
     }
-    let mut digits: Vec<char> = Vec::new();
+    let mut digits: Vec<char> = Vec.new();
     let mut val = n;
     while val > 0 {
         let digit = (val % 10) as u8;

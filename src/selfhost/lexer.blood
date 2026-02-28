@@ -24,7 +24,7 @@ pub struct Lexer<'src> {
     /// Flag for unterminated block comment
     has_unterminated_comment: bool,
     /// Pending trivia to attach to the next token
-    pending_trivia: Vec<token::Trivia>,
+    pending_trivia: Vec<token.Trivia>,
 }
 
 impl<'src> Lexer<'src> {
@@ -39,7 +39,7 @@ impl<'src> Lexer<'src> {
             token_line: 1,
             token_column: 1,
             has_unterminated_comment: false,
-            pending_trivia: Vec::new(),
+            pending_trivia: Vec.new(),
         }
     }
 
@@ -97,11 +97,11 @@ impl<'src> Lexer<'src> {
     }
 
     /// Create a token with the current span and attached trivia.
-    fn make_token(self: &mut Self, kind: token::TokenKind) -> token::Token {
+    fn make_token(self: &mut Self, kind: token.TokenKind) -> token.Token {
         let trivia = self.take_pending_trivia();
-        token::Token {
+        token.Token {
             kind,
-            span: token::common::Span {
+            span: token::common.Span {
                 start: self.token_start,
                 end: self.pos,
                 line: self.token_line,
@@ -112,16 +112,16 @@ impl<'src> Lexer<'src> {
     }
 
     /// Takes the pending trivia, replacing it with an empty vec.
-    fn take_pending_trivia(self: &mut Self) -> Vec<token::Trivia> {
+    fn take_pending_trivia(self: &mut Self) -> Vec<token.Trivia> {
         let trivia = self.pending_trivia;
-        self.pending_trivia = Vec::new();
+        self.pending_trivia = Vec.new();
         trivia
     }
 
     /// Collect trivia (whitespace and comments), returning them as a vector.
     /// Trivia is preserved for formatting tools; the parser ignores it.
-    fn collect_trivia(self: &mut Self) -> Vec<token::Trivia> {
-        let mut trivia: Vec<token::Trivia> = Vec::new();
+    fn collect_trivia(self: &mut Self) -> Vec<token.Trivia> {
+        let mut trivia: Vec<token.Trivia> = Vec.new();
         loop {
             let c = self.current();
             if c == 10 {
@@ -130,13 +130,13 @@ impl<'src> Lexer<'src> {
                 let start_line = self.line;
                 let start_col = self.column;
                 self.advance();
-                let span = token::common::Span {
+                let span = token::common.Span {
                     start: start_pos,
                     end: self.pos,
                     line: start_line,
                     column: start_col,
                 };
-                trivia.push(token::Trivia::new(token::TriviaKind::Newline, span));
+                trivia.push(token.Trivia.new(token.TriviaKind.Newline, span));
             } else if c == 13 {
                 // CR or CR+LF
                 let start_pos = self.pos;
@@ -146,13 +146,13 @@ impl<'src> Lexer<'src> {
                 if self.current() == 10 {
                     self.advance();
                 }
-                let span = token::common::Span {
+                let span = token::common.Span {
                     start: start_pos,
                     end: self.pos,
                     line: start_line,
                     column: start_col,
                 };
-                trivia.push(token::Trivia::new(token::TriviaKind::Newline, span));
+                trivia.push(token.Trivia.new(token.TriviaKind.Newline, span));
             } else if c == 32 || c == 9 {
                 // space or tab — collect contiguous whitespace
                 let start_pos = self.pos;
@@ -161,13 +161,13 @@ impl<'src> Lexer<'src> {
                 while self.current() == 32 || self.current() == 9 {
                     self.advance();
                 }
-                let span = token::common::Span {
+                let span = token::common.Span {
                     start: start_pos,
                     end: self.pos,
                     line: start_line,
                     column: start_col,
                 };
-                trivia.push(token::Trivia::new(token::TriviaKind::Whitespace, span));
+                trivia.push(token.Trivia.new(token.TriviaKind.Whitespace, span));
             } else if c == 47 && self.peek() == 47 {
                 // // line comment
                 if self.peek_at(2usize) == 47 && self.peek_at(3usize) != 47 {
@@ -181,13 +181,13 @@ impl<'src> Lexer<'src> {
                 while self.current() != 0 && self.current() != 10 {
                     self.advance();
                 }
-                let span = token::common::Span {
+                let span = token::common.Span {
                     start: start_pos,
                     end: self.pos,
                     line: start_line,
                     column: start_col,
                 };
-                trivia.push(token::Trivia::new(token::TriviaKind::LineComment, span));
+                trivia.push(token.Trivia.new(token.TriviaKind.LineComment, span));
             } else if c == 47 && self.peek() == 42 {
                 // /* block comment */
                 let start_pos = self.pos;
@@ -212,13 +212,13 @@ impl<'src> Lexer<'src> {
                 if depth > 0 {
                     self.has_unterminated_comment = true;
                 }
-                let span = token::common::Span {
+                let span = token::common.Span {
                     start: start_pos,
                     end: self.pos,
                     line: start_line,
                     column: start_col,
                 };
-                trivia.push(token::Trivia::new(token::TriviaKind::BlockComment, span));
+                trivia.push(token.Trivia.new(token.TriviaKind.BlockComment, span));
             } else {
                 break;
             }
@@ -238,7 +238,7 @@ impl<'src> Lexer<'src> {
 
     /// Check if byte is alphanumeric or underscore
     fn is_alnum_underscore(c: u8) -> bool {
-        Lexer::is_alpha(c) || Lexer::is_digit(c) || c == 95
+        Lexer.is_alpha(c) || Lexer.is_digit(c) || c == 95
     }
 
     /// Check if byte is uppercase
@@ -247,33 +247,33 @@ impl<'src> Lexer<'src> {
     }
 
     /// Get the next token
-    pub fn next_token(self: &mut Self) -> token::Token {
+    pub fn next_token(self: &mut Self) -> token.Token {
         self.pending_trivia = self.collect_trivia();
         self.start_token();
 
         if self.has_unterminated_comment {
             self.has_unterminated_comment = false;
-            return self.make_token(token::TokenKind::Error);
+            return self.make_token(token.TokenKind.Error);
         }
 
         if self.at_end() {
-            return self.make_token(token::TokenKind::Eof);
+            return self.make_token(token.TokenKind.Eof);
         }
 
         let c = self.current();
 
         // Single-character tokens
-        if c == 40 { self.advance(); return self.make_token(token::TokenKind::LParen); }
-        if c == 41 { self.advance(); return self.make_token(token::TokenKind::RParen); }
-        if c == 123 { self.advance(); return self.make_token(token::TokenKind::LBrace); }
-        if c == 125 { self.advance(); return self.make_token(token::TokenKind::RBrace); }
-        if c == 91 { self.advance(); return self.make_token(token::TokenKind::LBracket); }
-        if c == 93 { self.advance(); return self.make_token(token::TokenKind::RBracket); }
-        if c == 44 { self.advance(); return self.make_token(token::TokenKind::Comma); }
-        if c == 59 { self.advance(); return self.make_token(token::TokenKind::Semi); }
-        if c == 63 { self.advance(); return self.make_token(token::TokenKind::Question); }
-        if c == 35 { self.advance(); return self.make_token(token::TokenKind::Hash); }
-        if c == 36 { self.advance(); return self.make_token(token::TokenKind::Dollar); }
+        if c == 40 { self.advance(); return self.make_token(token.TokenKind.LParen); }
+        if c == 41 { self.advance(); return self.make_token(token.TokenKind.RParen); }
+        if c == 123 { self.advance(); return self.make_token(token.TokenKind.LBrace); }
+        if c == 125 { self.advance(); return self.make_token(token.TokenKind.RBrace); }
+        if c == 91 { self.advance(); return self.make_token(token.TokenKind.LBracket); }
+        if c == 93 { self.advance(); return self.make_token(token.TokenKind.RBracket); }
+        if c == 44 { self.advance(); return self.make_token(token.TokenKind.Comma); }
+        if c == 59 { self.advance(); return self.make_token(token.TokenKind.Semi); }
+        if c == 63 { self.advance(); return self.make_token(token.TokenKind.Question); }
+        if c == 35 { self.advance(); return self.make_token(token.TokenKind.Hash); }
+        if c == 36 { self.advance(); return self.make_token(token.TokenKind.Dollar); }
 
         // Multi-character operators
         if c == 58 {
@@ -281,9 +281,9 @@ impl<'src> Lexer<'src> {
             self.advance();
             if self.current() == 58 {
                 self.advance();
-                return self.make_token(token::TokenKind::ColonColon);
+                return self.make_token(token.TokenKind.ColonColon);
             }
-            return self.make_token(token::TokenKind::Colon);
+            return self.make_token(token.TokenKind.Colon);
         }
 
         if c == 46 {
@@ -293,11 +293,11 @@ impl<'src> Lexer<'src> {
                 self.advance();
                 if self.current() == 61 {
                     self.advance();
-                    return self.make_token(token::TokenKind::DotDotEq);
+                    return self.make_token(token.TokenKind.DotDotEq);
                 }
-                return self.make_token(token::TokenKind::DotDot);
+                return self.make_token(token.TokenKind.DotDot);
             }
-            return self.make_token(token::TokenKind::Dot);
+            return self.make_token(token.TokenKind.Dot);
         }
 
         if c == 61 {
@@ -305,13 +305,13 @@ impl<'src> Lexer<'src> {
             self.advance();
             if self.current() == 61 {
                 self.advance();
-                return self.make_token(token::TokenKind::EqEq);
+                return self.make_token(token.TokenKind.EqEq);
             }
             if self.current() == 62 {
                 self.advance();
-                return self.make_token(token::TokenKind::FatArrow);
+                return self.make_token(token.TokenKind.FatArrow);
             }
-            return self.make_token(token::TokenKind::Eq);
+            return self.make_token(token.TokenKind.Eq);
         }
 
         if c == 33 {
@@ -319,9 +319,9 @@ impl<'src> Lexer<'src> {
             self.advance();
             if self.current() == 61 {
                 self.advance();
-                return self.make_token(token::TokenKind::NotEq);
+                return self.make_token(token.TokenKind.NotEq);
             }
-            return self.make_token(token::TokenKind::Not);
+            return self.make_token(token.TokenKind.Not);
         }
 
         if c == 60 {
@@ -329,17 +329,17 @@ impl<'src> Lexer<'src> {
             self.advance();
             if self.current() == 61 {
                 self.advance();
-                return self.make_token(token::TokenKind::LtEq);
+                return self.make_token(token.TokenKind.LtEq);
             }
             if self.current() == 60 {
                 self.advance();
                 if self.current() == 61 {
                     self.advance();
-                    return self.make_token(token::TokenKind::ShlEq);
+                    return self.make_token(token.TokenKind.ShlEq);
                 }
-                return self.make_token(token::TokenKind::Shl);
+                return self.make_token(token.TokenKind.Shl);
             }
-            return self.make_token(token::TokenKind::Lt);
+            return self.make_token(token.TokenKind.Lt);
         }
 
         if c == 62 {
@@ -347,17 +347,17 @@ impl<'src> Lexer<'src> {
             self.advance();
             if self.current() == 61 {
                 self.advance();
-                return self.make_token(token::TokenKind::GtEq);
+                return self.make_token(token.TokenKind.GtEq);
             }
             if self.current() == 62 {
                 self.advance();
                 if self.current() == 61 {
                     self.advance();
-                    return self.make_token(token::TokenKind::ShrEq);
+                    return self.make_token(token.TokenKind.ShrEq);
                 }
-                return self.make_token(token::TokenKind::Shr);
+                return self.make_token(token.TokenKind.Shr);
             }
-            return self.make_token(token::TokenKind::Gt);
+            return self.make_token(token.TokenKind.Gt);
         }
 
         if c == 43 {
@@ -365,9 +365,9 @@ impl<'src> Lexer<'src> {
             self.advance();
             if self.current() == 61 {
                 self.advance();
-                return self.make_token(token::TokenKind::PlusEq);
+                return self.make_token(token.TokenKind.PlusEq);
             }
-            return self.make_token(token::TokenKind::Plus);
+            return self.make_token(token.TokenKind.Plus);
         }
 
         if c == 45 {
@@ -375,13 +375,13 @@ impl<'src> Lexer<'src> {
             self.advance();
             if self.current() == 61 {
                 self.advance();
-                return self.make_token(token::TokenKind::MinusEq);
+                return self.make_token(token.TokenKind.MinusEq);
             }
             if self.current() == 62 {
                 self.advance();
-                return self.make_token(token::TokenKind::Arrow);
+                return self.make_token(token.TokenKind.Arrow);
             }
-            return self.make_token(token::TokenKind::Minus);
+            return self.make_token(token.TokenKind.Minus);
         }
 
         if c == 42 {
@@ -389,9 +389,9 @@ impl<'src> Lexer<'src> {
             self.advance();
             if self.current() == 61 {
                 self.advance();
-                return self.make_token(token::TokenKind::StarEq);
+                return self.make_token(token.TokenKind.StarEq);
             }
-            return self.make_token(token::TokenKind::Star);
+            return self.make_token(token.TokenKind.Star);
         }
 
         if c == 47 {
@@ -403,9 +403,9 @@ impl<'src> Lexer<'src> {
             self.advance();
             if self.current() == 61 {
                 self.advance();
-                return self.make_token(token::TokenKind::SlashEq);
+                return self.make_token(token.TokenKind.SlashEq);
             }
-            return self.make_token(token::TokenKind::Slash);
+            return self.make_token(token.TokenKind.Slash);
         }
 
         if c == 37 {
@@ -413,9 +413,9 @@ impl<'src> Lexer<'src> {
             self.advance();
             if self.current() == 61 {
                 self.advance();
-                return self.make_token(token::TokenKind::PercentEq);
+                return self.make_token(token.TokenKind.PercentEq);
             }
-            return self.make_token(token::TokenKind::Percent);
+            return self.make_token(token.TokenKind.Percent);
         }
 
         if c == 38 {
@@ -423,13 +423,13 @@ impl<'src> Lexer<'src> {
             self.advance();
             if self.current() == 38 {
                 self.advance();
-                return self.make_token(token::TokenKind::AndAnd);
+                return self.make_token(token.TokenKind.AndAnd);
             }
             if self.current() == 61 {
                 self.advance();
-                return self.make_token(token::TokenKind::AndEq);
+                return self.make_token(token.TokenKind.AndEq);
             }
-            return self.make_token(token::TokenKind::And);
+            return self.make_token(token.TokenKind.And);
         }
 
         if c == 124 {
@@ -437,17 +437,17 @@ impl<'src> Lexer<'src> {
             self.advance();
             if self.current() == 124 {
                 self.advance();
-                return self.make_token(token::TokenKind::OrOr);
+                return self.make_token(token.TokenKind.OrOr);
             }
             if self.current() == 61 {
                 self.advance();
-                return self.make_token(token::TokenKind::OrEq);
+                return self.make_token(token.TokenKind.OrEq);
             }
             if self.current() == 62 {
                 self.advance();
-                return self.make_token(token::TokenKind::Pipe);
+                return self.make_token(token.TokenKind.Pipe);
             }
-            return self.make_token(token::TokenKind::Or);
+            return self.make_token(token.TokenKind.Or);
         }
 
         if c == 94 {
@@ -455,9 +455,9 @@ impl<'src> Lexer<'src> {
             self.advance();
             if self.current() == 61 {
                 self.advance();
-                return self.make_token(token::TokenKind::CaretEq);
+                return self.make_token(token.TokenKind.CaretEq);
             }
-            return self.make_token(token::TokenKind::Caret);
+            return self.make_token(token.TokenKind.Caret);
         }
 
         if c == 64 {
@@ -466,12 +466,12 @@ impl<'src> Lexer<'src> {
         }
 
         // Numbers
-        if Lexer::is_digit(c) {
+        if Lexer.is_digit(c) {
             return self.lex_number();
         }
 
         // Identifiers and keywords
-        if Lexer::is_alpha(c) || c == 95 {
+        if Lexer.is_alpha(c) || c == 95 {
             // Check for byte string literal b"..."
             if c == 98 && self.peek() == 34 {
                 return self.lex_byte_string();
@@ -497,7 +497,7 @@ impl<'src> Lexer<'src> {
                 return self.lex_char();
             }
             // If next is alphanumeric/underscore, check if char after that is closing quote
-            if Lexer::is_alpha(next) || next == 95 {
+            if Lexer.is_alpha(next) || next == 95 {
                 let after_next = self.peek_at(2);
                 // If closing quote follows immediately, it's a char literal ('a', '_')
                 if after_next == 39 {
@@ -512,11 +512,11 @@ impl<'src> Lexer<'src> {
 
         // Unknown character - return error token
         self.advance();
-        self.make_token(token::TokenKind::Error)
+        self.make_token(token.TokenKind.Error)
     }
 
     /// Lex a doc comment (///)
-    fn lex_doc_comment(self: &mut Self) -> token::Token {
+    fn lex_doc_comment(self: &mut Self) -> token.Token {
         // Skip ///
         self.advance();
         self.advance();
@@ -525,31 +525,31 @@ impl<'src> Lexer<'src> {
         while self.current() != 0 && self.current() != 10 {
             self.advance();
         }
-        self.make_token(token::TokenKind::DocComment)
+        self.make_token(token.TokenKind.DocComment)
     }
 
     /// Lex @ tokens (@unsafe, @heap, @stack, or plain @)
-    fn lex_at_token(self: &mut Self) -> token::Token {
+    fn lex_at_token(self: &mut Self) -> token.Token {
         self.advance(); // skip @
         // Check for @unsafe (6 chars)
         if self.match_keyword_bytes(0usize, 6usize, 117u8, 110u8, 115u8, 97u8, 102u8, 101u8) {
             // u n s a f e
             self.pos = self.pos + 6;
-            return self.make_token(token::TokenKind::AtUnsafe);
+            return self.make_token(token.TokenKind.AtUnsafe);
         }
         // Check for @heap (4 chars)
         if self.match_keyword_bytes(0usize, 4usize, 104u8, 101u8, 97u8, 112u8, 0u8, 0u8) {
             // h e a p
             self.pos = self.pos + 4;
-            return self.make_token(token::TokenKind::AtHeap);
+            return self.make_token(token.TokenKind.AtHeap);
         }
         // Check for @stack (5 chars)
         if self.match_keyword_bytes(0usize, 5usize, 115u8, 116u8, 97u8, 99u8, 107u8, 0u8) {
             // s t a c k
             self.pos = self.pos + 5;
-            return self.make_token(token::TokenKind::AtStack);
+            return self.make_token(token.TokenKind.AtStack);
         }
-        self.make_token(token::TokenKind::At)
+        self.make_token(token.TokenKind.At)
     }
 
     /// Match bytes at current position
@@ -564,7 +564,7 @@ impl<'src> Lexer<'src> {
     }
 
     /// Lex a number
-    fn lex_number(self: &mut Self) -> token::Token {
+    fn lex_number(self: &mut Self) -> token.Token {
         // Check for hex, octal, binary
         if self.current() == 48 {
             let next = self.peek();
@@ -572,11 +572,11 @@ impl<'src> Lexer<'src> {
                 // 0x or 0X - hex
                 self.advance();
                 self.advance();
-                while Lexer::is_hex_digit(self.current()) || self.current() == 95 {
+                while Lexer.is_hex_digit(self.current()) || self.current() == 95 {
                     self.advance();
                 }
                 self.lex_int_suffix();
-                return self.make_token(token::TokenKind::IntLit);
+                return self.make_token(token.TokenKind.IntLit);
             }
             if next == 111 || next == 79 {
                 // 0o or 0O - octal
@@ -586,7 +586,7 @@ impl<'src> Lexer<'src> {
                     self.advance();
                 }
                 self.lex_int_suffix();
-                return self.make_token(token::TokenKind::IntLit);
+                return self.make_token(token.TokenKind.IntLit);
             }
             if next == 98 || next == 66 {
                 // 0b or 0B - binary
@@ -596,19 +596,19 @@ impl<'src> Lexer<'src> {
                     self.advance();
                 }
                 self.lex_int_suffix();
-                return self.make_token(token::TokenKind::IntLit);
+                return self.make_token(token.TokenKind.IntLit);
             }
         }
 
         // Decimal number
-        while Lexer::is_digit(self.current()) || self.current() == 95 {
+        while Lexer.is_digit(self.current()) || self.current() == 95 {
             self.advance();
         }
 
         // Check for float
-        if self.current() == 46 && Lexer::is_digit(self.peek()) {
+        if self.current() == 46 && Lexer.is_digit(self.peek()) {
             self.advance(); // skip .
-            while Lexer::is_digit(self.current()) || self.current() == 95 {
+            while Lexer.is_digit(self.current()) || self.current() == 95 {
                 self.advance();
             }
             // Exponent
@@ -617,7 +617,7 @@ impl<'src> Lexer<'src> {
                 if self.current() == 43 || self.current() == 45 {
                     self.advance();
                 }
-                while Lexer::is_digit(self.current()) || self.current() == 95 {
+                while Lexer.is_digit(self.current()) || self.current() == 95 {
                     self.advance();
                 }
             }
@@ -632,11 +632,11 @@ impl<'src> Lexer<'src> {
                     self.advance();
                 }
             }
-            return self.make_token(token::TokenKind::FloatLit);
+            return self.make_token(token.TokenKind.FloatLit);
         }
 
         self.lex_int_suffix();
-        self.make_token(token::TokenKind::IntLit)
+        self.make_token(token.TokenKind.IntLit)
     }
 
     /// Check if byte is hex digit
@@ -661,8 +661,8 @@ impl<'src> Lexer<'src> {
                 }
             }
             // Check for numeric suffix
-            if Lexer::is_digit(self.current()) {
-                while Lexer::is_digit(self.current()) {
+            if Lexer.is_digit(self.current()) {
+                while Lexer.is_digit(self.current()) {
                     self.advance();
                 }
             } else {
@@ -673,7 +673,7 @@ impl<'src> Lexer<'src> {
     }
 
     /// Lex a string literal
-    fn lex_string(self: &mut Self) -> token::Token {
+    fn lex_string(self: &mut Self) -> token.Token {
         self.advance(); // skip opening "
         while self.current() != 0 && self.current() != 34 {
             if self.current() == 92 {
@@ -687,11 +687,11 @@ impl<'src> Lexer<'src> {
         if self.current() == 34 {
             self.advance(); // skip closing "
         }
-        self.make_token(token::TokenKind::StringLit)
+        self.make_token(token.TokenKind.StringLit)
     }
 
     /// Lex a character literal
-    fn lex_char(self: &mut Self) -> token::Token {
+    fn lex_char(self: &mut Self) -> token.Token {
         self.advance(); // skip opening '
         if self.current() == 92 {
             // backslash escape
@@ -703,11 +703,11 @@ impl<'src> Lexer<'src> {
         if self.current() == 39 {
             self.advance(); // skip closing '
         }
-        self.make_token(token::TokenKind::CharLit)
+        self.make_token(token.TokenKind.CharLit)
     }
 
     /// Lex a byte string literal
-    fn lex_byte_string(self: &mut Self) -> token::Token {
+    fn lex_byte_string(self: &mut Self) -> token.Token {
         self.advance(); // skip b
         self.advance(); // skip opening "
         while self.current() != 0 && self.current() != 34 {
@@ -721,11 +721,11 @@ impl<'src> Lexer<'src> {
         if self.current() == 34 {
             self.advance();
         }
-        self.make_token(token::TokenKind::ByteStringLit)
+        self.make_token(token.TokenKind.ByteStringLit)
     }
 
     /// Lex a raw string literal
-    fn lex_raw_string(self: &mut Self) -> token::Token {
+    fn lex_raw_string(self: &mut Self) -> token.Token {
         self.advance(); // skip r
         let mut hash_count: i32 = 0;
         while self.current() == 35 {
@@ -733,7 +733,7 @@ impl<'src> Lexer<'src> {
             self.advance();
         }
         if self.current() != 34 {
-            return self.make_token(token::TokenKind::Error);
+            return self.make_token(token.TokenKind.Error);
         }
         self.advance(); // skip opening "
 
@@ -755,22 +755,22 @@ impl<'src> Lexer<'src> {
                 self.advance();
             }
         }
-        self.make_token(token::TokenKind::RawStringLit)
+        self.make_token(token.TokenKind.RawStringLit)
     }
 
     /// Lex a lifetime
-    fn lex_lifetime(self: &mut Self) -> token::Token {
+    fn lex_lifetime(self: &mut Self) -> token.Token {
         self.advance(); // skip '
-        while Lexer::is_alnum_underscore(self.current()) {
+        while Lexer.is_alnum_underscore(self.current()) {
             self.advance();
         }
-        self.make_token(token::TokenKind::Lifetime)
+        self.make_token(token.TokenKind.Lifetime)
     }
 
     /// Lex an identifier or keyword
-    fn lex_identifier(self: &mut Self) -> token::Token {
+    fn lex_identifier(self: &mut Self) -> token.Token {
         let start = self.pos;
-        while Lexer::is_alnum_underscore(self.current()) {
+        while Lexer.is_alnum_underscore(self.current()) {
             self.advance();
         }
         let len = self.pos - start;
@@ -781,153 +781,153 @@ impl<'src> Lexer<'src> {
     }
 
     /// Match identifier against keywords
-    fn match_keyword(self: &Self, start: usize, len: usize) -> token::TokenKind {
+    fn match_keyword(self: &Self, start: usize, len: usize) -> token.TokenKind {
         let first = self.byte_at(start);
 
         // Check by first character
         if first == 97 {
             // 'a'
-            if len == 2 && self.byte_at(start + 1) == 115 { return token::TokenKind::As; }
-            if len == 5 && self.match_bytes(start, 97, 115, 121, 110, 99) { return token::TokenKind::Async; }
-            if len == 5 && self.match_bytes(start, 97, 119, 97, 105, 116) { return token::TokenKind::Await; }
-            if len == 6 && self.match_bytes6(start, 97, 102, 102, 105, 110, 101) { return token::TokenKind::Affine; }
-            if len == 8 && self.match_bytes8(start, 97, 98, 115, 116, 114, 97, 99, 116) { return token::TokenKind::Abstract; }
+            if len == 2 && self.byte_at(start + 1) == 115 { return token.TokenKind.As; }
+            if len == 5 && self.match_bytes(start, 97, 115, 121, 110, 99) { return token.TokenKind.Async; }
+            if len == 5 && self.match_bytes(start, 97, 119, 97, 105, 116) { return token.TokenKind.Await; }
+            if len == 6 && self.match_bytes6(start, 97, 102, 102, 105, 110, 101) { return token.TokenKind.Affine; }
+            if len == 8 && self.match_bytes8(start, 97, 98, 115, 116, 114, 97, 99, 116) { return token.TokenKind.Abstract; }
         }
         if first == 98 {
             // 'b'
-            if len == 5 && self.match_bytes(start, 98, 114, 101, 97, 107) { return token::TokenKind::Break; }
-            if len == 6 && self.match_bytes6(start, 98, 114, 105, 100, 103, 101) { return token::TokenKind::Bridge; }
-            if len == 6 && self.match_bytes6(start, 98, 101, 99, 111, 109, 101) { return token::TokenKind::Become; }
-            if len == 3 && self.match_bytes3(start, 98, 111, 120) { return token::TokenKind::Box; }
+            if len == 5 && self.match_bytes(start, 98, 114, 101, 97, 107) { return token.TokenKind.Break; }
+            if len == 6 && self.match_bytes6(start, 98, 114, 105, 100, 103, 101) { return token.TokenKind.Bridge; }
+            if len == 6 && self.match_bytes6(start, 98, 101, 99, 111, 109, 101) { return token.TokenKind.Become; }
+            if len == 3 && self.match_bytes3(start, 98, 111, 120) { return token.TokenKind.Box; }
         }
         if first == 99 {
             // 'c'
-            if len == 5 && self.match_bytes(start, 99, 111, 110, 115, 116) { return token::TokenKind::Const; }
-            if len == 8 && self.match_bytes8(start, 99, 111, 110, 116, 105, 110, 117, 101) { return token::TokenKind::Continue; }
-            if len == 5 && self.match_bytes(start, 99, 114, 97, 116, 101) { return token::TokenKind::Crate; }
-            if len == 5 && self.match_bytes(start, 99, 97, 116, 99, 104) { return token::TokenKind::Catch; }
+            if len == 5 && self.match_bytes(start, 99, 111, 110, 115, 116) { return token.TokenKind.Const; }
+            if len == 8 && self.match_bytes8(start, 99, 111, 110, 116, 105, 110, 117, 101) { return token.TokenKind.Continue; }
+            if len == 5 && self.match_bytes(start, 99, 114, 97, 116, 101) { return token.TokenKind.Crate; }
+            if len == 5 && self.match_bytes(start, 99, 97, 116, 99, 104) { return token.TokenKind.Catch; }
         }
         if first == 100 {
             // 'd'
-            if len == 9 && self.match_bytes9(start, 100, 101, 99, 114, 101, 97, 115, 101, 115) { return token::TokenKind::Decreases; }
-            if len == 4 && self.match_bytes4(start, 100, 101, 101, 112) { return token::TokenKind::Deep; }
-            if len == 3 && self.match_bytes3(start, 100, 121, 110) { return token::TokenKind::Dyn; }
-            if len == 7 && self.match_bytes7(start, 100, 101, 102, 97, 117, 108, 116) { return token::TokenKind::Default; }
-            if len == 2 && self.byte_at(start + 1) == 111 { return token::TokenKind::Do; }
+            if len == 9 && self.match_bytes9(start, 100, 101, 99, 114, 101, 97, 115, 101, 115) { return token.TokenKind.Decreases; }
+            if len == 4 && self.match_bytes4(start, 100, 101, 101, 112) { return token.TokenKind.Deep; }
+            if len == 3 && self.match_bytes3(start, 100, 121, 110) { return token.TokenKind.Dyn; }
+            if len == 7 && self.match_bytes7(start, 100, 101, 102, 97, 117, 108, 116) { return token.TokenKind.Default; }
+            if len == 2 && self.byte_at(start + 1) == 111 { return token.TokenKind.Do; }
         }
         if first == 101 {
             // 'e'
-            if len == 6 && self.match_bytes6(start, 101, 102, 102, 101, 99, 116) { return token::TokenKind::Effect; }
-            if len == 4 && self.match_bytes4(start, 101, 108, 115, 101) { return token::TokenKind::Else; }
-            if len == 7 && self.match_bytes7(start, 101, 110, 115, 117, 114, 101, 115) { return token::TokenKind::Ensures; }
-            if len == 4 && self.match_bytes4(start, 101, 110, 117, 109) { return token::TokenKind::Enum; }
-            if len == 7 && self.match_bytes7(start, 101, 120, 116, 101, 110, 100, 115) { return token::TokenKind::Extends; }
-            if len == 6 && self.match_bytes6(start, 101, 120, 116, 101, 114, 110) { return token::TokenKind::Extern; }
+            if len == 6 && self.match_bytes6(start, 101, 102, 102, 101, 99, 116) { return token.TokenKind.Effect; }
+            if len == 4 && self.match_bytes4(start, 101, 108, 115, 101) { return token.TokenKind.Else; }
+            if len == 7 && self.match_bytes7(start, 101, 110, 115, 117, 114, 101, 115) { return token.TokenKind.Ensures; }
+            if len == 4 && self.match_bytes4(start, 101, 110, 117, 109) { return token.TokenKind.Enum; }
+            if len == 7 && self.match_bytes7(start, 101, 120, 116, 101, 110, 100, 115) { return token.TokenKind.Extends; }
+            if len == 6 && self.match_bytes6(start, 101, 120, 116, 101, 114, 110) { return token.TokenKind.Extern; }
         }
         if first == 102 {
             // 'f'
-            if len == 5 && self.match_bytes(start, 102, 97, 108, 115, 101) { return token::TokenKind::False; }
-            if len == 2 && self.byte_at(start + 1) == 110 { return token::TokenKind::Fn; }
-            if len == 3 && self.match_bytes3(start, 102, 111, 114) { return token::TokenKind::For; }
-            if len == 6 && self.match_bytes6(start, 102, 111, 114, 97, 108, 108) { return token::TokenKind::Forall; }
-            if len == 5 && self.match_bytes(start, 102, 105, 110, 97, 108) { return token::TokenKind::Final; }
-            if len == 7 && self.match_bytes7(start, 102, 105, 110, 97, 108, 108, 121) { return token::TokenKind::Finally; }
+            if len == 5 && self.match_bytes(start, 102, 97, 108, 115, 101) { return token.TokenKind.False; }
+            if len == 2 && self.byte_at(start + 1) == 110 { return token.TokenKind.Fn; }
+            if len == 3 && self.match_bytes3(start, 102, 111, 114) { return token.TokenKind.For; }
+            if len == 6 && self.match_bytes6(start, 102, 111, 114, 97, 108, 108) { return token.TokenKind.Forall; }
+            if len == 5 && self.match_bytes(start, 102, 105, 110, 97, 108) { return token.TokenKind.Final; }
+            if len == 7 && self.match_bytes7(start, 102, 105, 110, 97, 108, 108, 121) { return token.TokenKind.Finally; }
         }
         if first == 104 {
             // 'h'
-            if len == 7 && self.match_bytes7(start, 104, 97, 110, 100, 108, 101, 114) { return token::TokenKind::Handler; }
-            if len == 6 && self.match_bytes6(start, 104, 97, 110, 100, 108, 101) { return token::TokenKind::Handle; }
+            if len == 7 && self.match_bytes7(start, 104, 97, 110, 100, 108, 101, 114) { return token.TokenKind.Handler; }
+            if len == 6 && self.match_bytes6(start, 104, 97, 110, 100, 108, 101) { return token.TokenKind.Handle; }
         }
         if first == 105 {
             // 'i'
-            if len == 2 && self.byte_at(start + 1) == 102 { return token::TokenKind::If; }
-            if len == 4 && self.match_bytes4(start, 105, 109, 112, 108) { return token::TokenKind::Impl; }
-            if len == 2 && self.byte_at(start + 1) == 110 { return token::TokenKind::In; }
-            if len == 9 && self.match_bytes9(start, 105, 110, 118, 97, 114, 105, 97, 110, 116) { return token::TokenKind::Invariant; }
+            if len == 2 && self.byte_at(start + 1) == 102 { return token.TokenKind.If; }
+            if len == 4 && self.match_bytes4(start, 105, 109, 112, 108) { return token.TokenKind.Impl; }
+            if len == 2 && self.byte_at(start + 1) == 110 { return token.TokenKind.In; }
+            if len == 9 && self.match_bytes9(start, 105, 110, 118, 97, 114, 105, 97, 110, 116) { return token.TokenKind.Invariant; }
         }
         if first == 108 {
             // 'l'
-            if len == 3 && self.match_bytes3(start, 108, 101, 116) { return token::TokenKind::Let; }
-            if len == 6 && self.match_bytes6(start, 108, 105, 110, 101, 97, 114) { return token::TokenKind::Linear; }
-            if len == 4 && self.match_bytes4(start, 108, 111, 111, 112) { return token::TokenKind::Loop; }
+            if len == 3 && self.match_bytes3(start, 108, 101, 116) { return token.TokenKind.Let; }
+            if len == 6 && self.match_bytes6(start, 108, 105, 110, 101, 97, 114) { return token.TokenKind.Linear; }
+            if len == 4 && self.match_bytes4(start, 108, 111, 111, 112) { return token.TokenKind.Loop; }
         }
         if first == 109 {
             // 'm'
-            if len == 5 && self.match_bytes(start, 109, 97, 116, 99, 104) { return token::TokenKind::Match; }
-            if len == 3 && self.match_bytes3(start, 109, 111, 100) { return token::TokenKind::Mod; }
-            if len == 6 && self.match_bytes6(start, 109, 111, 100, 117, 108, 101) { return token::TokenKind::Module; }
-            if len == 4 && self.match_bytes4(start, 109, 111, 118, 101) { return token::TokenKind::Move; }
-            if len == 3 && self.match_bytes3(start, 109, 117, 116) { return token::TokenKind::Mut; }
-            if len == 5 && self.match_bytes(start, 109, 97, 99, 114, 111) { return token::TokenKind::Macro; }
+            if len == 5 && self.match_bytes(start, 109, 97, 116, 99, 104) { return token.TokenKind.Match; }
+            if len == 3 && self.match_bytes3(start, 109, 111, 100) { return token.TokenKind.Mod; }
+            if len == 6 && self.match_bytes6(start, 109, 111, 100, 117, 108, 101) { return token.TokenKind.Module; }
+            if len == 4 && self.match_bytes4(start, 109, 111, 118, 101) { return token.TokenKind.Move; }
+            if len == 3 && self.match_bytes3(start, 109, 117, 116) { return token.TokenKind.Mut; }
+            if len == 5 && self.match_bytes(start, 109, 97, 99, 114, 111) { return token.TokenKind.Macro; }
         }
         if first == 111 {
             // 'o'
-            if len == 2 && self.byte_at(start + 1) == 112 { return token::TokenKind::Op; }
-            if len == 8 && self.match_bytes8(start, 111, 118, 101, 114, 114, 105, 100, 101) { return token::TokenKind::Override; }
+            if len == 2 && self.byte_at(start + 1) == 112 { return token.TokenKind.Op; }
+            if len == 8 && self.match_bytes8(start, 111, 118, 101, 114, 114, 105, 100, 101) { return token.TokenKind.Override; }
         }
         if first == 112 {
             // 'p'
-            if len == 7 && self.match_bytes7(start, 112, 101, 114, 102, 111, 114, 109) { return token::TokenKind::Perform; }
-            if len == 3 && self.match_bytes3(start, 112, 117, 98) { return token::TokenKind::Pub; }
-            if len == 4 && self.match_bytes4(start, 112, 117, 114, 101) { return token::TokenKind::Pure; }
-            if len == 4 && self.match_bytes4(start, 112, 114, 105, 118) { return token::TokenKind::Priv; }
+            if len == 7 && self.match_bytes7(start, 112, 101, 114, 102, 111, 114, 109) { return token.TokenKind.Perform; }
+            if len == 3 && self.match_bytes3(start, 112, 117, 98) { return token.TokenKind.Pub; }
+            if len == 4 && self.match_bytes4(start, 112, 117, 114, 101) { return token.TokenKind.Pure; }
+            if len == 4 && self.match_bytes4(start, 112, 114, 105, 118) { return token.TokenKind.Priv; }
         }
         if first == 114 {
             // 'r'
-            if len == 3 && self.match_bytes3(start, 114, 101, 102) { return token::TokenKind::Ref; }
-            if len == 6 && self.match_bytes6(start, 114, 101, 103, 105, 111, 110) { return token::TokenKind::Region; }
-            if len == 8 && self.match_bytes8(start, 114, 101, 113, 117, 105, 114, 101, 115) { return token::TokenKind::Requires; }
-            if len == 6 && self.match_bytes6(start, 114, 101, 115, 117, 109, 101) { return token::TokenKind::Resume; }
-            if len == 6 && self.match_bytes6(start, 114, 101, 116, 117, 114, 110) { return token::TokenKind::Return; }
+            if len == 3 && self.match_bytes3(start, 114, 101, 102) { return token.TokenKind.Ref; }
+            if len == 6 && self.match_bytes6(start, 114, 101, 103, 105, 111, 110) { return token.TokenKind.Region; }
+            if len == 8 && self.match_bytes8(start, 114, 101, 113, 117, 105, 114, 101, 115) { return token.TokenKind.Requires; }
+            if len == 6 && self.match_bytes6(start, 114, 101, 115, 117, 109, 101) { return token.TokenKind.Resume; }
+            if len == 6 && self.match_bytes6(start, 114, 101, 116, 117, 114, 110) { return token.TokenKind.Return; }
         }
         if first == 115 {
             // 's'
-            if len == 4 && self.match_bytes4(start, 115, 101, 108, 102) { return token::TokenKind::SelfLower; }
-            if len == 7 && self.match_bytes7(start, 115, 104, 97, 108, 108, 111, 119) { return token::TokenKind::Shallow; }
-            if len == 6 && self.match_bytes6(start, 115, 116, 97, 116, 105, 99) { return token::TokenKind::Static; }
-            if len == 6 && self.match_bytes6(start, 115, 116, 114, 117, 99, 116) { return token::TokenKind::Struct; }
-            if len == 5 && self.match_bytes(start, 115, 117, 112, 101, 114) { return token::TokenKind::Super; }
+            if len == 4 && self.match_bytes4(start, 115, 101, 108, 102) { return token.TokenKind.SelfLower; }
+            if len == 7 && self.match_bytes7(start, 115, 104, 97, 108, 108, 111, 119) { return token.TokenKind.Shallow; }
+            if len == 6 && self.match_bytes6(start, 115, 116, 97, 116, 105, 99) { return token.TokenKind.Static; }
+            if len == 6 && self.match_bytes6(start, 115, 116, 114, 117, 99, 116) { return token.TokenKind.Struct; }
+            if len == 5 && self.match_bytes(start, 115, 117, 112, 101, 114) { return token.TokenKind.Super; }
         }
         if first == 83 {
             // 'S'
-            if len == 4 && self.match_bytes4(start, 83, 101, 108, 102) { return token::TokenKind::SelfUpper; }
+            if len == 4 && self.match_bytes4(start, 83, 101, 108, 102) { return token.TokenKind.SelfUpper; }
         }
         if first == 116 {
             // 't'
-            if len == 5 && self.match_bytes(start, 116, 114, 97, 105, 116) { return token::TokenKind::Trait; }
-            if len == 4 && self.match_bytes4(start, 116, 114, 117, 101) { return token::TokenKind::True; }
-            if len == 4 && self.match_bytes4(start, 116, 121, 112, 101) { return token::TokenKind::Type; }
-            if len == 3 && self.match_bytes3(start, 116, 114, 121) { return token::TokenKind::Try; }
-            if len == 6 && self.match_bytes6(start, 116, 121, 112, 101, 111, 102) { return token::TokenKind::Typeof; }
-            if len == 5 && self.match_bytes(start, 116, 104, 114, 111, 119) { return token::TokenKind::Throw; }
+            if len == 5 && self.match_bytes(start, 116, 114, 97, 105, 116) { return token.TokenKind.Trait; }
+            if len == 4 && self.match_bytes4(start, 116, 114, 117, 101) { return token.TokenKind.True; }
+            if len == 4 && self.match_bytes4(start, 116, 121, 112, 101) { return token.TokenKind.Type; }
+            if len == 3 && self.match_bytes3(start, 116, 114, 121) { return token.TokenKind.Try; }
+            if len == 6 && self.match_bytes6(start, 116, 121, 112, 101, 111, 102) { return token.TokenKind.Typeof; }
+            if len == 5 && self.match_bytes(start, 116, 104, 114, 111, 119) { return token.TokenKind.Throw; }
         }
         if first == 117 {
             // 'u'
-            if len == 3 && self.match_bytes3(start, 117, 115, 101) { return token::TokenKind::Use; }
-            if len == 6 && self.match_bytes6(start, 117, 110, 115, 97, 102, 101) { return token::TokenKind::Unsafe; }
-            if len == 7 && self.match_bytes7(start, 117, 110, 115, 105, 122, 101, 100) { return token::TokenKind::Unsized; }
-            if len == 5 && self.match_bytes(start, 117, 110, 105, 111, 110) { return token::TokenKind::Union; }
+            if len == 3 && self.match_bytes3(start, 117, 115, 101) { return token.TokenKind.Use; }
+            if len == 6 && self.match_bytes6(start, 117, 110, 115, 97, 102, 101) { return token.TokenKind.Unsafe; }
+            if len == 7 && self.match_bytes7(start, 117, 110, 115, 105, 122, 101, 100) { return token.TokenKind.Unsized; }
+            if len == 5 && self.match_bytes(start, 117, 110, 105, 111, 110) { return token.TokenKind.Union; }
         }
         if first == 118 {
             // 'v'
-            if len == 7 && self.match_bytes7(start, 118, 105, 114, 116, 117, 97, 108) { return token::TokenKind::Virtual; }
+            if len == 7 && self.match_bytes7(start, 118, 105, 114, 116, 117, 97, 108) { return token.TokenKind.Virtual; }
         }
         if first == 119 {
             // 'w'
-            if len == 5 && self.match_bytes(start, 119, 104, 101, 114, 101) { return token::TokenKind::Where; }
-            if len == 5 && self.match_bytes(start, 119, 104, 105, 108, 101) { return token::TokenKind::While; }
-            if len == 4 && self.match_bytes4(start, 119, 105, 116, 104) { return token::TokenKind::With; }
+            if len == 5 && self.match_bytes(start, 119, 104, 101, 114, 101) { return token.TokenKind.Where; }
+            if len == 5 && self.match_bytes(start, 119, 104, 105, 108, 101) { return token.TokenKind.While; }
+            if len == 4 && self.match_bytes4(start, 119, 105, 116, 104) { return token.TokenKind.With; }
         }
         if first == 121 {
             // 'y'
-            if len == 5 && self.match_bytes(start, 121, 105, 101, 108, 100) { return token::TokenKind::Yield; }
+            if len == 5 && self.match_bytes(start, 121, 105, 101, 108, 100) { return token.TokenKind.Yield; }
         }
 
         // Not a keyword - determine if TypeIdent or Ident
-        if Lexer::is_upper(first) {
-            token::TokenKind::TypeIdent
+        if Lexer.is_upper(first) {
+            token.TokenKind.TypeIdent
         } else {
-            token::TokenKind::Ident
+            token.TokenKind.Ident
         }
     }
 
@@ -967,8 +967,8 @@ impl<'src> Lexer<'src> {
         if esc == 120 {
             // \x — hex escape: 2 hex digits
             self.advance(); // skip 'x'
-            if Lexer::is_hex_digit(self.current()) { self.advance(); }
-            if Lexer::is_hex_digit(self.current()) { self.advance(); }
+            if Lexer.is_hex_digit(self.current()) { self.advance(); }
+            if Lexer.is_hex_digit(self.current()) { self.advance(); }
         } else if esc == 117 {
             // \u — unicode escape: \u{...}
             self.advance(); // skip 'u'

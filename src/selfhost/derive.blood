@@ -43,12 +43,12 @@ impl DeriveKind {
     /// Returns the trait name.
     pub fn trait_name(self: &DeriveKind) -> &str {
         match self {
-            &DeriveKind::Clone => "Clone",
-            &DeriveKind::Debug => "Debug",
-            &DeriveKind::PartialEq => "PartialEq",
-            &DeriveKind::Eq => "Eq",
-            &DeriveKind::Default => "Default",
-            &DeriveKind::Hash => "Hash",
+            &DeriveKind.Clone => "Clone",
+            &DeriveKind.Debug => "Debug",
+            &DeriveKind.PartialEq => "PartialEq",
+            &DeriveKind.Eq => "Eq",
+            &DeriveKind.Default => "Default",
+            &DeriveKind.Hash => "Hash",
         }
     }
 
@@ -59,29 +59,29 @@ impl DeriveKind {
 
         // "Clone" = 5 chars
         if len == 5 && bytes[0] == 67 && bytes[1] == 108 && bytes[2] == 111 && bytes[3] == 110 && bytes[4] == 101 {
-            return Option::Some(DeriveKind::Clone);
+            return Option.Some(DeriveKind.Clone);
         }
         // "Debug" = 5 chars
         if len == 5 && bytes[0] == 68 && bytes[1] == 101 && bytes[2] == 98 && bytes[3] == 117 && bytes[4] == 103 {
-            return Option::Some(DeriveKind::Debug);
+            return Option.Some(DeriveKind.Debug);
         }
         // "PartialEq" = 9 chars
         if len == 9 && bytes[0] == 80 && bytes[1] == 97 && bytes[2] == 114 {
-            return Option::Some(DeriveKind::PartialEq);
+            return Option.Some(DeriveKind.PartialEq);
         }
         // "Eq" = 2 chars
         if len == 2 && bytes[0] == 69 && bytes[1] == 113 {
-            return Option::Some(DeriveKind::Eq);
+            return Option.Some(DeriveKind.Eq);
         }
         // "Default" = 7 chars
         if len == 7 && bytes[0] == 68 && bytes[1] == 101 && bytes[2] == 102 {
-            return Option::Some(DeriveKind::Default);
+            return Option.Some(DeriveKind.Default);
         }
         // "Hash" = 4 chars
         if len == 4 && bytes[0] == 72 && bytes[1] == 97 && bytes[2] == 115 && bytes[3] == 104 {
-            return Option::Some(DeriveKind::Hash);
+            return Option.Some(DeriveKind.Hash);
         }
-        Option::None
+        Option.None
     }
 }
 
@@ -94,20 +94,20 @@ pub struct DeriveRequest {
     /// The derive kind.
     pub kind: DeriveKind,
     /// The DefId of the target struct/enum.
-    pub target_def: hir_def::DefId,
+    pub target_def: hir_def.DefId,
     /// The name of the target type.
-    pub target_name: common::SpannedSymbol,
+    pub target_name: common.SpannedSymbol,
     /// The span of the derive attribute.
-    pub span: common::Span,
+    pub span: common.Span,
 }
 
 impl DeriveRequest {
     /// Creates a new derive request.
     pub fn new(
         kind: DeriveKind,
-        target_def: hir_def::DefId,
-        target_name: common::SpannedSymbol,
-        span: common::Span,
+        target_def: hir_def.DefId,
+        target_name: common.SpannedSymbol,
+        span: common.Span,
     ) -> DeriveRequest {
         DeriveRequest {
             kind: kind,
@@ -127,7 +127,7 @@ pub struct DeriveExpander {
     /// Queued derive requests.
     pub requests: Vec<DeriveRequest>,
     /// Generated items from expansion.
-    pub generated_items: Vec<hir_item::Item>,
+    pub generated_items: Vec<hir_item.Item>,
     /// Errors encountered during expansion.
     pub errors: Vec<DeriveError>,
 }
@@ -139,16 +139,16 @@ pub struct DeriveError {
     /// Human-readable error message.
     pub message: String,
     /// The span of the derive attribute.
-    pub span: common::Span,
+    pub span: common.Span,
 }
 
 impl DeriveExpander {
     /// Creates a new derive expander.
     pub fn new() -> DeriveExpander {
         DeriveExpander {
-            requests: Vec::new(),
-            generated_items: Vec::new(),
-            errors: Vec::new(),
+            requests: Vec.new(),
+            generated_items: Vec.new(),
+            errors: Vec.new(),
         }
     }
 
@@ -173,23 +173,23 @@ impl DeriveExpander {
     fn expand_request(self: &mut DeriveExpander, index: usize) {
         let req = &self.requests[index];
         match &req.kind {
-            &DeriveKind::Clone => {
+            &DeriveKind.Clone => {
                 self.expand_clone(index);
             }
-            &DeriveKind::Debug => {
+            &DeriveKind.Debug => {
                 self.expand_debug(index);
             }
-            &DeriveKind::PartialEq => {
+            &DeriveKind.PartialEq => {
                 self.expand_partial_eq(index);
             }
-            &DeriveKind::Eq => {
+            &DeriveKind.Eq => {
                 // Eq is a marker trait — no methods to generate
                 // Just record that it was derived (for trait bound checking)
             }
-            &DeriveKind::Default => {
+            &DeriveKind.Default => {
                 self.expand_default(index);
             }
-            &DeriveKind::Hash => {
+            &DeriveKind.Hash => {
                 self.expand_hash(index);
             }
         }
@@ -211,13 +211,13 @@ impl DeriveExpander {
         let target_def = req.target_def;
 
         // Generate method: fn clone(&self) -> Self
-        let ret_ty = hir_ty::Type::new(hir_ty::TypeKind::Adt {
+        let ret_ty = hir_ty.Type.new(hir_ty.TypeKind.Adt {
             def_id: target_def,
-            args: Vec::new(),
+            args: Vec.new(),
         });
 
-        let self_ty = hir_ty::Type::new(hir_ty::TypeKind::Ref {
-            inner: Box::new(hir_ty::copy_type(&ret_ty)),
+        let self_ty = hir_ty.Type.new(hir_ty.TypeKind.Ref {
+            inner: Box.new(hir_ty::copy_type(&ret_ty)),
             mutable: false,
         });
 
@@ -225,7 +225,7 @@ impl DeriveExpander {
             name: common::make_string("clone"),
             self_ty: self_ty,
             ret_ty: ret_ty,
-            params: Vec::new(),
+            params: Vec.new(),
             span: span,
         };
 
@@ -264,14 +264,14 @@ impl DeriveExpander {
     /// ```
     /// impl Default for MyStruct {
     ///     fn default() -> MyStruct {
-    ///         MyStruct { field1: Default::default(), ... }
+    ///         MyStruct { field1: Default.default(), ... }
     ///     }
     /// }
     /// ```
     fn expand_default(self: &mut DeriveExpander, index: usize) {
         let req = &self.requests[index];
         let _ = req;
-        // Zero-init each field or call Default::default()
+        // Zero-init each field or call Default.default()
     }
 
     /// Generates a Hash impl for the target type.
@@ -296,13 +296,13 @@ struct DerivedMethod {
     /// Method name.
     pub name: String,
     /// The self type (&Self or &mut Self).
-    pub self_ty: hir_ty::Type,
+    pub self_ty: hir_ty.Type,
     /// Return type.
-    pub ret_ty: hir_ty::Type,
+    pub ret_ty: hir_ty.Type,
     /// Additional parameters (beyond self).
     pub params: Vec<DerivedParam>,
     /// Source span.
-    pub span: common::Span,
+    pub span: common.Span,
 }
 
 /// A parameter in a derived method.
@@ -310,7 +310,7 @@ struct DerivedParam {
     /// Parameter name.
     pub name: String,
     /// Parameter type.
-    pub ty: hir_ty::Type,
+    pub ty: hir_ty.Type,
 }
 
 // ============================================================
@@ -322,11 +322,11 @@ struct DerivedParam {
 /// Looks for `#[derive(Trait1, Trait2, ...)]` attributes and converts
 /// each trait name to a DeriveRequest.
 pub fn extract_derive_requests(
-    attrs: &Vec<ast::Attribute>,
-    target_def: hir_def::DefId,
-    target_name: common::SpannedSymbol,
+    attrs: &Vec<ast.Attribute>,
+    target_def: hir_def.DefId,
+    target_name: common.SpannedSymbol,
 ) -> Vec<DeriveRequest> {
-    let mut requests: Vec<DeriveRequest> = Vec::new();
+    let mut requests: Vec<DeriveRequest> = Vec.new();
 
     for i in 0usize..attrs.len() {
         let attr = &attrs[i];
@@ -335,18 +335,18 @@ pub fn extract_derive_requests(
         if is_derive_attribute(attr) {
             // Extract trait names from the argument list
             match &attr.args {
-                &Option::Some(ref args) => {
+                &Option.Some(ref args) => {
                     match args {
-                        &ast::AttributeArgs::List(ref arg_list) => {
+                        &ast.AttributeArgs.List(ref arg_list) => {
                             for j in 0usize..arg_list.len() {
                                 match &arg_list[j] {
-                                    &ast::AttributeArg::Ident(ref name) => {
+                                    &ast.AttributeArg.Ident(ref name) => {
                                         // Look up the derive kind
                                         let name_str = symbol_to_string(name);
-                                        let kind_opt = DeriveKind::from_name(name_str.as_str());
+                                        let kind_opt = DeriveKind.from_name(name_str.as_str());
                                         match kind_opt {
-                                            Option::Some(kind) => {
-                                                let req = DeriveRequest::new(
+                                            Option.Some(kind) => {
+                                                let req = DeriveRequest.new(
                                                     kind,
                                                     target_def,
                                                     target_name,
@@ -354,21 +354,21 @@ pub fn extract_derive_requests(
                                                 );
                                                 requests.push(req);
                                             }
-                                            Option::None => {
+                                            Option.None => {
                                                 // Unknown derive trait — will be reported later
                                             }
                                         }
                                     }
-                                    &ast::AttributeArg::KeyValue { key: _, val: _ } => {}
-                                    &ast::AttributeArg::Lit(_) => {}
-                                    &ast::AttributeArg::Call { name: _, arg: _ } => {}
+                                    &ast.AttributeArg.KeyValue { key: _, val: _ } => {}
+                                    &ast.AttributeArg.Lit(_) => {}
+                                    &ast.AttributeArg.Call { name: _, arg: _ } => {}
                                 }
                             }
                         }
-                        &ast::AttributeArgs::Eq(_) => {}
+                        &ast.AttributeArgs.Eq(_) => {}
                     }
                 }
-                &Option::None => {}
+                &Option.None => {}
             }
         }
 
@@ -378,7 +378,7 @@ pub fn extract_derive_requests(
 }
 
 /// Checks if an attribute is #[derive(...)].
-fn is_derive_attribute(attr: &ast::Attribute) -> bool {
+fn is_derive_attribute(attr: &ast.Attribute) -> bool {
     if attr.path.len() != 1 {
         return false;
     }
@@ -398,10 +398,10 @@ fn is_derive_attribute(attr: &ast::Attribute) -> bool {
 
 /// Converts a SpannedSymbol to a String.
 /// This is a placeholder that uses the symbol index.
-fn symbol_to_string(sym: &common::SpannedSymbol) -> String {
+fn symbol_to_string(sym: &common.SpannedSymbol) -> String {
     // In practice, this would use the interner to look up the text.
     // For now, return a placeholder based on the symbol index.
-    let mut result = String::new();
+    let mut result = String.new();
     result.push_str("sym_");
     // Convert index to string manually
     let idx = sym.symbol.index;
@@ -409,7 +409,7 @@ fn symbol_to_string(sym: &common::SpannedSymbol) -> String {
         result.push_str("0");
     } else {
         // Simple number to string
-        let mut digits: Vec<u8> = Vec::new();
+        let mut digits: Vec<u8> = Vec.new();
         let mut n = idx;
         while n > 0 {
             let digit = (n % 10) as u8 + 48; // '0' = 48

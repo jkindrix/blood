@@ -19,31 +19,31 @@ mod type_intern;
 /// from that local to a nested location (fields, array elements, etc.).
 pub struct Place {
     /// The base local variable.
-    pub local: mir_def::MirLocalId,
+    pub local: mir_def.MirLocalId,
     /// Projections applied to the local to reach the final place.
     pub projection: Vec<PlaceElem>,
     /// If this place refers to a static variable, the DefId of that static.
-    pub static_def_id: Option<hir_def::DefId>,
+    pub static_def_id: Option<hir_def.DefId>,
 }
 
 impl Place {
     /// Creates a place referring directly to a local variable.
-    pub fn local(local: mir_def::MirLocalId) -> Place {
-        Place { local, projection: Vec::new(), static_def_id: Option::None }
+    pub fn local(local: mir_def.MirLocalId) -> Place {
+        Place { local, projection: Vec.new(), static_def_id: Option.None }
     }
 
     /// Creates a place referring to a static variable.
-    pub fn static_place(def_id: hir_def::DefId) -> Place {
+    pub fn static_place(def_id: hir_def.DefId) -> Place {
         Place {
-            local: mir_def::MirLocalId::return_place(),  // Dummy local, not used for statics
-            projection: Vec::new(),
-            static_def_id: Option::Some(def_id),
+            local: mir_def.MirLocalId.return_place(),  // Dummy local, not used for statics
+            projection: Vec.new(),
+            static_def_id: Option.Some(def_id),
         }
     }
 
     /// Creates the return place (_0).
     pub fn return_place() -> Place {
-        Place::local(mir_def::MirLocalId::return_place())
+        Place.local(mir_def.MirLocalId.return_place())
     }
 
     /// Adds a projection element to this place.
@@ -66,13 +66,13 @@ impl Place {
     /// Returns true if this place refers to a static variable.
     pub fn is_static(self: &Place) -> bool {
         match &self.static_def_id {
-            Option::Some(_) => true,
-            Option::None => false,
+            Option.Some(_) => true,
+            Option.None => false,
         }
     }
 
     /// Returns the DefId of the static variable, if this is a static place.
-    pub fn get_static_def_id(self: &Place) -> Option<hir_def::DefId> {
+    pub fn get_static_def_id(self: &Place) -> Option<hir_def.DefId> {
         self.static_def_id
     }
 }
@@ -91,7 +91,7 @@ pub enum PlaceElem {
     /// The u32 is the field index.
     Field(u32),
     /// Array/slice indexing with a dynamic index: `place[local]`
-    Index(mir_def::MirLocalId),
+    Index(mir_def.MirLocalId),
     /// Array/slice indexing with a constant index.
     ConstantIndex {
         /// The offset from the start (or end if from_end is true).
@@ -134,18 +134,18 @@ pub enum Operand {
 
 impl Operand {
     /// Creates a copy operand from a local.
-    pub fn copy_local(local: mir_def::MirLocalId) -> Operand {
-        Operand::Copy(Place::local(local))
+    pub fn copy_local(local: mir_def.MirLocalId) -> Operand {
+        Operand.Copy(Place.local(local))
     }
 
     /// Creates a move operand from a local.
-    pub fn move_local(local: mir_def::MirLocalId) -> Operand {
-        Operand::Move(Place::local(local))
+    pub fn move_local(local: mir_def.MirLocalId) -> Operand {
+        Operand.Move(Place.local(local))
     }
 
     /// Creates a constant operand.
     pub fn constant(c: Constant) -> Operand {
-        Operand::Constant(c)
+        Operand.Constant(c)
     }
 }
 
@@ -184,7 +184,7 @@ pub enum Rvalue {
     /// Type cast.
     Cast {
         operand: Operand,
-        target_ty: type_intern::TyId,
+        target_ty: type_intern.TyId,
     },
     /// Aggregate construction (tuple, struct, array, enum variant).
     Aggregate {
@@ -201,7 +201,7 @@ pub enum Rvalue {
         array_len: u64,
     },
     /// Zero-initialize a value of the given type.
-    ZeroInit(type_intern::TyId),
+    ZeroInit(type_intern.TyId),
 }
 
 // ============================================================
@@ -257,100 +257,100 @@ impl MirBinOp {
     /// Returns true if this is a comparison operator.
     pub fn is_comparison(self: &MirBinOp) -> bool {
         match self {
-            MirBinOp::Eq => true,
-            MirBinOp::Ne => true,
-            MirBinOp::Lt => true,
-            MirBinOp::Le => true,
-            MirBinOp::Gt => true,
-            MirBinOp::Ge => true,
-            MirBinOp::Add => false,
-            MirBinOp::Sub => false,
-            MirBinOp::Mul => false,
-            MirBinOp::Div => false,
-            MirBinOp::Rem => false,
-            MirBinOp::BitAnd => false,
-            MirBinOp::BitOr => false,
-            MirBinOp::BitXor => false,
-            MirBinOp::Shl => false,
-            MirBinOp::Shr => false,
-            MirBinOp::AddChecked => false,
-            MirBinOp::SubChecked => false,
-            MirBinOp::MulChecked => false,
+            MirBinOp.Eq => true,
+            MirBinOp.Ne => true,
+            MirBinOp.Lt => true,
+            MirBinOp.Le => true,
+            MirBinOp.Gt => true,
+            MirBinOp.Ge => true,
+            MirBinOp.Add => false,
+            MirBinOp.Sub => false,
+            MirBinOp.Mul => false,
+            MirBinOp.Div => false,
+            MirBinOp.Rem => false,
+            MirBinOp.BitAnd => false,
+            MirBinOp.BitOr => false,
+            MirBinOp.BitXor => false,
+            MirBinOp.Shl => false,
+            MirBinOp.Shr => false,
+            MirBinOp.AddChecked => false,
+            MirBinOp.SubChecked => false,
+            MirBinOp.MulChecked => false,
         }
     }
 
     /// Returns true if this is an arithmetic operator.
     pub fn is_arithmetic(self: &MirBinOp) -> bool {
         match self {
-            MirBinOp::Add => true,
-            MirBinOp::Sub => true,
-            MirBinOp::Mul => true,
-            MirBinOp::Div => true,
-            MirBinOp::Rem => true,
-            MirBinOp::AddChecked => true,
-            MirBinOp::SubChecked => true,
-            MirBinOp::MulChecked => true,
-            MirBinOp::Eq => false,
-            MirBinOp::Ne => false,
-            MirBinOp::Lt => false,
-            MirBinOp::Le => false,
-            MirBinOp::Gt => false,
-            MirBinOp::Ge => false,
-            MirBinOp::BitAnd => false,
-            MirBinOp::BitOr => false,
-            MirBinOp::BitXor => false,
-            MirBinOp::Shl => false,
-            MirBinOp::Shr => false,
+            MirBinOp.Add => true,
+            MirBinOp.Sub => true,
+            MirBinOp.Mul => true,
+            MirBinOp.Div => true,
+            MirBinOp.Rem => true,
+            MirBinOp.AddChecked => true,
+            MirBinOp.SubChecked => true,
+            MirBinOp.MulChecked => true,
+            MirBinOp.Eq => false,
+            MirBinOp.Ne => false,
+            MirBinOp.Lt => false,
+            MirBinOp.Le => false,
+            MirBinOp.Gt => false,
+            MirBinOp.Ge => false,
+            MirBinOp.BitAnd => false,
+            MirBinOp.BitOr => false,
+            MirBinOp.BitXor => false,
+            MirBinOp.Shl => false,
+            MirBinOp.Shr => false,
         }
     }
 
     /// Returns true if this is a bitwise operator.
     pub fn is_bitwise(self: &MirBinOp) -> bool {
         match self {
-            MirBinOp::BitAnd => true,
-            MirBinOp::BitOr => true,
-            MirBinOp::BitXor => true,
-            MirBinOp::Shl => true,
-            MirBinOp::Shr => true,
-            MirBinOp::Add => false,
-            MirBinOp::Sub => false,
-            MirBinOp::Mul => false,
-            MirBinOp::Div => false,
-            MirBinOp::Rem => false,
-            MirBinOp::Eq => false,
-            MirBinOp::Ne => false,
-            MirBinOp::Lt => false,
-            MirBinOp::Le => false,
-            MirBinOp::Gt => false,
-            MirBinOp::Ge => false,
-            MirBinOp::AddChecked => false,
-            MirBinOp::SubChecked => false,
-            MirBinOp::MulChecked => false,
+            MirBinOp.BitAnd => true,
+            MirBinOp.BitOr => true,
+            MirBinOp.BitXor => true,
+            MirBinOp.Shl => true,
+            MirBinOp.Shr => true,
+            MirBinOp.Add => false,
+            MirBinOp.Sub => false,
+            MirBinOp.Mul => false,
+            MirBinOp.Div => false,
+            MirBinOp.Rem => false,
+            MirBinOp.Eq => false,
+            MirBinOp.Ne => false,
+            MirBinOp.Lt => false,
+            MirBinOp.Le => false,
+            MirBinOp.Gt => false,
+            MirBinOp.Ge => false,
+            MirBinOp.AddChecked => false,
+            MirBinOp.SubChecked => false,
+            MirBinOp.MulChecked => false,
         }
     }
 
     /// Returns true if this is a checked arithmetic operator.
     pub fn is_checked(self: &MirBinOp) -> bool {
         match self {
-            MirBinOp::AddChecked => true,
-            MirBinOp::SubChecked => true,
-            MirBinOp::MulChecked => true,
-            MirBinOp::Add => false,
-            MirBinOp::Sub => false,
-            MirBinOp::Mul => false,
-            MirBinOp::Div => false,
-            MirBinOp::Rem => false,
-            MirBinOp::Eq => false,
-            MirBinOp::Ne => false,
-            MirBinOp::Lt => false,
-            MirBinOp::Le => false,
-            MirBinOp::Gt => false,
-            MirBinOp::Ge => false,
-            MirBinOp::BitAnd => false,
-            MirBinOp::BitOr => false,
-            MirBinOp::BitXor => false,
-            MirBinOp::Shl => false,
-            MirBinOp::Shr => false,
+            MirBinOp.AddChecked => true,
+            MirBinOp.SubChecked => true,
+            MirBinOp.MulChecked => true,
+            MirBinOp.Add => false,
+            MirBinOp.Sub => false,
+            MirBinOp.Mul => false,
+            MirBinOp.Div => false,
+            MirBinOp.Rem => false,
+            MirBinOp.Eq => false,
+            MirBinOp.Ne => false,
+            MirBinOp.Lt => false,
+            MirBinOp.Le => false,
+            MirBinOp.Gt => false,
+            MirBinOp.Ge => false,
+            MirBinOp.BitAnd => false,
+            MirBinOp.BitOr => false,
+            MirBinOp.BitXor => false,
+            MirBinOp.Shl => false,
+            MirBinOp.Shr => false,
         }
     }
 }
@@ -376,27 +376,27 @@ pub enum AggregateKind {
     /// A tuple.
     Tuple,
     /// An array of the given element type.
-    Array(type_intern::TyId),
+    Array(type_intern.TyId),
     /// An ADT (struct or enum variant).
     Adt {
         /// The DefId of the struct or enum.
-        def_id: hir_def::DefId,
+        def_id: hir_def.DefId,
         /// The variant index (0 for structs, variant index for enums).
         variant_idx: u32,
         /// Type arguments for generics.
-        type_args: Vec<type_intern::TyId>,
+        type_args: Vec<type_intern.TyId>,
     },
     /// An extensible record.
     Record,
     /// A closure.
     Closure {
         /// The DefId of the closure.
-        def_id: hir_def::DefId,
+        def_id: hir_def.DefId,
     },
     /// A range value.
     Range {
         /// The element type of the range.
-        element: type_intern::TyId,
+        element: type_intern.TyId,
         /// Whether this is an inclusive range.
         inclusive: bool,
     },
@@ -409,66 +409,66 @@ pub enum AggregateKind {
 /// A compile-time constant value.
 pub struct Constant {
     /// The type of this constant (interned).
-    pub ty: type_intern::TyId,
+    pub ty: type_intern.TyId,
     /// The kind of constant.
     pub kind: ConstantKind,
 }
 
 impl Constant {
     /// Creates a new constant.
-    pub fn new(ty: type_intern::TyId, kind: ConstantKind) -> Constant {
+    pub fn new(ty: type_intern.TyId, kind: ConstantKind) -> Constant {
         Constant { ty, kind }
     }
 
     /// Creates a boolean constant.
     pub fn bool_val(b: bool) -> Constant {
         Constant {
-            ty: type_intern::CommonTypes::bool_ty(),
-            kind: ConstantKind::Bool(b),
+            ty: type_intern.CommonTypes.bool_ty(),
+            kind: ConstantKind.Bool(b),
         }
     }
 
     /// Creates an i32 constant.
     pub fn i32_val(v: i64) -> Constant {
         Constant {
-            ty: type_intern::CommonTypes::i32_ty(),
-            kind: ConstantKind::Int(v as i128),
+            ty: type_intern.CommonTypes.i32_ty(),
+            kind: ConstantKind.Int(v as i128),
         }
     }
 
     /// Creates a u64 constant.
     pub fn u64_val(v: u64) -> Constant {
         Constant {
-            ty: type_intern::CommonTypes::u64_ty(),
-            kind: ConstantKind::Uint(v as u128),
+            ty: type_intern.CommonTypes.u64_ty(),
+            kind: ConstantKind.Uint(v as u128),
         }
     }
 
     /// Creates a usize constant.
     pub fn usize_val(v: u64) -> Constant {
         Constant {
-            ty: type_intern::CommonTypes::usize_ty(),
-            kind: ConstantKind::Uint(v as u128),
+            ty: type_intern.CommonTypes.usize_ty(),
+            kind: ConstantKind.Uint(v as u128),
         }
     }
 
     /// Creates a unit constant.
     pub fn unit() -> Constant {
         Constant {
-            ty: type_intern::CommonTypes::unit(),
-            kind: ConstantKind::Unit,
+            ty: type_intern.CommonTypes.unit(),
+            kind: ConstantKind.Unit,
         }
     }
 
     /// Creates a string constant.
     pub fn string(s: String) -> Constant {
-        let str_ref_ty = type_intern::type_to_ty_id(&hir_ty::Type::new(hir_ty::TypeKind::Ref {
-            inner: Box::new(hir_ty::Type::str_ty()),
+        let str_ref_ty = type_intern::type_to_ty_id(&hir_ty.Type.new(hir_ty.TypeKind.Ref {
+            inner: Box.new(hir_ty.Type.str_ty()),
             mutable: false,
         }));
         Constant {
             ty: str_ref_ty,
-            kind: ConstantKind::String(s),
+            kind: ConstantKind.String(s),
         }
     }
 }
@@ -496,11 +496,11 @@ pub enum ConstantKind {
     /// The unit value ().
     Unit,
     /// A reference to a function definition.
-    FnDef(hir_def::DefId),
+    FnDef(hir_def.DefId),
     /// A reference to a const definition.
-    ConstDef(hir_def::DefId),
+    ConstDef(hir_def.DefId),
     /// A reference to a static definition.
-    StaticDef(hir_def::DefId),
+    StaticDef(hir_def.DefId),
     /// A zero-sized type marker.
     ZeroSized,
 }
@@ -517,29 +517,29 @@ pub struct SwitchTargets {
     /// Mapping from values to target blocks.
     pub targets: Vec<SwitchTarget>,
     /// The default target if no value matches.
-    pub otherwise: mir_def::BasicBlockId,
+    pub otherwise: mir_def.BasicBlockId,
 }
 
 impl SwitchTargets {
     /// Creates new switch targets.
-    pub fn new(targets: Vec<SwitchTarget>, otherwise: mir_def::BasicBlockId) -> SwitchTargets {
+    pub fn new(targets: Vec<SwitchTarget>, otherwise: mir_def.BasicBlockId) -> SwitchTargets {
         SwitchTargets { targets, otherwise }
     }
 
     /// Creates switch targets for a boolean condition.
     pub fn bool_switch(
-        false_block: mir_def::BasicBlockId,
-        true_block: mir_def::BasicBlockId,
+        false_block: mir_def.BasicBlockId,
+        true_block: mir_def.BasicBlockId,
     ) -> SwitchTargets {
-        let mut targets = Vec::new();
+        let mut targets = Vec.new();
         targets.push(SwitchTarget { value: 0, target: false_block });
         targets.push(SwitchTarget { value: 1, target: true_block });
         SwitchTargets { targets, otherwise: false_block }
     }
 
     /// Returns all target blocks (including otherwise).
-    pub fn all_targets(self: &SwitchTargets) -> Vec<mir_def::BasicBlockId> {
-        let mut result = Vec::new();
+    pub fn all_targets(self: &SwitchTargets) -> Vec<mir_def.BasicBlockId> {
+        let mut result = Vec.new();
         for i in 0usize..self.targets.len() {
             result.push(self.targets[i].target);
         }
@@ -553,12 +553,12 @@ pub struct SwitchTarget {
     /// The discriminant value.
     pub value: u128,
     /// The target block.
-    pub target: mir_def::BasicBlockId,
+    pub target: mir_def.BasicBlockId,
 }
 
 impl SwitchTarget {
     /// Creates a new switch target.
-    pub fn new(value: u128, target: mir_def::BasicBlockId) -> SwitchTarget {
+    pub fn new(value: u128, target: mir_def.BasicBlockId) -> SwitchTarget {
         SwitchTarget { value, target }
     }
 }

@@ -29,22 +29,22 @@ pub enum ResolveErrorCode {
 
 /// A name resolution error.
 pub struct ResolveError {
-    pub name_sym: common::Symbol,
-    pub span: common::Span,
+    pub name_sym: common.Symbol,
+    pub span: common.Span,
     pub code: ResolveErrorCode,
 }
 
 impl ResolveError {
-    pub fn new(name_sym: common::Symbol, span: common::Span, code: ResolveErrorCode) -> ResolveError {
+    pub fn new(name_sym: common.Symbol, span: common.Span, code: ResolveErrorCode) -> ResolveError {
         ResolveError { name_sym, span, code }
     }
 
-    pub fn not_found(name_sym: common::Symbol, span: common::Span) -> ResolveError {
-        ResolveError::new(name_sym, span, ResolveErrorCode::NotFound)
+    pub fn not_found(name_sym: common.Symbol, span: common.Span) -> ResolveError {
+        ResolveError.new(name_sym, span, ResolveErrorCode.NotFound)
     }
 
-    pub fn duplicate(name_sym: common::Symbol, span: common::Span) -> ResolveError {
-        ResolveError::new(name_sym, span, ResolveErrorCode::DuplicateDefinition)
+    pub fn duplicate(name_sym: common.Symbol, span: common.Span) -> ResolveError {
+        ResolveError.new(name_sym, span, ResolveErrorCode.DuplicateDefinition)
     }
 }
 
@@ -72,103 +72,103 @@ pub struct Binding {
     /// The kind of binding.
     pub kind: BindingKind,
     /// For Local: the local variable ID. For others: dummy.
-    pub local_id: hir_def::LocalId,
+    pub local_id: hir_def.LocalId,
     /// For Def/Module: the definition ID. For others: dummy.
-    pub def_id: hir_def::DefId,
+    pub def_id: hir_def.DefId,
     /// For TypeParam: the type variable ID. For others: dummy.
-    pub ty_var_id: hir_def::TyVarId,
+    pub ty_var_id: hir_def.TyVarId,
     /// For Local: whether the variable is mutable.
     pub mutable: bool,
     /// For Local: the declaration span.
-    pub span: common::Span,
+    pub span: common.Span,
 }
 
 impl Binding {
     /// Creates a local variable binding.
-    pub fn local(local_id: hir_def::LocalId, mutable: bool, span: common::Span) -> Binding {
+    pub fn local(local_id: hir_def.LocalId, mutable: bool, span: common.Span) -> Binding {
         Binding {
-            kind: BindingKind::Local,
+            kind: BindingKind.Local,
             local_id: local_id,
-            def_id: hir_def::DefId::dummy(),
-            ty_var_id: hir_def::TyVarId::dummy(),
+            def_id: hir_def.DefId.dummy(),
+            ty_var_id: hir_def.TyVarId.dummy(),
             mutable: mutable,
             span: span,
         }
     }
 
     /// Creates a definition binding.
-    pub fn def(def_id: hir_def::DefId) -> Binding {
+    pub fn def(def_id: hir_def.DefId) -> Binding {
         Binding {
-            kind: BindingKind::Def,
-            local_id: hir_def::LocalId::dummy(),
+            kind: BindingKind.Def,
+            local_id: hir_def.LocalId.dummy(),
             def_id: def_id,
-            ty_var_id: hir_def::TyVarId::dummy(),
+            ty_var_id: hir_def.TyVarId.dummy(),
             mutable: false,
-            span: common::Span::dummy(),
+            span: common.Span.dummy(),
         }
     }
 
     /// Creates a module binding.
-    pub fn mod_binding(def_id: hir_def::DefId) -> Binding {
+    pub fn mod_binding(def_id: hir_def.DefId) -> Binding {
         Binding {
-            kind: BindingKind::Module,
-            local_id: hir_def::LocalId::dummy(),
+            kind: BindingKind.Module,
+            local_id: hir_def.LocalId.dummy(),
             def_id: def_id,
-            ty_var_id: hir_def::TyVarId::dummy(),
+            ty_var_id: hir_def.TyVarId.dummy(),
             mutable: false,
-            span: common::Span::dummy(),
+            span: common.Span.dummy(),
         }
     }
 
     /// Creates a type parameter binding.
-    pub fn type_param(ty_var_id: hir_def::TyVarId) -> Binding {
+    pub fn type_param(ty_var_id: hir_def.TyVarId) -> Binding {
         Binding {
-            kind: BindingKind::TypeParam,
-            local_id: hir_def::LocalId::dummy(),
-            def_id: hir_def::DefId::dummy(),
+            kind: BindingKind.TypeParam,
+            local_id: hir_def.LocalId.dummy(),
+            def_id: hir_def.DefId.dummy(),
             ty_var_id: ty_var_id,
             mutable: false,
-            span: common::Span::dummy(),
+            span: common.Span.dummy(),
         }
     }
 
     /// Returns true if this is a Local binding.
     pub fn is_local(self: &Self) -> bool {
         match self.kind {
-            BindingKind::Local => true,
-            BindingKind::Def => false,
-            BindingKind::Module => false,
-            BindingKind::TypeParam => false,
+            BindingKind.Local => true,
+            BindingKind.Def => false,
+            BindingKind.Module => false,
+            BindingKind.TypeParam => false,
         }
     }
 
     /// Returns true if this is a Def binding.
     pub fn is_def(self: &Self) -> bool {
         match self.kind {
-            BindingKind::Local => false,
-            BindingKind::Def => true,
-            BindingKind::Module => false,
-            BindingKind::TypeParam => false,
+            BindingKind.Local => false,
+            BindingKind.Def => true,
+            BindingKind.Module => false,
+            BindingKind.TypeParam => false,
         }
     }
 
     /// Returns true if this is a Module binding.
     pub fn is_module(self: &Self) -> bool {
         match self.kind {
-            BindingKind::Local => false,
-            BindingKind::Def => false,
-            BindingKind::Module => true,
-            BindingKind::TypeParam => false,
+            BindingKind.Local => false,
+            BindingKind.Def => false,
+            BindingKind.Module => true,
+            BindingKind.TypeParam => false,
         }
     }
 
     /// Returns true if this is a TypeParam binding.
     pub fn is_type_param(self: &Self) -> bool {
         match self.kind {
-            BindingKind::Local => false,
-            BindingKind::Def => false,
-            BindingKind::Module => false,
-            BindingKind::TypeParam => true,
+            BindingKind.Local => false,
+            BindingKind.Def => false,
+            BindingKind.Module => false,
+            BindingKind.TypeParam => true,
         }
     }
 }
@@ -193,12 +193,12 @@ pub enum ScopeKind {
 
 /// A binding entry storing name and binding.
 pub struct BindingEntry {
-    pub name: common::Symbol,
+    pub name: common.Symbol,
     pub binding: Binding,
 }
 
 impl BindingEntry {
-    pub fn new(name: common::Symbol, binding: Binding) -> BindingEntry {
+    pub fn new(name: common.Symbol, binding: Binding) -> BindingEntry {
         BindingEntry { name, binding }
     }
 }
@@ -208,7 +208,7 @@ pub struct Scope {
     pub kind: ScopeKind,
     pub bindings: Vec<BindingEntry>,
     pub parent: Option<usize>,
-    pub label: Option<common::Symbol>,
+    pub label: Option<common.Symbol>,
 }
 
 // ============================================================
@@ -217,12 +217,12 @@ pub struct Scope {
 
 /// An entry in the global namespace.
 pub struct GlobalEntry {
-    pub name: common::Symbol,
-    pub def_id: hir_def::DefId,
+    pub name: common.Symbol,
+    pub def_id: hir_def.DefId,
 }
 
 impl GlobalEntry {
-    pub fn new(name: common::Symbol, def_id: hir_def::DefId) -> GlobalEntry {
+    pub fn new(name: common.Symbol, def_id: hir_def.DefId) -> GlobalEntry {
         GlobalEntry { name, def_id }
     }
 }
@@ -244,12 +244,12 @@ pub struct LookupResult {
 
 /// Entry storing DefId and its info for lookup.
 pub struct DefInfoEntry {
-    pub def_id: hir_def::DefId,
-    pub info: hir_def::DefInfo,
+    pub def_id: hir_def.DefId,
+    pub info: hir_def.DefInfo,
 }
 
 impl DefInfoEntry {
-    pub fn new(def_id: hir_def::DefId, info: hir_def::DefInfo) -> DefInfoEntry {
+    pub fn new(def_id: hir_def.DefId, info: hir_def.DefInfo) -> DefInfoEntry {
         DefInfoEntry { def_id, info }
     }
 }
@@ -278,32 +278,32 @@ pub struct Resolver {
     /// Counter for allocating LocalIds (reset per function).
     pub next_local_id: u32,
     /// Hash index for O(1) global name lookup: name.index → vec index
-    pub globals_hash: hashmap::HashMapU64U32,
+    pub globals_hash: hashmap.HashMapU64U32,
     /// Hash index for O(1) def_info lookup: def_id.index → vec index
-    pub def_info_hash: hashmap::HashMapU64U32,
+    pub def_info_hash: hashmap.HashMapU64U32,
     /// Hash index for O(1) child lookup: (parent_def.index, name.index) combined → def_id.index
-    pub child_def_hash: hashmap::HashMapU64U64,
+    pub child_def_hash: hashmap.HashMapU64U64,
 }
 
 impl Resolver {
     /// Creates a new resolver.
     pub fn new() -> Resolver {
         let mut resolver = Resolver {
-            scopes: Vec::new(),
-            scope_stack: Vec::new(),
-            globals: Vec::new(),
-            def_info: Vec::new(),
-            errors: Vec::new(),
+            scopes: Vec.new(),
+            scope_stack: Vec.new(),
+            globals: Vec.new(),
+            def_info: Vec.new(),
+            errors: Vec.new(),
             next_def_id: 0,
             next_local_id: 0,
-            globals_hash: hashmap::HashMapU64U32::new(),
-            def_info_hash: hashmap::HashMapU64U32::new(),
-            child_def_hash: hashmap::HashMapU64U64::new(),
+            globals_hash: hashmap.HashMapU64U32.new(),
+            def_info_hash: hashmap.HashMapU64U32.new(),
+            child_def_hash: hashmap.HashMapU64U64.new(),
         };
         // Create the root module scope
         let root_scope = Scope {
-            kind: ScopeKind::Module,
-            bindings: Vec::new(),
+            kind: ScopeKind.Module,
+            bindings: Vec.new(),
             parent: None,
             label: None,
         };
@@ -313,15 +313,15 @@ impl Resolver {
     }
 
     /// Allocates a fresh DefId.
-    pub fn alloc_def_id(self: &mut Self) -> hir_def::DefId {
-        let id = hir_def::DefId::new(self.next_def_id);
+    pub fn alloc_def_id(self: &mut Self) -> hir_def.DefId {
+        let id = hir_def.DefId.new(self.next_def_id);
         self.next_def_id = self.next_def_id + 1;
         id
     }
 
     /// Allocates a fresh LocalId.
-    pub fn alloc_local_id(self: &mut Self) -> hir_def::LocalId {
-        let id = hir_def::LocalId::new(self.next_local_id);
+    pub fn alloc_local_id(self: &mut Self) -> hir_def.LocalId {
+        let id = hir_def.LocalId.new(self.next_local_id);
         self.next_local_id = self.next_local_id + 1;
         id
     }
@@ -346,7 +346,7 @@ impl Resolver {
         let parent = self.current_scope();
         let scope = Scope {
             kind: kind,
-            bindings: Vec::new(),
+            bindings: Vec.new(),
             parent: Some(parent),
             label: None,
         };
@@ -356,11 +356,11 @@ impl Resolver {
     }
 
     /// Pushes a labeled scope (for loops).
-    pub fn push_labeled_scope(self: &mut Self, kind: ScopeKind, label: common::Symbol) {
+    pub fn push_labeled_scope(self: &mut Self, kind: ScopeKind, label: common.Symbol) {
         let parent = self.current_scope();
         let scope = Scope {
             kind: kind,
-            bindings: Vec::new(),
+            bindings: Vec.new(),
             parent: Some(parent),
             label: Some(label),
         };
@@ -379,7 +379,7 @@ impl Resolver {
     }
 
     /// Defines a binding in the current scope.
-    pub fn define(self: &mut Self, name: common::Symbol, binding: Binding) -> bool {
+    pub fn define(self: &mut Self, name: common.Symbol, binding: Binding) -> bool {
         let scope_idx = self.current_scope();
 
         // Check for duplicates in current scope
@@ -391,7 +391,7 @@ impl Resolver {
         }
 
         // Add binding
-        let entry = BindingEntry::new(name, binding);
+        let entry = BindingEntry.new(name, binding);
         self.scopes[scope_idx].bindings.push(entry);
         true
     }
@@ -402,21 +402,21 @@ impl Resolver {
     /// definition of a name is found first (matching blood-rust behavior).
     pub fn define_local(
         self: &mut Self,
-        name: common::Symbol,
-        local_id: hir_def::LocalId,
+        name: common.Symbol,
+        local_id: hir_def.LocalId,
         mutable: bool,
-        span: common::Span,
+        span: common.Span,
     ) -> bool {
-        let binding = Binding::local(local_id, mutable, span);
+        let binding = Binding.local(local_id, mutable, span);
         let scope_idx = self.current_scope();
-        let entry = BindingEntry::new(name, binding);
+        let entry = BindingEntry.new(name, binding);
         self.scopes[scope_idx].bindings.push(entry);
         true
     }
 
     /// Marks an existing local variable as mutable.
     /// Used by for-loop desugaring to make the loop variable mutable.
-    pub fn mark_local_mutable(self: &mut Self, local_id: hir_def::LocalId) {
+    pub fn mark_local_mutable(self: &mut Self, local_id: hir_def.LocalId) {
         let mut si: usize = self.scopes.len();
         while si > 0 {
             si -= 1;
@@ -432,24 +432,24 @@ impl Resolver {
     /// Defines a global item (function, struct, enum, etc.).
     pub fn define_global(
         self: &mut Self,
-        name: common::Symbol,
-        def_id: hir_def::DefId,
+        name: common.Symbol,
+        def_id: hir_def.DefId,
     ) -> bool {
         // O(1) check for duplicates in globals using hash
         match self.globals_hash.get(name.index as u64) {
-            Option::Some(_) => { return false; } // Duplicate
-            Option::None => {}
+            Option.Some(_) => { return false; } // Duplicate
+            Option.None => {}
         }
 
         // Add to globals and hash
         let vec_idx = self.globals.len() as u32;
-        let entry = GlobalEntry::new(name, def_id);
+        let entry = GlobalEntry.new(name, def_id);
         self.globals.push(entry);
         self.globals_hash.insert(name.index as u64, vec_idx);
 
         // Also add to root module scope
-        let binding = Binding::def(def_id);
-        let binding_entry = BindingEntry::new(name, binding);
+        let binding = Binding.def(def_id);
+        let binding_entry = BindingEntry.new(name, binding);
         self.scopes[0].bindings.push(binding_entry);
 
         true
@@ -462,8 +462,8 @@ impl Resolver {
     /// inside function bodies).
     pub fn define_local_item(
         self: &mut Self,
-        name: common::Symbol,
-        def_id: hir_def::DefId,
+        name: common.Symbol,
+        def_id: hir_def.DefId,
     ) -> bool {
         // Check for duplicates in current scope
         let current_scope_idx = self.current_scope();
@@ -475,8 +475,8 @@ impl Resolver {
         }
 
         // Add to current scope
-        let binding = Binding::def(def_id);
-        let binding_entry = BindingEntry::new(name, binding);
+        let binding = Binding.def(def_id);
+        let binding_entry = BindingEntry.new(name, binding);
         self.scopes[current_scope_idx].bindings.push(binding_entry);
 
         true
@@ -488,10 +488,10 @@ impl Resolver {
     /// Type parameters can be looked up via lookup_type_param during type resolution.
     pub fn define_type_param(
         self: &mut Self,
-        name: common::Symbol,
-        ty_var_id: hir_def::TyVarId,
+        name: common.Symbol,
+        ty_var_id: hir_def.TyVarId,
     ) -> bool {
-        let binding = Binding::type_param(ty_var_id);
+        let binding = Binding.type_param(ty_var_id);
         self.define(name, binding)
     }
 
@@ -500,7 +500,7 @@ impl Resolver {
     /// Returns Some(TyVarId) if found, None otherwise.
     /// This is used during type path resolution to check if a name refers
     /// to a type parameter before checking for type definitions.
-    pub fn lookup_type_param(self: &Self, name: common::Symbol) -> Option<hir_def::TyVarId> {
+    pub fn lookup_type_param(self: &Self, name: common.Symbol) -> Option<hir_def.TyVarId> {
         // Search through scope stack from innermost to outermost
         let stack_len = self.scope_stack.len();
         let mut stack_idx = stack_len;
@@ -515,49 +515,49 @@ impl Resolver {
                 let entry = &scope.bindings[i];
                 if entry.name.index == name.index {
                     if entry.binding.is_type_param() {
-                        return Option::Some(entry.binding.ty_var_id);
+                        return Option.Some(entry.binding.ty_var_id);
                     }
                 }
             }
         }
 
-        Option::None
+        Option.None
     }
 
     /// Registers definition info.
     pub fn register_def_info(
         self: &mut Self,
-        def_id: hir_def::DefId,
-        kind: hir_def::DefKind,
-        name: common::Symbol,
-        span: common::Span,
-        parent: Option<hir_def::DefId>,
+        def_id: hir_def.DefId,
+        kind: hir_def.DefKind,
+        name: common.Symbol,
+        span: common.Span,
+        parent: Option<hir_def.DefId>,
     ) {
         let vec_idx = self.def_info.len() as u32;
-        let info = hir_def::DefInfo::new(kind, name, span, parent);
-        let entry = DefInfoEntry::new(def_id, info);
+        let info = hir_def.DefInfo.new(kind, name, span, parent);
+        let entry = DefInfoEntry.new(def_id, info);
         self.def_info.push(entry);
         // Populate hash indexes
         self.def_info_hash.insert(def_id.index as u64, vec_idx);
         match &parent {
-            &Option::Some(p) => {
+            &Option.Some(p) => {
                 let combined = hashmap::combine_u32_usize(p.index, name.index as usize);
                 self.child_def_hash.insert(combined, def_id.index as u64);
             }
-            &Option::None => {}
+            &Option.None => {}
         }
     }
 
     /// Sets the visibility of a previously registered definition.
-    pub fn set_def_visibility(self: &mut Self, def_id: hir_def::DefId, vis: common::Visibility) {
+    pub fn set_def_visibility(self: &mut Self, def_id: hir_def.DefId, vis: common.Visibility) {
         match self.def_info_hash.get(def_id.index as u64) {
-            Option::Some(vec_idx) => {
+            Option.Some(vec_idx) => {
                 let idx = vec_idx as usize;
                 if idx < self.def_info.len() {
                     self.def_info[idx].info.visibility = vis;
                 }
             }
-            Option::None => {
+            Option.None => {
                 // Fallback to linear scan
                 for i in 0usize..self.def_info.len() {
                     if self.def_info[i].def_id.index == def_id.index {
@@ -572,15 +572,15 @@ impl Resolver {
     /// Registers a variant definition with its variant index.
     pub fn register_variant_def_info(
         self: &mut Self,
-        def_id: hir_def::DefId,
-        name: common::Symbol,
-        span: common::Span,
-        parent: hir_def::DefId,
+        def_id: hir_def.DefId,
+        name: common.Symbol,
+        span: common.Span,
+        parent: hir_def.DefId,
         variant_index: u32,
     ) {
         let vec_idx = self.def_info.len() as u32;
-        let info = hir_def::DefInfo::variant(name, span, parent, variant_index);
-        let entry = DefInfoEntry::new(def_id, info);
+        let info = hir_def.DefInfo.variant(name, span, parent, variant_index);
+        let entry = DefInfoEntry.new(def_id, info);
         self.def_info.push(entry);
         // Populate hash indexes
         self.def_info_hash.insert(def_id.index as u64, vec_idx);
@@ -590,16 +590,16 @@ impl Resolver {
 
     /// Gets definition info by DefId.
     /// Returns None if the DefId is not registered.
-    pub fn get_def_info(self: &Self, def_id: hir_def::DefId) -> Option<hir_def::DefInfo> {
+    pub fn get_def_info(self: &Self, def_id: hir_def.DefId) -> Option<hir_def.DefInfo> {
         // O(1) hash lookup
         match self.def_info_hash.get(def_id.index as u64) {
-            Option::Some(vec_idx) => {
+            Option.Some(vec_idx) => {
                 let idx = vec_idx as usize;
                 if idx < self.def_info.len() {
                     let entry = &self.def_info[idx].info;
                     let cloned_parent = clone_optional_def_id(&entry.parent);
                     let cloned_vi = clone_optional_u32(&entry.variant_index);
-                    return Option::Some(hir_def::DefInfo {
+                    return Option.Some(hir_def.DefInfo {
                         kind: entry.kind,
                         name: entry.name,
                         span: entry.span,
@@ -609,7 +609,7 @@ impl Resolver {
                     });
                 }
             }
-            Option::None => {}
+            Option.None => {}
         }
         // Fallback to linear scan
         for i in 0usize..self.def_info.len() {
@@ -618,7 +618,7 @@ impl Resolver {
                 let entry = &self.def_info[i].info;
                 let cloned_parent = clone_optional_def_id(&entry.parent);
                 let cloned_vi = clone_optional_u32(&entry.variant_index);
-                return Option::Some(hir_def::DefInfo {
+                return Option.Some(hir_def.DefInfo {
                     kind: entry.kind,
                     name: entry.name,
                     span: entry.span,
@@ -628,11 +628,11 @@ impl Resolver {
                 });
             }
         }
-        Option::None
+        Option.None
     }
 
     /// Looks up a name in the current scope chain.
-    pub fn lookup(self: &Self, name: common::Symbol) -> Option<LookupResult> {
+    pub fn lookup(self: &Self, name: common.Symbol) -> Option<LookupResult> {
         // Search through scope stack from innermost to outermost
         let stack_len = self.scope_stack.len();
         let mut stack_idx = stack_len;
@@ -659,14 +659,14 @@ impl Resolver {
 
         // O(1) check globals using hash
         match self.globals_hash.get(name.index as u64) {
-            Option::Some(global_idx) => {
+            Option.Some(global_idx) => {
                 return Some(LookupResult {
                     scope_index: 0,
                     binding_index: global_idx as usize,
                     is_global: true,
                 });
             }
-            Option::None => {}
+            Option.None => {}
         }
 
         None
@@ -686,26 +686,26 @@ impl Resolver {
 
     /// Gets the DefId from a binding if it is a Def or Module kind.
     /// Returns None for Local bindings.
-    pub fn binding_def_id(self: &Self, binding: &Binding) -> Option<hir_def::DefId> {
+    pub fn binding_def_id(self: &Self, binding: &Binding) -> Option<hir_def.DefId> {
         if binding.is_local() {
             None
         } else {
-            Some(hir_def::DefId::new(binding.def_id.index))
+            Some(hir_def.DefId.new(binding.def_id.index))
         }
     }
 
     /// Gets the LocalId from a binding if it is a Local kind.
     /// Returns None for Def/Module bindings.
-    pub fn binding_local_id(self: &Self, binding: &Binding) -> Option<hir_def::LocalId> {
+    pub fn binding_local_id(self: &Self, binding: &Binding) -> Option<hir_def.LocalId> {
         if binding.is_local() {
-            Some(hir_def::LocalId::new(binding.local_id.index))
+            Some(hir_def.LocalId.new(binding.local_id.index))
         } else {
             None
         }
     }
 
     /// Looks up a labeled loop scope.
-    pub fn lookup_label(self: &Self, label: common::Symbol) -> Option<usize> {
+    pub fn lookup_label(self: &Self, label: common.Symbol) -> Option<usize> {
         let stack_len = self.scope_stack.len();
         let mut stack_idx = stack_len;
 
@@ -737,14 +737,14 @@ impl Resolver {
 
     /// Takes ownership of the errors, leaving the resolver with an empty error list.
     pub fn take_errors(self: &mut Self) -> Vec<ResolveError> {
-        let mut result: Vec<ResolveError> = Vec::new();
+        let mut result: Vec<ResolveError> = Vec.new();
         while self.errors.len() > 0 {
             let popped = self.errors.pop();
             let err = popped.unwrap();
             result.push(err);
         }
         // Reverse to get original order
-        let mut reversed: Vec<ResolveError> = Vec::new();
+        let mut reversed: Vec<ResolveError> = Vec.new();
         while result.len() > 0 {
             let popped = result.pop();
             let err = popped.unwrap();
@@ -757,61 +757,61 @@ impl Resolver {
     /// Used for glob imports (`use path::*`) to import all public items from a module.
     /// Skips Variant and Impl definitions (variants are imported via their parent enum,
     /// impl blocks aren't named items).
-    pub fn get_children_of_parent(self: &Self, parent_def: hir_def::DefId) -> Vec<ChildEntry> {
-        let mut result: Vec<ChildEntry> = Vec::new();
+    pub fn get_children_of_parent(self: &Self, parent_def: hir_def.DefId) -> Vec<ChildEntry> {
+        let mut result: Vec<ChildEntry> = Vec.new();
         for i in 0usize..self.def_info.len() {
             let entry = &self.def_info[i];
             match &entry.info.parent {
-                &Option::Some(p) => {
+                &Option.Some(p) => {
                     if p.index == parent_def.index {
                         // Skip variants and impl blocks
                         match entry.info.kind {
-                            hir_def::DefKind::Variant => {}
-                            hir_def::DefKind::Impl => {}
+                            hir_def.DefKind.Variant => {}
+                            hir_def.DefKind.Impl => {}
                             _ => {
                                 // Only include public items
                                 match entry.info.visibility {
-                                    common::Visibility::Public => {
+                                    common.Visibility.Public => {
                                         result.push(ChildEntry {
                                             name: entry.info.name,
-                                            def_id: hir_def::DefId::new(entry.def_id.index),
+                                            def_id: hir_def.DefId.new(entry.def_id.index),
                                         });
                                     }
-                                    common::Visibility::PublicCrate => {
+                                    common.Visibility.PublicCrate => {
                                         result.push(ChildEntry {
                                             name: entry.info.name,
-                                            def_id: hir_def::DefId::new(entry.def_id.index),
+                                            def_id: hir_def.DefId.new(entry.def_id.index),
                                         });
                                     }
-                                    common::Visibility::PublicSuper => {
+                                    common.Visibility.PublicSuper => {
                                         result.push(ChildEntry {
                                             name: entry.info.name,
-                                            def_id: hir_def::DefId::new(entry.def_id.index),
+                                            def_id: hir_def.DefId.new(entry.def_id.index),
                                         });
                                     }
-                                    common::Visibility::PublicSelf => {}
-                                    common::Visibility::Private => {}
+                                    common.Visibility.PublicSelf => {}
+                                    common.Visibility.Private => {}
                                 }
                             }
                         }
                     }
                 }
-                &Option::None => {}
+                &Option.None => {}
             }
         }
         result
     }
 
     /// Looks up a child definition within a parent's namespace.
-    /// Used for resolving qualified paths like module::Item.
-    pub fn lookup_in_parent(self: &Self, parent_def: hir_def::DefId, name: common::Symbol) -> Option<hir_def::DefId> {
+    /// Used for resolving qualified paths like module.Item.
+    pub fn lookup_in_parent(self: &Self, parent_def: hir_def.DefId, name: common.Symbol) -> Option<hir_def.DefId> {
         // O(1) hash lookup using combined (parent, name) key
         let combined = hashmap::combine_u32_usize(parent_def.index, name.index as usize);
         match self.child_def_hash.get(combined) {
-            Option::Some(def_id_index) => {
-                return Some(hir_def::DefId::new(def_id_index as u32));
+            Option.Some(def_id_index) => {
+                return Some(hir_def.DefId.new(def_id_index as u32));
             }
-            Option::None => {}
+            Option.None => {}
         }
         // Fallback to linear scan
         for i in 0usize..self.def_info.len() {
@@ -819,47 +819,47 @@ impl Resolver {
             match &entry.info.parent {
                 &Some(p) => {
                     if p.index == parent_def.index && entry.info.name.index == name.index {
-                        return Some(hir_def::DefId::new(entry.def_id.index));
+                        return Some(hir_def.DefId.new(entry.def_id.index));
                     }
                 }
                 &None => {}
             }
         }
-        Option::None
+        Option.None
     }
 
     /// Looks up a child definition by parent DefId and source span position.
     /// Used for overloaded methods where name-based lookup is ambiguous.
-    pub fn lookup_by_parent_and_span(self: &Self, parent_def: hir_def::DefId, span_start: usize) -> Option<hir_def::DefId> {
+    pub fn lookup_by_parent_and_span(self: &Self, parent_def: hir_def.DefId, span_start: usize) -> Option<hir_def.DefId> {
         for i in 0usize..self.def_info.len() {
             let entry = &self.def_info[i];
             match &entry.info.parent {
                 &Some(p) => {
                     if p.index == parent_def.index && entry.info.span.start == span_start {
-                        return Some(hir_def::DefId::new(entry.def_id.index));
+                        return Some(hir_def.DefId.new(entry.def_id.index));
                     }
                 }
                 &None => {}
             }
         }
-        Option::None
+        Option.None
     }
 
     /// Resolves a qualified path with multiple segments.
     /// Returns the final DefId and whether it's a module, type, or value.
     pub fn resolve_qualified_path(
         self: &Self,
-        segments: &Vec<common::SpannedSymbol>,
+        segments: &Vec<common.SpannedSymbol>,
     ) -> Option<QualifiedPathResult> {
         if segments.len() == 0 {
-            return Option::None;
+            return Option.None;
         }
 
         // Resolve first segment in current scope
         let first = &segments[0];
         let first_lookup = self.lookup(first.symbol);
         if first_lookup.is_none() {
-            return Option::None;
+            return Option.None;
         }
 
         let first_result = first_lookup.unwrap();
@@ -874,18 +874,18 @@ impl Resolver {
         }
 
         // For multi-segment paths, if first segment resolved to a local/type_param
-        // (DefId::dummy = 0xFFFFFFFF), it can't have child definitions. This happens
+        // (DefId.dummy = 0xFFFFFFFF), it can't have child definitions. This happens
         // when a pattern binding like `ref hir_ty` shadows a module name `hir_ty`.
         // Fall back to globals hash where the module binding lives.
         let mut current_def = first_binding.def_id;
         if current_def.index == 4294967295 {
             match self.globals_hash.get(first.symbol.index as u64) {
-                Option::Some(global_idx) => {
+                Option.Some(global_idx) => {
                     let global_entry = &self.globals[global_idx as usize];
                     current_def = global_entry.def_id;
                 }
-                Option::None => {
-                    return Option::None;
+                Option.None => {
+                    return Option.None;
                 }
             }
         }
@@ -895,7 +895,7 @@ impl Resolver {
             let seg = &segments[i];
             let child = self.lookup_in_parent(current_def, seg.symbol);
             if child.is_none() {
-                return Option::None;
+                return Option.None;
             }
             current_def = child.unwrap();
         }
@@ -914,8 +914,8 @@ impl Resolver {
 /// An entry representing a child definition of a module.
 /// Used by get_children_of_parent() for glob imports.
 pub struct ChildEntry {
-    pub name: common::Symbol,
-    pub def_id: hir_def::DefId,
+    pub name: common.Symbol,
+    pub def_id: hir_def.DefId,
 }
 
 // ============================================================
@@ -924,7 +924,7 @@ pub struct ChildEntry {
 
 /// Result of resolving a qualified path.
 pub struct QualifiedPathResult {
-    pub def_id: hir_def::DefId,
+    pub def_id: hir_def.DefId,
     pub is_module: bool,
 }
 
@@ -933,17 +933,17 @@ pub struct QualifiedPathResult {
 // ============================================================
 
 /// Clones an Option<DefId>.
-fn clone_optional_def_id(opt: &Option<hir_def::DefId>) -> Option<hir_def::DefId> {
+fn clone_optional_def_id(opt: &Option<hir_def.DefId>) -> Option<hir_def.DefId> {
     match opt {
-        &Option::Some(d) => Option::Some(hir_def::DefId::new(d.index)),
-        &Option::None => Option::None,
+        &Option.Some(d) => Option.Some(hir_def.DefId.new(d.index)),
+        &Option.None => Option.None,
     }
 }
 
 /// Clones an Option<u32>.
 fn clone_optional_u32(opt: &Option<u32>) -> Option<u32> {
     match opt {
-        &Option::Some(v) => Option::Some(v),
-        &Option::None => Option::None,
+        &Option.Some(v) => Option.Some(v),
+        &Option.None => Option.None,
     }
 }

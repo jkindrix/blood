@@ -22,14 +22,14 @@ mod mir_body;
 /// point in execution (typically a handler entry).
 pub struct SnapshotEntry {
     /// The place whose generation is recorded.
-    pub place: mir_types::Place,
+    pub place: mir_types.Place,
     /// The generation value at the time of the snapshot.
     pub generation: u32,
 }
 
 impl SnapshotEntry {
     /// Creates a new snapshot entry.
-    pub fn new(place: mir_types::Place, generation: u32) -> SnapshotEntry {
+    pub fn new(place: mir_types.Place, generation: u32) -> SnapshotEntry {
         SnapshotEntry {
             place: place,
             generation: generation,
@@ -55,25 +55,25 @@ pub struct SnapshotInfo {
     /// The entries in this snapshot.
     pub entries: Vec<SnapshotEntry>,
     /// The basic block where the handler is pushed.
-    pub handler_block: mir_def::BasicBlockId,
+    pub handler_block: mir_def.BasicBlockId,
     /// The DefId of the handler that triggered this snapshot.
-    pub handler_id: hir_def::DefId,
+    pub handler_id: hir_def.DefId,
     /// The span of the handler push.
-    pub span: common::Span,
+    pub span: common.Span,
 }
 
 impl SnapshotInfo {
     /// Creates a new snapshot.
     pub fn new(
         id: u32,
-        handler_block: mir_def::BasicBlockId,
-        handler_id: hir_def::DefId,
-        span: common::Span,
+        handler_block: mir_def.BasicBlockId,
+        handler_id: hir_def.DefId,
+        span: common.Span,
     ) -> SnapshotInfo {
         SnapshotInfo {
             id: id,
-            parent: Option::None,
-            entries: Vec::new(),
+            parent: Option.None,
+            entries: Vec.new(),
             handler_block: handler_block,
             handler_id: handler_id,
             span: span,
@@ -82,7 +82,7 @@ impl SnapshotInfo {
 
     /// Sets the parent snapshot for nested handlers.
     pub fn set_parent(self: &mut SnapshotInfo, parent_id: u32) {
-        self.parent = Option::Some(parent_id);
+        self.parent = Option.Some(parent_id);
     }
 
     /// Adds an entry to this snapshot.
@@ -98,16 +98,16 @@ impl SnapshotInfo {
     /// Returns true if this is a nested handler (has a parent).
     pub fn is_nested(self: &SnapshotInfo) -> bool {
         match &self.parent {
-            &Option::Some(_) => true,
-            &Option::None => false,
+            &Option.Some(_) => true,
+            &Option.None => false,
         }
     }
 
     /// Returns the nesting depth (0 = top-level).
     pub fn depth(self: &SnapshotInfo, all_snapshots: &Vec<SnapshotInfo>) -> u32 {
         match &self.parent {
-            &Option::None => 0,
-            &Option::Some(parent_id) => {
+            &Option.None => 0,
+            &Option.Some(parent_id) => {
                 // Find parent snapshot and compute its depth + 1
                 for i in 0usize..all_snapshots.len() {
                     if all_snapshots[i].id == parent_id {
@@ -136,7 +136,7 @@ impl SnapshotAnalysis {
     /// Creates a new empty analysis.
     pub fn new() -> SnapshotAnalysis {
         SnapshotAnalysis {
-            snapshots: Vec::new(),
+            snapshots: Vec.new(),
             max_depth: 0,
         }
     }
@@ -155,10 +155,10 @@ impl SnapshotAnalysis {
     pub fn find_snapshot(self: &SnapshotAnalysis, id: u32) -> Option<usize> {
         for i in 0usize..self.snapshots.len() {
             if self.snapshots[i].id == id {
-                return Option::Some(i);
+                return Option.Some(i);
             }
         }
-        Option::None
+        Option.None
     }
 }
 
@@ -174,24 +174,24 @@ impl SnapshotAnalysis {
 /// 2. On PushHandler, create a new snapshot with current generation
 /// 3. On PopHandler, close the current snapshot
 /// 4. Build parent-child relationships for nested handlers
-pub fn analyze_snapshots(body: &mir_body::MirBody) -> SnapshotAnalysis {
-    let mut result = SnapshotAnalysis::new();
+pub fn analyze_snapshots(body: &mir_body.MirBody) -> SnapshotAnalysis {
+    let mut result = SnapshotAnalysis.new();
     let mut next_id: u32 = 0;
-    let mut handler_stack: Vec<u32> = Vec::new(); // Stack of snapshot IDs
+    let mut handler_stack: Vec<u32> = Vec.new(); // Stack of snapshot IDs
 
     // Walk blocks in order
     for bb_idx in 0usize..body.basic_blocks.len() {
         let block = &body.basic_blocks[bb_idx];
-        let block_id = mir_def::BasicBlockId::new(bb_idx as u32);
+        let block_id = mir_def.BasicBlockId.new(bb_idx as u32);
 
         // Scan statements for handler push/pop
         for stmt_idx in 0usize..block.statements.len() {
             match &block.statements[stmt_idx].kind {
-                &mir_stmt::StatementKind::PushHandler { handler_id, ref state_place, state_kind: _ } => {
+                &mir_stmt.StatementKind.PushHandler { handler_id, ref state_place, state_kind: _ } => {
                     let snapshot_id = next_id;
                     next_id += 1;
 
-                    let mut snapshot = SnapshotInfo::new(
+                    let mut snapshot = SnapshotInfo.new(
                         snapshot_id,
                         block_id,
                         handler_id,
@@ -205,8 +205,8 @@ pub fn analyze_snapshots(body: &mir_body::MirBody) -> SnapshotAnalysis {
                     }
 
                     // Record the state place as a snapshot entry
-                    let entry = SnapshotEntry::new(
-                        mir_types::Place::local(state_place.local),
+                    let entry = SnapshotEntry.new(
+                        mir_types.Place.local(state_place.local),
                         snapshot_id, // Use snapshot ID as generation marker
                     );
                     snapshot.add_entry(entry);
@@ -214,22 +214,22 @@ pub fn analyze_snapshots(body: &mir_body::MirBody) -> SnapshotAnalysis {
                     handler_stack.push(snapshot_id);
                     result.snapshots.push(snapshot);
                 }
-                &mir_stmt::StatementKind::PopHandler => {
+                &mir_stmt.StatementKind.PopHandler => {
                     if handler_stack.len() > 0 {
                         let _popped = handler_stack[handler_stack.len() - 1];
                         // Remove last element
-                        let mut new_stack: Vec<u32> = Vec::new();
+                        let mut new_stack: Vec<u32> = Vec.new();
                         for k in 0usize..handler_stack.len() - 1 {
                             new_stack.push(handler_stack[k]);
                         }
                         handler_stack = new_stack;
                     }
                 }
-                &mir_stmt::StatementKind::PushInlineHandler { effect_id, operations: _ } => {
+                &mir_stmt.StatementKind.PushInlineHandler { effect_id, operations: _ } => {
                     let snapshot_id = next_id;
                     next_id += 1;
 
-                    let mut snapshot = SnapshotInfo::new(
+                    let mut snapshot = SnapshotInfo.new(
                         snapshot_id,
                         block_id,
                         effect_id,
@@ -244,15 +244,15 @@ pub fn analyze_snapshots(body: &mir_body::MirBody) -> SnapshotAnalysis {
                     handler_stack.push(snapshot_id);
                     result.snapshots.push(snapshot);
                 }
-                &mir_stmt::StatementKind::Assign { place: _, rvalue: _ } => {}
-                &mir_stmt::StatementKind::StorageLive(_) => {}
-                &mir_stmt::StatementKind::StorageDead(_) => {}
-                &mir_stmt::StatementKind::Drop(_) => {}
-                &mir_stmt::StatementKind::CallReturnClause { handler_id: _, handler_name: _, body_result: _, state_place: _, destination: _ } => {}
-                &mir_stmt::StatementKind::Deinit(_) => {}
-                &mir_stmt::StatementKind::SetDiscriminant { place: _, variant_idx: _ } => {}
-                &mir_stmt::StatementKind::CopyNonOverlapping { src: _, dst: _, count: _ } => {}
-                &mir_stmt::StatementKind::Nop => {}
+                &mir_stmt.StatementKind.Assign { place: _, rvalue: _ } => {}
+                &mir_stmt.StatementKind.StorageLive(_) => {}
+                &mir_stmt.StatementKind.StorageDead(_) => {}
+                &mir_stmt.StatementKind.Drop(_) => {}
+                &mir_stmt.StatementKind.CallReturnClause { handler_id: _, handler_name: _, body_result: _, state_place: _, destination: _ } => {}
+                &mir_stmt.StatementKind.Deinit(_) => {}
+                &mir_stmt.StatementKind.SetDiscriminant { place: _, variant_idx: _ } => {}
+                &mir_stmt.StatementKind.CopyNonOverlapping { src: _, dst: _, count: _ } => {}
+                &mir_stmt.StatementKind.Nop => {}
             }
         }
 

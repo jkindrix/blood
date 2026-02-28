@@ -22,14 +22,14 @@ mod mir_body;
 
 /// Validates a MIR body and returns a list of error messages.
 /// An empty list means the MIR is valid.
-pub fn validate_body(body: &mir_body::MirBody, fn_name: &str) -> Vec<String> {
-    let mut errors: Vec<String> = Vec::new();
+pub fn validate_body(body: &mir_body.MirBody, fn_name: &str) -> Vec<String> {
+    let mut errors: Vec<String> = Vec.new();
     let num_locals = body.locals.len();
     let num_blocks = body.basic_blocks.len();
 
     // Check 1: Body must have at least one local (return place)
     if num_locals == 0 {
-        let mut msg = String::new();
+        let mut msg = String.new();
         msg.push_str("no locals (missing return place _0)");
         errors.push(msg);
     }
@@ -39,7 +39,7 @@ pub fn validate_body(body: &mir_body::MirBody, fn_name: &str) -> Vec<String> {
     let param_count_usize: usize = body.param_count as usize;
     let param_end: usize = one + param_count_usize;
     if param_end > num_locals {
-        let mut msg = String::new();
+        let mut msg = String.new();
         msg.push_str("param_count (");
         push_usize(&mut msg, body.param_count as usize);
         msg.push_str(") exceeds local count (");
@@ -50,7 +50,7 @@ pub fn validate_body(body: &mir_body::MirBody, fn_name: &str) -> Vec<String> {
 
     // Check 3: Body must have at least one basic block
     if num_blocks == 0 {
-        let mut msg = String::new();
+        let mut msg = String.new();
         msg.push_str("no basic blocks");
         errors.push(msg);
         return errors;
@@ -60,13 +60,13 @@ pub fn validate_body(body: &mir_body::MirBody, fn_name: &str) -> Vec<String> {
     for bb_idx in 0usize..num_blocks {
         let block = &body.basic_blocks[bb_idx];
         match &block.terminator {
-            &Option::Some(ref term) => {
+            &Option.Some(ref term) => {
                 // Check 5: Successor block indices must be in range
                 let succs = term.successors();
                 for si in 0usize..succs.len() {
                     let succ_idx = succs[si].as_usize();
                     if succ_idx >= num_blocks {
-                        let mut msg = String::new();
+                        let mut msg = String.new();
                         msg.push_str("bb");
                         push_usize(&mut msg, bb_idx);
                         msg.push_str(": successor bb");
@@ -81,8 +81,8 @@ pub fn validate_body(body: &mir_body::MirBody, fn_name: &str) -> Vec<String> {
                 // Check 6: Validate terminator operand local references
                 validate_terminator_locals(&mut errors, term, bb_idx, num_locals);
             }
-            &Option::None => {
-                let mut msg = String::new();
+            &Option.None => {
+                let mut msg = String.new();
                 msg.push_str("bb");
                 push_usize(&mut msg, bb_idx);
                 msg.push_str(": missing terminator");
@@ -103,41 +103,41 @@ pub fn validate_body(body: &mir_body::MirBody, fn_name: &str) -> Vec<String> {
 /// Validates that all local references in a statement are in range.
 fn validate_statement_locals(
     errors: &mut Vec<String>,
-    stmt: &mir_stmt::Statement,
+    stmt: &mir_stmt.Statement,
     bb_idx: usize,
     stmt_idx: usize,
     num_locals: usize,
 ) {
     match &stmt.kind {
-        &mir_stmt::StatementKind::Assign { ref place, ref rvalue } => {
+        &mir_stmt.StatementKind.Assign { ref place, ref rvalue } => {
             validate_place_local(errors, place, bb_idx, stmt_idx, num_locals, "assign dest");
             validate_rvalue_locals(errors, rvalue, bb_idx, stmt_idx, num_locals);
         }
-        &mir_stmt::StatementKind::StorageLive(ref local_id) => {
+        &mir_stmt.StatementKind.StorageLive(ref local_id) => {
             check_local_range(errors, local_id.as_usize(), bb_idx, stmt_idx, num_locals, "StorageLive");
         }
-        &mir_stmt::StatementKind::StorageDead(ref local_id) => {
+        &mir_stmt.StatementKind.StorageDead(ref local_id) => {
             check_local_range(errors, local_id.as_usize(), bb_idx, stmt_idx, num_locals, "StorageDead");
         }
-        &mir_stmt::StatementKind::Drop(ref place) => {
+        &mir_stmt.StatementKind.Drop(ref place) => {
             validate_place_local(errors, place, bb_idx, stmt_idx, num_locals, "Drop");
         }
-        &mir_stmt::StatementKind::Deinit(ref place) => {
+        &mir_stmt.StatementKind.Deinit(ref place) => {
             validate_place_local(errors, place, bb_idx, stmt_idx, num_locals, "Deinit");
         }
-        &mir_stmt::StatementKind::SetDiscriminant { ref place, variant_idx: _ } => {
+        &mir_stmt.StatementKind.SetDiscriminant { ref place, variant_idx: _ } => {
             validate_place_local(errors, place, bb_idx, stmt_idx, num_locals, "SetDiscriminant");
         }
-        &mir_stmt::StatementKind::CopyNonOverlapping { ref src, ref dst, count: _ } => {
+        &mir_stmt.StatementKind.CopyNonOverlapping { ref src, ref dst, count: _ } => {
             validate_operand_local(errors, src, bb_idx, stmt_idx, num_locals, "CopyNonOverlapping src");
             validate_operand_local(errors, dst, bb_idx, stmt_idx, num_locals, "CopyNonOverlapping dst");
         }
-        &mir_stmt::StatementKind::PushHandler { handler_id: _, ref state_place, state_kind: _ } => {
+        &mir_stmt.StatementKind.PushHandler { handler_id: _, ref state_place, state_kind: _ } => {
             validate_place_local(errors, state_place, bb_idx, stmt_idx, num_locals, "PushHandler state");
         }
-        &mir_stmt::StatementKind::PopHandler => {}
-        &mir_stmt::StatementKind::PushInlineHandler { effect_id: _, operations: _ } => {}
-        &mir_stmt::StatementKind::CallReturnClause {
+        &mir_stmt.StatementKind.PopHandler => {}
+        &mir_stmt.StatementKind.PushInlineHandler { effect_id: _, operations: _ } => {}
+        &mir_stmt.StatementKind.CallReturnClause {
             handler_id: _,
             handler_name: _,
             ref body_result,
@@ -148,50 +148,50 @@ fn validate_statement_locals(
             validate_place_local(errors, state_place, bb_idx, stmt_idx, num_locals, "CallReturnClause state");
             validate_place_local(errors, destination, bb_idx, stmt_idx, num_locals, "CallReturnClause dest");
         }
-        &mir_stmt::StatementKind::Nop => {}
+        &mir_stmt.StatementKind.Nop => {}
     }
 }
 
 /// Validates that all local references in a terminator are in range.
 fn validate_terminator_locals(
     errors: &mut Vec<String>,
-    term: &mir_term::Terminator,
+    term: &mir_term.Terminator,
     bb_idx: usize,
     num_locals: usize,
 ) {
     let stmt_idx: usize = 999;
     match &term.kind {
-        &mir_term::TerminatorKind::Goto { target: _ } => {}
-        &mir_term::TerminatorKind::Return => {}
-        &mir_term::TerminatorKind::Unreachable => {}
-        &mir_term::TerminatorKind::SwitchInt { ref discr, targets: _ } => {
+        &mir_term.TerminatorKind.Goto { target: _ } => {}
+        &mir_term.TerminatorKind.Return => {}
+        &mir_term.TerminatorKind.Unreachable => {}
+        &mir_term.TerminatorKind.SwitchInt { ref discr, targets: _ } => {
             validate_operand_local(errors, discr, bb_idx, stmt_idx, num_locals, "SwitchInt discr");
         }
-        &mir_term::TerminatorKind::Call { ref func, ref args, ref destination, target: _, unwind: _ } => {
+        &mir_term.TerminatorKind.Call { ref func, ref args, ref destination, target: _, unwind: _ } => {
             validate_operand_local(errors, func, bb_idx, stmt_idx, num_locals, "Call func");
             for ai in 0usize..args.len() {
                 validate_operand_local(errors, &args[ai], bb_idx, stmt_idx, num_locals, "Call arg");
             }
             validate_place_local(errors, destination, bb_idx, stmt_idx, num_locals, "Call dest");
         }
-        &mir_term::TerminatorKind::Assert { ref cond, expected: _, msg: _, target: _, unwind: _ } => {
+        &mir_term.TerminatorKind.Assert { ref cond, expected: _, msg: _, target: _, unwind: _ } => {
             validate_operand_local(errors, cond, bb_idx, stmt_idx, num_locals, "Assert cond");
         }
-        &mir_term::TerminatorKind::Drop { ref place, target: _, unwind: _ } => {
+        &mir_term.TerminatorKind.Drop { ref place, target: _, unwind: _ } => {
             validate_place_local(errors, place, bb_idx, stmt_idx, num_locals, "Drop");
         }
-        &mir_term::TerminatorKind::Perform { effect_id: _, op_index: _, ref args, ref destination, target: _, is_tail_resumptive: _ } => {
+        &mir_term.TerminatorKind.Perform { effect_id: _, op_index: _, ref args, ref destination, target: _, is_tail_resumptive: _ } => {
             for ai in 0usize..args.len() {
                 validate_operand_local(errors, &args[ai], bb_idx, stmt_idx, num_locals, "Perform arg");
             }
             validate_place_local(errors, destination, bb_idx, stmt_idx, num_locals, "Perform dest");
         }
-        &mir_term::TerminatorKind::Resume { ref value } => {
+        &mir_term.TerminatorKind.Resume { ref value } => {
             match value {
-                &Option::Some(ref v) => {
+                &Option.Some(ref v) => {
                     validate_operand_local(errors, v, bb_idx, stmt_idx, num_locals, "Resume value");
                 }
-                &Option::None => {}
+                &Option.None => {}
             }
         }
     }
@@ -200,53 +200,53 @@ fn validate_terminator_locals(
 /// Validates local references in an rvalue.
 fn validate_rvalue_locals(
     errors: &mut Vec<String>,
-    rvalue: &mir_types::Rvalue,
+    rvalue: &mir_types.Rvalue,
     bb_idx: usize,
     stmt_idx: usize,
     num_locals: usize,
 ) {
     match rvalue {
-        &mir_types::Rvalue::Use(ref operand) => {
+        &mir_types.Rvalue.Use(ref operand) => {
             validate_operand_local(errors, operand, bb_idx, stmt_idx, num_locals, "Use");
         }
-        &mir_types::Rvalue::Ref { ref place, mutable: _ } => {
+        &mir_types.Rvalue.Ref { ref place, mutable: _ } => {
             validate_place_local(errors, place, bb_idx, stmt_idx, num_locals, "Ref");
         }
-        &mir_types::Rvalue::AddressOf { ref place, mutable: _ } => {
+        &mir_types.Rvalue.AddressOf { ref place, mutable: _ } => {
             validate_place_local(errors, place, bb_idx, stmt_idx, num_locals, "AddressOf");
         }
-        &mir_types::Rvalue::BinaryOp { op: _, ref left, ref right } => {
+        &mir_types.Rvalue.BinaryOp { op: _, ref left, ref right } => {
             validate_operand_local(errors, left, bb_idx, stmt_idx, num_locals, "BinaryOp left");
             validate_operand_local(errors, right, bb_idx, stmt_idx, num_locals, "BinaryOp right");
         }
-        &mir_types::Rvalue::UnaryOp { op: _, ref operand } => {
+        &mir_types.Rvalue.UnaryOp { op: _, ref operand } => {
             validate_operand_local(errors, operand, bb_idx, stmt_idx, num_locals, "UnaryOp");
         }
-        &mir_types::Rvalue::Cast { ref operand, target_ty: _ } => {
+        &mir_types.Rvalue.Cast { ref operand, target_ty: _ } => {
             validate_operand_local(errors, operand, bb_idx, stmt_idx, num_locals, "Cast");
         }
-        &mir_types::Rvalue::Aggregate { kind: _, ref operands } => {
+        &mir_types.Rvalue.Aggregate { kind: _, ref operands } => {
             for ai in 0usize..operands.len() {
                 validate_operand_local(errors, &operands[ai], bb_idx, stmt_idx, num_locals, "Aggregate elem");
             }
         }
-        &mir_types::Rvalue::Discriminant(ref place) => {
+        &mir_types.Rvalue.Discriminant(ref place) => {
             validate_place_local(errors, place, bb_idx, stmt_idx, num_locals, "Discriminant");
         }
-        &mir_types::Rvalue::Len(ref place) => {
+        &mir_types.Rvalue.Len(ref place) => {
             validate_place_local(errors, place, bb_idx, stmt_idx, num_locals, "Len");
         }
-        &mir_types::Rvalue::ArrayToSlice { ref array_ref, array_len: _ } => {
+        &mir_types.Rvalue.ArrayToSlice { ref array_ref, array_len: _ } => {
             validate_operand_local(errors, array_ref, bb_idx, stmt_idx, num_locals, "ArrayToSlice");
         }
-        &mir_types::Rvalue::ZeroInit(ref _ty) => {}
+        &mir_types.Rvalue.ZeroInit(ref _ty) => {}
     }
 }
 
 /// Validates that a place's local is in range.
 fn validate_place_local(
     errors: &mut Vec<String>,
-    place: &mir_types::Place,
+    place: &mir_types.Place,
     bb_idx: usize,
     stmt_idx: usize,
     num_locals: usize,
@@ -256,14 +256,14 @@ fn validate_place_local(
     // Also check Index projections
     for pi in 0usize..place.projection.len() {
         match &place.projection[pi] {
-            &mir_types::PlaceElem::Index(ref idx_local) => {
+            &mir_types.PlaceElem.Index(ref idx_local) => {
                 check_local_range(errors, idx_local.as_usize(), bb_idx, stmt_idx, num_locals, "Index projection");
             }
-            &mir_types::PlaceElem::Deref => {}
-            &mir_types::PlaceElem::Field(_) => {}
-            &mir_types::PlaceElem::ConstantIndex { offset: _, min_length: _, from_end: _ } => {}
-            &mir_types::PlaceElem::Subslice { from: _, to: _, from_end: _ } => {}
-            &mir_types::PlaceElem::Downcast(_) => {}
+            &mir_types.PlaceElem.Deref => {}
+            &mir_types.PlaceElem.Field(_) => {}
+            &mir_types.PlaceElem.ConstantIndex { offset: _, min_length: _, from_end: _ } => {}
+            &mir_types.PlaceElem.Subslice { from: _, to: _, from_end: _ } => {}
+            &mir_types.PlaceElem.Downcast(_) => {}
         }
     }
 }
@@ -271,20 +271,20 @@ fn validate_place_local(
 /// Validates that an operand's local is in range.
 fn validate_operand_local(
     errors: &mut Vec<String>,
-    operand: &mir_types::Operand,
+    operand: &mir_types.Operand,
     bb_idx: usize,
     stmt_idx: usize,
     num_locals: usize,
     context: &str,
 ) {
     match operand {
-        &mir_types::Operand::Copy(ref place) => {
+        &mir_types.Operand.Copy(ref place) => {
             validate_place_local(errors, place, bb_idx, stmt_idx, num_locals, context);
         }
-        &mir_types::Operand::Move(ref place) => {
+        &mir_types.Operand.Move(ref place) => {
             validate_place_local(errors, place, bb_idx, stmt_idx, num_locals, context);
         }
-        &mir_types::Operand::Constant(_) => {}
+        &mir_types.Operand.Constant(_) => {}
     }
 }
 
@@ -298,7 +298,7 @@ fn check_local_range(
     context: &str,
 ) {
     if local_idx >= num_locals {
-        let mut msg = String::new();
+        let mut msg = String.new();
         msg.push_str("bb");
         push_usize(&mut msg, bb_idx);
         if stmt_idx < 999 {
@@ -325,7 +325,7 @@ fn push_usize(s: &mut String, val: usize) {
         s.push('0');
         return;
     }
-    let mut digits: Vec<u8> = Vec::new();
+    let mut digits: Vec<u8> = Vec.new();
     let mut v = val;
     while v > 0 {
         let digit = (v % 10) as u8;

@@ -21,8 +21,8 @@ mod type_intern;
 // ============================================================
 
 /// Formats a complete MIR body as human-readable text.
-pub fn format_mir_body(body: &mir_body::MirBody, fn_name: &str) -> String {
-    let mut out = String::new();
+pub fn format_mir_body(body: &mir_body.MirBody, fn_name: &str) -> String {
+    let mut out = String.new();
 
     // Function header
     out.push_str("fn ");
@@ -77,13 +77,13 @@ pub fn format_mir_body(body: &mir_body::MirBody, fn_name: &str) -> String {
 
         // Terminator
         match &block.terminator {
-            &Option::Some(ref term) => {
+            &Option.Some(ref term) => {
                 let term_str = format_terminator(term);
                 out.push_str("        ");
                 out.push_str(term_str.as_str());
                 out.push('\n');
             }
-            &Option::None => {
+            &Option.None => {
                 out.push_str("        // <no terminator>\n");
             }
         }
@@ -104,8 +104,8 @@ pub fn format_mir_body(body: &mir_body::MirBody, fn_name: &str) -> String {
 
 /// Formats a local variable declaration.
 /// Output: `_N: Type  // kind [name]`
-pub fn format_local(local: &mir_body::MirLocal, index: usize, param_count: u32) -> String {
-    let mut out = String::new();
+pub fn format_local(local: &mir_body.MirLocal, index: usize, param_count: u32) -> String {
+    let mut out = String.new();
     out.push('_');
     push_u32(&mut out, index as u32);
     out.push_str(": ");
@@ -116,26 +116,26 @@ pub fn format_local(local: &mir_body::MirLocal, index: usize, param_count: u32) 
     // Comment with kind and optional name
     out.push_str("  // ");
     match &local.kind {
-        &mir_def::LocalKind::ReturnPlace => {
+        &mir_def.LocalKind.ReturnPlace => {
             out.push_str("return");
         }
-        &mir_def::LocalKind::Arg => {
+        &mir_def.LocalKind.Arg => {
             out.push_str("arg");
         }
-        &mir_def::LocalKind::Var => {
+        &mir_def.LocalKind.Var => {
             out.push_str("var");
         }
-        &mir_def::LocalKind::Temp => {
+        &mir_def.LocalKind.Temp => {
             out.push_str("temp");
         }
     }
 
     match &local.name {
-        &Option::Some(ref name) => {
+        &Option.Some(ref name) => {
             out.push_str(": ");
             out.push_str(name.as_str());
         }
-        &Option::None => {}
+        &Option.None => {}
     }
 
     out
@@ -146,11 +146,11 @@ pub fn format_local(local: &mir_body::MirLocal, index: usize, param_count: u32) 
 // ============================================================
 
 /// Formats a HIR type as a human-readable string.
-pub fn format_type(ty: &hir_ty::Type) -> String {
+pub fn format_type(ty: &hir_ty.Type) -> String {
     match &ty.kind {
-        &hir_ty::TypeKind::Primitive(ref prim) => format_prim(prim),
-        &hir_ty::TypeKind::Tuple(ref elems) => {
-            let mut out = String::new();
+        &hir_ty.TypeKind.Primitive(ref prim) => format_prim(prim),
+        &hir_ty.TypeKind.Tuple(ref elems) => {
+            let mut out = String.new();
             out.push('(');
             for i in 0usize..elems.len() {
                 if i > 0 {
@@ -162,8 +162,8 @@ pub fn format_type(ty: &hir_ty::Type) -> String {
             out.push(')');
             out
         }
-        &hir_ty::TypeKind::Array { ref element, size } => {
-            let mut out = String::new();
+        &hir_ty.TypeKind.Array { ref element, size } => {
+            let mut out = String.new();
             out.push('[');
             let inner = format_type(element.as_ref());
             out.push_str(inner.as_str());
@@ -172,16 +172,16 @@ pub fn format_type(ty: &hir_ty::Type) -> String {
             out.push(']');
             out
         }
-        &hir_ty::TypeKind::Slice { ref element } => {
-            let mut out = String::new();
+        &hir_ty.TypeKind.Slice { ref element } => {
+            let mut out = String.new();
             out.push('[');
             let inner = format_type(element.as_ref());
             out.push_str(inner.as_str());
             out.push(']');
             out
         }
-        &hir_ty::TypeKind::Ref { ref inner, mutable } => {
-            let mut out = String::new();
+        &hir_ty.TypeKind.Ref { ref inner, mutable } => {
+            let mut out = String.new();
             out.push('&');
             if mutable {
                 out.push_str("mut ");
@@ -190,8 +190,8 @@ pub fn format_type(ty: &hir_ty::Type) -> String {
             out.push_str(inner_str.as_str());
             out
         }
-        &hir_ty::TypeKind::Ptr { ref inner, mutable } => {
-            let mut out = String::new();
+        &hir_ty.TypeKind.Ptr { ref inner, mutable } => {
+            let mut out = String.new();
             out.push('*');
             if mutable {
                 out.push_str("mut ");
@@ -202,8 +202,8 @@ pub fn format_type(ty: &hir_ty::Type) -> String {
             out.push_str(inner_str.as_str());
             out
         }
-        &hir_ty::TypeKind::Fn { ref params, ref ret, ref effects } => {
-            let mut out = String::new();
+        &hir_ty.TypeKind.Fn { ref params, ref ret, ref effects } => {
+            let mut out = String.new();
             out.push_str("fn(");
             for i in 0usize..params.len() {
                 if i > 0 {
@@ -217,8 +217,8 @@ pub fn format_type(ty: &hir_ty::Type) -> String {
             out.push_str(ret_str.as_str());
             out
         }
-        &hir_ty::TypeKind::Closure { def_id, ref params, ref ret } => {
-            let mut out = String::new();
+        &hir_ty.TypeKind.Closure { def_id, ref params, ref ret } => {
+            let mut out = String.new();
             out.push_str("closure[def");
             push_u32(&mut out, def_id.index);
             out.push_str("](");
@@ -234,8 +234,8 @@ pub fn format_type(ty: &hir_ty::Type) -> String {
             out.push_str(ret_str.as_str());
             out
         }
-        &hir_ty::TypeKind::Adt { def_id, ref args } => {
-            let mut out = String::new();
+        &hir_ty.TypeKind.Adt { def_id, ref args } => {
+            let mut out = String.new();
             out.push_str("Adt(def");
             push_u32(&mut out, def_id.index);
             if args.len() > 0 {
@@ -252,20 +252,20 @@ pub fn format_type(ty: &hir_ty::Type) -> String {
             out.push(')');
             out
         }
-        &hir_ty::TypeKind::Infer(ref var_id) => {
-            let mut out = String::new();
+        &hir_ty.TypeKind.Infer(ref var_id) => {
+            let mut out = String.new();
             out.push('?');
             push_u32(&mut out, var_id.index);
             out
         }
-        &hir_ty::TypeKind::Param(ref var_id) => {
-            let mut out = String::new();
+        &hir_ty.TypeKind.Param(ref var_id) => {
+            let mut out = String.new();
             out.push_str("T");
             push_u32(&mut out, var_id.index);
             out
         }
-        &hir_ty::TypeKind::Record { ref fields, ref row_var } => {
-            let mut out = String::new();
+        &hir_ty.TypeKind.Record { ref fields, ref row_var } => {
+            let mut out = String.new();
             out.push_str("{ ");
             for i in 0usize..fields.len() {
                 if i > 0 {
@@ -278,8 +278,8 @@ pub fn format_type(ty: &hir_ty::Type) -> String {
             out.push_str(" }");
             out
         }
-        &hir_ty::TypeKind::Forall { ref params, ref body } => {
-            let mut out = String::new();
+        &hir_ty.TypeKind.Forall { ref params, ref body } => {
+            let mut out = String.new();
             out.push_str("forall<");
             for i in 0usize..params.len() {
                 if i > 0 {
@@ -293,8 +293,8 @@ pub fn format_type(ty: &hir_ty::Type) -> String {
             out.push_str(body_str.as_str());
             out
         }
-        &hir_ty::TypeKind::Range { ref element, inclusive } => {
-            let mut out = String::new();
+        &hir_ty.TypeKind.Range { ref element, inclusive } => {
+            let mut out = String.new();
             if inclusive {
                 out.push_str("RangeInclusive<");
             } else {
@@ -305,20 +305,20 @@ pub fn format_type(ty: &hir_ty::Type) -> String {
             out.push('>');
             out
         }
-        &hir_ty::TypeKind::DynTrait { trait_id, ref auto_traits } => {
-            let mut out = String::new();
+        &hir_ty.TypeKind.DynTrait { trait_id, ref auto_traits } => {
+            let mut out = String.new();
             out.push_str("dyn Trait(def");
             push_u32(&mut out, trait_id.index);
             out.push(')');
             out
         }
-        &hir_ty::TypeKind::Never => common::make_string("!"),
-        &hir_ty::TypeKind::Error => common::make_string("{error}"),
-        &hir_ty::TypeKind::Ownership { ref qualifier, ref inner } => {
-            let mut out = String::new();
+        &hir_ty.TypeKind.Never => common::make_string("!"),
+        &hir_ty.TypeKind.Error => common::make_string("{error}"),
+        &hir_ty.TypeKind.Ownership { ref qualifier, ref inner } => {
+            let mut out = String.new();
             match qualifier {
-                &hir_ty::OwnershipQualifier::Linear => out.push_str("linear "),
-                &hir_ty::OwnershipQualifier::Affine => out.push_str("affine "),
+                &hir_ty.OwnershipQualifier.Linear => out.push_str("linear "),
+                &hir_ty.OwnershipQualifier.Affine => out.push_str("affine "),
             }
             let inner_str = format_type(inner.as_ref());
             out.push_str(inner_str.as_str());
@@ -328,25 +328,25 @@ pub fn format_type(ty: &hir_ty::Type) -> String {
 }
 
 /// Formats a primitive type name.
-pub fn format_prim(prim: &hir_ty::PrimitiveTy) -> String {
+pub fn format_prim(prim: &hir_ty.PrimitiveTy) -> String {
     match prim {
-        &hir_ty::PrimitiveTy::Bool => common::make_string("bool"),
-        &hir_ty::PrimitiveTy::I8 => common::make_string("i8"),
-        &hir_ty::PrimitiveTy::I16 => common::make_string("i16"),
-        &hir_ty::PrimitiveTy::I32 => common::make_string("i32"),
-        &hir_ty::PrimitiveTy::I64 => common::make_string("i64"),
-        &hir_ty::PrimitiveTy::I128 => common::make_string("i128"),
-        &hir_ty::PrimitiveTy::Isize => common::make_string("isize"),
-        &hir_ty::PrimitiveTy::U8 => common::make_string("u8"),
-        &hir_ty::PrimitiveTy::U16 => common::make_string("u16"),
-        &hir_ty::PrimitiveTy::U32 => common::make_string("u32"),
-        &hir_ty::PrimitiveTy::U64 => common::make_string("u64"),
-        &hir_ty::PrimitiveTy::U128 => common::make_string("u128"),
-        &hir_ty::PrimitiveTy::Usize => common::make_string("usize"),
-        &hir_ty::PrimitiveTy::F32 => common::make_string("f32"),
-        &hir_ty::PrimitiveTy::F64 => common::make_string("f64"),
-        &hir_ty::PrimitiveTy::Char => common::make_string("char"),
-        &hir_ty::PrimitiveTy::Str => common::make_string("str"),
+        &hir_ty.PrimitiveTy.Bool => common::make_string("bool"),
+        &hir_ty.PrimitiveTy.I8 => common::make_string("i8"),
+        &hir_ty.PrimitiveTy.I16 => common::make_string("i16"),
+        &hir_ty.PrimitiveTy.I32 => common::make_string("i32"),
+        &hir_ty.PrimitiveTy.I64 => common::make_string("i64"),
+        &hir_ty.PrimitiveTy.I128 => common::make_string("i128"),
+        &hir_ty.PrimitiveTy.Isize => common::make_string("isize"),
+        &hir_ty.PrimitiveTy.U8 => common::make_string("u8"),
+        &hir_ty.PrimitiveTy.U16 => common::make_string("u16"),
+        &hir_ty.PrimitiveTy.U32 => common::make_string("u32"),
+        &hir_ty.PrimitiveTy.U64 => common::make_string("u64"),
+        &hir_ty.PrimitiveTy.U128 => common::make_string("u128"),
+        &hir_ty.PrimitiveTy.Usize => common::make_string("usize"),
+        &hir_ty.PrimitiveTy.F32 => common::make_string("f32"),
+        &hir_ty.PrimitiveTy.F64 => common::make_string("f64"),
+        &hir_ty.PrimitiveTy.Char => common::make_string("char"),
+        &hir_ty.PrimitiveTy.Str => common::make_string("str"),
     }
 }
 
@@ -356,11 +356,11 @@ pub fn format_prim(prim: &hir_ty::PrimitiveTy) -> String {
 
 /// Formats a place (memory location).
 /// Output examples: `_1`, `_1.2`, `(*_1)`, `(_1 as 3)`, `_1[_2]`
-pub fn format_place(place: &mir_types::Place) -> String {
+pub fn format_place(place: &mir_types.Place) -> String {
     // Check for static place first
     match &place.static_def_id {
-        &Option::Some(ref def_id) => {
-            let mut out = String::new();
+        &Option.Some(ref def_id) => {
+            let mut out = String.new();
             out.push_str("static(def");
             push_u32(&mut out, def_id.index);
             out.push(')');
@@ -371,10 +371,10 @@ pub fn format_place(place: &mir_types::Place) -> String {
             }
             return out;
         }
-        &Option::None => {}
+        &Option.None => {}
     }
 
-    let mut out = String::new();
+    let mut out = String.new();
     out.push('_');
     push_u32(&mut out, place.local.index);
 
@@ -388,24 +388,24 @@ pub fn format_place(place: &mir_types::Place) -> String {
 }
 
 /// Formats a single projection element.
-pub fn format_projection(elem: &mir_types::PlaceElem) -> String {
+pub fn format_projection(elem: &mir_types.PlaceElem) -> String {
     match elem {
-        &mir_types::PlaceElem::Deref => common::make_string(".*"),
-        &mir_types::PlaceElem::Field(idx) => {
-            let mut out = String::new();
+        &mir_types.PlaceElem.Deref => common::make_string(".*"),
+        &mir_types.PlaceElem.Field(idx) => {
+            let mut out = String.new();
             out.push('.');
             push_u32(&mut out, idx);
             out
         }
-        &mir_types::PlaceElem::Index(ref local_id) => {
-            let mut out = String::new();
+        &mir_types.PlaceElem.Index(ref local_id) => {
+            let mut out = String.new();
             out.push_str("[_");
             push_u32(&mut out, local_id.index);
             out.push(']');
             out
         }
-        &mir_types::PlaceElem::ConstantIndex { offset, min_length, from_end } => {
-            let mut out = String::new();
+        &mir_types.PlaceElem.ConstantIndex { offset, min_length, from_end } => {
+            let mut out = String.new();
             out.push('[');
             if from_end {
                 out.push_str("-");
@@ -416,8 +416,8 @@ pub fn format_projection(elem: &mir_types::PlaceElem) -> String {
             out.push(']');
             out
         }
-        &mir_types::PlaceElem::Subslice { from, to, from_end } => {
-            let mut out = String::new();
+        &mir_types.PlaceElem.Subslice { from, to, from_end } => {
+            let mut out = String.new();
             out.push('[');
             push_u64(&mut out, from);
             out.push_str("..");
@@ -428,8 +428,8 @@ pub fn format_projection(elem: &mir_types::PlaceElem) -> String {
             out.push(']');
             out
         }
-        &mir_types::PlaceElem::Downcast(variant_idx) => {
-            let mut out = String::new();
+        &mir_types.PlaceElem.Downcast(variant_idx) => {
+            let mut out = String.new();
             out.push_str(" as variant#");
             push_u32(&mut out, variant_idx);
             out
@@ -442,33 +442,33 @@ pub fn format_projection(elem: &mir_types::PlaceElem) -> String {
 // ============================================================
 
 /// Formats an operand.
-pub fn format_operand(operand: &mir_types::Operand) -> String {
+pub fn format_operand(operand: &mir_types.Operand) -> String {
     match operand {
-        &mir_types::Operand::Copy(ref place) => {
-            let mut out = String::new();
+        &mir_types.Operand.Copy(ref place) => {
+            let mut out = String.new();
             out.push_str("Copy(");
             let p = format_place(place);
             out.push_str(p.as_str());
             out.push(')');
             out
         }
-        &mir_types::Operand::Move(ref place) => {
-            let mut out = String::new();
+        &mir_types.Operand.Move(ref place) => {
+            let mut out = String.new();
             out.push_str("Move(");
             let p = format_place(place);
             out.push_str(p.as_str());
             out.push(')');
             out
         }
-        &mir_types::Operand::Constant(ref constant) => {
+        &mir_types.Operand.Constant(ref constant) => {
             format_constant(constant)
         }
     }
 }
 
 /// Formats a constant.
-pub fn format_constant(c: &mir_types::Constant) -> String {
-    let mut out = String::new();
+pub fn format_constant(c: &mir_types.Constant) -> String {
+    let mut out = String.new();
     out.push_str("const ");
     let kind_str = format_constant_kind(&c.kind);
     out.push_str(kind_str.as_str());
@@ -480,10 +480,10 @@ pub fn format_constant(c: &mir_types::Constant) -> String {
 }
 
 /// Formats a constant kind value.
-pub fn format_constant_kind(kind: &mir_types::ConstantKind) -> String {
+pub fn format_constant_kind(kind: &mir_types.ConstantKind) -> String {
     match kind {
-        &mir_types::ConstantKind::Int(val) => {
-            let mut out = String::new();
+        &mir_types.ConstantKind.Int(val) => {
+            let mut out = String.new();
             // i128 value — print as i64 for readability
             let v = val as i64;
             let zero: i64 = 0;
@@ -496,34 +496,34 @@ pub fn format_constant_kind(kind: &mir_types::ConstantKind) -> String {
             }
             out
         }
-        &mir_types::ConstantKind::Uint(val) => {
-            let mut out = String::new();
+        &mir_types.ConstantKind.Uint(val) => {
+            let mut out = String.new();
             push_u64(&mut out, val as u64);
             out
         }
-        &mir_types::ConstantKind::Float(bits) => {
-            let mut out = String::new();
+        &mir_types.ConstantKind.Float(bits) => {
+            let mut out = String.new();
             out.push_str("float(0x");
             push_hex_u64(&mut out, bits);
             out.push(')');
             out
         }
-        &mir_types::ConstantKind::Bool(val) => {
+        &mir_types.ConstantKind.Bool(val) => {
             if val {
                 common::make_string("true")
             } else {
                 common::make_string("false")
             }
         }
-        &mir_types::ConstantKind::Char(val) => {
-            let mut out = String::new();
+        &mir_types.ConstantKind.Char(val) => {
+            let mut out = String.new();
             out.push('\'');
             out.push(val);
             out.push('\'');
             out
         }
-        &mir_types::ConstantKind::String(ref val) => {
-            let mut out = String::new();
+        &mir_types.ConstantKind.String(ref val) => {
+            let mut out = String.new();
             out.push('"');
             // Truncate very long strings for readability
             let bytes = val.as_bytes();
@@ -553,36 +553,36 @@ pub fn format_constant_kind(kind: &mir_types::ConstantKind) -> String {
             out.push('"');
             out
         }
-        &mir_types::ConstantKind::ByteString(ref val) => {
-            let mut out = String::new();
+        &mir_types.ConstantKind.ByteString(ref val) => {
+            let mut out = String.new();
             out.push_str("b\"<");
             push_u64(&mut out, val.len() as u64);
             out.push_str(" bytes>\"");
             out
         }
-        &mir_types::ConstantKind::Unit => common::make_string("()"),
-        &mir_types::ConstantKind::FnDef(ref def_id) => {
-            let mut out = String::new();
+        &mir_types.ConstantKind.Unit => common::make_string("()"),
+        &mir_types.ConstantKind.FnDef(ref def_id) => {
+            let mut out = String.new();
             out.push_str("fn(def");
             push_u32(&mut out, def_id.index);
             out.push(')');
             out
         }
-        &mir_types::ConstantKind::ConstDef(ref def_id) => {
-            let mut out = String::new();
+        &mir_types.ConstantKind.ConstDef(ref def_id) => {
+            let mut out = String.new();
             out.push_str("const(def");
             push_u32(&mut out, def_id.index);
             out.push(')');
             out
         }
-        &mir_types::ConstantKind::StaticDef(ref def_id) => {
-            let mut out = String::new();
+        &mir_types.ConstantKind.StaticDef(ref def_id) => {
+            let mut out = String.new();
             out.push_str("static(def");
             push_u32(&mut out, def_id.index);
             out.push(')');
             out
         }
-        &mir_types::ConstantKind::ZeroSized => common::make_string("zst"),
+        &mir_types.ConstantKind.ZeroSized => common::make_string("zst"),
     }
 }
 
@@ -591,44 +591,44 @@ pub fn format_constant_kind(kind: &mir_types::ConstantKind) -> String {
 // ============================================================
 
 /// Formats a binary operator.
-pub fn format_binop(binop: &mir_types::MirBinOp) -> String {
+pub fn format_binop(binop: &mir_types.MirBinOp) -> String {
     match binop {
-        &mir_types::MirBinOp::Add => common::make_string("Add"),
-        &mir_types::MirBinOp::Sub => common::make_string("Sub"),
-        &mir_types::MirBinOp::Mul => common::make_string("Mul"),
-        &mir_types::MirBinOp::Div => common::make_string("Div"),
-        &mir_types::MirBinOp::Rem => common::make_string("Rem"),
-        &mir_types::MirBinOp::Eq => common::make_string("Eq"),
-        &mir_types::MirBinOp::Ne => common::make_string("Ne"),
-        &mir_types::MirBinOp::Lt => common::make_string("Lt"),
-        &mir_types::MirBinOp::Le => common::make_string("Le"),
-        &mir_types::MirBinOp::Gt => common::make_string("Gt"),
-        &mir_types::MirBinOp::Ge => common::make_string("Ge"),
-        &mir_types::MirBinOp::BitAnd => common::make_string("BitAnd"),
-        &mir_types::MirBinOp::BitOr => common::make_string("BitOr"),
-        &mir_types::MirBinOp::BitXor => common::make_string("BitXor"),
-        &mir_types::MirBinOp::Shl => common::make_string("Shl"),
-        &mir_types::MirBinOp::Shr => common::make_string("Shr"),
-        &mir_types::MirBinOp::AddChecked => common::make_string("AddChecked"),
-        &mir_types::MirBinOp::SubChecked => common::make_string("SubChecked"),
-        &mir_types::MirBinOp::MulChecked => common::make_string("MulChecked"),
+        &mir_types.MirBinOp.Add => common::make_string("Add"),
+        &mir_types.MirBinOp.Sub => common::make_string("Sub"),
+        &mir_types.MirBinOp.Mul => common::make_string("Mul"),
+        &mir_types.MirBinOp.Div => common::make_string("Div"),
+        &mir_types.MirBinOp.Rem => common::make_string("Rem"),
+        &mir_types.MirBinOp.Eq => common::make_string("Eq"),
+        &mir_types.MirBinOp.Ne => common::make_string("Ne"),
+        &mir_types.MirBinOp.Lt => common::make_string("Lt"),
+        &mir_types.MirBinOp.Le => common::make_string("Le"),
+        &mir_types.MirBinOp.Gt => common::make_string("Gt"),
+        &mir_types.MirBinOp.Ge => common::make_string("Ge"),
+        &mir_types.MirBinOp.BitAnd => common::make_string("BitAnd"),
+        &mir_types.MirBinOp.BitOr => common::make_string("BitOr"),
+        &mir_types.MirBinOp.BitXor => common::make_string("BitXor"),
+        &mir_types.MirBinOp.Shl => common::make_string("Shl"),
+        &mir_types.MirBinOp.Shr => common::make_string("Shr"),
+        &mir_types.MirBinOp.AddChecked => common::make_string("AddChecked"),
+        &mir_types.MirBinOp.SubChecked => common::make_string("SubChecked"),
+        &mir_types.MirBinOp.MulChecked => common::make_string("MulChecked"),
     }
 }
 
 /// Formats a unary operator.
-pub fn format_unop(unop: &mir_types::MirUnOp) -> String {
+pub fn format_unop(unop: &mir_types.MirUnOp) -> String {
     match unop {
-        &mir_types::MirUnOp::Neg => common::make_string("Neg"),
-        &mir_types::MirUnOp::Not => common::make_string("Not"),
+        &mir_types.MirUnOp.Neg => common::make_string("Neg"),
+        &mir_types.MirUnOp.Not => common::make_string("Not"),
     }
 }
 
 /// Formats an aggregate kind.
-pub fn format_aggregate_kind(kind: &mir_types::AggregateKind) -> String {
+pub fn format_aggregate_kind(kind: &mir_types.AggregateKind) -> String {
     match kind {
-        &mir_types::AggregateKind::Tuple => common::make_string("Tuple"),
-        &mir_types::AggregateKind::Array(ref elem_ty) => {
-            let mut out = String::new();
+        &mir_types.AggregateKind.Tuple => common::make_string("Tuple"),
+        &mir_types.AggregateKind.Array(ref elem_ty) => {
+            let mut out = String.new();
             out.push_str("Array(");
             let elem_hir_ty = type_intern::ty_id_to_type(*elem_ty);
             let ty_str = format_type(&elem_hir_ty);
@@ -636,8 +636,8 @@ pub fn format_aggregate_kind(kind: &mir_types::AggregateKind) -> String {
             out.push(')');
             out
         }
-        &mir_types::AggregateKind::Adt { def_id, variant_idx, ref type_args } => {
-            let mut out = String::new();
+        &mir_types.AggregateKind.Adt { def_id, variant_idx, ref type_args } => {
+            let mut out = String.new();
             out.push_str("Adt(def");
             push_u32(&mut out, def_id.index);
             out.push_str(", variant=");
@@ -657,16 +657,16 @@ pub fn format_aggregate_kind(kind: &mir_types::AggregateKind) -> String {
             out.push(')');
             out
         }
-        &mir_types::AggregateKind::Record => common::make_string("Record"),
-        &mir_types::AggregateKind::Closure { def_id } => {
-            let mut out = String::new();
+        &mir_types.AggregateKind.Record => common::make_string("Record"),
+        &mir_types.AggregateKind.Closure { def_id } => {
+            let mut out = String.new();
             out.push_str("Closure(def");
             push_u32(&mut out, def_id.index);
             out.push(')');
             out
         }
-        &mir_types::AggregateKind::Range { ref element, inclusive } => {
-            let mut out = String::new();
+        &mir_types.AggregateKind.Range { ref element, inclusive } => {
+            let mut out = String.new();
             if inclusive {
                 out.push_str("RangeInclusive(");
             } else {
@@ -686,18 +686,18 @@ pub fn format_aggregate_kind(kind: &mir_types::AggregateKind) -> String {
 // ============================================================
 
 /// Formats an rvalue (right-hand side of an assignment).
-pub fn format_rvalue(rv: &mir_types::Rvalue) -> String {
+pub fn format_rvalue(rv: &mir_types.Rvalue) -> String {
     match rv {
-        &mir_types::Rvalue::Use(ref operand) => {
-            let mut out = String::new();
+        &mir_types.Rvalue.Use(ref operand) => {
+            let mut out = String.new();
             out.push_str("Use(");
             let op_str = format_operand(operand);
             out.push_str(op_str.as_str());
             out.push(')');
             out
         }
-        &mir_types::Rvalue::Ref { ref place, mutable } => {
-            let mut out = String::new();
+        &mir_types.Rvalue.Ref { ref place, mutable } => {
+            let mut out = String.new();
             if mutable {
                 out.push_str("Ref(&mut ");
             } else {
@@ -708,8 +708,8 @@ pub fn format_rvalue(rv: &mir_types::Rvalue) -> String {
             out.push(')');
             out
         }
-        &mir_types::Rvalue::AddressOf { ref place, mutable } => {
-            let mut out = String::new();
+        &mir_types.Rvalue.AddressOf { ref place, mutable } => {
+            let mut out = String.new();
             if mutable {
                 out.push_str("AddressOf(*mut ");
             } else {
@@ -720,8 +720,8 @@ pub fn format_rvalue(rv: &mir_types::Rvalue) -> String {
             out.push(')');
             out
         }
-        &mir_types::Rvalue::BinaryOp { op: ref bin_op, ref left, ref right } => {
-            let mut out = String::new();
+        &mir_types.Rvalue.BinaryOp { op: ref bin_op, ref left, ref right } => {
+            let mut out = String.new();
             out.push_str("BinaryOp(");
             let op_str = format_binop(bin_op);
             out.push_str(op_str.as_str());
@@ -734,8 +734,8 @@ pub fn format_rvalue(rv: &mir_types::Rvalue) -> String {
             out.push(')');
             out
         }
-        &mir_types::Rvalue::UnaryOp { op: ref un_op, ref operand } => {
-            let mut out = String::new();
+        &mir_types.Rvalue.UnaryOp { op: ref un_op, ref operand } => {
+            let mut out = String.new();
             out.push_str("UnaryOp(");
             let op_str = format_unop(un_op);
             out.push_str(op_str.as_str());
@@ -745,8 +745,8 @@ pub fn format_rvalue(rv: &mir_types::Rvalue) -> String {
             out.push(')');
             out
         }
-        &mir_types::Rvalue::Cast { ref operand, ref target_ty } => {
-            let mut out = String::new();
+        &mir_types.Rvalue.Cast { ref operand, ref target_ty } => {
+            let mut out = String.new();
             out.push_str("Cast(");
             let operand_str = format_operand(operand);
             out.push_str(operand_str.as_str());
@@ -757,8 +757,8 @@ pub fn format_rvalue(rv: &mir_types::Rvalue) -> String {
             out.push(')');
             out
         }
-        &mir_types::Rvalue::Aggregate { ref kind, ref operands } => {
-            let mut out = String::new();
+        &mir_types.Rvalue.Aggregate { ref kind, ref operands } => {
+            let mut out = String.new();
             out.push_str("Aggregate(");
             let kind_str = format_aggregate_kind(kind);
             out.push_str(kind_str.as_str());
@@ -773,24 +773,24 @@ pub fn format_rvalue(rv: &mir_types::Rvalue) -> String {
             out.push_str("])");
             out
         }
-        &mir_types::Rvalue::Discriminant(ref place) => {
-            let mut out = String::new();
+        &mir_types.Rvalue.Discriminant(ref place) => {
+            let mut out = String.new();
             out.push_str("Discriminant(");
             let p = format_place(place);
             out.push_str(p.as_str());
             out.push(')');
             out
         }
-        &mir_types::Rvalue::Len(ref place) => {
-            let mut out = String::new();
+        &mir_types.Rvalue.Len(ref place) => {
+            let mut out = String.new();
             out.push_str("Len(");
             let p = format_place(place);
             out.push_str(p.as_str());
             out.push(')');
             out
         }
-        &mir_types::Rvalue::ArrayToSlice { ref array_ref, array_len } => {
-            let mut out = String::new();
+        &mir_types.Rvalue.ArrayToSlice { ref array_ref, array_len } => {
+            let mut out = String.new();
             out.push_str("ArrayToSlice(");
             let arr_op = format_operand(array_ref);
             out.push_str(arr_op.as_str());
@@ -799,8 +799,8 @@ pub fn format_rvalue(rv: &mir_types::Rvalue) -> String {
             out.push(')');
             out
         }
-        &mir_types::Rvalue::ZeroInit(ref ty) => {
-            let mut out = String::new();
+        &mir_types.Rvalue.ZeroInit(ref ty) => {
+            let mut out = String.new();
             out.push_str("ZeroInit(");
             let zi_hir_ty = type_intern::ty_id_to_type(*ty);
             let ty_str = format_type(&zi_hir_ty);
@@ -816,10 +816,10 @@ pub fn format_rvalue(rv: &mir_types::Rvalue) -> String {
 // ============================================================
 
 /// Formats a statement.
-pub fn format_statement(stmt: &mir_stmt::Statement) -> String {
+pub fn format_statement(stmt: &mir_stmt.Statement) -> String {
     match &stmt.kind {
-        &mir_stmt::StatementKind::Assign { ref place, ref rvalue } => {
-            let mut out = String::new();
+        &mir_stmt.StatementKind.Assign { ref place, ref rvalue } => {
+            let mut out = String.new();
             let p = format_place(place);
             out.push_str(p.as_str());
             out.push_str(" = ");
@@ -827,30 +827,30 @@ pub fn format_statement(stmt: &mir_stmt::Statement) -> String {
             out.push_str(rv.as_str());
             out
         }
-        &mir_stmt::StatementKind::StorageLive(ref local) => {
-            let mut out = String::new();
+        &mir_stmt.StatementKind.StorageLive(ref local) => {
+            let mut out = String.new();
             out.push_str("StorageLive(_");
             push_u32(&mut out, local.index);
             out.push(')');
             out
         }
-        &mir_stmt::StatementKind::StorageDead(ref local) => {
-            let mut out = String::new();
+        &mir_stmt.StatementKind.StorageDead(ref local) => {
+            let mut out = String.new();
             out.push_str("StorageDead(_");
             push_u32(&mut out, local.index);
             out.push(')');
             out
         }
-        &mir_stmt::StatementKind::Drop(ref place) => {
-            let mut out = String::new();
+        &mir_stmt.StatementKind.Drop(ref place) => {
+            let mut out = String.new();
             out.push_str("Drop(");
             let p = format_place(place);
             out.push_str(p.as_str());
             out.push(')');
             out
         }
-        &mir_stmt::StatementKind::PushHandler { handler_id, ref state_place, ref state_kind } => {
-            let mut out = String::new();
+        &mir_stmt.StatementKind.PushHandler { handler_id, ref state_place, ref state_kind } => {
+            let mut out = String.new();
             out.push_str("PushHandler(def");
             push_u32(&mut out, handler_id.index);
             out.push_str(", state=");
@@ -859,11 +859,11 @@ pub fn format_statement(stmt: &mir_stmt::Statement) -> String {
             out.push(')');
             out
         }
-        &mir_stmt::StatementKind::PopHandler => {
+        &mir_stmt.StatementKind.PopHandler => {
             common::make_string("PopHandler")
         }
-        &mir_stmt::StatementKind::PushInlineHandler { effect_id, ref operations } => {
-            let mut out = String::new();
+        &mir_stmt.StatementKind.PushInlineHandler { effect_id, ref operations } => {
+            let mut out = String.new();
             out.push_str("PushInlineHandler(def");
             push_u32(&mut out, effect_id.index);
             out.push_str(", ops=");
@@ -871,8 +871,8 @@ pub fn format_statement(stmt: &mir_stmt::Statement) -> String {
             out.push(')');
             out
         }
-        &mir_stmt::StatementKind::CallReturnClause { handler_id, ref handler_name, ref body_result, ref state_place, ref destination } => {
-            let mut out = String::new();
+        &mir_stmt.StatementKind.CallReturnClause { handler_id, ref handler_name, ref body_result, ref state_place, ref destination } => {
+            let mut out = String.new();
             out.push_str("CallReturnClause(");
             out.push_str(handler_name.as_str());
             out.push_str(", result=");
@@ -884,16 +884,16 @@ pub fn format_statement(stmt: &mir_stmt::Statement) -> String {
             out.push(')');
             out
         }
-        &mir_stmt::StatementKind::Deinit(ref place) => {
-            let mut out = String::new();
+        &mir_stmt.StatementKind.Deinit(ref place) => {
+            let mut out = String.new();
             out.push_str("Deinit(");
             let p = format_place(place);
             out.push_str(p.as_str());
             out.push(')');
             out
         }
-        &mir_stmt::StatementKind::SetDiscriminant { ref place, variant_idx } => {
-            let mut out = String::new();
+        &mir_stmt.StatementKind.SetDiscriminant { ref place, variant_idx } => {
+            let mut out = String.new();
             out.push_str("SetDiscriminant(");
             let p = format_place(place);
             out.push_str(p.as_str());
@@ -902,8 +902,8 @@ pub fn format_statement(stmt: &mir_stmt::Statement) -> String {
             out.push(')');
             out
         }
-        &mir_stmt::StatementKind::CopyNonOverlapping { ref src, ref dst, ref count } => {
-            let mut out = String::new();
+        &mir_stmt.StatementKind.CopyNonOverlapping { ref src, ref dst, ref count } => {
+            let mut out = String.new();
             out.push_str("CopyNonOverlapping(src=");
             let s = format_operand(src);
             out.push_str(s.as_str());
@@ -916,7 +916,7 @@ pub fn format_statement(stmt: &mir_stmt::Statement) -> String {
             out.push(')');
             out
         }
-        &mir_stmt::StatementKind::Nop => common::make_string("Nop"),
+        &mir_stmt.StatementKind.Nop => common::make_string("Nop"),
     }
 }
 
@@ -925,16 +925,16 @@ pub fn format_statement(stmt: &mir_stmt::Statement) -> String {
 // ============================================================
 
 /// Formats a terminator.
-pub fn format_terminator(term: &mir_term::Terminator) -> String {
+pub fn format_terminator(term: &mir_term.Terminator) -> String {
     match &term.kind {
-        &mir_term::TerminatorKind::Goto { target } => {
-            let mut out = String::new();
+        &mir_term.TerminatorKind.Goto { target } => {
+            let mut out = String.new();
             out.push_str("goto -> bb");
             push_u32(&mut out, target.index);
             out
         }
-        &mir_term::TerminatorKind::SwitchInt { ref discr, ref targets } => {
-            let mut out = String::new();
+        &mir_term.TerminatorKind.SwitchInt { ref discr, ref targets } => {
+            let mut out = String.new();
             out.push_str("switchInt(");
             let d = format_operand(discr);
             out.push_str(d.as_str());
@@ -953,11 +953,11 @@ pub fn format_terminator(term: &mir_term::Terminator) -> String {
             out.push(']');
             out
         }
-        &mir_term::TerminatorKind::Return => {
+        &mir_term.TerminatorKind.Return => {
             common::make_string("return")
         }
-        &mir_term::TerminatorKind::Call { ref func, ref args, ref destination, ref target, ref unwind } => {
-            let mut out = String::new();
+        &mir_term.TerminatorKind.Call { ref func, ref args, ref destination, ref target, ref unwind } => {
+            let mut out = String.new();
             let dest = format_place(destination);
             out.push_str(dest.as_str());
             out.push_str(" = call ");
@@ -973,18 +973,18 @@ pub fn format_terminator(term: &mir_term::Terminator) -> String {
             }
             out.push_str(") -> ");
             match target {
-                &Option::Some(ref t) => {
+                &Option.Some(ref t) => {
                     out.push_str("bb");
                     push_u32(&mut out, t.index);
                 }
-                &Option::None => {
+                &Option.None => {
                     out.push_str("diverge");
                 }
             }
             out
         }
-        &mir_term::TerminatorKind::Assert { ref cond, expected, ref msg, target, ref unwind } => {
-            let mut out = String::new();
+        &mir_term.TerminatorKind.Assert { ref cond, expected, ref msg, target, ref unwind } => {
+            let mut out = String.new();
             out.push_str("assert(");
             let c = format_operand(cond);
             out.push_str(c.as_str());
@@ -1000,8 +1000,8 @@ pub fn format_terminator(term: &mir_term::Terminator) -> String {
             push_u32(&mut out, target.index);
             out
         }
-        &mir_term::TerminatorKind::Perform { effect_id, op_index, ref args, ref destination, ref target, is_tail_resumptive } => {
-            let mut out = String::new();
+        &mir_term.TerminatorKind.Perform { effect_id, op_index, ref args, ref destination, ref target, is_tail_resumptive } => {
+            let mut out = String.new();
             let dest = format_place(destination);
             out.push_str(dest.as_str());
             out.push_str(" = perform def");
@@ -1018,11 +1018,11 @@ pub fn format_terminator(term: &mir_term::Terminator) -> String {
             }
             out.push_str(") -> ");
             match target {
-                &Option::Some(ref t) => {
+                &Option.Some(ref t) => {
                     out.push_str("bb");
                     push_u32(&mut out, t.index);
                 }
-                &Option::None => {
+                &Option.None => {
                     out.push_str("diverge");
                 }
             }
@@ -1031,25 +1031,25 @@ pub fn format_terminator(term: &mir_term::Terminator) -> String {
             }
             out
         }
-        &mir_term::TerminatorKind::Resume { ref value } => {
-            let mut out = String::new();
+        &mir_term.TerminatorKind.Resume { ref value } => {
+            let mut out = String.new();
             out.push_str("resume");
             match value {
-                &Option::Some(ref v) => {
+                &Option.Some(ref v) => {
                     out.push('(');
                     let val = format_operand(v);
                     out.push_str(val.as_str());
                     out.push(')');
                 }
-                &Option::None => {}
+                &Option.None => {}
             }
             out
         }
-        &mir_term::TerminatorKind::Unreachable => {
+        &mir_term.TerminatorKind.Unreachable => {
             common::make_string("unreachable")
         }
-        &mir_term::TerminatorKind::Drop { ref place, target, ref unwind } => {
-            let mut out = String::new();
+        &mir_term.TerminatorKind.Drop { ref place, target, ref unwind } => {
+            let mut out = String.new();
             out.push_str("drop(");
             let p = format_place(place);
             out.push_str(p.as_str());
@@ -1070,7 +1070,7 @@ fn push_u32(s: &mut String, val: u32) {
         s.push('0');
         return;
     }
-    let mut digits: Vec<u8> = Vec::new();
+    let mut digits: Vec<u8> = Vec.new();
     let mut n = val;
     while n > 0 {
         let digit = (n % 10) as u8;
@@ -1090,7 +1090,7 @@ fn push_u64(s: &mut String, val: u64) {
         s.push('0');
         return;
     }
-    let mut digits: Vec<u8> = Vec::new();
+    let mut digits: Vec<u8> = Vec.new();
     let mut n = val;
     while n > 0 {
         let digit = (n % 10) as u8;
@@ -1110,7 +1110,7 @@ fn push_hex_u64(s: &mut String, val: u64) {
         s.push('0');
         return;
     }
-    let mut digits: Vec<u8> = Vec::new();
+    let mut digits: Vec<u8> = Vec.new();
     let mut n = val;
     while n > 0 {
         let digit = (n % 16) as u8;

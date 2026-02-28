@@ -20,7 +20,7 @@ mod codegen_types;
 /// Returns a list of module names (strings).
 /// Skips comments, inline modules (with `{`), and non-mod lines.
 pub fn scan_mod_names(content: &str) -> Vec<String> {
-    let mut names: Vec<String> = Vec::new();
+    let mut names: Vec<String> = Vec.new();
     let bytes = content.as_bytes();
     let len = bytes.len();
 
@@ -109,7 +109,7 @@ pub fn scan_mod_names(content: &str) -> Vec<String> {
                         }
 
                         if trimmed_end > mod_name_start {
-                            let mut name = String::new();
+                            let mut name = String.new();
                             let mut ni: usize = mod_name_start;
                             while ni < trimmed_end {
                                 name.push(bytes[ni] as char);
@@ -136,8 +136,8 @@ pub fn scan_mod_names(content: &str) -> Vec<String> {
 /// Collects all source files transitively referenced from the entry file.
 /// Returns a sorted list of absolute file paths.
 pub fn collect_source_files(base_dir: &str, entry_path: &str) -> Vec<String> {
-    let mut visited: Vec<String> = Vec::new();
-    let mut queue: Vec<String> = Vec::new();
+    let mut visited: Vec<String> = Vec.new();
+    let mut queue: Vec<String> = Vec.new();
 
     // Start with the entry file
     queue.push(make_string(entry_path));
@@ -181,7 +181,7 @@ pub fn collect_source_files(base_dir: &str, entry_path: &str) -> Vec<String> {
             let mod_name = &mod_names[mi];
 
             // Try {dir}/{name}.blood
-            let mut file_path = String::new();
+            let mut file_path = String.new();
             file_path.push_str(current_dir.as_str());
             file_path.push('/');
             file_path.push_str(mod_name.as_str());
@@ -191,7 +191,7 @@ pub fn collect_source_files(base_dir: &str, entry_path: &str) -> Vec<String> {
                 queue.push(file_path);
             } else {
                 // Try {dir}/{name}/mod.blood
-                let mut dir_path = String::new();
+                let mut dir_path = String.new();
                 dir_path.push_str(current_dir.as_str());
                 dir_path.push('/');
                 dir_path.push_str(mod_name.as_str());
@@ -259,7 +259,7 @@ pub fn compute_combined_hash(files: &Vec<String>) -> u64 {
 
 /// Returns the cache file path for a given hash.
 pub fn cache_ll_path(cache_dir: &str, hash: u64) -> String {
-    let mut path = String::new();
+    let mut path = String.new();
     path.push_str(cache_dir);
     path.push('/');
     let hash_str = codegen_types::format_u64(hash);
@@ -272,7 +272,7 @@ pub fn cache_ll_path(cache_dir: &str, hash: u64) -> String {
 /// Checks BLOOD_CACHE env var first; falls back to base_dir/.blood-cache.
 pub fn ensure_cache_dir(base_dir: &str) -> String {
     let env_cache: &str = env_get("BLOOD_CACHE");
-    let mut cache_dir = String::new();
+    let mut cache_dir = String.new();
     if env_cache.len() > 0 {
         cache_dir.push_str(env_cache);
     } else {
@@ -280,7 +280,7 @@ pub fn ensure_cache_dir(base_dir: &str) -> String {
         cache_dir.push_str("/.blood-cache");
     }
 
-    let mut mkdir_cmd = String::new();
+    let mut mkdir_cmd = String.new();
     mkdir_cmd.push_str("mkdir -p ");
     mkdir_cmd.push_str(cache_dir.as_str());
     system(mkdir_cmd.as_str());
@@ -318,7 +318,7 @@ pub fn try_cache(base_dir: &str, entry_path: &str, compiler_path: &str) -> u64 {
 /// Uses `stat -c '%Y %s'` to get mtime (epoch seconds) + size.
 fn binary_fingerprint(path: &str) -> u64 {
     let stat_file = "/tmp/.blood_cache_stat";
-    let mut cmd = String::new();
+    let mut cmd = String.new();
     cmd.push_str("stat -c '%Y %s' '");
     cmd.push_str(path);
     cmd.push_str("' > ");
@@ -337,7 +337,7 @@ fn binary_fingerprint(path: &str) -> u64 {
 
 /// Creates an owned String from a &str.
 fn make_string(s: &str) -> String {
-    let mut result = String::new();
+    let mut result = String.new();
     result.push_str(s);
     result
 }

@@ -20,34 +20,34 @@ mod typeck_types;
 mod typeck_info;
 
 // Re-export types from submodules for public API
-pub use typeck_types::TypeError;
-pub use typeck_types::TypeErrorKind;
-pub use typeck_types::TypeNote;
-pub use typeck_types::CheckMode;
-pub use typeck_types::Coercion;
-pub use typeck_types::CoercionResult;
-pub use typeck_types::ItemCheckResult;
-pub use typeck_types::CrateCheckResult;
-pub use typeck_types::Obligation;
-pub use typeck_types::Predicate;
-pub use typeck_types::ObligationCause;
-pub use typeck_types::LocalInfo;
+pub use typeck_types.TypeError;
+pub use typeck_types.TypeErrorKind;
+pub use typeck_types.TypeNote;
+pub use typeck_types.CheckMode;
+pub use typeck_types.Coercion;
+pub use typeck_types.CoercionResult;
+pub use typeck_types.ItemCheckResult;
+pub use typeck_types.CrateCheckResult;
+pub use typeck_types.Obligation;
+pub use typeck_types.Predicate;
+pub use typeck_types.ObligationCause;
+pub use typeck_types.LocalInfo;
 
-pub use typeck_info::StructInfo;
-pub use typeck_info::EnumInfo;
-pub use typeck_info::FnInfo;
-pub use typeck_info::EffectInfo;
-pub use typeck_info::EffectOpInfo;
-pub use typeck_info::FieldInfo;
-pub use typeck_info::VariantInfo;
-pub use typeck_info::FnSigInfo;
-pub use typeck_info::ConstInfo;
-pub use typeck_info::StaticInfo;
-pub use typeck_info::MethodInfo;
-pub use typeck_info::ImplInfo;
-pub use typeck_info::TraitInfo;
-pub use typeck_info::TraitMethodInfo;
-pub use typeck_info::TraitImplInfo;
+pub use typeck_info.StructInfo;
+pub use typeck_info.EnumInfo;
+pub use typeck_info.FnInfo;
+pub use typeck_info.EffectInfo;
+pub use typeck_info.EffectOpInfo;
+pub use typeck_info.FieldInfo;
+pub use typeck_info.VariantInfo;
+pub use typeck_info.FnSigInfo;
+pub use typeck_info.ConstInfo;
+pub use typeck_info.StaticInfo;
+pub use typeck_info.MethodInfo;
+pub use typeck_info.ImplInfo;
+pub use typeck_info.TraitInfo;
+pub use typeck_info.TraitMethodInfo;
+pub use typeck_info.TraitImplInfo;
 
 // ============================================================
 // Builtin DefId Name Mapping
@@ -78,15 +78,15 @@ impl BuiltinDefName {
 
 /// Counts only type parameters in a generics param list, excluding
 /// lifetime parameters and const parameters.
-fn count_type_params(params: &Vec<hir_ty::GenericParam>) -> u32 {
+fn count_type_params(params: &Vec<hir_ty.GenericParam>) -> u32 {
     let mut count: u32 = 0;
     for i in 0usize..params.len() {
         match &params[i] {
-            &hir_ty::GenericParam::TypeParam(_) => {
+            &hir_ty.GenericParam.TypeParam(_) => {
                 count += 1;
             }
-            &hir_ty::GenericParam::LifetimeParam(_) => {}
-            &hir_ty::GenericParam::ConstParam(_) => {}
+            &hir_ty.GenericParam.LifetimeParam(_) => {}
+            &hir_ty.GenericParam.ConstParam(_) => {}
         }
     }
     count
@@ -94,15 +94,15 @@ fn count_type_params(params: &Vec<hir_ty::GenericParam>) -> u32 {
 
 /// Extracts the actual TyVarId indices from generic parameters.
 /// These are the globally unique indices assigned during HIR lowering.
-fn extract_type_param_ids(params: &Vec<hir_ty::GenericParam>) -> Vec<u32> {
-    let mut ids: Vec<u32> = Vec::new();
+fn extract_type_param_ids(params: &Vec<hir_ty.GenericParam>) -> Vec<u32> {
+    let mut ids: Vec<u32> = Vec.new();
     for i in 0usize..params.len() {
         match &params[i] {
-            &hir_ty::GenericParam::TypeParam(ref def) => {
+            &hir_ty.GenericParam.TypeParam(ref def) => {
                 ids.push(def.var_id.index);
             }
-            &hir_ty::GenericParam::LifetimeParam(_) => {}
-            &hir_ty::GenericParam::ConstParam(_) => {}
+            &hir_ty.GenericParam.LifetimeParam(_) => {}
+            &hir_ty.GenericParam.ConstParam(_) => {}
         }
     }
     ids
@@ -139,8 +139,8 @@ impl ExhaustivenessResult {
     /// Returns true if the result is exhaustive.
     pub fn is_exhaustive(self: &ExhaustivenessResult) -> bool {
         match self {
-            &ExhaustivenessResult::Exhaustive => true,
-            &ExhaustivenessResult::NonExhaustive(_) => false,
+            &ExhaustivenessResult.Exhaustive => true,
+            &ExhaustivenessResult.NonExhaustive(_) => false,
         }
     }
 }
@@ -153,13 +153,13 @@ pub enum DeconstructedPattern {
     Literal { value: i128 },
     /// A struct variant pattern.
     Variant {
-        def_id: hir_def::DefId,
+        def_id: hir_def.DefId,
         variant_idx: u32,
         fields: Vec<DeconstructedPattern>,
     },
     /// A struct pattern (non-enum).
     Struct {
-        def_id: hir_def::DefId,
+        def_id: hir_def.DefId,
         fields: Vec<DeconstructedPattern>,
     },
     /// A tuple pattern.
@@ -173,33 +173,33 @@ pub enum DeconstructedPattern {
 impl DeconstructedPattern {
     /// Creates a wildcard pattern.
     pub fn wildcard() -> DeconstructedPattern {
-        DeconstructedPattern::Wildcard
+        DeconstructedPattern.Wildcard
     }
 
     /// Creates a literal pattern.
     pub fn literal(value: i128) -> DeconstructedPattern {
-        DeconstructedPattern::Literal { value: value }
+        DeconstructedPattern.Literal { value: value }
     }
 
     /// Creates a variant pattern.
-    pub fn variant(def_id: hir_def::DefId, variant_idx: u32, fields: Vec<DeconstructedPattern>) -> DeconstructedPattern {
-        DeconstructedPattern::Variant { def_id: def_id, variant_idx: variant_idx, fields: fields }
+    pub fn variant(def_id: hir_def.DefId, variant_idx: u32, fields: Vec<DeconstructedPattern>) -> DeconstructedPattern {
+        DeconstructedPattern.Variant { def_id: def_id, variant_idx: variant_idx, fields: fields }
     }
 
     /// Creates a struct pattern.
-    pub fn struct_pat(def_id: hir_def::DefId, fields: Vec<DeconstructedPattern>) -> DeconstructedPattern {
-        DeconstructedPattern::Struct { def_id: def_id, fields: fields }
+    pub fn struct_pat(def_id: hir_def.DefId, fields: Vec<DeconstructedPattern>) -> DeconstructedPattern {
+        DeconstructedPattern.Struct { def_id: def_id, fields: fields }
     }
 
     /// Creates a tuple pattern.
     pub fn tuple(fields: Vec<DeconstructedPattern>) -> DeconstructedPattern {
-        DeconstructedPattern::Tuple { fields: fields }
+        DeconstructedPattern.Tuple { fields: fields }
     }
 
     /// Returns true if this pattern is a wildcard.
     pub fn is_wildcard(self: &DeconstructedPattern) -> bool {
         match self {
-            &DeconstructedPattern::Wildcard => true,
+            &DeconstructedPattern.Wildcard => true,
             _ => false,
         }
     }
@@ -230,7 +230,7 @@ impl PatternMatrix {
     /// Creates a new empty pattern matrix.
     pub fn new(width: usize) -> PatternMatrix {
         PatternMatrix {
-            rows: Vec::new(),
+            rows: Vec.new(),
             width: width,
         }
     }
@@ -266,60 +266,60 @@ impl PatternMatrix {
 /// - Registered item signatures for lookup
 pub struct TypeChecker {
     /// Substitution table for type unification.
-    pub subst_table: unify::SubstTable,
+    pub subst_table: unify.SubstTable,
     /// Unifier for generating fresh type variables.
-    pub unifier: unify::Unifier,
+    pub unifier: unify.Unifier,
     /// Current function's return type.
-    pub return_ty: Option<type_intern::TyId>,
+    pub return_ty: Option<type_intern.TyId>,
     /// Whether we're currently in a loop.
     pub in_loop: bool,
     /// Type of the current loop (for break values).
-    pub loop_ty: Option<type_intern::TyId>,
+    pub loop_ty: Option<type_intern.TyId>,
     /// Local variable types by LocalId index.
-    pub locals: Vec<typeck_types::LocalInfo>,
+    pub locals: Vec<typeck_types.LocalInfo>,
     /// Type errors collected during checking.
-    pub errors: Vec<typeck_types::TypeError>,
+    pub errors: Vec<typeck_types.TypeError>,
     /// Function signature info by DefId.index for O(1) lookup.
-    pub fn_sigs: Vec<Option<typeck_info::FnSigInfo>>,
+    pub fn_sigs: Vec<Option<typeck_info.FnSigInfo>>,
     /// Struct info by DefId.index for O(1) lookup.
-    pub structs: Vec<Option<typeck_info::StructInfo>>,
+    pub structs: Vec<Option<typeck_info.StructInfo>>,
     /// Enum info by DefId.index for O(1) lookup.
-    pub enums: Vec<Option<typeck_info::EnumInfo>>,
+    pub enums: Vec<Option<typeck_info.EnumInfo>>,
     /// Const info by DefId.index for O(1) lookup.
-    pub consts: Vec<Option<typeck_info::ConstInfo>>,
+    pub consts: Vec<Option<typeck_info.ConstInfo>>,
     /// Static info by DefId.index for O(1) lookup.
-    pub statics: Vec<Option<typeck_info::StaticInfo>>,
+    pub statics: Vec<Option<typeck_info.StaticInfo>>,
     /// Impl blocks for method resolution.
-    pub impls: Vec<typeck_info::ImplInfo>,
+    pub impls: Vec<typeck_info.ImplInfo>,
     /// Trait definitions by DefId.index for O(1) lookup.
-    pub traits: Vec<Option<typeck_info::TraitInfo>>,
+    pub traits: Vec<Option<typeck_info.TraitInfo>>,
     /// Trait implementations for trait resolution.
-    pub trait_impls: Vec<typeck_info::TraitImplInfo>,
+    pub trait_impls: Vec<typeck_info.TraitImplInfo>,
     /// DefId counter for allocating synthetic builtin DefIds.
     pub next_def_id: u32,
     /// Builtin type DefIds.
-    pub builtin_string_def: Option<hir_def::DefId>,
-    pub builtin_vec_def: Option<hir_def::DefId>,
-    pub builtin_option_def: Option<hir_def::DefId>,
-    pub builtin_box_def: Option<hir_def::DefId>,
-    pub builtin_hashmap_def: Option<hir_def::DefId>,
-    pub builtin_result_def: Option<hir_def::DefId>,
+    pub builtin_string_def: Option<hir_def.DefId>,
+    pub builtin_vec_def: Option<hir_def.DefId>,
+    pub builtin_option_def: Option<hir_def.DefId>,
+    pub builtin_box_def: Option<hir_def.DefId>,
+    pub builtin_hashmap_def: Option<hir_def.DefId>,
+    pub builtin_result_def: Option<hir_def.DefId>,
     /// Effect info by DefId.index for O(1) lookup.
-    pub effects: Vec<Option<typeck_info::EffectInfo>>,
+    pub effects: Vec<Option<typeck_info.EffectInfo>>,
     /// Builtin DefId-to-runtime-name mapping.
     /// Populated during register_builtin_signatures.
     pub builtin_def_names: Vec<BuiltinDefName>,
     /// Method resolution side table.
     /// Records resolved method DefIds keyed by expression span start,
     /// so MIR lowering can look up methods that were resolved during type checking.
-    pub method_resolutions: Vec<common::MethodResEntry>,
+    pub method_resolutions: Vec<common.MethodResEntry>,
     /// Field resolution side table.
     /// Records resolved field indices keyed by expression span start,
     /// so MIR lowering can look up the correct field index for named fields.
-    pub field_resolutions: Vec<common::FieldResEntry>,
+    pub field_resolutions: Vec<common.FieldResEntry>,
     /// Deferred method calls whose receiver was an unresolved Infer variable.
     /// After all bodies are type-checked, these are revisited to resolve methods.
-    pub pending_method_calls: Vec<common::PendingMethodCall>,
+    pub pending_method_calls: Vec<common.PendingMethodCall>,
     /// Current body's DefId for scoping method/field resolutions.
     /// Set before type-checking each function body.
     pub current_body_def_id: u32,
@@ -329,12 +329,12 @@ pub struct TypeChecker {
     /// When true, call-site effect checking is suppressed since the handler handles effects.
     pub in_handler: bool,
     /// Hash index for O(1) variant lookup: variant_def_id.index → (enum_idx << 32) | variant_idx
-    pub variant_hash: hashmap::HashMapU64U64,
+    pub variant_hash: hashmap.HashMapU64U64,
     /// Hash index for O(1) trait impl existence check: trait_def_id.index → 1
-    pub trait_impl_hash: hashmap::HashMapU64U32,
+    pub trait_impl_hash: hashmap.HashMapU64U32,
     /// Expected type for resume() calls in the current handler op body.
     /// Set before type-checking each handler op body, None when not in a handler op.
-    pub resume_ty: Option<type_intern::TyId>,
+    pub resume_ty: Option<type_intern.TyId>,
     /// Whether the current handler is shallow (single resume allowed).
     pub in_shallow_handler: bool,
     /// Count of resume expressions seen in the current handler op body.
@@ -343,54 +343,54 @@ pub struct TypeChecker {
     /// When a trait default method is used by an impl, calls within the default
     /// method body that target abstract trait methods must be redirected to the
     /// concrete impl methods. This table records those remappings.
-    pub default_method_remaps: Vec<common::DefaultMethodRemap>,
+    pub default_method_remaps: Vec<common.DefaultMethodRemap>,
     /// Array-to-slice coercion side table.
     /// Records expressions where &[T; N] needs to be coerced to &[T].
-    /// MIR lowering uses these to emit Rvalue::ArrayToSlice.
-    pub coercion_entries: Vec<common::CoercionEntry>,
+    /// MIR lowering uses these to emit Rvalue.ArrayToSlice.
+    pub coercion_entries: Vec<common.CoercionEntry>,
 }
 
 impl TypeChecker {
     /// Creates a new type checker.
     pub fn new() -> TypeChecker {
         TypeChecker {
-            subst_table: unify::SubstTable::new(),
-            unifier: unify::Unifier::new(),
-            return_ty: Option::None,
+            subst_table: unify.SubstTable.new(),
+            unifier: unify.Unifier.new(),
+            return_ty: Option.None,
             in_loop: false,
-            loop_ty: Option::None,
-            locals: Vec::new(),
-            errors: Vec::new(),
-            fn_sigs: Vec::new(),
-            structs: Vec::new(),
-            enums: Vec::new(),
-            consts: Vec::new(),
-            statics: Vec::new(),
-            impls: Vec::new(),
-            traits: Vec::new(),
-            trait_impls: Vec::new(),
+            loop_ty: Option.None,
+            locals: Vec.new(),
+            errors: Vec.new(),
+            fn_sigs: Vec.new(),
+            structs: Vec.new(),
+            enums: Vec.new(),
+            consts: Vec.new(),
+            statics: Vec.new(),
+            impls: Vec.new(),
+            traits: Vec.new(),
+            trait_impls: Vec.new(),
             next_def_id: 0,
-            builtin_string_def: Option::None,
-            builtin_vec_def: Option::None,
-            builtin_option_def: Option::None,
-            builtin_box_def: Option::None,
-            builtin_hashmap_def: Option::None,
-            builtin_result_def: Option::None,
-            effects: Vec::new(),
-            builtin_def_names: Vec::new(),
-            method_resolutions: Vec::new(),
-            field_resolutions: Vec::new(),
-            pending_method_calls: Vec::new(),
+            builtin_string_def: Option.None,
+            builtin_vec_def: Option.None,
+            builtin_option_def: Option.None,
+            builtin_box_def: Option.None,
+            builtin_hashmap_def: Option.None,
+            builtin_result_def: Option.None,
+            effects: Vec.new(),
+            builtin_def_names: Vec.new(),
+            method_resolutions: Vec.new(),
+            field_resolutions: Vec.new(),
+            pending_method_calls: Vec.new(),
             current_body_def_id: 0,
-            current_effect_row: Vec::new(),
+            current_effect_row: Vec.new(),
             in_handler: false,
-            variant_hash: hashmap::HashMapU64U64::new(),
-            trait_impl_hash: hashmap::HashMapU64U32::new(),
-            resume_ty: Option::None,
+            variant_hash: hashmap.HashMapU64U64.new(),
+            trait_impl_hash: hashmap.HashMapU64U32.new(),
+            resume_ty: Option.None,
             in_shallow_handler: false,
             resume_count: 0,
-            default_method_remaps: Vec::new(),
-            coercion_entries: Vec::new(),
+            default_method_remaps: Vec.new(),
+            coercion_entries: Vec.new(),
         }
     }
 
@@ -398,72 +398,72 @@ impl TypeChecker {
     /// This avoids TyVarId collisions with HIR-allocated inference variables.
     pub fn new_from(start_ty_var: u32) -> TypeChecker {
         TypeChecker {
-            subst_table: unify::SubstTable::new(),
-            unifier: unify::Unifier::new_from(start_ty_var),
-            return_ty: Option::None,
+            subst_table: unify.SubstTable.new(),
+            unifier: unify.Unifier.new_from(start_ty_var),
+            return_ty: Option.None,
             in_loop: false,
-            loop_ty: Option::None,
-            locals: Vec::new(),
-            errors: Vec::new(),
-            fn_sigs: Vec::new(),
-            structs: Vec::new(),
-            enums: Vec::new(),
-            consts: Vec::new(),
-            statics: Vec::new(),
-            impls: Vec::new(),
-            traits: Vec::new(),
-            trait_impls: Vec::new(),
+            loop_ty: Option.None,
+            locals: Vec.new(),
+            errors: Vec.new(),
+            fn_sigs: Vec.new(),
+            structs: Vec.new(),
+            enums: Vec.new(),
+            consts: Vec.new(),
+            statics: Vec.new(),
+            impls: Vec.new(),
+            traits: Vec.new(),
+            trait_impls: Vec.new(),
             next_def_id: 0,
-            builtin_string_def: Option::None,
-            builtin_vec_def: Option::None,
-            builtin_option_def: Option::None,
-            builtin_box_def: Option::None,
-            builtin_hashmap_def: Option::None,
-            builtin_result_def: Option::None,
-            effects: Vec::new(),
-            builtin_def_names: Vec::new(),
-            method_resolutions: Vec::new(),
-            field_resolutions: Vec::new(),
-            pending_method_calls: Vec::new(),
+            builtin_string_def: Option.None,
+            builtin_vec_def: Option.None,
+            builtin_option_def: Option.None,
+            builtin_box_def: Option.None,
+            builtin_hashmap_def: Option.None,
+            builtin_result_def: Option.None,
+            effects: Vec.new(),
+            builtin_def_names: Vec.new(),
+            method_resolutions: Vec.new(),
+            field_resolutions: Vec.new(),
+            pending_method_calls: Vec.new(),
             current_body_def_id: 0,
-            current_effect_row: Vec::new(),
+            current_effect_row: Vec.new(),
             in_handler: false,
-            variant_hash: hashmap::HashMapU64U64::new(),
-            trait_impl_hash: hashmap::HashMapU64U32::new(),
-            resume_ty: Option::None,
+            variant_hash: hashmap.HashMapU64U64.new(),
+            trait_impl_hash: hashmap.HashMapU64U32.new(),
+            resume_ty: Option.None,
             in_shallow_handler: false,
             resume_count: 0,
-            default_method_remaps: Vec::new(),
-            coercion_entries: Vec::new(),
+            default_method_remaps: Vec.new(),
+            coercion_entries: Vec.new(),
         }
     }
 
     /// Generates a fresh inference type variable.
-    pub fn fresh_infer(self: &mut Self) -> type_intern::TyId {
+    pub fn fresh_infer(self: &mut Self) -> type_intern.TyId {
         self.unifier.fresh_infer_id()
     }
 
     /// Adds a local variable to the context.
-    pub fn add_local(self: &mut Self, ty: type_intern::TyId, mutable: bool, span: common::Span) -> hir_def::LocalId {
-        let id = hir_def::LocalId::new(self.locals.len() as u32);
-        let info = typeck_types::LocalInfo::new(ty, mutable, span);
+    pub fn add_local(self: &mut Self, ty: type_intern.TyId, mutable: bool, span: common.Span) -> hir_def.LocalId {
+        let id = hir_def.LocalId.new(self.locals.len() as u32);
+        let info = typeck_types.LocalInfo.new(ty, mutable, span);
         self.locals.push(info);
         id
     }
 
     /// Gets the type of a local variable.
-    pub fn get_local_ty(self: &Self, id: hir_def::LocalId) -> Option<type_intern::TyId> {
+    pub fn get_local_ty(self: &Self, id: hir_def.LocalId) -> Option<type_intern.TyId> {
         let idx = id.index as usize;
         if idx < self.locals.len() {
             let local_ref = &self.locals[idx];
-            Some(type_intern::TyId::new(local_ref.ty.index))
+            Some(type_intern.TyId.new(local_ref.ty.index))
         } else {
-            Option::None
+            Option.None
         }
     }
 
     /// Checks if a local variable is mutable.
-    pub fn is_local_mutable(self: &Self, id: hir_def::LocalId) -> bool {
+    pub fn is_local_mutable(self: &Self, id: hir_def.LocalId) -> bool {
         let idx = id.index as usize;
         if idx < self.locals.len() {
             self.locals[idx].mutable
@@ -473,17 +473,17 @@ impl TypeChecker {
     }
 
     /// Sets the return type for the current function.
-    pub fn set_return_ty(self: &mut Self, ty: type_intern::TyId) {
+    pub fn set_return_ty(self: &mut Self, ty: type_intern.TyId) {
         self.return_ty = Some(ty);
     }
 
     /// Clears the return type when exiting a function.
     pub fn clear_return_ty(self: &mut Self) {
-        self.return_ty = Option::None;
+        self.return_ty = Option.None;
     }
 
     /// Enters a loop context.
-    pub fn enter_loop(self: &mut Self, ty: type_intern::TyId) {
+    pub fn enter_loop(self: &mut Self, ty: type_intern.TyId) {
         self.in_loop = true;
         self.loop_ty = Some(ty);
     }
@@ -491,27 +491,27 @@ impl TypeChecker {
     /// Exits a loop context.
     pub fn exit_loop(self: &mut Self) {
         self.in_loop = false;
-        self.loop_ty = Option::None;
+        self.loop_ty = Option.None;
     }
 
     /// Reports a type error.
-    pub fn error(self: &mut Self, kind: typeck_types::TypeErrorKind, span: common::Span) {
-        let err = typeck_types::TypeError::new(kind, span);
+    pub fn error(self: &mut Self, kind: typeck_types.TypeErrorKind, span: common.Span) {
+        let err = typeck_types.TypeError.new(kind, span);
         self.errors.push(err);
     }
 
     /// Reports a type error with an additional context note.
-    pub fn error_with_note(self: &mut Self, kind: typeck_types::TypeErrorKind, span: common::Span, note: String) {
-        let mut err = typeck_types::TypeError::new(kind, span);
-        let n = typeck_types::TypeNote::new(note);
+    pub fn error_with_note(self: &mut Self, kind: typeck_types.TypeErrorKind, span: common.Span, note: String) {
+        let mut err = typeck_types.TypeError.new(kind, span);
+        let n = typeck_types.TypeNote.new(note);
         err.notes.push(n);
         self.errors.push(err);
     }
 
     /// Reports a type error with a note that has a source span.
-    pub fn error_with_spanned_note(self: &mut Self, kind: typeck_types::TypeErrorKind, span: common::Span, note: String, note_span: common::Span) {
-        let mut err = typeck_types::TypeError::new(kind, span);
-        let n = typeck_types::TypeNote::with_span(note, note_span);
+    pub fn error_with_spanned_note(self: &mut Self, kind: typeck_types.TypeErrorKind, span: common.Span, note: String, note_span: common.Span) {
+        let mut err = typeck_types.TypeError.new(kind, span);
+        let n = typeck_types.TypeNote.with_span(note, note_span);
         err.notes.push(n);
         self.errors.push(err);
     }
@@ -525,13 +525,13 @@ impl TypeChecker {
     /// The span_start is the byte offset of the call expression, used as the key.
     /// The def_id_index is the DefId.index of the resolved method.
     pub fn record_method_resolution(self: &mut Self, span_start: usize, def_id_index: u32) {
-        self.method_resolutions.push(common::MethodResEntry::new(self.current_body_def_id, span_start, def_id_index));
+        self.method_resolutions.push(common.MethodResEntry.new(self.current_body_def_id, span_start, def_id_index));
     }
 
     /// Records an array-to-slice coercion for an expression.
     /// The span_start is the byte offset of the expression being coerced.
     pub fn record_coercion(self: &mut Self, span_start: usize, array_len: u64) {
-        self.coercion_entries.push(common::CoercionEntry::new(self.current_body_def_id, span_start, array_len));
+        self.coercion_entries.push(common.CoercionEntry.new(self.current_body_def_id, span_start, array_len));
     }
 
     /// Records a resolved field index for a named field access expression.
@@ -539,51 +539,51 @@ impl TypeChecker {
     /// This is critical: chained accesses like `a.b.c` share the same expr.span.start
     /// but each field name has a unique position.
     pub fn record_field_resolution(self: &mut Self, span_start: usize, field_idx: u32) {
-        self.field_resolutions.push(common::FieldResEntry::new(self.current_body_def_id, span_start, field_idx));
+        self.field_resolutions.push(common.FieldResEntry.new(self.current_body_def_id, span_start, field_idx));
     }
 
     /// Gets the field index for a struct field by name.
     /// Returns Some(index) where index is the positional index of the field.
-    pub fn get_struct_field_idx(self: &Self, def_id: hir_def::DefId, field_name: common::Symbol) -> Option<u32> {
+    pub fn get_struct_field_idx(self: &Self, def_id: hir_def.DefId, field_name: common.Symbol) -> Option<u32> {
         let struct_info = self.get_struct(def_id);
         match struct_info {
             Some(info) => {
                 for i in 0usize..info.fields.len() {
                     if info.fields[i].name.index == field_name.index {
-                        return Option::Some(i as u32);
+                        return Option.Some(i as u32);
                     }
                 }
-                Option::None
+                Option.None
             }
-            None => Option::None,
+            None => Option.None,
         }
     }
 
     /// Records a deferred method call whose receiver is still an Infer variable.
-    pub fn record_pending_method_call(self: &mut Self, span_start: usize, receiver_var: u32, method_symbol: common::Symbol, return_ty_var: u32) {
-        self.pending_method_calls.push(common::PendingMethodCall::new(self.current_body_def_id, span_start, receiver_var, method_symbol, return_ty_var));
+    pub fn record_pending_method_call(self: &mut Self, span_start: usize, receiver_var: u32, method_symbol: common.Symbol, return_ty_var: u32) {
+        self.pending_method_calls.push(common.PendingMethodCall.new(self.current_body_def_id, span_start, receiver_var, method_symbol, return_ty_var));
     }
 
     /// Allocates a fresh DefId for synthetic builtin registrations.
-    pub fn alloc_def_id(self: &mut Self) -> hir_def::DefId {
-        let id = hir_def::DefId::new(self.next_def_id);
+    pub fn alloc_def_id(self: &mut Self) -> hir_def.DefId {
+        let id = hir_def.DefId.new(self.next_def_id);
         self.next_def_id = self.next_def_id + 1;
         id
     }
 
     /// Registers a function signature directly with explicit types.
-    /// Used for builtin associated functions like String::new(), Vec::new(), etc.
+    /// Used for builtin associated functions like String.new(), Vec.new(), etc.
     pub fn register_fn_sig_direct(
         self: &mut Self,
-        def_id: hir_def::DefId,
-        param_tys: Vec<type_intern::TyId>,
-        return_ty: type_intern::TyId,
+        def_id: hir_def.DefId,
+        param_tys: Vec<type_intern.TyId>,
+        return_ty: type_intern.TyId,
         num_generics: u32,
     ) {
-        let info = typeck_info::FnSigInfo::new(param_tys, return_ty, num_generics);
+        let info = typeck_info.FnSigInfo.new(param_tys, return_ty, num_generics);
         let def_idx = def_id.index as usize;
         while self.fn_sigs.len() <= def_idx {
-            self.fn_sigs.push(Option::None);
+            self.fn_sigs.push(Option.None);
         }
         self.fn_sigs[def_idx] = Some(info);
     }
@@ -594,19 +594,19 @@ impl TypeChecker {
     /// unify::unify. This is the correct implementation.
     ///
     /// BUG-005 (mutations through &mut field_of_ref) is now fixed in blood-rust.
-    pub fn unify(self: &mut Self, a: type_intern::TyId, b: type_intern::TyId, span: common::Span) -> bool {
+    pub fn unify(self: &mut Self, a: type_intern.TyId, b: type_intern.TyId, span: common.Span) -> bool {
         let result = unify::unify_id(&mut self.subst_table, &mut self.unifier, a, b, span);
 
         match result {
-            unify::UnifyResult::Ok => true,
-            unify::UnifyResult::Err(e) => {
+            unify.UnifyResult.Ok => true,
+            unify.UnifyResult.Err(e) => {
                 // Convert unify error to type error
                 let kind = match e.kind {
-                    unify::UnifyErrorKind::TypeMismatch => typeck_types::TypeErrorKind::TypeMismatch,
-                    unify::UnifyErrorKind::OccursCheck => typeck_types::TypeErrorKind::InfiniteType,
-                    unify::UnifyErrorKind::ArityMismatch => typeck_types::TypeErrorKind::ArityMismatch,
-                    unify::UnifyErrorKind::EffectMismatch => typeck_types::TypeErrorKind::TypeMismatch,
-                    unify::UnifyErrorKind::RecordMismatch => typeck_types::TypeErrorKind::TypeMismatch,
+                    unify.UnifyErrorKind.TypeMismatch => typeck_types.TypeErrorKind.TypeMismatch,
+                    unify.UnifyErrorKind.OccursCheck => typeck_types.TypeErrorKind.InfiniteType,
+                    unify.UnifyErrorKind.ArityMismatch => typeck_types.TypeErrorKind.ArityMismatch,
+                    unify.UnifyErrorKind.EffectMismatch => typeck_types.TypeErrorKind.TypeMismatch,
+                    unify.UnifyErrorKind.RecordMismatch => typeck_types.TypeErrorKind.TypeMismatch,
                 };
                 self.error(kind, e.span);
                 false
@@ -618,23 +618,23 @@ impl TypeChecker {
     /// Returns true if unification succeeds, false otherwise.
     /// Used by check_expr to try unification before coercion,
     /// deferring error reporting until both have been attempted.
-    pub fn try_unify(self: &mut Self, a: type_intern::TyId, b: type_intern::TyId, span: common::Span) -> bool {
+    pub fn try_unify(self: &mut Self, a: type_intern.TyId, b: type_intern.TyId, span: common.Span) -> bool {
         let result = unify::unify_id(&mut self.subst_table, &mut self.unifier, a, b, span);
         match result {
-            unify::UnifyResult::Ok => true,
-            unify::UnifyResult::Err(_e) => false,
+            unify.UnifyResult.Ok => true,
+            unify.UnifyResult.Err(_e) => false,
         }
     }
 
     /// Resolves a type by applying current substitutions.
-    pub fn resolve(self: &Self, ty: type_intern::TyId) -> type_intern::TyId {
-        let table_ref: &unify::SubstTable = &self.subst_table;
+    pub fn resolve(self: &Self, ty: type_intern.TyId) -> type_intern.TyId {
+        let table_ref: &unify.SubstTable = &self.subst_table;
         unify::apply_substs_id(table_ref, ty)
     }
 
     /// Clears local variables (for entering a new function body).
     pub fn clear_locals(self: &mut Self) {
-        self.locals = Vec::new();
+        self.locals = Vec.new();
     }
 
     // ========================================================
@@ -642,9 +642,9 @@ impl TypeChecker {
     // ========================================================
 
     /// Registers a function signature for later lookup.
-    pub fn register_fn_sig(self: &mut Self, def_id: hir_def::DefId, sig: &hir_item::FnSig) {
+    pub fn register_fn_sig(self: &mut Self, def_id: hir_def.DefId, sig: &hir_item.FnSig) {
         // Extract parameter types (convert at HIR boundary)
-        let mut param_tys: Vec<type_intern::TyId> = Vec::new();
+        let mut param_tys: Vec<type_intern.TyId> = Vec.new();
         for i in 0usize..sig.params.len() {
             param_tys.push(sig.params[i].ty);
         }
@@ -654,7 +654,7 @@ impl TypeChecker {
         let type_param_ids = extract_type_param_ids(&sig.generics.params);
 
         // Extract effect row DefIds
-        let mut effect_def_ids: Vec<u32> = Vec::new();
+        let mut effect_def_ids: Vec<u32> = Vec.new();
         for ei in 0usize..sig.effects.effects.len() {
             effect_def_ids.push(sig.effects.effects[ei].def_id.index);
         }
@@ -663,7 +663,7 @@ impl TypeChecker {
         let where_predicates = hir_ty::copy_where_predicates(&sig.generics.where_predicates);
 
         // Create the info with actual param IDs, effect row, and where clauses
-        let info = typeck_info::FnSigInfo::with_where_clauses(
+        let info = typeck_info.FnSigInfo.with_where_clauses(
             param_tys,
             sig.return_ty,
             num_generics,
@@ -675,30 +675,30 @@ impl TypeChecker {
         // Store at def_id.index
         let def_idx = def_id.index as usize;
         while self.fn_sigs.len() <= def_idx {
-            self.fn_sigs.push(Option::None);
+            self.fn_sigs.push(Option.None);
         }
         self.fn_sigs[def_idx] = Some(info);
     }
 
     /// Registers a struct definition for later lookup.
-    pub fn register_struct(self: &mut Self, def_id: hir_def::DefId, name: common::Symbol, struct_def: &hir_item::StructDef) {
+    pub fn register_struct(self: &mut Self, def_id: hir_def.DefId, name: common.Symbol, struct_def: &hir_item.StructDef) {
         // Extract field names and field info based on struct body
-        let mut field_names: Vec<common::Symbol> = Vec::new();
-        let mut fields: Vec<typeck_info::FieldInfo> = Vec::new();
+        let mut field_names: Vec<common.Symbol> = Vec.new();
+        let mut fields: Vec<typeck_info.FieldInfo> = Vec.new();
         match &struct_def.body {
-            &hir_item::StructBody::Record(ref struct_fields) => {
+            &hir_item.StructBody.Record(ref struct_fields) => {
                 for i in 0usize..struct_fields.len() {
                     let f = &struct_fields[i];
                     field_names.push(f.name.symbol);
-                    let info = typeck_info::FieldInfo::new(f.name.symbol, f.ty);
+                    let info = typeck_info.FieldInfo.new(f.name.symbol, f.ty);
                     fields.push(info);
                 }
             }
-            &hir_item::StructBody::Tuple(ref types) => {
+            &hir_item.StructBody.Tuple(ref types) => {
                 // Tuple structs don't have named fields
                 let _ = types;
             }
-            &hir_item::StructBody::Unit => {
+            &hir_item.StructBody.Unit => {
                 // Unit structs have no fields
             }
         }
@@ -707,38 +707,38 @@ impl TypeChecker {
         let num_generics = count_type_params(&struct_def.generics.params);
 
         // Create the info
-        let info = typeck_info::StructInfo::new(def_id, name, num_generics, field_names, fields);
+        let info = typeck_info.StructInfo.new(def_id, name, num_generics, field_names, fields);
 
         // Store at def_id.index
         let def_idx = def_id.index as usize;
         while self.structs.len() <= def_idx {
-            self.structs.push(Option::None);
+            self.structs.push(Option.None);
         }
         self.structs[def_idx] = Some(info);
     }
 
     /// Registers an enum definition for later lookup.
-    pub fn register_enum(self: &mut Self, def_id: hir_def::DefId, name: common::Symbol, enum_def: &hir_item::EnumDef) {
+    pub fn register_enum(self: &mut Self, def_id: hir_def.DefId, name: common.Symbol, enum_def: &hir_item.EnumDef) {
         // Extract variant names and variant info
-        let mut variant_names: Vec<common::Symbol> = Vec::new();
-        let mut variants: Vec<typeck_info::VariantInfo> = Vec::new();
+        let mut variant_names: Vec<common.Symbol> = Vec.new();
+        let mut variants: Vec<typeck_info.VariantInfo> = Vec.new();
         for i in 0usize..enum_def.variants.len() {
             let v = &enum_def.variants[i];
             variant_names.push(v.name.symbol);
 
             // Extract field types and names based on variant kind
-            let mut field_tys: Vec<type_intern::TyId> = Vec::new();
-            let mut field_names: Vec<common::Symbol> = Vec::new();
+            let mut field_tys: Vec<type_intern.TyId> = Vec.new();
+            let mut field_names: Vec<common.Symbol> = Vec.new();
             match &v.kind {
-                &hir_item::VariantKind::Unit => {
+                &hir_item.VariantKind.Unit => {
                     // No fields
                 }
-                &hir_item::VariantKind::Tuple(ref types) => {
+                &hir_item.VariantKind.Tuple(ref types) => {
                     for j in 0usize..types.len() {
                         field_tys.push(types[j]);
                     }
                 }
-                &hir_item::VariantKind::Record(ref struct_fields) => {
+                &hir_item.VariantKind.Record(ref struct_fields) => {
                     // For record variants, store both field names and types
                     for j in 0usize..struct_fields.len() {
                         field_names.push(struct_fields[j].name.symbol);
@@ -748,9 +748,9 @@ impl TypeChecker {
             }
 
             let info = if field_names.len() > 0 {
-                typeck_info::VariantInfo::with_field_names(v.name.symbol, field_tys, field_names, i as u32, v.def_id)
+                typeck_info.VariantInfo.with_field_names(v.name.symbol, field_tys, field_names, i as u32, v.def_id)
             } else {
-                typeck_info::VariantInfo::with_def_id(v.name.symbol, field_tys, i as u32, v.def_id)
+                typeck_info.VariantInfo.with_def_id(v.name.symbol, field_tys, i as u32, v.def_id)
             };
             variants.push(info);
         }
@@ -759,12 +759,12 @@ impl TypeChecker {
         let num_generics = count_type_params(&enum_def.generics.params);
 
         // Create the info
-        let info = typeck_info::EnumInfo::new(def_id, name, num_generics, variant_names, variants);
+        let info = typeck_info.EnumInfo.new(def_id, name, num_generics, variant_names, variants);
 
         // Store at def_id.index
         let def_idx = def_id.index as usize;
         while self.enums.len() <= def_idx {
-            self.enums.push(Option::None);
+            self.enums.push(Option.None);
         }
         self.enums[def_idx] = Some(info);
 
@@ -782,33 +782,33 @@ impl TypeChecker {
     // ========================================================
 
     /// Gets a function signature by DefId in O(1) time.
-    pub fn get_fn_sig(self: &Self, def_id: hir_def::DefId) -> Option<&typeck_info::FnSigInfo> {
+    pub fn get_fn_sig(self: &Self, def_id: hir_def.DefId) -> Option<&typeck_info.FnSigInfo> {
         let def_idx = def_id.index as usize;
         if def_idx >= self.fn_sigs.len() {
-            return Option::None;
+            return Option.None;
         }
         match &self.fn_sigs[def_idx] {
             &Some(ref info) => Some(info),
-            &None => Option::None,
+            &None => Option.None,
         }
     }
 
     /// Gets a struct info by DefId in O(1) time.
-    pub fn get_struct(self: &Self, def_id: hir_def::DefId) -> Option<&typeck_info::StructInfo> {
+    pub fn get_struct(self: &Self, def_id: hir_def.DefId) -> Option<&typeck_info.StructInfo> {
         let def_idx = def_id.index as usize;
         if def_idx >= self.structs.len() {
-            return Option::None;
+            return Option.None;
         }
         match &self.structs[def_idx] {
             &Some(ref info) => Some(info),
-            &None => Option::None,
+            &None => Option.None,
         }
     }
 
     /// Gets the number of generic parameters for a struct by DefId.
     /// Returns 0 if the struct is not found (non-generic default).
     /// This returns a value type (u32) to avoid Option<&T> reference issues.
-    pub fn get_struct_num_generics(self: &Self, def_id: hir_def::DefId) -> u32 {
+    pub fn get_struct_num_generics(self: &Self, def_id: hir_def.DefId) -> u32 {
         let def_idx = def_id.index as usize;
         if def_idx >= self.structs.len() {
             return 0;
@@ -821,7 +821,7 @@ impl TypeChecker {
 
     /// Gets the number of fields for a struct by DefId.
     /// Returns 0 if the struct is not found.
-    pub fn get_struct_num_fields(self: &Self, def_id: hir_def::DefId) -> u32 {
+    pub fn get_struct_num_fields(self: &Self, def_id: hir_def.DefId) -> u32 {
         let def_idx = def_id.index as usize;
         if def_idx >= self.structs.len() {
             return 0;
@@ -833,7 +833,7 @@ impl TypeChecker {
     }
 
     /// Returns true if a struct with the given DefId is registered.
-    pub fn has_struct(self: &Self, def_id: hir_def::DefId) -> bool {
+    pub fn has_struct(self: &Self, def_id: hir_def.DefId) -> bool {
         let def_idx = def_id.index as usize;
         if def_idx >= self.structs.len() {
             return false;
@@ -845,28 +845,28 @@ impl TypeChecker {
     }
 
     /// Gets an enum info by DefId in O(1) time.
-    pub fn get_enum(self: &Self, def_id: hir_def::DefId) -> Option<&typeck_info::EnumInfo> {
+    pub fn get_enum(self: &Self, def_id: hir_def.DefId) -> Option<&typeck_info.EnumInfo> {
         let def_idx = def_id.index as usize;
         if def_idx >= self.enums.len() {
-            return Option::None;
+            return Option.None;
         }
         match &self.enums[def_idx] {
             &Some(ref info) => Some(info),
-            &None => Option::None,
+            &None => Option.None,
         }
     }
 
     /// Finds a variant's index by its DefId across all registered enums.
     /// Returns (enum_def_id, variant_index) if found.
-    pub fn find_variant_index_by_def_id(self: &Self, variant_def_id: hir_def::DefId) -> Option<u32> {
+    pub fn find_variant_index_by_def_id(self: &Self, variant_def_id: hir_def.DefId) -> Option<u32> {
         // O(1) hash lookup
         match self.variant_hash.get(variant_def_id.index as u64) {
-            Option::Some(combined) => {
+            Option.Some(combined) => {
                 // Extract variant_idx from combined value (lower 32 bits)
                 let variant_idx = (combined & 0xFFFFFFFF) as u32;
-                return Option::Some(variant_idx);
+                return Option.Some(variant_idx);
             }
-            Option::None => {}
+            Option.None => {}
         }
         // Fallback to linear scan
         for i in 0usize..self.enums.len() {
@@ -874,22 +874,22 @@ impl TypeChecker {
                 &Some(ref enum_info) => {
                     for j in 0usize..enum_info.variants.len() {
                         if enum_info.variants[j].def_id.index == variant_def_id.index {
-                            return Option::Some(enum_info.variants[j].variant_index);
+                            return Option.Some(enum_info.variants[j].variant_index);
                         }
                     }
                 }
                 &None => {}
             }
         }
-        Option::None
+        Option.None
     }
 
     /// Finds the parent enum info for a variant DefId.
     /// Returns the enum's DefId, number of generics, and the variant's field types.
-    pub fn find_enum_for_variant(self: &Self, variant_def_id: hir_def::DefId) -> Option<EnumVariantLookup> {
+    pub fn find_enum_for_variant(self: &Self, variant_def_id: hir_def.DefId) -> Option<EnumVariantLookup> {
         // O(1) hash lookup
         match self.variant_hash.get(variant_def_id.index as u64) {
-            Option::Some(combined) => {
+            Option.Some(combined) => {
                 // Extract enum_idx and variant_idx from combined value
                 let enum_idx = (combined >> 32) as usize;
                 let variant_idx = (combined & 0xFFFFFFFF) as usize;
@@ -897,11 +897,11 @@ impl TypeChecker {
                     match &self.enums[enum_idx] {
                         &Some(ref enum_info) => {
                             if variant_idx < enum_info.variants.len() {
-                                let mut fn_vec: Vec<common::Symbol> = Vec::new();
+                                let mut fn_vec: Vec<common.Symbol> = Vec.new();
                                 for k in 0usize..enum_info.variants[variant_idx].field_names.len() {
                                     fn_vec.push(enum_info.variants[variant_idx].field_names[k]);
                                 }
-                                return Option::Some(EnumVariantLookup {
+                                return Option.Some(EnumVariantLookup {
                                     enum_def_id: enum_info.def_id,
                                     num_generics: enum_info.num_generics,
                                     variant_index: enum_info.variants[variant_idx].variant_index,
@@ -914,7 +914,7 @@ impl TypeChecker {
                     }
                 }
             }
-            Option::None => {}
+            Option.None => {}
         }
         // Fallback to linear scan
         for i in 0usize..self.enums.len() {
@@ -922,11 +922,11 @@ impl TypeChecker {
                 &Some(ref enum_info) => {
                     for j in 0usize..enum_info.variants.len() {
                         if enum_info.variants[j].def_id.index == variant_def_id.index {
-                            let mut fn_vec: Vec<common::Symbol> = Vec::new();
+                            let mut fn_vec: Vec<common.Symbol> = Vec.new();
                             for k in 0usize..enum_info.variants[j].field_names.len() {
                                 fn_vec.push(enum_info.variants[j].field_names[k]);
                             }
-                            return Option::Some(EnumVariantLookup {
+                            return Option.Some(EnumVariantLookup {
                                 enum_def_id: enum_info.def_id,
                                 num_generics: enum_info.num_generics,
                                 variant_index: enum_info.variants[j].variant_index,
@@ -939,31 +939,31 @@ impl TypeChecker {
                 &None => {}
             }
         }
-        Option::None
+        Option.None
     }
 
     /// Gets the field type for a struct field by name.
-    pub fn get_struct_field_ty(self: &Self, def_id: hir_def::DefId, field_name: common::Symbol) -> Option<type_intern::TyId> {
+    pub fn get_struct_field_ty(self: &Self, def_id: hir_def.DefId, field_name: common.Symbol) -> Option<type_intern.TyId> {
         let struct_info = self.get_struct(def_id);
         match struct_info {
             Some(info) => {
                 for i in 0usize..info.fields.len() {
                     if info.fields[i].name.index == field_name.index {
-                        return Some(type_intern::TyId::new(info.fields[i].ty.index));
+                        return Some(type_intern.TyId.new(info.fields[i].ty.index));
                     }
                 }
-                Option::None
+                Option.None
             }
-            None => Option::None,
+            None => Option.None,
         }
     }
 
     /// Gets a variant's field type by name using the variant's DefId.
     /// Returns the field type if found, None otherwise.
-    pub fn get_variant_field_ty_by_name(self: &Self, variant_def_id: hir_def::DefId, field_name: common::Symbol) -> Option<type_intern::TyId> {
+    pub fn get_variant_field_ty_by_name(self: &Self, variant_def_id: hir_def.DefId, field_name: common.Symbol) -> Option<type_intern.TyId> {
         // O(1) hash lookup for variant location
         match self.variant_hash.get(variant_def_id.index as u64) {
-            Option::Some(combined) => {
+            Option.Some(combined) => {
                 let enum_idx = (combined >> 32) as usize;
                 let variant_idx = (combined & 0xFFFFFFFF) as usize;
                 if enum_idx < self.enums.len() {
@@ -974,18 +974,18 @@ impl TypeChecker {
                                 for k in 0usize..enum_info.variants[variant_idx].field_names.len() {
                                     if enum_info.variants[variant_idx].field_names[k].index == field_name.index {
                                         if k < enum_info.variants[variant_idx].field_tys.len() {
-                                            return Some(type_intern::TyId::new(enum_info.variants[variant_idx].field_tys[k].index));
+                                            return Some(type_intern.TyId.new(enum_info.variants[variant_idx].field_tys[k].index));
                                         }
                                     }
                                 }
-                                return Option::None;
+                                return Option.None;
                             }
                         }
                         &None => {}
                     }
                 }
             }
-            Option::None => {}
+            Option.None => {}
         }
         // Fallback to linear scan
         for i in 0usize..self.enums.len() {
@@ -998,72 +998,72 @@ impl TypeChecker {
                                 if enum_info.variants[j].field_names[k].index == field_name.index {
                                     // Return the corresponding field type
                                     if k < enum_info.variants[j].field_tys.len() {
-                                        return Some(type_intern::TyId::new(enum_info.variants[j].field_tys[k].index));
+                                        return Some(type_intern.TyId.new(enum_info.variants[j].field_tys[k].index));
                                     }
                                 }
                             }
-                            return Option::None;
+                            return Option.None;
                         }
                     }
                 }
                 &None => {}
             }
         }
-        Option::None
+        Option.None
     }
 
     /// Gets a const info by DefId in O(1) time.
-    pub fn get_const(self: &Self, def_id: hir_def::DefId) -> Option<&typeck_info::ConstInfo> {
+    pub fn get_const(self: &Self, def_id: hir_def.DefId) -> Option<&typeck_info.ConstInfo> {
         let def_idx = def_id.index as usize;
         if def_idx >= self.consts.len() {
-            return Option::None;
+            return Option.None;
         }
         match &self.consts[def_idx] {
             &Some(ref info) => Some(info),
-            &None => Option::None,
+            &None => Option.None,
         }
     }
 
     /// Gets a static info by DefId in O(1) time.
-    pub fn get_static(self: &Self, def_id: hir_def::DefId) -> Option<&typeck_info::StaticInfo> {
+    pub fn get_static(self: &Self, def_id: hir_def.DefId) -> Option<&typeck_info.StaticInfo> {
         let def_idx = def_id.index as usize;
         if def_idx >= self.statics.len() {
-            return Option::None;
+            return Option.None;
         }
         match &self.statics[def_idx] {
             &Some(ref info) => Some(info),
-            &None => Option::None,
+            &None => Option.None,
         }
     }
 
     /// Registers a constant definition for later lookup.
-    pub fn register_const(self: &mut Self, def_id: hir_def::DefId, name: common::Symbol, ty: type_intern::TyId) {
-        let info = typeck_info::ConstInfo::new(def_id, name, ty);
+    pub fn register_const(self: &mut Self, def_id: hir_def.DefId, name: common.Symbol, ty: type_intern.TyId) {
+        let info = typeck_info.ConstInfo.new(def_id, name, ty);
         let def_idx = def_id.index as usize;
         while self.consts.len() <= def_idx {
-            self.consts.push(Option::None);
+            self.consts.push(Option.None);
         }
         self.consts[def_idx] = Some(info);
     }
 
     /// Registers a static definition for later lookup.
-    pub fn register_static(self: &mut Self, def_id: hir_def::DefId, name: common::Symbol, ty: type_intern::TyId, mutable: bool) {
-        let info = typeck_info::StaticInfo::new(def_id, name, ty, mutable);
+    pub fn register_static(self: &mut Self, def_id: hir_def.DefId, name: common.Symbol, ty: type_intern.TyId, mutable: bool) {
+        let info = typeck_info.StaticInfo.new(def_id, name, ty, mutable);
         let def_idx = def_id.index as usize;
         while self.statics.len() <= def_idx {
-            self.statics.push(Option::None);
+            self.statics.push(Option.None);
         }
         self.statics[def_idx] = Some(info);
     }
 
     /// Registers an impl block for method resolution.
-    pub fn register_impl(self: &mut Self, impl_info: typeck_info::ImplInfo) {
+    pub fn register_impl(self: &mut Self, impl_info: typeck_info.ImplInfo) {
         self.impls.push(impl_info);
     }
 
     /// Looks up a method on a type by name.
     /// Returns the method info and the impl it belongs to, or None if not found.
-    pub fn lookup_method(self: &Self, ty: type_intern::TyId, method_name: common::Symbol) -> Option<MethodLookupResult> {
+    pub fn lookup_method(self: &Self, ty: type_intern.TyId, method_name: common.Symbol) -> Option<MethodLookupResult> {
         for impl_idx in 0usize..self.impls.len() {
             let impl_info = &self.impls[impl_idx];
 
@@ -1081,11 +1081,11 @@ impl TypeChecker {
                 }
             }
         }
-        Option::None
+        Option.None
     }
 
     /// Counts how many impls provide a method with the given name for the given type.
-    pub fn count_method_matches(self: &Self, ty: type_intern::TyId, method_name: common::Symbol) -> u32 {
+    pub fn count_method_matches(self: &Self, ty: type_intern.TyId, method_name: common.Symbol) -> u32 {
         let mut count: u32 = 0;
         for impl_idx in 0usize..self.impls.len() {
             let impl_info = &self.impls[impl_idx];
@@ -1102,12 +1102,12 @@ impl TypeChecker {
     }
 
     /// Gets method info from a lookup result.
-    pub fn get_method_from_lookup(self: &Self, result: &MethodLookupResult) -> &typeck_info::MethodInfo {
+    pub fn get_method_from_lookup(self: &Self, result: &MethodLookupResult) -> &typeck_info.MethodInfo {
         &self.impls[result.impl_index].methods[result.method_index]
     }
 
     /// Gets the impl info from a lookup result.
-    pub fn get_impl_from_lookup(self: &Self, result: &MethodLookupResult) -> &typeck_info::ImplInfo {
+    pub fn get_impl_from_lookup(self: &Self, result: &MethodLookupResult) -> &typeck_info.ImplInfo {
         &self.impls[result.impl_index]
     }
 
@@ -1120,9 +1120,9 @@ impl TypeChecker {
     /// The method with the highest score wins. Ties (ambiguous) return None.
     pub fn lookup_method_overloaded(
         self: &Self,
-        ty: type_intern::TyId,
-        method_name: common::Symbol,
-        arg_tys: &Vec<type_intern::TyId>,
+        ty: type_intern.TyId,
+        method_name: common.Symbol,
+        arg_tys: &Vec<type_intern.TyId>,
     ) -> Option<MethodLookupResult> {
         let mut best_impl: usize = 0;
         let mut best_method: usize = 0;
@@ -1169,12 +1169,12 @@ impl TypeChecker {
                 method_index: best_method,
             })
         } else {
-            Option::None
+            Option.None
         }
     }
 
     /// Gets a variant's index by name within an enum.
-    pub fn get_variant_index(self: &Self, enum_def_id: hir_def::DefId, variant_name: common::Symbol) -> Option<u32> {
+    pub fn get_variant_index(self: &Self, enum_def_id: hir_def.DefId, variant_name: common.Symbol) -> Option<u32> {
         let enum_info = self.get_enum(enum_def_id);
         match enum_info {
             Some(info) => {
@@ -1183,9 +1183,9 @@ impl TypeChecker {
                         return Some(info.variants[i].variant_index);
                     }
                 }
-                Option::None
+                Option.None
             }
-            None => Option::None,
+            None => Option.None,
         }
     }
 
@@ -1194,45 +1194,45 @@ impl TypeChecker {
     // ========================================================
 
     /// Registers a trait definition for later lookup.
-    pub fn register_trait(self: &mut Self, def_id: hir_def::DefId, info: typeck_info::TraitInfo) {
+    pub fn register_trait(self: &mut Self, def_id: hir_def.DefId, info: typeck_info.TraitInfo) {
         let def_idx = def_id.index as usize;
         while self.traits.len() <= def_idx {
-            self.traits.push(Option::None);
+            self.traits.push(Option.None);
         }
         self.traits[def_idx] = Some(info);
     }
 
     /// Gets a trait definition by DefId.
-    pub fn get_trait(self: &Self, def_id: hir_def::DefId) -> Option<&typeck_info::TraitInfo> {
+    pub fn get_trait(self: &Self, def_id: hir_def.DefId) -> Option<&typeck_info.TraitInfo> {
         let def_idx = def_id.index as usize;
         if def_idx < self.traits.len() {
             match &self.traits[def_idx] {
-                &Option::Some(ref info) => Some(info),
-                &Option::None => Option::None,
+                &Option.Some(ref info) => Some(info),
+                &Option.None => Option.None,
             }
         } else {
-            Option::None
+            Option.None
         }
     }
 
     /// Registers a trait implementation.
-    pub fn register_trait_impl(self: &mut Self, impl_info: typeck_info::TraitImplInfo) {
+    pub fn register_trait_impl(self: &mut Self, impl_info: typeck_info.TraitImplInfo) {
         // Mark this trait as having at least one impl
         self.trait_impl_hash.insert(impl_info.trait_def_id.index as u64, 1);
         self.trait_impls.push(impl_info);
     }
 
     /// Registers an effect definition.
-    pub fn register_effect(self: &mut Self, def_id: hir_def::DefId, info: typeck_info::EffectInfo) {
+    pub fn register_effect(self: &mut Self, def_id: hir_def.DefId, info: typeck_info.EffectInfo) {
         let def_idx = def_id.index as usize;
         while self.effects.len() <= def_idx {
-            self.effects.push(Option::None);
+            self.effects.push(Option.None);
         }
         self.effects[def_idx] = Some(info);
     }
 
     /// Checks if an effect is registered.
-    pub fn has_effect(self: &Self, def_id: hir_def::DefId) -> bool {
+    pub fn has_effect(self: &Self, def_id: hir_def.DefId) -> bool {
         let def_idx = def_id.index as usize;
         if def_idx >= self.effects.len() {
             return false;
@@ -1244,7 +1244,7 @@ impl TypeChecker {
     }
 
     /// Gets the number of operations for an effect.
-    pub fn get_effect_num_ops(self: &Self, def_id: hir_def::DefId) -> u32 {
+    pub fn get_effect_num_ops(self: &Self, def_id: hir_def.DefId) -> u32 {
         let def_idx = def_id.index as usize;
         if def_idx >= self.effects.len() {
             return 0;
@@ -1257,11 +1257,11 @@ impl TypeChecker {
 
     /// Checks if a type implements a trait.
     /// Returns true if an implementation exists.
-    pub fn type_implements_trait(self: &Self, ty: type_intern::TyId, trait_ref: &hir_ty::TraitRef) -> bool {
+    pub fn type_implements_trait(self: &Self, ty: type_intern.TyId, trait_ref: &hir_ty.TraitRef) -> bool {
         // Quick O(1) check: if no impl exists for this trait, return false immediately
         match self.trait_impl_hash.get(trait_ref.def_id.index as u64) {
-            Option::Some(_) => {}
-            Option::None => { return false; }
+            Option.Some(_) => {}
+            Option.None => { return false; }
         }
         // Search for an impl that matches
         for i in 0usize..self.trait_impls.len() {
@@ -1282,20 +1282,20 @@ impl TypeChecker {
 
     /// Resolves an obligation (checks if a predicate is satisfied).
     /// Returns true if the obligation is satisfied.
-    pub fn resolve_obligation(self: &Self, obligation: &typeck_types::Obligation) -> bool {
+    pub fn resolve_obligation(self: &Self, obligation: &typeck_types.Obligation) -> bool {
         match &obligation.predicate {
-            &typeck_types::Predicate::Trait(ref trait_ref) => {
+            &typeck_types.Predicate.Trait(ref trait_ref) => {
                 // For trait bounds, we need to find an impl
                 // The trait ref contains the type parameter that must implement the trait
                 // For now, we check if any impl exists for the trait
                 self.has_impl_for_trait(trait_ref.def_id)
             }
-            &typeck_types::Predicate::TypeEqual { left, right } => {
+            &typeck_types.Predicate.TypeEqual { left, right } => {
                 // For type equality, types must unify
                 // We can't mutate here, so do a simple structural check
                 types_structurally_equal_id(left, right)
             }
-            &typeck_types::Predicate::WellFormed(_) => {
+            &typeck_types.Predicate.WellFormed(_) => {
                 // WF predicates are assumed satisfied for now
                 true
             }
@@ -1303,11 +1303,11 @@ impl TypeChecker {
     }
 
     /// Checks if any implementation exists for a trait.
-    fn has_impl_for_trait(self: &Self, trait_def_id: hir_def::DefId) -> bool {
+    fn has_impl_for_trait(self: &Self, trait_def_id: hir_def.DefId) -> bool {
         // O(1) hash lookup
         match self.trait_impl_hash.get(trait_def_id.index as u64) {
-            Option::Some(_) => true,
-            Option::None => false,
+            Option.Some(_) => true,
+            Option.None => false,
         }
     }
 
@@ -1315,9 +1315,9 @@ impl TypeChecker {
     /// `arg_types` are the resolved types of the actual arguments.
     pub fn check_where_clause_bounds(
         self: &mut Self,
-        fn_sig: &typeck_info::FnSigInfo,
-        arg_types: &Vec<type_intern::TyId>,
-        span: common::Span,
+        fn_sig: &typeck_info.FnSigInfo,
+        arg_types: &Vec<type_intern.TyId>,
+        span: common.Span,
     ) {
         if fn_sig.where_predicates.len() == 0 {
             return;
@@ -1325,27 +1325,27 @@ impl TypeChecker {
 
         for pi in 0usize..fn_sig.where_predicates.len() {
             match &fn_sig.where_predicates[pi] {
-                &hir_ty::WherePredicate::TypeBound { ref ty, ref bounds, span: pred_span } => {
+                &hir_ty.WherePredicate.TypeBound { ref ty, ref bounds, span: pred_span } => {
                     // Find what concrete type was substituted for this type param.
                     // The constrained type is Infer(param_id) — find which parameter
                     // position uses that Infer ID, then get the resolved arg type.
                     let concrete_ty = self.resolve_where_param_type(ty, fn_sig, arg_types);
                     match &concrete_ty {
-                        &Option::Some(resolved_ty) => {
+                        &Option.Some(resolved_ty) => {
                             // Check each trait bound
                             for bi in 0usize..bounds.len() {
                                 if !self.type_implements_trait(resolved_ty, &bounds[bi]) {
-                                    self.error(typeck_types::TypeErrorKind::TraitNotImplemented, span);
+                                    self.error(typeck_types.TypeErrorKind.TraitNotImplemented, span);
                                 }
                             }
                         }
-                        &Option::None => {
+                        &Option.None => {
                             // Could not resolve param type — skip check
                         }
                     }
                 }
-                &hir_ty::WherePredicate::LifetimeBound { lifetime: _, bound: _, span: _ } => {}
-                &hir_ty::WherePredicate::EffectBound { effect_var: _, ref bounds, span: _ } => {}
+                &hir_ty.WherePredicate.LifetimeBound { lifetime: _, bound: _, span: _ } => {}
+                &hir_ty.WherePredicate.EffectBound { effect_var: _, ref bounds, span: _ } => {}
             }
         }
     }
@@ -1355,53 +1355,53 @@ impl TypeChecker {
     /// which parameter position uses that ID and returns the corresponding arg type.
     fn resolve_where_param_type(
         self: &Self,
-        where_ty: &hir_ty::Type,
-        fn_sig: &typeck_info::FnSigInfo,
-        arg_types: &Vec<type_intern::TyId>,
-    ) -> Option<type_intern::TyId> {
+        where_ty: &hir_ty.Type,
+        fn_sig: &typeck_info.FnSigInfo,
+        arg_types: &Vec<type_intern.TyId>,
+    ) -> Option<type_intern.TyId> {
         // Get the param ID from the where clause type
         let param_id: Option<u32> = match &where_ty.kind {
-            &hir_ty::TypeKind::Infer(ref var_id) => Option::Some(var_id.index),
-            &hir_ty::TypeKind::Param(ref var_id) => Option::Some(var_id.index),
-            _ => Option::None,
+            &hir_ty.TypeKind.Infer(ref var_id) => Option.Some(var_id.index),
+            &hir_ty.TypeKind.Param(ref var_id) => Option.Some(var_id.index),
+            _ => Option.None,
         };
 
         match &param_id {
-            &Option::Some(pid) => {
+            &Option.Some(pid) => {
                 // Find which parameter position has this Infer(pid) in the original sig
                 let mut i: usize = 0;
                 while i < fn_sig.param_tys.len() && i < arg_types.len() {
                     if self.param_type_uses_infer_id(fn_sig.param_tys[i], pid) {
-                        return Option::Some(type_intern::TyId::new(arg_types[i].index));
+                        return Option.Some(type_intern.TyId.new(arg_types[i].index));
                     }
                     i += 1;
                 }
-                Option::None
+                Option.None
             }
-            &Option::None => Option::None,
+            &Option.None => Option.None,
         }
     }
 
     /// Checks if a parameter type uses a specific Infer ID at the top level.
-    fn param_type_uses_infer_id(self: &Self, ty: type_intern::TyId, target_id: u32) -> bool {
+    fn param_type_uses_infer_id(self: &Self, ty: type_intern.TyId, target_id: u32) -> bool {
         let interner = type_intern::type_interner();
         let kind = interner.get(ty);
         match kind {
-            &type_intern::InternedTypeKind::Infer(ref var_id) => var_id.index == target_id,
-            &type_intern::InternedTypeKind::Param(ref var_id) => var_id.index == target_id,
-            &type_intern::InternedTypeKind::Ref { inner, mutable: _ } => {
-                self.param_type_uses_infer_id(type_intern::TyId::new(inner.index), target_id)
+            &type_intern.InternedTypeKind.Infer(ref var_id) => var_id.index == target_id,
+            &type_intern.InternedTypeKind.Param(ref var_id) => var_id.index == target_id,
+            &type_intern.InternedTypeKind.Ref { inner, mutable: _ } => {
+                self.param_type_uses_infer_id(type_intern.TyId.new(inner.index), target_id)
             }
             _ => false,
         }
     }
 
     /// Checks all collected obligations and reports errors for unsatisfied ones.
-    pub fn check_obligations(self: &mut Self, obligations: &Vec<typeck_types::Obligation>) {
+    pub fn check_obligations(self: &mut Self, obligations: &Vec<typeck_types.Obligation>) {
         for i in 0usize..obligations.len() {
             if !self.resolve_obligation(&obligations[i]) {
                 // Report error for unsatisfied obligation
-                self.error(typeck_types::TypeErrorKind::TraitNotImplemented, obligations[i].span);
+                self.error(typeck_types.TypeErrorKind.TraitNotImplemented, obligations[i].span);
             }
         }
     }
@@ -1418,59 +1418,59 @@ pub struct MethodLookupResult {
 /// Result of looking up a variant's parent enum.
 pub struct EnumVariantLookup {
     /// The parent enum's DefId.
-    pub enum_def_id: hir_def::DefId,
+    pub enum_def_id: hir_def.DefId,
     /// Number of generic parameters on the enum.
     pub num_generics: u32,
     /// This variant's index within the enum.
     pub variant_index: u32,
     /// The variant's field types.
-    pub field_tys: Vec<type_intern::TyId>,
+    pub field_tys: Vec<type_intern.TyId>,
     /// Field names for record variants (empty for tuple/unit variants).
-    pub field_names: Vec<common::Symbol>,
+    pub field_names: Vec<common.Symbol>,
 }
 
 /// Copies a Vec of TyId values.
-fn copy_ty_id_vec(tys: &Vec<type_intern::TyId>) -> Vec<type_intern::TyId> {
-    let mut result: Vec<type_intern::TyId> = Vec::new();
+fn copy_ty_id_vec(tys: &Vec<type_intern.TyId>) -> Vec<type_intern.TyId> {
+    let mut result: Vec<type_intern.TyId> = Vec.new();
     for i in 0usize..tys.len() {
-        result.push(type_intern::TyId::new(tys[i].index));
+        result.push(type_intern.TyId.new(tys[i].index));
     }
     result
 }
 
 /// Checks if a type matches an impl's self type for method lookup.
 /// This handles basic cases; generic matching requires instantiation.
-fn types_match_for_impl(impl_ty: &hir_ty::Type, target_ty: &hir_ty::Type) -> bool {
+fn types_match_for_impl(impl_ty: &hir_ty.Type, target_ty: &hir_ty.Type) -> bool {
     match (&impl_ty.kind, &target_ty.kind) {
         // ADT types match if same def_id (generic args checked during instantiation)
-        (&hir_ty::TypeKind::Adt { def_id: impl_def, args: _ }, &hir_ty::TypeKind::Adt { def_id: target_def, args: _ }) => {
+        (&hir_ty.TypeKind.Adt { def_id: impl_def, args: _ }, &hir_ty.TypeKind.Adt { def_id: target_def, args: _ }) => {
             impl_def.index == target_def.index
         }
         // Primitive types must match exactly
-        (&hir_ty::TypeKind::Primitive(impl_prim), &hir_ty::TypeKind::Primitive(target_prim)) => {
+        (&hir_ty.TypeKind.Primitive(impl_prim), &hir_ty.TypeKind.Primitive(target_prim)) => {
             unify::primitives_equal(impl_prim, target_prim)
         }
         // Reference types - check inner type
-        (&hir_ty::TypeKind::Ref { ref inner, mutable: impl_mut }, &hir_ty::TypeKind::Ref { inner: ref target_inner, mutable: target_mut }) => {
+        (&hir_ty.TypeKind.Ref { ref inner, mutable: impl_mut }, &hir_ty.TypeKind.Ref { inner: ref target_inner, mutable: target_mut }) => {
             impl_mut == target_mut && types_match_for_impl(inner.as_ref(), target_inner.as_ref())
         }
         // Slice types
-        (&hir_ty::TypeKind::Slice { ref element }, &hir_ty::TypeKind::Slice { element: ref target_elem }) => {
+        (&hir_ty.TypeKind.Slice { ref element }, &hir_ty.TypeKind.Slice { element: ref target_elem }) => {
             types_match_for_impl(element.as_ref(), target_elem.as_ref())
         }
         // Array types
-        (&hir_ty::TypeKind::Array { ref element, size }, &hir_ty::TypeKind::Array { element: ref target_elem, size: target_size }) => {
+        (&hir_ty.TypeKind.Array { ref element, size }, &hir_ty.TypeKind.Array { element: ref target_elem, size: target_size }) => {
             size == target_size && types_match_for_impl(element.as_ref(), target_elem.as_ref())
         }
         // Inference variables match anything (will be constrained during checking)
-        (&hir_ty::TypeKind::Infer(_), _) => true,
-        (_, &hir_ty::TypeKind::Infer(_)) => true,
+        (&hir_ty.TypeKind.Infer(_), _) => true,
+        (_, &hir_ty.TypeKind.Infer(_)) => true,
         // Type parameters in impl self_ty match anything (generic impls)
-        (&hir_ty::TypeKind::Param(_), _) => true,
-        (_, &hir_ty::TypeKind::Param(_)) => true,
+        (&hir_ty.TypeKind.Param(_), _) => true,
+        (_, &hir_ty.TypeKind.Param(_)) => true,
         // Ownership types - compare inner types
-        (&hir_ty::TypeKind::Ownership { qualifier: impl_q, ref inner },
-         &hir_ty::TypeKind::Ownership { qualifier: target_q, inner: ref target_inner }) => {
+        (&hir_ty.TypeKind.Ownership { qualifier: impl_q, ref inner },
+         &hir_ty.TypeKind.Ownership { qualifier: target_q, inner: ref target_inner }) => {
             impl_q == target_q && types_match_for_impl(inner.as_ref(), target_inner.as_ref())
         }
         // Other combinations don't match
@@ -1479,79 +1479,79 @@ fn types_match_for_impl(impl_ty: &hir_ty::Type, target_ty: &hir_ty::Type) -> boo
 }
 
 /// Checks if a type matches an impl's self type for method lookup, using TyId.
-fn types_match_for_impl_id(impl_ty: type_intern::TyId, target_ty: type_intern::TyId) -> bool {
+fn types_match_for_impl_id(impl_ty: type_intern.TyId, target_ty: type_intern.TyId) -> bool {
     let interner = type_intern::type_interner();
     let impl_kind = interner.get(impl_ty);
     // Check if impl type is Infer or Param (matches anything)
     match impl_kind {
-        &type_intern::InternedTypeKind::Infer(_) => { return true; }
-        &type_intern::InternedTypeKind::Param(_) => { return true; }
+        &type_intern.InternedTypeKind.Infer(_) => { return true; }
+        &type_intern.InternedTypeKind.Param(_) => { return true; }
         _ => {}
     }
     // Check if target type is Infer or Param (matches anything)
     let target_kind = interner.get(target_ty);
     match target_kind {
-        &type_intern::InternedTypeKind::Infer(_) => { return true; }
-        &type_intern::InternedTypeKind::Param(_) => { return true; }
+        &type_intern.InternedTypeKind.Infer(_) => { return true; }
+        &type_intern.InternedTypeKind.Param(_) => { return true; }
         _ => {}
     }
     // Match both types for structural compatibility
     match impl_kind {
-        &type_intern::InternedTypeKind::Adt { def_id: impl_def, args: _ } => {
+        &type_intern.InternedTypeKind.Adt { def_id: impl_def, args: _ } => {
             match target_kind {
-                &type_intern::InternedTypeKind::Adt { def_id: target_def, args: _ } => {
+                &type_intern.InternedTypeKind.Adt { def_id: target_def, args: _ } => {
                     impl_def.index == target_def.index
                 }
                 _ => false,
             }
         }
-        &type_intern::InternedTypeKind::Primitive(impl_prim) => {
+        &type_intern.InternedTypeKind.Primitive(impl_prim) => {
             match target_kind {
-                &type_intern::InternedTypeKind::Primitive(target_prim) => {
+                &type_intern.InternedTypeKind.Primitive(target_prim) => {
                     unify::primitives_equal(impl_prim, target_prim)
                 }
                 _ => false,
             }
         }
-        &type_intern::InternedTypeKind::Ref { inner: impl_inner, mutable: impl_mut } => {
+        &type_intern.InternedTypeKind.Ref { inner: impl_inner, mutable: impl_mut } => {
             match target_kind {
-                &type_intern::InternedTypeKind::Ref { inner: target_inner, mutable: target_mut } => {
+                &type_intern.InternedTypeKind.Ref { inner: target_inner, mutable: target_mut } => {
                     impl_mut == target_mut && types_match_for_impl_id(
-                        type_intern::TyId::new(impl_inner.index),
-                        type_intern::TyId::new(target_inner.index),
+                        type_intern.TyId.new(impl_inner.index),
+                        type_intern.TyId.new(target_inner.index),
                     )
                 }
                 _ => false,
             }
         }
-        &type_intern::InternedTypeKind::Slice { element: impl_elem } => {
+        &type_intern.InternedTypeKind.Slice { element: impl_elem } => {
             match target_kind {
-                &type_intern::InternedTypeKind::Slice { element: target_elem } => {
+                &type_intern.InternedTypeKind.Slice { element: target_elem } => {
                     types_match_for_impl_id(
-                        type_intern::TyId::new(impl_elem.index),
-                        type_intern::TyId::new(target_elem.index),
+                        type_intern.TyId.new(impl_elem.index),
+                        type_intern.TyId.new(target_elem.index),
                     )
                 }
                 _ => false,
             }
         }
-        &type_intern::InternedTypeKind::Array { element: impl_elem, size: impl_size } => {
+        &type_intern.InternedTypeKind.Array { element: impl_elem, size: impl_size } => {
             match target_kind {
-                &type_intern::InternedTypeKind::Array { element: target_elem, size: target_size } => {
+                &type_intern.InternedTypeKind.Array { element: target_elem, size: target_size } => {
                     impl_size == target_size && types_match_for_impl_id(
-                        type_intern::TyId::new(impl_elem.index),
-                        type_intern::TyId::new(target_elem.index),
+                        type_intern.TyId.new(impl_elem.index),
+                        type_intern.TyId.new(target_elem.index),
                     )
                 }
                 _ => false,
             }
         }
-        &type_intern::InternedTypeKind::Ownership { qualifier: impl_q, inner: impl_inner } => {
+        &type_intern.InternedTypeKind.Ownership { qualifier: impl_q, inner: impl_inner } => {
             match target_kind {
-                &type_intern::InternedTypeKind::Ownership { qualifier: target_q, inner: target_inner } => {
+                &type_intern.InternedTypeKind.Ownership { qualifier: target_q, inner: target_inner } => {
                     impl_q == target_q && types_match_for_impl_id(
-                        type_intern::TyId::new(impl_inner.index),
-                        type_intern::TyId::new(target_inner.index),
+                        type_intern.TyId.new(impl_inner.index),
+                        type_intern.TyId.new(target_inner.index),
                     )
                 }
                 _ => false,
@@ -1566,19 +1566,19 @@ fn types_match_for_impl_id(impl_ty: type_intern::TyId, target_ty: type_intern::T
 /// - 0: incompatible types (no match)
 /// - 1: flexible match (one or both are Infer/Param — matches anything)
 /// - 2: exact match (both are concrete and structurally equal)
-fn type_match_specificity(param_ty: type_intern::TyId, arg_ty: type_intern::TyId) -> u32 {
+fn type_match_specificity(param_ty: type_intern.TyId, arg_ty: type_intern.TyId) -> u32 {
     let interner = type_intern::type_interner();
     let param_kind = interner.get(param_ty);
     let arg_kind = interner.get(arg_ty);
     // If either side is Infer or Param, it's a flexible match (score 1)
     match param_kind {
-        &type_intern::InternedTypeKind::Infer(_) => { return 1; }
-        &type_intern::InternedTypeKind::Param(_) => { return 1; }
+        &type_intern.InternedTypeKind.Infer(_) => { return 1; }
+        &type_intern.InternedTypeKind.Param(_) => { return 1; }
         _ => {}
     }
     match arg_kind {
-        &type_intern::InternedTypeKind::Infer(_) => { return 1; }
-        &type_intern::InternedTypeKind::Param(_) => { return 1; }
+        &type_intern.InternedTypeKind.Infer(_) => { return 1; }
+        &type_intern.InternedTypeKind.Param(_) => { return 1; }
         _ => {}
     }
     // Both are concrete — check for exact structural match
@@ -1591,14 +1591,14 @@ fn type_match_specificity(param_ty: type_intern::TyId, arg_ty: type_intern::TyId
 
 /// Checks if two types are structurally equal (for obligation resolution).
 /// This is a simplified check that doesn't handle inference variables.
-fn types_structurally_equal(a: &hir_ty::Type, b: &hir_ty::Type) -> bool {
+fn types_structurally_equal(a: &hir_ty.Type, b: &hir_ty.Type) -> bool {
     match (&a.kind, &b.kind) {
-        (&hir_ty::TypeKind::Never, &hir_ty::TypeKind::Never) => true,
-        (&hir_ty::TypeKind::Error, &hir_ty::TypeKind::Error) => true,
-        (&hir_ty::TypeKind::Primitive(ref pa), &hir_ty::TypeKind::Primitive(ref pb)) => {
+        (&hir_ty.TypeKind.Never, &hir_ty.TypeKind.Never) => true,
+        (&hir_ty.TypeKind.Error, &hir_ty.TypeKind.Error) => true,
+        (&hir_ty.TypeKind.Primitive(ref pa), &hir_ty.TypeKind.Primitive(ref pb)) => {
             unify::primitives_equal(*pa, *pb)
         }
-        (&hir_ty::TypeKind::Tuple(ref elems_a), &hir_ty::TypeKind::Tuple(ref elems_b)) => {
+        (&hir_ty.TypeKind.Tuple(ref elems_a), &hir_ty.TypeKind.Tuple(ref elems_b)) => {
             if elems_a.len() != elems_b.len() {
                 return false;
             }
@@ -1609,24 +1609,24 @@ fn types_structurally_equal(a: &hir_ty::Type, b: &hir_ty::Type) -> bool {
             }
             true
         }
-        (&hir_ty::TypeKind::Ref { ref inner, mutable: ma },
-         &hir_ty::TypeKind::Ref { inner: ref inner_b, mutable: mb }) => {
+        (&hir_ty.TypeKind.Ref { ref inner, mutable: ma },
+         &hir_ty.TypeKind.Ref { inner: ref inner_b, mutable: mb }) => {
             ma == mb && types_structurally_equal(inner.as_ref(), inner_b.as_ref())
         }
-        (&hir_ty::TypeKind::Ptr { ref inner, mutable: ma },
-         &hir_ty::TypeKind::Ptr { inner: ref inner_b, mutable: mb }) => {
+        (&hir_ty.TypeKind.Ptr { ref inner, mutable: ma },
+         &hir_ty.TypeKind.Ptr { inner: ref inner_b, mutable: mb }) => {
             ma == mb && types_structurally_equal(inner.as_ref(), inner_b.as_ref())
         }
-        (&hir_ty::TypeKind::Array { ref element, size: sa },
-         &hir_ty::TypeKind::Array { element: ref elem_b, size: sb }) => {
+        (&hir_ty.TypeKind.Array { ref element, size: sa },
+         &hir_ty.TypeKind.Array { element: ref elem_b, size: sb }) => {
             sa == sb && types_structurally_equal(element.as_ref(), elem_b.as_ref())
         }
-        (&hir_ty::TypeKind::Slice { ref element },
-         &hir_ty::TypeKind::Slice { element: ref elem_b }) => {
+        (&hir_ty.TypeKind.Slice { ref element },
+         &hir_ty.TypeKind.Slice { element: ref elem_b }) => {
             types_structurally_equal(element.as_ref(), elem_b.as_ref())
         }
-        (&hir_ty::TypeKind::Adt { def_id: da, ref args },
-         &hir_ty::TypeKind::Adt { def_id: db, args: ref args_b }) => {
+        (&hir_ty.TypeKind.Adt { def_id: da, ref args },
+         &hir_ty.TypeKind.Adt { def_id: db, args: ref args_b }) => {
             if da.index != db.index {
                 return false;
             }
@@ -1641,8 +1641,8 @@ fn types_structurally_equal(a: &hir_ty::Type, b: &hir_ty::Type) -> bool {
             true
         }
         // Ownership types - compare qualifier and inner type
-        (&hir_ty::TypeKind::Ownership { qualifier: qa, ref inner },
-         &hir_ty::TypeKind::Ownership { qualifier: qb, inner: ref inner_b }) => {
+        (&hir_ty.TypeKind.Ownership { qualifier: qa, ref inner },
+         &hir_ty.TypeKind.Ownership { qualifier: qb, inner: ref inner_b }) => {
             qa == qb && types_structurally_equal(inner.as_ref(), inner_b.as_ref())
         }
         _ => false,
@@ -1651,7 +1651,7 @@ fn types_structurally_equal(a: &hir_ty::Type, b: &hir_ty::Type) -> bool {
 
 /// Checks if two interned types are structurally equal (for obligation resolution).
 /// TyId version of types_structurally_equal.
-fn types_structurally_equal_id(a: type_intern::TyId, b: type_intern::TyId) -> bool {
+fn types_structurally_equal_id(a: type_intern.TyId, b: type_intern.TyId) -> bool {
     // Quick check: same TyId index means same interned type
     if a.index == b.index {
         return true;
@@ -1660,29 +1660,29 @@ fn types_structurally_equal_id(a: type_intern::TyId, b: type_intern::TyId) -> bo
     let a_kind = interner.get(a);
     let b_kind = interner.get(b);
     match a_kind {
-        &type_intern::InternedTypeKind::Never => {
+        &type_intern.InternedTypeKind.Never => {
             match b_kind {
-                &type_intern::InternedTypeKind::Never => true,
+                &type_intern.InternedTypeKind.Never => true,
                 _ => false,
             }
         }
-        &type_intern::InternedTypeKind::Error => {
+        &type_intern.InternedTypeKind.Error => {
             match b_kind {
-                &type_intern::InternedTypeKind::Error => true,
+                &type_intern.InternedTypeKind.Error => true,
                 _ => false,
             }
         }
-        &type_intern::InternedTypeKind::Primitive(pa) => {
+        &type_intern.InternedTypeKind.Primitive(pa) => {
             match b_kind {
-                &type_intern::InternedTypeKind::Primitive(pb) => {
+                &type_intern.InternedTypeKind.Primitive(pb) => {
                     unify::primitives_equal(pa, pb)
                 }
                 _ => false,
             }
         }
-        &type_intern::InternedTypeKind::Tuple(list_a) => {
+        &type_intern.InternedTypeKind.Tuple(list_a) => {
             match b_kind {
-                &type_intern::InternedTypeKind::Tuple(list_b) => {
+                &type_intern.InternedTypeKind.Tuple(list_b) => {
                     let len_a = interner.ty_list_len(list_a);
                     let len_b = interner.ty_list_len(list_b);
                     if len_a != len_b {
@@ -1700,53 +1700,53 @@ fn types_structurally_equal_id(a: type_intern::TyId, b: type_intern::TyId) -> bo
                 _ => false,
             }
         }
-        &type_intern::InternedTypeKind::Ref { inner: inner_a, mutable: ma } => {
+        &type_intern.InternedTypeKind.Ref { inner: inner_a, mutable: ma } => {
             match b_kind {
-                &type_intern::InternedTypeKind::Ref { inner: inner_b, mutable: mb } => {
+                &type_intern.InternedTypeKind.Ref { inner: inner_b, mutable: mb } => {
                     ma == mb && types_structurally_equal_id(
-                        type_intern::TyId::new(inner_a.index),
-                        type_intern::TyId::new(inner_b.index),
+                        type_intern.TyId.new(inner_a.index),
+                        type_intern.TyId.new(inner_b.index),
                     )
                 }
                 _ => false,
             }
         }
-        &type_intern::InternedTypeKind::Ptr { inner: inner_a, mutable: ma } => {
+        &type_intern.InternedTypeKind.Ptr { inner: inner_a, mutable: ma } => {
             match b_kind {
-                &type_intern::InternedTypeKind::Ptr { inner: inner_b, mutable: mb } => {
+                &type_intern.InternedTypeKind.Ptr { inner: inner_b, mutable: mb } => {
                     ma == mb && types_structurally_equal_id(
-                        type_intern::TyId::new(inner_a.index),
-                        type_intern::TyId::new(inner_b.index),
+                        type_intern.TyId.new(inner_a.index),
+                        type_intern.TyId.new(inner_b.index),
                     )
                 }
                 _ => false,
             }
         }
-        &type_intern::InternedTypeKind::Array { element: elem_a, size: sa } => {
+        &type_intern.InternedTypeKind.Array { element: elem_a, size: sa } => {
             match b_kind {
-                &type_intern::InternedTypeKind::Array { element: elem_b, size: sb } => {
+                &type_intern.InternedTypeKind.Array { element: elem_b, size: sb } => {
                     sa == sb && types_structurally_equal_id(
-                        type_intern::TyId::new(elem_a.index),
-                        type_intern::TyId::new(elem_b.index),
+                        type_intern.TyId.new(elem_a.index),
+                        type_intern.TyId.new(elem_b.index),
                     )
                 }
                 _ => false,
             }
         }
-        &type_intern::InternedTypeKind::Slice { element: elem_a } => {
+        &type_intern.InternedTypeKind.Slice { element: elem_a } => {
             match b_kind {
-                &type_intern::InternedTypeKind::Slice { element: elem_b } => {
+                &type_intern.InternedTypeKind.Slice { element: elem_b } => {
                     types_structurally_equal_id(
-                        type_intern::TyId::new(elem_a.index),
-                        type_intern::TyId::new(elem_b.index),
+                        type_intern.TyId.new(elem_a.index),
+                        type_intern.TyId.new(elem_b.index),
                     )
                 }
                 _ => false,
             }
         }
-        &type_intern::InternedTypeKind::Adt { def_id: da, args: args_a } => {
+        &type_intern.InternedTypeKind.Adt { def_id: da, args: args_a } => {
             match b_kind {
-                &type_intern::InternedTypeKind::Adt { def_id: db, args: args_b } => {
+                &type_intern.InternedTypeKind.Adt { def_id: db, args: args_b } => {
                     if da.index != db.index {
                         return false;
                     }
@@ -1767,12 +1767,12 @@ fn types_structurally_equal_id(a: type_intern::TyId, b: type_intern::TyId) -> bo
                 _ => false,
             }
         }
-        &type_intern::InternedTypeKind::Ownership { qualifier: qa, inner: inner_a } => {
+        &type_intern.InternedTypeKind.Ownership { qualifier: qa, inner: inner_a } => {
             match b_kind {
-                &type_intern::InternedTypeKind::Ownership { qualifier: qb, inner: inner_b } => {
+                &type_intern.InternedTypeKind.Ownership { qualifier: qb, inner: inner_b } => {
                     qa == qb && types_structurally_equal_id(
-                        type_intern::TyId::new(inner_a.index),
-                        type_intern::TyId::new(inner_b.index),
+                        type_intern.TyId.new(inner_a.index),
+                        type_intern.TyId.new(inner_b.index),
                     )
                 }
                 _ => false,
@@ -1790,16 +1790,16 @@ fn types_structurally_equal_id(a: type_intern::TyId, b: type_intern::TyId) -> bo
 /// Returns ExhaustivenessResult indicating whether patterns cover all cases.
 pub fn check_exhaustiveness_arms(
     checker: &mut TypeChecker,
-    scrutinee_ty: &hir_ty::Type,
-    arms: &Vec<hir_expr::MatchArm>,
-    _span: common::Span,
+    scrutinee_ty: &hir_ty.Type,
+    arms: &Vec<hir_expr.MatchArm>,
+    _span: common.Span,
 ) -> ExhaustivenessResult {
     // Convert HIR patterns to deconstructed patterns
-    let mut matrix = PatternMatrix::new(1);
+    let mut matrix = PatternMatrix.new(1);
 
     for i in 0usize..arms.len() {
         let decon = deconstruct_pattern(checker, &arms[i].pattern);
-        let row = PatternRow::new(vec_of_one(decon));
+        let row = PatternRow.new(vec_of_one(decon));
         matrix.push_row(row);
     }
 
@@ -1807,162 +1807,162 @@ pub fn check_exhaustiveness_arms(
     let witnesses = compute_witnesses(checker, scrutinee_ty, &matrix);
 
     if witnesses.len() == 0 {
-        ExhaustivenessResult::Exhaustive
+        ExhaustivenessResult.Exhaustive
     } else {
-        ExhaustivenessResult::NonExhaustive(witnesses)
+        ExhaustivenessResult.NonExhaustive(witnesses)
     }
 }
 
 /// Converts an HIR pattern to a deconstructed pattern.
-fn deconstruct_pattern(checker: &mut TypeChecker, pattern: &hir_expr::Pattern) -> DeconstructedPattern {
+fn deconstruct_pattern(checker: &mut TypeChecker, pattern: &hir_expr.Pattern) -> DeconstructedPattern {
     match &pattern.kind {
-        &hir_expr::PatternKind::Wildcard => DeconstructedPattern::Wildcard,
-        &hir_expr::PatternKind::Binding { local_id: _, ref name, mode: _, ref subpattern } => {
+        &hir_expr.PatternKind.Wildcard => DeconstructedPattern.Wildcard,
+        &hir_expr.PatternKind.Binding { local_id: _, ref name, mode: _, ref subpattern } => {
             // Binding acts as wildcard unless it has a sub-pattern
             let _ = name;
             match subpattern {
-                &Option::Some(ref sub) => deconstruct_pattern(checker, sub.as_ref()),
-                &Option::None => DeconstructedPattern::Wildcard,
+                &Option.Some(ref sub) => deconstruct_pattern(checker, sub.as_ref()),
+                &Option.None => DeconstructedPattern.Wildcard,
             }
         }
-        &hir_expr::PatternKind::Literal(ref lit) => {
+        &hir_expr.PatternKind.Literal(ref lit) => {
             deconstruct_literal(lit)
         }
-        &hir_expr::PatternKind::Tuple(ref pats) => {
-            let mut fields: Vec<DeconstructedPattern> = Vec::new();
+        &hir_expr.PatternKind.Tuple(ref pats) => {
+            let mut fields: Vec<DeconstructedPattern> = Vec.new();
             for i in 0usize..pats.len() {
                 fields.push(deconstruct_pattern(checker, &pats[i]));
             }
-            DeconstructedPattern::Tuple { fields: fields }
+            DeconstructedPattern.Tuple { fields: fields }
         }
-        &hir_expr::PatternKind::Struct { ref path, ref fields, has_rest } => {
+        &hir_expr.PatternKind.Struct { ref path, ref fields, has_rest } => {
             let def_id = path.def_id;
-            let mut field_pats: Vec<DeconstructedPattern> = Vec::new();
+            let mut field_pats: Vec<DeconstructedPattern> = Vec.new();
             for i in 0usize..fields.len() {
                 field_pats.push(deconstruct_pattern(checker, &fields[i].pattern));
             }
             let _ = has_rest;
             // Check if this is a record enum variant (has variant_index) or a plain struct
             let variant_idx_opt = match path.variant_index {
-                Option::Some(idx) => Option::Some(idx),
-                Option::None => {
+                Option.Some(idx) => Option.Some(idx),
+                Option.None => {
                     checker.find_variant_index_by_def_id(def_id)
                 }
             };
             match variant_idx_opt {
-                Option::Some(variant_idx) => {
+                Option.Some(variant_idx) => {
                     // Record enum variant — use Variant for exhaustiveness
-                    DeconstructedPattern::Variant { def_id: def_id, variant_idx: variant_idx, fields: field_pats }
+                    DeconstructedPattern.Variant { def_id: def_id, variant_idx: variant_idx, fields: field_pats }
                 }
-                Option::None => {
+                Option.None => {
                     // Plain struct or unresolved — use Struct
-                    DeconstructedPattern::Struct { def_id: def_id, fields: field_pats }
+                    DeconstructedPattern.Struct { def_id: def_id, fields: field_pats }
                 }
             }
         }
-        &hir_expr::PatternKind::TupleStruct { ref path, ref fields } => {
+        &hir_expr.PatternKind.TupleStruct { ref path, ref fields } => {
             // Tuple struct pattern - could be enum variant with fields
             let def_id = path.def_id;
             let variant_idx_opt = match path.variant_index {
-                Option::Some(idx) => Option::Some(idx),
-                Option::None => {
+                Option.Some(idx) => Option.Some(idx),
+                Option.None => {
                     checker.find_variant_index_by_def_id(def_id)
                 }
             };
             match variant_idx_opt {
-                Option::Some(variant_idx) => {
-                    let mut field_pats: Vec<DeconstructedPattern> = Vec::new();
+                Option.Some(variant_idx) => {
+                    let mut field_pats: Vec<DeconstructedPattern> = Vec.new();
                     for i in 0usize..fields.len() {
                         field_pats.push(deconstruct_pattern(checker, &fields[i]));
                     }
-                    DeconstructedPattern::Variant { def_id: def_id, variant_idx: variant_idx, fields: field_pats }
+                    DeconstructedPattern.Variant { def_id: def_id, variant_idx: variant_idx, fields: field_pats }
                 }
-                Option::None => {
+                Option.None => {
                     // Variant index unknown (cross-module enum not registered).
                     // Treat as Wildcard to avoid false non-exhaustive errors.
-                    DeconstructedPattern::Wildcard
+                    DeconstructedPattern.Wildcard
                 }
             }
         }
-        &hir_expr::PatternKind::Or(ref pats) => {
-            let mut alts: Vec<DeconstructedPattern> = Vec::new();
+        &hir_expr.PatternKind.Or(ref pats) => {
+            let mut alts: Vec<DeconstructedPattern> = Vec.new();
             for i in 0usize..pats.len() {
                 alts.push(deconstruct_pattern(checker, &pats[i]));
             }
-            DeconstructedPattern::Or { pats: alts }
+            DeconstructedPattern.Or { pats: alts }
         }
-        &hir_expr::PatternKind::Ref { ref inner, mutable: _ } => {
+        &hir_expr.PatternKind.Ref { ref inner, mutable: _ } => {
             // Reference pattern - unwrap and deconstruct the inner pattern
             deconstruct_pattern(checker, inner.as_ref())
         }
-        &hir_expr::PatternKind::Range { ref start, ref end_val, inclusive: _ } => {
+        &hir_expr.PatternKind.Range { ref start, ref end_val, inclusive: _ } => {
             // Range patterns are complex - treat as partial coverage for now
             let _ = start;
             let _ = end_val;
-            DeconstructedPattern::Missing
+            DeconstructedPattern.Missing
         }
-        &hir_expr::PatternKind::Slice { ref prefix, ref rest, ref suffix } => {
+        &hir_expr.PatternKind.Slice { ref prefix, ref rest, ref suffix } => {
             // Slice patterns - simplified handling
             let _ = prefix;
             let _ = rest;
             let _ = suffix;
-            DeconstructedPattern::Wildcard
+            DeconstructedPattern.Wildcard
         }
-        &hir_expr::PatternKind::Path(ref path) => {
+        &hir_expr.PatternKind.Path(ref path) => {
             // Path patterns (could be enum variant or const)
             let def_id = path.def_id;
             let variant_idx_opt = match path.variant_index {
-                Option::Some(idx) => Option::Some(idx),
-                Option::None => {
+                Option.Some(idx) => Option.Some(idx),
+                Option.None => {
                     // variant_index not set by HIR lowering — look up by def_id
                     checker.find_variant_index_by_def_id(def_id)
                 }
             };
             match variant_idx_opt {
-                Option::Some(variant_idx) => {
-                    DeconstructedPattern::Variant { def_id: def_id, variant_idx: variant_idx, fields: Vec::new() }
+                Option.Some(variant_idx) => {
+                    DeconstructedPattern.Variant { def_id: def_id, variant_idx: variant_idx, fields: Vec.new() }
                 }
-                Option::None => {
+                Option.None => {
                     // Variant index unknown (cross-module enum not registered).
                     // Treat as Wildcard to avoid false non-exhaustive errors.
-                    DeconstructedPattern::Wildcard
+                    DeconstructedPattern.Wildcard
                 }
             }
         }
-        &hir_expr::PatternKind::Rest => {
+        &hir_expr.PatternKind.Rest => {
             // Rest pattern (..) - matches any number of elements
-            DeconstructedPattern::Wildcard
+            DeconstructedPattern.Wildcard
         }
-        &hir_expr::PatternKind::Error => {
+        &hir_expr.PatternKind.Error => {
             // Error pattern - treat as wildcard for recovery
-            DeconstructedPattern::Wildcard
+            DeconstructedPattern.Wildcard
         }
     }
 }
 
 /// Converts a literal to a deconstructed pattern.
-fn deconstruct_literal(lit: &hir_expr::Literal) -> DeconstructedPattern {
+fn deconstruct_literal(lit: &hir_expr.Literal) -> DeconstructedPattern {
     match &lit.kind {
-        &hir_expr::LiteralKind::Int { val, ty: _ } => {
-            DeconstructedPattern::Literal { value: val as i128 }
+        &hir_expr.LiteralKind.Int { val, ty: _ } => {
+            DeconstructedPattern.Literal { value: val as i128 }
         }
-        &hir_expr::LiteralKind::Bool(b) => {
+        &hir_expr.LiteralKind.Bool(b) => {
             let value = if b { 1i128 } else { 0i128 };
-            DeconstructedPattern::Literal { value: value }
+            DeconstructedPattern.Literal { value: value }
         }
-        &hir_expr::LiteralKind::Char(c) => {
-            DeconstructedPattern::Literal { value: c as i128 }
+        &hir_expr.LiteralKind.Char(c) => {
+            DeconstructedPattern.Literal { value: c as i128 }
         }
-        &hir_expr::LiteralKind::Float { bits: _, ty: _ } => {
+        &hir_expr.LiteralKind.Float { bits: _, ty: _ } => {
             // Float patterns - treat as partial
-            DeconstructedPattern::Missing
+            DeconstructedPattern.Missing
         }
-        &hir_expr::LiteralKind::Str(_) => {
+        &hir_expr.LiteralKind.Str(_) => {
             // String patterns - treat as partial
-            DeconstructedPattern::Missing
+            DeconstructedPattern.Missing
         }
-        &hir_expr::LiteralKind::ByteStr(_) => {
-            DeconstructedPattern::Missing
+        &hir_expr.LiteralKind.ByteStr(_) => {
+            DeconstructedPattern.Missing
         }
     }
 }
@@ -1971,7 +1971,7 @@ fn deconstruct_literal(lit: &hir_expr::Literal) -> DeconstructedPattern {
 /// Returns empty vector if patterns are exhaustive.
 fn compute_witnesses(
     checker: &mut TypeChecker,
-    scrutinee_ty: &hir_ty::Type,
+    scrutinee_ty: &hir_ty.Type,
     matrix: &PatternMatrix,
 ) -> Vec<Witness> {
     // For exhaustiveness, we need to check if every possible constructor of
@@ -1982,11 +1982,11 @@ fn compute_witnesses(
     // avoid false non-exhaustive errors for cross-module enums and
     // other cases where type inference hasn't fully resolved.
     match &scrutinee_ty.kind {
-        &hir_ty::TypeKind::Infer(_) => {
-            return Vec::new();
+        &hir_ty.TypeKind.Infer(_) => {
+            return Vec.new();
         }
-        &hir_ty::TypeKind::Error => {
-            return Vec::new();
+        &hir_ty.TypeKind.Error => {
+            return Vec.new();
         }
         _ => {}
     }
@@ -1996,10 +1996,10 @@ fn compute_witnesses(
 
     // If no constructors, the type is uninhabited (like Never)
     if constructors.len() == 0 {
-        return Vec::new(); // Exhaustive by vacuity
+        return Vec.new(); // Exhaustive by vacuity
     }
 
-    let mut witnesses: Vec<Witness> = Vec::new();
+    let mut witnesses: Vec<Witness> = Vec.new();
 
     // For each constructor, check if it's covered
     for i in 0usize..constructors.len() {
@@ -2008,7 +2008,7 @@ fn compute_witnesses(
         // Check if this constructor is matched by any row in the matrix
         if !constructor_is_covered(matrix, ctor) {
             // This constructor is not covered - it's a witness
-            witnesses.push(Witness::new(clone_string_helper(&ctor.description)));
+            witnesses.push(Witness.new(clone_string_helper(&ctor.description)));
         }
     }
 
@@ -2029,54 +2029,54 @@ impl Constructor {
     fn new(description: String) -> Constructor {
         Constructor {
             description: description,
-            variant_idx: Option::None,
-            literal_value: Option::None,
+            variant_idx: Option.None,
+            literal_value: Option.None,
         }
     }
 
     fn variant(name: String, idx: u32) -> Constructor {
         Constructor {
             description: name,
-            variant_idx: Option::Some(idx),
-            literal_value: Option::None,
+            variant_idx: Option.Some(idx),
+            literal_value: Option.None,
         }
     }
 }
 
 /// Gets all constructors for a type.
-fn get_type_constructors(checker: &mut TypeChecker, ty: &hir_ty::Type) -> Vec<Constructor> {
-    let mut ctors: Vec<Constructor> = Vec::new();
+fn get_type_constructors(checker: &mut TypeChecker, ty: &hir_ty.Type) -> Vec<Constructor> {
+    let mut ctors: Vec<Constructor> = Vec.new();
 
     match &ty.kind {
-        &hir_ty::TypeKind::Primitive(ref prim) => {
+        &hir_ty.TypeKind.Primitive(ref prim) => {
             match prim {
-                &hir_ty::PrimitiveTy::Bool => {
+                &hir_ty.PrimitiveTy.Bool => {
                     // Bool has two constructors: true and false
-                    ctors.push(Constructor::new(common::make_string("true")));
-                    ctors.push(Constructor::new(common::make_string("false")));
+                    ctors.push(Constructor.new(common::make_string("true")));
+                    ctors.push(Constructor.new(common::make_string("false")));
                 }
                 _ => {
                     // Other primitives (integers, etc.) have infinite constructors
                     // Treat as single wildcard constructor for simplicity
-                    ctors.push(Constructor::new(common::make_string("_")));
+                    ctors.push(Constructor.new(common::make_string("_")));
                 }
             }
         }
-        &hir_ty::TypeKind::Adt { def_id, args: _ } => {
+        &hir_ty.TypeKind.Adt { def_id, args: _ } => {
             // Check if it's an enum
             match checker.get_enum(def_id) {
-                Option::Some(enum_info) => {
+                Option.Some(enum_info) => {
                     // Add one constructor per variant
                     for i in 0usize..enum_info.variants.len() {
                         let variant = &enum_info.variants[i];
                         let name = match interner::resolve(variant.name) {
-                            Option::Some(resolved) => {
+                            Option.Some(resolved) => {
                                 // Clone the resolved string
                                 let mut s = common::make_string("");
                                 s.push_str(resolved.as_str());
                                 s
                             }
-                            Option::None => {
+                            Option.None => {
                                 // Fallback if interner resolution fails
                                 let mut s = common::make_string("Variant");
                                 let idx_str = usize_to_string(i);
@@ -2084,33 +2084,33 @@ fn get_type_constructors(checker: &mut TypeChecker, ty: &hir_ty::Type) -> Vec<Co
                                 s
                             }
                         };
-                        ctors.push(Constructor::variant(name, variant.variant_index));
+                        ctors.push(Constructor.variant(name, variant.variant_index));
                     }
                 }
-                Option::None => {
+                Option.None => {
                     // It's a struct - single constructor
-                    ctors.push(Constructor::new(common::make_string("_")));
+                    ctors.push(Constructor.new(common::make_string("_")));
                 }
             }
         }
-        &hir_ty::TypeKind::Tuple(_) => {
+        &hir_ty.TypeKind.Tuple(_) => {
             // Tuple has single constructor
-            ctors.push(Constructor::new(common::make_string("(..)")));
+            ctors.push(Constructor.new(common::make_string("(..)")));
         }
-        &hir_ty::TypeKind::Never => {
+        &hir_ty.TypeKind.Never => {
             // Never type has no constructors (uninhabited)
         }
-        &hir_ty::TypeKind::Ownership { qualifier: _, ref inner } => {
+        &hir_ty.TypeKind.Ownership { qualifier: _, ref inner } => {
             // Ownership type uses inner type's constructors
             return get_type_constructors(checker, inner.as_ref());
         }
-        &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => {
+        &hir_ty.TypeKind.Ref { ref inner, mutable: _ } => {
             // Reference type uses inner type's constructors (auto-deref)
             return get_type_constructors(checker, inner.as_ref());
         }
         _ => {
             // Other types - treat as single wildcard
-            ctors.push(Constructor::new(common::make_string("_")));
+            ctors.push(Constructor.new(common::make_string("_")));
         }
     }
 
@@ -2134,28 +2134,28 @@ fn constructor_is_covered(matrix: &PatternMatrix, ctor: &Constructor) -> bool {
 /// Checks if a pattern matches a constructor.
 fn pattern_matches_constructor(pat: &DeconstructedPattern, ctor: &Constructor) -> bool {
     match pat {
-        &DeconstructedPattern::Wildcard => true,
-        &DeconstructedPattern::Variant { def_id: _, variant_idx, fields: _ } => {
+        &DeconstructedPattern.Wildcard => true,
+        &DeconstructedPattern.Variant { def_id: _, variant_idx, fields: _ } => {
             match ctor.variant_idx {
-                Option::Some(ctor_idx) => variant_idx == ctor_idx,
-                Option::None => false,
+                Option.Some(ctor_idx) => variant_idx == ctor_idx,
+                Option.None => false,
             }
         }
-        &DeconstructedPattern::Literal { value } => {
+        &DeconstructedPattern.Literal { value } => {
             match ctor.literal_value {
-                Option::Some(ctor_val) => value == ctor_val,
-                Option::None => true, // Literal matches wildcard constructor
+                Option.Some(ctor_val) => value == ctor_val,
+                Option.None => true, // Literal matches wildcard constructor
             }
         }
-        &DeconstructedPattern::Struct { def_id: _, fields: _ } => {
+        &DeconstructedPattern.Struct { def_id: _, fields: _ } => {
             // Struct pattern matches single struct constructor
             ctor.variant_idx.is_none()
         }
-        &DeconstructedPattern::Tuple { fields: _ } => {
+        &DeconstructedPattern.Tuple { fields: _ } => {
             // Tuple pattern matches tuple constructor
             true
         }
-        &DeconstructedPattern::Or { ref pats } => {
+        &DeconstructedPattern.Or { ref pats } => {
             // Or pattern matches if any alternative matches
             for i in 0usize..pats.len() {
                 if pattern_matches_constructor(&pats[i], ctor) {
@@ -2164,20 +2164,20 @@ fn pattern_matches_constructor(pat: &DeconstructedPattern, ctor: &Constructor) -
             }
             false
         }
-        &DeconstructedPattern::Missing => false,
+        &DeconstructedPattern.Missing => false,
     }
 }
 
 /// Creates a Vec with a single element.
 fn vec_of_one(p: DeconstructedPattern) -> Vec<DeconstructedPattern> {
-    let mut v: Vec<DeconstructedPattern> = Vec::new();
+    let mut v: Vec<DeconstructedPattern> = Vec.new();
     v.push(p);
     v
 }
 
 /// Clones a String (helper function).
 fn clone_string_helper(s: &String) -> String {
-    let mut result = String::new();
+    let mut result = String.new();
     result.push_str(s.as_str());
     result
 }
@@ -2188,9 +2188,9 @@ fn usize_to_string(n: usize) -> String {
         return common::make_string("0");
     }
 
-    let mut result = String::new();
+    let mut result = String.new();
     let mut num = n;
-    let mut digits: Vec<char> = Vec::new();
+    let mut digits: Vec<char> = Vec.new();
 
     while num > 0 {
         let digit = (num % 10) as u8;
@@ -2218,16 +2218,16 @@ fn usize_to_string(n: usize) -> String {
 /// Returns a list of unresolved obligations (which become type errors).
 pub fn resolve_obligations(
     checker: &mut TypeChecker,
-    obligations: &Vec<typeck_types::Obligation>,
-) -> Vec<typeck_types::Obligation> {
-    let mut unresolved: Vec<typeck_types::Obligation> = Vec::new();
+    obligations: &Vec<typeck_types.Obligation>,
+) -> Vec<typeck_types.Obligation> {
+    let mut unresolved: Vec<typeck_types.Obligation> = Vec.new();
 
     for i in 0usize..obligations.len() {
         let obligation = &obligations[i];
         let resolved = resolve_single_obligation(checker, obligation);
         if !resolved {
             // Re-create obligation for error reporting
-            let unresolve = typeck_types::Obligation::new(
+            let unresolve = typeck_types.Obligation.new(
                 copy_predicate(&obligation.predicate),
                 obligation.span,
                 copy_obligation_cause(&obligation.cause),
@@ -2243,18 +2243,18 @@ pub fn resolve_obligations(
 /// Returns true if resolved, false if not.
 fn resolve_single_obligation(
     checker: &mut TypeChecker,
-    obligation: &typeck_types::Obligation,
+    obligation: &typeck_types.Obligation,
 ) -> bool {
     match &obligation.predicate {
-        &typeck_types::Predicate::Trait(ref trait_ref) => {
+        &typeck_types.Predicate.Trait(ref trait_ref) => {
             // O(1) hash lookup to check if any impl exists for this trait
             let trait_def_id = trait_ref.def_id;
             match checker.trait_impl_hash.get(trait_def_id.index as u64) {
-                Option::Some(_) => true,
-                Option::None => false,
+                Option.Some(_) => true,
+                Option.None => false,
             }
         }
-        &typeck_types::Predicate::TypeEqual { left, right } => {
+        &typeck_types.Predicate.TypeEqual { left, right } => {
             let result = unify::unify_id(
                 &mut checker.subst_table,
                 &mut checker.unifier,
@@ -2263,11 +2263,11 @@ fn resolve_single_obligation(
                 obligation.span,
             );
             match result {
-                unify::UnifyResult::Ok => true,
-                unify::UnifyResult::Err(_) => false,
+                unify.UnifyResult.Ok => true,
+                unify.UnifyResult.Err(_) => false,
             }
         }
-        &typeck_types::Predicate::WellFormed(_) => {
+        &typeck_types.Predicate.WellFormed(_) => {
             // Well-formedness is always satisfied for now
             true
         }
@@ -2275,39 +2275,39 @@ fn resolve_single_obligation(
 }
 
 /// Copies a predicate (since Blood lacks Clone).
-fn copy_predicate(pred: &typeck_types::Predicate) -> typeck_types::Predicate {
+fn copy_predicate(pred: &typeck_types.Predicate) -> typeck_types.Predicate {
     match pred {
-        &typeck_types::Predicate::Trait(ref tr) => {
-            typeck_types::Predicate::Trait(hir_ty::TraitRef {
-                def_id: hir_def::DefId::new(tr.def_id.index),
-                args: Vec::new(),
+        &typeck_types.Predicate.Trait(ref tr) => {
+            typeck_types.Predicate.Trait(hir_ty.TraitRef {
+                def_id: hir_def.DefId.new(tr.def_id.index),
+                args: Vec.new(),
                 span: tr.span,
             })
         }
-        &typeck_types::Predicate::TypeEqual { left, right } => {
-            typeck_types::Predicate::TypeEqual {
-                left: type_intern::TyId::new(left.index),
-                right: type_intern::TyId::new(right.index),
+        &typeck_types.Predicate.TypeEqual { left, right } => {
+            typeck_types.Predicate.TypeEqual {
+                left: type_intern.TyId.new(left.index),
+                right: type_intern.TyId.new(right.index),
             }
         }
-        &typeck_types::Predicate::WellFormed(ty) => {
-            typeck_types::Predicate::WellFormed(type_intern::TyId::new(ty.index))
+        &typeck_types.Predicate.WellFormed(ty) => {
+            typeck_types.Predicate.WellFormed(type_intern.TyId.new(ty.index))
         }
     }
 }
 
 /// Copies an obligation cause.
-fn copy_obligation_cause(cause: &typeck_types::ObligationCause) -> typeck_types::ObligationCause {
+fn copy_obligation_cause(cause: &typeck_types.ObligationCause) -> typeck_types.ObligationCause {
     match cause {
-        &typeck_types::ObligationCause::WhereClause => typeck_types::ObligationCause::WhereClause,
-        &typeck_types::ObligationCause::FnArgument => typeck_types::ObligationCause::FnArgument,
-        &typeck_types::ObligationCause::FnReturn => typeck_types::ObligationCause::FnReturn,
-        &typeck_types::ObligationCause::FieldType => typeck_types::ObligationCause::FieldType,
-        &typeck_types::ObligationCause::MethodCall => typeck_types::ObligationCause::MethodCall,
-        &typeck_types::ObligationCause::Operator => typeck_types::ObligationCause::Operator,
-        &typeck_types::ObligationCause::Cast => typeck_types::ObligationCause::Cast,
-        &typeck_types::ObligationCause::Coercion => typeck_types::ObligationCause::Coercion,
-        &typeck_types::ObligationCause::Pattern => typeck_types::ObligationCause::Pattern,
+        &typeck_types.ObligationCause.WhereClause => typeck_types.ObligationCause.WhereClause,
+        &typeck_types.ObligationCause.FnArgument => typeck_types.ObligationCause.FnArgument,
+        &typeck_types.ObligationCause.FnReturn => typeck_types.ObligationCause.FnReturn,
+        &typeck_types.ObligationCause.FieldType => typeck_types.ObligationCause.FieldType,
+        &typeck_types.ObligationCause.MethodCall => typeck_types.ObligationCause.MethodCall,
+        &typeck_types.ObligationCause.Operator => typeck_types.ObligationCause.Operator,
+        &typeck_types.ObligationCause.Cast => typeck_types.ObligationCause.Cast,
+        &typeck_types.ObligationCause.Coercion => typeck_types.ObligationCause.Coercion,
+        &typeck_types.ObligationCause.Pattern => typeck_types.ObligationCause.Pattern,
     }
 }
 
@@ -2328,10 +2328,10 @@ pub struct UnreachableArmsResult {
 /// the last arm, all subsequent arms are unreachable.
 pub fn check_unreachable_arms(
     checker: &mut TypeChecker,
-    arms: &Vec<hir_expr::MatchArm>,
+    arms: &Vec<hir_expr.MatchArm>,
 ) -> UnreachableArmsResult {
     let mut result = UnreachableArmsResult {
-        unreachable_indices: Vec::new(),
+        unreachable_indices: Vec.new(),
     };
 
     let mut wildcard_seen = false;
@@ -2345,8 +2345,8 @@ pub fn check_unreachable_arms(
             // Check if this arm is a wildcard/catch-all without a guard
             let is_catchall = is_catchall_pattern(&arms[i].pattern);
             let has_guard = match &arms[i].guard {
-                &Option::Some(_) => true,
-                &Option::None => false,
+                &Option.Some(_) => true,
+                &Option.None => false,
             };
             if is_catchall && !has_guard {
                 wildcard_seen = true;
@@ -2359,13 +2359,13 @@ pub fn check_unreachable_arms(
 }
 
 /// Checks if a pattern is a catch-all (wildcard or simple binding).
-fn is_catchall_pattern(pattern: &hir_expr::Pattern) -> bool {
+fn is_catchall_pattern(pattern: &hir_expr.Pattern) -> bool {
     match &pattern.kind {
-        &hir_expr::PatternKind::Wildcard => true,
-        &hir_expr::PatternKind::Binding { local_id: _, name: _, mode: _, ref subpattern } => {
+        &hir_expr.PatternKind.Wildcard => true,
+        &hir_expr.PatternKind.Binding { local_id: _, name: _, mode: _, ref subpattern } => {
             match subpattern {
-                &Option::Some(ref sub) => is_catchall_pattern(sub.as_ref()),
-                &Option::None => true,
+                &Option.Some(ref sub) => is_catchall_pattern(sub.as_ref()),
+                &Option.None => true,
             }
         }
         _ => false,

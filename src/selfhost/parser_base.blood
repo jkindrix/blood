@@ -29,14 +29,14 @@ pub enum ErrorCode {
 /// A parser diagnostic/error.
 pub struct Diagnostic {
     pub message: String,
-    pub span: common::Span,
+    pub span: common.Span,
     pub code: ErrorCode,
     pub notes: Vec<String>,
 }
 
 /// Creates a new diagnostic.
-pub fn make_diagnostic(message: String, span: common::Span, code: ErrorCode) -> Diagnostic {
-    Diagnostic { message: message, span: span, code: code, notes: Vec::new() }
+pub fn make_diagnostic(message: String, span: common.Span, code: ErrorCode) -> Diagnostic {
+    Diagnostic { message: message, span: span, code: code, notes: Vec.new() }
 }
 
 // ============================================================
@@ -58,15 +58,15 @@ pub struct InternEntry {
 /// Fields are public so parsing functions in other modules can access them.
 pub struct Parser<'src> {
     /// The lexer producing tokens.
-    pub lexer: lexer::Lexer<'src>,
+    pub lexer: lexer.Lexer<'src>,
     /// The source text.
     pub source: &'src str,
     /// Current token.
-    pub current: token::Token,
+    pub current: token.Token,
     /// Next token (for one-token lookahead).
-    pub next: token::Token,
+    pub next: token.Token,
     /// Previous token.
-    pub previous: token::Token,
+    pub previous: token.Token,
     /// Accumulated errors.
     pub errors: Vec<Diagnostic>,
     /// Whether we're in panic mode (error recovery).
@@ -80,23 +80,23 @@ pub struct Parser<'src> {
     /// Used for parsing nested generics like `Option<Vec<T>>`.
     pub pending_gt: bool,
     /// Accumulated doc comment tokens, drained in parse_attributes().
-    pub pending_doc_comments: Vec<token::Token>,
+    pub pending_doc_comments: Vec<token.Token>,
 }
 
 impl<'src> Parser<'src> {
     /// Create a new parser for the given source.
     pub fn new(source: &'src str) -> Parser<'src> {
-        let mut lexer = lexer::Lexer::new(source);
-        let mut pending_doc_comments: Vec<token::Token> = Vec::new();
+        let mut lexer = lexer.Lexer.new(source);
+        let mut pending_doc_comments: Vec<token.Token> = Vec.new();
         let mut current = lexer.next_token();
         // Accumulate any leading doc comments
-        while current.kind == token::TokenKind::DocComment {
+        while current.kind == token.TokenKind.DocComment {
             pending_doc_comments.push(current);
             current = lexer.next_token();
         }
         let mut next = lexer.next_token();
         // Accumulate doc comments in lookahead
-        while next.kind == token::TokenKind::DocComment {
+        while next.kind == token.TokenKind.DocComment {
             pending_doc_comments.push(next);
             next = lexer.next_token();
         }
@@ -106,10 +106,10 @@ impl<'src> Parser<'src> {
             source,
             current,
             next,
-            previous: token::Token::dummy(token::TokenKind::Error),
-            errors: Vec::new(),
+            previous: token.Token.dummy(token.TokenKind.Error),
+            errors: Vec.new(),
             panic_mode: false,
-            interned: Vec::new(),
+            interned: Vec.new(),
             allow_struct_literal: true,
             pending_gt: false,
             pending_doc_comments: pending_doc_comments,
@@ -121,28 +121,28 @@ impl<'src> Parser<'src> {
     // ============================================================
 
     /// Check if the current token matches the given kind.
-    pub fn check(self: &Self, kind: token::TokenKind) -> bool {
+    pub fn check(self: &Self, kind: token.TokenKind) -> bool {
         self.current.kind == kind
     }
 
     /// Check if the next token matches the given kind.
-    pub fn check_next(self: &Self, kind: token::TokenKind) -> bool {
+    pub fn check_next(self: &Self, kind: token.TokenKind) -> bool {
         self.next.kind == kind
     }
 
     /// Check if we've reached the end of input.
     pub fn is_at_end(self: &Self) -> bool {
-        self.current.kind == token::TokenKind::Eof
+        self.current.kind == token.TokenKind.Eof
     }
 
     /// Advance to the next token, returning the previous.
     /// Doc comments are automatically skipped.
-    pub fn advance(self: &mut Self) -> token::Token {
+    pub fn advance(self: &mut Self) -> token.Token {
         self.previous = self.current;
         self.current = self.next;
         self.next = self.lexer.next_token();
         // Accumulate doc comments in lookahead
-        while self.next.kind == token::TokenKind::DocComment {
+        while self.next.kind == token.TokenKind.DocComment {
             self.pending_doc_comments.push(self.next);
             self.next = self.lexer.next_token();
         }
@@ -150,7 +150,7 @@ impl<'src> Parser<'src> {
     }
 
     /// Consume a token of the expected kind, or report error.
-    pub fn expect(self: &mut Self, kind: token::TokenKind) -> bool {
+    pub fn expect(self: &mut Self, kind: token.TokenKind) -> bool {
         if self.check(kind) {
             self.advance();
             true
@@ -162,7 +162,7 @@ impl<'src> Parser<'src> {
 
     /// Try to consume a token of the expected kind.
     /// Returns true if consumed, false otherwise.
-    pub fn try_consume(self: &mut Self, kind: token::TokenKind) -> bool {
+    pub fn try_consume(self: &mut Self, kind: token.TokenKind) -> bool {
         if self.check(kind) {
             self.advance();
             true
@@ -183,7 +183,7 @@ impl<'src> Parser<'src> {
     /// Check if we're at a closing angle bracket (handles >> splitting).
     /// Returns true if current token is Gt, or Shr (>>), or pending_gt is set.
     pub fn check_closing_angle(self: &Self) -> bool {
-        self.pending_gt || self.current.kind == token::TokenKind::Gt || self.current.kind == token::TokenKind::Shr
+        self.pending_gt || self.current.kind == token.TokenKind.Gt || self.current.kind == token.TokenKind.Shr
     }
 
     /// Consume a closing angle bracket (handles >> splitting).
@@ -193,21 +193,21 @@ impl<'src> Parser<'src> {
     pub fn expect_closing_angle(self: &mut Self) -> bool {
         if self.pending_gt {
             self.pending_gt = false;
-            self.previous = token::Token { kind: token::TokenKind::Gt, span: self.previous.span, leading_trivia: Vec::new() };
+            self.previous = token.Token { kind: token.TokenKind.Gt, span: self.previous.span, leading_trivia: Vec.new() };
             return true;
         }
-        if self.current.kind == token::TokenKind::Gt {
+        if self.current.kind == token.TokenKind.Gt {
             self.advance();
             return true;
         }
-        if self.current.kind == token::TokenKind::Shr {
+        if self.current.kind == token.TokenKind.Shr {
             let shr_span = self.current.span;
             self.pending_gt = true;
             self.advance();
-            self.previous = token::Token { kind: token::TokenKind::Gt, span: shr_span, leading_trivia: Vec::new() };
+            self.previous = token.Token { kind: token.TokenKind.Gt, span: shr_span, leading_trivia: Vec.new() };
             return true;
         }
-        self.error_expected_kind(token::TokenKind::Gt);
+        self.error_expected_kind(token.TokenKind.Gt);
         false
     }
 
@@ -219,7 +219,7 @@ impl<'src> Parser<'src> {
         self.error_at(self.current.span, message, code);
     }
 
-    pub fn error_at(self: &mut Self, span: common::Span, message: String, code: ErrorCode) {
+    pub fn error_at(self: &mut Self, span: common.Span, message: String, code: ErrorCode) {
         if self.panic_mode {
             return;
         }
@@ -228,7 +228,7 @@ impl<'src> Parser<'src> {
         self.errors.push(diagnostic);
     }
 
-    pub fn error_at_with_note(self: &mut Self, span: common::Span, message: String, code: ErrorCode, note: String) {
+    pub fn error_at_with_note(self: &mut Self, span: common.Span, message: String, code: ErrorCode, note: String) {
         if self.panic_mode {
             return;
         }
@@ -238,8 +238,8 @@ impl<'src> Parser<'src> {
         self.errors.push(diagnostic);
     }
 
-    pub fn error_expected_kind(self: &mut Self, expected: token::TokenKind) {
-        let mut message = String::new();
+    pub fn error_expected_kind(self: &mut Self, expected: token.TokenKind) {
+        let mut message = String.new();
         message.push_str("expected ");
         message.push_str(expected.display_name());
         message.push_str(", found ");
@@ -248,16 +248,16 @@ impl<'src> Parser<'src> {
             self.error_at_with_note(
                 self.current.span,
                 message,
-                ErrorCode::UnexpectedEof,
+                ErrorCode.UnexpectedEof,
                 common::make_string("did you forget a closing brace or semicolon?"),
             );
         } else {
-            self.error_at_current(message, ErrorCode::UnexpectedToken);
+            self.error_at_current(message, ErrorCode.UnexpectedToken);
         }
     }
 
     pub fn error_expected(self: &mut Self, expected: &str) {
-        let mut message = String::new();
+        let mut message = String.new();
         message.push_str("expected ");
         message.push_str(expected);
         message.push_str(", found ");
@@ -266,17 +266,17 @@ impl<'src> Parser<'src> {
             self.error_at_with_note(
                 self.current.span,
                 message,
-                ErrorCode::UnexpectedEof,
+                ErrorCode.UnexpectedEof,
                 common::make_string("did you forget a closing brace or semicolon?"),
             );
         } else {
-            self.error_at_current(message, ErrorCode::UnexpectedToken);
+            self.error_at_current(message, ErrorCode.UnexpectedToken);
         }
     }
 
     /// Reports an "expected X" error with a specific error code.
     pub fn error_expected_with_code(self: &mut Self, expected: &str, code: ErrorCode) {
-        let mut message = String::new();
+        let mut message = String.new();
         message.push_str("expected ");
         message.push_str(expected);
         message.push_str(", found ");
@@ -285,7 +285,7 @@ impl<'src> Parser<'src> {
             self.error_at_with_note(
                 self.current.span,
                 message,
-                ErrorCode::UnexpectedEof,
+                ErrorCode.UnexpectedEof,
                 common::make_string("unexpected end of file"),
             );
         } else {
@@ -299,155 +299,155 @@ impl<'src> Parser<'src> {
 
         while !self.is_at_end() {
             // Stop at end of statement
-            if self.previous.kind == token::TokenKind::Semi {
+            if self.previous.kind == token.TokenKind.Semi {
                 return;
             }
 
             // Stop at declaration keywords
             match self.current.kind {
-                token::TokenKind::Fn => { return; }
-                token::TokenKind::Struct => { return; }
-                token::TokenKind::Enum => { return; }
-                token::TokenKind::Trait => { return; }
-                token::TokenKind::Impl => { return; }
-                token::TokenKind::Type => { return; }
-                token::TokenKind::Const => { return; }
-                token::TokenKind::Static => { return; }
-                token::TokenKind::Mod => { return; }
-                token::TokenKind::Use => { return; }
-                token::TokenKind::Pub => { return; }
-                token::TokenKind::Effect => { return; }
-                token::TokenKind::Handler => { return; }
-                token::TokenKind::Bridge => { return; }
-                token::TokenKind::RBrace => { return; }
+                token.TokenKind.Fn => { return; }
+                token.TokenKind.Struct => { return; }
+                token.TokenKind.Enum => { return; }
+                token.TokenKind.Trait => { return; }
+                token.TokenKind.Impl => { return; }
+                token.TokenKind.Type => { return; }
+                token.TokenKind.Const => { return; }
+                token.TokenKind.Static => { return; }
+                token.TokenKind.Mod => { return; }
+                token.TokenKind.Use => { return; }
+                token.TokenKind.Pub => { return; }
+                token.TokenKind.Effect => { return; }
+                token.TokenKind.Handler => { return; }
+                token.TokenKind.Bridge => { return; }
+                token.TokenKind.RBrace => { return; }
                 // For all other tokens, skip
-                token::TokenKind::As => { self.advance(); }
-                token::TokenKind::Async => { self.advance(); }
-                token::TokenKind::Await => { self.advance(); }
-                token::TokenKind::Break => { self.advance(); }
-                token::TokenKind::Continue => { self.advance(); }
-                token::TokenKind::Crate => { self.advance(); }
-                token::TokenKind::Decreases => { self.advance(); }
-                token::TokenKind::Deep => { self.advance(); }
-                token::TokenKind::Default => { self.advance(); }
-                token::TokenKind::Dyn => { self.advance(); }
-                token::TokenKind::Ensures => { self.advance(); }
-                token::TokenKind::Else => { self.advance(); }
-                token::TokenKind::Extends => { self.advance(); }
-                token::TokenKind::Extern => { self.advance(); }
-                token::TokenKind::False => { self.advance(); }
-                token::TokenKind::For => { self.advance(); }
-                token::TokenKind::Forall => { self.advance(); }
-                token::TokenKind::Handle => { self.advance(); }
-                token::TokenKind::If => { self.advance(); }
-                token::TokenKind::In => { self.advance(); }
-                token::TokenKind::Invariant => { self.advance(); }
-                token::TokenKind::Let => { self.advance(); }
-                token::TokenKind::Linear => { self.advance(); }
-                token::TokenKind::Loop => { self.advance(); }
-                token::TokenKind::Match => { self.advance(); }
-                token::TokenKind::Module => { self.advance(); }
-                token::TokenKind::Move => { self.advance(); }
-                token::TokenKind::Mut => { self.advance(); }
-                token::TokenKind::Op => { self.advance(); }
-                token::TokenKind::Perform => { self.advance(); }
-                token::TokenKind::Pure => { self.advance(); }
-                token::TokenKind::Ref => { self.advance(); }
-                token::TokenKind::Region => { self.advance(); }
-                token::TokenKind::Requires => { self.advance(); }
-                token::TokenKind::Resume => { self.advance(); }
-                token::TokenKind::Return => { self.advance(); }
-                token::TokenKind::SelfLower => { self.advance(); }
-                token::TokenKind::SelfUpper => { self.advance(); }
-                token::TokenKind::Shallow => { self.advance(); }
-                token::TokenKind::Super => { self.advance(); }
-                token::TokenKind::True => { self.advance(); }
-                token::TokenKind::Unsafe => { self.advance(); }
-                token::TokenKind::Where => { self.advance(); }
-                token::TokenKind::While => { self.advance(); }
-                token::TokenKind::With => { self.advance(); }
-                token::TokenKind::Affine => { self.advance(); }
-                token::TokenKind::Try => { self.advance(); }
-                token::TokenKind::Abstract => { self.advance(); }
-                token::TokenKind::Become => { self.advance(); }
-                token::TokenKind::Box => { self.advance(); }
-                token::TokenKind::Do => { self.advance(); }
-                token::TokenKind::Final => { self.advance(); }
-                token::TokenKind::Macro => { self.advance(); }
-                token::TokenKind::Override => { self.advance(); }
-                token::TokenKind::Priv => { self.advance(); }
-                token::TokenKind::Typeof => { self.advance(); }
-                token::TokenKind::Unsized => { self.advance(); }
-                token::TokenKind::Virtual => { self.advance(); }
-                token::TokenKind::Yield => { self.advance(); }
-                token::TokenKind::Catch => { self.advance(); }
-                token::TokenKind::Finally => { self.advance(); }
-                token::TokenKind::Throw => { self.advance(); }
-                token::TokenKind::Union => { self.advance(); }
-                token::TokenKind::IntLit => { self.advance(); }
-                token::TokenKind::FloatLit => { self.advance(); }
-                token::TokenKind::StringLit => { self.advance(); }
-                token::TokenKind::ByteStringLit => { self.advance(); }
-                token::TokenKind::RawStringLit => { self.advance(); }
-                token::TokenKind::CharLit => { self.advance(); }
-                token::TokenKind::Ident => { self.advance(); }
-                token::TokenKind::TypeIdent => { self.advance(); }
-                token::TokenKind::Lifetime => { self.advance(); }
-                token::TokenKind::Plus => { self.advance(); }
-                token::TokenKind::Minus => { self.advance(); }
-                token::TokenKind::Star => { self.advance(); }
-                token::TokenKind::Slash => { self.advance(); }
-                token::TokenKind::Percent => { self.advance(); }
-                token::TokenKind::EqEq => { self.advance(); }
-                token::TokenKind::NotEq => { self.advance(); }
-                token::TokenKind::Lt => { self.advance(); }
-                token::TokenKind::Gt => { self.advance(); }
-                token::TokenKind::LtEq => { self.advance(); }
-                token::TokenKind::GtEq => { self.advance(); }
-                token::TokenKind::AndAnd => { self.advance(); }
-                token::TokenKind::OrOr => { self.advance(); }
-                token::TokenKind::Not => { self.advance(); }
-                token::TokenKind::And => { self.advance(); }
-                token::TokenKind::Or => { self.advance(); }
-                token::TokenKind::Caret => { self.advance(); }
-                token::TokenKind::Shl => { self.advance(); }
-                token::TokenKind::Shr => { self.advance(); }
-                token::TokenKind::Eq => { self.advance(); }
-                token::TokenKind::PlusEq => { self.advance(); }
-                token::TokenKind::MinusEq => { self.advance(); }
-                token::TokenKind::StarEq => { self.advance(); }
-                token::TokenKind::SlashEq => { self.advance(); }
-                token::TokenKind::PercentEq => { self.advance(); }
-                token::TokenKind::AndEq => { self.advance(); }
-                token::TokenKind::OrEq => { self.advance(); }
-                token::TokenKind::CaretEq => { self.advance(); }
-                token::TokenKind::ShlEq => { self.advance(); }
-                token::TokenKind::ShrEq => { self.advance(); }
-                token::TokenKind::LParen => { self.advance(); }
-                token::TokenKind::RParen => { self.advance(); }
-                token::TokenKind::LBrace => { self.advance(); }
-                token::TokenKind::LBracket => { self.advance(); }
-                token::TokenKind::RBracket => { self.advance(); }
-                token::TokenKind::Comma => { self.advance(); }
-                token::TokenKind::Semi => { self.advance(); }
-                token::TokenKind::Colon => { self.advance(); }
-                token::TokenKind::ColonColon => { self.advance(); }
-                token::TokenKind::Dot => { self.advance(); }
-                token::TokenKind::DotDot => { self.advance(); }
-                token::TokenKind::DotDotEq => { self.advance(); }
-                token::TokenKind::Arrow => { self.advance(); }
-                token::TokenKind::FatArrow => { self.advance(); }
-                token::TokenKind::Pipe => { self.advance(); }
-                token::TokenKind::At => { self.advance(); }
-                token::TokenKind::Hash => { self.advance(); }
-                token::TokenKind::Question => { self.advance(); }
-                token::TokenKind::Dollar => { self.advance(); }
-                token::TokenKind::AtUnsafe => { self.advance(); }
-                token::TokenKind::AtHeap => { self.advance(); }
-                token::TokenKind::AtStack => { self.advance(); }
-                token::TokenKind::DocComment => { self.advance(); }
-                token::TokenKind::Eof => { return; }
-                token::TokenKind::Error => { self.advance(); }
+                token.TokenKind.As => { self.advance(); }
+                token.TokenKind.Async => { self.advance(); }
+                token.TokenKind.Await => { self.advance(); }
+                token.TokenKind.Break => { self.advance(); }
+                token.TokenKind.Continue => { self.advance(); }
+                token.TokenKind.Crate => { self.advance(); }
+                token.TokenKind.Decreases => { self.advance(); }
+                token.TokenKind.Deep => { self.advance(); }
+                token.TokenKind.Default => { self.advance(); }
+                token.TokenKind.Dyn => { self.advance(); }
+                token.TokenKind.Ensures => { self.advance(); }
+                token.TokenKind.Else => { self.advance(); }
+                token.TokenKind.Extends => { self.advance(); }
+                token.TokenKind.Extern => { self.advance(); }
+                token.TokenKind.False => { self.advance(); }
+                token.TokenKind.For => { self.advance(); }
+                token.TokenKind.Forall => { self.advance(); }
+                token.TokenKind.Handle => { self.advance(); }
+                token.TokenKind.If => { self.advance(); }
+                token.TokenKind.In => { self.advance(); }
+                token.TokenKind.Invariant => { self.advance(); }
+                token.TokenKind.Let => { self.advance(); }
+                token.TokenKind.Linear => { self.advance(); }
+                token.TokenKind.Loop => { self.advance(); }
+                token.TokenKind.Match => { self.advance(); }
+                token.TokenKind.Module => { self.advance(); }
+                token.TokenKind.Move => { self.advance(); }
+                token.TokenKind.Mut => { self.advance(); }
+                token.TokenKind.Op => { self.advance(); }
+                token.TokenKind.Perform => { self.advance(); }
+                token.TokenKind.Pure => { self.advance(); }
+                token.TokenKind.Ref => { self.advance(); }
+                token.TokenKind.Region => { self.advance(); }
+                token.TokenKind.Requires => { self.advance(); }
+                token.TokenKind.Resume => { self.advance(); }
+                token.TokenKind.Return => { self.advance(); }
+                token.TokenKind.SelfLower => { self.advance(); }
+                token.TokenKind.SelfUpper => { self.advance(); }
+                token.TokenKind.Shallow => { self.advance(); }
+                token.TokenKind.Super => { self.advance(); }
+                token.TokenKind.True => { self.advance(); }
+                token.TokenKind.Unsafe => { self.advance(); }
+                token.TokenKind.Where => { self.advance(); }
+                token.TokenKind.While => { self.advance(); }
+                token.TokenKind.With => { self.advance(); }
+                token.TokenKind.Affine => { self.advance(); }
+                token.TokenKind.Try => { self.advance(); }
+                token.TokenKind.Abstract => { self.advance(); }
+                token.TokenKind.Become => { self.advance(); }
+                token.TokenKind.Box => { self.advance(); }
+                token.TokenKind.Do => { self.advance(); }
+                token.TokenKind.Final => { self.advance(); }
+                token.TokenKind.Macro => { self.advance(); }
+                token.TokenKind.Override => { self.advance(); }
+                token.TokenKind.Priv => { self.advance(); }
+                token.TokenKind.Typeof => { self.advance(); }
+                token.TokenKind.Unsized => { self.advance(); }
+                token.TokenKind.Virtual => { self.advance(); }
+                token.TokenKind.Yield => { self.advance(); }
+                token.TokenKind.Catch => { self.advance(); }
+                token.TokenKind.Finally => { self.advance(); }
+                token.TokenKind.Throw => { self.advance(); }
+                token.TokenKind.Union => { self.advance(); }
+                token.TokenKind.IntLit => { self.advance(); }
+                token.TokenKind.FloatLit => { self.advance(); }
+                token.TokenKind.StringLit => { self.advance(); }
+                token.TokenKind.ByteStringLit => { self.advance(); }
+                token.TokenKind.RawStringLit => { self.advance(); }
+                token.TokenKind.CharLit => { self.advance(); }
+                token.TokenKind.Ident => { self.advance(); }
+                token.TokenKind.TypeIdent => { self.advance(); }
+                token.TokenKind.Lifetime => { self.advance(); }
+                token.TokenKind.Plus => { self.advance(); }
+                token.TokenKind.Minus => { self.advance(); }
+                token.TokenKind.Star => { self.advance(); }
+                token.TokenKind.Slash => { self.advance(); }
+                token.TokenKind.Percent => { self.advance(); }
+                token.TokenKind.EqEq => { self.advance(); }
+                token.TokenKind.NotEq => { self.advance(); }
+                token.TokenKind.Lt => { self.advance(); }
+                token.TokenKind.Gt => { self.advance(); }
+                token.TokenKind.LtEq => { self.advance(); }
+                token.TokenKind.GtEq => { self.advance(); }
+                token.TokenKind.AndAnd => { self.advance(); }
+                token.TokenKind.OrOr => { self.advance(); }
+                token.TokenKind.Not => { self.advance(); }
+                token.TokenKind.And => { self.advance(); }
+                token.TokenKind.Or => { self.advance(); }
+                token.TokenKind.Caret => { self.advance(); }
+                token.TokenKind.Shl => { self.advance(); }
+                token.TokenKind.Shr => { self.advance(); }
+                token.TokenKind.Eq => { self.advance(); }
+                token.TokenKind.PlusEq => { self.advance(); }
+                token.TokenKind.MinusEq => { self.advance(); }
+                token.TokenKind.StarEq => { self.advance(); }
+                token.TokenKind.SlashEq => { self.advance(); }
+                token.TokenKind.PercentEq => { self.advance(); }
+                token.TokenKind.AndEq => { self.advance(); }
+                token.TokenKind.OrEq => { self.advance(); }
+                token.TokenKind.CaretEq => { self.advance(); }
+                token.TokenKind.ShlEq => { self.advance(); }
+                token.TokenKind.ShrEq => { self.advance(); }
+                token.TokenKind.LParen => { self.advance(); }
+                token.TokenKind.RParen => { self.advance(); }
+                token.TokenKind.LBrace => { self.advance(); }
+                token.TokenKind.LBracket => { self.advance(); }
+                token.TokenKind.RBracket => { self.advance(); }
+                token.TokenKind.Comma => { self.advance(); }
+                token.TokenKind.Semi => { self.advance(); }
+                token.TokenKind.Colon => { self.advance(); }
+                token.TokenKind.ColonColon => { self.advance(); }
+                token.TokenKind.Dot => { self.advance(); }
+                token.TokenKind.DotDot => { self.advance(); }
+                token.TokenKind.DotDotEq => { self.advance(); }
+                token.TokenKind.Arrow => { self.advance(); }
+                token.TokenKind.FatArrow => { self.advance(); }
+                token.TokenKind.Pipe => { self.advance(); }
+                token.TokenKind.At => { self.advance(); }
+                token.TokenKind.Hash => { self.advance(); }
+                token.TokenKind.Question => { self.advance(); }
+                token.TokenKind.Dollar => { self.advance(); }
+                token.TokenKind.AtUnsafe => { self.advance(); }
+                token.TokenKind.AtHeap => { self.advance(); }
+                token.TokenKind.AtStack => { self.advance(); }
+                token.TokenKind.DocComment => { self.advance(); }
+                token.TokenKind.Eof => { return; }
+                token.TokenKind.Error => { self.advance(); }
             }
         }
     }
@@ -456,10 +456,10 @@ impl<'src> Parser<'src> {
     pub fn skip_to_closing_brace(self: &mut Self) {
         let mut depth: u32 = 1;
         while !self.is_at_end() {
-            if self.current.kind == token::TokenKind::LBrace {
+            if self.current.kind == token.TokenKind.LBrace {
                 depth += 1;
             }
-            if self.current.kind == token::TokenKind::RBrace {
+            if self.current.kind == token.TokenKind.RBrace {
                 depth -= 1;
                 if depth == 0 {
                     return;
@@ -486,7 +486,7 @@ impl<'src> Parser<'src> {
     /// Take ownership of the errors, leaving an empty vector in the parser.
     pub fn take_errors(self: &mut Self) -> Vec<Diagnostic> {
         let errors = self.errors;
-        self.errors = Vec::new();
+        self.errors = Vec.new();
         errors
     }
 
@@ -541,16 +541,16 @@ impl<'src> Parser<'src> {
     }
 
     /// Parse a spanned symbol from current token.
-    pub fn parse_spanned_symbol(self: &mut Self) -> common::SpannedSymbol {
+    pub fn parse_spanned_symbol(self: &mut Self) -> common.SpannedSymbol {
         let span = self.current.span;
         let index = self.intern_symbol(span.start as u32, span.end as u32);
-        let symbol = common::Symbol { index: index };
+        let symbol = common.Symbol { index: index };
         self.advance();
-        common::SpannedSymbol { symbol: symbol, span: span }
+        common.SpannedSymbol { symbol: symbol, span: span }
     }
 
     /// Check if a token is exactly the underscore character.
-    pub fn token_is_underscore(self: &Self, tok: token::Token) -> bool {
+    pub fn token_is_underscore(self: &Self, tok: token.Token) -> bool {
         let start = tok.span.start as usize;
         let end = tok.span.end as usize;
         // Check length is 1 and the byte is '_' (95)
@@ -560,7 +560,7 @@ impl<'src> Parser<'src> {
     /// Extract doc text from a DocComment token.
     /// The token span covers `/// text here` (from `///` to end of line).
     /// Skip first 3 bytes (`///`), then skip one optional leading space.
-    pub fn extract_doc_text(self: &Self, tok: token::Token) -> String {
+    pub fn extract_doc_text(self: &Self, tok: token.Token) -> String {
         let start = tok.span.start as usize;
         let end = tok.span.end as usize;
         let mut pos = start + 3; // skip "///"
@@ -568,7 +568,7 @@ impl<'src> Parser<'src> {
         if pos < end && self.source_byte_at(pos) == 32 {
             pos += 1;
         }
-        let mut result = String::new();
+        let mut result = String.new();
         while pos < end {
             let b = self.source_byte_at(pos);
             result.push(b as char);
@@ -585,7 +585,7 @@ impl<'src> Parser<'src> {
 /// Parse an integer value from the source text at the given span.
 /// Handles decimal, hex (0x), octal (0o), and binary (0b) formats.
 /// Skips underscore separators and stops at suffix characters.
-pub fn parse_int_value_from_span(parser: &mut Parser, span: common::Span) -> u128 {
+pub fn parse_int_value_from_span(parser: &mut Parser, span: common.Span) -> u128 {
     let start = span.start;
     let end = span.end;
     let mut pos = start;
@@ -648,7 +648,7 @@ pub fn parse_int_value_from_span(parser: &mut Parser, span: common::Span) -> u12
 
 /// Extract the integer suffix from the source text at the given span.
 /// Integer suffixes start with 'i' or 'u' (e.g., i32, u64, isize, usize).
-pub fn parse_int_suffix_from_span(parser: &mut Parser, span: common::Span) -> Option<ast::IntSuffix> {
+pub fn parse_int_suffix_from_span(parser: &mut Parser, span: common.Span) -> Option<ast.IntSuffix> {
     let start = span.start;
     let end = span.end;
     let mut pos = start;
@@ -686,7 +686,7 @@ pub fn parse_int_suffix_from_span(parser: &mut Parser, span: common::Span) -> Op
 
     // Parse suffix if present
     if pos >= end {
-        return Option::None;
+        return Option.None;
     }
 
     let first = parser.source_byte_at(pos);
@@ -696,27 +696,27 @@ pub fn parse_int_suffix_from_span(parser: &mut Parser, span: common::Span) -> Op
         // 'i' prefix
         if suffix_len == 2 && parser.source_byte_at(pos + 1) == 56 {
             // "i8"
-            return Option::Some(ast::IntSuffix::I8);
+            return Option.Some(ast.IntSuffix.I8);
         }
         if suffix_len == 3 && parser.source_byte_at(pos + 1) == 49 && parser.source_byte_at(pos + 2) == 54 {
             // "i16"
-            return Option::Some(ast::IntSuffix::I16);
+            return Option.Some(ast.IntSuffix.I16);
         }
         if suffix_len == 3 && parser.source_byte_at(pos + 1) == 51 && parser.source_byte_at(pos + 2) == 50 {
             // "i32"
-            return Option::Some(ast::IntSuffix::I32);
+            return Option.Some(ast.IntSuffix.I32);
         }
         if suffix_len == 3 && parser.source_byte_at(pos + 1) == 54 && parser.source_byte_at(pos + 2) == 52 {
             // "i64"
-            return Option::Some(ast::IntSuffix::I64);
+            return Option.Some(ast.IntSuffix.I64);
         }
         if suffix_len == 4 && parser.source_byte_at(pos + 1) == 49 && parser.source_byte_at(pos + 2) == 50 && parser.source_byte_at(pos + 3) == 56 {
             // "i128"
-            return Option::Some(ast::IntSuffix::I128);
+            return Option.Some(ast.IntSuffix.I128);
         }
         if suffix_len == 5 && parser.source_byte_at(pos + 1) == 115 && parser.source_byte_at(pos + 2) == 105 && parser.source_byte_at(pos + 3) == 122 && parser.source_byte_at(pos + 4) == 101 {
             // "isize"
-            return Option::Some(ast::IntSuffix::Isize);
+            return Option.Some(ast.IntSuffix.Isize);
         }
     }
 
@@ -724,36 +724,36 @@ pub fn parse_int_suffix_from_span(parser: &mut Parser, span: common::Span) -> Op
         // 'u' prefix
         if suffix_len == 2 && parser.source_byte_at(pos + 1) == 56 {
             // "u8"
-            return Option::Some(ast::IntSuffix::U8);
+            return Option.Some(ast.IntSuffix.U8);
         }
         if suffix_len == 3 && parser.source_byte_at(pos + 1) == 49 && parser.source_byte_at(pos + 2) == 54 {
             // "u16"
-            return Option::Some(ast::IntSuffix::U16);
+            return Option.Some(ast.IntSuffix.U16);
         }
         if suffix_len == 3 && parser.source_byte_at(pos + 1) == 51 && parser.source_byte_at(pos + 2) == 50 {
             // "u32"
-            return Option::Some(ast::IntSuffix::U32);
+            return Option.Some(ast.IntSuffix.U32);
         }
         if suffix_len == 3 && parser.source_byte_at(pos + 1) == 54 && parser.source_byte_at(pos + 2) == 52 {
             // "u64"
-            return Option::Some(ast::IntSuffix::U64);
+            return Option.Some(ast.IntSuffix.U64);
         }
         if suffix_len == 4 && parser.source_byte_at(pos + 1) == 49 && parser.source_byte_at(pos + 2) == 50 && parser.source_byte_at(pos + 3) == 56 {
             // "u128"
-            return Option::Some(ast::IntSuffix::U128);
+            return Option.Some(ast.IntSuffix.U128);
         }
         if suffix_len == 5 && parser.source_byte_at(pos + 1) == 115 && parser.source_byte_at(pos + 2) == 105 && parser.source_byte_at(pos + 3) == 122 && parser.source_byte_at(pos + 4) == 101 {
             // "usize"
-            return Option::Some(ast::IntSuffix::Usize);
+            return Option.Some(ast.IntSuffix.Usize);
         }
     }
 
-    Option::None
+    Option.None
 }
 
 /// Parse a float value from the source text and return its bits as u64.
 /// Parses the decimal representation and converts to IEEE 754 f64 bits.
-pub fn parse_float_bits_from_span(parser: &mut Parser, span: common::Span) -> u64 {
+pub fn parse_float_bits_from_span(parser: &mut Parser, span: common.Span) -> u64 {
     let start = span.start;
     let end = span.end;
 
@@ -822,7 +822,7 @@ pub fn parse_float_bits_from_span(parser: &mut Parser, span: common::Span) -> u6
         }
         if pos == exp_digit_start {
             // No digits after exponent marker — invalid float
-            parser.error_at(span, common::make_string("invalid floating-point literal: incomplete exponent"), ErrorCode::InvalidFloat);
+            parser.error_at(span, common::make_string("invalid floating-point literal: incomplete exponent"), ErrorCode.InvalidFloat);
         }
         if exp_neg {
             exp = 0 - exp;
@@ -862,7 +862,7 @@ pub fn parse_float_bits_from_span(parser: &mut Parser, span: common::Span) -> u6
 }
 
 /// Extract the float suffix from the source text (f32 or f64).
-pub fn parse_float_suffix_from_span(parser: &mut Parser, span: common::Span) -> Option<ast::FloatSuffix> {
+pub fn parse_float_suffix_from_span(parser: &mut Parser, span: common.Span) -> Option<ast.FloatSuffix> {
     let end = span.end;
 
     // Check if span ends with f32 or f64
@@ -874,23 +874,23 @@ pub fn parse_float_suffix_from_span(parser: &mut Parser, span: common::Span) -> 
             // 'f'
             if b1 == 51 && b2 == 50 {
                 // "f32"
-                return Option::Some(ast::FloatSuffix::F32);
+                return Option.Some(ast.FloatSuffix.F32);
             }
             if b1 == 54 && b2 == 52 {
                 // "f64"
-                return Option::Some(ast::FloatSuffix::F64);
+                return Option.Some(ast.FloatSuffix.F64);
             }
         }
     }
 
-    Option::None
+    Option.None
 }
 
 /// Parse a string literal from the source text (strips quotes, handles escape sequences).
-pub fn parse_string_from_span(parser: &mut Parser, span: common::Span) -> String {
+pub fn parse_string_from_span(parser: &mut Parser, span: common.Span) -> String {
     let start = span.start;
     let end = span.end;
-    let mut result = String::new();
+    let mut result = String.new();
 
     // Skip opening quote
     let mut pos = start + 1;
@@ -962,10 +962,10 @@ pub fn parse_string_from_span(parser: &mut Parser, span: common::Span) -> String
                 }
             } else {
                 // Unknown escape — report error
-                let mut msg = String::new();
+                let mut msg = String.new();
                 msg.push_str("invalid escape sequence: \\");
                 msg.push(esc as char);
-                parser.error_at(span, msg, ErrorCode::UnexpectedCharacter);
+                parser.error_at(span, msg, ErrorCode.UnexpectedCharacter);
                 result.push(92 as char);
                 result.push(esc as char);
             }
@@ -1018,10 +1018,10 @@ pub fn parse_string_from_span(parser: &mut Parser, span: common::Span) -> String
 
 /// Parse a byte string literal from the source text (b"...").
 /// Returns Vec<u8> of the raw bytes with escape sequences processed.
-pub fn parse_byte_string_from_span(parser: &mut Parser, span: common::Span) -> Vec<u8> {
+pub fn parse_byte_string_from_span(parser: &mut Parser, span: common.Span) -> Vec<u8> {
     let start = span.start;
     let end = span.end;
-    let mut result: Vec<u8> = Vec::new();
+    let mut result: Vec<u8> = Vec.new();
 
     // Skip 'b"' prefix (2 bytes)
     let mut pos = start + 2;
@@ -1081,10 +1081,10 @@ pub fn parse_byte_string_from_span(parser: &mut Parser, span: common::Span) -> V
 
 /// Parse a raw string literal from the source text (no escape processing).
 /// Raw string tokens have the form r"..." — skip the r" prefix and " suffix.
-pub fn parse_raw_string_from_span(parser: &mut Parser, span: common::Span) -> String {
+pub fn parse_raw_string_from_span(parser: &mut Parser, span: common.Span) -> String {
     let start = span.start;
     let end = span.end;
-    let mut result = String::new();
+    let mut result = String.new();
 
     // Skip 'r"' prefix (2 bytes)
     let mut pos = start + 2;
@@ -1129,7 +1129,7 @@ pub fn parse_raw_string_from_span(parser: &mut Parser, span: common::Span) -> St
 }
 
 /// Parse a character literal from the source text (strips quotes, handles escapes).
-pub fn parse_char_from_span(parser: &mut Parser, span: common::Span) -> char {
+pub fn parse_char_from_span(parser: &mut Parser, span: common.Span) -> char {
     let start = span.start;
     let end = span.end;
 
@@ -1137,7 +1137,7 @@ pub fn parse_char_from_span(parser: &mut Parser, span: common::Span) -> char {
     let pos = start + 1;
 
     if pos >= end {
-        parser.error_at(span, common::make_string("empty character literal"), ErrorCode::UnexpectedCharacter);
+        parser.error_at(span, common::make_string("empty character literal"), ErrorCode.UnexpectedCharacter);
         return '?';
     }
 
@@ -1145,7 +1145,7 @@ pub fn parse_char_from_span(parser: &mut Parser, span: common::Span) -> char {
 
     // Check for empty char literal ('')
     if b == 39 {
-        parser.error_at(span, common::make_string("empty character literal"), ErrorCode::UnexpectedCharacter);
+        parser.error_at(span, common::make_string("empty character literal"), ErrorCode.UnexpectedCharacter);
         return '?';
     }
     if b == 92 && pos + 1 < end {
@@ -1183,10 +1183,10 @@ pub fn parse_char_from_span(parser: &mut Parser, span: common::Span) -> char {
             }
         }
         // Unknown escape in char literal — report error
-        let mut msg = String::new();
+        let mut msg = String.new();
         msg.push_str("invalid escape sequence: \\");
         msg.push(esc as char);
-        parser.error_at(span, msg, ErrorCode::UnexpectedCharacter);
+        parser.error_at(span, msg, ErrorCode.UnexpectedCharacter);
         return esc as char;
     }
 

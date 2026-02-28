@@ -34,9 +34,9 @@ mod type_intern;
 pub fn begin_streaming_module(
     module_name: &str,
     output_path: &str,
-    items: &Vec<hir_lower_ctx::ItemEntry>,
-) -> codegen_ctx::CodegenCtx {
-    let mut ctx = codegen_ctx::CodegenCtx::new();
+    items: &Vec<hir_lower_ctx.ItemEntry>,
+) -> codegen_ctx.CodegenCtx {
+    let mut ctx = codegen_ctx.CodegenCtx.new();
 
     // NOTE: ADT registry population is done by the caller after registering
     // builtin ADTs (Vec, String, HashMap, Box). This ensures builtins are
@@ -44,7 +44,7 @@ pub fn begin_streaming_module(
     // instead of being expanded as { i8, [sizeof(T) x i8] }.
 
     // Build module header
-    let mut header = String::new();
+    let mut header = String.new();
     header.push_str("; ModuleID = '");
     header.push_str(module_name);
     header.push_str("'\n");
@@ -65,8 +65,8 @@ pub fn begin_streaming_module(
 /// Generates LLVM IR for a single function and buffers it for batched file I/O.
 /// Returns true on success.
 pub fn generate_function_to_file(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    body: &mir_body::MirBody,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    body: &mir_body.MirBody,
     fn_name: &str,
 ) -> bool {
     // Generate the function IR using the shared codegen logic
@@ -82,10 +82,10 @@ pub fn generate_function_to_file(
 /// then flushing the write buffer to disk.
 /// Returns true on success.
 pub fn finish_streaming_module(
-    ctx: &mut codegen_ctx::CodegenCtx,
+    ctx: &mut codegen_ctx.CodegenCtx,
 ) -> bool {
     // Emit string constants into ctx.output, then copy to avoid aliased borrow
-    ctx.output = String::new();
+    ctx.output = String.new();
     ctx.emit_string_constants();
     let constants_ir = codegen_stmt::clone_string(&ctx.output);
     ctx.buffer_write(constants_ir.as_str());
@@ -101,29 +101,29 @@ pub fn finish_streaming_module(
 /// Should be called after begin_streaming_module but before generating functions.
 /// Uses the interner to get the actual static variable names.
 pub fn emit_static_globals_with_names(
-    ctx: &mut codegen_ctx::CodegenCtx,
-    interner: &interner::StringInterner,
-    items: &Vec<hir_lower_ctx::ItemEntry>,
+    ctx: &mut codegen_ctx.CodegenCtx,
+    interner: &interner.StringInterner,
+    items: &Vec<hir_lower_ctx.ItemEntry>,
 ) {
-    let mut output = String::new();
+    let mut output = String.new();
     output.push_str("\n; Static global variables\n");
 
     for i in 0usize..items.len() {
         let item = &items[i].item;
         match &item.kind {
-            &hir_item::ItemKind::Static(ref static_def) => {
+            &hir_item.ItemKind.Static(ref static_def) => {
                 // Get mangled name for the static using the actual symbol name
                 // Convention: names are stored WITHOUT @ prefix, @ is added when emitting
-                let mut name = String::new();
+                let mut name = String.new();
                 name.push_str("def");
                 push_u32(&mut name, item.def_id.index);
                 name.push('_');
                 // Get the actual name from the interner
                 match interner.resolve(item.name.symbol) {
-                    Option::Some(symbol_name) => {
+                    Option.Some(symbol_name) => {
                         name.push_str(symbol_name.as_str());
                     }
-                    Option::None => {
+                    Option.None => {
                         name.push_str("STATIC");
                     }
                 }
@@ -145,7 +145,7 @@ pub fn emit_static_globals_with_names(
                 ctx.register_static(item.def_id.index);
                 ctx.register_static_type(item.def_id.index, llvm_type);
             }
-            &hir_item::ItemKind::Const(ref _const_def) => {
+            &hir_item.ItemKind.Const(ref _const_def) => {
                 // Mark this DefId as a const item so codegen can call its body function
                 // (instead of treating it as a function pointer reference)
                 ctx.register_const(item.def_id.index);
@@ -164,7 +164,7 @@ fn push_u32(s: &mut String, val: u32) {
         s.push('0');
         return;
     }
-    let mut digits: Vec<u8> = Vec::new();
+    let mut digits: Vec<u8> = Vec.new();
     let mut n = val;
     while n > 0 {
         digits.push((n % 10) as u8);

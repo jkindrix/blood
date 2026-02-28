@@ -16,34 +16,34 @@ pub struct TypeError {
     /// The kind of type error.
     pub kind: TypeErrorKind,
     /// The span where the error occurred.
-    pub span: common::Span,
+    pub span: common.Span,
     /// Additional notes for the error.
     pub notes: Vec<TypeNote>,
 }
 
 impl TypeError {
     /// Creates a new type error.
-    pub fn new(kind: TypeErrorKind, span: common::Span) -> TypeError {
+    pub fn new(kind: TypeErrorKind, span: common.Span) -> TypeError {
         TypeError {
             kind: kind,
             span: span,
-            notes: Vec::new(),
+            notes: Vec.new(),
         }
     }
 
     /// Creates a type mismatch error.
-    pub fn mismatch(span: common::Span) -> TypeError {
-        TypeError::new(TypeErrorKind::TypeMismatch, span)
+    pub fn mismatch(span: common.Span) -> TypeError {
+        TypeError.new(TypeErrorKind.TypeMismatch, span)
     }
 
     /// Creates an undefined variable error.
-    pub fn undefined(span: common::Span) -> TypeError {
-        TypeError::new(TypeErrorKind::UndefinedVariable, span)
+    pub fn undefined(span: common.Span) -> TypeError {
+        TypeError.new(TypeErrorKind.UndefinedVariable, span)
     }
 
     /// Creates an invalid call error.
-    pub fn not_callable(span: common::Span) -> TypeError {
-        TypeError::new(TypeErrorKind::NotCallable, span)
+    pub fn not_callable(span: common.Span) -> TypeError {
+        TypeError.new(TypeErrorKind.NotCallable, span)
     }
 }
 
@@ -104,7 +104,7 @@ pub struct TypeNote {
     /// The note message.
     pub message: String,
     /// Optional span for the note.
-    pub span: Option<common::Span>,
+    pub span: Option<common.Span>,
 }
 
 impl TypeNote {
@@ -117,7 +117,7 @@ impl TypeNote {
     }
 
     /// Creates a type note with a span.
-    pub fn with_span(message: String, span: common::Span) -> TypeNote {
+    pub fn with_span(message: String, span: common.Span) -> TypeNote {
         TypeNote {
             message: message,
             span: Some(span),
@@ -134,25 +134,25 @@ pub enum CheckMode {
     /// Infer the type (no expectation).
     Infer,
     /// Check against an expected type.
-    Check(type_intern::TyId),
+    Check(type_intern.TyId),
     /// Coerce to an expected type (allows implicit conversions).
-    Coerce(type_intern::TyId),
+    Coerce(type_intern.TyId),
 }
 
 impl CheckMode {
     /// Creates an inference mode.
     pub fn infer() -> CheckMode {
-        CheckMode::Infer
+        CheckMode.Infer
     }
 
     /// Creates a checking mode with the given expected type.
-    pub fn check(ty: type_intern::TyId) -> CheckMode {
-        CheckMode::Check(ty)
+    pub fn check(ty: type_intern.TyId) -> CheckMode {
+        CheckMode.Check(ty)
     }
 
     /// Creates a coercion mode with the given target type.
-    pub fn coerce(ty: type_intern::TyId) -> CheckMode {
-        CheckMode::Coerce(ty)
+    pub fn coerce(ty: type_intern.TyId) -> CheckMode {
+        CheckMode.Coerce(ty)
     }
 }
 
@@ -237,14 +237,14 @@ pub struct Obligation {
     /// The predicate (trait bound) that must hold.
     pub predicate: Predicate,
     /// The span where this obligation was created.
-    pub span: common::Span,
+    pub span: common.Span,
     /// The cause of this obligation.
     pub cause: ObligationCause,
 }
 
 impl Obligation {
     /// Creates a new obligation.
-    pub fn new(predicate: Predicate, span: common::Span, cause: ObligationCause) -> Obligation {
+    pub fn new(predicate: Predicate, span: common.Span, cause: ObligationCause) -> Obligation {
         Obligation {
             predicate: predicate,
             span: span,
@@ -256,14 +256,14 @@ impl Obligation {
 /// A predicate that must be satisfied.
 pub enum Predicate {
     /// A trait bound: T: Trait
-    Trait(hir_ty::TraitRef),
+    Trait(hir_ty.TraitRef),
     /// A type equality: T == U
     TypeEqual {
-        left: type_intern::TyId,
-        right: type_intern::TyId,
+        left: type_intern.TyId,
+        right: type_intern.TyId,
     },
     /// A well-formed type: WF(T)
-    WellFormed(type_intern::TyId),
+    WellFormed(type_intern.TyId),
 }
 
 /// The cause of an obligation.
@@ -295,16 +295,16 @@ pub enum ObligationCause {
 /// Information about a local variable for type checking.
 pub struct LocalInfo {
     /// The local variable's type.
-    pub ty: type_intern::TyId,
+    pub ty: type_intern.TyId,
     /// Whether the local is mutable.
     pub mutable: bool,
     /// The span where the local was declared.
-    pub span: common::Span,
+    pub span: common.Span,
 }
 
 impl LocalInfo {
     /// Creates new local info.
-    pub fn new(ty: type_intern::TyId, mutable: bool, span: common::Span) -> LocalInfo {
+    pub fn new(ty: type_intern.TyId, mutable: bool, span: common.Span) -> LocalInfo {
         LocalInfo {
             ty: ty,
             mutable: mutable,

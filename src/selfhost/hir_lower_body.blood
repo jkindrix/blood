@@ -22,35 +22,35 @@ mod type_intern;
 /// Lower a function body.
 /// ast_params is used to generate destructuring let statements for complex parameter patterns.
 pub fn lower_fn_body(
-    ctx: &mut hir_lower_ctx::LoweringCtx,
-    body_id: hir_def::BodyId,
-    params: &Vec<hir_item::FnParam>,
-    ast_params: &Vec<ast::Param>,
-    body_expr: &Option<ast::Expr>,
-    body_block: &Option<ast::Block>,
-) -> hir_expr::Body {
+    ctx: &mut hir_lower_ctx.LoweringCtx,
+    body_id: hir_def.BodyId,
+    params: &Vec<hir_item.FnParam>,
+    ast_params: &Vec<ast.Param>,
+    body_expr: &Option<ast.Expr>,
+    body_block: &Option<ast.Block>,
+) -> hir_expr.Body {
     // Push a function scope for parameter bindings
-    ctx.resolver.push_scope(resolve::ScopeKind::Function);
+    ctx.resolver.push_scope(resolve.ScopeKind.Function);
 
     // Create locals for parameters and register them in scope
-    let mut locals: Vec<hir_expr::Local> = Vec::new();
+    let mut locals: Vec<hir_expr.Local> = Vec.new();
     let mut i: usize = 0;
     while i < params.len() && i < ast_params.len() {
         let p = &params[i];
         let ast_p = &ast_params[i];
-        let local_id = hir_def::LocalId::new(i as u32);
+        let local_id = hir_def.LocalId.new(i as u32);
 
         // Extract the correct symbol from the AST pattern's span
         // (The FnParam's symbol may have garbage due to struct layout issues)
         let param_symbol = extract_param_symbol_from_ast(ctx, &ast_p.pattern);
 
         // Create a properly corrected SpannedSymbol for the local
-        let corrected_name = common::SpannedSymbol {
+        let corrected_name = common.SpannedSymbol {
             symbol: param_symbol,
             span: p.name.span,
         };
 
-        let local = hir_expr::Local::new(
+        let local = hir_expr.Local.new(
             local_id,
             corrected_name,
             p.ty,
@@ -76,7 +76,7 @@ pub fn lower_fn_body(
 
     // Clear the body_locals accumulator before lowering the body.
     // During body lowering, lower_pattern will push binding locals here.
-    ctx.body_locals = Vec::new();
+    ctx.body_locals = Vec.new();
 
     // Lower the body expression
     let mut body_lowered = match body_expr {
@@ -86,10 +86,10 @@ pub fn lower_fn_body(
                 &Some(ref block) => hir_lower_expr::lower_block_to_expr(ctx, block),
                 &None => {
                     // No body - create unit expression
-                    hir_expr::Expr::new(
-                        hir_expr::ExprKind::Tuple(Vec::new()),
-                        type_intern::CommonTypes::unit(),
-                        common::Span::dummy(),
+                    hir_expr.Expr.new(
+                        hir_expr.ExprKind.Tuple(Vec.new()),
+                        type_intern.CommonTypes.unit(),
+                        common.Span.dummy(),
                     )
                 }
             }
@@ -108,7 +108,7 @@ pub fn lower_fn_body(
     // These were collected by lower_pattern during body expression lowering.
     for bl_idx in 0usize..ctx.body_locals.len() {
         let bl = &ctx.body_locals[bl_idx];
-        locals.push(hir_expr::Local::new(
+        locals.push(hir_expr.Local.new(
             bl.id,
             bl.name,
             bl.ty,
@@ -116,23 +116,23 @@ pub fn lower_fn_body(
             bl.span,
         ));
     }
-    ctx.body_locals = Vec::new();
+    ctx.body_locals = Vec.new();
 
     // Pop the function scope
     ctx.resolver.pop_scope();
 
-    hir_expr::Body::new(body_id, locals, param_count, body_lowered)
+    hir_expr.Body.new(body_id, locals, param_count, body_lowered)
 }
 
 /// Check if a pattern needs destructuring (is not a simple identifier or wildcard).
-fn needs_destructuring(pattern: &ast::Pattern) -> bool {
+fn needs_destructuring(pattern: &ast.Pattern) -> bool {
     match &pattern.kind {
-        &ast::PatternKind::Ident { by_ref: _, is_mut: _, name: _, ref subpattern } => {
+        &ast.PatternKind.Ident { by_ref: _, is_mut: _, name: _, ref subpattern } => {
             // Simple ident with no subpattern doesn't need destructuring
             subpattern.is_some()
         }
-        &ast::PatternKind::Wildcard => false,
-        &ast::PatternKind::Ref { is_mut: _, ref inner } => {
+        &ast.PatternKind.Wildcard => false,
+        &ast.PatternKind.Ref { is_mut: _, ref inner } => {
             needs_destructuring(inner.as_ref())
         }
         _ => true
@@ -141,12 +141,12 @@ fn needs_destructuring(pattern: &ast::Pattern) -> bool {
 
 /// Generate destructuring let statements for complex parameter patterns.
 fn generate_param_destructures(
-    ctx: &mut hir_lower_ctx::LoweringCtx,
-    params: &Vec<hir_item::FnParam>,
-    ast_params: &Vec<ast::Param>,
-    locals: &mut Vec<hir_expr::Local>,
-) -> Vec<hir_expr::Stmt> {
-    let mut stmts: Vec<hir_expr::Stmt> = Vec::new();
+    ctx: &mut hir_lower_ctx.LoweringCtx,
+    params: &Vec<hir_item.FnParam>,
+    ast_params: &Vec<ast.Param>,
+    locals: &mut Vec<hir_expr.Local>,
+) -> Vec<hir_expr.Stmt> {
+    let mut stmts: Vec<hir_expr.Stmt> = Vec.new();
 
     let mut i: usize = 0;
     while i < ast_params.len() && i < params.len() {
@@ -154,7 +154,7 @@ fn generate_param_destructures(
 
         if needs_destructuring(&ast_param.pattern) {
             // Get the synthetic parameter's local_id
-            let param_local_id = hir_def::LocalId::new(i as u32);
+            let param_local_id = hir_def.LocalId.new(i as u32);
 
             // Lower the pattern
             let pattern_hir = hir_lower_expr::lower_pattern(ctx, &ast_param.pattern);
@@ -164,16 +164,16 @@ fn generate_param_destructures(
 
             // Create a reference to the synthetic parameter
             let param_ty = params[i].ty;
-            let param_ref = hir_expr::Expr::new(
-                hir_expr::ExprKind::Local(param_local_id),
+            let param_ref = hir_expr.Expr.new(
+                hir_expr.ExprKind.Local(param_local_id),
                 param_ty,
                 ast_param.span,
             );
 
             // Create the let statement: let <pattern> = <param>;
-            let let_stmt = hir_expr::Stmt::Let {
+            let let_stmt = hir_expr.Stmt.Let {
                 pattern: pattern_hir,
-                ty: Option::None,
+                ty: Option.None,
                 init: Some(param_ref),
                 span: ast_param.span,
             };
@@ -188,11 +188,11 @@ fn generate_param_destructures(
 }
 
 /// Collect local IDs from a pattern and add them to the locals vector.
-fn collect_pattern_locals(pattern: &hir_expr::Pattern, locals: &mut Vec<hir_expr::Local>) {
+fn collect_pattern_locals(pattern: &hir_expr.Pattern, locals: &mut Vec<hir_expr.Local>) {
     match &pattern.kind {
-        &hir_expr::PatternKind::Binding { local_id, ref name, mode: _, ref subpattern } => {
+        &hir_expr.PatternKind.Binding { local_id, ref name, mode: _, ref subpattern } => {
             // Add this binding to locals
-            let local = hir_expr::Local::new(
+            let local = hir_expr.Local.new(
                 local_id,
                 *name,
                 pattern.ty,
@@ -208,32 +208,32 @@ fn collect_pattern_locals(pattern: &hir_expr::Pattern, locals: &mut Vec<hir_expr
                 collect_pattern_locals(sub_ref, locals);
             }
         }
-        &hir_expr::PatternKind::Tuple(ref fields) => {
+        &hir_expr.PatternKind.Tuple(ref fields) => {
             for i in 0usize..fields.len() {
                 collect_pattern_locals(&fields[i], locals);
             }
         }
-        &hir_expr::PatternKind::TupleStruct { path: _, ref fields } => {
+        &hir_expr.PatternKind.TupleStruct { path: _, ref fields } => {
             for i in 0usize..fields.len() {
                 collect_pattern_locals(&fields[i], locals);
             }
         }
-        &hir_expr::PatternKind::Struct { path: _, ref fields, has_rest: _ } => {
+        &hir_expr.PatternKind.Struct { path: _, ref fields, has_rest: _ } => {
             for i in 0usize..fields.len() {
                 collect_pattern_locals(&fields[i].pattern, locals);
             }
         }
-        &hir_expr::PatternKind::Ref { mutable: _, ref inner } => {
+        &hir_expr.PatternKind.Ref { mutable: _, ref inner } => {
             collect_pattern_locals(inner.as_ref(), locals);
         }
-        &hir_expr::PatternKind::Or(ref patterns) => {
+        &hir_expr.PatternKind.Or(ref patterns) => {
             // For Or patterns, all arms bind the same variables
             // Just collect from the first arm
             if patterns.len() > 0 {
                 collect_pattern_locals(&patterns[0], locals);
             }
         }
-        &hir_expr::PatternKind::Slice { ref prefix, ref rest, ref suffix } => {
+        &hir_expr.PatternKind.Slice { ref prefix, ref rest, ref suffix } => {
             let mut i: usize = 0;
             while i < prefix.len() {
                 collect_pattern_locals(&prefix[i], locals);
@@ -249,23 +249,23 @@ fn collect_pattern_locals(pattern: &hir_expr::Pattern, locals: &mut Vec<hir_expr
             }
         }
         // These pattern kinds don't introduce bindings
-        &hir_expr::PatternKind::Wildcard => {}
-        &hir_expr::PatternKind::Rest => {}
-        &hir_expr::PatternKind::Literal(_) => {}
-        &hir_expr::PatternKind::Path(_) => {}
-        &hir_expr::PatternKind::Range { start: _, end_val: _, inclusive: _ } => {}
-        &hir_expr::PatternKind::Error => {}
+        &hir_expr.PatternKind.Wildcard => {}
+        &hir_expr.PatternKind.Rest => {}
+        &hir_expr.PatternKind.Literal(_) => {}
+        &hir_expr.PatternKind.Path(_) => {}
+        &hir_expr.PatternKind.Range { start: _, end_val: _, inclusive: _ } => {}
+        &hir_expr.PatternKind.Error => {}
     }
 }
 
 /// Wrap an expression with destructuring let statements.
-fn wrap_with_destructures(body: hir_expr::Expr, stmts: Vec<hir_expr::Stmt>) -> hir_expr::Expr {
+fn wrap_with_destructures(body: hir_expr.Expr, stmts: Vec<hir_expr.Stmt>) -> hir_expr.Expr {
     // Create a block with the destructuring statements followed by the body expression
     let span = body.span;
-    let block = hir_expr::Block::new(stmts, Some(Box::new(body)), span);
-    hir_expr::Expr::new(
-        hir_expr::ExprKind::Block(block),
-        type_intern::type_interner().mk_infer(hir_def::TyVarId::new(0)),  // Type will be inferred
+    let block = hir_expr.Block.new(stmts, Some(Box.new(body)), span);
+    hir_expr.Expr.new(
+        hir_expr.ExprKind.Block(block),
+        type_intern::type_interner().mk_infer(hir_def.TyVarId.new(0)),  // Type will be inferred
         span,
     )
 }
@@ -273,23 +273,23 @@ fn wrap_with_destructures(body: hir_expr::Expr, stmts: Vec<hir_expr::Stmt>) -> h
 /// Extract the parameter symbol from an AST pattern using span-based lookup.
 /// This works around struct layout issues where reading the symbol directly
 /// from the AST enum variant gives garbage values.
-fn extract_param_symbol_from_ast(ctx: &mut hir_lower_ctx::LoweringCtx, pattern: &ast::Pattern) -> common::Symbol {
+fn extract_param_symbol_from_ast(ctx: &mut hir_lower_ctx.LoweringCtx, pattern: &ast.Pattern) -> common.Symbol {
     match &pattern.kind {
-        &ast::PatternKind::Ident { by_ref: _, is_mut: _, name: _, subpattern: _ } => {
+        &ast.PatternKind.Ident { by_ref: _, is_mut: _, name: _, subpattern: _ } => {
             // Use the pattern's span to extract the actual name string
             // (name.span might be garbage due to struct layout issues)
             let name_str = ctx.span_to_string(pattern.span);
             // Intern the string to get a symbol that matches what expression lowering uses
             ctx.intern(name_str.as_str())
         }
-        &ast::PatternKind::Ref { is_mut: _, ref inner } => {
+        &ast.PatternKind.Ref { is_mut: _, ref inner } => {
             // Look through reference patterns
             extract_param_symbol_from_ast(ctx, inner.as_ref())
         }
         _ => {
             // For wildcards and complex patterns, return a dummy symbol
             // Complex patterns are handled by destructuring
-            common::Symbol::new(0)
+            common.Symbol.new(0)
         }
     }
 }

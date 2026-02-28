@@ -57,64 +57,64 @@ impl TypeLayout {
 
 /// Fast path: returns a static &str for common LLVM types without String allocation.
 /// Returns None for compound types (tuples, arrays, ADTs, ranges) that need dynamic construction.
-pub fn type_to_llvm_fast(ty: &hir_ty::Type) -> Option<&str> {
+pub fn type_to_llvm_fast(ty: &hir_ty.Type) -> Option<&str> {
     match &ty.kind {
-        &hir_ty::TypeKind::Primitive(ref prim) => {
+        &hir_ty.TypeKind.Primitive(ref prim) => {
             match prim {
-                &hir_ty::PrimitiveTy::Bool => Option::Some("i1"),
-                &hir_ty::PrimitiveTy::Char => Option::Some("i32"),
-                &hir_ty::PrimitiveTy::I8 => Option::Some("i8"),
-                &hir_ty::PrimitiveTy::I16 => Option::Some("i16"),
-                &hir_ty::PrimitiveTy::I32 => Option::Some("i32"),
-                &hir_ty::PrimitiveTy::I64 => Option::Some("i64"),
-                &hir_ty::PrimitiveTy::I128 => Option::Some("i128"),
-                &hir_ty::PrimitiveTy::Isize => Option::Some("i64"),
-                &hir_ty::PrimitiveTy::U8 => Option::Some("i8"),
-                &hir_ty::PrimitiveTy::U16 => Option::Some("i16"),
-                &hir_ty::PrimitiveTy::U32 => Option::Some("i32"),
-                &hir_ty::PrimitiveTy::U64 => Option::Some("i64"),
-                &hir_ty::PrimitiveTy::U128 => Option::Some("i128"),
-                &hir_ty::PrimitiveTy::Usize => Option::Some("i64"),
-                &hir_ty::PrimitiveTy::F32 => Option::Some("float"),
-                &hir_ty::PrimitiveTy::F64 => Option::Some("double"),
-                &hir_ty::PrimitiveTy::Str => Option::Some("{ ptr, i64 }"),
+                &hir_ty.PrimitiveTy.Bool => Option.Some("i1"),
+                &hir_ty.PrimitiveTy.Char => Option.Some("i32"),
+                &hir_ty.PrimitiveTy.I8 => Option.Some("i8"),
+                &hir_ty.PrimitiveTy.I16 => Option.Some("i16"),
+                &hir_ty.PrimitiveTy.I32 => Option.Some("i32"),
+                &hir_ty.PrimitiveTy.I64 => Option.Some("i64"),
+                &hir_ty.PrimitiveTy.I128 => Option.Some("i128"),
+                &hir_ty.PrimitiveTy.Isize => Option.Some("i64"),
+                &hir_ty.PrimitiveTy.U8 => Option.Some("i8"),
+                &hir_ty.PrimitiveTy.U16 => Option.Some("i16"),
+                &hir_ty.PrimitiveTy.U32 => Option.Some("i32"),
+                &hir_ty.PrimitiveTy.U64 => Option.Some("i64"),
+                &hir_ty.PrimitiveTy.U128 => Option.Some("i128"),
+                &hir_ty.PrimitiveTy.Usize => Option.Some("i64"),
+                &hir_ty.PrimitiveTy.F32 => Option.Some("float"),
+                &hir_ty.PrimitiveTy.F64 => Option.Some("double"),
+                &hir_ty.PrimitiveTy.Str => Option.Some("{ ptr, i64 }"),
             }
         }
-        &hir_ty::TypeKind::Never => Option::Some("void"),
-        &hir_ty::TypeKind::Ref { inner: _, mutable: _ } => Option::Some("ptr"),
-        &hir_ty::TypeKind::Ptr { inner: _, mutable: _ } => Option::Some("ptr"),
-        &hir_ty::TypeKind::Fn { params: _, ret: _, effects: _ } => Option::Some("{ ptr, ptr }"),
-        &hir_ty::TypeKind::Closure { def_id: _, params: _, ret: _ } => Option::Some("{ ptr, ptr }"),
-        &hir_ty::TypeKind::Infer(_) => Option::Some("i64"),
-        &hir_ty::TypeKind::Record { fields: _, row_var: _ } => Option::None, // needs slow path to build struct
-        &hir_ty::TypeKind::Forall { params: _, body: _ } => Option::Some("ptr"),
-        &hir_ty::TypeKind::Error => Option::Some("i64"),
-        _ => Option::None,
+        &hir_ty.TypeKind.Never => Option.Some("void"),
+        &hir_ty.TypeKind.Ref { inner: _, mutable: _ } => Option.Some("ptr"),
+        &hir_ty.TypeKind.Ptr { inner: _, mutable: _ } => Option.Some("ptr"),
+        &hir_ty.TypeKind.Fn { params: _, ret: _, effects: _ } => Option.Some("{ ptr, ptr }"),
+        &hir_ty.TypeKind.Closure { def_id: _, params: _, ret: _ } => Option.Some("{ ptr, ptr }"),
+        &hir_ty.TypeKind.Infer(_) => Option.Some("i64"),
+        &hir_ty.TypeKind.Record { fields: _, row_var: _ } => Option.None, // needs slow path to build struct
+        &hir_ty.TypeKind.Forall { params: _, body: _ } => Option.Some("ptr"),
+        &hir_ty.TypeKind.Error => Option.Some("i64"),
+        _ => Option.None,
     }
 }
 
 /// Converts an HIR type to its LLVM IR representation.
-pub fn type_to_llvm(ty: &hir_ty::Type) -> String {
+pub fn type_to_llvm(ty: &hir_ty.Type) -> String {
     match &ty.kind {
-        &hir_ty::TypeKind::Primitive(ref prim) => primitive_to_llvm(prim),
-        &hir_ty::TypeKind::Never => common::make_string("void"),
-        &hir_ty::TypeKind::Tuple(ref elems) => tuple_to_llvm(elems),
-        &hir_ty::TypeKind::Array { ref element, size } => array_to_llvm(element.as_ref(), size),
-        &hir_ty::TypeKind::Slice { ref element } => slice_to_llvm(element.as_ref()),
-        &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => ref_to_llvm(inner.as_ref()),
-        &hir_ty::TypeKind::Ptr { ref inner, mutable: _ } => ptr_to_llvm(inner.as_ref()),
-        &hir_ty::TypeKind::Adt { def_id: _, ref args } => adt_to_llvm(args),
-        &hir_ty::TypeKind::Fn { ref params, ref ret, effects: _ } => fn_to_llvm(params, ret.as_ref()),
-        &hir_ty::TypeKind::Closure { def_id: _, ref params, ref ret } => fn_to_llvm(params, ret.as_ref()),
-        &hir_ty::TypeKind::Param(ref var_id) => param_to_llvm(var_id),
-        &hir_ty::TypeKind::Infer(_) => common::make_string("i64"),
-        &hir_ty::TypeKind::Record { ref fields, row_var: _ } => record_to_llvm(fields),
+        &hir_ty.TypeKind.Primitive(ref prim) => primitive_to_llvm(prim),
+        &hir_ty.TypeKind.Never => common::make_string("void"),
+        &hir_ty.TypeKind.Tuple(ref elems) => tuple_to_llvm(elems),
+        &hir_ty.TypeKind.Array { ref element, size } => array_to_llvm(element.as_ref(), size),
+        &hir_ty.TypeKind.Slice { ref element } => slice_to_llvm(element.as_ref()),
+        &hir_ty.TypeKind.Ref { ref inner, mutable: _ } => ref_to_llvm(inner.as_ref()),
+        &hir_ty.TypeKind.Ptr { ref inner, mutable: _ } => ptr_to_llvm(inner.as_ref()),
+        &hir_ty.TypeKind.Adt { def_id: _, ref args } => adt_to_llvm(args),
+        &hir_ty.TypeKind.Fn { ref params, ref ret, effects: _ } => fn_to_llvm(params, ret.as_ref()),
+        &hir_ty.TypeKind.Closure { def_id: _, ref params, ref ret } => fn_to_llvm(params, ret.as_ref()),
+        &hir_ty.TypeKind.Param(ref var_id) => param_to_llvm(var_id),
+        &hir_ty.TypeKind.Infer(_) => common::make_string("i64"),
+        &hir_ty.TypeKind.Record { ref fields, row_var: _ } => record_to_llvm(fields),
         // Forall types are represented as opaque pointers (polymorphic values)
-        &hir_ty::TypeKind::Forall { params: _, body: _ } => common::make_string("ptr"),
+        &hir_ty.TypeKind.Forall { params: _, body: _ } => common::make_string("ptr"),
         // Ownership qualifiers don't affect runtime representation
-        &hir_ty::TypeKind::Ownership { qualifier: _, ref inner } => type_to_llvm(inner.as_ref()),
+        &hir_ty.TypeKind.Ownership { qualifier: _, ref inner } => type_to_llvm(inner.as_ref()),
         // Range types are represented as a struct { element, element } or { element, element, bool }
-        &hir_ty::TypeKind::Range { ref element, inclusive: _ } => {
+        &hir_ty.TypeKind.Range { ref element, inclusive: _ } => {
             let elem_llvm = type_to_llvm(element.as_ref());
             let mut s = common::make_string("{ ");
             s.push_str(elem_llvm.as_str());
@@ -124,18 +124,18 @@ pub fn type_to_llvm(ty: &hir_ty::Type) -> String {
             s
         }
         // Trait objects are fat pointers (data ptr + vtable ptr)
-        &hir_ty::TypeKind::DynTrait { trait_id: _, auto_traits: _ } => common::make_string("{ ptr, ptr }"),
-        &hir_ty::TypeKind::Error => common::make_string("i64"),
+        &hir_ty.TypeKind.DynTrait { trait_id: _, auto_traits: _ } => common::make_string("{ ptr, ptr }"),
+        &hir_ty.TypeKind.Error => common::make_string("i64"),
     }
 }
 
 /// Converts an HIR type to LLVM IR for use as a function return type.
 /// This is the same as type_to_llvm except that unit `()` becomes `void`
 /// instead of `{}`, which is required for LLVM function declarations.
-pub fn return_type_to_llvm(ty: &hir_ty::Type) -> String {
+pub fn return_type_to_llvm(ty: &hir_ty.Type) -> String {
     // Check for unit type (empty tuple)
     match &ty.kind {
-        &hir_ty::TypeKind::Tuple(ref elems) => {
+        &hir_ty.TypeKind.Tuple(ref elems) => {
             if elems.len() == 0 {
                 return common::make_string("void");
             }
@@ -146,30 +146,30 @@ pub fn return_type_to_llvm(ty: &hir_ty::Type) -> String {
 }
 
 /// Converts a primitive type to LLVM IR.
-fn primitive_to_llvm(prim: &hir_ty::PrimitiveTy) -> String {
+fn primitive_to_llvm(prim: &hir_ty.PrimitiveTy) -> String {
     match prim {
-        &hir_ty::PrimitiveTy::Bool => common::make_string("i1"),
-        &hir_ty::PrimitiveTy::Char => common::make_string("i32"),
-        &hir_ty::PrimitiveTy::I8 => common::make_string("i8"),
-        &hir_ty::PrimitiveTy::I16 => common::make_string("i16"),
-        &hir_ty::PrimitiveTy::I32 => common::make_string("i32"),
-        &hir_ty::PrimitiveTy::I64 => common::make_string("i64"),
-        &hir_ty::PrimitiveTy::I128 => common::make_string("i128"),
-        &hir_ty::PrimitiveTy::Isize => common::make_string("i64"),
-        &hir_ty::PrimitiveTy::U8 => common::make_string("i8"),
-        &hir_ty::PrimitiveTy::U16 => common::make_string("i16"),
-        &hir_ty::PrimitiveTy::U32 => common::make_string("i32"),
-        &hir_ty::PrimitiveTy::U64 => common::make_string("i64"),
-        &hir_ty::PrimitiveTy::U128 => common::make_string("i128"),
-        &hir_ty::PrimitiveTy::Usize => common::make_string("i64"),
-        &hir_ty::PrimitiveTy::F32 => common::make_string("float"),
-        &hir_ty::PrimitiveTy::F64 => common::make_string("double"),
-        &hir_ty::PrimitiveTy::Str => common::make_string("{ ptr, i64 }"),
+        &hir_ty.PrimitiveTy.Bool => common::make_string("i1"),
+        &hir_ty.PrimitiveTy.Char => common::make_string("i32"),
+        &hir_ty.PrimitiveTy.I8 => common::make_string("i8"),
+        &hir_ty.PrimitiveTy.I16 => common::make_string("i16"),
+        &hir_ty.PrimitiveTy.I32 => common::make_string("i32"),
+        &hir_ty.PrimitiveTy.I64 => common::make_string("i64"),
+        &hir_ty.PrimitiveTy.I128 => common::make_string("i128"),
+        &hir_ty.PrimitiveTy.Isize => common::make_string("i64"),
+        &hir_ty.PrimitiveTy.U8 => common::make_string("i8"),
+        &hir_ty.PrimitiveTy.U16 => common::make_string("i16"),
+        &hir_ty.PrimitiveTy.U32 => common::make_string("i32"),
+        &hir_ty.PrimitiveTy.U64 => common::make_string("i64"),
+        &hir_ty.PrimitiveTy.U128 => common::make_string("i128"),
+        &hir_ty.PrimitiveTy.Usize => common::make_string("i64"),
+        &hir_ty.PrimitiveTy.F32 => common::make_string("float"),
+        &hir_ty.PrimitiveTy.F64 => common::make_string("double"),
+        &hir_ty.PrimitiveTy.Str => common::make_string("{ ptr, i64 }"),
     }
 }
 
 /// Converts a tuple type to LLVM IR.
-fn tuple_to_llvm(elems: &Vec<hir_ty::Type>) -> String {
+fn tuple_to_llvm(elems: &Vec<hir_ty.Type>) -> String {
     if elems.len() == 0 {
         return common::make_string("{}");
     }
@@ -187,7 +187,7 @@ fn tuple_to_llvm(elems: &Vec<hir_ty::Type>) -> String {
 }
 
 /// Converts a record type to LLVM IR: { field1_ty, field2_ty, ... }
-fn record_to_llvm(fields: &Vec<hir_ty::RecordField>) -> String {
+fn record_to_llvm(fields: &Vec<hir_ty.RecordField>) -> String {
     if fields.len() == 0 {
         return common::make_string("{}");
     }
@@ -205,7 +205,7 @@ fn record_to_llvm(fields: &Vec<hir_ty::RecordField>) -> String {
 }
 
 /// Converts an array type to LLVM IR.
-fn array_to_llvm(elem: &hir_ty::Type, size: u64) -> String {
+fn array_to_llvm(elem: &hir_ty.Type, size: u64) -> String {
     let mut result = common::make_string("[");
     let size_str = format_u64(size);
     result.push_str(size_str.as_str());
@@ -218,31 +218,31 @@ fn array_to_llvm(elem: &hir_ty::Type, size: u64) -> String {
 
 /// Converts a slice type to LLVM IR.
 /// Slices are fat pointers: { ptr, i64 }
-fn slice_to_llvm(_elem: &hir_ty::Type) -> String {
+fn slice_to_llvm(_elem: &hir_ty.Type) -> String {
     common::make_string("{ ptr, i64 }")
 }
 
 /// Checks if a type is unsized (requires fat pointer when referenced).
-pub fn is_unsized_type(ty: &hir_ty::Type) -> bool {
+pub fn is_unsized_type(ty: &hir_ty.Type) -> bool {
     match &ty.kind {
         // str is an unsized primitive type
-        &hir_ty::TypeKind::Primitive(ref prim) => {
+        &hir_ty.TypeKind.Primitive(ref prim) => {
             match prim {
-                &hir_ty::PrimitiveTy::Str => true,
+                &hir_ty.PrimitiveTy.Str => true,
                 _ => false,
             }
         }
         // Slices are unsized
-        &hir_ty::TypeKind::Slice { element: _ } => true,
+        &hir_ty.TypeKind.Slice { element: _ } => true,
         // Trait objects are unsized
-        &hir_ty::TypeKind::DynTrait { trait_id: _, auto_traits: _ } => true,
+        &hir_ty.TypeKind.DynTrait { trait_id: _, auto_traits: _ } => true,
         _ => false,
     }
 }
 
 /// Converts a reference type to LLVM IR.
 /// References to unsized types (str, slices, dyn Trait) are fat pointers.
-fn ref_to_llvm(inner: &hir_ty::Type) -> String {
+fn ref_to_llvm(inner: &hir_ty.Type) -> String {
     if is_unsized_type(inner) {
         // Fat pointer for unsized types
         common::make_string("{ ptr, i64 }")
@@ -253,7 +253,7 @@ fn ref_to_llvm(inner: &hir_ty::Type) -> String {
 
 /// Converts a raw pointer type to LLVM IR.
 /// Pointers to unsized types are fat pointers.
-fn ptr_to_llvm(inner: &hir_ty::Type) -> String {
+fn ptr_to_llvm(inner: &hir_ty.Type) -> String {
     if is_unsized_type(inner) {
         // Fat pointer for unsized types
         common::make_string("{ ptr, i64 }")
@@ -264,19 +264,19 @@ fn ptr_to_llvm(inner: &hir_ty::Type) -> String {
 
 /// Converts an ADT (struct/enum) type to LLVM IR.
 /// For now, we use an opaque pointer representation.
-fn adt_to_llvm(_args: &Vec<hir_ty::Type>) -> String {
+fn adt_to_llvm(_args: &Vec<hir_ty.Type>) -> String {
     common::make_string("ptr")
 }
 
 /// Converts a function type to LLVM IR.
 /// Function pointers are fat pointers { fn_ptr, env_ptr } to support closures.
-fn fn_to_llvm(_params: &Vec<hir_ty::Type>, _return_ty: &hir_ty::Type) -> String {
+fn fn_to_llvm(_params: &Vec<hir_ty.Type>, _return_ty: &hir_ty.Type) -> String {
     common::make_string("{ ptr, ptr }")
 }
 
 /// Converts a type parameter to LLVM IR.
 /// Type parameters should be monomorphized before codegen.
-fn param_to_llvm(_var_id: &hir_def::TyVarId) -> String {
+fn param_to_llvm(_var_id: &hir_def.TyVarId) -> String {
     common::make_string("ptr")
 }
 
@@ -285,35 +285,35 @@ fn param_to_llvm(_var_id: &hir_def::TyVarId) -> String {
 // ============================================================
 
 /// Gets the layout for a type.
-pub fn get_layout(ty: &hir_ty::Type) -> TypeLayout {
+pub fn get_layout(ty: &hir_ty.Type) -> TypeLayout {
     match &ty.kind {
-        &hir_ty::TypeKind::Primitive(ref prim) => primitive_layout(prim),
-        &hir_ty::TypeKind::Never => TypeLayout::new(0, 1, common::make_string("void")),
-        &hir_ty::TypeKind::Tuple(ref elems) => tuple_layout(elems),
-        &hir_ty::TypeKind::Array { ref element, size } => array_layout(element.as_ref(), size),
-        &hir_ty::TypeKind::Slice { element: _ } => TypeLayout::new(16, 8, common::make_string("{ ptr, i64 }")),
-        &hir_ty::TypeKind::Ref { ref inner, mutable: _ } => {
+        &hir_ty.TypeKind.Primitive(ref prim) => primitive_layout(prim),
+        &hir_ty.TypeKind.Never => TypeLayout.new(0, 1, common::make_string("void")),
+        &hir_ty.TypeKind.Tuple(ref elems) => tuple_layout(elems),
+        &hir_ty.TypeKind.Array { ref element, size } => array_layout(element.as_ref(), size),
+        &hir_ty.TypeKind.Slice { element: _ } => TypeLayout.new(16, 8, common::make_string("{ ptr, i64 }")),
+        &hir_ty.TypeKind.Ref { ref inner, mutable: _ } => {
             if is_unsized_type(inner.as_ref()) {
                 // Fat pointer for references to unsized types
-                TypeLayout::new(16, 8, common::make_string("{ ptr, i64 }"))
+                TypeLayout.new(16, 8, common::make_string("{ ptr, i64 }"))
             } else {
-                TypeLayout::pointer()
+                TypeLayout.pointer()
             }
         }
-        &hir_ty::TypeKind::Ptr { ref inner, mutable: _ } => {
+        &hir_ty.TypeKind.Ptr { ref inner, mutable: _ } => {
             if is_unsized_type(inner.as_ref()) {
                 // Fat pointer for pointers to unsized types
-                TypeLayout::new(16, 8, common::make_string("{ ptr, i64 }"))
+                TypeLayout.new(16, 8, common::make_string("{ ptr, i64 }"))
             } else {
-                TypeLayout::pointer()
+                TypeLayout.pointer()
             }
         }
-        &hir_ty::TypeKind::Adt { def_id: _, args: _ } => TypeLayout::pointer(),
-        &hir_ty::TypeKind::Fn { params: _, ret: _, effects: _ } => TypeLayout::new(16, 8, common::make_string("{ ptr, ptr }")),
-        &hir_ty::TypeKind::Closure { def_id: _, params: _, ret: _ } => TypeLayout::new(16, 8, common::make_string("{ ptr, ptr }")),
-        &hir_ty::TypeKind::Param(_) => TypeLayout::pointer(),
-        &hir_ty::TypeKind::Infer(_) => TypeLayout::new(8, 8, common::make_string("i64")),
-        &hir_ty::TypeKind::Record { ref fields, row_var: _ } => {
+        &hir_ty.TypeKind.Adt { def_id: _, args: _ } => TypeLayout.pointer(),
+        &hir_ty.TypeKind.Fn { params: _, ret: _, effects: _ } => TypeLayout.new(16, 8, common::make_string("{ ptr, ptr }")),
+        &hir_ty.TypeKind.Closure { def_id: _, params: _, ret: _ } => TypeLayout.new(16, 8, common::make_string("{ ptr, ptr }")),
+        &hir_ty.TypeKind.Param(_) => TypeLayout.pointer(),
+        &hir_ty.TypeKind.Infer(_) => TypeLayout.new(8, 8, common::make_string("i64")),
+        &hir_ty.TypeKind.Record { ref fields, row_var: _ } => {
             let llvm_ty = record_to_llvm(fields);
             let mut size: u64 = 0;
             let mut align: u64 = 1;
@@ -324,52 +324,52 @@ pub fn get_layout(ty: &hir_ty::Type) -> TypeLayout {
                     align = field_layout.align;
                 }
             }
-            TypeLayout::new(size, align, llvm_ty)
+            TypeLayout.new(size, align, llvm_ty)
         }
-        &hir_ty::TypeKind::Forall { params: _, body: _ } => TypeLayout::pointer(),
+        &hir_ty.TypeKind.Forall { params: _, body: _ } => TypeLayout.pointer(),
         // Ownership qualifiers don't affect layout
-        &hir_ty::TypeKind::Ownership { qualifier: _, ref inner } => get_layout(inner.as_ref()),
+        &hir_ty.TypeKind.Ownership { qualifier: _, ref inner } => get_layout(inner.as_ref()),
         // Range types: { element, element }
-        &hir_ty::TypeKind::Range { ref element, inclusive: _ } => {
+        &hir_ty.TypeKind.Range { ref element, inclusive: _ } => {
             let elem_layout = get_layout(element.as_ref());
-            TypeLayout::new(elem_layout.size * 2, elem_layout.align, type_to_llvm(&hir_ty::Type::new(hir_ty::TypeKind::Range {
-                element: Box::new(hir_ty::copy_type(element.as_ref())),
+            TypeLayout.new(elem_layout.size * 2, elem_layout.align, type_to_llvm(&hir_ty.Type.new(hir_ty.TypeKind.Range {
+                element: Box.new(hir_ty::copy_type(element.as_ref())),
                 inclusive: false,
             })))
         }
         // Trait objects: fat pointer { ptr, ptr }
-        &hir_ty::TypeKind::DynTrait { trait_id: _, auto_traits: _ } => TypeLayout::new(16, 8, common::make_string("{ ptr, ptr }")),
-        &hir_ty::TypeKind::Error => TypeLayout::new(8, 8, common::make_string("i64")),
+        &hir_ty.TypeKind.DynTrait { trait_id: _, auto_traits: _ } => TypeLayout.new(16, 8, common::make_string("{ ptr, ptr }")),
+        &hir_ty.TypeKind.Error => TypeLayout.new(8, 8, common::make_string("i64")),
     }
 }
 
 /// Gets layout for a primitive type.
-fn primitive_layout(prim: &hir_ty::PrimitiveTy) -> TypeLayout {
+fn primitive_layout(prim: &hir_ty.PrimitiveTy) -> TypeLayout {
     match prim {
-        &hir_ty::PrimitiveTy::Bool => TypeLayout::primitive(1, common::make_string("i1")),
-        &hir_ty::PrimitiveTy::Char => TypeLayout::primitive(4, common::make_string("i32")),
-        &hir_ty::PrimitiveTy::I8 => TypeLayout::primitive(1, common::make_string("i8")),
-        &hir_ty::PrimitiveTy::I16 => TypeLayout::primitive(2, common::make_string("i16")),
-        &hir_ty::PrimitiveTy::I32 => TypeLayout::primitive(4, common::make_string("i32")),
-        &hir_ty::PrimitiveTy::I64 => TypeLayout::primitive(8, common::make_string("i64")),
-        &hir_ty::PrimitiveTy::I128 => TypeLayout::primitive(16, common::make_string("i128")),
-        &hir_ty::PrimitiveTy::Isize => TypeLayout::primitive(8, common::make_string("i64")),
-        &hir_ty::PrimitiveTy::U8 => TypeLayout::primitive(1, common::make_string("i8")),
-        &hir_ty::PrimitiveTy::U16 => TypeLayout::primitive(2, common::make_string("i16")),
-        &hir_ty::PrimitiveTy::U32 => TypeLayout::primitive(4, common::make_string("i32")),
-        &hir_ty::PrimitiveTy::U64 => TypeLayout::primitive(8, common::make_string("i64")),
-        &hir_ty::PrimitiveTy::U128 => TypeLayout::primitive(16, common::make_string("i128")),
-        &hir_ty::PrimitiveTy::Usize => TypeLayout::primitive(8, common::make_string("i64")),
-        &hir_ty::PrimitiveTy::F32 => TypeLayout::primitive(4, common::make_string("float")),
-        &hir_ty::PrimitiveTy::F64 => TypeLayout::primitive(8, common::make_string("double")),
-        &hir_ty::PrimitiveTy::Str => TypeLayout::new(16, 8, common::make_string("{ ptr, i64 }")),
+        &hir_ty.PrimitiveTy.Bool => TypeLayout.primitive(1, common::make_string("i1")),
+        &hir_ty.PrimitiveTy.Char => TypeLayout.primitive(4, common::make_string("i32")),
+        &hir_ty.PrimitiveTy.I8 => TypeLayout.primitive(1, common::make_string("i8")),
+        &hir_ty.PrimitiveTy.I16 => TypeLayout.primitive(2, common::make_string("i16")),
+        &hir_ty.PrimitiveTy.I32 => TypeLayout.primitive(4, common::make_string("i32")),
+        &hir_ty.PrimitiveTy.I64 => TypeLayout.primitive(8, common::make_string("i64")),
+        &hir_ty.PrimitiveTy.I128 => TypeLayout.primitive(16, common::make_string("i128")),
+        &hir_ty.PrimitiveTy.Isize => TypeLayout.primitive(8, common::make_string("i64")),
+        &hir_ty.PrimitiveTy.U8 => TypeLayout.primitive(1, common::make_string("i8")),
+        &hir_ty.PrimitiveTy.U16 => TypeLayout.primitive(2, common::make_string("i16")),
+        &hir_ty.PrimitiveTy.U32 => TypeLayout.primitive(4, common::make_string("i32")),
+        &hir_ty.PrimitiveTy.U64 => TypeLayout.primitive(8, common::make_string("i64")),
+        &hir_ty.PrimitiveTy.U128 => TypeLayout.primitive(16, common::make_string("i128")),
+        &hir_ty.PrimitiveTy.Usize => TypeLayout.primitive(8, common::make_string("i64")),
+        &hir_ty.PrimitiveTy.F32 => TypeLayout.primitive(4, common::make_string("float")),
+        &hir_ty.PrimitiveTy.F64 => TypeLayout.primitive(8, common::make_string("double")),
+        &hir_ty.PrimitiveTy.Str => TypeLayout.new(16, 8, common::make_string("{ ptr, i64 }")),
     }
 }
 
 /// Gets layout for a tuple type.
-fn tuple_layout(elems: &Vec<hir_ty::Type>) -> TypeLayout {
+fn tuple_layout(elems: &Vec<hir_ty.Type>) -> TypeLayout {
     if elems.len() == 0 {
-        return TypeLayout::new(0, 1, common::make_string("{}"));
+        return TypeLayout.new(0, 1, common::make_string("{}"));
     }
 
     let mut size: u64 = 0;
@@ -387,13 +387,13 @@ fn tuple_layout(elems: &Vec<hir_ty::Type>) -> TypeLayout {
     let padding = (align - (size % align)) % align;
     size += padding;
 
-    TypeLayout::new(size, align, tuple_to_llvm(elems))
+    TypeLayout.new(size, align, tuple_to_llvm(elems))
 }
 
 /// Gets layout for an array type.
-fn array_layout(elem: &hir_ty::Type, count: u64) -> TypeLayout {
+fn array_layout(elem: &hir_ty.Type, count: u64) -> TypeLayout {
     let elem_layout = get_layout(elem);
-    TypeLayout::new(
+    TypeLayout.new(
         elem_layout.size * count,
         elem_layout.align,
         array_to_llvm(elem, count),
@@ -401,7 +401,7 @@ fn array_layout(elem: &hir_ty::Type, count: u64) -> TypeLayout {
 }
 
 /// Returns the size of a type in bytes.
-pub fn type_size_bytes(ty: &hir_ty::Type) -> u64 {
+pub fn type_size_bytes(ty: &hir_ty.Type) -> u64 {
     get_layout(ty).size
 }
 
@@ -415,9 +415,9 @@ pub fn format_u64(n: u64) -> String {
         return common::make_string("0");
     }
 
-    let mut result = String::new();
+    let mut result = String.new();
     let mut value = n;
-    let mut digits: Vec<char> = Vec::new();
+    let mut digits: Vec<char> = Vec.new();
 
     while value > 0 {
         let digit = (value % 10) as u32;
@@ -455,9 +455,9 @@ pub fn format_u128(n: u128) -> String {
         return common::make_string("0");
     }
 
-    let mut result = String::new();
+    let mut result = String.new();
     let mut value = n;
-    let mut digits: Vec<char> = Vec::new();
+    let mut digits: Vec<char> = Vec.new();
 
     while value > 0 {
         let digit = (value % 10) as u32;
@@ -523,31 +523,31 @@ pub fn f32_bits_to_llvm_hex(bits: u32) -> String {
 // ============================================================
 
 /// Returns true if the type is a zero-sized type.
-pub fn is_zst(ty: &hir_ty::Type) -> bool {
+pub fn is_zst(ty: &hir_ty.Type) -> bool {
     let layout = get_layout(ty);
     layout.size == 0
 }
 
 /// Returns true if the type is a primitive integer type.
-pub fn is_integer(ty: &hir_ty::Type) -> bool {
+pub fn is_integer(ty: &hir_ty.Type) -> bool {
     match &ty.kind {
-        &hir_ty::TypeKind::Primitive(ref prim) => {
+        &hir_ty.TypeKind.Primitive(ref prim) => {
             match prim {
-                &hir_ty::PrimitiveTy::I8 => true,
-                &hir_ty::PrimitiveTy::I16 => true,
-                &hir_ty::PrimitiveTy::I32 => true,
-                &hir_ty::PrimitiveTy::I64 => true,
-                &hir_ty::PrimitiveTy::I128 => true,
-                &hir_ty::PrimitiveTy::Isize => true,
-                &hir_ty::PrimitiveTy::U8 => true,
-                &hir_ty::PrimitiveTy::U16 => true,
-                &hir_ty::PrimitiveTy::U32 => true,
-                &hir_ty::PrimitiveTy::U64 => true,
-                &hir_ty::PrimitiveTy::U128 => true,
-                &hir_ty::PrimitiveTy::Usize => true,
+                &hir_ty.PrimitiveTy.I8 => true,
+                &hir_ty.PrimitiveTy.I16 => true,
+                &hir_ty.PrimitiveTy.I32 => true,
+                &hir_ty.PrimitiveTy.I64 => true,
+                &hir_ty.PrimitiveTy.I128 => true,
+                &hir_ty.PrimitiveTy.Isize => true,
+                &hir_ty.PrimitiveTy.U8 => true,
+                &hir_ty.PrimitiveTy.U16 => true,
+                &hir_ty.PrimitiveTy.U32 => true,
+                &hir_ty.PrimitiveTy.U64 => true,
+                &hir_ty.PrimitiveTy.U128 => true,
+                &hir_ty.PrimitiveTy.Usize => true,
                 // Char and Bool are integer-like for cast purposes (i32 and i1 in LLVM)
-                &hir_ty::PrimitiveTy::Char => true,
-                &hir_ty::PrimitiveTy::Bool => true,
+                &hir_ty.PrimitiveTy.Char => true,
+                &hir_ty.PrimitiveTy.Bool => true,
                 _ => false,
             }
         }
@@ -556,16 +556,16 @@ pub fn is_integer(ty: &hir_ty::Type) -> bool {
 }
 
 /// Returns true if the type is a signed integer type.
-pub fn is_signed(ty: &hir_ty::Type) -> bool {
+pub fn is_signed(ty: &hir_ty.Type) -> bool {
     match &ty.kind {
-        &hir_ty::TypeKind::Primitive(ref prim) => {
+        &hir_ty.TypeKind.Primitive(ref prim) => {
             match prim {
-                &hir_ty::PrimitiveTy::I8 => true,
-                &hir_ty::PrimitiveTy::I16 => true,
-                &hir_ty::PrimitiveTy::I32 => true,
-                &hir_ty::PrimitiveTy::I64 => true,
-                &hir_ty::PrimitiveTy::I128 => true,
-                &hir_ty::PrimitiveTy::Isize => true,
+                &hir_ty.PrimitiveTy.I8 => true,
+                &hir_ty.PrimitiveTy.I16 => true,
+                &hir_ty.PrimitiveTy.I32 => true,
+                &hir_ty.PrimitiveTy.I64 => true,
+                &hir_ty.PrimitiveTy.I128 => true,
+                &hir_ty.PrimitiveTy.Isize => true,
                 _ => false,
             }
         }
@@ -574,12 +574,12 @@ pub fn is_signed(ty: &hir_ty::Type) -> bool {
 }
 
 /// Returns true if the type is a floating point type.
-pub fn is_float(ty: &hir_ty::Type) -> bool {
+pub fn is_float(ty: &hir_ty.Type) -> bool {
     match &ty.kind {
-        &hir_ty::TypeKind::Primitive(ref prim) => {
+        &hir_ty.TypeKind.Primitive(ref prim) => {
             match prim {
-                &hir_ty::PrimitiveTy::F32 => true,
-                &hir_ty::PrimitiveTy::F64 => true,
+                &hir_ty.PrimitiveTy.F32 => true,
+                &hir_ty.PrimitiveTy.F64 => true,
                 _ => false,
             }
         }
@@ -588,11 +588,11 @@ pub fn is_float(ty: &hir_ty::Type) -> bool {
 }
 
 /// Returns true if the type is a boolean.
-pub fn is_bool(ty: &hir_ty::Type) -> bool {
+pub fn is_bool(ty: &hir_ty.Type) -> bool {
     match &ty.kind {
-        &hir_ty::TypeKind::Primitive(ref prim) => {
+        &hir_ty.TypeKind.Primitive(ref prim) => {
             match prim {
-                &hir_ty::PrimitiveTy::Bool => true,
+                &hir_ty.PrimitiveTy.Bool => true,
                 _ => false,
             }
         }
@@ -601,11 +601,11 @@ pub fn is_bool(ty: &hir_ty::Type) -> bool {
 }
 
 /// Returns true if the type is a pointer-like type (ref, raw ptr, function ptr).
-pub fn is_pointer_like(ty: &hir_ty::Type) -> bool {
+pub fn is_pointer_like(ty: &hir_ty.Type) -> bool {
     match &ty.kind {
-        &hir_ty::TypeKind::Ref { inner: _, mutable: _ } => true,
-        &hir_ty::TypeKind::Ptr { inner: _, mutable: _ } => true,
-        &hir_ty::TypeKind::Fn { params: _, ret: _, effects: _ } => true,
+        &hir_ty.TypeKind.Ref { inner: _, mutable: _ } => true,
+        &hir_ty.TypeKind.Ptr { inner: _, mutable: _ } => true,
+        &hir_ty.TypeKind.Fn { params: _, ret: _, effects: _ } => true,
         _ => false,
     }
 }

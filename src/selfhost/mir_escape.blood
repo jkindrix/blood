@@ -33,19 +33,19 @@ impl EscapeState {
     /// Returns the more conservative of two escape states.
     pub fn join(self: &EscapeState, other: &EscapeState) -> EscapeState {
         match self {
-            &EscapeState::GlobalEscape => EscapeState::GlobalEscape,
-            &EscapeState::ArgEscape => {
+            &EscapeState.GlobalEscape => EscapeState.GlobalEscape,
+            &EscapeState.ArgEscape => {
                 match other {
-                    &EscapeState::GlobalEscape => EscapeState::GlobalEscape,
-                    &EscapeState::ArgEscape => EscapeState::ArgEscape,
-                    &EscapeState::NoEscape => EscapeState::ArgEscape,
+                    &EscapeState.GlobalEscape => EscapeState.GlobalEscape,
+                    &EscapeState.ArgEscape => EscapeState.ArgEscape,
+                    &EscapeState.NoEscape => EscapeState.ArgEscape,
                 }
             }
-            &EscapeState::NoEscape => {
+            &EscapeState.NoEscape => {
                 match other {
-                    &EscapeState::GlobalEscape => EscapeState::GlobalEscape,
-                    &EscapeState::ArgEscape => EscapeState::ArgEscape,
-                    &EscapeState::NoEscape => EscapeState::NoEscape,
+                    &EscapeState.GlobalEscape => EscapeState.GlobalEscape,
+                    &EscapeState.ArgEscape => EscapeState.ArgEscape,
+                    &EscapeState.NoEscape => EscapeState.NoEscape,
                 }
             }
         }
@@ -54,9 +54,9 @@ impl EscapeState {
     /// Returns true if this state requires heap allocation.
     pub fn needs_heap(self: &EscapeState) -> bool {
         match self {
-            &EscapeState::NoEscape => false,
-            &EscapeState::ArgEscape => true,
-            &EscapeState::GlobalEscape => true,
+            &EscapeState.NoEscape => false,
+            &EscapeState.ArgEscape => true,
+            &EscapeState.GlobalEscape => true,
         }
     }
 }
@@ -79,9 +79,9 @@ impl MemoryTier {
     /// Returns the tier name for debugging.
     pub fn name(self: &MemoryTier) -> &str {
         match self {
-            &MemoryTier::Stack => "stack",
-            &MemoryTier::Region => "region",
-            &MemoryTier::Persistent => "persistent",
+            &MemoryTier.Stack => "stack",
+            &MemoryTier.Region => "region",
+            &MemoryTier.Persistent => "persistent",
         }
     }
 }
@@ -101,53 +101,53 @@ pub struct EscapeAnalysis {
 /// A record of a local being captured by a closure.
 pub struct ClosureCapture {
     /// The local being captured.
-    pub local_id: mir_def::MirLocalId,
+    pub local_id: mir_def.MirLocalId,
     /// The DefId of the closure capturing it.
-    pub closure_def: hir_def::DefId,
+    pub closure_def: hir_def.DefId,
 }
 
 impl EscapeAnalysis {
     /// Creates a new analysis result with all locals at NoEscape.
     pub fn new(local_count: usize) -> EscapeAnalysis {
-        let mut states: Vec<EscapeState> = Vec::new();
+        let mut states: Vec<EscapeState> = Vec.new();
         for i in 0usize..local_count {
-            states.push(EscapeState::NoEscape);
+            states.push(EscapeState.NoEscape);
         }
         EscapeAnalysis {
             local_states: states,
-            closure_captures: Vec::new(),
+            closure_captures: Vec.new(),
         }
     }
 
     /// Gets the escape state of a local.
-    pub fn get_state(self: &EscapeAnalysis, local: mir_def::MirLocalId) -> &EscapeState {
+    pub fn get_state(self: &EscapeAnalysis, local: mir_def.MirLocalId) -> &EscapeState {
         &self.local_states[local.as_usize()]
     }
 
     /// Returns the recommended memory tier for a local.
-    pub fn recommended_tier(self: &EscapeAnalysis, local: mir_def::MirLocalId) -> MemoryTier {
+    pub fn recommended_tier(self: &EscapeAnalysis, local: mir_def.MirLocalId) -> MemoryTier {
         match &self.local_states[local.as_usize()] {
-            &EscapeState::NoEscape => MemoryTier::Stack,
-            &EscapeState::ArgEscape => MemoryTier::Region,
-            &EscapeState::GlobalEscape => MemoryTier::Persistent,
+            &EscapeState.NoEscape => MemoryTier.Stack,
+            &EscapeState.ArgEscape => MemoryTier.Region,
+            &EscapeState.GlobalEscape => MemoryTier.Persistent,
         }
     }
 
     /// Marks a local as escaping through an argument.
-    fn mark_arg_escape(self: &mut EscapeAnalysis, local: mir_def::MirLocalId) {
+    fn mark_arg_escape(self: &mut EscapeAnalysis, local: mir_def.MirLocalId) {
         let idx = local.as_usize();
         if idx < self.local_states.len() {
             let current = &self.local_states[idx];
-            let new_state = current.join(&EscapeState::ArgEscape);
+            let new_state = current.join(&EscapeState.ArgEscape);
             self.local_states[idx] = new_state;
         }
     }
 
     /// Marks a local as escaping globally.
-    fn mark_global_escape(self: &mut EscapeAnalysis, local: mir_def::MirLocalId) {
+    fn mark_global_escape(self: &mut EscapeAnalysis, local: mir_def.MirLocalId) {
         let idx = local.as_usize();
         if idx < self.local_states.len() {
-            self.local_states[idx] = EscapeState::GlobalEscape;
+            self.local_states[idx] = EscapeState.GlobalEscape;
         }
     }
 }
@@ -164,8 +164,8 @@ impl EscapeAnalysis {
 /// 3. If a local is stored to a place that escapes (return, global), mark GlobalEscape
 /// 4. If a local is passed as argument to a function call, mark ArgEscape
 /// 5. For closures, propagate captured locals' escape states
-pub fn analyze_escapes(body: &mir_body::MirBody) -> EscapeAnalysis {
-    let mut result = EscapeAnalysis::new(body.locals.len());
+pub fn analyze_escapes(body: &mir_body.MirBody) -> EscapeAnalysis {
+    let mut result = EscapeAnalysis.new(body.locals.len());
 
     // Walk all basic blocks
     for bb_idx in 0usize..body.basic_blocks.len() {
@@ -178,10 +178,10 @@ pub fn analyze_escapes(body: &mir_body::MirBody) -> EscapeAnalysis {
 
         // Analyze terminator
         match &block.terminator {
-            &Option::Some(ref term) => {
+            &Option.Some(ref term) => {
                 analyze_terminator(term, &mut result);
             }
-            &Option::None => {}
+            &Option.None => {}
         }
 
     }
@@ -190,9 +190,9 @@ pub fn analyze_escapes(body: &mir_body::MirBody) -> EscapeAnalysis {
 }
 
 /// Analyzes a single statement for escape behavior.
-fn analyze_statement(stmt: &mir_stmt::Statement, result: &mut EscapeAnalysis) {
+fn analyze_statement(stmt: &mir_stmt.Statement, result: &mut EscapeAnalysis) {
     match &stmt.kind {
-        &mir_stmt::StatementKind::Assign { ref place, ref rvalue } => {
+        &mir_stmt.StatementKind.Assign { ref place, ref rvalue } => {
             // If assigning to return place, the source escapes globally
             if place.is_return_place() {
                 mark_rvalue_escape_global(rvalue, result);
@@ -202,42 +202,42 @@ fn analyze_statement(stmt: &mir_stmt::Statement, result: &mut EscapeAnalysis) {
                 analyze_rvalue_escape(rvalue, result);
             }
         }
-        &mir_stmt::StatementKind::StorageLive(_) => {}
-        &mir_stmt::StatementKind::StorageDead(_) => {}
-        &mir_stmt::StatementKind::Drop(_) => {}
-        &mir_stmt::StatementKind::PushHandler { handler_id: _, ref state_place, state_kind: _ } => {
+        &mir_stmt.StatementKind.StorageLive(_) => {}
+        &mir_stmt.StatementKind.StorageDead(_) => {}
+        &mir_stmt.StatementKind.Drop(_) => {}
+        &mir_stmt.StatementKind.PushHandler { handler_id: _, ref state_place, state_kind: _ } => {
             // Handler state may escape through the handler mechanism
             if state_place.is_local() {
                 result.mark_arg_escape(state_place.local);
             }
         }
-        &mir_stmt::StatementKind::PopHandler => {}
-        &mir_stmt::StatementKind::PushInlineHandler { effect_id: _, operations: _ } => {}
-        &mir_stmt::StatementKind::CallReturnClause { handler_id: _, handler_name: _, ref body_result, ref state_place, ref destination } => {
+        &mir_stmt.StatementKind.PopHandler => {}
+        &mir_stmt.StatementKind.PushInlineHandler { effect_id: _, operations: _ } => {}
+        &mir_stmt.StatementKind.CallReturnClause { handler_id: _, handler_name: _, ref body_result, ref state_place, ref destination } => {
             // Body result flows to destination
             if destination.is_return_place() {
                 mark_operand_escape_global(body_result, result);
             }
             let _ = state_place;
         }
-        &mir_stmt::StatementKind::Deinit(_) => {}
-        &mir_stmt::StatementKind::SetDiscriminant { place: _, variant_idx: _ } => {}
-        &mir_stmt::StatementKind::CopyNonOverlapping { ref src, ref dst, count: _ } => {
+        &mir_stmt.StatementKind.Deinit(_) => {}
+        &mir_stmt.StatementKind.SetDiscriminant { place: _, variant_idx: _ } => {}
+        &mir_stmt.StatementKind.CopyNonOverlapping { ref src, ref dst, count: _ } => {
             // Both source and destination may involve escaping locals
             let _ = src;
             let _ = dst;
         }
-        &mir_stmt::StatementKind::Nop => {}
+        &mir_stmt.StatementKind.Nop => {}
     }
 }
 
 /// Analyzes a terminator for escape behavior.
-fn analyze_terminator(term: &mir_term::Terminator, result: &mut EscapeAnalysis) {
+fn analyze_terminator(term: &mir_term.Terminator, result: &mut EscapeAnalysis) {
     match &term.kind {
-        &mir_term::TerminatorKind::Goto { target: _ } => {}
-        &mir_term::TerminatorKind::SwitchInt { discr: _, targets: _ } => {}
-        &mir_term::TerminatorKind::Return => {}
-        &mir_term::TerminatorKind::Call { func: _, ref args, ref destination, target: _, unwind: _ } => {
+        &mir_term.TerminatorKind.Goto { target: _ } => {}
+        &mir_term.TerminatorKind.SwitchInt { discr: _, targets: _ } => {}
+        &mir_term.TerminatorKind.Return => {}
+        &mir_term.TerminatorKind.Call { func: _, ref args, ref destination, target: _, unwind: _ } => {
             // All arguments passed to a call may escape through that call
             for i in 0usize..args.len() {
                 mark_operand_escape_arg(&args[i], result);
@@ -246,23 +246,23 @@ fn analyze_terminator(term: &mir_term::Terminator, result: &mut EscapeAnalysis) 
             // (but the call result isn't a local we track — it's produced by callee)
             let _ = destination;
         }
-        &mir_term::TerminatorKind::Assert { cond: _, expected: _, msg: _, target: _, unwind: _ } => {}
-        &mir_term::TerminatorKind::Perform { effect_id: _, op_index: _, ref args, destination: _, target: _, is_tail_resumptive: _ } => {
+        &mir_term.TerminatorKind.Assert { cond: _, expected: _, msg: _, target: _, unwind: _ } => {}
+        &mir_term.TerminatorKind.Perform { effect_id: _, op_index: _, ref args, destination: _, target: _, is_tail_resumptive: _ } => {
             // Effect operation args escape through the handler
             for i in 0usize..args.len() {
                 mark_operand_escape_arg(&args[i], result);
             }
         }
-        &mir_term::TerminatorKind::Resume { ref value } => {
+        &mir_term.TerminatorKind.Resume { ref value } => {
             match value {
-                &Option::Some(ref op) => {
+                &Option.Some(ref op) => {
                     mark_operand_escape_global(op, result);
                 }
-                &Option::None => {}
+                &Option.None => {}
             }
         }
-        &mir_term::TerminatorKind::Unreachable => {}
-        &mir_term::TerminatorKind::Drop { place: _, target: _, unwind: _ } => {}
+        &mir_term.TerminatorKind.Unreachable => {}
+        &mir_term.TerminatorKind.Drop { place: _, target: _, unwind: _ } => {}
     }
 }
 
@@ -271,106 +271,106 @@ fn analyze_terminator(term: &mir_term::Terminator, result: &mut EscapeAnalysis) 
 // ============================================================
 
 /// Marks all locals referenced by an operand as ArgEscape.
-fn mark_operand_escape_arg(operand: &mir_types::Operand, result: &mut EscapeAnalysis) {
+fn mark_operand_escape_arg(operand: &mir_types.Operand, result: &mut EscapeAnalysis) {
     match operand {
-        &mir_types::Operand::Copy(ref place) => {
+        &mir_types.Operand.Copy(ref place) => {
             result.mark_arg_escape(place.local);
         }
-        &mir_types::Operand::Move(ref place) => {
+        &mir_types.Operand.Move(ref place) => {
             result.mark_arg_escape(place.local);
         }
-        &mir_types::Operand::Constant(_) => {}
+        &mir_types.Operand.Constant(_) => {}
     }
 }
 
 /// Marks all locals referenced by an operand as GlobalEscape.
-fn mark_operand_escape_global(operand: &mir_types::Operand, result: &mut EscapeAnalysis) {
+fn mark_operand_escape_global(operand: &mir_types.Operand, result: &mut EscapeAnalysis) {
     match operand {
-        &mir_types::Operand::Copy(ref place) => {
+        &mir_types.Operand.Copy(ref place) => {
             result.mark_global_escape(place.local);
         }
-        &mir_types::Operand::Move(ref place) => {
+        &mir_types.Operand.Move(ref place) => {
             result.mark_global_escape(place.local);
         }
-        &mir_types::Operand::Constant(_) => {}
+        &mir_types.Operand.Constant(_) => {}
     }
 }
 
 /// Marks locals in an rvalue as GlobalEscape (used when assigned to return place).
-fn mark_rvalue_escape_global(rvalue: &mir_types::Rvalue, result: &mut EscapeAnalysis) {
+fn mark_rvalue_escape_global(rvalue: &mir_types.Rvalue, result: &mut EscapeAnalysis) {
     match rvalue {
-        &mir_types::Rvalue::Use(ref op) => {
+        &mir_types.Rvalue.Use(ref op) => {
             mark_operand_escape_global(op, result);
         }
-        &mir_types::Rvalue::Ref { ref place, mutable: _ } => {
+        &mir_types.Rvalue.Ref { ref place, mutable: _ } => {
             result.mark_global_escape(place.local);
         }
-        &mir_types::Rvalue::AddressOf { ref place, mutable: _ } => {
+        &mir_types.Rvalue.AddressOf { ref place, mutable: _ } => {
             result.mark_global_escape(place.local);
         }
-        &mir_types::Rvalue::BinaryOp { op: _, ref left, ref right } => {
+        &mir_types.Rvalue.BinaryOp { op: _, ref left, ref right } => {
             mark_operand_escape_global(left, result);
             mark_operand_escape_global(right, result);
         }
-        &mir_types::Rvalue::UnaryOp { op: _, ref operand } => {
+        &mir_types.Rvalue.UnaryOp { op: _, ref operand } => {
             mark_operand_escape_global(operand, result);
         }
-        &mir_types::Rvalue::Cast { ref operand, target_ty: _ } => {
+        &mir_types.Rvalue.Cast { ref operand, target_ty: _ } => {
             mark_operand_escape_global(operand, result);
         }
-        &mir_types::Rvalue::Aggregate { kind: _, ref operands } => {
+        &mir_types.Rvalue.Aggregate { kind: _, ref operands } => {
             for i in 0usize..operands.len() {
                 mark_operand_escape_global(&operands[i], result);
             }
         }
-        &mir_types::Rvalue::Discriminant(ref place) => {
+        &mir_types.Rvalue.Discriminant(ref place) => {
             let _ = place;
         }
-        &mir_types::Rvalue::Len(ref place) => {
+        &mir_types.Rvalue.Len(ref place) => {
             let _ = place;
         }
-        &mir_types::Rvalue::ArrayToSlice { ref array_ref, array_len: _ } => {
+        &mir_types.Rvalue.ArrayToSlice { ref array_ref, array_len: _ } => {
             mark_operand_escape_global(array_ref, result);
         }
-        &mir_types::Rvalue::ZeroInit(_) => {}
+        &mir_types.Rvalue.ZeroInit(_) => {}
     }
 }
 
 /// Analyzes an rvalue for escape behavior (non-return assignments).
-fn analyze_rvalue_escape(rvalue: &mir_types::Rvalue, result: &mut EscapeAnalysis) {
+fn analyze_rvalue_escape(rvalue: &mir_types.Rvalue, result: &mut EscapeAnalysis) {
     match rvalue {
-        &mir_types::Rvalue::Ref { ref place, mutable: _ } => {
+        &mir_types.Rvalue.Ref { ref place, mutable: _ } => {
             // Taking a reference: the referenced local may now escape
             // through the destination. For now conservatively mark as ArgEscape.
             result.mark_arg_escape(place.local);
         }
-        &mir_types::Rvalue::AddressOf { ref place, mutable: _ } => {
+        &mir_types.Rvalue.AddressOf { ref place, mutable: _ } => {
             // Raw pointer — very likely to escape
             result.mark_arg_escape(place.local);
         }
-        &mir_types::Rvalue::Aggregate { ref kind, operands: _ } => {
+        &mir_types.Rvalue.Aggregate { ref kind, operands: _ } => {
             match kind {
-                &mir_types::AggregateKind::Closure { def_id } => {
+                &mir_types.AggregateKind.Closure { def_id } => {
                     // Closure captures: all operands are captured locals
                     // They escape at least through the closure
                     // (actual escape depends on what happens to the closure)
                     let _ = def_id;
                 }
-                &mir_types::AggregateKind::Tuple => {}
-                &mir_types::AggregateKind::Array(_) => {}
-                &mir_types::AggregateKind::Adt { def_id: _, variant_idx: _, type_args: _ } => {}
-                &mir_types::AggregateKind::Record => {}
-                &mir_types::AggregateKind::Range { element: _, inclusive: _ } => {}
+                &mir_types.AggregateKind.Tuple => {}
+                &mir_types.AggregateKind.Array(_) => {}
+                &mir_types.AggregateKind.Adt { def_id: _, variant_idx: _, type_args: _ } => {}
+                &mir_types.AggregateKind.Record => {}
+                &mir_types.AggregateKind.Range { element: _, inclusive: _ } => {}
             }
         }
-        &mir_types::Rvalue::Use(_) => {}
-        &mir_types::Rvalue::BinaryOp { op: _, left: _, right: _ } => {}
-        &mir_types::Rvalue::UnaryOp { op: _, operand: _ } => {}
-        &mir_types::Rvalue::Cast { operand: _, target_ty: _ } => {}
-        &mir_types::Rvalue::Discriminant(_) => {}
-        &mir_types::Rvalue::Len(_) => {}
-        &mir_types::Rvalue::ArrayToSlice { array_ref: _, array_len: _ } => {}
-        &mir_types::Rvalue::ZeroInit(_) => {}
+        &mir_types.Rvalue.Use(_) => {}
+        &mir_types.Rvalue.BinaryOp { op: _, left: _, right: _ } => {}
+        &mir_types.Rvalue.UnaryOp { op: _, operand: _ } => {}
+        &mir_types.Rvalue.Cast { operand: _, target_ty: _ } => {}
+        &mir_types.Rvalue.Discriminant(_) => {}
+        &mir_types.Rvalue.Len(_) => {}
+        &mir_types.Rvalue.ArrayToSlice { array_ref: _, array_len: _ } => {}
+        &mir_types.Rvalue.ZeroInit(_) => {}
     }
 }
 
@@ -381,8 +381,8 @@ fn analyze_rvalue_escape(rvalue: &mir_types::Rvalue, result: &mut EscapeAnalysis
 /// Returns the recommended memory tier for a given escape state.
 pub fn recommended_tier(state: &EscapeState) -> MemoryTier {
     match state {
-        &EscapeState::NoEscape => MemoryTier::Stack,
-        &EscapeState::ArgEscape => MemoryTier::Region,
-        &EscapeState::GlobalEscape => MemoryTier::Persistent,
+        &EscapeState.NoEscape => MemoryTier.Stack,
+        &EscapeState.ArgEscape => MemoryTier.Region,
+        &EscapeState.GlobalEscape => MemoryTier.Persistent,
     }
 }

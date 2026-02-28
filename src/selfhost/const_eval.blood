@@ -29,64 +29,64 @@ pub enum ConstValue {
 impl ConstValue {
     /// Creates an integer const value.
     pub fn int(value: i64) -> ConstValue {
-        ConstValue::Int(value)
+        ConstValue.Int(value)
     }
 
     /// Creates an unsigned integer const value.
     pub fn uint(value: u64) -> ConstValue {
-        ConstValue::Uint(value)
+        ConstValue.Uint(value)
     }
 
     /// Creates an error const value.
     pub fn error() -> ConstValue {
-        ConstValue::Error
+        ConstValue.Error
     }
 
     /// Returns true if this is an error.
     pub fn is_error(self: &ConstValue) -> bool {
         match self {
-            &ConstValue::Error => true,
-            &ConstValue::Int(_) => false,
-            &ConstValue::Uint(_) => false,
+            &ConstValue.Error => true,
+            &ConstValue.Int(_) => false,
+            &ConstValue.Uint(_) => false,
         }
     }
 
     /// Converts to usize for array sizes. Returns 0 on error.
     pub fn to_usize(self: &ConstValue) -> usize {
         match self {
-            &ConstValue::Int(v) => {
+            &ConstValue.Int(v) => {
                 if v < 0 {
                     0 // Negative sizes not allowed
                 } else {
                     v as usize
                 }
             }
-            &ConstValue::Uint(v) => v as usize,
-            &ConstValue::Error => 0,
+            &ConstValue.Uint(v) => v as usize,
+            &ConstValue.Error => 0,
         }
     }
 
     /// Converts to u64 for HIR array sizes. Returns 0 on error.
     pub fn to_u64(self: &ConstValue) -> u64 {
         match self {
-            &ConstValue::Int(v) => {
+            &ConstValue.Int(v) => {
                 if v < 0 {
                     0 // Negative sizes not allowed
                 } else {
                     v as u64
                 }
             }
-            &ConstValue::Uint(v) => v,
-            &ConstValue::Error => 0,
+            &ConstValue.Uint(v) => v,
+            &ConstValue.Error => 0,
         }
     }
 
     /// Converts to i64 for general const integer usage.
     pub fn to_i64(self: &ConstValue) -> i64 {
         match self {
-            &ConstValue::Int(v) => v,
-            &ConstValue::Uint(v) => v as i64,
-            &ConstValue::Error => 0,
+            &ConstValue.Int(v) => v,
+            &ConstValue.Uint(v) => v as i64,
+            &ConstValue.Error => 0,
         }
     }
 }
@@ -96,152 +96,152 @@ impl ConstValue {
 // ============================================================
 
 /// Evaluate a constant expression.
-/// Returns ConstValue::Error if the expression cannot be evaluated at compile time.
-pub fn eval_const_expr(expr: &ast::Expr) -> ConstValue {
+/// Returns ConstValue.Error if the expression cannot be evaluated at compile time.
+pub fn eval_const_expr(expr: &ast.Expr) -> ConstValue {
     match &expr.kind {
-        &ast::ExprKind::Literal(ref lit) => eval_literal(lit),
-        &ast::ExprKind::Binary { ref left, op: bin_op, ref right } => {
+        &ast.ExprKind.Literal(ref lit) => eval_literal(lit),
+        &ast.ExprKind.Binary { ref left, op: bin_op, ref right } => {
             eval_binary(left.as_ref(), bin_op, right.as_ref())
         }
-        &ast::ExprKind::Unary { op: unary_op, ref operand } => {
+        &ast.ExprKind.Unary { op: unary_op, ref operand } => {
             eval_unary(unary_op, operand.as_ref())
         }
-        &ast::ExprKind::Paren(ref inner) => eval_const_expr(inner.as_ref()),
+        &ast.ExprKind.Paren(ref inner) => eval_const_expr(inner.as_ref()),
         // Only literal, binary, unary, and parenthesized expressions are
         // supported in compile-time const evaluation. Other expression
         // kinds (paths to named constants, function calls, field accesses,
         // indexing, etc.) require full semantic analysis and are not
         // evaluable in the current const-eval pass.
-        _ => ConstValue::error(),
+        _ => ConstValue.error(),
     }
 }
 
 /// Evaluate a literal expression.
-fn eval_literal(lit: &ast::Literal) -> ConstValue {
+fn eval_literal(lit: &ast.Literal) -> ConstValue {
     match &lit.kind {
-        &ast::LiteralKind::Int { val, suffix: _ } => {
+        &ast.LiteralKind.Int { val, suffix: _ } => {
             // val is u128, convert to i64 (may truncate for very large values)
-            ConstValue::int(val as i64)
+            ConstValue.int(val as i64)
         }
-        &ast::LiteralKind::Bool(b) => {
+        &ast.LiteralKind.Bool(b) => {
             if b {
-                ConstValue::int(1)
+                ConstValue.int(1)
             } else {
-                ConstValue::int(0)
+                ConstValue.int(0)
             }
         }
-        &ast::LiteralKind::Float { bits: _, suffix: _ } => {
+        &ast.LiteralKind.Float { bits: _, suffix: _ } => {
             // Float literals cannot be evaluated as integer const expressions
-            ConstValue::error()
+            ConstValue.error()
         }
-        &ast::LiteralKind::Str(_) => {
+        &ast.LiteralKind.Str(_) => {
             // String literals cannot be evaluated as integer const expressions
-            ConstValue::error()
+            ConstValue.error()
         }
-        &ast::LiteralKind::ByteStr(_) => {
+        &ast.LiteralKind.ByteStr(_) => {
             // Byte string literals cannot be evaluated as integer const expressions
-            ConstValue::error()
+            ConstValue.error()
         }
-        &ast::LiteralKind::Char(_) => {
+        &ast.LiteralKind.Char(_) => {
             // Char literals cannot be evaluated as integer const expressions
-            ConstValue::error()
+            ConstValue.error()
         }
     }
 }
 
 /// Evaluate a binary expression.
-fn eval_binary(left: &ast::Expr, bin_op: common::BinOp, right: &ast::Expr) -> ConstValue {
+fn eval_binary(left: &ast.Expr, bin_op: common.BinOp, right: &ast.Expr) -> ConstValue {
     let left_val = eval_const_expr(left);
     let right_val = eval_const_expr(right);
 
     if left_val.is_error() || right_val.is_error() {
-        return ConstValue::error();
+        return ConstValue.error();
     }
 
     let l = left_val.to_i64();
     let r = right_val.to_i64();
 
     match bin_op {
-        common::BinOp::Add => ConstValue::int(l + r),
-        common::BinOp::Sub => ConstValue::int(l - r),
-        common::BinOp::Mul => ConstValue::int(l * r),
-        common::BinOp::Div => {
+        common.BinOp.Add => ConstValue.int(l + r),
+        common.BinOp.Sub => ConstValue.int(l - r),
+        common.BinOp.Mul => ConstValue.int(l * r),
+        common.BinOp.Div => {
             if r == 0 {
-                ConstValue::error() // Division by zero
+                ConstValue.error() // Division by zero
             } else {
-                ConstValue::int(l / r)
+                ConstValue.int(l / r)
             }
         }
-        common::BinOp::Rem => {
+        common.BinOp.Rem => {
             if r == 0 {
-                ConstValue::error() // Modulo by zero
+                ConstValue.error() // Modulo by zero
             } else {
-                ConstValue::int(l % r)
+                ConstValue.int(l % r)
             }
         }
-        common::BinOp::BitAnd => ConstValue::int(l & r),
-        common::BinOp::BitOr => ConstValue::int(l | r),
-        common::BinOp::BitXor => ConstValue::int(l ^ r),
-        common::BinOp::Shl => {
+        common.BinOp.BitAnd => ConstValue.int(l & r),
+        common.BinOp.BitOr => ConstValue.int(l | r),
+        common.BinOp.BitXor => ConstValue.int(l ^ r),
+        common.BinOp.Shl => {
             if r < 0 || r >= 64 {
-                ConstValue::error() // Shift amount out of range
+                ConstValue.error() // Shift amount out of range
             } else {
-                ConstValue::int(l << r)
+                ConstValue.int(l << r)
             }
         }
-        common::BinOp::Shr => {
+        common.BinOp.Shr => {
             if r < 0 || r >= 64 {
-                ConstValue::error() // Shift amount out of range
+                ConstValue.error() // Shift amount out of range
             } else {
-                ConstValue::int(l >> r)
+                ConstValue.int(l >> r)
             }
         }
         // Comparison ops return 1 (true) or 0 (false) as integer
-        common::BinOp::Eq => {
-            if l == r { ConstValue::int(1) } else { ConstValue::int(0) }
+        common.BinOp.Eq => {
+            if l == r { ConstValue.int(1) } else { ConstValue.int(0) }
         }
-        common::BinOp::Ne => {
-            if l != r { ConstValue::int(1) } else { ConstValue::int(0) }
+        common.BinOp.Ne => {
+            if l != r { ConstValue.int(1) } else { ConstValue.int(0) }
         }
-        common::BinOp::Lt => {
-            if l < r { ConstValue::int(1) } else { ConstValue::int(0) }
+        common.BinOp.Lt => {
+            if l < r { ConstValue.int(1) } else { ConstValue.int(0) }
         }
-        common::BinOp::Le => {
-            if l <= r { ConstValue::int(1) } else { ConstValue::int(0) }
+        common.BinOp.Le => {
+            if l <= r { ConstValue.int(1) } else { ConstValue.int(0) }
         }
-        common::BinOp::Gt => {
-            if l > r { ConstValue::int(1) } else { ConstValue::int(0) }
+        common.BinOp.Gt => {
+            if l > r { ConstValue.int(1) } else { ConstValue.int(0) }
         }
-        common::BinOp::Ge => {
-            if l >= r { ConstValue::int(1) } else { ConstValue::int(0) }
+        common.BinOp.Ge => {
+            if l >= r { ConstValue.int(1) } else { ConstValue.int(0) }
         }
         // Logical ops treat non-zero as true
-        common::BinOp::And => {
-            if l != 0 && r != 0 { ConstValue::int(1) } else { ConstValue::int(0) }
+        common.BinOp.And => {
+            if l != 0 && r != 0 { ConstValue.int(1) } else { ConstValue.int(0) }
         }
-        common::BinOp::Or => {
-            if l != 0 || r != 0 { ConstValue::int(1) } else { ConstValue::int(0) }
+        common.BinOp.Or => {
+            if l != 0 || r != 0 { ConstValue.int(1) } else { ConstValue.int(0) }
         }
         // Pipe operator is not meaningful for const evaluation
-        common::BinOp::Pipe => ConstValue::error(),
+        common.BinOp.Pipe => ConstValue.error(),
     }
 }
 
 /// Evaluate a unary expression.
-fn eval_unary(unary_op: common::UnaryOp, operand: &ast::Expr) -> ConstValue {
+fn eval_unary(unary_op: common.UnaryOp, operand: &ast.Expr) -> ConstValue {
     let val = eval_const_expr(operand);
     if val.is_error() {
-        return ConstValue::error();
+        return ConstValue.error();
     }
 
     let v = val.to_i64();
 
     match unary_op {
-        common::UnaryOp::Neg => ConstValue::int(-v),
-        common::UnaryOp::Not => ConstValue::int(!v),
-        common::UnaryOp::Deref => ConstValue::error(),
-        common::UnaryOp::Ref => ConstValue::error(),
-        common::UnaryOp::RefMut => ConstValue::error(),
+        common.UnaryOp.Neg => ConstValue.int(-v),
+        common.UnaryOp.Not => ConstValue.int(!v),
+        common.UnaryOp.Deref => ConstValue.error(),
+        common.UnaryOp.Ref => ConstValue.error(),
+        common.UnaryOp.RefMut => ConstValue.error(),
     }
 }
 
@@ -251,14 +251,14 @@ fn eval_unary(unary_op: common::UnaryOp, operand: &ast::Expr) -> ConstValue {
 
 /// Evaluate an expression and return as usize for array sizes.
 /// Returns 0 if evaluation fails.
-pub fn eval_array_size(expr: &ast::Expr) -> usize {
+pub fn eval_array_size(expr: &ast.Expr) -> usize {
     let val = eval_const_expr(expr);
     val.to_usize()
 }
 
 /// Evaluate an expression and return as u64 for HIR array sizes.
 /// Returns 0 if evaluation fails.
-pub fn eval_array_size_u64(expr: &ast::Expr) -> u64 {
+pub fn eval_array_size_u64(expr: &ast.Expr) -> u64 {
     let val = eval_const_expr(expr);
     val.to_u64()
 }
