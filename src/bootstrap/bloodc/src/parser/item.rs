@@ -960,7 +960,7 @@ impl<'src> Parser<'src> {
         // FinallyClause ::= 'finally' Block
         let finally_clause = if self.check(TokenKind::Finally) {
             self.advance(); // consume 'finally'
-            Some(self.parse_block())
+            Some(Box::new(self.parse_block()))
         } else {
             None
         };

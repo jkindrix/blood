@@ -417,9 +417,9 @@ pub struct HandlerDecl {
     pub where_clause: Option<WhereClause>,
     pub state: Vec<HandlerState>,
     pub return_clause: Option<ReturnClause>,
-    pub finally_clause: Option<Block>,
     pub operations: Vec<OperationImpl>,
     pub span: Span,
+    pub finally_clause: Option<Box<Block>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

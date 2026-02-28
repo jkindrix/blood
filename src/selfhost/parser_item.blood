@@ -1721,6 +1721,15 @@ fn parse_handler_decl(parser: &mut parser_base.Parser, attrs: Vec<ast.Attribute>
         Option.None
     };
 
+    // Parse optional finally clause: finally { body }
+    let finally_clause = if parser.check(token.TokenKind.Finally) {
+        parser.advance(); // consume 'finally'
+        let blk = parser_expr::parse_block(parser);
+        Option.Some(Box.new(blk))
+    } else {
+        Option.None
+    };
+
     // Parse operation implementations: op name(params) { body }
     let mut operations: Vec<ast.OperationImpl> = Vec.new();
     while parser.check(token.TokenKind.Op) {
@@ -1740,6 +1749,7 @@ fn parse_handler_decl(parser: &mut parser_base.Parser, attrs: Vec<ast.Attribute>
         where_clause,
         state,
         return_clause,
+        finally_clause,
         operations,
         span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     }
