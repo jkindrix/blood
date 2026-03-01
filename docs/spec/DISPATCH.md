@@ -2263,7 +2263,6 @@ For an object-safe trait `T` with methods `m₁, ..., mₙ`:
 ```
 Vtable layout for dyn T:
 ┌─────────────────┐
-│ drop_fn: fn_ptr │  -- Destructor for the concrete type
 │ size: usize     │  -- Size of concrete type
 │ align: usize    │  -- Alignment of concrete type
 │ m₁: fn_ptr      │  -- Method 1 implementation
@@ -2274,6 +2273,15 @@ Vtable layout for dyn T:
 ```
 
 Method ordering in the vtable follows declaration order in the trait.
+
+> **Design note — no `drop_fn` slot**: Blood's vtable does not include a destructor function pointer. Blood has no `Drop` trait and does not call per-value destructors on scope exit. Memory cleanup is handled by the memory tier system:
+>
+> - **Tier 0 (stack)**: Values are on the stack; no cleanup needed.
+> - **Tier 1 (region)**: Bulk deallocation via generation bump — no per-value cleanup.
+> - **Tier 2/3 (persistent)**: Runtime-managed reference counting.
+> - **Resource cleanup**: Effect handler `finally` clauses (ADR-036) replace RAII destructors.
+>
+> If a `dyn Trait` value owns an OS resource (file handle, socket), the enclosing effect handler's `finally` clause is responsible for cleanup — not a vtable-dispatched destructor. This is consistent with Blood's principle that resource management is explicit and effect-tracked, not implicit via scope-based destructors.
 
 #### 10.8.2 Trait Object Representation
 
