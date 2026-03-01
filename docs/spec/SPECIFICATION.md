@@ -426,7 +426,7 @@ effect Error<E> {
 }
 
 effect Fiber {
-    op spawn<T: Send>(task: fn() -> T / {Fiber} + Send) -> FiberHandle<T>
+    op spawn<T>(task: fn() -> T / {Fiber}) -> FiberHandle<T>
     op yield() -> unit
     op join<T>(handle: FiberHandle<T>) -> T
 }
@@ -605,8 +605,8 @@ deep handler Collect<T> for Yield<T> {
 
 ```blood
 effect Fiber {
-    op spawn<T: Send>(task: fn() -> T / {Fiber} + Send) -> FiberHandle<T>
-    op spawn_blocking<T: Send>(f: fn() -> T + Send) -> FiberHandle<T>
+    op spawn<T>(task: fn() -> T / {Fiber}) -> FiberHandle<T>
+    op spawn_blocking<T>(f: fn() -> T) -> FiberHandle<T>
     op yield() -> unit
     op sleep(duration: Duration) -> unit
     op join<T>(handle: FiberHandle<T>) -> T

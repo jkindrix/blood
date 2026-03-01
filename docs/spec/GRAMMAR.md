@@ -330,8 +330,8 @@ SpecClause ::= 'requires' Expr
    { body }
 *)
 
-FnQualifier ::= 'const' | 'async' | '@unsafe'
-(* `async fn foo()` is sugar for `fn foo() / {Async}` — see §8 for the Async effect *)
+FnQualifier ::= 'const' | 'fiber' | '@unsafe'
+(* `fiber fn foo()` is sugar for `fn foo() / {Fiber}` — see §8 for the Fiber effect *)
 (* `unsafe` is a keyword but only valid with the `@` prefix. Bare `unsafe` is a compile error
    with a diagnostic suggesting `@unsafe`. See §9.5 for the `@` prefix design rule. *)
 
@@ -419,10 +419,23 @@ effect IO extends Log {
 }
 
 effect Fiber extends IO {
-    op spawn<T: Send>(f: fn() -> T / {Fiber} + Send) -> FiberHandle<T>;
+    op spawn<T>(f: fn() -> T / {Fiber}) -> FiberHandle<T>;
     op yield() -> unit;
 }
 ```
+
+> **Design note — no `Send`/`Sync` traits**: Blood does not use Rust-style `Send`/`Sync` marker traits. Whether a value can cross fiber boundaries is determined automatically by the compiler from the value's **memory tier**:
+>
+> | Tier | Fiber-transferable? | Rationale |
+> |------|-------------------|-----------|
+> | Tier 0 (stack) | Yes | Pure value — copy/move |
+> | Tier 1 (region), mutable | No | Fiber-local — region isolation |
+> | Tier 1 (region), Frozen | Yes | Deeply immutable — safe to share |
+> | Tier 2/3 (persistent) | Yes | Ref-counted — designed for sharing |
+> | Linear | Yes (transfer) | Unique ownership moves to target fiber |
+> | Raw pointer | No | No safety guarantees |
+>
+> The compiler checks at `spawn` call sites that all captured values are fiber-transferable. This replaces the need for explicit `Send` bounds — the tier system already encodes the required information. See CONCURRENCY.md §8.1 for the full fiber-crossing rules.
 
 #### 3.4.2 Handler State
 
@@ -648,7 +661,7 @@ fn draw_all(shapes: &[&dyn Drawable]) / {IO} {
 }
 ```
 
-> **Design note (`impl Trait`):** `impl Trait` is **not planned** for Blood. Argument-position is **rejected** — Blood's multiple dispatch subsumes this use case. Return-position is **not planned** — Blood's effect system eliminates the primary motivator (`async fn` returns effects, not `impl Future`), and the universal callable type `fn(T) -> U` eliminates unnamed closure types. If a mechanism for hiding concrete return types is ever needed, `opaque` type aliases are the designated path, not `impl Trait` syntax. See `docs/design/IMPL_TRAIT.md` for the full evaluation.
+> **Design note (`impl Trait`):** `impl Trait` is **not planned** for Blood. Argument-position is **rejected** — Blood's multiple dispatch subsumes this use case. Return-position is **not planned** — Blood's effect system eliminates the primary motivator (`fiber fn` returns effects, not `impl Future`), and the universal callable type `fn(T) -> U` eliminates unnamed closure types. If a mechanism for hiding concrete return types is ever needed, `opaque` type aliases are the designated path, not `impl Trait` syntax. See `docs/design/IMPL_TRAIT.md` for the full evaluation.
 
 > **Design note (trait object safety):** Not every trait can be used as `dyn Trait`. A trait is **object-safe** (usable as a trait object) when all its methods can be represented as function pointers in a virtual function table. Methods that **prevent** object safety:
 >
@@ -1335,10 +1348,10 @@ Blood uses a three-tier keyword system to balance language expressiveness with i
 These words cannot be used as identifiers (except via raw identifiers, see §9.4).
 
 ```
-as async await break const continue crate dyn effect else enum
+as break const continue crate dyn effect else enum fiber
 extern false fn for forall if impl in let linear loop macro
 match mod move mut op pub pure ref region return self Self
-static struct super trait true try type unsafe use where while
+static struct super suspend trait true try type unsafe use where while
 ```
 
 **Note:** `unsafe` is only valid with the `@` prefix (`@unsafe`). Bare `unsafe` is a compile error with a diagnostic suggesting `@unsafe`. See §9.5.

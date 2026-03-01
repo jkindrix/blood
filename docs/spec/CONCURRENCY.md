@@ -7,7 +7,7 @@
 **Revision 0.4.0 Changes** (ADR-036 — Cohesive Concurrency Model):
 - Unified naming: `Fiber` throughout (replaced `Async` in §8); `Async` effect removed
 - Added `Cancel` effect with ADR-036 semantics (§4.5, §8.1): cooperative, separate from `Fiber`
-- Added `Send` bounds to `spawn` operations (§2.4, §8.1)
+- Replaced `Send`/`Sync` traits with tier-based fiber-crossing rules (§2.4, §8.1)
 - Added `spawn_blocking` operation for FFI interop (§2.4, §8.1)
 - Added handler finalization (`finally` clause) integration (§4.6)
 - Added generation snapshot cost model (§9.4)
@@ -30,7 +30,7 @@ This document specifies Blood's concurrency model, including fiber semantics, sc
 ## Table of Contents
 
 1. [Overview](#1-overview)
-2. [Fiber Model](#2-fiber-model) — Send bounds, spawn_blocking (ADR-036)
+2. [Fiber Model](#2-fiber-model) — Fiber-crossing rules, spawn_blocking (ADR-036)
 3. [Scheduler](#3-scheduler) — Safepoint preemption, priority inheritance (ADR-036)
 4. [Fiber Lifecycle](#4-fiber-lifecycle) — Cancel effect, handler finalization (ADR-036)
 5. [Communication](#5-communication)
@@ -232,17 +232,17 @@ enum WakeCondition {
 
 ```blood
 effect Fiber {
-    /// Spawn a new fiber (requires Send bounds — ADR-036 Sub-5)
-    op spawn<T: Send>(f: fn() -> T / {Fiber} + Send) -> FiberHandle<T>;
+    /// Spawn a new fiber (compiler checks captured values are fiber-transferable)
+    op spawn<T>(f: fn() -> T / {Fiber}) -> FiberHandle<T>;
 
     /// Spawn with configuration
-    op spawn_with<T: Send>(
+    op spawn_with<T>(
         config: FiberConfig,
-        f: fn() -> T / {Fiber} + Send
+        f: fn() -> T / {Fiber}
     ) -> FiberHandle<T>;
 
     /// Spawn on a dedicated OS thread (for blocking FFI — ADR-036 Sub-8)
-    op spawn_blocking<T: Send>(f: fn() -> T + Send) -> FiberHandle<T>;
+    op spawn_blocking<T>(f: fn() -> T) -> FiberHandle<T>;
 
     /// Get current fiber's handle
     op current() -> FiberHandle<()>;
@@ -1081,22 +1081,14 @@ impl Once {
 
 ```blood
 trait ParallelIterator<T> {
-    fn par_map<U, F>(self, f: F) -> ParMap<T, U, F>
-    where F: Fn(T) -> U + Send;
-
-    fn par_filter<F>(self, f: F) -> ParFilter<T, F>
-    where F: Fn(&T) -> bool + Send;
-
-    fn par_reduce<F>(self, identity: T, f: F) -> T
-    where F: Fn(T, T) -> T + Send;
-
-    fn par_for_each<F>(self, f: F)
-    where F: Fn(T) + Send;
+    fn par_map<U>(self, f: fn(T) -> U) -> Vec<U> / {Fiber};
+    fn par_filter(self, f: fn(&T) -> bool) -> Vec<T> / {Fiber};
+    fn par_reduce(self, identity: T, f: fn(T, T) -> T) -> T / {Fiber};
+    fn par_for_each(self, f: fn(T)) / {Fiber};
 }
 
-impl<T: Send> ParallelIterator<T> for Vec<T> {
-    fn par_map<U, F>(self, f: F) -> Vec<U> / {Fiber}
-    where F: Fn(T) -> U + Send {
+impl ParallelIterator<T> for Vec<T> {
+    fn par_map<U>(self, f: fn(T) -> U) -> Vec<U> / {Fiber} {
         let num_chunks = num_workers();
         let chunk_size = (self.len() + num_chunks - 1) / num_chunks;
 
@@ -1138,8 +1130,7 @@ struct Scope {
 }
 
 impl Scope {
-    fn spawn<F>(&mut self, f: F)
-    where F: FnOnce() + Send {
+    fn spawn(&mut self, f: fn() / {Fiber}) {
         self.fibers.push(spawn(f));
     }
 
@@ -1205,9 +1196,9 @@ All concurrency operations are effects. The `Async` effect from earlier spec ver
 
 ```blood
 effect Fiber {
-    op spawn<T: Send>(f: fn() -> T / {Fiber} + Send) -> FiberHandle<T>;
-    op spawn_with<T: Send>(config: FiberConfig, f: fn() -> T / {Fiber} + Send) -> FiberHandle<T>;
-    op spawn_blocking<T: Send>(f: fn() -> T + Send) -> FiberHandle<T>;
+    op spawn<T>(f: fn() -> T / {Fiber}) -> FiberHandle<T>;
+    op spawn_with<T>(config: FiberConfig, f: fn() -> T / {Fiber}) -> FiberHandle<T>;
+    op spawn_blocking<T>(f: fn() -> T) -> FiberHandle<T>;
     op current() -> FiberHandle<()>;
     op yield();
     op sleep(duration: Duration);
@@ -1225,15 +1216,18 @@ effect Channel<T> {
 }
 ```
 
-**`Send` bounds** (ADR-036 Sub-5): `Send` and `Sync` are auto-derived traits based on memory tier:
+**Fiber-crossing rules** (replaces Rust-style `Send`/`Sync` traits): Whether a value can cross fiber boundaries is determined automatically by the compiler from the value's **memory tier**. No explicit trait bounds are needed — the compiler checks at `spawn` call sites that all captured values are fiber-transferable.
 
-| Memory Tier | Send? | Sync? | Reason |
-|-------------|-------|-------|--------|
-| Tier 0 (stack) | Yes (if fields Send) | No | Stack-local |
-| Tier 1 (region), mutable | No | No | Fiber-private |
-| Tier 1 (region), Frozen | Yes | Yes | Deeply immutable |
-| Tier 2/3 (persistent) | Yes | Yes | Ref-counted, designed for sharing |
-| Linear values | Yes (via transfer) | No | Unique ownership |
+| Memory Tier | Transferable? | Shareable? | Rationale |
+|-------------|--------------|-----------|-----------|
+| Tier 0 (stack) | Yes | No | Pure value — copy/move semantics |
+| Tier 1 (region), mutable | No | No | Fiber-local region — region isolation invariant |
+| Tier 1 (region), Frozen | Yes | Yes | Deeply immutable — no mutation hazard |
+| Tier 2/3 (persistent) | Yes | Yes | Ref-counted, designed for cross-fiber sharing |
+| Linear values | Yes (transfer) | No | Unique ownership moves to target fiber |
+| Raw pointers | No | No | No safety guarantees — requires `@unsafe` |
+
+> **Design note**: Blood does not have `Send` or `Sync` traits. In Rust, these traits exist because the type system has no concept of memory tiers — `Send`/`Sync` encode thread-safety information that Blood's tier system already captures. Blood's compiler derives fiber-crossing safety from the type's allocation tier, which is fundamentally more precise because it is based on the actual memory model rather than manually-maintained trait implementations. See GRAMMAR.md §3.4.1 for the design note on this decision.
 
 ### 8.2 Deep/Shallow Handler Concurrency Semantics
 
@@ -1312,10 +1306,10 @@ fn region_fiber_example() / {Fiber} {
     region local_data {
         let buffer = allocate_buffer();  // In local_data region
 
-        // WRONG: Cannot share region reference (not Send)
-        // spawn(|| use_buffer(&buffer));  // COMPILE ERROR: &Region<T> is not Send
+        // WRONG: Cannot share mutable region reference (not fiber-transferable)
+        // spawn(|| use_buffer(&buffer));  // COMPILE ERROR: mutable Tier 1 reference is not fiber-transferable
 
-        // CORRECT: Promote to Tier 3 (Frozen is Send+Sync)
+        // CORRECT: Promote to Tier 3 (Frozen is fiber-transferable + shareable)
         let shared = persist(buffer.clone());
         spawn(|| use_buffer(&shared));
 

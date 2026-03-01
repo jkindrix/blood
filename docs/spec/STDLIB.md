@@ -1119,7 +1119,7 @@ struct Receiver<T> {
     channel: Arc<Channel<T>>,
 }
 
-impl<T: Send> Channel<T> {
+impl<T> Channel<T> {
     /// Creates a bounded channel with the specified capacity.
     fn bounded(capacity: usize) -> (Sender<T>, Receiver<T>) / {Allocate}
 
@@ -1127,15 +1127,15 @@ impl<T: Send> Channel<T> {
     fn unbounded() -> (Sender<T>, Receiver<T>) / {Allocate}
 }
 
-impl<T: Send> Sender<T> {
+impl<T> Sender<T> {
     /// Sends a value, blocking if the channel is full.
-    fn send(&self, value: T) -> Result<(), SendError<T>> / {Async}
+    fn send(&self, value: T) -> Result<(), SendError<T>> / {Fiber}
 
     /// Attempts to send without blocking.
     fn try_send(&self, value: T) -> Result<(), TrySendError<T>> / pure
 
     /// Sends a value with a timeout.
-    fn send_timeout(&self, value: T, timeout: Duration) -> Result<(), SendTimeoutError<T>> / {Async}
+    fn send_timeout(&self, value: T, timeout: Duration) -> Result<(), SendTimeoutError<T>> / {Fiber}
 
     /// Returns true if the channel is full.
     fn is_full(&self) -> bool / pure
@@ -1150,19 +1150,19 @@ impl<T: Send> Sender<T> {
     fn close(&self) / pure
 }
 
-impl<T: Send> Clone for Sender<T> {
+impl<T> Clone for Sender<T> {
     fn clone(&self) -> Sender<T> / pure
 }
 
-impl<T: Send> Receiver<T> {
+impl<T> Receiver<T> {
     /// Receives a value, blocking if the channel is empty.
-    fn recv(&self) -> Result<T, RecvError> / {Async}
+    fn recv(&self) -> Result<T, RecvError> / {Fiber}
 
     /// Attempts to receive without blocking.
     fn try_recv(&self) -> Result<T, TryRecvError> / pure
 
     /// Receives a value with a timeout.
-    fn recv_timeout(&self, timeout: Duration) -> Result<T, RecvTimeoutError> / {Async}
+    fn recv_timeout(&self, timeout: Duration) -> Result<T, RecvTimeoutError> / {Fiber}
 
     /// Returns true if the channel is empty.
     fn is_empty(&self) -> bool / pure
@@ -1171,13 +1171,13 @@ impl<T: Send> Receiver<T> {
     fn len(&self) -> usize / pure
 
     /// Creates an iterator that receives messages until the channel is closed.
-    fn iter(&self) -> impl Iterator<Item = T> / {Async}
+    fn iter(&self) -> impl Iterator<Item = T> / {Fiber}
 
     /// Closes the receiver, preventing further receives.
     fn close(&self) / pure
 }
 
-impl<T: Send> Clone for Receiver<T> {
+impl<T> Clone for Receiver<T> {
     fn clone(&self) -> Receiver<T> / pure
 }
 
@@ -1287,13 +1287,13 @@ impl<T> RwLock<T> {
     fn new(value: T) -> RwLock<T> / pure
 
     /// Acquires shared read access, blocking if a writer holds the lock.
-    fn read(&self) -> RwLockReadGuard<T> / {Async}
+    fn read(&self) -> RwLockReadGuard<T> / {Fiber}
 
     /// Attempts to acquire read access without blocking.
     fn try_read(&self) -> Option<RwLockReadGuard<T>> / pure
 
     /// Acquires exclusive write access, blocking until no readers or writers.
-    fn write(&self) -> RwLockWriteGuard<T> / {Async}
+    fn write(&self) -> RwLockWriteGuard<T> / {Fiber}
 
     /// Attempts to acquire write access without blocking.
     fn try_write(&self) -> Option<RwLockWriteGuard<T>> / pure
@@ -1339,7 +1339,7 @@ impl<T> Mutex<T> {
     fn new(value: T) -> Mutex<T> / pure
 
     /// Acquires the lock, blocking until available.
-    fn lock(&self) -> MutexGuard<T> / {Async}
+    fn lock(&self) -> MutexGuard<T> / {Fiber}
 
     /// Attempts to acquire the lock without blocking.
     fn try_lock(&self) -> Option<MutexGuard<T>> / pure
@@ -2099,158 +2099,65 @@ trait Overflowing: Sized {
 }
 ```
 
-### 5.9 Thread Safety Markers
+### 5.9 Fiber-Crossing Safety
 
-Marker traits for thread-safe data sharing.
+Blood does not have `Send` or `Sync` marker traits. Instead, the compiler automatically
+determines whether a value can be transferred across fiber boundaries based on its
+**memory tier** (see MEMORY_MODEL.md §1.3).
 
-```blood
-/// Types that can be transferred across fiber boundaries.
-///
-/// A type is `Send` if it is safe to send it to another fiber.
-/// This property is checked by the compiler and cannot be implemented manually.
-///
-/// # Auto-implementation
-/// Types are automatically `Send` if all of their components are `Send`.
-///
-/// # Non-Send Types
-/// - `*const T`, `*mut T` (raw pointers)
-/// - `Rc<T>` (non-atomic reference counting)
-/// - Types containing non-Send fields
-///
-/// # Example
-/// ```blood
-/// fn spawn_work<T: Send>(data: T) / {Async} {
-///     spawn(|| {
-///         // data can be safely used in the new fiber
-///         process(data)
-///     })
-/// }
-/// ```
-#[lang = "send"]
-unsafe trait Send {
-    // Marker trait - compiler verifies automatically
-}
+> **Design note — no Send/Sync traits**: Rust uses `Send` and `Sync` marker traits with
+> `unsafe impl` and negative impls to control cross-thread data transfer. Blood replaces
+> this with a compiler-automatic check based on the memory tier system. Every type's
+> tier is known at compile time, so no user-facing trait machinery is needed. This
+> eliminates an entire class of `unsafe` code (manual Send/Sync impls) while providing
+> equivalent safety guarantees. See ADR-036.
 
-/// Types that can be safely shared between fibers via shared references.
-///
-/// A type is `Sync` if `&T` is `Send`. This means multiple fibers can
-/// hold references to the same value simultaneously.
-///
-/// # Auto-implementation
-/// Types are automatically `Sync` if all of their components are `Sync`.
-///
-/// # Non-Sync Types
-/// - `Cell<T>`, `RefCell<T>` (interior mutability without synchronization)
-/// - `Rc<T>` (non-atomic reference counting)
-/// - Types containing non-Sync fields
-///
-/// # Relationship with Send
-/// - `T: Sync` implies `&T: Send`
-/// - `T: Send + Sync` means the type can be both moved and shared
-///
-/// # Example
-/// ```blood
-/// fn share_data<T: Sync>(data: &T) / {Async} {
-///     let data1 = data
-///     let data2 = data
-///     spawn(|| use_data(data1))
-///     spawn(|| use_data(data2))
-/// }
-/// ```
-#[lang = "sync"]
-unsafe trait Sync {
-    // Marker trait - compiler verifies automatically
-}
+#### 5.9.1 Fiber-Crossing Rules by Memory Tier
 
-// Standard implementations
+| Memory Tier | Fiber-Transferable? | Shared Across Fibers? | Rationale |
+|-------------|--------------------|-----------------------|-----------|
+| **Tier 0** (stack values) | Yes (copied) | Yes (immutable copies) | Value semantics — each fiber gets its own copy |
+| **Tier 1** (region-allocated) | No | No | Region-scoped lifetime — cannot outlive creating fiber's region |
+| **Tier 2** (ref-counted) | No (single-fiber RC) | No | Non-atomic reference counting — not thread-safe |
+| **Tier 2** (atomic RC / `Arc<T>`) | Yes | Yes | Atomic reference counting — thread-safe |
+| **Tier 3** (persistent) | Yes | Yes | Immutable, content-addressed — inherently safe |
 
-// All primitive types are Send + Sync
-unsafe impl Send for bool {}
-unsafe impl Sync for bool {}
-unsafe impl Send for i8 {}
-unsafe impl Sync for i8 {}
-// ... (all primitive types)
+#### 5.9.2 Compiler Enforcement
 
-// Box<T> is Send if T is Send
-unsafe impl<T: Send> Send for Box<T> {}
-// Box<T> is Sync if T is Sync
-unsafe impl<T: Sync> Sync for Box<T> {}
+When a value is captured by a fiber-spawning closure, the compiler checks:
 
-// Vec<T> is Send if T is Send
-unsafe impl<T: Send> Send for Vec<T> {}
-// Vec<T> is Sync if T is Sync
-unsafe impl<T: Sync> Sync for Vec<T> {}
-
-// Arc<T> is Send if T is Send + Sync
-unsafe impl<T: Send + Sync> Send for Arc<T> {}
-// Arc<T> is Sync if T is Send + Sync
-unsafe impl<T: Send + Sync> Sync for Arc<T> {}
-
-// Mutex<T> provides Sync even if T is not Sync (but requires T: Send)
-unsafe impl<T: Send> Send for Mutex<T> {}
-unsafe impl<T: Send> Sync for Mutex<T> {}
-
-// RwLock<T> provides Sync if T is Send + Sync
-unsafe impl<T: Send> Send for RwLock<T> {}
-unsafe impl<T: Send + Sync> Sync for RwLock<T> {}
-
-// Channel endpoints are Send if T is Send
-unsafe impl<T: Send> Send for Sender<T> {}
-unsafe impl<T: Send> Send for Receiver<T> {}
-
-// Atomic types are always Send + Sync
-unsafe impl Send for AtomicI32 {}
-unsafe impl Sync for AtomicI32 {}
-// ... (all atomic types)
-
-// Frozen<T> is always Sync (immutable after creation)
-unsafe impl<T: Freeze> Send for Frozen<T> {}
-unsafe impl<T: Freeze> Sync for Frozen<T> {}
-```
-
-#### 5.9.1 Negative Implementations
-
-Some types explicitly opt out of Send/Sync:
+1. **Value tier**: Is the value's memory tier fiber-transferable per the table above?
+2. **Transitive closure**: All fields of structs/enums must also be fiber-transferable.
+3. **References**: `&T` to a region-allocated value cannot cross fiber boundaries (the region may be deallocated). `&T` to a persistent value can.
 
 ```blood
-// Raw pointers are not Send or Sync
-impl<T> !Send for *const T {}
-impl<T> !Sync for *const T {}
-impl<T> !Send for *mut T {}
-impl<T> !Sync for *mut T {}
+fn example() / {Fiber} {
+    let x: i32 = 42                    // Tier 0 — fiber-transferable (copied)
+    let r = region { Vec.new() }       // Tier 1 — NOT fiber-transferable
+    let shared = Arc.new(Data { ... }) // Tier 2 atomic — fiber-transferable
 
-// Rc is not Send or Sync (use Arc for thread-safe sharing)
-impl<T> !Send for Rc<T> {}
-impl<T> !Sync for Rc<T> {}
-
-// Cell and RefCell are not Sync (interior mutability without sync)
-impl<T> !Sync for Cell<T> {}
-impl<T> !Sync for RefCell<T> {}
-
-// MutexGuard is not Send (must be released on same fiber)
-impl<T> !Send for MutexGuard<'_, T> {}
-
-// PhantomData markers
-struct PhantomNotSend(PhantomData<*const ()>);
-struct PhantomNotSync(PhantomData<Cell<()>>);
+    spawn(fn() {
+        use(x)       // OK: i32 is Tier 0, copied into fiber
+        use(shared)  // OK: Arc is Tier 2 atomic, ref-count bumped
+        // use(r)    // ERROR: region-allocated value cannot cross fiber boundary
+    })
+}
 ```
 
-#### 5.9.2 Thread Safety Guidelines
+#### 5.9.3 Fiber-Crossing Safety by Type
 
-| Type | Send | Sync | Notes |
-|------|------|------|-------|
-| Primitives (i32, bool, etc.) | Yes | Yes | No interior mutability |
-| Box<T> | If T: Send | If T: Sync | Owned heap data |
-| Vec<T> | If T: Send | If T: Sync | Owned collection |
-| Arc<T> | If T: Send+Sync | If T: Send+Sync | Shared ownership |
-| Rc<T> | No | No | Use Arc instead |
-| Mutex<T> | If T: Send | If T: Send | Provides Sync |
-| RwLock<T> | If T: Send | If T: Send+Sync | Multiple readers |
-| Cell<T> | If T: Send | No | Single-threaded interior mut |
-| RefCell<T> | If T: Send | No | Single-threaded borrow checking |
-| AtomicT | Yes | Yes | Lock-free operations |
-| Channel<T> | If T: Send | If T: Send | Inter-fiber communication |
-| Frozen<T> | If T: Freeze | Yes | Deeply immutable |
+| Type | Fiber-Transferable? | Shareable? | Notes |
+|------|--------------------:|:-----------|-------|
+| Primitives (i32, bool, etc.) | Yes | Yes | Tier 0, copied by value |
+| Structs/Enums (all Tier 0 fields) | Yes | Yes | Transitively checked |
+| Region-allocated values | No | No | Lifetime bound to region |
+| `Arc<T>` (T is transferable) | Yes | Yes | Atomic ref-counting |
+| `Mutex<T>` | Yes | Yes | Synchronized access |
+| `RwLock<T>` | Yes | Yes | Synchronized access |
+| `AtomicT` | Yes | Yes | Lock-free operations |
+| `Channel<T>` (T is transferable) | Yes | Yes | Inter-fiber communication |
+| `Frozen<T>` | Yes | Yes | Deeply immutable |
+| Raw pointers (`*const T`, `*mut T`) | No | No | Untracked by tier system |
 
 ---
 
@@ -3399,8 +3306,8 @@ fn benchmark<T, F: fn() -> T>(f: F) -> (T, Duration) / {IO} {
 fn with_timeout<T, F: fn() -> T>(
     f: F,
     timeout: Duration
-) -> Result<T, TimeoutError> / {Async} {
-    // Implementation uses async runtime
+) -> Result<T, TimeoutError> / {Fiber} {
+    // Implementation uses fiber runtime
 }
 
 // Delays
@@ -3663,7 +3570,7 @@ fn read_config(path: &Path) -> Config / {IO, Error<ConfigError>} { ... }
 fn parse_json(input: &str) -> Json / {Error<ParseError>} { ... }
 
 // Good: Network operations
-fn fetch_url(url: &Url) -> Response / {Async, Error<HttpError>} { ... }
+fn fetch_url(url: &Url) -> Response / {Fiber, Error<HttpError>} { ... }
 ```
 
 #### 10.0.2 When to Use Panic
@@ -3843,7 +3750,7 @@ pure                    (no effects)
   │
   └── IO ───────────────(subsumes Log; can do file/network*/env/time)
         │
-        └── Async       (subsumes IO; can spawn/await tasks)
+        └── Fiber       (subsumes IO; can spawn/suspend tasks)
 ```
 
 *\*Network operations are specified but not yet implemented. See §7 implementation status note.*
@@ -3907,14 +3814,14 @@ fn write_file(path: &Path, data: &[u8]) -> unit / {IO, Error<IoError>} {
 }
 ```
 
-### 10.4 Async
+### 10.4 Fiber
 
-Asynchronous operations.
+Fiber-based concurrency operations.
 
 ```blood
-effect Async {
-    op await<T>(future: Future<T>) -> T;
-    op spawn<T>(task: fn() -> T / Async) -> TaskHandle<T>;
+effect Fiber {
+    op suspend<T>(future: Future<T>) -> T;
+    op spawn<T>(task: fn() -> T / Fiber) -> TaskHandle<T>;
     op yield_now() -> unit;
 }
 
@@ -3935,7 +3842,7 @@ struct TaskHandle<T> {
 }
 
 impl<T> TaskHandle<T> {
-    fn join(self) -> T / {Async}
+    fn join(self) -> T / {Fiber}
     fn abort(self) -> unit / pure
 }
 ```
@@ -4295,17 +4202,17 @@ deep handler MockIO for IO {
 }
 ```
 
-### 11.4 Async Handlers
+### 11.4 Fiber Handlers
 
 ```blood
 // Single-threaded executor
-deep handler SingleThreadExecutor for Async {
+deep handler SingleThreadExecutor for Fiber {
     let mut ready_queue: VecDeque<Task>
     let mut waiting: HashMap<TaskId, (Future, Continuation)>
 
     return(x) { x }
 
-    op await(future) {
+    op suspend(future) {
         if future.is_ready() {
             resume(future.get())
         } else {
@@ -4696,13 +4603,13 @@ use std::core::Option;
                     └────┬────┘
                          │
                     ┌────▼────┐
-                    │  Async  │
+                    │  Fiber  │
                     └─────────┘
 ```
 
 Effects lower in the hierarchy subsume those above:
 - `IO` implies `Error`, `State`, `Log` capabilities
-- `Async` implies `IO` capabilities
+- `Fiber` implies `IO` capabilities
 
 ---
 
@@ -4892,9 +4799,9 @@ struct LocalStateHandler<S> {
 
 For large state, consider `Box<S>` or passing by reference.
 
-#### 13.4.2 Async Handler Internals
+#### 13.4.2 Fiber Handler Internals
 
-The async runtime uses:
+The fiber runtime uses:
 
 - **Task Queue**: Lock-free MPSC queue for ready tasks
 - **Wait Set**: HashMap<TaskId, (Future, Continuation)> for blocked tasks

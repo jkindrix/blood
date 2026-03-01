@@ -1829,7 +1829,7 @@ fn share_config() {
 **Proof**:
 1. Regions are created fiber-local (ownership = creating fiber)
 2. The type system prevents region references from crossing fiber boundaries
-3. Spawn operations require values to be `Send`, which excludes region references
+3. Spawn operations require captured values to be fiber-transferable (compiler checks memory tier); mutable Tier 1 region references are not fiber-transferable
 4. Only the owning fiber can access region contents
 5. Therefore, only the owner can dereference region pointers ∎
 
