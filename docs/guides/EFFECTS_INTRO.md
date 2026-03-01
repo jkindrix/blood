@@ -509,23 +509,23 @@ fn test_api_client() {
 }
 ```
 
-### Async Effects
+### Fiber Effects
 
 ```blood
-effect Async {
-    op spawn<T>(task: fn() -> T / Async) -> Handle<T>;
-    op await<T>(handle: Handle<T>) -> T;
+effect Fiber {
+    op spawn<T>(task: fn() -> T / Fiber) -> Handle<T>;
+    op suspend<T>(handle: Handle<T>) -> T;
     op yield();
 }
 
-fn fetch_all(urls: [String]) -> [Response] / {Async, HTTP} {
+fn fetch_all(urls: [String]) -> [Response] / {Fiber, HTTP} {
     let handles = urls.map(|url| {
-        perform Async::spawn(|| {
+        perform Fiber::spawn(|| {
             perform HTTP::get(url)
         })
     });
 
-    handles.map(|h| perform Async::await(h))
+    handles.map(|h| perform Fiber::suspend(h))
 }
 ```
 

@@ -1295,15 +1295,15 @@ fn cmd_build(args: &FileArgs, verbosity: u8, timings: bool) -> ExitCode {
                         let arity = fn_def.sig.inputs.len().min(255) as u8;
 
                         // Determine calling convention
-                        let convention = if fn_def.sig.is_async {
+                        let convention = if fn_def.sig.is_fiber {
                             CallingConvention::Effect
                         } else {
                             CallingConvention::Blood
                         };
 
                         // Build effect mask from function properties
-                        let effects = if fn_def.sig.is_async {
-                            EffectMask::ASYNC
+                        let effects = if fn_def.sig.is_fiber {
+                            EffectMask::FIBER
                         } else {
                             EffectMask::NONE
                         };

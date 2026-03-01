@@ -201,8 +201,8 @@ fn map<E>(f: fn(A) -> B / E) -> C / E
 // === Macros ===
 macro_rules!
 
-// === Async/Concurrency ===
-async fn
+// === Fiber/Concurrency ===
+fiber fn
 spawn
 channels
 ```

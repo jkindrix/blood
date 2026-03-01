@@ -576,7 +576,7 @@ impl Iterator for MyCollection {
 
 ## 6. Concurrency
 
-### 6.1 Async/Await vs Fibers
+### 6.1 Async/Await (Rust) vs Fibers (Blood)
 
 **Rust**: Stackless async/await with executors.
 
@@ -631,8 +631,8 @@ fn main() / {Fiber} {
     let handle1 = spawn(|| task1());
     let handle2 = spawn(|| task2());
 
-    let r1 = await(handle1);
-    let r2 = await(handle2);
+    let r1 = suspend(handle1);
+    let r2 = suspend(handle2);
 }
 ```
 
@@ -1000,7 +1000,7 @@ fn private() / pure {}
 |------|-------|-------|
 | `fn foo() -> T` | `fn foo() -> T / pure` | Effect annotation required |
 | `fn foo() -> Result<T, E>` | `fn foo() -> T / {Error<E>}` | Effects replace Result |
-| `async fn foo()` | `fn foo() / {Fiber}` | Fibers instead of async |
+| `async fn foo()` | `fiber fn foo() / {Fiber}` | Fibers instead of async |
 | `'a` lifetime | (none needed) | Generational pointers |
 | `Box<T>` | Region allocation | `region r { allocate(...) }` |
 | `Rc<T>` / `Arc<T>` | `persist(value)` | Tier 2/3 memory |
@@ -1016,7 +1016,7 @@ fn private() / pure {}
 | `Option<T>` methods | `{Nullable}` |
 | `println!`, `eprintln!` | `{IO}` |
 | `std::fs::*` | `{IO, Error<IoError>}` |
-| `async/await` | `{Fiber}` |
+| `async/await` (Rust) | `{Fiber}` (with `suspend`) |
 | `Mutex<T>`, `RwLock<T>` | `{State<T>}` |
 | Random number generation | `{Random}` |
 | Environment variables | `{Env}` |
@@ -1030,7 +1030,7 @@ When porting Rust code to Blood:
 - [ ] Add effect annotations to all functions
 - [ ] Replace `Result<T, E>` returns with `{Error<E>}` effect
 - [ ] Replace lifetime annotations with generational references
-- [ ] Convert `async fn` to fiber-based `/ {Fiber}`
+- [ ] Convert `async fn` to fiber-based `fiber fn` with `/ {Fiber}`
 - [ ] Replace `unsafe` blocks with `@unsafe` blocks
 - [ ] Convert trait-based DI to effect-based DI
 - [ ] Replace `Box`/`Rc`/`Arc` with appropriate memory tiers

@@ -28,7 +28,7 @@ fn make_test_crate(body_expr: Expr, return_type: Type) -> Crate {
         inputs: Vec::new(),
         output: return_type.clone(),
         is_const: false,
-        is_async: false,
+        is_fiber: false,
         is_unsafe: false,
         generics: Vec::new(),
         const_generics: Vec::new(),

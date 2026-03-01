@@ -147,8 +147,8 @@ pub struct FnSig {
     pub output: Type,
     /// Whether this is a const function.
     pub is_const: bool,
-    /// Whether this is an async function.
-    pub is_async: bool,
+    /// Whether this is a fiber function.
+    pub is_fiber: bool,
     /// Whether this is an unsafe function.
     pub is_unsafe: bool,
     /// Generic type parameters (TyVarIds for each type parameter).
@@ -164,7 +164,7 @@ impl FnSig {
             inputs,
             output,
             is_const: false,
-            is_async: false,
+            is_fiber: false,
             is_unsafe: false,
             generics: Vec::new(),
             const_generics: Vec::new(),

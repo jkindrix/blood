@@ -329,9 +329,9 @@ A program that fetches multiple URLs concurrently and reports results. Demonstra
 use std::net::http::{Client, Response};
 use std::time::Duration;
 
-effect Async {
+effect Fiber {
     fn spawn<T>(task: fn() -> T) -> Future<T>;
-    fn await<T>(future: Future<T>) -> T;
+    fn suspend<T>(future: Future<T>) -> T;
 }
 
 effect Http {
@@ -366,21 +366,21 @@ fn fetch_url(url: String) -> FetchResult with Http, Log {
     }
 }
 
-fn fetch_all(urls: Vec<String>) -> Vec<FetchResult> with Async, Http, Log {
+fn fetch_all(urls: Vec<String>) -> Vec<FetchResult> with Fiber, Http, Log {
     // Spawn all fetches concurrently
     let futures: Vec<Future<FetchResult>> = urls
         .into_iter()
-        .map(|url| do Async.spawn(|| fetch_url(url)))
+        .map(|url| do Fiber.spawn(|| fetch_url(url)))
         .collect();
 
-    // Await all results
+    // Suspend for all results
     futures
         .into_iter()
-        .map(|f| do Async.await(f))
+        .map(|f| do Fiber.suspend(f))
         .collect()
 }
 
-fn main() with Async, Http, Log {
+fn main() with Fiber, Http, Log {
     let urls = vec![
         "https://example.com".to_string(),
         "https://httpbin.org/get".to_string(),
@@ -401,13 +401,13 @@ fn main() with Async, Http, Log {
 }
 
 // Handlers compose naturally
-handler AsyncRuntime: Async {
+handler FiberRuntime: Fiber {
     fn spawn<T>(task: fn() -> T) -> Future<T> {
         // Implementation uses fibers/green threads
         resume(runtime::spawn(task))
     }
 
-    fn await<T>(future: Future<T>) -> T {
+    fn suspend<T>(future: Future<T>) -> T {
         resume(runtime::block_on(future))
     }
 }
@@ -434,11 +434,11 @@ handler ConsoleLog: Log {
 }
 ```
 
-**Blood's Async Approach:**
+**Blood's Fiber Approach:**
 - Effects make concurrency explicit in type signatures
 - Handlers can implement different concurrency strategies
-- No colored functions (async/await syntax pollution)
-- Composable: Log + Http + Async all work together
+- No colored functions (no async/await syntax pollution)
+- Composable: Log + Http + Fiber all work together
 - Testable: swap handlers for deterministic testing
 
 ### Rust Implementation

@@ -426,9 +426,9 @@ fn parse_where_predicate(parser: &mut parser_base.Parser) -> ast.WherePredicate 
 pub fn parse_fn_decl(parser: &mut parser_base.Parser, attrs: Vec<ast.Attribute>, vis: common.Visibility) -> ast.FnDecl {
     let start = parser.current.span;
 
-    // Parse optional qualifiers: const, async, unsafe
+    // Parse optional qualifiers: const, fiber, unsafe
     let is_const = parser.try_consume(token.TokenKind.Const);
-    let is_async = parser.try_consume(token.TokenKind.Async);
+    let is_fiber = parser.try_consume(token.TokenKind.Fiber);
     let is_unsafe = parser.try_consume(token.TokenKind.Unsafe);
 
     parser.advance(); // consume 'fn'
@@ -489,7 +489,7 @@ pub fn parse_fn_decl(parser: &mut parser_base.Parser, attrs: Vec<ast.Attribute>,
     let result = ast.FnDecl {
         attrs: attrs,
         vis: vis,
-        qualifiers: common.FnQualifiers { is_const: is_const, is_async: is_async, is_unsafe: is_unsafe },
+        qualifiers: common.FnQualifiers { is_const: is_const, is_fiber: is_fiber, is_unsafe: is_unsafe },
         name: name,
         type_params: type_params,
         params: params,
@@ -1083,7 +1083,7 @@ fn parse_impl_item(parser: &mut parser_base.Parser) -> ast.ImplItem {
                 ast.ImplItem.Const(const_decl)
             }
         }
-        token.TokenKind.Async => {
+        token.TokenKind.Fiber => {
             ast.ImplItem.Function(parse_fn_decl(parser, attrs, vis))
         }
         token.TokenKind.Unsafe => {
@@ -1101,7 +1101,7 @@ fn parse_impl_item(parser: &mut parser_base.Parser) -> ast.ImplItem {
             let placeholder = ast.FnDecl {
                 attrs: Vec.new(),
                 vis: common.Visibility.Private,
-                qualifiers: common.FnQualifiers { is_const: false, is_async: false, is_unsafe: false },
+                qualifiers: common.FnQualifiers { is_const: false, is_fiber: false, is_unsafe: false },
                 name: common.SpannedSymbol { symbol: common.Symbol { index: 0 }, span: start },
                 type_params: Option.None,
                 params: Vec.new(),
@@ -1325,7 +1325,7 @@ fn parse_trait_item(parser: &mut parser_base.Parser) -> ast.TraitItem {
                 ast.TraitItem.Const(const_decl)
             }
         }
-        token.TokenKind.Async => {
+        token.TokenKind.Fiber => {
             ast.TraitItem.Function(parse_fn_decl(parser, attrs, vis))
         }
         token.TokenKind.Unsafe => {
@@ -1380,7 +1380,7 @@ pub fn parse_declaration(parser: &mut parser_base.Parser) -> ast.Declaration {
                 ast.Declaration.Const(parse_const_decl(parser, attrs, vis))
             }
         }
-        token.TokenKind.Async => {
+        token.TokenKind.Fiber => {
             ast.Declaration.Function(parse_fn_decl(parser, attrs, vis))
         }
         token.TokenKind.Unsafe => {
@@ -1393,7 +1393,7 @@ pub fn parse_declaration(parser: &mut parser_base.Parser) -> ast.Declaration {
                 ast.Declaration.Function(ast.FnDecl {
                     attrs: Vec.new(),
                     vis: common.Visibility.Private,
-                    qualifiers: common.FnQualifiers { is_const: false, is_async: false, is_unsafe: false },
+                    qualifiers: common.FnQualifiers { is_const: false, is_fiber: false, is_unsafe: false },
                     name: common.SpannedSymbol { symbol: common.Symbol { index: 0 }, span: parser.previous.span },
                     type_params: Option.None,
                     params: Vec.new(),
@@ -1552,7 +1552,7 @@ pub fn parse_declaration(parser: &mut parser_base.Parser) -> ast.Declaration {
             let placeholder = ast.FnDecl {
                 attrs: Vec.new(),
                 vis: common.Visibility.Private,
-                qualifiers: common.FnQualifiers { is_const: false, is_async: false, is_unsafe: false },
+                qualifiers: common.FnQualifiers { is_const: false, is_fiber: false, is_unsafe: false },
                 name: common.SpannedSymbol { symbol: common.Symbol { index: 0 }, span: start },
                 type_params: Option.None,
                 params: Vec.new(),

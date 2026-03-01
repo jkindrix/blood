@@ -832,8 +832,8 @@ impl MacroExpander {
             TokenKind::RBrace => "}".to_string(),
             // Keywords
             TokenKind::As => "as".to_string(),
-            TokenKind::Async => "async".to_string(),
-            TokenKind::Await => "await".to_string(),
+            TokenKind::Fiber => "fiber".to_string(),
+            TokenKind::Suspend => "suspend".to_string(),
             TokenKind::Break => "break".to_string(),
             TokenKind::Const => "const".to_string(),
             TokenKind::Continue => "continue".to_string(),

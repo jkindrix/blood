@@ -242,7 +242,7 @@ impl SemanticTokensProvider {
             | TokenKind::Ref | TokenKind::Return | TokenKind::SelfLower | TokenKind::SelfUpper
             | TokenKind::Static | TokenKind::Struct | TokenKind::Super | TokenKind::Trait
             | TokenKind::True | TokenKind::Type | TokenKind::Use | TokenKind::Where
-            | TokenKind::While | TokenKind::Yield | TokenKind::Async | TokenKind::Await
+            | TokenKind::While | TokenKind::Yield | TokenKind::Fiber | TokenKind::Suspend
             | TokenKind::Dyn | TokenKind::Crate | TokenKind::Bridge | TokenKind::Extern => {
                 (Some(TokenType::Keyword as u32), 0)
             }

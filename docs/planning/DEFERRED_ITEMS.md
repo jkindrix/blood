@@ -120,25 +120,16 @@ Items are removed only when fully resolved, with a completion date and commit ha
 
 ---
 
-### DEF-007: `Async` → `Fiber` naming migration
+### ~~DEF-007: `Async` → `Fiber` naming migration~~ ✓
 
 | Field | Value |
 |-------|-------|
 | **Delta** | D9 |
 | **Deferred from** | Phase A (scope decision) |
-| **Deferred to** | Own sub-phase (A.5 or B/C) |
-| **Date** | 2026-02-28 |
+| **Resolved** | 2026-03-01 |
 | **Severity** | High — naming mismatch between spec (CONCURRENCY.md v0.4.0) and compilers |
 
-**What**: ADR-036 renamed `Async`/`Await` to `Fiber`/`Suspend` throughout the spec. Both compilers still use the `Async`/`Await` naming in lexer, parser, AST, HIR, typeck, MIR, and codegen.
-
-**Why**: Touches every compiler phase in both compilers. Too broad for Phase A which is scoped to parser-level syntax. Needs its own CCV pass.
-
-**What it blocks**: Spec compliance for concurrency syntax. Any new fiber-related features would use wrong naming.
-
-**What unblocks it**: Dedicated rename sub-phase with CCV across all 9 clusters in both compilers. Mechanical but high-volume.
-
-**Scale**: Unknown — needs grep audit. Likely hundreds of occurrences across both compilers.
+**Resolution**: Renamed `Async`→`Fiber` and `Await`→`Suspend` across both compilers and all spec/guide documents. Bootstrap compiler: lexer (token variants + keyword aliases), syntax_kind, parser, AST (`is_async`→`is_fiber`), HIR, typeck, codegen, VFT, build cache, LSP, macro expansion. Self-hosted compiler: token.blood, lexer.blood, interner.blood, common.blood, parser_item.blood, parser_expr.blood, parser_base.blood. Both compilers accept both `async`/`await` (backward compat) and `fiber`/`suspend` (new canonical). All spec documents updated: STDLIB.md (effect definition + 11 annotations + handler section), 10 guide/comparison docs. Verification: 1269/1269 lib tests, 344/344 ground-truth, second_gen/third_gen byte-identical (13,079,144 bytes).
 
 ---
 
@@ -200,41 +191,27 @@ Items are removed only when fully resolved, with a completion date and commit ha
 
 ---
 
-### DEF-010: `dyn Trait` vtable `drop_fn` conflicts with Blood's memory model
+### ~~DEF-010: `dyn Trait` vtable `drop_fn` conflicts with Blood's memory model~~ ✓
 
 | Field | Value |
 |-------|-------|
 | **Discovered** | Rust-ism audit (2026-03-01) |
-| **Deferred to** | Pre-DEF-005 (must resolve before implementing dyn Trait) |
-| **Date** | 2026-03-01 |
+| **Resolved** | 2026-03-01 |
 | **Severity** | High — architectural conflict in spec |
 
-**What**: DISPATCH.md §10.8.1 specifies a `drop_fn` slot in the `dyn Trait` vtable layout. Blood has no `Drop` trait — memory cleanup uses region deallocation, Tier 2 reference counting, and `finally` clauses in handlers. The `drop_fn` vtable slot is undefined in Blood's memory model.
-
-**Why deferred**: `dyn Trait` is not yet implemented (DEF-005). But the vtable spec must be corrected before implementation begins.
-
-**What it blocks**: DEF-005 (dyn Trait implementation).
-
-**What unblocks it**: Decide what replaces `drop_fn` in Blood's vtable: region-aware cleanup? `finally` handler? Remove the slot? Update DISPATCH.md §10.8.
+**Resolution**: Removed `drop_fn` from vtable layout in DISPATCH.md §10.8.1. Blood has no `Drop` trait and does not call per-value destructors. Memory cleanup is handled by the tier system (region deallocation, ref-counting, `finally` clauses). Added design note explaining the rationale. Resource cleanup for `dyn Trait` values is the responsibility of enclosing effect handler `finally` clauses, consistent with Blood's explicit resource management model.
 
 ---
 
-### DEF-011: `Send` trait used in spec but never defined
+### ~~DEF-011: `Send` trait used in spec but never defined~~ ✓
 
 | Field | Value |
 |-------|-------|
 | **Discovered** | Rust-ism audit (2026-03-01) |
-| **Deferred to** | Spec addendum |
-| **Date** | 2026-03-01 |
+| **Resolved** | 2026-03-01 |
 | **Severity** | High — undefined symbol in a formal soundness proof |
 
-**What**: `Send` appears in GRAMMAR.md §3.4.1 (fiber spawn signature) and MEMORY_MODEL.md §7.8 (soundness proof) but has no Blood-native definition. In Rust, `Send` is an auto-trait for thread-safe transfer. Blood's region isolation, linear types, and effect system provide orthogonal mechanisms for cross-fiber safety. DESIGN_SPACE_AUDIT.md flags this as "Defaulted" with no resolution.
-
-**Why deferred**: Requires a design decision on whether `Send` is a trait, an effect, a type-level property, or unnecessary in Blood's model.
-
-**What it blocks**: Fiber spawn type safety, soundness proof completeness.
-
-**What unblocks it**: Design decision on Blood-native cross-fiber safety mechanism. ADR needed.
+**Resolution**: Removed `Send`/`Sync` traits entirely from all spec documents. Blood does not need marker traits for fiber-crossing safety — the compiler automatically determines whether a value can cross fiber boundaries based on its **memory tier** (Tier 0 stack values: copied; Tier 1 region: no; Tier 2 non-atomic RC: no; Tier 2 atomic RC: yes; Tier 3 persistent: yes). Updated GRAMMAR.md §3.4.1 (spawn signature), CONCURRENCY.md §2.4/§7.1/§7.2/§8.1/§8.3, MEMORY_MODEL.md §7.8 (Theorem 5 proof), SPECIFICATION.md (spawn signatures), and STDLIB.md §5.9 (replaced "Thread Safety Markers" with "Fiber-Crossing Safety" based on memory tiers). This eliminates an entire class of `unsafe` code while providing equivalent safety guarantees.
 
 ---
 
@@ -322,19 +299,19 @@ Items are removed only when fully resolved, with a completion date and commit ha
 | DEF-002 | UncheckedBlock | Medium | Phase C | Active |
 | DEF-003 | #[unchecked(...)] | Medium | Phase C | Active |
 | DEF-004 | @heap/@stack | Medium | Phase C/E | Active |
-| DEF-005 | dyn Trait | Medium | Phase C | Active — **blocked by DEF-010, DEF-014** |
+| DEF-005 | dyn Trait | Medium | Phase C | Active — **blocked by DEF-014** |
 | DEF-006 | `in` containment | Low | Phase C | Active |
-| DEF-007 | Async → Fiber | High | Sub-phase | Active |
+| ~~DEF-007~~ | ~~Async → Fiber~~ | ~~High~~ | ~~Sub-phase~~ | **RESOLVED** (2026-03-01) |
 | DEF-008 | Continuation tokens | Low | Phase C | Active |
 | DEF-009 | Cast + linearity/regions | Medium | Spec addendum | Active |
-| DEF-010 | `dyn Trait` vtable `drop_fn` | High | Pre-DEF-005 | Active |
-| DEF-011 | `Send` undefined in Blood | High | Spec addendum | Active |
+| ~~DEF-010~~ | ~~`dyn Trait` vtable `drop_fn`~~ | ~~High~~ | ~~Pre-DEF-005~~ | **RESOLVED** (2026-03-01) |
+| ~~DEF-011~~ | ~~`Send` undefined in Blood~~ | ~~High~~ | ~~Spec addendum~~ | **RESOLVED** (2026-03-01) |
 | DEF-012 | `&T`/`&mut T` misleading | Low | Long-term | Active |
 | DEF-013 | `derive` Rust trait names | Low | Stdlib design | Active |
 | DEF-014 | `dyn Trait` vs effects eval | Medium | Pre-DEF-005 | Active |
 | DEF-015 | Result/Option × effects | Medium | Ecosystem guidelines | Active |
 
-**Active: 14 items.** Resolved: 1 (DEF-001).
-**High severity (3)**: DEF-007 (naming mismatch), DEF-010 (`drop_fn` conflict), DEF-011 (`Send` undefined).
+**Active: 11 items.** Resolved: 4 (DEF-001, DEF-007, DEF-010, DEF-011).
+**High severity (0)**: All high-severity items resolved.
 **Medium severity (7)**: DEF-002–005, DEF-009, DEF-014, DEF-015.
 **Low severity (4)**: DEF-006, DEF-008, DEF-012, DEF-013.

@@ -180,7 +180,7 @@ fn compute(x: i32) -> i32 {
 | `Net` | Network access | HTTP requests, sockets |
 | `Time` | Time access | Getting current time |
 | `Random` | Non-determinism | Random number generation |
-| `Async` | Concurrency | Spawning fibers, channels |
+| `Fiber` | Concurrency | Spawning fibers, channels |
 
 ### Security Properties
 
@@ -337,7 +337,7 @@ fn read_file_safe(path: &str) -> Result<Vec<u8>, IoError> {
 Blood's affine type system prevents data races by ensuring unique ownership:
 
 ```blood
-fn no_data_races() with Async {
+fn no_data_races() with Fiber {
     let data = vec![1, 2, 3];
 
     // Move into fiber - original binding invalidated
@@ -354,7 +354,7 @@ fn no_data_races() with Async {
 Communication between fibers uses typed channels:
 
 ```blood
-fn channel_example() with Async {
+fn channel_example() with Fiber {
     let (tx, rx) = channel::<Message>();
 
     spawn {

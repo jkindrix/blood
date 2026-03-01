@@ -206,8 +206,8 @@ impl<'src> Parser<'src> {
                 // Common field names
                 | TokenKind::Type
                 | TokenKind::In
-                | TokenKind::Async
-                | TokenKind::Await
+                | TokenKind::Fiber
+                | TokenKind::Suspend
                 | TokenKind::Move
                 | TokenKind::Ref
                 | TokenKind::With

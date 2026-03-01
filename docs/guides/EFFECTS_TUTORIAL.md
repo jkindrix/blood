@@ -524,7 +524,7 @@ deep handler TracingState<T> for State<T> {
 Use continuation-based handlers when you need:
 - Post-processing after resume
 - Multi-shot semantics (backtracking, non-determinism)
-- Complex control flow (coroutines, async)
+- Complex control flow (coroutines, fibers)
 
 #### Multi-Shot Handlers (~175 cycles per resume)
 
@@ -555,10 +555,10 @@ A **generation snapshot** records the expected generation values of all generati
 3. Not null pointers
 
 ```blood
-fn use_across_suspension() -> i32 / Async {
+fn use_across_suspension() -> i32 / Fiber {
     let data = Box::new(42);      // Heap allocation with generation G
     let global = &SOME_CONSTANT;  // Persistent - NOT captured
-    perform Async.yield();        // Captures: [(data.address, G)]
+    perform Fiber.yield();        // Captures: [(data.address, G)]
     // On resume: validate data.generation == G
     *data                         // Safe access
 }
@@ -610,13 +610,13 @@ Blood's compiler automatically **excludes** certain values to minimize overhead:
 4. **Stack-only locals**: Values that don't escape through the effect
 
 ```blood
-fn optimized_snapshot() / Async {
+fn optimized_snapshot() / Fiber {
     let temp = compute_temp();      // NOT captured (dead after perform)
     let msg = "logging";            // NOT captured (persistent)
     let opt: Option<&Data> = None;  // NOT captured (null)
     let data = get_data();          // CAPTURED (live after perform)
 
-    perform Async.yield();          // Snapshot contains only: data
+    perform Fiber.yield();          // Snapshot contains only: data
 
     process(data);                  // Uses data after resume
 }
@@ -628,13 +628,13 @@ Blood uses **dataflow liveness analysis** to minimize snapshot size:
 
 ```blood
 // Without optimization: would capture ALL refs in scope
-fn naive_capture() / Async {
+fn naive_capture() / Fiber {
     let a = get_ref();  // Captured (used after)
     let b = get_ref();  // Captured (used after)
     let c = get_ref();  // Captured (used after)
     let d = get_ref();  // Dead (not used after)
 
-    perform Async.yield();
+    perform Fiber.yield();
 
     process(a, b, c);   // d is dead - not captured!
 }
@@ -708,18 +708,18 @@ Total: ~4 cycles per reference
 
 ```blood
 // SLOW: Many references live at suspension
-fn slow_process(data: &[Item]) / Async {
+fn slow_process(data: &[Item]) / Fiber {
     let refs: Vec<&Item> = data.iter().collect();  // 1000 refs
     for r in refs {
-        perform Async.yield();  // Captures 1000 refs each time!
+        perform Fiber.yield();  // Captures 1000 refs each time!
         process(r);
     }
 }
 
 // FAST: Minimal references at suspension
-fn fast_process(data: &[Item]) / Async {
+fn fast_process(data: &[Item]) / Fiber {
     for i in 0..data.len() {
-        perform Async.yield();  // Captures only index + data base
+        perform Fiber.yield();  // Captures only index + data base
         process(&data[i]);
     }
 }
@@ -729,19 +729,19 @@ fn fast_process(data: &[Item]) / Async {
 
 ```blood
 // SLOW: Live reference across suspension
-fn slow_transform() / Async {
+fn slow_transform() / Fiber {
     let data = get_large_data();   // Large allocation
-    perform Async.yield();          // Snapshot includes data
+    perform Fiber.yield();          // Snapshot includes data
     transform(data)
 }
 
 // FAST: Transform before suspension
-fn fast_transform() / Async {
+fn fast_transform() / Fiber {
     let result = {
         let data = get_large_data();
         transform(data)  // data dies here
     };
-    perform Async.yield();  // Empty snapshot
+    perform Fiber.yield();  // Empty snapshot
     result
 }
 ```
@@ -750,16 +750,16 @@ fn fast_transform() / Async {
 
 ```blood
 // SLOW: Vector of references
-fn slow_collect() / Async {
+fn slow_collect() / Fiber {
     let items: Vec<&Data> = collect_refs();  // n refs
-    perform Async.yield();  // Captures n refs
+    perform Fiber.yield();  // Captures n refs
     process_all(&items)
 }
 
 // FAST: Vector of indices into shared storage
-fn fast_collect(storage: &Storage) / Async {
+fn fast_collect(storage: &Storage) / Fiber {
     let indices: Vec<u32> = collect_indices();  // No refs!
-    perform Async.yield();  // Captures only: storage (1 ref)
+    perform Fiber.yield();  // Captures only: storage (1 ref)
     for i in indices {
         process(storage.get(i));
     }
@@ -915,15 +915,15 @@ fn sum_items(items: &[i32]) -> i32 / Log {
 
 ```blood
 // SLOW: Capture large structure
-fn process(data: &LargeStruct) / Async {
-    perform Async.yield();  // Captures all of data's refs
+fn process(data: &LargeStruct) / Fiber {
+    perform Fiber.yield();  // Captures all of data's refs
     use_data(data);
 }
 
 // FAST: Extract needed data first
-fn process(data: &LargeStruct) / Async {
+fn process(data: &LargeStruct) / Fiber {
     let value = data.key_field;  // Extract what's needed
-    perform Async.yield();       // Only captures 'value'
+    perform Fiber.yield();       // Only captures 'value'
     use_value(value);
 }
 ```

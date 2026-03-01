@@ -39,10 +39,12 @@ pub enum TokenKind {
     // ============================================================
     #[token("as")]
     As,
+    #[token("fiber")]
     #[token("async")]
-    Async,
+    Fiber,
+    #[token("suspend")]
     #[token("await")]
-    Await,
+    Suspend,
     #[token("break")]
     Break,
     #[token("const")]
@@ -488,8 +490,8 @@ impl TokenKind {
     pub fn as_keyword_str(&self) -> Option<&'static str> {
         match self {
             TokenKind::As => Some("as"),
-            TokenKind::Async => Some("async"),
-            TokenKind::Await => Some("await"),
+            TokenKind::Fiber => Some("fiber"),
+            TokenKind::Suspend => Some("suspend"),
             TokenKind::Break => Some("break"),
             TokenKind::Const => Some("const"),
             TokenKind::Continue => Some("continue"),
@@ -552,8 +554,8 @@ impl TokenKind {
     pub fn description(&self) -> &'static str {
         match self {
             TokenKind::As => "keyword `as`",
-            TokenKind::Async => "keyword `async`",
-            TokenKind::Await => "keyword `await`",
+            TokenKind::Fiber => "keyword `fiber`",
+            TokenKind::Suspend => "keyword `suspend`",
             TokenKind::Break => "keyword `break`",
             TokenKind::Const => "keyword `const`",
             TokenKind::Continue => "keyword `continue`",

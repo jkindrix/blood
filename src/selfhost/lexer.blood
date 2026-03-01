@@ -788,8 +788,8 @@ impl<'src> Lexer<'src> {
         if first == 97 {
             // 'a'
             if len == 2 && self.byte_at(start + 1) == 115 { return token.TokenKind.As; }
-            if len == 5 && self.match_bytes(start, 97, 115, 121, 110, 99) { return token.TokenKind.Async; }
-            if len == 5 && self.match_bytes(start, 97, 119, 97, 105, 116) { return token.TokenKind.Await; }
+            if len == 5 && self.match_bytes(start, 97, 115, 121, 110, 99) { return token.TokenKind.Fiber; }  // async -> Fiber (compat)
+            if len == 5 && self.match_bytes(start, 97, 119, 97, 105, 116) { return token.TokenKind.Suspend; }  // await -> Suspend (compat)
             if len == 6 && self.match_bytes6(start, 97, 102, 102, 105, 110, 101) { return token.TokenKind.Affine; }
             if len == 8 && self.match_bytes8(start, 97, 98, 115, 116, 114, 97, 99, 116) { return token.TokenKind.Abstract; }
         }
@@ -827,6 +827,7 @@ impl<'src> Lexer<'src> {
         if first == 102 {
             // 'f'
             if len == 5 && self.match_bytes(start, 102, 97, 108, 115, 101) { return token.TokenKind.False; }
+            if len == 5 && self.match_bytes(start, 102, 105, 98, 101, 114) { return token.TokenKind.Fiber; }
             if len == 2 && self.byte_at(start + 1) == 110 { return token.TokenKind.Fn; }
             if len == 3 && self.match_bytes3(start, 102, 111, 114) { return token.TokenKind.For; }
             if len == 6 && self.match_bytes6(start, 102, 111, 114, 97, 108, 108) { return token.TokenKind.Forall; }
@@ -887,6 +888,7 @@ impl<'src> Lexer<'src> {
             if len == 6 && self.match_bytes6(start, 115, 116, 97, 116, 105, 99) { return token.TokenKind.Static; }
             if len == 6 && self.match_bytes6(start, 115, 116, 114, 117, 99, 116) { return token.TokenKind.Struct; }
             if len == 5 && self.match_bytes(start, 115, 117, 112, 101, 114) { return token.TokenKind.Super; }
+            if len == 7 && self.match_bytes7(start, 115, 117, 115, 112, 101, 110, 100) { return token.TokenKind.Suspend; }
         }
         if first == 83 {
             // 'S'

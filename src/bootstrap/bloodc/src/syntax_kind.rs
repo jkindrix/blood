@@ -142,10 +142,10 @@ pub enum SyntaxKind {
     KwShallow,
 
     // Capability keywords
-    /// `async`
-    KwAsync,
-    /// `await`
-    KwAwait,
+    /// `fiber`
+    KwFiber,
+    /// `suspend`
+    KwSuspend,
     /// `unsafe`
     KwUnsafe,
     /// `move`
@@ -466,8 +466,8 @@ pub enum SyntaxKind {
     CompoundAssignExpr,
     /// Let expression: `let x = y`
     LetExpr,
-    /// Await expression: `x.await`
-    AwaitExpr,
+    /// Suspend expression: `x.suspend`
+    SuspendExpr,
     /// Try expression: `x?`
     TryExpr,
     /// Perform expression: `perform op()`
@@ -478,8 +478,8 @@ pub enum SyntaxKind {
     ResumeExpr,
     /// Unsafe block: `unsafe { }`
     UnsafeExpr,
-    /// Async block: `async { }`
-    AsyncExpr,
+    /// Fiber block: `fiber { }`
+    FiberExpr,
 
     // ============================================================
     // Syntax Nodes - Statements
@@ -585,8 +585,8 @@ impl SyntaxKind {
                 | SyntaxKind::KwPure
                 | SyntaxKind::KwDeep
                 | SyntaxKind::KwShallow
-                | SyntaxKind::KwAsync
-                | SyntaxKind::KwAwait
+                | SyntaxKind::KwFiber
+                | SyntaxKind::KwSuspend
                 | SyntaxKind::KwUnsafe
                 | SyntaxKind::KwMove
                 | SyntaxKind::KwLinear

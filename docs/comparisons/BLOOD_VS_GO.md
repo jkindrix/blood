@@ -200,9 +200,9 @@ func fetchAll(urls []string) []Result {
 Blood uses effects for concurrency:
 
 ```blood
-effect Async {
+effect Fiber {
     fn spawn<T>(task: fn() -> T) -> Future<T>;
-    fn await<T>(future: Future<T>) -> T;
+    fn suspend<T>(future: Future<T>) -> T;
 }
 
 effect Channel<T> {
@@ -210,11 +210,11 @@ effect Channel<T> {
     fn recv() -> T;
 }
 
-fn fetch_all(urls: Vec<String>) -> Vec<Result> with Async, Http {
+fn fetch_all(urls: Vec<String>) -> Vec<Result> with Fiber, Http {
     let futures: Vec<Future<Result>> = urls
         .into_iter()
         .map(|url| {
-            do Async.spawn(|| {
+            do Fiber.spawn(|| {
                 match do Http.get(url.clone()) {
                     Ok(resp) => Result { url, body: resp.body(), err: None },
                     Err(e) => Result { url, body: vec![], err: Some(e) },
@@ -225,7 +225,7 @@ fn fetch_all(urls: Vec<String>) -> Vec<Result> with Async, Http {
 
     futures
         .into_iter()
-        .map(|f| do Async.await(f))
+        .map(|f| do Fiber.suspend(f))
         .collect()
 }
 ```
@@ -242,7 +242,7 @@ fn fetch_all(urls: Vec<String>) -> Vec<Result> with Async, Http {
 | Aspect | Go | Blood |
 |--------|-----|-------|
 | Model | Goroutines + channels | Effect handlers |
-| Syntax | `go func()` + `<-chan` | `do Async.spawn()` |
+| Syntax | `go func()` + `<-chan` | `do Fiber.spawn()` |
 | Testability | Requires mocking | Handler swapping |
 | Race detection | Runtime flag | Type-level (effects) |
 | Overhead | Very low | Low |
@@ -606,15 +606,15 @@ func processItems(items []Item) []Result {
 
 **Blood:**
 ```blood
-fn process_items(items: Vec<Item>) -> Vec<Result> with Async {
+fn process_items(items: Vec<Item>) -> Vec<Result> with Fiber {
     let futures: Vec<_> = items
         .into_iter()
-        .map(|item| do Async.spawn(|| process(item)))
+        .map(|item| do Fiber.spawn(|| process(item)))
         .collect();
 
     futures
         .into_iter()
-        .map(|f| do Async.await(f))
+        .map(|f| do Fiber.suspend(f))
         .collect()
 }
 ```
@@ -728,7 +728,7 @@ fn process(data: Vec<u8>) -> Result with Fail {
 1. Replace `error` returns with `Fail` effect
 2. Replace `nil` with `Option`
 3. Use pattern matching instead of type assertions
-4. Replace goroutines with `Async` effect
+4. Replace goroutines with `Fiber` effect
 
 ### From Blood to Go
 

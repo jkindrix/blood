@@ -184,11 +184,11 @@ region outer {
 When an effect handler suspends execution, regions are **preserved**:
 
 ```blood
-fn async_process() -> Result<Data> / Async {
+fn fiber_process() -> Result<Data> / Fiber {
     region temp {
         let partial = start_processing();
 
-        await fetch_more_data();  // Suspends here
+        suspend fetch_more_data();  // Suspends here
         // Region temp is preserved across suspension!
 
         finish_processing(partial)  // partial still valid

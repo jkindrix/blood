@@ -645,7 +645,7 @@ CANONICALIZE_EFFECT_ROW(effect_row, type_param_map) → CanonicalEffectRow:
 
 CANONICALIZE_SINGLE_EFFECT(effect, type_param_map) → CanonicalEffect:
     MATCH effect:
-        // Simple effect: IO, Async
+        // Simple effect: IO, Fiber
         SimpleEffect(name) →
             hash ← RESOLVE_EFFECT_TO_HASH(name)
             RETURN CanonicalSimpleEffect(hash)

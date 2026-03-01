@@ -21,7 +21,7 @@ impl<'src> Parser<'src> {
                     Some(Declaration::Const(self.parse_const_decl(attrs, vis)))
                 }
             }
-            TokenKind::Async => Some(Declaration::Function(self.parse_fn_decl(attrs, vis))),
+            TokenKind::Fiber => Some(Declaration::Function(self.parse_fn_decl(attrs, vis))),
             TokenKind::Struct => Some(Declaration::Struct(self.parse_struct_decl(attrs, vis))),
             TokenKind::Enum => Some(Declaration::Enum(self.parse_enum_decl(attrs, vis))),
             TokenKind::Effect => Some(Declaration::Effect(self.parse_effect_decl(attrs))),
@@ -82,15 +82,15 @@ impl<'src> Parser<'src> {
 
         while matches!(
             self.current.kind,
-            TokenKind::Const | TokenKind::Async | TokenKind::AtUnsafe
+            TokenKind::Const | TokenKind::Fiber | TokenKind::AtUnsafe
         ) {
             match self.current.kind {
                 TokenKind::Const => {
                     qualifiers.is_const = true;
                     self.advance();
                 }
-                TokenKind::Async => {
-                    qualifiers.is_async = true;
+                TokenKind::Fiber => {
+                    qualifiers.is_fiber = true;
                     self.advance();
                 }
                 TokenKind::AtUnsafe => {
@@ -1115,7 +1115,7 @@ impl<'src> Parser<'src> {
             let vis = self.parse_visibility();
 
             match self.current.kind {
-                TokenKind::Fn | TokenKind::Const | TokenKind::Async => {
+                TokenKind::Fn | TokenKind::Const | TokenKind::Fiber => {
                     items.push(TraitItem::Function(self.parse_fn_decl(attrs, vis)));
                 }
                 TokenKind::Type => {
@@ -1193,7 +1193,7 @@ impl<'src> Parser<'src> {
             let vis = self.parse_visibility();
 
             match self.current.kind {
-                TokenKind::Fn | TokenKind::Const | TokenKind::Async => {
+                TokenKind::Fn | TokenKind::Const | TokenKind::Fiber => {
                     items.push(ImplItem::Function(self.parse_fn_decl(attrs, vis)));
                 }
                 TokenKind::Type => {

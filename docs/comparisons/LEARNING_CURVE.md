@@ -92,7 +92,7 @@ Blood removes these Rust concepts entirely:
 
 Blood simplifies these:
 - Ownership → Generational references (simpler mental model)
-- Async/await → Effect handlers (more general, composable)
+- Async/await (Rust) → Fiber effect handlers (more general, composable)
 - Error handling → Effects (can use traditional or effectful)
 
 ### Comparison: Go (10 Core Concepts)
@@ -425,7 +425,7 @@ vec.push(4);  // Fine!
 println!("{}", first);
 ```
 
-### 3. Unified Async Model
+### 3. Unified Concurrency Model (Fiber Effects)
 
 Rust:
 ```rust
@@ -449,7 +449,7 @@ fn fetch(url: String) -> Result<String, Error> with Http {
 Blood achieves a balance between safety and learnability that Rust struggles with. The key innovations:
 
 1. **Generational references** provide memory safety without complex lifetime rules
-2. **Algebraic effects** provide a unified model for side effects and async
+2. **Algebraic effects** provide a unified model for side effects and concurrency (via Fiber)
 3. **Simpler ownership** lets you focus on logic, not fighting the compiler
 
 For most developers, Blood offers Rust-level safety with Go-level simplicity. The learning curve is front-loaded with familiar concepts, with advanced features (effects, handlers) introduced gradually.

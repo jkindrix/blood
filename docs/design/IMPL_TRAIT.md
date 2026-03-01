@@ -33,7 +33,7 @@
    - 6.1 [Effect-Polymorphic Return Types](#61-effect-polymorphic-return-types)
    - 6.2 [Existential Effects](#62-existential-effects)
    - 6.3 [`impl Effect` as a Concept](#63-impl-effect-as-a-concept)
-   - 6.4 [Async Desugaring Analogy](#64-async-desugaring-analogy)
+   - 6.4 [Fiber Desugaring Analogy](#64-fiber-desugaring-analogy)
 7. [The Case FOR Adding `impl Trait`](#7-the-case-for-adding-impl-trait)
 8. [The Case AGAINST Adding `impl Trait`](#8-the-case-against-adding-impl-trait)
 9. [Recommendation](#9-recommendation)
@@ -419,7 +419,7 @@ This would mean "the returned function performs some effect that satisfies the L
 
 **Verdict**: `impl Effect` is theoretically coherent but practically unnecessary given Blood's handler mechanism.
 
-### 6.4 Async Desugaring Analogy
+### 6.4 Fiber Desugaring Analogy
 
 In Rust, `async fn` desugars to a function returning `impl Future`. This is the single most common use of RPIT:
 
@@ -429,14 +429,14 @@ async fn fetch(url: &str) -> Data { ... }
 fn fetch(url: &str) -> impl Future<Output = Data> { ... }
 ```
 
-Blood does not need this because it models async as an effect:
+Blood does not need this because it models concurrency as a Fiber effect:
 
 ```blood
-// Blood: async is an effect, not an opaque return type
-fn fetch(url: &str) -> Data / {Async} { ... }
+// Blood: concurrency is a Fiber effect, not an opaque return type
+fn fetch(url: &str) -> Data / {Fiber} { ... }
 ```
 
-The `/ {Async}` effect annotation replaces what Rust needs `impl Future` for. The effect handler provides the runtime implementation (event loop, thread pool, etc.) without requiring an opaque type.
+The `/ {Fiber}` effect annotation replaces what Rust needs `impl Future` for. The effect handler provides the runtime implementation (event loop, thread pool, etc.) without requiring an opaque type.
 
 This is a significant advantage of Blood's design — it eliminates what is arguably the largest driver of `impl Trait` adoption in Rust.
 
@@ -521,7 +521,7 @@ In Blood, `impl` already means "implement a trait for a type" (`impl Block`). Us
 As shown in Section 3.1, APIT is unnecessary in Blood. This eliminates roughly half of `impl Trait`'s use cases.
 
 For the return-position case:
-- Blood's async is an effect, not `impl Future` — eliminating the largest RPIT driver
+- Blood's Fiber is an effect, not `impl Future` — eliminating the largest RPIT driver
 - Blood can use explicit associated types for trait return types
 - Blood can use type aliases for named opaque types
 
@@ -533,7 +533,7 @@ Rust has been designing `impl Trait` since 2016 and the type-alias form (TAIT) i
 
 Many Rust closure-return patterns exist because Rust lacks first-class effects:
 - Callbacks (replaced by effect handlers in Blood)
-- Async combinators (replaced by `/ {Async}` in Blood)
+- Async combinators (replaced by `/ {Fiber}` in Blood)
 - Error handling closures (replaced by `/ {Error<E>}` in Blood)
 
 With these use cases addressed by effects, the remaining need for closure-returning functions is smaller in Blood than in Rust.
@@ -622,8 +622,8 @@ Opaque return types must declare their effects explicitly:
 
 ```blood
 // The effect row is visible even if the type is opaque
-type AsyncIter = opaque Iterator<Item = i32>
-fn make_iter() -> AsyncIter / {IO} { ... }
+type FiberIter = opaque Iterator<Item = i32>
+fn make_iter() -> FiberIter / {IO} { ... }
 ```
 
 ### 10.4 Type Stability

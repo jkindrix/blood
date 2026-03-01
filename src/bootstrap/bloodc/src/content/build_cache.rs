@@ -666,7 +666,7 @@ fn hash_fn_sig(sig: &hir::FnSig, items: &HashMap<DefId, hir::Item>, hasher: &mut
     }
     hash_type(&sig.output, items, hasher);
     hasher.update_u8(if sig.is_const { 1 } else { 0 });
-    hasher.update_u8(if sig.is_async { 1 } else { 0 });
+    hasher.update_u8(if sig.is_fiber { 1 } else { 0 });
     hasher.update_u8(if sig.is_unsafe { 1 } else { 0 });
 }
 

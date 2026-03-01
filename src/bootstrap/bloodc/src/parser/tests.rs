@@ -71,8 +71,8 @@ fn test_pure_function() {
 }
 
 #[test]
-fn test_async_function() {
-    let source = "async fn fetch_data(url: String) -> Data / {IO, Async} { data }";
+fn test_fiber_function() {
+    let source = "fiber fn fetch_data(url: String) -> Data / {IO, Fiber} { data }";
     insta::assert_snapshot!(parse_to_debug(source));
 }
 
@@ -2273,7 +2273,7 @@ mod proptest_tests {
                     | "impl" | "pub" | "mod" | "use" | "const" | "static" | "mut"
                     | "ref" | "self" | "Self" | "true" | "false" | "as" | "in"
                     | "where" | "type" | "effect" | "handler" | "perform" | "resume"
-                    | "try" | "with" | "pure" | "async" | "move" | "dyn" | "unsafe"
+                    | "try" | "with" | "pure" | "fiber" | "move" | "dyn" | "unsafe"
             )
         })
     }

@@ -13,7 +13,7 @@ This cookbook provides practical patterns and recipes for using Blood's algebrai
 2. [State Management](#2-state-management)
 3. [Error Handling](#3-error-handling)
 4. [Logging and Tracing](#4-logging-and-tracing)
-5. [Async/Concurrent Patterns](#5-asyncconcurrent-patterns)
+5. [Fiber/Concurrent Patterns](#5-fiberconcurrent-patterns)
 6. [Effect Composition](#6-effect-composition)
 7. [Handler Optimization](#7-handler-optimization)
 8. [Testing with Effects](#8-testing-with-effects)
@@ -319,19 +319,19 @@ handler SilentLogger for Logger {
 
 ---
 
-## 5. Async/Concurrent Patterns
+## 5. Fiber/Concurrent Patterns
 
-### 5.1 Async Effect
+### 5.1 Fiber Effect
 
 ```blood
-effect Async {
-    op await<T>(future: Future<T>) -> T;
-    op spawn<T>(f: fn() -> T / {Async}) -> FiberHandle<T>;
+effect Fiber {
+    op suspend<T>(future: Future<T>) -> T;
+    op spawn<T>(f: fn() -> T / {Fiber}) -> FiberHandle<T>;
     op yield_();
 }
 
-fn fetch_data() / {Async, IO} -> Data {
-    let response = perform Async.await(http_get("https://api.example.com/data"));
+fn fetch_data() / {Fiber, IO} -> Data {
+    let response = perform Fiber.suspend(http_get("https://api.example.com/data"));
     response.json()
 }
 ```
@@ -339,13 +339,13 @@ fn fetch_data() / {Async, IO} -> Data {
 ### 5.2 Parallel Execution
 
 ```blood
-fn fetch_all(urls: Vec<String>) / {Async, IO} -> Vec<Response> {
+fn fetch_all(urls: Vec<String>) / {Fiber, IO} -> Vec<Response> {
     let handles: Vec<FiberHandle<Response>> = urls.iter()
-        .map(|url| perform Async.spawn(|| http_get(url)))
+        .map(|url| perform Fiber.spawn(|| http_get(url)))
         .collect();
 
     handles.iter()
-        .map(|h| perform Async.await(h))
+        .map(|h| perform Fiber.suspend(h))
         .collect()
 }
 ```
@@ -353,13 +353,13 @@ fn fetch_all(urls: Vec<String>) / {Async, IO} -> Vec<Response> {
 ### 5.3 Rate Limiting Handler
 
 ```blood
-handler RateLimiter(rate: i32, per: Duration) for Async {
+handler RateLimiter(rate: i32, per: Duration) for Fiber {
     state: tokens: i32 = rate
     state: last_refill: Instant = Instant::now()
 
     return(x) { x }
 
-    await(future) {
+    suspend(future) {
         // Refill tokens
         let now = Instant::now();
         if now - last_refill >= per {
@@ -369,12 +369,12 @@ handler RateLimiter(rate: i32, per: Duration) for Async {
 
         // Wait for token
         while tokens == 0 {
-            perform Async.yield_();
+            perform Fiber.yield_();
             // Check again after yield
         }
 
         tokens = tokens - 1;
-        resume(future.await)
+        resume(future.suspend)
     }
 
     spawn(f) {
@@ -399,12 +399,12 @@ fn process_order(order_id: i32) / {
     State<OrderState>,
     Error<OrderError>,
     Logger,
-    Async,
+    Fiber,
     IO
 } -> Receipt {
     perform Logger.log(LogLevel::Info, "Processing order {}".format(order_id));
 
-    let order = perform Async.await(fetch_order(order_id));
+    let order = perform Fiber.suspend(fetch_order(order_id));
 
     if !order.is_valid() {
         perform Error.throw(OrderError::InvalidOrder);
@@ -412,7 +412,7 @@ fn process_order(order_id: i32) / {
 
     perform State.put(OrderState::Processing);
 
-    let receipt = perform Async.await(charge_card(order));
+    let receipt = perform Fiber.suspend(charge_card(order));
 
     perform State.put(OrderState::Complete);
     perform Logger.log(LogLevel::Info, "Order {} complete".format(order_id));
@@ -425,7 +425,7 @@ fn process_order(order_id: i32) / {
 
 ```blood
 fn run_order_processing() {
-    with AsyncRuntime handle {
+    with FiberRuntime handle {
         with TryCatch<OrderError> handle {
             with StateHandler(OrderState::Pending) handle {
                 with ConsoleLogger handle {

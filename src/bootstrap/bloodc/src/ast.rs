@@ -284,7 +284,7 @@ pub struct FnDecl {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct FnQualifiers {
     pub is_const: bool,
-    pub is_async: bool,
+    pub is_fiber: bool,
     pub is_unsafe: bool,
 }
 

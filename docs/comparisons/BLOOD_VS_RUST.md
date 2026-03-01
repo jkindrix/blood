@@ -208,9 +208,9 @@ effect IO {
     fn println(msg: String) -> ();
 }
 
-effect Async {
+effect Fiber {
     fn spawn<T>(task: fn() -> T) -> Future<T>;
-    fn await<T>(f: Future<T>) -> T;
+    fn suspend<T>(f: Future<T>) -> T;
 }
 
 effect Log {
@@ -248,7 +248,7 @@ handler TestIO: IO {
 **Blood's Effect Advantages:**
 - Uniform syntax for all effects
 - Handlers are swappable (great for testing)
-- No "function coloring" (async doesn't infect signatures)
+- No "function coloring" (Fiber effect doesn't infect signatures like Rust's async)
 - Effects compose naturally
 
 **Trade-off:**
@@ -384,7 +384,7 @@ Backtrace:
 - **Formatter**: Planned
 - **Linter**: Basic, expanding
 - **Testing**: Built-in, effect-based mocking native
-- **Async**: Effect handlers (no separate runtime)
+- **Concurrency**: Fiber effect handlers (no separate runtime)
 
 **Maturity Gap:**
 Blood's ecosystem will need years to match Rust's maturity. For production projects today, Rust's ecosystem is a significant advantage.
@@ -469,7 +469,7 @@ fn parse(s: String) -> i32 with Parse {
 2. Replace `Result<T, E>` with effect declarations
 3. Replace `?` with `do Effect.operation()`
 4. Replace trait implementations with handlers
-5. Remove `async`/`await` (use Async effect instead)
+5. Remove `async`/`await` (use Fiber effect instead)
 
 ### From Blood to Rust
 

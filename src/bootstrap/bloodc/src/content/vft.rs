@@ -42,7 +42,7 @@ impl EffectMask {
     pub const IO: Self = Self(1 << 0);
     pub const STATE: Self = Self(1 << 1);
     pub const EXCEPTION: Self = Self(1 << 2);
-    pub const ASYNC: Self = Self(1 << 3);
+    pub const FIBER: Self = Self(1 << 3);
 
     pub fn contains(&self, other: Self) -> bool {
         self.0 & other.0 == other.0
