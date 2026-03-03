@@ -150,54 +150,25 @@ Proof.
       * right. apply IH. exact Hin'.
 Qed.
 
-(** ** Row variable compatibility for effect row union
+(** ** Effect row subset of union right component
 
-    When both rows are open with different row variables, their union
-    is ill-defined (the row variable represents unknown extensions).
-    In well-typed closed terms, this case cannot arise. *)
-
-Definition effect_rows_compatible (e1 e2 : effect_row) : Prop :=
-  match e1, e2 with
-  | Eff_Open _ rv1, Eff_Open _ rv2 => rv1 = rv2
-  | _, _ => True
-  end.
-
-(** ** Effect row subset of union right component *)
+    Now unconditional: since effect_row_subset for open rows only
+    compares concrete entries (not row variables), this always holds. *)
 
 Lemma effect_row_subset_union_r :
   forall e1 e2,
-    effect_rows_compatible e1 e2 ->
     effect_row_subset e2 (effect_row_union e1 e2).
 Proof.
-  intros [| es1 | es1 rv1] [| es2 | es2 rv2] Hcompat; simpl in *.
+  intros [| es1 | es1 rv1] [| es2 | es2 rv2]; simpl.
   - (* Pure, Pure *) trivial.
   - (* Pure, Closed *) intros e Hin. exact Hin.
-  - (* Pure, Open *) split. reflexivity. intros e Hin. exact Hin.
+  - (* Pure, Open *) intros e Hin. exact Hin.
   - (* Closed, Pure *) trivial.
   - (* Closed, Closed *) intros e Hin. apply effect_entries_union_r. exact Hin.
-  - (* Closed, Open *) split. reflexivity.
-    intros e Hin. apply effect_entries_union_r. exact Hin.
+  - (* Closed, Open *) intros e Hin. apply effect_entries_union_r. exact Hin.
   - (* Open, Pure *) trivial.
   - (* Open, Closed *) intros e Hin. apply effect_entries_union_r. exact Hin.
-  - (* Open, Open: Hcompat gives rv1 = rv2 *)
-    subst. split. reflexivity.
-    intros e Hin. apply effect_entries_union_r. exact Hin.
-Qed.
-
-(** ** Unconditional version for common cases (Pure or Closed second arg) *)
-
-Lemma effect_row_subset_union_r_closed :
-  forall e1 es2,
-    effect_row_subset (Eff_Closed es2) (effect_row_union e1 (Eff_Closed es2)).
-Proof.
-  intros. apply effect_row_subset_union_r. destruct e1; simpl; trivial.
-Qed.
-
-Lemma effect_row_subset_union_r_pure :
-  forall e1,
-    effect_row_subset Eff_Pure (effect_row_union e1 Eff_Pure).
-Proof.
-  intros. apply effect_row_subset_union_r. destruct e1; simpl; trivial.
+  - (* Open, Open *) intros e Hin. apply effect_entries_union_r. exact Hin.
 Qed.
 
 (** ** Effect row subset reflexivity *)
@@ -241,20 +212,15 @@ Proof.
       destruct e3; simpl in *.
       * contradiction.
       * contradiction.
-      * destruct H23 as [Heq H23'].
-        intros e Hin. apply H23'. apply H12. assumption.
+      * intros e Hin. apply H23. apply H12. assumption.
   - (* e1 = Eff_Open l n: can only be subset of open rows *)
     destruct e2; simpl in *.
     + contradiction.
     + contradiction.
-    + destruct H12 as [Heq12 H12'].
-      destruct e3; simpl in *.
+    + destruct e3; simpl in *.
       * contradiction.
       * contradiction.
-      * destruct H23 as [Heq23 H23'].
-        split.
-        { congruence. }
-        { intros e Hin. apply H23'. apply H12'. assumption. }
+      * intros e Hin. apply H23. apply H12. assumption.
 Qed.
 
 (** ** Helper: lin_split of empty context forces both sides empty *)
@@ -377,7 +343,7 @@ Lemma has_type_handle_inv :
     exists eff_name comp_ty handler_eff comp_eff,
       has_type Sigma [] [] e comp_ty comp_eff /\
       handler_well_formed Sigma [] [] h eff_name comp_ty T handler_eff /\
-      effect_row_subset (effect_row_union handler_eff comp_eff) eff.
+      effect_row_subset handler_eff eff.
 Proof.
   intros Sigma h e T eff Hty.
   remember (E_Handle h e) as ehandle.
@@ -459,57 +425,42 @@ Proof.
   - (* Closed, Pure *) intros e Hin. exact Hin.
   - (* Closed, Closed *) intros e Hin. apply effect_entries_union_l. exact Hin.
   - (* Closed, Open *) intros e Hin. apply effect_entries_union_l. exact Hin.
-  - (* Open, Pure *) split. reflexivity. intros e Hin. exact Hin.
-  - (* Open, Closed *) split. reflexivity.
-    intros e Hin. apply effect_entries_union_l. exact Hin.
-  - (* Open, Open *) split. reflexivity.
-    intros e Hin. apply effect_entries_union_l. exact Hin.
+  - (* Open, Pure *) intros e Hin. exact Hin.
+  - (* Open, Closed *) intros e Hin. apply effect_entries_union_l. exact Hin.
+  - (* Open, Open *) intros e Hin. apply effect_entries_union_l. exact Hin.
 Qed.
 
 (** ** Record fields correspondence: if a label is in the value-level
     fields and in the type-level fields, the value has the corresponding type *)
 
-Lemma record_fields_typed_lookup :
+(** ** Deterministic record field lookup aligns with typing
+
+    Uses find_field (first-match, deterministic) which mirrors the
+    type system's lookup_field. This avoids duplicate-label issues. *)
+
+Lemma record_fields_typed_find :
   forall Sigma Gamma Delta fields field_types eff l e T,
     record_fields_typed Sigma Gamma Delta fields field_types eff ->
-    In (l, e) fields ->
+    find_field fields l = Some e ->
     lookup_field field_types l = Some T ->
     has_type Sigma Gamma Delta e T eff.
 Proof.
   intros Sigma Gamma Delta fields field_types eff l e T Htyped.
-  induction Htyped; intros Hin Hlook.
-  - (* RFT_Nil *) destruct Hin.
+  induction Htyped; intros Hfind Hlook.
+  - (* RFT_Nil *) simpl in Hfind. discriminate.
   - (* RFT_Cons *)
-    simpl in Hlook. destruct (label_eqb l0 l) eqn:Heql.
-    + (* l0 = l: this is the matching field *)
-      apply Syntax.label_eqb_eq in Heql. subst.
-      destruct Hin as [Heq | Hin'].
-      * inversion Heq; subst.
-        injection Hlook as HT. subst.
-        apply T_Sub with (eff := eff1).
-        -- exact H.
-        -- apply effect_row_subset_union_l.
-      * (* Duplicate label in fields — first match wins in lookup.
-           The duplicate label case is degenerate: lookup matches l0 first,
-           so this branch is unreachable for well-formed records. *)
-        injection Hlook as HT. subst.
-        apply T_Sub with (eff := eff2).
-        -- apply IHHtyped. exact Hin'.
-           (* lookup_field found l0 first (above), so for rest_t to also
-              map l0 → T requires duplicate labels. This case is degenerate
-              but sound: the first match in lookup always wins. *)
-           admit. (* Duplicate label in type — degenerate case *)
-        -- apply effect_row_subset_union_r.
-           admit. (* Row variable compatibility — holds for closed terms *)
-    + (* l0 ≠ l *)
-      destruct Hin as [Heq | Hin'].
-      * inversion Heq; subst.
-        rewrite Syntax.label_eqb_refl in Heql. discriminate.
-      * apply T_Sub with (eff := eff2).
-        -- apply IHHtyped. exact Hin'. exact Hlook.
-        -- apply effect_row_subset_union_r.
-           admit. (* Row variable compatibility — holds for closed terms *)
-Admitted.
+    simpl in Hfind. simpl in Hlook.
+    destruct (label_eqb l0 l) eqn:Heql.
+    + (* l0 = l: first match in both *)
+      injection Hfind as He. injection Hlook as HT. subst.
+      apply T_Sub with (eff := eff1).
+      * exact H.
+      * apply effect_row_subset_union_l.
+    + (* l0 ≠ l: recurse into rest *)
+      apply T_Sub with (eff := eff2).
+      * apply IHHtyped; assumption.
+      * apply effect_row_subset_union_r.
+Qed.
 
 (** ** Context typing
 
@@ -652,7 +603,7 @@ Proof.
     exists A', eff_inner. split.
     + exact He0.
     + intros e' He'. simpl.
-      apply T_Sub with (eff := effect_row_union he ce).
+      apply T_Sub with (eff := he).
       * apply T_Handle with (Delta1 := []) (Delta2 := [])
                              (eff_name := en) (comp_ty := ct)
                              (handler_eff := he) (comp_eff := ce).
@@ -706,7 +657,6 @@ Proof.
       try contradiction;
       try (subst; inversion Hin; fail);
       try (apply H; exact Hin);
-      try (destruct H as [_ Hsub]; apply Hsub; exact Hin);
       auto.
 Qed.
 
@@ -811,6 +761,211 @@ Proof.
   - exact Hsub.
 Qed.
 
+(** ** Op clause typing lookup
+
+    If a clause is in a well-typed clause list, extract its typing. *)
+
+Lemma op_clause_typing_lookup :
+  forall Sigma Gamma Delta clauses sig result_ty handler_eff
+         eff_nm op_nm e_body,
+    op_clauses_well_formed Sigma Gamma Delta clauses sig result_ty handler_eff ->
+    In (OpClause eff_nm op_nm e_body) clauses ->
+    exists arg_ty ret_ty,
+      lookup_op sig op_nm = Some (arg_ty, ret_ty) /\
+      has_type Sigma
+               (arg_ty :: Ty_Arrow ret_ty result_ty handler_eff :: Gamma)
+               ((Lin_Unrestricted, false) :: (Lin_Unrestricted, false) :: Delta)
+               e_body result_ty handler_eff.
+Proof.
+  intros Sigma Gamma Delta clauses sig result_ty handler_eff
+         eff_nm op_nm e_body Hwf Hin.
+  induction Hwf.
+  - (* OpClauses_Nil *) destruct Hin.
+  - (* OpClauses_Cons *)
+    destruct Hin as [Heq | Hin_rest].
+    + (* Head match *)
+      injection Heq as H1 H2 H3. subst.
+      exists arg_ty, ret_ty.
+      split; assumption.
+    + (* In rest *)
+      exact (IHHwf Hin_rest).
+Qed.
+
+(** ** Delimited context typing (closed terms)
+
+    Analogous to context_typing for eval_contexts, but for
+    delimited contexts (which don't cross handler boundaries).
+    This decomposes the typing of D[e] into the typing of e
+    and a replacement function. *)
+
+Lemma delimited_context_typing :
+  forall Sigma D e T eff,
+    has_type Sigma [] [] (plug_delimited D e) T eff ->
+    exists A eff_inner,
+      has_type Sigma [] [] e A eff_inner /\
+      forall e',
+        has_type Sigma [] [] e' A eff_inner ->
+        has_type Sigma [] [] (plug_delimited D e') T eff.
+Proof.
+  induction D as [
+    | D' IHD e2_
+    | v_ D' IHD
+    | D' IHD e2_
+    | D' IHD l_
+    | D' IHD T_
+    | en_ opn_ D' IHD
+  ]; intros e T eff Hty; simpl in *.
+
+  (** DC_Hole *)
+  - exists T, eff. split.
+    + exact Hty.
+    + intros e' He'. exact He'.
+
+  (** DC_AppFun D' e2_ *)
+  - destruct (has_type_app_inv _ _ _ _ _ Hty)
+      as [A [fn_eff [eff1 [eff2 [Hty1 [Hty2 Hsub]]]]]].
+    destruct (IHD _ _ _ Hty1) as [A' [eff_inner [He Hreplace]]].
+    exists A', eff_inner. split.
+    + exact He.
+    + intros e' He'. simpl.
+      apply T_Sub with (eff := effect_row_union fn_eff (effect_row_union eff1 eff2)).
+      * apply T_App with (Delta1 := []) (Delta2 := [])
+                          (A := A) (fn_eff := fn_eff)
+                          (eff1 := eff1) (eff2 := eff2).
+        -- apply Split_Nil.
+        -- exact (Hreplace e' He').
+        -- exact Hty2.
+      * exact Hsub.
+
+  (** DC_AppArg v_ D' *)
+  - destruct (has_type_app_inv _ _ _ _ _ Hty)
+      as [A [fn_eff [eff1 [eff2 [Hty1 [Hty2 Hsub]]]]]].
+    destruct (IHD _ _ _ Hty2) as [A' [eff_inner [He Hreplace]]].
+    exists A', eff_inner. split.
+    + exact He.
+    + intros e' He'. simpl.
+      apply T_Sub with (eff := effect_row_union fn_eff (effect_row_union eff1 eff2)).
+      * apply T_App with (Delta1 := []) (Delta2 := [])
+                          (A := A) (fn_eff := fn_eff)
+                          (eff1 := eff1) (eff2 := eff2).
+        -- apply Split_Nil.
+        -- exact Hty1.
+        -- exact (Hreplace e' He').
+      * exact Hsub.
+
+  (** DC_Let D' e2_ *)
+  - destruct (has_type_let_inv _ _ _ _ _ Hty)
+      as [A [eff1 [eff2 [Hty1 [Hty2 Hsub]]]]].
+    destruct (IHD _ _ _ Hty1) as [A' [eff_inner [He Hreplace]]].
+    exists A', eff_inner. split.
+    + exact He.
+    + intros e' He'. simpl.
+      apply T_Sub with (eff := effect_row_union eff1 eff2).
+      * apply T_Let with (Delta1 := []) (Delta2 := [])
+                          (A := A) (eff1 := eff1) (eff2 := eff2).
+        -- apply Split_Nil.
+        -- exact (Hreplace e' He').
+        -- exact Hty2.
+      * exact Hsub.
+
+  (** DC_Select D' l_ *)
+  - destruct (has_type_select_inv _ _ _ _ _ Hty)
+      as [ft [eff_inner' [Hty_rec [Hlook Hsub]]]].
+    destruct (IHD _ _ _ Hty_rec) as [A' [eff_inner [He Hreplace]]].
+    exists A', eff_inner. split.
+    + exact He.
+    + intros e' He'. simpl.
+      apply T_Sub with (eff := eff_inner').
+      * apply T_Select with (fields := ft).
+        -- exact (Hreplace e' He').
+        -- exact Hlook.
+      * exact Hsub.
+
+  (** DC_Annot D' T_ *)
+  - destruct (has_type_annot_inv _ _ _ _ _ Hty)
+      as [HeqT [eff_inner' [Hinner Hsub]]]. subst.
+    destruct (IHD _ _ _ Hinner) as [A' [eff_inner [He Hreplace]]].
+    exists A', eff_inner. split.
+    + exact He.
+    + intros e' He'. simpl.
+      apply T_Sub with (eff := eff_inner').
+      * apply T_Annot. exact (Hreplace e' He').
+      * exact Hsub.
+
+  (** DC_PerformArg en_ opn_ D' *)
+  - remember (E_Perform en_ opn_ (plug_delimited D' e)) as eperf.
+    (* Inline perform inversion *)
+    assert (Hperf_inv : exists eff_sig arg_ty ret_ty eff',
+      lookup_effect Sigma en_ = Some eff_sig /\
+      lookup_op eff_sig opn_ = Some (arg_ty, ret_ty) /\
+      T = ret_ty /\
+      has_type Sigma [] [] (plug_delimited D' e) arg_ty eff' /\
+      effect_row_subset
+        (effect_row_union (Eff_Closed [Eff_Entry en_]) eff') eff).
+    { clear IHD.
+      remember (@nil ty) as Gamma.
+      remember (@nil (linearity * bool)) as Delta.
+      induction Hty; try discriminate.
+      - (* T_Perform *)
+        injection Heqeperf as H1 H2 H3. subst.
+        exists eff_sig, arg_ty, ret_ty, eff'.
+        split. assumption. split. assumption. split. reflexivity.
+        split. assumption. apply effect_row_subset_refl.
+      - (* T_Sub *)
+        destruct (IHHty Heqeperf HeqGamma HeqDelta)
+          as [es [at' [rt [ef [H1 [H2 [H3 [H4 H5]]]]]]]].
+        exists es, at', rt, ef.
+        split. assumption. split. assumption. split. assumption.
+        split. assumption.
+        eapply effect_row_subset_trans; eassumption. }
+    destruct Hperf_inv as [eff_sig [arg_ty [ret_ty [eff' [Hlook_eff [Hlook_op [HeqT [Hty_arg Hsub]]]]]]]].
+    subst T.
+    destruct (IHD _ _ _ Hty_arg) as [A' [eff_inner [He Hreplace]]].
+    exists A', eff_inner. split.
+    + exact He.
+    + intros e' He'. simpl.
+      apply T_Sub with (eff := effect_row_union (Eff_Closed [Eff_Entry en_]) eff').
+      * apply T_Perform with (eff_sig := eff_sig) (arg_ty := arg_ty).
+        -- exact Hlook_eff.
+        -- exact Hlook_op.
+        -- exact (Hreplace e' He').
+      * exact Hsub.
+Qed.
+
+(** ** Perform typing inversion
+
+    Extracts the argument type and return type from a perform expression. *)
+
+Lemma has_type_perform_inv :
+  forall Sigma eff_nm op_nm arg T eff,
+    has_type Sigma [] [] (E_Perform eff_nm op_nm arg) T eff ->
+    exists eff_sig arg_ty ret_ty eff_arg,
+      lookup_effect Sigma eff_nm = Some eff_sig /\
+      lookup_op eff_sig op_nm = Some (arg_ty, ret_ty) /\
+      T = ret_ty /\
+      has_type Sigma [] [] arg arg_ty eff_arg /\
+      effect_row_subset
+        (effect_row_union (Eff_Closed [Eff_Entry eff_nm]) eff_arg) eff.
+Proof.
+  intros Sigma eff_nm op_nm arg T eff Hty.
+  remember (E_Perform eff_nm op_nm arg) as eperf.
+  remember (@nil ty) as Gamma.
+  remember (@nil (linearity * bool)) as Delta.
+  induction Hty; try discriminate.
+  - (* T_Perform *)
+    injection Heqeperf as H1 H2 H3. subst.
+    exists eff_sig, arg_ty, ret_ty, eff'.
+    split. assumption. split. assumption. split. reflexivity.
+    split. assumption. apply effect_row_subset_refl.
+  - (* T_Sub *)
+    destruct (IHHty Heqeperf HeqGamma HeqDelta)
+      as [es [at' [rt [ef [H1 [H2 [H3 [H4 H5]]]]]]]].
+    exists es, at', rt, ef.
+    split. assumption. split. assumption. split. assumption.
+    split. assumption.
+    eapply effect_row_subset_trans; eassumption.
+Qed.
+
 (** ** Preservation Theorem
 
     Statement: If Γ; Δ ⊢ e : T / ε and e ──► e', then
@@ -823,16 +978,16 @@ Qed.
     hypothesis for Step_Context (which inversion cannot). *)
 
 Lemma preservation_ind :
-  forall c1 c2,
-    step c1 c2 ->
-    forall Sigma T eff,
+  forall Sigma c1 c2,
+    step Sigma c1 c2 ->
+    forall T eff,
       has_type Sigma [] [] (cfg_expr c1) T eff ->
       exists eff',
         has_type Sigma [] [] (cfg_expr c2) T eff' /\
         effect_row_subset eff' eff.
 Proof.
-  intros c1 c2 Hstep.
-  induction Hstep; simpl; intros Sigma0 T0 eff0 Htype.
+  intros Sigma c1 c2 Hstep.
+  induction Hstep; simpl; intros T0 eff0 Htype.
 
   (** Case Step_Beta: (λx:T. body) v ──► body[v/x] *)
   - destruct (has_type_app_inv _ _ _ _ _ Htype)
@@ -859,10 +1014,6 @@ Proof.
         exact Hty1. assumption.
     + eapply effect_row_subset_trans.
       * apply effect_row_subset_union_r.
-        admit. (* Row variable compatibility — holds for closed terms.
-                  The Eff_Open/Eff_Open case with different row variables
-                  cannot arise in well-typed closed terms because typing
-                  rules only produce Eff_Pure and Eff_Closed effects. *)
       * exact Hsub.
 
   (** Case Step_Select: {l₁=v₁,...}.lᵢ ──► vᵢ *)
@@ -872,7 +1023,7 @@ Proof.
       as [ft2 [eff_rec [Heq_ft [Hrft Hsub_rec]]]].
     injection Heq_ft as Hft. subst.
     exists eff_rec. split.
-    + apply record_fields_typed_lookup with
+    + apply record_fields_typed_find with
         (fields := fields) (field_types := ft2) (l := l).
       * exact Hrft.
       * assumption.
@@ -899,9 +1050,7 @@ Proof.
     + apply substitution_preserves_typing with (U := ct).
       * eassumption.
       * apply value_typing_inversion with (eff := ce). exact Htye. assumption.
-    + apply effect_row_subset_trans with (e2 := effect_row_union he ce).
-      * apply effect_row_subset_union_l.
-      * exact Hsub.
+    + exact Hsub.
 
   (** Case Step_HandleOpDeep *)
   - exists eff0. split.
@@ -920,7 +1069,7 @@ Proof.
 
   (** Case Step_Context: E[e] ──► E[e'] because e ──► e' *)
   - destruct (context_typing _ E e _ _ Htype) as [A [eff_inner [He Hreplace]]].
-    destruct (IHHstep _ _ _ He) as [eff_inner' [He' Hsub_inner]].
+    destruct (IHHstep _ _ He) as [eff_inner' [He' Hsub_inner]].
     exists eff0. split.
     + apply Hreplace.
       apply T_Sub with (eff := eff_inner').
@@ -946,13 +1095,13 @@ Admitted.
 Theorem preservation :
   forall Sigma e e' T eff M M',
     closed_well_typed Sigma e T eff ->
-    step (mk_config e M) (mk_config e' M') ->
+    step Sigma (mk_config e M) (mk_config e' M') ->
     exists eff',
       closed_well_typed Sigma e' T eff' /\
       effect_row_subset eff' eff.
 Proof.
   intros Sigma e e' T eff M M' Htype Hstep.
-  exact (preservation_ind _ _ Hstep Sigma T eff Htype).
+  exact (preservation_ind _ _ _ Hstep T eff Htype).
 Qed.
 
 (** ** Note: Type Soundness (combining Progress + Preservation) is

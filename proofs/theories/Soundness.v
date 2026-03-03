@@ -25,21 +25,21 @@ From Blood Require Import Preservation.
     is still well-typed (with potentially different effects). *)
 
 Lemma multi_step_type_preservation :
-  forall c c',
-    multi_step c c' ->
-    forall Sigma T eff,
+  forall Sigma c c',
+    multi_step Sigma c c' ->
+    forall T eff,
       closed_well_typed Sigma (cfg_expr c) T eff ->
       exists eff', closed_well_typed Sigma (cfg_expr c') T eff'.
 Proof.
-  intros c c' Hms. induction Hms as [c | c1 c2 c3 Hstep Hms IH].
+  intros Sigma c c' Hms. induction Hms as [c | c1 c2 c3 Hstep Hms IH].
   - (* Multi_Refl *)
-    intros Sigma T eff Hty. exists eff. exact Hty.
+    intros T eff Hty. exists eff. exact Hty.
   - (* Multi_Step *)
-    intros Sigma T eff Hty.
+    intros T eff Hty.
     destruct c1 as [e1 M1]. destruct c2 as [e2 M2]. simpl in *.
     destruct (preservation Sigma e1 e2 T eff M1 M2 Hty Hstep)
       as [eff2 [Hty2 _]].
-    exact (IH Sigma T eff2 Hty2).
+    exact (IH T eff2 Hty2).
 Qed.
 
 (** ** Multi-step preservation with effect tracking
@@ -48,24 +48,24 @@ Qed.
     through multi-step reduction. *)
 
 Lemma multi_step_type_preservation_sub :
-  forall c c',
-    multi_step c c' ->
-    forall Sigma T eff,
+  forall Sigma c c',
+    multi_step Sigma c c' ->
+    forall T eff,
       closed_well_typed Sigma (cfg_expr c) T eff ->
       exists eff', closed_well_typed Sigma (cfg_expr c') T eff' /\
                    effect_row_subset eff' eff.
 Proof.
-  intros c c' Hms. induction Hms as [c | c1 c2 c3 Hstep Hms IH].
+  intros Sigma c c' Hms. induction Hms as [c | c1 c2 c3 Hstep Hms IH].
   - (* Multi_Refl *)
-    intros Sigma T eff Hty. exists eff. split.
+    intros T eff Hty. exists eff. split.
     + exact Hty.
     + apply effect_row_subset_refl.
   - (* Multi_Step *)
-    intros Sigma T eff Hty.
+    intros T eff Hty.
     destruct c1 as [e1 M1]. destruct c2 as [e2 M2]. simpl in *.
     destruct (preservation Sigma e1 e2 T eff M1 M2 Hty Hstep)
       as [eff2 [Hty2 Hsub2]].
-    destruct (IH Sigma T eff2 Hty2)
+    destruct (IH T eff2 Hty2)
       as [eff3 [Hty3 Hsub3]].
     exists eff3. split.
     + exact Hty3.
@@ -96,14 +96,14 @@ Qed.
 Theorem type_soundness_full :
   forall Sigma e e' T eff M M',
     closed_well_typed Sigma e T eff ->
-    multi_step (mk_config e M) (mk_config e' M') ->
+    multi_step Sigma (mk_config e M) (mk_config e' M') ->
     (is_value e' = true) \/
-    (exists e'' M'', step (mk_config e' M') (mk_config e'' M'')) \/
+    (exists e'' M'', step Sigma (mk_config e' M') (mk_config e'' M'')) \/
     (exists eff_nm op v D,
        e' = plug_delimited D (E_Perform eff_nm op (value_to_expr v))).
 Proof.
   intros Sigma e e' T eff M M' Htype Hsteps.
-  destruct (multi_step_type_preservation _ _ Hsteps Sigma T eff) as [eff' Htype'].
+  destruct (multi_step_type_preservation Sigma _ _ Hsteps T eff) as [eff' Htype'].
   - simpl. exact Htype.
   - simpl in Htype'. exact (progress Sigma e' T eff' M' Htype').
 Qed.
@@ -131,9 +131,9 @@ Theorem effect_safety :
   forall Sigma e T M,
     closed_well_typed Sigma e T Eff_Pure ->
     forall e' M',
-      multi_step (mk_config e M) (mk_config e' M') ->
+      multi_step Sigma (mk_config e M) (mk_config e' M') ->
       (is_value e' = true) \/
-      (exists e'' M'', step (mk_config e' M') (mk_config e'' M'')).
+      (exists e'' M'', step Sigma (mk_config e' M') (mk_config e'' M'')).
 Proof.
   intros Sigma e T M Htype e' M' Hsteps.
   destruct (type_soundness_full Sigma e e' T Eff_Pure M M' Htype Hsteps)
@@ -149,7 +149,7 @@ Proof.
     destruct Hperform as [eff_nm [op0 [v0 [D Heq]]]]. subst e'.
     (* By multi_step_type_preservation_sub, e' has some type with
        effect eff' where eff' ⊆ Eff_Pure *)
-    destruct (multi_step_type_preservation_sub _ _ Hsteps Sigma T Eff_Pure)
+    destruct (multi_step_type_preservation_sub Sigma _ _ Hsteps T Eff_Pure)
       as [eff' [Htype' Hsub']].
     { simpl. exact Htype. }
     simpl in *.
@@ -219,18 +219,18 @@ Theorem full_composition_safety :
     closed_well_typed Sigma e T eff ->
     (* Property 1: No use-after-free (via generation checks) *)
     (forall e' M',
-       multi_step (mk_config e M) (mk_config e' M') ->
+       multi_step Sigma (mk_config e M) (mk_config e' M') ->
        (* All dereferences in the trace either succeed or raise StaleReference *)
        True) /\
     (* Property 2: No unhandled effects (via effect typing) *)
     (eff = Eff_Pure ->
      forall e' M',
-       multi_step (mk_config e M) (mk_config e' M') ->
+       multi_step Sigma (mk_config e M) (mk_config e' M') ->
        (is_value e' = true) \/
-       (exists e'' M'', step (mk_config e' M') (mk_config e'' M''))) /\
+       (exists e'' M'', step Sigma (mk_config e' M') (mk_config e'' M''))) /\
     (* Property 3: No type confusion (via type preservation) *)
     (forall e' M',
-       multi_step (mk_config e M) (mk_config e' M') ->
+       multi_step Sigma (mk_config e M) (mk_config e' M') ->
        exists eff', closed_well_typed Sigma e' T eff') /\
     (* Property 4: No linear duplication (via linearity context) *)
     True /\
@@ -247,7 +247,7 @@ Proof.
     exact (effect_safety Sigma e T M Htype e' M' Hsteps).
   - (* Property 3: No type confusion — multi-step preservation *)
     intros e' M' Hsteps.
-    exact (multi_step_type_preservation _ _ Hsteps Sigma T eff Htype).
+    exact (multi_step_type_preservation Sigma _ _ Hsteps T eff Htype).
   - (* Property 4: No linear duplication — compile-time guarantee *)
     exact I.
   - (* Property 5: No dispatch ambiguity — compile-time guarantee *)

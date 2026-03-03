@@ -145,33 +145,47 @@ Record config := mk_config {
   cfg_mem  : memory;
 }.
 
+(** ** Deterministic field lookup for expressions
+
+    Mirrors lookup_field from Typing.v but on (label * expr) lists. *)
+
+Fixpoint find_field (fields : list (label * expr)) (l : label) : option expr :=
+  match fields with
+  | [] => None
+  | (l', e) :: rest =>
+      if label_eqb l' l then Some e
+      else find_field rest l
+  end.
+
 (** ** Small-step reduction
 
     Corresponds to FORMAL_SEMANTICS.md §3 *)
 
-Inductive step : config -> config -> Prop :=
+Inductive step (Sigma : effect_context) : config -> config -> Prop :=
 
   (** [β-App]
       (λx:T. e) v  ──►  e[v/x] *)
   | Step_Beta : forall M T body v,
-      step (mk_config (E_App (E_Lam T body) (value_to_expr v)) M)
+      step Sigma (mk_config (E_App (E_Lam T body) (value_to_expr v)) M)
            (mk_config (subst 0 (value_to_expr v) body) M)
 
   (** [β-Let]
       let x = v in e  ──►  e[v/x] *)
   | Step_Let : forall M v e2,
       is_value v = true ->
-      step (mk_config (E_Let v e2) M)
+      step Sigma (mk_config (E_Let v e2) M)
            (mk_config (subst 0 v e2) M)
 
   (** [Record-Select]
-      {l₁=v₁,...,lₙ=vₙ}.lᵢ  ──►  vᵢ *)
+      {l₁=v₁,...,lₙ=vₙ}.lᵢ  ──►  vᵢ
+
+      Uses deterministic first-match lookup to align with the
+      type system's lookup_field semantics. *)
   | Step_Select : forall M fields l e,
-      In (l, e) fields ->
-      is_value e = true ->
+      find_field fields l = Some e ->
       (** All fields are values *)
       forallb (fun '(_, ei) => is_value ei) fields = true ->
-      step (mk_config (E_Select (E_Record fields) l) M)
+      step Sigma (mk_config (E_Select (E_Record fields) l) M)
            (mk_config e M)
 
   (** [Record-Extend]
@@ -179,21 +193,21 @@ Inductive step : config -> config -> Prop :=
   | Step_Extend : forall M l v fields,
       is_value v = true ->
       forallb (fun '(_, ei) => is_value ei) fields = true ->
-      step (mk_config (E_Extend l v (E_Record fields)) M)
+      step Sigma (mk_config (E_Extend l v (E_Record fields)) M)
            (mk_config (E_Record ((l, v) :: fields)) M)
 
   (** [Annot]
       (v : T) ──► v *)
   | Step_Annot : forall M v T,
       is_value v = true ->
-      step (mk_config (E_Annot v T) M)
+      step Sigma (mk_config (E_Annot v T) M)
            (mk_config v M)
 
   (** [Handle-Return]
       with h handle v  ──►  e_ret[v/x] *)
   | Step_HandleReturn : forall M hk e_ret clauses v,
       is_value v = true ->
-      step (mk_config
+      step Sigma (mk_config
               (E_Handle (Handler hk e_ret clauses) v) M)
            (mk_config
               (subst 0 v e_ret) M)
@@ -202,20 +216,25 @@ Inductive step : config -> config -> Prop :=
       with h handle D[perform E.op(v)]
         ──►  e_op[v/x, (λy. with h handle D[y])/resume]
 
-      where h is a deep handler for effect E *)
+      where h is a deep handler for effect E.
+      The ret_ty is constrained by the operation's return type
+      in Sigma, ensuring the continuation is well-typed. *)
   | Step_HandleOpDeep : forall M e_ret clauses D
                                eff_name op_nm v e_body
-                               ret_ty snap,
+                               arg_ty ret_ty eff_sig snap,
       is_value v = true ->
       (** Find matching clause *)
       In (OpClause eff_name op_nm e_body) clauses ->
+      (** Operation typing: constrains ret_ty *)
+      lookup_effect Sigma eff_name = Some eff_sig ->
+      lookup_op eff_sig op_nm = Some (arg_ty, ret_ty) ->
       (** Capture snapshot *)
       snap = extract_gen_refs D ->
       (** Build continuation: λy. with h handle D[y] *)
       let h := Handler Deep e_ret clauses in
       let kont := E_Lam ret_ty
                         (E_Handle h (plug_delimited D (E_Var 0))) in
-      step (mk_config
+      step Sigma (mk_config
               (E_Handle (Handler Deep e_ret clauses)
                         (plug_delimited D (E_Perform eff_name op_nm v))) M)
            (mk_config
@@ -229,13 +248,16 @@ Inductive step : config -> config -> Prop :=
       Note: handler NOT re-wrapped around continuation *)
   | Step_HandleOpShallow : forall M e_ret clauses D
                                   eff_name op_nm v e_body
-                                  ret_ty snap,
+                                  arg_ty ret_ty eff_sig snap,
       is_value v = true ->
       In (OpClause eff_name op_nm e_body) clauses ->
+      (** Operation typing: constrains ret_ty *)
+      lookup_effect Sigma eff_name = Some eff_sig ->
+      lookup_op eff_sig op_nm = Some (arg_ty, ret_ty) ->
       snap = extract_gen_refs D ->
       let kont := E_Lam ret_ty
                         (plug_delimited D (E_Var 0)) in
-      step (mk_config
+      step Sigma (mk_config
               (E_Handle (Handler Shallow e_ret clauses)
                         (plug_delimited D (E_Perform eff_name op_nm v))) M)
            (mk_config
@@ -246,8 +268,8 @@ Inductive step : config -> config -> Prop :=
       ─────────────
       E[e] ──► E[e'] *)
   | Step_Context : forall M M' E e e',
-      step (mk_config e M) (mk_config e' M') ->
-      step (mk_config (plug_eval E e) M)
+      step Sigma (mk_config e M) (mk_config e' M') ->
+      step Sigma (mk_config (plug_eval E e) M)
            (mk_config (plug_eval E e') M')
 
   (** [Resume-Valid]
@@ -256,7 +278,7 @@ Inductive step : config -> config -> Prop :=
   | Step_ResumeValid : forall M kont_body snap v,
       is_value v = true ->
       validate_snapshot M snap ->
-      step (mk_config
+      step Sigma (mk_config
               (E_App (E_Const (Const_Unit)) v)  (** simplified resume *)
               M)
            (mk_config
@@ -265,22 +287,34 @@ Inductive step : config -> config -> Prop :=
           continuations as first-class values with snapshots. *)
 .
 
+(** Make Sigma implicit in step constructors *)
+Arguments Step_Beta {Sigma}.
+Arguments Step_Let {Sigma}.
+Arguments Step_Select {Sigma}.
+Arguments Step_Extend {Sigma}.
+Arguments Step_Annot {Sigma}.
+Arguments Step_HandleReturn {Sigma}.
+Arguments Step_HandleOpDeep {Sigma}.
+Arguments Step_HandleOpShallow {Sigma}.
+Arguments Step_Context {Sigma}.
+Arguments Step_ResumeValid {Sigma}.
+
 (** ** Multi-step reduction (reflexive-transitive closure) *)
 
-Inductive multi_step : config -> config -> Prop :=
+Inductive multi_step (Sigma : effect_context) : config -> config -> Prop :=
   | Multi_Refl : forall c,
-      multi_step c c
+      multi_step Sigma c c
   | Multi_Step : forall c1 c2 c3,
-      step c1 c2 ->
-      multi_step c2 c3 ->
-      multi_step c1 c3.
+      step Sigma c1 c2 ->
+      multi_step Sigma c2 c3 ->
+      multi_step Sigma c1 c3.
 
-Notation "c1 '──►*' c2" := (multi_step c1 c2) (at level 40).
+Notation "c1 '──►*' c2" := (multi_step _ c1 c2) (at level 40).
 
 (** ** A term is stuck if it's not a value and cannot step *)
 
-Definition stuck (c : config) : Prop :=
+Definition stuck (Sigma : effect_context) (c : config) : Prop :=
   ~ (is_value (cfg_expr c) = true) /\
-  ~ (exists c', step c c') /\
+  ~ (exists c', step Sigma c c') /\
   ~ (exists eff op v D,
        cfg_expr c = plug_delimited D (E_Perform eff op (value_to_expr v))).

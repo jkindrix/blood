@@ -148,15 +148,15 @@ Lemma record_fields_lookup :
   forall Sigma Gamma Delta efields tfields eff l T,
     record_fields_typed Sigma Gamma Delta efields tfields eff ->
     lookup_field tfields l = Some T ->
-    exists e, In (l, e) efields.
+    exists e, find_field efields l = Some e.
 Proof.
   intros Sigma Gamma Delta efields tfields eff l T Hrt.
   induction Hrt; intros Hlook.
   - simpl in Hlook. discriminate.
-  - simpl in Hlook.
+  - simpl in Hlook. simpl.
     destruct (label_eqb l0 l) eqn:Heq.
-    + apply label_eqb_eq in Heq. subst. exists e. left. reflexivity.
-    + destruct (IHHrt Hlook) as [e' Hin]. exists e'. right. exact Hin.
+    + exists e. reflexivity.
+    + exact (IHHrt Hlook).
 Qed.
 
 (** ** Progress Theorem
@@ -173,7 +173,7 @@ Theorem progress :
   forall Sigma e T eff M,
     closed_well_typed Sigma e T eff ->
     (is_value e = true) \/
-    (exists e' M', step (mk_config e M) (mk_config e' M')) \/
+    (exists e' M', step Sigma (mk_config e M) (mk_config e' M')) \/
     (exists eff_nm op v D,
        e = plug_delimited D (E_Perform eff_nm op (value_to_expr v))).
 Proof.
@@ -269,20 +269,9 @@ Proof.
         as [ft2 [eff_rec [Heq_ft [Hrft _]]]].
       injection Heq_ft as Hft. subst.
       destruct (record_fields_lookup _ _ _ _ _ _ _ _ Hrft H)
-        as [ei Hini].
+        as [ei Hfind].
       exists ei, M. apply Step_Select with (fields := vfields).
-      { exact Hini. }
-      { (* is_value ei: In (l, ei) vfields and all fields are values *)
-        clear -Hini Hvalsf.
-        induction vfields as [| [l' e'] rest IH].
-        { inversion Hini. }
-        { simpl in Hvalsf. apply Bool.andb_true_iff in Hvalsf.
-          destruct Hvalsf as [Hv1 Hv2].
-          destruct Hini as [Heq | Hin].
-          { injection Heq as _ Heq. subst. exact Hv1. }
-          { exact (IH Hv2 Hin). }
-        }
-      }
+      { exact Hfind. }
       { exact Hvalsf. }
     + (* e steps → context rule *)
       left. exists (E_Select e' l), M'.
@@ -337,7 +326,7 @@ Corollary pure_progress :
   forall Sigma e T M,
     closed_well_typed Sigma e T Eff_Pure ->
     (is_value e = true) \/
-    (exists e' M', step (mk_config e M) (mk_config e' M')).
+    (exists e' M', step Sigma (mk_config e M) (mk_config e' M')).
 Proof.
   intros Sigma e T M Htype.
   destruct (progress Sigma e T Eff_Pure M Htype) as [Hval | [Hstep | Hperform]].

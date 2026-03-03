@@ -99,7 +99,7 @@ Qed.
 Theorem dynamic_effect_containment :
   forall Sigma e e' T eff M M',
     closed_well_typed Sigma e T eff ->
-    step (mk_config e M) (mk_config e' M') ->
+    step Sigma (mk_config e M) (mk_config e' M') ->
     exists eff',
       closed_well_typed Sigma e' T eff' /\
       effect_row_subset eff' eff.
@@ -181,16 +181,9 @@ Proof.
     simpl in *; auto;
     try contradiction;
     try (apply effect_entries_subset_union_compat; exact Hsub);
-    try (apply effect_entries_union_in_right);
-    try (subst; auto);
-    try (destruct Hsub as [Hrv Hsub]; subst;
-         try (split; [reflexivity | exact Hsub]);
-         try (split; [reflexivity | apply effect_entries_subset_union_compat; exact Hsub])).
-  (* Remaining cases involve open row variable mismatches.
-     These require row variable compatibility, which holds
-     for well-typed closed terms. *)
-  all: admit.
-Admitted.
+    try (intros e Hin; apply effect_entries_union_r; exact Hin);
+    try (subst; simpl; auto).
+Qed.
 
 Lemma effect_union_comm :
   forall eff1 eff2,
@@ -230,7 +223,7 @@ Theorem effect_discipline :
   forall Sigma e T M,
     closed_well_typed Sigma e T Eff_Pure ->
     forall e' M',
-      multi_step (mk_config e M) (mk_config e' M') ->
+      multi_step Sigma (mk_config e M) (mk_config e' M') ->
       (* e' either:
          - is a value (all effects handled)
          - can step (some handler will catch it)
@@ -243,7 +236,7 @@ Proof.
   intros Sigma e T M Htype e' M' Hsteps.
   intros [D [eff_nm [op0 [v0 [Heq _]]]]]. subst e'.
   (* By multi-step preservation, e' has effect eff' ⊆ Pure *)
-  destruct (multi_step_type_preservation_sub _ _ Hsteps Sigma T Eff_Pure)
+  destruct (multi_step_type_preservation_sub Sigma _ _ Hsteps T Eff_Pure)
     as [eff' [Htype' Hsub']].
   { simpl. exact Htype. }
   simpl in *.

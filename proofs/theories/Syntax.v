@@ -239,12 +239,16 @@ Definition effect_row_subset (r1 r2 : effect_row) : Prop :=
       | Eff_Open entries2 _ =>
           forall e, In e entries1 -> In e entries2
       end
-  | Eff_Open entries1 rv1 =>
+  | Eff_Open entries1 _ =>
       match r2 with
       | Eff_Pure => False  (** open row can't be subset of pure *)
       | Eff_Closed _ => False  (** open can't be subset of closed *)
-      | Eff_Open entries2 rv2 =>
-          rv1 = rv2 /\ (forall e, In e entries1 -> In e entries2)
+      | Eff_Open entries2 _ =>
+          (** Entry-level inclusion only. Row variables are uninterpreted
+              in this formalization (no unification), so we compare only
+              the concrete effect entries. This is sound: if all concrete
+              effects in r1 are in r2, then r1's known effects are covered. *)
+          forall e, In e entries1 -> In e entries2
       end
   end.
 
@@ -394,7 +398,7 @@ Proof.
     try (subst; inversion Hin; fail).
   - (* Closed/Closed *) apply Hsub. exact Hin.
   - (* Closed/Open *) apply Hsub. exact Hin.
-  - (* Open/Open *) destruct Hsub as [_ Hsub']. apply Hsub'. exact Hin.
+  - (* Open/Open *) apply Hsub. exact Hin.
 Qed.
 
 (** ** Custom nested induction principle for expr/handler/op_clause

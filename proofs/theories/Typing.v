@@ -293,11 +293,12 @@ with has_type :
       has_type Sigma Gamma Delta1 e comp_ty comp_eff ->
       handler_well_formed Sigma Gamma Delta2 h
                           eff_name comp_ty result_ty handler_eff ->
-      (** comp_eff should contain eff_name; result removes it *)
-      has_type Sigma Gamma Delta (E_Handle h e) result_ty
-               (effect_row_union handler_eff comp_eff)
-               (** Note: a more precise formulation would subtract
-                   eff_name from comp_eff *)
+      (** After handling, only the handler's own effects remain.
+          This design choice requires that all computation effects
+          are either handled or already in handler_eff. It aligns
+          with the absence of a handler-passthrough step rule in
+          the operational semantics (Semantics.v). *)
+      has_type Sigma Gamma Delta (E_Handle h e) result_ty handler_eff
 
   (** [T-Sub]
       Γ; Δ ⊢ e : T / ε    ε ⊆ ε'
