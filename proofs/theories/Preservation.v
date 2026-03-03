@@ -662,6 +662,155 @@ Proof.
       * exact Hsub.
 Qed.
 
+(** ** Helper: perform at top level requires effect in row
+
+    Moved here from Soundness.v so that Progress.v can use it
+    (Soundness.v imports Progress.v, creating a circular dependency). *)
+
+Lemma perform_requires_effect :
+  forall Sigma eff_nm op arg T eff,
+    has_type Sigma [] [] (E_Perform eff_nm op arg) T eff ->
+    effect_in_row eff_nm eff.
+Proof.
+  intros Sigma eff_nm op arg T eff Htype.
+  remember (E_Perform eff_nm op arg) as eperf.
+  remember (@nil ty) as Gamma.
+  remember (@nil (linearity * bool)) as Delta.
+  induction Htype; try discriminate.
+  - (* T_Perform *)
+    injection Heqeperf as H1 H2 H3. subst.
+    simpl.
+    destruct eff'; simpl.
+    + left. reflexivity.
+    + unfold effect_entries_union.
+      destruct (existsb (fun e0 => match e0 with Eff_Entry n' => effect_name_eqb eff_nm n' end) l) eqn:Hex.
+      * apply existsb_exists in Hex.
+        destruct Hex as [[n'] [Hin Heqb]].
+        unfold effect_name_eqb in Heqb.
+        apply String.eqb_eq in Heqb. subst n'.
+        simpl. exact Hin.
+      * simpl. left. reflexivity.
+    + unfold effect_entries_union.
+      destruct (existsb (fun e0 => match e0 with Eff_Entry n' => effect_name_eqb eff_nm n' end) l) eqn:Hex.
+      * apply existsb_exists in Hex.
+        destruct Hex as [[n'] [Hin Heqb]].
+        unfold effect_name_eqb in Heqb.
+        apply String.eqb_eq in Heqb. subst n'.
+        simpl. exact Hin.
+      * simpl. left. reflexivity.
+  - (* T_Sub *)
+    subst.
+    assert (Hin : effect_in_row eff_nm eff).
+    { apply IHHtype; auto. }
+    destruct eff, eff'; simpl in *;
+      try contradiction;
+      try (subst; inversion Hin; fail);
+      try (apply H; exact Hin);
+      try (destruct H as [_ Hsub]; apply Hsub; exact Hin);
+      auto.
+Qed.
+
+(** ** Helper: plug_delimited preserves effect containment
+
+    If D[perform eff_nm.op(v)] is well-typed with effect eff,
+    then eff_nm is in eff. Key lemma for effect safety. *)
+
+Lemma plug_delimited_perform_effect :
+  forall Sigma D eff_nm op v T eff,
+    has_type Sigma [] []
+      (plug_delimited D (E_Perform eff_nm op (value_to_expr v))) T eff ->
+    effect_in_row eff_nm eff.
+Proof.
+  intros Sigma D.
+  induction D as [
+    | D' IHD e2_
+    | v_ D' IHD
+    | D' IHD e2_
+    | D' IHD l_
+    | D' IHD T_
+    | en_ opn_ D' IHD
+  ]; intros eff_nm op0 v0 T eff Htype; simpl in *.
+
+  - (* DC_Hole *)
+    exact (perform_requires_effect _ _ _ _ _ _ Htype).
+
+  - (* DC_AppFun *)
+    remember (E_App (plug_delimited D' (E_Perform eff_nm op0 (value_to_expr v0))) e2_) as eform.
+    remember (@nil ty) as Gamma. remember (@nil (linearity * bool)) as Delta.
+    induction Htype; try discriminate.
+    + injection Heqeform as H1_ H2_. subst.
+      apply lin_split_nil_inv in H as [HD1 HD2]. subst.
+      eapply effect_in_union_right. eapply effect_in_union_left.
+      exact (IHD eff_nm op0 v0 _ eff1 Htype1).
+    + subst. eapply effect_in_row_subset; [| eassumption].
+      eapply IHHtype; try reflexivity. exact IHD.
+
+  - (* DC_AppArg *)
+    remember (E_App (value_to_expr v_) (plug_delimited D' (E_Perform eff_nm op0 (value_to_expr v0)))) as eform.
+    remember (@nil ty) as Gamma. remember (@nil (linearity * bool)) as Delta.
+    induction Htype; try discriminate.
+    + injection Heqeform as H1_ H2_. subst.
+      apply lin_split_nil_inv in H as [HD1 HD2]. subst.
+      eapply effect_in_union_right. eapply effect_in_union_right.
+      exact (IHD eff_nm op0 v0 _ eff2 Htype2).
+    + subst. eapply effect_in_row_subset; [| eassumption].
+      eapply IHHtype; try reflexivity. exact IHD.
+
+  - (* DC_Let *)
+    remember (E_Let (plug_delimited D' (E_Perform eff_nm op0 (value_to_expr v0))) e2_) as eform.
+    remember (@nil ty) as Gamma. remember (@nil (linearity * bool)) as Delta.
+    induction Htype; try discriminate.
+    + injection Heqeform as H1_ H2_. subst.
+      apply lin_split_nil_inv in H as [HD1 HD2]. subst.
+      eapply effect_in_union_left.
+      exact (IHD eff_nm op0 v0 _ eff1 Htype1).
+    + subst. eapply effect_in_row_subset; [| eassumption].
+      eapply IHHtype; try reflexivity. exact IHD.
+
+  - (* DC_Select *)
+    remember (E_Select (plug_delimited D' (E_Perform eff_nm op0 (value_to_expr v0))) l_) as eform.
+    remember (@nil ty) as Gamma. remember (@nil (linearity * bool)) as Delta.
+    induction Htype; try discriminate.
+    + injection Heqeform as H1_ H2_. subst.
+      exact (IHD eff_nm op0 v0 _ eff Htype).
+    + subst. eapply effect_in_row_subset; [| eassumption].
+      eapply IHHtype; try reflexivity. exact IHD.
+
+  - (* DC_Annot *)
+    remember (E_Annot (plug_delimited D' (E_Perform eff_nm op0 (value_to_expr v0))) T_) as eform.
+    remember (@nil ty) as Gamma. remember (@nil (linearity * bool)) as Delta.
+    induction Htype; try discriminate.
+    + injection Heqeform as H1_ H2_. subst.
+      exact (IHD eff_nm op0 v0 _ eff Htype).
+    + subst. eapply effect_in_row_subset; [| eassumption].
+      eapply IHHtype; try reflexivity. exact IHD.
+
+  - (* DC_PerformArg *)
+    remember (E_Perform en_ opn_ (plug_delimited D' (E_Perform eff_nm op0 (value_to_expr v0)))) as eform.
+    remember (@nil ty) as Gamma. remember (@nil (linearity * bool)) as Delta.
+    induction Htype; try discriminate.
+    + injection Heqeform as H1_ H2_ H3_. subst.
+      eapply effect_in_union_right.
+      exact (IHD eff_nm op0 v0 _ eff' Htype).
+    + subst. eapply effect_in_row_subset; [| eassumption].
+      eapply IHHtype; try reflexivity. exact IHD.
+Qed.
+
+(** ** Helper: effect_in_row is incompatible with sub-pure effects *)
+
+Lemma effect_in_row_not_pure :
+  forall eff_nm eff,
+    effect_in_row eff_nm eff ->
+    effect_row_subset eff Eff_Pure ->
+    False.
+Proof.
+  intros eff_nm eff Hin Hsub.
+  destruct eff; simpl in *.
+  - exact Hin.
+  - subst. inversion Hin.
+  - exact Hsub.
+Qed.
+
 (** ** Preservation Theorem
 
     Statement: If Γ; Δ ⊢ e : T / ε and e ──► e', then
@@ -669,41 +818,21 @@ Qed.
 
     Reference: FORMAL_SEMANTICS.md §7.2, §11.2
 
-    Proof sketch from the spec:
-    By induction on the derivation of e ──► e'.
+    We prove preservation via a config-level helper amenable to
+    induction on the step relation. This provides an induction
+    hypothesis for Step_Context (which inversion cannot). *)
 
-    Case β-App: (λx:S. e) v ──► e[v/x]
-      By T-Lam: Γ, x:S ⊢ e : T / ε
-      By T-App: Γ ⊢ v : S
-      By Substitution Lemma: Γ ⊢ e[v/x] : T / ε ∎
-
-    Case Handle-Return: with h handle v ──► h.return(v)
-      By T-Handle: Γ ⊢ v : T and h.return : T → U
-      Result has type U with effects from handler implementation.
-
-    Case Handle-Op-Deep:
-      with h handle D[perform op(v)] ──► e_op[v/x, κ/resume]
-      Continuation κ = λy. with h handle D[y]
-      By T-Handle: continuation has appropriate type
-      Handler clause e_op typed correctly by handler typing rules.
-
-    Effect subsumption maintained because handling removes
-    the handled effect from the row. ∎
-*)
-
-Theorem preservation :
-  forall Sigma e e' T eff M M',
-    closed_well_typed Sigma e T eff ->
-    step (mk_config e M) (mk_config e' M') ->
-    exists eff',
-      closed_well_typed Sigma e' T eff' /\
-      effect_row_subset eff' eff.
+Lemma preservation_ind :
+  forall c1 c2,
+    step c1 c2 ->
+    forall Sigma T eff,
+      has_type Sigma [] [] (cfg_expr c1) T eff ->
+      exists eff',
+        has_type Sigma [] [] (cfg_expr c2) T eff' /\
+        effect_row_subset eff' eff.
 Proof.
-  intros Sigma e e' T eff M M' Htype Hstep.
-  unfold closed_well_typed in *.
-
-  (* Proof by inversion on the step derivation. *)
-  inversion Hstep; subst.
+  intros c1 c2 Hstep.
+  induction Hstep; simpl; intros Sigma0 T0 eff0 Htype.
 
   (** Case Step_Beta: (λx:T. body) v ──► body[v/x] *)
   - destruct (has_type_app_inv _ _ _ _ _ Htype)
@@ -712,7 +841,7 @@ Proof.
       as [B' [fn_eff' [Heq Htybody]]].
     injection Heq as HA HB Hfn. subst.
     exists fn_eff'. split.
-    + apply substitution_preserves_typing with (U := T0).
+    + apply substitution_preserves_typing with (U := T).
       * exact Htybody.
       * apply value_typing_inversion with (eff := eff2).
         exact Hty2. apply value_to_expr_is_value.
@@ -730,7 +859,10 @@ Proof.
         exact Hty1. assumption.
     + eapply effect_row_subset_trans.
       * apply effect_row_subset_union_r.
-        admit. (* Row variable compatibility — holds for closed terms *)
+        admit. (* Row variable compatibility — holds for closed terms.
+                  The Eff_Open/Eff_Open case with different row variables
+                  cannot arise in well-typed closed terms because typing
+                  rules only produce Eff_Pure and Eff_Closed effects. *)
       * exact Hsub.
 
   (** Case Step_Select: {l₁=v₁,...}.lᵢ ──► vᵢ *)
@@ -748,15 +880,13 @@ Proof.
     + eapply effect_row_subset_trans; eassumption.
 
   (** Case Step_Extend: {l=v|{fields}} ──► {l=v, fields...} *)
-  - (* E_Extend has no typing rule — this case is vacuous. *)
-    exfalso.
+  - exfalso.
     remember (E_Extend l v (E_Record fields)) as eext.
     induction Htype; try discriminate; auto.
 
   (** Case Step_Annot: (v : T) ──► v *)
   - destruct (has_type_annot_inv _ _ _ _ _ Htype)
-      as [HeqT [eff_inner [Hinner Hsub]]].
-    subst.
+      as [HeqT [eff_inner [Hinner Hsub]]]. subst.
     exists eff_inner. split.
     + exact Hinner.
     + exact Hsub.
@@ -774,46 +904,56 @@ Proof.
       * exact Hsub.
 
   (** Case Step_HandleOpDeep *)
-  - exists eff. split.
-    + (* By T_Handle and handler well-formedness:
-         - v : arg_ty for operation op
-         - e_body : result_ty (with resume and arg bound)
-         - continuation κ = λy. with h handle D[y] : ret_ty → result_ty / handler_eff
-         By substitution: e_body[v/arg, κ/resume] : result_ty / handler_eff
-
-         The handled effect is removed from the effect row. *)
+  - exists eff0. split.
+    + (* Requires: handler clause typing inversion, delimited context
+         typing for continuation, and double substitution lemma.
+         The continuation λy. with h handle D[y] has type
+         ret_ty → result_ty / handler_eff by T_Lam + T_Handle. *)
       admit.
     + apply effect_row_subset_refl.
 
   (** Case Step_HandleOpShallow *)
-  - exists eff. split.
+  - exists eff0. split.
     + (* Similar to deep case, but continuation does not re-wrap handler *)
       admit.
     + apply effect_row_subset_refl.
 
-  (** Case Step_Context: E[e0] steps because e0 steps *)
-  - (* Apply context_typing to decompose plug_eval E e0. *)
-    destruct (context_typing _ E e0 _ _ Htype) as [A [eff_inner [He0 Hreplace]]].
-    (* The inner step preserves typing by the induction hypothesis.
-       Since we used inversion (not induction), we don't have a
-       recursive IH. However, we can apply preservation to the
-       inner step directly — Coq allows this because preservation
-       is being defined by Admitted (axiomatically).
-
-       In a fully rigorous proof, we would either:
-       1. Use well-founded induction on expression size, or
-       2. Restructure as induction on the step relation.
-
-       For now, we use the already-stated preservation on the
-       inner step (this is sound since we eventually close the
-       proof with Admitted). *)
-    admit.
-
-  (** Case Step_ResumeValid *)
-  - exists eff. split.
-    + admit.
+  (** Case Step_Context: E[e] ──► E[e'] because e ──► e' *)
+  - destruct (context_typing _ E e _ _ Htype) as [A [eff_inner [He Hreplace]]].
+    destruct (IHHstep _ _ _ He) as [eff_inner' [He' Hsub_inner]].
+    exists eff0. split.
+    + apply Hreplace.
+      apply T_Sub with (eff := eff_inner').
+      * exact He'.
+      * exact Hsub_inner.
     + apply effect_row_subset_refl.
+
+  (** Case Step_ResumeValid: simplified resume E_App (E_Const Const_Unit) v
+      This is vacuous — Const_Unit has type TyUnit, not an arrow type. *)
+  - exfalso.
+    destruct (has_type_app_inv _ _ _ _ _ Htype)
+      as [A [fn_eff [eff1 [eff2 [Hty1 [Hty2 Hsub]]]]]].
+    remember (E_Const Const_Unit) as econst.
+    remember (Ty_Arrow A T0 fn_eff) as Tarrow.
+    clear -Hty1 Heqeconst HeqTarrow.
+    induction Hty1; try discriminate.
+    + (* T_Const: typeof_const Const_Unit = Ty_Base TyUnit ≠ Ty_Arrow *)
+      injection Heqeconst as Hc. subst. simpl in HeqTarrow. discriminate.
+    + (* T_Sub: recurse — T_Sub preserves the type *)
+      exact (IHHty1 Heqeconst HeqTarrow).
 Admitted.
+
+Theorem preservation :
+  forall Sigma e e' T eff M M',
+    closed_well_typed Sigma e T eff ->
+    step (mk_config e M) (mk_config e' M') ->
+    exists eff',
+      closed_well_typed Sigma e' T eff' /\
+      effect_row_subset eff' eff.
+Proof.
+  intros Sigma e e' T eff M M' Htype Hstep.
+  exact (preservation_ind _ _ Hstep Sigma T eff Htype).
+Qed.
 
 (** ** Note: Type Soundness (combining Progress + Preservation) is
     in Soundness.v, which imports both Progress.v and this file. *)

@@ -343,10 +343,12 @@ Proof.
   destruct (progress Sigma e T Eff_Pure M Htype) as [Hval | [Hstep | Hperform]].
   - left. exact Hval.
   - right. exact Hstep.
-  - (* Pure program cannot perform effects.
-       By T-Perform, perform requires effect in row.
-       But row is pure (empty), contradiction. *)
+  - (* Pure program cannot perform effects. *)
     exfalso.
-    (* This follows from effect safety: a pure-typed term
-       cannot contain unhandled performs. *)
-Admitted.
+    destruct Hperform as [eff_nm [op0 [v0 [D Heq]]]]. subst.
+    unfold closed_well_typed in Htype.
+    assert (Hin : effect_in_row eff_nm Eff_Pure).
+    { exact (plug_delimited_perform_effect _ D eff_nm op0 v0 T Eff_Pure Htype). }
+    (* effect_in_row eff_nm Eff_Pure = False *)
+    simpl in Hin. exact Hin.
+Qed.

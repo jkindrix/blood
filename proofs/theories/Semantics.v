@@ -205,7 +205,7 @@ Inductive step : config -> config -> Prop :=
       where h is a deep handler for effect E *)
   | Step_HandleOpDeep : forall M e_ret clauses D
                                eff_name op_nm v e_body
-                               snap,
+                               ret_ty snap,
       is_value v = true ->
       (** Find matching clause *)
       In (OpClause eff_name op_nm e_body) clauses ->
@@ -213,7 +213,7 @@ Inductive step : config -> config -> Prop :=
       snap = extract_gen_refs D ->
       (** Build continuation: λy. with h handle D[y] *)
       let h := Handler Deep e_ret clauses in
-      let kont := E_Lam (Ty_Base TyUnit) (* placeholder type *)
+      let kont := E_Lam ret_ty
                         (E_Handle h (plug_delimited D (E_Var 0))) in
       step (mk_config
               (E_Handle (Handler Deep e_ret clauses)
@@ -229,11 +229,11 @@ Inductive step : config -> config -> Prop :=
       Note: handler NOT re-wrapped around continuation *)
   | Step_HandleOpShallow : forall M e_ret clauses D
                                   eff_name op_nm v e_body
-                                  snap,
+                                  ret_ty snap,
       is_value v = true ->
       In (OpClause eff_name op_nm e_body) clauses ->
       snap = extract_gen_refs D ->
-      let kont := E_Lam (Ty_Base TyUnit)
+      let kont := E_Lam ret_ty
                         (plug_delimited D (E_Var 0)) in
       step (mk_config
               (E_Handle (Handler Shallow e_ret clauses)
