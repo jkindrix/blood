@@ -17,8 +17,10 @@ From Blood Require Import Syntax.
 From Blood Require Import Typing.
 From Blood Require Import Substitution.
 From Blood Require Import Semantics.
-From Blood Require Import Progress.
+From Blood Require Import EffectAlgebra.
+From Blood Require Import ContextTyping.
 From Blood Require Import Preservation.
+From Blood Require Import Progress.
 From Blood Require Import Soundness.
 
 (** ** Effect containment

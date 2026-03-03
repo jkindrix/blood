@@ -17,7 +17,9 @@ From Blood Require Import Syntax.
 From Blood Require Import Typing.
 From Blood Require Import Substitution.
 From Blood Require Import Semantics.
-From Blood Require Import Preservation.
+From Blood Require Import EffectAlgebra.
+From Blood Require Import Inversion.
+From Blood Require Import ContextTyping.
 
 (** ** Canonical Forms Lemmas
 
@@ -131,15 +133,6 @@ Proof.
   - (* E_Resume *) intros. discriminate.
   - (* Handler *) intros. exact I.
   - (* OpClause *) intros. exact I.
-Qed.
-
-(** ** Helper: lin_split of empty context forces both sides empty *)
-
-Lemma lin_split_nil_inv :
-  forall Delta1 Delta2,
-    lin_split [] Delta1 Delta2 -> Delta1 = [] /\ Delta2 = [].
-Proof.
-  intros Delta1 Delta2 H. inversion H. auto.
 Qed.
 
 (** ** Helper: record field type-value correspondence *)

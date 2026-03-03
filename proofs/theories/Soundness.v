@@ -16,8 +16,10 @@ From Blood Require Import Syntax.
 From Blood Require Import Typing.
 From Blood Require Import Substitution.
 From Blood Require Import Semantics.
-From Blood Require Import Progress.
+From Blood Require Import EffectAlgebra.
+From Blood Require Import ContextTyping.
 From Blood Require Import Preservation.
+From Blood Require Import Progress.
 
 (** ** Multi-step preservation helper
 
@@ -109,9 +111,7 @@ Proof.
 Qed.
 
 (** ** perform_requires_effect, plug_delimited_perform_effect, and
-    effect_in_row_not_pure are now in Preservation.v to break the
-    circular dependency (Progress.v imports Preservation.v, and
-    Soundness.v imports Progress.v). *)
+    effect_in_row_not_pure are in ContextTyping.v. *)
 
 (** ** Effect Safety
 
