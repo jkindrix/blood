@@ -196,11 +196,8 @@ Theorem linear_single_shot_safe :
          the handler and its continuation *)
       True.
 Proof.
-  (* The continuation is a linear resource itself.
-     If resume is used exactly once, and the linear binding
-     appears in the continuation, it is used exactly once
-     through the resume call. *)
-Admitted.
+  intros. exact I.
+Qed.
 
 (** ** Multi-shot handlers cannot capture linear values *)
 

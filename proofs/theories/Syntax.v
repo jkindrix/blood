@@ -274,6 +274,86 @@ Definition effect_row_union (r1 r2 : effect_row) : effect_row :=
       Eff_Open (effect_entries_union es1 es2) rv1
   end.
 
+(** ** Custom nested induction principle for expr/handler/op_clause
+
+    Standard [induction e] does not provide induction hypotheses for
+    expressions nested inside lists (E_Record fields, Handler clauses).
+    This principle provides [Forall]-based IH for list elements. *)
+
+Section expr_nested_ind.
+  Variable P : expr -> Prop.
+  Variable P_handler : handler -> Prop.
+  Variable P_clause : op_clause -> Prop.
+
+  Hypothesis H_Var : forall v, P (E_Var v).
+  Hypothesis H_Const : forall c, P (E_Const c).
+  Hypothesis H_Lam : forall T body, P body -> P (E_Lam T body).
+  Hypothesis H_App : forall e1 e2, P e1 -> P e2 -> P (E_App e1 e2).
+  Hypothesis H_Let : forall e1 e2, P e1 -> P e2 -> P (E_Let e1 e2).
+  Hypothesis H_Annot : forall e T, P e -> P (E_Annot e T).
+  Hypothesis H_Record : forall fields,
+    Forall (fun p => P (snd p)) fields -> P (E_Record fields).
+  Hypothesis H_Select : forall e l, P e -> P (E_Select e l).
+  Hypothesis H_Extend : forall l e1 e2,
+    P e1 -> P e2 -> P (E_Extend l e1 e2).
+  Hypothesis H_Perform : forall eff op e, P e -> P (E_Perform eff op e).
+  Hypothesis H_Handle : forall h e,
+    P_handler h -> P e -> P (E_Handle h e).
+  Hypothesis H_Resume : forall e, P e -> P (E_Resume e).
+  Hypothesis H_Handler : forall hk e_ret clauses,
+    P e_ret -> Forall P_clause clauses ->
+    P_handler (Handler hk e_ret clauses).
+  Hypothesis H_OpClause : forall eff op body,
+    P body -> P_clause (OpClause eff op body).
+
+  Fixpoint expr_nested_ind (e : expr) : P e :=
+    match e return P e with
+    | E_Var v => H_Var v
+    | E_Const c => H_Const c
+    | E_Lam T body => H_Lam T body (expr_nested_ind body)
+    | E_App e1 e2 =>
+        H_App e1 e2 (expr_nested_ind e1) (expr_nested_ind e2)
+    | E_Let e1 e2 =>
+        H_Let e1 e2 (expr_nested_ind e1) (expr_nested_ind e2)
+    | E_Annot e1 T => H_Annot e1 T (expr_nested_ind e1)
+    | E_Record fields =>
+        H_Record fields
+          ((fix fields_ind (fs : list (label * expr))
+              : Forall (fun p => P (snd p)) fs :=
+            match fs return Forall (fun p => P (snd p)) fs with
+            | [] => Forall_nil _
+            | (l, ei) :: rest =>
+                Forall_cons (l, ei) (expr_nested_ind ei) (fields_ind rest)
+            end) fields)
+    | E_Select e1 l => H_Select e1 l (expr_nested_ind e1)
+    | E_Extend l e1 e2 =>
+        H_Extend l e1 e2 (expr_nested_ind e1) (expr_nested_ind e2)
+    | E_Perform eff op e1 =>
+        H_Perform eff op e1 (expr_nested_ind e1)
+    | E_Handle h e1 =>
+        H_Handle h e1 (handler_nested_ind h) (expr_nested_ind e1)
+    | E_Resume e1 => H_Resume e1 (expr_nested_ind e1)
+    end
+  with handler_nested_ind (h : handler) : P_handler h :=
+    match h return P_handler h with
+    | Handler hk e_ret clauses =>
+        H_Handler hk e_ret clauses (expr_nested_ind e_ret)
+          ((fix clauses_ind (cs : list op_clause)
+              : Forall P_clause cs :=
+            match cs return Forall P_clause cs with
+            | [] => Forall_nil _
+            | c :: rest =>
+                Forall_cons c (op_clause_nested_ind c) (clauses_ind rest)
+            end) clauses)
+    end
+  with op_clause_nested_ind (cl : op_clause) : P_clause cl :=
+    match cl return P_clause cl with
+    | OpClause eff op body =>
+        H_OpClause eff op body (expr_nested_ind body)
+    end.
+
+End expr_nested_ind.
+
 (** ** Notation *)
 
 Notation "'pure'" := Eff_Pure (at level 0).

@@ -171,12 +171,98 @@ Proof.
   intro eff. simpl. auto.
 Qed.
 
+Lemma effect_entries_union_in_right :
+  forall es1 es2 e,
+    In e es2 -> In e (effect_entries_union es1 es2).
+Proof.
+  induction es1 as [| [n] rest IH]; intros es2 e Hin.
+  - exact Hin.
+  - simpl.
+    destruct (existsb (fun e0 => match e0 with Eff_Entry n' => effect_name_eqb n n' end) es2).
+    + exact (IH es2 e Hin).
+    + right. exact (IH es2 e Hin).
+Qed.
+
+Lemma effect_entries_union_in_or :
+  forall es1 es2 e,
+    In e (effect_entries_union es1 es2) ->
+    In e es1 \/ In e es2.
+Proof.
+  induction es1 as [| [n] rest IH]; intros es2 e Hin.
+  - right. exact Hin.
+  - simpl in Hin.
+    destruct (existsb (fun e0 => match e0 with Eff_Entry n' => effect_name_eqb n n' end) es2) eqn:Hex.
+    + destruct (IH es2 e Hin) as [Hr | Hl].
+      * left. right. exact Hr.
+      * right. exact Hl.
+    + simpl in Hin. destruct Hin as [Heq | Hin].
+      * left. left. exact Heq.
+      * destruct (IH es2 e Hin) as [Hr | Hl].
+        -- left. right. exact Hr.
+        -- right. exact Hl.
+Qed.
+
+Lemma effect_entries_union_intro :
+  forall es1 es2 e,
+    In e es1 \/ In e es2 ->
+    In e (effect_entries_union es1 es2).
+Proof.
+  induction es1 as [| [n] rest IH]; intros es2 e [Hin1 | Hin2].
+  - inversion Hin1.
+  - exact Hin2.
+  - simpl in Hin1. destruct Hin1 as [Heq | Hin1].
+    + subst e. simpl.
+      destruct (existsb (fun e0 => match e0 with Eff_Entry n' => effect_name_eqb n n' end) es2) eqn:Hex.
+      * (* n already in es2, so it's in the union via es2 *)
+        apply existsb_exists in Hex. destruct Hex as [[n'] [Hin' Heqb]].
+        apply String.eqb_eq in Heqb. subst n'.
+        apply effect_entries_union_in_right. exact Hin'.
+      * simpl. left. reflexivity.
+    + simpl.
+      destruct (existsb _ es2).
+      * apply IH. left. exact Hin1.
+      * right. apply IH. left. exact Hin1.
+  - simpl.
+    destruct (existsb _ es2).
+    + apply IH. right. exact Hin2.
+    + right. apply IH. right. exact Hin2.
+Qed.
+
+Lemma effect_entries_subset_union_compat :
+  forall es1 es2 es3,
+    (forall e, In e es1 -> In e es2) ->
+    forall e, In e (effect_entries_union es1 es3) ->
+              In e (effect_entries_union es2 es3).
+Proof.
+  intros es1 es2 es3 Hsub e Hin.
+  apply effect_entries_union_in_or in Hin.
+  apply effect_entries_union_intro.
+  destruct Hin as [Hin1 | Hin2].
+  - left. apply Hsub. exact Hin1.
+  - right. exact Hin2.
+Qed.
+
 Lemma effect_union_monotone_left :
   forall eff1 eff2 eff3,
     effect_row_subset eff1 eff2 ->
     effect_row_subset (effect_row_union eff1 eff3) (effect_row_union eff2 eff3).
 Proof.
-  (* Union preserves subset on the left component *)
+  intros eff1 eff2 eff3 Hsub.
+  destruct eff1 as [| es1 | es1 rv1],
+           eff2 as [| es2 | es2 rv2],
+           eff3 as [| es3 | es3 rv3];
+    simpl in *; auto;
+    try contradiction;
+    try (apply effect_entries_subset_union_compat; exact Hsub);
+    try (apply effect_entries_union_in_right);
+    try (subst; auto);
+    try (destruct Hsub as [Hrv Hsub]; subst;
+         try (split; [reflexivity | exact Hsub]);
+         try (split; [reflexivity | apply effect_entries_subset_union_compat; exact Hsub])).
+  (* Remaining cases involve open row variable mismatches.
+     These require row variable compatibility, which holds
+     for well-typed closed terms. *)
+  all: admit.
 Admitted.
 
 Lemma effect_union_comm :
@@ -187,7 +273,25 @@ Lemma effect_union_comm :
       effect_in_row e (effect_row_union eff1 eff2) ->
       effect_in_row e (effect_row_union eff2 eff1).
 Proof.
-Admitted.
+  intros eff1 eff2 e Hin.
+  destruct eff1, eff2; simpl in *; auto.
+  - (* Closed/Closed *)
+    apply effect_entries_union_in_or in Hin.
+    apply effect_entries_union_intro.
+    destruct Hin; auto.
+  - (* Closed/Open *)
+    apply effect_entries_union_in_or in Hin.
+    apply effect_entries_union_intro.
+    destruct Hin; auto.
+  - (* Open/Closed *)
+    apply effect_entries_union_in_or in Hin.
+    apply effect_entries_union_intro.
+    destruct Hin; auto.
+  - (* Open/Open *)
+    apply effect_entries_union_in_or in Hin.
+    apply effect_entries_union_intro.
+    destruct Hin; auto.
+Qed.
 
 (** ** Well-typed programs respect effect discipline
 

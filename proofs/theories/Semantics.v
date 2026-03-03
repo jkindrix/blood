@@ -78,6 +78,7 @@ Inductive eval_context : Type :=
   | EC_AppArg : value -> eval_context -> eval_context   (** v E *)
   | EC_Let : eval_context -> expr -> eval_context       (** let x = E in e *)
   | EC_Select : eval_context -> label -> eval_context   (** E.l *)
+  | EC_Annot : eval_context -> ty -> eval_context          (** (E : T) *)
   | EC_PerformArg :
       effect_name -> op_name ->
       eval_context -> eval_context                      (** perform E.op(E) *)
@@ -95,6 +96,7 @@ Inductive delimited_context : Type :=
   | DC_AppArg : value -> delimited_context -> delimited_context
   | DC_Let : delimited_context -> expr -> delimited_context
   | DC_Select : delimited_context -> label -> delimited_context
+  | DC_Annot : delimited_context -> ty -> delimited_context
   | DC_PerformArg :
       effect_name -> op_name ->
       delimited_context -> delimited_context
@@ -109,6 +111,7 @@ Fixpoint plug_eval (E : eval_context) (e : expr) : expr :=
   | EC_AppFun E' e2 => E_App (plug_eval E' e) e2
   | EC_AppArg v E' => E_App (value_to_expr v) (plug_eval E' e)
   | EC_Let E' e2 => E_Let (plug_eval E' e) e2
+  | EC_Annot E' T => E_Annot (plug_eval E' e) T
   | EC_Select E' l => E_Select (plug_eval E' e) l
   | EC_PerformArg eff op E' => E_Perform eff op (plug_eval E' e)
   | EC_Handle h E' => E_Handle h (plug_eval E' e)
@@ -120,6 +123,7 @@ Fixpoint plug_delimited (D : delimited_context) (e : expr) : expr :=
   | DC_AppFun D' e2 => E_App (plug_delimited D' e) e2
   | DC_AppArg v D' => E_App (value_to_expr v) (plug_delimited D' e)
   | DC_Let D' e2 => E_Let (plug_delimited D' e) e2
+  | DC_Annot D' T => E_Annot (plug_delimited D' e) T
   | DC_Select D' l => E_Select (plug_delimited D' e) l
   | DC_PerformArg eff op D' => E_Perform eff op (plug_delimited D' e)
   end.

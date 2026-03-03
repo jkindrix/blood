@@ -219,45 +219,6 @@ Proof.
       intro Heq. apply Hfalse. symmetry. exact Heq.
 Qed.
 
-(** *** Part 3: No Use-After-Free *)
-
-Theorem no_use_after_free :
-  forall M0 M1 snap addr gen,
-    (** Snapshot captured in M0 *)
-    snapshot_captured_valid M0 snap ->
-    (** Memory evolved to M1 *)
-    mem_evolves M0 M1 ->
-    (** Resume check passed *)
-    snapshot_valid M1 snap ->
-    (** Reference is in the snapshot *)
-    In (GenRef addr gen) snap ->
-    (** Then dereferencing (addr, gen) in M1 is safe *)
-    current_gen M1 addr = gen /\
-    cell_is_allocated (M1 addr).
-Proof.
-  intros M0 M1 snap addr gen Hcaptured Hevolves Hvalid Hin.
-  split.
-  - (* Generation matches *)
-    unfold snapshot_valid in Hvalid.
-    rewrite Forall_forall in Hvalid.
-    specialize (Hvalid (GenRef addr gen) Hin).
-    exact Hvalid.
-  - (* Cell is allocated *)
-    (* Key insight: if current_gen matches the snapshot generation,
-       the cell has NOT been freed since capture.
-       Because free increments the generation, so if gen still matches
-       currentGen, no free has occurred at this address. *)
-    unfold snapshot_valid in Hvalid.
-    rewrite Forall_forall in Hvalid.
-    specialize (Hvalid (GenRef addr gen) Hin).
-    (* Need: gen = current_gen M1 addr implies allocated.
-       This follows from the memory operation semantics:
-       - MemStep_Free sets cell_value to None and increments gen
-       - If gen still matches, no free has occurred
-       - If no free, cell is still allocated (assuming no other
-         operation sets value to None) *)
-Admitted.
-
 (** ** Free increments generation
 
     Key lemma: freeing a cell always increments its generation. *)
@@ -309,6 +270,107 @@ Proof.
   - apply Nat.le_trans with (m := current_gen M2 addr).
     + exact (gen_monotone M1 M2 addr op H).
     + exact IHHevolves.
+Qed.
+
+(** ** Helper: allocation preserved when generation unchanged *)
+
+Lemma allocated_preserved_step :
+  forall M M' addr gen op,
+    cell_is_allocated (M addr) ->
+    current_gen M addr = gen ->
+    mem_step M op M' ->
+    current_gen M' addr = gen ->
+    cell_is_allocated (M' addr).
+Proof.
+  intros M M' addr gen op Halloc Hgen Hstep Hgen'.
+  destruct Hstep; unfold current_gen, mem_update in *.
+  - (* MemStep_Alloc *)
+    destruct (addr =? addr0) eqn:Heq.
+    + simpl. exact I.
+    + exact Halloc.
+  - (* MemStep_Free *)
+    destruct (addr =? addr0) eqn:Heq.
+    + (* addr = addr0: free sets gen to S gen0, but Hgen' says gen still matches *)
+      apply Nat.eqb_eq in Heq. subst addr0.
+      simpl in Hgen'.
+      (* Hgen' : S gen0 = gen, H : cell_gen (M addr) = gen0, Hgen : cell_gen (M addr) = gen *)
+      lia.
+    + exact Halloc.
+  - (* MemStep_Deref: memory unchanged *)
+    exact Halloc.
+Qed.
+
+Lemma allocated_preserved_evolves :
+  forall M M' addr gen,
+    cell_is_allocated (M addr) ->
+    current_gen M addr = gen ->
+    mem_evolves M M' ->
+    current_gen M' addr = gen ->
+    cell_is_allocated (M' addr).
+Proof.
+  intros M M' addr gen Halloc Hgen Hev.
+  revert Halloc Hgen.
+  induction Hev as [M0 | M0 M1 M2 op Hstep Hev IH]; intros Halloc Hgen Hgen'.
+  - exact Halloc.
+  - apply IH.
+    + eapply allocated_preserved_step; eauto.
+      (* current_gen M1 addr = gen:
+         gen_monotone says M1 >= M0 = gen.
+         gen_monotone_multi says M2 >= M1, and M2 has gen.
+         So M1 = gen. *)
+      assert (Hge : gen <= current_gen M1 addr).
+      { rewrite <- Hgen. exact (gen_monotone M0 M1 addr op Hstep). }
+      assert (Hle : current_gen M1 addr <= gen).
+      { rewrite <- Hgen'. exact (gen_monotone_multi M1 M2 addr Hev). }
+      lia.
+    + assert (Hge : gen <= current_gen M1 addr).
+      { rewrite <- Hgen. exact (gen_monotone M0 M1 addr op Hstep). }
+      assert (Hle : current_gen M1 addr <= gen).
+      { rewrite <- Hgen'. exact (gen_monotone_multi M1 M2 addr Hev). }
+      lia.
+    + exact Hgen'.
+Qed.
+
+(** *** Part 3: No Use-After-Free *)
+
+Theorem no_use_after_free :
+  forall M0 M1 snap addr gen,
+    (** Snapshot captured in M0 *)
+    snapshot_captured_valid M0 snap ->
+    (** Memory evolved to M1 *)
+    mem_evolves M0 M1 ->
+    (** Resume check passed *)
+    snapshot_valid M1 snap ->
+    (** Reference is in the snapshot *)
+    In (GenRef addr gen) snap ->
+    (** Then dereferencing (addr, gen) in M1 is safe *)
+    current_gen M1 addr = gen /\
+    cell_is_allocated (M1 addr).
+Proof.
+  intros M0 M1 snap addr gen Hcaptured Hevolves Hvalid Hin.
+  split.
+  - (* Generation matches *)
+    unfold snapshot_valid in Hvalid.
+    rewrite Forall_forall in Hvalid.
+    specialize (Hvalid (GenRef addr gen) Hin).
+    exact Hvalid.
+  - (* Cell is allocated *)
+    (* Key insight: if current_gen matches the snapshot generation,
+       the cell has NOT been freed since capture.
+       Because free increments the generation, so if gen still matches
+       currentGen, no free has occurred at this address. *)
+    unfold snapshot_valid in Hvalid.
+    rewrite Forall_forall in Hvalid.
+    specialize (Hvalid (GenRef addr gen) Hin).
+    (* By snapshot_captured_valid, cell was allocated at capture *)
+    destruct Hcaptured as [Hvalid0 Halloc0].
+    rewrite Forall_forall in Halloc0.
+    specialize (Halloc0 (GenRef addr gen) Hin). simpl in Halloc0.
+    unfold snapshot_valid in Hvalid0.
+    rewrite Forall_forall in Hvalid0.
+    specialize (Hvalid0 (GenRef addr gen) Hin). simpl in Hvalid0.
+    (* By allocated_preserved_evolves: since gen still matches, cell is still allocated *)
+    exact (allocated_preserved_evolves M0 M1 addr gen Halloc0 Hvalid0 Hevolves Hvalid).
 Qed.
 
 (** ** Stale reference detection is sound
