@@ -88,31 +88,11 @@ Theorem static_effect_containment :
 Proof.
   intros Sigma e T Htype.
   unfold effects_contained.
-  intros D eff_nm op v Heq.
-  (* Proof by contradiction.
-
-     Assume e = D[perform eff_nm.op(v)] for some D, eff_nm, op, v.
-
-     By the typing rules:
-     - perform eff_nm.op(v) has type B / {eff_nm} ∪ ε'
-       where ε' are the effects of evaluating v.
-
-     - D[...] propagates effects outward. The effect row of the
-       whole expression includes {eff_nm}.
-
-     - But the overall type says eff = Eff_Pure = {}.
-
-     - {eff_nm} ⊆ {} is impossible (eff_nm is not in the empty set).
-
-     - Contradiction.
-
-     The key lemma needed: if the overall expression is pure-typed,
-     then no subexpression can perform an effect without a handler
-     in between. This follows from the typing rules for E_Handle
-     (which removes effects from the row) and E_Perform (which
-     adds effects to the row).
-  *)
-Admitted.
+  intros D eff_nm op v Heq. subst e.
+  (* plug_delimited_perform_effect gives effect_in_row eff_nm Eff_Pure,
+     which IS the goal (and equals False by definition) *)
+  exact (plug_delimited_perform_effect Sigma D eff_nm op v T Eff_Pure Htype).
+Qed.
 
 (** Part 2: Dynamic effect preservation *)
 
@@ -171,62 +151,9 @@ Proof.
   intro eff. simpl. auto.
 Qed.
 
-Lemma effect_entries_union_in_right :
-  forall es1 es2 e,
-    In e es2 -> In e (effect_entries_union es1 es2).
-Proof.
-  induction es1 as [| [n] rest IH]; intros es2 e Hin.
-  - exact Hin.
-  - simpl.
-    destruct (existsb (fun e0 => match e0 with Eff_Entry n' => effect_name_eqb n n' end) es2).
-    + exact (IH es2 e Hin).
-    + right. exact (IH es2 e Hin).
-Qed.
-
-Lemma effect_entries_union_in_or :
-  forall es1 es2 e,
-    In e (effect_entries_union es1 es2) ->
-    In e es1 \/ In e es2.
-Proof.
-  induction es1 as [| [n] rest IH]; intros es2 e Hin.
-  - right. exact Hin.
-  - simpl in Hin.
-    destruct (existsb (fun e0 => match e0 with Eff_Entry n' => effect_name_eqb n n' end) es2) eqn:Hex.
-    + destruct (IH es2 e Hin) as [Hr | Hl].
-      * left. right. exact Hr.
-      * right. exact Hl.
-    + simpl in Hin. destruct Hin as [Heq | Hin].
-      * left. left. exact Heq.
-      * destruct (IH es2 e Hin) as [Hr | Hl].
-        -- left. right. exact Hr.
-        -- right. exact Hl.
-Qed.
-
-Lemma effect_entries_union_intro :
-  forall es1 es2 e,
-    In e es1 \/ In e es2 ->
-    In e (effect_entries_union es1 es2).
-Proof.
-  induction es1 as [| [n] rest IH]; intros es2 e [Hin1 | Hin2].
-  - inversion Hin1.
-  - exact Hin2.
-  - simpl in Hin1. destruct Hin1 as [Heq | Hin1].
-    + subst e. simpl.
-      destruct (existsb (fun e0 => match e0 with Eff_Entry n' => effect_name_eqb n n' end) es2) eqn:Hex.
-      * (* n already in es2, so it's in the union via es2 *)
-        apply existsb_exists in Hex. destruct Hex as [[n'] [Hin' Heqb]].
-        apply String.eqb_eq in Heqb. subst n'.
-        apply effect_entries_union_in_right. exact Hin'.
-      * simpl. left. reflexivity.
-    + simpl.
-      destruct (existsb _ es2).
-      * apply IH. left. exact Hin1.
-      * right. apply IH. left. exact Hin1.
-  - simpl.
-    destruct (existsb _ es2).
-    + apply IH. right. exact Hin2.
-    + right. apply IH. right. exact Hin2.
-Qed.
+(** effect_entries_union_in_right, effect_entries_union_in_or,
+    effect_entries_union_intro, effect_entries_union_in_left,
+    and effect_in_union_left are now in Syntax.v *)
 
 Lemma effect_entries_subset_union_compat :
   forall es1 es2 es3,
@@ -314,8 +241,15 @@ Theorem effect_discipline :
            True).
 Proof.
   intros Sigma e T M Htype e' M' Hsteps.
-  (* By preservation, e' is also pure-typed.
-     By static_effect_containment, a pure-typed term has no
-     unhandled performs.
-     Therefore e' cannot be an unhandled perform. *)
-Admitted.
+  intros [D [eff_nm [op0 [v0 [Heq _]]]]]. subst e'.
+  (* By multi-step preservation, e' has effect eff' ⊆ Pure *)
+  destruct (multi_step_type_preservation_sub _ _ Hsteps Sigma T Eff_Pure)
+    as [eff' [Htype' Hsub']].
+  { simpl. exact Htype. }
+  simpl in *.
+  (* The plugged perform introduces eff_nm into eff' *)
+  assert (Hin : effect_in_row eff_nm eff').
+  { exact (plug_delimited_perform_effect Sigma D eff_nm op0 v0 T eff' Htype'). }
+  (* But eff' ⊆ Pure, contradiction *)
+  exact (effect_in_row_not_pure eff_nm eff' Hin Hsub').
+Qed.

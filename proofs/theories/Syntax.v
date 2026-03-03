@@ -274,6 +274,129 @@ Definition effect_row_union (r1 r2 : effect_row) : effect_row :=
       Eff_Open (effect_entries_union es1 es2) rv1
   end.
 
+(** ** Effect entry union algebraic properties *)
+
+Lemma effect_entries_union_in_right :
+  forall es1 es2 e,
+    In e es2 -> In e (effect_entries_union es1 es2).
+Proof.
+  induction es1 as [| [n] rest IH]; intros es2 e Hin.
+  - exact Hin.
+  - simpl.
+    destruct (existsb (fun e0 => match e0 with Eff_Entry n' => effect_name_eqb n n' end) es2).
+    + exact (IH es2 e Hin).
+    + right. exact (IH es2 e Hin).
+Qed.
+
+Lemma effect_entries_union_in_left :
+  forall es1 es2 e,
+    In e es1 -> In e (effect_entries_union es1 es2).
+Proof.
+  induction es1 as [| [n] rest IH]; intros es2 e Hin.
+  - inversion Hin.
+  - simpl in Hin. destruct Hin as [Heq | Hin].
+    + subst e. simpl.
+      destruct (existsb (fun e0 => match e0 with Eff_Entry n' => effect_name_eqb n n' end) es2) eqn:Hex.
+      * apply existsb_exists in Hex.
+        destruct Hex as [[n'] [Hin' Heqb]].
+        unfold effect_name_eqb in Heqb.
+        apply String.eqb_eq in Heqb. subst n'.
+        apply effect_entries_union_in_right. exact Hin'.
+      * simpl. left. reflexivity.
+    + simpl.
+      destruct (existsb _ es2).
+      * exact (IH es2 e Hin).
+      * right. exact (IH es2 e Hin).
+Qed.
+
+Lemma effect_entries_union_in_or :
+  forall es1 es2 e,
+    In e (effect_entries_union es1 es2) ->
+    In e es1 \/ In e es2.
+Proof.
+  induction es1 as [| [n] rest IH]; intros es2 e Hin.
+  - right. exact Hin.
+  - simpl in Hin.
+    destruct (existsb (fun e0 => match e0 with Eff_Entry n' => effect_name_eqb n n' end) es2) eqn:Hex.
+    + destruct (IH es2 e Hin) as [Hr | Hl].
+      * left. right. exact Hr.
+      * right. exact Hl.
+    + simpl in Hin. destruct Hin as [Heq | Hin].
+      * left. left. exact Heq.
+      * destruct (IH es2 e Hin) as [Hr | Hl].
+        -- left. right. exact Hr.
+        -- right. exact Hl.
+Qed.
+
+Lemma effect_entries_union_intro :
+  forall es1 es2 e,
+    In e es1 \/ In e es2 ->
+    In e (effect_entries_union es1 es2).
+Proof.
+  intros es1 es2 e [Hin | Hin].
+  - exact (effect_entries_union_in_left es1 es2 e Hin).
+  - exact (effect_entries_union_in_right es1 es2 e Hin).
+Qed.
+
+(** Membership in effect_row_union from left component *)
+
+Lemma effect_in_union_left :
+  forall eff_nm eff1 eff2,
+    effect_in_row eff_nm eff1 ->
+    effect_in_row eff_nm (effect_row_union eff1 eff2).
+Proof.
+  intros eff_nm eff1 eff2 Hin.
+  destruct eff1; simpl in *.
+  - (* Pure *) contradiction.
+  - (* Closed *)
+    destruct eff2; simpl.
+    + exact Hin.
+    + apply effect_entries_union_in_left. exact Hin.
+    + apply effect_entries_union_in_left. exact Hin.
+  - (* Open *)
+    destruct eff2; simpl.
+    + exact Hin.
+    + apply effect_entries_union_in_left. exact Hin.
+    + apply effect_entries_union_in_left. exact Hin.
+Qed.
+
+Lemma effect_in_union_right :
+  forall eff_nm eff1 eff2,
+    effect_in_row eff_nm eff2 ->
+    effect_in_row eff_nm (effect_row_union eff1 eff2).
+Proof.
+  intros eff_nm eff1 eff2 Hin.
+  destruct eff2; simpl in *.
+  - (* Pure *) contradiction.
+  - (* Closed *)
+    destruct eff1; simpl.
+    + exact Hin.
+    + apply effect_entries_union_in_right. exact Hin.
+    + apply effect_entries_union_in_right. exact Hin.
+  - (* Open *)
+    destruct eff1; simpl.
+    + exact Hin.
+    + apply effect_entries_union_in_right. exact Hin.
+    + apply effect_entries_union_in_right. exact Hin.
+Qed.
+
+(** Subset preserves membership *)
+
+Lemma effect_in_row_subset :
+  forall eff_nm eff eff',
+    effect_in_row eff_nm eff ->
+    effect_row_subset eff eff' ->
+    effect_in_row eff_nm eff'.
+Proof.
+  intros eff_nm eff eff' Hin Hsub.
+  destruct eff, eff'; simpl in *;
+    try contradiction;
+    try (subst; inversion Hin; fail).
+  - (* Closed/Closed *) apply Hsub. exact Hin.
+  - (* Closed/Open *) apply Hsub. exact Hin.
+  - (* Open/Open *) destruct Hsub as [_ Hsub']. apply Hsub'. exact Hin.
+Qed.
+
 (** ** Custom nested induction principle for expr/handler/op_clause
 
     Standard [induction e] does not provide induction hypotheses for

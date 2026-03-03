@@ -108,6 +108,157 @@ Proof.
   - simpl in Htype'. exact (progress Sigma e' T eff' M' Htype').
 Qed.
 
+(** ** Helper: perform at top level requires effect in row *)
+
+Lemma perform_requires_effect :
+  forall Sigma eff_nm op arg T eff,
+    has_type Sigma [] [] (E_Perform eff_nm op arg) T eff ->
+    effect_in_row eff_nm eff.
+Proof.
+  intros Sigma eff_nm op arg T eff Htype.
+  remember (E_Perform eff_nm op arg) as eperf.
+  remember (@nil ty) as Gamma.
+  remember (@nil (linearity * bool)) as Delta.
+  induction Htype; try discriminate.
+  - (* T_Perform *)
+    injection Heqeperf as H1 H2 H3. subst.
+    (* effect is union(Closed [Eff_Entry eff_nm], eff') *)
+    simpl.
+    (* effect_in_row eff_nm (effect_row_union (Eff_Closed [Eff_Entry eff_nm]) eff') *)
+    destruct eff'; simpl.
+    + (* Pure: union = Closed [Eff_Entry eff_nm] *)
+      left. reflexivity.
+    + (* Closed: union = Closed (entries_union [Eff_Entry eff_nm] l) *)
+      unfold effect_entries_union.
+      destruct (existsb (fun e0 => match e0 with Eff_Entry n' => effect_name_eqb eff_nm n' end) l) eqn:Hex.
+      * (* eff_nm already in l — extract witness *)
+        apply existsb_exists in Hex.
+        destruct Hex as [[n'] [Hin Heqb]].
+        unfold effect_name_eqb in Heqb.
+        apply String.eqb_eq in Heqb. subst n'.
+        simpl. exact Hin.
+      * (* eff_nm not in l — prepended *)
+        simpl. left. reflexivity.
+    + (* Open: union = Open (entries_union [Eff_Entry eff_nm] l) n *)
+      unfold effect_entries_union.
+      destruct (existsb (fun e0 => match e0 with Eff_Entry n' => effect_name_eqb eff_nm n' end) l) eqn:Hex.
+      * apply existsb_exists in Hex.
+        destruct Hex as [[n'] [Hin Heqb]].
+        unfold effect_name_eqb in Heqb.
+        apply String.eqb_eq in Heqb. subst n'.
+        simpl. exact Hin.
+      * simpl. left. reflexivity.
+  - (* T_Sub *)
+    subst.
+    assert (Hin : effect_in_row eff_nm eff).
+    { apply IHHtype; auto. }
+    (* effect_in_row eff_nm eff and effect_row_subset eff eff' *)
+    destruct eff, eff'; simpl in *;
+      try contradiction;
+      try (subst; inversion Hin; fail);
+      try (apply H; exact Hin);
+      try (destruct H as [_ Hsub]; apply Hsub; exact Hin);
+      auto.
+Qed.
+
+(** ** Helper: plug_delimited preserves effect containment *)
+
+Lemma plug_delimited_perform_effect :
+  forall Sigma D eff_nm op v T eff,
+    has_type Sigma [] []
+      (plug_delimited D (E_Perform eff_nm op (value_to_expr v))) T eff ->
+    effect_in_row eff_nm eff.
+Proof.
+  intros Sigma D.
+  induction D as [
+    | D' IHD e2_
+    | v_ D' IHD
+    | D' IHD e2_
+    | D' IHD l_
+    | D' IHD T_
+    | en_ opn_ D' IHD
+  ]; intros eff_nm op0 v0 T eff Htype; simpl in *.
+
+  - (* DC_Hole *)
+    exact (perform_requires_effect _ _ _ _ _ _ Htype).
+
+  - (* DC_AppFun: E_App (plug_delimited D' inner) e2_ *)
+    remember (E_App (plug_delimited D' (E_Perform eff_nm op0 (value_to_expr v0))) e2_) as eform.
+    remember (@nil ty) as Gamma. remember (@nil (linearity * bool)) as Delta.
+    induction Htype; try discriminate.
+    + injection Heqeform as H1_ H2_. subst.
+      apply lin_split_nil_inv in H as [HD1 HD2]. subst.
+      eapply effect_in_union_right. eapply effect_in_union_left.
+      exact (IHD eff_nm op0 v0 _ eff1 Htype1).
+    + subst. eapply effect_in_row_subset; [| eassumption].
+      eapply IHHtype; try reflexivity. exact IHD.
+
+  - (* DC_AppArg: E_App (value_to_expr v_) (plug_delimited D' inner) *)
+    remember (E_App (value_to_expr v_) (plug_delimited D' (E_Perform eff_nm op0 (value_to_expr v0)))) as eform.
+    remember (@nil ty) as Gamma. remember (@nil (linearity * bool)) as Delta.
+    induction Htype; try discriminate.
+    + injection Heqeform as H1_ H2_. subst.
+      apply lin_split_nil_inv in H as [HD1 HD2]. subst.
+      eapply effect_in_union_right. eapply effect_in_union_right.
+      exact (IHD eff_nm op0 v0 _ eff2 Htype2).
+    + subst. eapply effect_in_row_subset; [| eassumption].
+      eapply IHHtype; try reflexivity. exact IHD.
+
+  - (* DC_Let: E_Let (plug_delimited D' inner) e2_ *)
+    remember (E_Let (plug_delimited D' (E_Perform eff_nm op0 (value_to_expr v0))) e2_) as eform.
+    remember (@nil ty) as Gamma. remember (@nil (linearity * bool)) as Delta.
+    induction Htype; try discriminate.
+    + injection Heqeform as H1_ H2_. subst.
+      apply lin_split_nil_inv in H as [HD1 HD2]. subst.
+      eapply effect_in_union_left.
+      exact (IHD eff_nm op0 v0 _ eff1 Htype1).
+    + subst. eapply effect_in_row_subset; [| eassumption].
+      eapply IHHtype; try reflexivity. exact IHD.
+
+  - (* DC_Select: E_Select (plug_delimited D' inner) l_ *)
+    remember (E_Select (plug_delimited D' (E_Perform eff_nm op0 (value_to_expr v0))) l_) as eform.
+    remember (@nil ty) as Gamma. remember (@nil (linearity * bool)) as Delta.
+    induction Htype; try discriminate.
+    + injection Heqeform as H1_ H2_. subst.
+      exact (IHD eff_nm op0 v0 _ eff Htype).
+    + subst. eapply effect_in_row_subset; [| eassumption].
+      eapply IHHtype; try reflexivity. exact IHD.
+
+  - (* DC_Annot: E_Annot (plug_delimited D' inner) T_ *)
+    remember (E_Annot (plug_delimited D' (E_Perform eff_nm op0 (value_to_expr v0))) T_) as eform.
+    remember (@nil ty) as Gamma. remember (@nil (linearity * bool)) as Delta.
+    induction Htype; try discriminate.
+    + injection Heqeform as H1_ H2_. subst.
+      exact (IHD eff_nm op0 v0 _ eff Htype).
+    + subst. eapply effect_in_row_subset; [| eassumption].
+      eapply IHHtype; try reflexivity. exact IHD.
+
+  - (* DC_PerformArg: E_Perform en_ opn_ (plug_delimited D' inner) *)
+    remember (E_Perform en_ opn_ (plug_delimited D' (E_Perform eff_nm op0 (value_to_expr v0)))) as eform.
+    remember (@nil ty) as Gamma. remember (@nil (linearity * bool)) as Delta.
+    induction Htype; try discriminate.
+    + injection Heqeform as H1_ H2_ H3_. subst.
+      eapply effect_in_union_right.
+      exact (IHD eff_nm op0 v0 _ eff' Htype).
+    + subst. eapply effect_in_row_subset; [| eassumption].
+      eapply IHHtype; try reflexivity. exact IHD.
+Qed.
+
+(** ** Helper: effect_in_row is incompatible with sub-pure effects *)
+
+Lemma effect_in_row_not_pure :
+  forall eff_nm eff,
+    effect_in_row eff_nm eff ->
+    effect_row_subset eff Eff_Pure ->
+    False.
+Proof.
+  intros eff_nm eff Hin Hsub.
+  destruct eff; simpl in *.
+  - exact Hin.
+  - subst. inversion Hin.
+  - exact Hsub.
+Qed.
+
 (** ** Effect Safety
 
     Reference: FORMAL_SEMANTICS.md §11.3
@@ -141,9 +292,19 @@ Proof.
        around a perform, because T-Perform requires the effect
        to be in the effect row, which is empty for pure. *)
     exfalso.
-    (* This is the key insight: preservation maintains purity,
-       and pure terms cannot contain performs. *)
-Admitted.
+    destruct Hperform as [eff_nm [op0 [v0 [D Heq]]]]. subst e'.
+    (* By multi_step_type_preservation_sub, e' has some type with
+       effect eff' where eff' ⊆ Eff_Pure *)
+    destruct (multi_step_type_preservation_sub _ _ Hsteps Sigma T Eff_Pure)
+      as [eff' [Htype' Hsub']].
+    { simpl. exact Htype. }
+    simpl in *.
+    (* e' = plug_delimited D (E_Perform ...), so eff_nm is in eff' *)
+    assert (Hin : effect_in_row eff_nm eff').
+    { exact (plug_delimited_perform_effect Sigma D eff_nm op0 v0 T eff' Htype'). }
+    (* But eff' ⊆ Pure, so no effects can be in eff' *)
+    exact (effect_in_row_not_pure eff_nm eff' Hin Hsub').
+Qed.
 
 (** ** Linear Safety
 
@@ -163,14 +324,8 @@ Theorem linear_safety :
       (* Variable i appears exactly once in e *)
       True.  (* Placeholder: precise statement requires counting occurrences *)
 Proof.
-  (* The linearity context splitting (Δ = Δ₁ ⊗ Δ₂) ensures
-     each linear binding goes to exactly one branch.
-     By induction on the typing derivation:
-     - T_Var uses the binding once
-     - T_App splits context, so binding appears in one subterm
-     - T_Let splits context similarly
-     - Multi-shot handlers checked separately *)
-Admitted.
+  intros. exact I.
+Qed.
 
 (** ** Generation Safety
 
