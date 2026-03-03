@@ -312,20 +312,27 @@ impl<'src> Parser<'src> {
     pub fn parse_type_path(&mut self) -> TypePath {
         let start = self.current.span;
         let mut segments = Vec::new();
+        // Track whether last segment was a lowercase identifier (Ident or contextual keyword).
+        // Used to allow `.lowercase` continuation for module chains (e.g., `codegen.codegen_ctx.CodegenError`)
+        // while preventing `.operation` from being consumed in `perform Effect.operation()`.
+        let mut last_was_lowercase = false;
 
         loop {
             // Allow contextual keywords as path segments (for identifier patterns)
-            let name = if self.check(TokenKind::TypeIdent)
-                || self.check_ident()
-                || self.check(TokenKind::SelfUpper)
+            let is_lowercase = self.check_ident()
                 || self.check(TokenKind::Crate)
-                || self.check(TokenKind::Super)
+                || self.check(TokenKind::Super);
+            let name = if self.check(TokenKind::TypeIdent)
+                || is_lowercase
+                || self.check(TokenKind::SelfUpper)
             {
                 self.advance();
                 self.spanned_symbol()
             } else {
                 break;
             };
+
+            last_was_lowercase = is_lowercase;
 
             // Parse optional type arguments
             let args = if self.check(TokenKind::Lt) {
@@ -337,16 +344,20 @@ impl<'src> Parser<'src> {
             segments.push(TypePathSegment { name, args });
 
             // Check for path continuation.
-            // Accept `::` always. Accept `.` only when followed by a type-like token
-            // (TypeIdent, SelfUpper, Crate, Super) to avoid consuming `.operation` in
-            // `perform Effect.operation()` as part of the type path.
+            // Accept `::` always. Accept `.` when followed by TypeIdent/SelfUpper/crate/super.
+            // Also accept `.` before lowercase Ident ONLY when the previous segment was lowercase
+            // (module.module chain), to avoid consuming `.operation` after `Effect` in
+            // `perform Effect.operation()`.
             if self.try_consume(TokenKind::ColonColon) {
                 // :: always continues the type path
             } else if self.check(TokenKind::Dot)
                 && (self.check_next(TokenKind::TypeIdent)
                     || self.check_next(TokenKind::SelfUpper)
                     || self.check_next(TokenKind::Crate)
-                    || self.check_next(TokenKind::Super))
+                    || self.check_next(TokenKind::Super)
+                    || (last_was_lowercase
+                        && (self.check_next(TokenKind::Ident)
+                            || Self::is_contextual_keyword(self.next.kind))))
             {
                 self.advance(); // consume .
             } else {

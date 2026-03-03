@@ -166,9 +166,9 @@ Items are removed only when fully resolved, with a completion date and commit ha
 
 **Resolution**: Both compilers now resolve `module.function(args)` as qualified calls via name resolution fallback (DEF-001 fix). The approach: `try_extract_module_chain` extracts path segments from nested Field/Path AST expressions, guards against local variables, then `resolve_qualified_path` (selfhost) or `try_resolve_qualified_chain` (bootstrap) walks the module hierarchy. Return types are properly extracted from function signatures and unified with arguments.
 
-**Result**: ~1,960 `lowercase::lowercase` expression paths converted to dot syntax across 47 selfhost files. 8 three-segment type paths remain using `::` for the first separator (`token::common.Span` × 6, `codegen::codegen_ctx.CodegenError` × 2) — these require the type-path parser to support 3+ dot-separated segments, a separate issue.
+**Result**: ~1,960 `lowercase::lowercase` expression paths converted to dot syntax across 47 selfhost files. Final 8 three-segment type paths (`token::common.Span` × 6, `codegen::codegen_ctx.CodegenError` × 2) resolved by extending both compilers' type-path parsers to accept `.lowercase` continuation when the previous segment is also lowercase (module chain heuristic). Zero `::` path separators remain in `.blood` files (only turbofish `::<T>` syntax).
 
-**Verification**: 339/339 ground-truth, second_gen/third_gen byte-identical (13,079,128 bytes), 1269/1269 bootstrap lib tests.
+**Verification**: 344/344 ground-truth (342 pass + 2 pre-existing first_gen COMPILE_FAIL limitations), second_gen/third_gen byte-identical (13,079,144 bytes), 1269/1269 bootstrap lib tests.
 
 ---
 

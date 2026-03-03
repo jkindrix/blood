@@ -4,6 +4,7 @@
 // Written to be compiled by blood-rust.
 
 mod token;
+mod common;
 
 /// The lexer for Blood source code
 pub struct Lexer<'src> {
@@ -101,7 +102,7 @@ impl<'src> Lexer<'src> {
         let trivia = self.take_pending_trivia();
         token.Token {
             kind,
-            span: token::common.Span {
+            span: common.Span {
                 start: self.token_start,
                 end: self.pos,
                 line: self.token_line,
@@ -130,7 +131,7 @@ impl<'src> Lexer<'src> {
                 let start_line = self.line;
                 let start_col = self.column;
                 self.advance();
-                let span = token::common.Span {
+                let span = common.Span {
                     start: start_pos,
                     end: self.pos,
                     line: start_line,
@@ -146,7 +147,7 @@ impl<'src> Lexer<'src> {
                 if self.current() == 10 {
                     self.advance();
                 }
-                let span = token::common.Span {
+                let span = common.Span {
                     start: start_pos,
                     end: self.pos,
                     line: start_line,
@@ -161,7 +162,7 @@ impl<'src> Lexer<'src> {
                 while self.current() == 32 || self.current() == 9 {
                     self.advance();
                 }
-                let span = token::common.Span {
+                let span = common.Span {
                     start: start_pos,
                     end: self.pos,
                     line: start_line,
@@ -181,7 +182,7 @@ impl<'src> Lexer<'src> {
                 while self.current() != 0 && self.current() != 10 {
                     self.advance();
                 }
-                let span = token::common.Span {
+                let span = common.Span {
                     start: start_pos,
                     end: self.pos,
                     line: start_line,
@@ -212,7 +213,7 @@ impl<'src> Lexer<'src> {
                 if depth > 0 {
                     self.has_unterminated_comment = true;
                 }
-                let span = token::common.Span {
+                let span = common.Span {
                     start: start_pos,
                     end: self.pos,
                     line: start_line,

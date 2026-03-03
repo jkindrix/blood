@@ -153,6 +153,12 @@ pub fn parse_type_path(parser: &mut parser_base.Parser) -> ast.TypePath {
     let start = parser.current.span;
     let mut segments: Vec<ast.TypePathSegment> = Vec.new();
 
+    // Track whether last segment was a lowercase identifier.
+    // Used to allow `.lowercase` continuation for module chains (e.g., `codegen.codegen_ctx.CodegenError`)
+    // while preventing `.operation` from being consumed in `perform Effect.operation()`.
+    let mut last_was_lowercase = parser.current.kind == token.TokenKind.Ident
+        || parser.current.kind.can_be_ident() && parser.current.kind != token.TokenKind.TypeIdent;
+
     // First segment
     let first_seg = parse_type_path_segment(parser);
     segments.push(first_seg);
@@ -161,15 +167,22 @@ pub fn parse_type_path(parser: &mut parser_base.Parser) -> ast.TypePath {
     loop {
         if parser.try_consume(token.TokenKind.ColonColon) {
             // :: always continues the path
+            last_was_lowercase = parser.current.kind == token.TokenKind.Ident
+                || parser.current.kind.can_be_ident() && parser.current.kind != token.TokenKind.TypeIdent;
             let seg = parse_type_path_segment(parser);
             segments.push(seg);
         } else if parser.current.kind == token.TokenKind.Dot
                   && (parser.check_next(token.TokenKind.TypeIdent)
                       || parser.check_next(token.TokenKind.SelfUpper)
                       || parser.check_next(token.TokenKind.Crate)
-                      || parser.check_next(token.TokenKind.Super)) {
-            // . accepted when followed by TypeIdent, Self, crate, or super
+                      || parser.check_next(token.TokenKind.Super)
+                      || last_was_lowercase && (parser.check_next(token.TokenKind.Ident)
+                          || parser.next.kind.can_be_ident() && parser.next.kind != token.TokenKind.TypeIdent)) {
+            // . accepted when followed by TypeIdent/Self/crate/super always,
+            // or lowercase Ident when previous segment was also lowercase (module chain)
             parser.advance(); // consume '.'
+            last_was_lowercase = parser.current.kind == token.TokenKind.Ident
+                || parser.current.kind.can_be_ident() && parser.current.kind != token.TokenKind.TypeIdent;
             let seg = parse_type_path_segment(parser);
             segments.push(seg);
         } else {
