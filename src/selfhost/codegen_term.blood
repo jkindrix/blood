@@ -470,6 +470,24 @@ fn emit_call(
     // Extract the target DefId (if this is a direct call to a known function)
     let target_def_id: Option<u32> = extract_call_def_id(func);
 
+    // Check for vtable dispatch: trait method call on dyn Trait object
+    match target_def_id {
+        Option.Some(did) => {
+            match ctx.lookup_trait_method(did) {
+                Option.Some(entry) => {
+                    if args.len() > 0 {
+                        if is_dyn_trait_arg(ctx, &args[0]) {
+                            emit_vtable_dispatch_call(ctx, entry, args, destination, target);
+                            return;
+                        }
+                    }
+                }
+                Option.None => {}
+            }
+        }
+        Option.None => {}
+    }
+
     // Emit arguments with their types, applying generic call fixup if needed
     let mut llvm_args: Vec<(String, String)> = Vec.new();
     for i in 0usize..args.len() {
@@ -716,6 +734,122 @@ fn extract_call_def_id(operand: &mir_types.Operand) -> Option<u32> {
             }
         }
         _ => Option.None,
+    }
+}
+
+/// Checks if a MIR operand has a dyn Trait type (or &dyn Trait).
+fn is_dyn_trait_arg(ctx: &mut codegen_ctx.CodegenCtx, arg: &mir_types.Operand) -> bool {
+    let ty_id: Option<type_intern.TyId> = match arg {
+        &mir_types.Operand.Copy(ref place) => ctx.get_local_hir_type(place.local),
+        &mir_types.Operand.Move(ref place) => ctx.get_local_hir_type(place.local),
+        &mir_types.Operand.Constant(ref c) => Option.Some(c.ty),
+    };
+    match ty_id {
+        Option.Some(tid) => {
+            let kind = type_intern.type_interner().get(tid);
+            match kind {
+                &type_intern.InternedTypeKind.DynTrait { trait_id: _, auto_traits: _ } => true,
+                &type_intern.InternedTypeKind.Ref { inner, mutable: _ } => {
+                    let inner_kind = type_intern.type_interner().get(inner);
+                    match inner_kind {
+                        &type_intern.InternedTypeKind.DynTrait { trait_id: _, auto_traits: _ } => true,
+                        _ => false,
+                    }
+                }
+                _ => false,
+            }
+        }
+        Option.None => false,
+    }
+}
+
+/// Emits a vtable dispatch call for a trait method on a dyn Trait object.
+fn emit_vtable_dispatch_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    entry: &codegen_ctx.TraitMethodEntry,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    // Emit first arg (the fat pointer: { data_ptr, vtable_ptr })
+    let (fat_ptr_val, fat_ptr_ty) = codegen_expr.emit_operand_typed(ctx, &args[0]);
+
+    // Extract data_ptr (field 0) and vtable_ptr (field 1)
+    let data_ptr = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&data_ptr);
+    ctx.write(" = extractvalue ");
+    ctx.write_string(&fat_ptr_ty);
+    ctx.write(" ");
+    ctx.write_string(&fat_ptr_val);
+    ctx.write(", 0\n");
+
+    let vtable_ptr = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&vtable_ptr);
+    ctx.write(" = extractvalue ");
+    ctx.write_string(&fat_ptr_ty);
+    ctx.write(" ");
+    ctx.write_string(&fat_ptr_val);
+    ctx.write(", 1\n");
+
+    // GEP into vtable for the method slot
+    let slot_ptr = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&slot_ptr);
+    ctx.write(" = getelementptr ptr, ptr ");
+    ctx.write_cgname(&vtable_ptr);
+    ctx.write(", i32 ");
+    // +2 for reserved size/align prefix slots in vtable layout
+    ctx.write_string(&codegen_types.format_u64((entry.slot_index + 2) as u64));
+    ctx.write("\n");
+
+    // Load function pointer from vtable slot
+    let fn_ptr = ctx.fresh_temp_cg();
+    ctx.emit_load_cg2(&fn_ptr, "ptr", &slot_ptr);
+
+    // Emit remaining args (skip first which is the fat pointer)
+    let mut call_args: Vec<(String, String)> = Vec.new();
+    // First arg to the impl method is the data pointer (self)
+    call_args.push((common.make_string("ptr"), cgname_to_string(&data_ptr)));
+    for i in 1usize..args.len() {
+        let (arg_val, arg_ty) = codegen_expr.emit_operand_typed(ctx, &args[i]);
+        call_args.push((arg_ty, arg_val));
+    }
+
+    // Get return type from destination
+    let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
+    let ret_ty = ctx.get_local_type(destination.local);
+    let is_void = is_void_type(ret_ty.as_str());
+    let fn_ptr_str = cgname_to_string(&fn_ptr);
+
+    if is_void {
+        ctx.begin_call_str(Option.None, "void", fn_ptr_str.as_str());
+        for vi in 0usize..call_args.len() {
+            let arg = &call_args[vi];
+            ctx.call_arg_str(vi == 0, arg.0.as_str(), arg.1.as_str());
+        }
+        ctx.end_call();
+    } else {
+        let result = ctx.fresh_temp_cg();
+        ctx.begin_call(Option.Some(&result), ret_ty.as_str(), fn_ptr_str.as_str());
+        for ai in 0usize..call_args.len() {
+            let arg = &call_args[ai];
+            ctx.call_arg_str(ai == 0, arg.0.as_str(), arg.1.as_str());
+        }
+        ctx.end_call();
+        ctx.emit_store_cg(ret_ty.as_str(), &result, dest_ptr.as_str());
+    }
+
+    // Jump to continuation
+    match target {
+        &Option.Some(t) => {
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
+        }
+        &Option.None => {
+            ctx.emit_unreachable();
+        }
     }
 }
 

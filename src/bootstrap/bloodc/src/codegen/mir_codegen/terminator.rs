@@ -407,6 +407,13 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                         .map_err(|e| vec![Diagnostic::error(
                             format!("LLVM call error: {}", e), span
                         )])?
+                } else if self.is_vtable_dispatch(def_id, args, body) {
+                    // Vtable dispatch: calling a trait method on a dyn Trait object.
+                    // The first arg is a fat pointer { data_ptr, vtable_ptr }.
+                    return self.compile_vtable_dispatch_call(
+                        *def_id, &arg_vals, destination, target, body,
+                        llvm_blocks, escape_results, span,
+                    );
                 } else if let Some(builtin_name) = self.builtin_fns.get(def_id) {
                     // Check for pointer intrinsics first - these compile to direct load/store
                     // This avoids function call overhead for every array access
@@ -2882,5 +2889,187 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
         // No conversion needed or not possible
         Ok(val)
+    }
+
+    /// Check if a call should be dispatched through a vtable.
+    ///
+    /// Returns true if `def_id` is a trait method and the first argument
+    /// is a trait object (dyn Trait fat pointer).
+    fn is_vtable_dispatch(
+        &self,
+        def_id: &crate::hir::DefId,
+        args: &[Operand],
+        body: &MirBody,
+    ) -> bool {
+        // Check if def_id is an abstract trait method (registered in trait_method_info)
+        if !self.trait_method_info.contains_key(def_id) {
+            return false;
+        }
+
+        // Check if first argument is a dyn Trait type
+        if let Some(first_arg) = args.first() {
+            let arg_ty = self.get_operand_type(first_arg, body);
+            match arg_ty.kind() {
+                crate::hir::TypeKind::DynTrait { .. } => true,
+                crate::hir::TypeKind::Ref { inner, .. } => {
+                    matches!(inner.kind(), crate::hir::TypeKind::DynTrait { .. })
+                }
+                _ => false,
+            }
+        } else {
+            false
+        }
+    }
+
+    /// Compile a vtable dispatch call for a trait method on a dyn Trait object.
+    ///
+    /// The first arg is a fat pointer `{ data_ptr, vtable_ptr }`. We extract the
+    /// vtable ptr, GEP to the method slot, load the fn_ptr, and build an indirect call
+    /// with data_ptr as the first argument (replacing the fat pointer).
+    #[allow(clippy::too_many_arguments)]
+    fn compile_vtable_dispatch_call(
+        &mut self,
+        method_def_id: crate::hir::DefId,
+        arg_vals: &[BasicValueEnum<'ctx>],
+        destination: &Place,
+        target: Option<&BasicBlockId>,
+        body: &MirBody,
+        llvm_blocks: &HashMap<BasicBlockId, BasicBlock<'ctx>>,
+        escape_results: Option<&EscapeResults>,
+        span: crate::span::Span,
+    ) -> Result<(), Vec<Diagnostic>> {
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let i32_ty = self.context.i32_type();
+
+        // First arg is the fat pointer { data_ptr, vtable_ptr }.
+        // It may be a StructValue (passed directly) or a PointerValue (pointer to struct in memory).
+        let fat_ptr = arg_vals.first().ok_or_else(|| vec![Diagnostic::error(
+            "Vtable dispatch requires at least one argument (trait object)".to_string(), span
+        )])?;
+
+        let fat_ptr_struct_ty = self.context.struct_type(&[ptr_ty.into(), ptr_ty.into()], false);
+
+        let (data_ptr, vtable_ptr) = if fat_ptr.is_struct_value() {
+            let sv = fat_ptr.into_struct_value();
+            let dp = self.builder
+                .build_extract_value(sv, 0, "data_ptr")
+                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
+                .into_pointer_value();
+            let vp = self.builder
+                .build_extract_value(sv, 1, "vtable_ptr")
+                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
+                .into_pointer_value();
+            (dp, vp)
+        } else {
+            // fat_ptr is a pointer to { ptr, ptr } in memory — load via GEP
+            let fat_ptr_ptr = fat_ptr.into_pointer_value();
+            let data_ptr_ptr = self.builder
+                .build_struct_gep(fat_ptr_struct_ty, fat_ptr_ptr, 0, "data_ptr_ptr")
+                .map_err(|e| vec![Diagnostic::error(format!("LLVM GEP error: {}", e), span)])?;
+            let dp = self.builder
+                .build_load(ptr_ty, data_ptr_ptr, "data_ptr")
+                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
+                .into_pointer_value();
+            let vtable_ptr_ptr = self.builder
+                .build_struct_gep(fat_ptr_struct_ty, fat_ptr_ptr, 1, "vtable_ptr_ptr")
+                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+            let vp = self.builder
+                .build_load(ptr_ty, vtable_ptr_ptr, "vtable_ptr")
+                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
+                .into_pointer_value();
+            (dp, vp)
+        };
+
+        // Find the trait_id and method slot from trait_method_info
+        let (trait_id, method_name) = self.trait_method_info.get(&method_def_id)
+            .cloned()
+            .ok_or_else(|| vec![Diagnostic::error(
+                format!("Method {:?} not found in trait_method_info", method_def_id), span
+            )])?;
+
+        let layout = self.vtable_layouts.get(&trait_id)
+            .ok_or_else(|| vec![Diagnostic::error(
+                format!("No vtable layout for trait {:?}", trait_id), span
+            )])?;
+
+        let slot_index = layout.iter()
+            .position(|(name, _)| name == &method_name)
+            .map(|idx| idx + 2)  // +2 for size/align prefix slots
+            .ok_or_else(|| vec![Diagnostic::error(
+                format!("Method '{}' not found in vtable layout for trait {:?}", method_name, trait_id), span
+            )])?;
+
+        // GEP into vtable to get the method slot pointer
+        let slot_ptr = unsafe {
+            self.builder.build_gep(
+                ptr_ty,
+                vtable_ptr,
+                &[i32_ty.const_int(slot_index as u64, false)],
+                "vtable_slot_ptr",
+            )
+        }.map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+
+        // Load the function pointer from the vtable slot
+        let fn_ptr = self.builder
+            .build_load(ptr_ty, slot_ptr, "fn_ptr")
+            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
+            .into_pointer_value();
+
+        // Build the argument list: data_ptr replaces fat pointer as first arg,
+        // remaining args passed through
+        let mut call_args: Vec<BasicMetadataValueEnum> = Vec::with_capacity(arg_vals.len());
+        call_args.push(data_ptr.into());
+        for val in &arg_vals[1..] {
+            call_args.push((*val).into());
+        }
+
+        // Build function type for the indirect call
+        let param_types: Vec<BasicMetadataTypeEnum> = call_args.iter()
+            .filter_map(|arg| match arg {
+                BasicMetadataValueEnum::ArrayValue(v) => Some(v.get_type().into()),
+                BasicMetadataValueEnum::IntValue(v) => Some(v.get_type().into()),
+                BasicMetadataValueEnum::FloatValue(v) => Some(v.get_type().into()),
+                BasicMetadataValueEnum::PointerValue(v) => Some(v.get_type().into()),
+                BasicMetadataValueEnum::StructValue(v) => Some(v.get_type().into()),
+                BasicMetadataValueEnum::VectorValue(v) => Some(v.get_type().into()),
+                BasicMetadataValueEnum::ScalableVectorValue(v) => Some(v.get_type().into()),
+                BasicMetadataValueEnum::MetadataValue(_) => None,
+            })
+            .collect();
+
+        // Determine return type from the destination local
+        let dest_local = destination.local_unchecked();
+        let dest_ty = &body.locals[dest_local.index() as usize].ty;
+        let fn_type = if matches!(dest_ty.kind(), crate::hir::TypeKind::Tuple(types) if types.is_empty()) {
+            self.context.void_type().fn_type(&param_types, false)
+        } else {
+            let ret_ty = self.lower_type(dest_ty);
+            ret_ty.fn_type(&param_types, false)
+        };
+
+        // Build indirect call through the vtable function pointer
+        let call_site = self.builder
+            .build_indirect_call(fn_type, fn_ptr, &call_args, "vtable_call")
+            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+
+        // Store the result
+        let result = call_site.try_as_basic_value().basic();
+        if let Some(result_val) = result {
+            let dest_ptr = self.compile_mir_place(destination, body, escape_results)?;
+            self.builder.build_store(dest_ptr, result_val)
+                .map_err(|e| vec![Diagnostic::error(format!("LLVM store error: {}", e), span)])?;
+        }
+
+        // Branch to target block
+        if let Some(target_block) = target {
+            if let Some(llvm_block) = llvm_blocks.get(target_block) {
+                self.builder.build_unconditional_branch(*llvm_block)
+                    .map_err(|e| vec![Diagnostic::error(
+                        format!("LLVM branch error: {}", e), span
+                    )])?;
+            }
+        }
+
+        Ok(())
     }
 }

@@ -4249,6 +4249,13 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
 
     let has_const_generics: bool = const_generic_fn_set.len() > 0;
 
+    // Generate vtables for dyn Trait dispatch (after ADT registry and def_names)
+    codegen.generate_vtables(&mut ctx, &lower_result.interner, &lower_result.items);
+    // Emit vtable global constants to output file
+    for vti in 0usize..ctx.vtable_defs.len() {
+        ctx.buffer_write(ctx.vtable_defs[vti].as_str());
+    }
+
     // Build work list: scan bodies once to identify which functions to codegen.
     // Filters out static bodies, duplicates, and const-generic bodies.
     let worklist = build_codegen_worklist(&lower_result, &static_def_ids, &const_generic_body_ids);

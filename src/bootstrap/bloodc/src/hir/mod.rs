@@ -41,6 +41,17 @@ pub use item::{
 };
 pub use ty::{Type, TypeKind, PrimitiveTy, TyVarId, ConstParamId, LifetimeId, ConstValue, GenericArg, RecordRowVarId, RecordField, FnEffect};
 
+/// Information about a trait implementation, used for vtable generation.
+#[derive(Debug, Clone)]
+pub struct TraitImplInfo {
+    /// The trait being implemented.
+    pub trait_id: DefId,
+    /// The concrete type implementing the trait.
+    pub self_ty: Type,
+    /// Method implementations: (method_name, impl_method_def_id).
+    pub methods: Vec<(String, DefId)>,
+}
+
 /// A compilation unit (crate) in HIR form.
 #[derive(Debug, Clone)]
 pub struct Crate {
@@ -53,6 +64,8 @@ pub struct Crate {
     /// Builtin functions: DefId -> function name.
     /// These are runtime functions with no source code.
     pub builtin_fns: HashMap<DefId, String>,
+    /// Trait implementations for vtable generation.
+    pub trait_impls: Vec<TraitImplInfo>,
 }
 
 impl Crate {
@@ -63,6 +76,7 @@ impl Crate {
             bodies: HashMap::new(),
             entry: None,
             builtin_fns: HashMap::new(),
+            trait_impls: Vec::new(),
         }
     }
 

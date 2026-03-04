@@ -79,6 +79,7 @@ fn make_test_crate(body_expr: Expr, return_type: Type) -> Crate {
         bodies,
         entry: None,
         builtin_fns: HashMap::new(),
+        trait_impls: Vec::new(),
     }
 }
 

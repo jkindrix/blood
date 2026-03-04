@@ -299,6 +299,10 @@ pub fn compile_mir_to_object(
         }
     }
 
+    // Generate vtables before MIR compilation so vtable globals and
+    // trait_method_info are available for trait object coercion and dispatch
+    codegen.generate_vtables(hir_crate)?;
+
     // Third pass: compile MIR function bodies
     for (&def_id, mir_body) in mir_bodies {
         let escape_results = escape_analysis.get(&def_id);
@@ -392,6 +396,10 @@ pub fn compile_mir_to_object_with_opt(
             codegen.declare_closure_from_mir(def_id, mir_body);
         }
     }
+
+    // Generate vtables before MIR compilation so vtable globals and
+    // trait_method_info are available for trait object coercion and dispatch
+    codegen.generate_vtables(hir_crate)?;
 
     // Third pass: compile MIR function bodies
     for (&def_id, mir_body) in mir_bodies {
@@ -514,6 +522,11 @@ pub fn compile_definition_to_object(
     // Compile const and static items (if this is a const/static definition)
     codegen.compile_const_items(hir_crate)?;
     codegen.compile_static_items(hir_crate)?;
+
+    // Generate vtables before MIR compilation so vtable globals and
+    // trait_method_info are available for trait object coercion and dispatch.
+    // In incremental mode each .o file gets vtable globals; LinkOnceODR deduplicates.
+    codegen.generate_vtables(hir_crate)?;
 
     // Compile the specific definition
     if let Some(mir) = mir_body {
@@ -795,6 +808,10 @@ pub fn compile_mir_to_ir_with_opt(
             codegen.declare_closure_from_mir(def_id, mir_body);
         }
     }
+
+    // Generate vtables before MIR compilation so vtable globals and
+    // trait_method_info are available for trait object coercion and dispatch
+    codegen.generate_vtables(hir_crate)?;
 
     // Third pass: compile MIR function bodies
     for (&def_id, mir_body) in mir_bodies {

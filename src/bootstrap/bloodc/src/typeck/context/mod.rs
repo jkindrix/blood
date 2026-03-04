@@ -1738,11 +1738,27 @@ impl<'a> TypeContext<'a> {
             zonked_bodies.insert(id, Self::zonk_body_with_unifier(&unifier, body));
         }
 
+        // Build trait impl info for vtable generation
+        let trait_impls: Vec<hir::TraitImplInfo> = self.impl_blocks.iter()
+            .filter_map(|impl_block| {
+                let trait_id = impl_block.trait_ref?;
+                let methods: Vec<(String, hir::DefId)> = impl_block.methods.iter()
+                    .map(|m| (m.name.clone(), m.def_id))
+                    .collect();
+                Some(hir::TraitImplInfo {
+                    trait_id,
+                    self_ty: impl_block.self_ty.clone(),
+                    methods,
+                })
+            })
+            .collect();
+
         hir::Crate {
             items,
             bodies: zonked_bodies,
             entry,
             builtin_fns: self.builtin_fns,
+            trait_impls,
         }
     }
 

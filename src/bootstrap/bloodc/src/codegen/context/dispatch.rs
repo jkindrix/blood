@@ -338,21 +338,17 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     /// This creates global constant arrays containing function pointers for
     /// each method in the trait, enabling dynamic dispatch through trait objects.
     pub fn generate_vtables(&mut self, hir_crate: &hir::Crate) -> Result<(), Vec<Diagnostic>> {
-        // First, build vtable layouts for all traits
-        self.build_vtable_layouts(hir_crate);
+        // Build vtable layouts if not already done (may have been called early
+        // to populate trait_method_info before MIR compilation).
+        if self.vtable_layouts.is_empty() {
+            self.build_vtable_layouts(hir_crate);
+        }
 
-        // Then generate vtables for each trait impl.
-        // Sort by DefId for deterministic vtable emission order in LLVM IR.
-        let mut sorted_items: Vec<_> = hir_crate.items.iter().collect();
-        sorted_items.sort_by_key(|(&def_id, _)| def_id.index());
-        for (_, item) in sorted_items {
-            if let hir::ItemKind::Impl { trait_ref: Some(tref), self_ty, items, .. } = &item.kind {
-                self.generate_vtable_for_impl(
-                    tref.def_id,
-                    self_ty,
-                    items,
-                )?;
-            }
+        // Then generate vtables for each trait impl using trait_impls info.
+        // The HIR doesn't have ItemKind::Impl items (impl methods are flattened
+        // as top-level Fn items), so we use the trait_impls list from typeck.
+        for impl_info in &hir_crate.trait_impls {
+            self.generate_vtable_for_trait_impl(impl_info)?;
         }
 
         Ok(())
@@ -361,7 +357,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     /// Build vtable layouts for all traits.
     ///
     /// The layout determines which slot each method occupies in the vtable.
-    fn build_vtable_layouts(&mut self, hir_crate: &hir::Crate) {
+    pub fn build_vtable_layouts(&mut self, hir_crate: &hir::Crate) {
         // Sort by DefId for deterministic layout ordering.
         let mut sorted_items: Vec<_> = hir_crate.items.iter().collect();
         sorted_items.sort_by_key(|(&def_id, _)| def_id.index());
@@ -372,6 +368,11 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 for (idx, trait_item) in items.iter().enumerate() {
                     if let hir::TraitItemKind::Fn(_, _) = &trait_item.kind {
                         slots.push((trait_item.name.clone(), idx));
+                        // Map abstract trait method DefId -> (trait_id, method_name)
+                        self.trait_method_info.insert(
+                            trait_item.def_id,
+                            (*def_id, trait_item.name.clone()),
+                        );
                     }
                 }
 
@@ -380,13 +381,13 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         }
     }
 
-    /// Generate a vtable for a specific trait impl.
+    /// Generate a vtable for a specific trait impl using TraitImplInfo.
     ///
     /// Vtable layout per DISPATCH.md §10.8.1:
     /// ```
     /// ┌─────────────────┐
-    /// │ size: usize      │  Slot 0 — Size of concrete type
-    /// │ align: usize     │  Slot 1 — Alignment of concrete type
+    /// │ size: usize      │  Slot 0 — Size of concrete type (reserved/null)
+    /// │ align: usize     │  Slot 1 — Alignment of concrete type (reserved/null)
     /// │ m₁: fn_ptr       │  Slot 2 — Method 1 implementation
     /// │ ...              │
     /// │ mₙ: fn_ptr       │  Slot N+1 — Method N implementation
@@ -394,12 +395,12 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     /// ```
     ///
     /// Note: Blood's vtable has no `drop_fn` slot (DEF-010 resolved).
-    fn generate_vtable_for_impl(
+    fn generate_vtable_for_trait_impl(
         &mut self,
-        trait_id: DefId,
-        self_ty: &Type,
-        impl_items: &[hir::ImplItem],
+        impl_info: &hir::TraitImplInfo,
     ) -> Result<(), Vec<Diagnostic>> {
+        let trait_id = impl_info.trait_id;
+
         // Get the vtable layout for this trait
         let Some(layout) = self.vtable_layouts.get(&trait_id).cloned() else {
             // No layout - trait has no methods
@@ -408,8 +409,6 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
         // Vtable has 2 metadata slots (size, align) + N method slots
         let ptr_type = self.context.ptr_type(AddressSpace::default());
-        let i64_type = self.context.i64_type();
-        // Total slots = 2 (size, align as i64 stored via inttoptr) + N methods
         let vtable_len = 2 + layout.len();
         let vtable_type = ptr_type.array_type(vtable_len as u32);
 
@@ -420,22 +419,18 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let vtable_name = format!(
             "__vtable_{}_{}_{}",
             trait_path,
-            self.type_to_vtable_name(self_ty),
+            self.type_to_vtable_name(&impl_info.self_ty),
             self.vtables.len()
         );
 
-        // Compute size and alignment of the concrete type
-        let type_size = crate::codegen::types::type_size(self_ty) as u64;
-        let type_align = crate::codegen::types::type_alignment(self_ty) as u64;
-
-        // Encode size and align as pointer-sized integers stored in pointer slots
-        // (inttoptr cast — size and align are metadata, not real pointers)
-        let size_as_ptr = self.builder
-            .build_int_to_ptr(i64_type.const_int(type_size, false), ptr_type, "size_as_ptr")
-            .unwrap_or(ptr_type.const_null());
-        let align_as_ptr = self.builder
-            .build_int_to_ptr(i64_type.const_int(type_align, false), ptr_type, "align_as_ptr")
-            .unwrap_or(ptr_type.const_null());
+        // Slots 0-1 are reserved for size/align metadata per DISPATCH.md §10.8.1.
+        // Blood uses regions + finally clauses for cleanup (no per-value destructors),
+        // so size/align are not needed at runtime for dispatch. Use null placeholders.
+        // This avoids the LLVM constant-expression limitation (build_int_to_ptr
+        // generates instructions, not constants, which cannot be used in global
+        // constant initializers).
+        let size_as_ptr = ptr_type.const_null();
+        let align_as_ptr = ptr_type.const_null();
 
         // Build vtable slots: [size, align, m1, m2, ..., mn]
         let mut vtable_slots: Vec<PointerValue<'ctx>> = Vec::new();
@@ -443,9 +438,12 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         vtable_slots.push(align_as_ptr);
 
         for (method_name, _slot_idx) in &layout {
-            let impl_method_fn = self.find_impl_method_fn(impl_items, method_name);
+            // Look up the impl method by name from TraitImplInfo.methods
+            let impl_fn = impl_info.methods.iter()
+                .find(|(name, _)| name == method_name)
+                .and_then(|(_, def_id)| self.functions.get(def_id).copied());
 
-            match impl_method_fn {
+            match impl_fn {
                 Some(fn_val) => {
                     let fn_ptr = fn_val.as_global_value().as_pointer_value();
                     vtable_slots.push(fn_ptr);
@@ -463,33 +461,16 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let vtable_global = self.module.add_global(vtable_type, None, &vtable_name);
         vtable_global.set_initializer(&vtable_init);
         vtable_global.set_constant(true);
-        vtable_global.set_linkage(inkwell::module::Linkage::Private);
+        vtable_global.set_linkage(inkwell::module::Linkage::LinkOnceODR);
 
         // Store for later lookup — self_ty should always be an ADT in trait impl context
-        if let Some(type_def_id) = self.type_to_def_id(self_ty) {
+        if let Some(type_def_id) = self.type_to_def_id(&impl_info.self_ty) {
             self.vtables.insert((trait_id, type_def_id), vtable_global);
         } else {
-            debug_assert!(false, "ICE: vtable generated for non-ADT type: {:?}", self_ty);
+            debug_assert!(false, "ICE: vtable generated for non-ADT type: {:?}", impl_info.self_ty);
         }
 
         Ok(())
-    }
-
-    /// Find the LLVM function for an impl method by name.
-    fn find_impl_method_fn(
-        &self,
-        impl_items: &[hir::ImplItem],
-        method_name: &str,
-    ) -> Option<FunctionValue<'ctx>> {
-        for impl_item in impl_items {
-            if let hir::ImplItemKind::Fn(_, _) = &impl_item.kind {
-                if impl_item.name == method_name {
-                    // Look up the compiled function
-                    return self.functions.get(&impl_item.def_id).copied();
-                }
-            }
-        }
-        None
     }
 
     /// Convert a type to a string suitable for vtable naming.

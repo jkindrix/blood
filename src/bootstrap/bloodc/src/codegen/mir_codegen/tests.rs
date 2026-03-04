@@ -75,6 +75,7 @@ fn make_test_crate(body_expr: Expr, return_type: Type) -> HirCrate {
         bodies,
         entry: None,
         builtin_fns: HashMap::new(),
+        trait_impls: Vec::new(),
     }
 }
 
@@ -329,6 +330,7 @@ fn test_mir_codegen_let_binding() {
         bodies,
         entry: None,
         builtin_fns: HashMap::new(),
+        trait_impls: Vec::new(),
     };
 
     let ir = compile_via_mir(&hir_crate);

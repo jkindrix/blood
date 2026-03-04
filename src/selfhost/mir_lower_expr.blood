@@ -901,38 +901,60 @@ fn lower_method_call_expr(
     let body = ctx.builder.body_ref();
     let local_info = body.get_local(recv_place.local);
     let local_ty_resolved = type_intern.ty_id_to_type(local_info.ty);
-    let local_is_thin_ref = match &local_ty_resolved.kind {
+    // Check if receiver is a dyn Trait fat pointer (&dyn Trait).
+    // For dyn Trait, pass the fat pointer directly — don't create a Ref
+    // (which would lose the vtable pointer).
+    let local_is_dyn_trait_ref = match &local_ty_resolved.kind {
         &hir_ty.TypeKind.Ref { ref inner, mutable: _ } => {
-            let inner_type = inner.as_ref();
-            match &inner_type.kind {
-                &hir_ty.TypeKind.Primitive(hir_ty.PrimitiveTy.Str) => false,
-                &hir_ty.TypeKind.Slice { element: _ } => false,
-                _ => true,
+            match &inner.as_ref().kind {
+                &hir_ty.TypeKind.DynTrait { trait_id: _, auto_traits: _ } => true,
+                _ => false,
             }
         }
         _ => false,
     };
 
-    let borrow_place = if local_is_thin_ref && recv_place.projection.len() == 0 {
-        recv_place.project(mir_types.PlaceElem.Deref)
+    if local_is_dyn_trait_ref {
+        // dyn Trait: pass the full { data_ptr, vtable_ptr } fat pointer directly.
+        // The receiver is already &dyn Trait, which is what the method expects.
+        arg_operands.push(mir_lower_util.operand_from_place_id(
+            mir_types.Place.local(recv_place.local),
+            local_info.ty,
+        ));
     } else {
-        recv_place
-    };
+        let local_is_thin_ref = match &local_ty_resolved.kind {
+            &hir_ty.TypeKind.Ref { ref inner, mutable: _ } => {
+                let inner_type = inner.as_ref();
+                match &inner_type.kind {
+                    &hir_ty.TypeKind.Primitive(hir_ty.PrimitiveTy.Str) => false,
+                    &hir_ty.TypeKind.Slice { element: _ } => false,
+                    _ => true,
+                }
+            }
+            _ => false,
+        };
 
-    let recv_ref_id = type_intern.type_interner().mk_ref(receiver.ty, false);
-    let recv_ref_temp = ctx.new_temp(recv_ref_id, span);
-    ctx.emit_assign(
-        mir_types.Place.local(recv_ref_temp),
-        mir_types.Rvalue.Ref {
-            place: borrow_place,
-            mutable: false,
-        },
-        span,
-    );
-    arg_operands.push(mir_lower_util.operand_from_place_id(
-        mir_types.Place.local(recv_ref_temp),
-        recv_ref_id,
-    ));
+        let borrow_place = if local_is_thin_ref && recv_place.projection.len() == 0 {
+            recv_place.project(mir_types.PlaceElem.Deref)
+        } else {
+            recv_place
+        };
+
+        let recv_ref_id = type_intern.type_interner().mk_ref(receiver.ty, false);
+        let recv_ref_temp = ctx.new_temp(recv_ref_id, span);
+        ctx.emit_assign(
+            mir_types.Place.local(recv_ref_temp),
+            mir_types.Rvalue.Ref {
+                place: borrow_place,
+                mutable: false,
+            },
+            span,
+        );
+        arg_operands.push(mir_lower_util.operand_from_place_id(
+            mir_types.Place.local(recv_ref_temp),
+            recv_ref_id,
+        ));
+    }
 
     // Evaluate remaining arguments
     for i in 0usize..args.len() {

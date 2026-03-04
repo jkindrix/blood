@@ -390,6 +390,12 @@ impl Unifier {
                 }
             }
 
+            // DynTrait types: same trait_id means they unify
+            (
+                TypeKind::DynTrait { trait_id: t1_id, .. },
+                TypeKind::DynTrait { trait_id: t2_id, .. },
+            ) if t1_id == t2_id => Ok(()),
+
             // No match
             _ => Err(Box::new(TypeError::new(
                 TypeErrorKind::Mismatch {

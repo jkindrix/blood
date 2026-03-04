@@ -9280,6 +9280,17 @@ impl<'a> TypeContext<'a> {
                     PrimitiveTy::Uint(_) | PrimitiveTy::Int(_))
             }
 
+            // Trait object coercion: &T → &dyn Trait or T → dyn Trait
+            (_, TypeKind::DynTrait { .. }) => true,
+            (_, TypeKind::Ref { inner, .. }) if matches!(inner.kind(), TypeKind::DynTrait { .. }) => true,
+            (TypeKind::Ref { inner: src_inner, .. }, TypeKind::Ref { inner: dst_inner, .. })
+                if matches!(dst_inner.kind(), TypeKind::DynTrait { .. }) => {
+                // &T → &dyn Trait: source inner must be a concrete type implementing the trait
+                // (actual trait impl check deferred — the cast will fail at link time if wrong)
+                !matches!(src_inner.kind(), TypeKind::DynTrait { .. })
+                    || true // dyn Trait → dyn Trait pass-through
+            }
+
             // Ownership wrappers — check inner type
             (TypeKind::Ownership { inner, .. }, _) => Self::is_cast_compatible(inner, target),
             (_, TypeKind::Ownership { inner, .. }) => Self::is_cast_compatible(source, inner),

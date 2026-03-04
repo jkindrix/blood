@@ -718,6 +718,9 @@ pub struct CodegenContext<'ctx, 'a> {
     /// Vtable slot mappings: trait_id -> Vec<(method_name, slot_index)>.
     /// Each trait has a fixed layout of method slots in its vtable.
     pub(super) vtable_layouts: HashMap<DefId, Vec<(String, usize)>>,
+    /// Trait method info: abstract trait method DefId -> (trait_id, method_name).
+    /// Used to identify vtable dispatch calls where the called DefId is a trait method.
+    pub(super) trait_method_info: HashMap<DefId, (DefId, String)>,
     /// WASM imports: maps function link name to WASM import module.
     /// Used for setting WASM import attributes during post-processing.
     pub(super) wasm_imports: HashMap<String, String>,
@@ -843,6 +846,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             persistent_slot_ids: HashMap::new(),
             vtables: HashMap::new(),
             vtable_layouts: HashMap::new(),
+            trait_method_info: HashMap::new(),
             wasm_imports: HashMap::new(),
             const_globals: HashMap::new(),
             static_globals: HashMap::new(),

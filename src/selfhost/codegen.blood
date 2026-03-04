@@ -23,6 +23,7 @@ mod mir_escape;
 mod hashmap;
 mod type_intern;
 mod codegen_size;
+mod interner;
 
 // ============================================================
 // Module Generation
@@ -90,11 +91,12 @@ impl CodegenResult {
 pub fn generate_module(
     module_name: &str,
     functions: &Vec<(String, mir_body.MirBody)>,
+    intern: &interner.StringInterner,
 ) -> CodegenResult {
     // Empty items list and no remaps for backward compatibility
     let empty_items: Vec<hir_lower_ctx.ItemEntry> = Vec.new();
     let empty_remaps: Vec<common.DefaultMethodRemap> = Vec.new();
-    generate_module_with_items(module_name, functions, &empty_items, &empty_remaps)
+    generate_module_with_items(module_name, functions, &empty_items, &empty_remaps, intern)
 }
 
 /// Finds call remapping entries for a given default method DefId.
@@ -123,6 +125,7 @@ pub fn generate_module_with_items(
     functions: &Vec<(String, mir_body.MirBody)>,
     items: &Vec<hir_lower_ctx.ItemEntry>,
     default_method_remaps: &Vec<common.DefaultMethodRemap>,
+    intern: &interner.StringInterner,
 ) -> CodegenResult {
     let mut output = String.new();
 
@@ -144,6 +147,9 @@ pub fn generate_module_with_items(
 
     // Populate ADT registry from HIR items
     populate_adt_registry(&mut ctx, items);
+
+    // Generate vtables for dyn Trait dispatch (must be after ADT registry and def names)
+    generate_vtables(&mut ctx, intern, items);
 
     // Module header
     output.push_str("; ModuleID = '");
@@ -195,6 +201,11 @@ pub fn generate_module_with_items(
     // Emit fn pointer wrapper functions collected during codegen
     for wpi in 0usize..ctx.fn_ptr_wrapper_defs.len() {
         output.push_str(ctx.fn_ptr_wrapper_defs[wpi].as_str());
+    }
+
+    // Emit vtable global constants
+    for vti in 0usize..ctx.vtable_defs.len() {
+        output.push_str(ctx.vtable_defs[vti].as_str());
     }
 
     // Append string constants from the context
@@ -628,6 +639,179 @@ pub fn rebuild_adt_layouts(
             }
         }
     }
+}
+
+// ============================================================
+// Vtable Generation
+// ============================================================
+
+/// Generates vtable layouts and vtable globals for dyn Trait dispatch.
+///
+/// This iterates over HIR items to:
+/// 1. Build vtable layouts for all traits (method name → slot index)
+/// 2. Record abstract trait method DefIds in trait_method_entries
+/// 3. Generate vtable global constants for each trait impl
+///
+/// Must be called after populate_adt_registry and after function names are registered.
+pub fn generate_vtables(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    intern: &interner.StringInterner,
+    items: &Vec<hir_lower_ctx.ItemEntry>,
+) {
+    // Pass 1: Build vtable layouts for all traits
+    for i in 0usize..items.len() {
+        let entry = &items[i];
+        match &entry.item.kind {
+            &hir_item.ItemKind.Trait(ref trait_def) => {
+                let trait_def_id = entry.def_id.index;
+                let mut method_names: Vec<String> = Vec.new();
+                let mut slot_idx: u32 = 0;
+                for ti in 0usize..trait_def.items.len() {
+                    match &trait_def.items[ti] {
+                        &hir_item.AssocItem.Fn(ref assoc_fn) => {
+                            let method_name = match intern.resolve(assoc_fn.name.symbol) {
+                                Option.Some(s) => clone_string(s),
+                                Option.None => {
+                                    let mut fallback = common.make_string("method_");
+                                    fallback.push_str(codegen_types.format_u64(assoc_fn.def_id.index as u64).as_str());
+                                    fallback
+                                }
+                            };
+                            // Record abstract trait method DefId
+                            ctx.trait_method_entries.push(codegen_ctx.TraitMethodEntry {
+                                method_def_id: assoc_fn.def_id.index,
+                                trait_def_id: trait_def_id,
+                                method_name: clone_string(&method_name),
+                                slot_index: slot_idx,
+                            });
+                            method_names.push(method_name);
+                            slot_idx += 1;
+                        }
+                        _ => {}
+                    }
+                }
+                let method_count = slot_idx;
+                ctx.vtable_layout_hash.insert(trait_def_id as u64, ctx.vtable_layouts.len() as u32);
+                ctx.vtable_layouts.push(codegen_ctx.VtableLayout {
+                    trait_def_id: trait_def_id,
+                    method_count: method_count,
+                    method_names: method_names,
+                });
+            }
+            _ => {}
+        }
+    }
+
+    // Pass 2: Generate vtable globals for each trait impl
+    for i in 0usize..items.len() {
+        let entry = &items[i];
+        match &entry.item.kind {
+            &hir_item.ItemKind.Impl(ref impl_def) => {
+                match &impl_def.trait_ref {
+                    &Option.Some(ref trait_ref) => {
+                        generate_vtable_for_impl(ctx, intern, trait_ref.def_id.index, &impl_def.self_ty, &impl_def.items, items);
+                    }
+                    &Option.None => {}
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Generate a vtable global constant for a single trait impl.
+fn generate_vtable_for_impl(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    intern: &interner.StringInterner,
+    trait_def_id: u32,
+    self_ty: &type_intern.TyId,
+    impl_items: &Vec<hir_item.AssocItem>,
+    all_items: &Vec<hir_lower_ctx.ItemEntry>,
+) {
+    // Look up the vtable layout for this trait
+    let layout_idx: u32 = match ctx.vtable_layout_hash.get(trait_def_id as u64) {
+        Option.Some(idx) => idx,
+        Option.None => { return; }
+    };
+    let layout = &ctx.vtable_layouts[layout_idx as usize];
+    if layout.method_count == 0 {
+        return;
+    }
+
+    // Determine the type DefId for the vtable key
+    let type_def_id: u32 = match type_intern.resolve_adt_def_id_id(*self_ty) {
+        Option.Some(did) => did,
+        Option.None => { return; }
+    };
+
+    // Build vtable name: __vtable_{TraitName}_{TypeName}_{index}
+    let mut vtable_name = common.make_string("__vtable_");
+    // Use trait item name if available
+    for ti in 0usize..all_items.len() {
+        if all_items[ti].def_id.index == trait_def_id {
+            match intern.resolve(all_items[ti].item.name.symbol) {
+                Option.Some(s) => { vtable_name.push_str(s.as_str()); }
+                Option.None => { vtable_name.push_str("trait"); }
+            }
+            break;
+        }
+    }
+    vtable_name.push('_');
+    vtable_name.push_str(codegen_types.format_u64(type_def_id as u64).as_str());
+    vtable_name.push('_');
+    vtable_name.push_str(codegen_types.format_u64(ctx.vtable_name_entries.len() as u64).as_str());
+
+    // Build the vtable LLVM IR: @name = linkonce_odr constant [N x ptr] [ptr null, ptr null, ptr @m1, ...]
+    let slot_count: u32 = 2u32 + layout.method_count;
+    let mut ir = common.make_string("@");
+    ir.push_str(vtable_name.as_str());
+    ir.push_str(" = linkonce_odr constant [");
+    ir.push_str(codegen_types.format_u64(slot_count as u64).as_str());
+    ir.push_str(" x ptr] [ptr null, ptr null");
+
+    // For each method slot, find the impl method function name
+    for mi in 0usize..layout.method_names.len() {
+        let method_name = &layout.method_names[mi];
+        ir.push_str(", ptr ");
+        // Find the impl method matching this name
+        let mut found = false;
+        for ii in 0usize..impl_items.len() {
+            match &impl_items[ii] {
+                &hir_item.AssocItem.Fn(ref assoc_fn) => {
+                    let impl_method_name = match intern.resolve(assoc_fn.name.symbol) {
+                        Option.Some(s) => clone_string(s),
+                        Option.None => common.make_string(""),
+                    };
+                    if string_eq_str(impl_method_name.as_str(), method_name.as_str()) {
+                        // Look up the compiled function name for this DefId
+                        match ctx.lookup_def_name(assoc_fn.def_id.index) {
+                            Option.Some(fn_name) => {
+                                ir.push('@');
+                                ir.push_str(fn_name.as_str());
+                                found = true;
+                            }
+                            Option.None => {}
+                        }
+                    }
+                }
+                _ => {}
+            }
+            if found { break; }
+        }
+        if !found {
+            ir.push_str("null");
+        }
+    }
+
+    ir.push_str("]\n");
+
+    // Store vtable name and IR
+    ctx.vtable_name_entries.push(codegen_ctx.VtableNameEntry {
+        trait_def_id: trait_def_id,
+        type_def_id: type_def_id,
+        vtable_name: clone_string(&vtable_name),
+    });
+    ctx.vtable_defs.push(ir);
 }
 
 /// Builds a StructLayout using basic type resolution (no ADT registry lookups).

@@ -1,0 +1,51 @@
+// Test: dyn Trait runtime dispatch through vtables
+// EXPECT: 36
+// EXPECT: 10
+// EXPECT: 46
+
+trait Shape {
+    fn area(&self) -> i32;
+}
+
+struct Square {
+    side: i32,
+}
+
+impl Shape for Square {
+    fn area(&self) -> i32 {
+        self.side * self.side
+    }
+}
+
+struct Rect {
+    w: i32,
+    h: i32,
+}
+
+impl Shape for Rect {
+    fn area(&self) -> i32 {
+        self.w * self.h
+    }
+}
+
+fn print_area(s: &dyn Shape) -> i32 {
+    let a: i32 = s.area();
+    println_int(a);
+    a
+}
+
+fn main() -> i32 {
+    let sq: Square = Square { side: 6 };
+    let a1: i32 = print_area(&sq as &dyn Shape);
+    if a1 != 36 { return 1; }
+
+    let r: Rect = Rect { w: 2, h: 5 };
+    let a2: i32 = print_area(&r as &dyn Shape);
+    if a2 != 10 { return 2; }
+
+    let total: i32 = a1 + a2;
+    println_int(total);
+    if total != 46 { return 3; }
+
+    0
+}

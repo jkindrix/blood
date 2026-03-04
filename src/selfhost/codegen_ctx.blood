@@ -315,8 +315,13 @@ pub struct CodegenCtx {
     vtable_hash: hashmap.HashMapU64U32,
     /// Vtable layout: hash(trait_def_id) → index in vtable_layouts.
     vtable_layout_hash: hashmap.HashMapU64U32,
-    /// Vtable layouts: stores (trait_def_id, method_count).
+    /// Vtable layouts: stores (trait_def_id, method_count, method_names).
     vtable_layouts: Vec<VtableLayout>,
+    /// Trait method info: abstract trait method DefId → (trait_def_id, method_name, slot_index).
+    /// Used to identify vtable dispatch calls.
+    pub trait_method_entries: Vec<TraitMethodEntry>,
+    /// Vtable name entries: (trait_def_id, type_def_id) → vtable global name.
+    pub vtable_name_entries: Vec<VtableNameEntry>,
 }
 
 /// Entry mapping a handler DefId to its effect DefId.
@@ -336,6 +341,23 @@ pub struct OpDefIndexEntry {
 pub struct VtableLayout {
     pub trait_def_id: u32,
     pub method_count: u32,
+    /// Method names in slot order.
+    pub method_names: Vec<String>,
+}
+
+/// Mapping from an abstract trait method DefId to its trait and slot.
+pub struct TraitMethodEntry {
+    pub method_def_id: u32,
+    pub trait_def_id: u32,
+    pub method_name: String,
+    pub slot_index: u32,
+}
+
+/// Vtable name entry: maps (trait_def_id, type_def_id) to vtable global name.
+pub struct VtableNameEntry {
+    pub trait_def_id: u32,
+    pub type_def_id: u32,
+    pub vtable_name: String,
 }
 
 /// Mapping from a handler DefId to its state shadow alloca name.
@@ -485,6 +507,8 @@ impl CodegenCtx {
             vtable_hash: hashmap.HashMapU64U32.with_capacity(32),
             vtable_layout_hash: hashmap.HashMapU64U32.with_capacity(16),
             vtable_layouts: Vec.with_capacity(16),
+            trait_method_entries: Vec.with_capacity(32),
+            vtable_name_entries: Vec.with_capacity(32),
         }
     }
 
@@ -556,6 +580,8 @@ impl CodegenCtx {
             vtable_hash: hashmap.HashMapU64U32.with_capacity(32),
             vtable_layout_hash: hashmap.HashMapU64U32.with_capacity(16),
             vtable_layouts: Vec.with_capacity(16),
+            trait_method_entries: Vec.with_capacity(32),
+            vtable_name_entries: Vec.with_capacity(32),
         }
     }
 
@@ -809,6 +835,28 @@ impl CodegenCtx {
             }
         }
         def_id
+    }
+
+    /// Look up trait method info for a given abstract trait method DefId.
+    /// Returns the TraitMethodEntry if this DefId is a trait method, None otherwise.
+    pub fn lookup_trait_method(self: &CodegenCtx, method_def_id: u32) -> Option<&TraitMethodEntry> {
+        for i in 0usize..self.trait_method_entries.len() {
+            if self.trait_method_entries[i].method_def_id == method_def_id {
+                return Option.Some(&self.trait_method_entries[i]);
+            }
+        }
+        Option.None
+    }
+
+    /// Look up vtable global name for a (trait_def_id, type_def_id) pair.
+    pub fn lookup_vtable_name(self: &CodegenCtx, trait_def_id: u32, type_def_id: u32) -> Option<&String> {
+        for i in 0usize..self.vtable_name_entries.len() {
+            if self.vtable_name_entries[i].trait_def_id == trait_def_id &&
+               self.vtable_name_entries[i].type_def_id == type_def_id {
+                return Option.Some(&self.vtable_name_entries[i].vtable_name);
+            }
+        }
+        Option.None
     }
 
     /// Registers a handler DefId → effect DefId mapping.
@@ -2381,6 +2429,8 @@ impl CodegenCtx {
             vtable_hash: hashmap.HashMapU64U32.new(),
             vtable_layout_hash: hashmap.HashMapU64U32.new(),
             vtable_layouts: Vec.new(),
+            trait_method_entries: Vec.new(),
+            vtable_name_entries: Vec.new(),
         };
 
         // Copy handler_op_body_ids with state counts (read-only, needed to flag handler op bodies)

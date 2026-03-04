@@ -1108,6 +1108,11 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         source_ty: &Type,
         target_ty: &Type,
     ) -> Result<BasicValueEnum<'ctx>, Vec<Diagnostic>> {
+        // Trait object coercion: T -> dyn Trait or &T -> &dyn Trait
+        if let Some(fat_ptr) = self.try_compile_trait_object_coercion(val, source_ty, target_ty)? {
+            return Ok(fat_ptr);
+        }
+
         let target_llvm = self.lower_type(target_ty);
 
         match (val, target_llvm) {
@@ -1269,6 +1274,86 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 )])
             }
         }
+    }
+
+    /// Try to compile a trait object coercion (T -> dyn Trait or &T -> &dyn Trait).
+    ///
+    /// Returns `Ok(Some(fat_ptr))` if this is a trait object coercion,
+    /// `Ok(None)` if it's not (caller should handle as normal cast).
+    fn try_compile_trait_object_coercion(
+        &mut self,
+        val: BasicValueEnum<'ctx>,
+        source_ty: &Type,
+        target_ty: &Type,
+    ) -> Result<Option<BasicValueEnum<'ctx>>, Vec<Diagnostic>> {
+        let ptr_ty = self.context.ptr_type(inkwell::AddressSpace::default());
+
+        // Determine if the target type involves dyn Trait
+        let trait_id = match target_ty.kind() {
+            TypeKind::DynTrait { trait_id, .. } => *trait_id,
+            TypeKind::Ref { inner, .. } => {
+                match inner.kind() {
+                    TypeKind::DynTrait { trait_id, .. } => *trait_id,
+                    _ => return Ok(None),
+                }
+            }
+            _ => return Ok(None),
+        };
+
+        // Extract the concrete type for vtable lookup.
+        // For &T -> &dyn Trait, the concrete type is T (strip the outer Ref).
+        let concrete_ty = match source_ty.kind() {
+            TypeKind::Ref { inner, .. } => inner,
+            _ => source_ty,
+        };
+
+        // Get the data pointer from the source value
+        let data_ptr = match val {
+            BasicValueEnum::PointerValue(ptr) => ptr,
+            _ => {
+                // Non-pointer: allocate stack storage and take address
+                let alloca = self.builder
+                    .build_alloca(val.get_type(), "trait_obj_data")
+                    .map_err(|e| vec![Diagnostic::error(
+                        format!("LLVM error: {}", e), self.current_span()
+                    )])?;
+                self.builder
+                    .build_store(alloca, val)
+                    .map_err(|e| vec![Diagnostic::error(
+                        format!("LLVM error: {}", e), self.current_span()
+                    )])?;
+                alloca
+            }
+        };
+
+        // Look up vtable for (trait_id, concrete_type)
+        let vtable_ptr = match self.get_vtable(trait_id, concrete_ty) {
+            Some(vtable) => vtable,
+            None => {
+                self.errors.push(Diagnostic::warning(
+                    format!(
+                        "No vtable found for trait {:?} on type {}",
+                        trait_id, concrete_ty
+                    ),
+                    self.current_span(),
+                ));
+                ptr_ty.const_null()
+            }
+        };
+
+        // Build fat pointer: { data_ptr, vtable_ptr }
+        let fat_ptr_ty = self.context.struct_type(&[ptr_ty.into(), ptr_ty.into()], false);
+        let mut fat_ptr = fat_ptr_ty.get_undef();
+        fat_ptr = self.builder
+            .build_insert_value(fat_ptr, data_ptr, 0, "fat_ptr.data")
+            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?
+            .into_struct_value();
+        fat_ptr = self.builder
+            .build_insert_value(fat_ptr, vtable_ptr, 1, "fat_ptr.vtable")
+            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?
+            .into_struct_value();
+
+        Ok(Some(fat_ptr.into()))
     }
 
     /// Compile an aggregate value (struct, tuple, array).

@@ -1864,8 +1864,102 @@ pub fn emit_rvalue(
                 }
                 _ => {}
             }
+            // DynTrait coercion: T -> dyn Trait or &T -> &dyn Trait
             if !handled {
-                // General cast path
+                let tgt_interned = type_intern.type_interner().get(*target_ty);
+                let mut dyn_trait_id: Option<u32> = Option.None;
+                match tgt_interned {
+                    &type_intern.InternedTypeKind.DynTrait { trait_id, auto_traits: _ } => {
+                        dyn_trait_id = Option.Some(trait_id.index);
+                    }
+                    &type_intern.InternedTypeKind.Ref { inner, mutable: _ } => {
+                        let inner_kind = type_intern.type_interner().get(inner);
+                        match inner_kind {
+                            &type_intern.InternedTypeKind.DynTrait { trait_id, auto_traits: _ } => {
+                                dyn_trait_id = Option.Some(trait_id.index);
+                            }
+                            _ => {}
+                        }
+                    }
+                    _ => {}
+                }
+                match dyn_trait_id {
+                    Option.Some(trait_def_id) => {
+                        let (val, src_ty) = emit_operand_typed(ctx, operand);
+                        // Extract concrete type DefId from source for vtable lookup
+                        let src_ty_id: Option<type_intern.TyId> = match operand {
+                            &mir_types.Operand.Copy(ref place) => ctx.get_local_hir_type(place.local),
+                            &mir_types.Operand.Move(ref place) => ctx.get_local_hir_type(place.local),
+                            &mir_types.Operand.Constant(ref c) => Option.Some(c.ty),
+                        };
+                        let mut concrete_def_id: Option<u32> = Option.None;
+                        match src_ty_id {
+                            Option.Some(stid) => {
+                                let src_interned = type_intern.type_interner().get(stid);
+                                match src_interned {
+                                    &type_intern.InternedTypeKind.Adt { def_id, args: _ } => {
+                                        concrete_def_id = Option.Some(def_id.index);
+                                    }
+                                    &type_intern.InternedTypeKind.Ref { inner, mutable: _ } => {
+                                        let inner_src = type_intern.type_interner().get(inner);
+                                        match inner_src {
+                                            &type_intern.InternedTypeKind.Adt { def_id, args: _ } => {
+                                                concrete_def_id = Option.Some(def_id.index);
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            Option.None => {}
+                        }
+                        match concrete_def_id {
+                            Option.Some(type_def_id) => {
+                                match ctx.lookup_vtable_name(trait_def_id, type_def_id) {
+                                    Option.Some(vtable_name) => {
+                                        // Build data pointer
+                                        let mut data_ptr: String;
+                                        if str_eq(src_ty.as_str(), "ptr") {
+                                            data_ptr = val;
+                                        } else {
+                                            // Value type: alloca + store, use alloca as ptr
+                                            let alloca = ctx.fresh_temp_cg();
+                                            ctx.emit_alloca_cg(&alloca, src_ty.as_str());
+                                            ctx.emit_store_str_cg(src_ty.as_str(), val.as_str(), &alloca);
+                                            data_ptr = cgname_to_string(&alloca);
+                                        }
+                                        // insertvalue { ptr, ptr } undef, ptr %data, 0
+                                        let fat1 = ctx.fresh_temp_cg();
+                                        ctx.write_indent();
+                                        ctx.write_cgname(&fat1);
+                                        ctx.write(" = insertvalue { ptr, ptr } undef, ptr ");
+                                        ctx.write_string(&data_ptr);
+                                        ctx.write(", 0\n");
+                                        // insertvalue { ptr, ptr } %fat1, ptr @vtable_name, 1
+                                        let fat2 = ctx.fresh_temp_cg();
+                                        ctx.write_indent();
+                                        ctx.write_cgname(&fat2);
+                                        ctx.write(" = insertvalue { ptr, ptr } ");
+                                        ctx.write_cgname(&fat1);
+                                        ctx.write(", ptr @");
+                                        ctx.write_string(vtable_name);
+                                        ctx.write(", 1\n");
+                                        // Store fat pointer to destination
+                                        ctx.emit_store_cg("{ ptr, ptr }", &fat2, dest);
+                                        handled = true;
+                                    }
+                                    Option.None => {}
+                                }
+                            }
+                            Option.None => {}
+                        }
+                    }
+                    Option.None => {}
+                }
+            }
+            // General cast path
+            if !handled {
                 let (val, src_ty) = emit_operand_typed(ctx, operand);
                 let tgt_llvm = codegen_size.type_to_llvm_with_ctx_id(ctx, *target_ty);
                 // Use the type-aware cast if we have source type info.
