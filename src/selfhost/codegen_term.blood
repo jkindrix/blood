@@ -116,6 +116,45 @@ pub fn emit_terminator(
                 }
             }
 
+            // --- Snapshot: create and populate for effect-captured locals ---
+            ctx.write("    ; snapshot: create for perform\n");
+            let snapshot = ctx.fresh_temp_cg();
+            ctx.begin_call(Option.Some(&snapshot), "ptr", "@blood_snapshot_create");
+            ctx.end_call();
+
+            // Add entries for effect-captured locals that have generation tracking
+            for ec_idx in 0usize..ctx.effect_captured_locals.len() {
+                let ec_local_index = ctx.effect_captured_locals[ec_idx];
+                let ec_local_id = mir_def.MirLocalId.new(ec_local_index);
+                match ctx.get_local_generation(ec_local_id) {
+                    Option.Some(gen_name) => {
+                        // Load pointer from local alloca, convert to i64 address
+                        let ec_alloca_cg = ctx.local_cg(ec_local_id);
+                        let ec_ptr = ctx.fresh_temp_cg();
+                        ctx.emit_load_cg2(&ec_ptr, "ptr", &ec_alloca_cg);
+                        let ec_addr = ctx.fresh_temp_cg();
+                        ctx.emit_cast_cg2(&ec_addr, "ptrtoint", "ptr", &ec_ptr, "i64");
+                        // Load generation from generation alloca
+                        let ec_gen = ctx.fresh_temp_cg();
+                        ctx.emit_load_cg(&ec_gen, "i32", gen_name.as_str());
+                        // Add snapshot entry
+                        ctx.begin_call(Option.None, "void", "@blood_snapshot_add_entry");
+                        ctx.call_arg_cg(true, "ptr", &snapshot);
+                        ctx.call_arg_cg(false, "i64", &ec_addr);
+                        ctx.call_arg_cg(false, "i32", &ec_gen);
+                        ctx.end_call();
+                    }
+                    Option.None => {
+                        // Local has no generation tracking — skip
+                    }
+                }
+            }
+
+            // Store snapshot in effect context for handler to retrieve
+            ctx.begin_call(Option.None, "void", "@blood_effect_context_set_snapshot");
+            ctx.call_arg_cg(true, "ptr", &snapshot);
+            ctx.end_call();
+
             // Create continuation (identity for tail-resumptive)
             let continuation = ctx.fresh_temp_cg();
             ctx.write_indent();
@@ -163,6 +202,34 @@ pub fn emit_terminator(
                 ctx.emit_store_cg("i64", &result, dest.as_str());
             }
 
+            // --- Snapshot: validate after perform returns ---
+            ctx.write("    ; snapshot: validate after perform\n");
+            let stale_index = ctx.fresh_temp_cg();
+            ctx.begin_call(Option.Some(&stale_index), "i64", "@blood_snapshot_validate");
+            ctx.call_arg_cg(true, "ptr", &snapshot);
+            ctx.end_call();
+
+            ctx.begin_call(Option.None, "void", "@blood_snapshot_destroy");
+            ctx.call_arg_cg(true, "ptr", &snapshot);
+            ctx.end_call();
+
+            let stale_cmp = ctx.fresh_temp_cg();
+            ctx.emit_icmp_cg2(&stale_cmp, "ne", "i64", &stale_index, "0");
+            let stale_label = ctx.fresh_label_cg();
+            let ok_label = ctx.fresh_label_cg();
+            ctx.emit_cond_br_cg(&stale_cmp, &stale_label, &ok_label);
+
+            // Stale path: panic
+            ctx.emit_label_cg(&stale_label);
+            ctx.begin_call(Option.None, "void", "@blood_stale_reference_panic");
+            ctx.call_arg_str(true, "i32", "0");
+            ctx.call_arg_str(false, "i32", "0");
+            ctx.end_call();
+            ctx.emit_unreachable();
+
+            // OK path: continue to target
+            ctx.emit_label_cg(&ok_label);
+
             match target {
                 &Option.Some(t) => {
                     let label = ctx.block_label_cg(t);
@@ -177,6 +244,46 @@ pub fn emit_terminator(
             // Resume from handler op body.
             // The inner body returns the resume value in its natural return type.
             // The wrapper function handles widening to i64 and continuation resume.
+
+            // --- Snapshot: validate before resume ---
+            ctx.write("    ; snapshot: validate before resume\n");
+            let resume_snap = ctx.fresh_temp_cg();
+            ctx.begin_call(Option.Some(&resume_snap), "ptr", "@blood_effect_context_get_snapshot");
+            ctx.end_call();
+
+            let snap_is_null = ctx.fresh_temp_cg();
+            ctx.write_indent();
+            ctx.write_cgname(&snap_is_null);
+            ctx.write(" = icmp eq ptr ");
+            ctx.write_cgname(&resume_snap);
+            ctx.write(", null\n");
+
+            let snap_validate_label = ctx.fresh_label_cg();
+            let snap_ok_label = ctx.fresh_label_cg();
+            ctx.emit_cond_br_cg(&snap_is_null, &snap_ok_label, &snap_validate_label);
+
+            // Validate path
+            ctx.emit_label_cg(&snap_validate_label);
+            let resume_stale = ctx.fresh_temp_cg();
+            ctx.begin_call(Option.Some(&resume_stale), "i64", "@blood_snapshot_validate");
+            ctx.call_arg_cg(true, "ptr", &resume_snap);
+            ctx.end_call();
+
+            let resume_stale_cmp = ctx.fresh_temp_cg();
+            ctx.emit_icmp_cg2(&resume_stale_cmp, "ne", "i64", &resume_stale, "0");
+            let resume_panic_label = ctx.fresh_label_cg();
+            ctx.emit_cond_br_cg(&resume_stale_cmp, &resume_panic_label, &snap_ok_label);
+
+            // Stale panic path
+            ctx.emit_label_cg(&resume_panic_label);
+            ctx.begin_call(Option.None, "void", "@blood_stale_reference_panic");
+            ctx.call_arg_str(true, "i32", "0");
+            ctx.call_arg_str(false, "i32", "0");
+            ctx.end_call();
+            ctx.emit_unreachable();
+
+            // OK path: proceed with resume
+            ctx.emit_label_cg(&snap_ok_label);
 
             // Write back handler state fields before returning.
             emit_handler_state_writeback(ctx);

@@ -315,6 +315,12 @@ pub fn generate_function_with_ctx(
     // Emit allocas with escape-aware allocation decisions
     codegen_stmt.emit_allocas_with_escapes(ctx, body, &escape_result);
 
+    // Store effect-captured locals for snapshot validation during Perform codegen
+    ctx.effect_captured_locals.clear();
+    for eci in 0usize..escape_result.effect_captured.len() {
+        ctx.effect_captured_locals.push(escape_result.effect_captured[eci].index);
+    }
+
     // Store arguments into allocas
     codegen_stmt.emit_arg_stores(ctx, body);
 
@@ -1298,6 +1304,16 @@ pub fn intrinsic_declarations() -> String {
     output.push_str("declare i32 @blood_get_generation(i64)\n");
     output.push_str("declare void @blood_increment_generation(ptr)\n");
     output.push_str("declare void @blood_stale_reference_panic(i32, i32)\n");
+
+    // Snapshot validation for effect handlers
+    output.push_str("\n; Snapshot validation\n");
+    output.push_str("declare ptr @blood_snapshot_create()\n");
+    output.push_str("declare void @blood_snapshot_add_entry(ptr, i64, i32)\n");
+    output.push_str("declare i64 @blood_snapshot_validate(ptr)\n");
+    output.push_str("declare void @blood_snapshot_destroy(ptr)\n");
+    output.push_str("declare void @blood_snapshot_stale_panic(ptr, i64)\n");
+    output.push_str("declare ptr @blood_effect_context_get_snapshot()\n");
+    output.push_str("declare void @blood_effect_context_set_snapshot(ptr)\n");
 
     // Persistent allocation (reference counting)
     output.push_str("\n; Persistent allocation (reference counting)\n");

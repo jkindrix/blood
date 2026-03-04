@@ -260,12 +260,22 @@ fn lower_expr_inner(
             lower_expr(ctx, inner.as_ref(), dest);
         }
         &hir_expr.ExprKind.Region { name: _, ref stmts, expr: ref region_expr } => {
-            // Region blocks: lower body like a block for now.
-            // Full region lifecycle (create/activate/deactivate/destroy)
-            // will be added when runtime integration is complete.
+            // Region lifecycle: create → activate → body → deactivate → exit_scope → destroy
+            // Allocate a local to hold the region ID (u64)
+            let region_local = ctx.new_temp(type_intern.CommonTypes.u64_ty(), expr.span);
+
+            // Emit RegionEnter: codegen will call blood_region_create + blood_region_activate
+            ctx.emit_stmt(mir_stmt.Statement.new(
+                mir_stmt.StatementKind.RegionEnter { region_local },
+                expr.span,
+            ));
+
+            // Lower body statements
             for i in 0usize..stmts.len() {
                 lower_stmt(ctx, &stmts[i]);
             }
+
+            // Lower body expression (if present)
             match region_expr {
                 &Option.Some(ref e) => {
                     lower_expr(ctx, e.as_ref(), dest);
@@ -283,6 +293,12 @@ fn lower_expr_inner(
                     }
                 }
             }
+
+            // Emit RegionExit: codegen will call blood_region_deactivate + exit_scope + conditional destroy
+            ctx.emit_stmt(mir_stmt.Statement.new(
+                mir_stmt.StatementKind.RegionExit { region_local },
+                expr.span,
+            ));
         }
         &hir_expr.ExprKind.ForIter { ref label, ref pattern, ref iter, ref body } => {
             lower_for_iter_expr(ctx, label, pattern.as_ref(), iter.as_ref(), body.as_ref(), dest, expr.span);

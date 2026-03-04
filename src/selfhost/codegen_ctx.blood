@@ -322,6 +322,9 @@ pub struct CodegenCtx {
     pub trait_method_entries: Vec<TraitMethodEntry>,
     /// Vtable name entries: (trait_def_id, type_def_id) → vtable global name.
     pub vtable_name_entries: Vec<VtableNameEntry>,
+    /// Effect-captured local indices for the current function.
+    /// Set from escape analysis; used during Perform codegen for snapshot creation.
+    pub effect_captured_locals: Vec<u32>,
 }
 
 /// Entry mapping a handler DefId to its effect DefId.
@@ -509,6 +512,7 @@ impl CodegenCtx {
             vtable_layouts: Vec.with_capacity(16),
             trait_method_entries: Vec.with_capacity(32),
             vtable_name_entries: Vec.with_capacity(32),
+            effect_captured_locals: Vec.new(),
         }
     }
 
@@ -582,6 +586,7 @@ impl CodegenCtx {
             vtable_layouts: Vec.with_capacity(16),
             trait_method_entries: Vec.with_capacity(32),
             vtable_name_entries: Vec.with_capacity(32),
+            effect_captured_locals: Vec.new(),
         }
     }
 
@@ -1371,6 +1376,7 @@ impl CodegenCtx {
         self.persistent_locals_hash = hashmap.HashMapU64U32.new();
         self.local_generations.clear();
         self.local_generations_hash = hashmap.HashMapU64U32.new();
+        self.effect_captured_locals.clear();
     }
 
     // ======== Error Reporting ========
@@ -2431,6 +2437,7 @@ impl CodegenCtx {
             vtable_layouts: Vec.new(),
             trait_method_entries: Vec.new(),
             vtable_name_entries: Vec.new(),
+            effect_captured_locals: Vec.new(),
         };
 
         // Copy handler_op_body_ids with state counts (read-only, needed to flag handler op bodies)

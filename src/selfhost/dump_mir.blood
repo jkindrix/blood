@@ -917,6 +917,20 @@ pub fn format_statement(stmt: &mir_stmt.Statement) -> String {
             out
         }
         &mir_stmt.StatementKind.Nop => common.make_string("Nop"),
+        &mir_stmt.StatementKind.RegionEnter { region_local } => {
+            let mut out = String.new();
+            out.push_str("RegionEnter(_");
+            push_u32(&mut out, region_local.index);
+            out.push_str(")");
+            out
+        }
+        &mir_stmt.StatementKind.RegionExit { region_local } => {
+            let mut out = String.new();
+            out.push_str("RegionExit(_");
+            push_u32(&mut out, region_local.index);
+            out.push_str(")");
+            out
+        }
     }
 }
 

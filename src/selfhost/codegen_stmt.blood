@@ -516,6 +516,67 @@ pub fn emit_statement(
                 ctx.emit_store_cg(result_ty.as_str(), &narrowed, dest_ptr.as_str());
             }
         }
+        &mir_stmt.StatementKind.RegionEnter { region_local } => {
+            // Emit region lifecycle: create + activate
+            // %region_id = call i64 @blood_region_create(i64 1048576, i64 1073741824)
+            // store i64 %region_id, ptr %_N
+            // call void @blood_region_activate(i64 %region_id)
+            ctx.write("    ; region enter\n");
+
+            // Use the existing alloca for the region_local (already emitted during locals init)
+            let region_alloca_cg = ctx.local_cg(region_local);
+
+            let region_id = ctx.fresh_temp_cg();
+            ctx.begin_call(Option.Some(&region_id), "i64", "@blood_region_create");
+            ctx.call_arg_str(true, "i64", "1048576");     // initial_size = 1MB
+            ctx.call_arg_str(false, "i64", "1073741824"); // max_size = 1GB
+            ctx.end_call();
+
+            ctx.emit_store_cg2("i64", &region_id, &region_alloca_cg);
+
+            ctx.begin_call(Option.None, "void", "@blood_region_activate");
+            ctx.call_arg_cg(true, "i64", &region_id);
+            ctx.end_call();
+        }
+        &mir_stmt.StatementKind.RegionExit { region_local } => {
+            // Emit region lifecycle: deactivate + exit_scope + conditional destroy
+            // call void @blood_region_deactivate()
+            // %sd = call i32 @blood_region_exit_scope(i64 %region_id)
+            // %cmp = icmp ne i32 %sd, 0
+            // br i1 %cmp, label %destroy, label %continue
+            // destroy:
+            //   call void @blood_region_destroy(i64 %region_id)
+            //   br label %continue
+            // continue:
+            ctx.write("    ; region exit\n");
+
+            let region_alloca_cg = ctx.local_cg(region_local);
+            let region_id = ctx.fresh_temp_cg();
+            ctx.emit_load_cg2(&region_id, "i64", &region_alloca_cg);
+
+            ctx.begin_call(Option.None, "void", "@blood_region_deactivate");
+            ctx.end_call();
+
+            let sd = ctx.fresh_temp_cg();
+            ctx.begin_call(Option.Some(&sd), "i32", "@blood_region_exit_scope");
+            ctx.call_arg_cg(true, "i64", &region_id);
+            ctx.end_call();
+
+            let cmp = ctx.fresh_temp_cg();
+            ctx.emit_icmp_cg2(&cmp, "ne", "i32", &sd, "0");
+
+            let destroy_label = ctx.fresh_label_cg();
+            let continue_label = ctx.fresh_label_cg();
+            ctx.emit_cond_br_cg(&cmp, &destroy_label, &continue_label);
+
+            ctx.emit_label_cg(&destroy_label);
+            ctx.begin_call(Option.None, "void", "@blood_region_destroy");
+            ctx.call_arg_cg(true, "i64", &region_id);
+            ctx.end_call();
+            ctx.emit_br_cg(&continue_label);
+
+            ctx.emit_label_cg(&continue_label);
+        }
     }
 }
 

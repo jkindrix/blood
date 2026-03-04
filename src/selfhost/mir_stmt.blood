@@ -138,6 +138,19 @@ pub enum StatementKind {
     },
     /// No operation (placeholder for removed statements).
     Nop,
+    /// Enter a region scope: create and activate a region.
+    /// Codegen emits: region_id = blood_region_create(1MB, 1GB); blood_region_activate(region_id)
+    RegionEnter {
+        /// The MIR local that will hold the region ID (u64).
+        region_local: mir_def.MirLocalId,
+    },
+    /// Exit a region scope: deactivate, check exit_scope, conditionally destroy.
+    /// Codegen emits: blood_region_deactivate(); sd = blood_region_exit_scope(region_id);
+    ///   if sd != 0 { blood_region_destroy(region_id) }
+    RegionExit {
+        /// The MIR local holding the region ID (u64).
+        region_local: mir_def.MirLocalId,
+    },
 }
 
 // ============================================================
