@@ -1,0 +1,103 @@
+// Benchmark: enum match dispatch
+// Measures: match-based dispatch on enum variants
+// Spec target: reference point for tagged union dispatch (DISPATCH.md §8.3)
+
+enum Cmd {
+    Add(i32),
+    Sub(i32),
+    Mul(i32),
+    Nop,
+}
+
+fn apply_cmd(state: i32, cmd: Cmd) -> i32 {
+    match cmd {
+        Cmd.Add(n) => state + n,
+        Cmd.Sub(n) => state - n,
+        Cmd.Mul(n) => state * n,
+        Cmd.Nop => state,
+    }
+}
+
+fn sort_samples(buf: u64, n: u64) {
+    if n <= 1 { return; }
+    let mut i: u64 = 1;
+    while i < n {
+        let key: u64 = ptr_read_u64(buf + i * 8);
+        let mut j: u64 = i;
+        while j > 0 {
+            let val: u64 = ptr_read_u64(buf + (j - 1) * 8);
+            if val <= key {
+                break;
+            }
+            ptr_write_u64(buf + j * 8, val);
+            j = j - 1;
+        }
+        ptr_write_u64(buf + j * 8, key);
+        i = i + 1;
+    }
+}
+
+fn main() -> i32 {
+    let warmup_iters: u64 = 10000;
+    let measure_iters: u64 = 1000000;
+    let num_samples: u64 = 21;
+
+    // Warmup
+    let mut total_check: u64 = 0;
+    let mut w: u64 = 0;
+    while w < warmup_iters {
+        let mut state: i32 = 0;
+        state = apply_cmd(state, Cmd.Add(3));
+        state = apply_cmd(state, Cmd.Mul(2));
+        state = apply_cmd(state, Cmd.Sub(1));
+        state = apply_cmd(state, Cmd.Nop);
+        total_check = total_check + (state as u64);
+        w = w + 1;
+    }
+
+    // Measure
+    let samples: u64 = alloc(num_samples * 8);
+    let mut s: u64 = 0;
+    while s < num_samples {
+        let start: u64 = blood_clock_nanos();
+        let mut i: u64 = 0;
+        while i < measure_iters {
+            let mut state: i32 = 0;
+            state = apply_cmd(state, Cmd.Add(3));
+            state = apply_cmd(state, Cmd.Mul(2));
+            state = apply_cmd(state, Cmd.Sub(1));
+            state = apply_cmd(state, Cmd.Nop);
+            total_check = total_check + (state as u64);
+            i = i + 1;
+        }
+        let elapsed: u64 = blood_clock_nanos() - start;
+        ptr_write_u64(samples + s * 8, elapsed);
+        s = s + 1;
+    }
+
+    sort_samples(samples, num_samples);
+
+    let median_offset: u64 = 80;
+    let median: u64 = ptr_read_u64(samples + median_offset);
+    let min_val: u64 = ptr_read_u64(samples);
+    // 4 match dispatches per iteration
+    let dispatches: u64 = measure_iters * 4;
+    let ns_per_dispatch: u64 = median / dispatches;
+
+    print_str("benchmark=enum_dispatch\n");
+    print_str("median_total_ns=");
+    println_u64(median);
+    print_str("min_total_ns=");
+    println_u64(min_val);
+    print_str("iterations=");
+    println_u64(measure_iters);
+    print_str("dispatches=");
+    println_u64(dispatches);
+    print_str("ns_per_dispatch=");
+    println_u64(ns_per_dispatch);
+    print_str("checksum=");
+    println_u64(total_check);
+
+    free(samples);
+    0
+}

@@ -1,0 +1,95 @@
+// Benchmark: effect handler dispatch latency
+// Measures: cost of perform State.get() + State.put() inside an installed handler
+// Spec target: <50ns handler invocation (SPECIFICATION.md §11.7.1)
+
+effect State {
+    op get() -> i32;
+    op put(s: i32) -> ();
+}
+
+deep handler IntState for State {
+    let mut state: i32
+    return(x) { x }
+    op get() { resume(state) }
+    op put(s) { state = s; resume(()) }
+}
+
+fn sort_samples(buf: u64, n: u64) {
+    if n <= 1 { return; }
+    let mut i: u64 = 1;
+    while i < n {
+        let key: u64 = ptr_read_u64(buf + i * 8);
+        let mut j: u64 = i;
+        while j > 0 {
+            let val: u64 = ptr_read_u64(buf + (j - 1) * 8);
+            if val <= key {
+                break;
+            }
+            ptr_write_u64(buf + j * 8, val);
+            j = j - 1;
+        }
+        ptr_write_u64(buf + j * 8, key);
+        i = i + 1;
+    }
+}
+
+fn main() -> i32 {
+    let warmup_iters: u64 = 1000;
+    let measure_iters: u64 = 100000;
+    let num_samples: u64 = 21;
+
+    // Warmup
+    let _w: i32 = with IntState { state: 0 } handle {
+        let mut i: u64 = 0;
+        while i < warmup_iters {
+            let v: i32 = perform State.get();
+            perform State.put(v + 1);
+            i = i + 1;
+        }
+        perform State.get()
+    };
+
+    // Measure: one handler install, many performs inside
+    let samples: u64 = alloc(num_samples * 8);
+    let mut s: u64 = 0;
+    while s < num_samples {
+        let result: i32 = with IntState { state: 0 } handle {
+            let start: u64 = blood_clock_nanos();
+            let mut i: u64 = 0;
+            while i < measure_iters {
+                let v: i32 = perform State.get();
+                perform State.put(v + 1);
+                i = i + 1;
+            }
+            let elapsed: u64 = blood_clock_nanos() - start;
+            ptr_write_u64(samples + s * 8, elapsed);
+            perform State.get()
+        };
+        s = s + 1;
+    }
+
+    sort_samples(samples, num_samples);
+
+    let median_offset: u64 = 80;
+    let median: u64 = ptr_read_u64(samples + median_offset);
+    let min_val: u64 = ptr_read_u64(samples);
+    // Each iteration does 2 performs (get + put)
+    let ops: u64 = measure_iters * 2;
+    let ns_per_op: u64 = median / ops;
+
+    print_str("benchmark=effect_dispatch\n");
+    print_str("median_total_ns=");
+    println_u64(median);
+    print_str("min_total_ns=");
+    println_u64(min_val);
+    print_str("iterations=");
+    println_u64(measure_iters);
+    print_str("perform_ops=");
+    println_u64(ops);
+    print_str("ns_per_op=");
+    println_u64(ns_per_op);
+    print_str("target_ns=50\n");
+
+    free(samples);
+    0
+}

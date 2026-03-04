@@ -60,12 +60,13 @@ The Synthetic Safety Model achieves:
 4. **Graceful degradation** — Runtime checks where static proof fails
 5. **Effect integration** — Safe interaction with algebraic effect handlers
 
-> **Performance Basis**: Performance characteristics are derived from:
-> - Vale's generational reference implementation
-> - x86-64 cycle analysis (~3-4 cycles for generation check)
-> - Java HotSpot escape analysis (proven in production)
+> **Performance Basis**: Performance characteristics measured using Blood micro-benchmarks:
+> - Region full lifecycle (create+alloc+exit): ~3,400ns (`benchmarks/micro/bench_region_alloc.blood`)
+> - Persistent allocation (Tier 2 RC): ~184ns (`benchmarks/micro/bench_persistent_alloc.blood`)
+> - Pointer dereference overhead: ~0% with inlining (`benchmarks/micro/bench_pointer_overhead.blood`)
+> - Escape analysis validated by 346 ground-truth tests
 >
-> Blood-specific benchmarks are tracked in the test suite. See §10 for current measurements.
+> See `benchmarks/micro/` for reproduction. Run `benchmarks/micro/run_micro.sh --release`.
 
 ### 1.2 Related Specifications
 
@@ -313,18 +314,17 @@ Estimated performance impact: ~5-15% slowdown
 - Concurrent data structure updates
 - VFT hot-swap
 
-#### 2.6.4 Real-World Overhead Estimates (Unvalidated)
+#### 2.6.4 Real-World Overhead Estimates (Blood Measurements)
 
-Based on analysis of similar systems (Go with GC, Vale's design documents):
+Measured using `benchmarks/micro/bench_pointer_overhead.blood` (value-passing vs reference-passing computation, 1M iterations, 21 samples):
 
-| Workload Type | Estimated Overhead | Confidence |
-|---------------|-------------------|------------|
-| Compute-bound (minimal pointers) | <1% | High |
-| Balanced (mixed) | 3-8% | Medium |
-| Pointer-heavy (graphs, trees) | 10-20% | Medium |
-| Linked list traversal (worst case) | 20-40% | Low |
+| Workload Type | Measured Overhead | Notes |
+|---------------|-------------------|-------|
+| Compute-bound (minimal pointers) | ~0% | Inlined references eliminated by LLVM |
+| Balanced (mixed, struct via &mut) | ~0% | With release-mode inlining |
+| Without inlining (debug mode) | ~42% | Function call convention dominates |
 
-**Note**: These estimates are based on cache behavior analysis. Actual performance measurements are tracked in the benchmark suite.
+**Note**: With LLVM inlining enabled (`--release`), reference access overhead is eliminated entirely for function-local references. The debug-mode overhead (~42%) reflects calling convention differences (pass-by-value vs pass-by-reference), not pointer representation cost.
 
 #### 2.6.5 Trade-off Justification
 
@@ -344,7 +344,7 @@ The 128-bit pointer overhead is accepted because:
 
 | Approach | Memory Overhead | CPU Overhead | Complexity | GC Pauses |
 |----------|-----------------|--------------|------------|-----------|
-| **Blood (128-bit gen-ref)** | 2x pointers | ~4 cycles/check* | Low | None |
+| **Blood (128-bit gen-ref)** | 2x pointers | ~0% with inlining* | Low | None |
 | **Rust (borrow checker)** | None | None | High | None |
 | **Go (GC)** | ~1.5x heap | Variable | Low | 1-10ms |
 | **Java (GC)** | ~2x heap | Variable | Low | 10-100ms |
@@ -355,7 +355,7 @@ Blood's approach trades memory/CPU overhead for:
 - No GC pauses
 - Stronger safety than C
 
-*Note: The ~4 cycles/check is for heap dereferences with slot registry lookup. Stack references (Tier 0) have zero overhead. Benchmarked in `bloodc/benches/runtime_bench.rs`.
+*Note: With LLVM inlining (`--release`), reference dereference overhead is ~0% for function-local references. Without inlining (debug mode), overhead is ~42% due to calling convention differences. Stack references (Tier 0) always have zero overhead. Measured in `benchmarks/micro/bench_pointer_overhead.blood`.
 
 #### 2.6.7 When 128-bit Overhead is Acceptable vs. Problematic
 
@@ -424,13 +424,13 @@ Profile your application if:
 
 ### 3.1 Tier Overview
 
-| Tier | Name | Lifecycle | Safety Mechanism | Cost (benchmarked) |
-|------|------|-----------|------------------|---------------------|
-| 0 | Stack | Lexical scope | Compile-time proof | Zero (~0.2ns) |
-| 1 | Region | Explicit scope | Generational check | ~4 cycles (~1.3ns) |
-| 2 | Persistent | Reference-counted | Deferred RC | Variable |
+| Tier | Name | Lifecycle | Safety Mechanism | Cost (measured) |
+|------|------|-----------|------------------|-----------------|
+| 0 | Stack | Lexical scope | Compile-time proof | ~1ns (baseline loop) |
+| 1 | Region | Explicit scope | Generational check | ~3,400ns (full lifecycle) |
+| 2 | Persistent | Reference-counted | Deferred RC | ~184ns (alloc+dealloc) |
 
-*Cycle costs benchmarked in `bloodc/benches/runtime_bench.rs`. Tier 0 is essentially free; Tier 1 cost is dominated by slot registry lookup.
+*Measured using Blood micro-benchmarks (`benchmarks/micro/`). Tier 0 is essentially free. Tier 1 cost includes region create+allocate+exit (bump allocation within an existing region is near-zero). Tier 2 measured via `bench_persistent_alloc.blood` (GlobalEscape enum through `&mut` reference).
 
 ### 3.2 Tier 0: Stack
 
@@ -667,7 +667,7 @@ dereference:
     call    blood_stale_ref_handler
 ```
 
-**Typical cost**: ~3-4 cycles in the fast path (generations match), based on x86-64 instruction analysis. See Performance Basis in §1.1.
+**Typical cost**: ~0% overhead with LLVM inlining (reference access optimized away). Without inlining, the load-compare-branch sequence adds measurable overhead. See `benchmarks/micro/bench_pointer_overhead.blood` for measurements and Performance Basis in §1.1.
 
 ---
 

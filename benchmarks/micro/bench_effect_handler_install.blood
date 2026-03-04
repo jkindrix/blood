@@ -1,0 +1,88 @@
+// Benchmark: effect handler install/teardown overhead
+// Measures: cost of installing and removing a handler (no operations performed)
+// Spec target: <100ns handler installation (SPECIFICATION.md §11.7.1)
+
+effect State {
+    op get() -> i32;
+    op put(s: i32) -> ();
+}
+
+deep handler IntState for State {
+    let mut state: i32
+    return(x) { x }
+    op get() { resume(state) }
+    op put(s) { state = s; resume(()) }
+}
+
+fn sort_samples(buf: u64, n: u64) {
+    if n <= 1 { return; }
+    let mut i: u64 = 1;
+    while i < n {
+        let key: u64 = ptr_read_u64(buf + i * 8);
+        let mut j: u64 = i;
+        while j > 0 {
+            let val: u64 = ptr_read_u64(buf + (j - 1) * 8);
+            if val <= key {
+                break;
+            }
+            ptr_write_u64(buf + j * 8, val);
+            j = j - 1;
+        }
+        ptr_write_u64(buf + j * 8, key);
+        i = i + 1;
+    }
+}
+
+fn main() -> i32 {
+    let warmup_iters: u64 = 1000;
+    let measure_iters: u64 = 100000;
+    let num_samples: u64 = 21;
+
+    // Warmup
+    let mut total_check: u64 = 0;
+    let mut w: u64 = 0;
+    while w < warmup_iters {
+        let val: i32 = with IntState { state: 42 } handle { 42 };
+        total_check = total_check + (val as u64);
+        w = w + 1;
+    }
+
+    // Measure
+    let samples: u64 = alloc(num_samples * 8);
+    let mut s: u64 = 0;
+    while s < num_samples {
+        let start: u64 = blood_clock_nanos();
+        let mut i: u64 = 0;
+        while i < measure_iters {
+            let val: i32 = with IntState { state: 42 } handle { 42 };
+            total_check = total_check + (val as u64);
+            i = i + 1;
+        }
+        let elapsed: u64 = blood_clock_nanos() - start;
+        ptr_write_u64(samples + s * 8, elapsed);
+        s = s + 1;
+    }
+
+    sort_samples(samples, num_samples);
+
+    let median_offset: u64 = 80;
+    let median: u64 = ptr_read_u64(samples + median_offset);
+    let min_val: u64 = ptr_read_u64(samples);
+    let ns_per_op: u64 = median / measure_iters;
+
+    print_str("benchmark=effect_handler_install\n");
+    print_str("median_total_ns=");
+    println_u64(median);
+    print_str("min_total_ns=");
+    println_u64(min_val);
+    print_str("iterations=");
+    println_u64(measure_iters);
+    print_str("ns_per_op=");
+    println_u64(ns_per_op);
+    print_str("target_ns=100\n");
+    print_str("checksum=");
+    println_u64(total_check);
+
+    free(samples);
+    0
+}

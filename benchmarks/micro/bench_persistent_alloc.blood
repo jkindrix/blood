@@ -1,0 +1,92 @@
+// Benchmark: persistent (Tier 2) allocation latency
+// Measures: alloc + dealloc cycle for GlobalEscape values (non-copy enum through &mut)
+// Spec target: <200ns persistent allocation (MEMORY_MODEL.md §3.1)
+
+enum Value {
+    Num(i32),
+    None,
+}
+
+fn store_value(r: &mut Value, n: i32) {
+    *r = Value.Num(n);
+}
+
+fn extract(v: Value) -> i32 {
+    match v {
+        Value.Num(n) => n,
+        Value.None => 0,
+    }
+}
+
+fn run_benchmark(iterations: u64) -> u64 {
+    let mut checksum: u64 = 0;
+    let mut i: u64 = 0;
+    while i < iterations {
+        let mut v: Value = Value.None;
+        store_value(&mut v, (i as i32));
+        let n: i32 = extract(v);
+        checksum = checksum + (n as u64);
+        i = i + 1;
+    }
+    checksum
+}
+
+fn sort_samples(buf: u64, n: u64) {
+    if n <= 1 { return; }
+    let mut i: u64 = 1;
+    while i < n {
+        let key: u64 = ptr_read_u64(buf + i * 8);
+        let mut j: u64 = i;
+        while j > 0 {
+            let val: u64 = ptr_read_u64(buf + (j - 1) * 8);
+            if val <= key {
+                break;
+            }
+            ptr_write_u64(buf + j * 8, val);
+            j = j - 1;
+        }
+        ptr_write_u64(buf + j * 8, key);
+        i = i + 1;
+    }
+}
+
+fn main() -> i32 {
+    let warmup_iters: u64 = 1000;
+    let measure_iters: u64 = 100000;
+    let num_samples: u64 = 21;
+
+    let mut total_check: u64 = run_benchmark(warmup_iters);
+
+    let samples: u64 = alloc(num_samples * 8);
+    let mut i: u64 = 0;
+    while i < num_samples {
+        let start: u64 = blood_clock_nanos();
+        total_check = total_check + run_benchmark(measure_iters);
+        let elapsed: u64 = blood_clock_nanos() - start;
+        ptr_write_u64(samples + i * 8, elapsed);
+        i = i + 1;
+    }
+
+    sort_samples(samples, num_samples);
+
+    let median_offset: u64 = 80;
+    let median: u64 = ptr_read_u64(samples + median_offset);
+    let min_val: u64 = ptr_read_u64(samples);
+    let ns_per_op: u64 = median / measure_iters;
+
+    print_str("benchmark=persistent_alloc\n");
+    print_str("median_total_ns=");
+    println_u64(median);
+    print_str("min_total_ns=");
+    println_u64(min_val);
+    print_str("iterations=");
+    println_u64(measure_iters);
+    print_str("ns_per_op=");
+    println_u64(ns_per_op);
+    print_str("target_ns=200\n");
+    print_str("checksum=");
+    println_u64(total_check);
+
+    free(samples);
+    0
+}

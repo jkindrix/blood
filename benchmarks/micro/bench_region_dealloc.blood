@@ -1,0 +1,98 @@
+// Benchmark: region deallocation O(1) verification
+// Measures: region exit time with varying number of allocations inside
+// Spec target: O(1) deallocation — exit time should be constant regardless of N
+
+struct Item {
+    a: i32,
+    b: i32,
+    c: i32,
+    d: i32,
+}
+
+fn alloc_n_items(n: i32) -> i32 {
+    let result: i32 = region {
+        let mut sum: i32 = 0;
+        let mut i: i32 = 0;
+        while i < n {
+            let item: Item = Item { a: i, b: i + 1, c: i + 2, d: i + 3 };
+            sum = sum + item.a;
+            i = i + 1;
+        }
+        sum
+    };
+    result
+}
+
+fn run_benchmark_n(iterations: u64, n: i32) -> u64 {
+    let mut checksum: u64 = 0;
+    let mut i: u64 = 0;
+    while i < iterations {
+        let val: i32 = alloc_n_items(n);
+        checksum = checksum + (val as u64);
+        i = i + 1;
+    }
+    checksum
+}
+
+fn sort_samples(buf: u64, n: u64) {
+    if n <= 1 { return; }
+    let mut i: u64 = 1;
+    while i < n {
+        let key: u64 = ptr_read_u64(buf + i * 8);
+        let mut j: u64 = i;
+        while j > 0 {
+            let val: u64 = ptr_read_u64(buf + (j - 1) * 8);
+            if val <= key {
+                break;
+            }
+            ptr_write_u64(buf + j * 8, val);
+            j = j - 1;
+        }
+        ptr_write_u64(buf + j * 8, key);
+        i = i + 1;
+    }
+}
+
+fn measure_n(n: i32, iters: u64, label: &str) {
+    let num_samples: u64 = 21;
+    let _warmup: u64 = run_benchmark_n(100, n);
+
+    let samples: u64 = alloc(num_samples * 8);
+    let mut i: u64 = 0;
+    while i < num_samples {
+        let start: u64 = blood_clock_nanos();
+        let _check: u64 = run_benchmark_n(iters, n);
+        let elapsed: u64 = blood_clock_nanos() - start;
+        ptr_write_u64(samples + i * 8, elapsed);
+        i = i + 1;
+    }
+
+    sort_samples(samples, num_samples);
+
+    let median_offset: u64 = 80;
+    let median: u64 = ptr_read_u64(samples + median_offset);
+    let ns_per_op: u64 = median / iters;
+
+    print_str("benchmark=region_dealloc_");
+    print_str(label);
+    print_str("\n");
+    print_str("alloc_count=");
+    print_str(label);
+    print_str("\n");
+    print_str("median_total_ns=");
+    println_u64(median);
+    print_str("ns_per_op=");
+    println_u64(ns_per_op);
+
+    free(samples);
+}
+
+fn main() -> i32 {
+    // Measure region with 10, 100, 1000 allocations
+    // If dealloc is O(1), ns_per_op should scale linearly with N (alloc cost)
+    // but the dealloc component should be constant
+    measure_n(10, 10000, "10");
+    measure_n(100, 1000, "100");
+    measure_n(1000, 100, "1000");
+    0
+}

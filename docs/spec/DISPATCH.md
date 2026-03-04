@@ -1440,16 +1440,18 @@ BUILD_COLLISION_FILTER(method_table) → BloomFilter:
     RETURN filter
 ```
 
-#### 6.3.4 Performance Characteristics (Unvalidated)
+#### 6.3.4 Performance Characteristics
 
-| Scenario | Cycles (est.) | Notes |
-|----------|---------------|-------|
-| Fingerprint hit, no collision | ~5-8 | Hash lookup + bloom check |
-| Fingerprint hit, bloom positive | ~15-25 | + Full type ID comparison |
-| Fingerprint hit, actual collision | ~30-50 | + LRU cache lookup |
-| Cache miss, full resolution | ~100-200 | Full dispatch algorithm |
+| Scenario | Measured | Notes |
+|----------|----------|-------|
+| Static (monomorphized) | ~0ns | Zero overhead with LLVM inlining (measured) |
+| Static (trait method) | ~1ns | Monomorphized, equivalent to direct call (measured) |
+| Fingerprint hit, no collision | ~5-8 cycles (est.) | Not yet implemented — design only |
+| Fingerprint hit, bloom positive | ~15-25 cycles (est.) | Not yet implemented — design only |
+| Fingerprint hit, actual collision | ~30-50 cycles (est.) | Not yet implemented — design only |
+| Cache miss, full resolution | ~100-200 cycles (est.) | Not yet implemented — design only |
 
-> **Note**: These cycle estimates are derived from Julia's dispatch system benchmarks and Common Lisp CLOS measurements. See §8 for Blood-specific validation.
+> **Note**: Static dispatch (monomorphization) is measured using Blood micro-benchmarks (`benchmarks/micro/bench_static_dispatch.blood`, `bench_trait_dispatch.blood`). Dynamic dispatch via fingerprint tables and bloom filters is not yet implemented — cycle estimates for dynamic paths are theoretical. See §8 for full measurements.
 
 The bloom filter false positive rate is ~1% with the above parameters (based on standard bloom filter mathematics), meaning only ~1% of non-colliding lookups pay the verification cost.
 
@@ -1806,16 +1808,17 @@ map(nums, |x| { print(x); x }) // E = {IO}
 
 ## 8. Performance Considerations
 
-> **Performance Basis**: Performance characteristics are derived from Julia's dispatch benchmarks and Common Lisp CLOS measurements. Blood-specific benchmarks are tracked in the test suite.
+> **Performance Basis**: Static dispatch measured using Blood micro-benchmarks (`benchmarks/micro/`). Dynamic dispatch via fingerprint tables is not yet implemented — cycle estimates for dynamic paths remain theoretical. Run `benchmarks/micro/run_micro.sh --release` to reproduce.
 
 ### 8.1 Dispatch Overhead Summary
 
-| Dispatch Type | Overhead (est.) | When Used |
-|---------------|-----------------|-----------|
-| Static (monomorphized) | 0 cycles | Types known at compile time |
-| Static (known method) | ~0 cycles | Direct call, possible inline |
-| Dynamic (fingerprint hit) | ~5-10 cycles | Hash lookup + indirect call |
-| Dynamic (fingerprint miss) | ~50-100 cycles | Full type resolution |
+| Dispatch Type | Overhead | Status | When Used |
+|---------------|----------|--------|-----------|
+| Static (monomorphized) | 0ns (measured) | Implemented | Types known at compile time |
+| Static (known method) | ~1ns (measured) | Implemented | Direct call, possible inline |
+| Enum match dispatch | ~128ns (measured) | Implemented | Tagged union pattern matching |
+| Dynamic (fingerprint hit) | ~5-10 cycles (est.) | Not implemented | Hash lookup + indirect call |
+| Dynamic (fingerprint miss) | ~50-100 cycles (est.) | Not implemented | Full type resolution |
 
 ### 8.2 Optimization Strategies
 

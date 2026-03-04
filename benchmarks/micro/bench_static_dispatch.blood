@@ -1,0 +1,115 @@
+// Benchmark: static (monomorphized) dispatch baseline
+// Measures: monomorphized generic function call overhead
+// Spec target: 0 cycles (DISPATCH.md §8.1 — "Static (monomorphized)")
+
+fn identity_i32(x: i32) -> i32 { x }
+fn identity_u64(x: u64) -> u64 { x }
+
+fn compute_direct(iterations: u64) -> u64 {
+    let mut state: u64 = 12345;
+    let mut i: u64 = 0;
+    while i < iterations {
+        state = state ^ (state << 13);
+        state = state ^ (state >> 7);
+        state = state ^ (state << 17);
+        i = i + 1;
+    }
+    state
+}
+
+fn compute_via_call(iterations: u64) -> u64 {
+    let mut state: u64 = 12345;
+    let mut i: u64 = 0;
+    while i < iterations {
+        state = identity_u64(state ^ (identity_u64(state) << 13));
+        state = identity_u64(state ^ (identity_u64(state) >> 7));
+        state = identity_u64(state ^ (identity_u64(state) << 17));
+        i = i + 1;
+    }
+    state
+}
+
+fn sort_samples(buf: u64, n: u64) {
+    if n <= 1 { return; }
+    let mut i: u64 = 1;
+    while i < n {
+        let key: u64 = ptr_read_u64(buf + i * 8);
+        let mut j: u64 = i;
+        while j > 0 {
+            let val: u64 = ptr_read_u64(buf + (j - 1) * 8);
+            if val <= key {
+                break;
+            }
+            ptr_write_u64(buf + j * 8, val);
+            j = j - 1;
+        }
+        ptr_write_u64(buf + j * 8, key);
+        i = i + 1;
+    }
+}
+
+fn main() -> i32 {
+    let warmup_iters: u64 = 10000;
+    let measure_iters: u64 = 1000000;
+    let num_samples: u64 = 21;
+
+    // Measure direct computation
+    let _w1: u64 = compute_direct(warmup_iters);
+    let direct_samples: u64 = alloc(num_samples * 8);
+    let mut total_check: u64 = 0;
+    let mut i: u64 = 0;
+    while i < num_samples {
+        let start: u64 = blood_clock_nanos();
+        total_check = total_check + compute_direct(measure_iters);
+        let elapsed: u64 = blood_clock_nanos() - start;
+        ptr_write_u64(direct_samples + i * 8, elapsed);
+        i = i + 1;
+    }
+    sort_samples(direct_samples, num_samples);
+
+    // Measure via function calls (simulates monomorphized dispatch)
+    let _w2: u64 = compute_via_call(warmup_iters);
+    let call_samples: u64 = alloc(num_samples * 8);
+    i = 0;
+    while i < num_samples {
+        let start: u64 = blood_clock_nanos();
+        total_check = total_check + compute_via_call(measure_iters);
+        let elapsed: u64 = blood_clock_nanos() - start;
+        ptr_write_u64(call_samples + i * 8, elapsed);
+        i = i + 1;
+    }
+    sort_samples(call_samples, num_samples);
+
+    let median_offset: u64 = 80;
+    let direct_median: u64 = ptr_read_u64(direct_samples + median_offset);
+    let call_median: u64 = ptr_read_u64(call_samples + median_offset);
+    let direct_ns: u64 = direct_median / measure_iters;
+    let call_ns: u64 = call_median / measure_iters;
+
+    let overhead_pct: u64 = if call_median > direct_median {
+        (call_median - direct_median) * 100 / direct_median
+    } else {
+        0
+    };
+
+    print_str("benchmark=static_dispatch\n");
+    print_str("direct_median_ns=");
+    println_u64(direct_median);
+    print_str("call_median_ns=");
+    println_u64(call_median);
+    print_str("direct_ns_per_op=");
+    println_u64(direct_ns);
+    print_str("call_ns_per_op=");
+    println_u64(call_ns);
+    print_str("overhead_pct=");
+    println_u64(overhead_pct);
+    print_str("target=0_cycles\n");
+    print_str("iterations=");
+    println_u64(measure_iters);
+    print_str("checksum=");
+    println_u64(total_check);
+
+    free(direct_samples);
+    free(call_samples);
+    0
+}

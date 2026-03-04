@@ -533,19 +533,34 @@ See `proofs/PROOF_ROADMAP.md` (v1.6) for complete per-file inventory and detaile
 
 ---
 
-## 9. Phase F: Performance Validation (Pre-1.0)
+## 9. Phase F: Performance Validation (Pre-1.0) — COMPLETE
 
 **Priority**: Lowest — explicitly marked pre-1.0 in SPECIFICATION.md §11.7.
-**Prerequisite**: Tier 3 implemented (for memory benchmarks).
+**Prerequisite**: Tier 2 implemented (Phase E).
 
-| # | Work Item | Type |
-|---|-----------|------|
-| F.1 | Design dispatch benchmark suite | Design |
-| F.2 | Design memory model benchmark suite | Design |
-| F.3 | Implement benchmarks as Blood programs | Implementation |
-| F.4 | Run benchmarks against first_gen | Measurement |
-| F.5 | Replace external citations in DISPATCH.md with Blood measurements | Documentation |
-| F.6 | Replace external citations in MEMORY_MODEL.md with Blood measurements | Documentation |
+| # | Work Item | Type | Status |
+|---|-----------|------|--------|
+| F.1 | Design dispatch benchmark suite | Design | ✅ Done |
+| F.2 | Design memory model benchmark suite | Design | ✅ Done |
+| F.3 | Implement benchmarks as Blood programs | Implementation | ✅ 12 benchmarks |
+| F.4 | Run benchmarks against first_gen | Measurement | ✅ All pass/measured |
+| F.5 | Replace external citations in DISPATCH.md with Blood measurements | Documentation | ✅ Done |
+| F.6 | Replace external citations in MEMORY_MODEL.md with Blood measurements | Documentation | ✅ Done |
+
+**Key Results** (release mode, bootstrap compiler):
+
+| Benchmark | Measured | Target | Verdict |
+|-----------|----------|--------|---------|
+| Baseline (xorshift loop) | ~1ns/op | - | Calibration |
+| Persistent alloc (Tier 2) | ~184ns | <200ns | PASS |
+| Pointer overhead (inlined) | ~0% | <10% | PASS |
+| Handler install | ~17ns | <100ns | PASS |
+| Static dispatch | ~0ns | 0 cycles | PASS |
+| Trait dispatch | ~1ns | ~0 cycles | PASS |
+| Effect dispatch (perform) | ~136ns | <50ns | Needs optimization |
+| Region full lifecycle | ~3,400ns | <50ns (bump alloc) | Different metric |
+
+**Findings**: Static dispatch is truly zero-cost. Persistent allocation meets spec targets. Effect handler dispatch (~136ns/perform) exceeds the 50ns target — deep handler resume overhead dominates. Region full lifecycle (create+alloc+exit) is ~3,400ns; the spec's <50ns target applies to bump allocation within an existing region, not the full lifecycle.
 
 ---
 

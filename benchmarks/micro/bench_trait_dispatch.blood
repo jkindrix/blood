@@ -1,0 +1,92 @@
+// Benchmark: trait method dispatch (statically resolved)
+// Measures: trait method call overhead vs direct function call
+// Spec target: ~0 cycles (DISPATCH.md §8.1 — "Static (known method)")
+
+trait Hasher {
+    fn hash(self: &Self, val: u64) -> u64;
+}
+
+struct XorHasher {
+    seed: u64,
+}
+
+impl Hasher for XorHasher {
+    fn hash(self: &Self, val: u64) -> u64 {
+        let mut h: u64 = val ^ self.seed;
+        h = h ^ (h << 13);
+        h = h ^ (h >> 7);
+        h = h ^ (h << 17);
+        h
+    }
+}
+
+fn compute_direct(iterations: u64) -> u64 {
+    let hasher: XorHasher = XorHasher { seed: 42 };
+    let mut state: u64 = 12345;
+    let mut i: u64 = 0;
+    while i < iterations {
+        state = hasher.hash(state);
+        i = i + 1;
+    }
+    state
+}
+
+fn sort_samples(buf: u64, n: u64) {
+    if n <= 1 { return; }
+    let mut i: u64 = 1;
+    while i < n {
+        let key: u64 = ptr_read_u64(buf + i * 8);
+        let mut j: u64 = i;
+        while j > 0 {
+            let val: u64 = ptr_read_u64(buf + (j - 1) * 8);
+            if val <= key {
+                break;
+            }
+            ptr_write_u64(buf + j * 8, val);
+            j = j - 1;
+        }
+        ptr_write_u64(buf + j * 8, key);
+        i = i + 1;
+    }
+}
+
+fn main() -> i32 {
+    let warmup_iters: u64 = 10000;
+    let measure_iters: u64 = 1000000;
+    let num_samples: u64 = 21;
+
+    let mut total_check: u64 = compute_direct(warmup_iters);
+
+    let samples: u64 = alloc(num_samples * 8);
+    let mut i: u64 = 0;
+    while i < num_samples {
+        let start: u64 = blood_clock_nanos();
+        total_check = total_check + compute_direct(measure_iters);
+        let elapsed: u64 = blood_clock_nanos() - start;
+        ptr_write_u64(samples + i * 8, elapsed);
+        i = i + 1;
+    }
+
+    sort_samples(samples, num_samples);
+
+    let median_offset: u64 = 80;
+    let median: u64 = ptr_read_u64(samples + median_offset);
+    let min_val: u64 = ptr_read_u64(samples);
+    let ns_per_op: u64 = median / measure_iters;
+
+    print_str("benchmark=trait_dispatch\n");
+    print_str("median_total_ns=");
+    println_u64(median);
+    print_str("min_total_ns=");
+    println_u64(min_val);
+    print_str("iterations=");
+    println_u64(measure_iters);
+    print_str("ns_per_op=");
+    println_u64(ns_per_op);
+    print_str("target=0_cycles\n");
+    print_str("checksum=");
+    println_u64(total_check);
+
+    free(samples);
+    0
+}

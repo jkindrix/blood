@@ -1,0 +1,109 @@
+// Benchmark: generator pattern via deep handler (Yield effect)
+// Measures: yield + resume cycle for generator-style iteration
+// Spec target: shallow handler performance (SPECIFICATION.md §11.7.3)
+
+effect Yield {
+    op yield_value(value: i32) -> ();
+}
+
+deep handler Summer for Yield {
+    let mut total: i32
+
+    return(x) { total }
+
+    op yield_value(v) {
+        total = total + v;
+        resume(())
+    }
+}
+
+fn sort_samples(buf: u64, n: u64) {
+    if n <= 1 { return; }
+    let mut i: u64 = 1;
+    while i < n {
+        let key: u64 = ptr_read_u64(buf + i * 8);
+        let mut j: u64 = i;
+        while j > 0 {
+            let val: u64 = ptr_read_u64(buf + (j - 1) * 8);
+            if val <= key {
+                break;
+            }
+            ptr_write_u64(buf + j * 8, val);
+            j = j - 1;
+        }
+        ptr_write_u64(buf + j * 8, key);
+        i = i + 1;
+    }
+}
+
+fn main() -> i32 {
+    let warmup_iters: u64 = 10;
+    let measure_iters: u64 = 1000;
+    let yields_per_iter: u64 = 100;
+    let num_samples: u64 = 21;
+
+    // Warmup
+    let mut total_check: u64 = 0;
+    let mut w: u64 = 0;
+    while w < warmup_iters {
+        let result: i32 = with Summer { total: 0 } handle {
+            let mut k: i32 = 1;
+            while k <= 100 {
+                perform Yield.yield_value(k);
+                k = k + 1;
+            }
+            0
+        };
+        total_check = total_check + (result as u64);
+        w = w + 1;
+    }
+
+    // Measure
+    let samples: u64 = alloc(num_samples * 8);
+    let mut s: u64 = 0;
+    while s < num_samples {
+        let start: u64 = blood_clock_nanos();
+        let mut i: u64 = 0;
+        while i < measure_iters {
+            let result: i32 = with Summer { total: 0 } handle {
+                let mut k: i32 = 1;
+                while k <= 100 {
+                    perform Yield.yield_value(k);
+                    k = k + 1;
+                }
+                0
+            };
+            total_check = total_check + (result as u64);
+            i = i + 1;
+        }
+        let elapsed: u64 = blood_clock_nanos() - start;
+        ptr_write_u64(samples + s * 8, elapsed);
+        s = s + 1;
+    }
+
+    sort_samples(samples, num_samples);
+
+    let median_offset: u64 = 80;
+    let median: u64 = ptr_read_u64(samples + median_offset);
+    let min_val: u64 = ptr_read_u64(samples);
+    let total_yields: u64 = measure_iters * yields_per_iter;
+    let ns_per_yield: u64 = median / total_yields;
+
+    print_str("benchmark=generator_sum\n");
+    print_str("median_total_ns=");
+    println_u64(median);
+    print_str("min_total_ns=");
+    println_u64(min_val);
+    print_str("iterations=");
+    println_u64(measure_iters);
+    print_str("yields_per_iter=100\n");
+    print_str("total_yields=");
+    println_u64(total_yields);
+    print_str("ns_per_yield=");
+    println_u64(ns_per_yield);
+    print_str("checksum=");
+    println_u64(total_check);
+
+    free(samples);
+    0
+}

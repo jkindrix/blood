@@ -1,0 +1,129 @@
+// Benchmark: pointer dereference overhead
+// Measures: stack-local computation vs same computation through references
+// Spec target: <10% overhead for pointer-heavy workloads (MEMORY_MODEL.md §2.6.4)
+
+struct State {
+    a: u64,
+    b: u64,
+    c: u64,
+}
+
+fn step_stack(a: u64, b: u64, c: u64) -> State {
+    let na: u64 = (a ^ (b << 3)) + 1;
+    let nb: u64 = b ^ (c >> 1);
+    let nc: u64 = c ^ (na << 7);
+    State { a: na, b: nb, c: nc }
+}
+
+fn compute_stack(iterations: u64) -> u64 {
+    let mut s: State = State { a: 1, b: 2, c: 3 };
+    let mut i: u64 = 0;
+    while i < iterations {
+        s = step_stack(s.a, s.b, s.c);
+        i = i + 1;
+    }
+    s.a + s.b + s.c
+}
+
+fn step_ref(s: &mut State) {
+    s.a = (s.a ^ (s.b << 3)) + 1;
+    s.b = s.b ^ (s.c >> 1);
+    s.c = s.c ^ (s.a << 7);
+}
+
+fn compute_ref(iterations: u64) -> u64 {
+    let mut s: State = State { a: 1, b: 2, c: 3 };
+    let mut i: u64 = 0;
+    while i < iterations {
+        step_ref(&mut s);
+        i = i + 1;
+    }
+    s.a + s.b + s.c
+}
+
+fn sort_samples(buf: u64, n: u64) {
+    if n <= 1 { return; }
+    let mut i: u64 = 1;
+    while i < n {
+        let key: u64 = ptr_read_u64(buf + i * 8);
+        let mut j: u64 = i;
+        while j > 0 {
+            let val: u64 = ptr_read_u64(buf + (j - 1) * 8);
+            if val <= key {
+                break;
+            }
+            ptr_write_u64(buf + j * 8, val);
+            j = j - 1;
+        }
+        ptr_write_u64(buf + j * 8, key);
+        i = i + 1;
+    }
+}
+
+fn main() -> i32 {
+    let warmup_iters: u64 = 10000;
+    let measure_iters: u64 = 1000000;
+    let num_samples: u64 = 21;
+
+    // Measure stack-local computation
+    let _w1: u64 = compute_stack(warmup_iters);
+    let stack_samples: u64 = alloc(num_samples * 8);
+    let mut total_check: u64 = 0;
+    let mut i: u64 = 0;
+    while i < num_samples {
+        let start: u64 = blood_clock_nanos();
+        total_check = total_check + compute_stack(measure_iters);
+        let elapsed: u64 = blood_clock_nanos() - start;
+        ptr_write_u64(stack_samples + i * 8, elapsed);
+        i = i + 1;
+    }
+    sort_samples(stack_samples, num_samples);
+
+    // Measure reference-heavy computation
+    let _w2: u64 = compute_ref(warmup_iters);
+    let ref_samples: u64 = alloc(num_samples * 8);
+    i = 0;
+    while i < num_samples {
+        let start: u64 = blood_clock_nanos();
+        total_check = total_check + compute_ref(measure_iters);
+        let elapsed: u64 = blood_clock_nanos() - start;
+        ptr_write_u64(ref_samples + i * 8, elapsed);
+        i = i + 1;
+    }
+    sort_samples(ref_samples, num_samples);
+
+    let median_offset: u64 = 80;
+    let stack_median: u64 = ptr_read_u64(stack_samples + median_offset);
+    let ref_median: u64 = ptr_read_u64(ref_samples + median_offset);
+
+    let stack_ns: u64 = stack_median / measure_iters;
+    let ref_ns: u64 = ref_median / measure_iters;
+
+    // Overhead percentage (integer math, guarded against underflow)
+    let overhead_pct: u64 = if ref_median > stack_median {
+        (ref_median - stack_median) * 100 / stack_median
+    } else {
+        0
+    };
+
+    print_str("benchmark=pointer_overhead\n");
+    print_str("stack_median_ns=");
+    println_u64(stack_median);
+    print_str("ref_median_ns=");
+    println_u64(ref_median);
+    print_str("stack_ns_per_op=");
+    println_u64(stack_ns);
+    print_str("ref_ns_per_op=");
+    println_u64(ref_ns);
+    print_str("overhead_pct=");
+    println_u64(overhead_pct);
+    print_str("target_pct=10\n");
+    print_str("iterations=");
+    println_u64(measure_iters);
+    print_str("checksum=");
+    println_u64(total_check);
+
+    free(stack_samples);
+    free(ref_samples);
+    0
+}
