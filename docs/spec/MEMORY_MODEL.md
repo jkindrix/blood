@@ -2030,12 +2030,12 @@ The following require formal proof (e.g., in Coq/Agda). All theorems now have pr
 
 | Theorem | Status | Complexity | Section |
 |---------|--------|------------|---------|
-| No UAF (Tier 1) | Sketch provided | Low | 9.1 |
-| No UAF (Tier 0) | Sketch provided | Medium (escape analysis) | 9.1 |
-| Snapshot Safety | Sketch provided | Medium | 9.1 |
-| Linear Safety | Sketch provided | Medium | 9.1 |
-| Region Isolation | Sketch provided | Low | 9.1, 7.8 |
-| Region-Effect Suspension | Sketch provided | Medium | 9.1, 7.7 |
+| No UAF (Tier 1) | ✅ Mechanized (`no_use_after_free`, GenerationSnapshots.v) | Low | 9.1 |
+| No UAF (Tier 0) | ✅ Mechanized (`stack_safety`, MemorySafety.v) | Medium (escape analysis) | 9.1 |
+| Snapshot Safety | ✅ Mechanized (`gen_snapshot_valid`, GenerationSnapshots.v) | Medium | 9.1 |
+| Linear Safety | ✅ Mechanized (`linear_safety_static`, LinearSafety.v) | Medium | 9.1 |
+| Region Isolation | ✅ Mechanized (`region_isolation`, FiberSafety.v) | Low | 9.1, 7.8 |
+| Region-Effect Suspension | ✅ Mechanized (`region_effect_safety`, Regions.v) | Medium | 9.1, 7.7 |
 | Snapshot Liveness Soundness | Sketch provided | Medium | 9.1, 6.4.1 |
 | Cycle Collection + Effects | Sketch provided | Medium | 9.1, 8.5 |
 | Reserved Generation Correctness | Sketch provided | Low | 9.1, 4.5 |

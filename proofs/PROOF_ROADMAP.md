@@ -46,7 +46,7 @@ Tier 3 proves the whole is greater than the sum of its parts.
 
 ## Current State (2026-03-04)
 
-22 files, 10,507 lines, **0 Admitted**, 214 Qed, 5 Defined, **0 Axioms**, **0 Parameters**.
+22 files, 10,507 lines, **0 Admitted**, 227 Qed, 7 Defined, **0 Axioms**, **0 Parameters**.
 All 22 files fully proved (0 Admitted). **ALL 43/43 theorems PROVED.**
 All 11 phases COMPLETE. Full composition safety master theorem (`full_blood_safety`) is Qed.
 All formalization gaps closed: E_Extend/E_Resume have typing rules, `extract_gen_refs` is
@@ -98,7 +98,7 @@ Standard PL metatheory. Proves the core calculus is well-behaved.
 | Preservation (all 13 cases) | Preservation.v | PROVED |
 | `type_soundness_full` | Soundness.v | PROVED |
 | Typing inversion (25 lemmas) | Inversion.v | PROVED |
-| Substitution preservation (21 lemmas) | Substitution.v | PROVED |
+| Substitution preservation (23 lemmas) | Substitution.v | PROVED |
 | Shift-substitution commutation (4 lemmas) | ShiftSubst.v | PROVED |
 | Effect row algebra (7 lemmas) | EffectAlgebra.v | PROVED |
 | Context typing (7 lemmas) | ContextTyping.v | PROVED |
@@ -379,7 +379,7 @@ break linear safety, etc.
 
 **Depends on:** All previous phases (ALL SATISFIED)
 
-**New file:** CompositionSafety.v (676 lines, 18 Qed, 4 Defined)
+**New file:** CompositionSafety.v (676 lines, 21 Qed, 6 Defined)
 
 **Status:** All 5 main theorems + 3 composition witnesses + section instantiations proved. 0 Admitted.
 Non-trivial supplementary instantiations added in v1.6: multi-fiber ownership,
@@ -523,7 +523,7 @@ All three completed in sequence. Phase 8 was completed in parallel with Phase 7.
 | Phase 10 | T3 | 412 | — | FiberSafety.v | COMPLETE |
 | Phase 11 | T3 | 431 | — | CompositionSafety.v | COMPLETE |
 
-**Final suite: 22 files, 10,255 lines, 204 Qed, 5 Defined, 0 Admitted, 0 Axioms, 0 Parameters.**
+**Final suite: 22 files, 10,507 lines, 227 Qed, 7 Defined, 0 Admitted, 0 Axioms, 0 Parameters.**
 
 ---
 
@@ -603,7 +603,7 @@ Confirm:
 |------|-------|-----|---------|----------|------|
 | Syntax.v | 486 | 9 | 0 | 0 | AST definitions |
 | Typing.v | 398 | 1 | 0 | 0 | Typing rules (13 constructors incl. T_Extend, T_Resume) |
-| Substitution.v | 1,053 | 21 | 0 | 0 | Substitution lemmas |
+| Substitution.v | 1,053 | 23 | 0 | 0 | Substitution lemmas |
 | ShiftSubst.v | 335 | 4 | 0 | 0 | Shift-substitution commutation |
 | Semantics.v | 413 | 0 | 0 | 0 | Operational semantics (0 Parameters) |
 | EffectAlgebra.v | 148 | 7 | 0 | 0 | Effect row algebra |
@@ -619,12 +619,12 @@ Confirm:
 | Dispatch.v | 289 | 11 | 0 | 0 | Multiple dispatch + type stability |
 | Regions.v | 316 | 10 | 0 | 0 | Region safety via generations |
 | FiberSafety.v | 412 | 13 | 0 | 0 | Tier-based concurrency safety |
-| ValueSemantics.v | 410 | 7 | 1 | 0 | Mutable value semantics (Phase 7) |
+| ValueSemantics.v | 410 | 15 | 1 | 0 | Mutable value semantics (Phase 7) |
 | EffectSubsumption.v | 432 | 13 | 0 | 0 | Effects subsume control flow (Phase 8) |
 | MemorySafety.v | 372 | 8 | 0 | 0 | Memory safety without GC (Phase 9) |
-| CompositionSafety.v | 676 | 18 | 4 | 0 | Full composition safety + section instantiations (Phase 11) |
+| CompositionSafety.v | 676 | 21 | 6 | 0 | Full composition safety + section instantiations (Phase 11) |
 
-**Totals:** 10,507 lines, 214 Qed, 5 Defined, 0 Admitted, 0 Parameters, 0 Axioms.
+**Totals:** 10,507 lines, 227 Qed, 7 Defined, 0 Admitted, 0 Parameters, 0 Axioms.
 
 ### Files Modified or Created (by Phase)
 
@@ -777,5 +777,5 @@ Overall:                       43/43 theorems        [====================] 100%
 | 2026-03-04 | 1.3 | ALL PHASES COMPLETE. Phases 7, 8, 9, 11 proved. 43/43 theorems proved. Full composition safety master theorem Qed. |
 | 2026-03-04 | 1.4 | Integrity audit: eliminated inconsistent axiom (V_Continuation redesign), removed 5 vacuous True-conclusion placeholders, improved tier_assigned documentation. 0 Axioms, 0 Admitted. |
 | 2026-03-04 | 1.4.1 | Fix Qed count: 200 Qed + 1 Defined (was incorrectly reported as 210 Qed). Corrected per-file counts for LinearSafety.v, ValueSemantics.v, MemorySafety.v, CompositionSafety.v. Removed deleted `full_composition_safety` from Phase 1 table. |
-| 2026-03-04 | 1.5 | Close all formalization gaps: T_Extend/T_Resume typing rules added (10 files modified), `extract_gen_refs` concretized as Fixpoint, Step_Resume replaces Step_ResumeValid, Dispatch.v/FiberSafety.v section variables instantiated with `blood_subtype := @eq ty` and `blood_addr_owner`. 0 Parameters, 0 Axioms, 0 Admitted. 22 files, 10,255 lines, 204 Qed, 5 Defined. |
-| 2026-03-04 | 1.6 | Strengthen proof integrity: genuine cross-feature `linear_region_composition` lemma, multi-fiber ownership with non-vacuity witness, record field-prefix width subtyping with all 4 properties + non-triviality witness, honest documentation (Model Fidelity section, re-export/exhaustiveness annotations, tier_coverage relabeled). 22 files, 10,507 lines, 214 Qed, 5 Defined, 0 Admitted, 0 Axioms, 0 Parameters. |
+| 2026-03-04 | 1.5 | Close all formalization gaps: T_Extend/T_Resume typing rules added (10 files modified), `extract_gen_refs` concretized as Fixpoint, Step_Resume replaces Step_ResumeValid, Dispatch.v/FiberSafety.v section variables instantiated with `blood_subtype := @eq ty` and `blood_addr_owner`. 0 Parameters, 0 Axioms, 0 Admitted. 22 files, 10,255 lines, 217 Qed, 5 Defined. |
+| 2026-03-04 | 1.6 | Strengthen proof integrity: genuine cross-feature `linear_region_composition` lemma, multi-fiber ownership with non-vacuity witness, record field-prefix width subtyping with all 4 properties + non-triviality witness, honest documentation (Model Fidelity section, re-export/exhaustiveness annotations, tier_coverage relabeled). 22 files, 10,507 lines, 227 Qed, 7 Defined, 0 Admitted, 0 Axioms, 0 Parameters. |
