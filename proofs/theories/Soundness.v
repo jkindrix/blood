@@ -280,6 +280,7 @@ Qed.
     - Phase M8 (effect subsumption): FULLY MECHANIZED (0 Admitted) in EffectSubsumption.v
     - Phase M9 (memory safety): FULLY MECHANIZED (0 Admitted) in MemorySafety.v
     - Phase M10 (concurrency): FULLY MECHANIZED (0 Admitted) in FiberSafety.v
+    - Phase M11 (composition): FULLY MECHANIZED (0 Admitted) in CompositionSafety.v
     - Axioms: 1 (continuation_expr_is_value)
     - Parameters: 1 (extract_gen_refs)
 *)
