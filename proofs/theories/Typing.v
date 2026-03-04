@@ -151,7 +151,7 @@ Inductive handler_well_formed :
                e_ret result_ty handler_effects ->
       (** Each operation clause types correctly *)
       op_clauses_well_formed Sigma Gamma Delta clauses
-                             eff_sig result_ty handler_effects ->
+                             eff_name eff_sig result_ty handler_effects ->
       handler_well_formed Sigma Gamma Delta
                           (Handler hk e_ret clauses)
                           eff_name comp_ty result_ty handler_effects
@@ -160,11 +160,11 @@ Inductive handler_well_formed :
 
 with op_clauses_well_formed :
     effect_context -> type_context -> lin_context ->
-    list op_clause -> effect_sig -> ty -> effect_row -> Prop :=
-  | OpClauses_Nil : forall Sigma Gamma Delta sig result_ty eff,
-      op_clauses_well_formed Sigma Gamma Delta [] sig result_ty eff
+    list op_clause -> effect_name -> effect_sig -> ty -> effect_row -> Prop :=
+  | OpClauses_Nil : forall Sigma Gamma Delta eff_name sig result_ty eff,
+      op_clauses_well_formed Sigma Gamma Delta [] eff_name sig result_ty eff
   | OpClauses_Cons :
-      forall Sigma Gamma Delta eff_nm op_nm e_body rest
+      forall Sigma Gamma Delta eff_name op_nm e_body rest
              sig result_ty handler_eff arg_ty ret_ty,
       lookup_op sig op_nm = Some (arg_ty, ret_ty) ->
       (** Γ, resume:(B→U/ε'), x:A ⊢ e_body : U / ε' *)
@@ -172,10 +172,10 @@ with op_clauses_well_formed :
                (arg_ty :: Ty_Arrow ret_ty result_ty handler_eff :: Gamma)
                ((Lin_Unrestricted, false) :: (Lin_Unrestricted, false) :: Delta)
                e_body result_ty handler_eff ->
-      op_clauses_well_formed Sigma Gamma Delta rest sig result_ty handler_eff ->
+      op_clauses_well_formed Sigma Gamma Delta rest eff_name sig result_ty handler_eff ->
       op_clauses_well_formed Sigma Gamma Delta
-                             (OpClause eff_nm op_nm e_body :: rest)
-                             sig result_ty handler_eff
+                             (OpClause eff_name op_nm e_body :: rest)
+                             eff_name sig result_ty handler_eff
 
 (** ** Main typing judgment
 

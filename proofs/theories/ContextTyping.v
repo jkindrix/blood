@@ -21,6 +21,7 @@ From Blood Require Import Typing.
 From Blood Require Import Semantics.
 From Blood Require Import EffectAlgebra.
 From Blood Require Import Inversion.
+From Blood Require Import Substitution.
 
 (** ** Context typing
 
@@ -233,6 +234,7 @@ Proof.
     | D' IHD l_
     | D' IHD T_
     | en_ opn_ D' IHD
+    | done_ l_ D' IHD rest_
   ]; intros eff_nm op0 v0 T eff Htype; simpl in *.
 
   - (* DC_Hole *)
@@ -298,6 +300,19 @@ Proof.
       exact (IHD eff_nm op0 v0 _ eff' Htype).
     + subst. eapply effect_in_row_subset; [| eassumption].
       eapply IHHtype; try reflexivity. exact IHD.
+
+  - (* DC_RecordField *)
+    remember (E_Record (done_ ++ (l_, plug_delimited D' (E_Perform eff_nm op0 (value_to_expr v0))) :: rest_)) as eform.
+    remember (@nil ty) as Gamma. remember (@nil (linearity * bool)) as Delta.
+    induction Htype; try discriminate.
+    + (* T_Record *)
+      injection Heqeform as Hfields. subst.
+      destruct (rft_field_effect_incl _ _ _ _ _ _ _ _ _ H)
+        as [A [eff_e [He Hsub_field]]].
+      eapply effect_in_row_subset; [| exact Hsub_field].
+      exact (IHD eff_nm op0 v0 _ _ He).
+    + subst. eapply effect_in_row_subset; [| eassumption].
+      eapply IHHtype; try reflexivity. exact IHD.
 Qed.
 
 (** ** effect_in_row is incompatible with sub-pure effects *)
@@ -320,10 +335,11 @@ Qed.
     If a clause is in a well-typed clause list, extract its typing. *)
 
 Lemma op_clause_typing_lookup :
-  forall Sigma Gamma Delta clauses sig result_ty handler_eff
+  forall Sigma Gamma Delta clauses eff_name sig result_ty handler_eff
          eff_nm op_nm e_body,
-    op_clauses_well_formed Sigma Gamma Delta clauses sig result_ty handler_eff ->
+    op_clauses_well_formed Sigma Gamma Delta clauses eff_name sig result_ty handler_eff ->
     In (OpClause eff_nm op_nm e_body) clauses ->
+    eff_nm = eff_name /\
     exists arg_ty ret_ty,
       lookup_op sig op_nm = Some (arg_ty, ret_ty) /\
       has_type Sigma
@@ -331,7 +347,7 @@ Lemma op_clause_typing_lookup :
                ((Lin_Unrestricted, false) :: (Lin_Unrestricted, false) :: Delta)
                e_body result_ty handler_eff.
 Proof.
-  intros Sigma Gamma Delta clauses sig result_ty handler_eff
+  intros Sigma Gamma Delta clauses eff_name sig result_ty handler_eff
          eff_nm op_nm e_body Hwf Hin.
   induction Hwf.
   - (* OpClauses_Nil *) destruct Hin.
@@ -339,6 +355,7 @@ Proof.
     destruct Hin as [Heq | Hin_rest].
     + (* Head match *)
       injection Heq as H1 H2 H3. subst.
+      split. reflexivity.
       exists arg_ty, ret_ty.
       split; assumption.
     + (* In rest *)
@@ -366,6 +383,7 @@ Proof.
     | D' IHD l_
     | D' IHD T_
     | en_ opn_ D' IHD
+    | done_ l_ D' IHD rest_
   ]; intros e T eff Hty; simpl in *.
 
   (** DC_Hole *)
@@ -481,5 +499,143 @@ Proof.
         -- exact Hlook_eff.
         -- exact Hlook_op.
         -- exact (Hreplace e' He').
+      * exact Hsub.
+
+  (** DC_RecordField done_ l_ D' rest_ *)
+  - destruct (has_type_record_inv _ _ _ _ Hty)
+      as [ft [eff_rec [Heq_ft [Hrft Hsub]]]]. subst.
+    destruct (rft_field_decompose _ _ _ _ _ _ _ _ _ Hrft)
+      as [A [eff_field [Hfield Hreplace_rft]]].
+    destruct (IHD _ _ _ Hfield) as [A' [eff_inner [He Hreplace]]].
+    exists A', eff_inner. split.
+    + exact He.
+    + intros e' He'. simpl.
+      apply T_Sub with (eff := eff_rec).
+      * apply T_Record.
+        apply Hreplace_rft. exact (Hreplace e' He').
+      * exact Hsub.
+Qed.
+
+(** ** Generalized delimited context typing (arbitrary Gamma/Delta)
+
+    Required for the HandleOp preservation proof, where the continuation
+    body lives in a non-empty context [ret_ty]. *)
+
+Lemma delimited_context_typing_gen :
+  forall Sigma Gamma Delta D e T eff,
+    has_type Sigma Gamma Delta (plug_delimited D e) T eff ->
+    exists A eff_inner,
+      has_type Sigma Gamma Delta e A eff_inner /\
+      forall Delta' e',
+        has_type Sigma Gamma Delta' e' A eff_inner ->
+        has_type Sigma Gamma Delta (plug_delimited D e') T eff.
+Proof.
+  induction D as [
+    | D' IHD e2_
+    | v_ D' IHD
+    | D' IHD e2_
+    | D' IHD l_
+    | D' IHD T_
+    | en_ opn_ D' IHD
+    | done_ l_ D' IHD rest_
+  ]; intros e T eff Hty; simpl in *.
+
+  (** DC_Hole *)
+  - exists T, eff. split.
+    + exact Hty.
+    + intros Delta' e' He'.
+      exact (has_type_lin_irrelevant _ _ _ _ _ _ He' Delta).
+
+  (** DC_AppFun D' e2_ *)
+  - destruct (has_type_app_inv_gen _ _ _ _ _ _ _ Hty)
+      as [A [D1 [D2 [fn_eff [eff1 [eff2 [Hsplit [Hty1 [Hty2 Hsub]]]]]]]]].
+    destruct (IHD _ _ _ (has_type_lin_irrelevant _ _ _ _ _ _ Hty1 Delta))
+      as [A' [eff_inner [He Hreplace]]].
+    exists A', eff_inner. split.
+    + exact He.
+    + intros Delta' e' He'. simpl.
+      apply T_Sub with (eff := effect_row_union fn_eff (effect_row_union eff1 eff2)).
+      * eapply T_App.
+        -- exact Hsplit.
+        -- exact (has_type_lin_irrelevant _ _ _ _ _ _ (Hreplace _ e' He') D1).
+        -- exact Hty2.
+      * exact Hsub.
+
+  (** DC_AppArg v_ D' *)
+  - destruct (has_type_app_inv_gen _ _ _ _ _ _ _ Hty)
+      as [A [D1 [D2 [fn_eff [eff1 [eff2 [Hsplit [Hty1 [Hty2 Hsub]]]]]]]]].
+    destruct (IHD _ _ _ (has_type_lin_irrelevant _ _ _ _ _ _ Hty2 Delta))
+      as [A' [eff_inner [He Hreplace]]].
+    exists A', eff_inner. split.
+    + exact He.
+    + intros Delta' e' He'. simpl.
+      apply T_Sub with (eff := effect_row_union fn_eff (effect_row_union eff1 eff2)).
+      * eapply T_App.
+        -- exact Hsplit.
+        -- exact Hty1.
+        -- exact (has_type_lin_irrelevant _ _ _ _ _ _ (Hreplace _ e' He') D2).
+      * exact Hsub.
+
+  (** DC_Let D' e2_ *)
+  - destruct (has_type_let_inv_gen _ _ _ _ _ _ _ Hty)
+      as [A [D1 [D2 [eff1 [eff2 [Hsplit [Hty1 [Hty2 Hsub]]]]]]]].
+    destruct (IHD _ _ _ (has_type_lin_irrelevant _ _ _ _ _ _ Hty1 Delta))
+      as [A' [eff_inner [He Hreplace]]].
+    exists A', eff_inner. split.
+    + exact He.
+    + intros Delta' e' He'. simpl.
+      apply T_Sub with (eff := effect_row_union eff1 eff2).
+      * eapply T_Let.
+        -- exact Hsplit.
+        -- exact (has_type_lin_irrelevant _ _ _ _ _ _ (Hreplace _ e' He') D1).
+        -- exact Hty2.
+      * exact Hsub.
+
+  (** DC_Select D' l_ *)
+  - destruct (has_type_select_inv_gen _ _ _ _ _ _ _ Hty)
+      as [ft [eff_inner' [Hty_rec [Hlook Hsub]]]].
+    destruct (IHD _ _ _ Hty_rec) as [A' [eff_inner [He Hreplace]]].
+    exists A', eff_inner. split.
+    + exact He.
+    + intros Delta' e' He'. simpl.
+      apply T_Sub with (eff := eff_inner').
+      * eapply T_Select; [exact (Hreplace _ e' He') | exact Hlook].
+      * exact Hsub.
+
+  (** DC_Annot D' T_ *)
+  - destruct (has_type_annot_inv_gen _ _ _ _ _ _ _ Hty)
+      as [HeqT [eff_inner' [Hinner Hsub]]]. subst.
+    destruct (IHD _ _ _ Hinner) as [A' [eff_inner [He Hreplace]]].
+    exists A', eff_inner. split.
+    + exact He.
+    + intros Delta' e' He'. simpl.
+      apply T_Sub with (eff := eff_inner').
+      * apply T_Annot. exact (Hreplace _ e' He').
+      * exact Hsub.
+
+  (** DC_PerformArg en_ opn_ D' *)
+  - destruct (has_type_perform_inv_gen _ _ _ _ _ _ _ _ Hty)
+      as [eff_sig [arg_ty [ret_ty [eff' [Hlook_eff [Hlook_op [HeqT [Hty_arg Hsub]]]]]]]].
+    subst T.
+    destruct (IHD _ _ _ Hty_arg) as [A' [eff_inner [He Hreplace]]].
+    exists A', eff_inner. split.
+    + exact He.
+    + intros Delta' e' He'. simpl.
+      apply T_Sub with (eff := effect_row_union (Eff_Closed [Eff_Entry en_]) eff').
+      * eapply T_Perform; [exact Hlook_eff | exact Hlook_op | exact (Hreplace _ e' He')].
+      * exact Hsub.
+
+  (** DC_RecordField done_ l_ D' rest_ *)
+  - destruct (has_type_record_inv_gen _ _ _ _ _ _ Hty)
+      as [ft [eff_rec [Heq_ft [Hrft Hsub]]]]. subst.
+    destruct (rft_field_decompose _ _ _ _ _ _ _ _ _ Hrft)
+      as [A [eff_field [Hfield Hreplace_rft]]].
+    destruct (IHD _ _ _ Hfield) as [A' [eff_inner [He Hreplace]]].
+    exists A', eff_inner. split.
+    + exact He.
+    + intros Delta' e' He'. simpl.
+      apply T_Sub with (eff := eff_rec).
+      * apply T_Record.
+        apply Hreplace_rft. exact (Hreplace _ e' He').
       * exact Hsub.
 Qed.

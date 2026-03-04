@@ -100,6 +100,9 @@ Inductive delimited_context : Type :=
   | DC_PerformArg :
       effect_name -> op_name ->
       delimited_context -> delimited_context
+  | DC_RecordField :
+      list (label * expr) -> label ->
+      delimited_context -> list (label * expr) -> delimited_context
   .
   (** Note: NO DC_Handle — that's the key difference *)
 
@@ -126,6 +129,8 @@ Fixpoint plug_delimited (D : delimited_context) (e : expr) : expr :=
   | DC_Annot D' T => E_Annot (plug_delimited D' e) T
   | DC_Select D' l => E_Select (plug_delimited D' e) l
   | DC_PerformArg eff op D' => E_Perform eff op (plug_delimited D' e)
+  | DC_RecordField done l D' rest =>
+      E_Record (done ++ (l, plug_delimited D' e) :: rest)
   end.
 
 (** ** Extract generation references from a delimited context
@@ -263,6 +268,15 @@ Inductive step (Sigma : effect_context) : config -> config -> Prop :=
            (mk_config
               (subst 0 v (subst 1 kont e_body)) M)
 
+  (** [RecordEval]
+      e ──► e'
+      ─────────────────────────────────────────────
+      {done, l=e, rest} ──► {done, l=e', rest} *)
+  | Step_RecordEval : forall M M' done l e e' rest,
+      step Sigma (mk_config e M) (mk_config e' M') ->
+      step Sigma (mk_config (E_Record (done ++ (l, e) :: rest)) M)
+           (mk_config (E_Record (done ++ (l, e') :: rest)) M')
+
   (** [Context]
       e ──► e'
       ─────────────
@@ -296,6 +310,7 @@ Arguments Step_Annot {Sigma}.
 Arguments Step_HandleReturn {Sigma}.
 Arguments Step_HandleOpDeep {Sigma}.
 Arguments Step_HandleOpShallow {Sigma}.
+Arguments Step_RecordEval {Sigma}.
 Arguments Step_Context {Sigma}.
 Arguments Step_ResumeValid {Sigma}.
 

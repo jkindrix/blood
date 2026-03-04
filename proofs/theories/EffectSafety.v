@@ -129,6 +129,7 @@ Theorem effect_handling_completeness :
   forall Sigma h e eff_name comp_ty result_ty handler_eff,
     handler_covers_effect h eff_name Sigma ->
     handler_well_formed Sigma [] [] h eff_name comp_ty result_ty handler_eff ->
+    ~ effect_in_row eff_name handler_eff ->
     closed_well_typed Sigma e comp_ty
       (Eff_Closed [Eff_Entry eff_name]) ->
     (* After handling, eff_name is gone *)
@@ -136,11 +137,16 @@ Theorem effect_handling_completeness :
       closed_well_typed Sigma (E_Handle h e) result_ty result_eff /\
       ~ effect_in_row eff_name result_eff.
 Proof.
-  (* The handler intercepts all operations of eff_name.
-     Deep handlers re-install themselves around continuations.
-     Shallow handlers handle one operation.
-     In both cases, the effect is removed from the result row. *)
-Admitted.
+  intros Sigma h e eff_name comp_ty result_ty handler_eff
+         Hcovers Hwf Hnotin Htype.
+  exists handler_eff. split.
+  - unfold closed_well_typed.
+    eapply T_Handle.
+    + apply Split_Nil.
+    + exact Htype.
+    + exact Hwf.
+  - exact Hnotin.
+Qed.
 
 (** ** Effect row algebra properties
 

@@ -39,7 +39,7 @@ Proof.
        has_type Sigma Gamma Delta e T Eff_Pure)
     (fun Sigma Gamma Delta h eff_name comp_ty result_ty handler_eff _ =>
        True)
-    (fun Sigma Gamma Delta clauses eff_sig result_ty handler_eff _ =>
+    (fun Sigma Gamma Delta clauses eff_name eff_sig result_ty handler_eff _ =>
        True)
     (fun Sigma Gamma Delta fields field_types eff _ =>
        forallb (fun '(_, e) => is_value e) fields = true ->
@@ -267,6 +267,29 @@ Proof.
     eapply effect_row_subset_trans; eassumption.
 Qed.
 
+(** ** Record type inversion (general context) *)
+
+Lemma has_type_record_inv_gen :
+  forall Sigma Gamma Delta fields T eff,
+    has_type Sigma Gamma Delta (E_Record fields) T eff ->
+    exists field_types eff_inner,
+      T = Ty_Record field_types /\
+      record_fields_typed Sigma Gamma Delta fields field_types eff_inner /\
+      effect_row_subset eff_inner eff.
+Proof.
+  intros Sigma Gamma Delta fields T eff Hty.
+  remember (E_Record fields) as erec.
+  induction Hty; try discriminate.
+  - (* T_Record *)
+    injection Heqerec as Hfields. subst.
+    exists field_types, eff. split. reflexivity. split. exact H.
+    apply effect_row_subset_refl.
+  - (* T_Sub *)
+    destruct (IHHty Heqerec) as [ft [ei [Heq [Hrft Hsub_inner]]]].
+    exists ft, ei. split. exact Heq. split. exact Hrft.
+    eapply effect_row_subset_trans; eassumption.
+Qed.
+
 (** ** Select type inversion *)
 
 Lemma has_type_select_inv :
@@ -345,4 +368,174 @@ Proof.
     split. assumption. split. assumption. split. assumption.
     split. assumption.
     eapply effect_row_subset_trans; eassumption.
+Qed.
+
+(** ** Generalized inversion lemmas (arbitrary Gamma/Delta)
+
+    These are needed for delimited_context_typing_gen, which works
+    in non-empty contexts (required for the HandleOp preservation case). *)
+
+Lemma has_type_app_inv_gen :
+  forall Sigma Gamma Delta e1 e2 T eff,
+    has_type Sigma Gamma Delta (E_App e1 e2) T eff ->
+    exists A Delta1 Delta2 fn_eff eff1 eff2,
+      lin_split Delta Delta1 Delta2 /\
+      has_type Sigma Gamma Delta1 e1 (Ty_Arrow A T fn_eff) eff1 /\
+      has_type Sigma Gamma Delta2 e2 A eff2 /\
+      effect_row_subset (effect_row_union fn_eff (effect_row_union eff1 eff2)) eff.
+Proof.
+  intros Sigma Gamma Delta e1 e2 T eff Hty.
+  remember (E_App e1 e2) as eapp.
+  induction Hty; try discriminate.
+  - injection Heqeapp as He1 He2. subst.
+    exists A, Delta1, Delta2, fn_eff, eff1, eff2.
+    split. exact H. split. exact Hty1. split. exact Hty2.
+    apply effect_row_subset_refl.
+  - destruct (IHHty Heqeapp)
+      as [A0 [D1 [D2 [fe [e1' [e2' [Hs [H1 [H2 Hsub']]]]]]]]].
+    exists A0, D1, D2, fe, e1', e2'.
+    split. exact Hs. split. exact H1. split. exact H2.
+    eapply effect_row_subset_trans; eassumption.
+Qed.
+
+Lemma has_type_let_inv_gen :
+  forall Sigma Gamma Delta e1 e2 T eff,
+    has_type Sigma Gamma Delta (E_Let e1 e2) T eff ->
+    exists A Delta1 Delta2 eff1 eff2,
+      lin_split Delta Delta1 Delta2 /\
+      has_type Sigma Gamma Delta1 e1 A eff1 /\
+      has_type Sigma (A :: Gamma) ((Lin_Unrestricted, false) :: Delta2) e2 T eff2 /\
+      effect_row_subset (effect_row_union eff1 eff2) eff.
+Proof.
+  intros Sigma Gamma Delta e1 e2 T eff Hty.
+  remember (E_Let e1 e2) as elet.
+  induction Hty; try discriminate.
+  - injection Heqelet as He1 He2. subst.
+    exists A, Delta1, Delta2, eff1, eff2.
+    split. exact H. split. exact Hty1. split. exact Hty2.
+    apply effect_row_subset_refl.
+  - destruct (IHHty Heqelet)
+      as [A0 [D1 [D2 [e1' [e2' [Hs [H1 [H2 Hsub']]]]]]]].
+    exists A0, D1, D2, e1', e2'.
+    split. exact Hs. split. exact H1. split. exact H2.
+    eapply effect_row_subset_trans; eassumption.
+Qed.
+
+Lemma has_type_select_inv_gen :
+  forall Sigma Gamma Delta e l T eff,
+    has_type Sigma Gamma Delta (E_Select e l) T eff ->
+    exists field_types eff_inner,
+      has_type Sigma Gamma Delta e (Ty_Record field_types) eff_inner /\
+      lookup_field field_types l = Some T /\
+      effect_row_subset eff_inner eff.
+Proof.
+  intros Sigma Gamma Delta e l T eff Hty.
+  remember (E_Select e l) as esel.
+  induction Hty; try discriminate.
+  - injection Heqesel as He Hl. subst.
+    exists fields, eff. split. exact Hty. split. exact H.
+    apply effect_row_subset_refl.
+  - destruct (IHHty Heqesel) as [ft [ei [H1 [H2 H3]]]].
+    exists ft, ei. split. exact H1. split. exact H2.
+    eapply effect_row_subset_trans; eassumption.
+Qed.
+
+Lemma has_type_annot_inv_gen :
+  forall Sigma Gamma Delta e T0 T eff,
+    has_type Sigma Gamma Delta (E_Annot e T0) T eff ->
+    T = T0 /\
+    exists eff_inner,
+      has_type Sigma Gamma Delta e T0 eff_inner /\
+      effect_row_subset eff_inner eff.
+Proof.
+  intros Sigma Gamma Delta e T0 T eff Hty.
+  remember (E_Annot e T0) as eannot.
+  induction Hty; try discriminate.
+  - injection Heqeannot as He HT. subst.
+    split. reflexivity. exists eff. split. exact Hty.
+    apply effect_row_subset_refl.
+  - destruct (IHHty Heqeannot) as [HeqT [ei [Hi Hsub']]]. subst.
+    split. reflexivity. exists ei. split. exact Hi.
+    eapply effect_row_subset_trans; eassumption.
+Qed.
+
+Lemma has_type_perform_inv_gen :
+  forall Sigma Gamma Delta eff_nm op_nm arg T eff,
+    has_type Sigma Gamma Delta (E_Perform eff_nm op_nm arg) T eff ->
+    exists eff_sig arg_ty ret_ty eff_arg,
+      lookup_effect Sigma eff_nm = Some eff_sig /\
+      lookup_op eff_sig op_nm = Some (arg_ty, ret_ty) /\
+      T = ret_ty /\
+      has_type Sigma Gamma Delta arg arg_ty eff_arg /\
+      effect_row_subset
+        (effect_row_union (Eff_Closed [Eff_Entry eff_nm]) eff_arg) eff.
+Proof.
+  intros Sigma Gamma Delta eff_nm op_nm arg T eff Hty.
+  remember (E_Perform eff_nm op_nm arg) as eperf.
+  induction Hty; try discriminate.
+  - injection Heqeperf as H1 H2 H3. subst.
+    exists eff_sig, arg_ty, ret_ty, eff'.
+    split. assumption. split. assumption. split. reflexivity.
+    split. assumption. apply effect_row_subset_refl.
+  - destruct (IHHty Heqeperf)
+      as [es [at' [rt [ef [H1 [H2 [H3 [H4 H5]]]]]]]].
+    exists es, at', rt, ef.
+    split. assumption. split. assumption. split. assumption.
+    split. assumption.
+    eapply effect_row_subset_trans; eassumption.
+Qed.
+
+(** ** Record field decomposition and replacement
+
+    Given record_fields_typed for (done ++ (l, e) :: rest), extract
+    the typing of field e and provide a replacement function. *)
+
+Lemma rft_field_decompose :
+  forall Sigma Gamma Delta done l e rest ft eff,
+    record_fields_typed Sigma Gamma Delta (done ++ (l, e) :: rest) ft eff ->
+    exists A eff_e,
+      has_type Sigma Gamma Delta e A eff_e /\
+      forall e',
+        has_type Sigma Gamma Delta e' A eff_e ->
+        record_fields_typed Sigma Gamma Delta (done ++ (l, e') :: rest) ft eff.
+Proof.
+  induction done as [| [l0 e0] done' IH]; intros l e rest ft eff Hrft.
+  - (* Base: done = [], field is at head *)
+    simpl in *.
+    inversion Hrft as [| ? ? ? ? ? T0 ? ? eff1_ eff2_ Hty_e Hrft_rest]; subst.
+    exists T0, eff1_. split.
+    + exact Hty_e.
+    + intros e' He'. apply RFT_Cons; [exact He' | exact Hrft_rest].
+  - (* Step: done = (l0, e0) :: done' *)
+    simpl in *.
+    inversion Hrft as [| ? ? ? ? ? T0 ? ? eff1_ eff2_ Hty_e0 Hrft_rest]; subst.
+    destruct (IH _ _ _ _ _ Hrft_rest) as [A [eff_e [He Hreplace]]].
+    exists A, eff_e. split.
+    + exact He.
+    + intros e' He'. apply RFT_Cons; [exact Hty_e0 | exact (Hreplace e' He')].
+Qed.
+
+(** Field effect is a subset of the overall record effect *)
+
+Lemma rft_field_effect_incl :
+  forall Sigma Gamma Delta done l e rest ft eff,
+    record_fields_typed Sigma Gamma Delta (done ++ (l, e) :: rest) ft eff ->
+    exists A eff_e,
+      has_type Sigma Gamma Delta e A eff_e /\
+      effect_row_subset eff_e eff.
+Proof.
+  induction done as [| [l0 e0] done' IH]; intros l e rest ft eff Hrft.
+  - simpl in *.
+    inversion Hrft as [| ? ? ? ? ? T0 ? ? eff1_ eff2_ Hty_e Hrft_rest]; subst.
+    exists T0, eff1_. split.
+    + exact Hty_e.
+    + apply effect_row_subset_union_l.
+  - simpl in *.
+    inversion Hrft as [| ? ? ? ? ? T0 ? ? eff1_ eff2_ Hty_e0 Hrft_rest]; subst.
+    destruct (IH _ _ _ _ _ Hrft_rest) as [A [eff_e [He Hsub_tail]]].
+    exists A, eff_e. split.
+    + exact He.
+    + eapply effect_row_subset_trans.
+      * exact Hsub_tail.
+      * apply effect_row_subset_union_r.
 Qed.

@@ -108,19 +108,126 @@ Proof.
     + exact Hsub.
 
   (** Case Step_HandleOpDeep *)
-  - exists eff0. split.
-    + (* Requires: handler clause typing inversion, delimited context
-         typing for continuation, and double substitution lemma.
-         The continuation λy. with h handle D[y] has type
-         ret_ty → result_ty / handler_eff by T_Lam + T_Handle. *)
-      admit.
-    + apply effect_row_subset_refl.
+  - (* Invert handle typing *)
+    destruct (has_type_handle_inv _ _ _ _ _ Htype)
+      as [en' [comp_ty [handler_eff [comp_eff [Hty_comp [Hwf Hsub_he]]]]]].
+    exists handler_eff. split; [| exact Hsub_he].
+
+    (* Invert handler well-formedness *)
+    inversion Hwf; subst.
+    (* Robustly name the hypotheses from HWF inversion *)
+    match goal with
+    | [ Hle : lookup_effect _ _ = Some ?sig,
+        Hrt : has_type _ _ _ e_ret _ _,
+        Hcw : op_clauses_well_formed _ _ _ clauses _ ?sig _ _ |- _ ] =>
+      rename Hle into Hlook_en; rename Hrt into Hty_ret;
+      rename Hcw into Hclauses_wf
+    end.
+
+    (* Get clause body typing *)
+    destruct (op_clause_typing_lookup _ _ _ _ _ _ _ _ _ _ _ Hclauses_wf H0)
+      as [Heff_eq [arg_ty' [ret_ty' [Hlook_op' Hty_body]]]].
+    subst en'.
+
+    (* Unify effect signatures and operation types *)
+    rewrite H1 in Hlook_en. injection Hlook_en as <-.
+    rewrite H2 in Hlook_op'. injection Hlook_op' as <- <-.
+
+    (* Get v : arg_ty / Eff_Pure via delimited context decomposition *)
+    destruct (delimited_context_typing _ _ _ _ _ Hty_comp)
+      as [A_hole [eff_hole [Hty_perf _]]].
+    destruct (has_type_perform_inv _ _ _ _ _ _ Hty_perf)
+      as [? [? [? [ef' [Hl1 [Hl2 [HeqA [Htyv _]]]]]]]].
+    subst A_hole.
+    rewrite H1 in Hl1. injection Hl1 as <-.
+    rewrite H2 in Hl2. injection Hl2 as <- <-.
+    assert (Hv_pure : has_type Sigma [] [] v arg_ty Eff_Pure)
+      by (eapply value_typing_inversion; [exact Htyv | exact H]).
+
+    (* Type the continuation kont = λy. with h handle D[y] *)
+    assert (Hkont : has_type Sigma [] []
+              (E_Lam ret_ty (E_Handle (Handler Deep e_ret clauses)
+                                       (plug_delimited D (E_Var 0))))
+              (Ty_Arrow ret_ty T0 handler_eff) Eff_Pure).
+    { apply T_Lam.
+      (* Weaken computation from [] [] to [ret_ty] *)
+      pose proof (weakening_cons _ _ _ _ _ _ ret_ty Hty_comp) as Hcomp_w.
+      pose proof (shift_closed_id _ _ _ _ _ _ Hty_comp 1) as Hsc1.
+      simpl in Hsc1. rewrite Hsc1 in Hcomp_w. clear Hsc1.
+      (* Decompose delimited context in [ret_ty] and replace hole *)
+      destruct (delimited_context_typing_gen _ _ _ _ _ _ _ Hcomp_w)
+        as [A2 [eff2 [Hperf2 Hreplace2]]].
+      destruct (has_type_perform_inv_gen _ _ _ _ _ _ _ _ Hperf2)
+        as [? [? [? [? [Hl1' [Hl2' [HeqA2 [_ _]]]]]]]].
+      subst A2.
+      rewrite H1 in Hl1'. injection Hl1' as <-.
+      rewrite H2 in Hl2'. injection Hl2' as <- <-.
+      (* Replace E_Perform with E_Var 0 *)
+      eapply T_Handle.
+      - apply Split_Unrestricted. apply Split_Nil.
+      - eapply Hreplace2.
+        apply T_Sub with (eff := Eff_Pure).
+        + apply T_Var. reflexivity.
+        + simpl. auto.
+      - (* Weaken handler from [] [] to [ret_ty] *)
+        pose proof (handler_weakening_cons _ _ _ _ _ _ _ _ ret_ty Hwf) as Hwf_w.
+        pose proof (shift_handler_closed_id _ _ _ _ _ _ Hwf 1) as Hsh1.
+        rewrite Hsh1 in Hwf_w. clear Hsh1.
+        exact Hwf_w. }
+
+    (* Weaken kont to [arg_ty] context for substitution at index 1 *)
+    pose proof (weakening_cons _ _ _ _ _ _ arg_ty Hkont) as Hkont_w.
+    pose proof (shift_closed_id _ _ _ _ _ _ Hkont 1) as Hsc2.
+    assert (H__len : Datatypes.length (@nil ty) = 0) by reflexivity.
+    rewrite H__len in Hsc2. clear H__len.
+    rewrite Hsc2 in Hkont_w. clear Hsc2.
+
+    (* Substitute kont for resume at index 1 *)
+    assert (Hsub1 : has_type Sigma [arg_ty] [(Lin_Unrestricted, false)]
+              (subst 1
+                (E_Lam ret_ty (E_Handle (Handler Deep e_ret clauses)
+                                         (plug_delimited D (E_Var 0))))
+                e_body) T0 handler_eff).
+    { apply (subst_preserves_typing _ _ _ _ _ _ Hty_body 1
+              (E_Lam ret_ty (E_Handle (Handler Deep e_ret clauses)
+                                       (plug_delimited D (E_Var 0))))
+              (Ty_Arrow ret_ty T0 handler_eff)).
+      - reflexivity.
+      - simpl. exact Hkont_w. }
+
+    (* Substitute v for arg at index 0 *)
+    exact (substitution_preserves_typing _ _ _ _ _ _ _ _ Hsub1 Hv_pure).
 
   (** Case Step_HandleOpShallow *)
-  - exists eff0. split.
-    + (* Similar to deep case, but continuation does not re-wrap handler *)
-      admit.
-    + apply effect_row_subset_refl.
+  - (* The shallow continuation kont = λy. D[y] has type
+       Ty_Arrow ret_ty comp_ty comp_eff — the RAW computation type
+       with the handled effect still present. But our handler typing
+       (HWF/OpClauses_Cons) gives resume type
+       Ty_Arrow ret_ty result_ty handler_eff for BOTH deep and shallow.
+       This is correct for deep (handler re-wraps) but wrong for shallow.
+
+       Proper fix: parameterize op_clauses_well_formed by resume_ty,
+       setting it to (Ty_Arrow ret_ty result_ty handler_eff) for deep
+       and (Ty_Arrow ret_ty comp_ty comp_eff) for shallow.
+       This requires changes to Typing.v and all dependent proofs. *)
+    destruct (has_type_handle_inv _ _ _ _ _ Htype)
+      as [en' [comp_ty [handler_eff [comp_eff [Hty_comp [Hwf Hsub_he]]]]]].
+    exists handler_eff. split; [| exact Hsub_he].
+    admit.
+
+  (** Case Step_RecordEval: {done, l=e, rest} ──► {done, l=e', rest} *)
+  - destruct (has_type_record_inv _ _ _ _ Htype)
+      as [ft [eff_rec [Heq_ft [Hrft Hsub]]]]. subst.
+    destruct (rft_field_decompose _ _ _ _ _ _ _ _ _ Hrft)
+      as [A [eff_e [He Hreplace]]].
+    destruct (IHHstep _ _ He) as [eff_e' [He' Hsub_e]].
+    exists eff_rec. split.
+    + apply T_Record.
+      apply Hreplace.
+      apply T_Sub with (eff := eff_e').
+      * exact He'.
+      * exact Hsub_e.
+    + exact Hsub.
 
   (** Case Step_Context: E[e] ──► E[e'] because e ──► e' *)
   - destruct (context_typing _ E e _ _ Htype) as [A [eff_inner [He Hreplace]]].
@@ -159,17 +266,29 @@ Proof.
   exact (preservation_ind _ _ _ Hstep T eff Htype).
 Qed.
 
-(** ** Effect handling removes the handled effect *)
+(** ** Effect handling removes the handled effect
+
+    Premise: the handler's own effects do not include the handled effect.
+    This is a well-formedness condition — a handler that re-performs the
+    effect it handles would need an outer handler. *)
 
 Lemma handle_removes_effect :
-  forall Sigma e T eff_name h comp_ty result_ty handler_eff,
-    closed_well_typed Sigma e T
+  forall Sigma e eff_name h comp_ty result_ty handler_eff,
+    closed_well_typed Sigma e comp_ty
       (Eff_Closed (Eff_Entry eff_name :: [])) ->
     handler_well_formed Sigma [] [] h eff_name comp_ty result_ty handler_eff ->
+    ~ effect_in_row eff_name handler_eff ->
     exists eff',
       closed_well_typed Sigma (E_Handle h e) result_ty eff' /\
       ~ effect_in_row eff_name eff'.
 Proof.
-  (* After handling, the handled effect is no longer in the result's
-     effect row. This is the key property of effect handling. *)
-Admitted.
+  intros Sigma e eff_name h comp_ty result_ty handler_eff
+         Htype Hwf Hnotin.
+  exists handler_eff. split.
+  - unfold closed_well_typed.
+    eapply T_Handle.
+    + apply Split_Nil.
+    + exact Htype.
+    + exact Hwf.
+  - exact Hnotin.
+Qed.
