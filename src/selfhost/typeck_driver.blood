@@ -974,6 +974,7 @@ fn setup_handler_op_context(
     checker.resume_ty = Option.None;
     checker.in_shallow_handler = false;
     checker.resume_count = 0;
+    checker.handler_state_types.clear();
 
     // Search for handler that owns this body
     for i in 0usize..items.len() {
@@ -989,6 +990,11 @@ fn setup_handler_op_context(
                             &common.HandlerKind.Deep => {
                                 checker.in_shallow_handler = false;
                             }
+                        }
+
+                        // Record handler state field types for linearity checking
+                        for si in 0usize..handler_def.state.len() {
+                            checker.handler_state_types.push(handler_def.state[si].ty);
                         }
 
                         // Find the effect op return type via op_def_id

@@ -1479,6 +1479,34 @@ pub fn get_closure_ret(id: TyId) -> Option<TyId> {
     }
 }
 
+/// Returns true if the TyId has a Linear ownership qualifier.
+pub fn is_linear_id(id: TyId) -> bool {
+    let kind = type_interner().get(id);
+    match kind {
+        &InternedTypeKind.Ownership { ref qualifier, inner: _ } => {
+            match qualifier {
+                &hir_ty.OwnershipQualifier.Linear => true,
+                &hir_ty.OwnershipQualifier.Affine => false,
+            }
+        }
+        _ => false,
+    }
+}
+
+/// Returns true if the TyId has an Affine ownership qualifier.
+pub fn is_affine_id(id: TyId) -> bool {
+    let kind = type_interner().get(id);
+    match kind {
+        &InternedTypeKind.Ownership { ref qualifier, inner: _ } => {
+            match qualifier {
+                &hir_ty.OwnershipQualifier.Linear => false,
+                &hir_ty.OwnershipQualifier.Affine => true,
+            }
+        }
+        _ => false,
+    }
+}
+
 // ============================================================
 // Type Formatting for Error Messages
 // ============================================================

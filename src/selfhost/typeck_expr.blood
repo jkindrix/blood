@@ -2546,6 +2546,15 @@ fn infer_resume(
     if checker.in_shallow_handler && checker.resume_count > 1 {
         checker.error(typeck_types.TypeErrorKind.InvalidControl, span);
     }
+    // EFF-04: Check for linear/affine state fields in multi-shot deep handlers
+    if !checker.in_shallow_handler && checker.resume_count > 1 {
+        for si in 0usize..checker.handler_state_types.len() {
+            let state_ty = checker.handler_state_types[si];
+            if type_intern.is_linear_id(state_ty) || type_intern.is_affine_id(state_ty) {
+                checker.error(typeck_types.TypeErrorKind.InvalidControl, span);
+            }
+        }
+    }
     // Check resume value type matches expected op return type
     // checker.resume_ty is Option<TyId>
     match &checker.resume_ty {

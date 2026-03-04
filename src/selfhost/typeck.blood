@@ -339,6 +339,9 @@ pub struct TypeChecker {
     pub in_shallow_handler: bool,
     /// Count of resume expressions seen in the current handler op body.
     pub resume_count: u32,
+    /// Handler state field types for the current handler op body.
+    /// Used to check linear/affine types in multi-shot handlers.
+    pub handler_state_types: Vec<type_intern.TyId>,
     /// Trait default method remapping table.
     /// When a trait default method is used by an impl, calls within the default
     /// method body that target abstract trait methods must be redirected to the
@@ -389,6 +392,7 @@ impl TypeChecker {
             resume_ty: Option.None,
             in_shallow_handler: false,
             resume_count: 0,
+            handler_state_types: Vec.new(),
             default_method_remaps: Vec.new(),
             coercion_entries: Vec.new(),
         }
@@ -433,6 +437,7 @@ impl TypeChecker {
             resume_ty: Option.None,
             in_shallow_handler: false,
             resume_count: 0,
+            handler_state_types: Vec.new(),
             default_method_remaps: Vec.new(),
             coercion_entries: Vec.new(),
         }
