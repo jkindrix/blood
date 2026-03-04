@@ -83,6 +83,11 @@ Inductive eval_context : Type :=
       effect_name -> op_name ->
       eval_context -> eval_context                      (** perform E.op(E) *)
   | EC_Handle : handler -> eval_context -> eval_context (** with h handle E *)
+  | EC_ExtendVal :
+      label -> eval_context -> expr -> eval_context       (** {l = E | e} *)
+  | EC_ExtendRec :
+      label -> value -> eval_context -> eval_context      (** {l = v | E} *)
+  | EC_Resume : eval_context -> eval_context              (** resume(E) *)
   .
 
 (** ** Delimited evaluation contexts
@@ -105,6 +110,11 @@ Inductive delimited_context : Type :=
       delimited_context -> list (label * expr) -> delimited_context
   | DC_HandleOther :
       handler -> delimited_context -> delimited_context
+  | DC_ExtendVal :
+      label -> delimited_context -> expr -> delimited_context
+  | DC_ExtendRec :
+      label -> value -> delimited_context -> delimited_context
+  | DC_Resume : delimited_context -> delimited_context
   .
   (** Note: DC_HandleOther allows performs to escape through
       a handler that does NOT handle the performed effect. *)
@@ -121,6 +131,9 @@ Fixpoint plug_eval (E : eval_context) (e : expr) : expr :=
   | EC_Select E' l => E_Select (plug_eval E' e) l
   | EC_PerformArg eff op E' => E_Perform eff op (plug_eval E' e)
   | EC_Handle h E' => E_Handle h (plug_eval E' e)
+  | EC_ExtendVal l E' e2 => E_Extend l (plug_eval E' e) e2
+  | EC_ExtendRec l v E' => E_Extend l (value_to_expr v) (plug_eval E' e)
+  | EC_Resume E' => E_Resume (plug_eval E' e)
   end.
 
 Fixpoint plug_delimited (D : delimited_context) (e : expr) : expr :=
@@ -136,6 +149,12 @@ Fixpoint plug_delimited (D : delimited_context) (e : expr) : expr :=
       E_Record (done ++ (l, plug_delimited D' e) :: rest)
   | DC_HandleOther h D' =>
       E_Handle h (plug_delimited D' e)
+  | DC_ExtendVal l D' e2 =>
+      E_Extend l (plug_delimited D' e) e2
+  | DC_ExtendRec l v D' =>
+      E_Extend l (value_to_expr v) (plug_delimited D' e)
+  | DC_Resume D' =>
+      E_Resume (plug_delimited D' e)
   end.
 
 (** ** dc_no_match: no handler in the delimited context handles the effect *)
@@ -156,6 +175,9 @@ Fixpoint dc_no_match (D : delimited_context) (eff_nm : effect_name) : Prop :=
            match cl with OpClause en _ _ => en <> eff_nm end
        end) /\
       dc_no_match D' eff_nm
+  | DC_ExtendVal _ D' _ => dc_no_match D' eff_nm
+  | DC_ExtendRec _ _ D' => dc_no_match D' eff_nm
+  | DC_Resume D' => dc_no_match D' eff_nm
   end.
 
 (** ** Extract generation references from a delimited context
@@ -163,10 +185,43 @@ Fixpoint dc_no_match (D : delimited_context) (eff_nm : effect_name) : Prop :=
     GenRefs : Context → GenSnapshot
     Corresponds to FORMAL_SEMANTICS.md §4.2 *)
 
-(** For simplicity, we define this as an abstract function.
-    In a full development, this would walk the context structure. *)
+(** Collect generation references from values embedded in a
+    delimited context (specifically from V_Continuation snapshots). *)
 
-Parameter extract_gen_refs : delimited_context -> gen_snapshot.
+Fixpoint value_gen_refs (v : value) : list gen_ref :=
+  match v with
+  | V_Const _ => []
+  | V_Lam _ _ => []
+  | V_Record fields =>
+      (fix fields_refs (fs : list (label * value)) : list gen_ref :=
+        match fs with
+        | [] => []
+        | (_, fv) :: rest => value_gen_refs fv ++ fields_refs rest
+        end) fields
+  | V_Continuation _ _ (GenSnapshot refs) => refs
+  end.
+
+Fixpoint extract_gen_refs (D : delimited_context) : gen_snapshot :=
+  match D with
+  | DC_Hole => GenSnapshot []
+  | DC_AppFun D' _ => extract_gen_refs D'
+  | DC_AppArg v D' =>
+      match extract_gen_refs D' with
+      | GenSnapshot refs => GenSnapshot (value_gen_refs v ++ refs)
+      end
+  | DC_Let D' _ => extract_gen_refs D'
+  | DC_Select D' _ => extract_gen_refs D'
+  | DC_Annot D' _ => extract_gen_refs D'
+  | DC_PerformArg _ _ D' => extract_gen_refs D'
+  | DC_RecordField _ _ D' _ => extract_gen_refs D'
+  | DC_HandleOther _ D' => extract_gen_refs D'
+  | DC_ExtendVal _ D' _ => extract_gen_refs D'
+  | DC_ExtendRec _ v D' =>
+      match extract_gen_refs D' with
+      | GenSnapshot refs => GenSnapshot (value_gen_refs v ++ refs)
+      end
+  | DC_Resume D' => extract_gen_refs D'
+  end.
 
 (** ** Configuration: expression + memory state *)
 
@@ -311,19 +366,16 @@ Inductive step (Sigma : effect_context) : config -> config -> Prop :=
       step Sigma (mk_config (plug_eval E e) M)
            (mk_config (plug_eval E e') M')
 
-  (** [Resume-Valid]
-      resume((κ, Γ_gen, ∅), v) ──► κ(v)
-      if ∀(a,g) ∈ Γ_gen. currentGen(a) = g *)
-  | Step_ResumeValid : forall M kont_body snap v,
+  (** [Resume]
+      resume(v)  ──►  v
+
+      E_Resume is a transparent syntactic wrapper marking continuation
+      call sites. The actual continuation invocation happens via E_App
+      on the lambda bound in handler clause bodies. *)
+  | Step_Resume : forall M v,
       is_value v = true ->
-      validate_snapshot M snap ->
-      step Sigma (mk_config
-              (E_App (E_Const (Const_Unit)) v)  (** simplified resume *)
-              M)
-           (mk_config
-              (subst 0 v kont_body) M)
-      (** Note: This is simplified. A full formalization would track
-          continuations as first-class values with snapshots. *)
+      step Sigma (mk_config (E_Resume v) M)
+           (mk_config v M)
 .
 
 (** Make Sigma implicit in step constructors *)
@@ -337,7 +389,7 @@ Arguments Step_HandleOpDeep {Sigma}.
 Arguments Step_HandleOpShallow {Sigma}.
 Arguments Step_RecordEval {Sigma}.
 Arguments Step_Context {Sigma}.
-Arguments Step_ResumeValid {Sigma}.
+Arguments Step_Resume {Sigma}.
 
 (** ** Multi-step reduction (reflexive-transitive closure) *)
 

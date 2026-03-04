@@ -56,6 +56,8 @@ Proof.
   - (* T_Select *) intros ? ? ? ? ? ? ? ? Hty IH Hlook Hval. simpl in Hval. discriminate.
   - (* T_Perform *) intros ? ? ? ? ? ? ? ? ? ? Hlookeff Hlookop Hty IH Hval. simpl in Hval. discriminate.
   - (* T_Handle *) intros ? ? ? ? ? ? ? ? ? ? ? Hsplit Hty IH Hwf IHwf Hpass Hval. simpl in Hval. discriminate.
+  - (* T_Extend *) intros ? ? ? ? ? ? ? ? ? ? ? ? Hsplit Hty1 IH1 Hty2 IH2 Hval. simpl in Hval. discriminate.
+  - (* T_Resume *) intros ? ? ? ? ? ? Hty IH Hval. simpl in Hval. discriminate.
   - (* T_Sub *)
     intros Sigma Gamma Delta e T eff eff' Hty IH Hsub Hval.
     apply T_Sub with (eff := Eff_Pure).
@@ -343,6 +345,102 @@ Proof.
   - (* T_Sub *)
     destruct (IHHty Heqesel) as [ft [ei [Htye [Hlook Hsub_inner]]]].
     exists ft, ei. split. exact Htye. split. exact Hlook.
+    eapply effect_row_subset_trans; eassumption.
+Qed.
+
+(** ** Extend type inversion *)
+
+Lemma has_type_extend_inv :
+  forall Sigma l e1 e2 T eff,
+    has_type Sigma [] [] (E_Extend l e1 e2) T eff ->
+    exists T1 fields eff1 eff2,
+      T = Ty_Record ((l, T1) :: fields) /\
+      has_type Sigma [] [] e1 T1 eff1 /\
+      has_type Sigma [] [] e2 (Ty_Record fields) eff2 /\
+      effect_row_subset (effect_row_union eff1 eff2) eff.
+Proof.
+  intros Sigma l e1 e2 T eff Hty.
+  remember (E_Extend l e1 e2) as eext.
+  remember (@nil ty) as Gamma.
+  remember (@nil (linearity * bool)) as Delta.
+  generalize dependent HeqDelta.
+  generalize dependent HeqGamma.
+  generalize dependent e2. generalize dependent e1.
+  induction Hty; intros; subst; try discriminate.
+  - (* T_Extend *)
+    injection Heqeext as Hl He1 He2. subst.
+    apply lin_split_nil_inv in H as [HD1 HD2]. subst.
+    exists T, fields, eff1, eff2.
+    split. reflexivity. split. exact Hty1. split. exact Hty2.
+    apply effect_row_subset_refl.
+  - (* T_Sub *)
+    destruct (IHHty _ _ eq_refl eq_refl eq_refl)
+      as [T1 [flds [e1' [e2' [Heq [H1 [H2 Hsub']]]]]]].
+    exists T1, flds, e1', e2'.
+    split. exact Heq. split. exact H1. split. exact H2.
+    eapply effect_row_subset_trans; eassumption.
+Qed.
+
+Lemma has_type_extend_inv_gen :
+  forall Sigma Gamma Delta l e1 e2 T eff,
+    has_type Sigma Gamma Delta (E_Extend l e1 e2) T eff ->
+    exists T1 fields Delta1 Delta2 eff1 eff2,
+      T = Ty_Record ((l, T1) :: fields) /\
+      lin_split Delta Delta1 Delta2 /\
+      has_type Sigma Gamma Delta1 e1 T1 eff1 /\
+      has_type Sigma Gamma Delta2 e2 (Ty_Record fields) eff2 /\
+      effect_row_subset (effect_row_union eff1 eff2) eff.
+Proof.
+  intros Sigma Gamma Delta l e1 e2 T eff Hty.
+  remember (E_Extend l e1 e2) as eext.
+  induction Hty; try discriminate.
+  - injection Heqeext as Hl He1 He2. subst.
+    exists T, fields, Delta1, Delta2, eff1, eff2.
+    split. reflexivity. split. exact H. split. exact Hty1.
+    split. exact Hty2. apply effect_row_subset_refl.
+  - destruct (IHHty Heqeext)
+      as [T1 [flds [D1 [D2 [e1' [e2' [Heq [Hs [H1 [H2 Hsub']]]]]]]]]].
+    exists T1, flds, D1, D2, e1', e2'.
+    split. exact Heq. split. exact Hs. split. exact H1.
+    split. exact H2.
+    eapply effect_row_subset_trans; eassumption.
+Qed.
+
+(** ** Resume type inversion *)
+
+Lemma has_type_resume_inv :
+  forall Sigma e T eff,
+    has_type Sigma [] [] (E_Resume e) T eff ->
+    exists eff_inner,
+      has_type Sigma [] [] e T eff_inner /\
+      effect_row_subset eff_inner eff.
+Proof.
+  intros Sigma e T eff Hty.
+  remember (E_Resume e) as eres.
+  induction Hty; try discriminate.
+  - (* T_Resume *)
+    injection Heqeres as He. subst.
+    exists eff. split. exact Hty. apply effect_row_subset_refl.
+  - (* T_Sub *)
+    destruct (IHHty Heqeres) as [ei [Hi Hsub']].
+    exists ei. split. exact Hi.
+    eapply effect_row_subset_trans; eassumption.
+Qed.
+
+Lemma has_type_resume_inv_gen :
+  forall Sigma Gamma Delta e T eff,
+    has_type Sigma Gamma Delta (E_Resume e) T eff ->
+    exists eff_inner,
+      has_type Sigma Gamma Delta e T eff_inner /\
+      effect_row_subset eff_inner eff.
+Proof.
+  intros Sigma Gamma Delta e T eff Hty.
+  remember (E_Resume e) as eres.
+  induction Hty; try discriminate.
+  - injection Heqeres as He. subst.
+    exists eff. split. exact Hty. apply effect_row_subset_refl.
+  - destruct (IHHty Heqeres) as [ei [Hi Hsub']].
+    exists ei. split. exact Hi.
     eapply effect_row_subset_trans; eassumption.
 Qed.
 

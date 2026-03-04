@@ -441,12 +441,10 @@ Proof.
     split.
     + intros x Hx.
       destruct (lin_split_linear_false _ _ _ x Hsplit Hx) as [[H1 H2] | [H1 H2]].
-      * (* x goes to Delta1 (computation), handler gets (true) *)
-        simpl. rewrite (IH1a x H1).
+      * simpl. rewrite (IH1a x H1).
         destruct h as [hk e_ret clauses].
         specialize (IHhb x H2). lia.
-      * (* x goes to Delta2 (handler), computation gets (true) *)
-        simpl. rewrite (IH1b x H1).
+      * simpl. rewrite (IH1b x H1).
         destruct h as [hk e_ret clauses].
         specialize (IHha x H2). lia.
     + intros x Hx.
@@ -454,6 +452,22 @@ Proof.
       simpl. rewrite (IH1b x H1).
       destruct h as [hk e_ret clauses].
       specialize (IHhb x H2). lia.
+
+  - (* TL_Extend *)
+    intros Sigma Gamma Delta Delta1 Delta2 l e1 e2 T fields eff1 eff2
+           Hsplit _ [IH1a IH1b] _ [IH2a IH2b].
+    split.
+    + intros x Hx.
+      destruct (lin_split_linear_false _ _ _ x Hsplit Hx) as [[H1 H2] | [H1 H2]].
+      * simpl. rewrite (IH1a x H1). rewrite (IH2b x H2). lia.
+      * simpl. rewrite (IH1b x H1). rewrite (IH2a x H2). lia.
+    + intros x Hx.
+      destruct (lin_split_linear_true _ _ _ x Hsplit Hx) as [H1 H2].
+      simpl. rewrite (IH1b x H1). rewrite (IH2b x H2). lia.
+
+  - (* TL_Resume *)
+    intros Sigma Gamma Delta e T eff _ [IH1 IH2].
+    exact (conj IH1 IH2).
 
   - (* TL_Sub *)
     intros Sigma Gamma Delta e T eff eff' _ [IH1 IH2] _.
@@ -671,6 +685,24 @@ Proof.
       simpl. rewrite (IH1b x H1).
       destruct h as [hk e_ret clauses].
       specialize (IHhb x H2). lia.
+
+  - (* TL_Extend *)
+    intros Sigma Gamma Delta Delta1 Delta2 l e1 e2 T fields eff1 eff2
+           Hsplit _ [IH1a IH1b] _ [IH2a IH2b].
+    split.
+    + intros x Hx.
+      destruct (lin_split_affine_false _ _ _ x Hsplit Hx)
+        as [[H1 H2] | [[H1 H2] | [H1 H2]]].
+      * simpl. specialize (IH1a x H1). rewrite (IH2b x H2). lia.
+      * simpl. rewrite (IH1b x H1). specialize (IH2a x H2). lia.
+      * simpl. rewrite (IH1b x H1). rewrite (IH2b x H2). lia.
+    + intros x Hx.
+      destruct (lin_split_affine_true _ _ _ x Hsplit Hx) as [H1 H2].
+      simpl. rewrite (IH1b x H1). rewrite (IH2b x H2). lia.
+
+  - (* TL_Resume *)
+    intros Sigma Gamma Delta e T eff _ [IH1 IH2].
+    exact (conj IH1 IH2).
 
   - (* TL_Sub *)
     intros Sigma Gamma Delta e T eff eff' _ [IH1 IH2] _.

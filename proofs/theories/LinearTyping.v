@@ -279,6 +279,19 @@ with has_type_lin :
          en <> eff_name -> effect_in_row en handler_eff) ->
       has_type_lin Sigma Gamma Delta (E_Handle h e) result_ty handler_eff
 
+  | TL_Extend : forall Sigma Gamma Delta Delta1 Delta2 l e1 e2
+                       T fields eff1 eff2,
+      lin_split Delta Delta1 Delta2 ->
+      has_type_lin Sigma Gamma Delta1 e1 T eff1 ->
+      has_type_lin Sigma Gamma Delta2 e2 (Ty_Record fields) eff2 ->
+      has_type_lin Sigma Gamma Delta (E_Extend l e1 e2)
+               (Ty_Record ((l, T) :: fields))
+               (effect_row_union eff1 eff2)
+
+  | TL_Resume : forall Sigma Gamma Delta e T eff,
+      has_type_lin Sigma Gamma Delta e T eff ->
+      has_type_lin Sigma Gamma Delta (E_Resume e) T eff
+
   | TL_Sub : forall Sigma Gamma Delta e T eff eff',
       has_type_lin Sigma Gamma Delta e T eff ->
       effect_row_subset eff eff' ->
@@ -413,6 +426,15 @@ Proof.
     intros Sigma Gamma Delta Delta1 Delta2 h e eff_name comp_ty result_ty
            handler_eff comp_eff Hsplit _ IHe _ IHh Hpass.
     eapply T_Handle; [exact Hsplit | exact IHe | exact IHh | exact Hpass].
+
+  - (* TL_Extend *)
+    intros Sigma Gamma Delta Delta1 Delta2 l e1 e2 T fields eff1 eff2
+           Hsplit _ IH1 _ IH2.
+    eapply T_Extend; [exact Hsplit | exact IH1 | exact IH2].
+
+  - (* TL_Resume *)
+    intros Sigma Gamma Delta e T eff _ IH.
+    apply T_Resume. exact IH.
 
   - (* TL_Sub *)
     intros Sigma Gamma Delta e T eff eff' _ IH Hsub.

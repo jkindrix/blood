@@ -1,6 +1,6 @@
 # Blood Formal Verification Roadmap
 
-**Version:** 1.4
+**Version:** 1.5
 **Created:** 2026-03-04
 **Status:** Authoritative — this is the single source of truth for Blood's formal verification plan
 
@@ -46,21 +46,20 @@ Tier 3 proves the whole is greater than the sum of its parts.
 
 ## Current State (2026-03-04)
 
-22 files, 9,678 lines, **0 Admitted**, 200 Qed, 1 Defined, **0 Axioms**, 1 Parameter.
+22 files, 10,255 lines, **0 Admitted**, 204 Qed, 5 Defined, **0 Axioms**, **0 Parameters**.
 All 22 files fully proved (0 Admitted). **ALL 43/43 theorems PROVED.**
 All 11 phases COMPLETE. Full composition safety master theorem (`full_blood_safety`) is Qed.
+All formalization gaps closed: E_Extend/E_Resume have typing rules, `extract_gen_refs` is
+a concrete Fixpoint, Dispatch.v/FiberSafety.v section variables are instantiated.
 
 ### Permanent Modeling Assumptions
 
-These are deliberate abstractions, not proof gaps:
+None remaining. All abstractions have been concretized:
 
-| Item | File | Kind | Rationale |
-|------|------|------|-----------|
-| `extract_gen_refs` | Semantics.v | Parameter | Snapshot extraction abstracted at interface level |
-
-Note: The axiom `continuation_expr_is_value` was eliminated in v1.4 by redesigning
-`V_Continuation` to store `(ty, body, snapshot)` instead of `(expr, snapshot)`.
-`value_to_expr` now produces `E_Lam ty body`, making `is_value` provable by `reflexivity`.
+- `extract_gen_refs` — was a `Parameter` in Semantics.v, now a concrete `Fixpoint`
+  that walks delimited contexts collecting gen_refs from embedded values (v1.5)
+- `continuation_expr_is_value` — was an `Axiom`, eliminated in v1.4 by redesigning
+  `V_Continuation` to store `(ty, body, snapshot)` instead of `(expr, snapshot)`
 
 ---
 
@@ -76,10 +75,10 @@ Standard PL metatheory. Proves the core calculus is well-behaved.
 
 | Theorem | File | Status |
 |---------|------|--------|
-| Progress (all 11 cases) | Progress.v | PROVED |
-| Preservation (all 11 cases) | Preservation.v | PROVED |
+| Progress (all 13 cases) | Progress.v | PROVED |
+| Preservation (all 13 cases) | Preservation.v | PROVED |
 | `type_soundness_full` | Soundness.v | PROVED |
-| Typing inversion (21 lemmas) | Inversion.v | PROVED |
+| Typing inversion (25 lemmas) | Inversion.v | PROVED |
 | Substitution preservation (21 lemmas) | Substitution.v | PROVED |
 | Shift-substitution commutation (4 lemmas) | ShiftSubst.v | PROVED |
 | Effect row algebra (7 lemmas) | EffectAlgebra.v | PROVED |
@@ -145,7 +144,7 @@ Blood's answer — enforced by the type system — is: you can't. This is a prop
 
 **Depends on:** Phase 1 (SATISFIED)
 
-**Files:** LinearTyping.v (474 lines, 2 Qed), LinearSafety.v (811 lines, 18 Qed)
+**Files:** LinearTyping.v (496 lines, 2 Qed), LinearSafety.v (843 lines, 18 Qed)
 
 **Status:** All 4 previously-admitted theorems proved. 0 Admitted.
 
@@ -361,15 +360,19 @@ break linear safety, etc.
 
 **Depends on:** All previous phases (ALL SATISFIED)
 
-**New file:** CompositionSafety.v (342 lines, 8 Qed)
+**New file:** CompositionSafety.v (431 lines, 8 Qed, 4 Defined)
 
-**Status:** All 5 main theorems + 3 composition witnesses proved. 0 Admitted.
+**Status:** All 5 main theorems + 3 composition witnesses + section instantiations proved. 0 Admitted.
 
 The master theorem `full_blood_safety` proves the conjunction of type soundness, effect
 safety, type preservation, effect discipline, and composition guarantee for the complete
 Blood calculus. Works because of Blood's modular architecture: core typing is never modified,
 strengthened judgments bridge back, runtime mechanisms are orthogonal, and self-contained
 modules can't break each other.
+
+Section instantiations close the last formalization gaps by defining Blood's concrete
+subtype relation (`blood_subtype := @eq ty`) and ownership model (`blood_addr_owner`),
+then instantiating all parameterized theorems from Dispatch.v and FiberSafety.v.
 
 | Theorem | File | Status |
 |---------|------|--------|
@@ -381,6 +384,11 @@ modules can't break each other.
 | `effects_linearity_compose` | CompositionSafety.v | PROVED (bonus) |
 | `regions_generations_compose` | CompositionSafety.v | PROVED (bonus) |
 | `effects_regions_compose` | CompositionSafety.v | PROVED (bonus) |
+| `blood_dispatch_determinism` | CompositionSafety.v | INSTANTIATED |
+| `blood_type_stability_soundness` | CompositionSafety.v | INSTANTIATED |
+| `blood_dispatch_preserves_typing` | CompositionSafety.v | INSTANTIATED |
+| `blood_tier_crossing_safety` | CompositionSafety.v | INSTANTIATED |
+| `blood_region_isolation` | CompositionSafety.v | INSTANTIATED |
 
 ---
 
@@ -394,7 +402,6 @@ modules can't break each other.
 | Macro expansion | Pre-type-checking source transformation; orthogonal to safety |
 | Bridge FFI | Operates at ABI boundary, outside type-safe core |
 | Escape analysis algorithm | Compiler implementation detail; Phase 5 formalizes the soundness guarantee, not the algorithm |
-| Concrete `extract_gen_refs` | Abstract interface sufficient for all safety proofs; concretization is optional |
 
 ---
 
@@ -485,9 +492,9 @@ All three completed in sequence. Phase 8 was completed in parallel with Phase 7.
 | Phase 8 | T3 | 432 | — | EffectSubsumption.v | COMPLETE |
 | Phase 9 | T3 | 359 | — | MemorySafety.v | COMPLETE |
 | Phase 10 | T3 | 412 | — | FiberSafety.v | COMPLETE |
-| Phase 11 | T3 | 355 | — | CompositionSafety.v | COMPLETE |
+| Phase 11 | T3 | 431 | — | CompositionSafety.v | COMPLETE |
 
-**Final suite: 22 files, 9,678 lines, 200 Qed, 1 Defined, 0 Admitted, 0 Axioms.**
+**Final suite: 22 files, 10,255 lines, 204 Qed, 5 Defined, 0 Admitted, 0 Axioms, 0 Parameters.**
 
 ---
 
@@ -495,12 +502,12 @@ All three completed in sequence. Phase 8 was completed in parallel with Phase 7.
 
 ### Modeling Axioms (permanent, by design)
 
-| Item | File | Rationale |
-|------|------|-----------|
-| `extract_gen_refs` | Semantics.v | Abstract snapshot extraction interface |
+NONE REMAINING. All previously-abstract items have been concretized:
 
-Note: `continuation_expr_is_value` axiom was **eliminated** in v1.4 by redesigning
-`V_Continuation` to store lambda components directly.
+| Item | File | Status |
+|------|------|--------|
+| `extract_gen_refs` | Semantics.v | **Concretized** (v1.5) — now a Fixpoint |
+| `continuation_expr_is_value` | Syntax.v | **Eliminated** (v1.4) — V_Continuation redesign |
 
 ### Genuine Proof Obligations — ALL RESOLVED
 
@@ -516,7 +523,15 @@ design in LinearTyping.v + LinearSafety.v:
 
 ### Formalization Gaps
 
-NONE REMAINING — all formalization gaps have been resolved.
+NONE REMAINING — all formalization gaps closed in v1.5:
+
+| Gap | Resolution |
+|-----|------------|
+| E_Extend had no typing rule | T_Extend added (Typing.v), propagated to all 10 proof files |
+| E_Resume had broken semantics | Step_Resume replaces unreachable Step_ResumeValid; T_Resume added |
+| `extract_gen_refs` was abstract Parameter | Concrete Fixpoint in Semantics.v |
+| Dispatch.v section variables uninstantiated | `blood_subtype := @eq ty` in CompositionSafety.v |
+| FiberSafety.v section variables uninstantiated | `blood_addr_owner` in CompositionSafety.v |
 
 ---
 
@@ -555,32 +570,32 @@ Confirm:
 
 ### All Files (22)
 
-| File | Lines | Qed | Admitted | Role |
-|------|-------|-----|----------|------|
-| Syntax.v | 486 | 9 | 0 | AST definitions (0 Axioms) |
-| Typing.v | 372 | 1 | 0 | Typing rules |
-| Substitution.v | 1,011 | 21 | 0 | Substitution lemmas |
-| ShiftSubst.v | 335 | 4 | 0 | Shift-substitution commutation |
-| Semantics.v | 361 | 0 | 0 | Operational semantics (1 Parameter) |
-| EffectAlgebra.v | 148 | 7 | 0 | Effect row algebra |
-| ContextTyping.v | 713 | 7 | 0 | Evaluation context typing |
-| Inversion.v | 575 | 21 | 0 | Typing inversion (0 Axioms) |
-| Progress.v | 488 | 9 | 0 | Progress theorem (all 11 cases) |
-| Preservation.v | 366 | 3 | 0 | Preservation theorem (all 11 cases) |
-| Soundness.v | 203 | 5 | 0 | Type soundness + composition |
-| EffectSafety.v | 261 | 9 | 0 | Effect safety (9 theorems) |
-| GenerationSnapshots.v | 508 | 14 | 0 | Generation snapshot safety |
-| LinearTyping.v | 474 | 2 | 0 | Strengthened typing with linearity |
-| LinearSafety.v | 811 | 18 | 0 | Linear/affine safety (all 4 proved) |
-| Dispatch.v | 289 | 11 | 0 | Multiple dispatch + type stability |
-| Regions.v | 316 | 10 | 0 | Region safety via generations |
-| FiberSafety.v | 412 | 13 | 0 | Tier-based concurrency safety |
-| ValueSemantics.v | 410 | 7 (+1 Defined) | 0 | Mutable value semantics (Phase 7) |
-| EffectSubsumption.v | 432 | 13 | 0 | Effects subsume control flow (Phase 8) |
-| MemorySafety.v | 365 | 8 | 0 | Memory safety without GC (Phase 9) |
-| CompositionSafety.v | 342 | 8 | 0 | Full composition safety (Phase 11) |
+| File | Lines | Qed | Defined | Admitted | Role |
+|------|-------|-----|---------|----------|------|
+| Syntax.v | 486 | 9 | 0 | 0 | AST definitions |
+| Typing.v | 398 | 1 | 0 | 0 | Typing rules (13 constructors incl. T_Extend, T_Resume) |
+| Substitution.v | 1,053 | 21 | 0 | 0 | Substitution lemmas |
+| ShiftSubst.v | 335 | 4 | 0 | 0 | Shift-substitution commutation |
+| Semantics.v | 413 | 0 | 0 | 0 | Operational semantics (0 Parameters) |
+| EffectAlgebra.v | 148 | 7 | 0 | 0 | Effect row algebra |
+| ContextTyping.v | 876 | 7 | 0 | 0 | Evaluation context typing |
+| Inversion.v | 673 | 25 | 0 | 0 | Typing inversion |
+| Progress.v | 536 | 9 | 0 | 0 | Progress theorem (all 13 cases) |
+| Preservation.v | 371 | 3 | 0 | 0 | Preservation theorem (all 13 cases) |
+| Soundness.v | 203 | 5 | 0 | 0 | Type soundness + composition |
+| EffectSafety.v | 261 | 9 | 0 | 0 | Effect safety (9 theorems) |
+| GenerationSnapshots.v | 508 | 14 | 0 | 0 | Generation snapshot safety |
+| LinearTyping.v | 496 | 2 | 0 | 0 | Strengthened typing with linearity |
+| LinearSafety.v | 843 | 18 | 0 | 0 | Linear/affine safety (all 4 proved) |
+| Dispatch.v | 289 | 11 | 0 | 0 | Multiple dispatch + type stability |
+| Regions.v | 316 | 10 | 0 | 0 | Region safety via generations |
+| FiberSafety.v | 412 | 13 | 0 | 0 | Tier-based concurrency safety |
+| ValueSemantics.v | 410 | 7 | 1 | 0 | Mutable value semantics (Phase 7) |
+| EffectSubsumption.v | 432 | 13 | 0 | 0 | Effects subsume control flow (Phase 8) |
+| MemorySafety.v | 365 | 8 | 0 | 0 | Memory safety without GC (Phase 9) |
+| CompositionSafety.v | 431 | 8 | 4 | 0 | Full composition safety + section instantiations (Phase 11) |
 
-**Totals:** 9,678 lines, 200 Qed, 1 Defined, 0 Admitted.
+**Totals:** 10,255 lines, 204 Qed, 5 Defined, 0 Admitted, 0 Parameters, 0 Axioms.
 
 ### Files Modified or Created (by Phase)
 
@@ -733,3 +748,4 @@ Overall:                       43/43 theorems        [====================] 100%
 | 2026-03-04 | 1.3 | ALL PHASES COMPLETE. Phases 7, 8, 9, 11 proved. 43/43 theorems proved. Full composition safety master theorem Qed. |
 | 2026-03-04 | 1.4 | Integrity audit: eliminated inconsistent axiom (V_Continuation redesign), removed 5 vacuous True-conclusion placeholders, improved tier_assigned documentation. 0 Axioms, 0 Admitted. |
 | 2026-03-04 | 1.4.1 | Fix Qed count: 200 Qed + 1 Defined (was incorrectly reported as 210 Qed). Corrected per-file counts for LinearSafety.v, ValueSemantics.v, MemorySafety.v, CompositionSafety.v. Removed deleted `full_composition_safety` from Phase 1 table. |
+| 2026-03-04 | 1.5 | Close all formalization gaps: T_Extend/T_Resume typing rules added (10 files modified), `extract_gen_refs` concretized as Fixpoint, Step_Resume replaces Step_ResumeValid, Dispatch.v/FiberSafety.v section variables instantiated with `blood_subtype := @eq ty` and `blood_addr_owner`. 0 Parameters, 0 Axioms, 0 Admitted. 22 files, 10,255 lines, 204 Qed, 5 Defined. |

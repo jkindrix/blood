@@ -389,6 +389,54 @@ Proof.
               rewrite Heq_cl. intro Habs. exact (Hneq_en (eq_sym Habs)).
            ++ exact Hdc.
 
+  (** Case T_Extend *)
+  - intros Sigma Gamma Delta Delta1 Delta2 l e1 e2 T fields eff1 eff2
+           Hsplit He1 IH1 He2 IH2 HeqG HeqD M. subst.
+    apply lin_split_nil_inv in Hsplit as [HD1 HD2]. subst.
+    specialize (IH1 eq_refl eq_refl M).
+    specialize (IH2 eq_refl eq_refl M).
+    right.
+    destruct IH1 as [Hval1 | [[e1' [M' Hstep1]] | [en1 [op1 [v1 [D1 [Heq1 Hdc1]]]]]]].
+    + destruct IH2 as [Hval2 | [[e2' [M' Hstep2]] | [en2 [op2 [v2 [D2 [Heq2 Hdc2]]]]]]].
+      * (* Both values → Step_Extend *)
+        left.
+        pose proof (value_typing_inversion _ _ _ _ _ _ He2 Hval2) as Hpure2.
+        destruct (canonical_forms_record _ _ _ Hpure2 Hval2)
+          as [vfields [Heqr Hvalsf]].
+        subst e2.
+        exists (E_Record ((l, e1) :: vfields)), M.
+        apply Step_Extend; [exact Hval1 | exact Hvalsf].
+      * (* e1 value, e2 steps → EC_ExtendRec *)
+        left.
+        destruct (expr_to_value _ Hval1) as [v1 Hv1]. subst e1.
+        exists (E_Extend l (value_to_expr v1) e2'), M'.
+        apply (Step_Context M M' (EC_ExtendRec l v1 EC_Hole) e2 e2'). exact Hstep2.
+      * (* e1 value, e2 performs → DC_ExtendRec *)
+        right. subst e2.
+        destruct (expr_to_value _ Hval1) as [v1 Hv1]. subst e1.
+        exists en2, op2, v2, (DC_ExtendRec l v1 D2). split. reflexivity. exact Hdc2.
+    + (* e1 steps → EC_ExtendVal *)
+      left.
+      exists (E_Extend l e1' e2), M'.
+      apply (Step_Context M M' (EC_ExtendVal l EC_Hole e2) e1 e1'). exact Hstep1.
+    + (* e1 performs → DC_ExtendVal *)
+      right. subst e1.
+      exists en1, op1, v1, (DC_ExtendVal l D1 e2). split. reflexivity. exact Hdc1.
+
+  (** Case T_Resume *)
+  - intros Sigma Gamma Delta e T eff He IHe HeqG HeqD M. subst.
+    specialize (IHe eq_refl eq_refl M).
+    right.
+    destruct IHe as [Hval | [[e' [M' Hstep]] | [en [op0 [v0 [D [Heq Hdc]]]]]]].
+    + (* e is value → Step_Resume *)
+      left. exists e, M. apply Step_Resume. exact Hval.
+    + (* e steps → EC_Resume *)
+      left. exists (E_Resume e'), M'.
+      apply (Step_Context M M' (EC_Resume EC_Hole) e e'). exact Hstep.
+    + (* e performs → DC_Resume *)
+      right. subst e.
+      exists en, op0, v0, (DC_Resume D). split. reflexivity. exact Hdc.
+
   (** Case T_Sub *)
   - intros Sigma Gamma Delta e T eff eff' He IHe Hsub HeqG HeqD M. subst.
     exact (IHe eq_refl eq_refl M).

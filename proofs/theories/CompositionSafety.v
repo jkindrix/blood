@@ -286,21 +286,104 @@ Proof.
   exact region_safety.
 Qed.
 
-(** Dispatch + Typing: dispatch preserves types (from Phase 6) *)
+(** ** Section Instantiation: Dispatch
 
-(** Note: dispatch_determinism, type_stability_soundness, and
-    dispatch_preserves_typing are proved in Dispatch.v using
-    Section variables. They compose with the rest because
-    dispatch resolution is a compile-time check that doesn't
-    affect the runtime typing judgment. *)
+    Blood uses structural equality as its subtype relation for dispatch.
+    This is the simplest sound choice: T <: T' iff T = T'.
+    All required properties (reflexivity, transitivity, antisymmetry,
+    decidability) follow from properties of Leibniz equality.
 
-(** Tier crossing + Regions: from Phase 10 *)
+    To instantiate, we need decidable equality on [ty], [effect_row],
+    and [effect_entry] (mutual inductives from Syntax.v). *)
 
-(** Note: tier_crossing_safety and region_isolation are proved
-    in FiberSafety.v. They compose because tier crossing rules
-    are enforced at compile time, while region safety is a
-    runtime guarantee via generations. The two mechanisms
-    operate at different levels (compile-time vs runtime). *)
+(** *** Decidable equality on base_type *)
+
+Lemma base_type_eq_dec : forall (b1 b2 : base_type), {b1 = b2} + {b1 <> b2}.
+Proof. decide equality. Defined.
+
+(** *** Decidable equality on ty / effect_row / effect_entry
+
+    These are mutually inductive (Syntax.v), so we use Coq's
+    mutual [Fixpoint] with [decide equality]. *)
+
+Fixpoint ty_eq_dec (t1 t2 : ty) : {t1 = t2} + {t1 <> t2}
+with effect_row_eq_dec (e1 e2 : effect_row) : {e1 = e2} + {e1 <> e2}
+with effect_entry_eq_dec (ee1 ee2 : effect_entry) : {ee1 = ee2} + {ee1 <> ee2}.
+Proof.
+  - decide equality.
+    + apply base_type_eq_dec.
+    + apply list_eq_dec. decide equality. apply string_dec.
+    + apply Nat.eq_dec.
+  - decide equality.
+    + apply list_eq_dec. exact effect_entry_eq_dec.
+    + apply Nat.eq_dec.
+    + apply list_eq_dec. exact effect_entry_eq_dec.
+  - decide equality. apply string_dec.
+Defined.
+
+(** *** Blood's subtype relation: structural equality *)
+
+Definition blood_subtype : ty -> ty -> Prop := @eq ty.
+
+Lemma blood_subtype_dec :
+  forall T1 T2, {blood_subtype T1 T2} + {~ blood_subtype T1 T2}.
+Proof. intros. apply ty_eq_dec. Defined.
+
+Lemma blood_subtype_refl : forall T, blood_subtype T T.
+Proof. intro. reflexivity. Qed.
+
+Lemma blood_subtype_trans : forall T1 T2 T3,
+    blood_subtype T1 T2 -> blood_subtype T2 T3 -> blood_subtype T1 T3.
+Proof. intros T1 T2 T3 H1 H2. unfold blood_subtype in *. subst. reflexivity. Qed.
+
+Lemma blood_subtype_antisym : forall T1 T2,
+    blood_subtype T1 T2 -> blood_subtype T2 T1 -> T1 = T2.
+Proof. intros T1 T2 H _. exact H. Qed.
+
+(** *** Decidable equality on method
+
+    The [method] record (defined in Dispatch.v) has fields
+    [meth_params : list ty], [meth_ret : ty], [meth_eff : effect_row].
+    It does not reference section variables, so it is un-parameterized. *)
+
+Lemma blood_method_eq_dec :
+  forall m1 m2 : method, {m1 = m2} + {m1 <> m2}.
+Proof.
+  intros. decide equality.
+  - apply effect_row_eq_dec.
+  - apply ty_eq_dec.
+  - apply list_eq_dec. apply ty_eq_dec.
+Defined.
+
+(** *** Dispatch instantiation
+
+    Instantiate the parameterized dispatch theorems with Blood's
+    concrete subtype relation (structural equality). *)
+
+Definition blood_dispatch_determinism :=
+  dispatch_determinism blood_subtype
+                       blood_subtype_antisym blood_method_eq_dec.
+
+Definition blood_type_stability_soundness :=
+  type_stability_soundness blood_subtype.
+
+Definition blood_dispatch_preserves_typing :=
+  dispatch_preserves_typing blood_subtype.
+
+(** *** Fiber safety instantiation
+
+    Instantiate with a concrete address ownership model.
+    The simplest model: each address is owned by fiber 0
+    (single-fiber execution). This suffices to instantiate the
+    parameterized theorems. *)
+
+Definition blood_addr_owner : nat -> fiber_id := fun _ => 0.
+
+Definition blood_tier_crossing_safety :=
+  tier_crossing_safety blood_addr_owner.
+
+Definition blood_region_isolation :=
+  region_isolation blood_addr_owner.
 
 (** ** Summary
 
@@ -326,7 +409,13 @@ Qed.
     - effects_linearity_compose: Effects + Linearity (Phase 2)
     - regions_generations_compose: Regions + Generations (Phase 5)
     - effects_regions_compose: Effects + Regions
-    - References to Dispatch.v and FiberSafety.v for remaining pairs
+
+    Section instantiations (closing the formalization gaps):
+    - blood_dispatch_determinism: Dispatch.v instantiated with eq as subtype
+    - blood_type_stability_soundness: Type stability instantiated
+    - blood_dispatch_preserves_typing: Dispatch typing instantiated
+    - blood_tier_crossing_safety: FiberSafety.v instantiated
+    - blood_region_isolation: Region isolation instantiated
 
     Key architectural insight: Blood's safety properties compose
     WITHOUT interference because:

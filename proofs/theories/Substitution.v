@@ -328,6 +328,18 @@ Proof.
     + apply IHh.
     + exact Hpass.
 
+  - (* T_Extend *)
+    intros Sigma Gamma Delta Delta1 Delta2 l e1 e2 T fields eff1 eff2
+           Hsplit He1 IH1 He2 IH2 U n. simpl.
+    eapply T_Extend.
+    + apply lin_split_insert. exact Hsplit.
+    + apply IH1.
+    + apply IH2.
+
+  - (* T_Resume *)
+    intros Sigma Gamma Delta e T eff He IHe U n. simpl.
+    apply T_Resume. apply IHe.
+
   - (* T_Sub *)
     intros Sigma Gamma Delta e T eff eff' He IHe Hsub U n.
     apply T_Sub with (eff := eff).
@@ -453,6 +465,12 @@ Proof.
            handler_eff comp_eff _ _ IHe _ IHh Hpass Delta'.
     destruct (lin_split_exists Delta') as [D1' [D2' Hsplit']].
     eapply T_Handle; [exact Hsplit' | apply IHe | apply IHh | exact Hpass].
+  - (* T_Extend *)
+    intros Sigma Gamma Delta Delta1 Delta2 l e1 e2 T fields eff1 eff2
+           _ _ IH1 _ IH2 Delta'.
+    destruct (lin_split_exists Delta') as [D1' [D2' Hsplit']].
+    eapply T_Extend; [exact Hsplit' | apply IH1 | apply IH2].
+  - (* T_Resume *) intros. apply T_Resume. auto.
   - (* T_Sub *)
     intros Sigma Gamma Delta e T eff eff' _ IH Hsub Delta'.
     apply T_Sub with (eff := eff); [apply IH | exact Hsub].
@@ -743,6 +761,15 @@ Proof.
            handler_eff comp_eff _ _ IHe _ IHh _ d. simpl.
     f_equal; [exact (IHh d) | exact (IHe d)].
 
+  - (* T_Extend *)
+    intros Sigma Gamma Delta Delta1 Delta2 l e1 e2 T fields eff1 eff2
+           _ _ IH1 _ IH2 d. simpl.
+    f_equal; [exact (IH1 d) | exact (IH2 d)].
+
+  - (* T_Resume *)
+    intros Sigma Gamma Delta e T eff _ IH d. simpl.
+    f_equal. exact (IH d).
+
   - (* T_Sub *)
     intros Sigma Gamma Delta e T eff eff' _ IH _ d.
     exact (IH d).
@@ -925,6 +952,21 @@ Proof.
           (has_type_lin_irrelevant _ _ _ _ _ _ Hval (remove_nth j Delta2)))
         D2').
     + exact Hpass.
+
+  - (* T_Extend *)
+    intros Sigma Gamma Delta Delta1 Delta2 l e1 e2 T fields eff1 eff2
+           Hsplit _ IH1 _ IH2 j v Sty HnthSty Hval. simpl.
+    destruct (lin_split_exists (remove_nth j Delta)) as [D1' [D2' Hsplit']].
+    eapply T_Extend.
+    + exact Hsplit'.
+    + apply (has_type_lin_irrelevant _ _ _ _ _ _ (IH1 j v Sty HnthSty
+        (has_type_lin_irrelevant _ _ _ _ _ _ Hval (remove_nth j Delta1)))).
+    + apply (has_type_lin_irrelevant _ _ _ _ _ _ (IH2 j v Sty HnthSty
+        (has_type_lin_irrelevant _ _ _ _ _ _ Hval (remove_nth j Delta2)))).
+
+  - (* T_Resume *)
+    intros Sigma Gamma Delta e T eff _ IH j v Sty HnthSty Hval. simpl.
+    apply T_Resume. exact (IH j v Sty HnthSty Hval).
 
   - (* T_Sub *)
     intros Sigma Gamma Delta e T eff eff' _ IH Hsub j v Sty HnthSty Hval.

@@ -86,9 +86,21 @@ Proof.
     + eapply effect_row_subset_trans; eassumption.
 
   (** Case Step_Extend: {l=v|{fields}} ──► {l=v, fields...} *)
-  - exfalso.
-    remember (E_Extend l v (E_Record fields)) as eext.
-    induction Htype; try discriminate; auto.
+  - destruct (has_type_extend_inv _ _ _ _ _ _ Htype)
+      as [T1 [ft [eff1 [eff2 [HeqT [Htyv [Htyrec Hsub]]]]]]]. subst.
+    (* Both v and the record are values, so we can get pure typing *)
+    assert (Hv_pure : has_type Sigma [] [] v T1 Eff_Pure)
+      by (eapply value_typing_inversion; [exact Htyv | exact H]).
+    assert (Hrec_pure : has_type Sigma [] [] (E_Record fields) (Ty_Record ft) Eff_Pure)
+      by (eapply value_typing_inversion; [exact Htyrec | simpl; exact H0]).
+    destruct (has_type_record_inv _ _ _ _ Hrec_pure)
+      as [ft2 [eff_rec [Heq_ft [Hrft Hsub_rec]]]].
+    injection Heq_ft as <-.
+    exists Eff_Pure. split.
+    + apply T_Sub with (eff := effect_row_union Eff_Pure eff_rec).
+      * apply T_Record. apply RFT_Cons; [exact Hv_pure | exact Hrft].
+      * destruct eff_rec; simpl in Hsub_rec |- *; try contradiction; trivial.
+    + destruct eff0; simpl; trivial.
 
   (** Case Step_Annot: (v : T) ──► v *)
   - destruct (has_type_annot_inv _ _ _ _ _ Htype)
@@ -306,19 +318,12 @@ Proof.
       * exact Hsub_inner.
     + apply effect_row_subset_refl.
 
-  (** Case Step_ResumeValid: simplified resume E_App (E_Const Const_Unit) v
-      This is vacuous — Const_Unit has type TyUnit, not an arrow type. *)
-  - exfalso.
-    destruct (has_type_app_inv _ _ _ _ _ Htype)
-      as [A [fn_eff [eff1 [eff2 [Hty1 [Hty2 Hsub]]]]]].
-    remember (E_Const Const_Unit) as econst.
-    remember (Ty_Arrow A T0 fn_eff) as Tarrow.
-    clear -Hty1 Heqeconst HeqTarrow.
-    induction Hty1; try discriminate.
-    + (* T_Const: typeof_const Const_Unit = Ty_Base TyUnit ≠ Ty_Arrow *)
-      injection Heqeconst as Hc. subst. simpl in HeqTarrow. discriminate.
-    + (* T_Sub: recurse — T_Sub preserves the type *)
-      exact (IHHty1 Heqeconst HeqTarrow).
+  (** Case Step_Resume: E_Resume v ──► v *)
+  - destruct (has_type_resume_inv _ _ _ _ Htype)
+      as [eff_inner [Hinner Hsub]].
+    exists eff_inner. split.
+    + exact Hinner.
+    + exact Hsub.
 Qed.
 
 Theorem preservation :

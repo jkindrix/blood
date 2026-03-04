@@ -170,6 +170,47 @@ Proof.
         -- exact Hwf.
         -- exact Hpass.
       * exact Hsub.
+
+  (** EC_ExtendVal l E' e2: plug = E_Extend l (plug_eval E' e0) e2 *)
+  - destruct (has_type_extend_inv _ _ _ _ _ _ Hty)
+      as [T1 [fields [eff1 [eff2 [Heq [Hty1 [Hty2 Hsub]]]]]]]. subst.
+    destruct (IHE _ _ _ Hty1) as [A' [eff_inner [He0 Hreplace]]].
+    exists A', eff_inner. split.
+    + exact He0.
+    + intros e' He'. simpl.
+      apply T_Sub with (eff := effect_row_union eff1 eff2).
+      * apply T_Extend with (Delta1 := []) (Delta2 := [])
+                              (eff1 := eff1) (eff2 := eff2).
+        -- apply Split_Nil.
+        -- exact (Hreplace e' He').
+        -- exact Hty2.
+      * exact Hsub.
+
+  (** EC_ExtendRec l v E': plug = E_Extend l (value_to_expr v) (plug_eval E' e0) *)
+  - destruct (has_type_extend_inv _ _ _ _ _ _ Hty)
+      as [T1 [fields [eff1 [eff2 [Heq [Hty1 [Hty2 Hsub]]]]]]]. subst.
+    destruct (IHE _ _ _ Hty2) as [A' [eff_inner [He0 Hreplace]]].
+    exists A', eff_inner. split.
+    + exact He0.
+    + intros e' He'. simpl.
+      apply T_Sub with (eff := effect_row_union eff1 eff2).
+      * apply T_Extend with (Delta1 := []) (Delta2 := [])
+                              (eff1 := eff1) (eff2 := eff2).
+        -- apply Split_Nil.
+        -- exact Hty1.
+        -- exact (Hreplace e' He').
+      * exact Hsub.
+
+  (** EC_Resume E': plug = E_Resume (plug_eval E' e0) *)
+  - destruct (has_type_resume_inv _ _ _ _ Hty)
+      as [eff_inner' [Hinner Hsub]].
+    destruct (IHE _ _ _ Hinner) as [A' [eff_inner [He0 Hreplace]]].
+    exists A', eff_inner. split.
+    + exact He0.
+    + intros e' He'. simpl.
+      apply T_Sub with (eff := eff_inner').
+      * apply T_Resume. exact (Hreplace e' He').
+      * exact Hsub.
 Qed.
 
 (** ** Perform at top level requires effect in row *)
@@ -286,6 +327,9 @@ Proof.
     | en_ opn_ D' IHD
     | done_ l_ D' IHD rest_
     | h_ D' IHD
+    | l_ D' IHD e2_
+    | l_ v_ D' IHD
+    | D' IHD
   ]; intros e T eff Hty; simpl in *.
 
   (** DC_Hole *)
@@ -433,6 +477,47 @@ Proof.
         -- exact Hwf.
         -- exact Hpass.
       * exact Hsub.
+
+  (** DC_ExtendVal l_ D' e2_ *)
+  - destruct (has_type_extend_inv _ _ _ _ _ _ Hty)
+      as [T1 [fields [eff1 [eff2 [Heq [Hty1 [Hty2 Hsub]]]]]]]. subst.
+    destruct (IHD _ _ _ Hty1) as [A' [eff_inner [He Hreplace]]].
+    exists A', eff_inner. split.
+    + exact He.
+    + intros e' He'. simpl.
+      apply T_Sub with (eff := effect_row_union eff1 eff2).
+      * apply T_Extend with (Delta1 := []) (Delta2 := [])
+                              (eff1 := eff1) (eff2 := eff2).
+        -- apply Split_Nil.
+        -- exact (Hreplace e' He').
+        -- exact Hty2.
+      * exact Hsub.
+
+  (** DC_ExtendRec l_ v_ D' *)
+  - destruct (has_type_extend_inv _ _ _ _ _ _ Hty)
+      as [T1 [fields [eff1 [eff2 [Heq [Hty1 [Hty2 Hsub]]]]]]]. subst.
+    destruct (IHD _ _ _ Hty2) as [A' [eff_inner [He Hreplace]]].
+    exists A', eff_inner. split.
+    + exact He.
+    + intros e' He'. simpl.
+      apply T_Sub with (eff := effect_row_union eff1 eff2).
+      * apply T_Extend with (Delta1 := []) (Delta2 := [])
+                              (eff1 := eff1) (eff2 := eff2).
+        -- apply Split_Nil.
+        -- exact Hty1.
+        -- exact (Hreplace e' He').
+      * exact Hsub.
+
+  (** DC_Resume D' *)
+  - destruct (has_type_resume_inv _ _ _ _ Hty)
+      as [eff_inner' [Hinner Hsub]].
+    destruct (IHD _ _ _ Hinner) as [A' [eff_inner [He Hreplace]]].
+    exists A', eff_inner. split.
+    + exact He.
+    + intros e' He'. simpl.
+      apply T_Sub with (eff := eff_inner').
+      * apply T_Resume. exact (Hreplace e' He').
+      * exact Hsub.
 Qed.
 
 (** ** Generalized delimited context typing (arbitrary Gamma/Delta)
@@ -458,6 +543,9 @@ Proof.
     | en_ opn_ D' IHD
     | done_ l_ D' IHD rest_
     | h_ D' IHD
+    | l_ D' IHD e2_
+    | l_ v_ D' IHD
+    | D' IHD
   ]; intros e T eff Hty; simpl in *.
 
   (** DC_Hole *)
@@ -574,6 +662,47 @@ Proof.
         -- exact Hwf.
         -- exact Hpass.
       * exact Hsub.
+
+  (** DC_ExtendVal l_ D' e2_ *)
+  - destruct (has_type_extend_inv_gen _ _ _ _ _ _ _ _ Hty)
+      as [T1 [fields [D1 [D2 [eff1 [eff2 [Heq [Hsplit [Hty1 [Hty2 Hsub]]]]]]]]]]. subst.
+    destruct (IHD _ _ _ (has_type_lin_irrelevant _ _ _ _ _ _ Hty1 Delta))
+      as [A' [eff_inner [He Hreplace]]].
+    exists A', eff_inner. split.
+    + exact He.
+    + intros Delta' e' He'. simpl.
+      apply T_Sub with (eff := effect_row_union eff1 eff2).
+      * eapply T_Extend.
+        -- exact Hsplit.
+        -- exact (has_type_lin_irrelevant _ _ _ _ _ _ (Hreplace _ e' He') D1).
+        -- exact Hty2.
+      * exact Hsub.
+
+  (** DC_ExtendRec l_ v_ D' *)
+  - destruct (has_type_extend_inv_gen _ _ _ _ _ _ _ _ Hty)
+      as [T1 [fields [D1 [D2 [eff1 [eff2 [Heq [Hsplit [Hty1 [Hty2 Hsub]]]]]]]]]]. subst.
+    destruct (IHD _ _ _ (has_type_lin_irrelevant _ _ _ _ _ _ Hty2 Delta))
+      as [A' [eff_inner [He Hreplace]]].
+    exists A', eff_inner. split.
+    + exact He.
+    + intros Delta' e' He'. simpl.
+      apply T_Sub with (eff := effect_row_union eff1 eff2).
+      * eapply T_Extend.
+        -- exact Hsplit.
+        -- exact Hty1.
+        -- exact (has_type_lin_irrelevant _ _ _ _ _ _ (Hreplace _ e' He') D2).
+      * exact Hsub.
+
+  (** DC_Resume D' *)
+  - destruct (has_type_resume_inv_gen _ _ _ _ _ _ Hty)
+      as [eff_inner' [Hinner Hsub]].
+    destruct (IHD _ _ _ Hinner) as [A' [eff_inner [He Hreplace]]].
+    exists A', eff_inner. split.
+    + exact He.
+    + intros Delta' e' He'. simpl.
+      apply T_Sub with (eff := eff_inner').
+      * apply T_Resume. exact (Hreplace _ e' He').
+      * exact Hsub.
 Qed.
 
 (** ** plug_delimited preserves effect containment
@@ -598,6 +727,9 @@ Proof.
     | en_ opn_ D' IHD
     | done_ l_ D' IHD rest_
     | h_ D' IHD
+    | l_ D' IHD e2_
+    | l_ v_ D' IHD
+    | D' IHD
   ]; intros eff_nm op0 v0 T eff Htype Hdc; simpl in *.
 
   - (* DC_Hole *)
@@ -710,4 +842,35 @@ Proof.
     + (* eff_nm ≠ en_handle: pass-through *)
       eapply effect_in_row_subset; [| exact Hsub].
       exact (Hpass eff_nm Hin_comp Hneq_en).
+
+  - (* DC_ExtendVal *)
+    remember (E_Extend l_ (plug_delimited D' (E_Perform eff_nm op0 (value_to_expr v0))) e2_) as eform.
+    remember (@nil ty) as Gamma. remember (@nil (linearity * bool)) as Delta.
+    induction Htype; try discriminate.
+    + injection Heqeform as H1_ H2_ H3_. subst.
+      apply lin_split_nil_inv in H as [HD1 HD2]. subst.
+      eapply effect_in_union_left.
+      exact (IHD eff_nm op0 v0 _ eff1 Htype1 Hdc).
+    + subst. eapply effect_in_row_subset; [| eassumption].
+      eapply IHHtype; try reflexivity; try exact IHD; try assumption.
+
+  - (* DC_ExtendRec *)
+    remember (E_Extend l_ (value_to_expr v_) (plug_delimited D' (E_Perform eff_nm op0 (value_to_expr v0)))) as eform.
+    remember (@nil ty) as Gamma. remember (@nil (linearity * bool)) as Delta.
+    induction Htype; try discriminate.
+    + injection Heqeform as H1_ H2_ H3_. subst.
+      apply lin_split_nil_inv in H as [HD1 HD2]. subst.
+      eapply effect_in_union_right.
+      exact (IHD eff_nm op0 v0 _ eff2 Htype2 Hdc).
+    + subst. eapply effect_in_row_subset; [| eassumption].
+      eapply IHHtype; try reflexivity; try exact IHD; try assumption.
+
+  - (* DC_Resume *)
+    remember (E_Resume (plug_delimited D' (E_Perform eff_nm op0 (value_to_expr v0)))) as eform.
+    remember (@nil ty) as Gamma. remember (@nil (linearity * bool)) as Delta.
+    induction Htype; try discriminate.
+    + injection Heqeform as H1_. subst.
+      exact (IHD eff_nm op0 v0 _ eff Htype Hdc).
+    + subst. eapply effect_in_row_subset; [| eassumption].
+      eapply IHHtype; try reflexivity; try exact IHD; try assumption.
 Qed.

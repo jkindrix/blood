@@ -337,6 +337,32 @@ with has_type :
          en <> eff_name -> effect_in_row en handler_eff) ->
       has_type Sigma Gamma Delta (E_Handle h e) result_ty handler_eff
 
+  (** [T-Extend]
+      Δ = Δ₁ ⊗ Δ₂
+      Γ; Δ₁ ⊢ e₁ : T / ε₁    Γ; Δ₂ ⊢ e₂ : {fields} / ε₂
+      ────────────────────────────────────────────────────────
+      Γ; Δ ⊢ {l = e₁ | e₂} : {(l,T) :: fields} / ε₁ ∪ ε₂ *)
+  | T_Extend : forall Sigma Gamma Delta Delta1 Delta2 l e1 e2
+                       T fields eff1 eff2,
+      lin_split Delta Delta1 Delta2 ->
+      has_type Sigma Gamma Delta1 e1 T eff1 ->
+      has_type Sigma Gamma Delta2 e2 (Ty_Record fields) eff2 ->
+      has_type Sigma Gamma Delta (E_Extend l e1 e2)
+               (Ty_Record ((l, T) :: fields))
+               (effect_row_union eff1 eff2)
+
+  (** [T-Resume]
+      Γ; Δ ⊢ e : T / ε
+      ──────────────────────
+      Γ; Δ ⊢ resume(e) : T / ε
+
+      Resume is a transparent wrapper — a syntactic marker for
+      continuation call sites. The actual invocation happens via E_App
+      on the continuation lambda bound in handler clause bodies. *)
+  | T_Resume : forall Sigma Gamma Delta e T eff,
+      has_type Sigma Gamma Delta e T eff ->
+      has_type Sigma Gamma Delta (E_Resume e) T eff
+
   (** [T-Sub]
       Γ; Δ ⊢ e : T / ε    ε ⊆ ε'
       ──────────────────────────────
