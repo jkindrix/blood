@@ -1816,7 +1816,7 @@ map(nums, |x| { print(x); x }) // E = {IO}
 |---------------|----------|--------|-----------|
 | Static (monomorphized) | 0ns (measured) | Implemented | Types known at compile time |
 | Static (known method) | ~1ns (measured) | Implemented | Direct call, possible inline |
-| Enum match dispatch | ~128ns (measured) | Implemented | Tagged union pattern matching |
+| Enum match dispatch | ~0ns (measured) | Implemented | Tagged union pattern matching (Copy enums stack-promoted) |
 | Dynamic (fingerprint hit) | ~5-10 cycles (est.) | Not implemented | Hash lookup + indirect call |
 | Dynamic (fingerprint miss) | ~50-100 cycles (est.) | Not implemented | Full type resolution |
 

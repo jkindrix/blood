@@ -1,25 +1,9 @@
-// Benchmark: region allocation latency
-// Measures: region create + allocate struct + read + exit per iteration
+// Benchmark: region bump allocation latency
+// Measures: bump allocation within an existing region (region_alloc + region_reset)
 // Spec target: <50ns region allocation (MEMORY_MODEL.md §3.1)
-
-struct Point {
-    x: i32,
-    y: i32,
-}
-
-fn run_benchmark(iterations: u64) -> u64 {
-    let mut checksum: u64 = 0;
-    let mut i: u64 = 0;
-    while i < iterations {
-        let val: i32 = region {
-            let p: Point = Point { x: 3, y: 4 };
-            p.x + p.y
-        };
-        checksum = checksum + (val as u64);
-        i = i + 1;
-    }
-    checksum
-}
+//
+// Creates one region, then loops: alloc struct-sized chunk, read, reset bump pointer.
+// This tests the fast path (bump alloc within existing region), not region lifecycle.
 
 fn sort_samples(buf: u64, n: u64) {
     if n <= 1 { return; }
@@ -41,20 +25,41 @@ fn sort_samples(buf: u64, n: u64) {
 }
 
 fn main() -> i32 {
-    let warmup_iters: u64 = 1000;
-    let measure_iters: u64 = 100000;
+    let warmup_iters: u64 = 10000;
+    let measure_iters: u64 = 1000000;
     let num_samples: u64 = 21;
 
-    let mut total_check: u64 = run_benchmark(warmup_iters);
+    // Create a single region (1MB initial, 1GB max)
+    let rid: u64 = region_create(1048576, 1073741824);
 
+    // Warmup: alloc + read + reset
+    let mut total_check: u64 = 0;
+    let mut w: u64 = 0;
+    while w < warmup_iters {
+        // Allocate 8 bytes (struct-sized) with 8-byte alignment
+        let ptr: u64 = region_alloc(rid, 8, 8);
+        ptr_write_u64(ptr, w);
+        total_check = total_check + ptr_read_u64(ptr);
+        region_reset(rid);
+        w = w + 1;
+    }
+
+    // Measure
     let samples: u64 = alloc(num_samples * 8);
-    let mut i: u64 = 0;
-    while i < num_samples {
+    let mut s: u64 = 0;
+    while s < num_samples {
         let start: u64 = blood_clock_nanos();
-        total_check = total_check + run_benchmark(measure_iters);
+        let mut i: u64 = 0;
+        while i < measure_iters {
+            let ptr: u64 = region_alloc(rid, 8, 8);
+            ptr_write_u64(ptr, i);
+            total_check = total_check + ptr_read_u64(ptr);
+            region_reset(rid);
+            i = i + 1;
+        }
         let elapsed: u64 = blood_clock_nanos() - start;
-        ptr_write_u64(samples + i * 8, elapsed);
-        i = i + 1;
+        ptr_write_u64(samples + s * 8, elapsed);
+        s = s + 1;
     }
 
     sort_samples(samples, num_samples);
@@ -77,6 +82,7 @@ fn main() -> i32 {
     print_str("checksum=");
     println_u64(total_check);
 
+    region_destroy(rid);
     free(samples);
     0
 }

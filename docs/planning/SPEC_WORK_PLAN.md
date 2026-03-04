@@ -547,20 +547,43 @@ See `proofs/PROOF_ROADMAP.md` (v1.6) for complete per-file inventory and detaile
 | F.5 | Replace external citations in DISPATCH.md with Blood measurements | Documentation | ✅ Done |
 | F.6 | Replace external citations in MEMORY_MODEL.md with Blood measurements | Documentation | ✅ Done |
 
-**Key Results** (release mode, bootstrap compiler):
+**Key Results** (release mode, bootstrap compiler, post-optimization):
 
 | Benchmark | Measured | Target | Verdict |
 |-----------|----------|--------|---------|
 | Baseline (xorshift loop) | ~1ns/op | - | Calibration |
-| Persistent alloc (Tier 2) | ~184ns | <200ns | PASS |
+| Region bump alloc (alloc+reset) | ~65ns | <50ns | WARN (close) |
+| Region reset (O(1) dealloc) | ~41ns | O(1) | PASS |
+| Persistent alloc (alloc+free) | ~34ns | <200ns | PASS |
 | Pointer overhead (inlined) | ~0% | <10% | PASS |
-| Handler install | ~17ns | <100ns | PASS |
+| Handler install | ~16ns | <100ns | PASS |
 | Static dispatch | ~0ns | 0 cycles | PASS |
 | Trait dispatch | ~1ns | ~0 cycles | PASS |
-| Effect dispatch (perform) | ~136ns | <50ns | Needs optimization |
-| Region full lifecycle | ~3,400ns | <50ns (bump alloc) | Different metric |
+| Enum match dispatch | ~0ns | - | PASS (Copy enums stack-promoted) |
+| Effect dispatch (perform) | ~128ns | <50ns | Needs optimization |
 
-**Findings**: Static dispatch is truly zero-cost. Persistent allocation meets spec targets. Effect handler dispatch (~136ns/perform) exceeds the 50ns target — deep handler resume overhead dominates. Region full lifecycle (create+alloc+exit) is ~3,400ns; the spec's <50ns target applies to bump allocation within an existing region, not the full lifecycle.
+**Optimizations applied**:
+- **Enum Copy detection**: Escape analysis now recognizes enums with all-Copy variant payloads as Copy, enabling stack promotion. Enum dispatch dropped from ~128ns to ~0ns (allocation overhead eliminated).
+- **Region benchmark correction**: Benchmarks now test bump allocation within an existing region (alloc+reset) rather than full region lifecycle (create/destroy with mmap/munmap syscalls). Region bump alloc: ~65ns. Reset is O(1) at ~41ns regardless of allocation count.
+- **Persistent alloc benchmark correction**: Now tests explicit alloc/free cycle rather than Copy enum through &mut (which was incorrectly triggering persistent allocation).
+
+**Findings**: Static dispatch is truly zero-cost. Persistent allocation and region bump allocation meet or approach spec targets. Effect handler dispatch (~128ns/perform) exceeds the 50ns target — deep handler resume overhead dominates (continuation creation ~45-50ns, global mutex ~20-25ns, linear handler search ~15-20ns). Path to <50ns exists: skip continuation for tail-resumptive handlers, lock-free handler stack, hash-based handler lookup.
+
+**Self-hosted compiler (first_gen) comparison** (release mode):
+
+| Benchmark | blood-rust | first_gen | Notes |
+|-----------|------------|-----------|-------|
+| Baseline | ~1ns | ~2ns | Slightly slower loop codegen |
+| Region bump alloc | ~65ns | ~68ns | Nearly identical |
+| Region reset | ~41ns | ~43ns | Nearly identical |
+| Persistent alloc | ~34ns | ~37ns | Nearly identical |
+| Pointer overhead | 0% | 0% | Both inline away |
+| Effect dispatch | ~128ns | ~124ns | Similar |
+| Static dispatch | 0% | 141% | first_gen lacks inlining hints |
+| Trait dispatch | ~1ns | ~5ns | first_gen lacks inlining hints |
+| Enum dispatch | ~0ns | ~3ns | first_gen lacks inlining hints |
+
+first_gen matches blood-rust for runtime-dominated benchmarks (region, alloc, effects). Inlining-dependent benchmarks show first_gen overhead — the self-hosted codegen doesn't emit LLVM inlining attributes (`alwaysinline`, `inlinehint`). Two benchmarks (handler_install, generator_sum) fail in first_gen with LLVM verification errors (`alloca` domination in handler codegen).
 
 ---
 

@@ -1,31 +1,18 @@
 // Benchmark: persistent (Tier 2) allocation latency
-// Measures: alloc + dealloc cycle for GlobalEscape values (non-copy enum through &mut)
+// Measures: alloc + dealloc cycle (explicit heap allocation path)
 // Spec target: <200ns persistent allocation (MEMORY_MODEL.md §3.1)
-
-enum Value {
-    Num(i32),
-    None,
-}
-
-fn store_value(r: &mut Value, n: i32) {
-    *r = Value.Num(n);
-}
-
-fn extract(v: Value) -> i32 {
-    match v {
-        Value.Num(n) => n,
-        Value.None => 0,
-    }
-}
+//
+// Tests the raw alloc/free cycle that Tier 2 persistent values use.
+// Previous version used a Copy enum which the optimizer correctly stack-promotes.
 
 fn run_benchmark(iterations: u64) -> u64 {
     let mut checksum: u64 = 0;
     let mut i: u64 = 0;
     while i < iterations {
-        let mut v: Value = Value.None;
-        store_value(&mut v, (i as i32));
-        let n: i32 = extract(v);
-        checksum = checksum + (n as u64);
+        let ptr: u64 = alloc(16);
+        ptr_write_u64(ptr, i);
+        checksum = checksum + ptr_read_u64(ptr);
+        free(ptr);
         i = i + 1;
     }
     checksum

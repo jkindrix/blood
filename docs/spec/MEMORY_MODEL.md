@@ -61,8 +61,9 @@ The Synthetic Safety Model achieves:
 5. **Effect integration** — Safe interaction with algebraic effect handlers
 
 > **Performance Basis**: Performance characteristics measured using Blood micro-benchmarks:
-> - Region full lifecycle (create+alloc+exit): ~3,400ns (`benchmarks/micro/bench_region_alloc.blood`)
-> - Persistent allocation (Tier 2 RC): ~184ns (`benchmarks/micro/bench_persistent_alloc.blood`)
+> - Region bump allocation (alloc+reset within existing region): ~65ns (`benchmarks/micro/bench_region_alloc.blood`)
+> - Region reset (O(1) deallocation): ~41ns regardless of allocation count (`benchmarks/micro/bench_region_dealloc.blood`)
+> - Persistent allocation (Tier 2, explicit alloc+free): ~34ns (`benchmarks/micro/bench_persistent_alloc.blood`)
 > - Pointer dereference overhead: ~0% with inlining (`benchmarks/micro/bench_pointer_overhead.blood`)
 > - Escape analysis validated by 346 ground-truth tests
 >
@@ -427,10 +428,10 @@ Profile your application if:
 | Tier | Name | Lifecycle | Safety Mechanism | Cost (measured) |
 |------|------|-----------|------------------|-----------------|
 | 0 | Stack | Lexical scope | Compile-time proof | ~1ns (baseline loop) |
-| 1 | Region | Explicit scope | Generational check | ~3,400ns (full lifecycle) |
-| 2 | Persistent | Reference-counted | Deferred RC | ~184ns (alloc+dealloc) |
+| 1 | Region | Explicit scope | Generational check | ~65ns (bump alloc+reset) |
+| 2 | Persistent | Reference-counted | Deferred RC | ~34ns (alloc+free) |
 
-*Measured using Blood micro-benchmarks (`benchmarks/micro/`). Tier 0 is essentially free. Tier 1 cost includes region create+allocate+exit (bump allocation within an existing region is near-zero). Tier 2 measured via `bench_persistent_alloc.blood` (GlobalEscape enum through `&mut` reference).
+*Measured using Blood micro-benchmarks (`benchmarks/micro/`). Tier 0 is essentially free. Tier 1 bump allocation within an existing region: ~65ns (alloc+write+read+reset). Region reset is O(1) (~41ns) regardless of allocation count. Tier 2 measured via `bench_persistent_alloc.blood` (explicit alloc/free cycle). Copy-type enums are stack-promoted by escape analysis, avoiding allocation entirely.
 
 ### 3.2 Tier 0: Stack
 

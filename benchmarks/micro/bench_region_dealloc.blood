@@ -1,38 +1,9 @@
 // Benchmark: region deallocation O(1) verification
-// Measures: region exit time with varying number of allocations inside
-// Spec target: O(1) deallocation — exit time should be constant regardless of N
-
-struct Item {
-    a: i32,
-    b: i32,
-    c: i32,
-    d: i32,
-}
-
-fn alloc_n_items(n: i32) -> i32 {
-    let result: i32 = region {
-        let mut sum: i32 = 0;
-        let mut i: i32 = 0;
-        while i < n {
-            let item: Item = Item { a: i, b: i + 1, c: i + 2, d: i + 3 };
-            sum = sum + item.a;
-            i = i + 1;
-        }
-        sum
-    };
-    result
-}
-
-fn run_benchmark_n(iterations: u64, n: i32) -> u64 {
-    let mut checksum: u64 = 0;
-    let mut i: u64 = 0;
-    while i < iterations {
-        let val: i32 = alloc_n_items(n);
-        checksum = checksum + (val as u64);
-        i = i + 1;
-    }
-    checksum
-}
+// Measures: region_reset time with varying number of allocations inside
+// Spec target: O(1) deallocation — reset time should be constant regardless of N
+//
+// Uses explicit region_create + region_alloc + region_reset to test the bump
+// allocator's O(1) reset behavior directly.
 
 fn sort_samples(buf: u64, n: u64) {
     if n <= 1 { return; }
@@ -53,18 +24,42 @@ fn sort_samples(buf: u64, n: u64) {
     }
 }
 
-fn measure_n(n: i32, iters: u64, label: &str) {
+fn measure_reset(rid: u64, alloc_count: u64, iters: u64, label: &str) {
     let num_samples: u64 = 21;
-    let _warmup: u64 = run_benchmark_n(100, n);
 
+    // Warmup
+    let mut w: u64 = 0;
+    while w < 100 {
+        let mut a: u64 = 0;
+        while a < alloc_count {
+            let _ptr: u64 = region_alloc(rid, 16, 8);
+            a = a + 1;
+        }
+        region_reset(rid);
+        w = w + 1;
+    }
+
+    // Measure: alloc N items, then time only the reset
     let samples: u64 = alloc(num_samples * 8);
-    let mut i: u64 = 0;
-    while i < num_samples {
-        let start: u64 = blood_clock_nanos();
-        let _check: u64 = run_benchmark_n(iters, n);
-        let elapsed: u64 = blood_clock_nanos() - start;
-        ptr_write_u64(samples + i * 8, elapsed);
-        i = i + 1;
+    let mut s: u64 = 0;
+    while s < num_samples {
+        let mut total_reset_ns: u64 = 0;
+        let mut i: u64 = 0;
+        while i < iters {
+            // Allocate N items
+            let mut a: u64 = 0;
+            while a < alloc_count {
+                let _ptr: u64 = region_alloc(rid, 16, 8);
+                a = a + 1;
+            }
+            // Time only the reset
+            let start: u64 = blood_clock_nanos();
+            region_reset(rid);
+            total_reset_ns = total_reset_ns + (blood_clock_nanos() - start);
+            i = i + 1;
+        }
+        ptr_write_u64(samples + s * 8, total_reset_ns);
+        s = s + 1;
     }
 
     sort_samples(samples, num_samples);
@@ -88,11 +83,15 @@ fn measure_n(n: i32, iters: u64, label: &str) {
 }
 
 fn main() -> i32 {
-    // Measure region with 10, 100, 1000 allocations
-    // If dealloc is O(1), ns_per_op should scale linearly with N (alloc cost)
-    // but the dealloc component should be constant
-    measure_n(10, 10000, "10");
-    measure_n(100, 1000, "100");
-    measure_n(1000, 100, "1000");
+    // Create a single region (16MB initial, 1GB max)
+    let rid: u64 = region_create(16777216, 1073741824);
+
+    // Measure reset time with 10, 100, 1000 allocations
+    // If dealloc is O(1), ns_per_op should be constant
+    measure_reset(rid, 10, 10000, "10");
+    measure_reset(rid, 100, 10000, "100");
+    measure_reset(rid, 1000, 10000, "1000");
+
+    region_destroy(rid);
     0
 }

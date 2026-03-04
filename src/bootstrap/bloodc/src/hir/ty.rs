@@ -281,10 +281,12 @@ impl Type {
             // ADTs: look up fields and check if all are Copy
             TypeKind::Adt { def_id, args: _ } => {
                 // Try to get field types. If we can't look them up, assume not Copy.
+                // For structs: returns struct field types.
+                // For enums: returns all variant field types (enum is Copy if all are).
                 if let Some(field_types) = adt_fields(*def_id) {
                     field_types.iter().all(|t| t.is_copy(adt_fields))
                 } else {
-                    // Enums or unknown ADTs are not Copy
+                    // Unknown ADTs are not Copy
                     false
                 }
             }
