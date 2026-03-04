@@ -271,7 +271,10 @@ Qed.
     - Definitions: COMPLETE
     - Theorem statements: COMPLETE
     - Phase M1 proofs: FULLY MECHANIZED (0 Admitted)
+    - Phase M2 (effects): FULLY MECHANIZED (0 Admitted)
     - Phase M3 (linearity): 4 Admitted in LinearSafety.v
+      (requires strengthening T_Var/T_Const leaf rules and
+       rebuilding substitution infrastructure; see LinearSafety.v header)
     - Axioms: 1 (continuation_expr_is_value)
     - Parameters: 1 (extract_gen_refs)
 *)

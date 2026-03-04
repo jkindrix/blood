@@ -6,6 +6,43 @@
     Reference: FORMAL_SEMANTICS.md §8 (Linear Types and Effects Interaction)
     Phase: M3 — Linearity
     Task: FORMAL-004
+
+    Status: 4 Admitted — requires Phase M3 typing rule changes.
+
+    The 4 theorems below require strengthening the core typing rules
+    in Typing.v before they become provable. Specifically:
+
+    1. T_Var must check Delta: require [nth_error Delta x = Some (_, false)]
+       and that all other linear bindings are consumed
+       ([all_others_linear_consumed Delta x]).
+
+    2. T_Const must check Delta: require [all_linear_consumed Delta]
+       (no unconsumed linear bindings).
+
+    3. RFT_Cons must add [lin_split] across record fields (currently
+       shares Delta without splitting).
+
+    4. HWF must add a multi-shot linear restriction (no linear captures
+       when resume is used more than once).
+
+    These changes break the [has_type_lin_irrelevant] lemma in
+    Substitution.v (which proves typing is independent of Delta),
+    cascading through [subst_preserves_typing], Preservation.v,
+    and ContextTyping.v. The full Phase M3 plan:
+
+    a. Strengthen Typing.v leaf rules (T_Var, T_Const, RFT_Nil/Cons)
+    b. Add a linearity-introduction mechanism (T_Let/T_Lam should use
+       [lin_of_type A] instead of always [Lin_Unrestricted])
+    c. Replace [has_type_lin_irrelevant] with linearity-preserving
+       substitution lemmas
+    d. Cascade through all [has_type_mut_ind] users
+    e. Prove the 4 theorems below
+
+    Counter-example proving current rules insufficient:
+      [has_type Sigma [TyI32] [(Lin_Linear, false)]
+                (E_Const (Const_I32 42)) (Ty_Base TyI32) Eff_Pure]
+    holds by T_Const (which accepts any Delta), yet
+      [count_var 0 (E_Const (Const_I32 42)) = 0 <> 1].
 *)
 
 From Stdlib Require Import String.
@@ -123,7 +160,13 @@ Definition multishot_handler_safe
 
     Reference: FORMAL_SEMANTICS.md §11.4
 
-    In a well-typed program, no linear value is used more than once. *)
+    In a well-typed program, no linear value is used more than once.
+
+    ADMITTED — Phase M3 prerequisite: T_Var must check Delta
+    (require binding available + all other linears consumed),
+    and T_Const must require [all_linear_consumed Delta].
+    Without these, T_Var/T_Const accept any Delta, making the
+    theorem false (see counter-example in file header). *)
 
 Theorem linear_safety_static :
   forall Sigma Gamma Delta e T eff,
@@ -133,29 +176,32 @@ Theorem linear_safety_static :
       nth_error Delta x = Some (Lin_Linear, false) ->
       linear_used_once x e.
 Proof.
-  intros Sigma Gamma Delta e T eff Htype.
-  (* By induction on the typing derivation.
+  (* Proof strategy (once Phase M3 typing changes are made):
 
-     Key cases:
+     By mutual induction on the typing derivation.
 
-     T_Var: e = E_Var y.
-       If x = y, count = 1. If x ≠ y, x must be used elsewhere
-       (the linear binding must be used somewhere in the program).
+     T_Var y: If x = y, count_var y (E_Var y) = 1. Done.
+       If x <> y, [all_others_linear_consumed Delta y] contradicts
+       [nth_error Delta x = Some (Lin_Linear, false)].
 
-     T_App: e = E_App e1 e2.
-       Δ = Δ₁ ⊗ Δ₂. The linear binding goes to exactly one side.
-       If x is in Δ₁, by IH count_var x e1 = 1 and x is marked
-       used in Δ₂ (so not counted in e2).
-       Similarly if x is in Δ₂.
+     T_Const: [all_linear_consumed Delta] contradicts the premise.
 
-     T_Let: Similar to T_App with context splitting.
+     T_App (e1 e2): lin_split sends the linear binding to exactly
+       one side. Apply IH to that side (count = 1); the other side
+       has the binding marked consumed (count = 0).
 
-     T_Handle: For multi-shot handlers, the handler well-formedness
-       condition ensures no linear captures (cf. §8.1).
+     T_Let, T_Handle: Similar lin_split reasoning.
+
+     T_Record: With lin_split across fields (RFT_Cons change),
+       the linear binding goes to exactly one field.
   *)
 Admitted.
 
-(** ** Affine Safety Theorem *)
+(** ** Affine Safety Theorem
+
+    ADMITTED — Phase M3 prerequisite: same as [linear_safety_static].
+    T_Var must check Delta; T_Const must require all linears consumed.
+    Affine differs only in allowing count = 0 (via [Split_Affine_Neither]). *)
 
 Theorem affine_safety_static :
   forall Sigma Gamma Delta e T eff,
@@ -164,9 +210,9 @@ Theorem affine_safety_static :
       nth_error Delta x = Some (Lin_Affine, false) ->
       affine_used_at_most_once x e.
 Proof.
-  (* Similar to linear safety, but allows count = 0 or 1.
-     The context splitting rules allow affine bindings to go
-     to one side, both sides (with neither using), etc. *)
+  (* Same structure as linear_safety_static but with <= 1 instead of = 1.
+     The Split_Affine_Neither constructor allows an affine binding
+     to be consumed on neither side (count = 0), giving the <= 1 bound. *)
 Admitted.
 
 (** ** Linear values survive single-shot handlers
@@ -199,7 +245,11 @@ Proof.
   intros. exact I.
 Qed.
 
-(** ** Multi-shot handlers cannot capture linear values *)
+(** ** Multi-shot handlers cannot capture linear values
+
+    ADMITTED — Phase M3 prerequisite: HWF must add a multi-shot
+    linear restriction premise requiring [no_linear_captures Delta body]
+    when [count_var 1 body > 1] (resume used multiple times). *)
 
 Theorem multishot_no_linear_capture :
   forall Sigma Gamma Delta h eff_name comp_ty result_ty handler_eff comp_eff,
@@ -213,14 +263,14 @@ Theorem multishot_no_linear_capture :
     (* Then no linear values from the outer context *)
     multishot_handler_safe h Delta.
 Proof.
-  (* By the handler well-formedness typing rule (§6.2):
-     "If handler is multi-shot:
-        ∀i. LinearVars(FV(e_opᵢ) ∩ Γ) = ∅"
-
-     This is enforced during type checking. The typing derivation
-     for the handler clause requires that no linear bindings from
-     Delta are used in the clause body when resume can be called
-     multiple times. *)
+  (* Once HWF includes the multi-shot linear restriction premise,
+     this follows directly by inversion on HWF and the new premise.
+     The proof sketch:
+     1. Invert HWF to get [op_clauses_well_formed] and the new
+        multi-shot restriction.
+     2. The restriction says: for each clause where resume is used > 1
+        times, no linear bindings from Delta appear in the body.
+     3. This is exactly [multishot_handler_safe]. *)
 Admitted.
 
 (** ** Effect suspension and linearity
@@ -230,7 +280,12 @@ Admitted.
     At perform, all linear values in scope must be:
     1. Consumed before the perform, or
     2. Passed as part of the argument, or
-    3. Explicitly transferred to the continuation *)
+    3. Explicitly transferred to the continuation
+
+    ADMITTED — Phase M3 prerequisite: T_Var must check Delta.
+    Once T_Var requires [all_others_linear_consumed], the argument
+    sub-expression is the ONLY place where x can be used (since
+    T_Perform doesn't introduce new bindings). *)
 
 Theorem effect_suspension_linear_safety :
   forall Sigma Gamma Delta eff_nm op arg_e (T : ty) eff,
@@ -244,13 +299,11 @@ Theorem effect_suspension_linear_safety :
       (* x must appear in arg_e *)
       var_in x arg_e.
 Proof.
-  (* By the typing rule T-Perform:
-     The linearity context Delta must have no unconsumed linear
-     bindings except those transferred via the argument.
-
-     This is enforced by the context splitting rules:
-     all linear bindings must go to a sub-derivation where they
-     are actually used. *)
+  (* Once Phase M3 typing changes are made:
+     1. Invert T_Perform to get [has_type ... arg_e arg_ty eff'].
+     2. Apply [linear_safety_static] to the sub-derivation:
+        count_var x arg_e = 1.
+     3. Since count_var x arg_e = 1 > 0, [var_in x arg_e] holds. *)
 Admitted.
 
 (** ** Summary: linearity is preserved through all features
@@ -259,7 +312,13 @@ Admitted.
     1. Standard evaluation (context splitting)
     2. Effect handling (multi-shot restriction)
     3. Continuation capture (suspension rules)
-    4. Generation snapshots (orthogonal to linearity) *)
+    4. Generation snapshots (orthogonal to linearity)
+
+    Phase M3 status: 4 Admitted (linear_safety_static, affine_safety_static,
+    multishot_no_linear_capture, effect_suspension_linear_safety).
+    All require strengthening Typing.v leaf rules and rebuilding the
+    substitution/preservation infrastructure without [has_type_lin_irrelevant].
+    See file header for the full Phase M3 plan. *)
 
 Theorem linear_safety_complete :
   forall Sigma e T,
