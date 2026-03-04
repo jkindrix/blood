@@ -64,23 +64,32 @@ pub fn emit_statement(
                 ctx.end_call();
             } else if ctx.is_persistent_allocated(*local) {
                 // Persistent-allocated local: decrement reference count
+                // Load slot_id from the tracked slot_id alloca (NOT the pointer alloca)
                 ctx.write("    ; storage dead (persistent) ");
                 ctx.write_string(&name);
                 ctx.newline();
-                let slot_val = ctx.fresh_temp_cg();
-                ctx.emit_load_cg(&slot_val, "i64", name.as_str());
-                // Only decrement if slot_id != 0 (0 means uninitialized)
-                let cmp_val = ctx.fresh_temp_cg();
-                ctx.emit_icmp_cg2(&cmp_val, "ne", "i64", &slot_val, "0");
-                let then_label = ctx.fresh_label_cg();
-                let end_label = ctx.fresh_label_cg();
-                ctx.emit_cond_br_cg(&cmp_val, &then_label, &end_label);
-                ctx.emit_label_cg(&then_label);
-                ctx.begin_call(Option.None, "void", "@blood_persistent_decrement");
-                ctx.call_arg_cg(true, "i64", &slot_val);
-                ctx.end_call();
-                ctx.emit_br_cg(&end_label);
-                ctx.emit_label_cg(&end_label);
+                match ctx.get_persistent_slot_id_name(*local) {
+                    Option.Some(slot_id_alloca_name) => {
+                        let slot_val = ctx.fresh_temp_cg();
+                        ctx.emit_load_cg(&slot_val, "i64", slot_id_alloca_name.as_str());
+                        // Only decrement if slot_id != 0 (0 means uninitialized)
+                        let cmp_val = ctx.fresh_temp_cg();
+                        ctx.emit_icmp_cg2(&cmp_val, "ne", "i64", &slot_val, "0");
+                        let then_label = ctx.fresh_label_cg();
+                        let end_label = ctx.fresh_label_cg();
+                        ctx.emit_cond_br_cg(&cmp_val, &then_label, &end_label);
+                        ctx.emit_label_cg(&then_label);
+                        ctx.begin_call(Option.None, "void", "@blood_persistent_decrement");
+                        ctx.call_arg_cg(true, "i64", &slot_val);
+                        ctx.end_call();
+                        ctx.emit_br_cg(&end_label);
+                        ctx.emit_label_cg(&end_label);
+                    }
+                    Option.None => {
+                        // Should not happen: persistent-allocated but no slot_id tracked
+                        ctx.write("    ; WARNING: persistent local without slot_id tracking\n");
+                    }
+                }
             } else {
                 // Stack-allocated local: no cleanup needed
                 ctx.write("    ; storage dead ");
@@ -1181,8 +1190,8 @@ pub fn emit_allocas_with_escapes(
                 &mir_escape.MemoryTier.Persistent => {
                     // Persistent allocation
                     let name = ctx.local_alloca_name(local_id);
-                    emit_persistent_local(ctx, local.ty, &name);
-                    ctx.mark_persistent_allocated(local_id);
+                    let slot_id_name: String = emit_persistent_local(ctx, local.ty, &name);
+                    ctx.mark_persistent_allocated(local_id, slot_id_name);
                 }
             }
         }
@@ -1250,12 +1259,12 @@ fn emit_region_local(
     ctx.set_local_generation(local_id, gen_name);
 }
 
-/// Emits a persistent-allocated local.
+/// Emits a persistent-allocated local. Returns the name of the alloca holding the slot_id.
 fn emit_persistent_local(
     ctx: &mut codegen_ctx.CodegenCtx,
     ty_id: type_intern.TyId,
     name: &String,
-) {
+) -> String {
     // Allocate pointer slot on stack for the result
     let name_cg = codegen_ctx.CgName.Str(clone_string(name));
     ctx.emit_alloca_cg(&name_cg, "ptr");
@@ -1264,6 +1273,9 @@ fn emit_persistent_local(
     // blood_persistent_alloc writes the slot ID to this address
     let slot_id_tmp = ctx.fresh_temp_cg();
     ctx.emit_alloca_cg(&slot_id_tmp, "i64");
+
+    // Initialize slot_id to 0 (so StorageDead skips decrement if alloc wasn't called)
+    ctx.emit_store_str_cg("i64", "0", &slot_id_tmp);
 
     // Call @blood_persistent_alloc(size, align, type_fp, out_id)
     // Use TyId-native size computation which correctly handles registered
@@ -1281,6 +1293,9 @@ fn emit_persistent_local(
 
     // Store returned pointer
     ctx.emit_store_cg("ptr", &result_tmp, name.as_str());
+
+    // Return the slot_id alloca name for tracking
+    cgname_to_string(&slot_id_tmp)
 }
 
 /// Returns true if the type is Copy (can be stack-allocated regardless of escape).

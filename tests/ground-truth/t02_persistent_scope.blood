@@ -1,0 +1,38 @@
+// Test: non-copy value outlives inner scope via reference store (GlobalEscape)
+// EXPECT: 7
+// EXPECT: 15
+enum Outcome {
+    Ok(i32),
+    Err,
+}
+
+fn unwrap_outcome(r: Outcome) -> i32 {
+    match r {
+        Outcome.Ok(n) => n,
+        Outcome.Err => -1,
+    }
+}
+
+fn compute_and_store(dest: &mut Outcome, a: i32, b: i32) {
+    let sum: i32 = a + b;
+    *dest = Outcome.Ok(sum);
+}
+
+fn main() -> i32 {
+    // Value stored through ref from a function call
+    let mut r1: Outcome = Outcome.Err;
+    compute_and_store(&mut r1, 3, 4);
+    let v1: i32 = unwrap_outcome(r1);
+    println_int(v1); // 7
+    if v1 != 7 { return 1; }
+
+    // Multiple stores to the same location
+    let mut r2: Outcome = Outcome.Err;
+    compute_and_store(&mut r2, 1, 2);   // r2 = Ok(3)
+    compute_and_store(&mut r2, 5, 10);  // r2 = Ok(15)
+    let v2: i32 = unwrap_outcome(r2);
+    println_int(v2); // 15
+    if v2 != 15 { return 2; }
+
+    0
+}

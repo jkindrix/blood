@@ -369,8 +369,12 @@ struct RegionLocalEntry {
 }
 
 /// Tracks a local that was allocated via persistent (ref-counted) allocation.
+/// The slot_id_name is the LLVM alloca holding the i64 slot ID returned by
+/// blood_persistent_alloc. StorageDead must load from this alloca (not the
+/// pointer alloca) to call blood_persistent_decrement with the correct ID.
 struct PersistentLocalEntry {
     local_id: u32,
+    slot_id_name: String,
 }
 
 /// Mapping from a MIR local to its generation alloca SSA name.
@@ -1169,9 +1173,10 @@ impl CodegenCtx {
     }
 
     /// Marks a local as persistent-allocated (will be decremented on StorageDead).
-    pub fn mark_persistent_allocated(self: &mut CodegenCtx, local: mir_def.MirLocalId) {
-        self.persistent_locals.push(PersistentLocalEntry { local_id: local.index });
-        self.persistent_locals_hash.insert(local.index as u64, 1);
+    /// The slot_id_name is the LLVM alloca that holds the i64 slot ID.
+    pub fn mark_persistent_allocated(self: &mut CodegenCtx, local: mir_def.MirLocalId, slot_id_name: String) {
+        self.persistent_locals.push(PersistentLocalEntry { local_id: local.index, slot_id_name: slot_id_name });
+        self.persistent_locals_hash.insert(local.index as u64, self.persistent_locals.len() as u32);
     }
 
     /// Returns true if a local is region-allocated.
@@ -1182,6 +1187,17 @@ impl CodegenCtx {
     /// Returns true if a local is persistent-allocated.
     pub fn is_persistent_allocated(self: &CodegenCtx, local: mir_def.MirLocalId) -> bool {
         self.persistent_locals_hash.contains_key(local.index as u64)
+    }
+
+    /// Returns the slot_id alloca name for a persistent-allocated local.
+    pub fn get_persistent_slot_id_name(self: &CodegenCtx, local: mir_def.MirLocalId) -> Option<&String> {
+        match self.persistent_locals_hash.get(local.index as u64) {
+            Option.Some(idx) => {
+                let i: usize = (idx - 1) as usize;
+                Option.Some(&self.persistent_locals[i].slot_id_name)
+            }
+            Option.None => Option.None,
+        }
     }
 
     /// Returns true if a local is the handler op state pointer.

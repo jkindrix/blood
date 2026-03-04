@@ -1,0 +1,57 @@
+// Test: non-copy enum values through multiple reference stores (persistent allocation)
+// EXPECT: 6
+// EXPECT: 1
+// EXPECT: 0
+enum Tag {
+    A(i32),
+    B(i32),
+    None,
+}
+
+fn get_tag_value(t: Tag) -> i32 {
+    match t {
+        Tag.A(n) => n,
+        Tag.B(n) => n,
+        Tag.None => 0,
+    }
+}
+
+fn is_a(t: Tag) -> bool {
+    match t {
+        Tag.A(_) => true,
+        Tag.B(_) => false,
+        Tag.None => false,
+    }
+}
+
+fn swap_tags(a: &mut Tag, b: &mut Tag) {
+    // Read current values
+    let va: i32 = get_tag_value(*a);
+    let vb: i32 = get_tag_value(*b);
+    // Swap: write each value to the other location
+    *a = Tag.A(vb);
+    *b = Tag.B(va);
+}
+
+fn main() -> i32 {
+    // Create two tagged values and swap them
+    let mut t1: Tag = Tag.A(3);
+    let mut t2: Tag = Tag.B(6);
+    swap_tags(&mut t1, &mut t2);
+    // After swap: t1 has value 6 (from t2), t2 has value 3 (from t1)
+    let v1: i32 = get_tag_value(t1);
+    println_int(v1); // 6
+    if v1 != 6 { return 1; }
+
+    // Verify tag variant changed
+    let a1: bool = is_a(t1);
+    println_int(if a1 { 1 } else { 0 }); // 1 (swapped into A)
+
+    let a2: bool = is_a(t2);
+    println_int(if a2 { 1 } else { 0 }); // 0 (swapped into B)
+
+    let v2: i32 = get_tag_value(t2);
+    if v2 != 3 { return 2; }
+
+    0
+}

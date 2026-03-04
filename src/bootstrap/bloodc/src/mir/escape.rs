@@ -20,7 +20,7 @@
 //! |-------|-------------|-------------|------------|-------------------|
 //! | NoEscape | Value doesn't escape function | Stack (Tier 0) | `alloca` | NO |
 //! | ArgEscape | Escapes via argument/return | Region (Tier 1) | `blood_alloc_or_abort` | YES |
-//! | GlobalEscape | Escapes to global/heap | Region (Tier 1) | `blood_alloc_or_abort` | YES |
+//! | GlobalEscape | Escapes to global/heap | Persistent (Tier 2) | `blood_persistent_alloc` | NO (RC) |
 //! | Effect-captured | Captured by effect operation | Region (Tier 1) | `blood_alloc_or_abort` | YES |
 //!
 //! ## Generation Check Details
@@ -101,7 +101,7 @@ impl EscapeState {
         match self {
             EscapeState::NoEscape => MemoryTier::Stack,
             EscapeState::ArgEscape => MemoryTier::Region,
-            EscapeState::GlobalEscape => MemoryTier::Region, // or Persistent if long-lived
+            EscapeState::GlobalEscape => MemoryTier::Persistent,
         }
     }
 }
@@ -923,7 +923,7 @@ mod tests {
     fn test_escape_state_recommended_tier() {
         assert_eq!(EscapeState::NoEscape.recommended_tier(), MemoryTier::Stack);
         assert_eq!(EscapeState::ArgEscape.recommended_tier(), MemoryTier::Region);
-        assert_eq!(EscapeState::GlobalEscape.recommended_tier(), MemoryTier::Region);
+        assert_eq!(EscapeState::GlobalEscape.recommended_tier(), MemoryTier::Persistent);
     }
 
     #[test]
@@ -1540,10 +1540,10 @@ mod tests {
 
             // recommended_tier matches the state
             let tier = state.recommended_tier();
-            if state == EscapeState::NoEscape {
-                assert_eq!(tier, MemoryTier::Stack);
-            } else {
-                assert_eq!(tier, MemoryTier::Region);
+            match state {
+                EscapeState::NoEscape => assert_eq!(tier, MemoryTier::Stack),
+                EscapeState::ArgEscape => assert_eq!(tier, MemoryTier::Region),
+                EscapeState::GlobalEscape => assert_eq!(tier, MemoryTier::Persistent),
             }
         }
     }

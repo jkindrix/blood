@@ -96,7 +96,7 @@ The following table tracks implementation status of SSM (Synthetic Safety Model)
 | Generation check emission | ✅ Implemented | `bloodc/src/codegen/mir_codegen.rs` | blood_validate_generation at derefs |
 | Snapshot validation at runtime | ✅ Implemented | `blood-runtime/src/ffi_exports.rs` | blood_snapshot_validate FFI |
 | Region management | ✅ Implemented | `blood-runtime/src/memory.rs` | Slot, Region types |
-| Persistent tier (Tier 3) | 📋 Designed | — | RC + cycle collection |
+| Persistent tier (Tier 2) | ✅ Implemented | `mir/escape.rs`, `codegen_stmt.blood` | RC alloc + decrement on StorageDead |
 
 **Legend**: ✅ Implemented | 🔶 Partial | 📋 Designed | ❌ Not Started
 
@@ -2137,8 +2137,8 @@ In debug builds:
 | | FLAGS | ✅ Implemented | `mir/ptr.rs` | MUT, LINEAR, FROZEN, NULLABLE |
 | | TYPE_FP | ✅ Implemented | `mir/ptr.rs` | 24-bit type fingerprint |
 | **64-bit Stack Ptr** | ADDRESS | ✅ Implemented | `mir/ptr.rs` | Tier 0 thin pointers |
-| **Persistent Slot** | REFCOUNT | 📋 Designed | — | Deferred RC planned |
-| | WEAK_COUNT | 📋 Designed | — | Weak reference support |
+| **Persistent Slot** | REFCOUNT | ✅ Implemented | `blood-runtime/src/memory.rs` | RC increment/decrement via FFI |
+| | WEAK_COUNT | ✅ Implemented | `blood-runtime/src/memory.rs` | Weak reference support |
 | | METADATA | 📋 Designed | — | Per-slot metadata |
 
 **Legend**: ✅ Implemented | 🔶 Partial | 📋 Designed | ❌ Not Started

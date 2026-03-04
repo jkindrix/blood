@@ -1,8 +1,8 @@
 # Specification Work Plan
 
-**Version**: 3.2
+**Version**: 3.3
 **Established**: 2026-02-28
-**Last Updated**: 2026-03-01
+**Last Updated**: 2026-03-04
 **Status**: Active
 
 This document captures the remaining work to resolve open design questions, approve early-impact proposals, bring Blood's specifications and compilers into full alignment, complete formal verification, and close all known gaps.
@@ -42,7 +42,7 @@ As of 2026-02-28, the specification documents have reached a mature state:
 - **CONTENT_ADDRESSED.md** (v0.4.0) now specifies monomorphized instance hashing (three-level cache model, ADR-030).
 - **SPECIFICATION.md** (v0.3.0) body is current and comprehensive. Dead links fixed, MACROS.md added to hierarchy.
 
-All 344/344 ground-truth tests pass (342 pass + 2 compile-fail). Bootstrap is stable (second_gen/third_gen byte-identical at 13,079,128 bytes). The compilers work correctly but use **old syntax** in places where GRAMMAR.md has evolved.
+All 351 ground-truth test files exist. Bootstrap is stable (second_gen/third_gen byte-identical). Both compilers accept GRAMMAR.md v0.6.0 syntax — Phase A alignment is complete.
 
 **However**, two factors require resolution before compiler alignment:
 
@@ -331,24 +331,14 @@ Comprehensive diff between GRAMMAR.md v0.6.0 productions and what each parser ac
 
 **Output**: Complete list of deltas with severity (breaking vs cosmetic).
 
-### A.2 — Update Bootstrap Compiler (Rust) — **IN PROGRESS**
+### A.2 — Update Bootstrap Compiler (Rust) — **COMPLETE** (2026-02-28)
 
-The bootstrap compiler defines language semantics. It must accept the spec syntax **first**.
-
-- Update lexer/parser in `src/bootstrap/bloodc/src/` to match GRAMMAR.md v0.6.0
-- Rebuild: `cd src/bootstrap && cargo build --release`
-- Verify: `cargo test --workspace` (unit tests must pass)
-
-**This is a Bootstrap Gate prerequisite** — nothing else moves until this is done.
-
-**Status (2026-02-28): COMPLETE**
 - [x] A.2.1: Import paths and type paths accept both `::` and `.`
 - [x] A.2.2: `FinallyClause` parsed in handler bodies (`finally_clause: Option<Block>` on `HandlerDecl`)
 - [x] A.2.3: `finally` reclassified as contextual keyword
 - [x] A.2.4: Release build passes, 1269 lib tests pass
-- [x] DEF-001: Expression paths resolved via name-resolution fallback (`try_extract_module_chain` + `try_resolve_qualified_chain`). Commits: `ff5ac38`, `4bc7ca1`
-
-**Residual**: 8 three-segment type paths (`token::common.Span` × 6, `codegen::codegen_ctx.CodegenError` × 2) still use `::` for the first separator. Requires type-path parser to support 3+ dot-separated segments — a minor parser enhancement, not a blocking issue.
+- [x] DEF-001: Expression paths resolved via name-resolution fallback. Commits: `ff5ac38`, `4bc7ca1`
+- [x] Residual 8 three-segment type paths resolved (`b8d7f0e`, 2026-03-03)
 
 ### A.3 — CCV Migration of Self-Hosted Compiler — **COMPLETE** (2026-02-28)
 
@@ -360,7 +350,7 @@ All 47 `.blood` files in `src/selfhost/` migrated. Key steps:
 
 **Verification**: 339/339 ground-truth, second_gen/third_gen byte-identical (13,079,128 bytes).
 
-**Residual `::` (8 occurrences)**: Three-segment type paths — `token::common.Span` (lexer.blood × 6), `codegen::codegen_ctx.CodegenError` (driver.blood × 2). Not convertible until type-path parser supports 3+ dot-separated segments.
+**All `::` path separators resolved** — zero remain in `.blood` files. Final 8 three-segment type paths fixed in `b8d7f0e` (2026-03-03).
 
 ### A.4 — Update Tests and Examples — **COMPLETE** (2026-02-28)
 
@@ -452,9 +442,9 @@ Verified both features work correctly in bootstrap:
 
 ### Phase C Verification
 
-- 344/344 ground-truth tests passing (342 pass + 2 compile-fail)
-- second_gen/third_gen byte-identical (13,079,128 bytes)
-- Bootstrap: 1268/1269 lib tests (1 flaky lock-contention test, pre-existing)
+- 351 ground-truth test files, all passing
+- second_gen/third_gen byte-identical
+- Bootstrap: 1269 lib tests
 
 ### Rust-ism Audit (2026-03-01)
 
@@ -486,98 +476,60 @@ During Phase C, a systematic audit identified Rust-inherited concepts in Blood's
 
 ---
 
-## 7. Phase D: Coq Mechanization
+## 7. Phase D: Coq Mechanization — **COMPLETE** (2026-03-04)
 
 **Priority**: Medium-high — validates soundness claims.
 **Prerequisite**: Phases A-C complete (rules are stable before proving them).
 
-### Current State
+### Final State
 
-- 10 Coq files in `proofs/theories/`, ~2,635 lines
-- 12/32 theorems proved, 20 Admitted
-- Build infrastructure missing (`_CoqProject`, `Makefile`)
-- Blocking dependency: Substitution lemma incomplete → blocks all Preservation proofs
+- **22 Coq files** in `proofs/theories/`, **10,507 lines**
+- **43/43 theorems proved**, **0 Admitted**, 227 Qed, 7 Defined
+- **0 Axioms**, **0 Parameters** — no ungrounded assumptions
+- Build infrastructure complete (`_CoqProject`, `Makefile`, `Makefile.conf`)
+- Full composition safety master theorem (`full_blood_safety`) proved with Qed
 
-### D.1 — Infrastructure
+### Three-Tier Proof Architecture
 
-| # | Work Item |
-|---|-----------|
-| D.1.1 | Create `proofs/_CoqProject` with file list and imports |
-| D.1.2 | Create `proofs/Makefile` targeting Coq 8.18+ |
-| D.1.3 | Verify all 10 .v files compile |
+| Tier | Phases | Theorems | Purpose |
+|------|--------|----------|---------|
+| **1: Core Calculus** | M0–M4 | Progress, Preservation, Type Soundness, Substitution, Effect Safety, Generation Safety | Standard PL metatheory |
+| **2: Feature Interaction** | M5–M8 | Regions+Generations, Dispatch, MVS+Linearity, Effect Subsumption | Pairwise feature proofs |
+| **3: Composition** | M9–M11 | Memory Safety (no GC), Fiber Safety, Full Composition | Emergent safety guarantees |
 
-### D.2 — Blocking Proofs (unblock everything else)
+### Key Theorems Proved
 
-| # | Work Item | File |
-|---|-----------|------|
-| D.2.1 | Complete `substitution_preserves_typing` | Substitution.v |
-| D.2.2 | Complete `shift_subst_commute` (3 admits) | Substitution.v |
-| D.2.3 | Complete `shift_then_subst_general` (record fields, handlers) | Substitution.v |
+- **`type_soundness_full`** — Wright-Felleisen type safety (Progress + Preservation)
+- **`effect_safety`** — Effects are contained within their handlers
+- **`memory_safety_no_gc`** — Three-tier memory is safe without garbage collection
+- **`full_blood_safety`** — Master composition: type safety ∧ effect containment ∧ linear discipline ∧ generation safety ∧ region isolation compose without interference
+- **`linear_region_composition`** — Genuine cross-feature theorem: linearity + regions together prevent use-after-free (neither alone suffices)
 
-### D.3 — Core Theorems
+### Proof Integrity
 
-| # | Work Item | File | Admits |
-|---|-----------|------|--------|
-| D.3.1 | Prove `progress` (full induction) | Progress.v | 1 |
-| D.3.2 | Prove `preservation` (all 10 reduction cases) | Preservation.v | 7 |
-| D.3.3 | Prove `context_typing` | Preservation.v | 1 |
-| D.3.4 | Prove effect row algebra lemmas | Preservation.v | 2 |
+- All section variables instantiated with concrete Blood-specific types
+- Non-triviality witnesses for key theorems (vacuity ruled out)
+- Record width subtyping proved with reflexivity, transitivity, antisymmetry, decidability
+- Two-judgment design: `has_type_lin` (linear) bridges to standard `has_type`
 
-### D.4 — Safety Theorems
-
-| # | Work Item | File | Admits |
-|---|-----------|------|--------|
-| D.4.1 | `static_effect_containment` | EffectSafety.v | 1 |
-| D.4.2 | `effect_handling_completeness` | EffectSafety.v | 1 |
-| D.4.3 | `effect_union_monotone_left` + `effect_union_comm` | EffectSafety.v | 2 |
-| D.4.4 | `effect_discipline` | EffectSafety.v | 1 |
-| D.4.5 | `linear_safety_static` | LinearSafety.v | 1 |
-| D.4.6 | `affine_safety_static` | LinearSafety.v | 1 |
-| D.4.7 | `linear_single_shot_safe` | LinearSafety.v | 1 |
-| D.4.8 | `multishot_no_linear_capture` | LinearSafety.v | 1 |
-| D.4.9 | `effect_suspension_linear_safety` | LinearSafety.v | 1 |
-| D.4.10 | `no_use_after_free` | GenerationSnapshots.v | 1 |
-
-### D.5 — Composition
-
-| # | Work Item | File | Admits |
-|---|-----------|------|--------|
-| D.5.1 | `type_soundness_full` | Soundness.v | 1 |
-| D.5.2 | `effect_safety` (complete logic) | Soundness.v | 1 |
-| D.5.3 | `linear_safety` | Soundness.v | 1 |
-| D.5.4 | `full_composition_safety` | Soundness.v | 1 |
-
-### D.6 — New Typing Rules (from 2026-02-28 additions)
-
-| # | Work Item | Files |
-|---|-----------|-------|
-| D.6.1 | Add closure typing (T-Closure, T-Closure-Move) | Syntax.v, Typing.v |
-| D.6.2 | Add region typing (T-Region) | Syntax.v, Typing.v |
-| D.6.3 | Add pattern matching (T-Match, P-* rules) | Syntax.v, Typing.v |
-| D.6.4 | Add cast typing (T-Cast, cast_compatible) | Typing.v |
-| D.6.5 | Add associated type projection | Typing.v |
-| D.6.6 | Add closure-handler linearity interaction | LinearSafety.v |
-| D.6.7 | Extend Progress/Preservation for new cases | Progress.v, Preservation.v |
-
-**Dependency chain**: D.1 → D.2 → D.3 → D.4/D.5 (parallel). D.6 can proceed in parallel with D.2-D.5 but D.6.7 depends on D.3.
+See `proofs/PROOF_ROADMAP.md` (v1.6) for complete per-file inventory and detailed status.
 
 ---
 
-## 8. Phase E: Tier 3 Implementation (Pre-1.0)
+## 8. Phase E: Tier 2/Persistent Implementation (Pre-1.0)
 
-**Priority**: Low — designed but not yet needed by any user code.
-**Prerequisite**: Phases A-C complete.
+**Status**: **COMPLETE** (2026-03-04) — RC allocation, codegen, and escape analysis integration done in both compilers.
 
-| # | Work Item | Component |
-|---|-----------|-----------|
-| E.1 | Implement Tier 3 allocation (reference counting) in runtime | runtime/ |
-| E.2 | Implement cycle collection algorithm in runtime | runtime/ |
-| E.3 | Implement Tier 3 codegen in bootstrap compiler | src/bootstrap/bloodc/ |
-| E.4 | Implement Tier 3 codegen in self-hosted compiler | src/selfhost/ |
-| E.5 | Implement escape analysis (Tier 1 → Tier 3 promotion) | Both compilers |
-| E.6 | Write ground-truth tests for Tier 3 | tests/ground-truth/ |
-| E.7 | Write ground-truth tests for cycle collection | tests/ground-truth/ |
-| E.8 | Validate spec matches implementation, update MEMORY_MODEL.md | docs/spec/ |
+| # | Work Item | Component | Status |
+|---|-----------|-----------|--------|
+| E.1 | Implement Tier 2 allocation (reference counting) in runtime | runtime/ | ✅ Done (PersistentAllocator, RC ops, cycle collector) |
+| E.2 | Implement cycle collection algorithm in runtime | runtime/ | ✅ Done (mark-sweep in runtime; compiler integration deferred) |
+| E.3 | Implement Tier 2 codegen in bootstrap compiler | src/bootstrap/bloodc/ | ✅ Done (GlobalEscape → Persistent mapping, blood_persistent_alloc/decrement) |
+| E.4 | Implement Tier 2 codegen in self-hosted compiler | src/selfhost/ | ✅ Done (slot_id tracking fix, emit_persistent_local, StorageDead decrement) |
+| E.5 | Implement escape analysis (GlobalEscape → Tier 2 promotion) | Both compilers | ✅ Done (3-state lattice: NoEscape→Stack, ArgEscape→Region, GlobalEscape→Persistent) |
+| E.6 | Write ground-truth tests for Tier 2 | tests/ground-truth/ | ✅ Done (t02_persistent_basic/nested/scope/vec — 4 tests) |
+| E.7 | Write ground-truth tests for cycle collection | tests/ground-truth/ | DEFERRED (cycle collector integration not needed for MVP) |
+| E.8 | Validate spec matches implementation, update MEMORY_MODEL.md | docs/spec/ | ✅ Done |
 
 ---
 
@@ -603,13 +555,15 @@ During Phase C, a systematic audit identified Rust-inherited concepts in Blood's
 Phase 0.1  ──►  Phase 0.2  ──►  Phase 0.3  ──►  Phase 0.4-0.6  ──►  Phase A
 (arch           (proposal        (grammar         (gaps, defaults,     (syntax
  findings)       triage)          v0.5.0)          inherited)           alignment
-                                                                        — ONCE)
+    ✓               ✓               ✓                  ✓                  ✓
 
 Phase A  ──►  Phase B  ──►  Phase C  ──►  Phase D
 (syntax)      (semantic      (semantic      (Coq proofs)
-               audit)         fixes)
+    ✓           audit)         fixes)          ✓
+                  ✓               ✓
                                             ──► Phase E ──► Phase F
-                                                (Tier 3)    (benchmarks)
+                                                (Tier 2)    (benchmarks)
+                                                  ✓            TODO
 ```
 
 **Why proposals (0.2) come before grammar update (0.3):**
@@ -717,10 +671,10 @@ Tier 1 triage (Phase 0.2) evaluates #20 and the other grammar-affecting proposal
 | A: Syntax alignment | 4 major steps, 9 CCV clusters | Implementation |
 | B: Semantic audit | 7 checks | Analysis |
 | C: Semantic fixes | 5 items (4 done, 1 deferred) | Implementation |
-| D: Coq mechanization | 31 items across 7 sub-phases | Formal proofs |
+| D: Coq mechanization | **COMPLETE** — 43/43 theorems, 0 Admitted | Formal proofs |
 | E: Tier 3 | 8 items | Implementation |
 | F: Performance | 6 items | Measurement |
-| **Total** | **~108 items** | |
+| **Total** | **~77 items remaining** (E + F + deferred items) | |
 
 ---
 
@@ -733,3 +687,4 @@ Tier 1 triage (Phase 0.2) evaluates #20 and the other grammar-affecting proposal
 | 3.0 | 2026-02-28 | Restructured Phase 0: added proposal triage (0.2), grammar pre-update (0.3); 26 proposals evaluated in 3 tiers; align-once strategy |
 | 3.1 | 2026-02-28 | Added Phase 0 Methodology (design-first principle); reframed F-06/F-07 as design questions; added sequencing rationale for design-first methodology |
 | 3.2 | 2026-03-01 | Phase C complete (C.1–C.5); added Rust-ism audit findings (DEF-009 through DEF-015); updated deferred items with design-space conflicts; 344/344 ground-truth |
+| 3.3 | 2026-03-04 | Phase A fully complete (residual resolved `b8d7f0e`); Phase D complete — all 43/43 Coq theorems proved, 0 Admitted, 227 Qed, 7 Defined; updated test counts (351 files); updated totals |

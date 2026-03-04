@@ -1,0 +1,36 @@
+// Test: non-copy value written through mutable reference (GlobalEscape → persistent tier)
+// EXPECT: 42
+// EXPECT: 99
+enum Value {
+    Num(i32),
+    None,
+}
+
+fn extract(v: Value) -> i32 {
+    match v {
+        Value.Num(n) => n,
+        Value.None => 0,
+    }
+}
+
+fn set_value(r: &mut Value, n: i32) {
+    *r = Value.Num(n);
+}
+
+fn main() -> i32 {
+    // Create enum value and write through mutable reference
+    let mut v: Value = Value.None;
+    set_value(&mut v, 42);
+    let n1: i32 = extract(v);
+    println_int(n1); // 42
+    if n1 != 42 { return 1; }
+
+    // Overwrite with a different value
+    let mut v2: Value = Value.Num(0);
+    set_value(&mut v2, 99);
+    let n2: i32 = extract(v2);
+    println_int(n2); // 99
+    if n2 != 99 { return 2; }
+
+    0
+}

@@ -1,0 +1,45 @@
+// Test: non-copy value through chain of function calls (nested GlobalEscape)
+// EXPECT: 30
+// EXPECT: 100
+enum Slot {
+    Val(i32),
+    Empty,
+}
+
+fn unslot(b: Slot) -> i32 {
+    match b {
+        Slot.Val(n) => n,
+        Slot.Empty => -1,
+    }
+}
+
+fn store_slot(dest: &mut Slot, n: i32) {
+    *dest = Slot.Val(n);
+}
+
+fn transform_slot(src: Slot, dest: &mut Slot) {
+    let n: i32 = unslot(src);
+    store_slot(dest, n * 10);
+}
+
+fn main() -> i32 {
+    // Chain: create → transform → read
+    let b1: Slot = Slot.Val(3);
+    let mut b2: Slot = Slot.Empty;
+    transform_slot(b1, &mut b2);
+    let r1: i32 = unslot(b2);
+    println_int(r1); // 30
+    if r1 != 30 { return 1; }
+
+    // Double transform chain
+    let b3: Slot = Slot.Val(1);
+    let mut b4: Slot = Slot.Empty;
+    transform_slot(b3, &mut b4);  // b4 = Val(10)
+    let mut b5: Slot = Slot.Empty;
+    transform_slot(b4, &mut b5);  // b5 = Val(100)
+    let r2: i32 = unslot(b5);
+    println_int(r2); // 100
+    if r2 != 100 { return 2; }
+
+    0
+}
