@@ -165,7 +165,7 @@ Proof.
       (* Replace E_Perform with E_Var 0 *)
       eapply T_Handle.
       - apply Split_Unrestricted. apply Split_Nil.
-      - eapply Hreplace2.
+      - apply (Hreplace2 [(Lin_Unrestricted, false)]).
         apply T_Sub with (eff := Eff_Pure).
         + apply T_Var. reflexivity.
         + simpl. auto.
@@ -254,7 +254,7 @@ Proof.
       rewrite H1 in Hl1'. injection Hl1' as <-.
       rewrite H2 in Hl2'. injection Hl2' as <- <-.
       (* Replace E_Perform with E_Var 0 — get D[y] : comp_ty / comp_eff *)
-      eapply Hreplace2.
+      apply (Hreplace2 [(Lin_Unrestricted, false)]).
       apply T_Sub with (eff := Eff_Pure).
       + apply T_Var. reflexivity.
       + simpl. auto. }
@@ -317,7 +317,7 @@ Proof.
       injection Heqeconst as Hc. subst. simpl in HeqTarrow. discriminate.
     + (* T_Sub: recurse — T_Sub preserves the type *)
       exact (IHHty1 Heqeconst HeqTarrow).
-Admitted.
+Qed.
 
 Theorem preservation :
   forall Sigma e e' T eff M M',
