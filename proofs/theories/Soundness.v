@@ -275,6 +275,8 @@ Qed.
     - Phase M3 (linearity): 4 Admitted in LinearSafety.v
       (requires strengthening T_Var/T_Const leaf rules and
        rebuilding substitution infrastructure; see LinearSafety.v header)
+    - Phase M5 (regions): FULLY MECHANIZED (0 Admitted) in Regions.v
+    - Phase M6 (dispatch): FULLY MECHANIZED (0 Admitted) in Dispatch.v
     - Axioms: 1 (continuation_expr_is_value)
     - Parameters: 1 (extract_gen_refs)
 *)
