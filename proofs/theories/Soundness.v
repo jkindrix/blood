@@ -276,6 +276,7 @@ Qed.
       LinearTyping.v + LinearSafety.v (via two-judgment design)
     - Phase M5 (regions): FULLY MECHANIZED (0 Admitted) in Regions.v
     - Phase M6 (dispatch): FULLY MECHANIZED (0 Admitted) in Dispatch.v
+    - Phase M7 (MVS x linearity): FULLY MECHANIZED (0 Admitted) in ValueSemantics.v
     - Phase M10 (concurrency): FULLY MECHANIZED (0 Admitted) in FiberSafety.v
     - Axioms: 1 (continuation_expr_is_value)
     - Parameters: 1 (extract_gen_refs)
