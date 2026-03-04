@@ -156,7 +156,7 @@ Proof.
 
   (** EC_Handle h E': plug = E_Handle h (plug E' e0) *)
   - destruct (has_type_handle_inv _ _ _ _ _ Hty)
-      as [en [ct [he [ce [Htye [Hwf Hsub]]]]]].
+      as [en [ct [he [ce [Htye [Hwf [Hpass Hsub]]]]]]].
     destruct (IHE _ _ _ Htye) as [A' [eff_inner [He0 Hreplace]]].
     exists A', eff_inner. split.
     + exact He0.
@@ -168,6 +168,7 @@ Proof.
         -- apply Split_Nil.
         -- exact (Hreplace e' He').
         -- exact Hwf.
+        -- exact Hpass.
       * exact Hsub.
 Qed.
 
@@ -213,106 +214,6 @@ Proof.
       try (subst; inversion Hin; fail);
       try (apply H; exact Hin);
       auto.
-Qed.
-
-(** ** plug_delimited preserves effect containment
-
-    If D[perform eff_nm.op(v)] is well-typed with effect eff,
-    then eff_nm is in eff. *)
-
-Lemma plug_delimited_perform_effect :
-  forall Sigma D eff_nm op v T eff,
-    has_type Sigma [] []
-      (plug_delimited D (E_Perform eff_nm op (value_to_expr v))) T eff ->
-    effect_in_row eff_nm eff.
-Proof.
-  intros Sigma D.
-  induction D as [
-    | D' IHD e2_
-    | v_ D' IHD
-    | D' IHD e2_
-    | D' IHD l_
-    | D' IHD T_
-    | en_ opn_ D' IHD
-    | done_ l_ D' IHD rest_
-  ]; intros eff_nm op0 v0 T eff Htype; simpl in *.
-
-  - (* DC_Hole *)
-    exact (perform_requires_effect _ _ _ _ _ _ Htype).
-
-  - (* DC_AppFun *)
-    remember (E_App (plug_delimited D' (E_Perform eff_nm op0 (value_to_expr v0))) e2_) as eform.
-    remember (@nil ty) as Gamma. remember (@nil (linearity * bool)) as Delta.
-    induction Htype; try discriminate.
-    + injection Heqeform as H1_ H2_. subst.
-      apply lin_split_nil_inv in H as [HD1 HD2]. subst.
-      eapply effect_in_union_right. eapply effect_in_union_left.
-      exact (IHD eff_nm op0 v0 _ eff1 Htype1).
-    + subst. eapply effect_in_row_subset; [| eassumption].
-      eapply IHHtype; try reflexivity. exact IHD.
-
-  - (* DC_AppArg *)
-    remember (E_App (value_to_expr v_) (plug_delimited D' (E_Perform eff_nm op0 (value_to_expr v0)))) as eform.
-    remember (@nil ty) as Gamma. remember (@nil (linearity * bool)) as Delta.
-    induction Htype; try discriminate.
-    + injection Heqeform as H1_ H2_. subst.
-      apply lin_split_nil_inv in H as [HD1 HD2]. subst.
-      eapply effect_in_union_right. eapply effect_in_union_right.
-      exact (IHD eff_nm op0 v0 _ eff2 Htype2).
-    + subst. eapply effect_in_row_subset; [| eassumption].
-      eapply IHHtype; try reflexivity. exact IHD.
-
-  - (* DC_Let *)
-    remember (E_Let (plug_delimited D' (E_Perform eff_nm op0 (value_to_expr v0))) e2_) as eform.
-    remember (@nil ty) as Gamma. remember (@nil (linearity * bool)) as Delta.
-    induction Htype; try discriminate.
-    + injection Heqeform as H1_ H2_. subst.
-      apply lin_split_nil_inv in H as [HD1 HD2]. subst.
-      eapply effect_in_union_left.
-      exact (IHD eff_nm op0 v0 _ eff1 Htype1).
-    + subst. eapply effect_in_row_subset; [| eassumption].
-      eapply IHHtype; try reflexivity. exact IHD.
-
-  - (* DC_Select *)
-    remember (E_Select (plug_delimited D' (E_Perform eff_nm op0 (value_to_expr v0))) l_) as eform.
-    remember (@nil ty) as Gamma. remember (@nil (linearity * bool)) as Delta.
-    induction Htype; try discriminate.
-    + injection Heqeform as H1_ H2_. subst.
-      exact (IHD eff_nm op0 v0 _ eff Htype).
-    + subst. eapply effect_in_row_subset; [| eassumption].
-      eapply IHHtype; try reflexivity. exact IHD.
-
-  - (* DC_Annot *)
-    remember (E_Annot (plug_delimited D' (E_Perform eff_nm op0 (value_to_expr v0))) T_) as eform.
-    remember (@nil ty) as Gamma. remember (@nil (linearity * bool)) as Delta.
-    induction Htype; try discriminate.
-    + injection Heqeform as H1_ H2_. subst.
-      exact (IHD eff_nm op0 v0 _ eff Htype).
-    + subst. eapply effect_in_row_subset; [| eassumption].
-      eapply IHHtype; try reflexivity. exact IHD.
-
-  - (* DC_PerformArg *)
-    remember (E_Perform en_ opn_ (plug_delimited D' (E_Perform eff_nm op0 (value_to_expr v0)))) as eform.
-    remember (@nil ty) as Gamma. remember (@nil (linearity * bool)) as Delta.
-    induction Htype; try discriminate.
-    + injection Heqeform as H1_ H2_ H3_. subst.
-      eapply effect_in_union_right.
-      exact (IHD eff_nm op0 v0 _ eff' Htype).
-    + subst. eapply effect_in_row_subset; [| eassumption].
-      eapply IHHtype; try reflexivity. exact IHD.
-
-  - (* DC_RecordField *)
-    remember (E_Record (done_ ++ (l_, plug_delimited D' (E_Perform eff_nm op0 (value_to_expr v0))) :: rest_)) as eform.
-    remember (@nil ty) as Gamma. remember (@nil (linearity * bool)) as Delta.
-    induction Htype; try discriminate.
-    + (* T_Record *)
-      injection Heqeform as Hfields. subst.
-      destruct (rft_field_effect_incl _ _ _ _ _ _ _ _ _ H)
-        as [A [eff_e [He Hsub_field]]].
-      eapply effect_in_row_subset; [| exact Hsub_field].
-      exact (IHD eff_nm op0 v0 _ _ He).
-    + subst. eapply effect_in_row_subset; [| eassumption].
-      eapply IHHtype; try reflexivity. exact IHD.
 Qed.
 
 (** ** effect_in_row is incompatible with sub-pure effects *)
@@ -384,6 +285,7 @@ Proof.
     | D' IHD T_
     | en_ opn_ D' IHD
     | done_ l_ D' IHD rest_
+    | h_ D' IHD
   ]; intros e T eff Hty; simpl in *.
 
   (** DC_Hole *)
@@ -514,6 +416,23 @@ Proof.
       * apply T_Record.
         apply Hreplace_rft. exact (Hreplace e' He').
       * exact Hsub.
+
+  (** DC_HandleOther h_ D' *)
+  - destruct (has_type_handle_inv _ _ _ _ _ Hty)
+      as [en [ct [he [ce [Htye [Hwf [Hpass Hsub]]]]]]].
+    destruct (IHD _ _ _ Htye) as [A' [eff_inner [He Hreplace]]].
+    exists A', eff_inner. split.
+    + exact He.
+    + intros e' He'. simpl.
+      apply T_Sub with (eff := he).
+      * apply T_Handle with (Delta1 := []) (Delta2 := [])
+                             (eff_name := en) (comp_ty := ct)
+                             (handler_eff := he) (comp_eff := ce).
+        -- apply Split_Nil.
+        -- exact (Hreplace e' He').
+        -- exact Hwf.
+        -- exact Hpass.
+      * exact Hsub.
 Qed.
 
 (** ** Generalized delimited context typing (arbitrary Gamma/Delta)
@@ -538,6 +457,7 @@ Proof.
     | D' IHD T_
     | en_ opn_ D' IHD
     | done_ l_ D' IHD rest_
+    | h_ D' IHD
   ]; intros e T eff Hty; simpl in *.
 
   (** DC_Hole *)
@@ -638,4 +558,156 @@ Proof.
       * apply T_Record.
         apply Hreplace_rft. exact (Hreplace _ e' He').
       * exact Hsub.
+
+  (** DC_HandleOther h_ D' *)
+  - destruct (has_type_handle_inv_gen _ _ _ _ _ _ _ Hty)
+      as [en [ct [D1 [D2 [he [ce [Hsplit [Htye [Hwf [Hpass Hsub]]]]]]]]]].
+    destruct (IHD _ _ _ (has_type_lin_irrelevant _ _ _ _ _ _ Htye Delta))
+      as [A' [eff_inner [He Hreplace]]].
+    exists A', eff_inner. split.
+    + exact He.
+    + intros Delta' e' He'. simpl.
+      apply T_Sub with (eff := he).
+      * eapply T_Handle.
+        -- exact Hsplit.
+        -- exact (has_type_lin_irrelevant _ _ _ _ _ _ (Hreplace _ e' He') D1).
+        -- exact Hwf.
+        -- exact Hpass.
+      * exact Hsub.
+Qed.
+
+(** ** plug_delimited preserves effect containment
+
+    If D[perform eff_nm.op(v)] is well-typed with effect eff,
+    and no handler in D handles eff_nm, then eff_nm is in eff. *)
+
+Lemma plug_delimited_perform_effect :
+  forall Sigma D eff_nm op v T eff,
+    has_type Sigma [] []
+      (plug_delimited D (E_Perform eff_nm op (value_to_expr v))) T eff ->
+    dc_no_match D eff_nm ->
+    effect_in_row eff_nm eff.
+Proof.
+  intros Sigma D.
+  induction D as [
+    | D' IHD e2_
+    | v_ D' IHD
+    | D' IHD e2_
+    | D' IHD l_
+    | D' IHD T_
+    | en_ opn_ D' IHD
+    | done_ l_ D' IHD rest_
+    | h_ D' IHD
+  ]; intros eff_nm op0 v0 T eff Htype Hdc; simpl in *.
+
+  - (* DC_Hole *)
+    exact (perform_requires_effect _ _ _ _ _ _ Htype).
+
+  - (* DC_AppFun *)
+    remember (E_App (plug_delimited D' (E_Perform eff_nm op0 (value_to_expr v0))) e2_) as eform.
+    remember (@nil ty) as Gamma. remember (@nil (linearity * bool)) as Delta.
+    induction Htype; try discriminate.
+    + injection Heqeform as H1_ H2_. subst.
+      apply lin_split_nil_inv in H as [HD1 HD2]. subst.
+      eapply effect_in_union_right. eapply effect_in_union_left.
+      exact (IHD eff_nm op0 v0 _ eff1 Htype1 Hdc).
+    + subst. eapply effect_in_row_subset; [| eassumption].
+      eapply IHHtype; try reflexivity; try exact IHD; try assumption.
+
+  - (* DC_AppArg *)
+    remember (E_App (value_to_expr v_) (plug_delimited D' (E_Perform eff_nm op0 (value_to_expr v0)))) as eform.
+    remember (@nil ty) as Gamma. remember (@nil (linearity * bool)) as Delta.
+    induction Htype; try discriminate.
+    + injection Heqeform as H1_ H2_. subst.
+      apply lin_split_nil_inv in H as [HD1 HD2]. subst.
+      eapply effect_in_union_right. eapply effect_in_union_right.
+      exact (IHD eff_nm op0 v0 _ eff2 Htype2 Hdc).
+    + subst. eapply effect_in_row_subset; [| eassumption].
+      eapply IHHtype; try reflexivity; try exact IHD; try assumption.
+
+  - (* DC_Let *)
+    remember (E_Let (plug_delimited D' (E_Perform eff_nm op0 (value_to_expr v0))) e2_) as eform.
+    remember (@nil ty) as Gamma. remember (@nil (linearity * bool)) as Delta.
+    induction Htype; try discriminate.
+    + injection Heqeform as H1_ H2_. subst.
+      apply lin_split_nil_inv in H as [HD1 HD2]. subst.
+      eapply effect_in_union_left.
+      exact (IHD eff_nm op0 v0 _ eff1 Htype1 Hdc).
+    + subst. eapply effect_in_row_subset; [| eassumption].
+      eapply IHHtype; try reflexivity; try exact IHD; try assumption.
+
+  - (* DC_Select *)
+    remember (E_Select (plug_delimited D' (E_Perform eff_nm op0 (value_to_expr v0))) l_) as eform.
+    remember (@nil ty) as Gamma. remember (@nil (linearity * bool)) as Delta.
+    induction Htype; try discriminate.
+    + injection Heqeform as H1_ H2_. subst.
+      exact (IHD eff_nm op0 v0 _ eff Htype Hdc).
+    + subst. eapply effect_in_row_subset; [| eassumption].
+      eapply IHHtype; try reflexivity; try exact IHD; try assumption.
+
+  - (* DC_Annot *)
+    remember (E_Annot (plug_delimited D' (E_Perform eff_nm op0 (value_to_expr v0))) T_) as eform.
+    remember (@nil ty) as Gamma. remember (@nil (linearity * bool)) as Delta.
+    induction Htype; try discriminate.
+    + injection Heqeform as H1_ H2_. subst.
+      exact (IHD eff_nm op0 v0 _ eff Htype Hdc).
+    + subst. eapply effect_in_row_subset; [| eassumption].
+      eapply IHHtype; try reflexivity; try exact IHD; try assumption.
+
+  - (* DC_PerformArg *)
+    remember (E_Perform en_ opn_ (plug_delimited D' (E_Perform eff_nm op0 (value_to_expr v0)))) as eform.
+    remember (@nil ty) as Gamma. remember (@nil (linearity * bool)) as Delta.
+    induction Htype; try discriminate.
+    + injection Heqeform as H1_ H2_ H3_. subst.
+      eapply effect_in_union_right.
+      exact (IHD eff_nm op0 v0 _ eff' Htype Hdc).
+    + subst. eapply effect_in_row_subset; [| eassumption].
+      eapply IHHtype; try reflexivity; try exact IHD; try assumption.
+
+  - (* DC_RecordField *)
+    remember (E_Record (done_ ++ (l_, plug_delimited D' (E_Perform eff_nm op0 (value_to_expr v0))) :: rest_)) as eform.
+    remember (@nil ty) as Gamma. remember (@nil (linearity * bool)) as Delta.
+    induction Htype; try discriminate.
+    + (* T_Record *)
+      injection Heqeform as Hfields. subst.
+      destruct (rft_field_effect_incl _ _ _ _ _ _ _ _ _ H)
+        as [A [eff_e [He Hsub_field]]].
+      eapply effect_in_row_subset; [| exact Hsub_field].
+      exact (IHD eff_nm op0 v0 _ _ He Hdc).
+    + subst. eapply effect_in_row_subset; [| eassumption].
+      eapply IHHtype; try reflexivity; try exact IHD; try assumption.
+
+  - (* DC_HandleOther *)
+    destruct Hdc as [Hno_clause Hdc'].
+    destruct (has_type_handle_inv _ _ _ _ _ Htype)
+      as [en_handle [ct [he [ce [Htye [Hwf [Hpass Hsub]]]]]]].
+    assert (Hin_comp : effect_in_row eff_nm ce).
+    { exact (IHD eff_nm op0 v0 _ _ Htye Hdc'). }
+    (* Case split: does the handler handle eff_nm? *)
+    destruct (String.string_dec eff_nm en_handle) as [Heq_en | Hneq_en].
+    + (* eff_nm = en_handle: handler handles this effect.
+         But dc_no_match says no clause handles eff_nm — contradiction. *)
+      subst en_handle.
+      (* From HWF: all ops of the effect have clauses *)
+      inversion Hwf; subst.
+      (* From the computation typing, get the perform *)
+      destruct (delimited_context_typing _ _ _ _ _ Htye)
+        as [A_hole [eff_hole [Hty_perf _]]].
+      destruct (has_type_perform_inv _ _ _ _ _ _ Hty_perf)
+        as [eff_sig' [arg_ty' [ret_ty' [ef' [Hl1 [Hl2 [_ [_ _]]]]]]]].
+      (* Unify eff_sig' with eff_sig from HWF *)
+      match goal with
+      | [ Hlook : lookup_effect Sigma eff_nm = Some eff_sig |- _ ] =>
+          rewrite Hl1 in Hlook; injection Hlook as <-
+      end.
+      (* lookup_op_In: the operation is in the signature *)
+      pose proof (lookup_op_In _ _ _ _ Hl2) as Hop_in_sig.
+      (* all_ops_handled: there exists a clause for this op *)
+      destruct (H2 _ _ _ Hop_in_sig) as [e_body Hcl_in].
+      (* But dc_no_match says every clause has en ≠ eff_nm *)
+      specialize (Hno_clause _ Hcl_in). simpl in Hno_clause.
+      exfalso. exact (Hno_clause eq_refl).
+    + (* eff_nm ≠ en_handle: pass-through *)
+      eapply effect_in_row_subset; [| exact Hsub].
+      exact (Hpass eff_nm Hin_comp Hneq_en).
 Qed.

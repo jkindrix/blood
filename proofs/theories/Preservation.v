@@ -99,7 +99,7 @@ Proof.
 
   (** Case Step_HandleReturn: with h handle v ──► e_ret[v/x] *)
   - destruct (has_type_handle_inv _ _ _ _ _ Htype)
-      as [en [ct [he [ce [Htye [Hwf Hsub]]]]]].
+      as [en [ct [he [ce [Htye [Hwf [_ Hsub]]]]]]].
     inversion Hwf; subst.
     exists he. split.
     + apply substitution_preserves_typing with (U := ct).
@@ -110,7 +110,7 @@ Proof.
   (** Case Step_HandleOpDeep *)
   - (* Invert handle typing *)
     destruct (has_type_handle_inv _ _ _ _ _ Htype)
-      as [en' [comp_ty [handler_eff [comp_eff [Hty_comp [Hwf Hsub_he]]]]]].
+      as [en' [comp_ty [handler_eff [comp_eff [Hty_comp [Hwf [Hpass Hsub_he]]]]]]].
     exists handler_eff. split; [| exact Hsub_he].
 
     (* Invert handler well-formedness *)
@@ -173,7 +173,9 @@ Proof.
         pose proof (handler_weakening_cons _ _ _ _ _ _ _ _ _ ret_ty Hwf) as Hwf_w.
         pose proof (shift_handler_closed_id _ _ _ _ _ _ _ Hwf 1) as Hsh1.
         rewrite Hsh1 in Hwf_w. clear Hsh1.
-        exact Hwf_w. }
+        exact Hwf_w.
+      - (* Pass-through: same as original, effects unchanged by weakening *)
+        exact Hpass. }
 
     (* Weaken kont to [arg_ty] context for substitution at index 1 *)
     pose proof (weakening_cons _ _ _ _ _ _ arg_ty Hkont) as Hkont_w.
@@ -201,7 +203,7 @@ Proof.
   (** Case Step_HandleOpShallow *)
   - (* Invert handle typing *)
     destruct (has_type_handle_inv _ _ _ _ _ Htype)
-      as [en' [comp_ty [handler_eff [comp_eff [Hty_comp [Hwf Hsub_he]]]]]].
+      as [en' [comp_ty [handler_eff [comp_eff [Hty_comp [Hwf [Hpass Hsub_he]]]]]]].
     exists handler_eff. split; [| exact Hsub_he].
 
     (* Invert handler well-formedness *)
@@ -356,5 +358,9 @@ Proof.
     + apply Split_Nil.
     + exact Htype.
     + exact Hwf.
+    + (* Pass-through: comp_eff = {eff_name}, so en <> eff_name is impossible *)
+      intros en Hin Hneq.
+      simpl in Hin. destruct Hin as [Heq | []].
+      injection Heq as Heq. subst. contradiction.
   - exact Hnotin.
 Qed.

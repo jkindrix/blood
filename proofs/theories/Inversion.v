@@ -55,7 +55,7 @@ Proof.
     simpl in Hval. apply T_Record. exact (IH Hval).
   - (* T_Select *) intros ? ? ? ? ? ? ? ? Hty IH Hlook Hval. simpl in Hval. discriminate.
   - (* T_Perform *) intros ? ? ? ? ? ? ? ? ? ? Hlookeff Hlookop Hty IH Hval. simpl in Hval. discriminate.
-  - (* T_Handle *) intros ? ? ? ? ? ? ? ? ? ? ? Hsplit Hty IH Hwf IHwf Hval. simpl in Hval. discriminate.
+  - (* T_Handle *) intros ? ? ? ? ? ? ? ? ? ? ? Hsplit Hty IH Hwf IHwf Hpass Hval. simpl in Hval. discriminate.
   - (* T_Sub *)
     intros Sigma Gamma Delta e T eff eff' Hty IH Hsub Hval.
     apply T_Sub with (eff := Eff_Pure).
@@ -220,6 +220,8 @@ Lemma has_type_handle_inv :
     exists eff_name comp_ty handler_eff comp_eff,
       has_type Sigma [] [] e comp_ty comp_eff /\
       handler_well_formed Sigma [] [] h eff_name comp_ty T handler_eff comp_eff /\
+      (forall en, effect_in_row en comp_eff ->
+         en <> eff_name -> effect_in_row en handler_eff) /\
       effect_row_subset handler_eff eff.
 Proof.
   intros Sigma h e T eff Hty.
@@ -235,12 +237,43 @@ Proof.
     injection Heqehandle as Hh He. subst.
     apply lin_split_nil_inv in H as [HD1 HD2]. subst.
     exists eff_name, comp_ty, handler_eff, comp_eff.
-    split. exact Hty. split. exact H0. apply effect_row_subset_refl.
+    split. exact Hty. split. exact H0. split. exact H1.
+    apply effect_row_subset_refl.
   - (* T_Sub *)
     destruct (IHHty _ _ eq_refl eq_refl eq_refl)
-      as [en [ct [he [ce [Htye [Hwf Hsub_inner]]]]]].
+      as [en [ct [he [ce [Htye [Hwf [Hpass Hsub_inner]]]]]]].
     exists en, ct, he, ce.
-    split. exact Htye. split. exact Hwf.
+    split. exact Htye. split. exact Hwf. split. exact Hpass.
+    eapply effect_row_subset_trans; eassumption.
+Qed.
+
+(** ** Handle type inversion (general context) *)
+
+Lemma has_type_handle_inv_gen :
+  forall Sigma Gamma Delta h e T eff,
+    has_type Sigma Gamma Delta (E_Handle h e) T eff ->
+    exists eff_name comp_ty Delta1 Delta2 handler_eff comp_eff,
+      lin_split Delta Delta1 Delta2 /\
+      has_type Sigma Gamma Delta1 e comp_ty comp_eff /\
+      handler_well_formed Sigma Gamma Delta2 h eff_name comp_ty T handler_eff comp_eff /\
+      (forall en, effect_in_row en comp_eff ->
+         en <> eff_name -> effect_in_row en handler_eff) /\
+      effect_row_subset handler_eff eff.
+Proof.
+  intros Sigma Gamma Delta h e T eff Hty.
+  remember (E_Handle h e) as ehandle.
+  induction Hty; try discriminate.
+  - (* T_Handle *)
+    injection Heqehandle as Hh He. subst.
+    exists eff_name, comp_ty, Delta1, Delta2, handler_eff, comp_eff.
+    split. exact H. split. exact Hty. split. exact H0.
+    split. exact H1. apply effect_row_subset_refl.
+  - (* T_Sub *)
+    destruct (IHHty Heqehandle)
+      as [en [ct [D1 [D2 [he [ce [Hsplit [Htye [Hwf [Hpass Hsub_inner]]]]]]]]]].
+    exists en, ct, D1, D2, he, ce.
+    split. exact Hsplit. split. exact Htye. split. exact Hwf.
+    split. exact Hpass.
     eapply effect_row_subset_trans; eassumption.
 Qed.
 

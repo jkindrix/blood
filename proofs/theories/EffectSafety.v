@@ -31,6 +31,7 @@ From Blood Require Import Soundness.
 Definition effects_contained (Sigma : effect_context) (e : expr) (eff : effect_row) : Prop :=
   forall D eff_nm op v,
     e = plug_delimited D (E_Perform eff_nm op (value_to_expr v)) ->
+    dc_no_match D eff_nm ->
     effect_in_row eff_nm eff.
 
 (** ** Effect elimination through handling
@@ -90,10 +91,10 @@ Theorem static_effect_containment :
 Proof.
   intros Sigma e T Htype.
   unfold effects_contained.
-  intros D eff_nm op v Heq. subst e.
+  intros D eff_nm op v Heq Hdc. subst e.
   (* plug_delimited_perform_effect gives effect_in_row eff_nm Eff_Pure,
      which IS the goal (and equals False by definition) *)
-  exact (plug_delimited_perform_effect Sigma D eff_nm op v T Eff_Pure Htype).
+  exact (plug_delimited_perform_effect Sigma D eff_nm op v T Eff_Pure Htype Hdc).
 Qed.
 
 (** Part 2: Dynamic effect preservation *)
@@ -146,6 +147,10 @@ Proof.
     + apply Split_Nil.
     + exact Htype.
     + exact Hwf.
+    + (* Pass-through: comp_eff = {eff_name}, so en <> eff_name is impossible *)
+      intros en Hin Hneq.
+      simpl in Hin. destruct Hin as [Heq | []].
+      injection Heq as Heq'. subst. contradiction.
   - exact Hnotin.
 Qed.
 
@@ -239,11 +244,10 @@ Theorem effect_discipline :
          - CANNOT be an unhandled perform *)
       ~ (exists D eff_nm op v,
            e' = plug_delimited D (E_Perform eff_nm op (value_to_expr v)) /\
-           (* no handler for eff_nm in scope *)
-           True).
+           dc_no_match D eff_nm).
 Proof.
   intros Sigma e T M Htype e' M' Hsteps.
-  intros [D [eff_nm [op0 [v0 [Heq _]]]]]. subst e'.
+  intros [D [eff_nm [op0 [v0 [Heq Hdc]]]]]. subst e'.
   (* By multi-step preservation, e' has effect eff' ⊆ Pure *)
   destruct (multi_step_type_preservation_sub Sigma _ _ Hsteps T Eff_Pure)
     as [eff' [Htype' Hsub']].
@@ -251,7 +255,7 @@ Proof.
   simpl in *.
   (* The plugged perform introduces eff_nm into eff' *)
   assert (Hin : effect_in_row eff_nm eff').
-  { exact (plug_delimited_perform_effect Sigma D eff_nm op0 v0 T eff' Htype'). }
+  { exact (plug_delimited_perform_effect Sigma D eff_nm op0 v0 T eff' Htype' Hdc). }
   (* But eff' ⊆ Pure, contradiction *)
   exact (effect_in_row_not_pure eff_nm eff' Hin Hsub').
 Qed.

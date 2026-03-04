@@ -321,11 +321,12 @@ Proof.
 
   - (* T_Handle *)
     intros Sigma Gamma Delta Delta1 Delta2 h e eff_name comp_ty result_ty
-           handler_eff comp_eff Hsplit He IHe Hh IHh U n. simpl.
+           handler_eff comp_eff Hsplit He IHe Hh IHh Hpass U n. simpl.
     eapply T_Handle.
     + apply lin_split_insert. exact Hsplit.
     + apply IHe.
     + apply IHh.
+    + exact Hpass.
 
   - (* T_Sub *)
     intros Sigma Gamma Delta e T eff eff' He IHe Hsub U n.
@@ -335,7 +336,7 @@ Proof.
 
   - (* HWF — Handler well-formed *)
     intros Sigma Gamma Delta hk e_ret clauses eff_name comp_ty result_ty
-           handler_eff comp_eff eff_sig Hlookeff Hret IHret Hclauses IHclauses U n.
+           handler_eff comp_eff eff_sig Hlookeff Hret IHret Hclauses IHclauses Hcov U n.
     simpl.
     eapply HWF.
     + exact Hlookeff.
@@ -344,6 +345,13 @@ Proof.
       rewrite insert_at_S_cons in IHret.
       exact IHret.
     + apply IHclauses.
+    + (* all_ops_handled: transform clauses through shift *)
+      intros op_nm0 arg_ty0 ret_ty0 Hin_sig.
+      destruct (Hcov op_nm0 arg_ty0 ret_ty0 Hin_sig) as [e_body0 Hin_cl].
+      exists (shift_expr 1 (S (S n)) e_body0).
+      change (In (shift_op_clause 1 n (OpClause eff_name op_nm0 e_body0))
+                 (map (shift_op_clause 1 n) clauses)).
+      apply in_map. exact Hin_cl.
 
   - (* OpClauses_Nil *)
     intros Sigma Gamma Delta eff_name sig rrt re result_ty eff U n.
@@ -442,19 +450,20 @@ Proof.
   - (* T_Perform *) intros. eapply T_Perform; eauto.
   - (* T_Handle *)
     intros Sigma Gamma Delta Delta1 Delta2 h e eff_name comp_ty result_ty
-           handler_eff comp_eff _ _ IHe _ IHh Delta'.
+           handler_eff comp_eff _ _ IHe _ IHh Hpass Delta'.
     destruct (lin_split_exists Delta') as [D1' [D2' Hsplit']].
-    eapply T_Handle; [exact Hsplit' | apply IHe | apply IHh].
+    eapply T_Handle; [exact Hsplit' | apply IHe | apply IHh | exact Hpass].
   - (* T_Sub *)
     intros Sigma Gamma Delta e T eff eff' _ IH Hsub Delta'.
     apply T_Sub with (eff := eff); [apply IH | exact Hsub].
   - (* HWF *)
     intros Sigma Gamma Delta hk e_ret clauses eff_name comp_ty result_ty
-           handler_eff comp_eff eff_sig Hlook _ IHret _ IHclauses Delta'.
+           handler_eff comp_eff eff_sig Hlook _ IHret _ IHclauses Hcov Delta'.
     eapply HWF.
     + exact Hlook.
     + apply (IHret ((Lin_Unrestricted, false) :: Delta')).
     + apply IHclauses.
+    + exact Hcov.
   - (* OpClauses_Nil *) intros. apply OpClauses_Nil.
   - (* OpClauses_Cons *)
     intros Sigma Gamma Delta eff_nm op_nm e_body rest sig rrt re result_ty
@@ -499,6 +508,7 @@ Proof.
   - apply (has_type_lin_irrelevant _ _ _ _ _ _ H0
              ((Lin_Unrestricted, false) :: Delta')).
   - apply (op_clauses_wf_lin_irrelevant _ _ _ _ _ _ _ _ _ _ H1 Delta').
+  - assumption.
 Qed.
 
 (** ** Lookup in context with element removed *)
@@ -647,6 +657,13 @@ Proof.
     rewrite !insert_at_S_cons in Hw.
     exact Hw.
   - exact (op_clauses_weakening_cons _ _ _ _ _ _ _ _ _ _ W H1).
+  - (* all_ops_handled: clauses shifted, same pattern *)
+    intros op_nm0 arg_ty0 ret_ty0 Hin_sig.
+    destruct (H2 op_nm0 arg_ty0 ret_ty0 Hin_sig) as [e_body0 Hin_cl].
+    exists (shift_expr 1 (S (S 0)) e_body0).
+    change (In (shift_op_clause 1 0 (OpClause eff_name op_nm0 e_body0))
+               (map (shift_op_clause 1 0) clauses)).
+    apply in_map. exact Hin_cl.
 Qed.
 
 (** ** Shift identity for well-typed terms
@@ -723,7 +740,7 @@ Proof.
 
   - (* T_Handle *)
     intros Sigma Gamma Delta Delta1 Delta2 h e eff_name comp_ty result_ty
-           handler_eff comp_eff _ _ IHe _ IHh d. simpl.
+           handler_eff comp_eff _ _ IHe _ IHh _ d. simpl.
     f_equal; [exact (IHh d) | exact (IHe d)].
 
   - (* T_Sub *)
@@ -732,7 +749,7 @@ Proof.
 
   - (* HWF *)
     intros Sigma Gamma Delta hk e_ret clauses eff_name comp_ty result_ty
-           handler_eff comp_eff eff_sig _ _ IHret _ IHclauses d. simpl.
+           handler_eff comp_eff eff_sig _ _ IHret _ IHclauses _ d. simpl.
     f_equal; [exact (IHret d) | exact (IHclauses d)].
 
   - (* OpClauses_Nil *) intros. reflexivity.
@@ -897,7 +914,7 @@ Proof.
 
   - (* T_Handle *)
     intros Sigma Gamma Delta Delta1 Delta2 h e eff_name comp_ty result_ty
-           handler_eff comp_eff Hsplit _ IHe _ IHh j v Sty HnthSty Hval. simpl.
+           handler_eff comp_eff Hsplit _ IHe _ IHh Hpass j v Sty HnthSty Hval. simpl.
     destruct (lin_split_exists (remove_nth j Delta)) as [D1' [D2' Hsplit']].
     eapply T_Handle.
     + exact Hsplit'.
@@ -907,6 +924,7 @@ Proof.
         (IHh j v Sty HnthSty
           (has_type_lin_irrelevant _ _ _ _ _ _ Hval (remove_nth j Delta2)))
         D2').
+    + exact Hpass.
 
   - (* T_Sub *)
     intros Sigma Gamma Delta e T eff eff' _ IH Hsub j v Sty HnthSty Hval.
@@ -914,7 +932,7 @@ Proof.
 
   - (* HWF *)
     intros Sigma Gamma Delta hk e_ret clauses eff_name comp_ty result_ty
-           handler_eff comp_eff eff_sig Hlookeff _ IHret _ IHclauses j v Sty HnthSty Hval.
+           handler_eff comp_eff eff_sig Hlookeff _ IHret _ IHclauses Hcov j v Sty HnthSty Hval.
     simpl. eapply HWF.
     + exact Hlookeff.
     + apply (has_type_lin_irrelevant _ _ _ _ _ _
@@ -923,6 +941,13 @@ Proof.
           ltac:(simpl; apply weakening_cons; exact Hval))
         ((Lin_Unrestricted, false) :: remove_nth j Delta)).
     + exact (IHclauses j v Sty HnthSty Hval).
+    + (* all_ops_handled: transform clauses through subst *)
+      intros op_nm0 arg_ty0 ret_ty0 Hin_sig.
+      destruct (Hcov op_nm0 arg_ty0 ret_ty0 Hin_sig) as [e_body0 Hin_cl].
+      exists (subst (S (S j)) (shift_expr 2 0 v) e_body0).
+      change (In (subst_op_clause j v (OpClause eff_name op_nm0 e_body0))
+                 (map (subst_op_clause j v) clauses)).
+      apply in_map. exact Hin_cl.
 
   - (* OpClauses_Nil *)
     intros Sigma Gamma Delta eff_name sig rrt re result_ty eff j v Sty HnthSty Hval.

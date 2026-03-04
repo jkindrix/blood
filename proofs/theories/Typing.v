@@ -66,6 +66,23 @@ Fixpoint lookup_op (sig : effect_sig) (op : op_name) : option (ty * ty) :=
       else lookup_op rest op
   end.
 
+(** ** lookup_op membership lemma *)
+
+Lemma lookup_op_In :
+  forall sig op arg_ty ret_ty,
+    lookup_op sig op = Some (arg_ty, ret_ty) ->
+    In (op, arg_ty, ret_ty) sig.
+Proof.
+  induction sig as [| [[name a_ty] r_ty] rest IH]; intros op arg_ty ret_ty Hlook.
+  - simpl in Hlook. discriminate.
+  - simpl in Hlook.
+    destruct (op_name_eqb name op) eqn:Heq.
+    + injection Hlook as Ha Hr. subst.
+      unfold op_name_eqb in Heq. apply String.eqb_eq in Heq. subst.
+      left. reflexivity.
+    + right. exact (IH _ _ _ Hlook).
+Qed.
+
 (** ** Record field lookup *)
 
 Fixpoint lookup_field (fields : list (label * ty)) (l : label) : option ty :=
@@ -160,6 +177,10 @@ Inductive handler_well_formed :
                              (match hk with Deep => result_ty | Shallow => comp_ty end)
                              (match hk with Deep => handler_effects | Shallow => comp_eff end)
                              result_ty handler_effects ->
+      (** All operations of the effect are handled by clauses *)
+      (forall op_nm arg_ty ret_ty,
+         In (op_nm, arg_ty, ret_ty) eff_sig ->
+         exists e_body, In (OpClause eff_name op_nm e_body) clauses) ->
       handler_well_formed Sigma Gamma Delta
                           (Handler hk e_ret clauses)
                           eff_name comp_ty result_ty handler_effects comp_eff
@@ -311,9 +332,9 @@ with has_type :
       has_type Sigma Gamma Delta1 e comp_ty comp_eff ->
       handler_well_formed Sigma Gamma Delta2 h
                           eff_name comp_ty result_ty handler_eff comp_eff ->
-      (** After handling, only the handler's own effects remain.
-          This design choice requires that all computation effects
-          are either handled or already in handler_eff. *)
+      (** Unhandled effects pass through the handler *)
+      (forall en, effect_in_row en comp_eff ->
+         en <> eff_name -> effect_in_row en handler_eff) ->
       has_type Sigma Gamma Delta (E_Handle h e) result_ty handler_eff
 
   (** [T-Sub]

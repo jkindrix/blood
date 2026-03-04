@@ -102,7 +102,8 @@ Theorem type_soundness_full :
     (is_value e' = true) \/
     (exists e'' M'', step Sigma (mk_config e' M') (mk_config e'' M'')) \/
     (exists eff_nm op v D,
-       e' = plug_delimited D (E_Perform eff_nm op (value_to_expr v))).
+       e' = plug_delimited D (E_Perform eff_nm op (value_to_expr v)) /\
+       dc_no_match D eff_nm).
 Proof.
   intros Sigma e e' T eff M M' Htype Hsteps.
   destruct (multi_step_type_preservation Sigma _ _ Hsteps T eff) as [eff' Htype'].
@@ -146,7 +147,7 @@ Proof.
        around a perform, because T-Perform requires the effect
        to be in the effect row, which is empty for pure. *)
     exfalso.
-    destruct Hperform as [eff_nm [op0 [v0 [D Heq]]]]. subst e'.
+    destruct Hperform as [eff_nm [op0 [v0 [D [Heq Hdc]]]]]. subst e'.
     (* By multi_step_type_preservation_sub, e' has some type with
        effect eff' where eff' ⊆ Eff_Pure *)
     destruct (multi_step_type_preservation_sub Sigma _ _ Hsteps T Eff_Pure)
@@ -155,7 +156,7 @@ Proof.
     simpl in *.
     (* e' = plug_delimited D (E_Perform ...), so eff_nm is in eff' *)
     assert (Hin : effect_in_row eff_nm eff').
-    { exact (plug_delimited_perform_effect Sigma D eff_nm op0 v0 T eff' Htype'). }
+    { exact (plug_delimited_perform_effect Sigma D eff_nm op0 v0 T eff' Htype' Hdc). }
     (* But eff' ⊆ Pure, so no effects can be in eff' *)
     exact (effect_in_row_not_pure eff_nm eff' Hin Hsub').
 Qed.
@@ -269,18 +270,8 @@ Qed.
     Status of proofs:
     - Definitions: COMPLETE
     - Theorem statements: COMPLETE
-    - Key proof structure: OUTLINED
-    - Full proofs: ADMITTED (require completing inductive cases)
-
-    The Admitted proofs follow standard proof techniques and the
-    detailed proof sketches in FORMAL_SEMANTICS.md §11. Completing
-    them requires:
-    - Canonical forms lemmas for each type constructor
-    - Inversion lemmas for typing derivations
-    - Commutation lemmas for shifting and substitution
-    - Detailed case analysis for each reduction rule
-
-    These are mechanical but substantial. The contribution here is
-    the correct statement of all theorems and the overall proof
-    architecture matching Blood's formal semantics specification.
+    - Phase M1 proofs: FULLY MECHANIZED (0 Admitted)
+    - Phase M3 (linearity): 4 Admitted in LinearSafety.v
+    - Axioms: 1 (continuation_expr_is_value)
+    - Parameters: 1 (extract_gen_refs)
 *)

@@ -103,8 +103,11 @@ Inductive delimited_context : Type :=
   | DC_RecordField :
       list (label * expr) -> label ->
       delimited_context -> list (label * expr) -> delimited_context
+  | DC_HandleOther :
+      handler -> delimited_context -> delimited_context
   .
-  (** Note: NO DC_Handle — that's the key difference *)
+  (** Note: DC_HandleOther allows performs to escape through
+      a handler that does NOT handle the performed effect. *)
 
 (** ** Plug expression into context *)
 
@@ -131,6 +134,28 @@ Fixpoint plug_delimited (D : delimited_context) (e : expr) : expr :=
   | DC_PerformArg eff op D' => E_Perform eff op (plug_delimited D' e)
   | DC_RecordField done l D' rest =>
       E_Record (done ++ (l, plug_delimited D' e) :: rest)
+  | DC_HandleOther h D' =>
+      E_Handle h (plug_delimited D' e)
+  end.
+
+(** ** dc_no_match: no handler in the delimited context handles the effect *)
+
+Fixpoint dc_no_match (D : delimited_context) (eff_nm : effect_name) : Prop :=
+  match D with
+  | DC_Hole => True
+  | DC_AppFun D' _ => dc_no_match D' eff_nm
+  | DC_AppArg _ D' => dc_no_match D' eff_nm
+  | DC_Let D' _ => dc_no_match D' eff_nm
+  | DC_Select D' _ => dc_no_match D' eff_nm
+  | DC_Annot D' _ => dc_no_match D' eff_nm
+  | DC_PerformArg _ _ D' => dc_no_match D' eff_nm
+  | DC_RecordField _ _ D' _ => dc_no_match D' eff_nm
+  | DC_HandleOther h D' =>
+      (match h with Handler _ _ clauses =>
+         forall cl, In cl clauses ->
+           match cl with OpClause en _ _ => en <> eff_nm end
+       end) /\
+      dc_no_match D' eff_nm
   end.
 
 (** ** Extract generation references from a delimited context
@@ -332,4 +357,5 @@ Definition stuck (Sigma : effect_context) (c : config) : Prop :=
   ~ (is_value (cfg_expr c) = true) /\
   ~ (exists c', step Sigma c c') /\
   ~ (exists eff op v D,
-       cfg_expr c = plug_delimited D (E_Perform eff op (value_to_expr v))).
+       cfg_expr c = plug_delimited D (E_Perform eff op (value_to_expr v)) /\
+       dc_no_match D eff).
