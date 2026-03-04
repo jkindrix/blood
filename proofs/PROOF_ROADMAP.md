@@ -46,7 +46,7 @@ Tier 3 proves the whole is greater than the sum of its parts.
 
 ## Current State (2026-03-04)
 
-22 files, 9,678 lines, **0 Admitted**, 210 Qed, **0 Axioms**, 1 Parameter.
+22 files, 9,678 lines, **0 Admitted**, 200 Qed, 1 Defined, **0 Axioms**, 1 Parameter.
 All 22 files fully proved (0 Admitted). **ALL 43/43 theorems PROVED.**
 All 11 phases COMPLETE. Full composition safety master theorem (`full_blood_safety`) is Qed.
 
@@ -79,7 +79,6 @@ Standard PL metatheory. Proves the core calculus is well-behaved.
 | Progress (all 11 cases) | Progress.v | PROVED |
 | Preservation (all 11 cases) | Preservation.v | PROVED |
 | `type_soundness_full` | Soundness.v | PROVED |
-| `full_composition_safety` | Soundness.v | PROVED |
 | Typing inversion (21 lemmas) | Inversion.v | PROVED |
 | Substitution preservation (21 lemmas) | Substitution.v | PROVED |
 | Shift-substitution commutation (4 lemmas) | ShiftSubst.v | PROVED |
@@ -146,7 +145,7 @@ Blood's answer — enforced by the type system — is: you can't. This is a prop
 
 **Depends on:** Phase 1 (SATISFIED)
 
-**Files:** LinearTyping.v (474 lines, 2 Qed), LinearSafety.v (833 lines, 19 Qed)
+**Files:** LinearTyping.v (474 lines, 2 Qed), LinearSafety.v (811 lines, 18 Qed)
 
 **Status:** All 4 previously-admitted theorems proved. 0 Admitted.
 
@@ -226,7 +225,7 @@ shows MVS + linearity = no-aliasing guarantee without Rust's ownership complexit
 
 **Depends on:** Phase 2 (SATISFIED)
 
-**New file:** ValueSemantics.v (425 lines, 16 Qed)
+**New file:** ValueSemantics.v (410 lines, 7 Qed, 1 Defined)
 
 **Status:** All 3 main theorems + 5 additional results proved. 0 Admitted.
 
@@ -298,7 +297,7 @@ and that generations + linearity prevent use-after-free in all three tiers.
 
 **Depends on:** Phase 2 (SATISFIED), Phase 4 (SATISFIED), Phase 5 (SATISFIED), Phase 7 (SATISFIED)
 
-**New file:** MemorySafety.v (359 lines, 8 Qed)
+**New file:** MemorySafety.v (365 lines, 8 Qed)
 
 **Status:** All 5 main theorems + 3 additional results proved. 0 Admitted.
 
@@ -362,7 +361,7 @@ break linear safety, etc.
 
 **Depends on:** All previous phases (ALL SATISFIED)
 
-**New file:** CompositionSafety.v (355 lines, 8 Qed)
+**New file:** CompositionSafety.v (342 lines, 8 Qed)
 
 **Status:** All 5 main theorems + 3 composition witnesses proved. 0 Admitted.
 
@@ -488,7 +487,7 @@ All three completed in sequence. Phase 8 was completed in parallel with Phase 7.
 | Phase 10 | T3 | 412 | — | FiberSafety.v | COMPLETE |
 | Phase 11 | T3 | 355 | — | CompositionSafety.v | COMPLETE |
 
-**Final suite: 22 files, 9,678 lines, 210 Qed, 0 Admitted, 0 Axioms.**
+**Final suite: 22 files, 9,678 lines, 200 Qed, 1 Defined, 0 Admitted, 0 Axioms.**
 
 ---
 
@@ -576,10 +575,12 @@ Confirm:
 | Dispatch.v | 289 | 11 | 0 | Multiple dispatch + type stability |
 | Regions.v | 316 | 10 | 0 | Region safety via generations |
 | FiberSafety.v | 412 | 13 | 0 | Tier-based concurrency safety |
-| ValueSemantics.v | 410 | 15 | 0 | Mutable value semantics (Phase 7) |
+| ValueSemantics.v | 410 | 7 (+1 Defined) | 0 | Mutable value semantics (Phase 7) |
 | EffectSubsumption.v | 432 | 13 | 0 | Effects subsume control flow (Phase 8) |
 | MemorySafety.v | 365 | 8 | 0 | Memory safety without GC (Phase 9) |
 | CompositionSafety.v | 342 | 8 | 0 | Full composition safety (Phase 11) |
+
+**Totals:** 9,678 lines, 200 Qed, 1 Defined, 0 Admitted.
 
 ### Files Modified or Created (by Phase)
 
@@ -730,4 +731,5 @@ Overall:                       43/43 theorems        [====================] 100%
 | 2026-03-04 | 1.1 | Phase 5 (Regions.v), Phase 6 (Dispatch.v), Phase 10 (FiberSafety.v) completed. |
 | 2026-03-04 | 1.2 | Phase 2 COMPLETE: LinearTyping.v (new) + LinearSafety.v (rewritten). 0 Admitted. Two-judgment design. 18 files, 8,229 lines, 168 Qed. All Tier 2 interactions proved except Phase 7. |
 | 2026-03-04 | 1.3 | ALL PHASES COMPLETE. Phases 7, 8, 9, 11 proved. 43/43 theorems proved. Full composition safety master theorem Qed. |
-| 2026-03-04 | 1.4 | Integrity audit: eliminated inconsistent axiom (V_Continuation redesign), removed 5 vacuous True-conclusion placeholders, improved tier_assigned documentation. 0 Axioms, 0 Admitted, 210 Qed. |
+| 2026-03-04 | 1.4 | Integrity audit: eliminated inconsistent axiom (V_Continuation redesign), removed 5 vacuous True-conclusion placeholders, improved tier_assigned documentation. 0 Axioms, 0 Admitted. |
+| 2026-03-04 | 1.4.1 | Fix Qed count: 200 Qed + 1 Defined (was incorrectly reported as 210 Qed). Corrected per-file counts for LinearSafety.v, ValueSemantics.v, MemorySafety.v, CompositionSafety.v. Removed deleted `full_composition_safety` from Phase 1 table. |
