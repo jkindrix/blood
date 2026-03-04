@@ -128,7 +128,8 @@ Qed.
 Theorem effect_handling_completeness :
   forall Sigma h e eff_name comp_ty result_ty handler_eff,
     handler_covers_effect h eff_name Sigma ->
-    handler_well_formed Sigma [] [] h eff_name comp_ty result_ty handler_eff ->
+    handler_well_formed Sigma [] [] h eff_name comp_ty result_ty handler_eff
+                        (Eff_Closed [Eff_Entry eff_name]) ->
     ~ effect_in_row eff_name handler_eff ->
     closed_well_typed Sigma e comp_ty
       (Eff_Closed [Eff_Entry eff_name]) ->

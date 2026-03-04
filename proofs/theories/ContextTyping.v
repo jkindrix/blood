@@ -335,19 +335,19 @@ Qed.
     If a clause is in a well-typed clause list, extract its typing. *)
 
 Lemma op_clause_typing_lookup :
-  forall Sigma Gamma Delta clauses eff_name sig result_ty handler_eff
+  forall Sigma Gamma Delta clauses eff_name sig rrt re result_ty handler_eff
          eff_nm op_nm e_body,
-    op_clauses_well_formed Sigma Gamma Delta clauses eff_name sig result_ty handler_eff ->
+    op_clauses_well_formed Sigma Gamma Delta clauses eff_name sig rrt re result_ty handler_eff ->
     In (OpClause eff_nm op_nm e_body) clauses ->
     eff_nm = eff_name /\
     exists arg_ty ret_ty,
       lookup_op sig op_nm = Some (arg_ty, ret_ty) /\
       has_type Sigma
-               (arg_ty :: Ty_Arrow ret_ty result_ty handler_eff :: Gamma)
+               (arg_ty :: Ty_Arrow ret_ty rrt re :: Gamma)
                ((Lin_Unrestricted, false) :: (Lin_Unrestricted, false) :: Delta)
                e_body result_ty handler_eff.
 Proof.
-  intros Sigma Gamma Delta clauses eff_name sig result_ty handler_eff
+  intros Sigma Gamma Delta clauses eff_name sig rrt re result_ty handler_eff
          eff_nm op_nm e_body Hwf Hin.
   induction Hwf.
   - (* OpClauses_Nil *) destruct Hin.

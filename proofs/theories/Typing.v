@@ -139,9 +139,11 @@ Inductive lin_split :
 
 Inductive handler_well_formed :
     effect_context -> type_context -> lin_context ->
-    handler -> effect_name -> ty -> ty -> effect_row -> Prop :=
+    handler -> effect_name -> ty -> ty -> effect_row ->
+    effect_row ->  (** comp_eff: computation's effect row *)
+    Prop :=
   | HWF : forall Sigma Gamma Delta hk e_ret clauses
-           eff_name comp_ty result_ty handler_effects
+           eff_name comp_ty result_ty handler_effects comp_eff
            eff_sig,
       (** Effect signature lookup *)
       lookup_effect Sigma eff_name = Some eff_sig ->
@@ -149,33 +151,49 @@ Inductive handler_well_formed :
           Γ, x:T ⊢ e_ret : U / ε' *)
       has_type Sigma (comp_ty :: Gamma) ((Lin_Unrestricted, false) :: Delta)
                e_ret result_ty handler_effects ->
-      (** Each operation clause types correctly *)
+      (** Each operation clause types correctly.
+          Resume type depends on handler kind:
+          - Deep: resume : B → U / ε' (handler re-wraps)
+          - Shallow: resume : B → T / ε_comp (raw continuation) *)
       op_clauses_well_formed Sigma Gamma Delta clauses
-                             eff_name eff_sig result_ty handler_effects ->
+                             eff_name eff_sig
+                             (match hk with Deep => result_ty | Shallow => comp_ty end)
+                             (match hk with Deep => handler_effects | Shallow => comp_eff end)
+                             result_ty handler_effects ->
       handler_well_formed Sigma Gamma Delta
                           (Handler hk e_ret clauses)
-                          eff_name comp_ty result_ty handler_effects
+                          eff_name comp_ty result_ty handler_effects comp_eff
 
-(** ** Operation clause typing *)
+(** ** Operation clause typing
+
+    Parameterized by resume type (resume_ret_ty, resume_eff) to support
+    both deep and shallow handlers correctly. *)
 
 with op_clauses_well_formed :
     effect_context -> type_context -> lin_context ->
-    list op_clause -> effect_name -> effect_sig -> ty -> effect_row -> Prop :=
-  | OpClauses_Nil : forall Sigma Gamma Delta eff_name sig result_ty eff,
-      op_clauses_well_formed Sigma Gamma Delta [] eff_name sig result_ty eff
+    list op_clause -> effect_name -> effect_sig ->
+    ty -> effect_row ->        (** resume_ret_ty, resume_eff *)
+    ty -> effect_row ->        (** result_ty, handler_eff *)
+    Prop :=
+  | OpClauses_Nil : forall Sigma Gamma Delta eff_name sig
+                           resume_ret_ty resume_eff result_ty eff,
+      op_clauses_well_formed Sigma Gamma Delta [] eff_name sig
+                             resume_ret_ty resume_eff result_ty eff
   | OpClauses_Cons :
       forall Sigma Gamma Delta eff_name op_nm e_body rest
-             sig result_ty handler_eff arg_ty ret_ty,
+             sig resume_ret_ty resume_eff result_ty handler_eff arg_ty ret_ty,
       lookup_op sig op_nm = Some (arg_ty, ret_ty) ->
-      (** Γ, resume:(B→U/ε'), x:A ⊢ e_body : U / ε' *)
+      (** Γ, resume:(B→resume_ret_ty/resume_eff), x:A ⊢ e_body : U / ε' *)
       has_type Sigma
-               (arg_ty :: Ty_Arrow ret_ty result_ty handler_eff :: Gamma)
+               (arg_ty :: Ty_Arrow ret_ty resume_ret_ty resume_eff :: Gamma)
                ((Lin_Unrestricted, false) :: (Lin_Unrestricted, false) :: Delta)
                e_body result_ty handler_eff ->
-      op_clauses_well_formed Sigma Gamma Delta rest eff_name sig result_ty handler_eff ->
+      op_clauses_well_formed Sigma Gamma Delta rest eff_name sig
+                             resume_ret_ty resume_eff result_ty handler_eff ->
       op_clauses_well_formed Sigma Gamma Delta
                              (OpClause eff_name op_nm e_body :: rest)
-                             eff_name sig result_ty handler_eff
+                             eff_name sig resume_ret_ty resume_eff
+                             result_ty handler_eff
 
 (** ** Main typing judgment
 
@@ -292,12 +310,10 @@ with has_type :
       lin_split Delta Delta1 Delta2 ->
       has_type Sigma Gamma Delta1 e comp_ty comp_eff ->
       handler_well_formed Sigma Gamma Delta2 h
-                          eff_name comp_ty result_ty handler_eff ->
+                          eff_name comp_ty result_ty handler_eff comp_eff ->
       (** After handling, only the handler's own effects remain.
           This design choice requires that all computation effects
-          are either handled or already in handler_eff. It aligns
-          with the absence of a handler-passthrough step rule in
-          the operational semantics (Semantics.v). *)
+          are either handled or already in handler_eff. *)
       has_type Sigma Gamma Delta (E_Handle h e) result_ty handler_eff
 
   (** [T-Sub]

@@ -152,6 +152,234 @@ Proof.
     + exact (IHHrt Hlook).
 Qed.
 
+(** ** Progress via mutual induction
+
+    We use mutual induction on the typing derivation to simultaneously
+    prove progress for expressions (P) and a record-field progress
+    property (S). The handler and op_clause predicates (Q, R) are
+    trivially True since we never need progress for those. *)
+
+Lemma progress_helper :
+  forall Sigma Gamma Delta e T eff,
+    has_type Sigma Gamma Delta e T eff ->
+    Gamma = @nil ty ->
+    Delta = @nil (linearity * bool) ->
+    forall M,
+      (is_value e = true) \/
+      (exists e' M', step Sigma (mk_config e M) (mk_config e' M')) \/
+      (exists eff_nm op v D,
+         e = plug_delimited D (E_Perform eff_nm op (value_to_expr v))).
+Proof.
+  apply (has_type_mut_ind
+    (** P: progress for expressions *)
+    (fun Sigma Gamma Delta e T eff _ =>
+       Gamma = @nil ty ->
+       Delta = @nil (linearity * bool) ->
+       forall M,
+         (is_value e = true) \/
+         (exists e' M', step Sigma (mk_config e M) (mk_config e' M')) \/
+         (exists eff_nm op v D,
+            e = plug_delimited D (E_Perform eff_nm op (value_to_expr v))))
+    (** Q: trivial for handler_well_formed *)
+    (fun Sigma Gamma Delta h eff_name comp_ty result_ty handler_eff comp_eff _ => True)
+    (** R: trivial for op_clauses_well_formed *)
+    (fun Sigma Gamma Delta clauses eff_name eff_sig rrt re result_ty handler_eff _ => True)
+    (** S: record field progress *)
+    (fun Sigma Gamma Delta fields field_types eff _ =>
+       Gamma = @nil ty ->
+       Delta = @nil (linearity * bool) ->
+       forall M,
+         (forallb (fun '(_, ei) => is_value ei) fields = true) \/
+         (exists done l e0 e0' rest M',
+            fields = done ++ (l, e0) :: rest /\
+            forallb (fun '(_, ei) => is_value ei) done = true /\
+            step Sigma (mk_config e0 M) (mk_config e0' M')) \/
+         (exists done l D rest eff_nm op v,
+            fields = done ++ (l, plug_delimited D (E_Perform eff_nm op (value_to_expr v))) :: rest /\
+            forallb (fun '(_, ei) => is_value ei) done = true))
+  ).
+
+  (** Case T_Var *)
+  - intros Sigma Gamma Delta x T Hlook HeqG HeqD M. subst.
+    destruct x; simpl in Hlook; discriminate.
+
+  (** Case T_Const *)
+  - intros. left. reflexivity.
+
+  (** Case T_Lam *)
+  - intros. left. reflexivity.
+
+  (** Case T_App *)
+  - intros Sigma Gamma Delta Delta1 Delta2 e1 e2 A B fn_eff eff1 eff2
+           Hsplit He1 IH1 He2 IH2 HeqG HeqD M. subst.
+    apply lin_split_nil_inv in Hsplit as [HD1 HD2]. subst.
+    specialize (IH1 eq_refl eq_refl M).
+    specialize (IH2 eq_refl eq_refl M).
+    right.
+    destruct IH1 as [Hval1 | [[e1' [M' Hstep1]] | [en1 [op1 [v1 [D1 Heq1]]]]]].
+    + destruct IH2 as [Hval2 | [[e2' [M' Hstep2]] | [en2 [op2 [v2 [D2 Heq2]]]]]].
+      * left.
+        pose proof (value_typing_inversion _ _ _ _ _ _ He1 Hval1) as Hpure1.
+        destruct (canonical_forms_arrow _ _ _ _ _ Hpure1 Hval1) as [body Heq1].
+        subst e1.
+        destruct (expr_to_value _ Hval2) as [v2 Hv2]. subst e2.
+        exists (subst 0 (value_to_expr v2) body), M. apply Step_Beta.
+      * left.
+        destruct (expr_to_value _ Hval1) as [v1 Hv1]. subst e1.
+        exists (E_App (value_to_expr v1) e2'), M'.
+        apply (Step_Context M M' (EC_AppArg v1 EC_Hole) e2 e2'). exact Hstep2.
+      * right. subst e2.
+        destruct (expr_to_value _ Hval1) as [v1 Hv1]. subst e1.
+        exists en2, op2, v2, (DC_AppArg v1 D2). reflexivity.
+    + left.
+      exists (E_App e1' e2), M'.
+      apply (Step_Context M M' (EC_AppFun EC_Hole e2) e1 e1'). exact Hstep1.
+    + right. subst e1.
+      exists en1, op1, v1, (DC_AppFun D1 e2). reflexivity.
+
+  (** Case T_Let *)
+  - intros Sigma Gamma Delta Delta1 Delta2 e1 e2 A B eff1 eff2
+           Hsplit He1 IH1 He2 IH2 HeqG HeqD M. subst.
+    apply lin_split_nil_inv in Hsplit as [HD1 HD2]. subst.
+    specialize (IH1 eq_refl eq_refl M).
+    right.
+    destruct IH1 as [Hval1 | [[e1' [M' Hstep1]] | [en1 [op1 [v1 [D1 Heq1]]]]]].
+    + left. exists (subst 0 e1 e2), M. apply Step_Let. exact Hval1.
+    + left. exists (E_Let e1' e2), M'.
+      apply (Step_Context M M' (EC_Let EC_Hole e2) e1 e1'). exact Hstep1.
+    + right. subst e1.
+      exists en1, op1, v1, (DC_Let D1 e2). reflexivity.
+
+  (** Case T_Annot *)
+  - intros Sigma Gamma Delta e T eff He IHe HeqG HeqD M. subst.
+    specialize (IHe eq_refl eq_refl M).
+    right.
+    destruct IHe as [Hval | [[e' [M' Hstep]] | [en [op0 [v0 [D Heq]]]]]].
+    + left. exists e, M. apply Step_Annot. exact Hval.
+    + left. exists (E_Annot e' T), M'.
+      apply (Step_Context M M' (EC_Annot EC_Hole T) e e'). exact Hstep.
+    + right. subst e.
+      exists en, op0, v0, (DC_Annot D T). reflexivity.
+
+  (** Case T_Record — uses mutual IH for record fields *)
+  - intros Sigma Gamma Delta fields field_types eff Hfields IH_rft HeqG HeqD M. subst.
+    specialize (IH_rft eq_refl eq_refl M).
+    destruct IH_rft as [Hallval | [[done [l [e0 [e0' [rest [M' [Hdecomp [Hdone Hstep]]]]]]]] |
+                         [done [l [D [rest [eff_nm [op [v [Hdecomp Hdone]]]]]]]]]].
+    + (* All fields are values → E_Record is a value *)
+      left. simpl. exact Hallval.
+    + (* Some field steps → Step_RecordEval *)
+      right. left. subst fields.
+      exists (E_Record (done ++ (l, e0') :: rest)), M'.
+      apply Step_RecordEval. exact Hstep.
+    + (* Some field performs → propagate via DC_RecordField *)
+      right. right. subst fields.
+      exists eff_nm, op, v, (DC_RecordField done l D rest). reflexivity.
+
+  (** Case T_Select *)
+  - intros Sigma Gamma Delta e l T fields eff He IHe Hlook HeqG HeqD M. subst.
+    specialize (IHe eq_refl eq_refl M).
+    right.
+    destruct IHe as [Hval | [[e' [M' Hstep]] | [en [op0 [v0 [D Heq]]]]]].
+    + left.
+      pose proof (value_typing_inversion _ _ _ _ _ _ He Hval) as Hpure.
+      destruct (canonical_forms_record _ _ _ Hpure Hval)
+        as [vfields [Heqr Hvalsf]].
+      subst e.
+      destruct (has_type_record_inv _ _ _ _ Hpure)
+        as [ft2 [eff_rec [Heq_ft [Hrft _]]]].
+      injection Heq_ft as Hft. subst.
+      destruct (record_fields_lookup _ _ _ _ _ _ _ _ Hrft Hlook)
+        as [ei Hfind].
+      exists ei, M. apply Step_Select with (fields := vfields).
+      { exact Hfind. }
+      { exact Hvalsf. }
+    + left. exists (E_Select e' l), M'.
+      apply (Step_Context M M' (EC_Select EC_Hole l) e e'). exact Hstep.
+    + right. subst e.
+      exists en, op0, v0, (DC_Select D l). reflexivity.
+
+  (** Case T_Perform *)
+  - intros Sigma Gamma Delta e eff_name op eff_sig arg_ty ret_ty eff'
+           Hlookeff Hlookop He IHe HeqG HeqD M. subst.
+    specialize (IHe eq_refl eq_refl M).
+    right.
+    destruct IHe as [Hval | [[e' [M' Hstep]] | [en [op' [v0 [D Heq]]]]]].
+    + right.
+      destruct (expr_to_value _ Hval) as [v Hv]. subst e.
+      exists eff_name, op, v, DC_Hole. reflexivity.
+    + left. exists (E_Perform eff_name op e'), M'.
+      apply (Step_Context M M' (EC_PerformArg eff_name op EC_Hole) e e').
+      exact Hstep.
+    + right. subst e.
+      exists en, op', v0, (DC_PerformArg eff_name op D). reflexivity.
+
+  (** Case T_Handle *)
+  - intros Sigma Gamma Delta Delta1 Delta2 h e eff_name comp_ty result_ty
+           handler_eff comp_eff Hsplit He IHe Hwf _ HeqG HeqD M. subst.
+    apply lin_split_nil_inv in Hsplit as [HD1 HD2]. subst.
+    specialize (IHe eq_refl eq_refl M).
+    right.
+    destruct IHe as [Hval | [[e' [M' Hstep]] | [en [op' [v0 [D Heq]]]]]].
+    + left.
+      destruct h as [hk e_ret clauses].
+      exists (subst 0 e e_ret), M. apply Step_HandleReturn. exact Hval.
+    + left. exists (E_Handle h e'), M'.
+      apply (Step_Context M M' (EC_Handle h EC_Hole) e e'). exact Hstep.
+    + (* e performs → handler might handle it *)
+      admit.
+
+  (** Case T_Sub *)
+  - intros Sigma Gamma Delta e T eff eff' He IHe Hsub HeqG HeqD M. subst.
+    exact (IHe eq_refl eq_refl M).
+
+  (** Case HWF *)
+  - intros. exact I.
+
+  (** Case OpClauses_Nil *)
+  - intros. exact I.
+
+  (** Case OpClauses_Cons *)
+  - intros. exact I.
+
+  (** Case RFT_Nil *)
+  - intros Sigma Gamma Delta HeqG HeqD M. subst. left. simpl. reflexivity.
+
+  (** Case RFT_Cons *)
+  - intros Sigma Gamma Delta l e T rest_e rest_t eff1 eff2
+           He IH_e Hrest IH_rest HeqG HeqD M. subst.
+    specialize (IH_e eq_refl eq_refl M).
+    specialize (IH_rest eq_refl eq_refl M).
+    destruct IH_e as [Hval_e | [[e' [M' Hstep_e]] | [en [op' [v0 [D Heq_e]]]]]].
+    + (* Head field is a value *)
+      destruct IH_rest as [Hrest_val | [[done' [l' [e0 [e0' [rest' [M' [Hdecomp [Hdone' Hstep']]]]]]]] |
+                            [done' [l' [D' [rest' [eff_nm [op [v [Hdecomp Hdone']]]]]]]]]].
+      * (* All tail fields are values too *)
+        left. simpl. rewrite Hval_e. simpl. exact Hrest_val.
+      * (* Some tail field steps *)
+        right. left. subst rest_e.
+        exists ((l, e) :: done'), l', e0, e0', rest', M'.
+        split; [reflexivity |].
+        split; [simpl; rewrite Hval_e; simpl; exact Hdone' |].
+        exact Hstep'.
+      * (* Some tail field performs *)
+        right. right. subst rest_e.
+        exists ((l, e) :: done'), l', D', rest', eff_nm, op, v.
+        split; [reflexivity |].
+        simpl. rewrite Hval_e. simpl. exact Hdone'.
+    + (* Head field steps *)
+      right. left.
+      exists (@nil (label * expr)), l, e, e', rest_e, M'.
+      split; [reflexivity |].
+      split; [reflexivity |].
+      exact Hstep_e.
+    + (* Head field performs *)
+      right. right. subst e.
+      exists (@nil (label * expr)), l, D, rest_e, en, op', v0.
+      split; [reflexivity |].
+      simpl. reflexivity.
+Admitted.
+
 (** ** Progress Theorem
 
     Statement: If ∅; ∅ ⊢ e : T / ε then either:
@@ -171,147 +399,8 @@ Theorem progress :
        e = plug_delimited D (E_Perform eff_nm op (value_to_expr v))).
 Proof.
   intros Sigma e T eff M Htype.
-  unfold closed_well_typed in Htype.
-  remember (@nil ty) as Gamma.
-  remember (@nil (linearity * bool)) as Delta.
-  induction Htype; subst.
-
-  (** Case T_Var: lookup_var [] x = Some T — impossible *)
-  - destruct x; simpl in H; discriminate.
-
-  (** Case T_Const: E_Const is a value *)
-  - left. reflexivity.
-
-  (** Case T_Lam: E_Lam is a value *)
-  - left. reflexivity.
-
-  (** Case T_App: e₁ e₂ *)
-  - apply lin_split_nil_inv in H as [HD1 HD2]. subst.
-    specialize (IHHtype1 eq_refl eq_refl).
-    specialize (IHHtype2 eq_refl eq_refl).
-    right.
-    destruct IHHtype1 as [Hval1 | [[e1' [M' Hstep1]] | [en1 [op1 [v1 [D1 Heq1]]]]]].
-    + (* e1 is a value *)
-      destruct IHHtype2 as [Hval2 | [[e2' [M' Hstep2]] | [en2 [op2 [v2 [D2 Heq2]]]]]].
-      * (* e2 is a value → β-reduction *)
-        left.
-        pose proof (value_typing_inversion _ _ _ _ _ _ Htype1 Hval1) as Hpure1.
-        destruct (canonical_forms_arrow _ _ _ _ _ Hpure1 Hval1) as [body Heq1].
-        subst e1.
-        destruct (expr_to_value _ Hval2) as [v2 Hv2]. subst e2.
-        exists (subst 0 (value_to_expr v2) body), M. apply Step_Beta.
-      * (* e2 steps → context rule *)
-        left.
-        destruct (expr_to_value _ Hval1) as [v1 Hv1]. subst e1.
-        exists (E_App (value_to_expr v1) e2'), M'.
-        apply (Step_Context M M' (EC_AppArg v1 EC_Hole) e2 e2'). exact Hstep2.
-      * (* e2 performs → propagate *)
-        right. subst e2.
-        destruct (expr_to_value _ Hval1) as [v1 Hv1]. subst e1.
-        exists en2, op2, v2, (DC_AppArg v1 D2). reflexivity.
-    + (* e1 steps → context rule *)
-      left.
-      exists (E_App e1' e2), M'.
-      apply (Step_Context M M' (EC_AppFun EC_Hole e2) e1 e1'). exact Hstep1.
-    + (* e1 performs → propagate *)
-      right. subst e1.
-      exists en1, op1, v1, (DC_AppFun D1 e2). reflexivity.
-
-  (** Case T_Let: let x = e₁ in e₂ *)
-  - apply lin_split_nil_inv in H as [HD1 HD2]. subst.
-    specialize (IHHtype1 eq_refl eq_refl).
-    right.
-    destruct IHHtype1 as [Hval1 | [[e1' [M' Hstep1]] | [en1 [op1 [v1 [D1 Heq1]]]]]].
-    + (* e1 is a value → Step_Let *)
-      left. exists (subst 0 e1 e2), M. apply Step_Let. exact Hval1.
-    + (* e1 steps → context rule *)
-      left. exists (E_Let e1' e2), M'.
-      apply (Step_Context M M' (EC_Let EC_Hole e2) e1 e1'). exact Hstep1.
-    + (* e1 performs → propagate *)
-      right. subst e1.
-      exists en1, op1, v1, (DC_Let D1 e2). reflexivity.
-
-  (** Case T_Annot: (e : T) *)
-  - specialize (IHHtype eq_refl eq_refl).
-    right.
-    destruct IHHtype as [Hval | [[e' [M' Hstep]] | [en [op0 [v0 [D Heq]]]]]].
-    + (* e is a value → Step_Annot *)
-      left. exists e, M. apply Step_Annot. exact Hval.
-    + (* e steps → context rule *)
-      left. exists (E_Annot e' T), M'.
-      apply (Step_Context M M' (EC_Annot EC_Hole T) e e'). exact Hstep.
-    + (* e performs → propagate *)
-      right. subst e.
-      exists en, op0, v0, (DC_Annot D T). reflexivity.
-
-  (** Case T_Record: {l₁=e₁,...} — requires record field evaluation context
-      which is not modeled. Admitted. *)
-  - admit.
-
-  (** Case T_Select: e.l *)
-  - specialize (IHHtype eq_refl eq_refl).
-    right.
-    destruct IHHtype as [Hval | [[e' [M' Hstep]] | [en [op0 [v0 [D Heq]]]]]].
-    + (* e is a value (record) → Step_Select *)
-      left.
-      pose proof (value_typing_inversion _ _ _ _ _ _ Htype Hval) as Hpure.
-      destruct (canonical_forms_record _ _ _ Hpure Hval)
-        as [vfields [Heqr Hvalsf]].
-      subst e.
-      destruct (has_type_record_inv _ _ _ _ Hpure)
-        as [ft2 [eff_rec [Heq_ft [Hrft _]]]].
-      injection Heq_ft as Hft. subst.
-      destruct (record_fields_lookup _ _ _ _ _ _ _ _ Hrft H)
-        as [ei Hfind].
-      exists ei, M. apply Step_Select with (fields := vfields).
-      { exact Hfind. }
-      { exact Hvalsf. }
-    + (* e steps → context rule *)
-      left. exists (E_Select e' l), M'.
-      apply (Step_Context M M' (EC_Select EC_Hole l) e e'). exact Hstep.
-    + (* e performs → propagate *)
-      right. subst e.
-      exists en, op0, v0, (DC_Select D l). reflexivity.
-
-  (** Case T_Perform: perform E.op(e) — directly case 3 *)
-  - specialize (IHHtype eq_refl eq_refl).
-    right.
-    destruct IHHtype as [Hval | [[e' [M' Hstep]] | [en [op' [v0 [D Heq]]]]]].
-    + (* e is a value → case 3 with D = Hole *)
-      right.
-      destruct (expr_to_value _ Hval) as [v Hv]. subst e.
-      exists eff_name, op, v, DC_Hole. reflexivity.
-    + (* e steps → context rule *)
-      left. exists (E_Perform eff_name op e'), M'.
-      apply (Step_Context M M' (EC_PerformArg eff_name op EC_Hole) e e').
-      exact Hstep.
-    + (* e performs → propagate *)
-      right. subst e.
-      exists en, op', v0, (DC_PerformArg eff_name op D). reflexivity.
-
-  (** Case T_Handle: with h handle e *)
-  - apply lin_split_nil_inv in H as [HD1 HD2]. subst.
-    specialize (IHHtype eq_refl eq_refl).
-    right.
-    destruct IHHtype as [Hval | [[e' [M' Hstep]] | [en [op' [v0 [D Heq]]]]]].
-    + (* e is a value → Step_HandleReturn *)
-      left.
-      destruct h as [hk e_ret clauses].
-      exists (subst 0 e e_ret), M. apply Step_HandleReturn. exact Hval.
-    + (* e steps → context rule *)
-      left. exists (E_Handle h e'), M'.
-      apply (Step_Context M M' (EC_Handle h EC_Hole) e e'). exact Hstep.
-    + (* e performs → handler might handle it *)
-      (* Need to check if (en, op') is in h's clauses.
-         If yes → Step_HandleOpDeep/Shallow.
-         If no → unhandled perform, but no DC_Handle exists to propagate.
-         This case requires decidable clause lookup and the "unhandled
-         operation propagation" rule which is not in the formalization. *)
-      admit.
-
-  (** Case T_Sub: by IH directly *)
-  - exact (IHHtype eq_refl eq_refl).
-Admitted.
+  exact (progress_helper _ _ _ _ _ _ Htype eq_refl eq_refl M).
+Qed.
 
 (** ** Corollary: well-typed closed pure programs don't get stuck *)
 

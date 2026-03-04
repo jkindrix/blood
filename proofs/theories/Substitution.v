@@ -244,18 +244,18 @@ Proof.
        has_type Sigma (insert_at n U Gamma)
                       (insert_at n (Lin_Unrestricted, false) Delta)
                       (shift_expr 1 n e) T eff)
-    (fun Sigma Gamma Delta h eff_name comp_ty result_ty handler_eff _ =>
+    (fun Sigma Gamma Delta h eff_name comp_ty result_ty handler_eff comp_eff _ =>
        forall U n,
        handler_well_formed Sigma (insert_at n U Gamma)
                                  (insert_at n (Lin_Unrestricted, false) Delta)
                                  (shift_handler 1 n h)
-                                 eff_name comp_ty result_ty handler_eff)
-    (fun Sigma Gamma Delta clauses eff_name eff_sig result_ty handler_eff _ =>
+                                 eff_name comp_ty result_ty handler_eff comp_eff)
+    (fun Sigma Gamma Delta clauses eff_name eff_sig rrt re result_ty handler_eff _ =>
        forall U n,
        op_clauses_well_formed Sigma (insert_at n U Gamma)
                                     (insert_at n (Lin_Unrestricted, false) Delta)
                                     (map (shift_op_clause 1 n) clauses)
-                                    eff_name eff_sig result_ty handler_eff)
+                                    eff_name eff_sig rrt re result_ty handler_eff)
     (fun Sigma Gamma Delta fields field_types eff _ =>
        forall U n,
        record_fields_typed Sigma (insert_at n U Gamma)
@@ -335,7 +335,7 @@ Proof.
 
   - (* HWF — Handler well-formed *)
     intros Sigma Gamma Delta hk e_ret clauses eff_name comp_ty result_ty
-           handler_eff eff_sig Hlookeff Hret IHret Hclauses IHclauses U n.
+           handler_eff comp_eff eff_sig Hlookeff Hret IHret Hclauses IHclauses U n.
     simpl.
     eapply HWF.
     + exact Hlookeff.
@@ -346,11 +346,11 @@ Proof.
     + apply IHclauses.
 
   - (* OpClauses_Nil *)
-    intros Sigma Gamma Delta eff_name sig result_ty eff U n.
+    intros Sigma Gamma Delta eff_name sig rrt re result_ty eff U n.
     simpl. apply OpClauses_Nil.
 
   - (* OpClauses_Cons *)
-    intros Sigma Gamma Delta eff_name op_nm e_body rest sig result_ty
+    intros Sigma Gamma Delta eff_name op_nm e_body rest sig rrt re result_ty
            handler_eff arg_ty ret_ty Hlookop Hbody IHbody Hrest IHrest U n.
     simpl. eapply OpClauses_Cons.
     + exact Hlookop.
@@ -406,14 +406,14 @@ Proof.
   apply (has_type_mut_ind
     (fun Sigma Gamma Delta e T eff _ =>
        forall Delta', has_type Sigma Gamma Delta' e T eff)
-    (fun Sigma Gamma Delta h eff_name comp_ty result_ty handler_eff _ =>
+    (fun Sigma Gamma Delta h eff_name comp_ty result_ty handler_eff comp_eff _ =>
        forall Delta',
        handler_well_formed Sigma Gamma Delta' h
-                           eff_name comp_ty result_ty handler_eff)
-    (fun Sigma Gamma Delta clauses eff_name eff_sig result_ty handler_eff _ =>
+                           eff_name comp_ty result_ty handler_eff comp_eff)
+    (fun Sigma Gamma Delta clauses eff_name eff_sig rrt re result_ty handler_eff _ =>
        forall Delta',
        op_clauses_well_formed Sigma Gamma Delta' clauses
-                              eff_name eff_sig result_ty handler_eff)
+                              eff_name eff_sig rrt re result_ty handler_eff)
     (fun Sigma Gamma Delta fields field_types eff _ =>
        forall Delta',
        record_fields_typed Sigma Gamma Delta' fields field_types eff)).
@@ -450,14 +450,14 @@ Proof.
     apply T_Sub with (eff := eff); [apply IH | exact Hsub].
   - (* HWF *)
     intros Sigma Gamma Delta hk e_ret clauses eff_name comp_ty result_ty
-           handler_eff eff_sig Hlook _ IHret _ IHclauses Delta'.
+           handler_eff comp_eff eff_sig Hlook _ IHret _ IHclauses Delta'.
     eapply HWF.
     + exact Hlook.
     + apply (IHret ((Lin_Unrestricted, false) :: Delta')).
     + apply IHclauses.
   - (* OpClauses_Nil *) intros. apply OpClauses_Nil.
   - (* OpClauses_Cons *)
-    intros Sigma Gamma Delta eff_nm op_nm e_body rest sig result_ty
+    intros Sigma Gamma Delta eff_nm op_nm e_body rest sig rrt re result_ty
            handler_eff arg_ty ret_ty Hlookop _ IHbody _ IHrest Delta'.
     eapply OpClauses_Cons.
     + exact Hlookop.
@@ -471,12 +471,12 @@ Proof.
 Qed.
 
 Lemma op_clauses_wf_lin_irrelevant :
-  forall Sigma Gamma Delta clauses eff_name sig result_ty handler_eff,
-    op_clauses_well_formed Sigma Gamma Delta clauses eff_name sig result_ty handler_eff ->
+  forall Sigma Gamma Delta clauses eff_name sig rrt re result_ty handler_eff,
+    op_clauses_well_formed Sigma Gamma Delta clauses eff_name sig rrt re result_ty handler_eff ->
     forall Delta',
-    op_clauses_well_formed Sigma Gamma Delta' clauses eff_name sig result_ty handler_eff.
+    op_clauses_well_formed Sigma Gamma Delta' clauses eff_name sig rrt re result_ty handler_eff.
 Proof.
-  intros Sigma Gamma Delta clauses eff_name sig result_ty handler_eff Hcl.
+  intros Sigma Gamma Delta clauses eff_name sig rrt re result_ty handler_eff Hcl.
   induction Hcl; intros Delta'.
   - apply OpClauses_Nil.
   - eapply OpClauses_Cons.
@@ -487,18 +487,18 @@ Proof.
 Qed.
 
 Lemma handler_wf_lin_irrelevant :
-  forall Sigma Gamma Delta h eff_name comp_ty result_ty handler_eff,
-    handler_well_formed Sigma Gamma Delta h eff_name comp_ty result_ty handler_eff ->
+  forall Sigma Gamma Delta h eff_name comp_ty result_ty handler_eff comp_eff,
+    handler_well_formed Sigma Gamma Delta h eff_name comp_ty result_ty handler_eff comp_eff ->
     forall Delta',
-    handler_well_formed Sigma Gamma Delta' h eff_name comp_ty result_ty handler_eff.
+    handler_well_formed Sigma Gamma Delta' h eff_name comp_ty result_ty handler_eff comp_eff.
 Proof.
-  intros Sigma Gamma Delta h eff_name comp_ty result_ty handler_eff Hwf Delta'.
+  intros Sigma Gamma Delta h eff_name comp_ty result_ty handler_eff comp_eff Hwf Delta'.
   inversion Hwf; subst.
   eapply HWF.
   - eassumption.
   - apply (has_type_lin_irrelevant _ _ _ _ _ _ H0
              ((Lin_Unrestricted, false) :: Delta')).
-  - apply (op_clauses_wf_lin_irrelevant _ _ _ _ _ _ _ _ H1 Delta').
+  - apply (op_clauses_wf_lin_irrelevant _ _ _ _ _ _ _ _ _ _ H1 Delta').
 Qed.
 
 (** ** Lookup in context with element removed *)
@@ -607,14 +607,14 @@ Qed.
 (** ** Weakening at position 0 for op_clauses *)
 
 Lemma op_clauses_weakening_cons :
-  forall Sigma Gamma Delta clauses eff_name eff_sig result_ty handler_eff W,
-    op_clauses_well_formed Sigma Gamma Delta clauses eff_name eff_sig result_ty handler_eff ->
+  forall Sigma Gamma Delta clauses eff_name eff_sig rrt re result_ty handler_eff W,
+    op_clauses_well_formed Sigma Gamma Delta clauses eff_name eff_sig rrt re result_ty handler_eff ->
     op_clauses_well_formed Sigma (W :: Gamma)
                                   ((Lin_Unrestricted, false) :: Delta)
                                   (map (shift_op_clause 1 0) clauses)
-                                  eff_name eff_sig result_ty handler_eff.
+                                  eff_name eff_sig rrt re result_ty handler_eff.
 Proof.
-  intros Sigma Gamma Delta clauses eff_name eff_sig result_ty handler_eff W Hcl.
+  intros Sigma Gamma Delta clauses eff_name eff_sig rrt re result_ty handler_eff W Hcl.
   induction Hcl.
   - (* OpClauses_Nil *)
     simpl. apply OpClauses_Nil.
@@ -631,14 +631,14 @@ Qed.
 (** ** Weakening at position 0 for handler_well_formed *)
 
 Lemma handler_weakening_cons :
-  forall Sigma Gamma Delta h eff_name comp_ty result_ty handler_eff W,
-    handler_well_formed Sigma Gamma Delta h eff_name comp_ty result_ty handler_eff ->
+  forall Sigma Gamma Delta h eff_name comp_ty result_ty handler_eff comp_eff W,
+    handler_well_formed Sigma Gamma Delta h eff_name comp_ty result_ty handler_eff comp_eff ->
     handler_well_formed Sigma (W :: Gamma)
                               ((Lin_Unrestricted, false) :: Delta)
                               (shift_handler 1 0 h)
-                              eff_name comp_ty result_ty handler_eff.
+                              eff_name comp_ty result_ty handler_eff comp_eff.
 Proof.
-  intros Sigma Gamma Delta h eff_name comp_ty result_ty handler_eff W Hwf.
+  intros Sigma Gamma Delta h eff_name comp_ty result_ty handler_eff comp_eff W Hwf.
   inversion Hwf; subst. simpl.
   apply HWF with (eff_sig := eff_sig).
   - assumption. (* lookup_effect *)
@@ -646,7 +646,7 @@ Proof.
     pose proof (weakening _ _ _ _ _ _ H0 W 1) as Hw.
     rewrite !insert_at_S_cons in Hw.
     exact Hw.
-  - exact (op_clauses_weakening_cons _ _ _ _ _ _ _ _ W H1).
+  - exact (op_clauses_weakening_cons _ _ _ _ _ _ _ _ _ _ W H1).
 Qed.
 
 (** ** Shift identity for well-typed terms
@@ -673,9 +673,9 @@ Proof.
   apply (has_type_mut_ind
     (fun Sigma Gamma Delta e T eff _ =>
        forall d, shift_expr d (length Gamma) e = e)
-    (fun Sigma Gamma Delta h eff_name comp_ty result_ty handler_eff _ =>
+    (fun Sigma Gamma Delta h eff_name comp_ty result_ty handler_eff comp_eff _ =>
        forall d, shift_handler d (length Gamma) h = h)
-    (fun Sigma Gamma Delta clauses eff_name eff_sig result_ty handler_eff _ =>
+    (fun Sigma Gamma Delta clauses eff_name eff_sig rrt re result_ty handler_eff _ =>
        forall d, map (shift_op_clause d (length Gamma)) clauses = clauses)
     (fun Sigma Gamma Delta fields field_types eff _ =>
        forall d,
@@ -732,13 +732,13 @@ Proof.
 
   - (* HWF *)
     intros Sigma Gamma Delta hk e_ret clauses eff_name comp_ty result_ty
-           handler_eff eff_sig _ _ IHret _ IHclauses d. simpl.
+           handler_eff comp_eff eff_sig _ _ IHret _ IHclauses d. simpl.
     f_equal; [exact (IHret d) | exact (IHclauses d)].
 
   - (* OpClauses_Nil *) intros. reflexivity.
 
   - (* OpClauses_Cons *)
-    intros Sigma Gamma Delta eff_name op_nm e_body rest sig result_ty
+    intros Sigma Gamma Delta eff_name op_nm e_body rest sig rrt re result_ty
            handler_eff arg_ty ret_ty _ _ IHbody _ IHrest d. simpl.
     f_equal; [| exact (IHrest d)].
     f_equal. exact (IHbody d).
@@ -755,12 +755,12 @@ Qed.
 (** Corollary: shifting a handler typed in [] [] at cutoff 0 is identity *)
 
 Lemma shift_closed_clauses_id :
-  forall Sigma Gamma Delta clauses eff_name sig result_ty handler_eff,
-    op_clauses_well_formed Sigma Gamma Delta clauses eff_name sig result_ty handler_eff ->
+  forall Sigma Gamma Delta clauses eff_name sig rrt re result_ty handler_eff,
+    op_clauses_well_formed Sigma Gamma Delta clauses eff_name sig rrt re result_ty handler_eff ->
     forall d,
     map (shift_op_clause d (length Gamma)) clauses = clauses.
 Proof.
-  intros Sigma Gamma Delta clauses eff_name sig result_ty handler_eff Hcl.
+  intros Sigma Gamma Delta clauses eff_name sig rrt re result_ty handler_eff Hcl.
   induction Hcl; intro d.
   - reflexivity.
   - simpl. f_equal; [| exact (IHHcl d)].
@@ -769,15 +769,15 @@ Proof.
 Qed.
 
 Lemma shift_handler_closed_id :
-  forall Sigma h eff_name comp_ty result_ty handler_eff,
-    handler_well_formed Sigma [] [] h eff_name comp_ty result_ty handler_eff ->
+  forall Sigma h eff_name comp_ty result_ty handler_eff comp_eff,
+    handler_well_formed Sigma [] [] h eff_name comp_ty result_ty handler_eff comp_eff ->
     forall d, shift_handler d 0 h = h.
 Proof.
-  intros Sigma h eff_name comp_ty result_ty handler_eff Hwf d.
+  intros Sigma h eff_name comp_ty result_ty handler_eff comp_eff Hwf d.
   inversion Hwf; subst.
   simpl. f_equal.
   - exact (shift_closed_id _ _ _ _ _ _ H0 d).
-  - exact (shift_closed_clauses_id _ _ _ _ _ _ _ _ H1 d).
+  - exact (shift_closed_clauses_id _ _ _ _ _ _ _ _ _ _ H1 d).
 Qed.
 
 (** ** Substitution Preserves Typing (generalized)
@@ -803,20 +803,20 @@ Proof.
        has_type Sigma (remove_nth j Gamma) (remove_nth j Delta) v Sty Eff_Pure ->
        has_type Sigma (remove_nth j Gamma) (remove_nth j Delta)
                       (subst j v e) T eff)
-    (fun Sigma Gamma Delta h eff_name comp_ty result_ty handler_eff _ =>
+    (fun Sigma Gamma Delta h eff_name comp_ty result_ty handler_eff comp_eff _ =>
        forall j v Sty,
        lookup_var Gamma j = Some Sty ->
        has_type Sigma (remove_nth j Gamma) (remove_nth j Delta) v Sty Eff_Pure ->
        handler_well_formed Sigma (remove_nth j Gamma) (remove_nth j Delta)
                                  (subst_handler j v h)
-                                 eff_name comp_ty result_ty handler_eff)
-    (fun Sigma Gamma Delta clauses eff_name eff_sig result_ty handler_eff _ =>
+                                 eff_name comp_ty result_ty handler_eff comp_eff)
+    (fun Sigma Gamma Delta clauses eff_name eff_sig rrt re result_ty handler_eff _ =>
        forall j v Sty,
        lookup_var Gamma j = Some Sty ->
        has_type Sigma (remove_nth j Gamma) (remove_nth j Delta) v Sty Eff_Pure ->
        op_clauses_well_formed Sigma (remove_nth j Gamma) (remove_nth j Delta)
                                     (map (subst_op_clause j v) clauses)
-                                    eff_name eff_sig result_ty handler_eff)
+                                    eff_name eff_sig rrt re result_ty handler_eff)
     (fun Sigma Gamma Delta fields field_types eff _ =>
        forall j v Sty,
        lookup_var Gamma j = Some Sty ->
@@ -903,7 +903,7 @@ Proof.
     + exact Hsplit'.
     + apply (has_type_lin_irrelevant _ _ _ _ _ _ (IHe j v Sty HnthSty
         (has_type_lin_irrelevant _ _ _ _ _ _ Hval (remove_nth j Delta1)))).
-    + apply (handler_wf_lin_irrelevant _ _ _ _ _ _ _ _
+    + apply (handler_wf_lin_irrelevant _ _ _ _ _ _ _ _ _
         (IHh j v Sty HnthSty
           (has_type_lin_irrelevant _ _ _ _ _ _ Hval (remove_nth j Delta2)))
         D2').
@@ -914,7 +914,7 @@ Proof.
 
   - (* HWF *)
     intros Sigma Gamma Delta hk e_ret clauses eff_name comp_ty result_ty
-           handler_eff eff_sig Hlookeff _ IHret _ IHclauses j v Sty HnthSty Hval.
+           handler_eff comp_eff eff_sig Hlookeff _ IHret _ IHclauses j v Sty HnthSty Hval.
     simpl. eapply HWF.
     + exact Hlookeff.
     + apply (has_type_lin_irrelevant _ _ _ _ _ _
@@ -925,16 +925,16 @@ Proof.
     + exact (IHclauses j v Sty HnthSty Hval).
 
   - (* OpClauses_Nil *)
-    intros Sigma Gamma Delta eff_name sig result_ty eff j v Sty HnthSty Hval.
+    intros Sigma Gamma Delta eff_name sig rrt re result_ty eff j v Sty HnthSty Hval.
     simpl. apply OpClauses_Nil.
 
   - (* OpClauses_Cons *)
-    intros Sigma Gamma Delta eff_name op_nm e_body rest sig result_ty
+    intros Sigma Gamma Delta eff_name op_nm e_body rest sig rrt re result_ty
            handler_eff arg_ty ret_ty Hlookop _ IHbody _ IHrest j v Sty HnthSty Hval.
     simpl. eapply OpClauses_Cons.
     + exact Hlookop.
     + assert (Hval2 : has_type Sigma
-                (arg_ty :: Ty_Arrow ret_ty result_ty handler_eff :: remove_nth j Gamma)
+                (arg_ty :: Ty_Arrow ret_ty rrt re :: remove_nth j Gamma)
                 ((Lin_Unrestricted, false) :: (Lin_Unrestricted, false) :: remove_nth j Delta)
                 (shift_expr 2 0 v) Sty Eff_Pure).
       { rewrite <- (shift_compose v 1 1).

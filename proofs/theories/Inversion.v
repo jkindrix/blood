@@ -37,9 +37,9 @@ Proof.
     (fun Sigma Gamma Delta e T eff _ =>
        is_value e = true ->
        has_type Sigma Gamma Delta e T Eff_Pure)
-    (fun Sigma Gamma Delta h eff_name comp_ty result_ty handler_eff _ =>
+    (fun Sigma Gamma Delta h eff_name comp_ty result_ty handler_eff comp_eff _ =>
        True)
-    (fun Sigma Gamma Delta clauses eff_name eff_sig result_ty handler_eff _ =>
+    (fun Sigma Gamma Delta clauses eff_name eff_sig rrt re result_ty handler_eff _ =>
        True)
     (fun Sigma Gamma Delta fields field_types eff _ =>
        forallb (fun '(_, e) => is_value e) fields = true ->
@@ -219,7 +219,7 @@ Lemma has_type_handle_inv :
     has_type Sigma [] [] (E_Handle h e) T eff ->
     exists eff_name comp_ty handler_eff comp_eff,
       has_type Sigma [] [] e comp_ty comp_eff /\
-      handler_well_formed Sigma [] [] h eff_name comp_ty T handler_eff /\
+      handler_well_formed Sigma [] [] h eff_name comp_ty T handler_eff comp_eff /\
       effect_row_subset handler_eff eff.
 Proof.
   intros Sigma h e T eff Hty.

@@ -175,10 +175,10 @@ Admitted.
     so linear values in scope are safely transferred. *)
 
 Theorem linear_single_shot_safe :
-  forall Sigma Gamma Delta h e T eff eff_name comp_ty result_ty handler_eff,
+  forall Sigma Gamma Delta h e T eff eff_name comp_ty result_ty handler_eff comp_eff,
     has_type Sigma Gamma Delta e T eff ->
     handler_well_formed Sigma Gamma Delta h
-                        eff_name comp_ty result_ty handler_eff ->
+                        eff_name comp_ty result_ty handler_eff comp_eff ->
     (* If all operations are cf_linear *)
     (match h with
      | Handler _ _ clauses =>
@@ -202,9 +202,9 @@ Qed.
 (** ** Multi-shot handlers cannot capture linear values *)
 
 Theorem multishot_no_linear_capture :
-  forall Sigma Gamma Delta h eff_name comp_ty result_ty handler_eff,
+  forall Sigma Gamma Delta h eff_name comp_ty result_ty handler_eff comp_eff,
     handler_well_formed Sigma Gamma Delta h
-                        eff_name comp_ty result_ty handler_eff ->
+                        eff_name comp_ty result_ty handler_eff comp_eff ->
     (* If any operation clause uses resume more than once *)
     (exists cl body eff_nm op_nm,
        h = Handler Deep (E_Var 0) [cl] /\
