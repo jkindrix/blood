@@ -1,6 +1,6 @@
 # Blood Formal Verification Roadmap
 
-**Version:** 1.5
+**Version:** 1.6
 **Created:** 2026-03-04
 **Status:** Authoritative — this is the single source of truth for Blood's formal verification plan
 
@@ -46,11 +46,30 @@ Tier 3 proves the whole is greater than the sum of its parts.
 
 ## Current State (2026-03-04)
 
-22 files, 10,255 lines, **0 Admitted**, 204 Qed, 5 Defined, **0 Axioms**, **0 Parameters**.
+22 files, 10,507 lines, **0 Admitted**, 214 Qed, 5 Defined, **0 Axioms**, **0 Parameters**.
 All 22 files fully proved (0 Admitted). **ALL 43/43 theorems PROVED.**
 All 11 phases COMPLETE. Full composition safety master theorem (`full_blood_safety`) is Qed.
 All formalization gaps closed: E_Extend/E_Resume have typing rules, `extract_gen_refs` is
 a concrete Fixpoint, Dispatch.v/FiberSafety.v section variables are instantiated.
+
+### Model Fidelity
+
+The Coq formalization is a *model* of Blood, not the compiler itself. The following
+gaps between model and implementation are inherent and cannot be closed by more Coq:
+
+| Aspect | Model | Reality | Impact |
+|--------|-------|---------|--------|
+| **Dispatch subtype** | `blood_subtype := @eq ty` (equality) | Record width subtyping, trait impls | Dispatch determinism is trivially true for equality; record width subtyping instantiation (v1.6) provides a non-trivial supplementary witness |
+| **Fiber ownership** | `blood_addr_owner := fun _ => 0` (single fiber) | M:N scheduler, multiple fibers | Tier crossing safety is vacuous for one fiber; multi-fiber instantiation (v1.6) provides a non-trivial supplementary witness |
+| **Memory model** | `nat -> cell` (total function) | Virtual memory, pages, alignment | Generation bumps model deallocation; actual freed memory layout is not captured |
+| **Effect rows** | Finite lists of names | Compiler row variables, unification | Row polymorphism is approximated; open rows don't model full unification |
+| **Substitution** | De Bruijn capture-avoiding | Compiler uses named variables + scopes | Semantically equivalent but structurally different |
+| **Tier coverage** | `tier_assigned` — trivially true by exhaustive enum | Runtime allocator assigns tiers | Exhaustiveness witness (documented as structural property, not deep theorem) |
+| **Re-export theorems** | 3 of 5 Phase 11 theorems re-export earlier results | — | Composition evidence is structural (all files compile together); genuine cross-feature lemmas added in v1.6 |
+
+These gaps are standard for PL mechanizations. The formalization proves properties of
+Blood's *design*, not its *implementation*. Compiler correctness (implementation matches
+model) would require a verified compiler effort far beyond the current scope.
 
 ### Permanent Modeling Assumptions
 
@@ -307,7 +326,7 @@ generation bump (scope exit, region destroy, refcount drop), not how safety is c
 
 | Theorem | File | Status |
 |---------|------|--------|
-| `tier_coverage` | MemorySafety.v | PROVED |
+| `tier_coverage` | MemorySafety.v | PROVED (exhaustiveness witness) |
 | `stack_safety` | MemorySafety.v | PROVED |
 | `region_safety_composition` | MemorySafety.v | PROVED |
 | `persistent_safety` | MemorySafety.v | PROVED |
@@ -360,9 +379,11 @@ break linear safety, etc.
 
 **Depends on:** All previous phases (ALL SATISFIED)
 
-**New file:** CompositionSafety.v (431 lines, 8 Qed, 4 Defined)
+**New file:** CompositionSafety.v (676 lines, 18 Qed, 4 Defined)
 
 **Status:** All 5 main theorems + 3 composition witnesses + section instantiations proved. 0 Admitted.
+Non-trivial supplementary instantiations added in v1.6: multi-fiber ownership,
+record width subtyping, non-vacuity/non-triviality witnesses.
 
 The master theorem `full_blood_safety` proves the conjunction of type soundness, effect
 safety, type preservation, effect discipline, and composition guarantee for the complete
@@ -384,11 +405,19 @@ then instantiating all parameterized theorems from Dispatch.v and FiberSafety.v.
 | `effects_linearity_compose` | CompositionSafety.v | PROVED (bonus) |
 | `regions_generations_compose` | CompositionSafety.v | PROVED (bonus) |
 | `effects_regions_compose` | CompositionSafety.v | PROVED (bonus) |
+| `linear_region_composition` | CompositionSafety.v | PROVED (v1.6 genuine composition) |
 | `blood_dispatch_determinism` | CompositionSafety.v | INSTANTIATED |
 | `blood_type_stability_soundness` | CompositionSafety.v | INSTANTIATED |
 | `blood_dispatch_preserves_typing` | CompositionSafety.v | INSTANTIATED |
 | `blood_tier_crossing_safety` | CompositionSafety.v | INSTANTIATED |
 | `blood_region_isolation` | CompositionSafety.v | INSTANTIATED |
+| `multi_fiber_tier_crossing_safety` | CompositionSafety.v | INSTANTIATED (v1.6 non-trivial) |
+| `multi_fiber_region_isolation` | CompositionSafety.v | INSTANTIATED (v1.6 non-trivial) |
+| `multi_fiber_nonvacuity` | CompositionSafety.v | PROVED (v1.6 witness) |
+| `record_dispatch_determinism` | CompositionSafety.v | INSTANTIATED (v1.6 width subtype) |
+| `record_type_stability_soundness` | CompositionSafety.v | INSTANTIATED (v1.6 width subtype) |
+| `record_dispatch_preserves_typing` | CompositionSafety.v | INSTANTIATED (v1.6 width subtype) |
+| `record_width_subtype_nontrivial` | CompositionSafety.v | PROVED (v1.6 witness) |
 
 ---
 
@@ -592,10 +621,10 @@ Confirm:
 | FiberSafety.v | 412 | 13 | 0 | 0 | Tier-based concurrency safety |
 | ValueSemantics.v | 410 | 7 | 1 | 0 | Mutable value semantics (Phase 7) |
 | EffectSubsumption.v | 432 | 13 | 0 | 0 | Effects subsume control flow (Phase 8) |
-| MemorySafety.v | 365 | 8 | 0 | 0 | Memory safety without GC (Phase 9) |
-| CompositionSafety.v | 431 | 8 | 4 | 0 | Full composition safety + section instantiations (Phase 11) |
+| MemorySafety.v | 372 | 8 | 0 | 0 | Memory safety without GC (Phase 9) |
+| CompositionSafety.v | 676 | 18 | 4 | 0 | Full composition safety + section instantiations (Phase 11) |
 
-**Totals:** 10,255 lines, 204 Qed, 5 Defined, 0 Admitted, 0 Parameters, 0 Axioms.
+**Totals:** 10,507 lines, 214 Qed, 5 Defined, 0 Admitted, 0 Parameters, 0 Axioms.
 
 ### Files Modified or Created (by Phase)
 
@@ -688,7 +717,7 @@ Every theorem Blood needs, organized by what it proves.
 
 | # | Theorem | Status |
 |---|---------|--------|
-| 29 | `tier_coverage` | PROVED |
+| 29 | `tier_coverage` | PROVED (exhaustiveness witness) |
 | 30 | `stack_safety` | PROVED |
 | 31 | `region_safety_composition` | PROVED |
 | 32 | `persistent_safety` | PROVED |
@@ -708,10 +737,10 @@ Every theorem Blood needs, organized by what it proves.
 
 | # | Theorem | Status |
 |---|---------|--------|
-| 39 | `type_soundness_extended` | PROVED |
-| 40 | `effect_safety_preserved` | PROVED |
+| 39 | `type_soundness_extended` | PROVED (re-export) |
+| 40 | `effect_safety_preserved` | PROVED (re-export) |
 | 41 | `linear_safety_preserved` | PROVED |
-| 42 | `generation_safety_preserved` | PROVED |
+| 42 | `generation_safety_preserved` | PROVED (re-export) |
 | 43 | `full_blood_safety` | PROVED |
 
 **Total: 43 theorems. 43 PROVED. 0 ADMITTED. 0 NOT STARTED.**
@@ -749,3 +778,4 @@ Overall:                       43/43 theorems        [====================] 100%
 | 2026-03-04 | 1.4 | Integrity audit: eliminated inconsistent axiom (V_Continuation redesign), removed 5 vacuous True-conclusion placeholders, improved tier_assigned documentation. 0 Axioms, 0 Admitted. |
 | 2026-03-04 | 1.4.1 | Fix Qed count: 200 Qed + 1 Defined (was incorrectly reported as 210 Qed). Corrected per-file counts for LinearSafety.v, ValueSemantics.v, MemorySafety.v, CompositionSafety.v. Removed deleted `full_composition_safety` from Phase 1 table. |
 | 2026-03-04 | 1.5 | Close all formalization gaps: T_Extend/T_Resume typing rules added (10 files modified), `extract_gen_refs` concretized as Fixpoint, Step_Resume replaces Step_ResumeValid, Dispatch.v/FiberSafety.v section variables instantiated with `blood_subtype := @eq ty` and `blood_addr_owner`. 0 Parameters, 0 Axioms, 0 Admitted. 22 files, 10,255 lines, 204 Qed, 5 Defined. |
+| 2026-03-04 | 1.6 | Strengthen proof integrity: genuine cross-feature `linear_region_composition` lemma, multi-fiber ownership with non-vacuity witness, record field-prefix width subtyping with all 4 properties + non-triviality witness, honest documentation (Model Fidelity section, re-export/exhaustiveness annotations, tier_coverage relabeled). 22 files, 10,507 lines, 214 Qed, 5 Defined, 0 Admitted, 0 Axioms, 0 Parameters. |

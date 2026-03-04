@@ -101,12 +101,19 @@ Definition persistent_valid (a : allocation) (M : memory) : Prop :=
    current_gen M (alloc_addr a) = alloc_gen a) \/
   (current_gen M (alloc_addr a) > alloc_gen a).
 
-(** ** Theorem 1: Tier Coverage
+(** ** Structural Property: Tier Exhaustiveness
 
     Every allocation belongs to exactly one tier. This is enforced
     by construction: the [alloc_tier] field assigns each allocation
     to a specific tier, and [memory_tier] is an enumeration with
-    no overlap. *)
+    no overlap.
+
+    Note: This is a structural exhaustiveness witness, not a deep
+    safety theorem. The [memory_tier] type has exactly three
+    constructors with no "unassigned" state, so [tier_assigned]
+    is trivially true by case analysis. In a weaker model (e.g.,
+    with an optional tier field), this would require a non-trivial
+    invariant. The genuine safety content is in Theorems 2-5. *)
 
 Theorem tier_coverage :
   forall (a : allocation),

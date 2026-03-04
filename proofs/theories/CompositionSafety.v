@@ -45,15 +45,16 @@ From Blood Require Import ValueSemantics.
 From Blood Require Import EffectSubsumption.
 From Blood Require Import MemorySafety.
 
-(** ** Theorem 1: Extended Type Soundness
+(** ** Theorem 1: Extended Type Soundness (composition witness by re-export)
 
     Progress + Preservation hold for the full calculus including
     regions, dispatch, MVS, tiers, and effect handlers.
 
-    This is the standard Wright-Felleisen type soundness result,
-    already proved in Soundness.v. The "extended" version confirms
-    that no Tier 2/3 feature additions have introduced new stuck
-    states or broken the type soundness invariant.
+    This is a re-export of [type_soundness_full] from Soundness.v.
+    The composition evidence is structural: all 10 proof files were
+    updated for T_Extend/T_Resume typing rules and still compile,
+    confirming that no Tier 2/3 feature addition introduced new
+    stuck states or broke the type soundness invariant.
 
     Because all Tier 2/3 features are either:
     (a) self-contained modules (Regions.v, Dispatch.v, FiberSafety.v)
@@ -76,16 +77,16 @@ Proof.
   exact type_soundness_full.
 Qed.
 
-(** ** Theorem 2: Effect Safety Preserved
+(** ** Theorem 2: Effect Safety Preserved (composition witness by re-export)
 
     Effect containment and handling still hold with all extensions
     (regions, dispatch, MVS, tiers).
 
-    Effect safety is a property of the core typing judgment, which
-    is unchanged by all extensions. The effect_safety theorem from
-    Soundness.v proves pure programs can't have unhandled performs.
-    This holds regardless of whether regions, dispatch, or MVS
-    features are also in use. *)
+    This is a re-export of [effect_safety] from Soundness.v.
+    The composition evidence is structural: effect safety is a
+    property of the core typing judgment, which is unchanged by
+    all extensions. The fact that all 10 proof files compile with
+    T_Extend/T_Resume confirms no extension broke effect safety. *)
 
 Theorem effect_safety_preserved :
   forall Sigma e T M,
@@ -136,13 +137,13 @@ Proof.
     exact (has_type_lin_to_has_type _ _ _ _ _ _ Htype).
 Qed.
 
-(** ** Theorem 4: Generation Safety Preserved
+(** ** Theorem 4: Generation Safety Preserved (composition witness by re-export)
 
     Generation snapshot validity holds with regions and tiers.
 
-    Generation safety is a property of the memory model (Semantics.v,
-    GenerationSnapshots.v), which is unchanged by typing extensions.
-    The generation mechanism works at the runtime level — typing
+    This is a re-export of [snapshot_valid] unfolding from
+    GenerationSnapshots.v. The composition evidence is structural:
+    the generation mechanism operates at the runtime level — typing
     features (linearity, dispatch, effects) operate at a different
     level and cannot interfere with generation checks. *)
 
@@ -233,6 +234,43 @@ Proof.
   - (* 4. Effect discipline *)
     intros Hpure e' M' Hsteps. subst.
     exact (effect_discipline Sigma e T M Htype e' M' Hsteps).
+Qed.
+
+(** ** Genuine cross-feature composition lemma
+
+    Unlike the re-export theorems above, this lemma combines results
+    from two independent phases (Phase 2: linearity, Phase 5: regions)
+    into a single statement that neither phase proves alone:
+
+    A linear generational reference is used exactly once (linearity),
+    AND if the referenced address is in a region that gets destroyed,
+    the snapshot becomes invalid (region safety).
+
+    This is genuine composition: linearity prevents double-free,
+    while regions + generations detect use-after-destroy. Together
+    they guarantee that a linear reference into a region is both
+    (a) used exactly once and (b) protected from dangling access. *)
+
+Theorem linear_region_composition :
+  forall Sigma Gamma Delta e T eff r M snap addr_ty,
+    has_type_lin Sigma
+      (Ty_Linear (Ty_GenRef addr_ty) :: Gamma)
+      ((Lin_Linear, false) :: Delta) e T eff ->
+    NoDup r ->
+    snapshot_valid M snap ->
+    (exists addr gen, In (GenRef addr gen) snap /\ In addr r) ->
+    (* Linear: the reference is used exactly once *)
+    count_var 0 e = 1 /\
+    (* Region: destroying the region invalidates the snapshot *)
+    ~ snapshot_valid (region_destroy r M) snap.
+Proof.
+  intros Sigma Gamma Delta e T eff r M snap addr_ty Htype Hnd Hvalid Hexists.
+  split.
+  - (* Linear safety: count_var 0 e = 1 *)
+    destruct (linear_safety_static _ _ _ _ _ _ Htype) as [H1 _].
+    apply H1. simpl. reflexivity.
+  - (* Region safety: snapshot invalidated *)
+    exact (region_safety r M snap Hnd Hvalid Hexists).
 Qed.
 
 (** ** Detailed composition properties
@@ -370,12 +408,12 @@ Definition blood_type_stability_soundness :=
 Definition blood_dispatch_preserves_typing :=
   dispatch_preserves_typing blood_subtype.
 
-(** *** Fiber safety instantiation
+(** *** Fiber safety instantiation (single-fiber baseline)
 
-    Instantiate with a concrete address ownership model.
     The simplest model: each address is owned by fiber 0
     (single-fiber execution). This suffices to instantiate the
-    parameterized theorems. *)
+    parameterized theorems but makes crossing safety vacuous
+    (there is only one fiber, so f1 <> f2 is never satisfiable). *)
 
 Definition blood_addr_owner : nat -> fiber_id := fun _ => 0.
 
@@ -385,47 +423,254 @@ Definition blood_tier_crossing_safety :=
 Definition blood_region_isolation :=
   region_isolation blood_addr_owner.
 
+(** *** Multi-fiber ownership instantiation (non-trivial)
+
+    A non-trivial ownership model with two fibers:
+    - Even addresses owned by fiber 0
+    - Odd addresses owned by fiber 1
+
+    This demonstrates that the parameterized theorems apply
+    non-vacuously when multiple fibers exist. *)
+
+Definition multi_fiber_addr_owner : nat -> fiber_id :=
+  fun addr => if Nat.even addr then 0 else 1.
+
+Definition multi_fiber_tier_crossing_safety :=
+  tier_crossing_safety multi_fiber_addr_owner.
+
+Definition multi_fiber_region_isolation :=
+  region_isolation multi_fiber_addr_owner.
+
+(** Non-vacuity witness: construct a concrete scenario where two
+    different fibers both hold references to the same address,
+    demonstrating that the f1 <> f2 premise is satisfiable. *)
+
+Example multi_fiber_nonvacuity :
+  exists (r1 r2 : typed_ref) (f1 f2 : fiber_id),
+    f1 <> f2 /\
+    legally_held multi_fiber_addr_owner r1 f1 /\
+    legally_held multi_fiber_addr_owner r2 f2 /\
+    ref_addr r1 = ref_addr r2.
+Proof.
+  (* Fiber 0 holds a mutable ref to even address 0;
+     Fiber 1 holds a frozen ref to the same address.
+     f1=0, f2=1, so f1 <> f2. *)
+  exists (mk_typed_ref Tier_Region Mut_Mutable 0 0).
+  exists (mk_typed_ref Tier_Region Mut_Frozen 0 0).
+  exists 0, 1.
+  split; [discriminate |].
+  split; [simpl; reflexivity |].
+  split; [simpl; exact I |].
+  reflexivity.
+Qed.
+
+(** The crossing safety theorem applies non-vacuously:
+    with two fibers, at most one can write to address 0. *)
+
+Example multi_fiber_crossing_example :
+  forall r1 r2,
+    ref_addr r1 = 0 ->
+    ref_addr r2 = 0 ->
+    legally_held multi_fiber_addr_owner r1 0 ->
+    legally_held multi_fiber_addr_owner r2 1 ->
+    ~ (is_writable r1 /\ is_writable r2).
+Proof.
+  intros r1 r2 Ha1 Ha2 Hh1 Hh2.
+  apply (multi_fiber_tier_crossing_safety r1 r2 0 1).
+  - discriminate.
+  - exact Hh1.
+  - exact Hh2.
+  - rewrite Ha1. symmetry. exact Ha2.
+Qed.
+
+(** ** Supplementary dispatch instantiation: record width subtyping
+
+    Blood's primary subtype relation is equality (blood_subtype above).
+    As a supplementary witness of non-trivial dispatch, we define a
+    record width subtyping relation where {x:Int, y:Int} <: {x:Int}
+    (a record with more fields is a subtype of one with fewer fields).
+
+    We use field-prefix subtyping: T1 <: T2 when T2's field list is a
+    prefix of T1's. For non-record types, equality. This is genuinely
+    non-trivial (unlike equality) and has clean structural proofs.
+
+    This demonstrates that the dispatch theorems from Dispatch.v
+    hold for an interesting subtype relation with structural content. *)
+
+(** Field-prefix relation: short is a prefix of long *)
+
+Fixpoint is_field_prefix (short long : list (label * ty)) : Prop :=
+  match short with
+  | [] => True
+  | (l, t) :: rest_short =>
+      match long with
+      | [] => False
+      | (l', t') :: rest_long =>
+          l = l' /\ t = t' /\ is_field_prefix rest_short rest_long
+      end
+  end.
+
+(** Record width subtype: for records, supertype's fields are a prefix
+    of subtype's fields. For all other types, equality. *)
+
+Definition record_width_subtype (T1 T2 : ty) : Prop :=
+  match T1, T2 with
+  | Ty_Record fs1, Ty_Record fs2 => is_field_prefix fs2 fs1
+  | _, _ => T1 = T2
+  end.
+
+(** *** Reflexivity *)
+
+Lemma is_field_prefix_refl : forall fs, is_field_prefix fs fs.
+Proof.
+  induction fs as [| [l t] rest IH].
+  - simpl. exact I.
+  - simpl. auto.
+Qed.
+
+Lemma record_width_subtype_refl : forall T, record_width_subtype T T.
+Proof.
+  intros T. destruct T; simpl; try reflexivity.
+  apply is_field_prefix_refl.
+Qed.
+
+(** *** Transitivity *)
+
+Lemma is_field_prefix_trans : forall fs1 fs2 fs3,
+    is_field_prefix fs1 fs2 ->
+    is_field_prefix fs2 fs3 ->
+    is_field_prefix fs1 fs3.
+Proof.
+  induction fs1 as [| [l1 t1] rest1 IH]; intros fs2 fs3 H12 H23.
+  - simpl. exact I.
+  - destruct fs2 as [| [l2 t2] rest2]; [simpl in H12; contradiction |].
+    destruct fs3 as [| [l3 t3] rest3]; [simpl in H23; contradiction |].
+    simpl in *. destruct H12 as [Hl12 [Ht12 Hr12]].
+    destruct H23 as [Hl23 [Ht23 Hr23]].
+    subst. split; [reflexivity |]. split; [reflexivity |].
+    exact (IH rest2 rest3 Hr12 Hr23).
+Qed.
+
+Lemma record_width_subtype_trans : forall T1 T2 T3,
+    record_width_subtype T1 T2 ->
+    record_width_subtype T2 T3 ->
+    record_width_subtype T1 T3.
+Proof.
+  intros T1 T2 T3 H12 H23.
+  destruct T1; destruct T2; destruct T3;
+    simpl in *; try congruence; try exact I; try contradiction.
+  - exact (is_field_prefix_trans _ _ _ H23 H12).
+Qed.
+
+(** *** Antisymmetry *)
+
+Lemma is_field_prefix_antisym : forall fs1 fs2,
+    is_field_prefix fs1 fs2 ->
+    is_field_prefix fs2 fs1 ->
+    fs1 = fs2.
+Proof.
+  induction fs1 as [| [l1 t1] rest1 IH]; intros fs2 H12 H21.
+  - destruct fs2 as [| [l2 t2] rest2].
+    + reflexivity.
+    + simpl in H21. contradiction.
+  - destruct fs2 as [| [l2 t2] rest2]; [simpl in H12; contradiction |].
+    simpl in H12. destruct H12 as [Hl12 [Ht12 Hr12]].
+    simpl in H21. destruct H21 as [Hl21 [Ht21 Hr21]].
+    subst. f_equal. exact (IH rest2 Hr12 Hr21).
+Qed.
+
+Lemma record_width_subtype_antisym : forall T1 T2,
+    record_width_subtype T1 T2 ->
+    record_width_subtype T2 T1 ->
+    T1 = T2.
+Proof.
+  intros T1 T2.
+  destruct T1, T2; simpl;
+    try (intros H1 H2; subst; reflexivity);
+    try (intros H _; exact H);
+    try (intros _ H; symmetry; exact H).
+  - (* Both Ty_Record *)
+    intros H12 H21. f_equal.
+    exact (is_field_prefix_antisym _ _ H21 H12).
+Qed.
+
+(** *** Decidability *)
+
+Lemma is_field_prefix_dec : forall fs1 fs2,
+    {is_field_prefix fs1 fs2} + {~ is_field_prefix fs1 fs2}.
+Proof.
+  induction fs1 as [| [l1 t1] rest1 IH]; intros fs2.
+  - left. simpl. exact I.
+  - destruct fs2 as [| [l2 t2] rest2].
+    + right. simpl. auto.
+    + simpl. destruct (string_dec l1 l2) as [Hl | Hl].
+      * destruct (ty_eq_dec t1 t2) as [Ht | Ht].
+        -- destruct (IH rest2) as [Hr | Hr].
+           ++ left. auto.
+           ++ right. intros [_ [_ H]]. exact (Hr H).
+        -- right. intros [_ [H _]]. exact (Ht H).
+      * right. intros [H _]. exact (Hl H).
+Defined.
+
+Lemma record_width_subtype_dec :
+  forall T1 T2,
+    {record_width_subtype T1 T2} + {~ record_width_subtype T1 T2}.
+Proof.
+  intros T1 T2.
+  destruct T1, T2; simpl; try apply ty_eq_dec.
+  - apply is_field_prefix_dec.
+Defined.
+
+(** *** Dispatch instantiation with record width subtyping *)
+
+Definition record_dispatch_determinism :=
+  dispatch_determinism record_width_subtype
+                       record_width_subtype_antisym blood_method_eq_dec.
+
+Definition record_type_stability_soundness :=
+  type_stability_soundness record_width_subtype.
+
+Definition record_dispatch_preserves_typing :=
+  dispatch_preserves_typing record_width_subtype.
+
+(** Non-triviality witness: two distinct types in the subtype relation *)
+
+Example record_width_subtype_nontrivial :
+  record_width_subtype
+    (Ty_Record [("x"%string, Ty_Base TyI32); ("y"%string, Ty_Base TyI32)])
+    (Ty_Record [("x"%string, Ty_Base TyI32)]) /\
+  Ty_Record [("x"%string, Ty_Base TyI32); ("y"%string, Ty_Base TyI32)] <>
+  Ty_Record [("x"%string, Ty_Base TyI32)].
+Proof.
+  split.
+  - simpl. auto.
+  - discriminate.
+Qed.
+
 (** ** Summary
 
-    CompositionSafety.v proves the five Phase 11 theorems:
+    Phase 11 theorems:
+    1. type_soundness_extended — (re-export) Wright-Felleisen soundness
+    2. effect_safety_preserved — (re-export) Effect containment
+    3. linear_safety_preserved — Linear/affine with all extensions
+    4. generation_safety_preserved — (re-export) Snapshot validation
+    5. full_blood_safety — Master composition theorem
 
-    1. type_soundness_extended — Wright-Felleisen soundness holds
-       for the full calculus with all Blood features.
+    Genuine cross-feature composition (v1.6):
+    - linear_region_composition: Linearity + Region safety combined
 
-    2. effect_safety_preserved — Effect containment and discipline
-       hold with all extensions (regions, dispatch, MVS, tiers).
+    Composition witnesses:
+    - effects_linearity_compose, regions_generations_compose,
+      effects_regions_compose
 
-    3. linear_safety_preserved — Linear/affine guarantees hold
-       with all extensions. Bridges to standard typing preserved.
+    Equality-based instantiations (primary):
+    - blood_dispatch_determinism, blood_type_stability_soundness,
+      blood_dispatch_preserves_typing, blood_tier_crossing_safety,
+      blood_region_isolation
 
-    4. generation_safety_preserved — Snapshot validation is
-       independent of typing features and composes freely.
-
-    5. full_blood_safety — Master composition theorem. Conjunction
-       of type soundness + effect safety + type preservation +
-       effect discipline.
-
-    Additional composition witnesses:
-    - effects_linearity_compose: Effects + Linearity (Phase 2)
-    - regions_generations_compose: Regions + Generations (Phase 5)
-    - effects_regions_compose: Effects + Regions
-
-    Section instantiations (closing the formalization gaps):
-    - blood_dispatch_determinism: Dispatch.v instantiated with eq as subtype
-    - blood_type_stability_soundness: Type stability instantiated
-    - blood_dispatch_preserves_typing: Dispatch typing instantiated
-    - blood_tier_crossing_safety: FiberSafety.v instantiated
-    - blood_region_isolation: Region isolation instantiated
-
-    Key architectural insight: Blood's safety properties compose
-    WITHOUT interference because:
-    (a) Core typing (has_type) is NEVER modified by extensions
-    (b) Strengthened judgments (has_type_lin) bridge to core typing
-    (c) Runtime mechanisms (generations) are orthogonal to typing
-    (d) Self-contained modules can't break each other
-    (e) Each feature operates at a different level of the system
-
-    This is not an accident — it is Blood's design thesis made formal.
+    Non-trivial supplementary instantiations (v1.6):
+    - multi_fiber_*: Two-fiber ownership with non-vacuity witness
+    - record_*: Field-prefix width subtyping with non-triviality witness
 
     Status: 0 Admitted.
 *)
