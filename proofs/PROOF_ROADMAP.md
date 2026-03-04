@@ -46,8 +46,8 @@ Tier 3 proves the whole is greater than the sum of its parts.
 
 ## Current State (2026-03-04)
 
-17 files, 7,253 lines, 4 Admitted (all in LinearSafety.v), 149 Qed, 1 Axiom, 1 Parameter.
-16 of 17 files fully proved (0 Admitted).
+18 files, 8,229 lines, **0 Admitted**, 168 Qed, 1 Axiom, 1 Parameter.
+All 18 files fully proved (0 Admitted).
 
 ### Permanent Modeling Assumptions
 
@@ -128,7 +128,7 @@ no published precedent exists for generation snapshot safety with algebraic effe
 Proofs that require multiple Blood features to state. Each theorem captures a property
 that emerges from the interaction of two or more features.
 
-### Phase 2: Effects x Linearity — IN PROGRESS (4 Admitted)
+### Phase 2: Effects x Linearity — COMPLETE
 
 **Goal:** Prove that algebraic effects and linear/affine types compose safely. Multi-shot
 handlers cannot capture linear values; single-shot handlers can. At `perform`, linear
@@ -142,36 +142,30 @@ Blood's answer — enforced by the type system — is: you can't. This is a prop
 
 **Depends on:** Phase 1 (SATISFIED)
 
-**File:** LinearSafety.v (4 Admitted -> 0)
+**Files:** LinearTyping.v (474 lines, 2 Qed), LinearSafety.v (833 lines, 19 Qed)
 
-| Theorem | Status | Proof Strategy |
-|---------|--------|----------------|
-| `linear_single_shot_safe` | Qed (placeholder) | Strengthen conclusion |
-| `linear_safety_complete` | Qed (placeholder) | Strengthen conclusion |
-| `linear_safety_static` | **ADMITTED** | Induction on typing derivation with context splitting |
-| `affine_safety_static` | **ADMITTED** | Similar, allowing Split_Affine_Neither |
-| `multishot_no_linear_capture` | **ADMITTED** | Handler well-formedness blocks linear capture |
-| `effect_suspension_linear_safety` | **ADMITTED** | Context splitting at perform preserves linearity |
+**Status:** All 4 previously-admitted theorems proved. 0 Admitted.
 
-Note: `linear_single_shot_safe` and `linear_safety_complete` are Qed but with trivial
-(`True`) conclusions. Strengthening to meaningful statements is part of this phase.
+| Theorem | File | Status |
+|---------|------|--------|
+| `linear_safety_static` | LinearSafety.v | PROVED |
+| `affine_safety_static` | LinearSafety.v | PROVED |
+| `multishot_no_linear_capture` | LinearSafety.v | PROVED |
+| `effect_suspension_linear_safety` | LinearSafety.v | PROVED |
 
-**Blocking issue:** The 4 theorems are NOT provable with current typing rules.
-T_Var doesn't check Delta, T_Const accepts any Delta, and a concrete counter-example
-exists (see LinearSafety.v header). Closing these requires:
+**Architecture:** Two-judgment design. Rather than modifying existing `has_type` rules
+(which would cascade through every proof file), a new `has_type_lin` judgment in
+LinearTyping.v adds linearity enforcement at leaf rules:
+- `TL_Var`: checks `Delta(x)` available and all other linears consumed
+- `TL_Const`: checks `all_linear_consumed Delta`
+- `TL_Lam`/`TL_Let`: introduce `lin_of_type A` (not always Unrestricted)
+- `RFT_Cons_Lin`: splits Delta across record fields via `lin_split`
+- `HWF_Lin`: requires `multishot_handler_safe_lin` and `lin_split`
 
-1. Strengthening typing rules: T_Var (+2 premises), T_Const (+1 premise),
-   RFT_Cons (+lin_split), HWF (+multishot restriction)
-2. Breaking `has_type_lin_irrelevant` in Substitution.v — the foundational lemma
-   proving typing is independent of Delta. This becomes FALSE with linearity-aware
-   leaf rules.
-3. Cascading through every `has_type_mut_ind` user: Substitution.v, Inversion.v,
-   ContextTyping.v, Preservation.v, Progress.v
-4. Adding a linearity-introduction mechanism (T_Lam/T_Let currently always use
-   `Lin_Unrestricted` — no way to introduce linear bindings for closed terms)
-
-**Estimated:** ~500-1000 lines changed across 8 existing files (typing rule redesign,
-not additive proof work)
+Bridge lemma `has_type_lin_to_has_type` erases linearity enforcement, proving every
+linearity-checked derivation is also a standard typing derivation. This avoids modifying
+existing `has_type` rules and prevents cascading breakage in Progress, Preservation,
+and Soundness.
 
 ### Phase 5: Regions x Generations — COMPLETE
 
@@ -378,20 +372,20 @@ Tier 1 (Foundation)
   Phase 4 (Gen Snapshots)         — COMPLETE
 
 Tier 2 (Interactions)
-  Phase 2 (Effects x Linearity)   — 4 admits remain
+  Phase 2 (Effects x Linearity)   — COMPLETE
     depends on: Phase 1
   Phase 5 (Regions x Generations) — COMPLETE
     depends on: Phase 4
   Phase 6 (Dispatch x Stability)  — COMPLETE
     depends on: Phase 1
-  Phase 7 (MVS x Linearity)       — not started
-    depends on: Phase 2
+  Phase 7 (MVS x Linearity)       — not started (UNBLOCKED)
+    depends on: Phase 2 (SATISFIED)
 
 Tier 3 (Compositions)
-  Phase 8 (Effects Subsume Patterns) — not started
-    depends on: Phase 2, Phase 3
+  Phase 8 (Effects Subsume Patterns) — not started (UNBLOCKED)
+    depends on: Phase 2 (SATISFIED), Phase 3 (SATISFIED)
   Phase 9 (Memory Safety, No GC)    — not started
-    depends on: Phase 2, Phase 4, Phase 5, Phase 7
+    depends on: Phase 2 (SATISFIED), Phase 4 (SATISFIED), Phase 5 (SATISFIED), Phase 7
   Phase 10 (Tier Concurrency Safety) — COMPLETE
     depends on: Phase 5
   Phase 11 (Full Composition Safety) — not started
@@ -401,38 +395,37 @@ Tier 3 (Compositions)
 Visual:
 
 ```
-Phase 1 ──DONE──┬──► Phase 2 ──────┬──► Phase 7 ──────────┐
-                │                  │                       │
-                │                  ├──► Phase 8 ───────────┤
-                │                  │                       │
-Phase 3 ──DONE──┤                  └──► Phase 9 ◄── P5 ◄──┤
-                │                          ▲               │
-Phase 4 ──DONE──┼──► Phase 5 ──DONE──────┼──► P10 ──DONE─┤
-                │                          │               │
-                └──► Phase 6 ──DONE───────┼───────────────┤
-                                           │               │
-                                           └──► Phase 11 ◄─┘
+Phase 1 ──DONE──┬──► Phase 2 ──DONE──┬──► Phase 7 ──────────┐
+                │                    │                       │
+                │                    ├──► Phase 8 ───────────┤
+                │                    │                       │
+Phase 3 ──DONE──┤                    └──► Phase 9 ◄── P5 ◄──┤
+                │                            ▲               │
+Phase 4 ──DONE──┼──► Phase 5 ──DONE────────┼──► P10 ──DONE─┤
+                │                            │               │
+                └──► Phase 6 ──DONE─────────┼───────────────┤
+                                             │               │
+                                             └──► Phase 11 ◄─┘
 ```
 
 ### Parallelism Opportunities
 
-These phases can proceed in parallel:
-- Phase 7 + Phase 8 (both depend only on Phase 2)
-- Phase 9 (Phase 5 complete; Phase 10 now also complete)
+These phases can proceed in parallel (all dependencies satisfied):
+- Phase 7 + Phase 8 (both depend only on Phase 2, which is COMPLETE)
+- Phase 10 is already COMPLETE
+
+After Phase 7 completes, Phase 9 is fully unblocked.
 
 ### Critical Path
 
-The longest dependency chain is:
+The longest remaining dependency chain is:
 
 ```
-Phase 2 → Phase 7 → Phase 9 → Phase 11
+Phase 7 → Phase 9 → Phase 11
 ```
 
-Phase 2 (Linear Safety) is the bottleneck — it blocks Phases 7, 8, 9, and (transitively) 11.
-**Warning:** Phase 2 is a typing rule redesign that touches every existing proof file.
-It breaks `has_type_lin_irrelevant` (Substitution.v), cascading through all mutual
-induction proofs. Should be done on a branch with incremental verification. See
-LinearSafety.v header for the full Phase M3 plan and counter-example.
+Phase 7 (MVS x Linearity) is the new bottleneck — it blocks Phase 9 and (transitively) 11.
+Phase 8 can proceed independently in parallel with Phase 7.
 
 ---
 
@@ -440,17 +433,17 @@ LinearSafety.v header for the full Phase M3 plan and counter-example.
 
 | Priority | Phase | Tier | Why |
 |----------|-------|------|-----|
-| **Highest** | Phase 2 | T2 | Only remaining admits (4); blocks 4 downstream phases |
-| DONE | Phase 5 | T2 | Region safety via generations — FULLY PROVED |
-| DONE | Phase 6 | T2 | Dispatch determinism + type stability — FULLY PROVED |
-| **Medium** | Phase 7 | T2 | Blocked on Phase 2; enables Phase 9 |
-| **Medium** | Phase 8 | T3 | Blocked on Phase 2; validates effects as unifying framework |
-| **Medium** | Phase 9 | T3 | Blood's headline claim (no GC); blocked on P2, P5, P7 |
-| DONE | Phase 10 | T3 | Tier crossing safety — FULLY PROVED |
+| **Highest** | Phase 7 | T2 | Critical path bottleneck; enables Phase 9 |
+| **High** | Phase 8 | T3 | Unblocked; validates effects as unifying framework |
+| **Medium** | Phase 9 | T3 | Blood's headline claim (no GC); blocked on P7 only |
 | **Lower** | Phase 11 | T3 | Crown jewel; depends on everything |
 | DONE | Phase 1 | T1 | Core foundation — FULLY PROVED |
+| DONE | Phase 2 | T2 | Effects x Linearity — FULLY PROVED (two-judgment design) |
 | DONE | Phase 3 | T1 | Effect safety — FULLY PROVED |
 | DONE | Phase 4 | T1 | Generation snapshots — FULLY PROVED |
+| DONE | Phase 5 | T2 | Region safety via generations — FULLY PROVED |
+| DONE | Phase 6 | T2 | Dispatch determinism + type stability — FULLY PROVED |
+| DONE | Phase 10 | T3 | Tier crossing safety — FULLY PROVED |
 
 ---
 
@@ -459,7 +452,7 @@ LinearSafety.v header for the full Phase M3 plan and counter-example.
 | Phase | Tier | New Lines | Complexity | New Files | Status |
 |-------|------|-----------|------------|-----------|--------|
 | Phase 1 | T1 | — | — | — | COMPLETE |
-| Phase 2 | T2 | 500-1000 (changed) | Very High | — | 4 admits (typing redesign) |
+| Phase 2 | T2 | 1,307 (new) | — | LinearTyping.v, LinearSafety.v (rewritten) | COMPLETE |
 | Phase 3 | T1 | — | — | — | COMPLETE |
 | Phase 4 | T1 | — | — | — | COMPLETE |
 | Phase 5 | T2 | 316 | — | Regions.v | COMPLETE |
@@ -471,11 +464,8 @@ LinearSafety.v header for the full Phase M3 plan and counter-example.
 | Phase 11 | T3 | 100-200 | Medium | CompositionSafety.v | Not started |
 | **Total remaining** | | **~1,150-2,050** | | **4 new files** | |
 
-Current suite: 17 files, 7,253 lines.
-Projected final: ~8,400-9,300 lines, 21+ files, zero Admitted.
-
-Note: Phase 2 estimate is "lines changed" not "lines added" — it modifies 8 existing
-files extensively. Net line count increase may be lower than the change count suggests.
+Current suite: 18 files, 8,229 lines.
+Projected final: ~8,880-9,530 lines, 22 files, zero Admitted.
 
 ---
 
@@ -488,19 +478,17 @@ files extensively. Net line count increase may be lower than the change count su
 | `continuation_expr_is_value` | Inversion.v | Deliberate abstraction over continuation structure |
 | `extract_gen_refs` | Semantics.v | Abstract snapshot extraction interface |
 
-### Genuine Proof Obligations (require Phase M3 typing rule changes)
+### Genuine Proof Obligations — ALL RESOLVED
 
-These 4 theorems are NOT provable with the current typing rules. T_Var does not
-check Delta, T_Const accepts any Delta, and a concrete counter-example exists
-(see LinearSafety.v header). Closing them requires strengthening leaf typing rules,
-breaking `has_type_lin_irrelevant`, and cascading through all mutual induction proofs.
+All 4 previously-admitted theorems are now fully proved via the two-judgment
+design in LinearTyping.v + LinearSafety.v:
 
-| Item | File | Strategy |
-|------|------|----------|
-| `linear_safety_static` | LinearSafety.v | Requires T_Var/T_Const to check Delta; induction on typing with context splitting |
-| `affine_safety_static` | LinearSafety.v | Same prerequisite; allows Split_Affine_Neither |
-| `multishot_no_linear_capture` | LinearSafety.v | Requires HWF multishot restriction premise |
-| `effect_suspension_linear_safety` | LinearSafety.v | Requires T_Var to check Delta; context splitting at perform |
+| Item | File | Status |
+|------|------|--------|
+| `linear_safety_static` | LinearSafety.v | PROVED (mutual induction on `has_type_lin`) |
+| `affine_safety_static` | LinearSafety.v | PROVED (mutual induction on `has_type_lin`) |
+| `multishot_no_linear_capture` | LinearSafety.v | PROVED (inversion on `HWF_Lin`) |
+| `effect_suspension_linear_safety` | LinearSafety.v | PROVED (from `linear_safety_static`) |
 
 ### Formalization Gaps
 
@@ -541,7 +529,7 @@ Confirm:
 
 ## Proof Suite File Inventory
 
-### Existing Files (17)
+### Existing Files (18)
 
 | File | Lines | Qed | Admitted | Role |
 |------|-------|-----|----------|------|
@@ -555,13 +543,14 @@ Confirm:
 | Inversion.v | 574 | 21 | 0 | Typing inversion (1 Axiom) |
 | Progress.v | 488 | 9 | 0 | Progress theorem (all 11 cases) |
 | Preservation.v | 366 | 3 | 0 | Preservation theorem (all 11 cases) |
-| Soundness.v | 277 | 8 | 0 | Type soundness + composition |
+| Soundness.v | 282 | 8 | 0 | Type soundness + composition |
 | EffectSafety.v | 261 | 9 | 0 | Effect safety (9 theorems) |
 | GenerationSnapshots.v | 508 | 14 | 0 | Generation snapshot safety |
+| LinearTyping.v | 474 | 2 | 0 | Strengthened typing with linearity |
+| LinearSafety.v | 833 | 19 | 0 | Linear/affine safety (all 4 proved) |
 | Dispatch.v | 289 | 11 | 0 | Multiple dispatch + type stability |
 | Regions.v | 316 | 10 | 0 | Region safety via generations |
 | FiberSafety.v | 412 | 13 | 0 | Tier-based concurrency safety |
-| LinearSafety.v | 272 | 2 | 4 | Linear/affine safety |
 
 ### Planned New Files (4)
 
@@ -572,18 +561,18 @@ Confirm:
 | MemorySafety.v | 9 | T3 | Memory safety without GC |
 | CompositionSafety.v | 11 | T3 | Full composition safety (master theorem) |
 
-### Modified Existing Files (by Phase)
+### Files Modified or Created (by Phase)
 
-| Phase | Files Modified |
-|-------|----------------|
-| Phase 2 | Typing.v, Substitution.v, Inversion.v, ContextTyping.v, Preservation.v, Progress.v, LinearSafety.v |
-| Phase 5 | (self-contained — Regions.v) |
-| Phase 6 | (self-contained — Dispatch.v) |
-| Phase 7 | (self-contained) |
-| Phase 8 | (self-contained) |
-| Phase 9 | (self-contained, imports Phases 2/4/5/7) |
-| Phase 10 | (imports Phase 5 definitions) |
-| Phase 11 | (imports all) |
+| Phase | Status | Files |
+|-------|--------|-------|
+| Phase 2 | COMPLETE | LinearTyping.v (new), LinearSafety.v (rewritten) — no changes to existing files |
+| Phase 5 | COMPLETE | Regions.v (new, self-contained) |
+| Phase 6 | COMPLETE | Dispatch.v (new, self-contained) |
+| Phase 7 | Not started | ValueSemantics.v (new, self-contained) |
+| Phase 8 | Not started | EffectSubsumption.v (new, self-contained) |
+| Phase 9 | Not started | MemorySafety.v (new, imports Phases 2/4/5/7) |
+| Phase 10 | COMPLETE | FiberSafety.v (new, imports Phase 5) |
+| Phase 11 | Not started | CompositionSafety.v (new, imports all) |
 
 ---
 
@@ -617,14 +606,14 @@ Every theorem Blood needs, organized by what it proves.
 | 10 | `gen_snapshot_valid` | PROVED |
 | 11 | `effects_gen_composition_safety` | PROVED |
 
-### Effects x Linearity (Tier 2 — Phase 2)
+### Effects x Linearity (Tier 2 — Phase 2 — COMPLETE)
 
 | # | Theorem | Status |
 |---|---------|--------|
-| 12 | `linear_safety_static` | ADMITTED |
-| 13 | `affine_safety_static` | ADMITTED |
-| 14 | `multishot_no_linear_capture` | ADMITTED |
-| 15 | `effect_suspension_linear_safety` | ADMITTED |
+| 12 | `linear_safety_static` | PROVED |
+| 13 | `affine_safety_static` | PROVED |
+| 14 | `multishot_no_linear_capture` | PROVED |
+| 15 | `effect_suspension_linear_safety` | PROVED |
 
 ### Regions x Generations (Tier 2 — Phase 5)
 
@@ -689,7 +678,7 @@ Every theorem Blood needs, organized by what it proves.
 | 42 | `generation_safety_preserved` | NOT STARTED |
 | 43 | `full_blood_safety` | NOT STARTED |
 
-**Total: 43 theorems. 22 PROVED. 4 ADMITTED. 17 NOT STARTED.**
+**Total: 43 theorems. 26 PROVED. 0 ADMITTED. 17 NOT STARTED.**
 
 ---
 
@@ -697,18 +686,18 @@ Every theorem Blood needs, organized by what it proves.
 
 ```
 Tier 1 (Core Calculus):       11/11 theorems proved  [====================] 100%
-Tier 2 (Interactions):         6/13 theorems proved  [=========           ]  46%
-  Phase 2 (Effects x Linear):  0/4  admitted         [----                ]
+Tier 2 (Interactions):        10/13 theorems proved  [===============     ]  77%
+  Phase 2 (Effects x Linear):  4/4  PROVED           [====================] 100%
   Phase 5 (Regions x Gen):     3/3  PROVED           [====================] 100%
   Phase 6 (Dispatch):          3/3  PROVED           [====================] 100%
-  Phase 7 (MVS x Linear):      0/3  not started      [                    ]
+  Phase 7 (MVS x Linear):      0/3  not started      [                    ]   0%
 Tier 3 (Compositions):         5/19 theorems proved  [=====               ]  26%
-  Phase 8 (Subsumption):       0/4  not started      [                    ]
-  Phase 9 (No GC):             0/5  not started      [                    ]
+  Phase 8 (Subsumption):       0/4  not started      [                    ]   0%
+  Phase 9 (No GC):             0/5  not started      [                    ]   0%
   Phase 10 (Concurrency):      5/5  PROVED           [====================] 100%
-  Phase 11 (Full Composition): 0/5  not started      [                    ]
+  Phase 11 (Full Composition): 0/5  not started      [                    ]   0%
 
-Overall:                       22/43 theorems        [==========          ]  51%
+Overall:                       26/43 theorems        [============        ]  60%
 ```
 
 ---
@@ -718,3 +707,5 @@ Overall:                       22/43 theorems        [==========          ]  51%
 | Date | Version | Changes |
 |------|---------|---------|
 | 2026-03-04 | 1.0 | Initial creation. Consolidated from analysis docs 006/007. Added Tier 3 (Phases 8-11). |
+| 2026-03-04 | 1.1 | Phase 5 (Regions.v), Phase 6 (Dispatch.v), Phase 10 (FiberSafety.v) completed. |
+| 2026-03-04 | 1.2 | Phase 2 COMPLETE: LinearTyping.v (new) + LinearSafety.v (rewritten). 0 Admitted. Two-judgment design. 18 files, 8,229 lines, 168 Qed. All Tier 2 interactions proved except Phase 7. |
