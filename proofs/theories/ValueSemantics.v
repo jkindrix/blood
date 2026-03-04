@@ -58,21 +58,6 @@ Definition is_immutable_borrow (T : ty) : Prop :=
   | _ => False
   end.
 
-(** ** Variable absence after substitution
-
-    After substituting for variable [j], variable [j] no longer appears
-    in the result expression. This is the formal content of "the original
-    binding is consumed" in a de Bruijn setting. *)
-
-Lemma subst_removes_var : forall j s e,
-  count_var j (subst j s e) = 0 ->
-  True.
-Proof. intros. exact I. Qed.
-
-(** More precisely: in the substituted expression, the original variable
-    index j is gone from the context (remove_nth j Gamma). The substituted
-    expression lives in a context where j has been removed. *)
-
 (** ** Copy independence via substitution
 
     When a value v is substituted for variable x in expression e,

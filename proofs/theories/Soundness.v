@@ -161,99 +161,16 @@ Proof.
     exact (effect_in_row_not_pure eff_nm eff' Hin Hsub').
 Qed.
 
-(** ** Linear Safety
+(** ** Superseded theorems (removed)
 
-    Reference: FORMAL_SEMANTICS.md §11.4
+    The following Phase 1 placeholder theorems have been removed because
+    they concluded with [True] rather than proving their claimed property.
+    Each has been superseded by a real proof in a later phase:
 
-    In a well-typed program, no linear value is used more than once.
-
-    This is enforced by the linearity context Δ and its splitting
-    rules. *)
-
-Theorem linear_safety :
-  forall Sigma Gamma Delta e T eff,
-    has_type Sigma Gamma Delta e T eff ->
-    (* All linear bindings in Delta are used exactly once in e *)
-    forall i,
-      nth_error Delta i = Some (Lin_Linear, false) ->
-      (* Variable i appears exactly once in e *)
-      True.  (* Placeholder: precise statement requires counting occurrences *)
-Proof.
-  intros. exact I.
-Qed.
-
-(** ** Generation Safety
-
-    Reference: FORMAL_SEMANTICS.md §11.5, §13.5
-
-    No generational reference dereference accesses freed memory.
-    With generation snapshots, continuation resume validates all
-    captured references. *)
-
-Theorem generation_safety :
-  forall (M : memory) (addr gen : nat),
-    (* If a dereference is attempted with a mismatched generation: *)
-    current_gen M addr <> gen ->
-    (* Then the reference (addr, gen) is stale — the runtime would
-       raise StaleReference before any memory access occurs.
-       Full statement requires memory trace modeling. *)
-    True.
-Proof.
-  trivial.
-Qed.
-
-(** ** Full Composition Safety
-
-    Reference: FORMAL_SEMANTICS.md §10.9.3
-
-    Let e be a Blood program. If ∅; ∅ ⊢ e : T / ε, then during
-    any finite reduction sequence e ──►* e':
-
-    1. No use-after-free
-    2. No unhandled effects
-    3. No type confusion
-    4. No linear duplication
-    5. No dispatch ambiguity *)
-
-Theorem full_composition_safety :
-  forall Sigma e T eff M,
-    closed_well_typed Sigma e T eff ->
-    (* Property 1: No use-after-free (via generation checks) *)
-    (forall e' M',
-       multi_step Sigma (mk_config e M) (mk_config e' M') ->
-       (* All dereferences in the trace either succeed or raise StaleReference *)
-       True) /\
-    (* Property 2: No unhandled effects (via effect typing) *)
-    (eff = Eff_Pure ->
-     forall e' M',
-       multi_step Sigma (mk_config e M) (mk_config e' M') ->
-       (is_value e' = true) \/
-       (exists e'' M'', step Sigma (mk_config e' M') (mk_config e'' M''))) /\
-    (* Property 3: No type confusion (via type preservation) *)
-    (forall e' M',
-       multi_step Sigma (mk_config e M) (mk_config e' M') ->
-       exists eff', closed_well_typed Sigma e' T eff') /\
-    (* Property 4: No linear duplication (via linearity context) *)
-    True /\
-    (* Property 5: No dispatch ambiguity (compile-time check) *)
-    True.
-Proof.
-  intros Sigma e T eff M Htype.
-  split; [| split; [| split; [| split]]].
-  - (* Property 1: No use-after-free — follows from generation checks.
-       Full proof in GenerationSnapshots.v *)
-    intros e' M' _. exact I.
-  - (* Property 2: No unhandled effects *)
-    intros Hpure e' M' Hsteps. subst.
-    exact (effect_safety Sigma e T M Htype e' M' Hsteps).
-  - (* Property 3: No type confusion — multi-step preservation *)
-    intros e' M' Hsteps.
-    exact (multi_step_type_preservation Sigma _ _ Hsteps T eff Htype).
-  - (* Property 4: No linear duplication — compile-time guarantee *)
-    exact I.
-  - (* Property 5: No dispatch ambiguity — compile-time guarantee *)
-    exact I.
-Qed.
+    - [linear_safety] → superseded by [linear_safety_static] in LinearSafety.v
+    - [generation_safety] → superseded by [no_use_after_free] in GenerationSnapshots.v
+    - [full_composition_safety] → superseded by [full_blood_safety] in CompositionSafety.v
+*)
 
 (** ** Summary of mechanized results
 
@@ -281,6 +198,6 @@ Qed.
     - Phase M9 (memory safety): FULLY MECHANIZED (0 Admitted) in MemorySafety.v
     - Phase M10 (concurrency): FULLY MECHANIZED (0 Admitted) in FiberSafety.v
     - Phase M11 (composition): FULLY MECHANIZED (0 Admitted) in CompositionSafety.v
-    - Axioms: 1 (continuation_expr_is_value)
+    - Axioms: 0 (continuation_expr_is_value eliminated by V_Continuation redesign)
     - Parameters: 1 (extract_gen_refs)
 *)

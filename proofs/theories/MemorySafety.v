@@ -59,7 +59,13 @@ Record allocation := mk_alloc {
 
 Definition alloc_set := list allocation.
 
-(** ** Tier coverage: every allocation has exactly one tier *)
+(** ** Tier coverage: every allocation has exactly one tier
+
+    Note: [tier_assigned] is trivially true by construction — [memory_tier]
+    is an exhaustive three-constructor enumeration with no "unassigned" state.
+    The theorem [tier_coverage] is a formal exhaustiveness witness: the type
+    system guarantees every allocation has a tier. In a weaker model (e.g.,
+    optional tier field), this would require a non-trivial invariant. *)
 
 Definition tier_assigned (a : allocation) : Prop :=
   match alloc_tier a with

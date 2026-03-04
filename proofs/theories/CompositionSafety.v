@@ -162,23 +162,24 @@ Qed.
 
 (** ** Theorem 5: Full Blood Safety (Master Theorem)
 
-    The conjunction of ALL safety properties:
+    The conjunction of the four core dynamic safety properties:
 
     1. Type soundness (well-typed programs don't get stuck)
-    2. Effect safety (pure programs have no unhandled performs)
-    3. Linear safety (linear bindings used exactly once)
-    4. Generation safety (stale references detected before access)
-    5. Region safety (region destruction invalidates snapshots)
-    6. Dispatch determinism (method resolution is unambiguous)
-    7. MVS no-aliasing (value types never alias)
-    8. Tier crossing safety (fiber crossing rules prevent races)
-    9. Memory safety (no GC needed — generations cover all tiers)
-    10. Effect subsumption (exceptions/generators/async are effects)
+    2. Effect safety (pure programs step or terminate)
+    3. Type preservation (reduction preserves types)
+    4. Effect discipline (no unhandled performs in pure programs)
 
-    This is the formal statement of Blood's design thesis:
-    the composition of effects, linearity, generations, regions,
-    dispatch, and MVS produces emergent safety guarantees that
-    no individual feature provides alone. *)
+    Additional safety properties (linear safety, generation safety,
+    region safety, dispatch determinism, MVS no-aliasing, tier crossing
+    safety, memory safety, effect subsumption) are proved in their
+    respective modules. The composition guarantee is that these
+    properties hold simultaneously because Blood's modular architecture
+    ensures no feature interferes with another:
+    - Core typing (has_type) is unchanged by any extension
+    - Linear typing (has_type_lin) bridges to has_type
+    - Region/dispatch/fiber safety are self-contained modules
+    - Generation mechanism is orthogonal to typing features
+    - Effect safety is a property of the unchanged core *)
 
 Theorem full_blood_safety :
   forall Sigma e T eff M,
@@ -211,15 +212,11 @@ Theorem full_blood_safety :
        multi_step Sigma (mk_config e M) (mk_config e' M') ->
        ~ (exists D eff_nm op v,
             e' = plug_delimited D (E_Perform eff_nm op (value_to_expr v)) /\
-            dc_no_match D eff_nm)) /\
-
-    (* 5. All safety guarantees compose — adding one feature
-       does not break guarantees of another *)
-    True.
+            dc_no_match D eff_nm)).
 
 Proof.
   intros Sigma e T eff M Htype.
-  split; [| split; [| split; [| split]]].
+  split; [| split; [| split]].
 
   - (* 1. Type soundness *)
     intros e' M' Hsteps.
@@ -236,16 +233,6 @@ Proof.
   - (* 4. Effect discipline *)
     intros Hpure e' M' Hsteps. subst.
     exact (effect_discipline Sigma e T M Htype e' M' Hsteps).
-
-  - (* 5. Composition: all features coexist without interference.
-       This is guaranteed by the modular architecture:
-       - Core typing (has_type) is unchanged by any extension
-       - Linear typing (has_type_lin) bridges to has_type
-       - Region/dispatch/fiber safety are self-contained modules
-       - Generation mechanism is orthogonal to typing features
-       - Effect safety is a property of the unchanged core
-       Therefore, all guarantees compose without interference. *)
-    exact I.
 Qed.
 
 (** ** Detailed composition properties
@@ -333,7 +320,7 @@ Qed.
 
     5. full_blood_safety — Master composition theorem. Conjunction
        of type soundness + effect safety + type preservation +
-       effect discipline + composition guarantee.
+       effect discipline.
 
     Additional composition witnesses:
     - effects_linearity_compose: Effects + Linearity (Phase 2)

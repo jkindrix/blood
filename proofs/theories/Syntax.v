@@ -138,7 +138,7 @@ Inductive value : Type :=
   | V_Const : constant -> value
   | V_Lam : ty -> expr -> value                        (** closure *)
   | V_Record : list (label * value) -> value           (** record value *)
-  | V_Continuation : expr -> gen_snapshot -> value     (** continuation with snapshot *)
+  | V_Continuation : ty -> expr -> gen_snapshot -> value (** continuation = λ(x:T).body + snapshot *)
 
 (** ** Generation snapshots
 
@@ -202,7 +202,7 @@ Fixpoint value_to_expr (v : value) : expr :=
   | V_Lam t e => E_Lam t e
   | V_Record fields =>
       E_Record (map (fun '(l, v) => (l, value_to_expr v)) fields)
-  | V_Continuation e _ => e   (** simplified: drop snapshot for expression *)
+  | V_Continuation t body _ => E_Lam t body   (** continuation is a lambda with snapshot *)
   end.
 
 (** ** Predicate: is an expression a value? *)

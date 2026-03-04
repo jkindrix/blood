@@ -91,22 +91,23 @@ Proof.
     + apply IHHtyped. assumption.
 Qed.
 
-(** ** value_to_expr always produces syntactic values *)
+(** ** value_to_expr always produces syntactic values
 
-Axiom continuation_expr_is_value :
-  forall e snap, is_value (value_to_expr (V_Continuation e snap)) = true.
+    Previously required an axiom for V_Continuation. Now that
+    V_Continuation stores (ty, body, snapshot) and value_to_expr
+    produces E_Lam ty body, this is provable by reflexivity. *)
 
 Lemma value_to_expr_is_value :
   forall v, is_value (value_to_expr v) = true.
 Proof.
-  fix IH 1. destruct v as [c | t e | fields | e snap].
+  fix IH 1. destruct v as [c | t e | fields | t body snap].
   - (* V_Const *) reflexivity.
   - (* V_Lam *) reflexivity.
   - (* V_Record *)
     simpl. induction fields as [| [l v'] fields' IHf].
     + reflexivity.
     + simpl. rewrite IH. simpl. exact IHf.
-  - (* V_Continuation *) apply continuation_expr_is_value.
+  - (* V_Continuation *) reflexivity.
 Qed.
 
 (** ** Type inversion lemmas for closed terms

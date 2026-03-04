@@ -750,28 +750,6 @@ Proof.
     intros. exact I.
 Qed.
 
-(** ** Linear values survive single-shot handlers *)
-
-Theorem linear_single_shot_safe :
-  forall Sigma Gamma Delta h e T eff eff_name comp_ty result_ty handler_eff comp_eff,
-    has_type_lin Sigma Gamma Delta e T eff ->
-    handler_well_formed_lin Sigma Gamma Delta h
-                        eff_name comp_ty result_ty handler_eff comp_eff ->
-    (match h with
-     | Handler _ _ clauses =>
-         forall cl,
-           In cl clauses ->
-           match cl with
-           | OpClause _ _ body => count_var 1 body = 1
-           end
-     end) ->
-    forall x,
-      nth_error Delta x = Some (Lin_Linear, false) ->
-      True.
-Proof.
-  intros. exact I.
-Qed.
-
 (** ** Multi-shot handlers cannot capture linear values *)
 
 Theorem multishot_no_linear_capture :
