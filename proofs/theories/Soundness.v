@@ -272,9 +272,8 @@ Qed.
     - Theorem statements: COMPLETE
     - Phase M1 proofs: FULLY MECHANIZED (0 Admitted)
     - Phase M2 (effects): FULLY MECHANIZED (0 Admitted)
-    - Phase M3 (linearity): 4 Admitted in LinearSafety.v
-      (requires strengthening T_Var/T_Const leaf rules and
-       rebuilding substitution infrastructure; see LinearSafety.v header)
+    - Phase M3 (linearity): FULLY MECHANIZED (0 Admitted) in
+      LinearTyping.v + LinearSafety.v (via two-judgment design)
     - Phase M5 (regions): FULLY MECHANIZED (0 Admitted) in Regions.v
     - Phase M6 (dispatch): FULLY MECHANIZED (0 Admitted) in Dispatch.v
     - Phase M10 (concurrency): FULLY MECHANIZED (0 Admitted) in FiberSafety.v
