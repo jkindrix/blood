@@ -46,8 +46,8 @@ Tier 3 proves the whole is greater than the sum of its parts.
 
 ## Current State (2026-03-04)
 
-16 files, 6,839 lines, 4 Admitted (all in LinearSafety.v), 138 Qed, 1 Axiom, 1 Parameter.
-15 of 16 files fully proved (0 Admitted).
+17 files, 7,253 lines, 4 Admitted (all in LinearSafety.v), 149 Qed, 1 Axiom, 1 Parameter.
+16 of 17 files fully proved (0 Admitted).
 
 ### Permanent Modeling Assumptions
 
@@ -297,38 +297,36 @@ and that generations + linearity prevent use-after-free in all three tiers.
 
 **Estimated:** ~150-250 new lines (heavy lifting done in Phases 2, 4, 5, 7; this stitches them together)
 
-### Phase 10: Tier-Based Concurrency Safety — NOT STARTED
+### Phase 10: Tier-Based Concurrency Safety — COMPLETE
 
 **Goal:** Prove that Blood's tier-based crossing rules guarantee safe concurrency without
 Rust-style Send/Sync traits.
 
-**Why this matters:** Blood claims its tier system (Stack values can't cross fibers, Region
-values checked on crossing, Persistent values free to cross) replaces Rust's trait-based
-approach. The proof shows data races are impossible under the tier crossing rules.
-
-**Scope note:** This does NOT require formalizing Blood's full M:N fiber scheduler,
-structured concurrency, or the Fiber effect. It requires only:
-- A notion of "fiber" as a concurrent execution context
-- Tier annotations on types (partially present from Phase 5)
-- A crossing predicate (can this value be sent to another fiber?)
-- The crossing rules (Stack=no, Region=checked, Persistent=yes)
-
-This is a lightweight fiber model — just enough to state and prove the crossing safety
-theorem.
+**Status:** All 5 main theorems + 3 corollaries proved. 0 Admitted.
 
 **Depends on:** Phase 5 (SATISFIED)
 
-**New file:** FiberSafety.v
+**New file:** FiberSafety.v (412 lines, 13 Qed)
 
-| Theorem | Proof Strategy |
-|---------|----------------|
-| `stack_no_cross` | Stack-tier values cannot be sent to another fiber |
-| `region_checked_cross` | Region-tier values require generation check on fiber crossing |
-| `persistent_free_cross` | Persistent-tier values can cross fibers freely |
-| `tier_crossing_safety` | **Composition theorem:** Tier crossing rules prevent data races between fibers |
-| `region_isolation` | Fibers cannot access each other's regions without explicit sharing |
+Self-contained — defines memory tiers (Stack, Region, Persistent), mutability (Mutable,
+Frozen), typed references, and fiber crossing predicates. Builds on Regions.v for the
+region-checked crossing theorem. Ownership model parameterized via Section variable
+(addr_owner), same pattern as Dispatch.v.
 
-**Estimated:** ~300-500 new lines
+Key insight (CONCURRENCY.md §9.2): Data race freedom follows by construction from the
+tier crossing rules. Mutable references require address ownership (unique per fiber),
+so two different fibers cannot both hold writable references to the same address.
+
+| Theorem | File | Status |
+|---------|------|--------|
+| `stack_no_cross` | FiberSafety.v | PROVED |
+| `region_checked_cross` | FiberSafety.v | PROVED |
+| `persistent_free_cross` | FiberSafety.v | PROVED |
+| `tier_crossing_safety` | FiberSafety.v | PROVED |
+| `region_isolation` | FiberSafety.v | PROVED |
+| `region_isolation_no_write` | FiberSafety.v | PROVED (bonus) |
+| `region_crossing_detected` | FiberSafety.v | PROVED (bonus) |
+| `crossing_region_is_frozen` | FiberSafety.v | PROVED (bonus) |
 
 ### Phase 11: Full Composition Safety — NOT STARTED
 
@@ -394,7 +392,7 @@ Tier 3 (Compositions)
     depends on: Phase 2, Phase 3
   Phase 9 (Memory Safety, No GC)    — not started
     depends on: Phase 2, Phase 4, Phase 5, Phase 7
-  Phase 10 (Tier Concurrency Safety) — not started
+  Phase 10 (Tier Concurrency Safety) — COMPLETE
     depends on: Phase 5
   Phase 11 (Full Composition Safety) — not started
     depends on: ALL previous phases
@@ -409,9 +407,9 @@ Phase 1 ──DONE──┬──► Phase 2 ──────┬──► Phas
                 │                  │                       │
 Phase 3 ──DONE──┤                  └──► Phase 9 ◄── P5 ◄──┤
                 │                          ▲               │
-Phase 4 ──DONE──┼──► Phase 5 ─────────────┼──► Phase 10 ──┤
+Phase 4 ──DONE──┼──► Phase 5 ──DONE──────┼──► P10 ──DONE─┤
                 │                          │               │
-                └──► Phase 6 ──────────────┼───────────────┤
+                └──► Phase 6 ──DONE───────┼───────────────┤
                                            │               │
                                            └──► Phase 11 ◄─┘
 ```
@@ -420,7 +418,7 @@ Phase 4 ──DONE──┼──► Phase 5 ───────────�
 
 These phases can proceed in parallel:
 - Phase 7 + Phase 8 (both depend only on Phase 2)
-- Phase 9 + Phase 10 (Phase 5 now complete; both are unblocked on their P5 dependency)
+- Phase 9 (Phase 5 complete; Phase 10 now also complete)
 
 ### Critical Path
 
@@ -448,7 +446,7 @@ LinearSafety.v header for the full Phase M3 plan and counter-example.
 | **Medium** | Phase 7 | T2 | Blocked on Phase 2; enables Phase 9 |
 | **Medium** | Phase 8 | T3 | Blocked on Phase 2; validates effects as unifying framework |
 | **Medium** | Phase 9 | T3 | Blood's headline claim (no GC); blocked on P2, P5, P7 |
-| **Lower** | Phase 10 | T3 | Concurrency safety; blocked on Phase 5 |
+| DONE | Phase 10 | T3 | Tier crossing safety — FULLY PROVED |
 | **Lower** | Phase 11 | T3 | Crown jewel; depends on everything |
 | DONE | Phase 1 | T1 | Core foundation — FULLY PROVED |
 | DONE | Phase 3 | T1 | Effect safety — FULLY PROVED |
@@ -469,12 +467,12 @@ LinearSafety.v header for the full Phase M3 plan and counter-example.
 | Phase 7 | T2 | 200-300 | Low-Medium | ValueSemantics.v | Not started |
 | Phase 8 | T3 | 200-300 | Medium | EffectSubsumption.v | Not started |
 | Phase 9 | T3 | 150-250 | Medium | MemorySafety.v | Not started |
-| Phase 10 | T3 | 300-500 | High | FiberSafety.v | Not started |
+| Phase 10 | T3 | 412 | — | FiberSafety.v | COMPLETE |
 | Phase 11 | T3 | 100-200 | Medium | CompositionSafety.v | Not started |
-| **Total remaining** | | **~1,450-2,550** | | **5 new files** | |
+| **Total remaining** | | **~1,150-2,050** | | **4 new files** | |
 
-Current suite: 16 files, 6,839 lines.
-Projected final: ~8,300-9,400 lines, 21+ files, zero Admitted.
+Current suite: 17 files, 7,253 lines.
+Projected final: ~8,400-9,300 lines, 21+ files, zero Admitted.
 
 Note: Phase 2 estimate is "lines changed" not "lines added" — it modifies 8 existing
 files extensively. Net line count increase may be lower than the change count suggests.
@@ -543,7 +541,7 @@ Confirm:
 
 ## Proof Suite File Inventory
 
-### Existing Files (16)
+### Existing Files (17)
 
 | File | Lines | Qed | Admitted | Role |
 |------|-------|-----|----------|------|
@@ -562,16 +560,16 @@ Confirm:
 | GenerationSnapshots.v | 508 | 14 | 0 | Generation snapshot safety |
 | Dispatch.v | 289 | 11 | 0 | Multiple dispatch + type stability |
 | Regions.v | 316 | 10 | 0 | Region safety via generations |
+| FiberSafety.v | 412 | 13 | 0 | Tier-based concurrency safety |
 | LinearSafety.v | 272 | 2 | 4 | Linear/affine safety |
 
-### Planned New Files (5)
+### Planned New Files (4)
 
 | File | Phase | Tier | Role |
 |------|-------|------|------|
 | ValueSemantics.v | 7 | T2 | Mutable value semantics |
 | EffectSubsumption.v | 8 | T3 | Effects unify control flow patterns |
 | MemorySafety.v | 9 | T3 | Memory safety without GC |
-| FiberSafety.v | 10 | T3 | Tier-based concurrency safety |
 | CompositionSafety.v | 11 | T3 | Full composition safety (master theorem) |
 
 ### Modified Existing Files (by Phase)
@@ -675,11 +673,11 @@ Every theorem Blood needs, organized by what it proves.
 
 | # | Theorem | Status |
 |---|---------|--------|
-| 34 | `stack_no_cross` | NOT STARTED |
-| 35 | `region_checked_cross` | NOT STARTED |
-| 36 | `persistent_free_cross` | NOT STARTED |
-| 37 | `tier_crossing_safety` | NOT STARTED |
-| 38 | `region_isolation` | NOT STARTED |
+| 34 | `stack_no_cross` | PROVED |
+| 35 | `region_checked_cross` | PROVED |
+| 36 | `persistent_free_cross` | PROVED |
+| 37 | `tier_crossing_safety` | PROVED |
+| 38 | `region_isolation` | PROVED |
 
 ### Full Composition Safety (Tier 3 — Phase 11)
 
@@ -691,7 +689,7 @@ Every theorem Blood needs, organized by what it proves.
 | 42 | `generation_safety_preserved` | NOT STARTED |
 | 43 | `full_blood_safety` | NOT STARTED |
 
-**Total: 43 theorems. 17 PROVED. 4 ADMITTED. 22 NOT STARTED.**
+**Total: 43 theorems. 22 PROVED. 4 ADMITTED. 17 NOT STARTED.**
 
 ---
 
@@ -704,13 +702,13 @@ Tier 2 (Interactions):         6/13 theorems proved  [=========           ]  46%
   Phase 5 (Regions x Gen):     3/3  PROVED           [====================] 100%
   Phase 6 (Dispatch):          3/3  PROVED           [====================] 100%
   Phase 7 (MVS x Linear):      0/3  not started      [                    ]
-Tier 3 (Compositions):         0/19 theorems proved  [                    ]   0%
+Tier 3 (Compositions):         5/19 theorems proved  [=====               ]  26%
   Phase 8 (Subsumption):       0/4  not started      [                    ]
   Phase 9 (No GC):             0/5  not started      [                    ]
-  Phase 10 (Concurrency):      0/5  not started      [                    ]
+  Phase 10 (Concurrency):      5/5  PROVED           [====================] 100%
   Phase 11 (Full Composition): 0/5  not started      [                    ]
 
-Overall:                       17/43 theorems        [========            ]  40%
+Overall:                       22/43 theorems        [==========          ]  51%
 ```
 
 ---
