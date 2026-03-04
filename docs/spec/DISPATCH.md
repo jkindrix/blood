@@ -2343,6 +2343,47 @@ DYNAMIC_DISPATCH(obj: dyn T, method_name: Symbol, args: [Value]) → Value:
 
 These mechanisms compose: a method family (multiple dispatch) can include a specialization for `dyn Trait` types, which then dispatches dynamically through the vtable.
 
+### 10.10 Hybrid Dispatch Hierarchy
+
+Blood provides multiple dispatch mechanisms, each suited to different use cases. They form a hierarchy ordered by preference — use the first mechanism that fits:
+
+| Priority | Mechanism | Use Case | Overhead | Requirement |
+|----------|-----------|----------|----------|-------------|
+| 1 | Enum + match | Closed variant sets | Zero-cost | All variants known at compile time |
+| 2 | Static multiple dispatch | Type-specialized behavior | Zero (monomorphized) | All argument types known at compile time |
+| 3 | Effect handlers | Behavioral polymorphism | ~128ns/perform | Operations dispatched through call stack |
+| 4 | `dyn Trait` vtables | Data polymorphism | ~3-5 cycles (indirect call) | Object-safe trait, heterogeneous data |
+
+#### When to Use Each
+
+**Enum + match** (default for closed sets): When all variants are known at compile time. Zero overhead, exhaustive checking, Copy optimization for enum payloads. Example: AST node types, error categories.
+
+**Static multiple dispatch** (default for open extensibility): When behavior varies by argument types but all types are known at compile time. Monomorphized, zero overhead. Example: numeric operations, serialization specializations.
+
+**Effect handlers** (behavioral polymorphism): When operations need to be intercepted, composed, or managed through the call stack. Not for storing data — effects are operations, not values. Example: logging, error handling, resource management, middleware.
+
+**`dyn Trait` vtables** (data polymorphism): When heterogeneous values must be stored together or when concrete types are unknown at compile time. Requires object-safe traits. Example: heterogeneous collections (`Vec<&dyn Drawable>`), plugin interfaces, type-erased APIs.
+
+#### Why Effects Cannot Replace Vtables
+
+Effects and vtables operate in **different dimensions**:
+
+- **Effects** dispatch operations through the call stack. `perform E.op(x)` walks the evidence vector to find a handler. The handler lives on the stack, not in the data. You cannot store an effect in a `Vec`.
+- **Vtables** dispatch methods through data pointers. A `dyn Trait` value carries its implementation. The vtable lives alongside the data. Trait objects are first-class values.
+
+They compose naturally: a vtable method can perform effects, and an effect handler can manipulate trait objects.
+
+#### Blood-Specific Advantages
+
+1. **No `drop_fn` in vtable** — Simpler layout than Rust. Cleanup via memory tiers + `finally` clauses (§10.8.1).
+2. **Generation checks on data pointer only** — Vtable pointer is static (compile-time constant); only the data pointer needs generation validation.
+3. **Effect rows on trait methods** — `fn draw(&self) / {IO}` is checked at trait object construction, not just at call site.
+4. **Content-addressed vtables** — Vtable identity = hash of implementations. Enables deduplication across compilation units and hot reload.
+
+#### Deferred: Fingerprint-Based Runtime Multiple Dispatch
+
+Runtime multiple dispatch via 24-bit type fingerprints (§6.2-6.5) is deferred indefinitely. Vtables are simpler and faster (~3-5 cycles vs ~5-10 cycles) for the common single-receiver case. Fingerprint dispatch can be added later if multi-argument runtime dispatch proves necessary.
+
 ---
 
 ## 11. Related Work

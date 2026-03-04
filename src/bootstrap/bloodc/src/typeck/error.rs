@@ -303,6 +303,12 @@ impl TypeError {
                 format!("casting `{source}` as `{target}` is invalid"),
             ),
 
+            // Object safety errors (E09xx)
+            TypeErrorKind::TraitNotObjectSafe { trait_name, reason } => (
+                "E0901",
+                format!("the trait `{trait_name}` cannot be made into an object: {reason}"),
+            ),
+
             // Linearity errors (E08xx)
             TypeErrorKind::UnusedLinearValue { name, ty } => (
                 "E0801",
@@ -639,6 +645,13 @@ pub enum TypeErrorKind {
     InvalidCast {
         source: Type,
         target: Type,
+    },
+
+    // Object safety errors (E09xx)
+    /// Trait is not object-safe: method has generic type parameters.
+    TraitNotObjectSafe {
+        trait_name: String,
+        reason: String,
     },
 
     // Linearity errors (E08xx)

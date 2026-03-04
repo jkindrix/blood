@@ -118,6 +118,30 @@ pub fn lower_type_id(ctx: &mut hir_lower_ctx.LoweringCtx, ty: &ast.Type) -> type
 
             type_intern.type_interner().intern(type_intern.InternedTypeKind.Forall { params: param_ids, body: body_id })
         }
+        &ast.TypeKind.DynTrait { ref trait_path, ref auto_traits } => {
+            let trait_def = resolve_type_path_to_def_id(ctx, trait_path);
+            match trait_def {
+                Option.Some(trait_id) => {
+                    let mut auto_ids: Vec<hir_def.DefId> = Vec.new();
+                    for i in 0usize..auto_traits.len() {
+                        let auto_def = resolve_type_path_to_def_id(ctx, &auto_traits[i]);
+                        match auto_def {
+                            Option.Some(auto_id) => {
+                                auto_ids.push(auto_id);
+                            }
+                            Option.None => {}
+                        }
+                    }
+                    type_intern.type_interner().intern(type_intern.InternedTypeKind.DynTrait {
+                        trait_id: trait_id,
+                        auto_traits: auto_ids,
+                    })
+                }
+                Option.None => {
+                    type_intern.CommonTypes.error()
+                }
+            }
+        }
         &ast.TypeKind.Never => {
             type_intern.CommonTypes.never()
         }
@@ -243,6 +267,30 @@ pub fn lower_type(ctx: &mut hir_lower_ctx.LoweringCtx, ty: &ast.Type) -> hir_ty.
                 body: Box.new(body_ty),
             })
         }
+        &ast.TypeKind.DynTrait { ref trait_path, ref auto_traits } => {
+            let trait_def = resolve_type_path_to_def_id(ctx, trait_path);
+            match trait_def {
+                Option.Some(trait_id) => {
+                    let mut auto_ids: Vec<hir_def.DefId> = Vec.new();
+                    for i in 0usize..auto_traits.len() {
+                        let auto_def = resolve_type_path_to_def_id(ctx, &auto_traits[i]);
+                        match auto_def {
+                            Option.Some(auto_id) => {
+                                auto_ids.push(auto_id);
+                            }
+                            Option.None => {}
+                        }
+                    }
+                    hir_ty.Type.new(hir_ty.TypeKind.DynTrait {
+                        trait_id: trait_id,
+                        auto_traits: auto_ids,
+                    })
+                }
+                Option.None => {
+                    hir_ty.Type.new(hir_ty.TypeKind.Error)
+                }
+            }
+        }
         &ast.TypeKind.Never => {
             hir_ty.Type.never()
         }
@@ -254,6 +302,55 @@ pub fn lower_type(ctx: &mut hir_lower_ctx.LoweringCtx, ty: &ast.Type) -> hir_ty.
             lower_type(ctx, inner.as_ref())
         }
     }
+}
+
+// ============================================================
+// Trait Path Resolution (for dyn Trait)
+// ============================================================
+
+/// Resolve a type path to a DefId. Used for `dyn Trait` trait references.
+/// Returns None and reports an error if the path cannot be resolved.
+fn resolve_type_path_to_def_id(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.TypePath) -> Option<hir_def.DefId> {
+    if path.segments.len() == 1 {
+        let seg = &path.segments[0];
+        let name_str = ctx.span_to_string(seg.name.span);
+        let lookup_symbol = ctx.intern(name_str.as_str());
+        let lookup = ctx.resolver.lookup(lookup_symbol);
+        if lookup.is_some() {
+            let result = lookup.unwrap();
+            let binding = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
+            return Option.Some(binding.def_id);
+        }
+        let mut msg = common.make_string("undefined trait: ");
+        msg.push_str(name_str.as_str());
+        ctx.error(hir.DiagnosticCode.E0102, msg, seg.name.span);
+        return Option.None;
+    }
+
+    // Multi-segment path (e.g., module.Trait)
+    let mut names: Vec<common.SpannedSymbol> = Vec.new();
+    for i in 0usize..path.segments.len() {
+        let seg = &path.segments[i];
+        let name_str = ctx.span_to_string(seg.name.span);
+        let re_interned = ctx.intern(name_str.as_str());
+        names.push(common.SpannedSymbol { symbol: re_interned, span: seg.name.span });
+    }
+    let resolved = ctx.resolver.resolve_qualified_path(&names);
+    if resolved.is_some() {
+        let result = resolved.unwrap();
+        return Option.Some(result.def_id);
+    }
+
+    let mut msg = common.make_string("undefined trait path: ");
+    for j in 0usize..names.len() {
+        if j > 0 {
+            msg.push_str(".");
+        }
+        let seg_str = ctx.span_to_string(names[j].span);
+        msg.push_str(seg_str.as_str());
+    }
+    ctx.error(hir.DiagnosticCode.E0102, msg, path.span);
+    Option.None
 }
 
 // ============================================================

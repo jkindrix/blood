@@ -199,6 +199,10 @@ pub struct TypeContext<'a> {
     /// Builtin methods for primitive and builtin types.
     /// Maps (type discriminant, method name) -> method info.
     pub(crate) builtin_methods: Vec<BuiltinMethodInfo>,
+    /// Cache of object safety results for traits.
+    /// Maps trait DefId to whether the trait is object-safe.
+    /// Computed during check_all_bodies Phase 1b and used for dyn Trait coercion checking.
+    pub(crate) object_safe_traits: HashMap<DefId, bool>,
 }
 
 /// Information about a struct.
@@ -763,6 +767,7 @@ impl<'a> TypeContext<'a> {
             box_def_id: None,
             iter_def_id: None,
             builtin_methods: Vec::new(),
+            object_safe_traits: HashMap::new(),
         };
         ctx.register_builtins();
         ctx.register_builtin_types();

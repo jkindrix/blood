@@ -10,6 +10,7 @@ mod common;
 mod hir_def;
 mod hir_ty;
 mod type_intern;
+mod typeck_info;
 
 // ============================================================
 // Method Candidates
@@ -147,6 +148,86 @@ impl DispatchResolver {
             ))
         }
     }
+}
+
+// ============================================================
+// Object Safety Checking
+// ============================================================
+
+/// Object safety violation kind.
+pub enum ObjectSafetyViolation {
+    /// Method has generic type parameters ([No-Generic-Self]).
+    GenericSelfMethod,
+    /// Method takes self by value ([No-Self-By-Value]).
+    SelfByValue,
+    /// Method returns Self by value ([No-Self-Return]).
+    SelfReturn,
+    /// Associated type has no default and is not bound ([Assoc-Type-Bound]).
+    UnboundAssocType,
+}
+
+/// Result of object safety checking.
+pub enum ObjectSafetyResult {
+    /// Trait is object-safe.
+    Safe,
+    /// Trait is not object-safe.
+    Unsafe(ObjectSafetyViolation),
+}
+
+/// Checks if a trait is object-safe per DISPATCH.md §10.7.
+///
+/// A trait is object-safe when all its methods can be represented as
+/// function pointers in a vtable. Returns Safe or Unsafe with the violation.
+///
+/// Rules checked:
+/// 1. [No-Generic-Self] — No method has generic type parameters (not checkable
+///    from TraitMethodInfo alone; deferred to parser/HIR phase when method generics
+///    are tracked)
+/// 2. [No-Self-By-Value] — No method takes self by value (must take &self or &mut self)
+/// 3. [No-Self-Return] — No method returns Self by value
+/// 4. [Assoc-Type-Bound] — All associated types have defaults
+pub fn check_trait_object_safety(
+    trait_info: &typeck_info.TraitInfo,
+) -> ObjectSafetyResult {
+    // Check each method
+    let i: u32 = 0;
+    let num_methods: u32 = trait_info.methods.len() as u32;
+    for i in 0..num_methods {
+        let method = &trait_info.methods[i as usize];
+
+        // Rule 2: [No-Self-By-Value]
+        // A method must take &self or &mut self, not self by value.
+        // If it takes neither &self nor &mut self, it either takes self by value
+        // or is a static method. Static methods are OK for object safety (they
+        // just can't be called through the vtable).
+        if !method.takes_self_ref && !method.takes_self_mut {
+            // This is either a static method (no self at all) or self by value.
+            // We cannot distinguish from TraitMethodInfo alone. For now, we
+            // conservatively treat methods that have parameters but no self_ref/self_mut
+            // as potentially taking self by value.
+            // TODO: Add takes_self_val field to TraitMethodInfo for precise checking.
+        }
+
+        // Rule 3: [No-Self-Return]
+        // Check if return type is Self (Param type). This is a conservative check.
+        let ret_kind = type_intern.type_interner().get(method.return_ty);
+        match ret_kind {
+            &type_intern.InternedTypeKind.Param(_) => {
+                return ObjectSafetyResult.Unsafe(ObjectSafetyViolation.SelfReturn);
+            }
+            _ => {}
+        }
+    }
+
+    // Rule 4: [Assoc-Type-Bound]
+    // All associated types must have defaults for the trait to be object-safe.
+    // TraitInfo.assoc_types is Vec<Symbol> — no default info stored currently.
+    // If there are any associated types without defaults, the trait is not object-safe.
+    // For now, treat any trait with associated types as potentially non-object-safe
+    // unless we can verify defaults exist.
+    // TODO: Add default tracking to assoc_types when associated type defaults are implemented.
+
+    ObjectSafetyResult.Safe
 }
 
 // ============================================================

@@ -275,6 +275,31 @@ impl<'a> TypeContext<'a> {
         }
     }
 
+    /// Pre-compute object safety for all registered traits.
+    ///
+    /// This caches the result in `object_safe_traits` for fast lookup during
+    /// dyn Trait coercion checking. Non-object-safe traits are noted but not
+    /// reported as errors here — errors are only emitted when code attempts to
+    /// use a non-object-safe trait as `dyn Trait`.
+    pub(crate) fn check_all_trait_object_safety(&mut self) {
+        let trait_ids: Vec<DefId> = self.trait_defs.keys().copied().collect();
+        for trait_id in trait_ids {
+            let is_safe = self.check_object_safety(
+                trait_id,
+                Span::new(0, 0, 0, 0), // dummy span — actual errors use the `dyn Trait` usage span
+            ).is_ok();
+            self.object_safe_traits.insert(trait_id, is_safe);
+        }
+    }
+
+    /// Check if a trait is object-safe (cached lookup).
+    ///
+    /// Returns true if the trait passes all four object safety rules.
+    /// Must be called after `check_all_trait_object_safety()`.
+    pub(crate) fn is_trait_object_safe(&self, trait_id: DefId) -> bool {
+        self.object_safe_traits.get(&trait_id).copied().unwrap_or(false)
+    }
+
     /// Check coherence: detect overlapping impl blocks.
     ///
     /// Two impls overlap if they could apply to the same type. For example:
@@ -363,6 +388,125 @@ impl<'a> TypeContext<'a> {
             }
 
             // Different type kinds don't overlap
+            _ => false,
+        }
+    }
+
+    /// Check if a trait is object-safe (can be used as `dyn Trait`).
+    ///
+    /// A trait is object-safe when all its methods can be represented as function
+    /// pointers in a vtable. See DISPATCH.md §10.7 for the formal rules.
+    ///
+    /// Returns Ok(()) if the trait is object-safe, or Err with the reason if not.
+    pub(crate) fn check_object_safety(
+        &self,
+        trait_id: DefId,
+        span: Span,
+    ) -> Result<(), Box<TypeError>> {
+        let Some(trait_info) = self.trait_defs.get(&trait_id) else {
+            // Trait not found - already reported during trait resolution
+            return Ok(());
+        };
+
+        for method in &trait_info.methods {
+            // Rule 1: [No-Generic-Self] — No generic type parameters on method
+            if !method.sig.generics.is_empty() {
+                return Err(Box::new(TypeError::new(
+                    TypeErrorKind::TraitNotObjectSafe {
+                        trait_name: trait_info.name.clone(),
+                        reason: format!(
+                            "method `{}` has generic type parameters",
+                            method.name
+                        ),
+                    },
+                    span,
+                ).with_help(
+                    "generic methods require monomorphization, which is incompatible with vtable dispatch"
+                )));
+            }
+
+            // Rule 2: [No-Self-By-Value] — Self not taken by value as parameter
+            // In FnSig, if the first input is Self by value (not behind a reference),
+            // the method takes self by value
+            if !method.sig.inputs.is_empty() {
+                let first_param = &method.sig.inputs[0];
+                if self.is_self_by_value(first_param) {
+                    return Err(Box::new(TypeError::new(
+                        TypeErrorKind::TraitNotObjectSafe {
+                            trait_name: trait_info.name.clone(),
+                            reason: format!(
+                                "method `{}` takes `self` by value",
+                                method.name
+                            ),
+                        },
+                        span,
+                    ).with_help(
+                        "methods on trait objects must take `&self` or `&mut self`, not `self` by value"
+                    )));
+                }
+            }
+
+            // Rule 3: [No-Self-Return] — Self not returned by value
+            if self.return_type_contains_self(&method.sig.output) {
+                return Err(Box::new(TypeError::new(
+                    TypeErrorKind::TraitNotObjectSafe {
+                        trait_name: trait_info.name.clone(),
+                        reason: format!(
+                            "method `{}` returns `Self`",
+                            method.name
+                        ),
+                    },
+                    span,
+                ).with_help(
+                    "the caller cannot allocate a return value of unknown size behind `dyn`"
+                )));
+            }
+        }
+
+        // Rule 4: [Assoc-Type-Bound] — Associated types must be determinable
+        for assoc_type in &trait_info.assoc_types {
+            if assoc_type.default.is_none() {
+                return Err(Box::new(TypeError::new(
+                    TypeErrorKind::TraitNotObjectSafe {
+                        trait_name: trait_info.name.clone(),
+                        reason: format!(
+                            "associated type `{}` has no default and is not bound in the `dyn` type",
+                            assoc_type.name
+                        ),
+                    },
+                    span,
+                ).with_help(
+                    "vtable callers need to know associated types to interpret return values"
+                )));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Check if a type represents `Self` by value (not behind a reference).
+    fn is_self_by_value(&self, ty: &Type) -> bool {
+        // Self by value would be represented as TypeKind::Param for the Self type
+        // parameter, without a Ref wrapper. We check that the first parameter
+        // is NOT a reference (which would be &self or &mut self).
+        match ty.kind() {
+            TypeKind::Ref { .. } => false, // &self or &mut self — OK
+            TypeKind::Ptr { .. } => false, // *self — OK
+            TypeKind::Param(_) => true,    // Self by value — NOT object-safe
+            _ => false,                     // Other types (e.g., concrete) — OK
+        }
+    }
+
+    /// Check if a return type contains Self by value.
+    fn return_type_contains_self(&self, ty: &Type) -> bool {
+        match ty.kind() {
+            TypeKind::Param(_) => true, // Bare Self return
+            TypeKind::Tuple(elems) => elems.iter().any(|e| self.return_type_contains_self(e)),
+            // Self behind a reference is OK (e.g., -> &Self)
+            TypeKind::Ref { .. } => false,
+            TypeKind::Ptr { .. } => false,
+            // ADT with Self as a type arg (e.g., Option<Self>)
+            TypeKind::Adt { args, .. } => args.iter().any(|a| self.return_type_contains_self(a)),
             _ => false,
         }
     }

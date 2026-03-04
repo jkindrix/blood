@@ -308,6 +308,15 @@ pub struct CodegenCtx {
     /// Deferred fn pointer wrapper function LLVM IR definitions.
     /// Collected when FnDef values are used, emitted after all function bodies.
     pub fn_ptr_wrapper_defs: Vec<String>,
+    /// Vtable global constant definitions (LLVM IR text).
+    /// Collected during vtable generation, emitted after string constants.
+    pub vtable_defs: Vec<String>,
+    /// Vtable lookup: hash(trait_def_id, impl_type_def_id) → index in vtable_defs.
+    vtable_hash: hashmap.HashMapU64U32,
+    /// Vtable layout: hash(trait_def_id) → index in vtable_layouts.
+    vtable_layout_hash: hashmap.HashMapU64U32,
+    /// Vtable layouts: stores (trait_def_id, method_count).
+    vtable_layouts: Vec<VtableLayout>,
 }
 
 /// Entry mapping a handler DefId to its effect DefId.
@@ -321,6 +330,12 @@ pub struct OpDefIndexEntry {
     pub effect_def_id: u32,
     pub op_name_sym: u32,
     pub positional_index: u32,
+}
+
+/// Vtable layout for a trait: maps method indices to slot positions.
+pub struct VtableLayout {
+    pub trait_def_id: u32,
+    pub method_count: u32,
 }
 
 /// Mapping from a handler DefId to its state shadow alloca name.
@@ -466,6 +481,10 @@ impl CodegenCtx {
             fn_ptr_wrapper_hash: hashmap.HashMapU64U32.with_capacity(32),
             fn_ptr_wrapper_names: Vec.with_capacity(32),
             fn_ptr_wrapper_defs: Vec.with_capacity(32),
+            vtable_defs: Vec.with_capacity(32),
+            vtable_hash: hashmap.HashMapU64U32.with_capacity(32),
+            vtable_layout_hash: hashmap.HashMapU64U32.with_capacity(16),
+            vtable_layouts: Vec.with_capacity(16),
         }
     }
 
@@ -533,6 +552,10 @@ impl CodegenCtx {
             fn_ptr_wrapper_hash: hashmap.HashMapU64U32.with_capacity(32),
             fn_ptr_wrapper_names: Vec.with_capacity(32),
             fn_ptr_wrapper_defs: Vec.with_capacity(32),
+            vtable_defs: Vec.with_capacity(32),
+            vtable_hash: hashmap.HashMapU64U32.with_capacity(32),
+            vtable_layout_hash: hashmap.HashMapU64U32.with_capacity(16),
+            vtable_layouts: Vec.with_capacity(16),
         }
     }
 
@@ -2354,6 +2377,10 @@ impl CodegenCtx {
             fn_ptr_wrapper_hash: hashmap.HashMapU64U32.with_capacity(32),
             fn_ptr_wrapper_names: Vec.with_capacity(32),
             fn_ptr_wrapper_defs: Vec.with_capacity(32),
+            vtable_defs: Vec.new(),
+            vtable_hash: hashmap.HashMapU64U32.new(),
+            vtable_layout_hash: hashmap.HashMapU64U32.new(),
+            vtable_layouts: Vec.new(),
         };
 
         // Copy handler_op_body_ids with state counts (read-only, needed to flag handler op bodies)

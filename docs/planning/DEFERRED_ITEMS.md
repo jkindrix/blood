@@ -89,6 +89,7 @@ Items are removed only when fully resolved, with a completion date and commit ha
 | **Deferred to** | Phase C |
 | **Date** | 2026-02-28 |
 | **Severity** | Medium — specified in DISPATCH.md §10.7-10.8, not implemented |
+| **Status** | **UNBLOCKED** — DEF-014 resolved (2026-03-04), design evaluation confirms vtables needed |
 
 **What**: GRAMMAR.md v0.4.0 specifies `dyn Trait` as a type form. Neither compiler parses it.
 
@@ -96,7 +97,7 @@ Items are removed only when fully resolved, with a completion date and commit ha
 
 **What it blocks**: Dynamic dispatch, trait objects, heterogeneous collections.
 
-**What unblocks it**: Object safety checking in typeck + vtable layout in codegen + runtime support.
+**What unblocks it**: ~~DEF-014 evaluation~~ ✓ + Object safety checking in typeck + vtable layout in codegen + runtime support.
 
 ---
 
@@ -253,22 +254,34 @@ Items are removed only when fully resolved, with a completion date and commit ha
 
 ---
 
-### DEF-014: `dyn Trait` vs effects for heterogeneous collections (unevaluated)
+### ~~DEF-014: `dyn Trait` vs effects for heterogeneous collections~~ ✓
 
 | Field | Value |
 |-------|-------|
 | **Discovered** | Rust-ism audit (2026-03-01) |
-| **Deferred to** | Pre-DEF-005 |
-| **Date** | 2026-03-01 |
+| **Resolved** | 2026-03-04 |
 | **Severity** | Medium — design space question |
 
-**What**: `dyn Trait` is in the spec with ABI rationale (heterogeneous collections, plugin interfaces). However, no evaluation exists of whether Blood's effects + handlers + fibers could serve these use cases without Rust-style vtables. The justification is an ABI constraint argument, not a "this is the best Blood-native solution" argument.
+**Resolution**: Evaluated whether Blood's effects + handlers + fibers can replace `dyn Trait` vtables. **Verdict: effects and vtables are complementary, not competing — both are needed.**
 
-**Why deferred**: `dyn Trait` is not yet implemented. The evaluation should happen before implementation begins.
+Effects dispatch operations through the call stack (behavioral polymorphism). Vtables dispatch methods through data pointers (data polymorphism). You cannot put an effect in a `Vec` — effects flow through continuations and the call stack, not as first-class data values. Heterogeneous collections require first-class data values with uniform representation.
 
-**What it blocks**: Confidence that DEF-005 implementation is the right approach.
+Options evaluated:
+- **Option A (effects only)**: Rejected — cannot store heterogeneous data in collections
+- **Option B (fingerprint dispatch)**: Deferred indefinitely — YAGNI, vtables simpler for single-receiver case
+- **Option C (`dyn Trait` vtables)**: Recommended — already designed in DISPATCH.md §10.7-10.8, composes with Blood's effects/tiers/linearity
+- **Option D (enum dispatch)**: Already works for closed sets — zero overhead, exhaustive
 
-**What unblocks it**: Design evaluation: can effects replace vtables for Blood's use cases? If not, document why vtables are necessary alongside effects.
+Blood's hybrid dispatch hierarchy (priority order):
+1. Enum + match (closed sets) — zero-cost, compile-time checked
+2. Static multiple dispatch (types known) — monomorphized, zero overhead
+3. Effect handlers (behavioral polymorphism) — middleware, interceptors, resources
+4. `dyn Trait` vtables (data polymorphism) — heterogeneous collections, plugins
+5. Fingerprint dispatch — deferred indefinitely
+
+Blood-specific advantages: no `drop_fn` in vtable (cleanup via tiers + finally), generation checks on data pointer only (vtable is static), effect rows on trait methods, content-addressed vtable deduplication.
+
+See `docs/design/DYN_TRAIT_EVALUATION.md` for the full evaluation.
 
 ---
 
@@ -299,7 +312,7 @@ Items are removed only when fully resolved, with a completion date and commit ha
 | DEF-002 | UncheckedBlock | Medium | Phase C | Active |
 | DEF-003 | #[unchecked(...)] | Medium | Phase C | Active |
 | DEF-004 | @heap/@stack | Medium | Phase C/E | Active |
-| DEF-005 | dyn Trait | Medium | Phase C | Active — **blocked by DEF-014** |
+| DEF-005 | dyn Trait | Medium | Phase C | Active — **UNBLOCKED** (DEF-014 resolved) |
 | DEF-006 | `in` containment | Low | Phase C | Active |
 | ~~DEF-007~~ | ~~Async → Fiber~~ | ~~High~~ | ~~Sub-phase~~ | **RESOLVED** (2026-03-01) |
 | DEF-008 | Continuation tokens | Low | Phase C | Active |
@@ -308,10 +321,10 @@ Items are removed only when fully resolved, with a completion date and commit ha
 | ~~DEF-011~~ | ~~`Send` undefined in Blood~~ | ~~High~~ | ~~Spec addendum~~ | **RESOLVED** (2026-03-01) |
 | DEF-012 | `&T`/`&mut T` misleading | Low | Long-term | Active |
 | DEF-013 | `derive` Rust trait names | Low | Stdlib design | Active |
-| DEF-014 | `dyn Trait` vs effects eval | Medium | Pre-DEF-005 | Active |
+| ~~DEF-014~~ | ~~`dyn Trait` vs effects eval~~ | ~~Medium~~ | ~~Pre-DEF-005~~ | **RESOLVED** (2026-03-04) |
 | DEF-015 | Result/Option × effects | Medium | Ecosystem guidelines | Active |
 
-**Active: 11 items.** Resolved: 4 (DEF-001, DEF-007, DEF-010, DEF-011).
+**Active: 9 items.** Resolved: 5 (DEF-001, DEF-007, DEF-010, DEF-011, DEF-014).
 **High severity (0)**: All high-severity items resolved.
-**Medium severity (7)**: DEF-002–005, DEF-009, DEF-014, DEF-015.
+**Medium severity (5)**: DEF-002–005, DEF-009, DEF-015.
 **Low severity (4)**: DEF-006, DEF-008, DEF-012, DEF-013.

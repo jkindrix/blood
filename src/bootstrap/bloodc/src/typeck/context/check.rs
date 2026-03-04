@@ -20,6 +20,11 @@ impl<'a> TypeContext<'a> {
         // Phase 1: Check coherence (no overlapping impls)
         self.check_coherence();
 
+        // Phase 1b: Check object safety for all traits
+        // Pre-compute which traits are object-safe so that dyn Trait coercion
+        // can be checked during expression type checking (Phase 5).
+        self.check_all_trait_object_safety();
+
         // Phase 2: Validate FFI types in bridge blocks
         self.validate_ffi_types();
 

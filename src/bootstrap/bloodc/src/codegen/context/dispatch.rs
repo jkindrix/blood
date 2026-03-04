@@ -244,20 +244,30 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     }
 
     /// Get the vtable slot for a specific method.
+    ///
+    /// Returns the actual slot index in the vtable array, accounting for the
+    /// 2-slot metadata prefix (size, align). Method slots start at index 2.
     fn get_vtable_slot_for_method(&self, trait_id: DefId, method_id: DefId) -> Option<usize> {
-        // We need to look up the method name from the method_id
-        // and then find its slot in the trait's vtable layout
-
-        // For now, use the method_id's index as a fallback
-        // In a complete implementation, we'd look up the actual method name
         if let Some(layout) = self.vtable_layouts.get(&trait_id) {
-            // Try to find the method by its def_id
-            // The vtable layout stores (method_name, slot_index)
-            // We need a way to map method_id -> method_name
-            // For now, use the slot index directly from method_id
+            // Look up the method name from the method_id
+            let method_name = self.def_paths.get(&method_id)
+                .map(|s| s.as_str());
+
+            // Search by method name if available
+            if let Some(name) = method_name {
+                for (idx, (slot_name, _)) in layout.iter().enumerate() {
+                    if slot_name == name || name.ends_with(slot_name.as_str()) {
+                        // Offset by 2 to skip size and align metadata slots
+                        return Some(idx + 2);
+                    }
+                }
+            }
+
+            // Fallback: use the slot index from the layout directly
             let method_idx = method_id.index() as usize;
             if method_idx < layout.len() {
-                return Some(layout[method_idx].1);
+                // Offset by 2 to skip size and align metadata slots
+                return Some(layout[method_idx].1 + 2);
             }
         }
         None
@@ -371,6 +381,19 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
     }
 
     /// Generate a vtable for a specific trait impl.
+    ///
+    /// Vtable layout per DISPATCH.md §10.8.1:
+    /// ```
+    /// ┌─────────────────┐
+    /// │ size: usize      │  Slot 0 — Size of concrete type
+    /// │ align: usize     │  Slot 1 — Alignment of concrete type
+    /// │ m₁: fn_ptr       │  Slot 2 — Method 1 implementation
+    /// │ ...              │
+    /// │ mₙ: fn_ptr       │  Slot N+1 — Method N implementation
+    /// └─────────────────┘
+    /// ```
+    ///
+    /// Note: Blood's vtable has no `drop_fn` slot (DEF-010 resolved).
     fn generate_vtable_for_impl(
         &mut self,
         trait_id: DefId,
@@ -383,13 +406,12 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             return Ok(());
         };
 
-        if layout.is_empty() {
-            return Ok(());
-        }
-
-        // Build array of function pointers
+        // Vtable has 2 metadata slots (size, align) + N method slots
         let ptr_type = self.context.ptr_type(AddressSpace::default());
-        let vtable_type = ptr_type.array_type(layout.len() as u32);
+        let i64_type = self.context.i64_type();
+        // Total slots = 2 (size, align as i64 stored via inttoptr) + N methods
+        let vtable_len = 2 + layout.len();
+        let vtable_type = ptr_type.array_type(vtable_len as u32);
 
         // Create a unique name for this vtable
         let trait_path = self.def_paths.get(&trait_id)
@@ -402,29 +424,42 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             self.vtables.len()
         );
 
-        // Collect function pointers for each slot
-        let mut method_ptrs = Vec::new();
+        // Compute size and alignment of the concrete type
+        let type_size = crate::codegen::types::type_size(self_ty) as u64;
+        let type_align = crate::codegen::types::type_alignment(self_ty) as u64;
+
+        // Encode size and align as pointer-sized integers stored in pointer slots
+        // (inttoptr cast — size and align are metadata, not real pointers)
+        let size_as_ptr = self.builder
+            .build_int_to_ptr(i64_type.const_int(type_size, false), ptr_type, "size_as_ptr")
+            .unwrap_or(ptr_type.const_null());
+        let align_as_ptr = self.builder
+            .build_int_to_ptr(i64_type.const_int(type_align, false), ptr_type, "align_as_ptr")
+            .unwrap_or(ptr_type.const_null());
+
+        // Build vtable slots: [size, align, m1, m2, ..., mn]
+        let mut vtable_slots: Vec<PointerValue<'ctx>> = Vec::new();
+        vtable_slots.push(size_as_ptr);
+        vtable_slots.push(align_as_ptr);
 
         for (method_name, _slot_idx) in &layout {
-            // Find the impl method for this trait method
             let impl_method_fn = self.find_impl_method_fn(impl_items, method_name);
 
             match impl_method_fn {
                 Some(fn_val) => {
-                    // Cast function to generic pointer
                     let fn_ptr = fn_val.as_global_value().as_pointer_value();
-                    method_ptrs.push(fn_ptr);
+                    vtable_slots.push(fn_ptr);
                 }
                 None => {
                     // Method not found - use null pointer (will panic at runtime)
                     // This should have been caught by trait impl validation
-                    method_ptrs.push(ptr_type.const_null());
+                    vtable_slots.push(ptr_type.const_null());
                 }
             }
         }
 
-        // Create the vtable global
-        let vtable_init = ptr_type.const_array(&method_ptrs);
+        // Create the vtable global constant
+        let vtable_init = ptr_type.const_array(&vtable_slots);
         let vtable_global = self.module.add_global(vtable_type, None, &vtable_name);
         vtable_global.set_initializer(&vtable_init);
         vtable_global.set_constant(true);

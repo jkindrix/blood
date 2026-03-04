@@ -905,6 +905,12 @@ pub enum TypeKind {
         body: Box<Type>,
     },
 
+    /// Dynamic trait object: `dyn Trait`, `dyn Trait + Send`
+    DynTrait {
+        trait_path: TypePath,
+        auto_traits: Vec<TypePath>,
+    },
+
     /// Never type: `!`
     Never,
 

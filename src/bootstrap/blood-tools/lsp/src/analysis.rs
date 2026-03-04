@@ -900,6 +900,23 @@ impl SemanticAnalyzer {
                     .collect();
                 format!("forall<{}>. {}", param_strs.join(", "), self.type_to_string(body, interner))
             }
+            ast::TypeKind::DynTrait { trait_path, auto_traits } => {
+                let main_trait = trait_path.segments.iter()
+                    .map(|seg| self.resolve_symbol(&seg.name.node, interner))
+                    .collect::<Vec<_>>()
+                    .join("::");
+                if auto_traits.is_empty() {
+                    format!("dyn {}", main_trait)
+                } else {
+                    let auto_strs: Vec<_> = auto_traits.iter()
+                        .map(|p| p.segments.iter()
+                            .map(|seg| self.resolve_symbol(&seg.name.node, interner))
+                            .collect::<Vec<_>>()
+                            .join("::"))
+                        .collect();
+                    format!("dyn {} + {}", main_trait, auto_strs.join(" + "))
+                }
+            }
         }
     }
 

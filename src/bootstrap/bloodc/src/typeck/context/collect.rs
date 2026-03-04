@@ -2775,6 +2775,7 @@ impl<'a> TypeContext<'a> {
                         return self.resolve_effect_type(inner);
                     }
                     ast::TypeKind::Forall { .. } => "forall type",
+                    ast::TypeKind::DynTrait { .. } => "dyn trait type",
                     ast::TypeKind::Path(_) => unreachable!("Path type should be handled by the match above")
                 };
                 Err(Box::new(TypeError::new(

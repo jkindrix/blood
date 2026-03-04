@@ -121,9 +121,28 @@ pub fn parse_type(parser: &mut parser_base.Parser) -> ast.Type {
                 span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
             };
         }
-        // Dynamic type: dyn Trait
+        // Dynamic type: dyn Trait, dyn Trait + Send
         token.TokenKind.Dyn => {
-            return parse_path_type(parser);
+            parser.advance();
+            let trait_path = parse_type_path(parser);
+            let mut auto_traits: Vec<ast.TypePath> = Vec.new();
+            // Parse optional auto-trait bounds: dyn Trait + Send + Sync
+            for _i in 0usize..16usize {
+                if parser.current.kind != token.TokenKind.Plus {
+                    break;
+                }
+                parser.advance();
+                let auto_path = parse_type_path(parser);
+                auto_traits.push(auto_path);
+            }
+            let end_span = parser.previous.span;
+            return ast.Type {
+                kind: ast.TypeKind.DynTrait {
+                    trait_path: trait_path,
+                    auto_traits: auto_traits,
+                },
+                span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+            };
         }
         // impl Trait
         token.TokenKind.Impl => {

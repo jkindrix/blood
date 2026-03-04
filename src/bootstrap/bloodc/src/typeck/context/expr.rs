@@ -3777,7 +3777,39 @@ impl<'a> TypeContext<'a> {
             }
         }
 
-        // Fourth, look for builtin methods on primitive/builtin types
+        // Fourth, look for methods on dyn Trait types
+        // For `dyn Trait` (or `&dyn Trait`), resolve methods through the trait's method list
+        let dyn_trait_id = match ty.kind() {
+            TypeKind::DynTrait { trait_id, .. } => Some(*trait_id),
+            TypeKind::Ref { inner, .. } => {
+                if let TypeKind::DynTrait { trait_id, .. } = inner.kind() {
+                    Some(*trait_id)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+        if let Some(trait_id) = dyn_trait_id {
+            if let Some(trait_info) = self.trait_defs.get(&trait_id) {
+                for method in &trait_info.methods {
+                    if method.name == method_name {
+                        if let Some(sig) = self.fn_sigs.get(&method.def_id) {
+                            let first_param = sig.inputs.first().cloned();
+                            return Some((
+                                method.def_id,
+                                sig.output.clone(),
+                                first_param,
+                                Vec::new(),
+                                sig.generics.clone(),
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+
+        // Fifth, look for builtin methods on primitive/builtin types
         if let Some(result) = self.find_builtin_method(ty, method_name) {
             return Some(result);
         }
@@ -4744,7 +4776,98 @@ impl<'a> TypeContext<'a> {
                 let inner_ty = self.ast_type_to_hir_type(inner)?;
                 Ok(Type::ownership(hir_qualifier, inner_ty))
             }
+            ast::TypeKind::DynTrait { trait_path, auto_traits } => {
+                // Resolve the main trait path to a DefId
+                let trait_id = self.resolve_type_path_to_def_id(trait_path, ty.span)?;
+                // Resolve auto trait paths
+                let mut auto_trait_ids = Vec::new();
+                for auto_path in auto_traits {
+                    let auto_id = self.resolve_type_path_to_def_id(auto_path, auto_path.span)?;
+                    auto_trait_ids.push(auto_id);
+                }
+                Ok(Type::dyn_trait(trait_id, auto_trait_ids))
+            }
         }
+    }
+
+    /// Resolve a type path to a DefId. Used for `dyn Trait` trait references.
+    fn resolve_type_path_to_def_id(
+        &mut self,
+        path: &ast::TypePath,
+        span: Span,
+    ) -> Result<DefId, Box<TypeError>> {
+        if path.segments.len() == 1 {
+            let name = self.symbol_to_string(path.segments[0].name.node);
+            if let Some(def_id) = self.resolver.lookup_type(&name) {
+                return Ok(def_id);
+            }
+            return Err(self.error_type_not_found(&name, span));
+        }
+
+        // Multi-segment: resolve through modules
+        let segments: Vec<String> = path.segments.iter()
+            .map(|s| self.symbol_to_string(s.name.node))
+            .collect();
+
+        let first_name = &segments[0];
+        let mut current_module_def_id = self.resolver.lookup_type(first_name)
+            .or_else(|| {
+                self.module_defs.iter()
+                    .find(|(_, info)| info.name == *first_name)
+                    .map(|(def_id, _)| *def_id)
+            })
+            .ok_or_else(|| Box::new(TypeError::new(
+                TypeErrorKind::ModuleNotFound {
+                    name: first_name.clone(),
+                    searched_paths: vec![first_name.clone()],
+                },
+                span,
+            )))?;
+
+        // Navigate through intermediate segments
+        for segment_name in &segments[1..segments.len()-1] {
+            let module_info = self.module_defs.get(&current_module_def_id).cloned()
+                .ok_or_else(|| Box::new(TypeError::new(
+                    TypeErrorKind::TypeNotFound {
+                        name: format!("{} is not a module", segment_name),
+                    },
+                    span,
+                )))?;
+            let mut found = false;
+            for &item_def_id in &module_info.items {
+                if let Some(def_info) = self.resolver.def_info.get(&item_def_id) {
+                    if def_info.name == *segment_name {
+                        if matches!(def_info.kind, hir::DefKind::Mod) {
+                            current_module_def_id = item_def_id;
+                            found = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            if !found {
+                return Err(Box::new(TypeError::new(
+                    TypeErrorKind::TypeNotFound {
+                        name: format!("module {} not found in path", segment_name),
+                    },
+                    span,
+                )));
+            }
+        }
+
+        // Look up final segment
+        let final_name = &segments[segments.len()-1];
+        if let Some(module_info) = self.module_defs.get(&current_module_def_id) {
+            for &item_def_id in &module_info.items {
+                if let Some(def_info) = self.resolver.def_info.get(&item_def_id) {
+                    if def_info.name == *final_name {
+                        return Ok(item_def_id);
+                    }
+                }
+            }
+        }
+
+        Err(self.error_type_not_found(&segments.join("::"), span))
     }
 
     /// Resolve a multi-segment type path through the module hierarchy.

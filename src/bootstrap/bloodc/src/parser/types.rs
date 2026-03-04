@@ -258,6 +258,23 @@ impl<'src> Parser<'src> {
                 }
             }
 
+            // Dynamic trait object: `dyn Trait`, `dyn Trait + Send`
+            TokenKind::Dyn => {
+                self.advance();
+                let trait_path = self.parse_type_path();
+                let mut auto_traits = Vec::new();
+                while self.try_consume(TokenKind::Plus) {
+                    auto_traits.push(self.parse_type_path());
+                }
+                Type {
+                    kind: TypeKind::DynTrait {
+                        trait_path,
+                        auto_traits,
+                    },
+                    span: start.merge(self.previous.span),
+                }
+            }
+
             // Record type
             TokenKind::LBrace => self.parse_record_type(),
 

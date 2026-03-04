@@ -172,6 +172,10 @@ pub fn check_lower_result(result: &hir_lower_ctx.LowerResult) -> TypeCheckResult
     // Phase 1: Collect type information from items
     collect_item_signatures(&mut checker, &result.items);
 
+    // Phase 1a2: Register synthetic impl blocks for dyn Trait types
+    // so that lookup_method can resolve methods on dyn Trait receivers.
+    checker.register_dyn_trait_impls();
+
     // Phase 1b: Register builtin method signatures for String, Vec, Option, etc.
     // Pass the interner from HIR lowering so method name symbols match.
     register_builtin_signatures(&mut checker, &result.interner);

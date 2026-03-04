@@ -1215,6 +1215,55 @@ impl TypeChecker {
         }
     }
 
+    /// Registers synthetic impl blocks for `dyn Trait` types.
+    /// Called after all traits are registered. Creates an impl entry with
+    /// `self_ty = DynTrait { trait_id, [] }` for each trait, allowing
+    /// the standard lookup_method path to resolve methods on dyn Trait.
+    pub fn register_dyn_trait_impls(self: &mut Self) {
+        // Iterate all registered traits
+        for trait_idx in 0usize..self.traits.len() {
+            match &self.traits[trait_idx] {
+                &Option.Some(ref trait_info) => {
+                    // Create a DynTrait type for this trait
+                    let empty_auto: Vec<hir_def.DefId> = Vec.new();
+                    let dyn_ty = type_intern.type_interner().intern(
+                        type_intern.InternedTypeKind.DynTrait {
+                            trait_id: trait_info.def_id,
+                            auto_traits: empty_auto,
+                        }
+                    );
+                    // Convert TraitMethodInfo → MethodInfo
+                    let mut methods: Vec<typeck_info.MethodInfo> = Vec.new();
+                    for mi in 0usize..trait_info.methods.len() {
+                        let tm = &trait_info.methods[mi];
+                        // Copy param_tys
+                        let mut ptys: Vec<type_intern.TyId> = Vec.new();
+                        for pi in 0usize..tm.param_tys.len() {
+                            ptys.push(tm.param_tys[pi]);
+                        }
+                        methods.push(typeck_info.MethodInfo.new(
+                            tm.def_id,
+                            tm.name,
+                            ptys,
+                            tm.return_ty,
+                            tm.takes_self_ref,
+                            tm.takes_self_mut,
+                        ));
+                    }
+                    // Register as a synthetic impl
+                    let synth_impl = typeck_info.ImplInfo.new(
+                        trait_info.def_id,  // use trait's DefId as impl DefId
+                        dyn_ty,
+                        0,  // no generics on dyn Trait
+                        methods,
+                    );
+                    self.impls.push(synth_impl);
+                }
+                &Option.None => {}
+            }
+        }
+    }
+
     /// Registers a trait implementation.
     pub fn register_trait_impl(self: &mut Self, impl_info: typeck_info.TraitImplInfo) {
         // Mark this trait as having at least one impl
@@ -1553,6 +1602,14 @@ fn types_match_for_impl_id(impl_ty: type_intern.TyId, target_ty: type_intern.TyI
                         type_intern.TyId.new(impl_inner.index),
                         type_intern.TyId.new(target_inner.index),
                     )
+                }
+                _ => false,
+            }
+        }
+        &type_intern.InternedTypeKind.DynTrait { trait_id: impl_trait, auto_traits: _ } => {
+            match target_kind {
+                &type_intern.InternedTypeKind.DynTrait { trait_id: target_trait, auto_traits: _ } => {
+                    impl_trait.index == target_trait.index
                 }
                 _ => false,
             }
