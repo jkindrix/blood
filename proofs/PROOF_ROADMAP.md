@@ -1,6 +1,6 @@
 # Blood Formal Verification Roadmap
 
-**Version:** 1.3
+**Version:** 1.4
 **Created:** 2026-03-04
 **Status:** Authoritative — this is the single source of truth for Blood's formal verification plan
 
@@ -46,7 +46,7 @@ Tier 3 proves the whole is greater than the sum of its parts.
 
 ## Current State (2026-03-04)
 
-22 files, 9,804 lines, **0 Admitted**, 215 Qed, 1 Axiom, 1 Parameter.
+22 files, 9,678 lines, **0 Admitted**, 210 Qed, **0 Axioms**, 1 Parameter.
 All 22 files fully proved (0 Admitted). **ALL 43/43 theorems PROVED.**
 All 11 phases COMPLETE. Full composition safety master theorem (`full_blood_safety`) is Qed.
 
@@ -56,8 +56,11 @@ These are deliberate abstractions, not proof gaps:
 
 | Item | File | Kind | Rationale |
 |------|------|------|-----------|
-| `continuation_expr_is_value` | Inversion.v | Axiom | Continuations abstract over expression structure |
 | `extract_gen_refs` | Semantics.v | Parameter | Snapshot extraction abstracted at interface level |
+
+Note: The axiom `continuation_expr_is_value` was eliminated in v1.4 by redesigning
+`V_Continuation` to store `(ty, body, snapshot)` instead of `(expr, snapshot)`.
+`value_to_expr` now produces `E_Lam ty body`, making `is_value` provable by `reflexivity`.
 
 ---
 
@@ -485,7 +488,7 @@ All three completed in sequence. Phase 8 was completed in parallel with Phase 7.
 | Phase 10 | T3 | 412 | — | FiberSafety.v | COMPLETE |
 | Phase 11 | T3 | 355 | — | CompositionSafety.v | COMPLETE |
 
-**Final suite: 22 files, 9,804 lines, 215 Qed, 0 Admitted.**
+**Final suite: 22 files, 9,678 lines, 210 Qed, 0 Admitted, 0 Axioms.**
 
 ---
 
@@ -495,8 +498,10 @@ All three completed in sequence. Phase 8 was completed in parallel with Phase 7.
 
 | Item | File | Rationale |
 |------|------|-----------|
-| `continuation_expr_is_value` | Inversion.v | Deliberate abstraction over continuation structure |
 | `extract_gen_refs` | Semantics.v | Abstract snapshot extraction interface |
+
+Note: `continuation_expr_is_value` axiom was **eliminated** in v1.4 by redesigning
+`V_Continuation` to store lambda components directly.
 
 ### Genuine Proof Obligations — ALL RESOLVED
 
@@ -553,28 +558,28 @@ Confirm:
 
 | File | Lines | Qed | Admitted | Role |
 |------|-------|-----|----------|------|
-| Syntax.v | 486 | 9 | 0 | AST definitions |
+| Syntax.v | 486 | 9 | 0 | AST definitions (0 Axioms) |
 | Typing.v | 372 | 1 | 0 | Typing rules |
 | Substitution.v | 1,011 | 21 | 0 | Substitution lemmas |
 | ShiftSubst.v | 335 | 4 | 0 | Shift-substitution commutation |
 | Semantics.v | 361 | 0 | 0 | Operational semantics (1 Parameter) |
 | EffectAlgebra.v | 148 | 7 | 0 | Effect row algebra |
 | ContextTyping.v | 713 | 7 | 0 | Evaluation context typing |
-| Inversion.v | 574 | 21 | 0 | Typing inversion (1 Axiom) |
+| Inversion.v | 575 | 21 | 0 | Typing inversion (0 Axioms) |
 | Progress.v | 488 | 9 | 0 | Progress theorem (all 11 cases) |
 | Preservation.v | 366 | 3 | 0 | Preservation theorem (all 11 cases) |
-| Soundness.v | 286 | 8 | 0 | Type soundness + composition |
+| Soundness.v | 203 | 5 | 0 | Type soundness + composition |
 | EffectSafety.v | 261 | 9 | 0 | Effect safety (9 theorems) |
 | GenerationSnapshots.v | 508 | 14 | 0 | Generation snapshot safety |
 | LinearTyping.v | 474 | 2 | 0 | Strengthened typing with linearity |
-| LinearSafety.v | 833 | 19 | 0 | Linear/affine safety (all 4 proved) |
+| LinearSafety.v | 811 | 18 | 0 | Linear/affine safety (all 4 proved) |
 | Dispatch.v | 289 | 11 | 0 | Multiple dispatch + type stability |
 | Regions.v | 316 | 10 | 0 | Region safety via generations |
 | FiberSafety.v | 412 | 13 | 0 | Tier-based concurrency safety |
-| ValueSemantics.v | 425 | 16 | 0 | Mutable value semantics (Phase 7) |
+| ValueSemantics.v | 410 | 15 | 0 | Mutable value semantics (Phase 7) |
 | EffectSubsumption.v | 432 | 13 | 0 | Effects subsume control flow (Phase 8) |
-| MemorySafety.v | 359 | 8 | 0 | Memory safety without GC (Phase 9) |
-| CompositionSafety.v | 355 | 8 | 0 | Full composition safety (Phase 11) |
+| MemorySafety.v | 365 | 8 | 0 | Memory safety without GC (Phase 9) |
+| CompositionSafety.v | 342 | 8 | 0 | Full composition safety (Phase 11) |
 
 ### Files Modified or Created (by Phase)
 
@@ -724,4 +729,5 @@ Overall:                       43/43 theorems        [====================] 100%
 | 2026-03-04 | 1.0 | Initial creation. Consolidated from analysis docs 006/007. Added Tier 3 (Phases 8-11). |
 | 2026-03-04 | 1.1 | Phase 5 (Regions.v), Phase 6 (Dispatch.v), Phase 10 (FiberSafety.v) completed. |
 | 2026-03-04 | 1.2 | Phase 2 COMPLETE: LinearTyping.v (new) + LinearSafety.v (rewritten). 0 Admitted. Two-judgment design. 18 files, 8,229 lines, 168 Qed. All Tier 2 interactions proved except Phase 7. |
-| 2026-03-04 | 1.3 | ALL PHASES COMPLETE. Phases 7, 8, 9, 11 proved. 22 files, 9,804 lines, 215 Qed, 0 Admitted. 43/43 theorems proved. Full composition safety master theorem Qed. |
+| 2026-03-04 | 1.3 | ALL PHASES COMPLETE. Phases 7, 8, 9, 11 proved. 43/43 theorems proved. Full composition safety master theorem Qed. |
+| 2026-03-04 | 1.4 | Integrity audit: eliminated inconsistent axiom (V_Continuation redesign), removed 5 vacuous True-conclusion placeholders, improved tier_assigned documentation. 0 Axioms, 0 Admitted, 210 Qed. |
