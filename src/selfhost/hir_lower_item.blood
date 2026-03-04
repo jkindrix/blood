@@ -1154,6 +1154,18 @@ fn lower_handler_decl(ctx: &mut hir_lower_ctx.LoweringCtx, h: &ast.HandlerDecl) 
         Option.None => {}
     }
 
+    // Emit diagnostic if finally clause is present (not yet supported)
+    match &h.finally_clause {
+        &Some(ref _finally_block) => {
+            ctx.error(
+                hir.DiagnosticCode.E0305,
+                common.make_string("finally clauses are not yet supported"),
+                h.span,
+            );
+        }
+        &None => {}
+    }
+
     // Pop type param scope after lowering all types that reference generics
     ctx.resolver.pop_scope();
 

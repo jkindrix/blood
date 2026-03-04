@@ -2035,6 +2035,16 @@ impl<'a> TypeContext<'a> {
         // Track this item as belonging to the current module
         self.current_module_items.push(def_id);
 
+        // Emit diagnostic if finally clause is present (not yet supported)
+        if handler.finally_clause.is_some() {
+            self.errors.push(TypeError::new(
+                TypeErrorKind::InvalidHandler {
+                    reason: "finally clauses are not yet supported".to_string(),
+                },
+                handler.span,
+            ));
+        }
+
         // Collect generic parameters
         let saved_generic_params = std::mem::take(&mut self.generic_params);
         let mut generics_vec = Vec::new();

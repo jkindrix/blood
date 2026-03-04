@@ -552,13 +552,18 @@ impl<'a> DispatchResolver<'a> {
                 Type::tuple(new_elems)
             }
 
-            TypeKind::Fn { params, ret, .. } => {
+            TypeKind::Fn { params, ret, effects, const_args } => {
                 let new_params: Vec<Type> = params
                     .iter()
                     .map(|p| self.apply_substitutions(p, substitutions))
                     .collect();
                 let new_ret = self.apply_substitutions(ret, substitutions);
-                Type::function(new_params, new_ret)
+                Type::new(TypeKind::Fn {
+                    params: new_params,
+                    ret: new_ret,
+                    effects: effects.clone(),
+                    const_args: const_args.clone(),
+                })
             }
 
             TypeKind::Adt { def_id, args } => {
@@ -716,10 +721,10 @@ impl<'a> DispatchResolver<'a> {
                         .all(|(a, b)| self.is_subtype(a, b));
             }
 
-            // Function types: contravariant in params, covariant in return
+            // Function types: contravariant in params, covariant in return, covariant in effects
             (
-                TypeKind::Fn { params: a_params, ret: a_ret, .. },
-                TypeKind::Fn { params: b_params, ret: b_ret, .. },
+                TypeKind::Fn { params: a_params, ret: a_ret, effects: a_effects, .. },
+                TypeKind::Fn { params: b_params, ret: b_ret, effects: b_effects, .. },
             ) => {
                 // Same arity required
                 if a_params.len() != b_params.len() {
@@ -730,7 +735,11 @@ impl<'a> DispatchResolver<'a> {
                     .all(|(a, b)| self.is_subtype(b, a));
                 // Covariant in return type: a_ret <: b_ret
                 let ret_ok = self.is_subtype(a_ret, b_ret);
-                return params_ok && ret_ok;
+                // Covariant in effects: a_effects ⊆ b_effects
+                // A function with fewer effects is a subtype of one with more
+                let effects_ok = a_effects.iter()
+                    .all(|ae| b_effects.contains(ae));
+                return params_ok && ret_ok && effects_ok;
             }
 
             // Pointers follow same variance as references
@@ -827,8 +836,8 @@ impl<'a> DispatchResolver<'a> {
                 TypeKind::Ptr { inner: b_inner, mutable: b_mut },
             ) => a_mut == b_mut && self.types_equal(a_inner, b_inner),
             (
-                TypeKind::Fn { params: a_params, ret: a_ret, .. },
-                TypeKind::Fn { params: b_params, ret: b_ret, .. },
+                TypeKind::Fn { params: a_params, ret: a_ret, effects: a_effects, .. },
+                TypeKind::Fn { params: b_params, ret: b_ret, effects: b_effects, .. },
             ) => {
                 a_params.len() == b_params.len()
                     && a_params
@@ -836,6 +845,7 @@ impl<'a> DispatchResolver<'a> {
                         .zip(b_params)
                         .all(|(a, b)| self.types_equal(a, b))
                     && self.types_equal(a_ret, b_ret)
+                    && a_effects == b_effects
             }
             (
                 TypeKind::Adt { def_id: a_def, args: a_args },

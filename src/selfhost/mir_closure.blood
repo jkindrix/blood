@@ -343,6 +343,14 @@ fn analyze_term_captures(
                 modes[idx] = new_mode;
             }
         }
+        &mir_term.TerminatorKind.StaleReference { ref ptr, expected_gen: _, actual_gen: _ } => {
+            if is_enclosing_local(ptr.local, enclosing_count) {
+                let idx = ptr.local.as_usize();
+                captured[idx] = true;
+                let new_mode = modes[idx].join(&CaptureMode.ByRef);
+                modes[idx] = new_mode;
+            }
+        }
     }
 }
 

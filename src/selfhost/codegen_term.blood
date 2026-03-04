@@ -207,6 +207,18 @@ pub fn emit_terminator(
             let label = ctx.block_label_cg(target);
             ctx.emit_br_cg(&label);
         }
+        &mir_term.TerminatorKind.StaleReference { ptr: _, expected_gen, actual_gen } => {
+            // Stale reference detected - call runtime panic with generation info
+            let mut expected_str = String.new();
+            dump_mir.push_u32(&mut expected_str, expected_gen);
+            let mut actual_str = String.new();
+            dump_mir.push_u32(&mut actual_str, actual_gen);
+            ctx.begin_call_str(Option.None, "void", "@blood_stale_reference_panic");
+            ctx.call_arg_str(true, "i32", expected_str.as_str());
+            ctx.call_arg_str(false, "i32", actual_str.as_str());
+            ctx.end_call();
+            ctx.emit_unreachable();
+        }
     }
 }
 

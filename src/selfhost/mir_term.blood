@@ -106,6 +106,7 @@ impl Terminator {
                 }
                 result
             }
+            &TerminatorKind.StaleReference { ptr: _, expected_gen: _, actual_gen: _ } => Vec.new(),
         }
     }
 
@@ -115,6 +116,7 @@ impl Terminator {
             &TerminatorKind.Return => true,
             &TerminatorKind.Unreachable => true,
             &TerminatorKind.Resume { value: _ } => true,
+            &TerminatorKind.StaleReference { ptr: _, expected_gen: _, actual_gen: _ } => true,
             &TerminatorKind.Goto { target: _ } => false,
             &TerminatorKind.SwitchInt { discr: _, targets: _ } => false,
             &TerminatorKind.Call { func: _, args: _, destination: _, target: _, unwind: _ } => false,
@@ -201,6 +203,15 @@ pub enum TerminatorKind {
         target: mir_def.BasicBlockId,
         /// The block to jump to on panic during drop.
         unwind: Option<mir_def.BasicBlockId>,
+    },
+    /// Stale reference detected - diverging terminator.
+    StaleReference {
+        /// The pointer that was stale.
+        ptr: mir_types.Place,
+        /// Expected generation.
+        expected_gen: u32,
+        /// Actual generation found.
+        actual_gen: u32,
     },
 }
 

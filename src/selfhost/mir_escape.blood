@@ -96,6 +96,9 @@ pub struct EscapeAnalysis {
     pub local_states: Vec<EscapeState>,
     /// Locals captured by closures within this function.
     pub closure_captures: Vec<ClosureCapture>,
+    /// Locals captured by effect operations (Perform args).
+    /// These need snapshot validation on resume.
+    pub effect_captured: Vec<mir_def.MirLocalId>,
 }
 
 /// A record of a local being captured by a closure.
@@ -116,6 +119,7 @@ impl EscapeAnalysis {
         EscapeAnalysis {
             local_states: states,
             closure_captures: Vec.new(),
+            effect_captured: Vec.new(),
         }
     }
 
@@ -130,6 +134,24 @@ impl EscapeAnalysis {
             &EscapeState.NoEscape => MemoryTier.Stack,
             &EscapeState.ArgEscape => MemoryTier.Region,
             &EscapeState.GlobalEscape => MemoryTier.Persistent,
+        }
+    }
+
+    /// Returns true if a local is captured by an effect operation.
+    pub fn is_effect_captured(self: &EscapeAnalysis, local: mir_def.MirLocalId) -> bool {
+        for i in 0usize..self.effect_captured.len() {
+            if self.effect_captured[i].index == local.index {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Marks a local as effect-captured (referenced in Perform args).
+    fn mark_effect_captured(self: &mut EscapeAnalysis, local: mir_def.MirLocalId) {
+        // Avoid duplicates
+        if !self.is_effect_captured(local) {
+            self.effect_captured.push(local);
         }
     }
 
@@ -251,6 +273,16 @@ fn analyze_terminator(term: &mir_term.Terminator, result: &mut EscapeAnalysis) {
             // Effect operation args escape through the handler
             for i in 0usize..args.len() {
                 mark_operand_escape_arg(&args[i], result);
+                // Also mark as effect-captured for snapshot validation
+                match &args[i] {
+                    &mir_types.Operand.Copy(ref place) => {
+                        result.mark_effect_captured(place.local);
+                    }
+                    &mir_types.Operand.Move(ref place) => {
+                        result.mark_effect_captured(place.local);
+                    }
+                    &mir_types.Operand.Constant(_) => {}
+                }
             }
         }
         &mir_term.TerminatorKind.Resume { ref value } => {
@@ -263,6 +295,7 @@ fn analyze_terminator(term: &mir_term.Terminator, result: &mut EscapeAnalysis) {
         }
         &mir_term.TerminatorKind.Unreachable => {}
         &mir_term.TerminatorKind.Drop { place: _, target: _, unwind: _ } => {}
+        &mir_term.TerminatorKind.StaleReference { ptr: _, expected_gen: _, actual_gen: _ } => {}
     }
 }
 

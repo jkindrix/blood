@@ -10,8 +10,8 @@ use crate::span::{Span, Spanned};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Precedence {
     None = 0,
-    Pipe = 1,       // |>
-    Assign = 2,     // = += -= etc.
+    Assign = 1,     // = += -= etc.
+    Pipe = 2,       // |>
     Range = 3,      // .. ..=
     Or = 4,         // ||
     And = 5,        // &&
@@ -31,9 +31,9 @@ impl Precedence {
     /// Get the next higher precedence level.
     fn next(self) -> Self {
         match self {
-            Precedence::None => Precedence::Pipe,
-            Precedence::Pipe => Precedence::Assign,
-            Precedence::Assign => Precedence::Range,
+            Precedence::None => Precedence::Assign,
+            Precedence::Assign => Precedence::Pipe,
+            Precedence::Pipe => Precedence::Range,
             Precedence::Range => Precedence::Or,
             Precedence::Or => Precedence::And,
             Precedence::And => Precedence::Comparison,

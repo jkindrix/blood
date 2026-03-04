@@ -1057,6 +1057,18 @@ pub fn format_terminator(term: &mir_term.Terminator) -> String {
             push_u32(&mut out, target.index);
             out
         }
+        &mir_term.TerminatorKind.StaleReference { ref ptr, expected_gen, actual_gen } => {
+            let mut out = String.new();
+            out.push_str("stale_reference(");
+            let p = format_place(ptr);
+            out.push_str(p.as_str());
+            out.push_str(", expected=");
+            push_u32(&mut out, expected_gen);
+            out.push_str(", actual=");
+            push_u32(&mut out, actual_gen);
+            out.push_str(")");
+            out
+        }
     }
 }
 
@@ -1065,7 +1077,7 @@ pub fn format_terminator(term: &mir_term.Terminator) -> String {
 // ============================================================
 
 /// Pushes a u32 as decimal digits into a string.
-fn push_u32(s: &mut String, val: u32) {
+pub fn push_u32(s: &mut String, val: u32) {
     if val == 0 {
         s.push('0');
         return;
