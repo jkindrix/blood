@@ -9260,13 +9260,13 @@ impl<'a> TypeContext<'a> {
                 false
             }
 
-            // Ptr → usize/isize
+            // Ptr → usize (spec §5.10.1 rule 6)
             (TypeKind::Ptr { .. }, TypeKind::Primitive(dst)) => {
-                matches!(dst, PrimitiveTy::Uint(UintTy::Usize) | PrimitiveTy::Int(IntTy::Isize))
+                matches!(dst, PrimitiveTy::Uint(UintTy::Usize))
             }
-            // usize/isize → Ptr
+            // usize → Ptr (spec §5.10.1 rule 6)
             (TypeKind::Primitive(src), TypeKind::Ptr { .. }) => {
-                matches!(src, PrimitiveTy::Uint(UintTy::Usize) | PrimitiveTy::Int(IntTy::Isize))
+                matches!(src, PrimitiveTy::Uint(UintTy::Usize))
             }
 
             // Ref → Ptr (&T → *const T, &mut T → *mut T, &mut T → *const T)
