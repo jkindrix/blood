@@ -1,11 +1,12 @@
 // COMPILE_FAIL: E0310
-// Test: affine value captured in deep (multi-shot) handler should fail
+// Test: affine value captured in deep (inline, multi-shot) handler should fail
+// Note: uses inline handler syntax (blood-rust only; first_gen rejects at parse stage)
 effect Choice {
     op choose() -> bool;
 }
 
 fn main() -> i32 {
-    let x: @affine i32 = 42;
+    let x: affine i32 = 42;
     with Choice {
         op choose() -> bool { resume(true) }
     } do {

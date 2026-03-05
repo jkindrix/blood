@@ -1,11 +1,12 @@
 // COMPILE_FAIL: E0304
-// Test: linear value captured in a deep handler should fail
+// Test: linear value captured in a deep (inline) handler should fail
+// Note: uses inline handler syntax (blood-rust only; first_gen rejects at parse stage)
 effect Counter {
     op inc() -> ();
 }
 
 fn main() -> i32 {
-    let x: @linear i32 = 42;
+    let x: linear i32 = 42;
     with Counter {
         op inc() -> () { resume(()) }
     } do {
