@@ -789,8 +789,6 @@ impl<'src> Lexer<'src> {
         if first == 97 {
             // 'a'
             if len == 2 && self.byte_at(start + 1) == 115 { return token.TokenKind.As; }
-            if len == 5 && self.match_bytes(start, 97, 115, 121, 110, 99) { return token.TokenKind.Fiber; }  // async -> Fiber (compat)
-            if len == 5 && self.match_bytes(start, 97, 119, 97, 105, 116) { return token.TokenKind.Suspend; }  // await -> Suspend (compat)
             if len == 6 && self.match_bytes6(start, 97, 102, 102, 105, 110, 101) { return token.TokenKind.Affine; }
             if len == 8 && self.match_bytes8(start, 97, 98, 115, 116, 114, 97, 99, 116) { return token.TokenKind.Abstract; }
         }
@@ -811,6 +809,7 @@ impl<'src> Lexer<'src> {
         if first == 100 {
             // 'd'
             if len == 9 && self.match_bytes9(start, 100, 101, 99, 114, 101, 97, 115, 101, 115) { return token.TokenKind.Decreases; }
+            if len == 5 && self.match_bytes(start, 100, 101, 102, 101, 114) { return token.TokenKind.Defer; }
             if len == 4 && self.match_bytes4(start, 100, 101, 101, 112) { return token.TokenKind.Deep; }
             if len == 3 && self.match_bytes3(start, 100, 121, 110) { return token.TokenKind.Dyn; }
             if len == 7 && self.match_bytes7(start, 100, 101, 102, 97, 117, 108, 116) { return token.TokenKind.Default; }
@@ -834,6 +833,10 @@ impl<'src> Lexer<'src> {
             if len == 6 && self.match_bytes6(start, 102, 111, 114, 97, 108, 108) { return token.TokenKind.Forall; }
             if len == 5 && self.match_bytes(start, 102, 105, 110, 97, 108) { return token.TokenKind.Final; }
             if len == 7 && self.match_bytes7(start, 102, 105, 110, 97, 108, 108, 121) { return token.TokenKind.Finally; }
+        }
+        if first == 103 {
+            // 'g'
+            if len == 3 && self.match_bytes3(start, 103, 101, 110) { return token.TokenKind.Gen; }
         }
         if first == 104 {
             // 'h'
@@ -876,6 +879,7 @@ impl<'src> Lexer<'src> {
         }
         if first == 114 {
             // 'r'
+            if len == 3 && self.match_bytes3(start, 114, 97, 119) { return token.TokenKind.Raw; }
             if len == 3 && self.match_bytes3(start, 114, 101, 102) { return token.TokenKind.Ref; }
             if len == 6 && self.match_bytes6(start, 114, 101, 103, 105, 111, 110) { return token.TokenKind.Region; }
             if len == 8 && self.match_bytes8(start, 114, 101, 113, 117, 105, 114, 101, 115) { return token.TokenKind.Requires; }
@@ -884,8 +888,10 @@ impl<'src> Lexer<'src> {
         }
         if first == 115 {
             // 's'
+            if len == 6 && self.match_bytes6(start, 115, 101, 108, 101, 99, 116) { return token.TokenKind.Select; }
             if len == 4 && self.match_bytes4(start, 115, 101, 108, 102) { return token.TokenKind.SelfLower; }
             if len == 7 && self.match_bytes7(start, 115, 104, 97, 108, 108, 111, 119) { return token.TokenKind.Shallow; }
+            if len == 5 && self.match_bytes(start, 115, 112, 97, 119, 110) { return token.TokenKind.Spawn; }
             if len == 6 && self.match_bytes6(start, 115, 116, 97, 116, 105, 99) { return token.TokenKind.Static; }
             if len == 6 && self.match_bytes6(start, 115, 116, 114, 117, 99, 116) { return token.TokenKind.Struct; }
             if len == 5 && self.match_bytes(start, 115, 117, 112, 101, 114) { return token.TokenKind.Super; }

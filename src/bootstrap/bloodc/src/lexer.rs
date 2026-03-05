@@ -40,10 +40,8 @@ pub enum TokenKind {
     #[token("as")]
     As,
     #[token("fiber")]
-    #[token("async")]
     Fiber,
     #[token("suspend")]
-    #[token("await")]
     Suspend,
     #[token("break")]
     Break,
@@ -197,6 +195,16 @@ pub enum TokenKind {
     Default,
     #[token("unsafe")]
     Unsafe,
+    #[token("defer")]
+    Defer,
+    #[token("gen")]
+    Gen,
+    #[token("raw")]
+    Raw,
+    #[token("select")]
+    Select,
+    #[token("spawn")]
+    Spawn,
 
     // ============================================================
     // Literals
@@ -625,6 +633,11 @@ impl TokenKind {
             TokenKind::Union => "contextual keyword `union`",
             TokenKind::Default => "contextual keyword `default`",
             TokenKind::Unsafe => "reserved keyword `unsafe`",
+            TokenKind::Defer => "reserved keyword `defer`",
+            TokenKind::Gen => "reserved keyword `gen`",
+            TokenKind::Raw => "reserved keyword `raw`",
+            TokenKind::Select => "reserved keyword `select`",
+            TokenKind::Spawn => "reserved keyword `spawn`",
             TokenKind::IntLit => "integer literal",
             TokenKind::FloatLit => "float literal",
             TokenKind::StringLit => "string literal",
