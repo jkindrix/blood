@@ -1504,6 +1504,121 @@ fn extract_param_name(ctx: &mut hir_lower_ctx.LoweringCtx, pattern: &ast.Pattern
 // ============================================================
 
 /// Lower a pattern.
+/// Collect all binding name indices from a pattern (recursive).
+fn collect_pattern_binding_spans(pattern: &ast.Pattern) -> Vec<common.Span> {
+    let mut spans: Vec<common.Span> = Vec.new();
+    collect_binding_spans_recursive(pattern, &mut spans);
+    spans
+}
+
+/// Recursively collect binding symbol indices from pattern tree.
+fn collect_binding_spans_recursive(pattern: &ast.Pattern, spans: &mut Vec<common.Span>) {
+    match &pattern.kind {
+        &ast.PatternKind.Ident { ref by_ref, ref is_mut, ref name, ref subpattern } => {
+            let _br = by_ref;
+            let _im = is_mut;
+            spans.push(name.span);
+            match subpattern {
+                &Some(ref sub) => collect_binding_spans_recursive(sub.as_ref(), spans),
+                &None => {}
+            }
+        }
+        &ast.PatternKind.Tuple { ref fields, ref rest_pos } => {
+            let _r = rest_pos;
+            for i in 0usize..fields.len() {
+                collect_binding_spans_recursive(&fields[i], spans);
+            }
+        }
+        &ast.PatternKind.Struct { ref path, ref fields, ref has_rest } => {
+            let _p = path;
+            let _hr = has_rest;
+            for i in 0usize..fields.len() {
+                match &fields[i].pattern {
+                    &Some(ref pat) => collect_binding_spans_recursive(pat, spans),
+                    &None => {
+                        spans.push(fields[i].name.span);
+                    }
+                }
+            }
+        }
+        &ast.PatternKind.TupleStruct { ref path, ref fields, ref rest_pos } => {
+            let _p = path;
+            let _r = rest_pos;
+            for i in 0usize..fields.len() {
+                collect_binding_spans_recursive(&fields[i], spans);
+            }
+        }
+        &ast.PatternKind.Or(ref alternatives) => {
+            if alternatives.len() > 0 {
+                collect_binding_spans_recursive(&alternatives[0], spans);
+            }
+        }
+        &ast.PatternKind.Ref { ref is_mut, ref inner } => {
+            let _im = is_mut;
+            collect_binding_spans_recursive(inner.as_ref(), spans);
+        }
+        &ast.PatternKind.Paren(ref inner) => {
+            collect_binding_spans_recursive(inner.as_ref(), spans);
+        }
+        &ast.PatternKind.Slice { ref elements, ref rest_pos } => {
+            let _r = rest_pos;
+            for i in 0usize..elements.len() {
+                collect_binding_spans_recursive(&elements[i], spans);
+            }
+        }
+        &ast.PatternKind.Wildcard => {}
+        &ast.PatternKind.Rest => {}
+        &ast.PatternKind.Literal(_) => {}
+        &ast.PatternKind.Range { ref start, ref end_val, ref inclusive } => {
+            let _s = start;
+            let _e = end_val;
+            let _i = inclusive;
+        }
+        &ast.PatternKind.Path(_) => {}
+    }
+}
+
+/// Extract binding name strings from spans.
+fn binding_names_from_spans(ctx: &mut hir_lower_ctx.LoweringCtx, spans: &Vec<common.Span>) -> Vec<String> {
+    let mut names: Vec<String> = Vec.new();
+    for i in 0usize..spans.len() {
+        names.push(ctx.span_to_string(spans[i]));
+    }
+    names
+}
+
+/// Check if two string vectors contain the same set of names (order-independent).
+fn binding_sets_equal(a: &Vec<String>, b: &Vec<String>) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    // Check every name in a exists in b
+    for i in 0usize..a.len() {
+        let mut found: bool = false;
+        for j in 0usize..b.len() {
+            if or_pat_str_eq(a[i].as_str(), b[j].as_str()) {
+                found = true;
+            }
+        }
+        if !found {
+            return false;
+        }
+    }
+    true
+}
+
+fn or_pat_str_eq(a: &str, b: &str) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    for i in 0usize..a.len() {
+        if a.as_bytes()[i] != b.as_bytes()[i] {
+            return false;
+        }
+    }
+    true
+}
+
 pub fn lower_pattern(ctx: &mut hir_lower_ctx.LoweringCtx, pattern: &ast.Pattern) -> hir_expr.Pattern {
     let span = pattern.span;
     let ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
@@ -1617,6 +1732,61 @@ pub fn lower_pattern(ctx: &mut hir_lower_ctx.LoweringCtx, pattern: &ast.Pattern)
             }
         }
         &ast.PatternKind.Or(ref patterns) => {
+            // [P-Or] Validate all alternatives bind the same variable names
+            if patterns.len() > 1 {
+                let first_spans = collect_pattern_binding_spans(&patterns[0]);
+                let first_names = binding_names_from_spans(ctx, &first_spans);
+                for i in 1usize..patterns.len() {
+                    let alt_spans = collect_pattern_binding_spans(&patterns[i]);
+                    let alt_names = binding_names_from_spans(ctx, &alt_spans);
+                    if !binding_sets_equal(&first_names, &alt_names) {
+                        let mut msg = common.make_string("or-pattern alternatives bind different variables");
+
+                        // Find missing bindings (in first but not in alt)
+                        let mut has_missing: bool = false;
+                        for j in 0usize..first_names.len() {
+                            let mut found: bool = false;
+                            for k in 0usize..alt_names.len() {
+                                if or_pat_str_eq(first_names[j].as_str(), alt_names[k].as_str()) {
+                                    found = true;
+                                }
+                            }
+                            if !found {
+                                if !has_missing {
+                                    msg.push_str("; missing: ");
+                                    has_missing = true;
+                                } else {
+                                    msg.push_str(", ");
+                                }
+                                msg.push_str(first_names[j].as_str());
+                            }
+                        }
+
+                        // Find extra bindings (in alt but not in first)
+                        let mut has_extra: bool = false;
+                        for j in 0usize..alt_names.len() {
+                            let mut found: bool = false;
+                            for k in 0usize..first_names.len() {
+                                if or_pat_str_eq(alt_names[j].as_str(), first_names[k].as_str()) {
+                                    found = true;
+                                }
+                            }
+                            if !found {
+                                if !has_extra {
+                                    msg.push_str("; extra: ");
+                                    has_extra = true;
+                                } else {
+                                    msg.push_str(", ");
+                                }
+                                msg.push_str(alt_names[j].as_str());
+                            }
+                        }
+
+                        ctx.error(hir.DiagnosticCode.E0403, msg, patterns[i].span);
+                    }
+                }
+            }
+
             let mut pats_hir: Vec<hir_expr.Pattern> = Vec.new();
             for i in 0usize..patterns.len() {
                 let p_hir = lower_pattern(ctx, &patterns[i]);
