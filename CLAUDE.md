@@ -17,7 +17,26 @@ blood/                          # Repository root
 
 Pipeline: `Source → Lexer → Parser → AST → HIR → Type Check → MIR → Codegen → LLVM`
 
-The Blood compiler must match the Rust compiler's behavior. Mismatches are bugs unless documented in `COMPILER_NOTES.md`.
+Both compilers must conform to the spec (`docs/spec/`). When a compiler diverges from the spec, the compiler is wrong — not the spec. When the two compilers disagree with each other, check the spec to determine which (if either) is correct. Mismatches are documented in `COMPILER_NOTES.md`.
+
+## Spec-First Principle
+
+Blood's Five Pillars are **Veracity** (generational refs), **Identity** (content-addressing), **Composability** (algebraic effects), **Extensibility** (multiple dispatch), and **Isolation** (linear types + regions). The design hierarchy is: **Correctness > Safety > Predictability > Performance > Ergonomics**.
+
+**The spec prescribes; the implementation conforms.** When you find a divergence between a spec and a compiler, the default assumption is the compiler is wrong. Agreement between two compilers is evidence of shared shortcuts, not correctness. The correct question is always: "Given Blood's aspirational design, what is the right answer?"
+
+**Updating a spec to match an implementation** requires one of three justifications — no exceptions:
+1. **Spec omission** — the spec failed to list a universally expected behavior
+2. **Rust-ism correction** — the spec inherited a Rust design that contradicts Blood's goals
+3. **Non-normative clarification** — an informational note, not a normative change
+
+"Both compilers do it" is **never sufficient** on its own. Safety-critical spec changes (memory model, type safety, effects) additionally require a design evaluation document before the change is made.
+
+**Partial implementations** must not be presented as closing a gap. If the spec prescribes behaviors A, B, and C and you implement only A, that is a valid first step — document what remains, do not mark it complete.
+
+Do not be afraid to declare that a compiler implementation is fundamentally wrong and shift back into investigation, research, and design before creating technical debt. The cost of getting the design right is always lower than the cost of building on a wrong foundation.
+
+For the full argument, examples, and the TYP-05 reversal history, see `.tmp/prompt.md`.
 
 ## Blood is NOT Rust
 
@@ -164,3 +183,24 @@ Run each tool with `--help` or see its header comments for detailed usage.
 - **Aether examples**: `~/blood-test/aether/`
 - **Bug history**: `tools/FAILURE_LOG.md`
 - **Session protocol**: `tools/AGENT_PROTOCOL.md`
+
+## Current Work Intake
+
+Active work is tracked in `.tmp/WORKLOAD.md`, derived from the spec/implementation divergence audit in `.tmp/AUDIT.md`.
+
+**To pick up work:**
+1. Read `.tmp/WORKLOAD.md` — items are organized by tier (Tier 1 = active correctness bugs, down to Tier 5 = open design questions)
+2. Work tiers in order: clear all actionable items in Tier N before moving to Tier N+1
+3. Within a tier, prioritize by danger score (higher = more urgent)
+4. For each item: read the AUDIT.md section for context, the relevant spec, and both compilers
+5. Follow the decision procedure:
+   - If the spec is right and the implementation is wrong → fix the code (`close-impl-to-spec`)
+   - If the spec has a genuine omission or Rust-ism → fix the spec with documented justification (`close-spec-to-impl`)
+   - If the answer is unclear → write a design evaluation, research the problem space (`open-question`)
+6. After completing work, update WORKLOAD.md with results and verify (build + ground-truth + bootstrap)
+
+**Tier-skip rules:** You may skip an item within a tier only if it is genuinely blocked (marked `open-question` with no resolution path, or has unmet prerequisites). When skipping, state the specific reason for each skipped item — do not dismiss a tier as a group. If all remaining items in a tier are blocked or deferred, you may proceed to the next tier after documenting why each was skipped.
+
+Items marked `[-]` are **deferred with re-evaluation triggers** — do not pick them up unless the trigger condition described in WORKLOAD.md is met.
+
+**Score vs tier:** Tiers group by *type* (bugs → spec gaps → missing features → deferred → design questions). Scores indicate *urgency within and across types*. A high-score Tier 3 item does NOT automatically override a low-score Tier 2 item — clear the tier first, skip only with per-item justification.
