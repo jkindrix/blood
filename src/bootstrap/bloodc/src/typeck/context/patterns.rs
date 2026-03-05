@@ -855,11 +855,29 @@ impl<'a> TypeContext<'a> {
                         }
                     }
 
-                    // Sort fields by index
+                    // Build full field vector with wildcards for unbound positions.
+                    // MIR lowering uses positional index as Field(i), so every
+                    // position must be present even when `..` skips fields.
                     indexed_fields.sort_by_key(|(idx, _)| *idx);
-                    let ordered_fields: Vec<hir::Pattern> = indexed_fields.into_iter()
-                        .map(|(_, pat)| pat)
-                        .collect();
+                    let total_fields = variant_info.fields.len();
+                    let mut ordered_fields: Vec<hir::Pattern> = Vec::with_capacity(total_fields);
+                    let mut bound_iter = indexed_fields.into_iter().peekable();
+                    for field_idx in 0..total_fields {
+                        if bound_iter.peek().map_or(false, |(idx, _)| *idx == field_idx) {
+                            let (_, pat) = bound_iter.next().unwrap();
+                            ordered_fields.push(pat);
+                        } else {
+                            // Unbound field — insert wildcard with the field's type
+                            let field_ty = self.substitute_type_vars(
+                                &variant_info.fields[field_idx].ty, &subst
+                            );
+                            ordered_fields.push(hir::Pattern {
+                                kind: hir::PatternKind::Wildcard,
+                                ty: field_ty,
+                                span: pattern.span,
+                            });
+                        }
+                    }
 
                     return Ok(hir::Pattern {
                         kind: hir::PatternKind::Variant {
