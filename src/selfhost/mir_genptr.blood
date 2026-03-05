@@ -6,7 +6,18 @@
 // that the generation matches (use-after-free detection).
 //
 // GenPtr layout: { address: u64, generation: u32, metadata: u32 }
-// Metadata: tier(2 bits) | flags(6 bits) | type_fingerprint(24 bits)
+// Metadata: tier(4 bits) | flags(4 bits) | type_fingerprint(24 bits)
+//
+// 128-bit Blood Pointer (align(16)):
+// ┌──────────────────────────────────┬───────────────────┬────────────────┐
+// │        ADDRESS (64 bits)         │  GENERATION (32)  │  METADATA (32) │
+// └──────────────────────────────────┴───────────────────┴────────────────┘
+//
+// Metadata layout:
+// ┌──────────┬──────────┬──────────────────────────┐
+// │ TIER [4] │ FLAGS[4] │   TYPE FINGERPRINT [24]  │
+// │ 31    28 │ 27    24 │ 23                     0 │
+// └──────────┴──────────┴──────────────────────────┘
 
 mod common;
 mod hir_def;
@@ -22,32 +33,37 @@ mod mir_body;
 
 /// The memory tier for an allocation.
 pub enum MemoryTier {
-    /// Stack allocation — automatic lifetime.
+    /// Stack allocation — lexical scope, thin pointers, no runtime check.
     Stack,
-    /// Region allocation — tied to a handler scope.
+    /// Region allocation — explicit scope, generational check.
     Region,
-    /// Persistent allocation — explicit deallocation.
+    /// Persistent allocation — reference-counted, deferred RC.
     Persistent,
+    /// Reserved for future use.
+    Reserved,
 }
 
 impl MemoryTier {
-    /// Returns the 2-bit encoding for this tier.
+    /// Returns the 4-bit encoding for this tier.
     pub fn encode(self: &MemoryTier) -> u32 {
         match self {
             &MemoryTier.Stack => 0,
             &MemoryTier.Region => 1,
             &MemoryTier.Persistent => 2,
+            &MemoryTier.Reserved => 3,
         }
     }
 
-    /// Decodes a 2-bit tier value.
+    /// Decodes a 4-bit tier value.
     pub fn decode(bits: u32) -> MemoryTier {
         if bits == 0 {
             MemoryTier.Stack
         } else if bits == 1 {
             MemoryTier.Region
-        } else {
+        } else if bits == 2 {
             MemoryTier.Persistent
+        } else {
+            MemoryTier.Reserved
         }
     }
 
@@ -57,6 +73,7 @@ impl MemoryTier {
             &MemoryTier.Stack => "stack",
             &MemoryTier.Region => "region",
             &MemoryTier.Persistent => "persistent",
+            &MemoryTier.Reserved => "reserved",
         }
     }
 }
@@ -66,8 +83,14 @@ impl MemoryTier {
 // ============================================================
 
 /// Flags encoded in the metadata field of a generational pointer.
+///
+/// Layout (4 bits, matching bootstrap mir/ptr.rs):
+///   Bit 3 (0x8): MUT      — Mutable reference
+///   Bit 2 (0x4): LINEAR   — Linear ownership
+///   Bit 1 (0x2): FROZEN   — Deeply immutable, shareable across fibers
+///   Bit 0 (0x1): NULLABLE — May be null (0 address valid)
 pub struct PtrFlags {
-    /// Raw flag bits (6 bits).
+    /// Raw flag bits (4 bits).
     pub bits: u8,
 }
 
@@ -77,19 +100,24 @@ impl PtrFlags {
         PtrFlags { bits: 0 }
     }
 
-    /// Flag: pointer is nullable.
+    /// Flag: pointer is nullable (bit 0).
     pub fn nullable() -> PtrFlags {
         PtrFlags { bits: 1 }
     }
 
-    /// Flag: pointer is mutable.
-    pub fn mutable_flag() -> PtrFlags {
+    /// Flag: pointer is deeply immutable (bit 1).
+    pub fn frozen() -> PtrFlags {
         PtrFlags { bits: 2 }
     }
 
-    /// Flag: pointer has been validated.
-    pub fn validated() -> PtrFlags {
+    /// Flag: pointer has linear ownership (bit 2).
+    pub fn linear() -> PtrFlags {
         PtrFlags { bits: 4 }
+    }
+
+    /// Flag: pointer is mutable (bit 3).
+    pub fn mutable_flag() -> PtrFlags {
+        PtrFlags { bits: 8 }
     }
 
     /// Combines two flag sets.
@@ -109,12 +137,12 @@ impl PtrFlags {
 
 /// A generational pointer that carries metadata for safety checks.
 ///
-/// Layout:
+/// Layout (128 bits, align(16)):
 /// - address: 64-bit pointer to the allocation
 /// - generation: 32-bit generation counter
 /// - metadata: 32-bit packed field
-///   - bits [31:30]: MemoryTier (2 bits)
-///   - bits [29:24]: flags (6 bits)
+///   - bits [31:28]: MemoryTier (4 bits)
+///   - bits [27:24]: PtrFlags (4 bits)
 ///   - bits [23:0]: type fingerprint (24 bits)
 pub struct GenPtr {
     /// The raw address of the allocation.
@@ -151,13 +179,13 @@ impl GenPtr {
 
     /// Extracts the memory tier from metadata.
     pub fn tier(self: &GenPtr) -> MemoryTier {
-        let tier_bits = (self.metadata >> 30) & 0x3;
+        let tier_bits = (self.metadata >> 28) & 0xF;
         MemoryTier.decode(tier_bits)
     }
 
     /// Extracts the flags from metadata.
     pub fn flags(self: &GenPtr) -> PtrFlags {
-        let flag_bits = ((self.metadata >> 24) & 0x3F) as u8;
+        let flag_bits = ((self.metadata >> 24) & 0xF) as u8;
         PtrFlags { bits: flag_bits }
     }
 
@@ -173,21 +201,21 @@ impl GenPtr {
 
 /// Encodes metadata from its components.
 pub fn encode_metadata(tier: &MemoryTier, flags: &PtrFlags, type_fp: u32) -> u32 {
-    let tier_bits = tier.encode() << 30;
-    let flag_bits = (flags.bits as u32 & 0x3F) << 24;
+    let tier_bits = tier.encode() << 28;
+    let flag_bits = (flags.bits as u32 & 0xF) << 24;
     let fp_bits = type_fp & 0x00FFFFFF;
     tier_bits | flag_bits | fp_bits
 }
 
 /// Decodes the tier from a metadata value.
 pub fn decode_tier(metadata: u32) -> MemoryTier {
-    let tier_bits = (metadata >> 30) & 0x3;
+    let tier_bits = (metadata >> 28) & 0xF;
     MemoryTier.decode(tier_bits)
 }
 
 /// Decodes the flags from a metadata value.
 pub fn decode_flags(metadata: u32) -> PtrFlags {
-    let flag_bits = ((metadata >> 24) & 0x3F) as u8;
+    let flag_bits = ((metadata >> 24) & 0xF) as u8;
     PtrFlags { bits: flag_bits }
 }
 
@@ -289,6 +317,47 @@ fn mix_hash(a: u32, b: u32) -> u32 {
     h = h ^ b;
     h *= 16777619; // FNV prime
     h
+}
+
+// ============================================================
+// Reserved Generation Constants
+// ============================================================
+
+/// Initial generation for new allocations.
+pub fn initial_generation() -> u32 { 1 }
+
+/// Freed memory (uninitialized).
+pub fn freed_generation() -> u32 { 0 }
+
+/// Persistent (reference-counted) allocations — generation is not checked.
+pub fn persistent_marker() -> u32 { 0xFFFFFFFF }
+
+/// Overflow guard — triggers tier promotion before overflow.
+pub fn overflow_guard() -> u32 { 0xFFFFFFFE }
+
+/// Tombstone generation — indicates slot freed but not yet reused.
+pub fn tombstone_gen() -> u32 { 0xFFFFFFFD }
+
+/// Maximum valid generation (exclusive). Generations at or above this
+/// value are reserved for sentinel purposes.
+pub fn max_valid_generation() -> u32 { 0xFFFFFFFD }
+
+/// Returns true if the generation value indicates the allocation needs
+/// tier promotion (overflow guard reached).
+pub fn needs_promotion(generation: u32) -> bool {
+    generation >= overflow_guard()
+}
+
+/// Increments a generation counter, returning the new value.
+/// If the increment would reach the overflow guard, returns the
+/// overflow guard value to signal promotion is needed.
+pub fn increment_generation(generation: u32) -> u32 {
+    let next = generation + 1;
+    if next >= overflow_guard() {
+        overflow_guard()
+    } else {
+        next
+    }
 }
 
 // ============================================================
