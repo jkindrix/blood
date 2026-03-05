@@ -390,13 +390,8 @@ pub enum TokenKind {
     #[token("@stack")]
     AtStack,
 
-    /// @affine type qualifier
-    #[token("@affine")]
-    AtAffine,
-
-    /// @linear type qualifier
-    #[token("@linear")]
-    AtLinear,
+    // @affine and @linear removed per GRAMMAR.md §9.5:
+    // constraint qualifiers use bare keywords (linear, affine), not @ prefix
 
     // ============================================================
     // Comments (handled specially)
@@ -693,8 +688,6 @@ impl TokenKind {
             TokenKind::AtUnsafe => "`@unsafe`",
             TokenKind::AtHeap => "`@heap`",
             TokenKind::AtStack => "`@stack`",
-            TokenKind::AtAffine => "`@affine`",
-            TokenKind::AtLinear => "`@linear`",
             TokenKind::DocComment => "doc comment",
             TokenKind::LineComment => "line comment",
             TokenKind::BlockComment => "block comment",
