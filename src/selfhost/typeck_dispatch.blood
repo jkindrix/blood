@@ -266,11 +266,25 @@ fn return_type_contains_self(ty: type_intern.TyId) -> bool {
 // Specificity Calculation
 // ============================================================
 
+/// Maximum recursion depth for dispatch type traversal.
+/// Guards against infinite recursion from cyclic type definitions.
+fn max_dispatch_depth() -> u32 { 64 }
+
 /// Computes specificity score for a type.
 /// Concrete types are more specific than generic ones.
 /// Scores: 10 = most specific (concrete primitive/never),
 ///         0 = least specific (unresolved inference variable or error).
 pub fn compute_specificity(ty: type_intern.TyId) -> u32 {
+    compute_specificity_bounded(ty, 0)
+}
+
+/// Depth-bounded specificity computation.
+/// Returns 0 (least specific) if depth limit is exceeded, preventing
+/// infinite recursion on cyclic type structures.
+fn compute_specificity_bounded(ty: type_intern.TyId, depth: u32) -> u32 {
+    if depth >= max_dispatch_depth() {
+        return 0;
+    }
     let interner = type_intern.type_interner();
     let kind = interner.get(ty);
     match kind {
@@ -285,13 +299,13 @@ pub fn compute_specificity(ty: type_intern.TyId) -> u32 {
         &type_intern.InternedTypeKind.Fn { params: _, ret: _, effects: _ } => 6,
         &type_intern.InternedTypeKind.Closure { def_id: _, params: _, ret: _ } => 6,
         &type_intern.InternedTypeKind.Ref { inner, mutable: _ } => {
-            compute_specificity(inner)
+            compute_specificity_bounded(inner, depth + 1)
         }
         &type_intern.InternedTypeKind.Ptr { inner, mutable: _ } => {
-            compute_specificity(inner)
+            compute_specificity_bounded(inner, depth + 1)
         }
         &type_intern.InternedTypeKind.Ownership { qualifier: _, inner } => {
-            compute_specificity(inner)
+            compute_specificity_bounded(inner, depth + 1)
         }
         &type_intern.InternedTypeKind.DynTrait { trait_id: _, auto_traits: _ } => 3,
         &type_intern.InternedTypeKind.Forall { params: _, body: _ } => 2,

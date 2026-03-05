@@ -635,7 +635,19 @@ impl<'a> DispatchResolver<'a> {
     /// - Covariant positions: &T, [T], arrays - T can be a subtype
     /// - Invariant positions: &mut T - T must be exactly equal
     /// - Contravariant positions: function parameters - reversed subtyping
+    /// Maximum recursion depth for subtype checking.
+    /// Guards against infinite recursion from cyclic type structures.
+    const MAX_SUBTYPE_DEPTH: u32 = 64;
+
     pub(crate) fn is_subtype(&self, a: &Type, b: &Type) -> bool {
+        self.is_subtype_bounded(a, b, 0)
+    }
+
+    fn is_subtype_bounded(&self, a: &Type, b: &Type, depth: u32) -> bool {
+        if depth >= Self::MAX_SUBTYPE_DEPTH {
+            return false;
+        }
+
         // Any type is a subtype of itself
         if self.types_equal(a, b) {
             return true;
@@ -671,7 +683,7 @@ impl<'a> DispatchResolver<'a> {
                 TypeKind::Ref { inner: a_inner, mutable: false },
                 TypeKind::Ref { inner: b_inner, mutable: false },
             ) => {
-                return self.is_subtype(a_inner, b_inner);
+                return self.is_subtype_bounded(a_inner, b_inner, depth + 1);
             }
 
             // Mutable references are invariant: &mut T requires exact match
@@ -695,7 +707,7 @@ impl<'a> DispatchResolver<'a> {
                 TypeKind::Ref { inner: a_inner, mutable: true },
                 TypeKind::Ref { inner: b_inner, mutable: false },
             ) => {
-                return self.is_subtype(a_inner, b_inner);
+                return self.is_subtype_bounded(a_inner, b_inner, depth + 1);
             }
 
             // Slices are covariant
@@ -703,7 +715,7 @@ impl<'a> DispatchResolver<'a> {
                 TypeKind::Slice { element: a_elem },
                 TypeKind::Slice { element: b_elem },
             ) => {
-                return self.is_subtype(a_elem, b_elem);
+                return self.is_subtype_bounded(a_elem, b_elem, depth + 1);
             }
 
             // Arrays are covariant in element type (same size required)
@@ -711,14 +723,14 @@ impl<'a> DispatchResolver<'a> {
                 TypeKind::Array { element: a_elem, size: a_size },
                 TypeKind::Array { element: b_elem, size: b_size },
             ) => {
-                return a_size == b_size && self.is_subtype(a_elem, b_elem);
+                return a_size == b_size && self.is_subtype_bounded(a_elem, b_elem, depth + 1);
             }
 
             // Tuples are covariant in each position
             (TypeKind::Tuple(a_elems), TypeKind::Tuple(b_elems)) => {
                 return a_elems.len() == b_elems.len()
                     && a_elems.iter().zip(b_elems.iter())
-                        .all(|(a, b)| self.is_subtype(a, b));
+                        .all(|(a, b)| self.is_subtype_bounded(a, b, depth + 1));
             }
 
             // Function types: contravariant in params, covariant in return, covariant in effects
@@ -732,9 +744,9 @@ impl<'a> DispatchResolver<'a> {
                 }
                 // Contravariant in parameters: b_param <: a_param
                 let params_ok = a_params.iter().zip(b_params.iter())
-                    .all(|(a, b)| self.is_subtype(b, a));
+                    .all(|(a, b)| self.is_subtype_bounded(b, a, depth + 1));
                 // Covariant in return type: a_ret <: b_ret
-                let ret_ok = self.is_subtype(a_ret, b_ret);
+                let ret_ok = self.is_subtype_bounded(a_ret, b_ret, depth + 1);
                 // Covariant in effects: a_effects ⊆ b_effects
                 // A function with fewer effects is a subtype of one with more
                 let effects_ok = a_effects.iter()
@@ -747,7 +759,7 @@ impl<'a> DispatchResolver<'a> {
                 TypeKind::Ptr { inner: a_inner, mutable: false },
                 TypeKind::Ptr { inner: b_inner, mutable: false },
             ) => {
-                return self.is_subtype(a_inner, b_inner);
+                return self.is_subtype_bounded(a_inner, b_inner, depth + 1);
             }
             (
                 TypeKind::Ptr { inner: a_inner, mutable: true },
