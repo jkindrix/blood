@@ -659,7 +659,9 @@ impl<'src> Parser<'src> {
                     let first_is_type = maybe_name_text.chars().next().map_or(false, |c| c.is_uppercase());
                     let mut last_was_type_ident = first_is_type;
                     loop {
-                        let consumed_sep = if self.try_consume(TokenKind::ColonColon) {
+                        let consumed_sep = if self.check(TokenKind::ColonColon) {
+                            self.warn_deprecated_colon_colon();
+                            self.advance();
                             true
                         } else if self.check(TokenKind::Dot) {
                             if last_was_type_ident {
@@ -1649,7 +1651,9 @@ impl<'src> Parser<'src> {
             //
             // `lowercase.lowercase` (e.g., `module.function()`) remains ambiguous with
             // `value.field` and is NOT consumed here — it uses `::` or postfix handling.
-            if self.try_consume(TokenKind::ColonColon) {
+            if self.check(TokenKind::ColonColon) {
+                self.warn_deprecated_colon_colon();
+                self.advance();
                 // :: always continues the path
             } else if self.check(TokenKind::Dot) {
                 let last_was_type_ident = segments.last()

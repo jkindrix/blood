@@ -461,6 +461,7 @@ fn parse_primary_expr(parser: &mut parser_base.Parser) -> ast.Expr {
             return parse_path_expr(parser);
         }
         token.TokenKind.ColonColon => {
+            parser.warn_at(parser.current.span, common.make_string("`::` is deprecated as a path separator; use `.` instead"), parser_base.ErrorCode.DeprecatedSyntax);
             return parse_path_expr(parser);
         }
         // Default expression - produces type's default value
@@ -1807,8 +1808,9 @@ fn parse_expr_path(parser: &mut parser_base.Parser) -> ast.ExprPath {
     segments.push(first_seg);
 
     loop {
-        if parser.try_consume(token.TokenKind.ColonColon) {
-            // :: always continues the path
+        if parser.check(token.TokenKind.ColonColon) {
+            parser.warn_at(parser.current.span, common.make_string("`::` is deprecated as a path separator; use `.` instead"), parser_base.ErrorCode.DeprecatedSyntax);
+            parser.advance();
             last_was_type_ident = parser.current.kind == token.TokenKind.TypeIdent;
             let seg = parse_expr_path_segment(parser);
             segments.push(seg);

@@ -184,6 +184,7 @@ impl Compiler {
     pub fn compile_with_base_dir(self: &mut Compiler, source: &str, base_dir: String) -> CompileResult {
         // Phase 1: Parse
         let parse_result = parser.parse_file(source);
+        let parse_warnings = convert_parse_warnings(&parse_result.warnings);
         if parse_result.errors.len() > 0 {
             let errors = convert_parse_errors(&parse_result.errors);
             return CompileResult.err(errors);
@@ -432,8 +433,15 @@ impl Compiler {
 
         // Propagate codegen warnings and non-fatal errors
         let mut result = CompileResult.ok(codegen_result.llvm_ir);
+        // Add parse warnings
+        for pwi in 0usize..parse_warnings.len() {
+            result.warnings.push(parse_warnings[pwi]);
+        }
         if codegen_result.errors.len() > 0 {
-            result.warnings = convert_codegen_errors_to_warnings(&codegen_result.errors);
+            let codegen_warns = convert_codegen_errors_to_warnings(&codegen_result.errors);
+            for cwi in 0usize..codegen_warns.len() {
+                result.warnings.push(codegen_warns[cwi]);
+            }
         }
         for wi in 0usize..codegen_result.warnings.len() {
             result.warnings.push(error.CompileWarning.new(
@@ -661,6 +669,22 @@ pub fn convert_parse_errors(diagnostics: &Vec<parser_base.Diagnostic>) -> Vec<er
     errors
 }
 
+/// Converts parser diagnostics to compile warnings.
+pub fn convert_parse_warnings(diagnostics: &Vec<parser_base.Diagnostic>) -> Vec<error.CompileWarning> {
+    let mut warnings = Vec.new();
+    for i in 0usize..diagnostics.len() {
+        let diag = &diagnostics[i];
+        let cw = error.CompileWarning.with_code(
+            error.CompilePhase.Parse,
+            clone_string(&diag.message),
+            diag.span,
+            common.make_string(parser_error_code(&diag.code)),
+        );
+        warnings.push(cw);
+    }
+    warnings
+}
+
 /// Converts HIR diagnostics to compile errors.
 pub fn convert_hir_diagnostics(diagnostics: &Vec<hir.Diagnostic>) -> Vec<error.CompileError> {
     let mut errors = Vec.new();
@@ -872,6 +896,7 @@ pub fn parser_error_code(code: &parser_base.ErrorCode) -> &str {
         &parser_base.ErrorCode.ExpectedPattern => "E0008",
         &parser_base.ErrorCode.ExpectedIdentifier => "E0009",
         &parser_base.ErrorCode.ExpectedDeclaration => "E0010",
+        &parser_base.ErrorCode.DeprecatedSyntax => "W0001",
     }
 }
 

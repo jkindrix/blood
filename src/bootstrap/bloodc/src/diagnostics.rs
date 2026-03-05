@@ -99,6 +99,8 @@ pub enum ErrorCode {
     UnsupportedSyntax = 117,
     /// Invalid macro fragment specifier.
     InvalidMacroFragment = 118,
+    /// Deprecated syntax (e.g., `::` as path separator).
+    DeprecatedSyntax = 119,
 
     // ============================================================
     // Pointer/Memory Warnings (W0001-W0099)
@@ -201,6 +203,7 @@ impl ErrorCode {
             ErrorCode::LargeHandlerDefinition => "handler with many operations may impact readability",
             // Syntax/Parser warnings
             ErrorCode::IgnoredAttributeOnUse => "attributes on use declarations are ignored",
+            ErrorCode::DeprecatedSyntax => "deprecated syntax usage",
         }
     }
 

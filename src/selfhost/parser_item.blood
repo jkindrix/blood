@@ -83,7 +83,11 @@ fn parse_attribute(parser: &mut parser_base.Parser) -> ast.Attribute {
     let first = parser.parse_spanned_symbol();
     path.push(first);
 
-    while parser.try_consume(token.TokenKind.ColonColon) || parser.try_consume(token.TokenKind.Dot) {
+    while parser.check(token.TokenKind.ColonColon) || parser.check(token.TokenKind.Dot) {
+        if parser.check(token.TokenKind.ColonColon) {
+            parser.warn_at(parser.current.span, common.make_string("`::` is deprecated as a path separator; use `.` instead"), parser_base.ErrorCode.DeprecatedSyntax);
+        }
+        parser.advance();
         let segment = parser.parse_spanned_symbol();
         path.push(segment);
     }
@@ -1425,6 +1429,9 @@ pub fn parse_declaration(parser: &mut parser_base.Parser) -> ast.Declaration {
                 path_segments.push(parser.parse_spanned_symbol());
             }
             // Accept optional :: between path and */{ (backward compat)
+            if parser.check(token.TokenKind.ColonColon) {
+                parser.warn_at(parser.current.span, common.make_string("`::` is deprecated as a path separator; use `.` instead"), parser_base.ErrorCode.DeprecatedSyntax);
+            }
             let had_colons = parser.try_consume(token.TokenKind.ColonColon);
             // Capture path span before potential move
             let path_start = path_segments[0].span;

@@ -365,7 +365,9 @@ impl<'src> Parser<'src> {
             // Also accept `.` before lowercase Ident ONLY when the previous segment was lowercase
             // (module.module chain), to avoid consuming `.operation` after `Effect` in
             // `perform Effect.operation()`.
-            if self.try_consume(TokenKind::ColonColon) {
+            if self.check(TokenKind::ColonColon) {
+                self.warn_deprecated_colon_colon();
+                self.advance();
                 // :: always continues the type path
             } else if self.check(TokenKind::Dot)
                 && (self.check_next(TokenKind::TypeIdent)

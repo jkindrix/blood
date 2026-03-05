@@ -24,6 +24,7 @@ pub enum ErrorCode {
     ExpectedPattern,
     ExpectedIdentifier,
     ExpectedDeclaration,
+    DeprecatedSyntax,
 }
 
 /// A parser diagnostic/error.
@@ -69,6 +70,8 @@ pub struct Parser<'src> {
     pub previous: token.Token,
     /// Accumulated errors.
     pub errors: Vec<Diagnostic>,
+    /// Accumulated warnings.
+    pub warnings: Vec<Diagnostic>,
     /// Whether we're in panic mode (error recovery).
     pub panic_mode: bool,
     /// Interned symbols (stores span info for deduplication).
@@ -108,6 +111,7 @@ impl<'src> Parser<'src> {
             next,
             previous: token.Token.dummy(token.TokenKind.Error),
             errors: Vec.new(),
+            warnings: Vec.new(),
             panic_mode: false,
             interned: Vec.new(),
             allow_struct_literal: true,
@@ -236,6 +240,11 @@ impl<'src> Parser<'src> {
         let mut diagnostic = make_diagnostic(message, span, code);
         diagnostic.notes.push(note);
         self.errors.push(diagnostic);
+    }
+
+    pub fn warn_at(self: &mut Self, span: common.Span, message: String, code: ErrorCode) {
+        let diagnostic = make_diagnostic(message, span, code);
+        self.warnings.push(diagnostic);
     }
 
     pub fn error_expected_kind(self: &mut Self, expected: token.TokenKind) {

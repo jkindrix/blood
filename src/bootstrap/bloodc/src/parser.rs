@@ -296,6 +296,15 @@ impl<'src> Parser<'src> {
         }
     }
 
+    /// Emit a deprecation warning for `::` used as a path separator.
+    fn warn_deprecated_colon_colon(&mut self) {
+        self.warn_at(
+            self.current.span,
+            "`::` is deprecated as a path separator; use `.` instead",
+            ErrorCode::DeprecatedSyntax,
+        );
+    }
+
     /// Check if the current token is a path separator (either `::` or `.`).
     /// Blood's grammar uses `.` as the universal path separator (GRAMMAR.md v0.4.0+),
     /// but `::` is still accepted during the transition period.
@@ -304,8 +313,13 @@ impl<'src> Parser<'src> {
     }
 
     /// Try to consume a path separator (either `::` or `.`).
+    /// Emits a deprecation warning if `::` is used.
     fn try_consume_path_sep(&mut self) -> bool {
-        if self.check(TokenKind::ColonColon) || self.check(TokenKind::Dot) {
+        if self.check(TokenKind::ColonColon) {
+            self.warn_deprecated_colon_colon();
+            self.advance();
+            true
+        } else if self.check(TokenKind::Dot) {
             self.advance();
             true
         } else {
@@ -916,7 +930,11 @@ impl<'src> Parser<'src> {
             self.advance();
             path.push(self.spanned_symbol());
 
-            while self.try_consume(TokenKind::ColonColon) {
+            while self.check(TokenKind::ColonColon) || self.check(TokenKind::Dot) {
+                if self.check(TokenKind::ColonColon) {
+                    self.warn_deprecated_colon_colon();
+                }
+                self.advance();
                 if self.check(TokenKind::Ident) || self.check(TokenKind::TypeIdent) {
                     self.advance();
                     path.push(self.spanned_symbol());

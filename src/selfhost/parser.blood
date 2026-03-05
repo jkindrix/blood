@@ -26,6 +26,7 @@ mod parser_item;
 pub struct ParseResult {
     pub program: Option<ast.Program>,
     pub errors: Vec<parser_base.Diagnostic>,
+    pub warnings: Vec<parser_base.Diagnostic>,
 }
 
 /// Parse a complete Blood source file.
@@ -57,17 +58,20 @@ pub fn parse_file(source: &str) -> ParseResult {
     };
 
     let errors = parser.take_errors();
+    let warnings = parser.warnings;
 
     if errors.len() > 0 {
         return ParseResult {
             program: Option.None,
             errors: errors,
+            warnings: warnings,
         };
     }
 
     ParseResult {
         program: Option.Some(program),
         errors: Vec.new(),
+        warnings: warnings,
     }
 }
 
@@ -141,7 +145,14 @@ fn parse_import(parser: &mut parser_base.Parser) -> ast.Import {
     let path = parse_module_path(parser);
 
     // Check for specific import types
-    if parser.try_consume(token.TokenKind.ColonColon) {
+    let consumed_colons = if parser.check(token.TokenKind.ColonColon) {
+        parser.warn_at(parser.current.span, common.make_string("`::` is deprecated as a path separator; use `.` instead"), parser_base.ErrorCode.DeprecatedSyntax);
+        parser.advance();
+        true
+    } else {
+        false
+    };
+    if consumed_colons {
         if parser.try_consume(token.TokenKind.Star) {
             // use std.ops::*;
             parser.expect(token.TokenKind.Semi);

@@ -258,6 +258,7 @@ fn parse_pattern_kind(parser: &mut parser_base.Parser) -> ast.PatternKind {
 
         // Path starting with ::
         token.TokenKind.ColonColon => {
+            parser.warn_at(parser.current.span, common.make_string("`::` is deprecated as a path separator; use `.` instead"), parser_base.ErrorCode.DeprecatedSyntax);
             return parse_path_pattern(parser);
         }
 
@@ -385,7 +386,9 @@ fn parse_ident_or_path_pattern(parser: &mut parser_base.Parser) -> ast.PatternKi
         segments.push(first_seg);
 
         loop {
-            if parser.try_consume(token.TokenKind.ColonColon) {
+            if parser.check(token.TokenKind.ColonColon) {
+                parser.warn_at(parser.current.span, common.make_string("`::` is deprecated as a path separator; use `.` instead"), parser_base.ErrorCode.DeprecatedSyntax);
+                parser.advance();
                 let seg_name = parser.parse_spanned_symbol();
                 let seg = ast.TypePathSegment { name: seg_name, args: Option.None };
                 segments.push(seg);

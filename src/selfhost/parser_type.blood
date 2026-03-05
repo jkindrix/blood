@@ -184,8 +184,9 @@ pub fn parse_type_path(parser: &mut parser_base.Parser) -> ast.TypePath {
 
     // Additional segments after :: or .
     loop {
-        if parser.try_consume(token.TokenKind.ColonColon) {
-            // :: always continues the path
+        if parser.check(token.TokenKind.ColonColon) {
+            parser.warn_at(parser.current.span, common.make_string("`::` is deprecated as a path separator; use `.` instead"), parser_base.ErrorCode.DeprecatedSyntax);
+            parser.advance();
             last_was_lowercase = parser.current.kind == token.TokenKind.Ident
                 || parser.current.kind.can_be_ident() && parser.current.kind != token.TokenKind.TypeIdent;
             let seg = parse_type_path_segment(parser);
@@ -641,7 +642,9 @@ fn parse_const_path(parser: &mut parser_base.Parser) -> ast.ExprPath {
     segments.push(first_seg);
 
     loop {
-        if parser.try_consume(token.TokenKind.ColonColon) {
+        if parser.check(token.TokenKind.ColonColon) {
+            parser.warn_at(parser.current.span, common.make_string("`::` is deprecated as a path separator; use `.` instead"), parser_base.ErrorCode.DeprecatedSyntax);
+            parser.advance();
             let seg_name = parser.parse_spanned_symbol();
             let seg = ast.ExprPathSegment { name: seg_name, args: Option.None };
             segments.push(seg);
