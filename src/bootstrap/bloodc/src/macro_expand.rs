@@ -366,6 +366,10 @@ impl MacroExpander {
                     self.expand_expr(e);
                 }
             }
+            ExprKind::Containment { value, range } => {
+                self.expand_expr(value);
+                self.expand_expr(range);
+            }
             ExprKind::Assign { target, value } => {
                 self.expand_expr(target);
                 self.expand_expr(value);

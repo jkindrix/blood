@@ -764,6 +764,10 @@ impl SemanticAnalyzer {
                     self.collect_expr_symbols(end, source, interner, symbols, symbol_at_offset);
                 }
             }
+            ExprKind::Containment { value, range } => {
+                self.collect_expr_symbols(value, source, interner, symbols, symbol_at_offset);
+                self.collect_expr_symbols(range, source, interner, symbols, symbol_at_offset);
+            }
             ExprKind::Break { value: Some(value), .. } => {
                 self.collect_expr_symbols(value, source, interner, symbols, symbol_at_offset);
             }

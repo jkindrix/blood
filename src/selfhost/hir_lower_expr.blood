@@ -112,6 +112,9 @@ pub fn lower_expr(ctx: &mut hir_lower_ctx.LoweringCtx, expr: &ast.Expr) -> hir_e
                 span,
             )
         }
+        &ast.ExprKind.Containment { ref value, ref range } => {
+            lower_containment_expr(ctx, value.as_ref(), range.as_ref(), span)
+        }
         &ast.ExprKind.Cast { ref expr, ref ty } => {
             let expr_hir = lower_expr(ctx, expr.as_ref());
             let cast_ty = hir_lower_type.lower_type_id(ctx, ty);
@@ -3434,6 +3437,99 @@ fn record_turbofish_const_args(
     }
     if has_const {
         ctx.turbofish_const_entries.push(hir_lower_ctx.TurbofishEntry.new(span_start, values));
+    }
+}
+
+/// Lower a containment expression: `value in range_expr`.
+/// Desugars `x in lo..hi` to `x >= lo && x < hi` (half-open)
+/// and `x in lo..=hi` to `x >= lo && x <= hi` (inclusive).
+fn lower_containment_expr(
+    ctx: &mut hir_lower_ctx.LoweringCtx,
+    value: &ast.Expr,
+    range: &ast.Expr,
+    span: common.Span,
+) -> hir_expr.Expr {
+    match &range.kind {
+        &ast.ExprKind.Range { ref start, ref end_val, inclusive } => {
+            let bool_ty = type_intern.CommonTypes.bool_ty();
+
+            // Lower the value expression (evaluated for each comparison — OK for simple exprs)
+            let val_lo = lower_expr(ctx, value);
+            let val_hi = lower_expr(ctx, value);
+
+            // Build: value >= start
+            let lo_cmp = match start {
+                &Some(ref lo) => {
+                    let lo_hir = lower_expr(ctx, lo.as_ref());
+                    hir_expr.Expr.new(
+                        hir_expr.ExprKind.Binary {
+                            operator: common.BinOp.Ge,
+                            left: Box.new(val_lo),
+                            right: Box.new(lo_hir),
+                        },
+                        bool_ty,
+                        span,
+                    )
+                }
+                &None => {
+                    // No lower bound (..hi) — always true for lower bound
+                    hir_expr.Expr.new(
+                        hir_expr.ExprKind.Literal(hir_expr.Literal.new(hir_expr.LiteralKind.Bool(true), span)),
+                        bool_ty,
+                        span,
+                    )
+                }
+            };
+
+            // Build: value < end (half-open) or value <= end (inclusive)
+            let hi_cmp = match end_val {
+                &Some(ref hi) => {
+                    let hi_hir = lower_expr(ctx, hi.as_ref());
+                    let cmp_op = if inclusive {
+                        common.BinOp.Le
+                    } else {
+                        common.BinOp.Lt
+                    };
+                    hir_expr.Expr.new(
+                        hir_expr.ExprKind.Binary {
+                            operator: cmp_op,
+                            left: Box.new(val_hi),
+                            right: Box.new(hi_hir),
+                        },
+                        bool_ty,
+                        span,
+                    )
+                }
+                &None => {
+                    // No upper bound (lo..) — always true for upper bound
+                    hir_expr.Expr.new(
+                        hir_expr.ExprKind.Literal(hir_expr.Literal.new(hir_expr.LiteralKind.Bool(true), span)),
+                        bool_ty,
+                        span,
+                    )
+                }
+            };
+
+            // Combine: lo_cmp && hi_cmp
+            hir_expr.Expr.new(
+                hir_expr.ExprKind.Binary {
+                    operator: common.BinOp.And,
+                    left: Box.new(lo_cmp),
+                    right: Box.new(hi_cmp),
+                },
+                bool_ty,
+                span,
+            )
+        }
+        _ => {
+            ctx.error(
+                hir.DiagnosticCode.E0100,
+                common.make_string("right-hand side of `in` must be a range expression (e.g., 0..len)"),
+                range.span,
+            );
+            let ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
+            hir_expr.Expr.new(hir_expr.ExprKind.Error, ty, span)
+        }
     }
 }
 

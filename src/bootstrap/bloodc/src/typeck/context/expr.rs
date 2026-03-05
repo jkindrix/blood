@@ -239,6 +239,9 @@ impl<'a> TypeContext<'a> {
                 // InlineWithDo is semantically equivalent to InlineHandle, just different syntax
                 self.infer_inline_handle(body, effect, operations, expr.span)
             }
+            ast::ExprKind::Containment { value, range } => {
+                self.infer_containment(value, range, expr.span)
+            }
         }
     }
 
@@ -9404,6 +9407,91 @@ impl<'a> TypeContext<'a> {
                 inclusive,
             },
             range_ty,
+            span,
+        ))
+    }
+
+    /// Infer type of a containment expression: `x in lo..hi`.
+    ///
+    /// Desugars to `x >= lo && x < hi` (half-open) or `x >= lo && x <= hi` (inclusive).
+    /// The range operand must be a Range expression; other RHS forms are an error.
+    fn infer_containment(
+        &mut self,
+        value: &ast::Expr,
+        range: &ast::Expr,
+        span: Span,
+    ) -> Result<hir::Expr, Box<TypeError>> {
+        // The range must be a Range expression
+        let (start, end, inclusive) = match &range.kind {
+            ast::ExprKind::Range { start, end, inclusive } => {
+                (start.as_deref(), end.as_deref(), *inclusive)
+            }
+            _ => {
+                return Err(Box::new(TypeError::new(
+                    TypeErrorKind::UnsupportedFeature {
+                        feature: "'in' operator requires a range expression (e.g., x in lo..hi)".into(),
+                    },
+                    range.span,
+                )));
+            }
+        };
+
+        // Infer type for value
+        let value_expr = self.infer_expr(value)?;
+        let val_ty = value_expr.ty.clone();
+        let bool_ty = Type::bool();
+
+        // Build lower bound check: value >= start (or true if no start)
+        let lower_check = if let Some(start_ast) = start {
+            let start_expr = self.check_expr(start_ast, &val_ty)?;
+            hir::Expr::new(
+                hir::ExprKind::Binary {
+                    op: ast::BinOp::Ge,
+                    left: Box::new(value_expr.clone()),
+                    right: Box::new(start_expr),
+                },
+                bool_ty.clone(),
+                span,
+            )
+        } else {
+            // No lower bound — always true
+            hir::Expr::new(
+                hir::ExprKind::Literal(hir::LiteralValue::Bool(true)),
+                bool_ty.clone(),
+                span,
+            )
+        };
+
+        // Build upper bound check: value < end (half-open) or value <= end (inclusive)
+        let upper_check = if let Some(end_ast) = end {
+            let end_expr = self.check_expr(end_ast, &val_ty)?;
+            let cmp_op = if inclusive { ast::BinOp::Le } else { ast::BinOp::Lt };
+            hir::Expr::new(
+                hir::ExprKind::Binary {
+                    op: cmp_op,
+                    left: Box::new(value_expr),
+                    right: Box::new(end_expr),
+                },
+                bool_ty.clone(),
+                span,
+            )
+        } else {
+            // No upper bound — always true
+            hir::Expr::new(
+                hir::ExprKind::Literal(hir::LiteralValue::Bool(true)),
+                bool_ty.clone(),
+                span,
+            )
+        };
+
+        // Combine with &&: lower_check && upper_check
+        Ok(hir::Expr::new(
+            hir::ExprKind::Binary {
+                op: ast::BinOp::And,
+                left: Box::new(lower_check),
+                right: Box::new(upper_check),
+            },
+            bool_ty,
             span,
         ))
     }

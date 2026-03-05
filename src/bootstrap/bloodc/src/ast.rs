@@ -1059,6 +1059,12 @@ pub enum ExprKind {
         inclusive: bool,
     },
 
+    /// Containment: `x in lo..hi`
+    Containment {
+        value: Box<Expr>,
+        range: Box<Expr>,
+    },
+
     /// Cast: `x as T`
     Cast {
         expr: Box<Expr>,

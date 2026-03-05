@@ -124,6 +124,7 @@ fn infix_precedence(kind: token.TokenKind) -> u8 {
         token.TokenKind.Gt => 6,
         token.TokenKind.LtEq => 6,
         token.TokenKind.GtEq => 6,
+        token.TokenKind.In => 6,
 
         // Bitwise or
         token.TokenKind.Or => 7,
@@ -673,6 +674,20 @@ fn parse_infix_expr(parser: &mut parser_base.Parser, left: ast.Expr, prec: u8) -
                     operator: common.BinOp.Ge,
                     left: Box.new(left),
                     right: Box.new(right),
+                },
+                span: common.Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
+            };
+        }
+        // Containment: x in lo..hi
+        // Parse RHS at Range precedence (3) so `..`/`..=` is captured
+        token.TokenKind.In => {
+            parser.advance();
+            let range = parse_expr_with_precedence(parser, 3);
+            let end_span = parser.previous.span;
+            return ast.Expr {
+                kind: ast.ExprKind.Containment {
+                    value: Box.new(left),
+                    range: Box.new(range),
                 },
                 span: common.Span { start: left.span.start, end: end_span.end, line: left.span.line, column: left.span.column },
             };

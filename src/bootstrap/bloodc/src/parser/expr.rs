@@ -74,7 +74,8 @@ fn binary_precedence(kind: TokenKind) -> Option<Precedence> {
         | TokenKind::Lt
         | TokenKind::Gt
         | TokenKind::LtEq
-        | TokenKind::GtEq => Some(Precedence::Comparison),
+        | TokenKind::GtEq
+        | TokenKind::In => Some(Precedence::Comparison),
         TokenKind::Or => Some(Precedence::BitOr),
         TokenKind::Caret => Some(Precedence::BitXor),
         TokenKind::And => Some(Precedence::BitAnd),
@@ -241,6 +242,23 @@ impl<'src> Parser<'src> {
                             op: bin_op,
                             target: Box::new(left),
                             value: Box::new(value),
+                        },
+                        span,
+                    }
+                }
+                TokenKind::In => {
+                    // Containment: x in lo..hi
+                    // Parse RHS at Range precedence so `..`/`..=` is captured
+                    let range = if no_struct {
+                        self.parse_expr_prec_no_struct(Precedence::Range)
+                    } else {
+                        self.parse_expr_prec(Precedence::Range)
+                    };
+                    let span = left.span.merge(range.span);
+                    Expr {
+                        kind: ExprKind::Containment {
+                            value: Box::new(left),
+                            range: Box::new(range),
                         },
                         span,
                     }

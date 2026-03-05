@@ -1,0 +1,46 @@
+// Test: ContainmentExpr — `x in lo..hi` syntax
+// Verifies half-open and inclusive range containment checks.
+
+fn check_half_open(x: i32) -> bool {
+    x in 0..10
+}
+
+fn check_inclusive(x: i32) -> bool {
+    x in 0..=10
+}
+
+fn main() -> i32 {
+    // Half-open range: 0 <= x < 10
+    let t1 = check_half_open(0);   // true (lower bound inclusive)
+    let t2 = check_half_open(5);   // true (mid-range)
+    let t3 = check_half_open(9);   // true (just below upper)
+    let t4 = check_half_open(10);  // false (upper bound exclusive)
+    let t5 = check_half_open(-1);  // false (below lower)
+
+    // Inclusive range: 0 <= x <= 10
+    let t6 = check_inclusive(0);   // true
+    let t7 = check_inclusive(10);  // true (upper bound inclusive)
+    let t8 = check_inclusive(11);  // false
+
+    // Inline usage
+    let x: i32 = 5;
+    let t9 = x in 1..100;
+
+    let mut result: i32 = 0;
+    if t1 { result = result + 1; }
+    if t2 { result = result + 1; }
+    if t3 { result = result + 1; }
+    if !t4 { result = result + 1; }
+    if !t5 { result = result + 1; }
+    if t6 { result = result + 1; }
+    if t7 { result = result + 1; }
+    if !t8 { result = result + 1; }
+    if t9 { result = result + 1; }
+
+    // All 9 checks should pass
+    if result == 9 {
+        0
+    } else {
+        result
+    }
+}
