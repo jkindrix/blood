@@ -537,6 +537,9 @@ pub fn emit_statement(
             ctx.begin_call(Option.None, "void", "@blood_region_activate");
             ctx.call_arg_cg(true, "i64", &region_id);
             ctx.end_call();
+
+            // Track active region for suspension during Perform
+            ctx.active_regions.push(codegen_ctx.CodegenCtx.cgname_to_string(&region_id));
         }
         &mir_stmt.StatementKind.RegionExit { region_local } => {
             // Emit region lifecycle: deactivate + exit_scope + conditional destroy
@@ -549,6 +552,11 @@ pub fn emit_statement(
             //   br label %continue
             // continue:
             ctx.write("    ; region exit\n");
+
+            // Pop active region tracking
+            if ctx.active_regions.len() > 0 {
+                ctx.active_regions.pop();
+            }
 
             let region_alloca_cg = ctx.local_cg(region_local);
             let region_id = ctx.fresh_temp_cg();

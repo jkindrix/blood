@@ -50,7 +50,7 @@ pub fn emit_terminator(
         &mir_term.TerminatorKind.Assert { ref cond, expected, ref msg, target, unwind: _ } => {
             emit_assert(ctx, cond, expected, msg, target);
         }
-        &mir_term.TerminatorKind.Perform { effect_id, op_index, ref args, ref destination, ref target, is_tail_resumptive: _ } => {
+        &mir_term.TerminatorKind.Perform { effect_id, op_index, ref args, ref destination, ref target, is_tail_resumptive } => {
             // Effect perform via evidence API 5-arg call:
             //   blood_perform(i64 effect_id, i32 op_index, ptr args, i64 arg_count, i64 continuation)
             let effect_id_val = codegen_types.format_u64(effect_id.index as u64);
@@ -160,6 +160,21 @@ pub fn emit_terminator(
             ctx.write_indent();
             ctx.write_cgname(&continuation);
             ctx.write(" = call i64 @blood_continuation_create_multishot(ptr @__blood_identity_continuation, ptr null)\n");
+
+            // For non-tail-resumptive effects inside region blocks, suspend active
+            // regions so they aren't destroyed while the continuation exists.
+            if !is_tail_resumptive && ctx.active_regions.len() > 0 {
+                ctx.write("    ; suspend active regions for non-tail-resumptive perform\n");
+                for ri in 0usize..ctx.active_regions.len() {
+                    let region_str = ctx.active_regions[ri].as_str();
+                    ctx.write_indent();
+                    ctx.write("call void @blood_continuation_add_suspended_region(i64 ");
+                    ctx.write_cgname(&continuation);
+                    ctx.write(", i64 ");
+                    ctx.write(region_str);
+                    ctx.write(")\n");
+                }
+            }
 
             // Call blood_perform(i64 effect_id, i32 op_index, ptr args, i64 arg_count, i64 continuation)
             let result = ctx.fresh_temp_cg();

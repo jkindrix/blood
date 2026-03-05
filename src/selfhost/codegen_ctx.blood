@@ -325,6 +325,10 @@ pub struct CodegenCtx {
     /// Effect-captured local indices for the current function.
     /// Set from escape analysis; used during Perform codegen for snapshot creation.
     pub effect_captured_locals: Vec<u32>,
+    /// Stack of active region LLVM register names.
+    /// Pushed when blood_region_activate is called, popped when blood_region_deactivate is called.
+    /// Used during Perform codegen to emit blood_continuation_add_suspended_region calls.
+    pub active_regions: Vec<String>,
 }
 
 /// Entry mapping a handler DefId to its effect DefId.
@@ -513,6 +517,7 @@ impl CodegenCtx {
             trait_method_entries: Vec.with_capacity(32),
             vtable_name_entries: Vec.with_capacity(32),
             effect_captured_locals: Vec.new(),
+            active_regions: Vec.with_capacity(4),
         }
     }
 
@@ -587,6 +592,7 @@ impl CodegenCtx {
             trait_method_entries: Vec.with_capacity(32),
             vtable_name_entries: Vec.with_capacity(32),
             effect_captured_locals: Vec.new(),
+            active_regions: Vec.with_capacity(4),
         }
     }
 
@@ -2438,6 +2444,7 @@ impl CodegenCtx {
             trait_method_entries: Vec.new(),
             vtable_name_entries: Vec.new(),
             effect_captured_locals: Vec.new(),
+            active_regions: Vec.with_capacity(4),
         };
 
         // Copy handler_op_body_ids with state counts (read-only, needed to flag handler op bodies)
