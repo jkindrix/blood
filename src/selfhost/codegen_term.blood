@@ -155,11 +155,18 @@ pub fn emit_terminator(
             ctx.call_arg_cg(true, "ptr", &snapshot);
             ctx.end_call();
 
-            // Create continuation (identity for tail-resumptive)
+            // Create continuation: skip for tail-resumptive (pass 0), allocate for non-tail
             let continuation = ctx.fresh_temp_cg();
-            ctx.write_indent();
-            ctx.write_cgname(&continuation);
-            ctx.write(" = call i64 @blood_continuation_create_multishot(ptr @__blood_identity_continuation, ptr null)\n");
+            if is_tail_resumptive {
+                ctx.write("    ; tail-resumptive: skip continuation allocation\n");
+                ctx.write_indent();
+                ctx.write_cgname(&continuation);
+                ctx.write(" = add i64 0, 0\n");
+            } else {
+                ctx.write_indent();
+                ctx.write_cgname(&continuation);
+                ctx.write(" = call i64 @blood_continuation_create_multishot(ptr @__blood_identity_continuation, ptr null)\n");
+            }
 
             // For non-tail-resumptive effects inside region blocks, suspend active
             // regions so they aren't destroyed while the continuation exists.

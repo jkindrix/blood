@@ -2338,10 +2338,14 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         };
 
         // Create continuation for the handler to resume to.
-        // For tail-resumptive handlers, this is ignored (handler just returns).
-        // For non-tail-resumptive handlers, this allows the handler to continue
-        // executing code after resume() returns.
-        let continuation_val = self.create_perform_continuation()?;
+        // For tail-resumptive handlers, pass 0 (no continuation needed — handler
+        // just returns the value directly). For non-tail-resumptive handlers,
+        // allocate a multishot continuation so the handler can suspend and resume.
+        let continuation_val = if is_tail_resumptive {
+            i64_ty.const_zero()
+        } else {
+            self.create_perform_continuation()?
+        };
 
         // For non-tail-resumptive effects inside region blocks, suspend the
         // active regions so they aren't destroyed while the continuation exists.
