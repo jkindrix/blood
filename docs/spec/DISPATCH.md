@@ -2266,14 +2266,16 @@ For an object-safe trait `T` with methods `m₁, ..., mₙ`:
 ```
 Vtable layout for dyn T:
 ┌─────────────────┐
-│ size: usize     │  -- Size of concrete type
-│ align: usize    │  -- Alignment of concrete type
+│ size: null       │  -- Reserved (always null)
+│ align: null      │  -- Reserved (always null)
 │ m₁: fn_ptr      │  -- Method 1 implementation
 │ m₂: fn_ptr      │  -- Method 2 implementation
 │ ...              │
 │ mₙ: fn_ptr      │  -- Method N implementation
 └─────────────────┘
 ```
+
+> **Design note — null size/align slots**: Both compilers emit null (zero) for the size and align slots. This is an intentional design decision, not a TODO. Blood does not use vtable-based size/align queries because: (1) region-based allocation does not require per-value size information at deallocation time (bulk deallocation via generation bump), and (2) Blood has no `mem::size_of_val` equivalent for trait objects. The slots are retained for ABI compatibility with potential future use and to maintain a consistent vtable prefix across all trait objects.
 
 Method ordering in the vtable follows declaration order in the trait.
 

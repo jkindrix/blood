@@ -710,6 +710,13 @@ cast_compatible(S, T) ⟺ one of:
                           Bit-preserving. Bridge/unsafe contexts only.
     7. Ptr coercion:      &T as *const T, &mut T as *mut T
                           Bridge contexts only.
+    8. Char ↔ Numeric:    Char as integer (Unicode code point, e.g., 'A' as i32 = 65)
+                          Integer as Char (code point to character, e.g., 65 as Char = 'A')
+                          Out-of-range values produce replacement character U+FFFD.
+    9. Ref ↔ Integer:     &T as usize, usize as &T
+                          Bit-preserving. Bridge/unsafe contexts only.
+   10. Fn → Integer:      fn as usize (function pointer to integer)
+                          Bit-preserving. Bridge/unsafe contexts only.
 ```
 
 Casts that are not in this relation are compile-time errors.

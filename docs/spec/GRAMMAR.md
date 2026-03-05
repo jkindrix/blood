@@ -1232,6 +1232,7 @@ From highest to lowest precedence:
 - **Comparison operators are non-associative.** `a < b < c` is a parse error. Comparison chaining is **not planned** — hidden temporaries conflict with linear types, and short-circuit evaluation creates ambiguous effect ordering. Use the `in` operator for range checks: `x in lo..hi` (see §5.6 ContainmentExpr). See `docs/design/COMPARISON_CHAINING.md` for the full evaluation.
 - **Postfix `?`** is the try operator for error propagation (see §5.6).
 - **Path (`.`)** is handled during postfix parsing, not as a binary operator in the precedence table.
+- **`return`, `break`, `continue`** are listed at precedence 0 for conceptual completeness, but both compilers parse them as **special prefix expressions outside the Pratt precedence climber**. The parser recognizes these keywords before entering the precedence loop and constructs `ReturnExpr`, `BreakExpr`, or `ContinueExpr` nodes directly. They do not participate in precedence climbing and cannot appear as operands to binary operators without parentheses.
 
 ### 7.2 Unary Operators
 
