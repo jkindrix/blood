@@ -1985,19 +1985,26 @@ fn unify_structural_id(
             }
         }
 
-        // Function types: unify params and return type.
-        // Effects are NOT unified here — checked at call sites.
-        &type_intern.InternedTypeKind.Fn { params, ret, effects: _ } => {
+        // Function types: unify params, return type, AND effects.
+        &type_intern.InternedTypeKind.Fn { params, ret, effects } => {
             let params_a = params;
             let ret_a = ret;
+            let effects_a = effects;
             let kind_b = type_intern.type_interner().get(b);
             match kind_b {
-                &type_intern.InternedTypeKind.Fn { params, ret, effects: _ } => {
+                &type_intern.InternedTypeKind.Fn { params, ret, effects } => {
                     match unify_ty_lists_id(table, unifier, params_a, params, span) {
                         UnifyResult.Err(e) => { return UnifyResult.Err(e); }
                         UnifyResult.Ok => {}
                     }
-                    unify_id(table, unifier, ret_a, ret, span)
+                    match unify_id(table, unifier, ret_a, ret, span) {
+                        UnifyResult.Err(e) => { return UnifyResult.Err(e); }
+                        UnifyResult.Ok => {}
+                    }
+                    // Unify effect rows
+                    let row_a = type_intern.effect_row_id_to_effect_row(effects_a);
+                    let row_b = type_intern.effect_row_id_to_effect_row(effects);
+                    unify_effect_rows(table, unifier, &row_a, &row_b, span)
                 }
                 _ => UnifyResult.Err(UnifyError.mismatch(span))
             }
