@@ -29,10 +29,10 @@ pub fn infer_expr(checker: &mut typeck.TypeChecker, expr: &hir_expr.Expr) -> typ
         &hir_expr.ExprKind.Literal(ref lit) => infer_literal(checker, lit),
         &hir_expr.ExprKind.Local(id) => infer_local(checker, id, expr.span),
         &hir_expr.ExprKind.Path(ref path) => infer_path(checker, path, expr.span),
-        &hir_expr.ExprKind.Binary { op: bin_op, ref left, ref right } => {
+        &hir_expr.ExprKind.Binary { operator: bin_op, ref left, ref right } => {
             infer_binary(checker, bin_op, left.as_ref(), right.as_ref(), expr.span)
         }
-        &hir_expr.ExprKind.Unary { op: un_op, ref operand } => {
+        &hir_expr.ExprKind.Unary { operator: un_op, ref operand } => {
             infer_unary(checker, un_op, operand.as_ref(), expr.span)
         }
         &hir_expr.ExprKind.Call { ref callee, ref args } => {
@@ -64,7 +64,7 @@ pub fn infer_expr(checker: &mut typeck.TypeChecker, expr: &hir_expr.Expr) -> typ
         &hir_expr.ExprKind.Assign { ref target, ref val } => {
             infer_assign(checker, target.as_ref(), val.as_ref(), expr.span)
         }
-        &hir_expr.ExprKind.AssignOp { op: assign_op, ref target, ref val } => {
+        &hir_expr.ExprKind.AssignOp { operator: assign_op, ref target, ref val } => {
             infer_assign_op(checker, assign_op, target.as_ref(), val.as_ref(), expr.span)
         }
         &hir_expr.ExprKind.AddrOf { mutable, expr: ref inner } => {
@@ -529,12 +529,12 @@ fn is_lvalue(expr: &hir_expr.Expr) -> bool {
         // Index access is lvalue if the base is lvalue
         &hir_expr.ExprKind.Index { ref base, idx: _ } => is_lvalue(base.as_ref()),
         // Dereference is always an lvalue
-        &hir_expr.ExprKind.Unary { op: uop, operand: _ } => is_deref_op(uop),
+        &hir_expr.ExprKind.Unary { operator: uop, operand: _ } => is_deref_op(uop),
         // Path to static is an lvalue (for mutable statics)
         &hir_expr.ExprKind.Path(_) => true,
         // Other expressions are not lvalues
         &hir_expr.ExprKind.Literal(_) => false,
-        &hir_expr.ExprKind.Binary { op: _, left: _, right: _ } => false,
+        &hir_expr.ExprKind.Binary { operator: _, left: _, right: _ } => false,
         &hir_expr.ExprKind.Call { callee: _, args: _ } => false,
         &hir_expr.ExprKind.MethodCall { receiver: _, method: _, method_def: _, type_args: _, args: _ } => false,
         &hir_expr.ExprKind.Tuple(_) => false,
@@ -551,7 +551,7 @@ fn is_lvalue(expr: &hir_expr.Expr) -> bool {
         &hir_expr.ExprKind.Break { label: _, val: _ } => false,
         &hir_expr.ExprKind.Continue { label: _ } => false,
         &hir_expr.ExprKind.Assign { target: _, val: _ } => false,
-        &hir_expr.ExprKind.AssignOp { op: _, target: _, val: _ } => false,
+        &hir_expr.ExprKind.AssignOp { operator: _, target: _, val: _ } => false,
         &hir_expr.ExprKind.AddrOf { mutable: _, expr: _ } => false,
         &hir_expr.ExprKind.Closure { captures: _, params: _, return_ty: _, effects: _, body: _, body_id: _ } => false,
         &hir_expr.ExprKind.WithHandle { handler: _, body: _ } => false,

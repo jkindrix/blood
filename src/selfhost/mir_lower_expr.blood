@@ -152,10 +152,10 @@ fn lower_expr_inner(
         &hir_expr.ExprKind.Path(ref path) => {
             lower_path_expr(ctx, path, &resolved_ty, dest, expr.span);
         }
-        &hir_expr.ExprKind.Binary { op: the_op, ref left, ref right } => {
+        &hir_expr.ExprKind.Binary { operator: the_op, ref left, ref right } => {
             lower_binary_expr(ctx, the_op, left.as_ref(), right.as_ref(), &resolved_ty, dest, expr.span);
         }
-        &hir_expr.ExprKind.Unary { op: the_op, ref operand } => {
+        &hir_expr.ExprKind.Unary { operator: the_op, ref operand } => {
             lower_unary_expr(ctx, the_op, operand.as_ref(), &resolved_ty, dest, expr.span);
         }
         &hir_expr.ExprKind.Call { ref callee, ref args } => {
@@ -191,7 +191,7 @@ fn lower_expr_inner(
         &hir_expr.ExprKind.Assign { ref target, ref val } => {
             lower_assign_expr(ctx, target.as_ref(), val.as_ref(), dest, expr.span);
         }
-        &hir_expr.ExprKind.AssignOp { op: the_op, ref target, ref val } => {
+        &hir_expr.ExprKind.AssignOp { operator: the_op, ref target, ref val } => {
             lower_assign_op_expr(ctx, the_op, target.as_ref(), val.as_ref(), &resolved_ty, dest, expr.span);
         }
         &hir_expr.ExprKind.AddrOf { mutable, expr: ref inner } => {
@@ -541,7 +541,7 @@ fn lower_binary_expr(
                     ctx.emit_assign(
                         place,
                         mir_types.Rvalue.BinaryOp {
-                            op: mir_bin_op,
+                            operator: mir_bin_op,
                             left: left_operand,
                             right: right_operand,
                         },
@@ -749,7 +749,7 @@ fn lower_simple_unary(
             let result_operand = mir_lower_util.operand_from_place(mir_types.Place.local(temp), &operand_ty_hir);
             ctx.emit_assign(
                 place,
-                mir_types.Rvalue.UnaryOp { op: mir_op, operand: result_operand },
+                mir_types.Rvalue.UnaryOp { operator: mir_op, operand: result_operand },
                 span,
             );
         }
@@ -1549,7 +1549,7 @@ fn lower_assign_op_expr(
             ctx.emit_assign(
                 mir_types.Place.local(result_temp),
                 mir_types.Rvalue.BinaryOp {
-                    op: mir_bin_op,
+                    operator: mir_bin_op,
                     left: left_op,
                     right: right_op,
                 },
@@ -1947,7 +1947,7 @@ fn lower_for_iter_expr(
     ctx.emit_assign(
         mir_types.Place.local(cond_temp),
         mir_types.Rvalue.BinaryOp {
-            op: mir_types.MirBinOp.Lt,
+            operator: mir_types.MirBinOp.Lt,
             left: idx_operand,
             right: size_operand,
         },
@@ -2020,7 +2020,7 @@ fn lower_for_iter_expr(
     ctx.emit_assign(
         mir_types.Place.local(inc_temp),
         mir_types.Rvalue.BinaryOp {
-            op: mir_types.MirBinOp.Add,
+            operator: mir_types.MirBinOp.Add,
             left: idx_for_add,
             right: one_operand,
         },
@@ -2596,7 +2596,7 @@ fn expr_to_place(
             // Functions and constants cannot be assigned to (caught by type checker).
             mir_types.Place.static_place(path.def_id)
         }
-        &hir_expr.ExprKind.Unary { op: the_op, ref operand } => {
+        &hir_expr.ExprKind.Unary { operator: the_op, ref operand } => {
             match the_op {
                 common.UnaryOp.Deref => {
                     let ptr_temp = ctx.new_temp(operand.as_ref().ty, span);
@@ -2651,11 +2651,11 @@ fn collect_closure_captures(
                 Option.None => {}
             }
         }
-        &hir_expr.ExprKind.Binary { op: _, ref left, ref right } => {
+        &hir_expr.ExprKind.Binary { operator: _, ref left, ref right } => {
             collect_closure_captures(ctx, left.as_ref(), captures);
             collect_closure_captures(ctx, right.as_ref(), captures);
         }
-        &hir_expr.ExprKind.Unary { op: _, ref operand } => {
+        &hir_expr.ExprKind.Unary { operator: _, ref operand } => {
             collect_closure_captures(ctx, operand.as_ref(), captures);
         }
         &hir_expr.ExprKind.Call { ref callee, ref args } => {
@@ -2731,7 +2731,7 @@ fn collect_closure_captures(
             collect_closure_captures(ctx, target.as_ref(), captures);
             collect_closure_captures(ctx, val.as_ref(), captures);
         }
-        &hir_expr.ExprKind.AssignOp { op: _, ref target, ref val } => {
+        &hir_expr.ExprKind.AssignOp { operator: _, ref target, ref val } => {
             collect_closure_captures(ctx, target.as_ref(), captures);
             collect_closure_captures(ctx, val.as_ref(), captures);
         }

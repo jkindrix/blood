@@ -475,8 +475,8 @@ fn check_rvalue_for_deref(
     validations: &mut Vec<GenValidation>,
 ) {
     match rvalue {
-        &mir_types.Rvalue.Use(ref op) => {
-            check_operand_for_deref(op, span, validations);
+        &mir_types.Rvalue.Use(ref operand) => {
+            check_operand_for_deref(operand, span, validations);
         }
         &mir_types.Rvalue.Ref { ref place, mutable: _ } => {
             check_place_for_deref(place, span, validations);
@@ -484,11 +484,11 @@ fn check_rvalue_for_deref(
         &mir_types.Rvalue.AddressOf { ref place, mutable: _ } => {
             check_place_for_deref(place, span, validations);
         }
-        &mir_types.Rvalue.BinaryOp { op: _, ref left, ref right } => {
+        &mir_types.Rvalue.BinaryOp { operator: _, ref left, ref right } => {
             check_operand_for_deref(left, span, validations);
             check_operand_for_deref(right, span, validations);
         }
-        &mir_types.Rvalue.UnaryOp { op: _, ref operand } => {
+        &mir_types.Rvalue.UnaryOp { operator: _, ref operand } => {
             check_operand_for_deref(operand, span, validations);
         }
         &mir_types.Rvalue.Cast { ref operand, target_ty: _ } => {

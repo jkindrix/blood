@@ -1758,7 +1758,7 @@ pub fn emit_rvalue(
             let addr = emit_place_data_ptr(ctx, place);
             ctx.emit_store("ptr", addr.as_str(), dest);
         }
-        &mir_types.Rvalue.BinaryOp { op: ref bin_op, ref left, ref right } => {
+        &mir_types.Rvalue.BinaryOp { operator: ref bin_op, ref left, ref right } => {
             // Get typed operands
             let (left_val, left_ty) = emit_operand_typed(ctx, left);
             let (right_val, right_ty) = emit_operand_typed(ctx, right);
@@ -1796,7 +1796,7 @@ pub fn emit_rvalue(
                 ctx.emit_store_cg(left_ty.as_str(), &result, dest);
             }
         }
-        &mir_types.Rvalue.UnaryOp { op: ref un_op, ref operand } => {
+        &mir_types.Rvalue.UnaryOp { operator: ref un_op, ref operand } => {
             let (val, ty) = emit_operand_typed(ctx, operand);
             let result = emit_unop_typed(ctx, un_op, &val, ty.as_str());
             ctx.emit_store_cg(ty.as_str(), &result, dest);
@@ -2728,7 +2728,7 @@ fn emit_unop_typed(
     match un_op {
         &mir_types.MirUnOp.Neg => {
             if is_float {
-                // fneg is a unary op: %res = fneg <ty> <val>
+                // fneg is a unary operator: %res = fneg <ty> <val>
                 ctx.write_indent();
                 ctx.write_cgname(&result);
                 ctx.write(" = fneg ");

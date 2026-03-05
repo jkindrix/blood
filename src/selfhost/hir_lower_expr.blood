@@ -35,13 +35,13 @@ pub fn lower_expr(ctx: &mut hir_lower_ctx.LoweringCtx, expr: &ast.Expr) -> hir_e
         &ast.ExprKind.Path(ref path) => {
             lower_path_expr(ctx, path, span)
         }
-        &ast.ExprKind.Binary { op: bin_op, ref left, ref right } => {
+        &ast.ExprKind.Binary { operator: bin_op, ref left, ref right } => {
             let left_hir = lower_expr(ctx, left.as_ref());
             let right_hir = lower_expr(ctx, right.as_ref());
             let ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
             hir_expr.Expr.new(
                 hir_expr.ExprKind.Binary {
-                    op: bin_op,
+                    operator: bin_op,
                     left: Box.new(left_hir),
                     right: Box.new(right_hir),
                 },
@@ -49,12 +49,12 @@ pub fn lower_expr(ctx: &mut hir_lower_ctx.LoweringCtx, expr: &ast.Expr) -> hir_e
                 span,
             )
         }
-        &ast.ExprKind.Unary { op: unary_op, ref operand } => {
+        &ast.ExprKind.Unary { operator: unary_op, ref operand } => {
             let operand_hir = lower_expr(ctx, operand.as_ref());
             let ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
             hir_expr.Expr.new(
                 hir_expr.ExprKind.Unary {
-                    op: unary_op,
+                    operator: unary_op,
                     operand: Box.new(operand_hir),
                 },
                 ty,
@@ -136,12 +136,12 @@ pub fn lower_expr(ctx: &mut hir_lower_ctx.LoweringCtx, expr: &ast.Expr) -> hir_e
                 span,
             )
         }
-        &ast.ExprKind.AssignOp { op: assign_op, ref target, ref val } => {
+        &ast.ExprKind.AssignOp { operator: assign_op, ref target, ref val } => {
             let target_hir = lower_expr(ctx, target.as_ref());
             let val_hir = lower_expr(ctx, val.as_ref());
             hir_expr.Expr.new(
                 hir_expr.ExprKind.AssignOp {
-                    op: assign_op,
+                    operator: assign_op,
                     target: Box.new(target_hir),
                     val: Box.new(val_hir),
                 },
@@ -231,7 +231,7 @@ pub fn lower_expr(ctx: &mut hir_lower_ctx.LoweringCtx, expr: &ast.Expr) -> hir_e
                 span,
             )
         }
-        &ast.ExprKind.Perform { effect: ref eff_path, ref operation, ref args } => {
+        &ast.ExprKind.Perform { effect_type: ref eff_path, ref operation, ref args } => {
             lower_perform_expr(ctx, eff_path, operation, args, span)
         }
         &ast.ExprKind.Resume(ref val) => {
@@ -2467,7 +2467,7 @@ fn lower_for_range(
 
     let condition = hir_expr.Expr.new(
         hir_expr.ExprKind.Binary {
-            op: cmp_op,
+            operator: cmp_op,
             left: Box.new(idx_ref_for_cond),
             right: Box.new(end_expr),
         },
@@ -2510,7 +2510,7 @@ fn lower_for_range(
 
     let add_expr = hir_expr.Expr.new(
         hir_expr.ExprKind.Binary {
-            op: common.BinOp.Add,
+            operator: common.BinOp.Add,
             left: Box.new(idx_ref_for_add),
             right: Box.new(one_lit),
         },
@@ -2760,8 +2760,8 @@ fn lower_try_with_expr(
         let hdlr = &handlers[i];
 
         // Resolve the effect path
-        let effect_def_id = if hdlr.effect.segments.len() >= 1 {
-            let seg = &hdlr.effect.segments[0];
+        let effect_def_id = if hdlr.effect_type.segments.len() >= 1 {
+            let seg = &hdlr.effect_type.segments[0];
             let name_str = ctx.span_to_string(seg.name.span);
             let lookup_symbol = ctx.intern(name_str.as_str());
             let lookup = ctx.resolver.lookup(lookup_symbol);
@@ -2773,7 +2773,7 @@ fn lower_try_with_expr(
                 ctx.error(
                     hir.DiagnosticCode.E0102,
                     common.make_string("unknown effect in try-with handler"),
-                    hdlr.effect.span,
+                    hdlr.effect_type.span,
                 );
                 hir_def.DefId.new(0)
             }
@@ -3098,7 +3098,7 @@ fn lower_macro_call_expr(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.ExprPat
             // Build !cond
             let not_cond = hir_expr.Expr.new(
                 hir_expr.ExprKind.Unary {
-                    op: common.UnaryOp.Not,
+                    operator: common.UnaryOp.Not,
                     operand: Box.new(cond_hir),
                 },
                 type_intern.CommonTypes.bool_ty(),

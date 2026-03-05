@@ -330,8 +330,8 @@ fn analyze_term_captures(
         }
         &mir_term.TerminatorKind.Resume { ref value } => {
             match value {
-                &Option.Some(ref op) => {
-                    mark_operand_capture(op, enclosing_count, captured, modes, false);
+                &Option.Some(ref operand) => {
+                    mark_operand_capture(operand, enclosing_count, captured, modes, false);
                 }
                 &Option.None => {}
             }
@@ -393,8 +393,8 @@ fn mark_rvalue_captures(
     modes: &mut Vec<CaptureMode>,
 ) {
     match rvalue {
-        &mir_types.Rvalue.Use(ref op) => {
-            mark_operand_capture(op, enclosing_count, captured, modes, false);
+        &mir_types.Rvalue.Use(ref operand) => {
+            mark_operand_capture(operand, enclosing_count, captured, modes, false);
         }
         &mir_types.Rvalue.Ref { ref place, mutable } => {
             if is_enclosing_local(place.local, enclosing_count) {
@@ -416,11 +416,11 @@ fn mark_rvalue_captures(
                 modes[idx] = new_mode;
             }
         }
-        &mir_types.Rvalue.BinaryOp { op: _, ref left, ref right } => {
+        &mir_types.Rvalue.BinaryOp { operator: _, ref left, ref right } => {
             mark_operand_capture(left, enclosing_count, captured, modes, false);
             mark_operand_capture(right, enclosing_count, captured, modes, false);
         }
-        &mir_types.Rvalue.UnaryOp { op: _, ref operand } => {
+        &mir_types.Rvalue.UnaryOp { operator: _, ref operand } => {
             mark_operand_capture(operand, enclosing_count, captured, modes, false);
         }
         &mir_types.Rvalue.Cast { ref operand, target_ty: _ } => {

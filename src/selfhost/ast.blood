@@ -246,7 +246,7 @@ pub struct HandlerDecl {
     pub kind: common.HandlerKind,
     pub name: common.SpannedSymbol,
     pub type_params: Option<TypeParams>,
-    pub effect: Type,
+    pub effect_type: Type,
     pub where_clause: Option<WhereClause>,
     pub state: Vec<HandlerState>,
     pub return_clause: Option<ReturnClause>,
@@ -277,7 +277,7 @@ pub struct OperationImpl {
 }
 
 pub struct TryWithHandler {
-    pub effect: TypePath,
+    pub effect_type: TypePath,
     pub operation: common.SpannedSymbol,
     pub params: Vec<Pattern>,
     pub body: Block,
@@ -629,12 +629,12 @@ pub enum ExprKind {
     Literal(Literal),
     Path(ExprPath),
     Binary {
-        op: common.BinOp,
+        operator: common.BinOp,
         left: Box<Expr>,
         right: Box<Expr>,
     },
     Unary {
-        op: common.UnaryOp,
+        operator: common.UnaryOp,
         operand: Box<Expr>,
     },
     Call {
@@ -676,7 +676,7 @@ pub enum ExprKind {
         val: Box<Expr>,
     },
     AssignOp {
-        op: common.BinOp,
+        operator: common.BinOp,
         target: Box<Expr>,
         val: Box<Expr>,
     },
@@ -737,7 +737,7 @@ pub enum ExprKind {
         body: Box<Expr>,
     },
     Perform {
-        effect: Option<TypePath>,
+        effect_type: Option<TypePath>,
         operation: common.SpannedSymbol,
         args: Vec<Expr>,
     },

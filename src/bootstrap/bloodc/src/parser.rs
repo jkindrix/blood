@@ -187,33 +187,33 @@ impl<'src> Parser<'src> {
     }
 
     /// Check if a token kind is a contextual keyword that can be used as an identifier.
-    /// These keywords are reserved but can appear as identifiers in certain contexts
-    /// (field names, parameter names, function names, etc.).
+    /// Contextual keywords (GRAMMAR.md §9.2) are reserved but can appear as identifiers
+    /// in certain contexts (field names, parameter names, function names, etc.).
+    /// Strict keywords (GRAMMAR.md §9.1) are NOT included here.
     fn is_contextual_keyword(kind: TokenKind) -> bool {
         matches!(
             kind,
-            // Effect system keywords
-            TokenKind::Default
-                | TokenKind::Handle
-                | TokenKind::Handler
-                | TokenKind::Effect
-                | TokenKind::Op
-                | TokenKind::Deep
-                | TokenKind::Shallow
-                | TokenKind::Pure
-                | TokenKind::Resume
+            // Effect handler keywords (contextual per GRAMMAR.md §9.2)
+            TokenKind::Handler
                 | TokenKind::Perform
-                // Common field names
-                | TokenKind::Type
-                | TokenKind::In
-                | TokenKind::Fiber
-                | TokenKind::Suspend
-                | TokenKind::Move
-                | TokenKind::Ref
+                | TokenKind::Resume
+                | TokenKind::Shallow
+                | TokenKind::Deep
+                | TokenKind::Handle
                 | TokenKind::With
-                | TokenKind::Where
-                | TokenKind::Module
+                | TokenKind::Default
                 | TokenKind::Finally
+                // Contract keywords (contextual per GRAMMAR.md §9.2)
+                | TokenKind::Requires
+                | TokenKind::Ensures
+                | TokenKind::Invariant
+                | TokenKind::Decreases
+                // Extension/bridge keywords (contextual per GRAMMAR.md §9.2)
+                | TokenKind::Extends
+                | TokenKind::Bridge
+                | TokenKind::Affine
+                | TokenKind::Union
+                // Note: 'unchecked' has no TokenKind variant yet
         )
     }
 

@@ -289,8 +289,8 @@ fn analyze_terminator(term: &mir_term.Terminator, result: &mut EscapeAnalysis) {
         }
         &mir_term.TerminatorKind.Resume { ref value } => {
             match value {
-                &Option.Some(ref op) => {
-                    mark_operand_escape_global(op, result);
+                &Option.Some(ref operand) => {
+                    mark_operand_escape_global(operand, result);
                 }
                 &Option.None => {}
             }
@@ -334,8 +334,8 @@ fn mark_operand_escape_global(operand: &mir_types.Operand, result: &mut EscapeAn
 /// Marks locals in an rvalue as GlobalEscape (used when assigned to return place).
 fn mark_rvalue_escape_global(rvalue: &mir_types.Rvalue, result: &mut EscapeAnalysis) {
     match rvalue {
-        &mir_types.Rvalue.Use(ref op) => {
-            mark_operand_escape_global(op, result);
+        &mir_types.Rvalue.Use(ref operand) => {
+            mark_operand_escape_global(operand, result);
         }
         &mir_types.Rvalue.Ref { ref place, mutable: _ } => {
             result.mark_global_escape(place.local);
@@ -343,11 +343,11 @@ fn mark_rvalue_escape_global(rvalue: &mir_types.Rvalue, result: &mut EscapeAnaly
         &mir_types.Rvalue.AddressOf { ref place, mutable: _ } => {
             result.mark_global_escape(place.local);
         }
-        &mir_types.Rvalue.BinaryOp { op: _, ref left, ref right } => {
+        &mir_types.Rvalue.BinaryOp { operator: _, ref left, ref right } => {
             mark_operand_escape_global(left, result);
             mark_operand_escape_global(right, result);
         }
-        &mir_types.Rvalue.UnaryOp { op: _, ref operand } => {
+        &mir_types.Rvalue.UnaryOp { operator: _, ref operand } => {
             mark_operand_escape_global(operand, result);
         }
         &mir_types.Rvalue.Cast { ref operand, target_ty: _ } => {
@@ -399,8 +399,8 @@ fn analyze_rvalue_escape(rvalue: &mir_types.Rvalue, result: &mut EscapeAnalysis)
             }
         }
         &mir_types.Rvalue.Use(_) => {}
-        &mir_types.Rvalue.BinaryOp { op: _, left: _, right: _ } => {}
-        &mir_types.Rvalue.UnaryOp { op: _, operand: _ } => {}
+        &mir_types.Rvalue.BinaryOp { operator: _, left: _, right: _ } => {}
+        &mir_types.Rvalue.UnaryOp { operator: _, operand: _ } => {}
         &mir_types.Rvalue.Cast { operand: _, target_ty: _ } => {}
         &mir_types.Rvalue.Discriminant(_) => {}
         &mir_types.Rvalue.Len(_) => {}
