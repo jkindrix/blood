@@ -62,93 +62,112 @@ Algorithm W is the standard Hindley-Milner inference algorithm. It processes exp
 W : (TypeEnv, Expr) → (Substitution, Type)
 ```
 
-### 2.2 Implementation: Union-Find Constraint-Based Inference
-
-Both compilers implement type inference using **union-find based unification with in-place mutation**, rather than the explicit substitution composition shown in classical Algorithm W. Algorithm W (Damas & Milner 1982) remains the theoretical basis — the same cases are handled and the same correctness properties hold — but the implementation strategy differs in important ways.
-
-#### Differences from Classical Algorithm W
-
-| Aspect | Classical Algorithm W | Blood Implementation |
-|--------|----------------------|---------------------|
-| **Substitution** | Explicit composition (`S₃ ∘ S₂ ∘ S₁`) | In-place mutation of type variable table |
-| **Type variables** | Mapped via substitution functions | Stored in a flat array indexed by `TyVarId` |
-| **Unification result** | Returns a new substitution | Mutates the union-find structure directly |
-| **Resolution** | Apply substitution to type | Follow parent pointers to representative |
-| **Environment threading** | Apply substitution to `Γ` between steps | Environment references `TyVarId`s; resolution is lazy |
-
-#### Constraint-Based Approach
-
-Instead of threading substitutions through recursive calls, the compilers:
-
-1. **Allocate fresh type variables** (`TyVarId`) for unknowns, stored in a flat table
-2. **Generate constraints** during expression traversal (e.g., "this variable's type must equal `i32`")
-3. **Solve constraints via unification**, which mutates the type variable table in place using union-find:
-   - `bind(α, τ)`: sets the parent of `α` to `τ` (with occurs check)
-   - `resolve(τ)`: follows parent pointers to find the representative type
-4. **Read back results** by resolving `TyVarId`s after inference completes
-
-#### Union-Find Structure
+### 2.2 Pseudocode
 
 ```
-Type Variable Table (indexed by TyVarId):
-    [0] → i32          (resolved)
-    [1] → parent: 0    (points to TyVarId 0)
-    [2] → unbound      (not yet constrained)
-    [3] → &[TyVarId 2] (partially resolved)
-
-resolve(TyVarId 1) → resolve(TyVarId 0) → i32
-resolve(TyVarId 3) → &[TyVarId 2] → &[?T]  (still contains unresolved var)
-```
-
-Path compression is applied during resolution: when following a chain of parent pointers, intermediate nodes are updated to point directly to the representative. This gives amortized near-constant time per resolution (inverse Ackermann).
-
-#### Pseudocode (Implemented Form)
-
-```
-INFER(Γ, e):
+ALGORITHM W(Γ, e):
     Input:
-        Γ : TypeEnv    -- Maps variables to TyVarIds or type schemes
+        Γ : TypeEnv    -- Type environment mapping variables to type schemes
         e : Expr       -- Expression to type
     Output:
-        τ : TyVarId    -- Type variable (resolve to get concrete type)
-    Side effect:
-        Mutates the global type variable table via unification
+        (S, τ)         -- Substitution and inferred type
 
     CASE e OF:
 
+        -- Variable
         x:
-            IF x ∉ dom(Γ) THEN ERROR "Unbound variable: " + x
-            RETURN instantiate(Γ(x))
+            IF x ∉ dom(Γ) THEN
+                ERROR "Unbound variable: " + x
+            σ = Γ(x)
+            τ = instantiate(σ)
+            RETURN (∅, τ)
 
+        -- Literal
         c:
-            RETURN typeOfLiteral(c)
+            τ = typeOfLiteral(c)
+            RETURN (∅, τ)
 
+        -- Lambda abstraction: λx. e₁
         λx. e₁:
             α = freshTypeVar()
             Γ' = Γ, x : α
-            τ₁ = INFER(Γ', e₁)
-            RETURN FnType(resolve(α), τ₁)
+            (S₁, τ₁) = W(Γ', e₁)
+            RETURN (S₁, S₁(α) → τ₁)
 
+        -- Application: e₁ e₂
         e₁ e₂:
-            τ₁ = INFER(Γ, e₁)
-            τ₂ = INFER(Γ, e₂)
+            (S₁, τ₁) = W(Γ, e₁)
+            (S₂, τ₂) = W(S₁(Γ), e₂)
             α = freshTypeVar()
-            unify(τ₁, FnType(τ₂, α))    -- mutates type var table
-            RETURN α
+            S₃ = unify(S₂(τ₁), τ₂ → α)
+            RETURN (S₃ ∘ S₂ ∘ S₁, S₃(α))
 
+        -- Let binding: let x = e₁ in e₂
         let x = e₁ in e₂:
-            τ₁ = INFER(Γ, e₁)
-            σ = generalize(Γ, τ₁)
-            Γ' = Γ, x : σ
-            RETURN INFER(Γ', e₂)
+            (S₁, τ₁) = W(Γ, e₁)
+            σ = generalize(S₁(Γ), τ₁)
+            Γ' = S₁(Γ), x : σ
+            (S₂, τ₂) = W(Γ', e₂)
+            RETURN (S₂ ∘ S₁, τ₂)
 
+        -- Type annotation: (e : τ)
         (e₁ : τ_ann):
-            τ₁ = INFER(Γ, e₁)
-            unify(τ₁, τ_ann)             -- mutates type var table
-            RETURN resolve(τ_ann)
-```
+            (S₁, τ₁) = W(Γ, e₁)
+            S₂ = unify(τ₁, τ_ann)
+            RETURN (S₂ ∘ S₁, S₂(τ_ann))
 
-Note the absence of substitution composition (`S₃ ∘ S₂ ∘ S₁`). All constraint information flows through the shared mutable type variable table. The `resolve()` function replaces explicit substitution application.
+        -- If expression: if e₁ then e₂ else e₃
+        if e₁ then e₂ else e₃:
+            (S₁, τ₁) = W(Γ, e₁)
+            S₂ = unify(τ₁, Bool)
+            (S₃, τ₂) = W(S₂∘S₁(Γ), e₂)
+            (S₄, τ₃) = W(S₃∘S₂∘S₁(Γ), e₃)
+            S₅ = unify(S₄(τ₂), τ₃)
+            RETURN (S₅ ∘ S₄ ∘ S₃ ∘ S₂ ∘ S₁, S₅(τ₃))
+
+        -- Record literal: {l₁ = e₁, ..., lₙ = eₙ}
+        {l₁ = e₁, ..., lₙ = eₙ}:
+            S = ∅
+            fields = []
+            FOR i = 1 TO n:
+                (Sᵢ, τᵢ) = W(S(Γ), eᵢ)
+                S = Sᵢ ∘ S
+                fields.append((lᵢ, τᵢ))
+            RETURN (S, Record(fields, None))
+
+        -- Field access: e.l
+        e₁.l:
+            (S₁, τ₁) = W(Γ, e₁)
+            α = freshTypeVar()
+            ρ = freshRowVar()
+            S₂ = unify(τ₁, Record([(l, α)], Some(ρ)))
+            RETURN (S₂ ∘ S₁, S₂(α))
+
+        -- Effect operation: perform E.op(e)
+        perform E.op(e₁):
+            (S₁, τ₁) = W(Γ, e₁)
+            (τ_param, τ_ret, ε_op) = lookupEffectOp(E, op)
+            S₂ = unify(τ₁, τ_param)
+            ε = addEffect(E, currentEffectRow())
+            RETURN (S₂ ∘ S₁, τ_ret) with effect ε
+
+        -- Match expression
+        match e₁ { p₁ => e₂, ..., pₙ => eₙ₊₁ }:
+            (S₁, τ_scrutinee) = W(Γ, e₁)
+            S = S₁
+            τ_result = freshTypeVar()
+            FOR i = 1 TO n:
+                (S', τ_pat, bindings) = inferPattern(pᵢ)
+                S = S' ∘ S
+                S_unify = unify(S(τ_scrutinee), S(τ_pat))
+                S = S_unify ∘ S
+                Γ' = S(Γ) ∪ bindings
+                (Sᵢ, τᵢ) = W(Γ', eᵢ₊₁)
+                S = Sᵢ ∘ S
+                S_branch = unify(S(τ_result), τᵢ)
+                S = S_branch ∘ S
+            RETURN (S, S(τ_result))
+```
 
 ### 2.3 Correctness Properties
 
@@ -157,6 +176,23 @@ Note the absence of substitution composition (`S₃ ∘ S₂ ∘ S₁`). All con
 **Theorem (Completeness)**: If `Γ ⊢ e : τ`, then `W(Γ, e)` succeeds with `(S, τ')` where `τ` is an instance of `τ'`.
 
 **Theorem (Principal Types)**: The type returned by Algorithm W is principal (most general).
+
+### 2.4 Implementation Notes
+
+Both compilers implement the Algorithm W contract using **substitution tables with lazy resolution** rather than explicit substitution composition. This is a standard implementation technique (see Rémy 1992, "Extension of ML Type System with a Sorted Equational Theory on Types") that achieves the same results through a different mechanism:
+
+| Aspect | Algorithm W (§2.2) | Compiler Strategy |
+|--------|---------------------|-------------------|
+| **Substitution** | Explicit composition (`S₃ ∘ S₂ ∘ S₁`) | Hash table mapping `TyVarId → Type` |
+| **Type variables** | Mapped via substitution functions | Stored in table indexed by `TyVarId` |
+| **Unification result** | Returns a new substitution | Mutates the substitution table directly |
+| **Resolution** | Apply substitution to type | Follow table entries to find concrete type |
+
+The key invariant is the same: after inference completes, resolving any `TyVarId` through the substitution table produces the same type that applying the composed substitution to the original type variable would produce.
+
+Neither compiler implements union-find with path compression. The bootstrap compiler uses `HashMap<TyVarId, Type>` with recursive resolution. The self-hosted compiler uses a hash-indexed `SubstTable` with iterative chain-following. Both are correct implementations of the same contract; neither claims the inverse Ackermann complexity bound of true union-find.
+
+> **Normative status**: §2.2 specifies *what* Blood's type inference guarantees (soundness, completeness, principal types via Algorithm W). This section documents *how* the current compilers achieve those guarantees. A conforming implementation may use any strategy that satisfies the §2.3 correctness properties.
 
 ---
 
@@ -689,9 +725,9 @@ pub struct Unifier {
 
 | Operation | Time Complexity | Notes |
 |-----------|-----------------|-------|
-| `unify` | O(n) amortized | n = type size, with path compression |
-| `resolve` | O(α(n)) | α = inverse Ackermann (nearly constant) |
-| `occurs_in` | O(n) | n = type size |
+| `unify` | O(n) | n = type size; recursive structural comparison |
+| `resolve` | O(k) | k = substitution chain length; iterative chain-following |
+| `occurs_in` | O(n) | n = type size; full structural traversal |
 | `generalize` | O(n + m) | n = type size, m = env size |
 
 ---

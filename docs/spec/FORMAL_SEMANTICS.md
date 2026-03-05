@@ -713,13 +713,13 @@ cast_compatible(S, T) ⟺ one of:
     8. Char ↔ Numeric:    Char as integer (Unicode code point, e.g., 'A' as i32 = 65)
                           Integer as Char (code point to character, e.g., 65 as Char = 'A')
                           Out-of-range values produce replacement character U+FFFD.
-    9. Ref ↔ Integer:     &T as usize, usize as &T
-                          Bit-preserving. Bridge/unsafe contexts only.
-   10. Fn → Integer:      fn as usize (function pointer to integer)
+    9. Fn → Integer:      fn as usize (function pointer to integer)
                           Bit-preserving. Bridge/unsafe contexts only.
 ```
 
 Casts that are not in this relation are compile-time errors.
+
+> **Design note — no `&T ↔ integer` cast**: Blood references carry 128 bits of safety information (64-bit address + 32-bit generation + 32-bit metadata). Casting `&T as usize` would discard generation and metadata, and the roundtrip `&T → usize → &T` would produce a reference that bypasses stale reference detection. Use the two-step path instead: `&T as *const T` (rule 7) then `*const T as usize` (rule 6). This makes the safety boundary explicit — you must first leave the generational reference system before entering the integer domain. See `docs/design/REF_INTEGER_CASTS.md` for the full evaluation.
 
 ### 5.11 Associated Type Typing
 
