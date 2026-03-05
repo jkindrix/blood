@@ -116,6 +116,8 @@ pub fn infer_expr(checker: &mut typeck.TypeChecker, expr: &hir_expr.Expr) -> typ
         &hir_expr.ExprKind.Resume(ref val) => infer_resume(checker, val.as_ref(), expr.span),
         &hir_expr.ExprKind.Try(ref inner) => infer_try(checker, inner.as_ref(), expr.span),
         &hir_expr.ExprKind.Unsafe(ref inner) => infer_expr(checker, inner.as_ref()),
+        &hir_expr.ExprKind.Heap(ref inner) => infer_expr(checker, inner.as_ref()),
+        &hir_expr.ExprKind.Stack(ref inner) => infer_expr(checker, inner.as_ref()),
         &hir_expr.ExprKind.Region { name: _, ref stmts, ref expr } => {
             for i in 0usize..stmts.len() {
                 infer_stmt(checker, &stmts[i]);
@@ -560,6 +562,8 @@ fn is_lvalue(expr: &hir_expr.Expr) -> bool {
         &hir_expr.ExprKind.Resume(ref _val) => false,
         &hir_expr.ExprKind.Try(ref _inner) => false,
         &hir_expr.ExprKind.Unsafe(ref _inner) => false,
+        &hir_expr.ExprKind.Heap(ref _inner) => false,
+        &hir_expr.ExprKind.Stack(ref _inner) => false,
         &hir_expr.ExprKind.Region { name: _, stmts: _, expr: _ } => false,
         &hir_expr.ExprKind.ForIter { label: _, pattern: _, iter: _, body: _ } => false,
         &hir_expr.ExprKind.Default => false,

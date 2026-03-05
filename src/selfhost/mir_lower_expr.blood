@@ -259,6 +259,14 @@ fn lower_expr_inner(
             // Unsafe blocks are transparent in MIR
             lower_expr(ctx, inner.as_ref(), dest);
         }
+        &hir_expr.ExprKind.Heap(ref inner) => {
+            // Allocation directives are transparent in MIR (escape analysis override not yet wired)
+            lower_expr(ctx, inner.as_ref(), dest);
+        }
+        &hir_expr.ExprKind.Stack(ref inner) => {
+            // Allocation directives are transparent in MIR (escape analysis override not yet wired)
+            lower_expr(ctx, inner.as_ref(), dest);
+        }
         &hir_expr.ExprKind.Region { name: _, ref stmts, expr: ref region_expr } => {
             // Region lifecycle: create → activate → body → deactivate → exit_scope → destroy
             // Allocate a local to hold the region ID (u64)
@@ -2819,6 +2827,12 @@ fn collect_closure_captures(
             }
         }
         &hir_expr.ExprKind.Unsafe(ref val) => {
+            collect_closure_captures(ctx, val.as_ref(), captures);
+        }
+        &hir_expr.ExprKind.Heap(ref val) => {
+            collect_closure_captures(ctx, val.as_ref(), captures);
+        }
+        &hir_expr.ExprKind.Stack(ref val) => {
             collect_closure_captures(ctx, val.as_ref(), captures);
         }
         &hir_expr.ExprKind.ForIter { label: _, ref pattern, ref iter, ref body } => {

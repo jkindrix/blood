@@ -398,7 +398,9 @@ impl<'a> TypeContext<'a> {
             hir::ExprKind::Borrow { expr: inner, .. }
             | hir::ExprKind::Deref(inner)
             | hir::ExprKind::AddrOf { expr: inner, .. }
-            | hir::ExprKind::Unsafe(inner) => {
+            | hir::ExprKind::Unsafe(inner)
+            | hir::ExprKind::Heap(inner)
+            | hir::ExprKind::Stack(inner) => {
                 self.collect_captures(inner, is_move, captures, seen);
             }
             hir::ExprKind::Let { init, .. } => {

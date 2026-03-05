@@ -284,7 +284,9 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
                 self.lower_closure(*body_id, captures, &expr.ty, expr.span)
             }
 
-            ExprKind::Unsafe(inner) => {
+            ExprKind::Unsafe(inner)
+            | ExprKind::Heap(inner)
+            | ExprKind::Stack(inner) => {
                 self.lower_expr(inner)
             }
 

@@ -1,0 +1,49 @@
+// Test @heap and @stack allocation expressions (SYN-05)
+//
+// @heap and @stack are prefix expressions that control allocation placement.
+// Currently they are parsed and type-checked but desugar transparently
+// (escape analysis override not yet wired).
+
+fn main() -> i32 {
+    // @heap forces heap allocation
+    let x = @heap 42;
+    if x != 42 {
+        return 1;
+    }
+
+    // @stack forces stack allocation
+    let y = @stack 100;
+    if y != 100 {
+        return 2;
+    }
+
+    // @heap with compound expression
+    let z = @heap (10 + 20);
+    if z != 30 {
+        return 3;
+    }
+
+    // @stack with compound expression
+    let w = @stack (5 * 8);
+    if w != 40 {
+        return 4;
+    }
+
+    // Nested: @heap of a function call result
+    let a = @heap add(3, 4);
+    if a != 7 {
+        return 5;
+    }
+
+    // Type flows through correctly
+    let b: i32 = @heap 99;
+    if b != 99 {
+        return 6;
+    }
+
+    0
+}
+
+fn add(x: i32, y: i32) -> i32 {
+    x + y
+}

@@ -281,6 +281,11 @@ pub enum ExprKind {
     /// Unsafe block: `unsafe { ... }`
     Unsafe(Box<Expr>),
 
+    /// Heap allocation directive: `@heap expr`
+    Heap(Box<Expr>),
+    /// Stack allocation directive: `@stack expr`
+    Stack(Box<Expr>),
+
     /// Effect operation: `perform Effect.op(args)`
     ///
     /// After evidence translation, this becomes a call through the evidence vector.

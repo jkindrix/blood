@@ -248,7 +248,9 @@ impl HandlerLintContext {
             ExprKind::Cast { expr, .. } => {
                 self.check_handler_nesting(expr, depth);
             }
-            ExprKind::Unsafe(inner) => {
+            ExprKind::Unsafe(inner)
+            | ExprKind::Heap(inner)
+            | ExprKind::Stack(inner) => {
                 self.check_handler_nesting(inner, depth);
             }
             ExprKind::Let { init, .. } => {

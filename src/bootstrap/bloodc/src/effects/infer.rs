@@ -314,7 +314,9 @@ impl EffectInferencer {
             ExprKind::Deref(inner) |
             ExprKind::AddrOf { expr: inner, .. } |
             ExprKind::Cast { expr: inner, .. } |
-            ExprKind::Unsafe(inner) => {
+            ExprKind::Unsafe(inner) |
+            ExprKind::Heap(inner) |
+            ExprKind::Stack(inner) => {
                 self.infer_expr(inner, ctx);
             }
 

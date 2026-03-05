@@ -478,7 +478,9 @@ pub trait ExprLowering {
                 self.lower_let(pattern, init, &expr.ty, expr.span)
             }
 
-            ExprKind::Unsafe(inner) => {
+            ExprKind::Unsafe(inner)
+            | ExprKind::Heap(inner)
+            | ExprKind::Stack(inner) => {
                 self.lower_expr(inner)
             }
 

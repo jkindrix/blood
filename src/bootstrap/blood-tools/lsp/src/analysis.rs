@@ -659,6 +659,9 @@ impl SemanticAnalyzer {
             ExprKind::Loop { body, .. } | ExprKind::Unsafe(body) | ExprKind::Region { body, .. } => {
                 self.collect_block_symbols(body, source, interner, symbols, symbol_at_offset);
             }
+            ExprKind::Heap(inner) | ExprKind::Stack(inner) => {
+                self.collect_expr_symbols(inner, source, interner, symbols, symbol_at_offset);
+            }
             ExprKind::While { condition, body, .. } => {
                 self.collect_expr_symbols(condition, source, interner, symbols, symbol_at_offset);
                 self.collect_block_symbols(body, source, interner, symbols, symbol_at_offset);

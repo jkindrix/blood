@@ -1145,7 +1145,9 @@ fn hash_expr(expr: &hir::Expr, items: &HashMap<DefId, hir::Item>, hasher: &mut C
             hash_pattern(pattern, items, hasher);
             hash_expr(init, items, hasher);
         }
-        hir::ExprKind::Unsafe(inner) => {
+        hir::ExprKind::Unsafe(inner)
+        | hir::ExprKind::Heap(inner)
+        | hir::ExprKind::Stack(inner) => {
             hasher.update_u8(0x1E);
             hash_expr(inner, items, hasher);
         }
@@ -1865,7 +1867,9 @@ fn extract_expr_deps(expr: &hir::Expr, deps: &mut HashSet<DefId>) {
         hir::ExprKind::Let { init, .. } => {
             extract_expr_deps(init, deps);
         }
-        hir::ExprKind::Unsafe(inner) => {
+        hir::ExprKind::Unsafe(inner)
+        | hir::ExprKind::Heap(inner)
+        | hir::ExprKind::Stack(inner) => {
             extract_expr_deps(inner, deps);
         }
         hir::ExprKind::MethodFamily { candidates, .. } => {

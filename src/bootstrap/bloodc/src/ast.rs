@@ -1207,6 +1207,11 @@ pub enum ExprKind {
     /// Unsafe block: `@unsafe { }`
     Unsafe(Block),
 
+    /// Heap allocation directive: `@heap expr`
+    Heap(Box<Expr>),
+    /// Stack allocation directive: `@stack expr`
+    Stack(Box<Expr>),
+
     /// Region: `region 'a { }`
     Region {
         name: Option<Spanned<Symbol>>,

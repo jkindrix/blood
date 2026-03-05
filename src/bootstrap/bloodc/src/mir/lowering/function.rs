@@ -229,7 +229,9 @@ pub fn collect_local_refs(expr: &Expr, refs: &mut Vec<CaptureCandidate>, in_muta
             collect_local_refs(init, refs, false);
         }
 
-        ExprKind::Unsafe(inner) => {
+        ExprKind::Unsafe(inner)
+        | ExprKind::Heap(inner)
+        | ExprKind::Stack(inner) => {
             collect_local_refs(inner, refs, in_mutable_context);
         }
 
@@ -530,8 +532,10 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
                 self.lower_let(pattern, init, &expr.ty, expr.span)
             }
 
-            ExprKind::Unsafe(inner) => {
-                // For now, just lower the inner expression (safety is handled elsewhere)
+            ExprKind::Unsafe(inner)
+            | ExprKind::Heap(inner)
+            | ExprKind::Stack(inner) => {
+                // For now, just lower the inner expression (safety/placement handled elsewhere)
                 self.lower_expr(inner)
             }
 

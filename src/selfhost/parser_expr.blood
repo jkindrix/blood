@@ -500,6 +500,26 @@ fn parse_primary_expr(parser: &mut parser_base.Parser) -> ast.Expr {
                 span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
             };
         }
+        // Heap allocation: @heap expr
+        token.TokenKind.AtHeap => {
+            parser.advance();
+            let inner = parse_expr_with_precedence(parser, 14);
+            let end_span = parser.previous.span;
+            return ast.Expr {
+                kind: ast.ExprKind.Heap(Box.new(inner)),
+                span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+            };
+        }
+        // Stack allocation: @stack expr
+        token.TokenKind.AtStack => {
+            parser.advance();
+            let inner = parse_expr_with_precedence(parser, 14);
+            let end_span = parser.previous.span;
+            return ast.Expr {
+                kind: ast.ExprKind.Stack(Box.new(inner)),
+                span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+            };
+        }
         // Effect expressions
         token.TokenKind.Perform => {
             return parse_perform_expr(parser);

@@ -267,6 +267,24 @@ pub fn lower_expr(ctx: &mut hir_lower_ctx.LoweringCtx, expr: &ast.Expr) -> hir_e
                 span,
             )
         }
+        &ast.ExprKind.Heap(ref inner) => {
+            let inner_hir = lower_expr(ctx, inner.as_ref());
+            let ty = inner_hir.ty;
+            hir_expr.Expr.new(
+                hir_expr.ExprKind.Heap(Box.new(inner_hir)),
+                ty,
+                span,
+            )
+        }
+        &ast.ExprKind.Stack(ref inner) => {
+            let inner_hir = lower_expr(ctx, inner.as_ref());
+            let ty = inner_hir.ty;
+            hir_expr.Expr.new(
+                hir_expr.ExprKind.Stack(Box.new(inner_hir)),
+                ty,
+                span,
+            )
+        }
         &ast.ExprKind.Region { ref name, ref body } => {
             // Lower region block preserving region semantics
             ctx.resolver.push_scope(resolve.ScopeKind.Block);

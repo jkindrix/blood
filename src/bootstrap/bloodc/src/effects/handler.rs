@@ -293,6 +293,8 @@ fn count_resumes(expr: &Expr) -> usize {
         | ExprKind::AddrOf { expr, .. } => count_resumes(expr),
         ExprKind::Deref(expr)
         | ExprKind::Unsafe(expr)
+        | ExprKind::Heap(expr)
+        | ExprKind::Stack(expr)
         | ExprKind::Dbg(expr)
         | ExprKind::SliceLen(expr)
         | ExprKind::VecLen(expr) => count_resumes(expr),

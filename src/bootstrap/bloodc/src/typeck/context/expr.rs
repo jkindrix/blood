@@ -204,6 +204,16 @@ impl<'a> TypeContext<'a> {
             ast::ExprKind::Unsafe(block) => {
                 self.infer_unsafe(block, expr.span)
             }
+            ast::ExprKind::Heap(inner) => {
+                let inner_hir = self.infer_expr(inner)?;
+                let ty = inner_hir.ty.clone();
+                Ok(hir::Expr::new(hir::ExprKind::Heap(Box::new(inner_hir)), ty, expr.span))
+            }
+            ast::ExprKind::Stack(inner) => {
+                let inner_hir = self.infer_expr(inner)?;
+                let ty = inner_hir.ty.clone();
+                Ok(hir::Expr::new(hir::ExprKind::Stack(Box::new(inner_hir)), ty, expr.span))
+            }
             ast::ExprKind::Region { name, body } => {
                 let expected = self.unifier.fresh_var();
                 let block_expr = self.check_block(body, &expected)?;
@@ -1337,7 +1347,7 @@ impl<'a> TypeContext<'a> {
                 }
             }
 
-            ExprKind::Unsafe(inner) | ExprKind::Dbg(inner) => {
+            ExprKind::Unsafe(inner) | ExprKind::Heap(inner) | ExprKind::Stack(inner) | ExprKind::Dbg(inner) => {
                 self.collect_local_refs(inner, locals);
             }
 

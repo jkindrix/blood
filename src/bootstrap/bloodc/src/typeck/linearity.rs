@@ -416,8 +416,10 @@ impl<'hir> LinearityChecker<'hir> {
                 self.check_expr(init);
             }
 
-            // Unsafe block
-            hir::ExprKind::Unsafe(inner) => {
+            // Unsafe/Heap/Stack block
+            hir::ExprKind::Unsafe(inner)
+            | hir::ExprKind::Heap(inner)
+            | hir::ExprKind::Stack(inner) => {
                 self.check_expr(inner);
             }
 

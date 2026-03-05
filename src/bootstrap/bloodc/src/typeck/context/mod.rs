@@ -1192,6 +1192,12 @@ impl<'a> TypeContext<'a> {
             hir::ExprKind::Unsafe(inner) => {
                 hir::ExprKind::Unsafe(Box::new(Self::zonk_expr_with_unifier(unifier, *inner)))
             }
+            hir::ExprKind::Heap(inner) => {
+                hir::ExprKind::Heap(Box::new(Self::zonk_expr_with_unifier(unifier, *inner)))
+            }
+            hir::ExprKind::Stack(inner) => {
+                hir::ExprKind::Stack(Box::new(Self::zonk_expr_with_unifier(unifier, *inner)))
+            }
             hir::ExprKind::Record { fields } => {
                 hir::ExprKind::Record {
                     fields: fields.into_iter().map(|f| hir::RecordFieldExpr {

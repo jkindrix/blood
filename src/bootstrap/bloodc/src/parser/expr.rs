@@ -928,6 +928,26 @@ impl<'src> Parser<'src> {
                 }
             }
 
+            // Heap allocation: @heap expr
+            TokenKind::AtHeap => {
+                self.advance();
+                let inner = self.parse_expr_prec(Precedence::Unary);
+                Expr {
+                    kind: ExprKind::Heap(Box::new(inner)),
+                    span: start.merge(self.previous.span),
+                }
+            }
+
+            // Stack allocation: @stack expr
+            TokenKind::AtStack => {
+                self.advance();
+                let inner = self.parse_expr_prec(Precedence::Unary);
+                Expr {
+                    kind: ExprKind::Stack(Box::new(inner)),
+                    span: start.merge(self.previous.span),
+                }
+            }
+
             // Region
             TokenKind::Region => {
                 self.advance();

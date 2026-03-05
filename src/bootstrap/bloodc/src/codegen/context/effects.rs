@@ -177,8 +177,8 @@ fn check_expr_tail_resumptive(expr: &hir::Expr, in_tail_position: bool) -> bool 
         Borrow { expr, .. } | AddrOf { expr, .. } => check_expr_tail_resumptive(expr, false),
         Deref(inner) => check_expr_tail_resumptive(inner, false),
 
-        // Unsafe block: inner inherits tail position
-        Unsafe(inner) => check_expr_tail_resumptive(inner, in_tail_position),
+        // Unsafe/Heap/Stack block: inner inherits tail position
+        Unsafe(inner) | Heap(inner) | Stack(inner) => check_expr_tail_resumptive(inner, in_tail_position),
 
         // Let expression (let x = e in body) - init is not in tail position
         Let { init, .. } => check_expr_tail_resumptive(init, false),

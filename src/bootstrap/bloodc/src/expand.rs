@@ -307,6 +307,12 @@ impl<'a> MacroExpander<'a> {
             ExprKind::Unsafe(inner) => {
                 ExprKind::Unsafe(Box::new(self.expand_expr(*inner)))
             }
+            ExprKind::Heap(inner) => {
+                ExprKind::Heap(Box::new(self.expand_expr(*inner)))
+            }
+            ExprKind::Stack(inner) => {
+                ExprKind::Stack(Box::new(self.expand_expr(*inner)))
+            }
 
             ExprKind::Let { pattern, init } => {
                 ExprKind::Let {
