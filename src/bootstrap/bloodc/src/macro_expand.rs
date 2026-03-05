@@ -902,6 +902,11 @@ impl MacroExpander {
             TokenKind::Union => "union".to_string(),
             TokenKind::Default => "default".to_string(),
             TokenKind::Unsafe => "unsafe".to_string(),
+            TokenKind::Defer => "defer".to_string(),
+            TokenKind::Gen => "gen".to_string(),
+            TokenKind::Raw => "raw".to_string(),
+            TokenKind::Select => "select".to_string(),
+            TokenKind::Spawn => "spawn".to_string(),
             // Other operators and punctuation
             TokenKind::Percent => "%".to_string(),
             TokenKind::Caret => "^".to_string(),
