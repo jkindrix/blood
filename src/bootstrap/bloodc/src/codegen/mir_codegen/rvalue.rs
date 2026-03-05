@@ -1141,6 +1141,15 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                             )])?;
                         Ok(cast.into())
                     }
+                } else if dst_bits == 1 {
+                    // Numeric → bool: use icmp ne 0 (not truncate, which gives low bit)
+                    let zero = int_val.get_type().const_zero();
+                    let cast = self.builder.build_int_compare(
+                        inkwell::IntPredicate::NE, int_val, zero, "to_bool")
+                        .map_err(|e| vec![Diagnostic::error(
+                            format!("LLVM icmp error: {}", e), self.current_span()
+                        )])?;
+                    Ok(cast.into())
                 } else {
                     // Truncating
                     let cast = self.builder.build_int_truncate(int_val, int_ty, "trunc")
@@ -2058,6 +2067,8 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         match ty.kind() {
             TypeKind::Primitive(PrimitiveTy::Int(_)) => true,
             TypeKind::Primitive(PrimitiveTy::Uint(_)) => false,
+            TypeKind::Primitive(PrimitiveTy::Bool) => false,
+            TypeKind::Primitive(PrimitiveTy::Char) => false,
             // Default to signed for other types (conservative)
             _ => true,
         }

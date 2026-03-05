@@ -9239,6 +9239,8 @@ impl<'a> TypeContext<'a> {
                 if is_numeric(src) && is_numeric(dst) { return true; }
                 // Bool → numeric
                 if matches!(src, PrimitiveTy::Bool) && is_numeric(dst) { return true; }
+                // Numeric → bool (0=false, nonzero=true)
+                if is_numeric(src) && matches!(dst, PrimitiveTy::Bool) { return true; }
                 // Char ↔ numeric
                 if matches!(src, PrimitiveTy::Char) && is_numeric(dst) { return true; }
                 if is_numeric(src) && matches!(dst, PrimitiveTy::Char) { return true; }

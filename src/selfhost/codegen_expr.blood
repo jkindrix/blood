@@ -2197,7 +2197,16 @@ fn emit_cast_from_llvm_types(
         // Int to int - determine by size
         let src_size = get_int_type_size(src_ty);
         let tgt_size = get_int_type_size(tgt_ty);
-        if tgt_size < src_size {
+        if tgt_size == 1 && src_size > 1 {
+            // Numeric → bool: use icmp ne 0 (not truncate, which gives low bit)
+            ctx.write_indent();
+            ctx.write_cgname(&result);
+            ctx.write(" = icmp ne ");
+            ctx.write(src_ty);
+            ctx.write(" ");
+            ctx.write_string(val);
+            ctx.write(", 0\n");
+        } else if tgt_size < src_size {
             ctx.emit_cast_cg(&result, "trunc", src_ty, val.as_str(), tgt_ty);
         } else if tgt_size > src_size {
             // Default to sign extend
@@ -2776,7 +2785,16 @@ fn emit_cast_with_types(
 
     if src_is_int && tgt_is_int {
         // Integer to integer cast
-        if tgt_size < src_size {
+        if codegen_types.is_bool(target_ty) && !codegen_types.is_bool(source_ty) {
+            // Numeric → bool: use icmp ne 0 (not truncate, which gives low bit)
+            ctx.write_indent();
+            ctx.write_cgname(&result);
+            ctx.write(" = icmp ne ");
+            ctx.write_string(&src_llvm);
+            ctx.write(" ");
+            ctx.write_string(val);
+            ctx.write(", 0\n");
+        } else if tgt_size < src_size {
             ctx.emit_cast_cg(&result, "trunc", src_llvm.as_str(), val.as_str(), tgt_llvm.as_str());
         } else if tgt_size > src_size {
             if src_is_signed {

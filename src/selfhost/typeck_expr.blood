@@ -1814,6 +1814,10 @@ fn is_valid_cast(src_ty: &hir_ty.Type, dst_ty: &hir_ty.Type) -> bool {
             if is_bool_primitive(src_prim) && is_numeric_primitive(dst_prim) {
                 return true;
             }
+            // Integer to bool (0=false, nonzero=true)
+            if is_numeric_primitive(src_prim) && is_bool_primitive(dst_prim) {
+                return true;
+            }
             false
         }
         // Raw pointer to usize/isize
