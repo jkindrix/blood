@@ -240,6 +240,8 @@ resume((κ, Γ_gen, ∅), v)  ──►  perform StaleReference.stale(a, g, g')
     if ∃(a,g) ∈ Γ_gen. currentGen(a) = g' ≠ g              [Resume-Stale]
 ```
 
+> **Note**: The formal notation `stale(a, g, g')` corresponds to the concrete Blood API `op stale(info: StaleInfo) -> never` where `StaleInfo` packages address, expected/actual generation, and optional debug fields. See SPECIFICATION.md §4.5 and MEMORY_MODEL.md Appendix B for the concrete definition.
+
 ---
 
 ## 4. Generation Snapshots

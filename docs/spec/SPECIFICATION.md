@@ -525,27 +525,41 @@ resume((κ, Γ_gen, ∅), v)  ──►  κ(v)
 
 ∃i. currentGen(aᵢ) ≠ gᵢ
 ─────────────────────────────────────────  [Resume-Stale]
-resume((κ, Γ_gen, ∅), v)  ──►  perform stale(aᵢ, gᵢ, currentGen(aᵢ))
+resume((κ, Γ_gen, ∅), v)  ──►  perform stale(StaleInfo { address: aᵢ, expected_generation: gᵢ, actual_generation: currentGen(aᵢ), .. })
 ```
 
 #### The StaleReference Effect
 
 ```blood
-effect StaleReference {
-    op stale(addr: Address, expected: Gen, actual: Gen) -> never
+/// Information about a stale reference access.
+struct StaleInfo {
+    /// Memory address that was accessed
+    address: usize,
+    /// Generation expected by the pointer
+    expected_generation: u32,
+    /// Actual generation in the memory slot
+    actual_generation: u32,
+    /// When the snapshot was captured (for debugging)
+    capture_timestamp: Option<Instant>,
+    /// Source location of the dereference (debug builds)
+    source_location: Option<SourceLoc>,
 }
 
-// Default handler: panic
+effect StaleReference {
+    op stale(info: StaleInfo) -> never
+}
+
+// Default handler: panic with diagnostic
 handler PanicOnStale for StaleReference {
-    op stale(addr, expected, actual) -> never {
-        panic("Use-after-free: {addr} gen {expected} != {actual}")
+    op stale(info) -> never {
+        panic("Use-after-free: {info.address} gen {info.expected_generation} != {info.actual_generation}")
     }
 }
 
 // Safety-critical: graceful degradation
 handler GracefulStale for StaleReference {
-    op stale(addr, expected, actual) -> never {
-        log_error("Memory violation at {addr}")
+    op stale(info) -> never {
+        log_error("Memory violation at {info.address}")
         abort_fiber()
     }
 }
