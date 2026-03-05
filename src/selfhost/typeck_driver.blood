@@ -346,7 +346,7 @@ fn register_trait(
 ) {
     let num_generics = count_type_params(&trait_def.generics.params);
     let mut methods: Vec<typeck.TraitMethodInfo> = Vec.new();
-    let mut assoc_types: Vec<common.Symbol> = Vec.new();
+    let mut assoc_types: Vec<typeck_info.AssocTypeInfo> = Vec.new();
 
     for i in 0usize..trait_def.items.len() {
         match &trait_def.items[i] {
@@ -364,6 +364,7 @@ fn register_trait(
                     }
                 }
 
+                let num_method_generics = count_type_params(&assoc_fn.sig.generics.params);
                 let method_info = typeck.TraitMethodInfo.new(
                     assoc_fn.def_id,
                     assoc_fn.name.symbol,
@@ -372,6 +373,7 @@ fn register_trait(
                     takes_self_ref,
                     takes_self_mut,
                     assoc_fn.has_default,
+                    num_method_generics,
                 );
                 methods.push(method_info);
 
@@ -382,7 +384,11 @@ fn register_trait(
                 }
             }
             &hir_item.AssocItem.Type(ref assoc_type) => {
-                assoc_types.push(assoc_type.name.symbol);
+                let has_default = match &assoc_type.default_ty {
+                    &Option.Some(_) => true,
+                    &Option.None => false,
+                };
+                assoc_types.push(typeck_info.AssocTypeInfo.new(assoc_type.name.symbol, has_default));
             }
             &hir_item.AssocItem.Const(_) => {}
         }

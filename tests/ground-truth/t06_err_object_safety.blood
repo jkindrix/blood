@@ -1,0 +1,18 @@
+// COMPILE_FAIL: trait is not object-safe (E0901)
+// Test: trait with generic method cannot be used as dyn Trait
+
+trait NotObjectSafe {
+    fn generic_method<T>(&self, x: T) -> i32;
+}
+
+struct Foo {}
+
+impl NotObjectSafe for Foo {
+    fn generic_method<T>(&self, x: T) -> i32 { 42 }
+}
+
+fn main() -> i32 {
+    let f: Foo = Foo {};
+    let d: &dyn NotObjectSafe = &f as &dyn NotObjectSafe;
+    0
+}

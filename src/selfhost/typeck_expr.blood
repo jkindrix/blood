@@ -1774,6 +1774,9 @@ fn infer_cast(
         checker.error_with_note(typeck.TypeErrorKind.InvalidCast, span, note);
     }
 
+    // Check object safety for dyn Trait coercions
+    check_dyn_trait_object_safety(checker, resolved_dst, span);
+
     // Return the target type
     dst_ty_id
 }
@@ -1900,6 +1903,39 @@ fn is_valid_cast(src_ty: &hir_ty.Type, dst_ty: &hir_ty.Type) -> bool {
         }
         // Other casts are invalid
         _ => false,
+    }
+}
+
+/// Checks if a resolved type targets a dyn Trait and verifies object safety.
+/// Emits E0901 if the trait is not object-safe.
+fn check_dyn_trait_object_safety(
+    checker: &mut typeck.TypeChecker,
+    ty: type_intern.TyId,
+    span: common.Span,
+) {
+    let kind = type_intern.type_interner().get(ty);
+    let trait_id_opt: Option<hir_def.DefId> = match kind {
+        &type_intern.InternedTypeKind.DynTrait { trait_id, auto_traits: _ } => {
+            Option.Some(trait_id)
+        }
+        &type_intern.InternedTypeKind.Ref { inner, mutable: _ } => {
+            let inner_kind = type_intern.type_interner().get(inner);
+            match inner_kind {
+                &type_intern.InternedTypeKind.DynTrait { trait_id, auto_traits: _ } => {
+                    Option.Some(trait_id)
+                }
+                _ => Option.None,
+            }
+        }
+        _ => Option.None,
+    };
+    match &trait_id_opt {
+        &Option.Some(tid) => {
+            if !checker.is_trait_object_safe(tid) {
+                checker.error(typeck.TypeErrorKind.TraitNotObjectSafe, span);
+            }
+        }
+        &Option.None => {}
     }
 }
 

@@ -18,6 +18,7 @@ mod type_intern;
 // Import submodules
 mod typeck_types;
 mod typeck_info;
+mod typeck_dispatch;
 
 // Re-export types from submodules for public API
 pub use typeck_types.TypeError;
@@ -1217,6 +1218,20 @@ impl TypeChecker {
             }
         } else {
             Option.None
+        }
+    }
+
+    /// Checks if a trait is object-safe by looking up its TraitInfo and
+    /// running the object safety rules from DISPATCH.md §10.7.
+    pub fn is_trait_object_safe(self: &Self, trait_id: hir_def.DefId) -> bool {
+        match self.get_trait(trait_id) {
+            Option.Some(info) => {
+                match typeck_dispatch.check_trait_object_safety(info) {
+                    typeck_dispatch.ObjectSafetyResult.Safe => true,
+                    typeck_dispatch.ObjectSafetyResult.Unsafe(_) => false,
+                }
+            }
+            Option.None => false,
         }
     }
 

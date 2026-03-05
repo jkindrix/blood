@@ -180,54 +180,86 @@ pub enum ObjectSafetyResult {
 /// function pointers in a vtable. Returns Safe or Unsafe with the violation.
 ///
 /// Rules checked:
-/// 1. [No-Generic-Self] — No method has generic type parameters (not checkable
-///    from TraitMethodInfo alone; deferred to parser/HIR phase when method generics
-///    are tracked)
+/// 1. [No-Generic-Self] — No method has generic type parameters
 /// 2. [No-Self-By-Value] — No method takes self by value (must take &self or &mut self)
 /// 3. [No-Self-Return] — No method returns Self by value
-/// 4. [Assoc-Type-Bound] — All associated types have defaults
+/// 4. [Assoc-Type-Bound] — All associated types have defaults or are bound
 pub fn check_trait_object_safety(
     trait_info: &typeck_info.TraitInfo,
 ) -> ObjectSafetyResult {
     // Check each method
-    let i: u32 = 0;
     let num_methods: u32 = trait_info.methods.len() as u32;
-    for i in 0..num_methods {
+    for i in 0u32..num_methods {
         let method = &trait_info.methods[i as usize];
+
+        // Rule 1: [No-Generic-Self]
+        // Generic methods require monomorphization, which is incompatible
+        // with vtable dispatch (vtable slots have fixed signatures).
+        if method.num_method_generics > 0 {
+            return ObjectSafetyResult.Unsafe(ObjectSafetyViolation.GenericSelfMethod);
+        }
 
         // Rule 2: [No-Self-By-Value]
         // A method must take &self or &mut self, not self by value.
-        // If it takes neither &self nor &mut self, it either takes self by value
-        // or is a static method. Static methods are OK for object safety (they
-        // just can't be called through the vtable).
-        if !method.takes_self_ref && !method.takes_self_mut {
-            // This is either a static method (no self at all) or self by value.
-            // We cannot distinguish from TraitMethodInfo alone. For now, we
-            // conservatively treat methods that have parameters but no self_ref/self_mut
-            // as potentially taking self by value.
-            // TODO: Add takes_self_val field to TraitMethodInfo for precise checking.
-        }
+        // Static methods (no self at all) are OK — they just can't be
+        // called through the vtable. Blood currently always desugars
+        // `self` to `&self`, so self-by-value is not representable yet.
+        // When self-by-value is added, this check will need a
+        // `takes_self_val` field on TraitMethodInfo.
 
         // Rule 3: [No-Self-Return]
-        // Check if return type is Self (Param type). This is a conservative check.
-        let ret_kind = type_intern.type_interner().get(method.return_ty);
-        match ret_kind {
-            &type_intern.InternedTypeKind.Param(_) => {
-                return ObjectSafetyResult.Unsafe(ObjectSafetyViolation.SelfReturn);
-            }
-            _ => {}
+        // Check if return type contains Self (Param type) not behind a reference.
+        if return_type_contains_self(method.return_ty) {
+            return ObjectSafetyResult.Unsafe(ObjectSafetyViolation.SelfReturn);
         }
     }
 
     // Rule 4: [Assoc-Type-Bound]
     // All associated types must have defaults for the trait to be object-safe.
-    // TraitInfo.assoc_types is Vec<Symbol> — no default info stored currently.
-    // If there are any associated types without defaults, the trait is not object-safe.
-    // For now, treat any trait with associated types as potentially non-object-safe
-    // unless we can verify defaults exist.
-    // TODO: Add default tracking to assoc_types when associated type defaults are implemented.
+    // Without a default, the vtable caller cannot determine the associated type.
+    let num_assoc: u32 = trait_info.assoc_types.len() as u32;
+    for j in 0u32..num_assoc {
+        let at = &trait_info.assoc_types[j as usize];
+        if !at.has_default {
+            return ObjectSafetyResult.Unsafe(ObjectSafetyViolation.UnboundAssocType);
+        }
+    }
 
     ObjectSafetyResult.Safe
+}
+
+/// Checks if a return type contains Self (Param type) not behind a reference.
+/// Recursively checks tuples and ADT type arguments.
+fn return_type_contains_self(ty: type_intern.TyId) -> bool {
+    let interner = type_intern.type_interner();
+    let kind = interner.get(ty);
+    match kind {
+        &type_intern.InternedTypeKind.Param(_) => true,
+        &type_intern.InternedTypeKind.Tuple(list_id) => {
+            let len = interner.ty_list_len(list_id);
+            for k in 0usize..len {
+                let elem = interner.get_ty_list_element(list_id, k);
+                if return_type_contains_self(elem) {
+                    return true;
+                }
+            }
+            false
+        }
+        &type_intern.InternedTypeKind.Adt { def_id: _, args } => {
+            let len = interner.ty_list_len(args);
+            for k in 0usize..len {
+                let arg = interner.get_ty_list_element(args, k);
+                if return_type_contains_self(arg) {
+                    return true;
+                }
+            }
+            false
+        }
+        // Self behind a reference or pointer is OK (known size)
+        &type_intern.InternedTypeKind.Ref { inner: _, mutable: _ } => false,
+        &type_intern.InternedTypeKind.Ptr { inner: _, mutable: _ } => false,
+        _ => false,
+    }
 }
 
 // ============================================================

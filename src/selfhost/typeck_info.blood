@@ -373,6 +373,21 @@ impl ImplInfo {
 // Trait Information
 // ============================================================
 
+/// Information about an associated type in a trait.
+pub struct AssocTypeInfo {
+    /// The name of the associated type.
+    pub name: common.Symbol,
+    /// Whether this associated type has a default.
+    pub has_default: bool,
+}
+
+impl AssocTypeInfo {
+    /// Creates new associated type info.
+    pub fn new(name: common.Symbol, has_default: bool) -> AssocTypeInfo {
+        AssocTypeInfo { name, has_default }
+    }
+}
+
 /// Information about a trait for type checking.
 pub struct TraitInfo {
     /// The DefId of the trait.
@@ -384,7 +399,7 @@ pub struct TraitInfo {
     /// Methods required by this trait.
     pub methods: Vec<TraitMethodInfo>,
     /// Associated types in this trait.
-    pub assoc_types: Vec<common.Symbol>,
+    pub assoc_types: Vec<AssocTypeInfo>,
 }
 
 impl TraitInfo {
@@ -394,7 +409,7 @@ impl TraitInfo {
         name: common.Symbol,
         num_generics: u32,
         methods: Vec<TraitMethodInfo>,
-        assoc_types: Vec<common.Symbol>,
+        assoc_types: Vec<AssocTypeInfo>,
     ) -> TraitInfo {
         TraitInfo { def_id, name, num_generics, methods, assoc_types }
     }
@@ -416,6 +431,8 @@ pub struct TraitMethodInfo {
     pub takes_self_mut: bool,
     /// Whether this method has a default implementation.
     pub has_default: bool,
+    /// Number of method-level generic type parameters (for object safety Rule 1).
+    pub num_method_generics: u32,
 }
 
 impl TraitMethodInfo {
@@ -428,10 +445,12 @@ impl TraitMethodInfo {
         takes_self_ref: bool,
         takes_self_mut: bool,
         has_default: bool,
+        num_method_generics: u32,
     ) -> TraitMethodInfo {
         TraitMethodInfo {
             def_id, name, param_tys, return_ty,
             takes_self_ref, takes_self_mut, has_default,
+            num_method_generics,
         }
     }
 }
