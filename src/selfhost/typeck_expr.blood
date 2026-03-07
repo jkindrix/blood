@@ -648,7 +648,21 @@ fn default_literal_type(expr: &hir_expr.Expr, fallback: type_intern.TyId) -> typ
 /// Infers the type of a local variable reference.
 fn infer_local(checker: &mut typeck.TypeChecker, id: hir_def.LocalId, span: common.Span) -> type_intern.TyId {
     match checker.get_local_ty(id) {
-        Some(ty) => ty,
+        Some(ty) => {
+            // EFF-04: Check for linear/affine outer locals captured in deep handler body
+            match &checker.deep_handler_local_boundary {
+                &Option.Some(boundary) => {
+                    if id.index < boundary {
+                        let resolved = checker.resolve(ty);
+                        if type_intern.is_linear_id(resolved) || type_intern.is_affine_id(resolved) {
+                            checker.error(typeck.TypeErrorKind.InvalidControl, span);
+                        }
+                    }
+                }
+                &Option.None => {}
+            }
+            ty
+        }
         Option.None => {
             checker.error(typeck.TypeErrorKind.UndefinedVariable, span);
             type_intern.CommonTypes.error()
@@ -2482,9 +2496,38 @@ fn infer_with_handle(
     body: &hir_expr.Expr,
     span: common.Span,
 ) -> type_intern.TyId {
-    // Check handler and body
-    infer_expr(checker, handler_expr);
-    infer_expr(checker, body)
+    // Type-check handler expression first to determine its kind
+    let handler_ty = infer_expr(checker, handler_expr);
+
+    // Check if the handler is deep — if so, set boundary for linearity checking
+    let resolved_handler = checker.resolve(handler_ty);
+    let mut is_deep = false;
+    match type_intern.get_adt_def_id(resolved_handler) {
+        Option.Some(def_id) => {
+            match checker.handler_kind_hash.get(def_id.index as u64) {
+                Option.Some(kind_val) => {
+                    if kind_val == 1 {
+                        is_deep = true;
+                    }
+                }
+                Option.None => {}
+            }
+        }
+        Option.None => {}
+    }
+
+    // For deep handlers, set boundary so infer_local can detect outer linear captures
+    let prev_boundary = checker.deep_handler_local_boundary;
+    if is_deep {
+        checker.deep_handler_local_boundary = Option.Some(checker.locals.len() as u32);
+    }
+
+    let body_ty = infer_expr(checker, body);
+
+    // Restore previous boundary
+    checker.deep_handler_local_boundary = prev_boundary;
+
+    body_ty
 }
 
 /// Infers the type of an effect operation invocation.

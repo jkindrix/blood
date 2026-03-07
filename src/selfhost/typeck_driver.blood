@@ -292,7 +292,14 @@ fn collect_item_signatures(
             &hir_item.ItemKind.Effect(ref effect_def) => {
                 register_effect(checker, entry.def_id, entry.item.name.symbol, effect_def);
             }
-            &hir_item.ItemKind.Handler(_) => {}
+            &hir_item.ItemKind.Handler(ref handler_def) => {
+                // Register handler kind (1 = deep, 0 = shallow) for linearity checking
+                let is_deep: u32 = match &handler_def.kind {
+                    &common.HandlerKind.Deep => 1,
+                    &common.HandlerKind.Shallow => 0,
+                };
+                checker.handler_kind_hash.insert(entry.def_id.index as u64, is_deep);
+            }
             &hir_item.ItemKind.Module(_) => {}
             &hir_item.ItemKind.Macro(_) => {}
             &hir_item.ItemKind.Foreign(ref foreign_def) => {

@@ -343,6 +343,13 @@ pub struct TypeChecker {
     /// Handler state field types for the current handler op body.
     /// Used to check linear/affine types in multi-shot handlers.
     pub handler_state_types: Vec<type_intern.TyId>,
+    /// Map from handler DefId index to handler kind (true = deep).
+    /// Populated during item registration. Used by with/handle linearity checking.
+    pub handler_kind_hash: hashmap.HashMapU64U32,
+    /// When inside a deep handler body, the local index boundary.
+    /// Locals with index < boundary are outer locals that must not be linear/affine.
+    /// None when not inside a deep handler body.
+    pub deep_handler_local_boundary: Option<u32>,
     /// Trait default method remapping table.
     /// When a trait default method is used by an impl, calls within the default
     /// method body that target abstract trait methods must be redirected to the
@@ -394,6 +401,8 @@ impl TypeChecker {
             in_shallow_handler: false,
             resume_count: 0,
             handler_state_types: Vec.new(),
+            handler_kind_hash: hashmap.HashMapU64U32.new(),
+            deep_handler_local_boundary: Option.None,
             default_method_remaps: Vec.new(),
             coercion_entries: Vec.new(),
         }
@@ -439,6 +448,8 @@ impl TypeChecker {
             in_shallow_handler: false,
             resume_count: 0,
             handler_state_types: Vec.new(),
+            handler_kind_hash: hashmap.HashMapU64U32.new(),
+            deep_handler_local_boundary: Option.None,
             default_method_remaps: Vec.new(),
             coercion_entries: Vec.new(),
         }

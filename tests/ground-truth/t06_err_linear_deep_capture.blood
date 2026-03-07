@@ -1,0 +1,25 @@
+// COMPILE_FAIL: E0801
+// Test: linear value referenced in a deep handler body should fail
+// The deep handler could resume multiple times, violating linearity
+// Note: x is captured in the handler body across a perform boundary
+effect Counter {
+    op inc() -> ();
+}
+
+deep handler CountHandler for Counter {
+    let mut count: i32
+    return(x) { x }
+    op inc() { count = count + 1; resume(()) }
+}
+
+fn use_linear(x: linear i32) -> linear i32 {
+    x
+}
+
+fn main() -> linear i32 {
+    let x: linear i32 = 42;
+    with CountHandler { count: 0 } handle {
+        perform Counter.inc();
+        use_linear(x)
+    }
+}
