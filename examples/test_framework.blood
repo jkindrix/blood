@@ -1,0 +1,158 @@
+// Demonstrates Blood's built-in test framework.
+//
+// Run with: blood test examples/test_framework.blood
+// List tests: blood test examples/test_framework.blood --list
+// Filter: blood test examples/test_framework.blood -F arithmetic
+
+// ============================================================
+// Code under test
+// ============================================================
+
+fn add(a: i32, b: i32) -> i32 {
+    a + b
+}
+
+fn multiply(a: i32, b: i32) -> i32 {
+    a * b
+}
+
+fn factorial(n: i32) -> i32 {
+    if n <= 1 {
+        1
+    } else {
+        n * factorial(n - 1)
+    }
+}
+
+fn is_even(n: i32) -> bool {
+    n % 2 == 0
+}
+
+fn abs(n: i32) -> i32 {
+    if n < 0 { 0 - n } else { n }
+}
+
+fn clamp(val: i32, lo: i32, hi: i32) -> i32 {
+    if val < lo {
+        lo
+    } else if val > hi {
+        hi
+    } else {
+        val
+    }
+}
+
+fn divide(a: i32, b: i32) -> i32 {
+    if b == 0 {
+        panic("division by zero");
+    }
+    a / b
+}
+
+// ============================================================
+// Arithmetic tests
+// ============================================================
+
+#[test]
+fn test_arithmetic_add() {
+    assert_eq_int(add(2, 3), 5);
+    assert_eq_int(add(0, 0), 0);
+    assert_eq_int(add(-1, 1), 0);
+    assert_eq_int(add(-5, -3), -8);
+}
+
+#[test]
+fn test_arithmetic_multiply() {
+    assert_eq_int(multiply(3, 4), 12);
+    assert_eq_int(multiply(0, 100), 0);
+    assert_eq_int(multiply(-2, 3), -6);
+    assert_eq_int(multiply(-3, -4), 12);
+}
+
+#[test]
+fn test_arithmetic_factorial() {
+    assert_eq_int(factorial(0), 1);
+    assert_eq_int(factorial(1), 1);
+    assert_eq_int(factorial(5), 120);
+    assert_eq_int(factorial(7), 5040);
+}
+
+#[test]
+fn test_arithmetic_divide() {
+    assert_eq_int(divide(10, 2), 5);
+    assert_eq_int(divide(7, 3), 2);
+    assert_eq_int(divide(-6, 3), -2);
+    assert_eq_int(divide(0, 5), 0);
+}
+
+// ============================================================
+// Boolean tests
+// ============================================================
+
+#[test]
+fn test_bool_is_even() {
+    assert_eq_bool(is_even(0), true);
+    assert_eq_bool(is_even(2), true);
+    assert_eq_bool(is_even(4), true);
+    assert_eq_bool(is_even(1), false);
+    assert_eq_bool(is_even(3), false);
+    assert_eq_bool(is_even(-2), true);
+    assert_eq_bool(is_even(-3), false);
+}
+
+#[test]
+fn test_bool_comparison() {
+    assert(1 < 2);
+    assert(2 > 1);
+    assert(3 == 3);
+    assert(3 != 4);
+    assert(5 >= 5);
+    assert(5 <= 5);
+}
+
+#[test]
+fn test_bool_logical() {
+    assert_eq_bool(true && true, true);
+    assert_eq_bool(true && false, false);
+    assert_eq_bool(false || true, true);
+    assert_eq_bool(false || false, false);
+    assert_eq_bool(!false, true);
+    assert_eq_bool(!true, false);
+}
+
+// ============================================================
+// Control flow tests
+// ============================================================
+
+#[test]
+fn test_abs() {
+    assert_eq_int(abs(5), 5);
+    assert_eq_int(abs(-5), 5);
+    assert_eq_int(abs(0), 0);
+}
+
+#[test]
+fn test_clamp() {
+    assert_eq_int(clamp(5, 0, 10), 5);
+    assert_eq_int(clamp(-1, 0, 10), 0);
+    assert_eq_int(clamp(15, 0, 10), 10);
+    assert_eq_int(clamp(0, 0, 10), 0);
+    assert_eq_int(clamp(10, 0, 10), 10);
+}
+
+// ============================================================
+// Attribute tests
+// ============================================================
+
+#[test]
+#[should_panic]
+fn test_divide_by_zero_panics() {
+    divide(1, 0);
+}
+
+#[test]
+#[ignore]
+fn test_future_feature() {
+    // This test is skipped until the feature is implemented.
+    assert(false);
+}
