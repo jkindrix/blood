@@ -209,15 +209,25 @@ impl<'a> TypeContext<'a> {
                 for field_pattern in fields {
                     let field_name = self.symbol_to_string(field_pattern.name.node);
 
-                    let field_info = struct_info.fields.iter()
-                        .find(|f| f.name == field_name)
-                        .ok_or_else(|| Box::new(TypeError::new(
-                            TypeErrorKind::NoField {
-                                ty: ty.clone(),
-                                field: field_name.clone(),
-                            },
-                            field_pattern.span,
-                        )))?;
+                    let field_info = match struct_info.fields.iter().find(|f| f.name == field_name) {
+                        Some(f) => f,
+                        None => {
+                            let mut err = TypeError::new(
+                                TypeErrorKind::NoField {
+                                    ty: ty.clone(),
+                                    field: field_name.clone(),
+                                },
+                                field_pattern.span,
+                            );
+                            if let Some(info) = self.resolver.def_info.get(&struct_def_id) {
+                                err = err.with_secondary_label(
+                                    info.span,
+                                    format!("struct `{}` defined here", info.name),
+                                );
+                            }
+                            return Err(Box::new(err));
+                        }
+                    };
 
                     bound_fields.insert(field_name.clone());
 
@@ -795,15 +805,25 @@ impl<'a> TypeContext<'a> {
                     for field_pattern in fields {
                         let field_name = self.symbol_to_string(field_pattern.name.node);
 
-                        let field_info = variant_info.fields.iter()
-                            .find(|f| f.name == field_name)
-                            .ok_or_else(|| Box::new(TypeError::new(
-                                TypeErrorKind::NoField {
-                                    ty: expected_ty.clone(),
-                                    field: field_name.clone(),
-                                },
-                                field_pattern.span,
-                            )))?;
+                        let field_info = match variant_info.fields.iter().find(|f| f.name == field_name) {
+                            Some(f) => f,
+                            None => {
+                                let mut err = TypeError::new(
+                                    TypeErrorKind::NoField {
+                                        ty: expected_ty.clone(),
+                                        field: field_name.clone(),
+                                    },
+                                    field_pattern.span,
+                                );
+                                if let Some(info) = self.resolver.def_info.get(&adt_def_id) {
+                                    err = err.with_secondary_label(
+                                        info.span,
+                                        format!("enum `{}` defined here", info.name),
+                                    );
+                                }
+                                return Err(Box::new(err));
+                            }
+                        };
 
                         bound_fields.insert(field_name.clone());
 
@@ -910,15 +930,25 @@ impl<'a> TypeContext<'a> {
                 for field_pattern in fields {
                     let field_name = self.symbol_to_string(field_pattern.name.node);
 
-                    let field_info = struct_info.fields.iter()
-                        .find(|f| f.name == field_name)
-                        .ok_or_else(|| Box::new(TypeError::new(
-                            TypeErrorKind::NoField {
-                                ty: expected_ty.clone(),
-                                field: field_name.clone(),
-                            },
-                            field_pattern.span,
-                        )))?;
+                    let field_info = match struct_info.fields.iter().find(|f| f.name == field_name) {
+                        Some(f) => f,
+                        None => {
+                            let mut err = TypeError::new(
+                                TypeErrorKind::NoField {
+                                    ty: expected_ty.clone(),
+                                    field: field_name.clone(),
+                                },
+                                field_pattern.span,
+                            );
+                            if let Some(info) = self.resolver.def_info.get(&struct_def_id) {
+                                err = err.with_secondary_label(
+                                    info.span,
+                                    format!("struct `{}` defined here", info.name),
+                                );
+                            }
+                            return Err(Box::new(err));
+                        }
+                    };
 
                     bound_fields.insert(field_name.clone());
 

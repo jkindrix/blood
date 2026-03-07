@@ -8,7 +8,7 @@ use crate::hir::DefId;
 use crate::hir::Type;
 use crate::hir::ty::display_type;
 use crate::span::Span;
-use crate::diagnostics::Diagnostic;
+use crate::diagnostics::{Diagnostic, DiagnosticLabel};
 
 /// Result type alias for type checking operations.
 ///
@@ -28,6 +28,8 @@ pub struct TypeError {
     pub source_file: Option<PathBuf>,
     /// Source content (for errors in imported modules).
     pub source_content: Option<String>,
+    /// Secondary diagnostic labels (e.g., "function defined here").
+    pub secondary_labels: Vec<DiagnosticLabel>,
 }
 
 impl TypeError {
@@ -39,6 +41,7 @@ impl TypeError {
             help: None,
             source_file: None,
             source_content: None,
+            secondary_labels: Vec::new(),
         }
     }
 
@@ -50,6 +53,12 @@ impl TypeError {
     /// Add a help message.
     pub fn with_help(mut self, help: impl Into<String>) -> Self {
         self.help = Some(help.into());
+        self
+    }
+
+    /// Add a secondary diagnostic label (e.g., pointing to a function definition).
+    pub fn with_secondary_label(mut self, span: Span, message: impl Into<String>) -> Self {
+        self.secondary_labels.push(DiagnosticLabel::secondary(span, message));
         self
     }
 
@@ -412,6 +421,11 @@ impl TypeError {
 
         if let Some(help) = &self.help {
             diag = diag.with_suggestion(help.clone());
+        }
+
+        // Attach secondary labels
+        for label in &self.secondary_labels {
+            diag = diag.with_label(label.clone());
         }
 
         // Pass source file info if this error is from an imported module

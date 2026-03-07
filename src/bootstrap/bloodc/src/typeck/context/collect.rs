@@ -1432,10 +1432,17 @@ impl<'a> TypeContext<'a> {
                     if other_sig.inputs.len() == current_sig.inputs.len()
                         && other_sig.inputs.iter().zip(current_sig.inputs.iter()).all(|(a, b)| a == b)
                     {
-                        return Err(Box::new(TypeError::new(
+                        let mut err = TypeError::new(
                             TypeErrorKind::DuplicateDefinition { name },
                             func.span,
-                        )));
+                        );
+                        if let Some(prev_info) = self.resolver.def_info.get(&other_id) {
+                            err = err.with_secondary_label(
+                                prev_info.span,
+                                "previous definition here",
+                            );
+                        }
+                        return Err(Box::new(err));
                     }
                 }
             }

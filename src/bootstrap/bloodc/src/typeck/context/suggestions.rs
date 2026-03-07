@@ -56,6 +56,8 @@ impl<'a> TypeContext<'a> {
     /// Searches for similar field names on the struct type and adds a
     /// "did you mean?" suggestion if close matches are found.
     pub(crate) fn error_unknown_field(&self, ty: &Type, field: &str, span: Span) -> Box<TypeError> {
+        use crate::hir::TypeKind;
+
         let field_names = self.collect_field_names(ty);
         let suggestions = suggest_similar(field, field_names.iter().map(|s| s.as_str()));
 
@@ -66,6 +68,15 @@ impl<'a> TypeContext<'a> {
             },
             span,
         );
+
+        if let TypeKind::Adt { def_id, .. } = ty.kind() {
+            if let Some(info) = self.resolver.def_info.get(def_id) {
+                error = error.with_secondary_label(
+                    info.span,
+                    format!("type `{}` defined here", info.name),
+                );
+            }
+        }
 
         if let Some(help) = format_suggestions(&suggestions) {
             error = error.with_help(help);
@@ -79,6 +90,8 @@ impl<'a> TypeContext<'a> {
     /// Searches for similar method names on the type and adds a
     /// "did you mean?" suggestion if close matches are found.
     pub(crate) fn error_method_not_found(&self, ty: &Type, method: &str, span: Span) -> Box<TypeError> {
+        use crate::hir::TypeKind;
+
         let method_names = self.collect_method_names(ty);
         let suggestions = suggest_similar(method, method_names.iter().map(|s| s.as_str()));
 
@@ -89,6 +102,15 @@ impl<'a> TypeContext<'a> {
             },
             span,
         );
+
+        if let TypeKind::Adt { def_id, .. } = ty.kind() {
+            if let Some(info) = self.resolver.def_info.get(def_id) {
+                error = error.with_secondary_label(
+                    info.span,
+                    format!("type `{}` defined here", info.name),
+                );
+            }
+        }
 
         if let Some(help) = format_suggestions(&suggestions) {
             error = error.with_help(help);

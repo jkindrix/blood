@@ -6395,13 +6395,23 @@ impl<'a> TypeContext<'a> {
         };
 
         if args.len() != param_types.len() {
-            return Err(Box::new(TypeError::new(
+            let mut err = TypeError::new(
                 TypeErrorKind::WrongArity {
                     expected: param_types.len(),
                     found: args.len(),
                 },
                 span,
-            )));
+            );
+            // Add secondary label pointing to the function definition
+            if let hir::ExprKind::Def(def_id) = &callee_expr.kind {
+                if let Some(info) = self.resolver.def_info.get(def_id) {
+                    err = err.with_secondary_label(
+                        info.span,
+                        format!("function `{}` defined here", info.name),
+                    );
+                }
+            }
+            return Err(Box::new(err));
         }
 
         // Check effect compatibility
@@ -8273,13 +8283,20 @@ impl<'a> TypeContext<'a> {
                                     let variant_field = match variant_fields.iter().find(|f| f.name == field_name) {
                                         Some(f) => f,
                                         None => {
-                                            return Err(Box::new(TypeError::new(
+                                            let mut err = TypeError::new(
                                                 TypeErrorKind::UnknownField {
                                                     ty: Type::adt(enum_def_id, type_args.clone()),
                                                     field: field_name,
                                                 },
                                                 field.span,
-                                            )));
+                                            );
+                                            if let Some(info) = self.resolver.def_info.get(&enum_def_id) {
+                                                err = err.with_secondary_label(
+                                                    info.span,
+                                                    format!("enum `{}` defined here", info.name),
+                                                );
+                                            }
+                                            return Err(Box::new(err));
                                         }
                                     };
 
@@ -8490,13 +8507,20 @@ impl<'a> TypeContext<'a> {
                                     let variant_field = match variant_fields.iter().find(|f| f.name == field_name) {
                                         Some(f) => f,
                                         None => {
-                                            return Err(Box::new(TypeError::new(
+                                            let mut err = TypeError::new(
                                                 TypeErrorKind::UnknownField {
                                                     ty: Type::adt(enum_def_id, type_args.clone()),
                                                     field: field_name,
                                                 },
                                                 field.span,
-                                            )));
+                                            );
+                                            if let Some(info) = self.resolver.def_info.get(&enum_def_id) {
+                                                err = err.with_secondary_label(
+                                                    info.span,
+                                                    format!("enum `{}` defined here", info.name),
+                                                );
+                                            }
+                                            return Err(Box::new(err));
                                         }
                                     };
 
@@ -8833,13 +8857,20 @@ impl<'a> TypeContext<'a> {
         if hir_base.is_none() {
             for field_info in &struct_info.fields {
                 if !provided_field_names.contains(&field_info.name) {
-                    return Err(Box::new(TypeError::new(
+                    let mut err = TypeError::new(
                         TypeErrorKind::MissingField {
                             ty: result_ty.clone(),
                             field: field_info.name.clone(),
                         },
                         span,
-                    )));
+                    );
+                    if let Some(info) = self.resolver.def_info.get(&def_id) {
+                        err = err.with_secondary_label(
+                            info.span,
+                            format!("struct `{}` defined here", info.name),
+                        );
+                    }
+                    return Err(Box::new(err));
                 }
             }
         }

@@ -41,6 +41,13 @@ fn format_diagnostics(diagnostics: &[Diagnostic]) -> String {
         if let Some(code) = &d.code {
             output = format!("[{}] {}", code, output);
         }
+        let secondary: Vec<_> = d.labels.iter().filter(|l| !l.primary).collect();
+        if !secondary.is_empty() {
+            output.push_str("\n  Labels:");
+            for l in &secondary {
+                output.push_str(&format!("\n    - {}", l.message));
+            }
+        }
         if !d.suggestions.is_empty() {
             output.push_str("\n  Suggestions:");
             for s in &d.suggestions {

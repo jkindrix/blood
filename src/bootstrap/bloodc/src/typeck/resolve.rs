@@ -227,11 +227,30 @@ impl<'a> Resolver<'a> {
         span: Span,
     ) -> Result<DefId, Box<TypeError>> {
         // Check for duplicates in current scope
-        if self.current_scope().bindings.contains_key(&name) {
-            return Err(Box::new(TypeError::new(
+        if let Some(existing) = self.current_scope().bindings.get(&name) {
+            let mut err = TypeError::new(
                 TypeErrorKind::DuplicateDefinition { name },
                 span,
-            )));
+            );
+            // Add secondary label pointing to the previous definition
+            match existing {
+                Binding::Def(prev_def_id) => {
+                    if let Some(prev_info) = self.def_info.get(prev_def_id) {
+                        err = err.with_secondary_label(
+                            prev_info.span,
+                            "previous definition here",
+                        );
+                    }
+                }
+                Binding::Local { span: prev_span, .. } => {
+                    err = err.with_secondary_label(
+                        *prev_span,
+                        "previous definition here",
+                    );
+                }
+                Binding::Methods(_) => {}
+            }
+            return Err(Box::new(err));
         }
 
         let def_id = self.next_def_id();
@@ -472,11 +491,29 @@ impl<'a> Resolver<'a> {
         span: Span,
     ) -> Result<(), Box<TypeError>> {
         // Check for duplicates in current scope
-        if self.current_scope().bindings.contains_key(&name) {
-            return Err(Box::new(TypeError::new(
+        if let Some(existing) = self.current_scope().bindings.get(&name) {
+            let mut err = TypeError::new(
                 TypeErrorKind::DuplicateDefinition { name },
                 span,
-            )));
+            );
+            match existing {
+                Binding::Def(prev_def_id) => {
+                    if let Some(prev_info) = self.def_info.get(prev_def_id) {
+                        err = err.with_secondary_label(
+                            prev_info.span,
+                            "previous definition here",
+                        );
+                    }
+                }
+                Binding::Local { span: prev_span, .. } => {
+                    err = err.with_secondary_label(
+                        *prev_span,
+                        "previous definition here",
+                    );
+                }
+                Binding::Methods(_) => {}
+            }
+            return Err(Box::new(err));
         }
 
         // Add as a Def binding (it's an alias to an existing definition)
