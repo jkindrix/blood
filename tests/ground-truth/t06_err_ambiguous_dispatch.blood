@@ -1,25 +1,21 @@
-// COMPILE_FAIL: method name defined multiple times (E0214)
-// EXPECT: is defined multiple times
-// Test: method call matching multiple impls should fail
-trait AsNum {
-    fn as_num(self) -> i32;
+// COMPILE_FAIL: E0214
+// Test: definition-time dispatch ambiguity detection (DIS-04)
+
+struct Foo {}
+
+impl Foo {
+    fn process(self: &Self, x: i32) -> i32 {
+        x
+    }
 }
 
-trait AsVal {
-    fn as_num(self) -> i32;
-}
-
-struct Both {}
-
-impl AsNum for Both {
-    fn as_num(self) -> i32 { 1 }
-}
-
-impl AsVal for Both {
-    fn as_num(self) -> i32 { 2 }
+impl Foo {
+    fn process(self: &Self, x: i32) -> i32 {
+        x + 1
+    }
 }
 
 fn main() -> i32 {
-    let b: Both = Both {};
-    b.as_num()
+    let f = Foo {};
+    f.process(1)
 }

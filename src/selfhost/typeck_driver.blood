@@ -27,6 +27,7 @@ mod typeck_linearity;
 mod interner;
 mod type_intern;
 mod typeck_types;
+mod typeck_dispatch;
 
 // ============================================================
 // Type Check Result
@@ -193,6 +194,21 @@ pub fn check_lower_result(result: &hir_lower_ctx.LowerResult) -> TypeCheckResult
         &result.builtin_result_ok_def,
         &result.builtin_result_err_def,
     );
+
+    // Phase 1d: Definition-time dispatch ambiguity check (DIS-04).
+    let ambiguities = typeck_dispatch.check_all_dispatch_ambiguity(&checker.impls);
+    for ai in 0usize..ambiguities.len() {
+        let amb = &ambiguities[ai];
+        let m2 = &checker.impls[amb.impl2_idx].methods[amb.method2_idx];
+        let m1 = &checker.impls[amb.impl1_idx].methods[amb.method1_idx];
+        // Report error at the second method, with note pointing to the first
+        checker.error_with_spanned_note(
+            typeck_types.TypeErrorKind.AmbiguousDispatch,
+            m2.span,
+            common.make_string("conflicts with this method"),
+            m1.span,
+        );
+    }
 
     // Phase 2: Type check main file bodies (determines success/failure).
     let body_limit = result.main_body_count;
@@ -432,6 +448,7 @@ fn register_trait(
                     assoc_fn.sig.return_ty,
                     takes_sr,
                     takes_sm,
+                    assoc_fn.name.span,
                 );
                 impl_methods.push(mi);
             }
@@ -488,6 +505,7 @@ fn register_impl(
                     assoc_fn.sig.return_ty,
                     takes_self_ref,
                     takes_self_mut,
+                    assoc_fn.name.span,
                 );
                 methods.push(method_info);
 
@@ -569,6 +587,7 @@ fn inject_default_methods(
                             type_intern.TyId.new(trait_method.return_ty.index),
                             trait_method.takes_self_ref,
                             trait_method.takes_self_mut,
+                            common.Span { start: 0, end: 0, line: 0, column: 0 },
                         );
                         methods.push(method_info);
 
@@ -1659,7 +1678,7 @@ fn add_method(
     // All builtin method names are pre-interned, so find() will always succeed.
     let found = interner.find(name);
     let sym = found.unwrap();
-    methods.push(typeck.MethodInfo.new(def_id, sym, params, ret, true, self_mut));
+    methods.push(typeck.MethodInfo.new(def_id, sym, params, ret, true, self_mut, common.Span { start: 0, end: 0, line: 0, column: 0 }));
     // Record mapping from synthetic DefId to runtime function name for codegen
     checker.builtin_def_names.push(
         typeck.BuiltinDefName.new(def_id.index, common.make_string(runtime_name)),
