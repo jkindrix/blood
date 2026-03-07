@@ -39,8 +39,8 @@ effect Yield<T> {
 
 // Effect for async operations (conceptual)
 effect Async {
-    op suspend() -> ();
-    op spawn(task: i32) -> i32;
+    op yield_control() -> ();
+    op launch(task: i32) -> i32;
 }
 
 // ===========================================================================
@@ -77,9 +77,9 @@ deep handler TryError<E> for Error<E> {
     op raise(err) {
         // Does not resume - early exit, stores error for later retrieval
         error_value = err;
-        // Return unit since this is a non-resumptive handler
+        // Return a default value since this handler doesn't resume
         // The handler's return clause determines the final result type
-        ()
+        0
     }
 }
 
@@ -205,9 +205,9 @@ deep handler Accumulator for Yield<i32> {
     let mut sum: i32
     let mut count: i32
 
-    // Return clause provides the accumulated statistics
+    // Return clause provides the accumulated sum
     return(x) {
-        (x, sum, count)
+        sum
     }
 
     op yield_value(v) {
