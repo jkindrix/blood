@@ -3422,12 +3422,12 @@ struct ThreadCodegenArg {
 /// Receives a ThreadCodegenArg via u64 address, processes its chunk of the
 /// worklist (MIR lowering + codegen), and writes IR to its output String.
 fn codegen_thread_worker(arg: u64) -> u64 {
-    let targ: &ThreadCodegenArg = arg as &ThreadCodegenArg;
-    let ctx: &mut codegen_ctx.CodegenCtx = targ.worker_ctx_addr as &mut codegen_ctx.CodegenCtx;
-    let lower: &hir_lower_ctx.LowerResult = targ.lower_result_addr as &hir_lower_ctx.LowerResult;
-    let typeck: &typeck_driver.TypeCheckResult = targ.typeck_result_addr as &typeck_driver.TypeCheckResult;
-    let wl: &CodegenWorkList = targ.worklist_addr as &CodegenWorkList;
-    let output: &mut String = targ.output_ir_addr as &mut String;
+    let targ: &ThreadCodegenArg = @unsafe { (arg as usize as *const ThreadCodegenArg) as &ThreadCodegenArg };
+    let ctx: &mut codegen_ctx.CodegenCtx = @unsafe { (targ.worker_ctx_addr as usize as *mut codegen_ctx.CodegenCtx) as &mut codegen_ctx.CodegenCtx };
+    let lower: &hir_lower_ctx.LowerResult = @unsafe { (targ.lower_result_addr as usize as *const hir_lower_ctx.LowerResult) as &hir_lower_ctx.LowerResult };
+    let typeck: &typeck_driver.TypeCheckResult = @unsafe { (targ.typeck_result_addr as usize as *const typeck_driver.TypeCheckResult) as &typeck_driver.TypeCheckResult };
+    let wl: &CodegenWorkList = @unsafe { (targ.worklist_addr as usize as *const CodegenWorkList) as &CodegenWorkList };
+    let output: &mut String = @unsafe { (targ.output_ir_addr as usize as *mut String) as &mut String };
 
     // Per-thread codegen region: holds codegen temporaries + ctx growth.
     // Thread-local since regions use thread-local stacks.

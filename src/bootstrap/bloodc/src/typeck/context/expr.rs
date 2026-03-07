@@ -9323,27 +9323,17 @@ impl<'a> TypeContext<'a> {
             (TypeKind::Ref { mutable: src_mut, .. }, TypeKind::Ptr { mutable: dst_mut, .. }) => {
                 !dst_mut || *src_mut
             }
-            // Ref → numeric (pointer packing, used in self-hosted compiler)
-            (TypeKind::Ref { .. }, TypeKind::Primitive(dst)) => {
-                matches!(dst,
-                    PrimitiveTy::Uint(_) | PrimitiveTy::Int(_))
+            // Ptr → Ref (*const T → &T, *mut T → &mut T) — unsafe dereference
+            (TypeKind::Ptr { mutable: src_mut, .. }, TypeKind::Ref { mutable: dst_mut, .. }) => {
+                !dst_mut || *src_mut
             }
-            // Numeric → Ref (pointer unpacking, used in self-hosted compiler)
-            (TypeKind::Primitive(src), TypeKind::Ref { .. }) => {
-                matches!(src,
-                    PrimitiveTy::Uint(_) | PrimitiveTy::Int(_))
-            }
-
             // Ptr → Ptr (pointer coercion, respects mutability)
             (TypeKind::Ptr { mutable: src_mut, .. }, TypeKind::Ptr { mutable: dst_mut, .. }) => {
                 !dst_mut || *src_mut
             }
 
-            // Fn → numeric (function pointer packing)
-            (TypeKind::Fn { .. }, TypeKind::Primitive(dst)) => {
-                matches!(dst,
-                    PrimitiveTy::Uint(_) | PrimitiveTy::Int(_))
-            }
+            // Fn → usize (function pointer to integer — static, no info lost)
+            (TypeKind::Fn { .. }, TypeKind::Primitive(PrimitiveTy::Uint(UintTy::Usize))) => true,
 
             // Trait object coercion: &T → &dyn Trait or T → dyn Trait
             (_, TypeKind::DynTrait { .. }) => true,

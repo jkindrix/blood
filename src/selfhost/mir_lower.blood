@@ -65,7 +65,7 @@ pub fn lower_body(
     let resolved_return_id = unify.apply_substs_id(subst_table, return_ty);
 
     // Borrow the substitution table by address (read-only during MIR lowering)
-    let subst_table_addr = subst_table as u64;
+    let subst_table_addr = @unsafe { subst_table as *const unify.SubstTable as usize } as u64;
 
     // Clone method resolutions for this lowering context
     let cloned_resolutions = clone_method_resolutions(method_resolutions);
@@ -136,7 +136,7 @@ pub fn lower_body_with_const_info(
     next_mono_def_id: u32,
 ) -> MirLowerResult {
     let resolved_return_id = unify.apply_substs_id(subst_table, return_ty);
-    let subst_table_addr = subst_table as u64;
+    let subst_table_addr = @unsafe { subst_table as *const unify.SubstTable as usize } as u64;
     let cloned_resolutions = clone_method_resolutions(method_resolutions);
     let cloned_field_res = clone_field_resolutions(field_resolutions);
     let cloned_coercions = clone_coercion_entries(coercion_entries);
@@ -215,7 +215,7 @@ pub fn lower_closure(
 ) -> mir_body.MirBody {
     // Resolve return type (TyId-native) and create lowering context
     let resolved_return_id = unify.apply_substs_id(subst_table, return_ty);
-    let subst_table_addr = subst_table as u64;
+    let subst_table_addr = @unsafe { subst_table as *const unify.SubstTable as usize } as u64;
     let mut ctx = mir_lower_ctx.MirLowerCtx.new(def_id, resolved_return_id, span, subst_table_addr, Vec.new(), Vec.new(), Vec.new());
 
     // Lower closure parameters
@@ -267,7 +267,7 @@ pub fn lower_static(
 ) -> mir_body.MirBody {
     // Resolve type (TyId-native) and create context
     let resolved_id = unify.apply_substs_id(subst_table, ty);
-    let subst_table_addr = subst_table as u64;
+    let subst_table_addr = @unsafe { subst_table as *const unify.SubstTable as usize } as u64;
     let mut ctx = mir_lower_ctx.MirLowerCtx.new(def_id, resolved_id, span, subst_table_addr, Vec.new(), Vec.new(), Vec.new());
 
     // Lower initializer expression

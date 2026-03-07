@@ -495,7 +495,7 @@ impl MirLowerCtx {
     /// Returns a reference to the borrowed substitution table.
     /// SAFETY: See subst_table_addr field documentation for lifetime guarantees.
     fn get_subst_table(self: &Self) -> &unify.SubstTable {
-        self.subst_table_addr as &unify.SubstTable
+        @unsafe { (self.subst_table_addr as usize as *const unify.SubstTable) as &unify.SubstTable }
     }
 
     /// Resolves type inference variables to concrete types using the substitution table.

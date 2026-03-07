@@ -2,7 +2,7 @@
 
 **Version**: 0.6.0
 **Status**: Specification target
-**Last Updated**: 2026-02-28
+**Last Updated**: 2026-03-07
 
 **Revision 0.6.0 Changes** (ADR-036 — Concurrency Model):
 - Added `FinallyClause` to `HandlerBody` production (§3.4)
@@ -1027,7 +1027,7 @@ Arg ::= (Ident ':')? Expr       (* named arguments are optional at call site *)
 MethodCallExpr ::= Expr '.' Ident TypeArgs? '(' Args ')'
 ```
 
-> **Design note (named arguments — ADR-031):** The `(Ident ':')? Expr` syntax in `Arg` allows optional named arguments at call sites. Callers may use positional arguments, named arguments, or a mix. Named arguments eliminate the "Wrong Attribute" bug category (6.9% of LLM-generated bugs per Tambon et al. 2024) by making parameter binding explicit. No ambiguity exists with other syntax — Blood's anonymous records use `#{ }`, not `{ }`, so `name: value` inside function call parentheses is always a named argument.
+> **Design note (named arguments — ADR-031):** The `(Ident ':')? Expr` syntax in `Arg` allows optional named arguments at call sites. Callers may use positional arguments, named arguments, or a mix. Named arguments eliminate the "Wrong Attribute" bug category (6.9% of LLM-generated bugs per Tambon et al. 2024) by making parameter binding explicit. No ambiguity exists with other syntax — `name: value` inside function call parentheses is always a named argument, not a record literal, because record literals require either a type path prefix (`Point { x: 1 }`) or standalone braces outside a call context.
 >
 > ```blood
 > fn create_user(name: String, age: u32, role: Role) -> User { ... }
@@ -1060,6 +1060,7 @@ CastExpr ::= Expr 'as' Type
 | Integer sign reinterpretation | `i32 as u32` | Bit pattern preserved; reinterprets sign |
 | Pointer casts | `*const T as *mut T` | Requires `@unsafe`; changes pointer mutability |
 | Reference to raw pointer | `&T as *const T` | Safe; creates a raw pointer from a reference |
+| Raw pointer to reference | `*const T as &T` | Requires `@unsafe`; dereferences raw pointer |
 
 Casts not in this table (e.g., between unrelated struct types, `bool as struct`) are **compile errors**. Pointer-to-integer and integer-to-pointer casts require `@unsafe`. This follows Blood's safety hierarchy: safe conversions are available freely, conversions with data loss are explicit via `as`, conversions that compromise safety require `@unsafe`.
 
@@ -1444,7 +1445,7 @@ The `@` prefix marks operations that alter the language's default safety, alloca
 
 ## Appendix A: Complete Grammar (Consolidated)
 
-For machine processing, see `grammar.ebnf` in the Blood repository.
+*Note: A machine-readable `grammar.ebnf` extraction is not yet available.*
 
 ---
 
