@@ -516,12 +516,37 @@ run_ground_truth() {
         if head -1 "$src" | grep -q '^// COMPILE_FAIL:'; then
             local tmpdir_cf
             tmpdir_cf=$(mktemp -d)
-            if "$bin" build "$src" --build-dir "$tmpdir_cf" -o "$tmpdir_cf/out" --stdlib-path "$STDLIB_PATH" >/dev/null 2>&1; then
+            local stderr_file="$tmpdir_cf/stderr.txt"
+            if "$bin" build "$src" --build-dir "$tmpdir_cf" -o "$tmpdir_cf/out" --stdlib-path "$STDLIB_PATH" >/dev/null 2>"$stderr_file"; then
                 fail "$name (expected compile failure, but succeeded)"
                 comp_fail=$((comp_fail + 1))
             else
-                ok "$name"
-                pass=$((pass + 1))
+                # Verify EXPECT: directives if present.
+                # Only check when testing with blood-rust (bootstrap compiler).
+                # The selfhost has different message formatting (e.g. Adt(N) vs type names),
+                # so we only verify exit code for first_gen/second_gen.
+                local expect_failed=0
+                local bin_base
+                bin_base="$(basename "$bin")"
+                if [ "$bin_base" != "first_gen" ] && [ "$bin_base" != "second_gen" ] && [ "$bin_base" != "third_gen" ] && grep -q '^// EXPECT: ' "$src"; then
+                    while IFS= read -r expect_line; do
+                        local pattern="${expect_line#// EXPECT: }"
+                        if ! grep -qF "$pattern" "$stderr_file"; then
+                            if [ "$expect_failed" -eq 0 ]; then
+                                fail "$name (missing expected diagnostic)"
+                                expect_failed=1
+                            fi
+                            echo "    expected: $pattern" >&2
+                            echo "    stderr was: $(head -5 "$stderr_file")" >&2
+                        fi
+                    done < <(grep '^// EXPECT: ' "$src")
+                fi
+                if [ "$expect_failed" -eq 0 ]; then
+                    ok "$name"
+                    pass=$((pass + 1))
+                else
+                    comp_fail=$((comp_fail + 1))
+                fi
             fi
             rm -rf "$tmpdir_cf"
             continue
