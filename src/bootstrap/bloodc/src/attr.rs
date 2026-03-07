@@ -269,7 +269,7 @@ impl TestInfo {
         let full_path = if module_path.is_empty() {
             name.clone()
         } else {
-            format!("{}::{}", module_path, name)
+            format!("{}.{}", module_path, name)
         };
         Self {
             name,
@@ -383,13 +383,13 @@ mod tests {
         let config = TestConfig { is_test: true, ..Default::default() };
         let info = TestInfo::new(
             "my_test".to_string(),
-            "foo::bar".to_string(),
+            "foo.bar".to_string(),
             config,
             Span::dummy(),
         );
         assert_eq!(info.name, "my_test");
-        assert_eq!(info.module_path, "foo::bar");
-        assert_eq!(info.full_path, "foo::bar::my_test");
+        assert_eq!(info.module_path, "foo.bar");
+        assert_eq!(info.full_path, "foo.bar.my_test");
     }
 
     #[test]

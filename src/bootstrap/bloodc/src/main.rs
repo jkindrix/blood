@@ -2397,7 +2397,7 @@ fn run_single_test(
         return TestOutcome::Failed(format!("Failed to write test harness: {}", e));
     }
 
-    // Build the test harness
+    // Build the test harness — output directly to temp dir so we can find the binary
     let build_args = FileArgs {
         file: harness_file.clone(),
         debug: false,
@@ -2405,9 +2405,9 @@ fn run_single_test(
         stdlib_path: args.stdlib_path.clone(),
         release: false,
         emit: Vec::new(),
-        output: None,
+        output: Some(harness_exe.clone()),
         no_cache: false,
-        build_dir: None,
+        build_dir: Some(temp_dir.join("blood_test_build")),
     };
 
     // Suppress build output unless verbose
