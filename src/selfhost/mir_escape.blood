@@ -23,12 +23,22 @@ mod mir_body;
 pub enum EscapeState {
     /// Value does not escape the function — safe for stack allocation.
     NoEscape,
+    /// Value is in an effectful function but only used before or after
+    /// suspension points, not across them. Safe for stack allocation,
+    /// no snapshot needed.
+    EffectLocal,
     /// Value escapes through a function argument — needs region allocation.
     ArgEscape,
+    /// Value is captured in a handler closure's state. The handler owns
+    /// the reference — region allocation, no snapshot needed.
+    EffectCapture,
     /// Value is stored into a heap-allocated structure — needs region allocation.
     /// Distinguished from GlobalEscape: the value lives in heap memory but
     /// doesn't necessarily reach a global/static. Allocation: Tier 1 (Region).
     HeapEscape,
+    /// Value crosses an effect suspension point — needs region allocation
+    /// and generation snapshot validation on resume.
+    EffectEscape,
     /// Value escapes to a global or return — needs persistent allocation.
     GlobalEscape,
 }
@@ -47,12 +57,16 @@ impl EscapeState {
     }
 
     /// Returns a numeric rank for lattice ordering.
+    /// NoEscape < EffectLocal < ArgEscape < EffectCapture < HeapEscape < EffectEscape < GlobalEscape
     fn rank(self: &EscapeState) -> i32 {
         match self {
             &EscapeState.NoEscape => 0,
-            &EscapeState.ArgEscape => 1,
-            &EscapeState.HeapEscape => 2,
-            &EscapeState.GlobalEscape => 3,
+            &EscapeState.EffectLocal => 1,
+            &EscapeState.ArgEscape => 2,
+            &EscapeState.EffectCapture => 3,
+            &EscapeState.HeapEscape => 4,
+            &EscapeState.EffectEscape => 5,
+            &EscapeState.GlobalEscape => 6,
         }
     }
 
@@ -60,8 +74,11 @@ impl EscapeState {
     fn clone(self: &EscapeState) -> EscapeState {
         match self {
             &EscapeState.NoEscape => EscapeState.NoEscape,
+            &EscapeState.EffectLocal => EscapeState.EffectLocal,
             &EscapeState.ArgEscape => EscapeState.ArgEscape,
+            &EscapeState.EffectCapture => EscapeState.EffectCapture,
             &EscapeState.HeapEscape => EscapeState.HeapEscape,
+            &EscapeState.EffectEscape => EscapeState.EffectEscape,
             &EscapeState.GlobalEscape => EscapeState.GlobalEscape,
         }
     }
@@ -70,8 +87,11 @@ impl EscapeState {
     pub fn needs_heap(self: &EscapeState) -> bool {
         match self {
             &EscapeState.NoEscape => false,
+            &EscapeState.EffectLocal => false,
             &EscapeState.ArgEscape => true,
+            &EscapeState.EffectCapture => true,
             &EscapeState.HeapEscape => true,
+            &EscapeState.EffectEscape => true,
             &EscapeState.GlobalEscape => true,
         }
     }
@@ -112,9 +132,6 @@ pub struct EscapeAnalysis {
     pub local_states: Vec<EscapeState>,
     /// Locals captured by closures within this function.
     pub closure_captures: Vec<ClosureCapture>,
-    /// Locals captured by effect operations (Perform args).
-    /// These need snapshot validation on resume.
-    pub effect_captured: Vec<mir_def.MirLocalId>,
 }
 
 /// A record of a local being captured by a closure.
@@ -135,7 +152,6 @@ impl EscapeAnalysis {
         EscapeAnalysis {
             local_states: states,
             closure_captures: Vec.new(),
-            effect_captured: Vec.new(),
         }
     }
 
@@ -148,28 +164,35 @@ impl EscapeAnalysis {
     pub fn recommended_tier(self: &EscapeAnalysis, local: mir_def.MirLocalId) -> MemoryTier {
         match &self.local_states[local.as_usize()] {
             &EscapeState.NoEscape => MemoryTier.Stack,
+            &EscapeState.EffectLocal => MemoryTier.Stack,
             &EscapeState.ArgEscape => MemoryTier.Region,
+            &EscapeState.EffectCapture => MemoryTier.Region,
             &EscapeState.HeapEscape => MemoryTier.Region,
+            &EscapeState.EffectEscape => MemoryTier.Region,
             &EscapeState.GlobalEscape => MemoryTier.Persistent,
         }
     }
 
-    /// Returns true if a local is captured by an effect operation.
+    /// Returns true if a local is captured by an effect operation
+    /// (EffectCapture or EffectEscape state). Used for stack promotion exclusion.
     pub fn is_effect_captured(self: &EscapeAnalysis, local: mir_def.MirLocalId) -> bool {
-        for i in 0usize..self.effect_captured.len() {
-            if self.effect_captured[i].index == local.index {
-                return true;
-            }
+        let idx = local.as_usize();
+        if idx < self.local_states.len() {
+            let rank = self.local_states[idx].rank();
+            // EffectCapture (rank 3) or EffectEscape (rank 5)
+            return rank == 3 || rank == 5;
         }
         false
     }
 
-    /// Marks a local as effect-captured (referenced in Perform args).
-    fn mark_effect_captured(self: &mut EscapeAnalysis, local: mir_def.MirLocalId) {
-        // Avoid duplicates
-        if !self.is_effect_captured(local) {
-            self.effect_captured.push(local);
+    /// Returns true if a local needs generation snapshot validation on resume.
+    /// Only EffectEscape locals cross suspension points and need snapshots.
+    pub fn needs_effect_snapshot(self: &EscapeAnalysis, local: mir_def.MirLocalId) -> bool {
+        let idx = local.as_usize();
+        if idx < self.local_states.len() {
+            return self.local_states[idx].rank() == 5;
         }
+        false
     }
 
     /// Marks a local as escaping through an argument.
@@ -178,6 +201,26 @@ impl EscapeAnalysis {
         if idx < self.local_states.len() {
             let current = &self.local_states[idx];
             let new_state = current.join(&EscapeState.ArgEscape);
+            self.local_states[idx] = new_state;
+        }
+    }
+
+    /// Marks a local as EffectEscape (crosses effect suspension point).
+    fn mark_effect_escape(self: &mut EscapeAnalysis, local: mir_def.MirLocalId) {
+        let idx = local.as_usize();
+        if idx < self.local_states.len() {
+            let current = &self.local_states[idx];
+            let new_state = current.join(&EscapeState.EffectEscape);
+            self.local_states[idx] = new_state;
+        }
+    }
+
+    /// Marks a local as EffectCapture (handler closure state).
+    fn mark_effect_capture(self: &mut EscapeAnalysis, local: mir_def.MirLocalId) {
+        let idx = local.as_usize();
+        if idx < self.local_states.len() {
+            let current = &self.local_states[idx];
+            let new_state = current.join(&EscapeState.EffectCapture);
             self.local_states[idx] = new_state;
         }
     }
@@ -261,9 +304,9 @@ fn analyze_statement(stmt: &mir_stmt.Statement, result: &mut EscapeAnalysis) {
         &mir_stmt.StatementKind.StorageDead(_) => {}
         &mir_stmt.StatementKind.Drop(_) => {}
         &mir_stmt.StatementKind.PushHandler { handler_id: _, ref state_place, state_kind: _ } => {
-            // Handler state may escape through the handler mechanism
+            // Handler state is captured by the handler closure (EffectCapture).
             if state_place.is_local() {
-                result.mark_arg_escape(state_place.local);
+                result.mark_effect_capture(state_place.local);
             }
         }
         &mir_stmt.StatementKind.PopHandler => {}
@@ -305,16 +348,14 @@ fn analyze_terminator(term: &mir_term.Terminator, result: &mut EscapeAnalysis) {
         }
         &mir_term.TerminatorKind.Assert { cond: _, expected: _, msg: _, target: _, unwind: _ } => {}
         &mir_term.TerminatorKind.Perform { effect_id: _, op_index: _, ref args, destination: _, target: _, is_tail_resumptive: _ } => {
-            // Effect operation args escape through the handler
+            // Effect operation args cross a suspension point (EffectEscape).
             for i in 0usize..args.len() {
-                mark_operand_escape_arg(&args[i], result);
-                // Also mark as effect-captured for snapshot validation
                 match &args[i] {
                     &mir_types.Operand.Copy(ref place) => {
-                        result.mark_effect_captured(place.local);
+                        result.mark_effect_escape(place.local);
                     }
                     &mir_types.Operand.Move(ref place) => {
-                        result.mark_effect_captured(place.local);
+                        result.mark_effect_escape(place.local);
                     }
                     &mir_types.Operand.Constant(_) => {}
                 }
@@ -518,8 +559,11 @@ fn analyze_rvalue_escape(rvalue: &mir_types.Rvalue, result: &mut EscapeAnalysis)
 pub fn recommended_tier(state: &EscapeState) -> MemoryTier {
     match state {
         &EscapeState.NoEscape => MemoryTier.Stack,
+        &EscapeState.EffectLocal => MemoryTier.Stack,
         &EscapeState.ArgEscape => MemoryTier.Region,
+        &EscapeState.EffectCapture => MemoryTier.Region,
         &EscapeState.HeapEscape => MemoryTier.Region,
+        &EscapeState.EffectEscape => MemoryTier.Region,
         &EscapeState.GlobalEscape => MemoryTier.Persistent,
     }
 }

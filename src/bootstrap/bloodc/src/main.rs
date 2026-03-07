@@ -1434,7 +1434,9 @@ fn cmd_build(args: &FileArgs, verbosity: u8, timings: bool) -> ExitCode {
                 // Report tier recommendations per function
                 for (&def_id, results) in &escape_results {
                     let stack_count = results.stack_promotable.len();
-                    let effect_captured = results.effect_captured.len();
+                    let effect_captured = results.states.values()
+                        .filter(|s| s.is_effect_captured())
+                        .count();
                     if verbosity > 2 {
                         eprintln!("  {:?}: {} stack-promotable, {} effect-captured",
                             def_id, stack_count, effect_captured);

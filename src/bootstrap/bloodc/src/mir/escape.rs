@@ -68,7 +68,8 @@ use super::types::{
 
 /// The escape state of a value.
 ///
-/// Forms a lattice: NoEscape < ArgEscape < HeapEscape < GlobalEscape
+/// Forms a lattice (variant order matters for derived Ord):
+/// NoEscape < EffectLocal < ArgEscape < EffectCapture < HeapEscape < EffectEscape < GlobalEscape
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub enum EscapeState {
     /// Value does not escape its defining function.
@@ -76,15 +77,28 @@ pub enum EscapeState {
     #[default]
     NoEscape,
 
+    /// Value is in an effectful function but only used before or after
+    /// suspension points, not across them. Safe for stack allocation,
+    /// no snapshot needed.
+    EffectLocal,
+
     /// Value escapes via function argument but not globally.
     /// May be stack-allocated if callee is inlined, otherwise Tier 1.
     ArgEscape,
+
+    /// Value is captured in a handler closure's state. The handler owns
+    /// the reference — region allocation, no snapshot needed.
+    EffectCapture,
 
     /// Value is stored into a heap-allocated structure (through a pointer dereference).
     /// Needs region allocation (Tier 1), but NOT persistent allocation (Tier 2).
     /// Distinguished from GlobalEscape: the value lives in heap memory but
     /// doesn't necessarily reach a global/static.
     HeapEscape,
+
+    /// Value crosses an effect suspension point — needs region allocation
+    /// and generation snapshot validation on resume.
+    EffectEscape,
 
     /// Value escapes to a global or static location.
     /// Must be persistently allocated (Tier 2).
@@ -99,15 +113,27 @@ impl EscapeState {
 
     /// Check if this state allows stack allocation.
     pub fn can_stack_allocate(self) -> bool {
-        matches!(self, EscapeState::NoEscape)
+        matches!(self, EscapeState::NoEscape | EscapeState::EffectLocal)
+    }
+
+    /// Check if this state is an effect-related capture (EffectCapture or EffectEscape).
+    /// Used for stack promotion exclusion.
+    pub fn is_effect_captured(self) -> bool {
+        matches!(self, EscapeState::EffectCapture | EscapeState::EffectEscape)
+    }
+
+    /// Check if this state requires generation snapshot validation on resume.
+    /// Only EffectEscape locals cross suspension points and need snapshots.
+    pub fn needs_effect_snapshot(self) -> bool {
+        matches!(self, EscapeState::EffectEscape)
     }
 
     /// Get the recommended memory tier for this escape state.
     pub fn recommended_tier(self) -> MemoryTier {
         match self {
-            EscapeState::NoEscape => MemoryTier::Stack,
-            EscapeState::ArgEscape => MemoryTier::Region,
-            EscapeState::HeapEscape => MemoryTier::Region,
+            EscapeState::NoEscape | EscapeState::EffectLocal => MemoryTier::Stack,
+            EscapeState::ArgEscape | EscapeState::EffectCapture
+            | EscapeState::HeapEscape | EscapeState::EffectEscape => MemoryTier::Region,
             EscapeState::GlobalEscape => MemoryTier::Persistent,
         }
     }
@@ -123,8 +149,6 @@ impl EscapeState {
 pub struct EscapeResults {
     /// Escape state for each local.
     pub states: HashMap<LocalId, EscapeState>,
-    /// Which locals are involved in effect operations.
-    pub effect_captured: HashSet<LocalId>,
     /// Allocations that can be promoted to stack.
     pub stack_promotable: HashSet<LocalId>,
     /// Closures and their captured locals.
@@ -139,7 +163,6 @@ impl EscapeResults {
     pub fn new() -> Self {
         Self {
             states: HashMap::new(),
-            effect_captured: HashSet::new(),
             stack_promotable: HashSet::new(),
             closure_captures: HashMap::new(),
             captured_by_closure: HashSet::new(),
@@ -156,9 +179,16 @@ impl EscapeResults {
         self.stack_promotable.contains(&local)
     }
 
-    /// Check if a local is captured by an effect operation.
+    /// Check if a local is captured by an effect operation
+    /// (EffectCapture or EffectEscape state). Used for stack promotion exclusion.
     pub fn is_effect_captured(&self, local: LocalId) -> bool {
-        self.effect_captured.contains(&local)
+        self.get(local).is_effect_captured()
+    }
+
+    /// Check if a local needs generation snapshot validation on resume.
+    /// Only EffectEscape locals cross suspension points and need snapshots.
+    pub fn needs_effect_snapshot(&self, local: LocalId) -> bool {
+        self.get(local).needs_effect_snapshot()
     }
 
     /// Check if a local is captured by a closure.
@@ -244,10 +274,16 @@ pub struct EscapeStatistics {
 pub struct EscapeStateBreakdown {
     /// Locals with NoEscape state.
     pub no_escape: usize,
+    /// Locals with EffectLocal state.
+    pub effect_local: usize,
     /// Locals with ArgEscape state.
     pub arg_escape: usize,
+    /// Locals with EffectCapture state.
+    pub effect_capture: usize,
     /// Locals with HeapEscape state.
     pub heap_escape: usize,
+    /// Locals with EffectEscape state.
+    pub effect_escape: usize,
     /// Locals with GlobalEscape state.
     pub global_escape: usize,
 }
@@ -270,15 +306,23 @@ impl EscapeStatistics {
         self.functions_analyzed += 1;
         self.total_locals += results.states.len();
         self.stack_promotable += results.stack_promotable.len();
-        self.effect_captured += results.effect_captured.len();
         self.closure_captured += results.captured_by_closure.len();
 
         // Count by escape state
         for state in results.states.values() {
             match state {
                 EscapeState::NoEscape => self.by_state.no_escape += 1,
+                EscapeState::EffectLocal => self.by_state.effect_local += 1,
                 EscapeState::ArgEscape => self.by_state.arg_escape += 1,
+                EscapeState::EffectCapture => {
+                    self.by_state.effect_capture += 1;
+                    self.effect_captured += 1;
+                }
                 EscapeState::HeapEscape => self.by_state.heap_escape += 1,
+                EscapeState::EffectEscape => {
+                    self.by_state.effect_escape += 1;
+                    self.effect_captured += 1;
+                }
                 EscapeState::GlobalEscape => self.by_state.global_escape += 1,
             }
         }
@@ -295,8 +339,11 @@ impl EscapeStatistics {
         self.effect_captured += other.effect_captured;
         self.closure_captured += other.closure_captured;
         self.by_state.no_escape += other.by_state.no_escape;
+        self.by_state.effect_local += other.by_state.effect_local;
         self.by_state.arg_escape += other.by_state.arg_escape;
+        self.by_state.effect_capture += other.by_state.effect_capture;
         self.by_state.heap_escape += other.by_state.heap_escape;
+        self.by_state.effect_escape += other.by_state.effect_escape;
         self.by_state.global_escape += other.by_state.global_escape;
         self.functions_analyzed += other.functions_analyzed;
     }
@@ -353,42 +400,41 @@ impl EscapeStatistics {
         report.push_str("║  ESCAPE STATE BREAKDOWN                                          ║\n");
         report.push_str("╠══════════════════════════════════════════════════════════════════╣\n");
 
-        let no_escape_pct = if self.total_locals > 0 {
-            (self.by_state.no_escape as f64 / self.total_locals as f64) * 100.0
-        } else {
-            0.0
-        };
-        let arg_escape_pct = if self.total_locals > 0 {
-            (self.by_state.arg_escape as f64 / self.total_locals as f64) * 100.0
-        } else {
-            0.0
-        };
-        let heap_escape_pct = if self.total_locals > 0 {
-            (self.by_state.heap_escape as f64 / self.total_locals as f64) * 100.0
-        } else {
-            0.0
-        };
-        let global_escape_pct = if self.total_locals > 0 {
-            (self.by_state.global_escape as f64 / self.total_locals as f64) * 100.0
-        } else {
-            0.0
+        let pct = |n: usize| -> f64 {
+            if self.total_locals > 0 {
+                (n as f64 / self.total_locals as f64) * 100.0
+            } else {
+                0.0
+            }
         };
 
         report.push_str(&format!(
             "║  NoEscape:                     {:>6} ({:>5.1}%)                   ║\n",
-            self.by_state.no_escape, no_escape_pct
+            self.by_state.no_escape, pct(self.by_state.no_escape)
+        ));
+        report.push_str(&format!(
+            "║  EffectLocal:                  {:>6} ({:>5.1}%)                   ║\n",
+            self.by_state.effect_local, pct(self.by_state.effect_local)
         ));
         report.push_str(&format!(
             "║  ArgEscape:                    {:>6} ({:>5.1}%)                   ║\n",
-            self.by_state.arg_escape, arg_escape_pct
+            self.by_state.arg_escape, pct(self.by_state.arg_escape)
+        ));
+        report.push_str(&format!(
+            "║  EffectCapture:                {:>6} ({:>5.1}%)                   ║\n",
+            self.by_state.effect_capture, pct(self.by_state.effect_capture)
         ));
         report.push_str(&format!(
             "║  HeapEscape:                   {:>6} ({:>5.1}%)                   ║\n",
-            self.by_state.heap_escape, heap_escape_pct
+            self.by_state.heap_escape, pct(self.by_state.heap_escape)
+        ));
+        report.push_str(&format!(
+            "║  EffectEscape:                 {:>6} ({:>5.1}%)                   ║\n",
+            self.by_state.effect_escape, pct(self.by_state.effect_escape)
         ));
         report.push_str(&format!(
             "║  GlobalEscape:                 {:>6} ({:>5.1}%)                   ║\n",
-            self.by_state.global_escape, global_escape_pct
+            self.by_state.global_escape, pct(self.by_state.global_escape)
         ));
         report.push_str("╠══════════════════════════════════════════════════════════════════╣\n");
         report.push_str("║  SPECIAL CAPTURES                                                ║\n");
@@ -459,8 +505,6 @@ impl EscapeStatistics {
 pub struct EscapeAnalyzer {
     /// Current escape states.
     states: HashMap<LocalId, EscapeState>,
-    /// Locals captured by effect operations.
-    effect_captured: HashSet<LocalId>,
     /// Global definitions (statics, etc.).
     globals: HashSet<DefId>,
     /// Maps closure local → captured locals.
@@ -474,7 +518,6 @@ impl EscapeAnalyzer {
     pub fn new() -> Self {
         Self {
             states: HashMap::new(),
-            effect_captured: HashSet::new(),
             globals: HashSet::new(),
             closure_captures: HashMap::new(),
             captured_by_closure: HashSet::new(),
@@ -504,7 +547,6 @@ impl EscapeAnalyzer {
         F: Fn(DefId) -> Option<Vec<crate::hir::Type>>,
     {
         self.states.clear();
-        self.effect_captured.clear();
         self.closure_captures.clear();
         self.captured_by_closure.clear();
 
@@ -632,10 +674,10 @@ impl EscapeAnalyzer {
             //    - For Copy types, escape state only tracks value flow, not storage
             //    - Storage can always be on the stack since values are copied on use
             //    - This includes primitives, unit, and structs with only Copy fields
-            // 2. OR NoEscape state AND not captured by effect operations or closures
+            // 2. OR stack-eligible state (NoEscape/EffectLocal) AND not captured by escaping closures
             let is_copy_type = ty.map(|t| t.is_copy(adt_fields)).unwrap_or(false);
             let escape_allows = state.can_stack_allocate()
-                && !self.effect_captured.contains(local)
+                && !state.is_effect_captured()
                 && !self.is_captured_by_escaping_closure(*local);
 
             let can_stack = is_copy_type || escape_allows;
@@ -646,7 +688,6 @@ impl EscapeAnalyzer {
 
         EscapeResults {
             states: self.states.clone(),
-            effect_captured: self.effect_captured.clone(),
             stack_promotable,
             closure_captures: self.closure_captures.clone(),
             captured_by_closure: self.captured_by_closure.clone(),
@@ -700,9 +741,8 @@ impl EscapeAnalyzer {
                 self.analyze_assignment(place, rvalue)
             }
             StatementKind::CaptureSnapshot(local) => {
-                // Effect snapshots capture references
-                self.effect_captured.insert(*local);
-                false
+                // Effect snapshots capture references — mark as EffectEscape
+                self.update_state(*local, EscapeState::EffectEscape)
             }
             StatementKind::Drop(place) | StatementKind::IncrementGeneration(place) => {
                 // These don't affect escape state
@@ -801,13 +841,11 @@ impl EscapeAnalyzer {
                 // Return value escapes to caller (already handled in initialization)
             }
             TerminatorKind::Perform { args, .. } => {
-                // Effect operations may capture values
+                // Effect operation args cross a suspension point (EffectEscape)
                 for arg in args {
                     if let Some(place) = arg.place() {
-                        // Only track locals, not statics
                         if let Some(local) = place.as_local() {
-                            self.effect_captured.insert(local);
-                            changed |= self.update_state(local, EscapeState::ArgEscape);
+                            changed |= self.update_state(local, EscapeState::EffectEscape);
                         }
                     }
                 }
@@ -1149,10 +1187,18 @@ mod tests {
         results.states.insert(LocalId::new(1), EscapeState::ArgEscape);
         assert_eq!(results.recommended_tier(LocalId::new(1)), MemoryTier::Region);
 
-        // Effect captured -> Region (even if NoEscape)
-        results.states.insert(LocalId::new(2), EscapeState::NoEscape);
-        results.effect_captured.insert(LocalId::new(2));
+        // EffectEscape -> Region
+        results.states.insert(LocalId::new(2), EscapeState::EffectEscape);
         assert_eq!(results.recommended_tier(LocalId::new(2)), MemoryTier::Region);
+
+        // EffectCapture -> Region
+        results.states.insert(LocalId::new(3), EscapeState::EffectCapture);
+        assert_eq!(results.recommended_tier(LocalId::new(3)), MemoryTier::Region);
+
+        // EffectLocal -> Stack
+        results.states.insert(LocalId::new(4), EscapeState::EffectLocal);
+        results.stack_promotable.insert(LocalId::new(4));
+        assert_eq!(results.recommended_tier(LocalId::new(4)), MemoryTier::Stack);
     }
 
     #[test]
@@ -1567,9 +1613,9 @@ mod tests {
             // recommended_tier matches the state
             let tier = state.recommended_tier();
             match state {
-                EscapeState::NoEscape => assert_eq!(tier, MemoryTier::Stack),
-                EscapeState::ArgEscape => assert_eq!(tier, MemoryTier::Region),
-                EscapeState::HeapEscape => assert_eq!(tier, MemoryTier::Region),
+                EscapeState::NoEscape | EscapeState::EffectLocal => assert_eq!(tier, MemoryTier::Stack),
+                EscapeState::ArgEscape | EscapeState::EffectCapture
+                | EscapeState::HeapEscape | EscapeState::EffectEscape => assert_eq!(tier, MemoryTier::Region),
                 EscapeState::GlobalEscape => assert_eq!(tier, MemoryTier::Persistent),
             }
         }
@@ -1734,43 +1780,46 @@ mod tests {
         }
     }
 
-    // Property: effect_captured values cannot be stack allocated
+    // Property: EffectEscape values cannot be stack allocated
     #[test]
     fn test_property_effect_captured_not_stack_promotable() {
         let mut results = EscapeResults::new();
         let local = LocalId::new(5);
 
-        // Mark as effect captured
-        results.effect_captured.insert(local);
-        results.states.insert(local, EscapeState::NoEscape);
+        // Mark as EffectEscape (crosses suspension point)
+        results.states.insert(local, EscapeState::EffectEscape);
 
-        // Even though state is NoEscape, recommended tier should be Region
-        // because effect_captured forces heap allocation
+        // EffectEscape → Region tier
         assert_eq!(
             results.recommended_tier(local),
             MemoryTier::Region,
-            "effect_captured local should have Region tier"
+            "EffectEscape local should have Region tier"
         );
+        assert!(results.is_effect_captured(local));
+        assert!(results.needs_effect_snapshot(local));
     }
 
     // Property: escape states form a finite lattice (bounded iterations)
     #[test]
     fn test_property_lattice_bounded() {
-        // The lattice has exactly 4 elements, so any ascending chain
-        // has at most 4 elements, guaranteeing termination
+        // The lattice has exactly 7 elements, so any ascending chain
+        // has at most 7 elements, guaranteeing termination
         let mut state = EscapeState::NoEscape;
         let mut count = 0;
 
         // Simulate worst-case ascending chain
         while state < EscapeState::GlobalEscape {
             state = state.join(match state {
-                EscapeState::NoEscape => EscapeState::ArgEscape,
-                EscapeState::ArgEscape => EscapeState::HeapEscape,
-                EscapeState::HeapEscape => EscapeState::GlobalEscape,
+                EscapeState::NoEscape => EscapeState::EffectLocal,
+                EscapeState::EffectLocal => EscapeState::ArgEscape,
+                EscapeState::ArgEscape => EscapeState::EffectCapture,
+                EscapeState::EffectCapture => EscapeState::HeapEscape,
+                EscapeState::HeapEscape => EscapeState::EffectEscape,
+                EscapeState::EffectEscape => EscapeState::GlobalEscape,
                 EscapeState::GlobalEscape => EscapeState::GlobalEscape,
             });
             count += 1;
-            assert!(count <= 4, "lattice chain exceeded expected bound");
+            assert!(count <= 7, "lattice chain exceeded expected bound");
         }
     }
 

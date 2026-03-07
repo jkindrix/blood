@@ -2163,7 +2163,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         if let Some(escape) = escape_results {
             for local in &body.locals {
                 // Check if this local is effect-captured and might contain a genref
-                if escape.is_effect_captured(local.id) && super::types::type_may_contain_genref_impl(&local.ty) {
+                if escape.needs_effect_snapshot(local.id) && super::types::type_may_contain_genref_impl(&local.ty) {
                     // Get the local's storage
                     if let Some(&local_ptr) = self.locals.get(&local.id) {
                         // Load the pointer value and extract address/generation.

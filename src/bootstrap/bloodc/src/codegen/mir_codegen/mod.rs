@@ -75,7 +75,7 @@ use crate::diagnostics::Diagnostic;
 use crate::hir::{DefId, LocalId, Type};
 use crate::mir::body::MirBody;
 use crate::mir::types::BasicBlockId;
-use crate::mir::{EscapeResults, EscapeState, MemoryTier};
+use crate::mir::{EscapeResults, MemoryTier};
 use crate::span::Span;
 use crate::ice_err;
 
@@ -452,7 +452,7 @@ impl<'ctx, 'a> MirCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
             // For Region tier, additionally skip if the local doesn't escape
             // and isn't effect-captured (redundant with tier check, but explicit)
             let state = results.get(local);
-            state == EscapeState::NoEscape && !results.is_effect_captured(local)
+            state.can_stack_allocate() && !state.is_effect_captured()
         } else {
             false // Conservative: always check if no analysis
         }

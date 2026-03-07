@@ -315,10 +315,13 @@ pub fn generate_function_with_ctx(
     // Emit allocas with escape-aware allocation decisions
     codegen_stmt.emit_allocas_with_escapes(ctx, body, &escape_result);
 
-    // Store effect-captured locals for snapshot validation during Perform codegen
+    // Store effect-escaped locals for snapshot validation during Perform codegen
     ctx.effect_captured_locals.clear();
-    for eci in 0usize..escape_result.effect_captured.len() {
-        ctx.effect_captured_locals.push(escape_result.effect_captured[eci].index);
+    for eci in 0usize..escape_result.local_states.len() {
+        let local_id = mir_def.MirLocalId { index: eci as u32 };
+        if escape_result.needs_effect_snapshot(local_id) {
+            ctx.effect_captured_locals.push(eci as u32);
+        }
     }
 
     // Store arguments into allocas

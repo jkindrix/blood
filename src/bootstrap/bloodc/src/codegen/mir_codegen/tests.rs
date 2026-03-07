@@ -684,10 +684,9 @@ fn test_get_local_tier_respects_escape_results() {
     let local2 = LocalId::new(2);
     results.states.insert(local2, crate::mir::escape::EscapeState::ArgEscape);
 
-    // Local 3: NoEscape but effect-captured, not stack-promotable
+    // Local 3: EffectEscape, not stack-promotable
     let local3 = LocalId::new(3);
-    results.states.insert(local3, crate::mir::escape::EscapeState::NoEscape);
-    results.effect_captured.insert(local3);
+    results.states.insert(local3, crate::mir::escape::EscapeState::EffectEscape);
 
     // Verify tier recommendations
     assert_eq!(results.recommended_tier(local1), MemoryTier::Stack,
@@ -695,7 +694,7 @@ fn test_get_local_tier_respects_escape_results() {
     assert_eq!(results.recommended_tier(local2), MemoryTier::Region,
         "ArgEscape should recommend Region");
     assert_eq!(results.recommended_tier(local3), MemoryTier::Region,
-        "Effect-captured should recommend Region even if NoEscape state");
+        "EffectEscape should recommend Region");
 }
 
 #[test]
