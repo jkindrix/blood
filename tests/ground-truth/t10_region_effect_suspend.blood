@@ -1,0 +1,38 @@
+// Test: region suspension protocol for non-tail-resumptive effect handlers.
+// Verifies that regions are properly suspended/resumed when a continuation
+// is captured inside a region block.
+// EXPECT: 100
+// EXPECT: region_suspend_ok
+effect Transform {
+    op apply(x: i32) -> i32;
+}
+
+deep handler Doubler for Transform {
+    return(x) { x }
+    op apply(x) {
+        // Non-tail-resumptive: work AFTER resume
+        let result: i32 = resume(x * 2);
+        result
+    }
+}
+
+fn compute() -> i32 / {Transform} {
+    // Region block around a perform — this triggers region suspension
+    let val: i32 = region {
+        let base: i32 = 50;
+        let transformed: i32 = perform Transform.apply(base);
+        transformed
+    };
+    val
+}
+
+fn main() -> i32 {
+    let result: i32 = with Doubler {} handle {
+        compute()
+    };
+    println_int(result);
+    if result != 100 { return 1; }
+
+    println_str("region_suspend_ok");
+    0
+}

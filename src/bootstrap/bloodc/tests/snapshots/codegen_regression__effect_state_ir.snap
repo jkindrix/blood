@@ -98,8 +98,6 @@ declare i64 @blood_clock_nanos()
 
 declare i64 @blood_continuation_create_multishot(ptr, ptr)
 
-declare i64 @blood_continuation_resume(i64, i64)
-
 declare i64 @blood_continuation_resume_with_regions(i64, i64)
 
 declare i64 @blood_continuation_take_suspended_regions(i64, ptr, i64)
@@ -637,7 +635,7 @@ resume_tail:                                      ; preds = %entry
   ret i64 %load
 
 resume_cont:                                      ; preds = %entry
-  %cont_result = call i64 @blood_continuation_resume(i64 %cont_handle, i64 %load)
+  %cont_result = call i64 @blood_continuation_resume_with_regions(i64 %cont_handle, i64 %load)
   br label %resume_merge
 
 resume_merge:                                     ; preds = %resume_cont
@@ -674,7 +672,7 @@ resume_tail:                                      ; preds = %entry
   ret i64 0
 
 resume_cont:                                      ; preds = %entry
-  %cont_result = call i64 @blood_continuation_resume(i64 %cont_handle, i64 0)
+  %cont_result = call i64 @blood_continuation_resume_with_regions(i64 %cont_handle, i64 0)
   br label %resume_merge
 
 resume_merge:                                     ; preds = %resume_cont

@@ -5011,6 +5011,17 @@ pub unsafe extern "C" fn blood_continuation_clone(handle: ContinuationHandle) ->
     // Also register the clone in the multi-shot registry
     get_multishot_registry().lock().insert(new_id, cb);
 
+    // Clone suspended region associations and increment suspend counts
+    let regions = get_continuation_regions();
+    let mut reg = regions.lock();
+    if let Some(region_ids) = reg.get(&handle) {
+        let cloned_regions = region_ids.clone();
+        for &rid in &cloned_regions {
+            blood_region_suspend(rid);
+        }
+        reg.insert(new_id, cloned_regions);
+    }
+
     // Register and return
     let k_ref = register_continuation(k);
     k_ref.id
@@ -5022,6 +5033,16 @@ pub unsafe extern "C" fn blood_continuation_clone(handle: ContinuationHandle) ->
 /// This removes the callback from the multi-shot registry.
 #[no_mangle]
 pub extern "C" fn blood_continuation_drop_multishot(handle: ContinuationHandle) {
+    // Clean up suspended region associations — decrement suspend counts
+    let regions = get_continuation_regions();
+    let mut reg = regions.lock();
+    if let Some(region_ids) = reg.remove(&handle) {
+        for rid in &region_ids {
+            blood_region_resume(*rid);
+        }
+    }
+    drop(reg);
+
     get_multishot_registry().lock().remove(&handle);
     // Also remove from continuation registry if present
     let _ = take_continuation(ContinuationRef { id: handle });

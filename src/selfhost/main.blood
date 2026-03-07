@@ -3193,7 +3193,7 @@ fn generate_handler_wrappers(
 
 /// Emits resume logic for a handler op wrapper.
 /// If cont == 0, returns resume_val directly (tail-resumptive).
-/// Otherwise, calls blood_continuation_resume and returns its result.
+/// Otherwise, calls blood_continuation_resume_with_regions and returns its result.
 fn emit_resume_logic(ir: &mut String, resume_val: &str) {
     ir.push_str("  %is_tail = icmp eq i64 %cont, 0\n");
     ir.push_str("  br i1 %is_tail, label %tail_resume, label %cont_resume\n");
@@ -3202,7 +3202,7 @@ fn emit_resume_logic(ir: &mut String, resume_val: &str) {
     ir.push_str(resume_val);
     ir.push_str("\n");
     ir.push_str("cont_resume:\n");
-    ir.push_str("  %cont_result = call i64 @blood_continuation_resume(i64 %cont, i64 ");
+    ir.push_str("  %cont_result = call i64 @blood_continuation_resume_with_regions(i64 %cont, i64 ");
     ir.push_str(resume_val);
     ir.push_str(")\n");
     ir.push_str("  ret i64 %cont_result\n");

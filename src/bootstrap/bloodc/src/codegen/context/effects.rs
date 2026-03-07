@@ -700,14 +700,14 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 cont_handle
             };
 
-            let cont_resume_fn = self.module.get_function("blood_continuation_resume")
+            let cont_resume_fn = self.module.get_function("blood_continuation_resume_with_regions")
                 .unwrap_or_else(|| {
-                    // Declare blood_continuation_resume: (handle: i64, value: i64) -> i64
+                    // Declare blood_continuation_resume_with_regions: (handle: i64, value: i64) -> i64
                     let fn_type = i64_type.fn_type(&[i64_type.into(), i64_type.into()], false);
-                    self.module.add_function("blood_continuation_resume", fn_type, None)
+                    self.module.add_function("blood_continuation_resume_with_regions", fn_type, None)
                 });
 
-            // Call blood_continuation_resume(resume_cont_handle, resume_value)
+            // Call blood_continuation_resume_with_regions(resume_cont_handle, resume_value)
             let call_result = self.builder
                 .build_call(cont_resume_fn, &[resume_cont_handle.into(), resume_value.into()], "cont_result")
                 .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
