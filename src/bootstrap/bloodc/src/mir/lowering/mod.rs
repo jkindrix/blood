@@ -121,6 +121,8 @@ pub struct MirLowering<'hir> {
     /// Inline handler bodies collected during lowering.
     /// Maps synthetic DefId to the handler body info for codegen.
     inline_handler_bodies: InlineHandlerBodies,
+    /// Whether building in release mode (for `unchecked(... when = "release")` conditional).
+    is_release: bool,
 }
 
 impl<'hir> MirLowering<'hir> {
@@ -133,7 +135,13 @@ impl<'hir> MirLowering<'hir> {
             closure_counter: 0,
             pending_closures: Vec::new(),
             inline_handler_bodies: HashMap::new(),
+            is_release: false,
         }
+    }
+
+    /// Set whether building in release mode (for `when = "release"` conditional).
+    pub fn set_release(&mut self, release: bool) {
+        self.is_release = release;
     }
 
     /// Lower all functions in the crate.
@@ -220,6 +228,7 @@ impl<'hir> MirLowering<'hir> {
             &mut self.pending_closures,
             &mut self.closure_counter,
             &mut self.inline_handler_bodies,
+            self.is_release,
         );
         builder.lower()
     }
@@ -239,6 +248,7 @@ impl<'hir> MirLowering<'hir> {
             &mut self.pending_closures,
             &mut self.closure_counter,
             &mut self.inline_handler_bodies,
+            self.is_release,
         );
         builder.lower()
     }

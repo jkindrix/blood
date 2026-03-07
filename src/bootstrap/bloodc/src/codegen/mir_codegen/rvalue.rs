@@ -290,6 +290,14 @@ impl<'ctx, 'a> MirRvalueCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                 // tag=0 means None (out of bounds), tag=1 means Some(char)
                 let result_struct = result.into_struct_value();
 
+                if self.unchecked_checks.contains(&crate::ast::UncheckedCheck::Bounds) {
+                    // Bounds check elided by unchecked(bounds) — extract value directly
+                    let char_val = self.builder
+                        .build_extract_value(result_struct, 1, "char_val")
+                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), body.span)])?;
+                    return Ok(char_val);
+                }
+
                 // Extract the tag to check for out-of-bounds
                 let tag = self.builder
                     .build_extract_value(result_struct, 0, "tag")

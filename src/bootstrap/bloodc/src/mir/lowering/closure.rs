@@ -72,6 +72,8 @@ pub struct ClosureLowering<'hir, 'ctx> {
     inline_handler_bodies: &'ctx mut InlineHandlerBodies,
     /// Current handler nesting depth for inline evidence optimization (EFF-OPT-003/004).
     handler_depth: usize,
+    /// Whether building in release mode (for `when = "release"` conditional).
+    is_release: bool,
 }
 
 impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
@@ -84,6 +86,7 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
         pending_closures: &'ctx mut PendingClosures,
         closure_counter: &'ctx mut u32,
         inline_handler_bodies: &'ctx mut InlineHandlerBodies,
+        is_release: bool,
     ) -> Self {
         let mut builder = MirBodyBuilder::new(def_id, body.span);
 
@@ -151,6 +154,7 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
             closure_counter,
             inline_handler_bodies,
             handler_depth: 0,
+            is_release,
         }
     }
 
@@ -289,8 +293,13 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
             | ExprKind::Stack(inner) => {
                 self.lower_expr(inner)
             }
-            ExprKind::Unchecked { ref checks, body, .. } => {
-                if checks.is_empty() {
+            ExprKind::Unchecked { ref checks, ref when_condition, body } => {
+                let condition_met = match when_condition.as_deref() {
+                    Some("release") => self.is_release,
+                    Some(_) => true,
+                    None => true,
+                };
+                if checks.is_empty() || !condition_met {
                     self.lower_expr(body)
                 } else {
                     let check_vec = checks.clone();
@@ -1931,6 +1940,10 @@ impl<'hir, 'ctx> ExprLowering for ClosureLowering<'hir, 'ctx> {
 
     fn closure_counter_mut(&mut self) -> &mut u32 {
         self.closure_counter
+    }
+
+    fn is_release(&self) -> bool {
+        self.is_release
     }
 
     fn push_loop_context(&mut self, label: Option<LoopId>, ctx: LoopContextInfo) {

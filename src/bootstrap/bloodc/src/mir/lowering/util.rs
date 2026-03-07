@@ -220,6 +220,9 @@ pub trait ExprLowering {
     /// Get a mutable reference to the closure counter.
     fn closure_counter_mut(&mut self) -> &mut u32;
 
+    /// Whether building in release mode (for `when = "release"` conditional).
+    fn is_release(&self) -> bool;
+
     // ========================================================================
     // Loop Context Methods (required - different implementations)
     // ========================================================================
@@ -483,8 +486,13 @@ pub trait ExprLowering {
             | ExprKind::Stack(inner) => {
                 self.lower_expr(inner)
             }
-            ExprKind::Unchecked { ref checks, body, .. } => {
-                if checks.is_empty() {
+            ExprKind::Unchecked { ref checks, ref when_condition, body } => {
+                let condition_met = match when_condition.as_deref() {
+                    Some("release") => self.is_release(),
+                    Some(_) => true,
+                    None => true,
+                };
+                if checks.is_empty() || !condition_met {
                     self.lower_expr(body)
                 } else {
                     let check_vec = checks.clone();

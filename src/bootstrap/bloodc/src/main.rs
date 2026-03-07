@@ -1341,6 +1341,7 @@ fn cmd_build(args: &FileArgs, verbosity: u8, timings: bool) -> ExitCode {
     // Lower to MIR (Phase 3 integration point)
     let t = Instant::now();
     let mut mir_lowering = mir::MirLowering::new(&hir_crate);
+    mir_lowering.set_release(args.release);
     let mir_result = match mir_lowering.lower_crate() {
         Ok((mir_bodies, inline_handler_bodies)) => {
             phase_timings.push(("MIR lowering", t.elapsed()));

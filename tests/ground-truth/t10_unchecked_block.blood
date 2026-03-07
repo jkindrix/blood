@@ -1,7 +1,7 @@
-// Test unchecked block parsing and basic semantics.
-// Currently unchecked blocks are transparent (no check elision yet),
-// so this verifies parsing and type-checking work correctly.
+// Test unchecked block parsing, execution, and bounds check elision.
 // EXPECT: 42
+// EXPECT: H
+// EXPECT: unchecked_ok
 
 fn main() -> i32 {
     let x: i32 = 10;
@@ -11,6 +11,16 @@ fn main() -> i32 {
     let result: i32 = unchecked(overflow) {
         x + y
     };
+    println_int(result);
+    if result != 42 { return 1; }
+
+    // Bounds check elision — string indexing without bounds check
+    let s: &str = "Hello";
+    let ch: char = unchecked(bounds) {
+        s[0]
+    };
+    println_char(ch);
+    if ch != 'H' { return 2; }
 
     // Multiple checks
     let result2: i32 = unchecked(bounds, overflow) {
@@ -24,7 +34,12 @@ fn main() -> i32 {
         }
     };
 
-    println!("{}", result3);
+    // Conditional mode — when = "release" should be transparent in debug mode
+    let result4: i32 = unchecked(overflow, when = "release") {
+        x + y
+    };
+    if result4 != 42 { return 3; }
 
+    println_str("unchecked_ok");
     0
 }
