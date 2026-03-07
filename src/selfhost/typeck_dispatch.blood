@@ -467,6 +467,8 @@ pub struct AmbiguityInfo {
     pub impl2_idx: usize,
     /// Method index within the second impl.
     pub method2_idx: usize,
+    /// Whether this is a diamond conflict (different traits).
+    pub is_diamond: bool,
 }
 
 /// Checks all registered impls for definition-time dispatch ambiguity.
@@ -517,12 +519,16 @@ pub fn check_all_dispatch_ambiguity(
                         continue;
                     }
 
-                    // Ambiguity detected
+                    // Ambiguity detected — check if it's a diamond conflict
+                    let diamond = impls[i].is_trait_impl()
+                        && impls[j].is_trait_impl()
+                        && impls[i].trait_def_id_index != impls[j].trait_def_id_index;
                     results.push(AmbiguityInfo {
                         impl1_idx: i,
                         method1_idx: mi,
                         impl2_idx: j,
                         method2_idx: mj,
+                        is_diamond: diamond,
                     });
                 }
             }

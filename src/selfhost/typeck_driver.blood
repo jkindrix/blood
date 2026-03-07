@@ -201,13 +201,21 @@ pub fn check_lower_result(result: &hir_lower_ctx.LowerResult) -> TypeCheckResult
         let amb = &ambiguities[ai];
         let m2 = &checker.impls[amb.impl2_idx].methods[amb.method2_idx];
         let m1 = &checker.impls[amb.impl1_idx].methods[amb.method1_idx];
-        // Report error at the second method, with note pointing to the first
-        checker.error_with_spanned_note(
-            typeck_types.TypeErrorKind.AmbiguousDispatch,
-            m2.span,
-            common.make_string("conflicts with this method"),
-            m1.span,
-        );
+        if amb.is_diamond {
+            checker.error_with_spanned_note(
+                typeck_types.TypeErrorKind.DiamondConflict,
+                m2.span,
+                common.make_string("conflicts with method from different trait"),
+                m1.span,
+            );
+        } else {
+            checker.error_with_spanned_note(
+                typeck_types.TypeErrorKind.AmbiguousDispatch,
+                m2.span,
+                common.make_string("conflicts with this method"),
+                m1.span,
+            );
+        }
     }
 
     // Phase 2: Type check main file bodies (determines success/failure).
@@ -534,12 +542,25 @@ fn register_impl(
 
     // Create and register impl info
     let num_generics = count_type_params(&impl_def.generics.params);
-    let impl_info = typeck.ImplInfo.new(
-        def_id,
-        impl_def.self_ty,
-        num_generics,
-        methods,
-    );
+    let impl_info = match &impl_def.trait_ref {
+        &Option.Some(ref trait_ref) => {
+            typeck.ImplInfo.new_trait(
+                def_id,
+                impl_def.self_ty,
+                num_generics,
+                trait_ref.def_id,
+                methods,
+            )
+        }
+        &Option.None => {
+            typeck.ImplInfo.new(
+                def_id,
+                impl_def.self_ty,
+                num_generics,
+                methods,
+            )
+        }
+    };
     checker.register_impl(impl_info);
 }
 

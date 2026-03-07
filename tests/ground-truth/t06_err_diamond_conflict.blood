@@ -1,0 +1,30 @@
+// COMPILE_FAIL: E0225
+// EXPECT: [E0214] the name
+// Test: diamond conflict — same method name from two different traits (DIS-06)
+
+trait Drawable {
+    fn render(self: &Self) -> i32;
+}
+
+trait Printable {
+    fn render(self: &Self) -> i32;
+}
+
+struct Widget {}
+
+impl Drawable for Widget {
+    fn render(self: &Self) -> i32 {
+        1
+    }
+}
+
+impl Printable for Widget {
+    fn render(self: &Self) -> i32 {
+        2
+    }
+}
+
+fn main() -> i32 {
+    let w = Widget {};
+    w.render()
+}

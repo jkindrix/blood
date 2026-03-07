@@ -348,6 +348,9 @@ impl MethodInfo {
     }
 }
 
+/// Sentinel value indicating an inherent impl (no trait).
+pub fn no_trait_def_id() -> u32 { 4294967295 }
+
 /// Stored info about an impl block.
 pub struct ImplInfo {
     /// The DefId of the impl block.
@@ -356,19 +359,37 @@ pub struct ImplInfo {
     pub self_ty: type_intern.TyId,
     /// Number of generic parameters on the impl.
     pub num_generics: u32,
+    /// DefId index of the trait being implemented, or no_trait_def_id() for inherent impls.
+    pub trait_def_id_index: u32,
     /// Methods in this impl block.
     pub methods: Vec<MethodInfo>,
 }
 
 impl ImplInfo {
-    /// Creates a new impl info.
+    /// Creates a new impl info for an inherent impl.
     pub fn new(
         def_id: hir_def.DefId,
         self_ty: type_intern.TyId,
         num_generics: u32,
         methods: Vec<MethodInfo>,
     ) -> ImplInfo {
-        ImplInfo { def_id, self_ty, num_generics, methods }
+        ImplInfo { def_id, self_ty, num_generics, trait_def_id_index: no_trait_def_id(), methods }
+    }
+
+    /// Creates a new impl info for a trait impl.
+    pub fn new_trait(
+        def_id: hir_def.DefId,
+        self_ty: type_intern.TyId,
+        num_generics: u32,
+        trait_def_id: hir_def.DefId,
+        methods: Vec<MethodInfo>,
+    ) -> ImplInfo {
+        ImplInfo { def_id, self_ty, num_generics, trait_def_id_index: trait_def_id.index, methods }
+    }
+
+    /// Returns true if this is a trait impl (not inherent).
+    pub fn is_trait_impl(self: &ImplInfo) -> bool {
+        self.trait_def_id_index != no_trait_def_id()
     }
 }
 
