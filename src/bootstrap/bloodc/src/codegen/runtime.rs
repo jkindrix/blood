@@ -29,7 +29,8 @@
 //! - `blood_unregister_allocation` - Remove address from slot registry
 //! - `blood_get_generation` - Get current generation for address
 //! - `blood_increment_generation` - Increment generation (invalidates refs)
-//! - `blood_stale_reference_panic` - Handle stale reference errors
+//! - `blood_stale_reference_panic` - Default handler for stale reference errors
+//! - `blood_default_stale_handler` - StaleReference effect handler (wraps panic)
 //!
 //! ### Effects
 //! - `blood_evidence_create/destroy/push/pop/get` - Evidence vectors
@@ -1048,6 +1049,14 @@ void blood_stale_reference_panic(uint32_t expected, uint32_t actual) {
     abort();
 }
 
+// Default StaleReference effect handler — wraps the panic for effect dispatch.
+// Signature: (state, expected_gen_i64, actual_gen_i64) -> i64 (never returns)
+static int64_t blood_default_stale_handler(void* state, int64_t expected_gen, int64_t actual_gen) {
+    (void)state;
+    blood_stale_reference_panic((uint32_t)expected_gen, (uint32_t)actual_gen);
+    return 0; // unreachable — blood_stale_reference_panic calls abort()
+}
+
 void blood_panic(BloodStr msg) {
     fprintf(stderr, "BLOOD RUNTIME PANIC: ");
     if (msg.ptr && msg.len > 0) {
@@ -1078,6 +1087,13 @@ int blood_runtime_init(void) {
     if (!current_evidence) {
         current_evidence = (EvidenceVector*)blood_evidence_create();
     }
+
+    // Register default StaleReference effect handler (effect_id = 0x1004).
+    // This handler panics on stale reference detection. Users can override
+    // by installing their own handler with `with ... handle { ... }`.
+    // The handler op returns -> never, so it must diverge.
+    static void* stale_ops[1] = { (void*)blood_default_stale_handler };
+    blood_evidence_register(current_evidence, 0x1004, stale_ops, 1);
 
     return 0;
 }

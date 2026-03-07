@@ -1249,6 +1249,9 @@ pub fn emit_place_addr(
 /// Emits a generation validation check for a dereferenced pointer.
 /// If the local has a tracked generation (i.e., it was region-allocated),
 /// validates that the pointer's generation matches the expected generation.
+/// On stale detection, performs the StaleReference effect (0x1004) through
+/// the evidence vector. The default handler panics; users can install
+/// custom handlers that must diverge (-> never).
 /// No-ops for stack-allocated locals or locals without generation tracking.
 fn emit_generation_check(
     ctx: &mut codegen_ctx.CodegenCtx,
@@ -1287,16 +1290,54 @@ fn emit_generation_check(
     let valid_label = ctx.fresh_label_cg();
     ctx.emit_cond_br_cg(&is_stale, &stale_label, &valid_label);
 
-    // Stale path: get actual generation for diagnostic, then panic
+    // Stale path: perform StaleReference effect (handler decides action)
     ctx.emit_label_cg(&stale_label);
     let actual_gen = ctx.fresh_temp_cg();
     ctx.begin_call(Option.Some(&actual_gen), "i32", "@blood_get_generation");
     ctx.call_arg_cg(true, "i64", &ptr_addr);
     ctx.end_call();
-    ctx.begin_call(Option.None, "void", "@blood_stale_reference_panic");
-    ctx.call_arg_cg(true, "i32", &expected_gen);
-    ctx.call_arg_cg(false, "i32", &actual_gen);
-    ctx.end_call();
+
+    // Zero-extend generation values to i64 for perform args
+    let exp_i64 = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&exp_i64);
+    ctx.write(" = zext i32 ");
+    ctx.write_cgname(&expected_gen);
+    ctx.write(" to i64\n");
+    let act_i64 = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&act_i64);
+    ctx.write(" = zext i32 ");
+    ctx.write_cgname(&actual_gen);
+    ctx.write(" to i64\n");
+
+    // Create args array [expected_gen, actual_gen] on stack
+    let stale_args = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&stale_args);
+    ctx.write(" = alloca [2 x i64]\n");
+    let arg0_ptr = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&arg0_ptr);
+    ctx.write(" = getelementptr [2 x i64], ptr ");
+    ctx.write_cgname(&stale_args);
+    ctx.write(", i64 0, i64 0\n");
+    ctx.emit_store_cg2("i64", &exp_i64, &arg0_ptr);
+    let arg1_ptr = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&arg1_ptr);
+    ctx.write(" = getelementptr [2 x i64], ptr ");
+    ctx.write_cgname(&stale_args);
+    ctx.write(", i64 0, i64 1\n");
+    ctx.emit_store_cg2("i64", &act_i64, &arg1_ptr);
+
+    // Call blood_perform(effect_id=0x1004, op_index=0, args, arg_count=2, continuation=0)
+    let _perform_result = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&_perform_result);
+    ctx.write(" = call i64 @blood_perform(i64 4100, i32 0, ptr ");
+    ctx.write_cgname(&stale_args);
+    ctx.write(", i64 2, i64 0)\n");
     ctx.emit_unreachable();
 
     // Valid path: continue with dereferenced pointer

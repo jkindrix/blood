@@ -183,32 +183,17 @@ impl<'ctx, 'a> MirTerminatorCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
             }
 
             TerminatorKind::StaleReference { ptr, expected, actual } => {
-                // Stale reference detected - raise effect or panic
-                // Compile the place to get the pointer value (for diagnostics)
+                // Stale reference detected - perform StaleReference effect
                 let _ptr_val = self.compile_mir_place(ptr, body, escape_results)?;
 
-                // Get the panic function
-                let panic_fn = self.module.get_function("blood_stale_reference_panic")
-                    .ok_or_else(|| vec![Diagnostic::error(
-                        "Runtime function blood_stale_reference_panic not found", term.span
-                    )])?;
-
-                // Create constant values for expected and actual generations
                 let i32_ty = self.context.i32_type();
                 let expected_int = i32_ty.const_int(*expected as u64, false);
                 let actual_int = i32_ty.const_int(*actual as u64, false);
 
-                // Call the panic handler with expected and actual generations
-                self.builder.build_call(panic_fn, &[expected_int.into(), actual_int.into()], "")
-                    .map_err(|e| vec![Diagnostic::error(
-                        format!("LLVM call error: {}", e), term.span
-                    )])?;
-
-                // After panic, code is unreachable
-                self.builder.build_unreachable()
-                    .map_err(|e| vec![Diagnostic::error(
-                        format!("LLVM unreachable error: {}", e), term.span
-                    )])?;
+                // Perform StaleReference.stale(expected, actual) through evidence vector
+                super::memory::emit_stale_reference_perform(
+                    self, expected_int, actual_int, term.span
+                )?;
             }
         }
 
@@ -2510,14 +2495,10 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
         // Stale path - panic
         self.builder.position_at_end(stale_bb);
-        let panic_fn = self.module.get_function("blood_stale_reference_panic")
-            .ok_or_else(|| vec![Diagnostic::error(
-                "Runtime function blood_stale_reference_panic not found", span
-            )])?;
-        self.builder.build_call(panic_fn, &[i32_ty.const_int(0, false).into(), i32_ty.const_int(0, false).into()], "")
-            .map_err(|e| vec![Diagnostic::error(format!("LLVM call error: {}", e), span)])?;
-        self.builder.build_unreachable()
-            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+        // Perform StaleReference effect instead of direct panic
+        let expected_zero = i32_ty.const_int(0, false);
+        let actual_zero = i32_ty.const_int(0, false);
+        super::memory::emit_stale_reference_perform(self, expected_zero, actual_zero, span)?;
 
         // Continue to target on valid path
         self.builder.position_at_end(continue_bb);

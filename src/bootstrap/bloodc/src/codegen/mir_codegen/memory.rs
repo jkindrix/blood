@@ -73,7 +73,8 @@ pub(super) fn emit_generation_check_impl<'ctx, 'a>(
     // 2. Comparing with the expected generation
     // 3. Returns 0 if valid, 1 if stale
     //
-    // If the check fails, we call `blood_stale_reference_panic` which aborts.
+    // If the check fails, we perform the StaleReference effect (0x1004).
+    // The default handler panics; users can install custom handlers.
 
     let i32_ty = ctx.context.i32_type();
     let i64_ty = ctx.context.i64_type();
@@ -121,44 +122,31 @@ pub(super) fn emit_generation_check_impl<'ctx, 'a>(
     ctx.builder.build_conditional_branch(is_valid, valid_bb, stale_bb)
         .map_err(|e| vec![Diagnostic::error(format!("LLVM branch error: {}", e), span)])?;
 
-    // Stale path: call panic handler
+    // Stale path: perform StaleReference effect (handler decides what to do)
     ctx.builder.position_at_end(stale_bb);
-    let panic_fn = ctx.module.get_function("blood_stale_reference_panic")
-        .ok_or_else(|| vec![Diagnostic::error(
-            "blood_stale_reference_panic not declared", span
-        )])?;
 
-    // Get current generation for the error message
-    if let Some(get_gen_fn) = ctx.module.get_function("blood_get_generation") {
+    // Get actual generation for the handler's diagnostic info
+    let actual_gen = if let Some(get_gen_fn) = ctx.module.get_function("blood_get_generation") {
         let gen_call_result = ctx.builder.build_call(
             get_gen_fn,
             &[address.into()],
             "actual_gen"
         ).map_err(|e| vec![Diagnostic::error(format!("LLVM call error: {}", e), span)])?;
 
-        let actual_gen = match gen_call_result.try_as_basic_value().basic() {
+        match gen_call_result.try_as_basic_value().basic() {
             Some(val) => val.into_int_value(),
             None => {
-                // blood_get_generation returned void unexpectedly - this is an ICE
-                // but we're already in a panic path, so log and continue with fallback
                 ice!("blood_get_generation returned void unexpectedly";
                      "span" => span,
-                     "fallback" => "using 0 for panic message");
+                     "fallback" => "using 0 for handler args");
                 i32_ty.const_int(0, false)
             }
-        };
-
-        ctx.builder.build_call(panic_fn, &[expected_gen.into(), actual_gen.into()], "")
-            .map_err(|e| vec![Diagnostic::error(format!("LLVM call error: {}", e), span)])?;
+        }
     } else {
-        // blood_get_generation not available - use expected as fallback for both args
-        // This is acceptable as we're in a panic path and need some value for the error message
-        ctx.builder.build_call(panic_fn, &[expected_gen.into(), expected_gen.into()], "")
-            .map_err(|e| vec![Diagnostic::error(format!("LLVM call error: {}", e), span)])?;
-    }
+        i32_ty.const_int(0, false)
+    };
 
-    ctx.builder.build_unreachable()
-        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+    emit_stale_reference_perform(ctx, expected_gen, actual_gen, span)?;
 
     // Continue at valid block
     ctx.builder.position_at_end(valid_bb);
@@ -306,4 +294,68 @@ pub(super) fn allocate_with_persistent_alloc_impl<'ctx, 'a>(
     ctx.persistent_slot_ids.insert(local_id, slot_id_alloca);
 
     Ok(raw_ptr)
+}
+
+/// Emit a `blood_perform` call for the StaleReference effect.
+///
+/// This performs `StaleReference.stale(expected_gen, actual_gen)` through
+/// the evidence vector. The default handler panics; user code can install
+/// custom handlers that must diverge (-> never).
+///
+/// The effect ID 0x1004 matches `STALE_REFERENCE_EFFECT_ID` in std_effects.rs.
+pub(super) fn emit_stale_reference_perform<'ctx, 'a>(
+    ctx: &mut CodegenContext<'ctx, 'a>,
+    expected_gen: IntValue<'ctx>,
+    actual_gen: IntValue<'ctx>,
+    span: Span,
+) -> Result<(), Vec<Diagnostic>> {
+    let i32_ty = ctx.context.i32_type();
+    let i64_ty = ctx.context.i64_type();
+
+    let perform_fn = ctx.module.get_function("blood_perform")
+        .ok_or_else(|| vec![Diagnostic::error(
+            "Runtime function blood_perform not found", span
+        )])?;
+
+    // Zero-extend i32 generation values to i64 for the args array
+    let exp_i64 = ctx.builder.build_int_z_extend(expected_gen, i64_ty, "exp_i64")
+        .map_err(|e| vec![Diagnostic::error(format!("LLVM extend error: {}", e), span)])?;
+    let act_i64 = ctx.builder.build_int_z_extend(actual_gen, i64_ty, "act_i64")
+        .map_err(|e| vec![Diagnostic::error(format!("LLVM extend error: {}", e), span)])?;
+
+    // Create args array [expected_gen, actual_gen] on stack
+    let array_ty = i64_ty.array_type(2);
+    let args_alloca = ctx.builder.build_alloca(array_ty, "stale_args")
+        .map_err(|e| vec![Diagnostic::error(format!("LLVM alloca error: {}", e), span)])?;
+
+    let zero = i64_ty.const_int(0, false);
+    let one = i64_ty.const_int(1, false);
+    let gep0 = unsafe {
+        ctx.builder.build_gep(array_ty, args_alloca, &[zero, zero], "stale_arg_0")
+    }.map_err(|e| vec![Diagnostic::error(format!("LLVM GEP error: {}", e), span)])?;
+    ctx.builder.build_store(gep0, exp_i64)
+        .map_err(|e| vec![Diagnostic::error(format!("LLVM store error: {}", e), span)])?;
+    let gep1 = unsafe {
+        ctx.builder.build_gep(array_ty, args_alloca, &[zero, one], "stale_arg_1")
+    }.map_err(|e| vec![Diagnostic::error(format!("LLVM GEP error: {}", e), span)])?;
+    ctx.builder.build_store(gep1, act_i64)
+        .map_err(|e| vec![Diagnostic::error(format!("LLVM store error: {}", e), span)])?;
+
+    // Call blood_perform(effect_id=0x1004, op_index=0, args, arg_count=2, continuation=0)
+    let effect_id = i64_ty.const_int(0x1004, false);
+    let op_index = i32_ty.const_int(0, false);
+    let arg_count = i64_ty.const_int(2, false);
+    let continuation = i64_ty.const_int(0, false);
+
+    ctx.builder.build_call(
+        perform_fn,
+        &[effect_id.into(), op_index.into(), args_alloca.into(), arg_count.into(), continuation.into()],
+        ""
+    ).map_err(|e| vec![Diagnostic::error(format!("LLVM call error: {}", e), span)])?;
+
+    // StaleReference.stale returns -> never, so emit unreachable
+    ctx.builder.build_unreachable()
+        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+
+    Ok(())
 }

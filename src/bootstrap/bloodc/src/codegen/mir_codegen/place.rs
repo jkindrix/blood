@@ -286,15 +286,10 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                                 format!("LLVM branch error: {}", e), body.span
                             )])?;
 
-                        // Stale path: get actual generation and abort
+                        // Stale path: perform StaleReference effect
                         self.builder.position_at_end(stale_bb);
-                        let panic_fn = self.module.get_function("blood_stale_reference_panic")
-                            .ok_or_else(|| vec![Diagnostic::error(
-                                "blood_stale_reference_panic not declared", body.span
-                            )])?;
 
-                        // Get the actual generation from the runtime for diagnostic
-                        // accuracy, matching the pattern in memory.rs:emit_generation_check_impl
+                        // Get the actual generation from the runtime for handler's diagnostic info
                         let actual_gen = if let Some(get_gen_fn) = self.module.get_function("blood_get_generation") {
                             let gen_result = self.builder.build_call(
                                 get_gen_fn,
@@ -308,21 +303,12 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                                 .map(|v| v.into_int_value())
                                 .unwrap_or_else(|| i32_ty.const_int(0, false))
                         } else {
-                            // Fallback if blood_get_generation not available
                             i32_ty.const_int(0, false)
                         };
 
-                        self.builder.build_call(
-                            panic_fn,
-                            &[expected_gen.into(), actual_gen.into()],
-                            ""
-                        ).map_err(|e| vec![Diagnostic::error(
-                            format!("LLVM call error: {}", e), body.span
-                        )])?;
-                        self.builder.build_unreachable()
-                            .map_err(|e| vec![Diagnostic::error(
-                                format!("LLVM unreachable error: {}", e), body.span
-                            )])?;
+                        super::memory::emit_stale_reference_perform(
+                            self, expected_gen, actual_gen, body.span
+                        )?;
 
                         // Continue on valid path
                         self.builder.position_at_end(valid_bb);

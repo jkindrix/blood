@@ -135,19 +135,18 @@ The cycle collector is essential for long-running programs — without it, any T
 
 ---
 
-## 5. MEM-04: StaleReference as Full Algebraic Effect (ACCEPTED — NOT DEFERRED)
+## 5. MEM-04: StaleReference as Full Algebraic Effect (IMPLEMENTED)
 
-### The Best Decision (Implementing Now)
-`StaleReference` should be an algebraic effect with `op stale(info: StaleInfo) -> never`. This IS Blood's headline feature — "handle memory errors as composable effects." The `-> never` return type bounds complexity (handler can't resume, so no state corruption risk). Default handler panics; user handlers can log, circuit-break, or shut down gracefully.
+### The Best Decision (Implemented)
+`StaleReference` is an algebraic effect with `op stale(expected_gen, actual_gen) -> never`. This IS Blood's headline feature — "handle memory errors as composable effects." The `-> never` return type bounds complexity (handler can't resume, so no state corruption risk). Default handler panics; user handlers can log, circuit-break, or shut down gracefully.
 
-### Why This Wasn't Deferred
-The `-> never` constraint eliminates the hard part of effect handler implementation (resume semantics). The codegen change is small: replace `call @blood_stale_reference_panic` with `perform StaleReference.stale(info)`. The effect system infrastructure already exists.
-
-### Implementation Scope
-- Define `StaleReference` effect and `StaleInfo` struct in stdlib
-- Codegen: replace direct panic call with `perform` at generation check failure sites
-- Default handler: `with PanicOnStale handle { ... }` wraps main
-- ~100 lines compiler + ~50 lines stdlib
+### Implementation
+- **Runtime**: Default `blood_default_stale_handler` registered at `blood_runtime_init()` with effect ID `0x1004`
+- **Bootstrap codegen**: All 4 stale reference sites (terminator.rs, place.rs, memory.rs) now call `blood_perform(0x1004, 0, [expected, actual], 2)` through the evidence vector instead of `blood_stale_reference_panic` directly
+- **Selfhost codegen**: `codegen_expr.blood:emit_generation_check` emits `blood_perform` call on stale path
+- **Effect dispatch**: Uses existing evidence vector infrastructure — hot path (generation check) unchanged, only failure path goes through effect system
+- **Default behavior**: Identical to previous — the default handler calls `blood_stale_reference_panic` which aborts with diagnostic message
+- **User override**: Users can install custom handlers using standard `with handler handle { ... }` syntax; handler must diverge (-> never)
 
 ---
 
