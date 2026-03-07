@@ -3618,6 +3618,30 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let assert_eq_bool_type = void_type.fn_type(&[bool_type.into(), bool_type.into()], false);
         self.module.add_function("blood_assert_eq_bool", assert_eq_bool_type, None);
 
+        // blood_assert_eq_i64(i64, i64) -> void
+        let assert_eq_i64_type = void_type.fn_type(&[i64_type.into(), i64_type.into()], false);
+        self.module.add_function("blood_assert_eq_i64", assert_eq_i64_type, None);
+
+        // blood_assert_eq_u32(i32, i32) -> void (u32 is i32 at LLVM level)
+        self.module.add_function("blood_assert_eq_u32", assert_eq_int_type, None);
+
+        // blood_assert_eq_u64(i64, i64) -> void
+        self.module.add_function("blood_assert_eq_u64", assert_eq_i64_type, None);
+
+        // blood_assert_eq_usize(i64, i64) -> void (usize is i64 on 64-bit)
+        self.module.add_function("blood_assert_eq_usize", assert_eq_i64_type, None);
+
+        // blood_assert_eq_str({*i8, i64}, {*i8, i64}) -> void
+        let str_slice_type_for_assert = self.context.struct_type(
+            &[i8_ptr_type.into(), i64_type.into()],
+            false
+        );
+        let assert_eq_str_type = void_type.fn_type(&[str_slice_type_for_assert.into(), str_slice_type_for_assert.into()], false);
+        self.module.add_function("blood_assert_eq_str", assert_eq_str_type, None);
+
+        // blood_assert_ne_int(i32, i32) -> void
+        self.module.add_function("blood_assert_ne_int", assert_eq_int_type, None);
+
         // print_char(i32) -> void
         self.module.add_function("print_char", print_int_type, None);
 

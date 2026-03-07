@@ -127,6 +127,27 @@ impl<'a> TypeContext<'a> {
         // assert_eq_bool(bool, bool) -> () - maps to blood_assert_eq_bool in runtime
         self.register_builtin_fn_aliased("assert_eq_bool", "blood_assert_eq_bool", vec![bool_ty.clone(), bool_ty.clone()], unit_ty.clone());
 
+        // assert_eq_i64(i64, i64) -> () - maps to blood_assert_eq_i64 in runtime
+        self.register_builtin_fn_aliased("assert_eq_i64", "blood_assert_eq_i64", vec![i64_ty.clone(), i64_ty.clone()], unit_ty.clone());
+
+        // assert_eq_u32(u32, u32) -> () - maps to blood_assert_eq_u32 in runtime
+        self.register_builtin_fn_aliased("assert_eq_u32", "blood_assert_eq_u32", vec![u32_ty.clone(), u32_ty.clone()], unit_ty.clone());
+
+        // assert_eq_u64(u64, u64) -> () - maps to blood_assert_eq_u64 in runtime
+        self.register_builtin_fn_aliased("assert_eq_u64", "blood_assert_eq_u64", vec![u64_ty.clone(), u64_ty.clone()], unit_ty.clone());
+
+        // assert_eq_usize(usize, usize) -> () - maps to blood_assert_eq_usize in runtime
+        {
+            let usize_ty = Type::usize();
+            self.register_builtin_fn_aliased("assert_eq_usize", "blood_assert_eq_usize", vec![usize_ty.clone(), usize_ty.clone()], unit_ty.clone());
+        }
+
+        // assert_eq_str(&str, &str) -> () - maps to blood_assert_eq_str in runtime
+        self.register_builtin_fn_aliased("assert_eq_str", "blood_assert_eq_str", vec![ref_str_ty.clone(), ref_str_ty.clone()], unit_ty.clone());
+
+        // assert_ne_int(i32, i32) -> () - maps to blood_assert_ne_int in runtime
+        self.register_builtin_fn_aliased("assert_ne_int", "blood_assert_ne_int", vec![i32_ty.clone(), i32_ty.clone()], unit_ty.clone());
+
         // unreachable() -> !
         self.register_builtin_fn("unreachable", vec![], never_ty.clone());
 

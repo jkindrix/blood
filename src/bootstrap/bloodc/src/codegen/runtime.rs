@@ -96,6 +96,24 @@ pub mod functions {
     /// Assert that two booleans are equal.
     pub const ASSERT_EQ_BOOL: &str = "blood_assert_eq_bool";
 
+    /// Assert that two i64s are equal.
+    pub const ASSERT_EQ_I64: &str = "blood_assert_eq_i64";
+
+    /// Assert that two u32s are equal.
+    pub const ASSERT_EQ_U32: &str = "blood_assert_eq_u32";
+
+    /// Assert that two u64s are equal.
+    pub const ASSERT_EQ_U64: &str = "blood_assert_eq_u64";
+
+    /// Assert that two usizes are equal.
+    pub const ASSERT_EQ_USIZE: &str = "blood_assert_eq_usize";
+
+    /// Assert that two strings are equal.
+    pub const ASSERT_EQ_STR: &str = "blood_assert_eq_str";
+
+    /// Assert that two integers are not equal.
+    pub const ASSERT_NE_INT: &str = "blood_assert_ne_int";
+
     // === Control Flow ===
 
     /// Unreachable code was reached.
@@ -491,6 +509,49 @@ void blood_assert_eq_bool(int32_t a, int32_t b) {
     if (a != b) {
         fprintf(stderr, "BLOOD ASSERTION FAILED: %s != %s\n",
                 a ? "true" : "false", b ? "true" : "false");
+        abort();
+    }
+}
+
+void blood_assert_eq_i64(int64_t a, int64_t b) {
+    if (a != b) {
+        fprintf(stderr, "BLOOD ASSERTION FAILED: %ld != %ld\n", (long)a, (long)b);
+        abort();
+    }
+}
+
+void blood_assert_eq_u32(uint32_t a, uint32_t b) {
+    if (a != b) {
+        fprintf(stderr, "BLOOD ASSERTION FAILED: %u != %u\n", a, b);
+        abort();
+    }
+}
+
+void blood_assert_eq_u64(uint64_t a, uint64_t b) {
+    if (a != b) {
+        fprintf(stderr, "BLOOD ASSERTION FAILED: %lu != %lu\n", (unsigned long)a, (unsigned long)b);
+        abort();
+    }
+}
+
+void blood_assert_eq_usize(uint64_t a, uint64_t b) {
+    if (a != b) {
+        fprintf(stderr, "BLOOD ASSERTION FAILED: %lu != %lu\n", (unsigned long)a, (unsigned long)b);
+        abort();
+    }
+}
+
+void blood_assert_eq_str(BloodStr a, BloodStr b) {
+    if (a.len != b.len || (a.len > 0 && memcmp(a.ptr, b.ptr, (size_t)a.len) != 0)) {
+        fprintf(stderr, "BLOOD ASSERTION FAILED: \"%.*s\" != \"%.*s\"\n",
+                (int)a.len, a.ptr, (int)b.len, b.ptr);
+        abort();
+    }
+}
+
+void blood_assert_ne_int(int32_t a, int32_t b) {
+    if (a == b) {
+        fprintf(stderr, "BLOOD ASSERTION FAILED: %d == %d (expected not equal)\n", a, b);
         abort();
     }
 }

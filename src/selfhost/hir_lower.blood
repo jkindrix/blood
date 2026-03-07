@@ -615,6 +615,7 @@ fn bi_i128() -> type_intern.TyId { type_intern.CommonTypes.i128_ty() }
 fn bi_u16() -> type_intern.TyId { type_intern.CommonTypes.u16_ty() }
 fn bi_u32() -> type_intern.TyId { type_intern.CommonTypes.u32_ty() }
 fn bi_u64() -> type_intern.TyId { type_intern.CommonTypes.u64_ty() }
+fn bi_usize() -> type_intern.TyId { type_intern.CommonTypes.usize_ty() }
 fn bi_u128() -> type_intern.TyId { type_intern.CommonTypes.u128_ty() }
 fn bi_f32() -> type_intern.TyId { type_intern.CommonTypes.f32_ty() }
 fn bi_f64() -> type_intern.TyId { type_intern.CommonTypes.f64_ty() }
@@ -733,6 +734,12 @@ fn register_builtin_functions(ctx: &mut hir_lower_ctx.LoweringCtx) {
     register_builtin_fn(ctx, &mut items, "assert", bi_params_1(type_intern.CommonTypes.bool_ty()), type_intern.CommonTypes.unit());
     register_builtin_fn(ctx, &mut items, "assert_eq_int", bi_params_2(type_intern.CommonTypes.i32_ty(), type_intern.CommonTypes.i32_ty()), type_intern.CommonTypes.unit());
     register_builtin_fn(ctx, &mut items, "assert_eq_bool", bi_params_2(type_intern.CommonTypes.bool_ty(), type_intern.CommonTypes.bool_ty()), type_intern.CommonTypes.unit());
+    register_builtin_fn(ctx, &mut items, "assert_eq_i64", bi_params_2(bi_i64(), bi_i64()), type_intern.CommonTypes.unit());
+    register_builtin_fn(ctx, &mut items, "assert_eq_u32", bi_params_2(bi_u32(), bi_u32()), type_intern.CommonTypes.unit());
+    register_builtin_fn(ctx, &mut items, "assert_eq_u64", bi_params_2(bi_u64(), bi_u64()), type_intern.CommonTypes.unit());
+    register_builtin_fn(ctx, &mut items, "assert_eq_usize", bi_params_2(bi_usize(), bi_usize()), type_intern.CommonTypes.unit());
+    register_builtin_fn(ctx, &mut items, "assert_eq_str", bi_params_2(bi_ref_str(), bi_ref_str()), type_intern.CommonTypes.unit());
+    register_builtin_fn(ctx, &mut items, "assert_ne_int", bi_params_2(type_intern.CommonTypes.i32_ty(), type_intern.CommonTypes.i32_ty()), type_intern.CommonTypes.unit());
     register_builtin_fn(ctx, &mut items, "unreachable", bi_params_0(), type_intern.CommonTypes.never());
     register_builtin_fn(ctx, &mut items, "todo", bi_params_0(), type_intern.CommonTypes.never());
     register_builtin_fn(ctx, &mut items, "process_exit", bi_params_1(type_intern.CommonTypes.i32_ty()), type_intern.CommonTypes.never());

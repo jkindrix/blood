@@ -11596,6 +11596,73 @@ pub extern "C" fn blood_assert_eq_int(a: i32, b: i32) {
     }
 }
 
+/// Assert that two i64 values are equal. Aborts if not.
+#[no_mangle]
+pub extern "C" fn blood_assert_eq_i64(a: i64, b: i64) {
+    if a != b {
+        eprintln!("BLOOD RUNTIME PANIC: assertion failed: {} != {}", a, b);
+        std::process::abort();
+    }
+}
+
+/// Assert that two u32 values are equal. Aborts if not.
+#[no_mangle]
+pub extern "C" fn blood_assert_eq_u32(a: u32, b: u32) {
+    if a != b {
+        eprintln!("BLOOD RUNTIME PANIC: assertion failed: {} != {}", a, b);
+        std::process::abort();
+    }
+}
+
+/// Assert that two u64 values are equal. Aborts if not.
+#[no_mangle]
+pub extern "C" fn blood_assert_eq_u64(a: u64, b: u64) {
+    if a != b {
+        eprintln!("BLOOD RUNTIME PANIC: assertion failed: {} != {}", a, b);
+        std::process::abort();
+    }
+}
+
+/// Assert that two usize values are equal. Aborts if not.
+#[no_mangle]
+pub extern "C" fn blood_assert_eq_usize(a: u64, b: u64) {
+    if a != b {
+        eprintln!("BLOOD RUNTIME PANIC: assertion failed: {} != {}", a, b);
+        std::process::abort();
+    }
+}
+
+/// Assert that two string slices are equal. Aborts if not.
+///
+/// # Safety
+/// Both string pointers must be valid for their respective lengths.
+#[no_mangle]
+pub unsafe extern "C" fn blood_assert_eq_str(a: BloodStr, b: BloodStr) {
+    let a_str = if a.ptr.is_null() || a.len == 0 {
+        ""
+    } else {
+        std::str::from_utf8_unchecked(std::slice::from_raw_parts(a.ptr, a.len as usize))
+    };
+    let b_str = if b.ptr.is_null() || b.len == 0 {
+        ""
+    } else {
+        std::str::from_utf8_unchecked(std::slice::from_raw_parts(b.ptr, b.len as usize))
+    };
+    if a_str != b_str {
+        eprintln!("BLOOD RUNTIME PANIC: assertion failed: \"{}\" != \"{}\"", a_str, b_str);
+        std::process::abort();
+    }
+}
+
+/// Assert that two integer values (i32) are NOT equal. Aborts if equal.
+#[no_mangle]
+pub extern "C" fn blood_assert_ne_int(a: i32, b: i32) {
+    if a == b {
+        eprintln!("BLOOD RUNTIME PANIC: assertion failed: {} == {} (expected not equal)", a, b);
+        std::process::abort();
+    }
+}
+
 // ============================================================================
 // Generation Management
 // ============================================================================
