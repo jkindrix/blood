@@ -477,8 +477,15 @@ impl<'src> Lexer<'src> {
             if c == 98 && self.peek() == 34 {
                 return self.lex_byte_string();
             }
-            // Check for raw string literal r"..." or r#"..."#
-            if c == 114 && (self.peek() == 34 || self.peek() == 35) {
+            // Check for raw identifier r#keyword or raw string r"..." / r#"..."#
+            if c == 114 && self.peek() == 35 {
+                let after_hash = self.peek_at(2);
+                if Lexer.is_alpha(after_hash) || after_hash == 95 {
+                    return self.lex_raw_identifier();
+                }
+                return self.lex_raw_string();
+            }
+            if c == 114 && self.peek() == 34 {
                 return self.lex_raw_string();
             }
             return self.lex_identifier();
@@ -779,6 +786,33 @@ impl<'src> Lexer<'src> {
         // Match keywords - we need to compare bytes
         let kind = self.match_keyword(start, len);
         self.make_token(kind)
+    }
+
+    /// Lex a raw identifier (r#keyword) — returns Ident/TypeIdent with span after r#
+    fn lex_raw_identifier(self: &mut Self) -> token.Token {
+        self.advance(); // skip 'r'
+        self.advance(); // skip '#'
+        let name_start = self.pos;
+        let first = self.current();
+        while Lexer.is_alnum_underscore(self.current()) {
+            self.advance();
+        }
+        let kind = if Lexer.is_upper(first) {
+            token.TokenKind.TypeIdent
+        } else {
+            token.TokenKind.Ident
+        };
+        let trivia = self.take_pending_trivia();
+        token.Token {
+            kind,
+            span: common.Span {
+                start: name_start,
+                end: self.pos,
+                line: self.token_line,
+                column: self.token_column + 2,
+            },
+            leading_trivia: trivia,
+        }
     }
 
     /// Match identifier against keywords

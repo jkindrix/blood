@@ -1,0 +1,31 @@
+// RUN: expect_exit 0
+// Test: raw identifiers (r#keyword) per GRAMMAR.md §9.4
+
+struct Config {
+    r#type: i32,
+    r#match: i32,
+    r#for: i32,
+}
+
+fn r#return(x: i32) -> i32 {
+    x * 2
+}
+
+fn main() -> i32 {
+    let c = Config { r#type: 10, r#match: 20, r#for: 30 };
+    let a = c.r#type;
+    let b = c.r#match;
+    let d = c.r#for;
+    let e = r#return(5);
+    // 10 + 20 + 30 + 10 = 70
+    if a == 10 {
+        if b == 20 {
+            if d == 30 {
+                if e == 10 {
+                    return 0;
+                }
+            }
+        }
+    }
+    1
+}

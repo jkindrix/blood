@@ -252,6 +252,10 @@ pub enum TokenKind {
     // ============================================================
     // Identifiers and Lifetimes
     // ============================================================
+    /// Raw identifier: r#keyword — uses a keyword as an identifier
+    #[regex(r"r#[a-zA-Z_][a-zA-Z0-9_]*", priority = 3)]
+    RawIdent,
+
     /// Identifier starting with lowercase or underscore
     #[regex(r"[a-z_][a-zA-Z0-9_]*")]
     Ident,
@@ -649,6 +653,7 @@ impl TokenKind {
             TokenKind::RawStringLitHash1 => "raw string literal",
             TokenKind::RawStringLitHash2 => "raw string literal",
             TokenKind::CharLit => "character literal",
+            TokenKind::RawIdent => "raw identifier",
             TokenKind::Ident => "identifier",
             TokenKind::TypeIdent => "type identifier",
             TokenKind::Lifetime => "lifetime",
@@ -819,8 +824,21 @@ impl<'src> Iterator for Lexer<'src> {
         match self.inner.next() {
             Some(Ok(kind)) => {
                 let logos_span = self.inner.span();
-                let (line, col) = self.line_index.line_col(logos_span.start);
-                let span = Span::new(logos_span.start, logos_span.end, line, col);
+                // Raw identifiers (r#keyword): convert to Ident/TypeIdent, skip r# in span
+                let (kind, start) = if kind == TokenKind::RawIdent {
+                    let name_start = logos_span.start + 2;
+                    let first_char = self.source.as_bytes()[name_start];
+                    let ident_kind = if first_char.is_ascii_uppercase() {
+                        TokenKind::TypeIdent
+                    } else {
+                        TokenKind::Ident
+                    };
+                    (ident_kind, name_start)
+                } else {
+                    (kind, logos_span.start)
+                };
+                let (line, col) = self.line_index.line_col(start);
+                let span = Span::new(start, logos_span.end, line, col);
                 Some(Token::new(kind, span))
             }
             Some(Err(())) => {
