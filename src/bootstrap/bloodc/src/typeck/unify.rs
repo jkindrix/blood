@@ -209,15 +209,18 @@ impl Unifier {
                 TypeKind::Ptr { inner: i2, mutable: m2 },
             ) if m1 == m2 => self.unify(i1, i2, span),
 
-            // Functions
+            // Functions — unify params, return type, and effect compatibility
             (
-                TypeKind::Fn { params: p1, ret: r1, .. },
-                TypeKind::Fn { params: p2, ret: r2, .. },
+                TypeKind::Fn { params: p1, ret: r1, effects: e1, .. },
+                TypeKind::Fn { params: p2, ret: r2, effects: e2, .. },
             ) if p1.len() == p2.len() => {
                 for (param1, param2) in p1.iter().zip(p2.iter()) {
                     self.unify(param1, param2, span)?;
                 }
-                self.unify(r1, r2, span)
+                self.unify(r1, r2, span)?;
+                // Effect subtyping: one set must be subset of the other.
+                // Implements S-Pure (pure <: ε) and Effect-Subtyping (E₁ ⊆ E₂).
+                self.unify_fn_effects(e1, e2, &t1, &t2, span)
             }
 
             // Closure types - unify based on param and return types
@@ -516,6 +519,39 @@ impl Unifier {
                 }
                 Ok(())
             }
+        }
+    }
+
+    /// Check effect compatibility for function types.
+    ///
+    /// Implements S-Pure (`pure <: ε`) and Effect-Subtyping (`E₁ ⊆ E₂`):
+    /// one effect set must be a subset of the other. A pure function (empty
+    /// effects) is compatible with any effect row.
+    fn unify_fn_effects(
+        &self,
+        e1: &[FnEffect],
+        e2: &[FnEffect],
+        t1: &Type,
+        t2: &Type,
+        span: Span,
+    ) -> Result<(), Box<TypeError>> {
+        // If either is pure, compatible (pure <: ε)
+        if e1.is_empty() || e2.is_empty() {
+            return Ok(());
+        }
+        // Check if one set is a subset of the other (by def_id)
+        let e1_sub_e2 = e1.iter().all(|eff| e2.iter().any(|e| e.def_id == eff.def_id));
+        let e2_sub_e1 = e2.iter().all(|eff| e1.iter().any(|e| e.def_id == eff.def_id));
+        if e1_sub_e2 || e2_sub_e1 {
+            Ok(())
+        } else {
+            Err(Box::new(TypeError::new(
+                TypeErrorKind::Mismatch {
+                    expected: t1.clone(),
+                    found: t2.clone(),
+                },
+                span,
+            )))
         }
     }
 

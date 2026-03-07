@@ -1,0 +1,30 @@
+// Test: pure function can be passed as fn parameter (S-Pure rule)
+// EXPECT: 42
+// EXPECT: 100
+// EXPECT: pure_subtype_ok
+
+fn pure_add(a: i32, b: i32) -> i32 {
+    a + b
+}
+
+fn pure_mul(a: i32, b: i32) -> i32 {
+    a * b
+}
+
+// Takes a function parameter — pure functions should be passable here
+fn apply_fn(f: fn(i32, i32) -> i32, a: i32, b: i32) -> i32 {
+    f(a, b)
+}
+
+fn main() -> i32 {
+    let result: i32 = apply_fn(pure_add, 20, 22);
+    println_int(result);
+    if result != 42 { return 1; }
+
+    let result2: i32 = apply_fn(pure_mul, 10, 10);
+    println_int(result2);
+    if result2 != 100 { return 2; }
+
+    println_str("pure_subtype_ok");
+    0
+}

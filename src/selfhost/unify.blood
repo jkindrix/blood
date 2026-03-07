@@ -2191,8 +2191,13 @@ pub fn unify_effect_rows(
     let b_closed = b.row_var.is_none();
 
     if a_closed && b_closed {
-        // Both closed: effects must match exactly
-        if !effect_sets_equal(&a.effects, &b.effects) {
+        // Effect subtyping: one set must be subset of the other.
+        // This implements S-Pure (pure <: ε) and Effect-Subtyping (E₁ ⊆ E₂).
+        // A pure function (empty row) is compatible with any effect row.
+        // A function with fewer effects is compatible with one with more.
+        let a_sub_b = contains_all_effects(&b.effects, &a.effects);
+        let b_sub_a = contains_all_effects(&a.effects, &b.effects);
+        if !a_sub_b && !b_sub_a {
             return UnifyResult.Err(UnifyError.new(UnifyErrorKind.EffectMismatch, span));
         }
         return UnifyResult.Ok;
