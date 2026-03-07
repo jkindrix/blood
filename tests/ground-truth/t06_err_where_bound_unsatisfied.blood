@@ -1,0 +1,21 @@
+// COMPILE_FAIL: E0213
+// EXPECT: [E0206] the trait bound
+// Test: where clause — calling generic fn with non-implementing type is rejected
+
+trait Summable {
+    fn sum_value(self: &Self) -> i32;
+}
+
+struct Pair {
+    pub a: i32,
+    pub b: i32,
+}
+
+fn get_sum<T>(x: &T) -> i32 where T: Summable {
+    x.sum_value()
+}
+
+fn main() -> i32 {
+    let p = Pair { a: 1, b: 2 };
+    get_sum(&p)
+}

@@ -1075,6 +1075,10 @@ impl TypeChecker {
 
     /// Registers an impl block for method resolution.
     pub fn register_impl(self: &mut Self, impl_info: typeck_info.ImplInfo) {
+        // If this is a trait impl, mark trait as having an impl for O(1) lookup
+        if impl_info.is_trait_impl() {
+            self.trait_impl_hash.insert(impl_info.trait_def_id_index as u64, 1);
+        }
         self.impls.push(impl_info);
     }
 
@@ -1344,16 +1348,12 @@ impl TypeChecker {
             Option.Some(_) => {}
             Option.None => { return false; }
         }
-        // Search for an impl that matches
-        for i in 0usize..self.trait_impls.len() {
-            let impl_info = &self.trait_impls[i];
-
-            // Check if this impl is for the right trait
-            if impl_info.trait_def_id.index == trait_ref.def_id.index {
-                // Check if the self type matches
+        // Search self.impls using trait_def_id_index (populated by register_impl)
+        let target_trait_idx = trait_ref.def_id.index;
+        for i in 0usize..self.impls.len() {
+            let impl_info = &self.impls[i];
+            if impl_info.trait_def_id_index == target_trait_idx {
                 if types_match_for_impl_id(impl_info.self_ty, ty) {
-                    // For now, we don't check where clause predicates
-                    // A full implementation would recursively check them
                     return true;
                 }
             }
@@ -1453,7 +1453,10 @@ impl TypeChecker {
                 let mut i: usize = 0;
                 while i < fn_sig.param_tys.len() && i < arg_types.len() {
                     if self.param_type_uses_infer_id(fn_sig.param_tys[i], pid) {
-                        return Option.Some(type_intern.TyId.new(arg_types[i].index));
+                        // Peel reference layers from arg_type matching the param structure.
+                        // E.g., param &Infer(T), arg &Pair → return Pair (not &Pair).
+                        let resolved = peel_refs_matching(fn_sig.param_tys[i], arg_types[i]);
+                        return Option.Some(resolved);
                     }
                     i += 1;
                 }
@@ -1463,7 +1466,7 @@ impl TypeChecker {
         }
     }
 
-    /// Checks if a parameter type uses a specific Infer ID at the top level.
+    /// Checks if a parameter type uses a specific Infer ID, possibly under references.
     fn param_type_uses_infer_id(self: &Self, ty: type_intern.TyId, target_id: u32) -> bool {
         let interner = type_intern.type_interner();
         let kind = interner.get(ty);
@@ -1485,6 +1488,27 @@ impl TypeChecker {
                 self.error(typeck_types.TypeErrorKind.TraitNotImplemented, obligations[i].span);
             }
         }
+    }
+}
+
+/// Peels reference layers from arg_ty matching the structure of param_ty.
+/// E.g., param_ty = &Infer(T), arg_ty = &Pair → returns Pair.
+/// If param_ty = &&Infer(T), arg_ty = &&Pair → returns Pair.
+/// If no Ref wrapping, returns arg_ty unchanged.
+fn peel_refs_matching(param_ty: type_intern.TyId, arg_ty: type_intern.TyId) -> type_intern.TyId {
+    let interner = type_intern.type_interner();
+    let pk = interner.get(param_ty);
+    match pk {
+        &type_intern.InternedTypeKind.Ref { inner: param_inner, mutable: _ } => {
+            let ak = interner.get(arg_ty);
+            match ak {
+                &type_intern.InternedTypeKind.Ref { inner: arg_inner, mutable: _ } => {
+                    peel_refs_matching(param_inner, arg_inner)
+                }
+                _ => arg_ty,
+            }
+        }
+        _ => arg_ty,
     }
 }
 
