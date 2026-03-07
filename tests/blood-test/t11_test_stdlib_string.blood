@@ -1,0 +1,371 @@
+// Tests for stdlib string functions using blood test framework.
+// Run: blood test tests/ground-truth/t11_test_stdlib_string.blood
+
+// --- stdlib/string.blood helpers (inlined) ---
+
+pub fn substring(s: &String, start: usize, end: usize) -> String {
+    let bytes = s.as_bytes();
+    let mut result = String.new();
+    let actual_end = if end > bytes.len() { bytes.len() } else { end };
+    let mut i = start;
+    while i < actual_end {
+        result.push(bytes[i] as char);
+        i += 1;
+    }
+    result
+}
+
+pub fn trim(s: &String) -> String {
+    let bytes = s.as_bytes();
+    let len = bytes.len();
+    let mut start: usize = 0;
+    let mut end: usize = len;
+    while start < len && (bytes[start] == 32 || bytes[start] == 9 || bytes[start] == 10 || bytes[start] == 13) {
+        start += 1;
+    }
+    while end > start && (bytes[end - 1] == 32 || bytes[end - 1] == 9 || bytes[end - 1] == 10 || bytes[end - 1] == 13) {
+        end -= 1;
+    }
+    substring(s, start, end)
+}
+
+pub fn contains(haystack: &String, needle: &String) -> bool {
+    match index_of(haystack, needle) {
+        Option.Some(_) => true,
+        Option.None => false,
+    }
+}
+
+pub fn starts_with(s: &String, prefix: &String) -> bool {
+    let s_bytes = s.as_bytes();
+    let p_bytes = prefix.as_bytes();
+    let p_len = p_bytes.len();
+    if p_len > s_bytes.len() {
+        return false;
+    }
+    for i in 0usize..p_len {
+        if s_bytes[i] != p_bytes[i] {
+            return false;
+        }
+    }
+    true
+}
+
+pub fn ends_with(s: &String, suffix: &String) -> bool {
+    let s_bytes = s.as_bytes();
+    let suf_bytes = suffix.as_bytes();
+    let s_len = s_bytes.len();
+    let suf_len = suf_bytes.len();
+    if suf_len > s_len {
+        return false;
+    }
+    let offset = s_len - suf_len;
+    for i in 0usize..suf_len {
+        if s_bytes[offset + i] != suf_bytes[i] {
+            return false;
+        }
+    }
+    true
+}
+
+pub fn index_of(s: &String, needle: &String) -> Option<usize> {
+    let s_bytes = s.as_bytes();
+    let n_bytes = needle.as_bytes();
+    let s_len = s_bytes.len();
+    let n_len = n_bytes.len();
+    if n_len == 0 {
+        let zero: usize = 0;
+        return Option.Some(zero);
+    }
+    if n_len > s_len {
+        return Option.None;
+    }
+    let mut i: usize = 0;
+    while i + n_len <= s_len {
+        let mut matches = true;
+        let mut j: usize = 0;
+        while j < n_len {
+            if s_bytes[i + j] != n_bytes[j] {
+                matches = false;
+                j = n_len;
+            }
+            j += 1;
+        }
+        if matches {
+            return Option.Some(i);
+        }
+        i += 1;
+    }
+    Option.None
+}
+
+pub fn replace(s: &String, from: &String, to: &String) -> String {
+    let s_bytes = s.as_bytes();
+    let from_bytes = from.as_bytes();
+    let to_bytes = to.as_bytes();
+    let s_len = s_bytes.len();
+    let from_len = from_bytes.len();
+    if from_len == 0 || from_len > s_len {
+        return clone_string(s);
+    }
+    let mut result = String.new();
+    let mut i: usize = 0;
+    while i < s_len {
+        if i + from_len <= s_len {
+            let mut matches = true;
+            let mut j: usize = 0;
+            while j < from_len {
+                if s_bytes[i + j] != from_bytes[j] {
+                    matches = false;
+                    j = from_len;
+                }
+                j += 1;
+            }
+            if matches {
+                for k in 0usize..to_bytes.len() {
+                    result.push(to_bytes[k] as char);
+                }
+                i += from_len;
+                continue;
+            }
+        }
+        result.push(s_bytes[i] as char);
+        i += 1;
+    }
+    result
+}
+
+pub fn to_uppercase(s: &String) -> String {
+    let bytes = s.as_bytes();
+    let len = bytes.len();
+    let mut result = String.new();
+    for i in 0usize..len {
+        let b = bytes[i];
+        if b >= 97 && b <= 122 {
+            result.push((b - 32) as char);
+        } else {
+            result.push(b as char);
+        }
+    }
+    result
+}
+
+pub fn to_lowercase(s: &String) -> String {
+    let bytes = s.as_bytes();
+    let len = bytes.len();
+    let mut result = String.new();
+    for i in 0usize..len {
+        let b = bytes[i];
+        if b >= 65 && b <= 90 {
+            result.push((b + 32) as char);
+        } else {
+            result.push(b as char);
+        }
+    }
+    result
+}
+
+pub fn repeat(s: &String, count: usize) -> String {
+    let mut result = String.new();
+    for i in 0usize..count {
+        result.push_str(s.as_str());
+    }
+    result
+}
+
+pub fn str_equals(a: &String, b: &str) -> bool {
+    let a_bytes = a.as_bytes();
+    let b_bytes = b.as_bytes();
+    if a_bytes.len() != b_bytes.len() {
+        return false;
+    }
+    for i in 0usize..a_bytes.len() {
+        if a_bytes[i] != b_bytes[i] {
+            return false;
+        }
+    }
+    true
+}
+
+pub fn clone_string(s: &String) -> String {
+    let mut result = String.new();
+    result.push_str(s.as_str());
+    result
+}
+
+// --- Helper: make String from &str ---
+
+fn make(s: &str) -> String {
+    let mut result = String.new();
+    result.push_str(s);
+    result
+}
+
+// --- Tests ---
+
+#[test]
+fn test_substring() {
+    let s = make("hello world");
+    let sub = substring(&s, 0 as usize, 5 as usize);
+    assert_eq_str(sub.as_str(), "hello");
+
+    let sub2 = substring(&s, 6 as usize, 11 as usize);
+    assert_eq_str(sub2.as_str(), "world");
+
+    let sub3 = substring(&s, 0 as usize, 0 as usize);
+    assert_eq_str(sub3.as_str(), "");
+
+    let sub4 = substring(&s, 0 as usize, 100 as usize);
+    assert_eq_str(sub4.as_str(), "hello world");
+}
+
+#[test]
+fn test_trim() {
+    let s1 = make("  hello  ");
+    let t1 = trim(&s1);
+    assert_eq_str(t1.as_str(), "hello");
+
+    let s2 = make("no spaces");
+    let t2 = trim(&s2);
+    assert_eq_str(t2.as_str(), "no spaces");
+
+    let s3 = make("   ");
+    let t3 = trim(&s3);
+    assert_eq_str(t3.as_str(), "");
+
+    let s4 = make("");
+    let t4 = trim(&s4);
+    assert_eq_str(t4.as_str(), "");
+}
+
+#[test]
+fn test_contains() {
+    let haystack = make("hello world");
+    let needle1 = make("world");
+    let needle2 = make("xyz");
+    let needle3 = make("");
+
+    assert_eq_bool(contains(&haystack, &needle1), true);
+    assert_eq_bool(contains(&haystack, &needle2), false);
+    assert_eq_bool(contains(&haystack, &needle3), true);
+}
+
+#[test]
+fn test_starts_with() {
+    let s = make("hello world");
+    let p1 = make("hello");
+    let p2 = make("world");
+    let p3 = make("");
+    let p4 = make("hello world and more");
+
+    assert_eq_bool(starts_with(&s, &p1), true);
+    assert_eq_bool(starts_with(&s, &p2), false);
+    assert_eq_bool(starts_with(&s, &p3), true);
+    assert_eq_bool(starts_with(&s, &p4), false);
+}
+
+#[test]
+fn test_ends_with() {
+    let s = make("hello world");
+    let suf1 = make("world");
+    let suf2 = make("hello");
+    let suf3 = make("");
+    let suf4 = make("very long suffix");
+
+    assert_eq_bool(ends_with(&s, &suf1), true);
+    assert_eq_bool(ends_with(&s, &suf2), false);
+    assert_eq_bool(ends_with(&s, &suf3), true);
+    assert_eq_bool(ends_with(&s, &suf4), false);
+}
+
+#[test]
+fn test_index_of() {
+    let s = make("abcdef");
+    let n1 = make("cd");
+    let n2 = make("xyz");
+    let n3 = make("");
+
+    match index_of(&s, &n1) {
+        Option.Some(idx) => assert_eq_usize(idx, 2 as usize),
+        Option.None => assert(false),
+    }
+
+    match index_of(&s, &n2) {
+        Option.Some(_) => assert(false),
+        Option.None => assert(true),
+    }
+
+    match index_of(&s, &n3) {
+        Option.Some(idx) => assert_eq_usize(idx, 0 as usize),
+        Option.None => assert(false),
+    }
+}
+
+#[test]
+fn test_replace() {
+    let s = make("hello world");
+    let from = make("world");
+    let to = make("blood");
+    let result = replace(&s, &from, &to);
+    assert_eq_str(result.as_str(), "hello blood");
+
+    let s2 = make("aaa");
+    let from2 = make("a");
+    let to2 = make("bb");
+    let result2 = replace(&s2, &from2, &to2);
+    assert_eq_str(result2.as_str(), "bbbbbb");
+}
+
+#[test]
+fn test_to_uppercase() {
+    let s = make("hello");
+    let upper = to_uppercase(&s);
+    assert_eq_str(upper.as_str(), "HELLO");
+
+    let s2 = make("Hello World 123");
+    let upper2 = to_uppercase(&s2);
+    assert_eq_str(upper2.as_str(), "HELLO WORLD 123");
+}
+
+#[test]
+fn test_to_lowercase() {
+    let s = make("HELLO");
+    let lower = to_lowercase(&s);
+    assert_eq_str(lower.as_str(), "hello");
+
+    let s2 = make("Hello World 123");
+    let lower2 = to_lowercase(&s2);
+    assert_eq_str(lower2.as_str(), "hello world 123");
+}
+
+#[test]
+fn test_repeat() {
+    let s = make("ab");
+    let r = repeat(&s, 3 as usize);
+    assert_eq_str(r.as_str(), "ababab");
+
+    let r0 = repeat(&s, 0 as usize);
+    assert_eq_str(r0.as_str(), "");
+
+    let r1 = repeat(&s, 1 as usize);
+    assert_eq_str(r1.as_str(), "ab");
+}
+
+#[test]
+fn test_str_equals() {
+    let s = make("blood");
+    assert_eq_bool(str_equals(&s, "blood"), true);
+    assert_eq_bool(str_equals(&s, "rust"), false);
+    assert_eq_bool(str_equals(&s, ""), false);
+
+    let empty = make("");
+    assert_eq_bool(str_equals(&empty, ""), true);
+}
+
+#[test]
+fn test_clone_string() {
+    let s = make("original");
+    let c = clone_string(&s);
+    assert_eq_str(c.as_str(), "original");
+    assert_eq_str(s.as_str(), "original");
+}

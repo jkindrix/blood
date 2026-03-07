@@ -1,0 +1,240 @@
+// Tests for stdlib math functions using blood test framework.
+// Run: blood test tests/ground-truth/t11_test_stdlib_math.blood
+
+// --- stdlib/math.blood (inlined) ---
+
+pub fn pow_i32(base: i32, exp: u32) -> i32 {
+    let mut result: i32 = 1;
+    let mut b = base;
+    let mut e = exp;
+    while e > 0 {
+        if e % 2 == 1 {
+            result *= b;
+        }
+        b *= b;
+        e /= 2;
+    }
+    result
+}
+
+pub fn pow_u32(base: u32, exp: u32) -> u32 {
+    let mut result: u32 = 1;
+    let mut b = base;
+    let mut e = exp;
+    while e > 0 {
+        if e % 2 == 1 {
+            result *= b;
+        }
+        b *= b;
+        e /= 2;
+    }
+    result
+}
+
+pub fn gcd(a: i32, b: i32) -> i32 {
+    let mut x = a;
+    let mut y = b;
+    if x < 0 { x = 0 - x; }
+    if y < 0 { y = 0 - y; }
+    while y != 0 {
+        let t = y;
+        y = x % y;
+        x = t;
+    }
+    x
+}
+
+pub fn lcm(a: i32, b: i32) -> i32 {
+    if a == 0 || b == 0 {
+        return 0;
+    }
+    let g = gcd(a, b);
+    let mut abs_a = a;
+    if abs_a < 0 { abs_a = 0 - abs_a; }
+    let mut abs_b = b;
+    if abs_b < 0 { abs_b = 0 - abs_b; }
+    (abs_a / g) * abs_b
+}
+
+pub fn is_power_of_two(n: u32) -> bool {
+    if n == 0 {
+        return false;
+    }
+    (n & (n - 1)) == 0
+}
+
+pub fn next_power_of_two(n: u32) -> u32 {
+    if n == 0 {
+        return 1;
+    }
+    if is_power_of_two(n) {
+        return n;
+    }
+    let mut v = n - 1;
+    v = v | (v >> 1);
+    v = v | (v >> 2);
+    v = v | (v >> 4);
+    v = v | (v >> 8);
+    v = v | (v >> 16);
+    v + 1
+}
+
+pub fn log2_u32(n: u32) -> u32 {
+    if n == 0 {
+        return 0;
+    }
+    let mut val = n;
+    let mut log: u32 = 0;
+    while val > 1 {
+        val = val >> 1;
+        log += 1;
+    }
+    log
+}
+
+pub fn sign(n: i32) -> i32 {
+    if n > 0 {
+        1
+    } else {
+        if n < 0 { 0 - 1 } else { 0 }
+    }
+}
+
+pub fn min_u32(a: u32, b: u32) -> u32 {
+    if a < b { a } else { b }
+}
+
+pub fn max_u32(a: u32, b: u32) -> u32 {
+    if a > b { a } else { b }
+}
+
+pub fn min_usize(a: usize, b: usize) -> usize {
+    if a < b { a } else { b }
+}
+
+pub fn max_usize(a: usize, b: usize) -> usize {
+    if a > b { a } else { b }
+}
+
+pub fn clamp_u32(val: u32, lo: u32, hi: u32) -> u32 {
+    if val < lo {
+        lo
+    } else {
+        if val > hi { hi } else { val }
+    }
+}
+
+// --- Tests ---
+
+#[test]
+fn test_pow_i32() {
+    assert_eq_int(pow_i32(2, 0 as u32), 1);
+    assert_eq_int(pow_i32(2, 1 as u32), 2);
+    assert_eq_int(pow_i32(2, 10 as u32), 1024);
+    assert_eq_int(pow_i32(3, 5 as u32), 243);
+    assert_eq_int(pow_i32(-2, 3 as u32), -8);
+    assert_eq_int(pow_i32(-2, 4 as u32), 16);
+    assert_eq_int(pow_i32(1, 100 as u32), 1);
+    assert_eq_int(pow_i32(0, 5 as u32), 0);
+}
+
+#[test]
+fn test_pow_u32() {
+    assert_eq_u32(pow_u32(2 as u32, 0 as u32), 1 as u32);
+    assert_eq_u32(pow_u32(2 as u32, 10 as u32), 1024 as u32);
+    assert_eq_u32(pow_u32(3 as u32, 5 as u32), 243 as u32);
+    assert_eq_u32(pow_u32(10 as u32, 4 as u32), 10000 as u32);
+}
+
+#[test]
+fn test_gcd() {
+    assert_eq_int(gcd(12, 8), 4);
+    assert_eq_int(gcd(15, 10), 5);
+    assert_eq_int(gcd(7, 13), 1);
+    assert_eq_int(gcd(0, 5), 5);
+    assert_eq_int(gcd(5, 0), 5);
+    assert_eq_int(gcd(-12, 8), 4);
+    assert_eq_int(gcd(12, -8), 4);
+    assert_eq_int(gcd(100, 100), 100);
+}
+
+#[test]
+fn test_lcm() {
+    assert_eq_int(lcm(4, 6), 12);
+    assert_eq_int(lcm(3, 5), 15);
+    assert_eq_int(lcm(7, 7), 7);
+    assert_eq_int(lcm(0, 5), 0);
+    assert_eq_int(lcm(5, 0), 0);
+    assert_eq_int(lcm(12, 18), 36);
+}
+
+#[test]
+fn test_is_power_of_two() {
+    assert_eq_bool(is_power_of_two(0 as u32), false);
+    assert_eq_bool(is_power_of_two(1 as u32), true);
+    assert_eq_bool(is_power_of_two(2 as u32), true);
+    assert_eq_bool(is_power_of_two(3 as u32), false);
+    assert_eq_bool(is_power_of_two(4 as u32), true);
+    assert_eq_bool(is_power_of_two(16 as u32), true);
+    assert_eq_bool(is_power_of_two(17 as u32), false);
+    assert_eq_bool(is_power_of_two(1024 as u32), true);
+}
+
+#[test]
+fn test_next_power_of_two() {
+    assert_eq_u32(next_power_of_two(0 as u32), 1 as u32);
+    assert_eq_u32(next_power_of_two(1 as u32), 1 as u32);
+    assert_eq_u32(next_power_of_two(2 as u32), 2 as u32);
+    assert_eq_u32(next_power_of_two(3 as u32), 4 as u32);
+    assert_eq_u32(next_power_of_two(5 as u32), 8 as u32);
+    assert_eq_u32(next_power_of_two(7 as u32), 8 as u32);
+    assert_eq_u32(next_power_of_two(9 as u32), 16 as u32);
+    assert_eq_u32(next_power_of_two(1000 as u32), 1024 as u32);
+}
+
+#[test]
+fn test_log2_u32() {
+    assert_eq_u32(log2_u32(0 as u32), 0 as u32);
+    assert_eq_u32(log2_u32(1 as u32), 0 as u32);
+    assert_eq_u32(log2_u32(2 as u32), 1 as u32);
+    assert_eq_u32(log2_u32(4 as u32), 2 as u32);
+    assert_eq_u32(log2_u32(8 as u32), 3 as u32);
+    assert_eq_u32(log2_u32(1024 as u32), 10 as u32);
+    assert_eq_u32(log2_u32(7 as u32), 2 as u32);
+}
+
+#[test]
+fn test_sign() {
+    assert_eq_int(sign(42), 1);
+    assert_eq_int(sign(1), 1);
+    assert_eq_int(sign(0), 0);
+    assert_eq_int(sign(-1), -1);
+    assert_eq_int(sign(-100), -1);
+}
+
+#[test]
+fn test_min_max_u32() {
+    assert_eq_u32(min_u32(3 as u32, 5 as u32), 3 as u32);
+    assert_eq_u32(min_u32(5 as u32, 3 as u32), 3 as u32);
+    assert_eq_u32(min_u32(3 as u32, 3 as u32), 3 as u32);
+    assert_eq_u32(max_u32(3 as u32, 5 as u32), 5 as u32);
+    assert_eq_u32(max_u32(5 as u32, 3 as u32), 5 as u32);
+    assert_eq_u32(max_u32(3 as u32, 3 as u32), 3 as u32);
+}
+
+#[test]
+fn test_min_max_usize() {
+    assert_eq_usize(min_usize(10 as usize, 20 as usize), 10 as usize);
+    assert_eq_usize(min_usize(20 as usize, 10 as usize), 10 as usize);
+    assert_eq_usize(max_usize(10 as usize, 20 as usize), 20 as usize);
+    assert_eq_usize(max_usize(20 as usize, 10 as usize), 20 as usize);
+}
+
+#[test]
+fn test_clamp_u32() {
+    assert_eq_u32(clamp_u32(5 as u32, 0 as u32, 10 as u32), 5 as u32);
+    assert_eq_u32(clamp_u32(0 as u32, 1 as u32, 10 as u32), 1 as u32);
+    assert_eq_u32(clamp_u32(15 as u32, 0 as u32, 10 as u32), 10 as u32);
+    assert_eq_u32(clamp_u32(0 as u32, 0 as u32, 10 as u32), 0 as u32);
+    assert_eq_u32(clamp_u32(10 as u32, 0 as u32, 10 as u32), 10 as u32);
+}
