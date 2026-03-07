@@ -6,6 +6,7 @@
 #   ./build_selfhost.sh rebuild      # Skip blood-rust, reuse existing first_gen
 #   ./build_selfhost.sh test [bin]   # Smoke test a binary (default: build/second_gen)
 #   ./build_selfhost.sh ground-truth [bin] # Run ground-truth tests (default: BLOOD_TEST or first_gen)
+#   ./build_selfhost.sh blood-test [bin]   # Run blood test suite (default: blood-rust)
 #   ./build_selfhost.sh emit [stage] # Emit intermediate IR (ast|hir|mir|llvm-ir|llvm-ir-unopt)
 #   ./build_selfhost.sh verify [ir]  # Run all verification checks on IR
 #   ./build_selfhost.sh ir-check [ir]# Run FileCheck tests against compiler output
@@ -29,6 +30,7 @@ BLOOD_RUST="${BLOOD_RUST:-$REPO_ROOT/src/bootstrap/target/release/blood}"
 RUNTIME_O="${RUNTIME_O:-$REPO_ROOT/runtime/runtime.o}"
 RUNTIME_A="${RUNTIME_A:-$REPO_ROOT/src/bootstrap/target/release/libblood_runtime.a}"
 GROUND_TRUTH="${GROUND_TRUTH:-$REPO_ROOT/tests/ground-truth}"
+BLOOD_TESTS="${BLOOD_TESTS:-$REPO_ROOT/tests/blood-test}"
 STDLIB_PATH="${STDLIB_PATH:-$REPO_ROOT/stdlib}"
 
 # Export for first_gen/second_gen runtime discovery
@@ -670,6 +672,47 @@ run_smoke_tests() {
     [ "$fail_count" -eq 0 ] && return 0 || return 1
 }
 
+# Run blood test files (tests with #[test] attributes, no main())
+run_blood_tests() {
+    local compiler="$1"
+    [ -f "$compiler" ] || die "$compiler not found"
+    [ -d "$BLOOD_TESTS" ] || die "blood-test directory not found at $BLOOD_TESTS"
+
+    step "Running blood test suite through $compiler"
+
+    local pass=0 fail_count=0 total=0
+
+    for src in "$BLOOD_TESTS"/*.blood; do
+        [ -f "$src" ] || continue
+        local name
+        name="$(basename "$src" .blood)"
+        total=$((total + 1))
+
+        local output rc=0
+        # Only pass --stdlib-path if the test file uses stdlib (has 'mod std;' or 'use std.')
+        local stdlib_flag=""
+        if grep -qE '^(mod std;|use std\.)' "$src"; then
+            stdlib_flag="--stdlib-path $STDLIB_PATH"
+        fi
+        output=$("$compiler" test "$src" $stdlib_flag 2>&1) || rc=$?
+
+        if [ "$rc" -eq 0 ]; then
+            # Extract summary line
+            local summary
+            summary=$(echo "$output" | grep '^test result:' || true)
+            ok "$name ${summary:+($summary)}"
+            pass=$((pass + 1))
+        else
+            fail "$name (exit $rc)"
+            echo "$output" | tail -5 | sed 's/^/      /'
+            fail_count=$((fail_count + 1))
+        fi
+    done
+
+    printf "\n  %d/%d test files passed\n" "$pass" "$total"
+    [ "$fail_count" -eq 0 ] && return 0 || return 1
+}
+
 case "${1:-full}" in
     full)
         PIPELINE_START=$(date +%s)
@@ -727,6 +770,10 @@ case "${1:-full}" in
 
     smoke-tests)
         run_smoke_tests "${2:-$BLOOD_RUST}"
+        ;;
+
+    blood-test)
+        run_blood_tests "${2:-$BLOOD_RUST}"
         ;;
 
     verify)
@@ -827,6 +874,7 @@ Commands:
   rebuild           Reuse existing first_gen to rebuild second_gen
   test [binary]     Smoke test a binary (default: build/second_gen)
   ground-truth [b]  Run ground-truth tests through binary (default: BLOOD_TEST or first_gen)
+  blood-test [b]    Run blood test suite (tests/blood-test/) through binary (default: blood-rust)
   smoke-tests [b]   Run smoke tests (tests/) through binary (default: blood-rust)
   verify [ir]       Run all verification checks (default: build/second_gen.ll)
   ir-check [ir]     Run FileCheck tests against compiler output
@@ -850,6 +898,7 @@ Environment:
   RUNTIME_O         Path to runtime.o (default: <repo>/runtime/runtime.o)
   RUNTIME_A         Path to libblood_runtime.a (default: <repo>/src/bootstrap/target/release/libblood_runtime.a)
   GROUND_TRUTH      Path to ground-truth test dir (default: <repo>/tests/ground-truth)
+  BLOOD_TESTS       Path to blood-test dir (default: <repo>/tests/blood-test)
 USAGE
         exit 1
         ;;
