@@ -617,6 +617,19 @@ pub enum EffectRowKind {
 }
 
 // ============================================================
+// Unchecked Checks
+// ============================================================
+
+/// A specific runtime check that can be disabled via `unchecked(check) { ... }`.
+pub enum UncheckedCheck {
+    Bounds,
+    Overflow,
+    Generation,
+    Null,
+    Alignment,
+}
+
+// ============================================================
 // Expressions
 // ============================================================
 
@@ -752,6 +765,13 @@ pub enum ExprKind {
         handlers: Vec<TryWithHandler>,
     },
     Unsafe(Block),
+    /// Unchecked block: `unchecked(checks) { ... }`
+    /// Disables specific runtime safety checks within the block.
+    Unchecked {
+        checks: Vec<UncheckedCheck>,
+        when_condition: Option<common.SpannedString>,
+        body: Block,
+    },
     /// Heap allocation directive: `@heap expr`
     Heap(Box<Expr>),
     /// Stack allocation directive: `@stack expr`

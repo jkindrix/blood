@@ -224,6 +224,7 @@ impl<'ctx, 'a> MirCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
         self.current_fn_def_id = Some(def_id);
         self.locals.clear();
         self.local_generations.clear();
+        self.unchecked_checks.clear();
         self.persistent_slot_ids.clear();
         self.handler_state_shadows.clear();
         self.active_regions.clear();

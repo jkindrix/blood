@@ -289,6 +289,17 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
             | ExprKind::Stack(inner) => {
                 self.lower_expr(inner)
             }
+            ExprKind::Unchecked { ref checks, body, .. } => {
+                if checks.is_empty() {
+                    self.lower_expr(body)
+                } else {
+                    let check_vec = checks.clone();
+                    self.push_stmt(StatementKind::EnterUnchecked(check_vec.clone()));
+                    let result = self.lower_expr(body);
+                    self.push_stmt(StatementKind::ExitUnchecked(check_vec));
+                    result
+                }
+            }
 
             ExprKind::Perform { effect_id, op_index, args, type_args: _ } => {
                 self.lower_perform(*effect_id, *op_index, args, &expr.ty, expr.span)

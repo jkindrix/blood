@@ -281,6 +281,13 @@ pub enum ExprKind {
     /// Unsafe block: `unsafe { ... }`
     Unsafe(Box<Expr>),
 
+    /// Unchecked block: disables specific runtime checks.
+    Unchecked {
+        checks: Vec<crate::ast::UncheckedCheck>,
+        when_condition: Option<String>,
+        body: Box<Expr>,
+    },
+
     /// Heap allocation directive: `@heap expr`
     Heap(Box<Expr>),
     /// Stack allocation directive: `@stack expr`

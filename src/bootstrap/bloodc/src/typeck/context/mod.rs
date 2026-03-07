@@ -1213,6 +1213,13 @@ impl<'a> TypeContext<'a> {
             hir::ExprKind::Unsafe(inner) => {
                 hir::ExprKind::Unsafe(Box::new(Self::zonk_expr_with_unifier(unifier, *inner)))
             }
+            hir::ExprKind::Unchecked { checks, when_condition, body } => {
+                hir::ExprKind::Unchecked {
+                    checks,
+                    when_condition,
+                    body: Box::new(Self::zonk_expr_with_unifier(unifier, *body)),
+                }
+            }
             hir::ExprKind::Heap(inner) => {
                 hir::ExprKind::Heap(Box::new(Self::zonk_expr_with_unifier(unifier, *inner)))
             }

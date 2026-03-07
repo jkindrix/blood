@@ -506,7 +506,9 @@ fn substitute_statement_types_with_ctx(stmt: &mut crate::mir::types::Statement, 
         | StatementKind::ValidateGeneration { .. }
         | StatementKind::PushHandler { .. }
         | StatementKind::PopHandler
-        | StatementKind::CallReturnClause { .. } => {}
+        | StatementKind::CallReturnClause { .. }
+        | StatementKind::EnterUnchecked(_)
+        | StatementKind::ExitUnchecked(_) => {}
     }
 }
 
@@ -709,6 +711,9 @@ pub struct CodegenContext<'ctx, 'a> {
     /// Map from region-allocated LocalId to generation storage (stack alloca).
     /// Used for generation validation on dereference.
     pub local_generations: HashMap<LocalId, PointerValue<'ctx>>,
+    /// Active unchecked checks — when a check is in this set, the corresponding
+    /// runtime validation is skipped.
+    pub unchecked_checks: std::collections::HashSet<crate::ast::UncheckedCheck>,
     /// Map from persistent-tier LocalId to slot ID storage (stack alloca holding u64 slot ID).
     /// Used for RC lifecycle management: blood_persistent_decrement on StorageDead.
     pub persistent_slot_ids: HashMap<LocalId, PointerValue<'ctx>>,
@@ -843,6 +848,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             handler_ops: HashMap::new(),
             builtin_fns: HashMap::new(),
             local_generations: HashMap::new(),
+            unchecked_checks: std::collections::HashSet::new(),
             persistent_slot_ids: HashMap::new(),
             vtables: HashMap::new(),
             vtable_layouts: HashMap::new(),
@@ -2465,6 +2471,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         self.locals.clear();
         self.local_types.clear();
         self.local_generations.clear();
+        self.unchecked_checks.clear();
         self.persistent_slot_ids.clear();
         self.loop_stack.clear();
         self.handler_state_shadows.clear();
@@ -2959,6 +2966,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let saved_locals = std::mem::take(&mut self.locals);
         let saved_local_types = std::mem::take(&mut self.local_types);
         let saved_local_generations = std::mem::take(&mut self.local_generations);
+        let saved_unchecked_checks = std::mem::take(&mut self.unchecked_checks);
         let saved_persistent_slot_ids = std::mem::take(&mut self.persistent_slot_ids);
         let saved_handler_state_shadows = std::mem::take(&mut self.handler_state_shadows);
         let saved_active_regions = std::mem::take(&mut self.active_regions);
@@ -2987,6 +2995,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 self.locals.clear();
                 self.local_types.clear();
                 self.local_generations.clear();
+                self.unchecked_checks.clear();
                 self.persistent_slot_ids.clear();
                 self.handler_state_shadows.clear();
                 self.active_regions.clear();
@@ -3007,6 +3016,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         self.locals = saved_locals;
         self.local_types = saved_local_types;
         self.local_generations = saved_local_generations;
+        self.unchecked_checks = saved_unchecked_checks;
         self.persistent_slot_ids = saved_persistent_slot_ids;
         self.handler_state_shadows = saved_handler_state_shadows;
         self.active_regions = saved_active_regions;
@@ -3118,6 +3128,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let saved_locals = std::mem::take(&mut self.locals);
         let saved_local_types = std::mem::take(&mut self.local_types);
         let saved_local_generations = std::mem::take(&mut self.local_generations);
+        let saved_unchecked_checks = std::mem::take(&mut self.unchecked_checks);
         let saved_persistent_slot_ids = std::mem::take(&mut self.persistent_slot_ids);
         let saved_handler_state_shadows = std::mem::take(&mut self.handler_state_shadows);
         let saved_active_regions = std::mem::take(&mut self.active_regions);
@@ -3142,6 +3153,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 self.locals.clear();
                 self.local_types.clear();
                 self.local_generations.clear();
+                self.unchecked_checks.clear();
                 self.persistent_slot_ids.clear();
                 self.handler_state_shadows.clear();
                 self.active_regions.clear();
@@ -3160,6 +3172,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         self.locals = saved_locals;
         self.local_types = saved_local_types;
         self.local_generations = saved_local_generations;
+        self.unchecked_checks = saved_unchecked_checks;
         self.persistent_slot_ids = saved_persistent_slot_ids;
         self.handler_state_shadows = saved_handler_state_shadows;
         self.active_regions = saved_active_regions;

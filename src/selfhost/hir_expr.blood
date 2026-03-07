@@ -8,6 +8,7 @@
 // - Types are attached to expressions and patterns
 // - Some syntactic sugar is desugared
 
+mod ast;
 mod common;
 mod hir_def;
 mod hir_ty;
@@ -247,6 +248,12 @@ pub enum ExprKind {
     },
     /// Unsafe block.
     Unsafe(Box<Expr>),
+    /// Unchecked block: disables specific runtime checks.
+    Unchecked {
+        checks: Vec<ast.UncheckedCheck>,
+        when_condition: Option<String>,
+        body: Box<Expr>,
+    },
     /// Heap allocation directive: `@heap expr`
     Heap(Box<Expr>),
     /// Stack allocation directive: `@stack expr`

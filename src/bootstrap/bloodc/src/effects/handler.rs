@@ -298,6 +298,7 @@ fn count_resumes(expr: &Expr) -> usize {
         | ExprKind::Dbg(expr)
         | ExprKind::SliceLen(expr)
         | ExprKind::VecLen(expr) => count_resumes(expr),
+        ExprKind::Unchecked { body, .. } => count_resumes(body),
         ExprKind::ArrayToSlice { expr, .. } => count_resumes(expr),
         ExprKind::Let { init, .. } => count_resumes(init),
         ExprKind::Range { start, end, .. } => {

@@ -307,6 +307,13 @@ impl<'a> MacroExpander<'a> {
             ExprKind::Unsafe(inner) => {
                 ExprKind::Unsafe(Box::new(self.expand_expr(*inner)))
             }
+            ExprKind::Unchecked { checks, when_condition, body } => {
+                ExprKind::Unchecked {
+                    checks,
+                    when_condition,
+                    body: Box::new(self.expand_expr(*body)),
+                }
+            }
             ExprKind::Heap(inner) => {
                 ExprKind::Heap(Box::new(self.expand_expr(*inner)))
             }

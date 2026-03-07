@@ -487,6 +487,7 @@ impl<'src> Parser<'src> {
                 | ExprKind::WhileLet { .. }
                 | ExprKind::For { .. }
                 | ExprKind::Unsafe(_)
+                | ExprKind::Unchecked { .. }
                 | ExprKind::Region { .. }
                 | ExprKind::WithHandle { .. }
         )
@@ -944,6 +945,71 @@ impl<'src> Parser<'src> {
                 let inner = self.parse_expr_prec(Precedence::Unary);
                 Expr {
                     kind: ExprKind::Stack(Box::new(inner)),
+                    span: start.merge(self.previous.span),
+                }
+            }
+
+            // Unchecked block: unchecked(bounds, overflow) { ... }
+            TokenKind::Unchecked => {
+                self.advance();
+                self.expect(TokenKind::LParen);
+                let mut checks = Vec::new();
+                let mut when_condition = None;
+                while !self.check(TokenKind::RParen) && !self.is_at_end() {
+                    let check_start = self.current.span;
+                    // Handle 'when' as a contextual keyword inside unchecked()
+                    if (self.check(TokenKind::Ident) || self.check_ident())
+                        && self.text(&self.current.span) == "when"
+                    {
+                        self.advance(); // consume 'when'
+                        self.expect(TokenKind::Eq);
+                        if self.check(TokenKind::StringLit) {
+                            let str_span = self.current.span;
+                            let cond = self.parse_string_literal_content();
+                            when_condition = Some(Spanned::new(cond, check_start.merge(str_span)));
+                        } else {
+                            self.error_at_current(
+                                "expected string literal after `when =`",
+                                crate::diagnostics::ErrorCode::UnexpectedToken,
+                            );
+                        }
+                    } else {
+                        let name = self.current_text().to_string();
+                        self.advance();
+                        let check = match name.as_str() {
+                            "bounds" => UncheckedCheck::Bounds,
+                            "overflow" => UncheckedCheck::Overflow,
+                            "generation" => UncheckedCheck::Generation,
+                            "null" => UncheckedCheck::Null,
+                            "alignment" => UncheckedCheck::Alignment,
+                            _ => {
+                                self.error_at(
+                                    check_start,
+                                    &format!(
+                                        "unknown unchecked check '{}', expected one of: bounds, overflow, generation, null, alignment",
+                                        name
+                                    ),
+                                    crate::diagnostics::ErrorCode::UnexpectedToken,
+                                );
+                                UncheckedCheck::Bounds // recovery
+                            }
+                        };
+                        checks.push(Spanned::new(check, check_start.merge(self.previous.span)));
+                    }
+                    if !self.check(TokenKind::RParen) {
+                        self.expect(TokenKind::Comma);
+                    }
+                }
+                self.expect(TokenKind::RParen);
+                if checks.is_empty() {
+                    self.error_at_current(
+                        "unchecked block requires at least one check name",
+                        crate::diagnostics::ErrorCode::UnexpectedToken,
+                    );
+                }
+                let body = self.parse_block();
+                Expr {
+                    kind: ExprKind::Unchecked { checks, when_condition, body },
                     span: start.merge(self.previous.span),
                 }
             }

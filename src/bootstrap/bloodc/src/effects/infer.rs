@@ -319,6 +319,9 @@ impl EffectInferencer {
             ExprKind::Stack(inner) => {
                 self.infer_expr(inner, ctx);
             }
+            ExprKind::Unchecked { body, .. } => {
+                self.infer_expr(body, ctx);
+            }
 
             ExprKind::Let { init, .. } => {
                 self.infer_expr(init, ctx);

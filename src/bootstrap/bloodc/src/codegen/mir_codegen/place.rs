@@ -220,7 +220,9 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                     // alloca initialization is correct (zero-init + blood_alloc_or_abort
                     // write) but the load reads from a different stack location.
                     // Investigation needed into LLVM 14 alloca frame layout.
-                    if false && !should_skip_gen_check {
+                    //
+                    // Also skipped when unchecked(generation) is active.
+                    if false && !should_skip_gen_check && !self.unchecked_checks.contains(&crate::ast::UncheckedCheck::Generation) {
                     if let Some(local_id) = place.as_local() {
                     if let Some(&gen_alloca) = self.local_generations.get(&local_id) {
                         let i32_ty = self.context.i32_type();

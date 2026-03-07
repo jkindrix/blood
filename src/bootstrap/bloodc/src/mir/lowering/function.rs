@@ -234,6 +234,9 @@ pub fn collect_local_refs(expr: &Expr, refs: &mut Vec<CaptureCandidate>, in_muta
         | ExprKind::Stack(inner) => {
             collect_local_refs(inner, refs, in_mutable_context);
         }
+        ExprKind::Unchecked { body, .. } => {
+            collect_local_refs(body, refs, in_mutable_context);
+        }
 
         // These don't contain local references
         ExprKind::Literal(_)
@@ -537,6 +540,17 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
             | ExprKind::Stack(inner) => {
                 // For now, just lower the inner expression (safety/placement handled elsewhere)
                 self.lower_expr(inner)
+            }
+            ExprKind::Unchecked { ref checks, body, .. } => {
+                if checks.is_empty() {
+                    self.lower_expr(body)
+                } else {
+                    let check_vec = checks.clone();
+                    self.push_stmt(StatementKind::EnterUnchecked(check_vec.clone()));
+                    let result = self.lower_expr(body);
+                    self.push_stmt(StatementKind::ExitUnchecked(check_vec));
+                    result
+                }
             }
 
             ExprKind::Perform { effect_id, op_index, args, type_args: _ } => {

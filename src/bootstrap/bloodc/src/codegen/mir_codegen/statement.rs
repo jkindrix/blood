@@ -1402,6 +1402,18 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                     )])?;
             }
 
+            StatementKind::EnterUnchecked(ref checks) => {
+                for check in checks {
+                    self.unchecked_checks.insert(*check);
+                }
+            }
+
+            StatementKind::ExitUnchecked(ref checks) => {
+                for check in checks {
+                    self.unchecked_checks.remove(check);
+                }
+            }
+
             StatementKind::Nop => {
                 // No operation
             }

@@ -1151,6 +1151,10 @@ fn hash_expr(expr: &hir::Expr, items: &HashMap<DefId, hir::Item>, hasher: &mut C
             hasher.update_u8(0x1E);
             hash_expr(inner, items, hasher);
         }
+        hir::ExprKind::Unchecked { body, .. } => {
+            hasher.update_u8(0x3A);
+            hash_expr(body, items, hasher);
+        }
         hir::ExprKind::Perform { effect_id, op_index, args, type_args: _ } => {
             hasher.update_u8(0x1F);
             // Hash effect name instead of index
@@ -1871,6 +1875,9 @@ fn extract_expr_deps(expr: &hir::Expr, deps: &mut HashSet<DefId>) {
         | hir::ExprKind::Heap(inner)
         | hir::ExprKind::Stack(inner) => {
             extract_expr_deps(inner, deps);
+        }
+        hir::ExprKind::Unchecked { body, .. } => {
+            extract_expr_deps(body, deps);
         }
         hir::ExprKind::MethodFamily { candidates, .. } => {
             // All candidate methods are dependencies

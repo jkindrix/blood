@@ -253,6 +253,9 @@ impl HandlerLintContext {
             | ExprKind::Stack(inner) => {
                 self.check_handler_nesting(inner, depth);
             }
+            ExprKind::Unchecked { body, .. } => {
+                self.check_handler_nesting(body, depth);
+            }
             ExprKind::Let { init, .. } => {
                 self.check_handler_nesting(init, depth);
             }

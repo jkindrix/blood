@@ -403,6 +403,9 @@ impl<'a> TypeContext<'a> {
             | hir::ExprKind::Stack(inner) => {
                 self.collect_captures(inner, is_move, captures, seen);
             }
+            hir::ExprKind::Unchecked { body, .. } => {
+                self.collect_captures(body, is_move, captures, seen);
+            }
             hir::ExprKind::Let { init, .. } => {
                 self.collect_captures(init, is_move, captures, seen);
             }

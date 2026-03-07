@@ -1207,6 +1207,14 @@ pub enum ExprKind {
     /// Unsafe block: `@unsafe { }`
     Unsafe(Block),
 
+    /// Unchecked block: `unchecked(checks) { ... }`
+    /// Disables specific runtime safety checks within the block.
+    Unchecked {
+        checks: Vec<Spanned<UncheckedCheck>>,
+        when_condition: Option<Spanned<String>>,
+        body: Block,
+    },
+
     /// Heap allocation directive: `@heap expr`
     Heap(Box<Expr>),
     /// Stack allocation directive: `@stack expr`
@@ -1230,6 +1238,16 @@ pub enum ExprKind {
         path: ExprPath,
         kind: MacroCallKind,
     },
+}
+
+/// A specific runtime check that can be disabled via `unchecked(check) { ... }`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum UncheckedCheck {
+    Bounds,
+    Overflow,
+    Generation,
+    Null,
+    Alignment,
 }
 
 /// The kind of macro call (built-in or user-defined).

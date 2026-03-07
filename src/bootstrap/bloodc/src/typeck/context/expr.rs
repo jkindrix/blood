@@ -204,6 +204,22 @@ impl<'a> TypeContext<'a> {
             ast::ExprKind::Unsafe(block) => {
                 self.infer_unsafe(block, expr.span)
             }
+            ast::ExprKind::Unchecked { ref checks, ref when_condition, ref body } => {
+                let expected = self.unifier.fresh_var();
+                let block_expr = self.check_block(body, &expected)?;
+                let result_ty = block_expr.ty.clone();
+                let check_kinds: Vec<_> = checks.iter().map(|c| c.node).collect();
+                let when_cond = when_condition.as_ref().map(|s| s.node.clone());
+                Ok(hir::Expr::new(
+                    hir::ExprKind::Unchecked {
+                        checks: check_kinds,
+                        when_condition: when_cond,
+                        body: Box::new(block_expr),
+                    },
+                    result_ty,
+                    expr.span,
+                ))
+            }
             ast::ExprKind::Heap(inner) => {
                 let inner_hir = self.infer_expr(inner)?;
                 let ty = inner_hir.ty.clone();
@@ -1349,6 +1365,9 @@ impl<'a> TypeContext<'a> {
 
             ExprKind::Unsafe(inner) | ExprKind::Heap(inner) | ExprKind::Stack(inner) | ExprKind::Dbg(inner) => {
                 self.collect_local_refs(inner, locals);
+            }
+            ExprKind::Unchecked { body, .. } => {
+                self.collect_local_refs(body, locals);
             }
 
             ExprKind::Assert { condition, message } => {

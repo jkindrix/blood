@@ -422,6 +422,9 @@ impl<'hir> LinearityChecker<'hir> {
             | hir::ExprKind::Stack(inner) => {
                 self.check_expr(inner);
             }
+            hir::ExprKind::Unchecked { body, .. } => {
+                self.check_expr(body);
+            }
 
             // Resume with value
             hir::ExprKind::Resume { value: Some(v) } => {

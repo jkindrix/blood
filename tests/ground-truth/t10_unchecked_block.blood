@@ -1,0 +1,30 @@
+// Test unchecked block parsing and basic semantics.
+// Currently unchecked blocks are transparent (no check elision yet),
+// so this verifies parsing and type-checking work correctly.
+// EXPECT: 42
+
+fn main() -> i32 {
+    let x: i32 = 10;
+    let y: i32 = 32;
+
+    // Basic unchecked block — should parse and execute body
+    let result: i32 = unchecked(overflow) {
+        x + y
+    };
+
+    // Multiple checks
+    let result2: i32 = unchecked(bounds, overflow) {
+        result
+    };
+
+    // Nested unchecked
+    let result3: i32 = unchecked(generation) {
+        unchecked(overflow) {
+            result2
+        }
+    };
+
+    println!("{}", result3);
+
+    0
+}

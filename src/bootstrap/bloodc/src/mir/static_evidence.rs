@@ -312,6 +312,7 @@ fn contains_nested_handle(expr: &Expr) -> bool {
         | ExprKind::Heap(expr)
         | ExprKind::Stack(expr)
         | ExprKind::Dbg(expr) => contains_nested_handle(expr),
+        ExprKind::Unchecked { body, .. } => contains_nested_handle(body),
 
         ExprKind::Range { start, end, .. } => {
             start.as_ref().is_some_and(|e| contains_nested_handle(e))
@@ -777,6 +778,9 @@ fn contains_escaping_control_flow(expr: &Expr) -> bool {
 
         ExprKind::Unsafe(expr) | ExprKind::Heap(expr) | ExprKind::Stack(expr) | ExprKind::Dbg(expr) => {
             contains_escaping_control_flow(expr)
+        }
+        ExprKind::Unchecked { body, .. } => {
+            contains_escaping_control_flow(body)
         }
 
         ExprKind::Let { init, .. } => {

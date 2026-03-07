@@ -259,6 +259,10 @@ fn lower_expr_inner(
             // Unsafe blocks are transparent in MIR
             lower_expr(ctx, inner.as_ref(), dest);
         }
+        &hir_expr.ExprKind.Unchecked { ref body, .. } => {
+            // Unchecked blocks are transparent in MIR (check disabling not yet wired)
+            lower_expr(ctx, body.as_ref(), dest);
+        }
         &hir_expr.ExprKind.Heap(ref inner) => {
             // Allocation directives are transparent in MIR (escape analysis override not yet wired)
             lower_expr(ctx, inner.as_ref(), dest);
@@ -2828,6 +2832,9 @@ fn collect_closure_captures(
         }
         &hir_expr.ExprKind.Unsafe(ref val) => {
             collect_closure_captures(ctx, val.as_ref(), captures);
+        }
+        &hir_expr.ExprKind.Unchecked { ref body, .. } => {
+            collect_closure_captures(ctx, body.as_ref(), captures);
         }
         &hir_expr.ExprKind.Heap(ref val) => {
             collect_closure_captures(ctx, val.as_ref(), captures);

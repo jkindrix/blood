@@ -345,6 +345,9 @@ impl MacroExpander {
             ExprKind::Unsafe(block) => {
                 self.expand_block(block);
             }
+            ExprKind::Unchecked { body, .. } => {
+                self.expand_block(body);
+            }
             ExprKind::Heap(inner) | ExprKind::Stack(inner) => {
                 self.expand_expr(inner);
             }

@@ -287,6 +287,13 @@ pub enum StatementKind {
         destination: Place,
     },
 
+    /// Enter an unchecked block — disables specified runtime checks.
+    /// Checks are purely lexical; no propagation across effect boundaries.
+    EnterUnchecked(Vec<crate::ast::UncheckedCheck>),
+
+    /// Exit an unchecked block — re-enables the specified checks.
+    ExitUnchecked(Vec<crate::ast::UncheckedCheck>),
+
     /// No-op (placeholder for removed statements).
     Nop,
 }

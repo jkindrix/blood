@@ -166,6 +166,9 @@ pub trait Visitor: Sized {
                 self.visit_place(state_place, PlaceContext::Read, location);
                 self.visit_place(destination, PlaceContext::Store, location);
             }
+            StatementKind::EnterUnchecked(_) | StatementKind::ExitUnchecked(_) => {
+                // No places or operands to visit
+            }
             StatementKind::Nop => {}
         }
     }

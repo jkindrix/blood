@@ -54,6 +54,7 @@ fn is_block_like_expr(expr: &ast.Expr) -> bool {
         &ast.ExprKind.WhileLet { label: _, pattern: _, scrutinee: _, body: _ } => true,
         &ast.ExprKind.For { label: _, pattern: _, iter: _, body: _ } => true,
         &ast.ExprKind.Unsafe(ref _b) => true,
+        &ast.ExprKind.Unchecked { checks: _, when_condition: _, ref body } => true,
         _ => false,
     }
 }
@@ -517,6 +518,126 @@ fn parse_primary_expr(parser: &mut parser_base.Parser) -> ast.Expr {
             let end_span = parser.previous.span;
             return ast.Expr {
                 kind: ast.ExprKind.Stack(Box.new(inner)),
+                span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+            };
+        }
+        // Unchecked block: unchecked(bounds, overflow) { ... }
+        token.TokenKind.Unchecked => {
+            parser.advance();
+            parser.expect(token.TokenKind.LParen);
+            let mut checks: Vec<ast.UncheckedCheck> = Vec.new();
+            let mut when_cond: Option<common.SpannedString> = Option.None;
+            while !parser.check(token.TokenKind.RParen) && !parser.is_at_end() {
+                let check_start = parser.current.span;
+                // Handle 'when' as a contextual keyword inside unchecked()
+                // 'when' = w(119) h(104) e(101) n(110), length 4
+                let check_span = parser.current.span;
+                let check_len = (check_span.end - check_span.start) as usize;
+                if check_len == 4
+                    && parser.source_byte_at(check_span.start) == 119
+                    && parser.source_byte_at(check_span.start + 1) == 104
+                    && parser.source_byte_at(check_span.start + 2) == 101
+                    && parser.source_byte_at(check_span.start + 3) == 110
+                {
+                    parser.advance(); // consume 'when'
+                    parser.expect(token.TokenKind.Eq);
+                    if parser.check(token.TokenKind.StringLit) {
+                        let str_span = parser.current.span;
+                        let cond = parser_base.parse_string_from_span(parser, str_span);
+                        parser.advance();
+                        when_cond = Option.Some(common.SpannedString {
+                            value: cond,
+                            span: common.Span {
+                                start: check_start.start,
+                                end: parser.previous.span.end,
+                                line: check_start.line,
+                                column: check_start.column,
+                            },
+                        });
+                    } else {
+                        parser.error_expected_with_code("string literal after `when =`", parser_base.ErrorCode.ExpectedExpression);
+                    }
+                } else {
+                    // Parse check name identifier
+                    let c_span = parser.current.span;
+                    let c_len = (c_span.end - c_span.start) as usize;
+                    parser.advance();
+                    // Match check name by bytes
+                    // "bounds" = b(98) o(111) u(117) n(110) d(100) s(115), len 6
+                    // "overflow" = o(111) v(118) e(101) r(114) f(102) l(108) o(111) w(119), len 8
+                    // "generation" = g(103) e(101) n(110) e(101) r(114) a(97) t(116) i(105) o(111) n(110), len 10
+                    // "null" = n(110) u(117) l(108) l(108), len 4
+                    // "alignment" = a(97) l(108) i(105) g(103) n(110) m(109) e(101) n(110) t(116), len 9
+                    if c_len == 6
+                        && parser.source_byte_at(c_span.start) == 98
+                        && parser.source_byte_at(c_span.start + 1) == 111
+                        && parser.source_byte_at(c_span.start + 2) == 117
+                        && parser.source_byte_at(c_span.start + 3) == 110
+                        && parser.source_byte_at(c_span.start + 4) == 100
+                        && parser.source_byte_at(c_span.start + 5) == 115
+                    {
+                        checks.push(ast.UncheckedCheck.Bounds);
+                    } else if c_len == 8
+                        && parser.source_byte_at(c_span.start) == 111
+                        && parser.source_byte_at(c_span.start + 1) == 118
+                        && parser.source_byte_at(c_span.start + 2) == 101
+                        && parser.source_byte_at(c_span.start + 3) == 114
+                        && parser.source_byte_at(c_span.start + 4) == 102
+                        && parser.source_byte_at(c_span.start + 5) == 108
+                        && parser.source_byte_at(c_span.start + 6) == 111
+                        && parser.source_byte_at(c_span.start + 7) == 119
+                    {
+                        checks.push(ast.UncheckedCheck.Overflow);
+                    } else if c_len == 10
+                        && parser.source_byte_at(c_span.start) == 103
+                        && parser.source_byte_at(c_span.start + 1) == 101
+                        && parser.source_byte_at(c_span.start + 2) == 110
+                        && parser.source_byte_at(c_span.start + 3) == 101
+                        && parser.source_byte_at(c_span.start + 4) == 114
+                        && parser.source_byte_at(c_span.start + 5) == 97
+                        && parser.source_byte_at(c_span.start + 6) == 116
+                        && parser.source_byte_at(c_span.start + 7) == 105
+                        && parser.source_byte_at(c_span.start + 8) == 111
+                        && parser.source_byte_at(c_span.start + 9) == 110
+                    {
+                        checks.push(ast.UncheckedCheck.Generation);
+                    } else if c_len == 4
+                        && parser.source_byte_at(c_span.start) == 110
+                        && parser.source_byte_at(c_span.start + 1) == 117
+                        && parser.source_byte_at(c_span.start + 2) == 108
+                        && parser.source_byte_at(c_span.start + 3) == 108
+                    {
+                        checks.push(ast.UncheckedCheck.Null);
+                    } else if c_len == 9
+                        && parser.source_byte_at(c_span.start) == 97
+                        && parser.source_byte_at(c_span.start + 1) == 108
+                        && parser.source_byte_at(c_span.start + 2) == 105
+                        && parser.source_byte_at(c_span.start + 3) == 103
+                        && parser.source_byte_at(c_span.start + 4) == 110
+                        && parser.source_byte_at(c_span.start + 5) == 109
+                        && parser.source_byte_at(c_span.start + 6) == 101
+                        && parser.source_byte_at(c_span.start + 7) == 110
+                        && parser.source_byte_at(c_span.start + 8) == 116
+                    {
+                        checks.push(ast.UncheckedCheck.Alignment);
+                    } else {
+                        parser.error_expected_with_code("one of: bounds, overflow, generation, null, alignment", parser_base.ErrorCode.ExpectedExpression);
+                        checks.push(ast.UncheckedCheck.Bounds); // recovery
+                    }
+                }
+                if !parser.check(token.TokenKind.RParen) {
+                    parser.expect(token.TokenKind.Comma);
+                }
+            }
+            parser.expect(token.TokenKind.RParen);
+            let block = parse_block(parser);
+            let end_span = parser.previous.span;
+            return ast.Expr {
+                kind: ast.ExprKind.Unchecked {
+                    checks: checks,
+                    when_condition: when_cond,
+                    body: block,
+                },
                 span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
             };
         }
@@ -2016,6 +2137,7 @@ fn can_start_expr(kind: token.TokenKind) -> bool {
         token.TokenKind.Continue => true,
         token.TokenKind.Move => true,
         token.TokenKind.Unsafe => true,
+        token.TokenKind.Unchecked => true,
         // Prefix range
         token.TokenKind.DotDot => true,
         token.TokenKind.DotDotEq => true,

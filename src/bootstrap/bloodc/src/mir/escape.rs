@@ -700,6 +700,10 @@ impl EscapeAnalyzer {
                 // Effect handler statements don't affect escape state
                 false
             }
+            StatementKind::EnterUnchecked(_) | StatementKind::ExitUnchecked(_) => {
+                // Unchecked blocks don't affect escape analysis
+                false
+            }
         }
     }
 

@@ -656,7 +656,8 @@ impl SemanticAnalyzer {
                     self.collect_expr_symbols(&arm.body, source, interner, symbols, symbol_at_offset);
                 }
             }
-            ExprKind::Loop { body, .. } | ExprKind::Unsafe(body) | ExprKind::Region { body, .. } => {
+            ExprKind::Loop { body, .. } | ExprKind::Unsafe(body) | ExprKind::Region { body, .. }
+            | ExprKind::Unchecked { body, .. } => {
                 self.collect_block_symbols(body, source, interner, symbols, symbol_at_offset);
             }
             ExprKind::Heap(inner) | ExprKind::Stack(inner) => {

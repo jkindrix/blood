@@ -213,7 +213,7 @@ impl<'src> Parser<'src> {
                 | TokenKind::Bridge
                 | TokenKind::Affine
                 | TokenKind::Union
-                // Note: 'unchecked' has no TokenKind variant yet
+                | TokenKind::Unchecked
         )
     }
 

@@ -267,6 +267,33 @@ pub fn lower_expr(ctx: &mut hir_lower_ctx.LoweringCtx, expr: &ast.Expr) -> hir_e
                 span,
             )
         }
+        &ast.ExprKind.Unchecked { ref checks, ref when_condition, ref body } => {
+            let block_hir = lower_block_to_expr(ctx, body);
+            let ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
+            let mut check_vec: Vec<ast.UncheckedCheck> = Vec.new();
+            for i in 0usize..checks.len() {
+                match &checks[i] {
+                    &ast.UncheckedCheck.Bounds => { check_vec.push(ast.UncheckedCheck.Bounds); }
+                    &ast.UncheckedCheck.Overflow => { check_vec.push(ast.UncheckedCheck.Overflow); }
+                    &ast.UncheckedCheck.Generation => { check_vec.push(ast.UncheckedCheck.Generation); }
+                    &ast.UncheckedCheck.Null => { check_vec.push(ast.UncheckedCheck.Null); }
+                    &ast.UncheckedCheck.Alignment => { check_vec.push(ast.UncheckedCheck.Alignment); }
+                }
+            }
+            let when_str: Option<String> = match when_condition {
+                &Option.Some(ref ss) => Option.Some(common.make_string(ss.value.as_str())),
+                &Option.None => Option.None,
+            };
+            hir_expr.Expr.new(
+                hir_expr.ExprKind.Unchecked {
+                    checks: check_vec,
+                    when_condition: when_str,
+                    body: Box.new(block_hir),
+                },
+                ty,
+                span,
+            )
+        }
         &ast.ExprKind.Heap(ref inner) => {
             let inner_hir = lower_expr(ctx, inner.as_ref());
             let ty = inner_hir.ty;

@@ -95,12 +95,22 @@ impl<'ctx, 'a> MirRvalueCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
             }
 
             Rvalue::CheckedBinaryOp { op, left, right } => {
-                // Checked operations return (result, overflow_flag) tuple
-                let operand_ty = self.get_operand_type(left, body);
-                let is_signed = self.is_signed_type(&operand_ty);
-                let lhs = self.compile_mir_operand(left, body, escape_results)?;
-                let rhs = self.compile_mir_operand(right, body, escape_results)?;
-                self.compile_checked_binary_op(*op, lhs, rhs, is_signed)
+                if self.unchecked_checks.contains(&crate::ast::UncheckedCheck::Overflow) {
+                    // Unchecked overflow — emit plain operation without overflow check
+                    let operand_ty = self.get_operand_type(left, body);
+                    let is_float = self.is_float_type(&operand_ty);
+                    let is_signed = self.is_signed_type(&operand_ty);
+                    let lhs = self.compile_mir_operand(left, body, escape_results)?;
+                    let rhs = self.compile_mir_operand(right, body, escape_results)?;
+                    self.compile_binary_op(*op, lhs, rhs, is_float, is_signed)
+                } else {
+                    // Checked operations return (result, overflow_flag) tuple
+                    let operand_ty = self.get_operand_type(left, body);
+                    let is_signed = self.is_signed_type(&operand_ty);
+                    let lhs = self.compile_mir_operand(left, body, escape_results)?;
+                    let rhs = self.compile_mir_operand(right, body, escape_results)?;
+                    self.compile_checked_binary_op(*op, lhs, rhs, is_signed)
+                }
             }
 
             Rvalue::UnaryOp { op, operand } => {

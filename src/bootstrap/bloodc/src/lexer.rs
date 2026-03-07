@@ -195,6 +195,8 @@ pub enum TokenKind {
     Default,
     #[token("unsafe")]
     Unsafe,
+    #[token("unchecked")]
+    Unchecked,
     #[token("defer")]
     Defer,
     #[token("gen")]
@@ -633,6 +635,7 @@ impl TokenKind {
             TokenKind::Union => "contextual keyword `union`",
             TokenKind::Default => "contextual keyword `default`",
             TokenKind::Unsafe => "reserved keyword `unsafe`",
+            TokenKind::Unchecked => "keyword `unchecked`",
             TokenKind::Defer => "reserved keyword `defer`",
             TokenKind::Gen => "reserved keyword `gen`",
             TokenKind::Raw => "reserved keyword `raw`",
@@ -750,6 +753,7 @@ impl TokenKind {
                 | TokenKind::Star    // Dereference
                 | TokenKind::And     // Reference
                 | TokenKind::AtUnsafe
+                | TokenKind::Unchecked
                 | TokenKind::Region
                 | TokenKind::Perform
                 | TokenKind::With
