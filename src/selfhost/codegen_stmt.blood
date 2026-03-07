@@ -329,11 +329,16 @@ pub fn emit_statement(
             ctx.write_string(&push_state_ptr);
             ctx.write(")\n");
 
-            // Mark as inline handler
-            ctx.write_indent();
-            ctx.write("call void @blood_evidence_set_inline(i64 ");
-            ctx.write_string(&effect_id_val);
-            ctx.write(")\n");
+            // EFF-OPT-003: Only set inline hint for single-handler scopes (depth 1).
+            // For nested handlers, the inner set_inline would overwrite the outer one,
+            // making the optimization unreliable.
+            ctx.handler_depth = ctx.handler_depth + 1;
+            if ctx.handler_depth <= 1 {
+                ctx.write_indent();
+                ctx.write("call void @blood_evidence_set_inline(i64 ");
+                ctx.write_string(&effect_id_val);
+                ctx.write(")\n");
+            }
         }
         &mir_stmt.StatementKind.PopHandler => {
             // Effect handler pop via evidence API
@@ -349,8 +354,14 @@ pub fn emit_statement(
             ctx.write_cgname(&ev_cur);
             ctx.write(")\n");
 
-            ctx.write_indent();
-            ctx.write("call void @blood_evidence_clear_inline()\n");
+            // EFF-OPT-003: Only clear inline hint if we set it (depth was ≤ 1)
+            if ctx.handler_depth <= 1 {
+                ctx.write_indent();
+                ctx.write("call void @blood_evidence_clear_inline()\n");
+            }
+            if ctx.handler_depth > 0 {
+                ctx.handler_depth = ctx.handler_depth - 1;
+            }
         }
         &mir_stmt.StatementKind.PushInlineHandler { effect_id, operations: _ } => {
             // Inline effect handler push via evidence API
@@ -439,11 +450,14 @@ pub fn emit_statement(
             ctx.write_string(&effect_id_val);
             ctx.write(", ptr null)\n");
 
-            // Mark as inline
-            ctx.write_indent();
-            ctx.write("call void @blood_evidence_set_inline(i64 ");
-            ctx.write_string(&effect_id_val);
-            ctx.write(")\n");
+            // EFF-OPT-003: Only set inline hint for single-handler scopes
+            ctx.handler_depth = ctx.handler_depth + 1;
+            if ctx.handler_depth <= 1 {
+                ctx.write_indent();
+                ctx.write("call void @blood_evidence_set_inline(i64 ");
+                ctx.write_string(&effect_id_val);
+                ctx.write(")\n");
+            }
         }
         &mir_stmt.StatementKind.CallReturnClause {
             handler_id,
