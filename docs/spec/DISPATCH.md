@@ -2772,7 +2772,7 @@ Step 3: Effect specificity as tiebreaker
   → RETURN M1 (pure version preferred)
 ```
 
-### C.4 Ambiguity Detection Example
+### C.4 Concrete vs Generic Dispatch Example
 
 **Setup**:
 
@@ -2781,7 +2781,7 @@ fn process(x: i32, y: i32) -> i32 { ... }        // M1
 fn process<T: Numeric>(x: T, y: T) -> T { ... }  // M2
 ```
 
-**Call**: `process(1i32, 2u8)` — mixed types
+**Call**: `process(1i32, 2i32)` — same types
 
 ```
 Step 1: COLLECT_CANDIDATES("process", 2)
@@ -2789,37 +2789,15 @@ Step 1: COLLECT_CANDIDATES("process", 2)
 
 Step 2: Check APPLICABLE
 
-  M1: APPLICABLE(M1, [i32, u8])
+  M1: APPLICABLE(M1, [i32, i32])
     - P1=i32, A1=i32: is_subtype(i32, i32) = true ✓
-    - P2=i32, A2=u8: is_subtype(u8, i32) = true (numeric promotion) ✓
+    - P2=i32, A2=i32: is_subtype(i32, i32) = true ✓
     → M1 is applicable ✓
 
-  M2: APPLICABLE(M2, [i32, u8])
-    - T=i32: i32: Numeric ✓
-    - But P2 requires T=i32, A2=u8
-    - u8 ≠ i32, T must be same for both
-    → M2 is NOT applicable (T cannot unify to both i32 and u8)
-
-  Applicable set: {M1}
-
-Step 3: Unique winner
-  → RETURN M1
-```
-
-**Alternative Call**: `process(1u8, 2u8)`
-
-```
-Step 2: Check APPLICABLE
-
-  M1: APPLICABLE(M1, [u8, u8])
-    - P1=i32, A1=u8: is_subtype(u8, i32) = true (promotion) ✓
-    - P2=i32, A2=u8: is_subtype(u8, i32) = true (promotion) ✓
-    → M1 is applicable ✓
-
-  M2: APPLICABLE(M2, [u8, u8])
-    - Instantiate T=u8: u8: Numeric ✓
-    - P1=u8, A1=u8: ✓
-    - P2=u8, A2=u8: ✓
+  M2: APPLICABLE(M2, [i32, i32])
+    - Instantiate T=i32: i32: Numeric ✓
+    - P1=i32, A1=i32: ✓
+    - P2=i32, A2=i32: ✓
     → M2 is applicable ✓
 
   Applicable set: {M1, M2}
@@ -2827,25 +2805,42 @@ Step 2: Check APPLICABLE
 Step 3: Compare specificity
 
   MORE_SPECIFIC(M1, M2):
-    - P1: i32 vs T=u8
-    - i32 is concrete, T is type param (pre-instantiation)
-    - Concrete generally more specific...
-    - But M1's i32 is NOT a subtype of u8
-    - all_at_least = false
-    → M1 NOT more specific than M2
+    - P1: i32 (concrete) vs T (type param)
+    - Concrete is more specific than type parameter ✓
+    - P2: i32 (concrete) vs T (type param) ✓
+    - all_at_least = true, at_least_one_strictly = true
+    → M1 more specific than M2 ✓
 
-  MORE_SPECIFIC(M2, M1):
-    - P1: T=u8 vs i32
-    - Type param, even instantiated, less specific than concrete
-    → M2 NOT more specific than M1
-
-  Neither is more specific!
-  Maximal set: {M1, M2}
-
-Step 4: AMBIGUITY DETECTED
-  → ERROR: Ambiguous dispatch between M1 and M2
-  → Suggestion: Add fn process(x: u8, y: u8) -> u8 to resolve
+  → RETURN M1 (concrete overload preferred)
 ```
+
+**Call**: `process(1u8, 2u8)` — non-i32 types
+
+```
+Step 2: Check APPLICABLE
+
+  M1: APPLICABLE(M1, [u8, u8])
+    - P1=i32, A1=u8: is_subtype(u8, i32) = false
+      (no numeric promotion — Blood requires explicit conversion)
+    → M1 is NOT applicable
+
+  M2: APPLICABLE(M2, [u8, u8])
+    - Instantiate T=u8: u8: Numeric ✓
+    - P1=u8, A1=u8: ✓
+    - P2=u8, A2=u8: ✓
+    → M2 is applicable ✓
+
+  Applicable set: {M2}
+
+Step 3: Unique winner
+  → RETURN M2
+```
+
+> **Design note:** Blood has no implicit numeric promotion (`u8` is not a subtype
+> of `i32`). All numeric types are incomparable in the subtype relation. This
+> avoids dispatch ambiguity in multiple dispatch and keeps type inference
+> decidable. Use explicit casts (`x as i32`) or generic functions
+> (`fn f<T: Numeric>(x: T)`) instead. See `docs/design/NUMERIC_SUBTYPING.md`.
 
 ### C.5 Diamond Problem Resolution
 
