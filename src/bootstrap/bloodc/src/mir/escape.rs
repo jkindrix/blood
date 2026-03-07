@@ -1569,6 +1569,7 @@ mod tests {
             match state {
                 EscapeState::NoEscape => assert_eq!(tier, MemoryTier::Stack),
                 EscapeState::ArgEscape => assert_eq!(tier, MemoryTier::Region),
+                EscapeState::HeapEscape => assert_eq!(tier, MemoryTier::Region),
                 EscapeState::GlobalEscape => assert_eq!(tier, MemoryTier::Persistent),
             }
         }

@@ -1,0 +1,80 @@
+// RUN: expect_exit 0
+// Test: semicolons optional after block-like expressions (SYN-06 Phase 1)
+
+fn test_let_if() -> i32 {
+    let x = if true { 10 } else { 20 }
+    x
+}
+
+fn test_let_match() -> i32 {
+    let x = match 3 {
+        1 => { 100 }
+        2 => { 200 }
+        _ => { 300 }
+    }
+    x
+}
+
+fn test_let_block() -> i32 {
+    let x = {
+        let a = 5;
+        a * 2
+    }
+    x
+}
+
+fn test_let_loop() -> i32 {
+    let mut n = 0;
+    let x = for i in 0..5 {
+        n = n + 1;
+    }
+    n
+}
+
+fn test_semi_still_works() -> i32 {
+    let a = if true { 1 } else { 0 };
+    let b = match a {
+        0 => { 10 }
+        _ => { 20 }
+    };
+    let c = { 30 };
+    a + b + c
+}
+
+fn test_nested() -> i32 {
+    let x = if true {
+        let y = match 1 {
+            1 => { 42 }
+            _ => { 0 }
+        }
+        y
+    } else {
+        0
+    }
+    x
+}
+
+fn main() -> i32 {
+    let a = test_let_if();
+    let b = test_let_match();
+    let c = test_let_block();
+    let d = test_let_loop();
+    let e = test_semi_still_works();
+    let f = test_nested();
+    // 10 + 300 + 10 + 5 + 51 + 42 = 418
+    // But we need exit code 0, so check via subtraction
+    if a == 10 {
+        if b == 300 {
+            if c == 10 {
+                if d == 5 {
+                    if e == 51 {
+                        if f == 42 {
+                            return 0;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    1
+}

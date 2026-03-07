@@ -55,6 +55,8 @@ fn is_block_like_expr(expr: &ast.Expr) -> bool {
         &ast.ExprKind.For { label: _, pattern: _, iter: _, body: _ } => true,
         &ast.ExprKind.Unsafe(ref _b) => true,
         &ast.ExprKind.Unchecked { checks: _, when_condition: _, ref body } => true,
+        &ast.ExprKind.Region { name: _, ref body } => true,
+        &ast.ExprKind.WithHandle { ref handler, ref body } => true,
         _ => false,
     }
 }
@@ -2292,7 +2294,19 @@ pub fn parse_let_statement(parser: &mut parser_base.Parser) -> ast.Statement {
         Option.None
     };
 
-    parser.expect(token.TokenKind.Semi);
+    // Semicolon optional after block-like initializers (SYN-06 Phase 1)
+    let mut is_block_init = false;
+    match &init_val {
+        &Option.Some(ref val) => {
+            is_block_init = is_block_like_expr(val);
+        }
+        &Option.None => {}
+    }
+    if !is_block_init {
+        parser.expect(token.TokenKind.Semi);
+    } else {
+        parser.try_consume(token.TokenKind.Semi);
+    }
 
     let end_span = parser.previous.span;
     ast.Statement.Let {
