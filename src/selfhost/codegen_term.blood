@@ -116,7 +116,12 @@ pub fn emit_terminator(
                 }
             }
 
-            // --- Snapshot: create and populate for effect-captured locals ---
+            // --- Snapshot: save outer, create new for this perform ---
+            ctx.write("    ; snapshot: save outer effect context snapshot\n");
+            let saved_snap = ctx.fresh_temp_cg();
+            ctx.begin_call(Option.Some(&saved_snap), "ptr", "@blood_effect_context_take_snapshot");
+            ctx.end_call();
+
             ctx.write("    ; snapshot: create for perform\n");
             let snapshot = ctx.fresh_temp_cg();
             ctx.begin_call(Option.Some(&snapshot), "ptr", "@blood_snapshot_create");
@@ -249,8 +254,13 @@ pub fn emit_terminator(
             ctx.end_call();
             ctx.emit_unreachable();
 
-            // OK path: continue to target
+            // OK path: restore outer snapshot and continue to target
             ctx.emit_label_cg(&ok_label);
+
+            ctx.write("    ; snapshot: restore outer effect context snapshot\n");
+            ctx.begin_call(Option.None, "void", "@blood_effect_context_set_snapshot");
+            ctx.call_arg_cg(true, "ptr", &saved_snap);
+            ctx.end_call();
 
             match target {
                 &Option.Some(t) => {

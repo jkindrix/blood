@@ -1,0 +1,50 @@
+// Test: nested effect performs with snapshot save/restore.
+// Verifies that inner performs don't corrupt outer perform's snapshot.
+// EXPECT: 100
+// EXPECT: nested_snap_ok
+effect Outer {
+    op transform(x: i32) -> i32;
+}
+
+effect Inner {
+    op double(x: i32) -> i32;
+}
+
+deep handler OuterHandler for Outer {
+    return(x) { x }
+    op transform(x) {
+        // Non-tail-resumptive: work after resume exercises snapshot
+        let result: i32 = resume(x);
+        result
+    }
+}
+
+deep handler InnerHandler for Inner {
+    return(x) { x }
+    op double(x) {
+        // Non-tail-resumptive: nested handler also does work after resume
+        let result: i32 = resume(x * 2);
+        result
+    }
+}
+
+fn compute() -> i32 / {Outer, Inner} {
+    // Outer perform
+    let a: i32 = perform Outer.transform(50);
+    // Inner perform (nested effect — tests snapshot save/restore)
+    let b: i32 = perform Inner.double(a);
+    b
+}
+
+fn main() -> i32 {
+    let result: i32 = with OuterHandler {} handle {
+        with InnerHandler {} handle {
+            compute()
+        }
+    };
+    println_int(result);
+    if result != 100 { return 1; }
+
+    println_str("nested_snap_ok");
+    0
+}

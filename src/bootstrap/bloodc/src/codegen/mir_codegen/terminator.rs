@@ -2126,6 +2126,17 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             .map(|a| self.compile_mir_operand(a, body, escape_results))
             .collect::<Result<_, _>>()?;
 
+        // Save outer effect context snapshot (for nested perform safety)
+        let take_snapshot_fn = self.module.get_function("blood_effect_context_take_snapshot")
+            .ok_or_else(|| vec![Diagnostic::error(
+                "Runtime function blood_effect_context_take_snapshot not found", span
+            )])?;
+        let saved_snapshot = self.builder.build_call(take_snapshot_fn, &[], "saved_snap")
+            .map_err(|e| vec![Diagnostic::error(format!("LLVM call error: {}", e), span)])?
+            .try_as_basic_value()
+            .basic()
+            .ok_or_else(|| vec![Diagnostic::error("take_snapshot returned void", span)])?;
+
         // Create generation snapshot before performing the effect
         // The snapshot captures the current generations of all generational
         // references that may be accessed after resuming.
@@ -2236,6 +2247,14 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 }
             }
         }
+
+        // Store snapshot in effect context so Resume-side validation can access it
+        let set_snapshot_fn = self.module.get_function("blood_effect_context_set_snapshot")
+            .ok_or_else(|| vec![Diagnostic::error(
+                "Runtime function blood_effect_context_set_snapshot not found", span
+            )])?;
+        self.builder.build_call(set_snapshot_fn, &[snapshot.into()], "")
+            .map_err(|e| vec![Diagnostic::error(format!("LLVM call error: {}", e), span)])?;
 
         // Call blood_perform with effect_id, op_index, args
         let perform_fn = self.module.get_function("blood_perform")
@@ -2500,8 +2519,13 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let actual_zero = i32_ty.const_int(0, false);
         super::memory::emit_stale_reference_perform(self, expected_zero, actual_zero, span)?;
 
-        // Continue to target on valid path
+        // Continue to target on valid path — restore outer snapshot first
         self.builder.position_at_end(continue_bb);
+
+        // Restore the outer effect context snapshot saved before this perform
+        self.builder.build_call(set_snapshot_fn, &[saved_snapshot.into()], "")
+            .map_err(|e| vec![Diagnostic::error(format!("LLVM call error: {}", e), span)])?;
+
         let target_bb = llvm_blocks.get(target).ok_or_else(|| {
             vec![Diagnostic::error("Perform target not found", span)]
         })?;
