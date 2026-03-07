@@ -88,7 +88,8 @@ impl<'a> TypeContext<'a> {
         }
 
         if !self.errors.is_empty() {
-            return Err(self.errors.iter().map(|e| e.to_diagnostic()).collect());
+            let names = self.build_type_name_map();
+            return Err(self.errors.iter().map(|e| e.to_diagnostic_with_names(&names)).collect());
         }
 
         Ok(())

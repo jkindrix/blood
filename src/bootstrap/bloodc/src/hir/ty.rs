@@ -21,6 +21,7 @@
 //! - Generational pointers (added in Phase 3)
 //! - Linear/affine types (added in Phase 3)
 
+use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 
@@ -855,6 +856,129 @@ impl fmt::Display for OwnershipQualifier {
         match self {
             OwnershipQualifier::Linear => write!(f, "linear"),
             OwnershipQualifier::Affine => write!(f, "affine"),
+        }
+    }
+}
+
+/// Format a type for user-facing display, resolving DefIds to human-readable names.
+///
+/// Unlike the `Display` impl (which is context-free and shows raw DefIds like `def351`),
+/// this function uses the provided name map to show actual type names like `HashMap<u32, i32>`.
+pub fn display_type(ty: &Type, names: &HashMap<DefId, String>) -> String {
+    display_type_kind(ty.kind(), names)
+}
+
+fn display_type_kind(kind: &TypeKind, names: &HashMap<DefId, String>) -> String {
+    match kind {
+        TypeKind::Primitive(p) => format!("{p}"),
+        TypeKind::Tuple(tys) if tys.is_empty() => "()".to_string(),
+        TypeKind::Tuple(tys) if tys.len() == 1 => {
+            format!("({},)", display_type(&tys[0], names))
+        }
+        TypeKind::Tuple(tys) => {
+            let inner: Vec<_> = tys.iter().map(|t| display_type(t, names)).collect();
+            format!("({})", inner.join(", "))
+        }
+        TypeKind::Array { element, size } => {
+            format!("[{}; {size}]", display_type(element, names))
+        }
+        TypeKind::Slice { element } => {
+            format!("[{}]", display_type(element, names))
+        }
+        TypeKind::Ref { inner, mutable: false } => {
+            format!("&{}", display_type(inner, names))
+        }
+        TypeKind::Ref { inner, mutable: true } => {
+            format!("&mut {}", display_type(inner, names))
+        }
+        TypeKind::Ptr { inner, mutable: false } => {
+            format!("*const {}", display_type(inner, names))
+        }
+        TypeKind::Ptr { inner, mutable: true } => {
+            format!("*mut {}", display_type(inner, names))
+        }
+        TypeKind::Fn { params, ret, effects, .. } => {
+            let params_str: Vec<_> = params.iter().map(|p| display_type(p, names)).collect();
+            let mut s = format!("fn({}) -> {}", params_str.join(", "), display_type(ret, names));
+            if !effects.is_empty() {
+                let effs: Vec<_> = effects.iter().map(|eff| {
+                    let name = names.get(&eff.def_id)
+                        .cloned()
+                        .unwrap_or_else(|| format!("E{}", eff.def_id.index()));
+                    if eff.type_args.is_empty() {
+                        name
+                    } else {
+                        let args: Vec<_> = eff.type_args.iter().map(|a| display_type(a, names)).collect();
+                        format!("{name}<{}>", args.join(", "))
+                    }
+                }).collect();
+                s.push_str(&format!(" / {{{}}}", effs.join(", ")));
+            }
+            s
+        }
+        TypeKind::Closure { def_id: _, params, ret } => {
+            let params_str: Vec<_> = params.iter().map(|p| display_type(p, names)).collect();
+            format!("|{}| -> {}", params_str.join(", "), display_type(ret, names))
+        }
+        TypeKind::Adt { def_id, args } => {
+            let name = names.get(def_id)
+                .cloned()
+                .unwrap_or_else(|| format!("def{}", def_id.index()));
+            if args.is_empty() {
+                name
+            } else {
+                let args_str: Vec<_> = args.iter().map(|a| display_type(a, names)).collect();
+                format!("{name}<{}>", args_str.join(", "))
+            }
+        }
+        TypeKind::Infer(id) => format!("?{}", id.0),
+        TypeKind::Param(id) => format!("T{}", id.0),
+        TypeKind::Never => "!".to_string(),
+        TypeKind::Range { element, inclusive: false } => {
+            format!("Range<{}>", display_type(element, names))
+        }
+        TypeKind::Range { element, inclusive: true } => {
+            format!("RangeInclusive<{}>", display_type(element, names))
+        }
+        TypeKind::Error => "{error}".to_string(),
+        TypeKind::DynTrait { trait_id, auto_traits } => {
+            let name = names.get(trait_id)
+                .cloned()
+                .unwrap_or_else(|| format!("def{}", trait_id.index()));
+            if auto_traits.is_empty() {
+                format!("dyn {name}")
+            } else {
+                let autos: Vec<_> = auto_traits.iter().map(|id| {
+                    names.get(id)
+                        .cloned()
+                        .unwrap_or_else(|| format!("def{}", id.index()))
+                }).collect();
+                format!("dyn {name} + {}", autos.join(" + "))
+            }
+        }
+        TypeKind::Record { fields, row_var } => {
+            let mut s = "{ ".to_string();
+            for (i, field) in fields.iter().enumerate() {
+                if i > 0 {
+                    s.push_str(", ");
+                }
+                s.push_str(&format!("{:?}: {}", field.name, display_type(&field.ty, names)));
+            }
+            if let Some(rv) = row_var {
+                if !fields.is_empty() {
+                    s.push(' ');
+                }
+                s.push_str(&format!("| RowVar{}", rv.0));
+            }
+            s.push_str(" }");
+            s
+        }
+        TypeKind::Forall { params, body } => {
+            let params_str: Vec<_> = params.iter().map(|p| format!("T{}", p.0)).collect();
+            format!("forall<{}>. {}", params_str.join(", "), display_type(body, names))
+        }
+        TypeKind::Ownership { qualifier, inner } => {
+            format!("{qualifier} {}", display_type(inner, names))
         }
     }
 }

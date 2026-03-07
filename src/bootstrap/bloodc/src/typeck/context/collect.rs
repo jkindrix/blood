@@ -103,7 +103,8 @@ impl<'a> TypeContext<'a> {
         }
 
         if !self.errors.is_empty() {
-            return Err(self.errors.iter().map(|e| e.to_diagnostic()).collect());
+            let names = self.build_type_name_map();
+            return Err(self.errors.iter().map(|e| e.to_diagnostic_with_names(&names)).collect());
         }
 
         Ok(())
@@ -114,6 +115,7 @@ impl<'a> TypeContext<'a> {
     /// A struct that directly or indirectly contains itself without indirection
     /// (Box, &, *const, *mut) has infinite size and is rejected.
     pub fn check_recursive_types(&self) -> Result<(), Vec<Diagnostic>> {
+        let names = self.build_type_name_map();
         let mut errors = Vec::new();
 
         for (&def_id, struct_info) in &self.struct_defs {
@@ -126,7 +128,7 @@ impl<'a> TypeContext<'a> {
                 errors.push(TypeError::new(
                     TypeErrorKind::RecursiveType { name: struct_info.name.clone() },
                     span,
-                ).to_diagnostic());
+                ).to_diagnostic_with_names(&names));
             }
         }
 

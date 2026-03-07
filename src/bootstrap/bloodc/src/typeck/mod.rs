@@ -88,6 +88,9 @@ pub fn check_program(
     // Phase 2: Type-check all bodies
     ctx.check_all_bodies()?;
 
+    // Build name map before consuming ctx (needed for linearity error display)
+    let type_name_map = ctx.build_type_name_map();
+
     // Phase 3: Build HIR
     let hir_crate = ctx.into_hir();
 
@@ -95,7 +98,7 @@ pub fn check_program(
     let linearity_errors = linearity::check_crate_linearity(&hir_crate);
     if !linearity_errors.is_empty() {
         return Err(linearity_errors.into_iter()
-            .map(|e| e.to_diagnostic())
+            .map(|e| e.to_diagnostic_with_names(&type_name_map))
             .collect());
     }
 

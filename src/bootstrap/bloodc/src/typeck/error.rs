@@ -1,9 +1,12 @@
 //! Type checking errors.
 
+use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
 
+use crate::hir::DefId;
 use crate::hir::Type;
+use crate::hir::ty::display_type;
 use crate::span::Span;
 use crate::diagnostics::Diagnostic;
 
@@ -57,8 +60,17 @@ impl TypeError {
         self
     }
 
-    /// Convert to a diagnostic.
+    /// Convert to a diagnostic with raw DefId display (fallback).
     pub fn to_diagnostic(&self) -> Diagnostic {
+        static EMPTY: std::sync::LazyLock<HashMap<DefId, String>> =
+            std::sync::LazyLock::new(HashMap::new);
+        self.to_diagnostic_with_names(&EMPTY)
+    }
+
+    /// Convert to a diagnostic, resolving DefIds to human-readable type names.
+    pub fn to_diagnostic_with_names(&self, names: &HashMap<DefId, String>) -> Diagnostic {
+        let dt = |ty: &Type| display_type(ty, names);
+
         // Error code categories per DIAGNOSTICS.md spec:
         // - E02xx: Type errors
         // - E03xx: Effect errors
@@ -67,7 +79,7 @@ impl TypeError {
             // Type errors (E02xx)
             TypeErrorKind::Mismatch { expected, found } => (
                 "E0201",
-                format!("type mismatch: expected `{expected}`, found `{found}`"),
+                format!("type mismatch: expected `{}`, found `{}`", dt(expected), dt(found)),
             ),
             TypeErrorKind::CannotInfer => (
                 "E0202",
@@ -95,7 +107,7 @@ impl TypeError {
             ),
             TypeErrorKind::TraitBoundNotSatisfied { ty, trait_name } => (
                 "E0206",
-                format!("the trait bound `{ty}: {trait_name}` is not satisfied"),
+                format!("the trait bound `{}: {trait_name}` is not satisfied", dt(ty)),
             ),
             TypeErrorKind::TraitNotFound { name } => (
                 "E0207",
@@ -111,7 +123,7 @@ impl TypeError {
             ),
             TypeErrorKind::NotAFunction { ty } => (
                 "E0210",
-                format!("expected function, found `{ty}`"),
+                format!("expected function, found `{}`", dt(ty)),
             ),
             TypeErrorKind::WrongArity { expected, found } => (
                 "E0211",
@@ -119,7 +131,7 @@ impl TypeError {
             ),
             TypeErrorKind::NotAStruct { ty } => (
                 "E0212",
-                format!("`{ty}` is not a struct"),
+                format!("`{}` is not a struct", dt(ty)),
             ),
             TypeErrorKind::NotAStructName { name } => (
                 "E0212",
@@ -127,7 +139,7 @@ impl TypeError {
             ),
             TypeErrorKind::NoField { ty, field } => (
                 "E0213",
-                format!("no field `{field}` on type `{ty}`"),
+                format!("no field `{field}` on type `{}`", dt(ty)),
             ),
             TypeErrorKind::DuplicateDefinition { name } => (
                 "E0214",
@@ -135,19 +147,19 @@ impl TypeError {
             ),
             TypeErrorKind::CannotDeref { ty } => (
                 "E0215",
-                format!("type `{ty}` cannot be dereferenced"),
+                format!("type `{}` cannot be dereferenced", dt(ty)),
             ),
             TypeErrorKind::InvalidBinaryOp { op, left, right } => (
                 "E0216",
-                format!("cannot apply `{op}` to `{left}` and `{right}`"),
+                format!("cannot apply `{op}` to `{}` and `{}`", dt(left), dt(right)),
             ),
             TypeErrorKind::InvalidUnaryOp { op, ty } => (
                 "E0217",
-                format!("cannot apply `{op}` to `{ty}`"),
+                format!("cannot apply `{op}` to `{}`", dt(ty)),
             ),
             TypeErrorKind::NotIndexable { ty } => (
                 "E0218",
-                format!("cannot index into a value of type `{ty}`"),
+                format!("cannot index into a value of type `{}`", dt(ty)),
             ),
             TypeErrorKind::MainSignature => (
                 "E0219",
@@ -155,7 +167,7 @@ impl TypeError {
             ),
             TypeErrorKind::ReturnTypeMismatch { expected, found } => (
                 "E0220",
-                format!("return type mismatch: expected `{expected}`, found `{found}`"),
+                format!("return type mismatch: expected `{}`, found `{}`", dt(expected), dt(found)),
             ),
             TypeErrorKind::NoMainFunction => (
                 "E0221",
@@ -163,7 +175,7 @@ impl TypeError {
             ),
             TypeErrorKind::MismatchedTypes { expected, found } => (
                 "E0201",
-                format!("mismatched types: expected `{expected}`, found `{found}`"),
+                format!("mismatched types: expected `{}`, found `{}`", dt(expected), dt(found)),
             ),
             TypeErrorKind::BreakOutsideLoop => (
                 "E0222",
@@ -179,15 +191,15 @@ impl TypeError {
             ),
             TypeErrorKind::MissingField { ty, field } => (
                 "E0225",
-                format!("missing field `{field}` in initializer of `{ty}`"),
+                format!("missing field `{field}` in initializer of `{}`", dt(ty)),
             ),
             TypeErrorKind::PatternMismatch { expected, pattern } => (
                 "E0226",
-                format!("pattern `{pattern}` not covered by type `{expected}`"),
+                format!("pattern `{pattern}` not covered by type `{}`", dt(expected)),
             ),
             TypeErrorKind::NotATuple { ty } => (
                 "E0227",
-                format!("`{ty}` is not a tuple"),
+                format!("`{}` is not a tuple", dt(ty)),
             ),
             TypeErrorKind::UnsupportedFeature { feature } => (
                 "E0228",
@@ -199,7 +211,7 @@ impl TypeError {
             ),
             TypeErrorKind::UnknownField { ty, field } => (
                 "E0230",
-                format!("unknown field `{field}` on type `{ty}`"),
+                format!("unknown field `{field}` on type `{}`", dt(ty)),
             ),
             TypeErrorKind::TypeAnnotationRequired => (
                 "E0202",
@@ -266,7 +278,7 @@ impl TypeError {
             // Method errors
             TypeErrorKind::MethodNotFound { ty, method } => (
                 "E0231",
-                format!("no method named `{method}` found for type `{ty}` in the current scope"),
+                format!("no method named `{method}` found for type `{}` in the current scope", dt(ty)),
             ),
 
             // Trait impl errors
@@ -280,7 +292,7 @@ impl TypeError {
             ),
             TypeErrorKind::OverlappingImpls { trait_name, ty_a, ty_b } => (
                 "E0234",
-                format!("conflicting implementations of trait `{trait_name}` for type `{ty_a}` and `{ty_b}`"),
+                format!("conflicting implementations of trait `{trait_name}` for type `{}` and `{}`", dt(ty_a), dt(ty_b)),
             ),
             TypeErrorKind::ConstEvalError { reason } => (
                 "E0235",
@@ -300,7 +312,7 @@ impl TypeError {
             ),
             TypeErrorKind::InvalidCast { source, target } => (
                 "E0239",
-                format!("casting `{source}` as `{target}` is invalid"),
+                format!("casting `{}` as `{}` is invalid", dt(source), dt(target)),
             ),
 
             // Object safety errors (E09xx)
@@ -312,41 +324,43 @@ impl TypeError {
             // Linearity errors (E08xx)
             TypeErrorKind::UnusedLinearValue { name, ty } => (
                 "E0801",
-                format!("linear value `{name}: {ty}` was never consumed. Linear types must be used exactly once."),
+                format!("linear value `{name}: {}` was never consumed. Linear types must be used exactly once.", dt(ty)),
             ),
             TypeErrorKind::MultipleLinearUse { name, ty, .. } => (
                 "E0802",
-                format!("linear value `{name}: {ty}` used more than once. Linear types must be used exactly once."),
+                format!("linear value `{name}: {}` used more than once. Linear types must be used exactly once.", dt(ty)),
             ),
             TypeErrorKind::MultipleAffineUse { name, ty, .. } => (
                 "E0803",
-                format!("affine value `{name}: {ty}` used more than once. Affine types may be used at most once."),
+                format!("affine value `{name}: {}` used more than once. Affine types may be used at most once.", dt(ty)),
             ),
             TypeErrorKind::LinearConsumedInLoop { name, ty } => (
                 "E0804",
-                format!("linear value `{name}: {ty}` consumed inside loop. Linear values defined outside loops cannot be consumed inside."),
+                format!("linear value `{name}: {}` consumed inside loop. Linear values defined outside loops cannot be consumed inside.", dt(ty)),
             ),
             TypeErrorKind::InconsistentLinearBranches { name, ty, consumed_count, branch_count } => (
                 "E0805",
                 format!(
-                    "linear value `{name}: {ty}` consumed in {consumed_count} of {branch_count} branches. Linear values must be consumed in all branches or none."
+                    "linear value `{name}: {}` consumed in {consumed_count} of {branch_count} branches. Linear values must be consumed in all branches or none.",
+                    dt(ty)
                 ),
             ),
             TypeErrorKind::LinearCaptureByRef { name, ty } => (
                 "E0806",
                 format!(
-                    "linear value `{name}: {ty}` cannot be captured by reference. Use `move` to capture by value."
+                    "linear value `{name}: {}` cannot be captured by reference. Use `move` to capture by value.",
+                    dt(ty)
                 ),
             ),
 
             // FFI errors (E05xx)
             TypeErrorKind::FfiUnsafeType { ty, reason, context } => (
                 "E0501",
-                format!("type `{ty}` in {context} is not FFI-safe: {reason}"),
+                format!("type `{}` in {context} is not FFI-safe: {reason}", dt(ty)),
             ),
             TypeErrorKind::FfiPortabilityWarning { ty, reason, context } => (
                 "E0502",
-                format!("type `{ty}` in {context} may have FFI portability issues: {reason}"),
+                format!("type `{}` in {context} may have FFI portability issues: {reason}", dt(ty)),
             ),
 
             // Multiple dispatch errors (E06xx)

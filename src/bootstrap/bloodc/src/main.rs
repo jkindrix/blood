@@ -844,6 +844,9 @@ fn cmd_check(args: &FileArgs, verbosity: u8) -> ExitCode {
         return ExitCode::from(1);
     }
 
+    // Build name map before consuming ctx (needed for linearity error display)
+    let type_name_map = ctx.build_type_name_map();
+
     // Generate HIR to verify everything is well-formed
     let hir_crate = ctx.into_hir();
 
@@ -855,7 +858,7 @@ fn cmd_check(args: &FileArgs, verbosity: u8) -> ExitCode {
     let linearity_errors = bloodc::typeck::linearity::check_crate_linearity(&hir_crate);
     if !linearity_errors.is_empty() {
         for error in &linearity_errors {
-            emitter.emit(&error.to_diagnostic());
+            emitter.emit(&error.to_diagnostic_with_names(&type_name_map));
         }
         eprintln!("Type checking failed: {} linearity error(s).", linearity_errors.len());
         return ExitCode::from(1);
@@ -1108,8 +1111,9 @@ fn cmd_build(args: &FileArgs, verbosity: u8, timings: bool) -> ExitCode {
     }
     phase_timings.push(("Type check", t.elapsed()));
 
-    // Get builtin type DefIds before consuming the context
+    // Get builtin type DefIds and name map before consuming the context
     let builtin_def_ids = ctx.get_builtin_def_ids();
+    let type_name_map = ctx.build_type_name_map();
 
     // Generate HIR
     let t = Instant::now();
@@ -1134,7 +1138,7 @@ fn cmd_build(args: &FileArgs, verbosity: u8, timings: bool) -> ExitCode {
     let linearity_errors = bloodc::typeck::linearity::check_crate_linearity(&hir_crate);
     if !linearity_errors.is_empty() {
         for error in &linearity_errors {
-            emitter.emit(&error.to_diagnostic());
+            emitter.emit(&error.to_diagnostic_with_names(&type_name_map));
         }
         eprintln!("Build failed: linearity errors.");
         return ExitCode::from(1);

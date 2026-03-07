@@ -793,6 +793,27 @@ impl<'a> TypeContext<'a> {
         self
     }
 
+    /// Build a mapping from DefId to human-readable type name for diagnostic display.
+    ///
+    /// Collects names from struct, enum, trait, and effect definitions so that
+    /// error messages show `HashMap` instead of `def351`.
+    pub fn build_type_name_map(&self) -> HashMap<DefId, String> {
+        let mut names = HashMap::new();
+        for (&def_id, info) in &self.struct_defs {
+            names.insert(def_id, info.name.clone());
+        }
+        for (&def_id, info) in &self.enum_defs {
+            names.insert(def_id, info.name.clone());
+        }
+        for (&def_id, info) in &self.trait_defs {
+            names.insert(def_id, info.name.clone());
+        }
+        for (&def_id, info) in &self.effect_defs {
+            names.insert(def_id, info.name.clone());
+        }
+        names
+    }
+
     /// Convert a Symbol to a String using the string interner.
     ///
     /// Symbols are interned during parsing, and this method resolves them back
