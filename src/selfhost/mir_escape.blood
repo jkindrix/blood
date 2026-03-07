@@ -25,29 +25,44 @@ pub enum EscapeState {
     NoEscape,
     /// Value escapes through a function argument — needs region allocation.
     ArgEscape,
+    /// Value is stored into a heap-allocated structure — needs region allocation.
+    /// Distinguished from GlobalEscape: the value lives in heap memory but
+    /// doesn't necessarily reach a global/static. Allocation: Tier 1 (Region).
+    HeapEscape,
     /// Value escapes to a global or return — needs persistent allocation.
     GlobalEscape,
 }
 
 impl EscapeState {
     /// Returns the more conservative of two escape states.
+    /// Lattice order: NoEscape < ArgEscape < HeapEscape < GlobalEscape
     pub fn join(self: &EscapeState, other: &EscapeState) -> EscapeState {
+        let self_rank = self.rank();
+        let other_rank = other.rank();
+        if self_rank >= other_rank {
+            self.clone()
+        } else {
+            other.clone()
+        }
+    }
+
+    /// Returns a numeric rank for lattice ordering.
+    fn rank(self: &EscapeState) -> i32 {
         match self {
+            &EscapeState.NoEscape => 0,
+            &EscapeState.ArgEscape => 1,
+            &EscapeState.HeapEscape => 2,
+            &EscapeState.GlobalEscape => 3,
+        }
+    }
+
+    /// Returns a copy of this escape state.
+    fn clone(self: &EscapeState) -> EscapeState {
+        match self {
+            &EscapeState.NoEscape => EscapeState.NoEscape,
+            &EscapeState.ArgEscape => EscapeState.ArgEscape,
+            &EscapeState.HeapEscape => EscapeState.HeapEscape,
             &EscapeState.GlobalEscape => EscapeState.GlobalEscape,
-            &EscapeState.ArgEscape => {
-                match other {
-                    &EscapeState.GlobalEscape => EscapeState.GlobalEscape,
-                    &EscapeState.ArgEscape => EscapeState.ArgEscape,
-                    &EscapeState.NoEscape => EscapeState.ArgEscape,
-                }
-            }
-            &EscapeState.NoEscape => {
-                match other {
-                    &EscapeState.GlobalEscape => EscapeState.GlobalEscape,
-                    &EscapeState.ArgEscape => EscapeState.ArgEscape,
-                    &EscapeState.NoEscape => EscapeState.NoEscape,
-                }
-            }
         }
     }
 
@@ -56,6 +71,7 @@ impl EscapeState {
         match self {
             &EscapeState.NoEscape => false,
             &EscapeState.ArgEscape => true,
+            &EscapeState.HeapEscape => true,
             &EscapeState.GlobalEscape => true,
         }
     }
@@ -133,6 +149,7 @@ impl EscapeAnalysis {
         match &self.local_states[local.as_usize()] {
             &EscapeState.NoEscape => MemoryTier.Stack,
             &EscapeState.ArgEscape => MemoryTier.Region,
+            &EscapeState.HeapEscape => MemoryTier.Region,
             &EscapeState.GlobalEscape => MemoryTier.Persistent,
         }
     }
@@ -161,6 +178,16 @@ impl EscapeAnalysis {
         if idx < self.local_states.len() {
             let current = &self.local_states[idx];
             let new_state = current.join(&EscapeState.ArgEscape);
+            self.local_states[idx] = new_state;
+        }
+    }
+
+    /// Marks a local as escaping to the heap (stored through a pointer/reference).
+    fn mark_heap_escape(self: &mut EscapeAnalysis, local: mir_def.MirLocalId) {
+        let idx = local.as_usize();
+        if idx < self.local_states.len() {
+            let current = &self.local_states[idx];
+            let new_state = current.join(&EscapeState.HeapEscape);
             self.local_states[idx] = new_state;
         }
     }
@@ -215,9 +242,15 @@ pub fn analyze_escapes(body: &mir_body.MirBody) -> EscapeAnalysis {
 fn analyze_statement(stmt: &mir_stmt.Statement, result: &mut EscapeAnalysis) {
     match &stmt.kind {
         &mir_stmt.StatementKind.Assign { ref place, ref rvalue } => {
-            // If assigning to return place, the source escapes globally
-            if place.is_return_place() {
+            // If assigning to return place or static, the source escapes globally
+            if place.is_return_place() || place.is_static() {
                 mark_rvalue_escape_global(rvalue, result);
+            } else if place_has_deref(place) {
+                // Storing through a pointer/reference dereference: the value
+                // escapes to heap-allocated memory. This is HeapEscape, not
+                // GlobalEscape — the value lives in heap but doesn't necessarily
+                // reach a global. Allocation: Tier 1 (Region) instead of Tier 2.
+                mark_rvalue_escape_heap(rvalue, result);
             } else {
                 // If assigning a ref/address-of to another local,
                 // the referenced local might escape through the destination
@@ -304,6 +337,74 @@ fn analyze_terminator(term: &mir_term.Terminator, result: &mut EscapeAnalysis) {
 // ============================================================
 // Helpers: Mark Escape Levels
 // ============================================================
+
+/// Returns true if the place involves a Deref projection (store through pointer).
+fn place_has_deref(place: &mir_types.Place) -> bool {
+    for i in 0usize..place.projection.len() {
+        match &place.projection[i] {
+            &mir_types.PlaceElem.Deref => { return true; }
+            &mir_types.PlaceElem.Field(_) => {}
+            &mir_types.PlaceElem.Index(_) => {}
+            &mir_types.PlaceElem.ConstantIndex { offset: _, min_length: _, from_end: _ } => {}
+            &mir_types.PlaceElem.Subslice { from: _, to: _, from_end: _ } => {}
+            &mir_types.PlaceElem.Downcast(_) => {}
+        }
+    }
+    false
+}
+
+/// Marks locals in an rvalue as HeapEscape (stored through pointer dereference).
+fn mark_rvalue_escape_heap(rvalue: &mir_types.Rvalue, result: &mut EscapeAnalysis) {
+    match rvalue {
+        &mir_types.Rvalue.Use(ref operand) => {
+            mark_operand_escape_heap(operand, result);
+        }
+        &mir_types.Rvalue.Ref { ref place, mutable: _ } => {
+            result.mark_heap_escape(place.local);
+        }
+        &mir_types.Rvalue.AddressOf { ref place, mutable: _ } => {
+            result.mark_heap_escape(place.local);
+        }
+        &mir_types.Rvalue.BinaryOp { operator: _, ref left, ref right } => {
+            mark_operand_escape_heap(left, result);
+            mark_operand_escape_heap(right, result);
+        }
+        &mir_types.Rvalue.UnaryOp { operator: _, ref operand } => {
+            mark_operand_escape_heap(operand, result);
+        }
+        &mir_types.Rvalue.Cast { ref operand, target_ty: _ } => {
+            mark_operand_escape_heap(operand, result);
+        }
+        &mir_types.Rvalue.Aggregate { kind: _, ref operands } => {
+            for i in 0usize..operands.len() {
+                mark_operand_escape_heap(&operands[i], result);
+            }
+        }
+        &mir_types.Rvalue.Discriminant(ref place) => {
+            let _ = place;
+        }
+        &mir_types.Rvalue.Len(ref place) => {
+            let _ = place;
+        }
+        &mir_types.Rvalue.ArrayToSlice { ref array_ref, array_len: _ } => {
+            mark_operand_escape_heap(array_ref, result);
+        }
+        &mir_types.Rvalue.ZeroInit(_) => {}
+    }
+}
+
+/// Marks all locals referenced by an operand as HeapEscape.
+fn mark_operand_escape_heap(operand: &mir_types.Operand, result: &mut EscapeAnalysis) {
+    match operand {
+        &mir_types.Operand.Copy(ref place) => {
+            result.mark_heap_escape(place.local);
+        }
+        &mir_types.Operand.Move(ref place) => {
+            result.mark_heap_escape(place.local);
+        }
+        &mir_types.Operand.Constant(_) => {}
+    }
+}
 
 /// Marks all locals referenced by an operand as ArgEscape.
 fn mark_operand_escape_arg(operand: &mir_types.Operand, result: &mut EscapeAnalysis) {
@@ -418,6 +519,7 @@ pub fn recommended_tier(state: &EscapeState) -> MemoryTier {
     match state {
         &EscapeState.NoEscape => MemoryTier.Stack,
         &EscapeState.ArgEscape => MemoryTier.Region,
+        &EscapeState.HeapEscape => MemoryTier.Region,
         &EscapeState.GlobalEscape => MemoryTier.Persistent,
     }
 }

@@ -48,7 +48,7 @@
 //! The analysis uses a lattice-based dataflow algorithm:
 //!
 //! ```text
-//! NoEscape < ArgEscape < GlobalEscape
+//! NoEscape < ArgEscape < HeapEscape < GlobalEscape
 //! ```
 //!
 //! Iteration continues until a fixed point is reached.
@@ -68,7 +68,7 @@ use super::types::{
 
 /// The escape state of a value.
 ///
-/// Forms a lattice: NoEscape < ArgEscape < GlobalEscape
+/// Forms a lattice: NoEscape < ArgEscape < HeapEscape < GlobalEscape
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub enum EscapeState {
     /// Value does not escape its defining function.
@@ -80,8 +80,14 @@ pub enum EscapeState {
     /// May be stack-allocated if callee is inlined, otherwise Tier 1.
     ArgEscape,
 
-    /// Value escapes to a global or heap location.
-    /// Must be heap-allocated (Tier 1 or Tier 2).
+    /// Value is stored into a heap-allocated structure (through a pointer dereference).
+    /// Needs region allocation (Tier 1), but NOT persistent allocation (Tier 2).
+    /// Distinguished from GlobalEscape: the value lives in heap memory but
+    /// doesn't necessarily reach a global/static.
+    HeapEscape,
+
+    /// Value escapes to a global or static location.
+    /// Must be persistently allocated (Tier 2).
     GlobalEscape,
 }
 
@@ -101,6 +107,7 @@ impl EscapeState {
         match self {
             EscapeState::NoEscape => MemoryTier::Stack,
             EscapeState::ArgEscape => MemoryTier::Region,
+            EscapeState::HeapEscape => MemoryTier::Region,
             EscapeState::GlobalEscape => MemoryTier::Persistent,
         }
     }
@@ -239,6 +246,8 @@ pub struct EscapeStateBreakdown {
     pub no_escape: usize,
     /// Locals with ArgEscape state.
     pub arg_escape: usize,
+    /// Locals with HeapEscape state.
+    pub heap_escape: usize,
     /// Locals with GlobalEscape state.
     pub global_escape: usize,
 }
@@ -269,6 +278,7 @@ impl EscapeStatistics {
             match state {
                 EscapeState::NoEscape => self.by_state.no_escape += 1,
                 EscapeState::ArgEscape => self.by_state.arg_escape += 1,
+                EscapeState::HeapEscape => self.by_state.heap_escape += 1,
                 EscapeState::GlobalEscape => self.by_state.global_escape += 1,
             }
         }
@@ -286,6 +296,7 @@ impl EscapeStatistics {
         self.closure_captured += other.closure_captured;
         self.by_state.no_escape += other.by_state.no_escape;
         self.by_state.arg_escape += other.by_state.arg_escape;
+        self.by_state.heap_escape += other.by_state.heap_escape;
         self.by_state.global_escape += other.by_state.global_escape;
         self.functions_analyzed += other.functions_analyzed;
     }
@@ -352,6 +363,11 @@ impl EscapeStatistics {
         } else {
             0.0
         };
+        let heap_escape_pct = if self.total_locals > 0 {
+            (self.by_state.heap_escape as f64 / self.total_locals as f64) * 100.0
+        } else {
+            0.0
+        };
         let global_escape_pct = if self.total_locals > 0 {
             (self.by_state.global_escape as f64 / self.total_locals as f64) * 100.0
         } else {
@@ -365,6 +381,10 @@ impl EscapeStatistics {
         report.push_str(&format!(
             "║  ArgEscape:                    {:>6} ({:>5.1}%)                   ║\n",
             self.by_state.arg_escape, arg_escape_pct
+        ));
+        report.push_str(&format!(
+            "║  HeapEscape:                   {:>6} ({:>5.1}%)                   ║\n",
+            self.by_state.heap_escape, heap_escape_pct
         ));
         report.push_str(&format!(
             "║  GlobalEscape:                 {:>6} ({:>5.1}%)                   ║\n",
@@ -818,11 +838,13 @@ impl EscapeAnalyzer {
         };
         let base_state = self.states.get(&local).copied().unwrap_or(EscapeState::NoEscape);
 
-        // If we're dereferencing, the target might have different escape properties
+        // If we're dereferencing, the value is stored through a pointer into
+        // heap-allocated memory. This is HeapEscape (Tier 1 / Region), not
+        // GlobalEscape (Tier 2 / Persistent). The value lives in heap memory
+        // but doesn't necessarily reach a global/static.
         for elem in &place.projection {
             if matches!(elem, PlaceElem::Deref) {
-                // Dereferencing a pointer: the pointee's escape is determined by the pointer
-                return EscapeState::GlobalEscape;
+                return EscapeState::HeapEscape;
             }
         }
 
@@ -1733,8 +1755,8 @@ mod tests {
     // Property: escape states form a finite lattice (bounded iterations)
     #[test]
     fn test_property_lattice_bounded() {
-        // The lattice has exactly 3 elements, so any ascending chain
-        // has at most 3 elements, guaranteeing termination
+        // The lattice has exactly 4 elements, so any ascending chain
+        // has at most 4 elements, guaranteeing termination
         let mut state = EscapeState::NoEscape;
         let mut count = 0;
 
@@ -1742,11 +1764,12 @@ mod tests {
         while state < EscapeState::GlobalEscape {
             state = state.join(match state {
                 EscapeState::NoEscape => EscapeState::ArgEscape,
-                EscapeState::ArgEscape => EscapeState::GlobalEscape,
+                EscapeState::ArgEscape => EscapeState::HeapEscape,
+                EscapeState::HeapEscape => EscapeState::GlobalEscape,
                 EscapeState::GlobalEscape => EscapeState::GlobalEscape,
             });
             count += 1;
-            assert!(count <= 3, "lattice chain exceeded expected bound");
+            assert!(count <= 4, "lattice chain exceeded expected bound");
         }
     }
 
