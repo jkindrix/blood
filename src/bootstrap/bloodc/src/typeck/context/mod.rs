@@ -196,6 +196,10 @@ pub struct TypeContext<'a> {
     pub(crate) box_def_id: Option<DefId>,
     /// DefId for the built-in Iter<T> type (iterator over T).
     pub(crate) iter_def_id: Option<DefId>,
+    /// DefId for the Deref trait.
+    pub(crate) deref_trait_def_id: Option<DefId>,
+    /// DefId for the DerefMut trait.
+    pub(crate) deref_mut_trait_def_id: Option<DefId>,
     /// Builtin methods for primitive and builtin types.
     /// Maps (type discriminant, method name) -> method info.
     pub(crate) builtin_methods: Vec<BuiltinMethodInfo>,
@@ -773,6 +777,8 @@ impl<'a> TypeContext<'a> {
             vec_def_id: None,
             box_def_id: None,
             iter_def_id: None,
+            deref_trait_def_id: None,
+            deref_mut_trait_def_id: None,
             builtin_methods: Vec::new(),
             object_safe_traits: HashMap::new(),
         };

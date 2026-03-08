@@ -6302,10 +6302,63 @@ impl<'a> TypeContext<'a> {
             ast::UnaryOp::Neg => operand_expr.ty.clone(),
             ast::UnaryOp::Not => operand_expr.ty.clone(),
             ast::UnaryOp::Deref => {
+                // Check for custom Deref impl first (desugars to method call)
+                let is_builtin_deref = matches!(operand_expr.ty.kind(),
+                    TypeKind::Ref { .. } | TypeKind::Ptr { .. }
+                ) || matches!(operand_expr.ty.kind(),
+                    TypeKind::Adt { def_id, args, .. }
+                    if self.resolver.def_info.get(def_id)
+                        .map(|i| i.name == "Box" && args.len() == 1)
+                        .unwrap_or(false)
+                );
+
+                if !is_builtin_deref {
+                    if let Some((target_ty, deref_method_id)) = self.resolve_deref_target(&operand_expr.ty) {
+                        // Desugar *expr into *(expr.deref())
+                        // 1. Borrow the operand: &expr
+                        let ref_ty = Type::reference(operand_expr.ty.clone(), false);
+                        let borrow_expr = hir::Expr::new(
+                            hir::ExprKind::Borrow {
+                                mutable: false,
+                                expr: Box::new(operand_expr),
+                            },
+                            ref_ty.clone(),
+                            span,
+                        );
+
+                        // 2. Call deref(&expr) -> &Target
+                        let ref_target_ty = Type::reference(target_ty.clone(), false);
+                        let callee_ty = Type::function(vec![ref_ty], ref_target_ty.clone());
+                        let callee = hir::Expr::new(
+                            hir::ExprKind::Def(deref_method_id),
+                            callee_ty,
+                            span,
+                        );
+                        let deref_call = hir::Expr::new(
+                            hir::ExprKind::Call {
+                                callee: Box::new(callee),
+                                args: vec![borrow_expr],
+                            },
+                            ref_target_ty,
+                            span,
+                        );
+
+                        // 3. Deref the &Target to get Target
+                        return Ok(hir::Expr::new(
+                            hir::ExprKind::Unary {
+                                op: ast::UnaryOp::Deref,
+                                operand: Box::new(deref_call),
+                            },
+                            target_ty,
+                            span,
+                        ));
+                    }
+                }
+
+                // Built-in deref for references, pointers, and Box
                 match operand_expr.ty.kind() {
                     TypeKind::Ref { inner, .. } => inner.clone(),
                     TypeKind::Ptr { inner, .. } => inner.clone(),
-                    // Box<T> can be dereferenced to T
                     TypeKind::Adt { def_id, args, .. } => {
                         if let Some(info) = self.resolver.def_info.get(def_id) {
                             if info.name == "Box" && args.len() == 1 {

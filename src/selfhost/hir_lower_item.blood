@@ -818,9 +818,14 @@ fn lower_trait_decl(ctx: &mut hir_lower_ctx.LoweringCtx, t: &ast.TraitDecl) {
 
     let trait_def = hir_item.TraitDef.new(generics, supertraits, items);
     let item_kind = hir_item.ItemKind.Trait(trait_def);
+    // Re-intern the name from source so it's in the HIR interner
+    // (AST symbols use the parser interner — different index space)
+    let name_str = ctx.span_to_string(t.name.span);
+    let reinterned_symbol = ctx.intern(name_str.as_str());
+    let reinterned_name = common.SpannedSymbol { symbol: reinterned_symbol, span: t.name.span };
     let item = hir_item.Item.new(
         def_id,
-        t.name,
+        reinterned_name,
         item_kind,
         t.vis,
         t.span,
@@ -937,7 +942,11 @@ fn lower_assoc_type(ctx: &mut hir_lower_ctx.LoweringCtx, ta: &ast.TypeAliasDecl)
     ctx.resolver.pop_scope();
 
     let bounds: Vec<hir_ty.TraitRef> = Vec.new();
-    hir_item.AssocType.new(def_id, ta.name, generics, bounds, default_ty)
+    // Re-intern the name from source so it's in the HIR interner
+    let name_str = ctx.span_to_string(ta.name.span);
+    let name_sym = ctx.intern(name_str.as_str());
+    let re_name = common.SpannedSymbol { symbol: name_sym, span: ta.name.span };
+    hir_item.AssocType.new(def_id, re_name, generics, bounds, default_ty)
 }
 
 /// Lower an associated constant.

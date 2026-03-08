@@ -829,6 +829,9 @@ fn cmd_check(args: &FileArgs, verbosity: u8) -> ExitCode {
         return ExitCode::from(1);
     }
 
+    // Detect Deref/DerefMut traits by name from user code
+    ctx.detect_deref_traits();
+
     // Expand derive macros after collection, before type checking bodies
     ctx.expand_derives();
 
@@ -1096,6 +1099,9 @@ fn cmd_build(args: &FileArgs, verbosity: u8, timings: bool) -> ExitCode {
             false
         }
     };
+
+    // Detect Deref/DerefMut traits by name from user code
+    ctx.detect_deref_traits();
 
     // Expand derive macros after collection, before type checking bodies
     ctx.expand_derives();

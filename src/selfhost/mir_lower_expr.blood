@@ -681,18 +681,77 @@ fn lower_unary_expr(
 ) {
     match unary_op {
         common.UnaryOp.Deref => {
-            // Evaluate to a place and deref
-            let ptr_temp = ctx.new_temp(operand.ty, span);
-            lower_expr(ctx, operand, mir_lower_ctx.destination_local(ptr_temp));
+            // Check for custom Deref trait impl (typeck records a method
+            // resolution at the *expr span when a custom deref is needed)
+            match ctx.lookup_method_def(span.start) {
+                Option.Some(deref_method_def) => {
+                    // Custom Deref: desugar *expr into *(expr.deref())
+                    // 1. Evaluate operand
+                    let operand_temp = ctx.new_temp(operand.ty, span);
+                    lower_expr(ctx, operand, mir_lower_ctx.destination_local(operand_temp));
 
-            match dest.as_place() {
-                Option.Some(place) => {
-                    let deref_place = mir_types.Place.local(ptr_temp)
-                        .project(mir_types.PlaceElem.Deref);
-                    let result_operand = mir_lower_util.operand_from_place(deref_place, ty);
-                    ctx.emit_assign(place, mir_types.Rvalue.Use(result_operand), span);
+                    // 2. Borrow the operand: &operand
+                    let interner = type_intern.type_interner();
+                    let resolved_operand_ty = ctx.resolve_type_to_id(operand.ty);
+                    let ref_operand_ty = interner.mk_ref(resolved_operand_ty, false);
+                    let ref_temp = ctx.new_temp(ref_operand_ty, span);
+                    ctx.emit_assign(
+                        mir_types.Place.local(ref_temp),
+                        mir_types.Rvalue.Ref {
+                            place: mir_types.Place.local(operand_temp),
+                            mutable: false,
+                        },
+                        span,
+                    );
+
+                    // 3. Call deref(&operand) -> &Target
+                    let target_ty = type_intern.type_to_ty_id(ty);
+                    let ref_target_ty = interner.mk_ref(target_ty, false);
+                    let deref_result = ctx.new_temp(ref_target_ty, span);
+                    let func_operand = mir_types.Operand.Constant(
+                        mir_types.Constant.new(
+                            ref_target_ty, // type doesn't matter much for FnDef
+                            mir_types.ConstantKind.FnDef(deref_method_def),
+                        ),
+                    );
+                    let mut args = Vec.new();
+                    args.push(mir_types.Operand.Move(mir_types.Place.local(ref_temp)));
+                    let next_block = ctx.new_block();
+                    ctx.terminate_call(
+                        func_operand,
+                        args,
+                        mir_types.Place.local(deref_result),
+                        next_block,
+                        span,
+                    );
+                    ctx.set_current_block(next_block);
+
+                    // 4. Deref the &Target to get Target
+                    match dest.as_place() {
+                        Option.Some(place) => {
+                            let deref_place = mir_types.Place.local(deref_result)
+                                .project(mir_types.PlaceElem.Deref);
+                            let result_operand = mir_lower_util.operand_from_place(deref_place, ty);
+                            ctx.emit_assign(place, mir_types.Rvalue.Use(result_operand), span);
+                        }
+                        Option.None => {}
+                    }
                 }
-                Option.None => {}
+                Option.None => {
+                    // Builtin deref: evaluate to a place and deref
+                    let ptr_temp = ctx.new_temp(operand.ty, span);
+                    lower_expr(ctx, operand, mir_lower_ctx.destination_local(ptr_temp));
+
+                    match dest.as_place() {
+                        Option.Some(place) => {
+                            let deref_place = mir_types.Place.local(ptr_temp)
+                                .project(mir_types.PlaceElem.Deref);
+                            let result_operand = mir_lower_util.operand_from_place(deref_place, ty);
+                            ctx.emit_assign(place, mir_types.Rvalue.Use(result_operand), span);
+                        }
+                        Option.None => {}
+                    }
+                }
             }
         }
         common.UnaryOp.Ref => {

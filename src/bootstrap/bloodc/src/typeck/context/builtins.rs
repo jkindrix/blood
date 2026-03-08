@@ -853,6 +853,9 @@ impl<'a> TypeContext<'a> {
         });
 
         self.iter_def_id = Some(iter_def_id);
+
+        // Note: Deref/DerefMut traits are detected by name from user code
+        // via detect_deref_traits() after resolve_program(), not registered as builtins.
     }
 
     /// Register built-in methods for primitive and builtin types.

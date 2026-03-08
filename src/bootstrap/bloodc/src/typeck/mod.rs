@@ -79,6 +79,9 @@ pub fn check_program(
     // Phase 1: Resolve names and collect items
     ctx.resolve_program(program)?;
 
+    // Phase 1.1: Detect Deref/DerefMut traits by name from user code
+    ctx.detect_deref_traits();
+
     // Phase 1.5: Expand derive macros
     ctx.expand_derives();
 

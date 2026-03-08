@@ -1,0 +1,30 @@
+// Test: Custom Deref trait implementation
+// Verifies that *expr works for types implementing the Deref trait
+
+trait Deref {
+    type Target;
+    fn deref(&self) -> &Self::Target;
+}
+
+struct Wrapper {
+    inner: i32,
+}
+
+impl Deref for Wrapper {
+    type Target = i32;
+    fn deref(&self) -> &i32 {
+        &self.inner
+    }
+}
+
+fn main() -> i32 {
+    let w = Wrapper { inner: 42 };
+    let val = *w;
+    assert_eq_int(val, 42);
+
+    let w2 = Wrapper { inner: 100 };
+    let val2 = *w2;
+    assert_eq_int(val2, 100);
+
+    0
+}

@@ -1081,7 +1081,58 @@ impl<'a> TypeContext<'a> {
             TypeKind::Primitive(hir::PrimitiveTy::String) => true,
             // Vec<T> implements Deref to [T]
             TypeKind::Adt { def_id, .. } if Some(*def_id) == self.vec_def_id => true,
-            _ => false,
+            // Check explicit Deref trait impl blocks
+            _ => self.has_deref_impl(ty),
         }
+    }
+
+    /// Check if a type has an explicit `impl Deref for T` block.
+    pub(crate) fn has_deref_impl(&self, ty: &Type) -> bool {
+        if let Some(deref_def_id) = self.deref_trait_def_id {
+            for impl_block in &self.impl_blocks {
+                if impl_block.trait_ref == Some(deref_def_id) && impl_block.self_ty == *ty {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Detect user-defined Deref and DerefMut traits by name.
+    /// Called after resolve_program() so trait_defs are populated.
+    pub fn detect_deref_traits(&mut self) {
+        for (&def_id, trait_info) in &self.trait_defs {
+            if trait_info.name == "Deref" {
+                self.deref_trait_def_id = Some(def_id);
+            } else if trait_info.name == "DerefMut" {
+                self.deref_mut_trait_def_id = Some(def_id);
+            }
+        }
+    }
+
+    /// Resolve the Deref::Target type and deref method DefId for a type with an explicit Deref impl.
+    /// Returns None if the type does not implement Deref or has no Target associated type.
+    pub(crate) fn resolve_deref_target(&self, ty: &Type) -> Option<(Type, DefId)> {
+        let deref_def_id = self.deref_trait_def_id?;
+        for impl_block in &self.impl_blocks {
+            if impl_block.trait_ref == Some(deref_def_id) && impl_block.self_ty == *ty {
+                let mut target_ty = None;
+                let mut deref_method = None;
+                for assoc_ty in &impl_block.assoc_types {
+                    if assoc_ty.name == "Target" {
+                        target_ty = Some(assoc_ty.ty.clone());
+                    }
+                }
+                for method in &impl_block.methods {
+                    if method.name == "deref" {
+                        deref_method = Some(method.def_id);
+                    }
+                }
+                if let (Some(target), Some(method_id)) = (target_ty, deref_method) {
+                    return Some((target, method_id));
+                }
+            }
+        }
+        None
     }
 }

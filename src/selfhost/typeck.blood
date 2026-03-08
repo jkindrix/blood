@@ -365,6 +365,13 @@ pub struct TypeChecker {
     /// Deferred field accesses whose base type was an unresolved Infer variable.
     /// After all bodies are type-checked, these are revisited to resolve fields.
     pub pending_field_accesses: Vec<common.PendingFieldAccess>,
+    /// DefId of the builtin Deref trait, if registered.
+    pub deref_trait_def_id: Option<hir_def.DefId>,
+    /// Maps ADT DefId.index → Deref Target TyId.index for custom Deref impls.
+    /// Populated when processing impl Deref blocks.
+    pub deref_target_types: hashmap.HashMapU64U64,
+    /// Maps ADT DefId.index → deref method DefId.index for custom Deref impls.
+    pub deref_method_ids: hashmap.HashMapU64U64,
 }
 
 impl TypeChecker {
@@ -413,6 +420,9 @@ impl TypeChecker {
             coercion_entries: Vec.new(),
             persist_def_id_index: Option.None,
             pending_field_accesses: Vec.new(),
+            deref_trait_def_id: Option.None,
+            deref_target_types: hashmap.HashMapU64U64.new(),
+            deref_method_ids: hashmap.HashMapU64U64.new(),
         }
     }
 
@@ -462,6 +472,9 @@ impl TypeChecker {
             coercion_entries: Vec.new(),
             persist_def_id_index: Option.None,
             pending_field_accesses: Vec.new(),
+            deref_trait_def_id: Option.None,
+            deref_target_types: hashmap.HashMapU64U64.new(),
+            deref_method_ids: hashmap.HashMapU64U64.new(),
         }
     }
 

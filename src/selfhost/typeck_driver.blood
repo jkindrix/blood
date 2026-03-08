@@ -182,6 +182,9 @@ pub fn check_lower_result(result: &hir_lower_ctx.LowerResult) -> TypeCheckResult
     // Phase 1: Collect type information from items
     collect_item_signatures(&mut checker, &result.items);
 
+    // Phase 1a1: Detect builtin Deref trait by name
+    detect_deref_trait(&mut checker, &result.items, &result.interner);
+
     // Phase 1a2: Register synthetic impl blocks for dyn Trait types
     // so that lookup_method can resolve methods on dyn Trait receivers.
     checker.register_dyn_trait_impls();
@@ -280,6 +283,103 @@ pub fn check_lower_result(result: &hir_lower_ctx.LowerResult) -> TypeCheckResult
         TypeCheckResult.failed(checker.errors, checker.subst_table, checker.method_resolutions, checker.field_resolutions)
     } else {
         TypeCheckResult.ok(checker.subst_table, checker.builtin_def_names, checker.method_resolutions, checker.field_resolutions, checker.default_method_remaps, checker.coercion_entries)
+    }
+}
+
+/// Detects the Deref trait by name and registers Deref impl target types.
+fn detect_deref_trait(
+    checker: &mut typeck.TypeChecker,
+    items: &Vec<hir_lower_ctx.ItemEntry>,
+    interner: &interner.StringInterner,
+) {
+    // First pass: find the Deref trait definition by name
+    for i in 0usize..items.len() {
+        let entry = &items[i];
+        match &entry.item.kind {
+            &hir_item.ItemKind.Trait(_) => {
+                match interner.resolve(entry.item.name.symbol) {
+                    Option.Some(name) => {
+                        if string_eq(name, "Deref") {
+                            checker.deref_trait_def_id = Option.Some(entry.def_id);
+                        }
+                    }
+                    Option.None => {}
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // Second pass: find impl Deref blocks and extract Target type + deref method
+    match &checker.deref_trait_def_id {
+        &Option.Some(ref deref_def_id) => {
+            let deref_idx = deref_def_id.index;
+            for i in 0usize..items.len() {
+                let entry = &items[i];
+                match &entry.item.kind {
+                    &hir_item.ItemKind.Impl(ref impl_def) => {
+                        match &impl_def.trait_ref {
+                            &Option.Some(ref trait_ref) => {
+                                if trait_ref.def_id.index == deref_idx {
+                                    // This is an impl Deref block
+                                    // Extract Target associated type
+                                    for j in 0usize..impl_def.items.len() {
+                                        match &impl_def.items[j] {
+                                            &hir_item.AssocItem.Type(ref assoc_type) => {
+                                                let is_target = match interner.resolve(assoc_type.name.symbol) {
+                                                    Option.Some(n) => string_eq(n, "Target"),
+                                                    Option.None => false,
+                                                };
+                                                if is_target {
+                                                    match &assoc_type.default_ty {
+                                                        &Option.Some(ref target_ty) => {
+                                                            // Get the ADT DefId from self_ty
+                                                            let self_ty_interner = type_intern.type_interner();
+                                                            match self_ty_interner.get(impl_def.self_ty) {
+                                                                &type_intern.InternedTypeKind.Adt { def_id, args: _ } => {
+                                                                    checker.deref_target_types.insert(
+                                                                        def_id.index as u64,
+                                                                        target_ty.index as u64,
+                                                                    );
+                                                                }
+                                                                _ => {}
+                                                            }
+                                                        }
+                                                        &Option.None => {}
+                                                    }
+                                                }
+                                            }
+                                            &hir_item.AssocItem.Fn(ref assoc_fn) => {
+                                                let is_deref = match interner.resolve(assoc_fn.name.symbol) {
+                                                    Option.Some(n) => string_eq(n, "deref"),
+                                                    Option.None => false,
+                                                };
+                                                if is_deref {
+                                                    let self_ty_interner = type_intern.type_interner();
+                                                    match self_ty_interner.get(impl_def.self_ty) {
+                                                        &type_intern.InternedTypeKind.Adt { def_id, args: _ } => {
+                                                            checker.deref_method_ids.insert(
+                                                                def_id.index as u64,
+                                                                assoc_fn.def_id.index as u64,
+                                                            );
+                                                        }
+                                                        _ => {}
+                                                    }
+                                                }
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                }
+                            }
+                            &Option.None => {}
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        &Option.None => {}
     }
 }
 

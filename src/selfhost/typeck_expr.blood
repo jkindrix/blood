@@ -958,10 +958,26 @@ fn infer_unary(
                     if is_box && args_len == 1 {
                         interner.get_ty_list_element(args, 0)
                     } else {
-                        let mut note = common.make_string("cannot dereference type ");
-                        note.push_str(type_intern.format_ty_id(resolved).as_str());
-                        checker.error_with_note(typeck.TypeErrorKind.TypeMismatch, span, note);
-                        type_intern.CommonTypes.error()
+                        // Check for custom Deref trait impl
+                        match checker.deref_target_types.get(def_id.index as u64) {
+                            Option.Some(target_ty_idx) => {
+                                // Record deref method resolution so MIR lowering
+                                // can emit a call instead of raw PlaceElem.Deref
+                                match checker.deref_method_ids.get(def_id.index as u64) {
+                                    Option.Some(method_def_id) => {
+                                        checker.record_method_resolution(span.start, method_def_id as u32);
+                                    }
+                                    Option.None => {}
+                                }
+                                type_intern.TyId.new(target_ty_idx as u32)
+                            }
+                            Option.None => {
+                                let mut note = common.make_string("cannot dereference type ");
+                                note.push_str(type_intern.format_ty_id(resolved).as_str());
+                                checker.error_with_note(typeck.TypeErrorKind.TypeMismatch, span, note);
+                                type_intern.CommonTypes.error()
+                            }
+                        }
                     }
                 }
                 _ => {
