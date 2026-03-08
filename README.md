@@ -23,11 +23,11 @@ Core compiler is functional and tested. Programs compile and run with full type 
 | Lexer & Parser | ✅ Complete | Production-tested |
 | Type Checker | ✅ Complete | Bidirectional + unification |
 | Code Generation | ✅ Complete | LLVM backend |
-| Effects System | 🔶 Partial | Bootstrap: evidence passing inline; self-hosted: runtime ABI in progress |
-| Memory Model | ✅ Integrated | Generational pointers in codegen (blood_alloc/blood_free) |
-| Runtime | ✅ Integrated | Memory management, FFI exports linked to programs |
-| Multiple Dispatch | 🔶 Partial | Compile-time dispatch complete; runtime dispatch in progress |
-| Closures | 🔶 Partial | Bootstrap: environment capture and codegen; self-hosted: parser support pending |
+| Effects System | ✅ Complete | Evidence passing, deep/shallow handlers, snapshots, StaleReference effect |
+| Memory Model | ✅ Integrated | Generational pointers, regions, escape analysis, persist() |
+| Runtime | ✅ Integrated | Memory management, effect dispatch, FFI exports |
+| Multiple Dispatch | 🔶 Partial | Compile-time dispatch complete; `dyn Trait` runtime dispatch not yet implemented |
+| Closures | ✅ Complete | Environment capture and codegen in both compilers |
 
 **Legend**: ✅ = Implemented and integrated | 🔶 = Partially integrated
 

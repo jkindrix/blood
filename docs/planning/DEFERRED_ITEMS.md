@@ -20,23 +20,16 @@ Items are removed only when fully resolved, with a completion date and commit ha
 
 ## Active Deferrals
 
-### DEF-002: `UncheckedBlock` expression
+### ~~DEF-002: `UncheckedBlock` expression~~ ✓
 
 | Field | Value |
 |-------|-------|
 | **Delta** | D4 |
 | **Deferred from** | Phase A (scope decision) |
-| **Deferred to** | Phase C |
-| **Date** | 2026-02-28 |
+| **Resolved** | 2026-03-07 |
 | **Severity** | Medium — new feature, no existing code uses it |
 
-**What**: GRAMMAR.md v0.5.0 added `UncheckedBlock ::= 'unchecked' Block` (§5.4). Neither compiler parses this.
-
-**Why**: Requires semantic implementation — the compiler must know *which checks* to disable inside the block (bounds checks, overflow checks, etc.) and how to propagate that through HIR/MIR/codegen. Parser stub alone has no value without semantics.
-
-**What it blocks**: Granular safety controls (RFC-S / ADR-031).
-
-**What unblocks it**: Design decision on check categories + implementation in typeck/MIR/codegen.
+**Resolution**: Full pipeline in both compilers (SYN-04). Five check kinds: `bounds`, `overflow`, `generation`, `null`, `alignment`. Conditional mode: `when = "release"`. MIR: `EnterUnchecked`/`ExitUnchecked` statements. Design doc: `docs/design/UNCHECKED_BLOCKS.md`. Remaining: `null`/`alignment` runtime checks not yet implemented; selfhost MIR treats unchecked as transparent.
 
 ---
 
@@ -60,23 +53,16 @@ Items are removed only when fully resolved, with a completion date and commit ha
 
 ---
 
-### DEF-004: `@heap` / `@stack` allocation expressions
+### ~~DEF-004: `@heap` / `@stack` allocation expressions~~ ✓
 
 | Field | Value |
 |-------|-------|
 | **Delta** | D6 |
 | **Deferred from** | Phase A (scope decision) |
-| **Deferred to** | Phase C or Phase E |
-| **Date** | 2026-02-28 |
+| **Resolved** | 2026-03-08 |
 | **Severity** | Medium — tokens exist in lexer but no parse rules |
 
-**What**: GRAMMAR.md v0.4.0 specifies `@heap expr` and `@stack expr` as allocation placement expressions. Both compilers lex `@heap` and `@stack` as tokens but have no parser rules to handle them.
-
-**Why**: Requires allocation strategy implementation — where does `@heap` allocate? How does `@stack` interact with regions? What's the runtime API? These are Tier 3 memory model questions.
-
-**What it blocks**: Explicit allocation placement (users currently have no way to control heap vs stack).
-
-**What unblocks it**: Memory model Tier 3 design decisions (Phase E) + runtime API for explicit allocation.
+**Resolution**: Full pipeline in both compilers (SYN-05 Phase 1+2). Parser/AST/HIR/typeck + MIR/escape analysis. `@heap` forces HeapEscape (region tier), `@stack` forces NoEscape (stack tier). Test: `t10_alloc_expr.blood`. 367/367 ground-truth.
 
 ---
 
@@ -101,23 +87,16 @@ Items are removed only when fully resolved, with a completion date and commit ha
 
 ---
 
-### DEF-006: `in` containment operator (general)
+### ~~DEF-006: `in` containment operator (general)~~ ✓
 
 | Field | Value |
 |-------|-------|
 | **Delta** | D8 |
 | **Deferred from** | Phase A (scope decision) |
-| **Deferred to** | Phase C |
-| **Date** | 2026-02-28 |
+| **Resolved** | 2026-03-05 |
 | **Severity** | Low — `in` works in for-loops; general containment is new |
 
-**What**: GRAMMAR.md v0.4.0 specifies `ContainmentExpr ::= Expr 'in' Expr` as a general boolean expression (e.g., `x in 0..10`). Currently `in` is only recognized in for-loop headers.
-
-**Why**: General containment requires operator overloading or trait infrastructure so that `in` can work with ranges, collections, etc. For-loop `in` is hard-coded.
-
-**What it blocks**: `x in lo..hi` as a boolean expression (currently must write `x >= lo && x < hi`).
-
-**What unblocks it**: Trait/operator infrastructure for `Contains` or similar protocol.
+**Resolution**: Both compilers support `x in lo..hi` and `x in lo..=hi` (SYN-03). Desugars to comparison chain during HIR lowering. Test: `t10_containment_expr.blood`. General collection containment (trait-based `in`) remains future work.
 
 ---
 
@@ -309,11 +288,11 @@ See `docs/design/DYN_TRAIT_EVALUATION.md` for the full evaluation.
 | ID | Item | Severity | Target Phase | Status |
 |----|------|----------|-------------|--------|
 | ~~DEF-001~~ | ~~Expression path `.`~~ | ~~Medium~~ | ~~Phase A~~ | **RESOLVED** (2026-02-28) |
-| DEF-002 | UncheckedBlock | Medium | Phase C | Active |
+| ~~DEF-002~~ | ~~UncheckedBlock~~ | ~~Medium~~ | ~~Phase C~~ | **RESOLVED** (2026-03-07) |
 | DEF-003 | #[unchecked(...)] | Medium | Phase C | Active |
-| DEF-004 | @heap/@stack | Medium | Phase C/E | Active |
+| ~~DEF-004~~ | ~~@heap/@stack~~ | ~~Medium~~ | ~~Phase C/E~~ | **RESOLVED** (2026-03-08) |
 | DEF-005 | dyn Trait | Medium | Phase C | Active — **UNBLOCKED** (DEF-014 resolved) |
-| DEF-006 | `in` containment | Low | Phase C | Active |
+| ~~DEF-006~~ | ~~`in` containment~~ | ~~Low~~ | ~~Phase C~~ | **RESOLVED** (2026-03-05) |
 | ~~DEF-007~~ | ~~Async → Fiber~~ | ~~High~~ | ~~Sub-phase~~ | **RESOLVED** (2026-03-01) |
 | DEF-008 | Continuation tokens | Low | Phase C | Active |
 | DEF-009 | Cast + linearity/regions | Medium | Spec addendum | Active |
@@ -324,7 +303,7 @@ See `docs/design/DYN_TRAIT_EVALUATION.md` for the full evaluation.
 | ~~DEF-014~~ | ~~`dyn Trait` vs effects eval~~ | ~~Medium~~ | ~~Pre-DEF-005~~ | **RESOLVED** (2026-03-04) |
 | DEF-015 | Result/Option × effects | Medium | Ecosystem guidelines | Active |
 
-**Active: 9 items.** Resolved: 5 (DEF-001, DEF-007, DEF-010, DEF-011, DEF-014).
+**Active: 6 items.** Resolved: 8 (DEF-001, DEF-002, DEF-004, DEF-006, DEF-007, DEF-010, DEF-011, DEF-014).
 **High severity (0)**: All high-severity items resolved.
-**Medium severity (5)**: DEF-002–005, DEF-009, DEF-015.
-**Low severity (4)**: DEF-006, DEF-008, DEF-012, DEF-013.
+**Medium severity (3)**: DEF-003, DEF-009, DEF-015.
+**Low severity (3)**: DEF-008, DEF-012, DEF-013.
