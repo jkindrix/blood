@@ -294,6 +294,11 @@ pub enum StatementKind {
     /// Exit an unchecked block — re-enables the specified checks.
     ExitUnchecked(Vec<crate::ast::UncheckedCheck>),
 
+    /// Safepoint — compiler-inserted preemption check.
+    /// At runtime: checks per-thread preemption flag, yields if set.
+    /// Inserted at loop back-edges and function prologues.
+    Safepoint,
+
     /// No-op (placeholder for removed statements).
     Nop,
 }

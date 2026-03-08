@@ -57,6 +57,7 @@ pub mod closure_analysis;
 pub mod escape;
 pub mod lowering;
 pub mod ptr;
+pub mod safepoint;
 pub mod snapshot;
 pub mod static_evidence;
 pub mod types;

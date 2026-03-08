@@ -1354,8 +1354,20 @@ fn cmd_build(args: &FileArgs, verbosity: u8, timings: bool) -> ExitCode {
     let mut mir_lowering = mir::MirLowering::new(&hir_crate);
     mir_lowering.set_release(args.release);
     let mir_result = match mir_lowering.lower_crate() {
-        Ok((mir_bodies, inline_handler_bodies)) => {
+        Ok((mut mir_bodies, inline_handler_bodies)) => {
             phase_timings.push(("MIR lowering", t.elapsed()));
+
+            // Insert safepoints at loop back-edges for cooperative preemption
+            let t_sp = Instant::now();
+            let mut total_safepoints = 0usize;
+            for (_def_id, body) in mir_bodies.iter_mut() {
+                total_safepoints += mir::safepoint::insert_safepoints(body, false);
+            }
+            phase_timings.push(("Safepoint insertion", t_sp.elapsed()));
+            if verbosity > 1 {
+                eprintln!("Safepoint insertion: {} safepoints in {} bodies.",
+                    total_safepoints, mir_bodies.len());
+            }
 
             if verbosity > 1 {
                 eprintln!("MIR lowering passed. {} function bodies, {} inline handlers.",

@@ -1414,6 +1414,19 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                 }
             }
 
+            StatementKind::Safepoint => {
+                let safepoint_fn = self.module.get_function("__builtin_safepoint_check")
+                    .unwrap_or_else(|| {
+                        let void_type = self.context.void_type();
+                        let fn_type = void_type.fn_type(&[], false);
+                        self.module.add_function("__builtin_safepoint_check", fn_type, None)
+                    });
+                self.builder.build_call(safepoint_fn, &[], "")
+                    .map_err(|e| vec![Diagnostic::error(
+                        format!("LLVM call error: {}", e), stmt.span
+                    )])?;
+            }
+
             StatementKind::Nop => {
                 // No operation
             }

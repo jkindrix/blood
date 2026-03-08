@@ -508,7 +508,8 @@ fn substitute_statement_types_with_ctx(stmt: &mut crate::mir::types::Statement, 
         | StatementKind::PopHandler
         | StatementKind::CallReturnClause { .. }
         | StatementKind::EnterUnchecked(_)
-        | StatementKind::ExitUnchecked(_) => {}
+        | StatementKind::ExitUnchecked(_)
+        | StatementKind::Safepoint => {}
     }
 }
 
@@ -4248,6 +4249,16 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // __builtin_scheduler_shutdown() -> void
         let scheduler_shutdown_builtin_type = void_type.fn_type(&[], false);
         self.module.add_function("__builtin_scheduler_shutdown", scheduler_shutdown_builtin_type, None);
+
+        // __builtin_safepoint_check() -> void (INFRA-02 Phase 4)
+        let safepoint_check_type = void_type.fn_type(&[], false);
+        self.module.add_function("__builtin_safepoint_check", safepoint_check_type, None);
+
+        // __builtin_safepoint_request() -> void
+        self.module.add_function("__builtin_safepoint_request", safepoint_check_type, None);
+
+        // __builtin_safepoint_clear() -> void
+        self.module.add_function("__builtin_safepoint_clear", safepoint_check_type, None);
 
         // === Runtime Lifecycle ===
 

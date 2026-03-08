@@ -218,7 +218,7 @@ fn validate_statement_locals(
             validate_place_local(def_id, block_idx, state_place, num_locals, stmt.span, errors);
             validate_place_local(def_id, block_idx, destination, num_locals, stmt.span, errors);
         }
-        StatementKind::PopHandler | StatementKind::EnterUnchecked(_) | StatementKind::ExitUnchecked(_) | StatementKind::Nop => {}
+        StatementKind::PopHandler | StatementKind::EnterUnchecked(_) | StatementKind::ExitUnchecked(_) | StatementKind::Safepoint | StatementKind::Nop => {}
     }
 }
 

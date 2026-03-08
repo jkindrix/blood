@@ -1045,6 +1045,9 @@ impl LivenessAnalysis {
                 StatementKind::EnterUnchecked(_) | StatementKind::ExitUnchecked(_) => {
                     // Unchecked blocks don't use or define locals
                 }
+                StatementKind::Safepoint => {
+                    // Safepoints don't use or define locals
+                }
                 StatementKind::CallReturnClause { body_result, state_place, destination, .. } => {
                     // body_result is used, state_place is used, destination is defined
                     Self::collect_operand_uses(body_result, &mut uses);

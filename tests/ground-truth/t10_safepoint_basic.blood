@@ -1,0 +1,30 @@
+// Test: Safepoint preemption in compute loop (INFRA-02 Phase 4)
+// Verifies: safepoints are inserted at loop back-edges,
+//           __builtin_safepoint_check is callable, loop still completes
+// EXPECT: 1000
+// EXPECT: done
+
+fn compute_loop() -> i32 {
+    // This loop has a safepoint inserted at its back-edge.
+    // Without preemption requested, the safepoint check is a no-op.
+    let mut sum: i32 = 0;
+    for i in 0..1000 {
+        sum += 1;
+    }
+    sum
+}
+
+fn main() -> i32 {
+    let result: i32 = compute_loop();
+    println_int(result);
+
+    // Manually request preemption and verify it clears after yield
+    __builtin_safepoint_request();
+    // Next safepoint check will yield and clear the flag
+    __builtin_safepoint_check();
+    // Flag should be cleared now — another check should be a no-op
+    __builtin_safepoint_check();
+
+    println_str("done");
+    0
+}

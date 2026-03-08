@@ -799,6 +799,9 @@ impl EscapeAnalyzer {
                 // Unchecked blocks don't affect escape analysis
                 false
             }
+            StatementKind::Safepoint => {
+                false
+            }
         }
     }
 

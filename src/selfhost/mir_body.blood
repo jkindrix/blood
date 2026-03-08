@@ -243,6 +243,68 @@ impl MirBody {
 
         result.push(block);
     }
+
+    /// Insert safepoint statements at loop back-edge targets (loop headers).
+    /// Returns the number of safepoints inserted.
+    pub fn insert_safepoints(self: &mut MirBody) -> usize {
+        let rpo = self.reverse_postorder();
+
+        // Build RPO index map
+        let mut rpo_index: Vec<usize> = Vec.new();
+        for i in 0usize..self.basic_blocks.len() {
+            rpo_index.push(0usize);
+        }
+        for i in 0usize..rpo.len() {
+            let bb_idx = rpo[i].as_usize();
+            rpo_index[bb_idx] = i;
+        }
+
+        // Find loop headers: targets of back-edges
+        // A back-edge is (A → B) where rpo_index[A] >= rpo_index[B]
+        let mut is_header: Vec<bool> = Vec.new();
+        for i in 0usize..self.basic_blocks.len() {
+            is_header.push(false);
+        }
+
+        for ri in 0usize..rpo.len() {
+            let bb_idx = rpo[ri].as_usize();
+            let block = &self.basic_blocks[bb_idx];
+            match &block.terminator {
+                &Option.Some(ref term) => {
+                    let succs = term.successors();
+                    for si in 0usize..succs.len() {
+                        let succ_idx = succs[si].as_usize();
+                        if succ_idx < rpo_index.len() {
+                            if rpo_index[succ_idx] <= rpo_index[bb_idx] {
+                                is_header[succ_idx] = true;
+                            }
+                        }
+                    }
+                }
+                &Option.None => {}
+            }
+        }
+
+        // Insert Safepoint at the beginning of each loop header
+        // Build a new statement list with safepoint prepended (no vec_insert needed)
+        let mut count: usize = 0;
+        for i in 0usize..self.basic_blocks.len() {
+            if is_header[i] {
+                let mut new_stmts: Vec<mir_stmt.Statement> = Vec.new();
+                new_stmts.push(mir_stmt.Statement.new(
+                    mir_stmt.StatementKind.Safepoint,
+                    common.Span.dummy(),
+                ));
+                for si in 0usize..self.basic_blocks[i].statements.len() {
+                    new_stmts.push(self.basic_blocks[i].statements[si]);
+                }
+                self.basic_blocks[i].statements = new_stmts;
+                count += 1;
+            }
+        }
+
+        count
+    }
 }
 
 // ============================================================

@@ -11938,6 +11938,42 @@ pub unsafe extern "C" fn __builtin_fiber_race(handles_ptr: u64, count: u64) -> u
     }
 }
 
+// ============================================================================
+// Safepoint Infrastructure (INFRA-02 Phase 4)
+// ============================================================================
+
+thread_local! {
+    /// Per-thread preemption flag. The scheduler sets this to request
+    /// that the current fiber yield at its next safepoint.
+    static PREEMPT_REQUESTED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Safepoint check — called at loop back-edges and function prologues.
+/// If preemption has been requested, clears the flag and yields.
+/// Cost: ~1 cycle when not preempting (branch predicted not-taken).
+#[no_mangle]
+pub extern "C" fn __builtin_safepoint_check() {
+    PREEMPT_REQUESTED.with(|flag| {
+        if flag.get() {
+            flag.set(false);
+            std::thread::yield_now();
+        }
+    })
+}
+
+/// Request preemption for the current thread's fiber.
+/// Called by the scheduler when a time quantum expires.
+#[no_mangle]
+pub extern "C" fn __builtin_safepoint_request() {
+    PREEMPT_REQUESTED.with(|flag| flag.set(true));
+}
+
+/// Clear any pending preemption request.
+#[no_mangle]
+pub extern "C" fn __builtin_safepoint_clear() {
+    PREEMPT_REQUESTED.with(|flag| flag.set(false));
+}
+
 /// Initialize the fiber scheduler.
 #[no_mangle]
 pub extern "C" fn __builtin_scheduler_init(_num_workers: u64) {

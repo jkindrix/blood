@@ -547,6 +547,15 @@ impl<'a> TypeContext<'a> {
         // __builtin_scheduler_shutdown() -> () - shut down scheduler
         self.register_builtin_fn("__builtin_scheduler_shutdown", vec![], unit_ty.clone());
 
+        // __builtin_safepoint_check() -> () - check preemption flag, yield if set
+        self.register_builtin_fn("__builtin_safepoint_check", vec![], unit_ty.clone());
+
+        // __builtin_safepoint_request() -> () - request preemption for current thread
+        self.register_builtin_fn("__builtin_safepoint_request", vec![], unit_ty.clone());
+
+        // __builtin_safepoint_clear() -> () - clear pending preemption request
+        self.register_builtin_fn("__builtin_safepoint_clear", vec![], unit_ty.clone());
+
         // === Memory Tier Promotion ===
 
         // persist<T>(value: T) -> T - promote value to persistent (Tier 3) allocation

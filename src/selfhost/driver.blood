@@ -424,6 +424,11 @@ impl Compiler {
             return CompileResult.err(mir_errors);
         }
 
+        // Insert safepoints at loop back-edges for cooperative preemption
+        for fi in 0usize..mir_functions.len() {
+            mir_functions[fi].1.insert_safepoints();
+        }
+
         // Phase 5: Generate LLVM IR from MIR
         let codegen_result = codegen.generate_module_with_items("main", &mir_functions, &lower_result.items, &typeck_result.default_method_remaps, &lower_result.interner);
         if !codegen_result.success {

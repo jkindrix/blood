@@ -169,6 +169,9 @@ pub trait Visitor: Sized {
             StatementKind::EnterUnchecked(_) | StatementKind::ExitUnchecked(_) => {
                 // No places or operands to visit
             }
+            StatementKind::Safepoint => {
+                // No places or operands to visit
+            }
             StatementKind::Nop => {}
         }
     }

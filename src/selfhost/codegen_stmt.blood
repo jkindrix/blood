@@ -197,6 +197,10 @@ pub fn emit_statement(
         &mir_stmt.StatementKind.Nop => {
             // No operation - do nothing
         }
+        &mir_stmt.StatementKind.Safepoint => {
+            // Emit call to safepoint check runtime function
+            ctx.write("  call void @__builtin_safepoint_check()\n");
+        }
         &mir_stmt.StatementKind.PushHandler { handler_id, ref state_place, ref state_kind } => {
             // Effect handler push via evidence API.
             // Look up the effect_id for this handler.
