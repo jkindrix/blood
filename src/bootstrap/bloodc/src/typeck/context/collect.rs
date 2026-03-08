@@ -1992,7 +1992,27 @@ impl<'a> TypeContext<'a> {
                 visibility: crate::ast::Visibility::Public,
             });
 
-            // Collect parameter types
+            // Collect operation-level generic type parameters (e.g., `op spawn<T>(...)`)
+            // These are separate from the effect's own generics and must be in scope
+            // when lowering parameter/return types that reference them.
+            let mut op_generics = Vec::new();
+            if let Some(ref type_params) = op.type_params {
+                for generic_param in &type_params.params {
+                    match generic_param {
+                        ast::GenericParam::Type(type_param) => {
+                            let param_name = self.symbol_to_string(type_param.name.node);
+                            let ty_var = TyVarId(self.next_type_param_id);
+                            self.next_type_param_id += 1;
+                            self.generic_params.insert(param_name, ty_var);
+                            op_generics.push(ty_var);
+                        }
+                        ast::GenericParam::Lifetime(_) => {}
+                        ast::GenericParam::Const(_) => {}
+                    }
+                }
+            }
+
+            // Collect parameter types (with both effect and op generics in scope)
             let params: Vec<Type> = op.params.iter()
                 .map(|p| self.ast_type_to_hir_type(&p.ty))
                 .collect::<Result<_, _>>()?;
@@ -2000,28 +2020,37 @@ impl<'a> TypeContext<'a> {
             // Get return type
             let return_ty = self.ast_type_to_hir_type(&op.return_type)?;
 
+            // Remove operation-level generics from scope (effect generics remain)
+            if let Some(ref type_params) = op.type_params {
+                for generic_param in &type_params.params {
+                    if let ast::GenericParam::Type(type_param) = generic_param {
+                        let param_name = self.symbol_to_string(type_param.name.node);
+                        self.generic_params.remove(&param_name);
+                    }
+                }
+            }
+
             operations.push(OperationInfo {
                 name: op_name.clone(),
                 params,
                 return_ty,
                 def_id: op_def_id,
+                generics: op_generics.clone(),
             });
 
-            // Also register the operation signature for type checking
-            // Include the effect's type parameters as generics so they can be instantiated
+            // Also register the operation signature for type checking.
+            // Include BOTH the effect's type parameters AND the operation's own generics.
+            let mut all_generics = generics_vec.clone();
+            all_generics.extend(op_generics.iter());
             self.fn_sigs.insert(op_def_id, hir::FnSig {
                 inputs: operations[index].params.clone(),
                 output: operations[index].return_ty.clone(),
                 is_const: false,
                 is_fiber: false,
                 is_unsafe: false,
-                generics: generics_vec.clone(),
+                generics: all_generics,
                 const_generics: Vec::new(),
             });
-
-            // Note: Effect operations are not builtins - they will be handled
-            // by the effect handler at runtime. For now, we just register the
-            // signature. Full effect codegen is Phase 2.
         }
 
         // Restore generic params

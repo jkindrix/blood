@@ -291,6 +291,9 @@ pub struct OperationInfo {
     pub params: Vec<Type>,
     pub return_ty: Type,
     pub def_id: DefId,
+    /// Operation-level generic type parameters (e.g., `op spawn<T>(...)`).
+    /// These are separate from the effect's own generics.
+    pub generics: Vec<TyVarId>,
 }
 
 /// Information about a handler.

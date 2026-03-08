@@ -2620,9 +2620,9 @@ fn infer_perform(
         // Find the matching operation by name
         let num_ops = checker.get_effect_num_ops(effect_def);
 
-        // Check if the effect has generic parameters — if so, we cannot
-        // unify concrete argument types against uninstantiated generic param types.
-        // Fall back to arity checking only for generic effects.
+        // Check if the effect or matched operation has generic parameters.
+        // If so, we cannot unify concrete argument types against uninstantiated
+        // generic param types. Fall back to arity checking only.
         let mut effect_is_generic = false;
         match &checker.effects[def_idx] {
             &Some(ref info) => {
@@ -2641,6 +2641,9 @@ fn infer_perform(
                 &Some(ref info) => {
                     let effect_op = &info.operations[oi_usize];
                     if effect_op.name.index == op_name.index {
+                        // Check if this specific operation has its own generics
+                        let op_is_generic = effect_is_generic || effect_op.num_op_generics > 0;
+
                         // Found the operation - check argument count
                         if arg_tys.len() != effect_op.param_tys.len() {
                             let mut note = common.make_string("effect operation expects ");
@@ -2648,16 +2651,15 @@ fn infer_perform(
                             note.push_str(" argument(s), found ");
                             note.push_str(type_intern.format_usize(arg_tys.len()).as_str());
                             checker.error_with_note(typeck.TypeErrorKind.ArityMismatch, span, note);
-                        } else if !effect_is_generic {
-                            // Only unify when the effect is non-generic
-                            // effect_op.param_tys are already TyId (from typeck_info migration)
+                        } else if !op_is_generic {
+                            // Only unify when neither the effect nor the operation is generic
                             for ai in 0usize..arg_tys.len() {
                                 checker.unify(arg_tys[ai], type_intern.TyId.new(effect_op.param_tys[ai].index), span);
                             }
                         }
-                        if effect_is_generic {
-                            // Generic effect — return type has uninstantiated params,
-                            // use fresh inference variable instead
+                        if op_is_generic {
+                            // Generic effect or operation — return type has uninstantiated
+                            // params, use fresh inference variable instead
                             result_ty = checker.fresh_infer();
                         } else {
                             result_ty = type_intern.TyId.new(effect_op.return_ty.index);

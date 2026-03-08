@@ -637,10 +637,18 @@ impl<'a> TypeContext<'a> {
         // This is needed because the effect's operation types (e.g., `put(s: S)`) use
         // the effect's TyVarIds, but the handler's state fields use the handler's TyVarIds.
         // We substitute effect's params with the handler's type args to unify them.
-        let effect_subst: HashMap<TyVarId, Type> = effect_info.generics.iter()
+        //
+        // Also erase operation-level generics to i64: handler bodies receive type-erased
+        // values through blood_perform, so the handler doesn't know the operation's T.
+        let mut effect_subst: HashMap<TyVarId, Type> = effect_info.generics.iter()
             .zip(handler_info.effect_type_args.iter())
             .map(|(ty_var, ty_arg)| (*ty_var, ty_arg.clone()))
             .collect();
+        for op in &effect_info.operations {
+            for &op_generic in &op.generics {
+                effect_subst.insert(op_generic, Type::i64());
+            }
+        }
 
         // Collect operation body IDs
         let mut operation_body_ids: Vec<(String, hir::BodyId)> = Vec::new();

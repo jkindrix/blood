@@ -1,0 +1,34 @@
+// Test: operation-level generic type parameters on effect ops
+// EXPECT: 42
+// EXPECT: 100
+
+// An effect with an operation-level generic (T varies per call site)
+effect Container {
+    op wrap<T>(value: T) -> T;
+}
+
+// Handler: deep handler that returns the value as-is (identity wrapper)
+deep handler Identity for Container {
+    return(x) { x }
+
+    op wrap(value) {
+        resume(value)
+    }
+}
+
+fn main() -> i32 {
+    let r1: i32 = with Identity {} handle {
+        // T = i32 at this call site
+        let x: i32 = perform Container.wrap(42);
+        println_int(x);
+
+        // T = i32 again, different value
+        let y: i32 = perform Container.wrap(100);
+        println_int(y);
+
+        if x != 42 { return 1; }
+        if y != 100 { return 1; }
+        0
+    };
+    r1
+}

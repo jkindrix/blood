@@ -683,11 +683,13 @@ fn register_effect(
             param_tys.push(type_intern.TyId.new(effect_op.param_tys[j].index));
         }
 
-        let op_info = typeck.EffectOpInfo.new(
+        let num_op_generics = count_type_params(&effect_op.generics.params);
+        let op_info = typeck.EffectOpInfo.new_with_generics(
             effect_op.def_id,
             effect_op.name.symbol,
             param_tys,
             effect_op.return_ty,
+            num_op_generics,
         );
         operations.push(op_info);
     }

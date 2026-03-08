@@ -159,6 +159,8 @@ pub struct EffectOpInfo {
     pub param_tys: Vec<type_intern.TyId>,
     /// Return type.
     pub return_ty: type_intern.TyId,
+    /// Number of operation-level generic type parameters (e.g., `op spawn<T>(...)`).
+    pub num_op_generics: u32,
 }
 
 impl EffectOpInfo {
@@ -174,6 +176,24 @@ impl EffectOpInfo {
             name: name,
             param_tys: param_tys,
             return_ty: return_ty,
+            num_op_generics: 0,
+        }
+    }
+
+    /// Creates new effect operation info with operation-level generics.
+    pub fn new_with_generics(
+        def_id: hir_def.DefId,
+        name: common.Symbol,
+        param_tys: Vec<type_intern.TyId>,
+        return_ty: type_intern.TyId,
+        num_op_generics: u32,
+    ) -> EffectOpInfo {
+        EffectOpInfo {
+            def_id: def_id,
+            name: name,
+            param_tys: param_tys,
+            return_ty: return_ty,
+            num_op_generics: num_op_generics,
         }
     }
 }

@@ -934,8 +934,11 @@ impl<'a> TypeContext<'a> {
                 }
             };
 
-            // Substitute type parameters in the operation's types
-            let param_types: Vec<Type> = op_info.params.iter()
+            // Substitute type parameters in the operation's types.
+            // First apply effect-level substitution (e.g., State<S> → State<i32>),
+            // then erase operation-level generics to i64 (handler bodies receive
+            // type-erased values through blood_perform).
+            let mut param_types: Vec<Type> = op_info.params.iter()
                 .map(|ty| {
                     if !effect_type_args.is_empty() {
                         self.substitute_effect_type_args(ty, &effect_info.generics, &effect_type_args)
@@ -945,12 +948,24 @@ impl<'a> TypeContext<'a> {
                 })
                 .collect();
 
-            // The effect operation's return type (used for resume's parameter)
-            let effect_op_return_type = if !effect_type_args.is_empty() {
+            let mut effect_op_return_type = if !effect_type_args.is_empty() {
                 self.substitute_effect_type_args(&op_info.return_ty, &effect_info.generics, &effect_type_args)
             } else {
                 op_info.return_ty.clone()
             };
+
+            // Erase operation-level generics to i64 in handler bodies.
+            // The handler doesn't know T — it varies per perform call site.
+            // At runtime, all values pass through blood_perform as i64.
+            if !op_info.generics.is_empty() {
+                let erase_subst: std::collections::HashMap<TyVarId, Type> = op_info.generics.iter()
+                    .map(|&var_id| (var_id, Type::i64()))
+                    .collect();
+                param_types = param_types.iter()
+                    .map(|ty| self.substitute_type_vars(ty, &erase_subst))
+                    .collect();
+                effect_op_return_type = self.substitute_type_vars(&effect_op_return_type, &erase_subst);
+            }
 
             // The inline handler can declare an explicit return type for documentation/checking
             // but this doesn't override the effect operation's return type for resume purposes
@@ -1661,6 +1676,31 @@ impl<'a> TypeContext<'a> {
                         ));
                     }
                 }
+            }
+        };
+
+        // Instantiate operation-level generics (e.g., `op spawn<T>(...) -> FiberHandle<T>`).
+        // Each call site gets fresh inference variables for the operation's type params,
+        // which are then inferred through unification with the actual arguments.
+        let (param_types, return_ty) = {
+            let op_generics = self.effect_defs.get(&effect_id)
+                .and_then(|info| info.operations.get(op_index as usize))
+                .map(|op| op.generics.clone())
+                .unwrap_or_default();
+
+            if !op_generics.is_empty() {
+                let mut op_subst: std::collections::HashMap<TyVarId, Type> = std::collections::HashMap::new();
+                for &op_ty_var in &op_generics {
+                    let fresh = self.unifier.fresh_var();
+                    op_subst.insert(op_ty_var, fresh);
+                }
+                let subst_params: Vec<Type> = param_types.iter()
+                    .map(|ty| self.substitute_type_vars(ty, &op_subst))
+                    .collect();
+                let subst_return = self.substitute_type_vars(&return_ty, &op_subst);
+                (subst_params, subst_return)
+            } else {
+                (param_types, return_ty)
             }
         };
 
