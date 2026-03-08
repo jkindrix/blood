@@ -180,7 +180,7 @@ No substantial applications exist to validate the design.
 Some performance claims are theoretical, not measured.
 
 - [x] **PERF-001**: Benchmark generation check in compiled Blood code (claim: ~1-2 cycles)
-  *Measured results (runtime_bench.rs): Inline comparison: ~129ps (<1 cycle). Full slot lookup: ~1.27ns (~4 cycles). The "1-2 cycles" claim applies to inline generation compare only; actual implementation with hash table lookup is ~4 cycles. Stack derefs (Tier 0) have zero overhead (~222ps). Slot lookup scales O(1) from 100-10k entries.*
+  *Measured results (runtime_bench.rs): Inline comparison: ~129ps (<1 cycle). Full slot lookup: ~1.27ns (~4 cycles). The "1-2 cycles" claim applies to inline generation compare only; actual implementation with hash table lookup is ~4 cycles. Stack derefs (Tier 1 (stack)) have zero overhead (~222ps). Slot lookup scales O(1) from 100-10k entries.*
 - [x] **PERF-002**: Benchmark effect handler overhead in real programs
   *Measured results (runtime_bench.rs):*
   - *Evidence vector: create ~5.4ns, push ~635ps (~2 cycles), lookup depth 3 ~386ps, lookup depth 10 ~1.7ns*
@@ -366,8 +366,8 @@ Blood uses 128-bit pointers universally, unlike Vale's flexible approach.
   - **Case 1: Stack-Promotable Values (HIGH PRIORITY)**
     - Values with `EscapeState::NoEscape` not captured by effects/escaping closures
     - Already tracked by `EscapeResults::stack_promotable` field
-    - Should use Tier 0 (64-bit thin pointers) with no generation checks
-    - Implementation gap: verify codegen actually emits Tier 0 allocation
+    - Should use Tier 1 (stack) (64-bit thin pointers) with no generation checks
+    - Implementation gap: verify codegen actually emits Tier 1 (stack) allocation
   - **Case 2: Persistent Tier References (MEDIUM PRIORITY)**
     - Reference-counted values with `generation == PERSISTENT_MARKER (0xFFFFFFFF)`
     - Runtime validation already skips generation check for persistent marker
@@ -379,12 +379,12 @@ Blood uses 128-bit pointers universally, unlike Vale's flexible approach.
     - Keep 64-bit throughout FFI data structures, convert to BloodPtr only when re-exported
   - *Implementation Strategy (Hybrid approach recommended):*
     - BloodPtr (128-bit) remains standard for Region tier
-    - Add StackPtr (64-bit) for Tier 0 stack allocations
+    - Add StackPtr (64-bit) for Tier 1 (stack) stack allocations
     - Add PersistentPtr (64-bit + RC header) for Tier 2
     - Add `PtrKind { Fat, Stack, Persistent }` to MIR representation
   - *Expected gains:* 40-50% overhead reduction for pointer-heavy workloads
   - *Recommended phases:*
-    - Phase 1: Verify stack-promotable values use Tier 0 in codegen (free wins)
+    - Phase 1: Verify stack-promotable values use Tier 1 (stack) in codegen (free wins)
     - Phase 2: Implement Persistent tier with thin pointers from day 1
     - Phase 3: Conditional thin pointer support for known-safe cases
     - Phase 4: FFI marshaling optimization
@@ -394,7 +394,7 @@ Blood uses 128-bit pointers universally, unlike Vale's flexible approach.
 
   **Approach 1: Automatic (via Escape Analysis) - RECOMMENDED**
   - Already identified by PTR-002 investigation
-  - `EscapeState::NoEscape` values → Tier 0 stack allocation (64-bit thin pointer)
+  - `EscapeState::NoEscape` values → Tier 1 (stack) stack allocation (64-bit thin pointer)
   - `PERSISTENT_MARKER` values → Skip generation check automatically
   - No new syntax required, zero developer overhead
   - **Status**: Infrastructure exists, needs codegen verification (PTR-002 Phase 1)
@@ -437,7 +437,7 @@ Blood uses 128-bit pointers universally, unlike Vale's flexible approach.
   - Revisit Approach 3 if escape analysis coverage proves insufficient
 
   **Implementation Priority**:
-  1. Verify PTR-002 Phase 1 (stack-promotable uses Tier 0)
+  1. Verify PTR-002 Phase 1 (stack-promotable uses Tier 1 (stack))
   2. Implement Persistent tier (PTR-002 Phase 2)
   3. Measure real-world impact
   4. Add @unchecked only if measurable gap remains

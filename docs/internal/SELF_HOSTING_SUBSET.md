@@ -148,7 +148,7 @@ fn name(params) -> ReturnType { body }
 fn name<T>(x: T) -> T   // Generics
 
 // === Effects ===
-effect Error<E> { throw(e: E) -> never }
+effect Error<E> { throw(e: E) -> ! }
 handle expr { ... }
 perform Effect.op(args)
 ```

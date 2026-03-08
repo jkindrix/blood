@@ -2,7 +2,7 @@
 
 **Version**: 0.4.0
 **Status**: Specification target
-**Last Updated**: 2026-02-28
+**Last Updated**: 2026-03-07
 
 **Revision 0.4.0 Changes** (ADR-036 — Cohesive Concurrency Model):
 - Unified naming: `Fiber` throughout (replaced `Async` in §8); `Async` effect removed
@@ -62,7 +62,7 @@ Blood's concurrency model provides:
 - [STDLIB.md](./STDLIB.md) — Fiber and Channel effects
 - [FORMAL_SEMANTICS.md](./FORMAL_SEMANTICS.md) — Effect handler semantics
 - [FFI.md](./FFI.md) — FFI interaction with fibers
-- [ROADMAP.md](./ROADMAP.md) — Runtime implementation phases
+- [ROADMAP.md](../planning/ROADMAP.md) — Runtime implementation phases
 
 ### 1.3 Implementation Status
 
@@ -135,7 +135,7 @@ A **fiber** is a lightweight, cooperatively-scheduled unit of execution:
 │  ┌─────────────────────────────────────────────────────┐     │
 │  │ Regions (Fiber-Local Memory)                         │     │
 │  │ - Stack allocations                                  │     │
-│  │ - Heap allocations (Tier 1)                          │     │
+│  │ - Heap allocations (Tier 2)                          │     │
 │  │ - Cannot be accessed by other fibers                 │     │
 │  └─────────────────────────────────────────────────────┘     │
 │                                                               │
@@ -232,17 +232,17 @@ enum WakeCondition {
 
 ```blood
 effect Fiber {
-    /// Spawn a new fiber (compiler checks captured values are fiber-transferable)
-    op spawn<T>(f: fn() -> T / {Fiber}) -> FiberHandle<T>;
+    /// Spawn a new fiber (Send bound ensures captured values are fiber-transferable)
+    op spawn<T: Send>(f: fn() -> T / {Fiber} + Send) -> FiberHandle<T>;
 
     /// Spawn with configuration
-    op spawn_with<T>(
+    op spawn_with<T: Send>(
         config: FiberConfig,
-        f: fn() -> T / {Fiber}
+        f: fn() -> T / {Fiber} + Send
     ) -> FiberHandle<T>;
 
     /// Spawn on a dedicated OS thread (for blocking FFI — ADR-036 Sub-8)
-    op spawn_blocking<T>(f: fn() -> T) -> FiberHandle<T>;
+    op spawn_blocking<T: Send>(f: fn() -> T + Send) -> FiberHandle<T>;
 
     /// Get current fiber's handle
     op current() -> FiberHandle<()>;
@@ -294,7 +294,7 @@ fn configured_example() / {Fiber} {
         FiberConfig {
             name: Some("worker"),
             stack_size: 64 * 1024,  // 64 KB
-            priority: Priority::High,
+            priority: Priority.High,
         },
         || { work() }
     );
@@ -658,7 +658,7 @@ fn cancel_example() / {Fiber} {
     nursery(|scope| {
         let handle = scope.spawn(|| cancellable_task());
 
-        sleep(Duration::seconds(5));
+        sleep(Duration.seconds(5));
         scope.cancel(handle);  // Sets cancellation flag
 
         // Handler finalization (finally) ensures cleanup
@@ -748,7 +748,7 @@ fn channel_example() / {Fiber, Channel<i32>} {
         for i in 0..100 {
             tx.send(i);  // Blocks if full
         }
-        drop(tx);  // Close sender
+        // tx goes out of scope here, closing the sender
     });
 
     loop {
@@ -850,7 +850,7 @@ fn fan_in() / {Fiber} {
         let tx = tx.clone();
         spawn(move || producer(source, tx));
     }
-    drop(tx);  // Drop original sender
+    // Original tx goes out of scope, only cloned senders remain
 
     // Consume all
     while let Ok(item) = rx.recv() {
@@ -893,7 +893,7 @@ fn select_example() / {Fiber} {
                 // No channel ready
                 yield();
             },
-            timeout(Duration::seconds(1)) => {
+            timeout(Duration.seconds(1)) => {
                 // Timeout
                 break;
             },
@@ -940,13 +940,13 @@ impl<T> Mutex<T> {
     }
 }
 
-impl<T> Drop for MutexGuard<T> {
-    fn drop(&mut self) {
-        self.mutex.locked.store(false);
-        // Wake one waiter
-        if let Some(fiber) = self.mutex.waiters.pop() {
-            scheduler.wake(fiber);
-        }
+/// MutexGuard is linear — unlocks when explicitly released or scope ends.
+/// Cleanup is handled by the region tier system, not a Drop trait.
+fn release<T>(guard: MutexGuard<T>) {
+    guard.mutex.locked.store(false);
+    // Wake one waiter
+    if let Some(fiber) = guard.mutex.waiters.pop() {
+        scheduler.wake(fiber);
     }
 }
 ```
@@ -1119,7 +1119,7 @@ fn parallel_example() / {Fiber} {
 
 ```blood
 fn parallel_scope<R>(f: fn(&Scope) -> R) -> R / {Fiber} {
-    let scope = Scope::new();
+    let scope = Scope.new();
     let result = f(&scope);
     scope.wait_all();  // Structured concurrency
     result
@@ -1144,7 +1144,7 @@ impl Scope {
 // Usage
 fn scope_example() / {Fiber} {
     let data = vec![1, 2, 3, 4, 5];
-    let results = Mutex::new(Vec::new());
+    let results = Mutex.new(Vec.new());
 
     parallel_scope(|scope| {
         for item in data {
@@ -1196,9 +1196,9 @@ All concurrency operations are effects. The `Async` effect from earlier spec ver
 
 ```blood
 effect Fiber {
-    op spawn<T>(f: fn() -> T / {Fiber}) -> FiberHandle<T>;
-    op spawn_with<T>(config: FiberConfig, f: fn() -> T / {Fiber}) -> FiberHandle<T>;
-    op spawn_blocking<T>(f: fn() -> T) -> FiberHandle<T>;
+    op spawn<T: Send>(f: fn() -> T / {Fiber} + Send) -> FiberHandle<T>;
+    op spawn_with<T: Send>(config: FiberConfig, f: fn() -> T / {Fiber} + Send) -> FiberHandle<T>;
+    op spawn_blocking<T: Send>(f: fn() -> T + Send) -> FiberHandle<T>;
     op current() -> FiberHandle<()>;
     op yield();
     op sleep(duration: Duration);
@@ -1209,25 +1209,25 @@ effect Cancel {
     op check_cancelled() -> unit;
 }
 
-effect Channel<T> {
+effect Channel<T: Send> {
     op channel(capacity: usize) -> (Sender<T>, Receiver<T>);
     op send(value: T);
     op recv() -> T;
 }
 ```
 
-**Fiber-crossing rules** (replaces Rust-style `Send`/`Sync` traits): Whether a value can cross fiber boundaries is determined automatically by the compiler from the value's **memory tier**. No explicit trait bounds are needed — the compiler checks at `spawn` call sites that all captured values are fiber-transferable.
+**Fiber-crossing rules** — `Send` as auto-derived marker trait: Whether a value can cross fiber boundaries is expressed via the `Send` trait, which is **auto-derived from the value's memory tier** and **cannot be manually implemented**. Generic code uses `T: Send` bounds to express fiber-transferability constraints.
 
-| Memory Tier | Transferable? | Shareable? | Rationale |
-|-------------|--------------|-----------|-----------|
-| Tier 0 (stack) | Yes | No | Pure value — copy/move semantics |
-| Tier 1 (region), mutable | No | No | Fiber-local region — region isolation invariant |
-| Tier 1 (region), Frozen | Yes | Yes | Deeply immutable — no mutation hazard |
-| Tier 2/3 (persistent) | Yes | Yes | Ref-counted, designed for cross-fiber sharing |
-| Linear values | Yes (transfer) | No | Unique ownership moves to target fiber |
-| Raw pointers | No | No | No safety guarantees — requires `@unsafe` |
+| Memory Tier | Send? | Rationale |
+|-------------|-------|-----------|
+| Tier 1 (stack) | Yes (if fields Send) | Pure value — copy/move semantics |
+| Tier 2 (region), mutable | No | Fiber-local region — region isolation invariant |
+| Tier 2 (region), Frozen | Yes | Deeply immutable — no mutation hazard |
+| Tier 3 (persistent) | Yes | Ref-counted, designed for cross-fiber sharing |
+| Linear values | Yes (transfer) | Unique ownership moves to target fiber |
+| Raw pointers | No | No safety guarantees — requires `@unsafe` |
 
-> **Design note**: Blood does not have `Send` or `Sync` traits. In Rust, these traits exist because the type system has no concept of memory tiers — `Send`/`Sync` encode thread-safety information that Blood's tier system already captures. Blood's compiler derives fiber-crossing safety from the type's allocation tier, which is fundamentally more precise because it is based on the actual memory model rather than manually-maintained trait implementations. See GRAMMAR.md §3.4.1 for the design note on this decision.
+> **Design note**: Unlike Rust, Blood's `Send` cannot be manually implemented (`unsafe impl Send` does not exist). Derivation is structural and unforgeable — determined entirely by the type's memory tier. Blood does not have a separate `Sync` trait; sharing is controlled by the tier system (Tier 2 Frozen and Tier 3 values are inherently shareable). See GRAMMAR.md §3.4.1 and DECISIONS.md ADR-036 Sub-5 for the full design rationale.
 
 ### 8.2 Deep/Shallow Handler Concurrency Semantics
 
@@ -1282,8 +1282,8 @@ deep handler Nursery for Fiber {
 
 // Run concurrent computation
 fn run<T>(f: fn() -> T / {Fiber}) -> T {
-    let scheduler = Scheduler::new();
-    with Nursery { scheduler, children: Vec::new() } handle {
+    let scheduler = Scheduler.new();
+    with Nursery { scheduler, children: Vec.new() } handle {
         f()
     }
 }
@@ -1306,8 +1306,8 @@ fn region_fiber_example() / {Fiber} {
     region local_data {
         let buffer = allocate_buffer();  // In local_data region
 
-        // WRONG: Cannot share mutable region reference (not fiber-transferable)
-        // spawn(|| use_buffer(&buffer));  // COMPILE ERROR: mutable Tier 1 reference is not fiber-transferable
+        // WRONG: Cannot share mutable region reference (not Send)
+        // spawn(|| use_buffer(&buffer));  // COMPILE ERROR: mutable Tier 2 reference is not Send
 
         // CORRECT: Promote to Tier 3 (Frozen is fiber-transferable + shareable)
         let shared = persist(buffer.clone());
@@ -1346,7 +1346,7 @@ fn sensor_readings() / {Yield<Reading>, Fiber} {
     loop {
         let reading = read_sensor()     // May suspend (Fiber)
         yield(reading)                  // Produce value (Yield<T>)
-        sleep(Duration::seconds(1))     // Suspend between values (Fiber)
+        sleep(Duration.seconds(1))     // Suspend between values (Fiber)
     }
 }
 
@@ -1384,7 +1384,7 @@ Each fiber has isolated memory:
 | Memory Type | Visibility | Sharing Mechanism |
 |-------------|------------|-------------------|
 | Stack | Fiber-local | None |
-| Tier 1 (Region) | Fiber-local | None (by design) |
+| Tier 2 (Region) | Fiber-local | None (by design) |
 | Tier 3 (Persistent) | Global | Explicit sharing |
 | Channels | Shared | Message passing |
 
@@ -1426,18 +1426,18 @@ For atomics and synchronization:
 
 ```blood
 fn atomic_example() {
-    let counter = AtomicI32::new(0);
+    let counter = AtomicI32.new(0);
 
     // Relaxed: just need atomicity
-    counter.fetch_add(1, Ordering::Relaxed);
+    counter.fetch_add(1, Ordering.Relaxed);
 
     // Release: publish updates
-    data.store(value, Ordering::Relaxed);
-    flag.store(true, Ordering::Release);
+    data.store(value, Ordering.Relaxed);
+    flag.store(true, Ordering.Release);
 
     // Acquire: see published updates
-    if flag.load(Ordering::Acquire) {
-        let v = data.load(Ordering::Relaxed);
+    if flag.load(Ordering.Acquire) {
+        let v = data.load(Ordering.Relaxed);
     }
 }
 ```
@@ -1450,12 +1450,12 @@ During fiber context switching, generation snapshots validate that references ha
 
 | Tier | In snapshot? | Reason |
 |------|-------------|--------|
-| Tier 0 (stack) | No | Stack frames are fiber-local by construction |
-| Tier 1 (region), mutable access | Yes | May be invalidated during suspension |
-| Tier 1 (region), Frozen access | No | Immutable — generation counter never advances |
-| Tier 2/3 (persistent) | No | Uses refcounting, not generations |
+| Tier 1 (stack) | No | Stack frames are fiber-local by construction |
+| Tier 2 (region), mutable access | Yes | May be invalidated during suspension |
+| Tier 2 (region), Frozen access | No | Immutable — generation counter never advances |
+| Tier 3/3 (persistent) | No | Uses refcounting, not generations |
 
-**Cost**: O(R_mutable) where R_mutable = count of mutable Tier 1 regions with live references. For the vast majority of fibers (those that only mutate their own region), R_mutable = 1. This is effectively O(1).
+**Cost**: O(R_mutable) where R_mutable = count of mutable Tier 2 regions with live references. For the vast majority of fibers (those that only mutate their own region), R_mutable = 1. This is effectively O(1).
 
 **Validation**: One integer comparison per snapshot entry (~4 cycles per entry, per MEMORY_MODEL.md estimates). Total context switch overhead from generation validation: ~4 cycles for typical fibers.
 

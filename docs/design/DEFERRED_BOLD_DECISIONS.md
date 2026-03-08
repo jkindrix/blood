@@ -105,7 +105,7 @@ Blood's tiered memory model should expose `persist()` for Tier 2 promotion and `
 This is Blood's answer to garbage collection: deterministic, tiered, with explicit control. No other language gives programmers a `freeze()` that provides both a type-level immutability guarantee AND enables lock-free cross-fiber sharing:
 
 ```blood
-let config = freeze(Config::load())
+let config = freeze(Config.load())
 // config: Frozen<Config> — deeply immutable, safe to share across fibers
 // No synchronization needed because Frozen<T> guarantees no mutation
 spawn(|| read_config(&config))  // Safe: Frozen<T> is Send
@@ -138,7 +138,7 @@ The cycle collector is essential for long-running programs — without it, any T
 ## 5. MEM-04: StaleReference as Full Algebraic Effect (IMPLEMENTED)
 
 ### The Best Decision (Implemented)
-`StaleReference` is an algebraic effect with `op stale(expected_gen, actual_gen) -> never`. This IS Blood's headline feature — "handle memory errors as composable effects." The `-> never` return type bounds complexity (handler can't resume, so no state corruption risk). Default handler panics; user handlers can log, circuit-break, or shut down gracefully.
+`StaleReference` is an algebraic effect with `op stale(expected_gen, actual_gen) -> !`. This IS Blood's headline feature — "handle memory errors as composable effects." The `-> !` return type bounds complexity (handler can't resume, so no state corruption risk). Default handler panics; user handlers can log, circuit-break, or shut down gracefully.
 
 ### Implementation
 - **Runtime**: Default `blood_default_stale_handler` registered at `blood_runtime_init()` with effect ID `0x1004`
@@ -146,7 +146,7 @@ The cycle collector is essential for long-running programs — without it, any T
 - **Selfhost codegen**: `codegen_expr.blood:emit_generation_check` emits `blood_perform` call on stale path
 - **Effect dispatch**: Uses existing evidence vector infrastructure — hot path (generation check) unchanged, only failure path goes through effect system
 - **Default behavior**: Identical to previous — the default handler calls `blood_stale_reference_panic` which aborts with diagnostic message
-- **User override**: Users can install custom handlers using standard `with handler handle { ... }` syntax; handler must diverge (-> never)
+- **User override**: Users can install custom handlers using standard `with handler handle { ... }` syntax; handler must diverge (`-> !`)
 
 ---
 

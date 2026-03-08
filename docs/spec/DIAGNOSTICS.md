@@ -140,7 +140,7 @@ level[CODE]: main message
 │    |              Int                                           │
 │    |                                                            │
 │    = note: the `+` operator is not defined for these types      │
-│    = help: convert the String to Int: `name.parse::<Int>()?`    │
+│    = help: convert the String to Int: `name.parse_int()?`    │
 └─────────────────────────────────────────────────────────────────┘
 
 Components:
@@ -871,7 +871,7 @@ Occurs when the type checker cannot determine a type from context.
 **Example:**
 ```blood
 fn main() {
-    let x = Vec::new();  // what type of Vec?
+    let x = Vec.new();  // what type of Vec?
 }
 ```
 
@@ -880,10 +880,10 @@ fn main() {
 error[E0202]: type annotations needed
   --> src/main.blood:2:9
    |
- 2 |     let x = Vec::new();
+ 2 |     let x = Vec.new();
    |         ^ cannot infer type
    |
-   = help: consider giving `x` an explicit type: `let x: Vec<i32> = Vec::new()`
+   = help: consider giving `x` an explicit type: `let x: Vec<i32> = Vec.new()`
 ```
 
 **Fix:** Add a type annotation to provide enough information for type inference.
@@ -927,7 +927,7 @@ Occurs when a generic type is instantiated with the wrong number of type argumen
 **Example:**
 ```blood
 fn main() {
-    let x: HashMap<String> = HashMap::new();  // missing value type
+    let x: HashMap<String> = HashMap.new();  // missing value type
 }
 ```
 
@@ -936,7 +936,7 @@ fn main() {
 error[E0204]: wrong number of type arguments: expected 2, found 1
   --> src/main.blood:2:12
    |
- 2 |     let x: HashMap<String> = HashMap::new();
+ 2 |     let x: HashMap<String> = HashMap.new();
    |            ^^^^^^^^^^^^^^^ expected 2 type arguments
    |
    = note: `HashMap` requires 2 type parameters: key type and value type
@@ -1607,7 +1607,7 @@ Occurs when a language feature is not yet implemented.
 **Example:**
 ```blood
 fn main() {
-    async fn fetch() { }  // async not yet supported
+    async fn fetch() { }  // async is not part of Blood
 }
 ```
 
@@ -1617,10 +1617,10 @@ error[E0228]: unsupported feature: async functions
   --> src/main.blood:2:5
    |
  2 |     async fn fetch() { }
-   |     ^^^^^ async functions are not yet supported
+   |     ^^^^^ Blood uses the Fiber effect for concurrency, not async/await
 ```
 
-**Fix:** Use an alternative approach or wait for the feature to be implemented.
+**Fix:** Use `effect Fiber` and `op spawn()` for concurrent operations. See [CONCURRENCY.md](./CONCURRENCY.md).
 
 **Related:** None
 
@@ -1751,7 +1751,7 @@ Occurs when a trait implementation is missing a required associated type.
 ```blood
 trait Container {
     type Item;
-    fn get(&self) -> Self::Item;
+    fn get(&self) -> Self.Item;
 }
 
 impl Container for MyBox {
@@ -1837,10 +1837,10 @@ Occurs when a match expression doesn't cover all possible patterns.
 enum Color { Red, Green, Blue }
 
 fn main() {
-    let c = Color::Red;
+    let c = Color.Red;
     match c {
-        Color::Red => println("red"),
-        Color::Green => println("green"),
+        Color.Red => println("red"),
+        Color.Green => println("green"),
         // missing Blue
     }
 }
@@ -1855,7 +1855,7 @@ error[E0236]: non-exhaustive patterns: `Blue` not covered
    |           ^ pattern `Blue` not covered
    |
    = note: ensure all variants are handled
-   = help: add a `Color::Blue => ...` arm or use `_ => ...` for a catch-all
+   = help: add a `Color.Blue => ...` arm or use `_ => ...` for a catch-all
 ```
 
 **Fix:** Add the missing pattern or use a wildcard `_` pattern.
@@ -1909,7 +1909,7 @@ effect IO {
 }
 
 fn pure_function() -> String / pure {  // declared as pure
-    perform IO::read_line()  // but performs IO
+    perform IO.read_line()  // but performs IO
 }
 ```
 
@@ -1920,7 +1920,7 @@ error[E0301]: unhandled effect `IO`
    |
  5 | fn pure_function() -> String / pure {
    |                                ---- function declared as `pure`
- 6 |     perform IO::read_line()
+ 6 |     perform IO.read_line()
    |     ^^^^^^^^^^^^^^^^^^^^^^^ performs `IO` effect
    |
    = note: `read_line` has effect signature `/ {IO}`
@@ -1952,7 +1952,7 @@ handler IntState for State<i32> {
 
 fn main() {
     with IntState handle {
-        let s: String = perform State::get();  // expects State<String>
+        let s: String = perform State.get();  // expects State<String>
     }
 }
 ```
@@ -2112,7 +2112,7 @@ effect Log {
 }
 
 fn process() -> i32 {  // no effect declaration
-    perform Log::log("processing");  // but performs Log effect
+    perform Log.log("processing");  // but performs Log effect
     42
 }
 ```
@@ -2124,7 +2124,7 @@ error[E0308]: function performs undeclared effects: Log
    |
  5 | fn process() -> i32 {
    | ^^^^^^^^^^^^^^^^^^^^ performs undeclared effect `Log`
- 6 |     perform Log::log("processing");
+ 6 |     perform Log.log("processing");
    |     ------------------------------ effect performed here
    |
    = help: add effect to signature: `fn process() -> i32 / {Log}`
@@ -2253,7 +2253,7 @@ error[E0203]: cannot find type `HashMap`
      |              ^^^^^^^ not found
   fix-it (suggestion): add import
     |
-  1+ | use std::collections::HashMap;
+  1+ | use std.collections.HashMap;
 ```
 
 ---
@@ -2282,8 +2282,8 @@ error[E0601]: ambiguous dispatch
 10 | fn draw(s: Circle) { ... }
    | ----------------------- candidate #1
 ...
-25 | fn draw(s: impl Shape) { ... }
-   | --------------------------- candidate #2
+25 | fn draw<S: Shape>(s: S) { ... }
+   | ------------------------------ candidate #2
 ...
 50 |     draw(my_shape)
    |     ^^^^^^^^^^^^^^ ambiguous: matches both candidates

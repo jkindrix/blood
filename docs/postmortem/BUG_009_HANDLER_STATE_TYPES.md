@@ -85,7 +85,7 @@ deep handler StringSwapper for Swap {
     return(x) { x }
 
     op swap() {
-        stored = String::new();  // Assignment to mutable state
+        stored = String.new();  // Assignment to mutable state
         resume(())
     }
 }

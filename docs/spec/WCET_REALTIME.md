@@ -88,7 +88,7 @@ These operations have data-dependent timing and should be avoided in hard real-t
 
 | Operation | Complexity | Bound Strategy |
 |-----------|------------|----------------|
-| Dynamic allocation (Tier 2) | O(allocator) | Use pre-allocated pools |
+| Dynamic allocation (Tier 3) | O(allocator) | Use pre-allocated pools |
 | Pattern matching (deep) | O(depth) | Limit match depth |
 | Recursive functions | O(depth) | Use explicit loops |
 | Multi-shot handler resume | O(copies) | Limit continuation size |
@@ -101,7 +101,7 @@ These operations have data-dependent timing and should be avoided in hard real-t
 
 Each memory tier has distinct timing characteristics:
 
-#### Tier 0: Stack Allocation
+#### Tier 1: Stack Allocation
 
 | Operation | WCET | Notes |
 |-----------|------|-------|
@@ -111,7 +111,7 @@ Each memory tier has distinct timing characteristics:
 
 **Real-time guarantee**: Constant-time allocation and deallocation.
 
-#### Tier 1: Region Allocation
+#### Tier 2: Region Allocation
 
 | Operation | WCET | Notes |
 |-----------|------|-------|
@@ -121,7 +121,7 @@ Each memory tier has distinct timing characteristics:
 
 **Real-time guarantee**: O(1) allocation within region, O(n) bulk deallocation.
 
-#### Tier 2: Persistent Allocation
+#### Tier 3: Persistent Allocation
 
 | Operation | WCET | Notes |
 |-----------|------|-------|

@@ -458,7 +458,7 @@ struct Continuation<'a> {
 ### 7.1 Goals
 
 - 128-bit generational references
-- Tier 0/1/2 memory hierarchy
+- Tier 1/2/3 memory hierarchy
 - Escape analysis
 - Generation snapshots for effects
 - StaleReference effect
@@ -539,9 +539,9 @@ impl ContinuationCapture {
 ### 7.5 Deliverables
 
 - [ ] Generational references work
-- [ ] Tier 0 (stack) allocation works
-- [ ] Tier 1 (region) allocation works
-- [ ] Tier 2 (persistent) allocation works
+- [ ] Tier 1 (stack) allocation works
+- [ ] Tier 2 (region) allocation works
+- [ ] Tier 3 (persistent) allocation works
 - [ ] Escape analysis optimizes allocations
 - [ ] StaleReference detected correctly
 - [ ] Generation snapshots captured and validated

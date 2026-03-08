@@ -117,7 +117,7 @@ This is a first-principles design problem. Eight sub-decisions must be resolved 
 | Cancellation mechanism | Deferred (DECISIONS.md) | Should cancellation be an effect, a scope property, handler non-resumption, or something else? |
 | Cancellation safety guarantees | Defaulted | What invariants does the language guarantee when a concurrent task is cancelled? |
 | Async drop / cleanup | Defaulted | How do linear types, regions, and effect handlers interact with task cancellation and resource cleanup? |
-| Thread-safety markers (Send/Sync) | Defaulted | Should cross-fiber safety be modeled as traits, effects, capabilities, or something else? What fits Blood's effect-first philosophy? |
+| Thread-safety markers (Send/Sync) | **Decided** | `Send` is auto-derived from memory tier (cannot be manually impl'd). `Sync` removed — deep immutability via `Frozen<T>` replaces shared-mutable synchronization. See ADR-033. |
 | Async iterators / streams | Defaulted | What is the right abstraction for asynchronous sequences in an effect-based language? |
 | Runtime-provided vs. library concurrency | Defaulted | What belongs in the language runtime vs. what can be expressed as library-level effect handlers? |
 | Fiber ↔ OS thread interaction | Defaulted | How should the language expose (or hide) the mapping between fibers and OS threads? |

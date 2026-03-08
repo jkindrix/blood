@@ -2,7 +2,7 @@
 
 **Version**: 0.3.0
 **Status**: Implementation Complete, Validation In Progress
-**Last Updated**: 2026-02-28
+**Last Updated**: 2026-03-07
 
 ---
 
@@ -34,7 +34,7 @@ Blood synthesizes five cutting-edge programming language innovations into a unif
 |------------|--------|---------------------|
 | Content-Addressed Code | Unison | BLAKE3-256 AST hashing |
 | Generational Memory Safety | Vale | 128-bit generational pointers |
-| Hybrid Ownership Model | Hylo + Rust + Vale | Move semantics with escape-analyzed allocation and explicit borrowing |
+| Hybrid Ownership Model | Hylo + Rust + Vale | Mutable value semantics with escape-analyzed allocation and explicit borrowing |
 | Algebraic Effects | Koka | Row-polymorphic effect system |
 | Multiple Dispatch | Julia | Type-stable open dispatch |
 
@@ -122,7 +122,7 @@ Blood's safety model should feel like collaboration, not combat. When the compil
 
 #### Principle 4: Simplicity is Not Simplistic
 
-Blood should be simpler than Rust to learn, but not by hiding complexity — by **eliminating unnecessary complexity**. Move semantics with escape-analyzed allocation are simpler to reason about than borrow checking while providing equivalent safety via generational references.
+Blood should be simpler than Rust to learn, but not by hiding complexity — by **eliminating unnecessary complexity**. Mutable value semantics with escape-analyzed allocation are simpler to reason about than borrow checking while providing equivalent safety via generational references.
 
 #### Principle 5: Interop is First-Class
 
@@ -188,7 +188,7 @@ Type ::=
     -- References & Pointers
     | '&' Lifetime? Mutability? Type           -- Reference
     | '*' Type                                 -- Raw pointer (unsafe)
-    | 'Box' '<' Type '>'                       -- Owned heap (Tier 2/3)
+    | 'Box' '<' Type '>'                       -- Owned heap (Tier 3/3)
 
     -- Functions
     | 'fn' '(' Params ')' '->' Type '/' EffectRow
@@ -200,7 +200,7 @@ Type ::=
     | 'linear' Type                            -- Linear wrapper (exactly once)
     | 'affine' Type                            -- Affine wrapper (at most once)
 
-Mutability ::= 'mut' | 'const'
+Mutability ::= 'mut'                               -- immutable by default; 'mut' opts in
 
 EffectRow ::= '{' (Effect ',')* ('|' RowVar)? '}'
             | 'pure'
@@ -422,11 +422,11 @@ effect State<S> {
 }
 
 effect Error<E> {
-    op raise(err: E) -> never
+    op raise(err: E) -> !
 }
 
 effect Fiber {
-    op spawn<T>(task: fn() -> T / {Fiber}) -> FiberHandle<T>
+    op spawn<T: Send>(task: fn() -> T / {Fiber} + Send) -> FiberHandle<T>
     op yield() -> unit
     op join<T>(handle: FiberHandle<T>) -> T
 }
@@ -546,19 +546,19 @@ struct StaleInfo {
 }
 
 effect StaleReference {
-    op stale(info: StaleInfo) -> never
+    op stale(info: StaleInfo) -> !
 }
 
 // Default handler: panic with diagnostic
 handler PanicOnStale for StaleReference {
-    op stale(info) -> never {
+    op stale(info) -> ! {
         panic("Use-after-free: {info.address} gen {info.expected_generation} != {info.actual_generation}")
     }
 }
 
 // Safety-critical: graceful degradation
 handler GracefulStale for StaleReference {
-    op stale(info) -> never {
+    op stale(info) -> ! {
         log_error("Memory violation at {info.address}")
         abort_fiber()
     }
@@ -571,7 +571,7 @@ handler GracefulStale for StaleReference {
 
 ```blood
 effect Error<E> {
-    op raise(err: E) -> never
+    op raise(err: E) -> !
 }
 
 deep handler Propagate<E> for Error<E> {
@@ -619,8 +619,8 @@ deep handler Collect<T> for Yield<T> {
 
 ```blood
 effect Fiber {
-    op spawn<T>(task: fn() -> T / {Fiber}) -> FiberHandle<T>
-    op spawn_blocking<T>(f: fn() -> T) -> FiberHandle<T>
+    op spawn<T: Send>(task: fn() -> T / {Fiber} + Send) -> FiberHandle<T>
+    op spawn_blocking<T: Send>(f: fn() -> T + Send) -> FiberHandle<T>
     op yield() -> unit
     op sleep(duration: Duration) -> unit
     op join<T>(handle: FiberHandle<T>) -> T
@@ -647,7 +647,7 @@ effect IO {
 ```blood
 effect NonDet {
     op choose<T>(options: Vec<T>) -> T
-    op fail() -> never
+    op fail() -> !
 }
 
 deep handler AllSolutions for NonDet {
@@ -674,7 +674,7 @@ fn bad<T>(linear resource: T) -> T / Choose {
 }
 ```
 
-Handler annotations:
+Handler annotations (*proposed — not yet in GRAMMAR.md standard attributes*):
 
 ```blood
 deep handler SingleShot for MyEffect {
@@ -716,16 +716,16 @@ effectful_map(nums, pure_fn)  // Works: pure <: E
 
 ### 5.1 Overview
 
-Blood uses the **Synthetic Safety Model (SSM)**, a hybrid ownership model that combines the simplicity of mutable value semantics with the flexibility of explicit borrowing:
+Blood uses the **Synthetic Safety Model (SSM)**, a hybrid ownership model that combines mutable value semantics with explicit borrowing and generational references:
 
 | Aspect | Blood Approach | Source Inspiration |
 |--------|----------------|-------------------|
-| **Default** | Move semantics (ownership transfer, not copies) | Rust |
+| **Default** | Mutable value semantics (copies, not moves) | Hylo/Val |
 | **Explicit** | Borrowing via `&T` and `&mut T` when needed | Rust |
 | **Heap** | Generational references for `Box<T>`, collections | Vale |
 | **Resources** | Linear/affine types for must-use handles | Linear logic |
 
-> **Terminology Note**: Blood uses a **hybrid ownership model** combining move semantics (Rust-inspired), escape-analyzed allocation (Vale-inspired), and generational references. Unlike Hylo's pure copy-by-default approach, Blood transfers ownership on assignment (move semantics). The escape analysis determines allocation tier (stack vs region vs persistent), not whether values are copied. Blood includes `&T` and `&mut T` for explicit borrowing when needed. See [MEMORY_MODEL.md §1.3](./MEMORY_MODEL.md#13-hybrid-model-clarification) for details.
+> **Terminology Note**: Blood uses **mutable value semantics** (MVS) — assignment copies values by default. This is simpler than Rust's move semantics while achieving equivalent safety via generational references and escape-analyzed allocation. The escape analysis determines allocation tier (stack vs region vs persistent). Blood includes `&T` and `&mut T` for explicit borrowing when needed. See [MEMORY_MODEL.md §1.5](./MEMORY_MODEL.md) for details.
 
 ### 5.2 Tiered Memory Model
 
@@ -759,7 +759,7 @@ Mismatched generation check triggers deterministic trap, handled as `StaleRefere
 
 ### 5.4 Escape-Analyzed Allocation
 
-Blood uses move semantics by default. The compiler performs inter-procedural escape analysis to determine allocation tier:
+Blood uses mutable value semantics by default (assignment copies). The compiler performs inter-procedural escape analysis to determine allocation tier:
 
 1. **Stack Promotion**: Objects that don't escape are stack-allocated
 2. **Check Elision**: Generation checks removed for locally-proven references
@@ -869,13 +869,9 @@ The runtime maintains a Virtual Function Table (VFT) indexed by hash:
 Since C uses symbol names and Blood uses hashes, an FFI Bridge maps between them:
 
 ```blood
-@ffi_bridge("libc")
-extern {
-    // C symbol "malloc" mapped to Blood hash
-    fn malloc(size: usize) -> *mut u8
-
-    // C symbol "free" mapped to Blood hash
-    fn free(ptr: *mut u8) -> unit
+bridge "C" libc {
+    fn malloc(size: usize) -> *mut u8;
+    fn free(ptr: *mut u8);
 }
 ```
 
@@ -887,9 +883,9 @@ FFI calls are inherently unsafe. Blood requires explicit annotation:
 fn safe_wrapper(size: usize) -> Result<Box<[u8]>, AllocError> / {Allocate} {
     let ptr = @unsafe { malloc(size) }
     if ptr.is_null() {
-        raise(AllocError::OutOfMemory)
+        raise(AllocError.OutOfMemory)
     } else {
-        Ok(Box::from_raw(ptr, size))
+        Ok(Box.from_raw(ptr, size))
     }
 }
 ```
@@ -965,9 +961,9 @@ with h handle E[perform o(v)]
 
 ### 10.2 Type Soundness
 
-*Formal proof to be provided in future revision.*
+*Mechanized in Coq — see [FORMAL_SEMANTICS.md §12](./FORMAL_SEMANTICS.md) (22 files, 10,507 lines, 227 Qed, 0 Admitted).*
 
-**Conjecture**: If `Γ ⊢ e : T / ε` and `e ──►* v`, then `v : T`.
+**Theorem**: If `Γ ⊢ e : T / ε` and `e ──►* v`, then `v : T`.
 
 ### 10.3 Effect Safety
 
@@ -995,8 +991,8 @@ This section documents Blood's expected performance characteristics, distinguish
 
 | Operation | Expected Cost | Status | Source |
 |-----------|---------------|--------|--------|
-| Generation check (Tier 1) | ~1-2 cycles | Theoretical | Vale design |
-| Check elision (Tier 0) | 0 cycles | Validated | Escape analysis research |
+| Generation check (Tier 2) | ~1-2 cycles | Theoretical | Vale design |
+| Check elision (Tier 1) | 0 cycles | Validated | Escape analysis research |
 | Snapshot capture | O(n) refs | Theoretical | Blood implementation |
 | Snapshot validation | O(n) refs | Theoretical | Blood implementation |
 | RC increment/decrement | ~10-20 cycles | Validated | Standard RC overhead |
@@ -1126,7 +1122,7 @@ Before Blood 1.0, the following benchmarks must validate performance claims.
 | `evidence_pass` | Evidence vector lookup | Array index |
 | `rc_increment` | Atomic refcount increment | Non-atomic increment |
 | `rc_decrement` | Atomic refcount decrement | Non-atomic decrement |
-| `tier_promotion` | Tier 1 → Tier 3 promotion | Allocation baseline |
+| `tier_promotion` | Tier 2 → Tier 3 promotion | Allocation baseline |
 
 #### 11.7.3 Macro-Benchmarks
 
@@ -1272,7 +1268,6 @@ ExprWithoutBlock ::= Literal | Path | Call | Method | Field
 
 | Prec | Operators | Assoc |
 |------|-----------|-------|
-| 18 | `::` | Left |
 | 17-15 | `.method()` `()` `[]` | Left |
 | 14 | `!` `-` `*` `&` | Right |
 | 13-11 | `as` `*/%` `+-` | Left |
@@ -1363,7 +1358,7 @@ fn create_list(values: &[i32]) -> Box<Node> / {Allocate} {
     let mut head: Option<Box<Node>> = None
 
     for &v in values.iter().rev() {
-        head = Some(Box::new(Node {
+        head = Some(Box.new(Node {
             value: v,
             next: head,
         }))
@@ -1419,10 +1414,10 @@ fn format(x: bool) -> String / pure {
 }
 
 fn format(x: Vec<T>) -> String / pure where T: Display {
-    let items = x.iter()
+    let items: Vec<String> = x.iter()
         .map(|item| format(item))
-        .collect::<Vec<_>>()
-        .join(", ")
+        .collect()
+    items.join(", ")
     "[" ++ items ++ "]"
 }
 
@@ -1447,14 +1442,14 @@ enum ParseError {
 
 fn parse_int(s: &str) -> i32 / {Error<ParseError>} {
     if s.is_empty() {
-        raise(ParseError::EndOfInput)
+        raise(ParseError.EndOfInput)
     }
 
     let mut result = 0i32
     for c in s.chars() {
         match c.to_digit(10) {
             Some(d) => result = result * 10 + d as i32,
-            None => raise(ParseError::UnexpectedChar(c)),
+            None => raise(ParseError.UnexpectedChar(c)),
         }
     }
     result
@@ -1542,7 +1537,7 @@ fn counter_example() -> i32 / {State<i32>} {
 
 fn main() / {IO} {
     // Run with state handler
-    let final_count = with StateHandler::new(0) handle {
+    let final_count = with StateHandler.new(0) handle {
         counter_example()
     };
 
@@ -1600,7 +1595,7 @@ impl File {
 }
 
 fn safe_file_operation(path: &Path) / {IO, Error<IoError>} {
-    let mut file = File::open(path)?
+    let mut file = File.open(path)?
 
     let mut buffer = [0u8; 1024]
     let bytes_read = file.read(&mut buffer)?
@@ -1622,7 +1617,7 @@ fn fibonacci() -> impl Iterator<Item = u64> / pure {
         let (mut a, mut b) = (0u64, 1u64)
         loop {
             yield(a)
-            (a, b) = (b, a.checked_add(b).unwrap_or(u64::MAX))
+            (a, b) = (b, a.checked_add(b).unwrap_or(u64.MAX))
         }
     }
 }
@@ -1631,7 +1626,7 @@ fn primes() -> impl Iterator<Item = u64> / pure {
     gen {
         yield(2)
         let mut n = 3u64
-        while n < u64::MAX {
+        while n < u64.MAX {
             if is_prime(n) {
                 yield(n)
             }

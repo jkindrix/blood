@@ -477,13 +477,13 @@ If Blood aims to interoperate with Rust-ecosystem patterns (iterator chains, bui
 
 Closures are central to functional programming style. Without RPIT, returning closures requires boxing:
 
-```blood
-// Without impl Trait: heap allocation required
+```rust
+// Without impl Trait (Rust): heap allocation required
 fn make_adder(n: i32) -> Box<dyn Fn(i32) -> i32> {
     Box::new(|x| x + n)
 }
 
-// With impl Trait: zero-cost
+// With impl Trait (Rust): zero-cost
 fn make_adder(n: i32) -> impl Fn(i32) -> i32 {
     |x| x + n
 }

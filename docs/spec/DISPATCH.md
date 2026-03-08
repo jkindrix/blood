@@ -2,7 +2,7 @@
 
 **Version**: 0.4.0
 **Status**: Implemented
-**Last Updated**: 2026-02-28
+**Last Updated**: 2026-03-07
 
 **Revision 0.4.0 Changes**:
 - Added object safety rules (§10.7) — formal rules for trait object validity
@@ -90,13 +90,13 @@ The following table tracks implementation status of dispatch subsystems:
 | Component | Status | Location | Notes |
 |-----------|--------|----------|-------|
 | Method family collection | ✅ Implemented | `bloodc/src/typeck/methods.rs` | Basic collection works |
-| Applicability check | ✅ Implemented | `bloodc/src/typeck/dispatch.rs` | Subtype checking integrated |
-| Specificity ordering | ✅ Implemented | `bloodc/src/typeck/dispatch.rs` | Pairwise comparison |
-| Generic instantiation | ✅ Implemented | `bloodc/src/typeck/dispatch.rs` | `instantiate_generic()` |
-| Constraint resolution | ✅ Implemented | `bloodc/src/typeck/dispatch.rs` | `ConstraintChecker` struct |
-| Effect-aware dispatch | ✅ Implemented | `bloodc/src/typeck/dispatch.rs` | `EffectRow` integration |
-| Diamond resolution | ✅ Implemented | `bloodc/src/typeck/dispatch.rs` | `AmbiguityError::is_diamond_conflict()` |
-| Type stability check | ✅ Implemented | `bloodc/src/typeck/dispatch.rs` | `check_type_stability()` |
+| Applicability check | ✅ Implemented | `bloodc/src/typeck/dispatch/resolver.rs` | Subtype checking integrated |
+| Specificity ordering | ✅ Implemented | `bloodc/src/typeck/dispatch/resolver.rs` | Pairwise comparison |
+| Generic instantiation | ✅ Implemented | `bloodc/src/typeck/dispatch/resolver.rs` | `instantiate_generic()` |
+| Constraint resolution | ✅ Implemented | `bloodc/src/typeck/dispatch/constraints.rs` | `ConstraintChecker` struct |
+| Effect-aware dispatch | ✅ Implemented | `bloodc/src/typeck/dispatch/effect_row.rs` | `EffectRow` integration |
+| Diamond resolution | ✅ Implemented | `bloodc/src/typeck/ambiguity.rs` | `AmbiguityError::is_diamond_conflict()` |
+| Type stability check | ✅ Implemented | `bloodc/src/typeck/dispatch/stability.rs` | `check_type_stability()` |
 | Dynamic dispatch codegen | ✅ Implemented | `bloodc/src/codegen/context/dispatch.rs` | `compile_dynamic_dispatch()` |
 | VFT generation | ✅ Implemented | `bloodc/src/content/vft.rs` | `VFT`, `DispatchTable` structs |
 | Vtable generation | ✅ Implemented | `bloodc/src/codegen/context/dispatch.rs` | `generate_vtables()` |
@@ -234,7 +234,7 @@ RESOLVE_DISPATCH(method_name, arg_types) → Method | Error:
 
     // Step 3: Handle no matches
     IF applicable.is_empty():
-        RETURN Error::NoMethodFound {
+        RETURN Error.NoMethodFound {
             name: method_name,
             arg_types: arg_types,
             candidates: all_methods
@@ -256,7 +256,7 @@ RESOLVE_DISPATCH(method_name, arg_types) → Method | Error:
         RETURN maximal[0]
 
     // Step 6: Ambiguity error
-    RETURN Error::AmbiguousDispatch {
+    RETURN Error.AmbiguousDispatch {
         name: method_name,
         arg_types: arg_types,
         candidates: maximal
@@ -413,7 +413,7 @@ RESOLVE_DIAMOND(call_site, receiver_type) → Method | Error:
             applicable_traits.append(trait)
 
     IF len(applicable_traits) == 0:
-        RETURN Error::NoMethodFound
+        RETURN Error.NoMethodFound
 
     IF len(applicable_traits) == 1:
         RETURN applicable_traits[0].get_method(call_site.method_name)
@@ -486,7 +486,7 @@ When a method name has no definitions:
 ```
 RESOLVE_EMPTY_FAMILY(method_name, arg_types) → Error:
     // No methods exist with this name at all
-    RETURN Error::UndefinedMethod {
+    RETURN Error.UndefinedMethod {
         name: method_name,
         suggestion: SUGGEST_SIMILAR_NAMES(method_name)
     }
@@ -643,8 +643,8 @@ fn cast<From, To>(x: PhantomData<From>) -> PhantomData<To> { ... }
 When type parameters have defaults:
 
 ```blood
-fn create<T = String>() -> T { T::default() }
-fn create<T: Numeric = i32>() -> T { T::zero() }
+fn create<T = String>() -> T { T.default() }
+fn create<T: Numeric = i32>() -> T { T.zero() }
 ```
 
 **Resolution**:
@@ -928,8 +928,8 @@ UNIFY_RECORDS(f1: [(Symbol, Type)], r1: RowVar?,
               subst: Substitution) → Result<Substitution, UnifyError>:
 
     // Convert to maps for easier manipulation
-    fields1 ← Map::from(f1)
-    fields2 ← Map::from(f2)
+    fields1 ← Map.from(f1)
+    fields2 ← Map.from(f2)
 
     // Find common, left-only, and right-only fields
     common ← fields1.keys() ∩ fields2.keys()
@@ -1016,11 +1016,11 @@ When return type involves associated types, stability requires the association t
 ```blood
 trait Iterator {
     type Item
-    fn next(&mut self) -> Option<Self::Item>
+    fn next(&mut self) -> Option<Self.Item>
 }
 
-// Type-stable: Self::Item determined by Self type
-fn first<I: Iterator>(iter: &mut I) -> Option<I::Item> {
+// Type-stable: Self.Item determined by Self type
+fn first<I: Iterator>(iter: &mut I) -> Option<I.Item> {
     iter.next()
 }
 ```
@@ -1042,7 +1042,7 @@ CHECK_POLYMORPHIC_STABILITY(method: Method) → Result<(), StabilityError>:
     undetermined ← return_ftvs - param_ftvs
 
     IF undetermined.is_not_empty():
-        RETURN Err(StabilityError::UndeterminedTypeVariable {
+        RETURN Err(StabilityError.UndeterminedTypeVariable {
             variables: undetermined,
             hint: "Return type contains type variables not determined by parameters"
         })
@@ -1190,9 +1190,9 @@ enum ParseResult {
 
 fn parse_value(input: &str) -> ParseResult / pure {
     // Type-stable: always returns ParseResult
-    if is_integer(input) { ParseResult::Integer(parse_int(input)) }
-    else if is_float(input) { ParseResult::Float(parse_float(input)) }
-    else { ParseResult::String(input.to_string()) }
+    if is_integer(input) { ParseResult.Integer(parse_int(input)) }
+    else if is_float(input) { ParseResult.Float(parse_float(input)) }
+    else { ParseResult.String(input.to_string()) }
 }
 ```
 
@@ -1427,7 +1427,7 @@ BloomFilter = {
 }
 
 BUILD_COLLISION_FILTER(method_table) → BloomFilter:
-    filter ← BloomFilter::new()
+    filter ← BloomFilter.new()
     seen_fingerprints ← HashSet::new()
 
     FOR entry IN method_table.entries:
@@ -1751,7 +1751,7 @@ DISPATCH_WITH_EFFECTS(method_name, args, context) → Method | Error:
     compatible ← [m FOR m IN candidates IF EFFECT_CONTEXT_CHECK(m, context)]
 
     IF compatible.is_empty():
-        RETURN Error::EffectNotAllowed {
+        RETURN Error.EffectNotAllowed {
             method: candidates[0],
             required: candidates[0].effects,
             available: context.allowed_effects
@@ -1850,9 +1850,9 @@ enum Item { A(TypeA), B(TypeB), C(TypeC) }
 fn medium(items: Vec<Item>) {
     for item in items {
         match item {
-            Item::A(a) => process(a),  // Static dispatch
-            Item::B(b) => process(b),
-            Item::C(c) => process(c),
+            Item.A(a) => process(a),  // Static dispatch
+            Item.B(b) => process(b),
+            Item.C(c) => process(c),
         }
     }
 }
@@ -2281,9 +2281,9 @@ Method ordering in the vtable follows declaration order in the trait.
 
 > **Design note — no `drop_fn` slot**: Blood's vtable does not include a destructor function pointer. Blood has no `Drop` trait and does not call per-value destructors on scope exit. Memory cleanup is handled by the memory tier system:
 >
-> - **Tier 0 (stack)**: Values are on the stack; no cleanup needed.
-> - **Tier 1 (region)**: Bulk deallocation via generation bump — no per-value cleanup.
-> - **Tier 2/3 (persistent)**: Runtime-managed reference counting.
+> - **Tier 1 (stack)**: Values are on the stack; no cleanup needed.
+> - **Tier 2 (region)**: Bulk deallocation via generation bump — no per-value cleanup.
+> - **Tier 3 (persistent)**: Runtime-managed reference counting.
 > - **Resource cleanup**: Effect handler `finally` clauses (ADR-036) replace RAII destructors.
 >
 > If a `dyn Trait` value owns an OS resource (file handle, socket), the enclosing effect handler's `finally` clause is responsible for cleanup — not a vtable-dispatched destructor. This is consistent with Blood's principle that resource management is explicit and effect-tracked, not implicit via scope-based destructors.
@@ -2921,7 +2921,7 @@ test_basic_no_match:
   methods:
     - sig: "fn add(x: i32, y: i32) -> i32"
   call: "add(\"hello\", \"world\")"
-  expected: Error::NoMethodFound
+  expected: Error.NoMethodFound
 
 test_basic_generic:
   methods:
@@ -2971,7 +2971,7 @@ test_ambiguous_no_resolution:
     - sig: "fn f<T: Serialize>(x: T) -> Bytes"
     - sig: "fn f<T: Hash>(x: T) -> Bytes"
   call: "f(value)"  # value: Serialize + Hash
-  expected: Error::AmbiguousDispatch
+  expected: Error.AmbiguousDispatch
 
 test_ambiguous_resolved_by_specific:
   methods:
@@ -3013,7 +3013,7 @@ test_effect_required:
     - sig: "fn load(p: Path) -> Data / {IO}"
   context: "pure"
   call: "load(path)"
-  expected: Error::EffectNotAllowed
+  expected: Error.EffectNotAllowed
 ```
 
 ### D.5 Edge Case Tests
@@ -3022,7 +3022,7 @@ test_effect_required:
 test_empty_family:
   methods: []
   call: "nonexistent(42)"
-  expected: Error::UndefinedMethod
+  expected: Error.UndefinedMethod
 
 test_variadic:
   methods:
@@ -3065,7 +3065,7 @@ test_unstable_conditional_type:
     fn unstable(x: i32) -> ??? {
       if x > 0 { x } else { "negative" }
     }
-  expected: Error::TypeUnstable
+  expected: Error.TypeUnstable
 
 test_stable_polymorphic:
   method: "fn identity<T>(x: T) -> T { x }"
@@ -3073,7 +3073,7 @@ test_stable_polymorphic:
 
 test_unstable_undetermined_return:
   method: "fn phantom<T, U>(x: T) -> U { ... }"
-  expected: Error::UndeterminedTypeVariable
+  expected: Error.UndeterminedTypeVariable
 ```
 
 ### D.7 Performance Regression Tests

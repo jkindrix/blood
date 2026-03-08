@@ -419,23 +419,23 @@ effect IO extends Log {
 }
 
 effect Fiber extends IO {
-    op spawn<T>(f: fn() -> T / {Fiber}) -> FiberHandle<T>;
+    op spawn<T: Send>(f: fn() -> T / {Fiber} + Send) -> FiberHandle<T>;
     op yield() -> unit;
 }
 ```
 
-> **Design note — no `Send`/`Sync` traits**: Blood does not use Rust-style `Send`/`Sync` marker traits. Whether a value can cross fiber boundaries is determined automatically by the compiler from the value's **memory tier**:
+> **Design note — `Send` as auto-derived marker trait**: Blood uses a `Send` marker trait for fiber-crossing safety, but unlike Rust, `Send` **cannot be manually implemented**. The compiler derives it purely from the value's **memory tier**:
 >
-> | Tier | Fiber-transferable? | Rationale |
-> |------|-------------------|-----------|
-> | Tier 0 (stack) | Yes | Pure value — copy/move |
-> | Tier 1 (region), mutable | No | Fiber-local — region isolation |
-> | Tier 1 (region), Frozen | Yes | Deeply immutable — safe to share |
-> | Tier 2/3 (persistent) | Yes | Ref-counted — designed for sharing |
+> | Tier | Send? | Rationale |
+> |------|-------|-----------|
+> | Tier 1 (stack) | Yes (if fields Send) | Pure value — copy/move |
+> | Tier 2 (region), mutable | No | Fiber-local — region isolation |
+> | Tier 2 (region), Frozen | Yes | Deeply immutable — safe to share |
+> | Tier 3 (persistent) | Yes | Ref-counted — designed for sharing |
 > | Linear | Yes (transfer) | Unique ownership moves to target fiber |
 > | Raw pointer | No | No safety guarantees |
 >
-> The compiler checks at `spawn` call sites that all captured values are fiber-transferable. This replaces the need for explicit `Send` bounds — the tier system already encodes the required information. See CONCURRENCY.md §8.1 for the full fiber-crossing rules.
+> `Send` bounds appear on `spawn` signatures so generic code can express fiber-transferability constraints (`fn foo<T: Send>(...)`). Derivation is structural and unforgeable — there is no `unsafe impl Send` in Blood. See CONCURRENCY.md §8.1 for the full fiber-crossing rules.
 
 #### 3.4.2 Handler State
 

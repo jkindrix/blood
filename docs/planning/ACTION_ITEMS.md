@@ -23,9 +23,9 @@ Derived from PTR-002 and PTR-004 investigations in v1.
 
 ### 1.1 Stack Pointer Verification [P1]
 
-PTR-002 Phase 1: Verify stack-promotable values use Tier 0.
+PTR-002 Phase 1: Verify stack-promotable values use Tier 1 (stack).
 
-- [x] **PTR-IMPL-001**: Verify codegen emits Tier 0 (64-bit thin pointer) for `EscapeState::NoEscape` values
+- [x] **PTR-IMPL-001**: Verify codegen emits Tier 1 (stack) (64-bit thin pointer) for `EscapeState::NoEscape` values
   - ✅ VERIFIED: `codegen/mir_codegen/mod.rs:236-263` correctly allocates based on escape tier
   - ✅ `MemoryTier::Stack` → `build_alloca` (LLVM stack allocation, thin pointer)
   - ✅ `MemoryTier::Region` → `allocate_with_blood_alloc` (heap with generation tracking)
@@ -33,7 +33,7 @@ PTR-002 Phase 1: Verify stack-promotable values use Tier 0.
   - ✅ Generation checks skipped for NoEscape locals (`place.rs:102-110`)
   - ✅ Additional finding: Primitive/Copy types are ALWAYS stack-promotable regardless of escape state
     (correct semantics: they are copied by value, not referenced)
-- [x] **PTR-IMPL-002**: Add tests verifying Tier 0 allocation in generated code
+- [x] **PTR-IMPL-002**: Add tests verifying Tier 1 (stack) allocation in generated code
   - ✅ Added 6 tests in `codegen/mir_codegen/tests.rs`:
     - `test_escape_analysis_affects_allocation_tier` - verifies escape→tier mapping
     - `test_stack_promotable_excludes_effect_captured` - non-primitive effect capture
@@ -490,7 +490,7 @@ Identified in PERF-007 hot path profiling.
   - Benchmark refactored to use real implementation (not simulation)
 
 **Previously Completed (Section 1.1 - Stack Pointer Verification):**
-- PTR-IMPL-001: Verified codegen emits Tier 0 for NoEscape values
+- PTR-IMPL-001: Verified codegen emits Tier 1 (stack) for NoEscape values
 - PTR-IMPL-002: Added tests verifying stack vs region allocation
 - PTR-IMPL-003: Profiled performance - Blood now matches C exactly (1.0x)
 

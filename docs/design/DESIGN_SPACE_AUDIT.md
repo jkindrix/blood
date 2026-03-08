@@ -69,7 +69,7 @@
 |------|-----------------|--------|----------|
 | Primary safety mechanism | Generational references | **Decided** | ADR-001, with fallback strategies in ADR-018 |
 | Ownership model | Hybrid mutable value semantics | **Decided** | ADR-014 |
-| Memory tiers | Stack (Tier 0) / Region (Tier 1) / Persistent RC (Tier 2) | **Decided** | ADR-008, MEMORY_MODEL.md |
+| Memory tiers | Stack (Tier 1) / Region (Tier 2) / Persistent RC (Tier 3) | **Decided** | ADR-008, MEMORY_MODEL.md |
 | Linear/affine types | Both supported; linear cannot cross multi-shot resume | **Decided** | ADR-006, ADR-026, FORMAL_SEMANTICS.md |
 | Garbage collection | None (generational refs + RC for Tier 2) | **Decided** | MEMORY_MODEL.md |
 | Escape analysis | Three-tier with 98.3% stack promotion rate | **Decided** | ESCAPE_ANALYSIS.md, ACTION_ITEMS.md |
@@ -117,7 +117,7 @@
 | Cancellation semantics | Not decided | **Deferred** | DECISIONS.md explicitly defers cooperative vs. preemptive |
 | Cancellation safety | Not addressed | **Defaulted** | No analysis of partial-operation consistency on cancellation |
 | Async drop | Not addressed | **Defaulted** | Effects may solve this, but no explicit analysis exists |
-| Send/Sync equivalents | Not documented | **Defaulted** | No thread-safety marker traits or effect-based equivalent discussed |
+| Send/Sync equivalents | `Send` auto-derived from memory tier; `Sync` removed (immutability via `Frozen<T>`) | **Decided** | ADR-033; `Frozen<T>` provides lock-free sharing |
 | Async iterators/streams | Not addressed | **Defaulted** | No evaluation of async sequences |
 | Runtime-provided vs. library async | Not documented | **Defaulted** | Fiber scheduler exists in runtime; relationship to language semantics unclear |
 | Deterministic simulation testing | Effect handlers intercept all nondeterminism sources | **Proposed** | EF_II Proposal #8; no compiler changes needed — library pattern on existing effects |
@@ -429,12 +429,12 @@ But the composition is incomplete:
 | Cancellation mechanism | **Deferred** (DECISIONS.md) |
 | Cancellation safety guarantees | **Defaulted** |
 | Async drop / cleanup | **Defaulted** |
-| Thread-safety markers (Send/Sync) | **Defaulted** |
+| Thread-safety markers (Send/Sync) | **Decided** (Send auto-derived, Sync removed) |
 | Async iterators / streams | **Defaulted** |
 | Runtime-provided vs. library concurrency | **Defaulted** |
 | Fiber ↔ OS thread interaction | **Defaulted** |
 
-This is the area where Blood could most distinguish itself. Effects naturally express structured concurrency (a handler scope = a task scope). Cancellation can be an effect. Send/Sync can be effect-based constraints. But none of this is designed or documented.
+This is the area where Blood could most distinguish itself. Effects naturally express structured concurrency (a handler scope = a task scope). Cancellation can be an effect. `Send` is now resolved as an auto-derived marker trait (derived from memory tier; `Frozen<T>` values are always `Send`); `Sync` was removed (deep immutability via `Frozen<T>` replaces shared-mutable synchronization). Remaining concurrency sub-decisions are not yet designed or documented.
 
 **Risk:** If the fiber runtime calcifies before the language-level concurrency model is designed, the runtime may constrain the language design rather than serving it.
 
@@ -468,8 +468,8 @@ Blood has 8 stdlib modules (HashMap, HashSet, Arena, Sort/Search, fmt, String, M
 - Which APIs are available without an OS or allocator
 
 Blood's tiered memory model maps naturally to a freestanding split:
-- `core`: Tier 0 only (stack allocation, no heap) — pure computation
-- `alloc`: Tier 0 + Tier 1 (stack + region allocation) — heap without OS
+- `core`: Tier 1 only (stack allocation, no heap) — pure computation
+- `alloc`: Tier 1 + Tier 2 (stack + region allocation) — heap without OS
 - `std`: All tiers (stack + region + persistent + I/O)
 
 This split would enable Blood for embedded systems, OS kernels, and WebAssembly without an OS — contexts that align with Blood's systems programming target domain.
@@ -565,7 +565,7 @@ Even with proposals included, gaps remain in four areas:
 
 2. **Ecosystem infrastructure** (23% of decisions defaulted): Normal for a pre-1.0 language, but some ecosystem decisions (compiler-as-a-library, freestanding split) exert backward pressure on the core and should be decided before implementation locks them in. The proposals partially address this (linter via safety audit, observability via effect handlers) but leave REPL, formatter, debugger, and doc generator unaddressed.
 
-3. **Concurrency** (the largest single gap): Blood has the most promising concurrency foundation of any systems language (effects that subsume async, fibers, structured scoping via handlers) but has not yet designed the cohesive model that ties these pieces together. The DST and replay proposals (EF_II #8, #12) demonstrate the testing side of concurrency but do not address the programming model (structured concurrency, cancellation, Send/Sync, async drop).
+3. **Concurrency** (the largest single gap): Blood has the most promising concurrency foundation of any systems language (effects that subsume async, fibers, structured scoping via handlers) but has not yet designed the cohesive model that ties these pieces together. The DST and replay proposals (EF_II #8, #12) demonstrate the testing side of concurrency but do not address the programming model (structured concurrency, cancellation, async drop). Send/Sync is now resolved (Send auto-derived, Sync removed in favor of `Frozen<T>`).
 
 4. **Proposal-to-commitment gap**: 21% of the design space is at "proposed" status. These proposals are well-researched but carry risk: none have been implemented, some depend on unbuilt infrastructure (incremental type checker, SMT solver integration), and the proposal layer is disproportionately focused on effects and content addressing while underexploiting generational memory (25%) and multiple dispatch (13%). Committing to proposals requires implementation evidence, not just design documents.
 

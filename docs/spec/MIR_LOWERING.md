@@ -84,7 +84,7 @@ Statement ::=
     | Assign(Place, Rvalue)           -- Assignment
     | StorageLive(LocalId)            -- Start of local's scope
     | StorageDead(LocalId)            -- End of local's scope
-    | Drop(Place)                      -- Drop value
+    | Drop(Place)                      -- Deallocate value (no user-defined Drop trait)
     | IncrementGeneration(Place)       -- Bump generation counter
     | CaptureSnapshot(LocalId)         -- Capture gen refs for effects
     | ValidateGeneration(Place, u32)   -- Check generation

@@ -1501,19 +1501,20 @@ Formally: if handler H handles effect E, then H's `finally` clause may perform e
 
 **Provenance**: The Effekt research (OOPSLA 2025, "Dynamic Wind for Effect Handlers") formally verifies that finalization clauses compose correctly with effect handlers, including nested effects and cancellation. `finally` is equivalent to Effekt's `on_suspend + on_return` (the paper proves this). More specialized lifecycle hooks (`on_suspend`, `on_resume`) can be added later if needed.
 
-### Sub-5: Send/Sync — Auto-Derived Traits from Memory Tier
+### Sub-5: Send — Auto-Derived Marker Trait from Memory Tier
 
-**Decision**: `Send` and `Sync` are auto-derived traits, not effects. A type is `Send` if all its fields are `Send`. A type is `Sync` if it is `Frozen` or `Synchronized`.
+**Decision**: `Send` is an auto-derived marker trait that cannot be manually implemented. The compiler derives it purely from a type's memory tier. Generic concurrent code uses `T: Send` bounds to express fiber-transferability constraints.
 
 **Derivation rules from Blood's memory model**:
 
-| Memory Tier | Send? | Sync? | Reason |
-|-------------|-------|-------|--------|
-| Tier 0 (stack) | Yes (if fields Send) | No | Stack-local, no sharing |
-| Tier 1 (region), mutable | No | No | Region-local, fiber-private |
-| Tier 1 (region), Frozen | Yes | Yes | Deeply immutable |
-| Tier 2/3 (persistent) | Yes | Yes | Ref-counted, designed for sharing |
-| Linear values | Yes (via transfer) | No | Unique ownership, no aliasing |
+| Memory Tier | Send? | Rationale |
+|-------------|-------|-----------|
+| Tier 1 (stack) | Yes (if fields Send) | Pure value — copy/move semantics |
+| Tier 2 (region), mutable | No | Fiber-local — region isolation invariant |
+| Tier 2 (region), Frozen | Yes | Deeply immutable — no mutation hazard |
+| Tier 3 (persistent) | Yes | Ref-counted, designed for cross-fiber sharing |
+| Linear values | Yes (transfer) | Unique ownership moves to target fiber |
+| Raw pointers | No | No safety guarantees — requires `@unsafe` |
 
 The `spawn` operation requires `Send` bounds:
 
@@ -1521,11 +1522,11 @@ The `spawn` operation requires `Send` bounds:
 op spawn<T: Send>(f: fn() -> T / {Fiber} + Send) -> FiberHandle<T>
 ```
 
-**Rationale**: `Send`/`Sync` describe structural type properties (whether fields are sendable/sharable), not runtime behaviors. Effects describe runtime behaviors (suspension, I/O, mutation). Conflating type properties with runtime effects muddies both systems.
+**Key difference from Rust**: `Send` cannot be manually implemented (`unsafe impl Send` does not exist in Blood). Derivation is structural and unforgeable — determined entirely by the type's memory tier. There is no way to "opt in" a region reference because the type system prevents cross-fiber region access at a fundamental level.
 
-Blood's memory model provides a stronger foundation than Rust's `Send`/`Sync`:
-- In Rust, `Send` is an `unsafe` trait — it can be incorrectly implemented
-- In Blood, `Send` is derived from the memory tier: region references are structurally not `Send`. There is no way to "opt in" a region reference because the type system prevents cross-fiber region access at a fundamental level
+**Design evolution**: An earlier iteration (DEF-011, 2026-03-01) removed Send/Sync entirely, replacing them with implicit compiler checks at spawn call sites. This was reverted because generic code (`fn foo<T>(x: T)` that transitively spawns) cannot express fiber-transferability constraints without a named trait bound. The insight from DEF-011 was preserved: Send is structural and unforgeable, derived from tier, never manually implemented.
+
+**Sync removed**: Blood does not need a separate `Sync` trait. Sharing is controlled by the tier system (Tier 2 Frozen and Tier 3 values are inherently shareable). No separate marker is needed.
 
 ### Sub-6: Streams — Effect Composition (`Yield<T>` + `Fiber`)
 
@@ -1621,10 +1622,10 @@ If `captures(f)` type-level extraction is too advanced for initial implementatio
 
 | Tier | In snapshot? | Reason |
 |------|-------------|--------|
-| Tier 0 (stack) | No | Stack frames are fiber-local by construction |
-| Tier 1 (region), mutable access | Yes | May be invalidated during suspension |
-| Tier 1 (region), Frozen access | No | Immutable — generation counter never advances |
-| Tier 2/3 (persistent) | No | Uses refcounting, not generations |
+| Tier 1 (stack) | No | Stack frames are fiber-local by construction |
+| Tier 2 (region), mutable access | Yes | May be invalidated during suspension |
+| Tier 2 (region), Frozen access | No | Immutable — generation counter never advances |
+| Tier 3 (persistent) | No | Uses refcounting, not generations |
 
 **Cost**: O(R_mutable) where R_mutable is the count of mutable Tier 1 regions the fiber holds references into. For the vast majority of fibers, R_mutable = 1 (the fiber's own region). This is effectively O(1). Validation is a single integer comparison per snapshot entry.
 

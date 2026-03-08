@@ -2,7 +2,7 @@
 
 **Version**: 0.4.0
 **Status**: Mostly Implemented (see table in §1.3)
-**Last Updated**: 2026-01-13
+**Last Updated**: 2026-03-07
 
 **Implementation Status**: Runtime FFI code (DynamicLibrary, FfiValue, FfiType, symbol resolution) is implemented in `blood-runtime/src/ffi.rs` and validated on x86-64 Linux. Bridge block parsing is implemented in `bloodc/src/parser/item.rs` and AST in `bloodc/src/ast.rs`. Full codegen support is implemented in `bloodc/src/codegen/context/mod.rs` including extern function declaration, FFI struct/enum/union/const/callback codegen, and calling convention handling (C, stdcall, fastcall, WASM). FFI type safety validation is implemented in `bloodc/src/typeck/ffi.rs`. Unsafe block codegen is implemented in `bloodc/src/codegen/context/expr.rs`.
 
@@ -165,7 +165,7 @@ BridgeCallback ::= 'callback' Ident '=' 'fn' '(' BridgeParams ')' ('->' BridgeTy
 ```blood
 fn allocate_buffer(size: usize) -> *mut u8 / {FFI} {
     @unsafe {
-        let ptr = libc::malloc(size)
+        let ptr = libc.malloc(size)
         if ptr.is_null() {
             panic!("malloc failed")
         }
@@ -175,7 +175,7 @@ fn allocate_buffer(size: usize) -> *mut u8 / {FFI} {
 
 fn safe_allocate(size: usize) -> Vec<u8> / {Allocate} {
     // Safe wrapper that doesn't expose raw pointers
-    Vec::with_capacity(size)
+    Vec.with_capacity(size)
 }
 ```
 
@@ -380,10 +380,10 @@ fn my_compare(a: *const u8, b: *const u8) -> i32 / pure {
 
 fn sort_array(arr: &mut [i32]) / {FFI} {
     @unsafe {
-        libc::qsort(
+        libc.qsort(
             arr.as_mut_ptr() as *mut u8,
             arr.len(),
-            std::mem::size_of::<i32>(),
+            std.mem.size_of(i32),
             my_compare  // Blood function as callback
         )
     }
@@ -394,7 +394,7 @@ fn sort_array(arr: &mut [i32]) / {FFI} {
 
 ```blood
 /// C string utilities
-mod ffi::cstr {
+mod ffi.cstr {
     /// Owned null-terminated C string
     struct CString {
         ptr: *mut u8,
@@ -412,10 +412,9 @@ mod ffi::cstr {
         fn to_str(&self) -> Result<&str, Utf8Error> / pure { ... }
     }
 
-    impl Drop for CString {
-        fn drop(&mut self) / pure {
-            @unsafe { libc::free(self.ptr) }
-        }
+    /// Cleanup: CString is linear — must be explicitly freed.
+    fn free(self) / pure {
+        @unsafe { libc.free(self.ptr) }
     }
 
     /// Borrowed C string slice
@@ -481,9 +480,9 @@ bridge "C" libc {
 
 fn example() / {FFI} {
     @unsafe {
-        let fmt = CString::new("Hello, %s! Number: %d\n");
-        let name = CString::new("World");
-        libc::printf(fmt.as_ptr(), name.as_ptr(), 42i32);
+        let fmt = CString.new("Hello, %s! Number: %d\n");
+        let name = CString.new("World");
+        libc.printf(fmt.as_ptr(), name.as_ptr(), 42i32);
     }
 }
 ```
@@ -556,19 +555,19 @@ Blood's FFI safety model is explicit:
 ```blood
 // WRONG: Implicit unsafe (rejected)
 fn call_c() / {FFI} {
-    libc::malloc(100)  // ERROR: FFI call requires @unsafe
+    libc.malloc(100)  // ERROR: FFI call requires @unsafe
 }
 
 // CORRECT: Explicit unsafe block
 fn call_c() / {FFI} {
     @unsafe {
-        libc::malloc(100)
+        libc.malloc(100)
     }
 }
 
 // CORRECT: Unsafe function (caller must use @unsafe)
 @unsafe fn raw_malloc(size: usize) -> *mut u8 / {FFI} {
-    libc::malloc(size)
+    libc.malloc(size)
 }
 ```
 
@@ -577,26 +576,26 @@ fn call_c() / {FFI} {
 ```blood
 /// Safe wrapper for C memory allocation
 fn allocate<T>(value: T) -> Box<T> / {Allocate, Error<AllocError>} {
-    let size = std::mem::size_of::<T>();
-    let align = std::mem::align_of::<T>();
+    let size = std.mem.size_of(T);
+    let align = std.mem.align_of(T);
 
     // Validate before FFI
     if size == 0 {
-        return Err(AllocError::ZeroSize);
+        return Err(AllocError.ZeroSize);
     }
 
     let ptr: *mut T = @unsafe {
-        let raw = libc::aligned_alloc(align, size);
+        let raw = libc.aligned_alloc(align, size);
         if raw.is_null() {
-            return Err(AllocError::OutOfMemory);
+            return Err(AllocError.OutOfMemory);
         }
         raw as *mut T
     };
 
     // Initialize and wrap in safe Box
     @unsafe {
-        std::ptr::write(ptr, value);
-        Box::from_raw(ptr)
+        std.ptr.write(ptr, value);
+        Box.from_raw(ptr)
     }
 }
 ```
@@ -611,10 +610,10 @@ fn safe_strlen(s: &str) -> usize / {FFI} {
         panic!("String contains interior null byte");
     }
 
-    let cstr = CString::new(s);
+    let cstr = CString.new(s);
 
     @unsafe {
-        libc::strlen(cstr.as_ptr())
+        libc.strlen(cstr.as_ptr())
     }
 }
 ```
@@ -625,17 +624,17 @@ fn safe_strlen(s: &str) -> usize / {FFI} {
 /// Reads a C string and validates UTF-8
 fn read_c_string(ptr: *const u8) -> Result<String, FfiError> / {FFI} {
     if ptr.is_null() {
-        return Err(FfiError::NullPointer);
+        return Err(FfiError.NullPointer);
     }
 
     @unsafe {
-        let len = libc::strlen(ptr);
-        let slice = std::slice::from_raw_parts(ptr, len);
+        let len = libc.strlen(ptr);
+        let slice = std.slice.from_raw_parts(ptr, len);
 
         // Validate UTF-8
-        match std::str::from_utf8(slice) {
+        match std.str.from_utf8(slice) {
             Ok(s) => Ok(s.to_string()),
-            Err(e) => Err(FfiError::InvalidUtf8(e)),
+            Err(e) => Err(FfiError.InvalidUtf8(e)),
         }
     }
 }
@@ -652,7 +651,7 @@ fn copy_memory(dest: *mut u8, src: *const u8, len: usize) / {FFI} {
         // - Caller guarantees dest has space for `len` bytes
         // - Caller guarantees src is readable for `len` bytes
         // - Caller guarantees no overlap (use memmove otherwise)
-        libc::memcpy(dest, src, len);
+        libc.memcpy(dest, src, len);
     }
 }
 ```
@@ -705,7 +704,7 @@ bridge "C" mylib {
 fn process(data: &[u8]) -> i32 / {FFI} {
     @unsafe {
         // C gets a pointer, must not store it
-        mylib::process_data(data.as_ptr(), data.len())
+        mylib.process_data(data.as_ptr(), data.len())
     }
     // data still valid here
 }
@@ -715,21 +714,21 @@ fn give_to_c(data: Vec<u8>) / {FFI} {
     let (ptr, len, cap) = data.into_raw_parts();
 
     @unsafe {
-        mylib::take_buffer(ptr, len);
+        mylib.take_buffer(ptr, len);
         // DO NOT drop 'data' - C owns it now
-        std::mem::forget(data);
+        std.mem.forget(data);
     }
 }
 
 /// Transfer in: C gives ownership to Blood
 fn receive_from_c(len: usize) -> Vec<u8> / {FFI} {
     @unsafe {
-        let ptr = mylib::create_buffer(len);
+        let ptr = mylib.create_buffer(len);
         if ptr.is_null() {
             panic!("create_buffer returned null");
         }
         // Blood now owns this memory
-        Vec::from_raw_parts(ptr, len, len)
+        Vec.from_raw_parts(ptr, len, len)
     }
 }
 ```
@@ -745,17 +744,16 @@ struct CResource {
 impl CResource {
     fn new() -> CResource / {FFI} {
         @unsafe {
-            CResource { ptr: mylib::create_resource() }
+            CResource { ptr: mylib.create_resource() }
         }
     }
 }
 
-impl Drop for CResource {
-    fn drop(&mut self) / {FFI} {
-        @unsafe {
-            // Must use library's free function, not libc::free
-            mylib::destroy_resource(self.ptr);
-        }
+/// CResource is linear — must be explicitly destroyed.
+fn destroy(self: CResource) / {FFI} {
+    @unsafe {
+        // Must use library's free function, not libc.free
+        mylib.destroy_resource(self.ptr);
     }
 }
 ```
@@ -764,21 +762,21 @@ impl Drop for CResource {
 
 ```blood
 /// RAII wrapper for C resources
-struct CGuard<T, F: Fn(*mut T)> {
+/// Linear RAII wrapper for C resources — must call .release() to free.
+linear struct CGuard<T> {
     ptr: *mut T,
-    destructor: F,
+    destructor: fn(*mut T),
 }
 
-impl<T, F: Fn(*mut T)> CGuard<T, F> {
-    fn new(ptr: *mut T, destructor: F) -> Self {
+impl<T> CGuard<T> {
+    fn new(ptr: *mut T, destructor: fn(*mut T)) -> Self {
         CGuard { ptr, destructor }
     }
 
     fn as_ptr(&self) -> *mut T { self.ptr }
-}
 
-impl<T, F: Fn(*mut T)> Drop for CGuard<T, F> {
-    fn drop(&mut self) {
+    /// Consume the guard, calling the destructor.
+    fn release(self) {
         (self.destructor)(self.ptr)
     }
 }
@@ -786,16 +784,16 @@ impl<T, F: Fn(*mut T)> Drop for CGuard<T, F> {
 // Usage
 fn use_resource() / {FFI} {
     let guard = @unsafe {
-        CGuard::new(
-            mylib::create_resource(),
-            |p| mylib::destroy_resource(p)
+        CGuard.new(
+            mylib.create_resource(),
+            |p| mylib.destroy_resource(p)
         )
     };
 
     @unsafe {
-        mylib::use_resource(guard.as_ptr());
+        mylib.use_resource(guard.as_ptr());
     }
-    // Automatically cleaned up
+    guard.release();  // Linear type — must explicitly release
 }
 ```
 
@@ -817,7 +815,7 @@ effect FFI extends IO {
 // FFI functions implicitly have the FFI effect
 fn call_foreign() / {FFI} {
     @unsafe {
-        libc::printf("Hello\n".as_ptr());
+        libc.printf("Hello\n".as_ptr());
     }
 }
 ```
@@ -825,19 +823,20 @@ fn call_foreign() / {FFI} {
 ### 7.2 Effect Propagation
 
 ```blood
-/// Safe wrapper with narrower effect
-fn print_message(msg: &str) / {IO} {
-    let cstr = CString::new(msg);
+/// Safe wrapper — requires FFI (which subsumes IO)
+fn print_message(msg: &str) / {FFI} {
+    let cstr = CString.new(msg);
     @unsafe {
-        libc::printf(cstr.as_ptr());
+        libc.printf(cstr.as_ptr());
     }
-    // FFI effect is "absorbed" into IO since FFI extends IO
+    cstr.free();
+    // Callers need {FFI} in their effect row, which implies {IO}
 }
 
 /// Pure wrapper (must guarantee no side effects)
 fn compute_length(s: &str) -> usize / pure {
     // ERROR: Cannot call FFI from pure context
-    // libc::strlen(...)
+    // libc.strlen(...)
 
     // Instead, use pure Blood code
     s.len()
@@ -861,9 +860,9 @@ deep handler MockFFI for FFI {
 
 fn mock_result(symbol: Symbol, args: ForeignArgs) -> ForeignResult {
     match symbol.name {
-        "malloc" => ForeignResult::Pointer(0x1000),
-        "strlen" => ForeignResult::Size(5),
-        _ => ForeignResult::Error,
+        "malloc" => ForeignResult.Pointer(0x1000),
+        "strlen" => ForeignResult.Size(5),
+        _ => ForeignResult.Error,
     }
 }
 
@@ -891,7 +890,7 @@ fn call_c_with_callback(f: fn() -> i32) -> i32 / {FFI} {
 
     @unsafe {
         // C code calls the callback
-        mylib::call_with_callback(callback)
+        mylib.call_with_callback(callback)
     }
 }
 
@@ -928,14 +927,14 @@ bridge "C" libc {
 
 /// Convert C return code to Blood Result
 fn safe_open(path: &Path, flags: OpenFlags) -> Result<Fd, IoError> / {FFI} {
-    let cpath = CString::new(path.to_str());
+    let cpath = CString.new(path.to_str());
 
     let fd = @unsafe {
-        libc::open(cpath.as_ptr(), flags.bits())
+        libc.open(cpath.as_ptr(), flags.bits())
     };
 
     if fd < 0 {
-        Err(IoError::from_errno())
+        Err(IoError.from_errno())
     } else {
         Ok(Fd(fd))
     }
@@ -953,13 +952,13 @@ bridge "C" libc {
 
 fn errno() -> i32 / {FFI} {
     @unsafe {
-        *libc::__errno_location()
+        *libc.__errno_location()
     }
 }
 
 fn set_errno(value: i32) / {FFI} {
     @unsafe {
-        *libc::__errno_location() = value;
+        *libc.__errno_location() = value;
     }
 }
 
@@ -976,10 +975,10 @@ enum Errno {
 impl From<Errno> for IoError {
     fn from(e: Errno) -> IoError {
         match e {
-            Errno::ENOENT => IoError::NotFound,
-            Errno::EACCES => IoError::PermissionDenied,
-            Errno::EEXIST => IoError::AlreadyExists,
-            _ => IoError::Other(e as i32),
+            Errno.ENOENT => IoError.NotFound,
+            Errno.EACCES => IoError.PermissionDenied,
+            Errno.EEXIST => IoError.AlreadyExists,
+            _ => IoError.Other(e as i32),
         }
     }
 }
@@ -993,18 +992,18 @@ bridge "C" mylib {
 }
 
 fn safe_get_value(key: &str) -> Result<i32, MyError> / {FFI} {
-    let ckey = CString::new(key);
+    let ckey = CString.new(key);
     let mut value: i32 = 0;
     let mut error: i32 = 0;
 
     let success = @unsafe {
-        mylib::get_value(ckey.as_ptr(), &mut value, &mut error)
+        mylib.get_value(ckey.as_ptr(), &mut value, &mut error)
     };
 
     if success {
         Ok(value)
     } else {
-        Err(MyError::from_code(error))
+        Err(MyError.from_code(error))
     }
 }
 ```
@@ -1013,15 +1012,15 @@ fn safe_get_value(key: &str) -> Result<i32, MyError> / {FFI} {
 
 ```blood
 fn safe_fopen(path: &str, mode: &str) -> Result<File, IoError> / {FFI} {
-    let cpath = CString::new(path);
-    let cmode = CString::new(mode);
+    let cpath = CString.new(path);
+    let cmode = CString.new(mode);
 
     let file_ptr = @unsafe {
-        libc::fopen(cpath.as_ptr(), cmode.as_ptr())
+        libc.fopen(cpath.as_ptr(), cmode.as_ptr())
     };
 
     if file_ptr.is_null() {
-        Err(IoError::from_errno())
+        Err(IoError.from_errno())
     } else {
         Ok(File { ptr: file_ptr })
     }
@@ -1033,16 +1032,16 @@ fn safe_fopen(path: &str, mode: &str) -> Result<File, IoError> / {FFI} {
 ```blood
 /// Convert FFI errors to Blood effects
 fn read_file(path: &Path) -> Vec<u8> / {FFI, Error<IoError>} {
-    let fd = safe_open(path, OpenFlags::READ)?;
+    let fd = safe_open(path, OpenFlags.READ)?;
 
-    let mut buffer = Vec::with_capacity(4096);
+    let mut buffer = Vec.with_capacity(4096);
     loop {
         let n = @unsafe {
-            libc::read(fd.0, buffer.as_mut_ptr().add(buffer.len()), 4096)
+            libc.read(fd.0, buffer.as_mut_ptr().add(buffer.len()), 4096)
         };
 
         if n < 0 {
-            raise(IoError::from_errno());
+            raise(IoError.from_errno());
         } else if n == 0 {
             break;
         } else {
@@ -1102,7 +1101,7 @@ struct LinuxEventLoop { epfd: i32 }
 #[cfg(target_os = "linux")]
 impl EventLoop for LinuxEventLoop {
     fn new() -> Self / {FFI} {
-        let epfd = @unsafe { platform::linux::epoll_create(1) };
+        let epfd = @unsafe { platform.linux.epoll_create(1) };
         LinuxEventLoop { epfd }
     }
     // ...
@@ -1114,7 +1113,7 @@ struct MacOSEventLoop { kq: i32 }
 #[cfg(target_os = "macos")]
 impl EventLoop for MacOSEventLoop {
     fn new() -> Self / {FFI} {
-        let kq = @unsafe { platform::macos::kqueue() };
+        let kq = @unsafe { platform.macos.kqueue() };
         MacOSEventLoop { kq }
     }
     // ...
@@ -1274,7 +1273,7 @@ bridge "C" example {
 }
 
 fn use_add() / {FFI} {
-    @unsafe { example::add(1, 2) }
+    @unsafe { example.add(1, 2) }
 }
 ```
 

@@ -67,7 +67,7 @@ Blood identifies all definitions by a cryptographic hash of their canonicalized 
 - [SPECIFICATION.md](./SPECIFICATION.md) — Core language specification
 - [DISPATCH.md](./DISPATCH.md) — VFT dispatch integration
 - [FORMAL_SEMANTICS.md](./FORMAL_SEMANTICS.md) — De Bruijn indexing
-- [ROADMAP.md](./ROADMAP.md) — Codebase manager implementation
+- [ROADMAP.md](../planning/ROADMAP.md) — Codebase manager implementation
 - [FFI.md](./FFI.md) — Hash-based symbol resolution
 
 ### 1.3 Implementation Status
@@ -1659,15 +1659,15 @@ fn hot_swap(old_hash: Hash, new_hash: Hash, mode: SwapMode) -> Result<()> {
     validate_compatibility(old_hash, new_hash)?;
 
     match mode {
-        SwapMode::Immediate => {
+        SwapMode.Immediate => {
             vft.atomic_update(old_hash, new_hash);
         }
-        SwapMode::Barrier => {
+        SwapMode.Barrier => {
             vft.prepare_update(old_hash, new_hash);
             wait_for_in_flight();
             vft.commit_update();
         }
-        SwapMode::Epoch => {
+        SwapMode.Epoch => {
             vft.schedule_update(old_hash, new_hash, next_epoch());
         }
     }
@@ -1714,7 +1714,7 @@ trait Migratable<Old, New> {
 /// Effect for migration operations
 effect Migrate {
     op log_migration(from: Hash, to: Hash);
-    op migration_failed(reason: String) -> never;
+    op migration_failed(reason: String) -> !;
 }
 ```
 
@@ -2095,7 +2095,7 @@ deploy:
 
 Blood's codebase manager is called **marrow** (bone marrow = source of blood cells = source of code definitions). This section documents how marrow integrates with the content-addressed storage system.
 
-For complete naming conventions and toolchain design, see [naming.md](./naming.md).
+For complete naming conventions and toolchain design, see [naming.md](../tooling/naming.md).
 
 #### 10.5.1 Marrow Architecture
 
@@ -2196,7 +2196,7 @@ Results from bloodbank.blood-lang.org:
 
 #### 10.5.5 Cross-References
 
-- [naming.md](./naming.md) — Toolchain naming conventions, including marrow
+- [naming.md](../tooling/naming.md) — Toolchain naming conventions, including marrow
 - [naming.md §2](./naming.md#2-content-addressed-architecture) — Content-addressing philosophy
 - [naming.md §5](./naming.md#5-hybrid-cli-design) — Hybrid CLI design
 - [blood-tools/ucm/](../../src/bootstrap/blood-tools/ucm/) — Marrow implementation
@@ -2269,7 +2269,7 @@ FnDef {
     name: "variance",
     params: [("data", TypeApp(Named("List"), [Named("f64")]))],
     return_type: Named("f64"),
-    effects: EffectRow::Pure,
+    effects: EffectRow.Pure,
     body: Let {
         name: "n",
         value: MethodCall(Var("data"), "length", []),

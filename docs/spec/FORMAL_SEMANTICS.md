@@ -2,8 +2,8 @@
 
 **Version**: 0.4.0
 **Status**: Specified
-**Implementation**: ✅ Complete (22 Coq proof files, 10,507 lines, 43/43 theorems proved, 0 Admitted)
-**Last Updated**: 2026-02-28
+**Implementation**: ✅ Complete (22 Coq proof files, 10,507 lines, 43 named theorems, 227 Qed total, 0 Admitted)
+**Last Updated**: 2026-03-07
 
 **Revision 0.4.0 Changes**:
 - Added closure typing rules (§5.7) — capture modes, linearity propagation, effect composition
@@ -240,7 +240,7 @@ resume((κ, Γ_gen, ∅), v)  ──►  perform StaleReference.stale(a, g, g')
     if ∃(a,g) ∈ Γ_gen. currentGen(a) = g' ≠ g              [Resume-Stale]
 ```
 
-> **Note**: The formal notation `stale(a, g, g')` corresponds to the concrete Blood API `op stale(info: StaleInfo) -> never` where `StaleInfo` packages address, expected/actual generation, and optional debug fields. See SPECIFICATION.md §4.5 and MEMORY_MODEL.md Appendix B for the concrete definition.
+> **Note**: The formal notation `stale(a, g, g')` corresponds to the concrete Blood API `op stale(info: StaleInfo) -> !` where `StaleInfo` packages address, expected/actual generation, and optional debug fields. See SPECIFICATION.md §4.5 and MEMORY_MODEL.md Appendix B for the concrete definition.
 
 ---
 
@@ -609,7 +609,7 @@ The nesting invariant follows from generation independence: each region maintain
 
 Pattern matching is exhaustive: every `match` expression must cover all possible values of the scrutinee type. The typing rules ensure that bindings introduced by patterns are correctly typed and that the overall match expression has a consistent type.
 
-See [GRAMMAR.md §5.5](./GRAMMAR.md#55-match-expressions) for surface syntax.
+See [GRAMMAR.md §5.2](./GRAMMAR.md#52-block-and-control-flow) for surface syntax.
 
 #### 5.9.1 Pattern Syntax
 
@@ -1327,7 +1327,9 @@ or concurrent separation logic (e.g., cycle collection proofs).
 
 ### 12.1 Choice of Proof Assistant
 
-Based on the current state of the art, we recommend a **two-track approach**:
+*Historical note: The original plan recommended a two-track approach. The actual mechanization used direct Coq without ITrees or Iris (see §12.2). The table below records the original evaluation.*
+
+The original evaluation considered a **two-track approach**:
 
 | Track | Tool | Purpose | Rationale |
 |-------|------|---------|-----------|
@@ -1371,9 +1373,9 @@ decisions:
 See `proofs/PROOF_ROADMAP.md` for the complete theorem inventory, dependency graph,
 model fidelity analysis, and file inventory.
 
-### 12.3 Recommended Formalization Approaches
+### 12.3 Future Formalization Approaches
 
-Based on recent literature, we recommend:
+For extending the mechanization beyond the current monomorphic fragment, these approaches from recent literature are relevant:
 
 | Mechanism | Approach | Reference |
 |-----------|----------|-----------|
@@ -1614,7 +1616,7 @@ This preserves safety: each resume path is independently validated.
 
 ---
 
-*Mechanized proofs in Coq/Agda are planned. See §12 for formalization roadmap.*
+*Mechanized proofs complete — see §12 for details (22 Coq files, 10,507 lines, 227 Qed, 0 Admitted).*
 
 ---
 

@@ -212,7 +212,7 @@ Items are removed only when fully resolved, with a completion date and commit ha
 | **Resolved** | 2026-03-01 |
 | **Severity** | High — undefined symbol in a formal soundness proof |
 
-**Resolution**: Removed `Send`/`Sync` traits entirely from all spec documents. Blood does not need marker traits for fiber-crossing safety — the compiler automatically determines whether a value can cross fiber boundaries based on its **memory tier** (Tier 0 stack values: copied; Tier 1 region: no; Tier 2 non-atomic RC: no; Tier 2 atomic RC: yes; Tier 3 persistent: yes). Updated GRAMMAR.md §3.4.1 (spawn signature), CONCURRENCY.md §2.4/§7.1/§7.2/§8.1/§8.3, MEMORY_MODEL.md §7.8 (Theorem 5 proof), SPECIFICATION.md (spawn signatures), and STDLIB.md §5.9 (replaced "Thread Safety Markers" with "Fiber-Crossing Safety" based on memory tiers). This eliminates an entire class of `unsafe` code while providing equivalent safety guarantees.
+**Resolution**: Restored `Send` as an auto-derived marker trait that **cannot be manually implemented**. Derivation is purely from memory tier (Tier 1 stack: yes; Tier 2 region mutable: no; Tier 2 Frozen: yes; Tier 3 persistent: yes; linear: yes via transfer; raw pointers: no). The original DEF-011 resolution (remove traits entirely, compiler checks at spawn call sites) was revised because generic code (`fn foo<T>` that transitively spawns) cannot express fiber-transferability constraints without a named trait bound. The key insight from DEF-011 was preserved: `Send` is structural and unforgeable — no `unsafe impl Send` exists in Blood. `Sync` was removed (tier system handles sharing). Updated GRAMMAR.md §3.4.1, CONCURRENCY.md §2.4/§8.1, SPECIFICATION.md, STDLIB.md §5.9, and DECISIONS.md ADR-036 Sub-5.
 
 ---
 

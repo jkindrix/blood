@@ -57,19 +57,19 @@ Blood targets **>95% stack allocation** for typical programs (PERF-V-002), enabl
 Escape states form a seven-element lattice:
 
 ```
-            GlobalEscape        -- Tier 2/3, persistent allocation
+            GlobalEscape        -- Tier 3, persistent allocation
                 |
             EffectEscape        -- Tier 2, region + generation snapshot
                 |
-            HeapEscape          -- Tier 1, region allocation
+            HeapEscape          -- Tier 2, region allocation
                 |
-            EffectCapture       -- Tier 1, handler-owned region ref
+            EffectCapture       -- Tier 2, handler-owned region ref
                 |
-            ArgEscape           -- Tier 1, region (or stack if inlined)
+            ArgEscape           -- Tier 2, region (or stack if inlined)
                 |
-            EffectLocal         -- Tier 0, stack (safe across suspension)
+            EffectLocal         -- Tier 1, stack (safe across suspension)
                 |
-            NoEscape            -- Tier 0, stack
+            NoEscape            -- Tier 1, stack
 ```
 
 The `join` operation computes the least upper bound (max by rank):
@@ -104,13 +104,13 @@ EscapeState ::=
 ```
 FUNCTION recommended_tier(state: EscapeState) -> MemoryTier:
     CASE state OF:
-        NoEscape      → Stack     -- Tier 0, thin pointer, no gen checks
-        EffectLocal   → Stack     -- Tier 0, safe across suspension
-        ArgEscape     → Region    -- Tier 1, gen-checked (stack if inlined)
-        EffectCapture → Region    -- Tier 1, handler-owned, no snapshot
-        HeapEscape    → Region    -- Tier 1, gen-checked
-        EffectEscape  → Region    -- Tier 1, gen-checked + snapshot validation on resume
-        GlobalEscape  → Region    -- Tier 2/3, gen-checked, persistent
+        NoEscape      → Stack     -- Tier 1, thin pointer, no gen checks
+        EffectLocal   → Stack     -- Tier 1, safe across suspension
+        ArgEscape     → Region    -- Tier 2, gen-checked (stack if inlined)
+        EffectCapture → Region    -- Tier 2, handler-owned, no snapshot
+        HeapEscape    → Region    -- Tier 2, gen-checked
+        EffectEscape  → Region    -- Tier 2, gen-checked + snapshot validation on resume
+        GlobalEscape  → Region    -- Tier 3, gen-checked, persistent
 ```
 
 ### 2.4 Effect Snapshot Requirements

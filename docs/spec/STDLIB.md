@@ -38,7 +38,7 @@ This document specifies Blood's standard library, including core types, traits, 
    - 5.6 [Hash Trait](#56-hash-trait)
    - 5.7 [Display and Debug Traits](#57-display-and-debug-traits)
    - 5.8 [Numeric Traits](#58-numeric-traits)
-   - 5.9 [Thread Safety Markers](#59-thread-safety-markers)
+   - 5.9 [Fiber-Crossing Safety](#59-fiber-crossing-safety)
 6. [Iterator Adapters](#6-iterator-adapters)
 7. [IO Types](#7-io-types)
 8. [Time Types](#8-time-types)
@@ -120,7 +120,7 @@ std/
 type bool = true | false
 type char = <Unicode scalar value>  // 4 bytes
 type unit = ()
-type never = !  // The type with no values (diverges)
+// `!` is the never type (no values, diverges). No alias — `!` is canonical.
 ```
 
 ### 2.4 Primitive Methods
@@ -223,7 +223,7 @@ struct Box<T> {
 }
 
 impl<T> Box<T> {
-    /// Allocates on the heap (Tier 1: Region) and returns a boxed value.
+    /// Allocates on the heap (Tier 2: Region) and returns a boxed value.
     /// The generation counter is initialized to the current generation at that address.
     fn new(value: T) -> Box<T> / {Allocate}
 
@@ -232,7 +232,7 @@ impl<T> Box<T> {
     fn into_inner(self) -> T / pure
 
     /// Leaks the box, returning a static reference.
-    /// The memory will never be freed (promoted to Tier 2).
+    /// The memory will never be freed (promoted to Tier 3).
     fn leak(self) -> &'static mut T / pure
 }
 
@@ -260,19 +260,14 @@ impl<T> DerefMut for Box<T> {
     fn deref_mut(&mut self) -> &mut T / {StaleReference}
 }
 
-impl<T> Drop for Box<T> {
-    /// Drops the box, incrementing the generation counter at the memory address.
-    ///
-    /// After this call, any existing references to this memory will have
-    /// stale generation counters and will raise `StaleReference` on dereference.
-    ///
-    /// # Generation Lifecycle
-    /// 1. Memory allocated with generation N
-    /// 2. Box created pointing to address with generation N
-    /// 3. Drop increments generation to N+1
-    /// 4. Old Box's generation (N) now mismatches (N+1) → stale
-    fn drop(&mut self) / pure
-}
+/// Box is linear — memory is freed when the box goes out of scope.
+/// The generation counter at the memory address is incremented on deallocation.
+///
+/// # Generation Lifecycle
+/// 1. Memory allocated with generation N
+/// 2. Box created pointing to address with generation N
+/// 3. Deallocation increments generation to N+1
+/// 4. Old references with generation N now mismatch (N+1) → stale
 ```
 
 ### 3.4 String
@@ -418,7 +413,7 @@ impl<Idx: Clone + PartialOrd + Step> Iterator for Range<Idx> {
     fn next(&mut self) -> Option<Idx> / pure {
         if self.start < self.end {
             let n = self.start.clone()
-            self.start = Step::forward(self.start.clone(), 1)
+            self.start = Step.forward(self.start.clone(), 1)
             Some(n)
         } else {
             None
@@ -426,7 +421,7 @@ impl<Idx: Clone + PartialOrd + Step> Iterator for Range<Idx> {
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) / pure {
-        let len = Step::steps_between(&self.start, &self.end).unwrap_or(usize::MAX)
+        let len = Step.steps_between(&self.start, &self.end).unwrap_or(usize.MAX)
         (len, Some(len))
     }
 }
@@ -435,7 +430,7 @@ impl<Idx: Clone + PartialOrd + Step> ExactSizeIterator for Range<Idx> {}
 impl<Idx: Clone + PartialOrd + Step> DoubleEndedIterator for Range<Idx> {
     fn next_back(&mut self) -> Option<Idx> / pure {
         if self.start < self.end {
-            self.end = Step::backward(self.end.clone(), 1)
+            self.end = Step.backward(self.end.clone(), 1)
             Some(self.end.clone())
         } else {
             None
@@ -451,28 +446,28 @@ impl<Idx: Clone + PartialOrd + Step> RangeInclusive<Idx> {
 }
 
 impl<Idx> RangeBounds<Idx> for Range<Idx> {
-    fn start_bound(&self) -> Bound<&Idx> / pure { Bound::Included(&self.start) }
-    fn end_bound(&self) -> Bound<&Idx> / pure { Bound::Excluded(&self.end) }
+    fn start_bound(&self) -> Bound<&Idx> / pure { Bound.Included(&self.start) }
+    fn end_bound(&self) -> Bound<&Idx> / pure { Bound.Excluded(&self.end) }
 }
 
 impl<Idx> RangeBounds<Idx> for RangeInclusive<Idx> {
-    fn start_bound(&self) -> Bound<&Idx> / pure { Bound::Included(&self.start) }
-    fn end_bound(&self) -> Bound<&Idx> / pure { Bound::Included(&self.end) }
+    fn start_bound(&self) -> Bound<&Idx> / pure { Bound.Included(&self.start) }
+    fn end_bound(&self) -> Bound<&Idx> / pure { Bound.Included(&self.end) }
 }
 
 impl<Idx> RangeBounds<Idx> for RangeFrom<Idx> {
-    fn start_bound(&self) -> Bound<&Idx> / pure { Bound::Included(&self.start) }
-    fn end_bound(&self) -> Bound<&Idx> / pure { Bound::Unbounded }
+    fn start_bound(&self) -> Bound<&Idx> / pure { Bound.Included(&self.start) }
+    fn end_bound(&self) -> Bound<&Idx> / pure { Bound.Unbounded }
 }
 
 impl<Idx> RangeBounds<Idx> for RangeTo<Idx> {
-    fn start_bound(&self) -> Bound<&Idx> / pure { Bound::Unbounded }
-    fn end_bound(&self) -> Bound<&Idx> / pure { Bound::Excluded(&self.end) }
+    fn start_bound(&self) -> Bound<&Idx> / pure { Bound.Unbounded }
+    fn end_bound(&self) -> Bound<&Idx> / pure { Bound.Excluded(&self.end) }
 }
 
 impl<Idx> RangeBounds<Idx> for RangeFull {
-    fn start_bound(&self) -> Bound<&Idx> / pure { Bound::Unbounded }
-    fn end_bound(&self) -> Bound<&Idx> / pure { Bound::Unbounded }
+    fn start_bound(&self) -> Bound<&Idx> / pure { Bound.Unbounded }
+    fn end_bound(&self) -> Bound<&Idx> / pure { Bound.Unbounded }
 }
 ```
 
@@ -532,8 +527,8 @@ impl Step for i32 {
 
 ```blood
 // Range syntax maps to constructors:
-1..10           // Range::new(1, 10)
-1..=10          // RangeInclusive::new(1, 10)
+1..10           // Range.new(1, 10)
+1..=10          // RangeInclusive.new(1, 10)
 1..             // RangeFrom { start: 1 }
 ..10            // RangeTo { end: 10 }
 ..=10           // RangeToInclusive { end: 10 }
@@ -569,7 +564,7 @@ Growable contiguous array, similar to Rust's `Vec` or C++'s `std::vector`.
 
 ```blood
 struct Vec<T> {
-    buf: RawVec<T>,   // Pointer + capacity (Tier 1 or 2 depending on escape)
+    buf: RawVec<T>,   // Pointer + capacity (Tier 2 or 2 depending on escape)
     len: usize,        // Current element count
 }
 
@@ -1008,12 +1003,10 @@ impl<'a, T: Ord> DerefMut for PeekMut<'a, T> {
     fn deref_mut(&mut self) -> &mut T / pure
 }
 
-impl<'a, T: Ord> Drop for PeekMut<'a, T> {
-    fn drop(&mut self) / pure {
-        // Sift down if element was modified
-        if self.sift {
-            self.heap.sift_down(0)
-        }
+/// PeekMut is linear — when released, sifts down if element was modified.
+fn release(self: PeekMut<T>) / pure {
+    if self.sift {
+        self.heap.sift_down(0)
     }
 }
 
@@ -1062,7 +1055,7 @@ impl<T: PartialOrd> PartialOrd for Reverse<T> {
 
 ```blood
 // Max-heap (default)
-let mut max_heap = BinaryHeap::new()
+let mut max_heap = BinaryHeap.new()
 max_heap.push(3)
 max_heap.push(1)
 max_heap.push(4)
@@ -1070,7 +1063,7 @@ assert_eq!(max_heap.pop(), Some(4))
 assert_eq!(max_heap.pop(), Some(3))
 
 // Min-heap using Reverse wrapper
-let mut min_heap: BinaryHeap<Reverse<i32>> = BinaryHeap::new()
+let mut min_heap: BinaryHeap<Reverse<i32>> = BinaryHeap.new()
 min_heap.push(Reverse(3))
 min_heap.push(Reverse(1))
 min_heap.push(Reverse(4))
@@ -1089,7 +1082,7 @@ impl Ord for Task {
     }
 }
 
-let mut task_queue = BinaryHeap::new()
+let mut task_queue = BinaryHeap.new()
 task_queue.push(Task { priority: 1, name: "low".into() })
 task_queue.push(Task { priority: 10, name: "high".into() })
 // Highest priority task is processed first
@@ -1360,11 +1353,8 @@ impl<'a, T> DerefMut for MutexGuard<'a, T> {
     fn deref_mut(&mut self) -> &mut T / pure
 }
 
-impl<'a, T> Drop for MutexGuard<'a, T> {
-    fn drop(&mut self) / pure {
-        // Releases the lock
-    }
-}
+/// MutexGuard is linear — releases the lock when scope ends.
+/// Cleanup handled by the region tier system.
 ```
 
 #### 4.8.5 Atomic Types
@@ -1489,17 +1479,17 @@ trait Into<T> {
 
 // Blanket implementation
 impl<T, U> Into<U> for T where U: From<T> {
-    fn into(self) -> U / pure { U::from(self) }
+    fn into(self) -> U / pure { U.from(self) }
 }
 
 trait TryFrom<T> {
     type Error
-    fn try_from(value: T) -> Result<Self, Self::Error> / pure
+    fn try_from(value: T) -> Result<Self, Self.Error> / pure
 }
 
 trait TryInto<T> {
     type Error
-    fn try_into(self) -> Result<T, Self::Error> / pure
+    fn try_into(self) -> Result<T, Self.Error> / pure
 }
 
 trait AsRef<T> {
@@ -1517,52 +1507,52 @@ trait AsMut<T> {
 // Arithmetic
 trait Add<Rhs = Self> {
     type Output
-    fn add(self, rhs: Rhs) -> Self::Output / pure
+    fn add(self, rhs: Rhs) -> Self.Output / pure
 }
 
 trait Sub<Rhs = Self> {
     type Output
-    fn sub(self, rhs: Rhs) -> Self::Output / pure
+    fn sub(self, rhs: Rhs) -> Self.Output / pure
 }
 
 trait Mul<Rhs = Self> {
     type Output
-    fn mul(self, rhs: Rhs) -> Self::Output / pure
+    fn mul(self, rhs: Rhs) -> Self.Output / pure
 }
 
 trait Div<Rhs = Self> {
     type Output
-    fn div(self, rhs: Rhs) -> Self::Output / pure
+    fn div(self, rhs: Rhs) -> Self.Output / pure
 }
 
 trait Rem<Rhs = Self> {
     type Output
-    fn rem(self, rhs: Rhs) -> Self::Output / pure
+    fn rem(self, rhs: Rhs) -> Self.Output / pure
 }
 
 trait Neg {
     type Output
-    fn neg(self) -> Self::Output / pure
+    fn neg(self) -> Self.Output / pure
 }
 
 // Index
 trait Index<Idx> {
     type Output
-    fn index(&self, index: Idx) -> &Self::Output / pure
+    fn index(&self, index: Idx) -> &Self.Output / pure
 }
 
 trait IndexMut<Idx>: Index<Idx> {
-    fn index_mut(&mut self, index: Idx) -> &mut Self::Output / pure
+    fn index_mut(&mut self, index: Idx) -> &mut Self.Output / pure
 }
 
 // Dereference
 trait Deref {
     type Target
-    fn deref(&self) -> &Self::Target / pure
+    fn deref(&self) -> &Self.Target / pure
 }
 
 trait DerefMut: Deref {
-    fn deref_mut(&mut self) -> &mut Self::Target / pure
+    fn deref_mut(&mut self) -> &mut Self.Target / pure
 }
 ```
 
@@ -1572,32 +1562,32 @@ trait DerefMut: Deref {
 trait Iterator {
     type Item
 
-    fn next(&mut self) -> Option<Self::Item> / pure
+    fn next(&mut self) -> Option<Self.Item> / pure
 
     // Provided methods (selection)
-    fn map<B, F: fn(Self::Item) -> B>(self, f: F) -> Map<Self, F> / pure
-    fn filter<P: fn(&Self::Item) -> bool>(self, p: P) -> Filter<Self, P> / pure
-    fn fold<B, F: fn(B, Self::Item) -> B>(self, init: B, f: F) -> B / pure
-    fn collect<B: FromIterator<Self::Item>>(self) -> B / pure
+    fn map<B, F: fn(Self.Item) -> B>(self, f: F) -> Map<Self, F> / pure
+    fn filter<P: fn(&Self.Item) -> bool>(self, p: P) -> Filter<Self, P> / pure
+    fn fold<B, F: fn(B, Self.Item) -> B>(self, init: B, f: F) -> B / pure
+    fn collect<B: FromIterator<Self.Item>>(self) -> B / pure
     fn count(self) -> usize / pure
-    fn sum<S: Sum<Self::Item>>(self) -> S / pure
-    fn product<P: Product<Self::Item>>(self) -> P / pure
-    fn any<F: fn(Self::Item) -> bool>(&mut self, f: F) -> bool / pure
-    fn all<F: fn(Self::Item) -> bool>(&mut self, f: F) -> bool / pure
-    fn find<P: fn(&Self::Item) -> bool>(&mut self, p: P) -> Option<Self::Item> / pure
-    fn position<P: fn(Self::Item) -> bool>(&mut self, p: P) -> Option<usize> / pure
+    fn sum<S: Sum<Self.Item>>(self) -> S / pure
+    fn product<P: Product<Self.Item>>(self) -> P / pure
+    fn any<F: fn(Self.Item) -> bool>(&mut self, f: F) -> bool / pure
+    fn all<F: fn(Self.Item) -> bool>(&mut self, f: F) -> bool / pure
+    fn find<P: fn(&Self.Item) -> bool>(&mut self, p: P) -> Option<Self.Item> / pure
+    fn position<P: fn(Self.Item) -> bool>(&mut self, p: P) -> Option<usize> / pure
     fn take(self, n: usize) -> Take<Self> / pure
     fn skip(self, n: usize) -> Skip<Self> / pure
-    fn chain<U: Iterator<Item = Self::Item>>(self, other: U) -> Chain<Self, U> / pure
+    fn chain<U: Iterator<Item = Self.Item>>(self, other: U) -> Chain<Self, U> / pure
     fn zip<U: Iterator>(self, other: U) -> Zip<Self, U> / pure
     fn enumerate(self) -> Enumerate<Self> / pure
 }
 
 trait IntoIterator {
     type Item
-    type IntoIter: Iterator<Item = Self::Item>
+    type IntoIter: Iterator<Item = Self.Item>
 
-    fn into_iter(self) -> Self::IntoIter / pure
+    fn into_iter(self) -> Self.IntoIter / pure
 }
 
 trait FromIterator<A> {
@@ -1614,10 +1604,6 @@ trait Clone {
 
 trait Copy: Clone {
     // Marker trait - bitwise copy is sufficient
-}
-
-trait Drop {
-    fn drop(&mut self) / pure
 }
 
 trait Default {
@@ -2039,9 +2025,9 @@ impl f64 {
     const LN_10: f64 = 2.30258509299404568402
 
     // Special values
-    const INFINITY: f64 = f64::infinity()
-    const NEG_INFINITY: f64 = f64::neg_infinity()
-    const NAN: f64 = f64::nan()
+    const INFINITY: f64 = f64.infinity()
+    const NEG_INFINITY: f64 = f64.neg_infinity()
+    const NAN: f64 = f64.nan()
     const EPSILON: f64 = 2.2204460492503131e-16
     const MIN: f64 = -1.7976931348623157e+308
     const MAX: f64 = 1.7976931348623157e+308
@@ -2101,25 +2087,26 @@ trait Overflowing: Sized {
 
 ### 5.9 Fiber-Crossing Safety
 
-Blood does not have `Send` or `Sync` marker traits. Instead, the compiler automatically
-determines whether a value can be transferred across fiber boundaries based on its
-**memory tier** (see MEMORY_MODEL.md §1.3).
+Blood uses a `Send` marker trait for fiber-crossing safety. Unlike Rust, `Send` is
+**auto-derived from the value's memory tier** and **cannot be manually implemented**.
+Generic code uses `T: Send` bounds to express fiber-transferability constraints
+(see MEMORY_MODEL.md §1.3).
 
-> **Design note — no Send/Sync traits**: Rust uses `Send` and `Sync` marker traits with
-> `unsafe impl` and negative impls to control cross-thread data transfer. Blood replaces
-> this with a compiler-automatic check based on the memory tier system. Every type's
-> tier is known at compile time, so no user-facing trait machinery is needed. This
-> eliminates an entire class of `unsafe` code (manual Send/Sync impls) while providing
-> equivalent safety guarantees. See ADR-036.
+> **Design note — auto-derived Send**: Rust uses `Send` and `Sync` marker traits with
+> `unsafe impl` to control cross-thread data transfer. Blood's `Send` is structural and
+> unforgeable — derived entirely from memory tier, with no `unsafe impl Send`. Blood does
+> not have a separate `Sync` trait; sharing is controlled by the tier system (Tier 2
+> Frozen and Tier 3 values are inherently shareable). This eliminates an entire class of
+> `unsafe` code while providing equivalent safety guarantees. See ADR-036.
 
 #### 5.9.1 Fiber-Crossing Rules by Memory Tier
 
 | Memory Tier | Fiber-Transferable? | Shared Across Fibers? | Rationale |
 |-------------|--------------------|-----------------------|-----------|
-| **Tier 0** (stack values) | Yes (copied) | Yes (immutable copies) | Value semantics — each fiber gets its own copy |
-| **Tier 1** (region-allocated) | No | No | Region-scoped lifetime — cannot outlive creating fiber's region |
-| **Tier 2** (ref-counted) | No (single-fiber RC) | No | Non-atomic reference counting — not thread-safe |
-| **Tier 2** (atomic RC / `Arc<T>`) | Yes | Yes | Atomic reference counting — thread-safe |
+| **Tier 1** (stack values) | Yes (copied) | Yes (immutable copies) | Value semantics — each fiber gets its own copy |
+| **Tier 2** (region-allocated) | No | No | Region-scoped lifetime — cannot outlive creating fiber's region |
+| **Tier 3** (ref-counted) | No (single-fiber RC) | No | Non-atomic reference counting — not thread-safe |
+| **Tier 3** (atomic RC / `Arc<T>`) | Yes | Yes | Atomic reference counting — thread-safe |
 | **Tier 3** (persistent) | Yes | Yes | Immutable, content-addressed — inherently safe |
 
 #### 5.9.2 Compiler Enforcement
@@ -2132,13 +2119,13 @@ When a value is captured by a fiber-spawning closure, the compiler checks:
 
 ```blood
 fn example() / {Fiber} {
-    let x: i32 = 42                    // Tier 0 — fiber-transferable (copied)
-    let r = region { Vec.new() }       // Tier 1 — NOT fiber-transferable
-    let shared = Arc.new(Data { ... }) // Tier 2 atomic — fiber-transferable
+    let x: i32 = 42                    // Tier 1 — fiber-transferable (copied)
+    let r = region { Vec.new() }       // Tier 2 — NOT fiber-transferable
+    let shared = Arc.new(Data { ... }) // Tier 3 atomic — fiber-transferable
 
     spawn(fn() {
-        use(x)       // OK: i32 is Tier 0, copied into fiber
-        use(shared)  // OK: Arc is Tier 2 atomic, ref-count bumped
+        use(x)       // OK: i32 is Tier 1, copied into fiber
+        use(shared)  // OK: Arc is Tier 3 atomic, ref-count bumped
         // use(r)    // ERROR: region-allocated value cannot cross fiber boundary
     })
 }
@@ -2148,8 +2135,8 @@ fn example() / {Fiber} {
 
 | Type | Fiber-Transferable? | Shareable? | Notes |
 |------|--------------------:|:-----------|-------|
-| Primitives (i32, bool, etc.) | Yes | Yes | Tier 0, copied by value |
-| Structs/Enums (all Tier 0 fields) | Yes | Yes | Transitively checked |
+| Primitives (i32, bool, etc.) | Yes | Yes | Tier 1, copied by value |
+| Structs/Enums (all Tier 1 fields) | Yes | Yes | Transitively checked |
 | Region-allocated values | No | No | Lifetime bound to region |
 | `Arc<T>` (T is transferable) | Yes | Yes | Atomic ref-counting |
 | `Mutex<T>` | Yes | Yes | Synchronized access |
@@ -2174,7 +2161,7 @@ struct Map<I, F> {
     f: F,
 }
 
-impl<B, I: Iterator, F: fn(I::Item) -> B> Iterator for Map<I, F> {
+impl<B, I: Iterator, F: fn(I.Item) -> B> Iterator for Map<I, F> {
     type Item = B
 
     fn next(&mut self) -> Option<B> / pure {
@@ -2192,10 +2179,10 @@ struct Filter<I, P> {
     predicate: P,
 }
 
-impl<I: Iterator, P: fn(&I::Item) -> bool> Iterator for Filter<I, P> {
-    type Item = I::Item
+impl<I: Iterator, P: fn(&I.Item) -> bool> Iterator for Filter<I, P> {
+    type Item = I.Item
 
-    fn next(&mut self) -> Option<I::Item> / pure {
+    fn next(&mut self) -> Option<I.Item> / pure {
         loop {
             match self.iter.next() {
                 Some(item) if (self.predicate)(&item) => return Some(item),
@@ -2212,7 +2199,7 @@ struct FilterMap<I, F> {
     f: F,
 }
 
-impl<B, I: Iterator, F: fn(I::Item) -> Option<B>> Iterator for FilterMap<I, F> {
+impl<B, I: Iterator, F: fn(I.Item) -> Option<B>> Iterator for FilterMap<I, F> {
     type Item = B
 
     fn next(&mut self) -> Option<B> / pure {
@@ -2259,9 +2246,9 @@ struct Zip<A, B> {
 }
 
 impl<A: Iterator, B: Iterator> Iterator for Zip<A, B> {
-    type Item = (A::Item, B::Item)
+    type Item = (A.Item, B.Item)
 
-    fn next(&mut self) -> Option<(A::Item, B::Item)> / pure {
+    fn next(&mut self) -> Option<(A.Item, B.Item)> / pure {
         let a = self.a.next()?
         let b = self.b.next()?
         Some((a, b))
@@ -2286,9 +2273,9 @@ struct Enumerate<I> {
 }
 
 impl<I: Iterator> Iterator for Enumerate<I> {
-    type Item = (usize, I::Item)
+    type Item = (usize, I.Item)
 
-    fn next(&mut self) -> Option<(usize, I::Item)> / pure {
+    fn next(&mut self) -> Option<(usize, I.Item)> / pure {
         let item = self.iter.next()?
         let i = self.count
         self.count += 1
@@ -2307,9 +2294,9 @@ struct Take<I> {
 }
 
 impl<I: Iterator> Iterator for Take<I> {
-    type Item = I::Item
+    type Item = I.Item
 
-    fn next(&mut self) -> Option<I::Item> / pure {
+    fn next(&mut self) -> Option<I.Item> / pure {
         if self.remaining > 0 {
             self.remaining -= 1
             self.iter.next()
@@ -2333,9 +2320,9 @@ struct Skip<I> {
 }
 
 impl<I: Iterator> Iterator for Skip<I> {
-    type Item = I::Item
+    type Item = I.Item
 
-    fn next(&mut self) -> Option<I::Item> / pure {
+    fn next(&mut self) -> Option<I.Item> / pure {
         while self.n > 0 {
             self.iter.next()?
             self.n -= 1
@@ -2351,10 +2338,10 @@ struct TakeWhile<I, P> {
     done: bool,
 }
 
-impl<I: Iterator, P: fn(&I::Item) -> bool> Iterator for TakeWhile<I, P> {
-    type Item = I::Item
+impl<I: Iterator, P: fn(&I.Item) -> bool> Iterator for TakeWhile<I, P> {
+    type Item = I.Item
 
-    fn next(&mut self) -> Option<I::Item> / pure {
+    fn next(&mut self) -> Option<I.Item> / pure {
         if self.done {
             return None
         }
@@ -2375,10 +2362,10 @@ struct SkipWhile<I, P> {
     done: bool,
 }
 
-impl<I: Iterator, P: fn(&I::Item) -> bool> Iterator for SkipWhile<I, P> {
-    type Item = I::Item
+impl<I: Iterator, P: fn(&I.Item) -> bool> Iterator for SkipWhile<I, P> {
+    type Item = I.Item
 
-    fn next(&mut self) -> Option<I::Item> / pure {
+    fn next(&mut self) -> Option<I.Item> / pure {
         if !self.done {
             loop {
                 match self.iter.next() {
@@ -2398,19 +2385,19 @@ impl<I: Iterator, P: fn(&I::Item) -> bool> Iterator for SkipWhile<I, P> {
 /// Flattens nested iterators.
 struct Flatten<I: Iterator>
 where
-    I::Item: IntoIterator,
+    I.Item: IntoIterator,
 {
     outer: I,
-    inner: Option<<I::Item as IntoIterator>::IntoIter>,
+    inner: Option<<I.Item as IntoIterator>.IntoIter>,
 }
 
 impl<I: Iterator> Iterator for Flatten<I>
 where
-    I::Item: IntoIterator,
+    I.Item: IntoIterator,
 {
-    type Item = <I::Item as IntoIterator>::Item
+    type Item = <I.Item as IntoIterator>.Item
 
-    fn next(&mut self) -> Option<Self::Item> / pure {
+    fn next(&mut self) -> Option<Self.Item> / pure {
         loop {
             if let Some(ref mut inner) = self.inner {
                 if let Some(item) = inner.next() {
@@ -2433,12 +2420,12 @@ struct FlatMap<I, F, U: IntoIterator> {
 /// Peekable iterator that can look ahead.
 struct Peekable<I: Iterator> {
     iter: I,
-    peeked: Option<Option<I::Item>>,
+    peeked: Option<Option<I.Item>>,
 }
 
 impl<I: Iterator> Peekable<I> {
     /// Returns a reference to the next element without consuming it.
-    fn peek(&mut self) -> Option<&I::Item> / pure {
+    fn peek(&mut self) -> Option<&I.Item> / pure {
         if self.peeked.is_none() {
             self.peeked = Some(self.iter.next())
         }
@@ -2446,7 +2433,7 @@ impl<I: Iterator> Peekable<I> {
     }
 
     /// Returns a mutable reference to the next element.
-    fn peek_mut(&mut self) -> Option<&mut I::Item> / pure {
+    fn peek_mut(&mut self) -> Option<&mut I.Item> / pure {
         if self.peeked.is_none() {
             self.peeked = Some(self.iter.next())
         }
@@ -2454,7 +2441,7 @@ impl<I: Iterator> Peekable<I> {
     }
 
     /// Consumes the next element if it matches the predicate.
-    fn next_if<P: fn(&I::Item) -> bool>(&mut self, predicate: P) -> Option<I::Item> / pure {
+    fn next_if<P: fn(&I.Item) -> bool>(&mut self, predicate: P) -> Option<I.Item> / pure {
         match self.peek() {
             Some(item) if predicate(item) => self.next(),
             _ => None,
@@ -2463,9 +2450,9 @@ impl<I: Iterator> Peekable<I> {
 }
 
 impl<I: Iterator> Iterator for Peekable<I> {
-    type Item = I::Item
+    type Item = I.Item
 
-    fn next(&mut self) -> Option<I::Item> / pure {
+    fn next(&mut self) -> Option<I.Item> / pure {
         match self.peeked.take() {
             Some(v) => v,
             None => self.iter.next(),
@@ -2479,9 +2466,9 @@ struct Fuse<I> {
 }
 
 impl<I: Iterator> Iterator for Fuse<I> {
-    type Item = I::Item
+    type Item = I.Item
 
-    fn next(&mut self) -> Option<I::Item> / pure {
+    fn next(&mut self) -> Option<I.Item> / pure {
         match &mut self.iter {
             Some(iter) => match iter.next() {
                 Some(item) => Some(item),
@@ -2501,10 +2488,10 @@ struct Inspect<I, F> {
     f: F,
 }
 
-impl<I: Iterator, F: fn(&I::Item)> Iterator for Inspect<I, F> {
-    type Item = I::Item
+impl<I: Iterator, F: fn(&I.Item)> Iterator for Inspect<I, F> {
+    type Item = I.Item
 
-    fn next(&mut self) -> Option<I::Item> / pure {
+    fn next(&mut self) -> Option<I.Item> / pure {
         let item = self.iter.next()?
         (self.f)(&item)
         Some(item)
@@ -2538,9 +2525,9 @@ struct Cycle<I: Clone + Iterator> {
 }
 
 impl<I: Clone + Iterator> Iterator for Cycle<I> {
-    type Item = I::Item
+    type Item = I.Item
 
-    fn next(&mut self) -> Option<I::Item> / pure {
+    fn next(&mut self) -> Option<I.Item> / pure {
         match self.iter.next() {
             Some(item) => Some(item),
             None => {
@@ -2597,9 +2584,9 @@ struct Rev<I> {
 }
 
 impl<I: DoubleEndedIterator> Iterator for Rev<I> {
-    type Item = I::Item
+    type Item = I.Item
 
-    fn next(&mut self) -> Option<I::Item> / pure {
+    fn next(&mut self) -> Option<I.Item> / pure {
         self.iter.next_back()
     }
 }
@@ -2614,84 +2601,84 @@ trait Iterator {
     type Item
 
     // Core method (must be implemented)
-    fn next(&mut self) -> Option<Self::Item> / pure
+    fn next(&mut self) -> Option<Self.Item> / pure
 
     // Size hints
     fn size_hint(&self) -> (usize, Option<usize>) / pure { (0, None) }
     fn count(self) -> usize / pure
-    fn last(self) -> Option<Self::Item> / pure
-    fn nth(&mut self, n: usize) -> Option<Self::Item> / pure
+    fn last(self) -> Option<Self.Item> / pure
+    fn nth(&mut self, n: usize) -> Option<Self.Item> / pure
 
     // Adapters (return new iterators)
-    fn map<B, F: fn(Self::Item) -> B>(self, f: F) -> Map<Self, F> / pure
-    fn filter<P: fn(&Self::Item) -> bool>(self, predicate: P) -> Filter<Self, P> / pure
-    fn filter_map<B, F: fn(Self::Item) -> Option<B>>(self, f: F) -> FilterMap<Self, F> / pure
-    fn chain<U: Iterator<Item = Self::Item>>(self, other: U) -> Chain<Self, U> / pure
+    fn map<B, F: fn(Self.Item) -> B>(self, f: F) -> Map<Self, F> / pure
+    fn filter<P: fn(&Self.Item) -> bool>(self, predicate: P) -> Filter<Self, P> / pure
+    fn filter_map<B, F: fn(Self.Item) -> Option<B>>(self, f: F) -> FilterMap<Self, F> / pure
+    fn chain<U: Iterator<Item = Self.Item>>(self, other: U) -> Chain<Self, U> / pure
     fn zip<U: Iterator>(self, other: U) -> Zip<Self, U> / pure
     fn enumerate(self) -> Enumerate<Self> / pure
     fn take(self, n: usize) -> Take<Self> / pure
     fn skip(self, n: usize) -> Skip<Self> / pure
-    fn take_while<P: fn(&Self::Item) -> bool>(self, predicate: P) -> TakeWhile<Self, P> / pure
-    fn skip_while<P: fn(&Self::Item) -> bool>(self, predicate: P) -> SkipWhile<Self, P> / pure
-    fn flatten(self) -> Flatten<Self> / pure where Self::Item: IntoIterator
-    fn flat_map<U: IntoIterator, F: fn(Self::Item) -> U>(self, f: F) -> FlatMap<Self, F, U> / pure
+    fn take_while<P: fn(&Self.Item) -> bool>(self, predicate: P) -> TakeWhile<Self, P> / pure
+    fn skip_while<P: fn(&Self.Item) -> bool>(self, predicate: P) -> SkipWhile<Self, P> / pure
+    fn flatten(self) -> Flatten<Self> / pure where Self.Item: IntoIterator
+    fn flat_map<U: IntoIterator, F: fn(Self.Item) -> U>(self, f: F) -> FlatMap<Self, F, U> / pure
     fn peekable(self) -> Peekable<Self> / pure
     fn fuse(self) -> Fuse<Self> / pure
-    fn inspect<F: fn(&Self::Item)>(self, f: F) -> Inspect<Self, F> / pure
-    fn interleave<J: Iterator<Item = Self::Item>>(self, other: J) -> Interleave<Self, J> / pure
+    fn inspect<F: fn(&Self.Item)>(self, f: F) -> Inspect<Self, F> / pure
+    fn interleave<J: Iterator<Item = Self.Item>>(self, other: J) -> Interleave<Self, J> / pure
     fn cycle(self) -> Cycle<Self> / pure where Self: Clone
     fn rev(self) -> Rev<Self> / pure where Self: DoubleEndedIterator
     fn step_by(self, step: usize) -> StepBy<Self> / pure
 
     // Consumers (collect/reduce to a value)
-    fn collect<B: FromIterator<Self::Item>>(self) -> B / pure
-    fn fold<B, F: fn(B, Self::Item) -> B>(self, init: B, f: F) -> B / pure
-    fn reduce<F: fn(Self::Item, Self::Item) -> Self::Item>(self, f: F) -> Option<Self::Item> / pure
-    fn sum<S: Sum<Self::Item>>(self) -> S / pure
-    fn product<P: Product<Self::Item>>(self) -> P / pure
-    fn min(self) -> Option<Self::Item> / pure where Self::Item: Ord
-    fn max(self) -> Option<Self::Item> / pure where Self::Item: Ord
-    fn min_by<F: fn(&Self::Item, &Self::Item) -> Ordering>(self, compare: F) -> Option<Self::Item> / pure
-    fn max_by<F: fn(&Self::Item, &Self::Item) -> Ordering>(self, compare: F) -> Option<Self::Item> / pure
-    fn min_by_key<B: Ord, F: fn(&Self::Item) -> B>(self, f: F) -> Option<Self::Item> / pure
-    fn max_by_key<B: Ord, F: fn(&Self::Item) -> B>(self, f: F) -> Option<Self::Item> / pure
+    fn collect<B: FromIterator<Self.Item>>(self) -> B / pure
+    fn fold<B, F: fn(B, Self.Item) -> B>(self, init: B, f: F) -> B / pure
+    fn reduce<F: fn(Self.Item, Self.Item) -> Self.Item>(self, f: F) -> Option<Self.Item> / pure
+    fn sum<S: Sum<Self.Item>>(self) -> S / pure
+    fn product<P: Product<Self.Item>>(self) -> P / pure
+    fn min(self) -> Option<Self.Item> / pure where Self.Item: Ord
+    fn max(self) -> Option<Self.Item> / pure where Self.Item: Ord
+    fn min_by<F: fn(&Self.Item, &Self.Item) -> Ordering>(self, compare: F) -> Option<Self.Item> / pure
+    fn max_by<F: fn(&Self.Item, &Self.Item) -> Ordering>(self, compare: F) -> Option<Self.Item> / pure
+    fn min_by_key<B: Ord, F: fn(&Self.Item) -> B>(self, f: F) -> Option<Self.Item> / pure
+    fn max_by_key<B: Ord, F: fn(&Self.Item) -> B>(self, f: F) -> Option<Self.Item> / pure
 
     // Searching
-    fn find<P: fn(&Self::Item) -> bool>(&mut self, predicate: P) -> Option<Self::Item> / pure
-    fn find_map<B, F: fn(Self::Item) -> Option<B>>(&mut self, f: F) -> Option<B> / pure
-    fn position<P: fn(Self::Item) -> bool>(&mut self, predicate: P) -> Option<usize> / pure
-    fn rposition<P: fn(Self::Item) -> bool>(&mut self, predicate: P) -> Option<usize> / pure
+    fn find<P: fn(&Self.Item) -> bool>(&mut self, predicate: P) -> Option<Self.Item> / pure
+    fn find_map<B, F: fn(Self.Item) -> Option<B>>(&mut self, f: F) -> Option<B> / pure
+    fn position<P: fn(Self.Item) -> bool>(&mut self, predicate: P) -> Option<usize> / pure
+    fn rposition<P: fn(Self.Item) -> bool>(&mut self, predicate: P) -> Option<usize> / pure
         where Self: DoubleEndedIterator + ExactSizeIterator
 
     // Boolean operations
-    fn any<F: fn(Self::Item) -> bool>(&mut self, f: F) -> bool / pure
-    fn all<F: fn(Self::Item) -> bool>(&mut self, f: F) -> bool / pure
+    fn any<F: fn(Self.Item) -> bool>(&mut self, f: F) -> bool / pure
+    fn all<F: fn(Self.Item) -> bool>(&mut self, f: F) -> bool / pure
 
     // Comparison
-    fn eq<I: Iterator<Item = Self::Item>>(self, other: I) -> bool / pure where Self::Item: PartialEq
-    fn ne<I: Iterator<Item = Self::Item>>(self, other: I) -> bool / pure where Self::Item: PartialEq
-    fn lt<I: Iterator<Item = Self::Item>>(self, other: I) -> bool / pure where Self::Item: PartialOrd
-    fn le<I: Iterator<Item = Self::Item>>(self, other: I) -> bool / pure where Self::Item: PartialOrd
-    fn gt<I: Iterator<Item = Self::Item>>(self, other: I) -> bool / pure where Self::Item: PartialOrd
-    fn ge<I: Iterator<Item = Self::Item>>(self, other: I) -> bool / pure where Self::Item: PartialOrd
-    fn cmp<I: Iterator<Item = Self::Item>>(self, other: I) -> Ordering / pure where Self::Item: Ord
+    fn eq<I: Iterator<Item = Self.Item>>(self, other: I) -> bool / pure where Self.Item: PartialEq
+    fn ne<I: Iterator<Item = Self.Item>>(self, other: I) -> bool / pure where Self.Item: PartialEq
+    fn lt<I: Iterator<Item = Self.Item>>(self, other: I) -> bool / pure where Self.Item: PartialOrd
+    fn le<I: Iterator<Item = Self.Item>>(self, other: I) -> bool / pure where Self.Item: PartialOrd
+    fn gt<I: Iterator<Item = Self.Item>>(self, other: I) -> bool / pure where Self.Item: PartialOrd
+    fn ge<I: Iterator<Item = Self.Item>>(self, other: I) -> bool / pure where Self.Item: PartialOrd
+    fn cmp<I: Iterator<Item = Self.Item>>(self, other: I) -> Ordering / pure where Self.Item: Ord
 
     // Partitioning
-    fn partition<B: Default + Extend<Self::Item>, F: fn(&Self::Item) -> bool>(self, f: F) -> (B, B) / pure
+    fn partition<B: Default + Extend<Self.Item>, F: fn(&Self.Item) -> bool>(self, f: F) -> (B, B) / pure
     fn unzip<A, B, FromA: Default + Extend<A>, FromB: Default + Extend<B>>(self) -> (FromA, FromB) / pure
         where Self: Iterator<Item = (A, B)>
 
     // Side effects
-    fn for_each<F: fn(Self::Item)>(self, f: F) / pure
+    fn for_each<F: fn(Self.Item)>(self, f: F) / pure
 }
 
 /// Double-ended iterators can iterate from both ends.
 trait DoubleEndedIterator: Iterator {
-    fn next_back(&mut self) -> Option<Self::Item> / pure
+    fn next_back(&mut self) -> Option<Self.Item> / pure
 
-    fn nth_back(&mut self, n: usize) -> Option<Self::Item> / pure
-    fn rfold<B, F: fn(B, Self::Item) -> B>(self, init: B, f: F) -> B / pure
-    fn rfind<P: fn(&Self::Item) -> bool>(&mut self, predicate: P) -> Option<Self::Item> / pure
+    fn nth_back(&mut self, n: usize) -> Option<Self.Item> / pure
+    fn rfold<B, F: fn(B, Self.Item) -> B>(self, init: B, f: F) -> B / pure
+    fn rfind<P: fn(&Self.Item) -> bool>(&mut self, predicate: P) -> Option<Self.Item> / pure
 }
 
 /// Iterators that know their exact length.
@@ -2910,11 +2897,8 @@ impl File {
     fn sync_data(&self) -> Result<(), IoError> / {IO}
 }
 
-impl Drop for File {
-    fn drop(&mut self) / pure {
-        // Closes the file descriptor
-    }
-}
+/// File is linear — must be explicitly closed.
+fn close(self) -> Result<(), IoError> / {IO}
 
 /// Options for opening files.
 struct OpenOptions {
@@ -3074,7 +3058,7 @@ impl Duration {
     const ZERO: Duration = Duration { secs: 0, nanos: 0 }
 
     /// Maximum duration.
-    const MAX: Duration = Duration { secs: u64::MAX, nanos: 999_999_999 }
+    const MAX: Duration = Duration { secs: u64.MAX, nanos: 999_999_999 }
 
     /// One second.
     const SECOND: Duration = Duration { secs: 1, nanos: 0 }
@@ -3296,7 +3280,7 @@ impl SystemTimeError {
 ```blood
 // Measuring elapsed time
 fn benchmark<T, F: fn() -> T>(f: F) -> (T, Duration) / {IO} {
-    let start = Instant::now()
+    let start = Instant.now()
     let result = f()
     let elapsed = start.elapsed()
     (result, elapsed)
@@ -3329,7 +3313,7 @@ impl RateLimiter {
         if elapsed < self.interval {
             sleep(self.interval - elapsed)
         }
-        self.last = Instant::now()
+        self.last = Instant.now()
     }
 }
 ```
@@ -3589,8 +3573,8 @@ fn get(slice: &[T], index: usize) -> &T / {Panic} {
 // Good: Unreachable code
 fn process(variant: MyEnum) -> i32 / {Panic} {
     match variant {
-        MyEnum::A => 1,
-        MyEnum::B => 2,
+        MyEnum.A => 1,
+        MyEnum.B => 2,
         _ => panic!("unreachable: all variants handled"),
     }
 }
@@ -3651,14 +3635,14 @@ Recoverable errors.
 
 ```blood
 effect Error<E> {
-    op raise(err: E) -> never;
+    op raise(err: E) -> !;
 }
 
 // Usage
 fn parse_int(s: &str) -> i32 / {Error<ParseError>} {
     match s.parse() {
         Ok(n) => n,
-        Err(e) => raise(ParseError::InvalidDigit(e)),
+        Err(e) => raise(ParseError.InvalidDigit(e)),
     }
 }
 ```
@@ -3723,8 +3707,8 @@ deep handler RealIO for IO {
     }
 
     // IO-specific operations
-    op read(fd, buf) { resume(@unsafe { syscall::read(fd, buf) }) }
-    op write(fd, buf) { resume(@unsafe { syscall::write(fd, buf) }) }
+    op read(fd, buf) { resume(@unsafe { syscall.read(fd, buf) }) }
+    op write(fd, buf) { resume(@unsafe { syscall.write(fd, buf) }) }
     // ... other IO operations
 }
 
@@ -3780,7 +3764,7 @@ fn println(s: &str) -> unit / {IO} {
 }
 
 fn read_line() -> String / {IO, Error<IoError>} {
-    let mut buf = String::new()
+    let mut buf = String.new()
     let mut byte = [0u8; 1]
     loop {
         match read(STDIN, &mut byte)? {
@@ -3793,8 +3777,8 @@ fn read_line() -> String / {IO, Error<IoError>} {
 }
 
 fn read_file(path: &Path) -> Bytes / {IO, Error<IoError>} {
-    let fd = open(path, OpenOptions::read())?
-    let mut buf = Vec::new()
+    let fd = open(path, OpenOptions.read())?
+    let mut buf = Vec.new()
     let mut chunk = [0u8; 4096]
     loop {
         match read(fd, &mut chunk)? {
@@ -3807,7 +3791,7 @@ fn read_file(path: &Path) -> Bytes / {IO, Error<IoError>} {
 }
 
 fn write_file(path: &Path, data: &[u8]) -> unit / {IO, Error<IoError>} {
-    let fd = open(path, OpenOptions::write().create(true).truncate(true))?
+    let fd = open(path, OpenOptions.write().create(true).truncate(true))?
     write(fd, data)?
     flush(fd)?
     close(fd)?
@@ -3821,7 +3805,7 @@ Fiber-based concurrency operations.
 ```blood
 effect Fiber {
     op suspend<T>(future: Future<T>) -> T;
-    op spawn<T>(task: fn() -> T / Fiber) -> TaskHandle<T>;
+    op spawn<T: Send>(task: fn() -> T / Fiber + Send) -> TaskHandle<T>;
     op yield_now() -> unit;
 }
 
@@ -3878,7 +3862,7 @@ Non-determinism (for backtracking search).
 ```blood
 effect NonDet {
     op choose<T>(options: Vec<T>) -> T;
-    op fail() -> never;
+    op fail() -> !;
 }
 
 // Usage: SAT solver, constraint satisfaction
@@ -3911,7 +3895,7 @@ Unrecoverable errors.
 
 ```blood
 effect Panic {
-    op panic(msg: &str) -> never;
+    op panic(msg: &str) -> !;
 }
 
 // panic! macro expands to:
@@ -3958,7 +3942,7 @@ effect StaleReference {
         expected_gen: u32,       // Generation stored in reference
         actual_gen: u32,         // Current generation at address
         access_type: AccessType, // Read or Write
-    ) -> never;
+    ) -> !;
 }
 
 enum AccessType {
@@ -3990,7 +3974,7 @@ This effect is raised by the runtime in these scenarios:
 ```blood
 // Example: Direct dereference causing StaleReference
 fn example() / {StaleReference} {
-    let boxed = Box::new(42)
+    let boxed = Box.new(42)
     let ptr = &*boxed      // Get reference, gen = N
     drop(boxed)            // Increments generation to N+1
     let _ = *ptr           // RAISES: StaleReference (expected N, actual N+1)
@@ -4004,7 +3988,7 @@ When an effect handler resumes a continuation, the Generation Snapshot is valida
 ```blood
 // Continuation capture stores snapshot of referenced generations
 fn example() / {State<i32>, StaleReference} {
-    let data = Box::new(vec![1, 2, 3])
+    let data = Box.new(vec![1, 2, 3])
     let slice = &data[..]  // Reference captured in snapshot
 
     modify(|s| {
@@ -4063,7 +4047,7 @@ effect Random {
 
 // Convenience functions
 fn random<T: Uniform>() -> T / {Random} {
-    T::sample_uniform()
+    T.sample_uniform()
 }
 
 fn shuffle<T>(slice: &mut [T]) / {Random} {
@@ -4157,7 +4141,7 @@ deep handler StateWithSnapshot<S> for State<S> {
 
 // Example showing snapshot validation
 fn example() / {State<i32>, StaleReference} {
-    let data = Box::new(vec![1, 2, 3])
+    let data = Box.new(vec![1, 2, 3])
     let slice = &data[..]  // Reference to heap data
 
     // When modify() suspends, snapshot captures slice's generation
@@ -4181,11 +4165,11 @@ See FORMAL_SEMANTICS.md Section 5 for the formal operational semantics of Genera
 // Real IO (production)
 deep handler RealIO for IO {
     return(x) { x }
-    op read(fd, buf) { resume(@unsafe { syscall::read(fd, buf) }) }
-    op write(fd, buf) { resume(@unsafe { syscall::write(fd, buf) }) }
-    op open(path, opts) { resume(@unsafe { syscall::open(path, opts) }) }
-    op close(fd) { resume(@unsafe { syscall::close(fd) }) }
-    op flush(fd) { resume(@unsafe { syscall::fsync(fd) }) }
+    op read(fd, buf) { resume(@unsafe { syscall.read(fd, buf) }) }
+    op write(fd, buf) { resume(@unsafe { syscall.write(fd, buf) }) }
+    op open(path, opts) { resume(@unsafe { syscall.open(path, opts) }) }
+    op close(fd) { resume(@unsafe { syscall.close(fd) }) }
+    op flush(fd) { resume(@unsafe { syscall.fsync(fd) }) }
 }
 
 // Mock IO (testing)
@@ -4224,7 +4208,7 @@ deep handler SingleThreadExecutor for Fiber {
 
     op spawn(task) {
         let id = next_task_id()
-        ready_queue.push_back(Task::new(id, task))
+        ready_queue.push_back(Task.new(id, task))
         resume(TaskHandle { id })
     }
 
@@ -4251,9 +4235,9 @@ deep handler Collect<T> for Yield<T> {
 
 // Lazy iterator (returns on first yield)
 shallow handler LazyIter<T> for Yield<T> {
-    return(_) { GeneratorState::Complete }
+    return(_) { GeneratorState.Complete }
     op yield(value) {
-        GeneratorState::Yielded(value, resume)
+        GeneratorState.Yielded(value, resume)
     }
 }
 
@@ -4400,7 +4384,7 @@ deep handler LogStaleAndRecover<T: Default> for StaleReference {
                addr, expected, actual)
         // Note: This handler cannot resume because op returns never
         // Must provide alternative value through handler return type
-        T::default()
+        T.default()
     }
 }
 ```
@@ -4484,13 +4468,13 @@ deep handler SecureRandom for Random {
     op random_range(max) {
         let mut bytes = [0u8; 8]
         @unsafe { getrandom(&mut bytes) }
-        resume(u64::from_le_bytes(bytes) % max)
+        resume(u64.from_le_bytes(bytes) % max)
     }
 
     op random_float() {
         let mut bytes = [0u8; 8]
         @unsafe { getrandom(&mut bytes) }
-        resume((u64::from_le_bytes(bytes) as f64) / (u64::MAX as f64))
+        resume((u64.from_le_bytes(bytes) as f64) / (u64.MAX as f64))
     }
 }
 
@@ -4536,7 +4520,7 @@ deep handler DeterministicRandom for Random {
     }
 
     op random_float() {
-        let val = (sequence[index % sequence.len()] as f64) / (u64::MAX as f64)
+        let val = (sequence[index % sequence.len()] as f64) / (u64.MAX as f64)
         index += 1
         resume(val)
     }
@@ -4553,12 +4537,12 @@ The prelude is automatically imported into every module:
 
 ```blood
 // std/prelude.blood
-pub use std::primitive::*;
-pub use std::core::{Option, Option::*, Result, Result::*, Box};
-pub use std::string::{String, str};
-pub use std::collections::Vec;
-pub use std::traits::{
-    Clone, Copy, Default, Drop,
+pub use std.primitive.*;
+pub use std.core.{Option, Option.*, Result, Result.*, Box};
+pub use std.string.{String, str};
+pub use std.collections.Vec;
+pub use std.traits.{
+    Clone, Copy, Default,
     Eq, PartialEq, Ord, PartialOrd,
     Iterator, IntoIterator,
     From, Into, AsRef, AsMut,
@@ -4566,8 +4550,8 @@ pub use std::traits::{
     Add, Sub, Mul, Div, Neg,
     Index, IndexMut,
 };
-pub use std::effects::{Error, IO, Panic};
-pub use std::handlers::{PropagateError};
+pub use std.effects.{Error, IO, Panic};
+pub use std.handlers.{PropagateError};
 ```
 
 ### 12.2 Excluding Prelude
@@ -4578,7 +4562,7 @@ To exclude the prelude:
 #![no_prelude]
 
 // Must explicitly import everything needed
-use std::core::Option;
+use std.core.Option;
 ```
 
 ---
@@ -4694,7 +4678,7 @@ fn count_ops<T>(computation: fn() -> T) -> (T, usize) {
     loop {
         match computation.run_until_effect() {
             Complete(x) => return (x, count),
-            Effect::Log(_, _, _, k) => {
+            Effect.Log(_, _, _, k) => {
                 count += 1;
                 computation = k(());  // Continue without stack growth
             }
@@ -4729,9 +4713,9 @@ Each memory tier uses optimized allocators:
 
 | Tier | Allocator | Generation Increment | Deallocation |
 |------|-----------|---------------------|--------------|
-| Tier 0 (Stack) | Stack pointer | N/A (no references) | Automatic (scope exit) |
-| Tier 1 (Region) | Bump allocator per region | Per-slot | Region release |
-| Tier 2 (Persistent) | System allocator + RC | Per-slot | RC zero |
+| Tier 1 (Stack) | Stack pointer | N/A (no references) | Automatic (scope exit) |
+| Tier 2 (Region) | Bump allocator per region | Per-slot | Region release |
+| Tier 3 (Persistent) | System allocator + RC | Per-slot | RC zero |
 
 **Slot Structure**:
 
@@ -4873,16 +4857,16 @@ See [FFI.md](./FFI.md) for complete FFI specification.
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │ Does value escape current scope?                                │
-│   NO → Tier 0 (Stack)                                           │
+│   NO → Tier 1 (Stack)                                           │
 │   YES ↓                                                         │
 ├─────────────────────────────────────────────────────────────────┤
 │ Does value escape current region?                               │
-│   NO → Tier 1 (Region) with generational references            │
+│   NO → Tier 2 (Region) with generational references            │
 │   YES ↓                                                         │
 ├─────────────────────────────────────────────────────────────────┤
 │ Is value shared across fibers/threads?                          │
-│   NO → Tier 1 (Region) with promotion                          │
-│   YES → Tier 2 (Persistent) with reference counting            │
+│   NO → Tier 2 (Region) with promotion                          │
+│   YES → Tier 3 (Persistent) with reference counting            │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
