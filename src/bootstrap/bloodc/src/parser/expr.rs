@@ -2538,15 +2538,8 @@ impl<'src> Parser<'src> {
                 } else {
                     None
                 };
-                // Semicolon optional after block-like initializers (SYN-06 Phase 1)
-                let is_block_init = value
-                    .as_ref()
-                    .map_or(false, |v| Self::is_block_like_expr(v));
-                if !is_block_init {
-                    self.expect(TokenKind::Semi);
-                } else {
-                    self.try_consume(TokenKind::Semi);
-                }
+                // Semicolons optional on all statements (SYN-06 Phase 2)
+                self.try_consume(TokenKind::Semi);
                 Statement::Let {
                     pattern,
                     ty,

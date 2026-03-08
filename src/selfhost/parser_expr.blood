@@ -2294,19 +2294,8 @@ pub fn parse_let_statement(parser: &mut parser_base.Parser) -> ast.Statement {
         Option.None
     };
 
-    // Semicolon optional after block-like initializers (SYN-06 Phase 1)
-    let mut is_block_init = false;
-    match &init_val {
-        &Option.Some(ref val) => {
-            is_block_init = is_block_like_expr(val);
-        }
-        &Option.None => {}
-    }
-    if !is_block_init {
-        parser.expect(token.TokenKind.Semi);
-    } else {
-        parser.try_consume(token.TokenKind.Semi);
-    }
+    // Semicolons optional on all statements (SYN-06 Phase 2)
+    parser.try_consume(token.TokenKind.Semi);
 
     let end_span = parser.previous.span;
     ast.Statement.Let {

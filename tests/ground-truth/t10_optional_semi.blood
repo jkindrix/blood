@@ -1,5 +1,5 @@
 // RUN: expect_exit 0
-// Test: semicolons optional after block-like expressions (SYN-06 Phase 1)
+// Test: semicolons optional on all statements (SYN-06 Phase 1 + Phase 2)
 
 fn test_let_if() -> i32 {
     let x = if true { 10 } else { 20 }
@@ -54,27 +54,47 @@ fn test_nested() -> i32 {
     x
 }
 
+// Phase 2: semicolons optional on ALL let statements (not just block-like)
+fn test_simple_let_no_semi() -> i32 {
+    let x = 42
+    let y = 10
+    x + y
+}
+
+fn test_multiple_no_semi() -> i32 {
+    let a = 1
+    let b = 2
+    let c = 3
+    a + b + c
+}
+
+fn test_mixed_semi() -> i32 {
+    let a = 10;
+    let b = 20
+    let c = 30;
+    let d = 40
+    a + b + c + d
+}
+
 fn main() -> i32 {
-    let a = test_let_if();
-    let b = test_let_match();
-    let c = test_let_block();
-    let d = test_let_loop();
-    let e = test_semi_still_works();
-    let f = test_nested();
-    // 10 + 300 + 10 + 5 + 51 + 42 = 418
-    // But we need exit code 0, so check via subtraction
-    if a == 10 {
-        if b == 300 {
-            if c == 10 {
-                if d == 5 {
-                    if e == 51 {
-                        if f == 42 {
-                            return 0;
-                        }
-                    }
-                }
-            }
-        }
-    }
-    1
+    let a = test_let_if()
+    let b = test_let_match()
+    let c = test_let_block()
+    let d = test_let_loop()
+    let e = test_semi_still_works()
+    let f = test_nested()
+    let g = test_simple_let_no_semi()
+    let h = test_multiple_no_semi()
+    let k = test_mixed_semi()
+
+    if a != 10 { return 1 }
+    if b != 300 { return 2 }
+    if c != 10 { return 3 }
+    if d != 5 { return 4 }
+    if e != 51 { return 5 }
+    if f != 42 { return 6 }
+    if g != 52 { return 7 }
+    if h != 6 { return 8 }
+    if k != 100 { return 9 }
+    0
 }
