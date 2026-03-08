@@ -129,13 +129,13 @@ enum Level {
 
 impl Level {
     fn from_bool(b: bool) -> Level {
-        if b { Level::High } else { Level::Low }
+        if b { Level.High } else { Level.Low }
     }
 
     fn to_bool(&self) -> bool {
         match self {
-            Level::Low => false,
-            Level::High => true,
+            Level.Low => false,
+            Level.High => true,
         }
     }
 }
@@ -164,9 +164,9 @@ impl PiModel {
     /// Get peripheral base address for this model
     fn peripheral_base(&self) -> u64 {
         match self {
-            PiModel::Pi3 => BCM2837_PERIPHERAL_BASE,
-            PiModel::Pi4 => BCM2711_PERIPHERAL_BASE,
-            PiModel::Unknown => BCM2837_PERIPHERAL_BASE, // Default to Pi 3
+            PiModel.Pi3 => BCM2837_PERIPHERAL_BASE,
+            PiModel.Pi4 => BCM2711_PERIPHERAL_BASE,
+            PiModel.Unknown => BCM2837_PERIPHERAL_BASE, // Default to Pi 3
         }
     }
 
@@ -174,12 +174,12 @@ impl PiModel {
     fn detect() -> PiModel / {FileSystem} {
         if let Some(model) = perform FileSystem.read_file("/proc/device-tree/model") {
             if model.contains("Raspberry Pi 4") {
-                return PiModel::Pi4;
+                return PiModel.Pi4;
             } else if model.contains("Raspberry Pi 3") {
-                return PiModel::Pi3;
+                return PiModel.Pi3;
             }
         }
-        PiModel::Unknown
+        PiModel.Unknown
     }
 }
 
@@ -244,7 +244,7 @@ impl GpioController {
     /// Initialize GPIO controller
     fn new() -> Result<GpioController, GpioError> / {MemoryIO, FileSystem} {
         // Detect Pi model
-        let model = PiModel::detect();
+        let model = PiModel.detect();
 
         // Calculate GPIO base address
         let gpio_base = model.peripheral_base() + GPIO_OFFSET;
@@ -262,7 +262,7 @@ impl GpioController {
     /// Check if pin number is valid
     fn validate_pin(&self, pin: u32) -> Result<(), GpioError> {
         if pin >= GPIO_PIN_COUNT {
-            Err(GpioError::InvalidPin(pin))
+            Err(GpioError.InvalidPin(pin))
         } else {
             Ok(())
         }
@@ -289,7 +289,7 @@ impl GpioController {
         self.validate_pin(pin)?;
 
         // Each GPFSEL register controls 10 pins (3 bits each)
-        let reg_offset = reg::GPFSEL0 + (pin / 10);
+        let reg_offset = reg.GPFSEL0 + (pin / 10);
         let bit_offset = (pin % 10) * 3;
 
         // Read-modify-write
@@ -305,22 +305,22 @@ impl GpioController {
     fn get_function(&self, pin: u32) -> Result<PinFunction, GpioError> / {MemoryIO} {
         self.validate_pin(pin)?;
 
-        let reg_offset = reg::GPFSEL0 + (pin / 10);
+        let reg_offset = reg.GPFSEL0 + (pin / 10);
         let bit_offset = (pin % 10) * 3;
 
         let value = self.read_reg(reg_offset);
         let func_bits = (value >> bit_offset) & 0b111;
 
         let func = match func_bits {
-            0b000 => PinFunction::Input,
-            0b001 => PinFunction::Output,
-            0b100 => PinFunction::Alt0,
-            0b101 => PinFunction::Alt1,
-            0b110 => PinFunction::Alt2,
-            0b111 => PinFunction::Alt3,
-            0b011 => PinFunction::Alt4,
-            0b010 => PinFunction::Alt5,
-            _ => PinFunction::Input, // Should never happen
+            0b000 => PinFunction.Input,
+            0b001 => PinFunction.Output,
+            0b100 => PinFunction.Alt0,
+            0b101 => PinFunction.Alt1,
+            0b110 => PinFunction.Alt2,
+            0b111 => PinFunction.Alt3,
+            0b011 => PinFunction.Alt4,
+            0b010 => PinFunction.Alt5,
+            _ => PinFunction.Input, // Should never happen
         };
 
         Ok(func)
@@ -330,7 +330,7 @@ impl GpioController {
     fn set_high(&self, pin: u32) -> Result<(), GpioError> / {MemoryIO} {
         self.validate_pin(pin)?;
 
-        let reg_offset = if pin < 32 { reg::GPSET0 } else { reg::GPSET1 };
+        let reg_offset = if pin < 32 { reg.GPSET0 } else { reg.GPSET1 };
         let bit = 1 << (pin % 32);
 
         self.write_reg(reg_offset, bit);
@@ -341,7 +341,7 @@ impl GpioController {
     fn set_low(&self, pin: u32) -> Result<(), GpioError> / {MemoryIO} {
         self.validate_pin(pin)?;
 
-        let reg_offset = if pin < 32 { reg::GPCLR0 } else { reg::GPCLR1 };
+        let reg_offset = if pin < 32 { reg.GPCLR0 } else { reg.GPCLR1 };
         let bit = 1 << (pin % 32);
 
         self.write_reg(reg_offset, bit);
@@ -351,8 +351,8 @@ impl GpioController {
     /// Set output pin to level
     fn write(&self, pin: u32, level: Level) -> Result<(), GpioError> / {MemoryIO} {
         match level {
-            Level::High => self.set_high(pin),
-            Level::Low => self.set_low(pin),
+            Level.High => self.set_high(pin),
+            Level.Low => self.set_low(pin),
         }
     }
 
@@ -360,11 +360,11 @@ impl GpioController {
     fn read(&self, pin: u32) -> Result<Level, GpioError> / {MemoryIO} {
         self.validate_pin(pin)?;
 
-        let reg_offset = if pin < 32 { reg::GPLEV0 } else { reg::GPLEV1 };
+        let reg_offset = if pin < 32 { reg.GPLEV0 } else { reg.GPLEV1 };
         let bit = 1 << (pin % 32);
 
         let value = self.read_reg(reg_offset);
-        Ok(Level::from_bool((value & bit) != 0))
+        Ok(Level.from_bool((value & bit) != 0))
     }
 
     /// Configure pull-up/down resistor (Pi 3 method)
@@ -372,19 +372,19 @@ impl GpioController {
         self.validate_pin(pin)?;
 
         let pud_value: u32 = match mode {
-            PullMode::None => 0,
-            PullMode::Down => 1,
-            PullMode::Up => 2,
+            PullMode.None => 0,
+            PullMode.Down => 1,
+            PullMode.Up => 2,
         };
 
         // 1. Write to GPPUD
-        self.write_reg(reg::GPPUD, pud_value);
+        self.write_reg(reg.GPPUD, pud_value);
 
         // 2. Wait 150 cycles (at least)
         perform Timing.delay_microseconds(10);
 
         // 3. Write to GPPUDCLK0/1
-        let clk_reg = if pin < 32 { reg::GPPUDCLK0 } else { reg::GPPUDCLK1 };
+        let clk_reg = if pin < 32 { reg.GPPUDCLK0 } else { reg.GPPUDCLK1 };
         let bit = 1 << (pin % 32);
         self.write_reg(clk_reg, bit);
 
@@ -392,7 +392,7 @@ impl GpioController {
         perform Timing.delay_microseconds(10);
 
         // 5. Clear GPPUD and GPPUDCLK
-        self.write_reg(reg::GPPUD, 0);
+        self.write_reg(reg.GPPUD, 0);
         self.write_reg(clk_reg, 0);
 
         Ok(())
@@ -403,13 +403,13 @@ impl GpioController {
         self.validate_pin(pin)?;
 
         let pud_value: u32 = match mode {
-            PullMode::None => 0,
-            PullMode::Up => 1,
-            PullMode::Down => 2,
+            PullMode.None => 0,
+            PullMode.Up => 1,
+            PullMode.Down => 2,
         };
 
         // Each register controls 16 pins (2 bits each)
-        let reg_offset = reg::GPIO_PUP_PDN_CNTRL_REG0 + (pin / 16);
+        let reg_offset = reg.GPIO_PUP_PDN_CNTRL_REG0 + (pin / 16);
         let bit_offset = (pin % 16) * 2;
 
         let mut value = self.read_reg(reg_offset);
@@ -423,7 +423,7 @@ impl GpioController {
     /// Configure pull-up/down (auto-detects Pi version)
     fn set_pull(&self, pin: u32, mode: PullMode) -> Result<(), GpioError> / {MemoryIO, Timing} {
         match self.model {
-            PiModel::Pi4 => self.set_pull_pi4(pin, mode),
+            PiModel.Pi4 => self.set_pull_pi4(pin, mode),
             _ => self.set_pull_pi3(pin, mode),
         }
     }
@@ -434,21 +434,21 @@ impl GpioController {
 
         let bit = 1 << (pin % 32);
         let (ren_reg, fen_reg) = if pin < 32 {
-            (reg::GPREN0, reg::GPFEN0)
+            (reg.GPREN0, reg.GPFEN0)
         } else {
-            (reg::GPREN1, reg::GPFEN1)
+            (reg.GPREN1, reg.GPFEN1)
         };
 
         match edge {
-            Edge::Rising => {
+            Edge.Rising => {
                 let val = self.read_reg(ren_reg) | bit;
                 self.write_reg(ren_reg, val);
             },
-            Edge::Falling => {
+            Edge.Falling => {
                 let val = self.read_reg(fen_reg) | bit;
                 self.write_reg(fen_reg, val);
             },
-            Edge::Both => {
+            Edge.Both => {
                 let ren_val = self.read_reg(ren_reg) | bit;
                 let fen_val = self.read_reg(fen_reg) | bit;
                 self.write_reg(ren_reg, ren_val);
@@ -463,7 +463,7 @@ impl GpioController {
     fn check_event(&self, pin: u32) -> Result<bool, GpioError> / {MemoryIO} {
         self.validate_pin(pin)?;
 
-        let reg_offset = if pin < 32 { reg::GPEDS0 } else { reg::GPEDS1 };
+        let reg_offset = if pin < 32 { reg.GPEDS0 } else { reg.GPEDS1 };
         let bit = 1 << (pin % 32);
 
         let value = self.read_reg(reg_offset);
@@ -474,7 +474,7 @@ impl GpioController {
     fn clear_event(&self, pin: u32) -> Result<(), GpioError> / {MemoryIO} {
         self.validate_pin(pin)?;
 
-        let reg_offset = if pin < 32 { reg::GPEDS0 } else { reg::GPEDS1 };
+        let reg_offset = if pin < 32 { reg.GPEDS0 } else { reg.GPEDS1 };
         let bit = 1 << (pin % 32);
 
         // Writing 1 clears the event flag
@@ -487,7 +487,7 @@ impl GpioController {
         self.validate_pin(pin)?;
 
         if self.pins_in_use[pin as usize] {
-            return Err(GpioError::WrongMode {
+            return Err(GpioError.WrongMode {
                 pin,
                 expected: "available",
                 actual: "in use",
@@ -530,9 +530,9 @@ struct Pin<Mode> {
     _mode: PhantomData<Mode>,
 }
 
-impl Pin<mode::Unconfigured> {
+impl Pin<mode.Unconfigured> {
     /// Create a new unconfigured pin
-    fn new(pin: u32, controller: &mut GpioController) -> Result<Pin<mode::Unconfigured>, GpioError> {
+    fn new(pin: u32, controller: &mut GpioController) -> Result<Pin<mode.Unconfigured>, GpioError> {
         controller.request_pin(pin)?;
 
         Ok(Pin {
@@ -543,9 +543,9 @@ impl Pin<mode::Unconfigured> {
     }
 
     /// Configure as input
-    fn into_input(self) -> Result<Pin<mode::Input>, GpioError> / {MemoryIO} {
+    fn into_input(self) -> Result<Pin<mode.Input>, GpioError> / {MemoryIO} {
         @unsafe {
-            (*self.controller).set_function(self.pin, PinFunction::Input)?;
+            (*self.controller).set_function(self.pin, PinFunction.Input)?;
         }
 
         Ok(Pin {
@@ -556,9 +556,9 @@ impl Pin<mode::Unconfigured> {
     }
 
     /// Configure as output
-    fn into_output(self) -> Result<Pin<mode::Output>, GpioError> / {MemoryIO} {
+    fn into_output(self) -> Result<Pin<mode.Output>, GpioError> / {MemoryIO} {
         @unsafe {
-            (*self.controller).set_function(self.pin, PinFunction::Output)?;
+            (*self.controller).set_function(self.pin, PinFunction.Output)?;
         }
 
         Ok(Pin {
@@ -569,28 +569,28 @@ impl Pin<mode::Unconfigured> {
     }
 }
 
-impl Pin<mode::Input> {
+impl Pin<mode.Input> {
     /// Read the pin level
     fn read(&self) -> Level / {MemoryIO} {
         @unsafe {
-            (*self.controller).read(self.pin).unwrap_or(Level::Low)
+            (*self.controller).read(self.pin).unwrap_or(Level.Low)
         }
     }
 
     /// Check if pin is high
     fn is_high(&self) -> bool / {MemoryIO} {
-        self.read() == Level::High
+        self.read() == Level.High
     }
 
     /// Check if pin is low
     fn is_low(&self) -> bool / {MemoryIO} {
-        self.read() == Level::Low
+        self.read() == Level.Low
     }
 
     /// Set pull-up resistor
     fn with_pullup(self) -> Self / {MemoryIO, Timing} {
         @unsafe {
-            let _ = (*self.controller).set_pull(self.pin, PullMode::Up);
+            let _ = (*self.controller).set_pull(self.pin, PullMode.Up);
         }
         self
     }
@@ -598,7 +598,7 @@ impl Pin<mode::Input> {
     /// Set pull-down resistor
     fn with_pulldown(self) -> Self / {MemoryIO, Timing} {
         @unsafe {
-            let _ = (*self.controller).set_pull(self.pin, PullMode::Down);
+            let _ = (*self.controller).set_pull(self.pin, PullMode.Down);
         }
         self
     }
@@ -629,9 +629,9 @@ impl Pin<mode::Input> {
     }
 
     /// Convert back to unconfigured
-    fn into_unconfigured(self) -> Pin<mode::Unconfigured> / {MemoryIO} {
+    fn into_unconfigured(self) -> Pin<mode.Unconfigured> / {MemoryIO} {
         @unsafe {
-            let _ = (*self.controller).set_function(self.pin, PinFunction::Input);
+            let _ = (*self.controller).set_function(self.pin, PinFunction.Input);
         }
 
         Pin {
@@ -642,7 +642,7 @@ impl Pin<mode::Input> {
     }
 }
 
-impl Pin<mode::Output> {
+impl Pin<mode.Output> {
     /// Set pin high
     fn set_high(&self) / {MemoryIO} {
         @unsafe {
@@ -660,8 +660,8 @@ impl Pin<mode::Output> {
     /// Set pin to level
     fn write(&self, level: Level) / {MemoryIO} {
         match level {
-            Level::High => self.set_high(),
-            Level::Low => self.set_low(),
+            Level.High => self.set_high(),
+            Level.Low => self.set_low(),
         }
     }
 
@@ -670,18 +670,18 @@ impl Pin<mode::Output> {
         // Read current level and write opposite
         // Note: This reads the output register, not the actual pin level
         @unsafe {
-            let current = (*self.controller).read(self.pin).unwrap_or(Level::Low);
+            let current = (*self.controller).read(self.pin).unwrap_or(Level.Low);
             match current {
-                Level::High => self.set_low(),
-                Level::Low => self.set_high(),
+                Level.High => self.set_low(),
+                Level.Low => self.set_high(),
             }
         }
     }
 
     /// Convert back to unconfigured
-    fn into_unconfigured(self) -> Pin<mode::Unconfigured> / {MemoryIO} {
+    fn into_unconfigured(self) -> Pin<mode.Unconfigured> / {MemoryIO} {
         @unsafe {
-            let _ = (*self.controller).set_function(self.pin, PinFunction::Input);
+            let _ = (*self.controller).set_function(self.pin, PinFunction.Input);
         }
 
         Pin {
@@ -710,12 +710,12 @@ struct PhantomData<T>;
 
 /// LED connected to GPIO pin
 struct Led {
-    pin: Pin<mode::Output>,
+    pin: Pin<mode.Output>,
     active_low: bool,
 }
 
 impl Led {
-    fn new(pin: Pin<mode::Output>, active_low: bool) -> Led {
+    fn new(pin: Pin<mode.Output>, active_low: bool) -> Led {
         Led { pin, active_low }
     }
 
@@ -746,21 +746,21 @@ impl Led {
 
 /// Button connected to GPIO pin
 struct Button {
-    pin: Pin<mode::Input>,
+    pin: Pin<mode.Input>,
     active_low: bool,
 }
 
 impl Button {
-    fn new(pin: Pin<mode::Input>, active_low: bool) -> Button {
+    fn new(pin: Pin<mode.Input>, active_low: bool) -> Button {
         Button { pin, active_low }
     }
 
     fn is_pressed(&self) -> bool / {MemoryIO} {
         let level = self.pin.read();
         if self.active_low {
-            level == Level::Low
+            level == Level.Low
         } else {
-            level == Level::High
+            level == Level.High
         }
     }
 
@@ -779,13 +779,13 @@ impl Button {
 
 /// PWM output using software timing
 struct SoftPwm {
-    pin: Pin<mode::Output>,
+    pin: Pin<mode.Output>,
     period_us: u32,
     duty_cycle: u32,  // 0-100
 }
 
 impl SoftPwm {
-    fn new(pin: Pin<mode::Output>, frequency_hz: u32) -> SoftPwm {
+    fn new(pin: Pin<mode.Output>, frequency_hz: u32) -> SoftPwm {
         SoftPwm {
             pin,
             period_us: 1_000_000 / frequency_hz,
@@ -823,15 +823,15 @@ fn main() -> i32 / {IO, MemoryIO, FileSystem, Timing} {
     // Initialize GPIO controller
     print("Initializing GPIO controller...");
 
-    let mut controller = match GpioController::new() {
+    let mut controller = match GpioController.new() {
         Ok(c) => {
             print(" OK");
             c
         },
         Err(e) => {
             match e {
-                GpioError::MapFailed(msg) => print(" FAILED: {}", msg),
-                GpioError::PermissionDenied => print(" FAILED: Permission denied (run as root?)"),
+                GpioError.MapFailed(msg) => print(" FAILED: {}", msg),
+                GpioError.PermissionDenied => print(" FAILED: Permission denied (run as root?)"),
                 _ => print(" FAILED: Unknown error"),
             }
             return 1;
@@ -844,7 +844,7 @@ fn main() -> i32 / {IO, MemoryIO, FileSystem, Timing} {
     print("\n--- Pin Configuration ---");
 
     // LED on GPIO 17 (active high)
-    let led_pin = match Pin::new(17, &mut controller) {
+    let led_pin = match Pin.new(17, &mut controller) {
         Ok(p) => p,
         Err(e) => {
             print("Failed to request GPIO 17");
@@ -852,11 +852,11 @@ fn main() -> i32 / {IO, MemoryIO, FileSystem, Timing} {
         }
     };
     let led_pin = led_pin.into_output().unwrap();
-    let led = Led::new(led_pin, false);
+    let led = Led.new(led_pin, false);
     print("GPIO 17: Configured as LED output");
 
     // Button on GPIO 27 (active low with pull-up)
-    let button_pin = match Pin::new(27, &mut controller) {
+    let button_pin = match Pin.new(27, &mut controller) {
         Ok(p) => p,
         Err(e) => {
             print("Failed to request GPIO 27");
@@ -864,7 +864,7 @@ fn main() -> i32 / {IO, MemoryIO, FileSystem, Timing} {
         }
     };
     let button_pin = button_pin.into_input().unwrap().with_pullup();
-    let button = Button::new(button_pin, true);
+    let button = Button.new(button_pin, true);
     print("GPIO 27: Configured as button input with pull-up");
 
     // Demo: Blink LED
@@ -890,11 +890,11 @@ fn main() -> i32 / {IO, MemoryIO, FileSystem, Timing} {
     print("\n--- Register Status ---");
 
     // Read GPFSEL1 (controls GPIO 10-19)
-    let gpfsel1 = controller.read_reg(reg::GPFSEL1);
+    let gpfsel1 = controller.read_reg(reg.GPFSEL1);
     print("GPFSEL1 = 0x{:08X}", gpfsel1);
 
     // Read pin levels
-    let gplev0 = controller.read_reg(reg::GPLEV0);
+    let gplev0 = controller.read_reg(reg.GPLEV0);
     print("GPLEV0  = 0x{:08X}", gplev0);
 
     // Demo: PWM
@@ -927,34 +927,34 @@ fn main_simulated() -> i32 / {IO} {
     try {
         main()
     } with {
-        MemoryIO::map(base, size) => {
+        MemoryIO.map(base, size) => {
             print("[SIM] Mapping 0x{:X} ({} bytes)", base, size);
             // Return simulated pointer
             resume(Ok(0x1000 as *mut u32))
         },
-        MemoryIO::unmap(ptr, size) => {
+        MemoryIO.unmap(ptr, size) => {
             print("[SIM] Unmapping {:p} ({} bytes)", ptr, size);
             resume(())
         },
-        MemoryIO::read_volatile(ptr) => {
+        MemoryIO.read_volatile(ptr) => {
             // Simulate some register values
             resume(0x00000000)
         },
-        MemoryIO::write_volatile(ptr, value) => {
+        MemoryIO.write_volatile(ptr, value) => {
             print("[SIM] Write 0x{:08X} to {:p}", value, ptr);
             resume(())
         },
-        MemoryIO::memory_barrier() => {
+        MemoryIO.memory_barrier() => {
             resume(())
         },
-        FileSystem::read_file(path) => {
+        FileSystem.read_file(path) => {
             if path == "/proc/device-tree/model" {
                 resume(Some("Raspberry Pi 4 Model B".to_string()))
             } else {
                 resume(None)
             }
         },
-        Timing::delay_microseconds(us) => {
+        Timing.delay_microseconds(us) => {
             // Skip delays in simulation
             resume(())
         },

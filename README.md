@@ -16,7 +16,7 @@ Blood synthesizes five cutting-edge programming language innovations:
 
 > **Version: 0.2.0**
 
-Core compiler is functional and tested. Programs compile and run with full type checking, effect tracking, and generational memory safety. Bootstrap compiler passes 2,047 unit tests; self-hosted compiler passes 271/317 ground-truth integration tests. See [IMPLEMENTATION_STATUS.md](docs/planning/IMPLEMENTATION_STATUS.md) for detailed component status.
+Core compiler is functional and tested. Programs compile and run with full type checking, effect tracking, and generational memory safety. Bootstrap compiler passes 2,047 unit tests; self-hosted compiler passes 356/357 ground-truth integration tests. See [IMPLEMENTATION_STATUS.md](docs/planning/IMPLEMENTATION_STATUS.md) for detailed component status.
 
 | Component | Status | Details |
 |-----------|--------|---------|
@@ -31,7 +31,7 @@ Core compiler is functional and tested. Programs compile and run with full type 
 
 **Legend**: ✅ = Implemented and integrated | 🔶 = Partially integrated
 
-**[Getting Started](docs/guides/GETTING_STARTED.md)** | [Specification](docs/spec/SPECIFICATION.md) | [Implementation Status](docs/planning/IMPLEMENTATION_STATUS.md)
+[Specification](docs/spec/SPECIFICATION.md) | [Implementation Status](docs/planning/IMPLEMENTATION_STATUS.md) | [Contributing](CONTRIBUTING.md)
 
 ## The Name
 
@@ -66,14 +66,12 @@ blood/
 │   └── selfhost/           # Self-hosted compiler (written in Blood)
 ├── docs/                   # Language specification & documentation
 │   ├── spec/               # Core language specifications
-│   ├── guides/             # Tutorials and user guides
+│   ├── design/             # Design evaluations and decisions
 │   ├── planning/           # Roadmaps, status, decisions
-│   ├── tooling/            # Tool specifications
 │   ├── internal/           # Compiler internals
-│   ├── comparisons/        # Blood vs other languages
 │   └── ...
 ├── examples/               # Blood language examples
-└── editors/                # Editor support (VS Code, etc.)
+└── tools/                  # Development & debugging tools
 ```
 
 See [`src/bootstrap/README.md`](src/bootstrap/README.md) for Rust-compiler-specific details.
@@ -82,7 +80,7 @@ See [`src/bootstrap/README.md`](src/bootstrap/README.md) for Rust-compiler-speci
 
 ```blood
 effect Error<E> {
-    op raise(err: E) -> never
+    op raise(err: E) -> !
 }
 
 effect IO {
@@ -116,7 +114,7 @@ cargo run -- run ../../examples/fizzbuzz.blood
 cargo test --workspace
 ```
 
-See **[GETTING_STARTED.md](docs/guides/GETTING_STARTED.md)** for the full tutorial.
+See the [Specification](docs/spec/SPECIFICATION.md) for language details.
 
 ## Documentation
 
@@ -139,13 +137,6 @@ See **[GETTING_STARTED.md](docs/guides/GETTING_STARTED.md)** for the full tutori
 | [FFI.md](docs/spec/FFI.md) | Foreign function interface |
 | [STDLIB.md](docs/spec/STDLIB.md) | Standard library design |
 | [DIAGNOSTICS.md](docs/spec/DIAGNOSTICS.md) | Error messages and diagnostics |
-| [UCM.md](docs/tooling/UCM.md) | Codebase Manager (tooling) |
-
-### Guides & Tutorials
-
-| Document | Description |
-|----------|-------------|
-| [GETTING_STARTED.md](docs/guides/GETTING_STARTED.md) | Tutorial and quick start guide |
 
 ### Planning & Status
 

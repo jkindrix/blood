@@ -92,4 +92,4 @@ Both compilers must produce identical behavior. Mismatches are bugs — see [COM
 - [Root README](../../README.md) — Project overview and design principles
 - [Language specification](../../docs/spec/SPECIFICATION.md) — Core language semantics
 - [Grammar](../../docs/spec/GRAMMAR.md) — Surface syntax
-- [Getting started](../../docs/guides/GETTING_STARTED.md) — Tutorial
+- [Contributing](../../CONTRIBUTING.md) — How to contribute

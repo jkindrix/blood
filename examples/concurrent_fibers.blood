@@ -21,9 +21,9 @@
 // The Fiber effect provides core concurrency operations.
 // Each operation is a "perform" that can suspend the current fiber.
 effect Fiber {
-    /// Spawn a new fiber to execute a task concurrently.
+    /// Launch a new fiber to execute a task concurrently.
     /// Returns a handle that can be used to await the result.
-    op spawn(task_id: i32) -> i32;
+    op launch(task_id: i32) -> i32;
 
     /// Get the current fiber's identifier.
     op current() -> i32;
@@ -114,7 +114,7 @@ fn demo_fiber_creation() {
     println_str("");
 
     println_str("Fiber creation in Blood:");
-    println_str("  1. Use 'perform Fiber.spawn(task_id)' to create a new fiber");
+    println_str("  1. Use 'perform Fiber.launch(task_id)' to create a new fiber");
     println_str("  2. Each fiber gets its own stack (growable, starts at 8KB)");
     println_str("  3. Fibers are scheduled on worker threads (M:N model)");
     println_str("  4. Returns a fiber ID for later synchronization");
@@ -758,7 +758,7 @@ deep handler FiberRuntime for Fiber {
 
     return(x) { x }
 
-    op spawn(task_id) {
+    op launch(task_id) {
         fiber_count = fiber_count + 1;
         resume(fiber_count)
     }
@@ -819,15 +819,15 @@ fn demo_effect_handlers() {
     println_str("");
 
     println_str("Concurrency operations are effects in Blood:");
-    println_str("  - Fiber.spawn, Fiber.yield are effect operations");
+    println_str("  - Fiber.launch, Fiber.yield are effect operations");
     println_str("  - Channel.send, Channel.recv are effect operations");
     println_str("  - Handlers implement the runtime behavior");
     println_str("");
 
     println_str("Runtime handler example:");
     println_str("  deep handler FiberRuntime for Fiber {");
-    println_str("      op spawn(task_id) {");
-    println_str("          let fid = scheduler.spawn(task_id);");
+    println_str("      op launch(task_id) {");
+    println_str("          let fid = scheduler.launch(task_id);");
     println_str("          resume(fid)");
     println_str("      }");
     println_str("      op yield_fiber() {");

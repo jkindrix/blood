@@ -99,7 +99,7 @@ blood/                          # Repository root (monorepo)
 │   ├── spec/                   # Core specs
 │   └── postmortem/             # Bug investigation records
 ├── examples/                   # Blood language examples
-└── editors/                    # Editor support (VS Code, etc.)
+└── tools/                      # Development & debugging tools
 ```
 
 > **Note:** The Cargo workspace is at `src/bootstrap/Cargo.toml`. All `cargo` commands must be run from the `src/bootstrap/` directory.
