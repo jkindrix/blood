@@ -1,0 +1,56 @@
+// Test: Fiber-like effect with handler calling builtins (INFRA-02 Phase 2b)
+// Verifies: effect definition → handler dispatch → builtin calls → resume pipeline
+// EXPECT: 10
+// EXPECT: 20
+// EXPECT: 30
+// EXPECT: 99
+
+// Fiber effect with yield and current operations
+effect SimpleFiber {
+    op yield_() -> ();
+    op current_id() -> u64;
+}
+
+// Handler that delegates to fiber builtins
+deep handler RuntimeFiber for SimpleFiber {
+    return(x) { x }
+
+    op yield_() {
+        __builtin_fiber_yield();
+        resume(())
+    }
+
+    op current_id() {
+        let id: u64 = __builtin_fiber_current();
+        resume(id)
+    }
+}
+
+// Function that performs multiple operations through the effect system
+fn do_work() -> i32 / {SimpleFiber} {
+    // Three dispatches — each goes through handler → builtin → resume
+    perform SimpleFiber.yield_();
+    println_int(10);
+
+    let _id: u64 = perform SimpleFiber.current_id();
+    println_int(20);
+
+    perform SimpleFiber.yield_();
+    println_int(30);
+
+    99
+}
+
+fn main() -> i32 {
+    __builtin_scheduler_init(0u64);
+
+    let result: i32 = with RuntimeFiber {} handle {
+        do_work()
+    };
+    println_int(result);
+
+    if result != 99 { return 1; }
+
+    __builtin_scheduler_shutdown();
+    0
+}
