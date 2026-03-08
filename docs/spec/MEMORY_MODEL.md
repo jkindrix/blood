@@ -3,13 +3,13 @@
 **Version**: 0.3.0
 **Status**: Implemented
 **Implementation**: ✅ Integrated
-**Last Updated**: 2026-01-10
+**Last Updated**: 2026-03-07
 
 **Implementation Status**: Core memory model is implemented and integrated. Performance benchmarks are ongoing.
 
 **Revision 0.3.0 Changes**:
 - Added implementation status link
-- Added cross-references to ROADMAP.md
+- Added cross-references to ../planning/ROADMAP.md
 
 **Revision 0.2.0 Changes**:
 - Added reserved generation values (4.5) to prevent overflow collision
@@ -63,7 +63,7 @@ The Synthetic Safety Model achieves:
 > **Performance Basis**: Performance characteristics measured using Blood micro-benchmarks:
 > - Region bump allocation (alloc+reset within existing region): ~65ns (`benchmarks/micro/bench_region_alloc.blood`)
 > - Region reset (O(1) deallocation): ~41ns regardless of allocation count (`benchmarks/micro/bench_region_dealloc.blood`)
-> - Persistent allocation (Tier 2, explicit alloc+free): ~34ns (`benchmarks/micro/bench_persistent_alloc.blood`)
+> - Persistent allocation (Tier 3, explicit alloc+free): ~34ns (`benchmarks/micro/bench_persistent_alloc.blood`)
 > - Pointer dereference overhead: ~0% with inlining (`benchmarks/micro/bench_pointer_overhead.blood`)
 > - Escape analysis validated by 346 ground-truth tests
 >
@@ -98,7 +98,7 @@ The following table tracks implementation status of SSM (Synthetic Safety Model)
 | Generation check emission | ✅ Implemented | `bloodc/src/codegen/mir_codegen.rs` | blood_validate_generation at derefs |
 | Snapshot validation at runtime | ✅ Implemented | `blood-runtime/src/ffi_exports.rs` | blood_snapshot_validate FFI |
 | Region management | ✅ Implemented | `blood-runtime/src/memory.rs` | Slot, Region types |
-| Persistent tier (Tier 2) | ✅ Implemented | `mir/escape.rs`, `codegen_stmt.blood` | RC alloc + decrement on StorageDead |
+| Persistent tier (Tier 3) | ✅ Implemented | `mir/escape.rs`, `codegen_stmt.blood` | RC alloc + decrement on StorageDead |
 
 **Legend**: ✅ Implemented | 🔶 Partial | 📋 Designed | ❌ Not Started
 
@@ -356,7 +356,7 @@ Blood's approach trades memory/CPU overhead for:
 - No GC pauses
 - Stronger safety than C
 
-*Note: With LLVM inlining (`--release`), reference dereference overhead is ~0% for function-local references. Without inlining (debug mode), overhead is ~42% due to calling convention differences. Stack references (Tier 0) always have zero overhead. Measured in `benchmarks/micro/bench_pointer_overhead.blood`.
+*Note: With LLVM inlining (`--release`), reference dereference overhead is ~0% for function-local references. Without inlining (debug mode), overhead is ~42% due to calling convention differences. Stack references (Tier 1) always have zero overhead. Measured in `benchmarks/micro/bench_pointer_overhead.blood`.
 
 #### 2.6.7 When 128-bit Overhead is Acceptable vs. Problematic
 
@@ -378,12 +378,12 @@ Blood's approach trades memory/CPU overhead for:
 | **Dense pointer arrays** | 4 pointers per cache line instead of 8 | Pack data, not pointers |
 | **Graph algorithms** | Heavy pointer chasing magnifies overhead | Use index-based adjacency lists |
 | **Hot inner loops** | Every heap dereference costs ~4 cycles | Hoist values out of loops |
-| **Memory-constrained embedded** | 2x pointer size may exceed RAM budget | Consider Tier 0 only or alternative approach |
+| **Memory-constrained embedded** | 2x pointer size may exceed RAM budget | Consider Tier 1 only or alternative approach |
 | **Real-time with µs latency** | ~1.3ns per dereference may be significant | Profile and optimize hot paths |
 
 **GUIDELINES FOR MINIMIZING OVERHEAD:**
 
-1. **Prefer stack allocation**: Values that don't escape are Tier 0 (zero overhead)
+1. **Prefer stack allocation**: Values that don't escape are Tier 1 (zero overhead)
 2. **Use value types**: `struct Point { x: i32, y: i32 }` is better than `&Point`
 3. **Avoid pointer-heavy data structures**: Linked lists, doubly-linked, etc.
 4. **Pack data, not pointers**: Store values inline when possible
@@ -427,13 +427,13 @@ Profile your application if:
 
 | Tier | Name | Lifecycle | Safety Mechanism | Cost (measured) |
 |------|------|-----------|------------------|-----------------|
-| 0 | Stack | Lexical scope | Compile-time proof | ~1ns (baseline loop) |
-| 1 | Region | Explicit scope | Generational check | ~65ns (bump alloc+reset) |
-| 2 | Persistent | Reference-counted | Deferred RC | ~34ns (alloc+free) |
+| 1 | Stack | Lexical scope | Compile-time proof | ~1ns (baseline loop) |
+| 2 | Region | Explicit scope | Generational check | ~65ns (bump alloc+reset) |
+| 3 | Persistent | Reference-counted | Deferred RC | ~34ns (alloc+free) |
 
-*Measured using Blood micro-benchmarks (`benchmarks/micro/`). Tier 0 is essentially free. Tier 1 bump allocation within an existing region: ~65ns (alloc+write+read+reset). Region reset is O(1) (~41ns) regardless of allocation count. Tier 2 measured via `bench_persistent_alloc.blood` (explicit alloc/free cycle). Copy-type enums are stack-promoted by escape analysis, avoiding allocation entirely.
+*Measured using Blood micro-benchmarks (`benchmarks/micro/`). Tier 1 is essentially free. Tier 2 bump allocation within an existing region: ~65ns (alloc+write+read+reset). Region reset is O(1) (~41ns) regardless of allocation count. Tier 3 measured via `bench_persistent_alloc.blood` (explicit alloc/free cycle). Copy-type enums are stack-promoted by escape analysis, avoiding allocation entirely.*
 
-### 3.2 Tier 0: Stack
+### 3.2 Tier 1: Stack
 
 **Allocation**: Values placed on CPU stack via `SP` manipulation.
 
@@ -455,7 +455,7 @@ fn stack_example() -> i32 {
 }
 ```
 
-### 3.3 Tier 1: Region
+### 3.3 Tier 2: Region
 
 **Allocation**: Values allocated in a memory region with generational tracking.
 
@@ -470,7 +470,7 @@ fn stack_example() -> i32 {
 
 ```blood
 fn region_example() -> Box<i32> {
-    let x = Box::new(42)  // Region allocated
+    let x = Box.new(42)  // Region allocated
     x                      // Box returned to caller
 }
 
@@ -479,7 +479,7 @@ fn use_region(b: Box<i32>) {
 }
 ```
 
-### 3.4 Tier 2: Persistent
+### 3.4 Tier 3: Persistent
 
 **Allocation**: Long-lived values managed by deferred reference counting.
 
@@ -494,7 +494,7 @@ fn use_region(b: Box<i32>) {
 
 ```blood
 fn persistent_example() {
-    let config = persist(load_config())  // Tier 2
+    let config = persist(load_config())  // Tier 3
     spawn(|| use_config(&config))        // Shared across fibers
     spawn(|| use_config(&config))
 }
@@ -506,7 +506,7 @@ fn persistent_example() {
 
 ### 4.1 Allocation
 
-When a value is allocated in Tier 1 (Region):
+When a value is allocated in Tier 2 (Region):
 
 ```
 ALLOCATE(value, type) → BloodPtr:
@@ -684,10 +684,10 @@ Each value is assigned an escape state:
 
 | State | Meaning | Tier Assignment |
 |-------|---------|-----------------|
-| `NoEscape` | Never escapes defining scope | Stack (Tier 0) |
+| `NoEscape` | Never escapes defining scope | Stack (Tier 1) |
 | `ArgEscape` | Escapes via function argument | Depends on callee |
-| `HeapEscape` | Stored in heap structure | Region (Tier 1) |
-| `GlobalEscape` | Reachable from global/static | Persistent (Tier 2) |
+| `HeapEscape` | Stored in heap structure | Region (Tier 2) |
+| `GlobalEscape` | Reachable from global/static | Persistent (Tier 3) |
 | `EffectEscape` | Crosses effect suspension | Region + Snapshot |
 
 ### 5.3 Escape Analysis Algorithm
@@ -911,7 +911,7 @@ Even though `println` performs IO:
 
 ```blood
 fn requires_snapshot() / {Yield<i32>} {
-    let v = Box::new(vec![1, 2, 3])  // HeapEscape
+    let v = Box.new(vec![1, 2, 3])  // HeapEscape
     yield(v.len() as i32)  // v is live across suspension!
     v.push(4)  // v must be validated after resume
     v.len() as i32
@@ -1017,9 +1017,9 @@ This is **dereference reachability**, not mere syntactic occurrence. A reference
 
 ```blood
 fn example() / {Yield<i32>} {
-    let a = Box::new(1)    // a is dereferenced after resume → INCLUDE
-    let b = Box::new(2)    // b is only passed, never dereferenced → EXCLUDE
-    let c = Box::new(3)    // c is conditionally dereferenced → INCLUDE
+    let a = Box.new(1)    // a is dereferenced after resume → INCLUDE
+    let b = Box.new(2)    // b is only passed, never dereferenced → EXCLUDE
+    let c = Box.new(3)    // c is conditionally dereferenced → INCLUDE
 
     yield(0)
 
@@ -1136,7 +1136,7 @@ LAZY_DEREF(ptr, snapshot):
 effect StaleReference {
     /// Called when a generational reference is stale.
     /// The handler MUST NOT resume normally - it must diverge.
-    op stale(info: StaleInfo) -> never
+    op stale(info: StaleInfo) -> !
 }
 
 struct StaleInfo {
@@ -1151,7 +1151,7 @@ struct StaleInfo {
 
 ```blood
 handler DefaultStaleHandler for StaleReference {
-    op stale(info) -> never {
+    op stale(info) -> ! {
         panic("Use-after-free detected: address {info.address} \
                had generation {info.expected_generation} at capture, \
                now {info.actual_generation}")
@@ -1163,7 +1163,7 @@ handler DefaultStaleHandler for StaleReference {
 
 ```blood
 handler SafetyCriticalStaleHandler for StaleReference {
-    op stale(info) -> never {
+    op stale(info) -> ! {
         // Log to flight recorder / black box
         log_critical("MEMORY VIOLATION", info)
 
@@ -1272,7 +1272,7 @@ REGION_ALLOC(region, value, type) → BloodPtr:
     ptr ← BloodPtr {
         address: &slot,
         generation: slot.generation,
-        metadata: make_metadata(type, Tier::Region)
+        metadata: make_metadata(type, Tier.Region)
     }
 
     region.stats.allocations += 1
@@ -1324,14 +1324,14 @@ fn process_batch(items: &[Item]) -> Summary {
 ```blood
 fn bad_escape() -> &Data {
     region r {
-        let data = Box::new(Data::new())
+        let data = Box.new(Data.new())
         &*data  // ERROR: reference escapes region
     }
 }
 
 fn good_escape() -> Data {
     region r {
-        let data = Box::new(Data::new())
+        let data = Box.new(Data.new())
         (*data).clone()  // OK: value copied out
     }
 }
@@ -1346,7 +1346,7 @@ When an algebraic effect suspends computation inside a scoped region, special ru
 ```blood
 fn problematic() / {Yield<i32>} {
     region r {
-        let data = Box::new(42)
+        let data = Box.new(42)
         yield(*data)      // Effect suspends here
         use(data)         // Is 'r' still valid after resume?
     }
@@ -1451,7 +1451,7 @@ ANALYZE_REGION_EFFECTS(function):
 ```blood
 fn generator() -> impl Iterator<i32> / {Yield<i32>} {
     region buffer_region {
-        let buffer = Vec::with_capacity(1000)
+        let buffer = Vec.with_capacity(1000)
 
         for i in 0..100 {
             buffer.push(compute(i))
@@ -1482,7 +1482,7 @@ Regions interact with Blood's fiber-based concurrency model. This section specif
 | `Suspended` | Owner fiber suspended at effect, region preserved |
 | `Transferring` | Ownership moving between fibers (brief) |
 
-Cross-fiber region references are **prohibited** for Tier 1 regions. Use Tier 3 (Persistent) for shared data.
+Cross-fiber region references are **prohibited** for Tier 2 regions. Use Tier 3 (Persistent) for shared data.
 
 #### 7.8.2 Fiber-Local Regions
 
@@ -1524,7 +1524,7 @@ To share data between fibers, use Tier 3 mechanisms:
 fn cross_fiber_sharing() {
     // WRONG: Cannot share region references
     region r {
-        let data = Box::new(Data::new())
+        let data = Box.new(Data.new())
         // spawn(|| use(&data))  // COMPILE ERROR: region ref crosses fiber
 
         // CORRECT: Promote to Tier 3 first
@@ -1540,7 +1540,7 @@ For immutable cross-fiber access:
 
 ```blood
 fn frozen_sharing() {
-    let config = freeze(Config::load())  // Tier 3, deeply immutable
+    let config = freeze(Config.load())  // Tier 3, deeply immutable
 
     // Multiple fibers can read frozen data
     let h1 = spawn(|| read_config(&config))
@@ -1589,7 +1589,7 @@ For rare cases requiring shared mutable state, Blood provides explicit synchroni
 
 ```blood
 fn shared_mutable() {
-    let shared: Synchronized<Counter> = synchronized(Counter::new())
+    let shared: Synchronized<Counter> = synchronized(Counter.new())
 
     spawn(|| {
         shared.with_lock(|counter| {
@@ -1600,6 +1600,47 @@ fn shared_mutable() {
 ```
 
 `Synchronized<T>` uses Tier 3 storage with mutex protection. This is an escape hatch, not the default.
+
+### 7.9 Region Reset
+
+Region reset recycles a region's memory without deallocating the underlying virtual mapping. This is an O(1) operation regardless of how many allocations the region contains.
+
+```
+REGION_RESET(region):
+    // Reset bump pointer to start of region
+    region.bump_offset ← 0
+
+    // Increment generation for all slots (invalidates existing pointers)
+    region.generation_base += 1
+    IF region.generation_base == 0:  // Overflow
+        PROMOTE_ALL_TO_PERSISTENT(region)
+
+    // Slot memory is not touched — only the bump pointer moves
+    // Cost: O(1) regardless of allocation count (~41ns measured)
+```
+
+**Key Properties**:
+1. **O(1) cost**: Only resets the bump pointer and increments generation — does not iterate slots
+2. **Pointer invalidation**: All existing generational references into the region become invalid (generation mismatch)
+3. **Virtual mapping preserved**: The `mmap`'d address range is kept, avoiding system call overhead of destroy+recreate
+4. **Use case**: Per-function scratch regions in hot loops (e.g., MIR lowering, codegen)
+
+```blood
+fn process_items(items: &[Item]) {
+    region scratch {
+        for item in items {
+            // Allocate temporaries in scratch region
+            let temp = transform(item)
+            emit(temp)
+
+            // Reset scratch region for next iteration
+            scratch.reset()  // O(1), all temp allocations recycled
+        }
+    }
+}
+```
+
+**Interaction with effect suspension**: A region MUST NOT be reset while any continuation holds references into it (i.e., while `region.suspend_count > 0`). This is enforced at compile time by the region-effect analysis (§7.7.6).
 
 ---
 
@@ -1629,15 +1670,15 @@ PersistentSlot = {
 
 ```
 RC_INCREMENT(slot):
-    old ← slot.refcount.fetch_add(1, Ordering::Relaxed)
+    old ← slot.refcount.fetch_add(1, Ordering.Relaxed)
     IF old == 0:
         PANIC("Increment of zero refcount")
 
 RC_DECREMENT(slot):
-    old ← slot.refcount.fetch_sub(1, Ordering::Release)
+    old ← slot.refcount.fetch_sub(1, Ordering.Release)
     IF old == 1:
         // Last reference dropped
-        fence(Ordering::Acquire)
+        fence(Ordering.Acquire)
         DROP_VALUE(slot.value)
 
         IF slot.weak_count.load() == 0:
@@ -1652,7 +1693,7 @@ To avoid deep recursion on drop, Blood uses **deferred decrement**:
 
 ```
 DEFERRED_RC_DECREMENT(slot):
-    old ← slot.refcount.fetch_sub(1, Ordering::Release)
+    old ← slot.refcount.fetch_sub(1, Ordering.Release)
     IF old == 1:
         QUEUE_FOR_COLLECTION(slot)
 
@@ -1661,7 +1702,7 @@ COLLECTOR_LOOP():
     WHILE NOT terminated:
         batch ← DRAIN_QUEUE(max: 100)
         FOR EACH slot IN batch:
-            fence(Ordering::Acquire)
+            fence(Ordering.Acquire)
             DROP_VALUE(slot.value)  // May queue more
             MAYBE_DEALLOCATE(slot)
 ```
@@ -1759,7 +1800,7 @@ Tier 3 enables safe sharing across fibers:
 
 ```blood
 fn share_config() {
-    let config: Frozen<Config> = freeze(Config::load())
+    let config: Frozen<Config> = freeze(Config.load())
     // config is now Tier 3 with refcount
 
     let handle1 = spawn(|| use_config(&config))  // RC++
@@ -1780,9 +1821,9 @@ fn share_config() {
 
 ### 9.1 Safety Theorems
 
-#### Theorem 1: No Use-After-Free (Tier 1)
+#### Theorem 1: No Use-After-Free (Tier 2)
 
-**Statement**: If `ptr` is a Tier 1 pointer and `DEREFERENCE(ptr)` succeeds, then `ptr.address` contains a live value.
+**Statement**: If `ptr` is a Tier 2 pointer and `DEREFERENCE(ptr)` succeeds, then `ptr.address` contains a live value.
 
 **Proof**:
 1. On allocation, `ptr.generation = slot.generation`
@@ -1791,12 +1832,12 @@ fn share_config() {
 4. After free, `ptr.generation ≠ slot.generation`
 5. Therefore, dereference after free raises `StaleReference` ∎
 
-#### Theorem 2: No Use-After-Free (Tier 0)
+#### Theorem 2: No Use-After-Free (Tier 1)
 
-**Statement**: If `ptr` is a Tier 0 (stack) pointer, dereference always succeeds while `ptr` is live.
+**Statement**: If `ptr` is a Tier 1 (stack) pointer, dereference always succeeds while `ptr` is live.
 
 **Proof**:
-1. Tier 0 pointers only exist for stack values
+1. Tier 1 pointers only exist for stack values
 2. Escape analysis proves `ptr` doesn't outlive value
 3. Stack frames deallocate LIFO
 4. While `ptr` is in scope, value's frame is on stack
@@ -1830,7 +1871,7 @@ fn share_config() {
 **Proof**:
 1. Regions are created fiber-local (ownership = creating fiber)
 2. The type system prevents region references from crossing fiber boundaries
-3. Spawn operations require captured values to be fiber-transferable (compiler checks memory tier); mutable Tier 1 region references are not fiber-transferable
+3. Spawn operations require `T: Send` bounds; mutable Tier 2 region references are not `Send` (auto-derived from memory tier)
 4. Only the owning fiber can access region contents
 5. Therefore, only the owner can dereference region pointers ∎
 
@@ -2031,8 +2072,8 @@ The following require formal proof (e.g., in Coq/Agda). All theorems now have pr
 
 | Theorem | Status | Complexity | Section |
 |---------|--------|------------|---------|
-| No UAF (Tier 1) | ✅ Mechanized (`no_use_after_free`, GenerationSnapshots.v) | Low | 9.1 |
-| No UAF (Tier 0) | ✅ Mechanized (`stack_safety`, MemorySafety.v) | Medium (escape analysis) | 9.1 |
+| No UAF (Tier 2) | ✅ Mechanized (`no_use_after_free`, GenerationSnapshots.v) | Low | 9.1 |
+| No UAF (Tier 1) | ✅ Mechanized (`stack_safety`, MemorySafety.v) | Medium (escape analysis) | 9.1 |
 | Snapshot Safety | ✅ Mechanized (`gen_snapshot_valid`, GenerationSnapshots.v) | Medium | 9.1 |
 | Linear Safety | ✅ Mechanized (`linear_safety_static`, LinearSafety.v) | Medium | 9.1 |
 | Region Isolation | ✅ Mechanized (`region_isolation`, FiberSafety.v) | Low | 9.1, 7.8 |
@@ -2137,7 +2178,7 @@ In debug builds:
 | | TIER | ✅ Implemented | `mir/ptr.rs` | Stack(0), Region(1), Persistent(2) |
 | | FLAGS | ✅ Implemented | `mir/ptr.rs` | MUT, LINEAR, FROZEN, NULLABLE |
 | | TYPE_FP | ✅ Implemented | `mir/ptr.rs` | 24-bit type fingerprint |
-| **64-bit Stack Ptr** | ADDRESS | ✅ Implemented | `mir/ptr.rs` | Tier 0 thin pointers |
+| **64-bit Stack Ptr** | ADDRESS | ✅ Implemented | `mir/ptr.rs` | Tier 1 thin pointers |
 | **Persistent Slot** | REFCOUNT | ✅ Implemented | `blood-runtime/src/memory.rs` | RC increment/decrement via FFI |
 | | WEAK_COUNT | ✅ Implemented | `blood-runtime/src/memory.rs` | Weak reference support |
 | | METADATA | 📋 Designed | — | Per-slot metadata |
@@ -2147,7 +2188,7 @@ In debug builds:
 ### A.2 Bit Layouts
 
 ```
-128-bit Blood Pointer (Tier 1/2):
+128-bit Blood Pointer (Tier 2/2):
 ┌────────────────────────────────────────────────────────────────────────────┐
 │ Bit  │ 127:64          │ 63:32           │ 31:28 │ 27:24 │ 23:0           │
 ├──────┼─────────────────┼─────────────────┼───────┼───────┼────────────────┤
@@ -2156,7 +2197,7 @@ In debug builds:
 │ Status │ ✅ Implemented │ ✅ Implemented │ ✅    │ ✅    │ ✅ Implemented │
 └────────────────────────────────────────────────────────────────────────────┘
 
-64-bit Stack Pointer (Tier 0):
+64-bit Stack Pointer (Tier 1):
 ┌────────────────────────────────────────────────────────────────────────────┐
 │ Bit  │ 63:0                                                                │
 ├──────┼─────────────────────────────────────────────────────────────────────┤
@@ -2194,7 +2235,7 @@ effect StaleReference {
     ///
     /// # Returns
     /// This operation never returns normally.
-    op stale(info: StaleInfo) -> never
+    op stale(info: StaleInfo) -> !
 }
 
 /// Information about a stale reference access.
