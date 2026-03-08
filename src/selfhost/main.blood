@@ -3250,8 +3250,30 @@ fn widen_to_i64(ir: &mut String, val_name: &str, ty: &str) -> String {
         s.push_str("_wide");
         return s;
     }
-    // For other types (void, struct, etc.), return 0
-    common.make_string("0")
+    if str_eq(ty, "{}") || str_eq(ty, "void") {
+        return common.make_string("0");
+    }
+    // For aggregate types (struct, tuple, etc.): reinterpret bits as i64.
+    // Store the struct to an i64-sized alloca, then load as i64.
+    ir.push_str("  %");
+    ir.push_str(val_name);
+    ir.push_str("_alloca = alloca i64\n");
+    ir.push_str("  store ");
+    ir.push_str(ty);
+    ir.push_str(" %");
+    ir.push_str(val_name);
+    ir.push_str(", ptr %");
+    ir.push_str(val_name);
+    ir.push_str("_alloca\n");
+    ir.push_str("  %");
+    ir.push_str(val_name);
+    ir.push_str("_wide = load i64, ptr %");
+    ir.push_str(val_name);
+    ir.push_str("_alloca\n");
+    let mut s = common.make_string("%");
+    s.push_str(val_name);
+    s.push_str("_wide");
+    s
 }
 
 /// Emits call arguments for the inner handler op body function.

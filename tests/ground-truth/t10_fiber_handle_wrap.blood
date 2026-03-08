@@ -1,0 +1,56 @@
+// Test: Struct wrapping/unwrapping in fiber handler bodies (INFRA-02 Phase 2c)
+// Verifies: handler body wraps u64 builtin results into typed structs,
+//           perform site unwraps them correctly
+// EXPECT: 42
+// EXPECT: 100
+// EXPECT: 142
+
+struct FiberId {
+    value: u64,
+}
+
+effect FiberOps {
+    op current() -> FiberId;
+    op make_id(val: u64) -> FiberId;
+}
+
+deep handler FiberRuntime for FiberOps {
+    return(x) { x }
+
+    op current() {
+        let rid: u64 = __builtin_fiber_current();
+        let id = FiberId { value: rid };
+        resume(id)
+    }
+
+    op make_id(val) {
+        let id = FiberId { value: val };
+        resume(id)
+    }
+}
+
+fn use_fiber_ops() -> i32 / {FiberOps} {
+    let id: FiberId = perform FiberOps.current();
+    // current() returns 0 when no scheduler, but we just check wrapping works
+    let custom: FiberId = perform FiberOps.make_id(42u64);
+    println_int(custom.value as i32);
+
+    let another: FiberId = perform FiberOps.make_id(100u64);
+    println_int(another.value as i32);
+
+    let sum: u64 = custom.value + another.value;
+    println_int(sum as i32);
+
+    0
+}
+
+fn main() -> i32 {
+    __builtin_scheduler_init(0u64);
+
+    let result: i32 = with FiberRuntime {} handle {
+        use_fiber_ops()
+    };
+
+    __builtin_scheduler_shutdown();
+    result
+}
