@@ -196,8 +196,6 @@ pub struct MirLowerCtx {
     loop_stack: Vec<LoopContext>,
     /// Counter for generating unique temporary names.
     temp_counter: u32,
-    /// Tracks moved places for use-after-move detection.
-    pub move_tracker: MoveTracker,
     /// Address of the substitution table from type inference (borrowed, not owned).
     /// Used to resolve TypeKind.Infer variables to concrete types.
     ///
@@ -336,7 +334,6 @@ impl MirLowerCtx {
             local_map: Vec.new(),
             loop_stack: Vec.new(),
             temp_counter: 0,
-            move_tracker: MoveTracker.new(),
             subst_table_addr: subst_table_addr,
             method_resolutions: method_resolutions,
             field_resolutions: field_resolutions,
@@ -662,16 +659,6 @@ impl MirLowerCtx {
         self.builder.push_assign(place, rvalue, span);
     }
 
-    /// Emits a storage live marker.
-    pub fn emit_storage_live(self: &mut MirLowerCtx, local: mir_def.MirLocalId, span: common.Span) {
-        self.emit_stmt(mir_stmt.Statement.storage_live(local, span));
-    }
-
-    /// Emits a storage dead marker.
-    pub fn emit_storage_dead(self: &mut MirLowerCtx, local: mir_def.MirLocalId, span: common.Span) {
-        self.emit_stmt(mir_stmt.Statement.storage_dead(local, span));
-    }
-
     // ======== Terminator Emission ========
 
     /// Terminates with an unconditional goto.
@@ -967,105 +954,6 @@ impl mir_types.PlaceElem {
                 mir_types.PlaceElem.Subslice { from, to, from_end }
             }
             &mir_types.PlaceElem.Downcast(idx) => mir_types.PlaceElem.Downcast(idx),
-        }
-    }
-}
-
-// ============================================================
-// Move Tracking Infrastructure
-// ============================================================
-//
-// This section provides infrastructure for tracking moved values
-// to detect use-after-move errors.
-//
-// # Architecture
-//
-// Move tracking operates in two phases:
-// 1. During MIR lowering: Record when Move operands are created
-// 2. During MIR analysis: Check that moved places aren't used again
-//
-// # Current Status
-//
-// MoveTracker is integrated into MirLowerCtx:
-// - MirLowerCtx has a `move_tracker` field
-// - `operand_from_place_tracked()` in mir_lower_util.blood checks for
-//   use-after-move before creating operands and tracks moves
-// - `clear_move_on_assign()` resets move status after reassignment
-//
-// # Usage
-//
-// Use `operand_from_place_tracked()` instead of `operand_from_place()`
-// to enable move tracking. The function will return Option.None if
-// the place has been moved from, allowing the caller to report an error.
-
-/// Tracks which places have been moved from.
-///
-/// This is a simplified representation. A full implementation would
-/// track partial moves (e.g., moving a struct field) and handle
-/// re-assignment which allows reuse.
-pub struct MoveTracker {
-    /// Places that have been moved from.
-    /// Stored as (local_index, moved) pairs.
-    moved_locals: Vec<MovedLocal>,
-}
-
-/// A local that has been moved from.
-struct MovedLocal {
-    /// The local's index.
-    local_index: u32,
-    /// The span where the move occurred (for error messages).
-    move_span: common.Span,
-}
-
-impl MoveTracker {
-    /// Creates a new move tracker.
-    pub fn new() -> MoveTracker {
-        MoveTracker {
-            moved_locals: Vec.new(),
-        }
-    }
-
-    /// Records that a local has been moved.
-    pub fn track_move(self: &mut Self, local: mir_def.MirLocalId, span: common.Span) {
-        self.moved_locals.push(MovedLocal {
-            local_index: local.index,
-            move_span: span,
-        });
-    }
-
-    /// Checks if a local has been moved.
-    /// Returns Some(span) if moved, None otherwise.
-    pub fn check_moved(self: &Self, local: mir_def.MirLocalId) -> Option<common.Span> {
-        for i in 0usize..self.moved_locals.len() {
-            if self.moved_locals[i].local_index == local.index {
-                return Option.Some(self.moved_locals[i].move_span);
-            }
-        }
-        Option.None
-    }
-
-    /// Clears the moved status of a local (after re-assignment).
-    pub fn clear_move(self: &mut Self, local: mir_def.MirLocalId) {
-        for i in 0usize..self.moved_locals.len() {
-            if self.moved_locals[i].local_index == local.index {
-                // Remove by swapping with last and popping
-                let last = self.moved_locals.len() - 1;
-                if i != last {
-                    self.moved_locals[i] = MovedLocal {
-                        local_index: self.moved_locals[last].local_index,
-                        move_span: self.moved_locals[last].move_span,
-                    };
-                }
-                self.moved_locals.pop();
-                return;
-            }
-        }
-    }
-
-    /// Resets all move tracking (for a new function body).
-    pub fn reset(self: &mut Self) {
-        while self.moved_locals.len() > 0 {
-            self.moved_locals.pop();
         }
     }
 }

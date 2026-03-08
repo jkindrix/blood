@@ -947,7 +947,7 @@ If `Γ; Δ ⊢ e : T / ε` and `e` is well-typed with generation snapshot semant
 
 **Interaction**: MVS performs implicit copies. Effect handlers may capture values that are semantically copied vs. referenced.
 
-**Safety Mechanism**: Copy semantics are unambiguous for values; only `Box<T>` uses generational references.
+**Safety Mechanism**: Copy semantics are unambiguous for values; generational references apply to heap-allocated types (e.g., `Box<T>`) that hold indirect pointers.
 
 **Theorem (Effects-MVS Safety)**:
 Value types in effect handler captures behave correctly because they are copied, not aliased.

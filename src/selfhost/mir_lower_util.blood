@@ -247,111 +247,18 @@ pub fn lower_literal(lit: &hir_expr.Literal, ty: &hir_ty.Type) -> mir_types.Cons
 /// ADT (struct, enum) types are conservatively treated as Move.
 /// Full ownership tracking would require:
 /// 1. Lang item infrastructure to identify the Copy trait
-/// 2. Access to TypeContext to query trait implementations
-/// 3. Recursive checking of ADT fields
+/// Creates an operand from a place.
 ///
-/// This is safe but may be less efficient than optimal - values that
-/// could be copied will instead be moved.
-///
-/// # Future Enhancements
-///
-/// To properly check ADT Copy status:
-/// 1. Add lang items system in typeck or resolver
-/// 2. Thread TypeContext through MIR lowering
-/// 3. Query type_implements_trait(ty, copy_trait_def_id)
-pub fn is_copy_type(ty: &hir_ty.Type) -> bool {
-    match &ty.kind {
-        &hir_ty.TypeKind.Primitive(_) => true,
-        &hir_ty.TypeKind.Ref { inner: _, mutable: _ } => true,
-        &hir_ty.TypeKind.Ptr { inner: _, mutable: _ } => true,
-        &hir_ty.TypeKind.Tuple(ref elems) => {
-            for i in 0usize..elems.len() {
-                if !is_copy_type(&elems[i]) {
-                    return false;
-                }
-            }
-            true
-        }
-        &hir_ty.TypeKind.Array { ref element, size: _ } => is_copy_type(element.as_ref()),
-        &hir_ty.TypeKind.Never => true,
-        // Other types are not Copy by default.
-        // ADT types would need TypeContext access to check Copy trait impl.
-        &hir_ty.TypeKind.Slice { element: _ } => false,
-        &hir_ty.TypeKind.Fn { params: _, ret: _, effects: _ } => false,
-        &hir_ty.TypeKind.Closure { def_id: _, params: _, ret: _ } => false,
-        &hir_ty.TypeKind.Adt { def_id: _, args: _ } => false,
-        &hir_ty.TypeKind.Infer(_) => false,
-        &hir_ty.TypeKind.Param(_) => false,
-        &hir_ty.TypeKind.Record { fields: _, row_var: _ } => false,
-        &hir_ty.TypeKind.Forall { params: _, body: _ } => false,
-        &hir_ty.TypeKind.Ownership { qualifier: _, inner: _ } => false, // Linear/affine types are not Copy
-        &hir_ty.TypeKind.Range { element: _, inclusive: _ } => true, // Range types are Copy if element is Copy
-        &hir_ty.TypeKind.DynTrait { trait_id: _, auto_traits: _ } => false, // Trait objects are not Copy
-        &hir_ty.TypeKind.Error => true,
-    }
-}
-
-/// Creates an operand from a place, choosing Copy or Move based on type.
+/// Blood uses Mutable Value Semantics (copy-by-default). All place
+/// accesses produce Copy operands. Linear/affine enforcement is a
+/// separate typeck phase (typeck_linearity.blood), not a MIR concern.
 pub fn operand_from_place(place: mir_types.Place, ty: &hir_ty.Type) -> mir_types.Operand {
-    if is_copy_type(ty) {
-        mir_types.Operand.Copy(place)
-    } else {
-        mir_types.Operand.Move(place)
-    }
+    mir_types.Operand.Copy(place)
 }
 
-/// Creates an operand from a place using a TyId, choosing Copy or Move based on type.
+/// Creates an operand from a place using a TyId.
 pub fn operand_from_place_id(place: mir_types.Place, ty_id: type_intern.TyId) -> mir_types.Operand {
-    let ty = type_intern.ty_id_to_type(ty_id);
-    operand_from_place(place, &ty)
-}
-
-/// Creates an operand with move tracking.
-///
-/// This function:
-/// 1. Checks if the place (if a local) has already been moved
-/// 2. If moved, returns None (caller should report use-after-move error)
-/// 3. If not moved and type is non-Copy, tracks the move
-/// 4. Returns the operand
-///
-/// # Returns
-/// - Some(operand) if the place is valid to use
-/// - None if the place has been moved (use-after-move)
-pub fn operand_from_place_tracked(
-    ctx: &mut mir_lower_ctx.MirLowerCtx,
-    place: mir_types.Place,
-    ty: &hir_ty.Type,
-    span: common.Span,
-) -> Option<mir_types.Operand> {
-    // If the place is just a local (no projection), check move status
-    if place.projection.len() == 0 {
-        // Check if already moved
-        let moved_span = ctx.move_tracker.check_moved(place.local);
-        if moved_span.is_some() {
-            // Place has been moved - caller should report error
-            return Option.None;
-        }
-    }
-
-    // Create the operand
-    let operand = operand_from_place(copy_place(&place), ty);
-
-    // If it's a Move operand and the place is a local, track the move
-    match &operand {
-        &mir_types.Operand.Move(ref p) => {
-            if p.projection.len() == 0 {
-                ctx.move_tracker.track_move(p.local, span);
-            }
-        }
-        &mir_types.Operand.Copy(_) => {
-            // Copy doesn't consume the place
-        }
-        &mir_types.Operand.Constant(_) => {
-            // Constants don't have places
-        }
-    }
-
-    Option.Some(operand)
+    mir_types.Operand.Copy(place)
 }
 
 /// Creates a copy of a Place.
@@ -418,13 +325,6 @@ fn copy_constant_kind(k: &mir_types.ConstantKind) -> mir_types.ConstantKind {
         &mir_types.ConstantKind.StaticDef(def_id) => mir_types.ConstantKind.StaticDef(def_id),
         &mir_types.ConstantKind.ZeroSized => mir_types.ConstantKind.ZeroSized,
     }
-}
-
-/// Clears the move status of a local after reassignment.
-///
-/// Call this after assigning to a local to allow it to be used again.
-pub fn clear_move_on_assign(ctx: &mut mir_lower_ctx.MirLowerCtx, local: mir_def.MirLocalId) {
-    ctx.move_tracker.clear_move(local);
 }
 
 // ============================================================

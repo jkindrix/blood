@@ -1048,7 +1048,7 @@ struct Once {
 }
 
 impl Once {
-    fn call_once<F: FnOnce()>(&self, f: F) / {Fiber} {
+    fn call_once(&self, f: linear fn() -> unit) / {Fiber} {
         match self.state.load() {
             2 => return,  // Already initialized
             1 => {

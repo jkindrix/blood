@@ -1675,11 +1675,8 @@ fn echo_handler(req: Request) -> Response / pure {
     }
 }
 
-fn logging_middleware<H>(handler: H) -> impl Fn(Request) -> Response / {IO}
-where
-    H: Fn(Request) -> Response / pure
-{
-    move |req| {
+fn logging_middleware(handler: fn(Request) -> Response / pure) -> fn(Request) -> Response / {IO} {
+    |req| {
         info!("Request: {} {}", req.method, req.path)
         let start = now()
         let response = handler(req)

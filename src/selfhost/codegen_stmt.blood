@@ -1262,8 +1262,8 @@ pub fn emit_allocas_with_escapes(
         let local_hir_ty = type_intern.ty_id_to_type(local.ty);
 
         // Get recommended tier from escape analysis
-        // Copy types always use stack regardless of escape state
-        let tier = if is_copy_type(&local_hir_ty) {
+        // Small fixed-size types always use stack regardless of escape state
+        let tier = if is_always_stack_type(&local_hir_ty) {
             mir_escape.MemoryTier.Stack
         } else {
             let t = escapes.recommended_tier(local_id);
@@ -1410,8 +1410,10 @@ fn emit_persistent_local(
     cgname_to_string(&slot_id_tmp)
 }
 
-/// Returns true if the type is Copy (can be stack-allocated regardless of escape).
-fn is_copy_type(ty: &hir_ty.Type) -> bool {
+/// Returns true if the type is small and fixed-size (always stack-allocated
+/// regardless of escape analysis). This is an allocation tier decision, not
+/// a value semantics distinction — Blood uses MVS (copy-by-default for all types).
+fn is_always_stack_type(ty: &hir_ty.Type) -> bool {
     match &ty.kind {
         &hir_ty.TypeKind.Primitive(_) => true,
         &hir_ty.TypeKind.Ref { inner: _, mutable: _ } => true,
@@ -1425,14 +1427,14 @@ fn is_copy_type(ty: &hir_ty.Type) -> bool {
                 return true;
             }
             for i in 0usize..elems.len() {
-                if !is_copy_type(&elems[i]) {
+                if !is_always_stack_type(&elems[i]) {
                     return false;
                 }
             }
             true
         }
         &hir_ty.TypeKind.Array { ref element, size: _ } => {
-            is_copy_type(element.as_ref())
+            is_always_stack_type(element.as_ref())
         }
         _ => false,
     }

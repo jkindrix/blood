@@ -173,12 +173,10 @@ These features are intentionally deferred to Phase 2 and will return explicit "n
 - Const type arguments are evaluated using const_eval
 - Full support would require storing const values in type args
 
-**Ownership tracking:**
-- `is_copy_type` determines Copy vs Move semantics for types
-- `MoveTracker` struct integrated into MirLowerCtx
-- `operand_from_place_tracked` with use-after-move detection
-- `clear_move_on_assign` for reassignment handling
-- ADTs conservatively treated as Move (would need trait lookup for full support)
+**Value semantics:**
+- Blood uses Mutable Value Semantics (copy-by-default). All MIR operands are Copy.
+- Linear/affine enforcement is a separate typeck phase (typeck_linearity.blood).
+- `is_always_stack_type` in codegen_stmt.blood determines allocation tier (stack vs region).
 
 **Row polymorphism (type lowering):**
 - `alloc_effect_row_var` and `alloc_record_row_var` methods in LoweringCtx
@@ -509,9 +507,7 @@ When modifying the compiler:
     - Updated lowering to create Forall with allocated type variables
     - Added Forall handling in substitute_type_params, apply_substs, occurs_in, unify
     - Updated codegen_types.blood and mir_lower_expr.blood for Forall
-  - Implemented ownership tracking infrastructure (mir_lower_ctx.blood, mir_lower_util.blood)
-    - `MoveTracker` struct for tracking moved places
-    - Documentation added to `is_copy_type` explaining limitations
+  - Value semantics: Blood uses MVS (copy-by-default). All MIR operands are Operand.Copy.
   - Implemented local item handling (resolve.blood, hir_lower_expr.blood)
     - `define_local_item` registers items in current scope
     - `lower_local_item` allocates DefId and registers in resolver
@@ -531,11 +527,7 @@ When modifying the compiler:
     - Effect row lowering handles `rest` field and `Var` case
     - Record type lowering handles `row_var` field
     - Added `with_effects_and_var` method to EffectRow (hir_ty.blood)
-  - Integrated MoveTracker into MIR lowering (mir_lower_ctx.blood, mir_lower_util.blood)
-    - Added `move_tracker` field to MirLowerCtx
-    - Added `operand_from_place_tracked` for use-after-move detection
-    - Added `clear_move_on_assign` for reassignment handling
-    - Added copy helper functions for MIR types
+  - Added copy helper functions for MIR types
   - All compiler files continue to pass type checking
 - **2026-01**: Inline module support:
   - Implemented inline module declarations (`mod foo { ... }`) in hir_lower.blood:

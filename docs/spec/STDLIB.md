@@ -231,9 +231,9 @@ impl<T> Box<T> {
     /// Does NOT increment generation (ownership transferred, not freed).
     fn into_inner(self) -> T / pure
 
-    /// Leaks the box, returning a static reference.
-    /// The memory will never be freed (promoted to Tier 3).
-    fn leak(self) -> &'static mut T / pure
+    /// Leaks the box, promoting memory to Tier 3 (persistent).
+    /// The returned reference is valid for the program's lifetime.
+    fn leak(self) -> &mut T / pure
 }
 
 impl<T> Deref for Box<T> {
