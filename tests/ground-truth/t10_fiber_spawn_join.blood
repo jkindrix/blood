@@ -1,0 +1,62 @@
+// Test: Fiber spawn/join end-to-end via effect system (INFRA-02 Phase 3)
+// Verifies: fn→u64 cast, __builtin_fiber_spawn, __builtin_fiber_join,
+//           result passing through effect handler
+// EXPECT: 42
+// EXPECT: 100
+
+struct FiberId {
+    value: u64,
+}
+
+effect Fiber {
+    op launch(f: u64) -> FiberId;
+    op join(id: FiberId) -> u64;
+}
+
+deep handler ThreadFiber for Fiber {
+    return(x) { x }
+
+    op launch(f) {
+        let fid: u64 = __builtin_fiber_spawn(f);
+        let id = FiberId { value: fid };
+        resume(id)
+    }
+
+    op join(id) {
+        let result: u64 = __builtin_fiber_join(id.value);
+        resume(result)
+    }
+}
+
+fn compute_42() -> u64 {
+    42u64
+}
+
+fn compute_100() -> u64 {
+    100u64
+}
+
+fn main() -> i32 {
+    __builtin_scheduler_init(0u64);
+
+    let exit: i32 = with ThreadFiber {} handle {
+        let f1_addr: u64 = compute_42 as u64;
+        let f2_addr: u64 = compute_100 as u64;
+
+        let id1: FiberId = perform Fiber.launch(f1_addr);
+        let id2: FiberId = perform Fiber.launch(f2_addr);
+
+        let r1: u64 = perform Fiber.join(id1);
+        let r2: u64 = perform Fiber.join(id2);
+
+        println_int(r1 as i32);
+        println_int(r2 as i32);
+
+        if r1 != 42u64 { return 1; }
+        if r2 != 100u64 { return 2; }
+        0
+    };
+
+    __builtin_scheduler_shutdown();
+    exit
+}
