@@ -40,6 +40,7 @@ pub use types::{
     InstantiationResult,
     ConstraintError,
     Constraint,
+    StructuralConstraint,
 };
 
 pub use effect_row::EffectRow;

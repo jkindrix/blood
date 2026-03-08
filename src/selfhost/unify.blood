@@ -1198,6 +1198,20 @@ pub enum Constraint {
         superset: hir_ty.EffectRow,
         span: common.Span,
     },
+    /// A type must have a field with the given name and compatible type.
+    HasField {
+        ty: hir_ty.Type,
+        field: common.Symbol,
+        field_ty: hir_ty.Type,
+        span: common.Span,
+    },
+    /// A type must have a method with the given name and compatible return type.
+    HasMethod {
+        ty: hir_ty.Type,
+        method: common.Symbol,
+        return_ty: hir_ty.Type,
+        span: common.Span,
+    },
 }
 
 /// A deferred constraint for later resolution.
@@ -2824,6 +2838,94 @@ fn solve_single_constraint(
                     },
                     message: msg,
                 })
+            }
+        }
+        &Constraint.HasField { ref ty, field, ref field_ty, span } => {
+            // Check the base type (without substitution — the solver is called
+            // after unification, so types should already be resolved through the
+            // main type checking pass).
+            let ty_id = type_intern.type_to_ty_id(ty);
+            let resolved_kind = type_intern.type_interner().get(ty_id);
+
+            match resolved_kind {
+                &type_intern.InternedTypeKind.Infer(_) => {
+                    // Type still unknown — defer
+                    ConstraintSolveResult.Deferred
+                }
+                &type_intern.InternedTypeKind.Record(ref fields_list_id, ref row_var) => {
+                    // Check if field exists in the record
+                    let record_list = type_intern.type_interner().get_record_field_list(*fields_list_id);
+                    let mut found = false;
+                    for fi in 0usize..record_list.fields.len() {
+                        if record_list.fields[fi].name.index == field.index {
+                            // Found — unify field types
+                            let existing_ty_id = record_list.fields[fi].ty;
+                            let expected_ty_id = type_intern.type_to_ty_id(field_ty);
+                            let result = unify_id(subst, unifier, existing_ty_id, expected_ty_id, span);
+                            match result {
+                                UnifyResult.Ok => { return ConstraintSolveResult.Solved; }
+                                UnifyResult.Err(_) => {
+                                    let msg = common.make_string("field type mismatch in record");
+                                    return ConstraintSolveResult.Failed(ConstraintError {
+                                        constraint: Constraint.HasField {
+                                            ty: hir_ty.copy_type(ty),
+                                            field: field,
+                                            field_ty: hir_ty.copy_type(field_ty),
+                                            span: span,
+                                        },
+                                        message: msg,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    if !found {
+                        match row_var {
+                            &Option.Some(_) => {
+                                // Record has a row variable — field can extend the row.
+                                // For now, just accept (full row extension requires
+                                // unifying the row variable with an extended record).
+                                ConstraintSolveResult.Solved
+                            }
+                            &Option.None => {
+                                let msg = common.make_string("field not found in record type");
+                                ConstraintSolveResult.Failed(ConstraintError {
+                                    constraint: Constraint.HasField {
+                                        ty: hir_ty.copy_type(ty),
+                                        field: field,
+                                        field_ty: hir_ty.copy_type(field_ty),
+                                        span: span,
+                                    },
+                                    message: msg,
+                                })
+                            }
+                        }
+                    } else {
+                        ConstraintSolveResult.Solved
+                    }
+                }
+                _ => {
+                    // Not a record — defer to the field access resolver
+                    // which handles ADTs, tuples, etc.
+                    ConstraintSolveResult.Deferred
+                }
+            }
+        }
+        &Constraint.HasMethod { ref ty, method, ref return_ty, span } => {
+            // Check the base type
+            let ty_id = type_intern.type_to_ty_id(ty);
+            let resolved_kind = type_intern.type_interner().get(ty_id);
+
+            match resolved_kind {
+                &type_intern.InternedTypeKind.Infer(_) => {
+                    // Type still unknown — defer
+                    ConstraintSolveResult.Deferred
+                }
+                _ => {
+                    // Type is concrete — method lookup requires the TypeChecker.
+                    // Defer to the pending_method_calls resolution mechanism.
+                    ConstraintSolveResult.Deferred
+                }
             }
         }
     }

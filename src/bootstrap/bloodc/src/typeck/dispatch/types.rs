@@ -85,3 +85,27 @@ pub struct Constraint {
     /// The trait that must be implemented.
     pub trait_name: String,
 }
+
+/// A structural constraint from the dispatch spec (DISPATCH.md §9.3).
+/// Used by the constraint solver for structural typing checks.
+#[derive(Debug, Clone)]
+pub enum StructuralConstraint {
+    /// The type must have a field with the given name and compatible type.
+    HasField {
+        /// The type that must have the field.
+        ty: Type,
+        /// The field name.
+        field_name: String,
+        /// The expected field type.
+        field_ty: Type,
+    },
+    /// The type must have a method with the given name and compatible return type.
+    HasMethod {
+        /// The type that must have the method.
+        ty: Type,
+        /// The method name.
+        method_name: String,
+        /// The expected return type.
+        return_ty: Type,
+    },
+}

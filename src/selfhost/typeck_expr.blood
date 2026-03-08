@@ -1347,7 +1347,7 @@ fn infer_field(
                 }
             }
         }
-        &hir_ty.TypeKind.Record { ref fields, row_var: _ } => {
+        &hir_ty.TypeKind.Record { ref fields, ref row_var } => {
             // Record field access by name
             match field {
                 &hir_expr.FieldAccess.Named { ref name, field_idx: _ } => {
@@ -1358,12 +1358,25 @@ fn infer_field(
                             return type_intern.type_to_ty_id(&fields[i].ty);
                         }
                     }
-                    checker.error_with_note(
-                        typeck.TypeErrorKind.NoSuchField,
-                        span,
-                        common.make_string("field not found in record type"),
-                    );
-                    type_intern.CommonTypes.error()
+                    // Field not in fixed fields — check for row variable
+                    match row_var {
+                        &Option.Some(_) => {
+                            // Row variable present — field may exist in the extended row.
+                            // Return a fresh infer variable; the constraint solver or
+                            // later resolution will validate when the row is fully known.
+                            let result_ty = checker.fresh_infer();
+                            checker.record_field_resolution(name.span.start, fields.len() as u32);
+                            result_ty
+                        }
+                        &Option.None => {
+                            checker.error_with_note(
+                                typeck.TypeErrorKind.NoSuchField,
+                                span,
+                                common.make_string("field not found in record type"),
+                            );
+                            type_intern.CommonTypes.error()
+                        }
+                    }
                 }
                 &hir_expr.FieldAccess.Index(_) => {
                     checker.error_with_note(
@@ -1438,9 +1451,31 @@ fn infer_field(
                 }
             }
         }
-        &hir_ty.TypeKind.Infer(_) => {
-            // Base type not yet known
-            checker.fresh_infer()
+        &hir_ty.TypeKind.Infer(ref var_id) => {
+            // Base type not yet known — record deferred field access
+            let result_ty = checker.fresh_infer();
+            match field {
+                &hir_expr.FieldAccess.Named { ref name, field_idx: _ } => {
+                    // Extract TyVarId indices for the pending record
+                    let base_var_index = var_id.index;
+                    let result_kind = type_intern.type_interner().get(result_ty);
+                    let result_var_index = match result_kind {
+                        &type_intern.InternedTypeKind.Infer(ref rv) => rv.index,
+                        _ => 0,
+                    };
+                    checker.record_pending_field_access(
+                        span.start,
+                        base_var_index,
+                        name.symbol,
+                        result_var_index,
+                        name.span.start,
+                    );
+                }
+                &hir_expr.FieldAccess.Index(_) => {
+                    // Index access on Infer — no symbol to record, just return fresh infer
+                }
+            }
+            result_ty
         }
         &hir_ty.TypeKind.Error => {
             type_intern.CommonTypes.error()

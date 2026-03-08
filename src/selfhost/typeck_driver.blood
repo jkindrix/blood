@@ -141,8 +141,9 @@ pub fn check_types(ctx: &hir_lower_ctx.LoweringCtx) -> TypeCheckResult {
         check_body(&mut checker, &body_entry.body, return_ty);
     }
 
-    // Phase 3: Deferred method resolution for Infer-receiver calls
+    // Phase 3: Deferred resolution for Infer-receiver calls and field accesses
     resolve_pending_methods(&mut checker);
+    resolve_pending_field_accesses(&mut checker);
 
     // Return result with substitution table for type resolution in MIR lowering
     if checker.has_errors() {
@@ -270,8 +271,9 @@ pub fn check_lower_result(result: &hir_lower_ctx.LowerResult) -> TypeCheckResult
         checker.errors.pop();
     }
 
-    // Phase 3: Deferred method resolution for Infer-receiver calls
+    // Phase 3: Deferred resolution for Infer-receiver calls and field accesses
     resolve_pending_methods(&mut checker);
+    resolve_pending_field_accesses(&mut checker);
 
     // Return result with substitution table for type resolution in MIR lowering
     if checker.has_errors() {
@@ -1652,6 +1654,124 @@ fn is_already_resolved(checker: &mut typeck.TypeChecker, body_def_id: u32, span_
     for i in 0usize..checker.method_resolutions.len() {
         if checker.method_resolutions[i].body_def_id == body_def_id &&
            checker.method_resolutions[i].span_start == span_start {
+            return true;
+        }
+    }
+    false
+}
+
+/// Resolves pending field accesses that were deferred because the base type was Infer.
+/// Similar to resolve_pending_methods: iterates until no more can be resolved.
+fn resolve_pending_field_accesses(checker: &mut typeck.TypeChecker) {
+    let interner = type_intern.type_interner();
+    let mut resolved_count: usize = 1;
+    while resolved_count > 0 {
+        resolved_count = 0;
+        for i in 0usize..checker.pending_field_accesses.len() {
+            let body_def_id = checker.pending_field_accesses[i].body_def_id;
+            let span_start = checker.pending_field_accesses[i].span_start;
+            let base_var = checker.pending_field_accesses[i].base_var;
+            let field_symbol = checker.pending_field_accesses[i].field_symbol;
+            let field_ty_var = checker.pending_field_accesses[i].field_ty_var;
+            let field_name_span_start = checker.pending_field_accesses[i].field_name_span_start;
+
+            // Skip if already resolved (field resolution recorded)
+            if is_field_already_resolved(checker, body_def_id, field_name_span_start) {
+                continue;
+            }
+
+            // Try to resolve the base type variable
+            let infer_ty_id = interner.intern(type_intern.InternedTypeKind.Infer(
+                hir_def.TyVarId.new(base_var)
+            ));
+            let base_ty_id = checker.resolve(infer_ty_id);
+            let stripped_id = typeck_expr.strip_refs_id(base_ty_id);
+            let stripped_kind = interner.get(stripped_id);
+
+            let still_infer = match stripped_kind {
+                &type_intern.InternedTypeKind.Infer(_) => true,
+                _ => false,
+            };
+
+            if !still_infer {
+                // Base is now concrete — resolve the field
+                checker.current_body_def_id = body_def_id;
+                let field_infer_id = interner.intern(type_intern.InternedTypeKind.Infer(
+                    hir_def.TyVarId.new(field_ty_var)
+                ));
+
+                match stripped_kind {
+                    &type_intern.InternedTypeKind.Adt(ref def_id, ref args) => {
+                        match checker.get_struct_field_ty(*def_id, field_symbol) {
+                            Some(field_ty) => {
+                                // Record field index
+                                match checker.get_struct_field_idx(*def_id, field_symbol) {
+                                    Option.Some(idx) => {
+                                        checker.record_field_resolution(field_name_span_start, idx);
+                                    }
+                                    Option.None => {}
+                                }
+                                // Substitute type params if generic
+                                let args_len = interner.ty_list_len(*args);
+                                let actual_field_ty = if args_len > 0 {
+                                    let mut subst = unify.TypeParamSubst.new();
+                                    for ai in 0usize..args_len {
+                                        let arg_id = interner.get_ty_list_element(*args, ai);
+                                        subst.add_id(ai as u32, arg_id);
+                                    }
+                                    unify.substitute_type_params_id(field_ty, &subst)
+                                } else {
+                                    field_ty
+                                };
+                                checker.unify(field_infer_id, actual_field_ty, common.Span.dummy());
+                                resolved_count += 1;
+                            }
+                            Option.None => {
+                                // Field not found on concrete type — error
+                            }
+                        }
+                    }
+                    &type_intern.InternedTypeKind.Record(ref fields_id, ref row_var) => {
+                        let field_list = interner.get_record_field_list(*fields_id);
+                        let mut found = false;
+                        for fi in 0usize..field_list.fields.len() {
+                            if field_list.fields[fi].name.index == field_symbol.index {
+                                checker.record_field_resolution(field_name_span_start, fi as u32);
+                                let field_ty_id = field_list.fields[fi].ty;
+                                checker.unify(field_infer_id, field_ty_id, common.Span.dummy());
+                                found = true;
+                                resolved_count += 1;
+                            }
+                        }
+                        if !found {
+                            match row_var {
+                                &Option.Some(_) => {
+                                    // Row variable present — field may exist in extended row
+                                    resolved_count += 1;
+                                }
+                                &Option.None => {
+                                    // No row variable — field not found, skip (error at original site)
+                                }
+                            }
+                        }
+                    }
+                    &type_intern.InternedTypeKind.Tuple(ref types) => {
+                        // Tuple field by name doesn't make sense — skip
+                    }
+                    _ => {
+                        // Other type — can't resolve field, skip
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Checks if a field access at the given name_span_start has already been resolved.
+fn is_field_already_resolved(checker: &mut typeck.TypeChecker, body_def_id: u32, name_span_start: usize) -> bool {
+    for i in 0usize..checker.field_resolutions.len() {
+        if checker.field_resolutions[i].body_def_id == body_def_id &&
+           checker.field_resolutions[i].span_start == name_span_start {
             return true;
         }
     }

@@ -1,0 +1,44 @@
+// Test: HasField constraint — deferred field resolution on generic types
+// When a function returns a struct and the field access happens on the result
+// (whose type is initially Infer), the type checker must defer field resolution
+// until the return type is unified with the concrete struct type.
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+fn make_point(x: i32, y: i32) -> Point {
+    Point { x: x, y: y }
+}
+
+fn main() -> i32 {
+    // Field access on function call result (type initially Infer)
+    let p = make_point(10, 20);
+    if p.x != 10 {
+        return 1;
+    }
+    if p.y != 20 {
+        return 2;
+    }
+
+    // Field access on anonymous record
+    let r = { a: 42, b: 99 };
+    if r.a != 42 {
+        return 3;
+    }
+    if r.b != 99 {
+        return 4;
+    }
+
+    // Nested field access
+    let q = make_point(p.x + 1, p.y + 1);
+    if q.x != 11 {
+        return 5;
+    }
+    if q.y != 21 {
+        return 6;
+    }
+
+    0
+}

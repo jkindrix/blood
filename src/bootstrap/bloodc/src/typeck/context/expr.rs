@@ -9211,7 +9211,7 @@ impl<'a> TypeContext<'a> {
                 }
 
                 // Check anonymous record types
-                if let TypeKind::Record { fields, .. } = inner_ty.kind() {
+                if let TypeKind::Record { fields, row_var, .. } = inner_ty.kind() {
                     for (idx, record_field) in fields.iter().enumerate() {
                         let record_field_name = self.symbol_to_string(record_field.name);
                         if record_field_name == field_name {
@@ -9225,7 +9225,33 @@ impl<'a> TypeContext<'a> {
                             ));
                         }
                     }
+                    // If record has a row variable, the field may exist in the
+                    // extended row — return a fresh infer variable (HasField constraint).
+                    if row_var.is_some() {
+                        let fresh_ty = self.unifier.fresh_var();
+                        return Ok(hir::Expr::new(
+                            hir::ExprKind::Field {
+                                base: Box::new(deref_expr),
+                                field_idx: fields.len() as u32,
+                            },
+                            fresh_ty,
+                            span,
+                        ));
+                    }
                     return Err(self.error_unknown_field(&inner_ty, &field_name, span));
+                }
+
+                // Infer type — base type not yet resolved, return fresh infer
+                if let TypeKind::Infer(_) = inner_ty.kind() {
+                    let fresh_ty = self.unifier.fresh_var();
+                    return Ok(hir::Expr::new(
+                        hir::ExprKind::Field {
+                            base: Box::new(deref_expr),
+                            field_idx: 0,
+                        },
+                        fresh_ty,
+                        span,
+                    ));
                 }
 
                 Err(Box::new(TypeError::new(

@@ -380,6 +380,31 @@ impl PendingMethodCall {
     }
 }
 
+/// A deferred field access whose base type was an unresolved Infer variable
+/// during initial type checking. After all bodies are checked, Infer
+/// variables may be resolved, allowing the field to be validated.
+pub struct PendingFieldAccess {
+    /// The DefId.index of the containing function body.
+    pub body_def_id: u32,
+    /// The byte offset of the field access expression span.
+    pub span_start: usize,
+    /// The TyVarId.index of the base type's Infer variable.
+    pub base_var: u32,
+    /// The interned symbol of the field name.
+    pub field_symbol: Symbol,
+    /// The TyVarId.index of the field type's Infer variable.
+    pub field_ty_var: u32,
+    /// The byte offset of the field name span (for field resolution recording).
+    pub field_name_span_start: usize,
+}
+
+impl PendingFieldAccess {
+    /// Creates a new pending field access entry.
+    pub fn new(body_def_id: u32, span_start: usize, base_var: u32, field_symbol: Symbol, field_ty_var: u32, field_name_span_start: usize) -> PendingFieldAccess {
+        PendingFieldAccess { body_def_id, span_start, base_var, field_symbol, field_ty_var, field_name_span_start }
+    }
+}
+
 // ============================================================
 // Trait Default Method Remapping
 // ============================================================

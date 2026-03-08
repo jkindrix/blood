@@ -362,6 +362,9 @@ pub struct TypeChecker {
     /// DefId index for the persist() builtin, if registered.
     /// Used by infer_call to override return type = argument type.
     pub persist_def_id_index: Option<u32>,
+    /// Deferred field accesses whose base type was an unresolved Infer variable.
+    /// After all bodies are type-checked, these are revisited to resolve fields.
+    pub pending_field_accesses: Vec<common.PendingFieldAccess>,
 }
 
 impl TypeChecker {
@@ -409,6 +412,7 @@ impl TypeChecker {
             default_method_remaps: Vec.new(),
             coercion_entries: Vec.new(),
             persist_def_id_index: Option.None,
+            pending_field_accesses: Vec.new(),
         }
     }
 
@@ -457,6 +461,7 @@ impl TypeChecker {
             default_method_remaps: Vec.new(),
             coercion_entries: Vec.new(),
             persist_def_id_index: Option.None,
+            pending_field_accesses: Vec.new(),
         }
     }
 
@@ -584,6 +589,11 @@ impl TypeChecker {
     /// Records a deferred method call whose receiver is still an Infer variable.
     pub fn record_pending_method_call(self: &mut Self, span_start: usize, receiver_var: u32, method_symbol: common.Symbol, return_ty_var: u32) {
         self.pending_method_calls.push(common.PendingMethodCall.new(self.current_body_def_id, span_start, receiver_var, method_symbol, return_ty_var));
+    }
+
+    /// Records a deferred field access whose base type is still an Infer variable.
+    pub fn record_pending_field_access(self: &mut Self, span_start: usize, base_var: u32, field_symbol: common.Symbol, field_ty_var: u32, field_name_span_start: usize) {
+        self.pending_field_accesses.push(common.PendingFieldAccess.new(self.current_body_def_id, span_start, base_var, field_symbol, field_ty_var, field_name_span_start));
     }
 
     /// Allocates a fresh DefId for synthetic builtin registrations.
