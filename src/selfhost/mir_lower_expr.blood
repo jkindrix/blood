@@ -1640,8 +1640,27 @@ fn lower_stmt(ctx: &mut mir_lower_ctx.MirLowerCtx, stmt: &hir_expr.Stmt) {
             // Evaluate initializer if present
             match init {
                 &Option.Some(ref e) => {
+                    // Detect @heap/@stack allocation directives
+                    let is_heap = match &e.kind {
+                        &hir_expr.ExprKind.Heap(_) => true,
+                        _ => false,
+                    };
+                    let is_stack = match &e.kind {
+                        &hir_expr.ExprKind.Stack(_) => true,
+                        _ => false,
+                    };
+
                     let temp = ctx.new_temp(e.ty, span);
                     lower_expr(ctx, e, mir_lower_ctx.destination_local(temp));
+
+                    // Record allocation directive for the destination local
+                    if is_heap {
+                        ctx.builder.add_heap_local(temp);
+                    }
+                    if is_stack {
+                        ctx.builder.add_stack_local(temp);
+                    }
+
                     mir_lower_pattern.lower_irrefutable_pattern(
                         ctx,
                         pattern,

@@ -1429,9 +1429,22 @@ pub trait ExprLowering {
         _ty: &Type,
         _span: Span,
     ) -> Result<Operand, Vec<Diagnostic>> {
+        // Detect @heap/@stack allocation directives before lowering
+        let alloc_directive = match init.kind {
+            ExprKind::Heap(_) => Some(crate::mir::body::AllocDirective::Heap),
+            ExprKind::Stack(_) => Some(crate::mir::body::AllocDirective::Stack),
+            _ => None,
+        };
+
         let init_val = self.lower_expr(init)?;
         let temp = self.new_temp(init.ty.clone(), init.span);
         self.push_assign(Place::local(temp), Rvalue::Use(init_val));
+
+        // Record allocation directive for the destination local
+        if let Some(directive) = alloc_directive {
+            self.builder_mut().add_alloc_override(temp, directive);
+        }
+
         self.bind_pattern(pattern, &Place::local(temp))?;
         Ok(Operand::Constant(Constant::unit()))
     }

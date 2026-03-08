@@ -2998,6 +2998,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             }
         }
 
+        // Apply @heap/@stack allocation directive overrides
+        escape_results.apply_alloc_overrides(&mono_mir);
+
         // Compile the monomorphized MIR body with escape analysis results
         use crate::codegen::mir_codegen::MirCodegen;
         let mut result = self.compile_mir_body(mono_def_id, &mono_mir, Some(&escape_results));
@@ -3177,6 +3180,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 }
             }
         }
+
+        // Apply @heap/@stack allocation directive overrides
+        escape_results.apply_alloc_overrides(&mono_mir);
 
         // Compile the monomorphized MIR body
         use crate::codegen::mir_codegen::MirCodegen;

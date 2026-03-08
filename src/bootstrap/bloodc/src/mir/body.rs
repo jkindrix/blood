@@ -25,6 +25,15 @@ use super::types::{BasicBlockData, BasicBlockId, Terminator, Statement};
 #[cfg(test)]
 use super::types::TerminatorKind;
 
+/// Explicit allocation directive from `@heap` or `@stack` expressions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AllocDirective {
+    /// `@heap expr` — force heap/region allocation
+    Heap,
+    /// `@stack expr` — force stack allocation
+    Stack,
+}
+
 /// A MIR function body.
 ///
 /// This is the main data structure representing a function in MIR form.
@@ -44,6 +53,8 @@ pub struct MirBody {
     pub effect_row: Option<crate::effects::EffectRow>,
     /// Spread of the function body for error reporting.
     pub source_scopes: Vec<SourceScope>,
+    /// Locals with explicit allocation directives (`@heap` or `@stack`).
+    pub alloc_overrides: HashMap<LocalId, AllocDirective>,
 }
 
 impl MirBody {
@@ -57,6 +68,7 @@ impl MirBody {
             span,
             effect_row: None,
             source_scopes: Vec::new(),
+            alloc_overrides: HashMap::new(),
         }
     }
 
@@ -398,6 +410,11 @@ impl MirBodyBuilder {
     /// Finish building and return the body.
     pub fn finish(self) -> MirBody {
         self.body
+    }
+
+    /// Record an explicit allocation directive for a local.
+    pub fn add_alloc_override(&mut self, local: LocalId, directive: AllocDirective) {
+        self.body.alloc_overrides.insert(local, directive);
     }
 }
 

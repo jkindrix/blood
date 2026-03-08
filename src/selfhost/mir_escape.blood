@@ -242,6 +242,30 @@ impl EscapeAnalysis {
             self.local_states[idx] = EscapeState.GlobalEscape;
         }
     }
+
+    /// Force a local to stack allocation (@stack directive).
+    pub fn force_stack(self: &mut EscapeAnalysis, local: mir_def.MirLocalId) {
+        let idx = local.as_usize();
+        if idx < self.local_states.len() {
+            self.local_states[idx] = EscapeState.NoEscape;
+        }
+    }
+
+    /// Apply @heap/@stack allocation directive overrides from a MIR body.
+    pub fn apply_alloc_overrides(self: &mut EscapeAnalysis, body: &mir_body.MirBody) {
+        for i in 0usize..body.heap_locals.len() {
+            let idx = body.heap_locals[i] as usize;
+            if idx < self.local_states.len() {
+                let current = &self.local_states[idx];
+                let new_state = current.join(&EscapeState.HeapEscape);
+                self.local_states[idx] = new_state;
+            }
+        }
+        for i in 0usize..body.stack_locals.len() {
+            let local = mir_def.MirLocalId { index: body.stack_locals[i] };
+            self.force_stack(local);
+        }
+    }
 }
 
 // ============================================================

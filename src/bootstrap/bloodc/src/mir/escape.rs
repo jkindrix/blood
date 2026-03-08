@@ -216,6 +216,34 @@ impl EscapeResults {
         self.stack_promotable.remove(&local);
     }
 
+    /// Force a local to HeapEscape (Region tier).
+    /// Used for `@heap` allocation directives.
+    pub fn force_heap_escape(&mut self, local: LocalId) {
+        let current = self.get(local);
+        // Only promote — don't demote if already at a higher tier
+        if current < EscapeState::HeapEscape {
+            self.states.insert(local, EscapeState::HeapEscape);
+        }
+        self.stack_promotable.remove(&local);
+    }
+
+    /// Force a local to NoEscape (Stack tier).
+    /// Used for `@stack` allocation directives.
+    pub fn force_stack(&mut self, local: LocalId) {
+        self.states.insert(local, EscapeState::NoEscape);
+        self.stack_promotable.insert(local);
+    }
+
+    /// Apply allocation directive overrides from MIR body.
+    pub fn apply_alloc_overrides(&mut self, body: &super::body::MirBody) {
+        for (&local, &directive) in &body.alloc_overrides {
+            match directive {
+                super::body::AllocDirective::Heap => self.force_heap_escape(local),
+                super::body::AllocDirective::Stack => self.force_stack(local),
+            }
+        }
+    }
+
     /// Get recommended memory tier for a local.
     pub fn recommended_tier(&self, local: LocalId) -> MemoryTier {
         // Stack-promotable locals can always use stack allocation.

@@ -41,6 +41,10 @@ pub struct MirBody {
     pub capture_locals: Vec<u32>,
     /// Types of captured variables (parallel to capture_locals, for codegen env struct).
     pub capture_tys: Vec<type_intern.TyId>,
+    /// MIR local indices with `@heap` allocation directive.
+    pub heap_locals: Vec<u32>,
+    /// MIR local indices with `@stack` allocation directive.
+    pub stack_locals: Vec<u32>,
 }
 
 impl MirBody {
@@ -55,6 +59,8 @@ impl MirBody {
             effect_row: Option.None,
             capture_locals: Vec.new(),
             capture_tys: Vec.new(),
+            heap_locals: Vec.new(),
+            stack_locals: Vec.new(),
         }
     }
 
@@ -493,6 +499,16 @@ impl MirBodyBuilder {
     /// Returns the built body.
     pub fn finish(self: MirBodyBuilder) -> MirBody {
         self.body
+    }
+
+    /// Record a @heap allocation directive for a local.
+    pub fn add_heap_local(self: &mut MirBodyBuilder, local: mir_def.MirLocalId) {
+        self.body.heap_locals.push(local.index);
+    }
+
+    /// Record a @stack allocation directive for a local.
+    pub fn add_stack_local(self: &mut MirBodyBuilder, local: mir_def.MirLocalId) {
+        self.body.stack_locals.push(local.index);
     }
 
     /// Returns a reference to the body being built.
