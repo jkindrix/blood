@@ -697,68 +697,18 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
             // Check if this local corresponds to a state field
             if let Some(&field_idx) = state_field_indices.get(local_name) {
-                // This is a state field - load its value from the typed state struct.
+                // Use the GEP pointer directly into the state struct as the local.
+                // This ensures reads/writes go through the shared state, so mutations
+                // are visible even when resume() does a longjmp (which would skip
+                // any post-body writeback code). This matches the selfhost approach.
                 let field_ptr = self.builder
                     .build_struct_gep(state_struct_type, typed_state_ptr, field_idx, &format!("{}_ptr", local_name))
                     .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
 
-                let alloca = self.builder
-                    .build_alloca(effective_type, local_name)
-                    .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
-
-                let state_field_ty = state_field_types[field_idx as usize];
-
-                // If the state struct field type matches the effective local type,
-                // load directly (no conversion needed). This handles aggregate types
-                // like String ({i8*, i64, i64}) correctly.
-                if state_field_ty == effective_type {
-                    let loaded = self.builder
-                        .build_load(effective_type, field_ptr, &format!("{}_val", local_name))
-                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
-                    self.builder.build_store(alloca, loaded)
-                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
-                } else {
-                    // Generic fallback: state field is i64, convert to effective type.
-                    let i64_value = self.builder
-                        .build_load(i64_type, field_ptr, &format!("{}_i64_val", local_name))
-                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
-
-                    let converted = if effective_type.is_int_type() {
-                        let target_int = effective_type.into_int_type();
-                        let i64_int = i64_value.into_int_value();
-                        if target_int.get_bit_width() == 64 {
-                            i64_value
-                        } else if target_int.get_bit_width() < 64 {
-                            self.builder.build_int_truncate(i64_int, target_int, &format!("{}_trunc", local_name))
-                                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
-                                .into()
-                        } else {
-                            self.builder.build_int_s_extend(i64_int, target_int, &format!("{}_sext", local_name))
-                                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
-                                .into()
-                        }
-                    } else if effective_type.is_pointer_type() {
-                        self.builder.build_int_to_ptr(i64_value.into_int_value(), effective_type.into_pointer_type(), &format!("{}_ptr", local_name))
-                            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
-                            .into()
-                    } else if effective_type.is_float_type() {
-                        self.builder.build_bit_cast(i64_value, effective_type, &format!("{}_float", local_name))
-                            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
-                    } else {
-                        return Err(vec![Diagnostic::error(
-                            format!(
-                                "ICE: handler state field '{}' has i64 layout but local has non-scalar effective type {:?}; \
-                                 cannot convert. This indicates a mismatch between handler state layout and body local types.",
-                                local_name, effective_type
-                            ),
-                            span,
-                        )]);
-                    };
-                    self.builder.build_store(alloca, converted)
-                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
-                }
-
-                self.locals.insert(local.id, alloca);
+                // Use the GEP pointer directly — all reads/writes go through
+                // the state struct. Opaque pointer semantics handle type width
+                // differences (effective_type loads from the GEP pointer).
+                self.locals.insert(local.id, field_ptr);
                 self.local_types.insert(local.id, effective_type);
                 continue;
             }
@@ -890,89 +840,8 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // Compile the body expression
         let result = self.compile_expr(&body.expr)?;
 
-        // Write back mutable state fields to the state struct
-        // This ensures mutations during the handler op are visible to subsequent code
-        for state_field in state_fields.iter() {
-            if state_field.mutable {
-                let field_name = state_field.name.as_str();
-                if let Some(&field_idx) = state_field_indices.get(field_name) {
-                    // Find the local that corresponds to this state field
-                    let local = body.locals.iter().find(|l| l.name.as_deref() == Some(field_name));
-                    if let Some(local) = local {
-                        if let Some(&local_alloca) = self.locals.get(&local.id) {
-                            // Get pointer to the state field
-                            let field_ptr = self.builder
-                                .build_struct_gep(state_struct_type, typed_state_ptr, field_idx, &format!("{}_writeback_ptr", field_name))
-                                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
-
-                            // Load current value from local (typed, e.g. i32)
-                            // Compute the effective type matching what was stored in the alloca
-                            let is_local_unresolved = matches!(local.ty.kind(),
-                                TypeKind::Param(_) | TypeKind::Infer(_) | TypeKind::Error);
-                            let local_effective_type: BasicTypeEnum = if is_local_unresolved {
-                                i64_type.into()
-                            } else {
-                                self.lower_type(&local.ty)
-                            };
-                            let current_val = self.builder
-                                .build_load(local_effective_type, local_alloca, &format!("{}_writeback_val", field_name))
-                                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
-
-                            let state_field_ty = state_field_types[field_idx as usize];
-
-                            // If the state struct field type matches the loaded value type,
-                            // store directly (no conversion needed). This handles aggregate
-                            // types like String ({i8*, i64, i64}) correctly.
-                            if state_field_ty == current_val.get_type() {
-                                self.builder.build_store(field_ptr, current_val)
-                                    .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
-                            } else {
-                                // Generic fallback: state field is i64, convert value to i64.
-                                let writeback_i64: BasicValueEnum = match current_val {
-                                    BasicValueEnum::IntValue(iv) => {
-                                        let bw = iv.get_type().get_bit_width();
-                                        if bw == 64 {
-                                            iv.into()
-                                        } else if bw < 64 {
-                                            self.builder.build_int_z_extend(iv, i64_type, &format!("{}_wb_zext", field_name))
-                                                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
-                                                .into()
-                                        } else {
-                                            self.builder.build_int_truncate(iv, i64_type, &format!("{}_wb_trunc", field_name))
-                                                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
-                                                .into()
-                                        }
-                                    }
-                                    BasicValueEnum::PointerValue(pv) => {
-                                        self.builder.build_ptr_to_int(pv, i64_type, &format!("{}_wb_ptoi", field_name))
-                                            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
-                                            .into()
-                                    }
-                                    BasicValueEnum::FloatValue(fv) => {
-                                        self.builder.build_bit_cast(fv, i64_type, &format!("{}_wb_fcast", field_name))
-                                            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
-                                    }
-                                    BasicValueEnum::StructValue(_) | BasicValueEnum::ArrayValue(_) | BasicValueEnum::VectorValue(_) | BasicValueEnum::ScalableVectorValue(_) => {
-                                        return Err(vec![Diagnostic::error(
-                                            format!(
-                                                "ICE: handler state field '{}' has i64 layout but write-back value is aggregate type {:?} \
-                                                 (struct, array, vector, or scalable vector); cannot convert to i64. This indicates a \
-                                                 mismatch between handler state layout and body local types.",
-                                                field_name, current_val.get_type()
-                                            ),
-                                            span,
-                                        )]);
-                                    }
-                                };
-
-                                self.builder.build_store(field_ptr, writeback_i64)
-                                    .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        // No writeback needed — state field locals point directly into the
+        // state struct via GEP, so all mutations are immediately visible.
 
         // Check if the basic block already has a terminator (e.g., from resume)
         // If so, don't add another return
