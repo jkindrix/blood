@@ -31,8 +31,8 @@ Escape analysis determines the optimal memory allocation tier for each local var
 
 | Escape State | Memory Tier | Generation Checks | Use Case |
 |--------------|-------------|-------------------|----------|
-| NoEscape | Stack (Tier 0) | NO | Local temporaries |
-| ArgEscape | Region (Tier 1) | YES | Returned values |
+| NoEscape | Stack (Tier 1) | NO | Local temporaries |
+| ArgEscape | Region (Tier 2) | YES | Returned values |
 | GlobalEscape | Region/Persistent | YES | Global storage |
 
 ### 1.2 Performance Target
@@ -54,26 +54,36 @@ Blood targets **>95% stack allocation** for typical programs (PERF-V-002), enabl
 
 ### 2.1 Lattice Structure
 
-Escape states form a three-element lattice:
+Escape states form a seven-element lattice:
 
 ```
-        GlobalEscape
-            |
-        ArgEscape
-            |
-        NoEscape
+            GlobalEscape        -- Tier 2/3, persistent allocation
+                |
+            EffectEscape        -- Tier 2, region + generation snapshot
+                |
+            HeapEscape          -- Tier 1, region allocation
+                |
+            EffectCapture       -- Tier 1, handler-owned region ref
+                |
+            ArgEscape           -- Tier 1, region (or stack if inlined)
+                |
+            EffectLocal         -- Tier 0, stack (safe across suspension)
+                |
+            NoEscape            -- Tier 0, stack
 ```
 
-The `join` operation computes the least upper bound:
+The `join` operation computes the least upper bound (max by rank):
 
 ```
-join(s1, s2) = max(s1, s2)
+join(s1, s2) = max(rank(s1), rank(s2))
 
-NoEscape ⊔ NoEscape     = NoEscape
-NoEscape ⊔ ArgEscape    = ArgEscape
-NoEscape ⊔ GlobalEscape = GlobalEscape
-ArgEscape ⊔ ArgEscape   = ArgEscape
-ArgEscape ⊔ GlobalEscape = GlobalEscape
+rank(NoEscape)      = 0
+rank(EffectLocal)   = 1
+rank(ArgEscape)     = 2
+rank(EffectCapture) = 3
+rank(HeapEscape)    = 4
+rank(EffectEscape)  = 5
+rank(GlobalEscape)  = 6
 ```
 
 ### 2.2 State Definitions
@@ -81,8 +91,12 @@ ArgEscape ⊔ GlobalEscape = GlobalEscape
 ```
 EscapeState ::=
     | NoEscape       -- Value stays within function, can use stack
+    | EffectLocal    -- In effectful function, used only before/after suspension points
     | ArgEscape      -- Value escapes via argument/return, needs region
-    | GlobalEscape   -- Value escapes to global/heap, needs region
+    | EffectCapture  -- Captured in handler closure state, handler-owned region ref
+    | HeapEscape     -- Stored into heap structure (through pointer dereference)
+    | EffectEscape   -- Crosses effect suspension point, needs snapshot validation
+    | GlobalEscape   -- Value escapes to global/static, needs persistent allocation
 ```
 
 ### 2.3 Memory Tier Mapping
@@ -90,10 +104,27 @@ EscapeState ::=
 ```
 FUNCTION recommended_tier(state: EscapeState) -> MemoryTier:
     CASE state OF:
-        NoEscape    → Stack     -- Tier 0, thin pointer
-        ArgEscape   → Region    -- Tier 1, gen-checked
-        GlobalEscape → Region   -- Tier 1/2, gen-checked
+        NoEscape      → Stack     -- Tier 0, thin pointer, no gen checks
+        EffectLocal   → Stack     -- Tier 0, safe across suspension
+        ArgEscape     → Region    -- Tier 1, gen-checked (stack if inlined)
+        EffectCapture → Region    -- Tier 1, handler-owned, no snapshot
+        HeapEscape    → Region    -- Tier 1, gen-checked
+        EffectEscape  → Region    -- Tier 1, gen-checked + snapshot validation on resume
+        GlobalEscape  → Region    -- Tier 2/3, gen-checked, persistent
 ```
+
+### 2.4 Effect Snapshot Requirements
+
+Only `EffectEscape` requires generation snapshot validation on resume:
+
+```
+FUNCTION needs_effect_snapshot(state: EscapeState) -> bool:
+    state == EffectEscape
+```
+
+Values at `EffectLocal` and `EffectCapture` do NOT require snapshots:
+- `EffectLocal`: used only before/after suspension, never live across it
+- `EffectCapture`: handler owns the reference, no aliasing across suspension
 
 ---
 
@@ -177,8 +208,7 @@ ALGORITHM ESCAPE_ANALYSIS(body: MirBody):
     FOR (local, state) IN states:
         type = body.locals[local].ty
         is_copy = type.is_copy()
-        escape_allows = state = NoEscape
-                        ∧ local ∉ effect_captured
+        escape_allows = (state = NoEscape ∨ state = EffectLocal)
                         ∧ NOT is_captured_by_escaping_closure(local)
 
         IF is_copy OR escape_allows:
@@ -186,7 +216,6 @@ ALGORITHM ESCAPE_ANALYSIS(body: MirBody):
 
     RETURN EscapeResults {
         states,
-        effect_captured,
         stack_promotable,
         closure_captures,
         captured_by_closure,
@@ -199,7 +228,7 @@ ALGORITHM ESCAPE_ANALYSIS(body: MirBody):
 |-------|------------|-------|
 | Initialization | O(n) | n = number of locals |
 | Closure collection | O(s) | s = number of statements |
-| Fixed-point iteration | O(s × k) | k = lattice height (3) |
+| Fixed-point iteration | O(s × k) | k = lattice height (7) |
 | Closure propagation | O(c) | c = number of closures |
 | **Total** | O(s) | Linear in function size |
 
@@ -253,8 +282,8 @@ ALGORITHM PLACE_ESCAPE_STATE(place, states):
     FOR elem IN place.projection:
         CASE elem OF:
             Deref:
-                -- Dereferencing: pointee might have global scope
-                RETURN GlobalEscape
+                -- Dereferencing: stored through heap pointer, needs region
+                RETURN HeapEscape
             Field(_) | Index(_) | Downcast(_):
                 -- Projections don't change escape state
                 CONTINUE
@@ -302,11 +331,16 @@ ALGORITHM ANALYZE_TERMINATOR(term, states):
             PASS
 
         Perform(_, _, args, _, _):
-            -- Effect operations capture values
+            -- Effect operations: args cross suspension point
             FOR arg IN args:
                 IF arg HAS place:
-                    effect_captured.add(place.local)
-                    changed |= update_state(place.local, ArgEscape)
+                    changed |= update_state(place.local, EffectEscape)
+
+        PushHandler(_, state_args, _):
+            -- Handler state captures: handler owns the reference
+            FOR arg IN state_args:
+                IF arg HAS place:
+                    changed |= update_state(place.local, EffectCapture)
 
         DropAndReplace(_, value, _, _):
             changed |= propagate_to_operand(value, NoEscape)
@@ -389,7 +423,9 @@ fn example() {
 A local can be stack-allocated if ANY of:
 
 1. **Copy type**: Type implements Copy (values are duplicated, storage stays local)
-2. **No escape**: NoEscape state AND not effect-captured AND not captured by escaping closure
+2. **Stack-safe escape**: `NoEscape` or `EffectLocal` state AND not captured by escaping closure
+
+The key change from the 3-state model: `EffectLocal` values are safe for stack allocation because they are used only before or after suspension points, never live across one. The separate `EffectCapture` and `EffectEscape` states distinguish handler-owned references (region, no snapshot) from suspension-crossing values (region, with snapshot validation).
 
 ### 7.2 Decision Tree
 
@@ -400,17 +436,13 @@ Can local L be stack-allocated?
 │   ├── YES → STACK ✓ (values are copied, storage doesn't escape)
 │   └── NO
 │       │
-│       ├── Is state(L) = NoEscape?
-│       │   ├── NO → HEAP ✗
+│       ├── Is state(L) ∈ {NoEscape, EffectLocal}?
+│       │   ├── NO → HEAP ✗ (ArgEscape or higher)
 │       │   └── YES
 │       │       │
-│       │       ├── Is L effect-captured?
-│       │       │   ├── YES → HEAP ✗ (effects need gen checks)
-│       │       │   └── NO
-│       │       │       │
-│       │       │       └── Is L captured by escaping closure?
-│       │       │           ├── YES → HEAP ✗
-│       │       │           └── NO → STACK ✓
+│       │       └── Is L captured by escaping closure?
+│       │           ├── YES → HEAP ✗
+│       │           └── NO → STACK ✓
 ```
 
 ### 7.3 Copy Type Detection
@@ -468,35 +500,26 @@ fn example() / {State<i32>} {
 
 ### 8.2 Detection
 
-Effect capture is detected via:
+Effect interaction is detected via escape state analysis (integrated into the main fixed-point loop):
 
-1. **CaptureSnapshot statements**: Explicit snapshot capture
-2. **Perform terminators**: Arguments to effect operations
+1. **Perform terminators**: Arguments to effect operations → `EffectEscape` (crosses suspension point, needs snapshot)
+2. **PushHandler state arguments**: Values captured as handler state → `EffectCapture` (handler-owned, no snapshot)
+3. **CaptureSnapshot statements**: Explicit snapshot capture → `EffectEscape`
 
-```
-ALGORITHM DETECT_EFFECT_CAPTURE(body):
-    effect_captured = {}
+With the 7-state lattice, there is no separate `effect_captured` set. Effect interaction is tracked directly through the escape states:
 
-    FOR block IN body.blocks:
-        FOR stmt IN block.statements:
-            IF stmt IS CaptureSnapshot(local):
-                effect_captured.add(local)
-
-        IF block.terminator IS Perform(_, _, args, _, _):
-            FOR arg IN args:
-                IF arg HAS place:
-                    effect_captured.add(place.local)
-
-    RETURN effect_captured
-```
+| Escape State | Stack-Safe? | Snapshot? | Rationale |
+|---|---|---|---|
+| EffectLocal | YES | No | Used only before/after suspension |
+| EffectCapture | No | No | Handler owns the reference |
+| EffectEscape | No | YES | Live across suspension point |
 
 ### 8.3 Impact on Stack Promotion
 
-Effect-captured locals cannot be stack-allocated regardless of escape state:
+Stack promotion uses the escape state directly:
 
 ```
-can_stack_allocate(local) = state(local) = NoEscape
-                            ∧ local ∉ effect_captured
+can_stack_allocate(local) = state(local) ∈ {NoEscape, EffectLocal}
                             ∧ ¬is_captured_by_escaping_closure(local)
 ```
 
@@ -511,7 +534,6 @@ can_stack_allocate(local) = state(local) = NoEscape
 
 pub struct EscapeAnalyzer {
     states: HashMap<LocalId, EscapeState>,
-    effect_captured: HashSet<LocalId>,
     globals: HashSet<DefId>,
     closure_captures: HashMap<LocalId, Vec<LocalId>>,
     captured_by_closure: HashSet<LocalId>,
@@ -519,12 +541,16 @@ pub struct EscapeAnalyzer {
 
 pub struct EscapeResults {
     pub states: HashMap<LocalId, EscapeState>,
-    pub effect_captured: HashSet<LocalId>,
     pub stack_promotable: HashSet<LocalId>,
     pub closure_captures: HashMap<LocalId, Vec<LocalId>>,
     pub captured_by_closure: HashSet<LocalId>,
 }
 ```
+
+> **Note:** Effect capture information is encoded directly in the escape states
+> (`EffectLocal`, `EffectCapture`, `EffectEscape`) rather than a separate
+> `effect_captured` set. Use `needs_effect_snapshot()` to check if a local
+> requires generation snapshot validation.
 
 ### 9.2 Key Functions
 
@@ -545,9 +571,8 @@ pub struct EscapeStatistics {
     pub total_locals: usize,
     pub stack_promotable: usize,
     pub heap_required: usize,
-    pub effect_captured: usize,
     pub closure_captured: usize,
-    pub by_state: EscapeStateBreakdown,
+    pub by_state: [usize; 7],  // One count per EscapeState variant
 }
 
 impl EscapeStatistics {
@@ -574,4 +599,4 @@ impl EscapeStatistics {
 
 ---
 
-*Last updated: 2026-01-14*
+*Last updated: 2026-03-08 — Updated from 3-state to 7-state lattice (MEM-03)*
