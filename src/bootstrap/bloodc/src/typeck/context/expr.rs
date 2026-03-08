@@ -9400,8 +9400,10 @@ impl<'a> TypeContext<'a> {
                 !dst_mut || *src_mut
             }
 
-            // Fn → usize (function pointer to integer — static, no info lost)
+            // Fn → integer (function pointer to integer — static, no info lost)
             (TypeKind::Fn { .. }, TypeKind::Primitive(PrimitiveTy::Uint(UintTy::Usize))) => true,
+            (TypeKind::Fn { .. }, TypeKind::Primitive(PrimitiveTy::Uint(UintTy::U64))) => true,
+            (TypeKind::Fn { .. }, TypeKind::Primitive(PrimitiveTy::Int(IntTy::I64))) => true,
 
             // Trait object coercion: &T → &dyn Trait or T → dyn Trait
             (_, TypeKind::DynTrait { .. }) => true,
