@@ -170,6 +170,14 @@ pub fn check_lower_result(result: &hir_lower_ctx.LowerResult) -> TypeCheckResult
     checker.builtin_hashmap_def = copy_opt_def_id(&result.builtin_hashmap_def);
     checker.builtin_result_def = copy_opt_def_id(&result.builtin_result_def);
 
+    // Find persist builtin DefId from builtin_fn_defs
+    for bfi in 0usize..result.builtin_fn_defs.len() {
+        let entry = &result.builtin_fn_defs[bfi];
+        if string_eq(&entry.runtime_name, "persist") {
+            checker.persist_def_id_index = Option.Some(entry.def_id_index);
+        }
+    }
+
     // Phase 1: Collect type information from items
     collect_item_signatures(&mut checker, &result.items);
 

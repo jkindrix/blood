@@ -618,6 +618,14 @@ fn emit_call(
         return;
     }
 
+    // persist(value) — value copy to persistent destination.
+    // The destination local was already allocated as persistent (ptr alloca)
+    // by emit_allocas_with_escapes, so we just copy the argument value there.
+    if string_eq_str(func_val.as_str(), "@persist") {
+        emit_persist_call(ctx, args, destination, target);
+        return;
+    }
+
     // Extract the target DefId (if this is a direct call to a known function)
     let target_def_id: Option<u32> = extract_call_def_id(func);
 
@@ -2583,6 +2591,43 @@ fn emit_box_as_ref_call(
     // Store result pointer to destination
     let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
     ctx.emit_store_cg("ptr", &result, dest_ptr.as_str());
+
+    // Jump to continuation
+    match target {
+        &Option.Some(t) => {
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
+        }
+        &Option.None => {
+            ctx.emit_unreachable();
+        }
+    }
+}
+
+/// Emits a persist() call — copies the argument value into the destination.
+/// The destination local was already allocated as persistent (ptr to heap buffer)
+/// by emit_allocas_with_escapes, so this is just a value copy through the heap pointer.
+fn emit_persist_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    if args.len() < 1 {
+        ctx.emit_unreachable();
+        return;
+    }
+
+    // Evaluate the argument
+    let (arg_val, arg_ty) = codegen_expr.emit_operand_typed(ctx, &args[0]);
+
+    // Get the destination data pointer (for persistent locals, this loads the heap ptr)
+    let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
+
+    // Store the value through the persistent buffer pointer
+    if !string_eq_str(arg_ty.as_str(), "{}") {
+        ctx.emit_store(arg_ty.as_str(), arg_val.as_str(), dest_ptr.as_str());
+    }
 
     // Jump to continuation
     match target {

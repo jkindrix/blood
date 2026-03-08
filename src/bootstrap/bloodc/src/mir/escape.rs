@@ -209,6 +209,13 @@ impl EscapeResults {
         self.closure_captures.get(&closure)
     }
 
+    /// Force a local to GlobalEscape (Persistent tier).
+    /// Used for `persist()` call destinations.
+    pub fn force_global_escape(&mut self, local: LocalId) {
+        self.states.insert(local, EscapeState::GlobalEscape);
+        self.stack_promotable.remove(&local);
+    }
+
     /// Get recommended memory tier for a local.
     pub fn recommended_tier(&self, local: LocalId) -> MemoryTier {
         // Stack-promotable locals can always use stack allocation.

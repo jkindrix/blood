@@ -310,7 +310,41 @@ pub fn generate_function_with_ctx(
     ctx.write("entry:\n");
 
     // Run escape analysis to determine allocation tiers
-    let escape_result = mir_escape.analyze_escapes(body);
+    let mut escape_result = mir_escape.analyze_escapes(body);
+
+    // Mark persist() call destinations as GlobalEscape (Persistent tier).
+    // This ensures the alloca phase allocates them as pointer-to-persistent-buffer.
+    for pbi in 0usize..body.basic_blocks.len() {
+        let pbb = &body.basic_blocks[pbi];
+        match &pbb.terminator {
+            &Option.Some(ref term) => {
+                match &term.kind {
+                    &mir_term.TerminatorKind.Call { ref func, args: _, ref destination, target: _, unwind: _ } => {
+                        match func {
+                            &mir_types.Operand.Constant(ref constant) => {
+                                match &constant.kind {
+                                    &mir_types.ConstantKind.FnDef(ref def_id) => {
+                                        match ctx.lookup_def_name(def_id.index) {
+                                            Option.Some(name) => {
+                                                if string_eq_str(name.as_str(), "persist") {
+                                                    escape_result.mark_global_escape(destination.local);
+                                                }
+                                            }
+                                            Option.None => {}
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            &Option.None => {}
+        }
+    }
 
     // Emit allocas with escape-aware allocation decisions
     codegen_stmt.emit_allocas_with_escapes(ctx, body, &escape_result);

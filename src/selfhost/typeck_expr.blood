@@ -1034,6 +1034,28 @@ fn infer_call(
 
     match &resolved_callee_hir.kind {
         &hir_ty.TypeKind.Fn { ref params, ref ret, ref effects } => {
+            // Special case: persist<T>(value: T) -> T
+            // The builtin is registered with dummy i64 types. Override:
+            // infer the argument type and use it as the return type.
+            match &callee_def_id {
+                &Option.Some(def_idx) => {
+                    match &checker.persist_def_id_index {
+                        &Option.Some(persist_idx) => {
+                            if def_idx == persist_idx {
+                                if args.len() != 1 {
+                                    checker.error(typeck.TypeErrorKind.ArityMismatch, span);
+                                    return type_intern.CommonTypes.error();
+                                }
+                                let arg_ty = infer_expr(checker, &args[0]);
+                                return arg_ty;
+                            }
+                        }
+                        &Option.None => {}
+                    }
+                }
+                &Option.None => {}
+            }
+
             // Check arity
             if params.len() != args.len() {
                 let mut note = common.make_string("expected ");

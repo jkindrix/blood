@@ -503,6 +503,36 @@ impl<'a> TypeContext<'a> {
             "thread_join", "blood_thread_join",
             vec![u64_ty.clone()], u64_ty.clone(),
         );
+
+        // === Memory Tier Promotion ===
+
+        // persist<T>(value: T) -> T - promote value to persistent (Tier 3) allocation
+        // Generic builtin: return type = argument type. Codegen emits
+        // blood_persistent_alloc + memcpy instead of a function call.
+        // Uses Param (not Infer) so instantiate_fn_sig substitutes correctly.
+        {
+            let t_infer = self.unifier.fresh_var();
+            let t_var = match t_infer.kind() {
+                TypeKind::Infer(id) => *id,
+                _ => unreachable!("fresh_var must return Infer"),
+            };
+            let t_ty = Type::param(t_var);
+            let def_id = self.resolver.define_item(
+                "persist".to_string(),
+                hir::DefKind::Fn,
+                Span::dummy(),
+            ).expect("BUG: persist builtin registration failed");
+            self.fn_sigs.insert(def_id, hir::FnSig {
+                inputs: vec![t_ty.clone()],
+                output: t_ty,
+                is_const: false,
+                is_fiber: false,
+                is_unsafe: false,
+                generics: vec![t_var],
+                const_generics: Vec::new(),
+            });
+            self.builtin_fns.insert(def_id, "persist".to_string());
+        }
     }
 
     /// Register a single built-in function.

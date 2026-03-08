@@ -2977,7 +2977,26 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // Run escape analysis on the monomorphized MIR body
         // This is critical for performance - without it, all locals would use Region tier
         let mut escape_analyzer = EscapeAnalyzer::new();
-        let escape_results = escape_analyzer.analyze(&mono_mir);
+        let mut escape_results = escape_analyzer.analyze(&mono_mir);
+
+        // Mark persist() call destinations as GlobalEscape (Persistent tier)
+        for bb in &mono_mir.basic_blocks {
+            if let Some(ref term) = bb.terminator {
+                if let crate::mir::TerminatorKind::Call { ref func, ref destination, .. } = term.kind {
+                    if let crate::mir::Operand::Constant(ref constant) = func {
+                        if let crate::mir::ConstantKind::FnDef(def_id) = constant.kind {
+                            if let Some(name) = self.builtin_fns.get(&def_id) {
+                                if name == "persist" {
+                                    if let crate::mir::types::PlaceBase::Local(local_id) = destination.base {
+                                        escape_results.force_global_escape(local_id);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         // Compile the monomorphized MIR body with escape analysis results
         use crate::codegen::mir_codegen::MirCodegen;
@@ -3138,7 +3157,26 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
 
         // Run escape analysis on the monomorphized MIR body
         let mut escape_analyzer = EscapeAnalyzer::new();
-        let escape_results = escape_analyzer.analyze(&mono_mir);
+        let mut escape_results = escape_analyzer.analyze(&mono_mir);
+
+        // Mark persist() call destinations as GlobalEscape (Persistent tier)
+        for bb in &mono_mir.basic_blocks {
+            if let Some(ref term) = bb.terminator {
+                if let crate::mir::TerminatorKind::Call { ref func, ref destination, .. } = term.kind {
+                    if let crate::mir::Operand::Constant(ref constant) = func {
+                        if let crate::mir::ConstantKind::FnDef(def_id) = constant.kind {
+                            if let Some(name) = self.builtin_fns.get(&def_id) {
+                                if name == "persist" {
+                                    if let crate::mir::types::PlaceBase::Local(local_id) = destination.base {
+                                        escape_results.force_global_escape(local_id);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         // Compile the monomorphized MIR body
         use crate::codegen::mir_codegen::MirCodegen;

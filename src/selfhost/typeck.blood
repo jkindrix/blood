@@ -359,6 +359,9 @@ pub struct TypeChecker {
     /// Records expressions where &[T; N] needs to be coerced to &[T].
     /// MIR lowering uses these to emit Rvalue.ArrayToSlice.
     pub coercion_entries: Vec<common.CoercionEntry>,
+    /// DefId index for the persist() builtin, if registered.
+    /// Used by infer_call to override return type = argument type.
+    pub persist_def_id_index: Option<u32>,
 }
 
 impl TypeChecker {
@@ -405,6 +408,7 @@ impl TypeChecker {
             deep_handler_local_boundary: Option.None,
             default_method_remaps: Vec.new(),
             coercion_entries: Vec.new(),
+            persist_def_id_index: Option.None,
         }
     }
 
@@ -452,6 +456,7 @@ impl TypeChecker {
             deep_handler_local_boundary: Option.None,
             default_method_remaps: Vec.new(),
             coercion_entries: Vec.new(),
+            persist_def_id_index: Option.None,
         }
     }
 

@@ -1,0 +1,21 @@
+// Test: persist() builtin promotes values to Tier 3 persistent allocation
+// EXPECT: 42
+// EXPECT: 100
+
+struct Point {
+    pub x: i32,
+    pub y: i32,
+}
+
+fn main() -> i32 {
+    let a: i32 = persist(42);
+    println_int(a);
+    if a != 42 { return 1; }
+
+    let p: Point = persist(Point { x: 100, y: 200 });
+    println_int(p.x);
+    if p.x != 100 { return 2; }
+    if p.y != 200 { return 3; }
+
+    0
+}

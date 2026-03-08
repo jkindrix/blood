@@ -848,6 +848,11 @@ fn register_builtin_functions(ctx: &mut hir_lower_ctx.LoweringCtx) {
         Option.None => {}
     }
 
+    // === Persistent Memory ===
+    // persist<T>(value: T) -> T — promote value to persistent (Tier 3) allocation.
+    // Registered with dummy i64 types; typeck special-cases this to infer T from the argument.
+    register_builtin_fn(ctx, &mut items, "persist", bi_params_1(bi_i64()), bi_i64());
+
     // === Region Memory Management ===
     register_builtin_fn(ctx, &mut items, "region_create", bi_params_2(bi_u64(), bi_u64()), bi_u64());
     register_builtin_fn(ctx, &mut items, "region_destroy", bi_params_1(bi_u64()), type_intern.CommonTypes.unit());

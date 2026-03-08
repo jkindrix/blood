@@ -512,6 +512,31 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                         return Ok(());
                     }
 
+                    // persist(value) — copy value to persistent destination.
+                    // The destination local was already allocated as persistent (ptr alloca)
+                    // by the escape analysis override, so just copy the argument value there.
+                    if builtin_name == "persist" {
+                        if let Some(arg_val) = arg_vals.first() {
+                            let dest_ptr = self.compile_mir_place(destination, body, escape_results)?;
+                            let store_inst = self.builder.build_store(dest_ptr, *arg_val)
+                                .map_err(|e| vec![Diagnostic::error(
+                                    format!("LLVM store error in persist: {}", e), span
+                                )])?;
+                            let alignment = self.get_type_alignment_for_value(*arg_val);
+                            let _ = store_inst.set_alignment(alignment);
+                        }
+                        if let Some(target_bb_id) = target {
+                            let target_bb = llvm_blocks.get(target_bb_id).ok_or_else(|| {
+                                vec![Diagnostic::error("Call target block not found", span)]
+                            })?;
+                            self.builder.build_unconditional_branch(*target_bb)
+                                .map_err(|e| vec![Diagnostic::error(
+                                    format!("LLVM branch error: {}", e), span
+                                )])?;
+                        }
+                        return Ok(());
+                    }
+
                     // Check for math intrinsics - these compile to hardware instructions
                     let intrinsic_name = match builtin_name.as_str() {
                         "sqrt" => Some("llvm.sqrt.f64"),
