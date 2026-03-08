@@ -152,7 +152,10 @@ impl<'src> Parser<'src> {
             }
         }
 
-        if self.errors.is_empty() {
+        let has_errors = self.errors.iter().any(|d| d.kind == crate::diagnostics::DiagnosticKind::Error);
+        if has_errors {
+            Err(std::mem::take(&mut self.errors))
+        } else {
             let end = self.previous.span;
             Ok(Program {
                 module,
@@ -160,8 +163,6 @@ impl<'src> Parser<'src> {
                 declarations,
                 span: start.merge(end),
             })
-        } else {
-            Err(std::mem::take(&mut self.errors))
         }
     }
 
@@ -170,10 +171,11 @@ impl<'src> Parser<'src> {
     pub fn parse_expr_for_macro(&mut self) -> Result<crate::ast::Expr, Vec<Diagnostic>> {
         let expr = self.parse_expr();
 
-        if self.errors.is_empty() {
-            Ok(expr)
-        } else {
+        let has_errors = self.errors.iter().any(|d| d.kind == crate::diagnostics::DiagnosticKind::Error);
+        if has_errors {
             Err(std::mem::take(&mut self.errors))
+        } else {
+            Ok(expr)
         }
     }
 
@@ -350,6 +352,12 @@ impl<'src> Parser<'src> {
     /// Take ownership of the string interner.
     pub fn take_interner(&mut self) -> DefaultStringInterner {
         std::mem::take(&mut self.interner)
+    }
+
+    /// Take any warnings accumulated during parsing.
+    /// Call after `parse_program()` returns `Ok` to retrieve deprecation warnings etc.
+    pub fn take_warnings(&mut self) -> Vec<Diagnostic> {
+        std::mem::take(&mut self.errors)
     }
 
     /// Check if there are any parsing errors.

@@ -535,7 +535,7 @@ mod tests {
     fn test_lower_enum_unit_variant() {
         assert_lowers(r#"
             enum Color { Red, Green, Blue }
-            fn main() { let c = Color::Red; }
+            fn main() { let c = Color.Red; }
         "#);
     }
 
@@ -543,7 +543,7 @@ mod tests {
     fn test_lower_enum_tuple_variant() {
         assert_lowers(r#"
             enum MyOption { Some(i32), None }
-            fn main() { let x = MyOption::Some(42); }
+            fn main() { let x = MyOption.Some(42); }
         "#);
     }
 

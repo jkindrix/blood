@@ -96,8 +96,6 @@ declare i64 @blood_clock_millis()
 
 declare i64 @blood_clock_nanos()
 
-declare i64 @blood_continuation_create_multishot(ptr, ptr)
-
 declare i64 @blood_continuation_resume_with_regions(i64, i64)
 
 declare i64 @blood_continuation_take_suspended_regions(i64, ptr, i64)
@@ -226,7 +224,19 @@ declare void @blood_assert(i32)
 
 declare void @blood_assert_eq_bool(i1, i1)
 
+declare void @blood_assert_eq_i64(i64, i64)
+
 declare void @blood_assert_eq_int(i32, i32)
+
+declare void @blood_assert_eq_str({ ptr, i64 }, { ptr, i64 })
+
+declare void @blood_assert_eq_u32(i32, i32)
+
+declare void @blood_assert_eq_u64(i64, i64)
+
+declare void @blood_assert_eq_usize(i64, i64)
+
+declare void @blood_assert_ne_int(i32, i32)
 
 declare void @blood_continuation_add_suspended_region(i64, i64)
 
@@ -524,9 +534,10 @@ bb2:                                              ; preds = %bb1
   br label %bb3
 
 bb3:                                              ; preds = %bb2
+  %saved_snap = call i64 @blood_effect_context_take_snapshot()
   %snapshot = call i64 @blood_snapshot_create()
-  %continuation = call i64 @blood_continuation_create_multishot(ptr @__blood_identity_continuation, ptr null)
-  %perform_result = call i64 @blood_perform(i64 351, i32 0, ptr null, i64 0, i64 %continuation)
+  call void @blood_effect_context_set_snapshot(i64 %snapshot)
+  %perform_result = call i64 @blood_perform(i64 358, i32 0, ptr null, i64 0, i64 0)
   %perform_trunc = trunc i64 %perform_result to i32
   store i32 %perform_trunc, ptr %_7_stack, align 4
   %validation = call i64 @blood_snapshot_validate(i64 %snapshot)
@@ -588,21 +599,22 @@ region_merge_ev:                                  ; preds = %region_clone_ev, %r
   %shadow_0_ptr = getelementptr inbounds { i64 }, ptr %state_shadow, i32 0, i32 0
   %state_field_0_ptoi = ptrtoint ptr %state_field_0 to i64
   store i64 %state_field_0_ptoi, ptr %shadow_0_ptr, align 8
-  call void @blood_evidence_push_with_state(ptr %evidence, i64 351, ptr %state_shadow)
+  call void @blood_evidence_push_with_state(ptr %evidence, i64 358, ptr %state_shadow)
   call void @"blood$increment"()
   br label %bb1
 
 snapshot_valid:                                   ; preds = %bb3
+  call void @blood_effect_context_set_snapshot(i64 %saved_snap)
   br label %bb4
 
 snapshot_stale:                                   ; preds = %bb3
-  call void @blood_stale_reference_panic(i32 0, i32 0)
+  %stale_args = alloca [2 x i64], align 8
+  %stale_arg_0 = getelementptr [2 x i64], ptr %stale_args, i64 0, i64 0
+  store i64 0, ptr %stale_arg_0, align 8
+  %stale_arg_1 = getelementptr [2 x i64], ptr %stale_args, i64 0, i64 1
+  store i64 0, ptr %stale_arg_1, align 8
+  %1 = call i64 @blood_perform(i64 4100, i32 0, ptr %stale_args, i64 2, i64 0)
   unreachable
-}
-
-define internal i64 @__blood_identity_continuation(i64 %0, ptr %1) {
-entry:
-  ret i64 %0
 }
 
 define linkonce_odr void @__blood_register_handlers() {
@@ -613,7 +625,7 @@ entry:
   %op_ptr1 = getelementptr [2 x ptr], ptr %handler_ops, i32 0, i32 1
   store ptr @LocalState_put, ptr %op_ptr1, align 8
   %ops_ptr = getelementptr [2 x ptr], ptr %handler_ops, i32 0, i32 0
-  call void @blood_evidence_register(ptr null, i64 351, ptr %ops_ptr, i64 2)
+  call void @blood_evidence_register(ptr null, i64 358, ptr %ops_ptr, i64 2)
   ret void
 }
 
@@ -707,9 +719,10 @@ bb0:
   %_3_stack = alloca i32, align 4
   %_4_stack = alloca i8, align 1
   %_5_stack = alloca i8, align 1
+  %saved_snap = call i64 @blood_effect_context_take_snapshot()
   %snapshot = call i64 @blood_snapshot_create()
-  %continuation = call i64 @blood_continuation_create_multishot(ptr @__blood_identity_continuation, ptr null)
-  %perform_result = call i64 @blood_perform(i64 351, i32 0, ptr null, i64 0, i64 %continuation)
+  call void @blood_effect_context_set_snapshot(i64 %snapshot)
+  %perform_result = call i64 @blood_perform(i64 358, i32 0, ptr null, i64 0, i64 0)
   %perform_trunc = trunc i64 %perform_result to i32
   store i32 %perform_trunc, ptr %_2_stack, align 4
   %validation = call i64 @blood_snapshot_validate(i64 %snapshot)
@@ -724,35 +737,48 @@ bb1:                                              ; preds = %snapshot_valid
   %add = add i32 %load1, 1
   store i32 %add, ptr %_3_stack, align 4
   %load2 = load i32, ptr %_3_stack, align 4
-  %snapshot3 = call i64 @blood_snapshot_create()
+  %saved_snap3 = call i64 @blood_effect_context_take_snapshot()
+  %snapshot4 = call i64 @blood_snapshot_create()
+  call void @blood_effect_context_set_snapshot(i64 %snapshot4)
   %perform_args = alloca [1 x i64], align 8
   %arg_0 = getelementptr [1 x i64], ptr %perform_args, i64 0, i64 0
   %arg_i64 = zext i32 %load2 to i64
   store i64 %arg_i64, ptr %arg_0, align 8
-  %continuation4 = call i64 @blood_continuation_create_multishot(ptr @__blood_identity_continuation, ptr null)
-  %perform_result5 = call i64 @blood_perform(i64 351, i32 1, ptr %perform_args, i64 1, i64 %continuation4)
-  %validation6 = call i64 @blood_snapshot_validate(i64 %snapshot3)
-  call void @blood_snapshot_destroy(i64 %snapshot3)
+  %perform_result5 = call i64 @blood_perform(i64 358, i32 1, ptr %perform_args, i64 1, i64 0)
+  %validation6 = call i64 @blood_snapshot_validate(i64 %snapshot4)
+  call void @blood_snapshot_destroy(i64 %snapshot4)
   %is_valid9 = icmp eq i64 %validation6, 0
   br i1 %is_valid9, label %snapshot_valid7, label %snapshot_stale8
 
 bb2:                                              ; preds = %snapshot_valid7
   store i8 0, ptr %_5_stack, align 1
-  %load10 = load i8, ptr %_5_stack, align 1
-  store i8 %load10, ptr %_0_stack, align 1
+  %load13 = load i8, ptr %_5_stack, align 1
+  store i8 %load13, ptr %_0_stack, align 1
   ret void
 
 snapshot_valid:                                   ; preds = %bb0
+  call void @blood_effect_context_set_snapshot(i64 %saved_snap)
   br label %bb1
 
 snapshot_stale:                                   ; preds = %bb0
-  call void @blood_stale_reference_panic(i32 0, i32 0)
+  %stale_args = alloca [2 x i64], align 8
+  %stale_arg_0 = getelementptr [2 x i64], ptr %stale_args, i64 0, i64 0
+  store i64 0, ptr %stale_arg_0, align 8
+  %stale_arg_1 = getelementptr [2 x i64], ptr %stale_args, i64 0, i64 1
+  store i64 0, ptr %stale_arg_1, align 8
+  %0 = call i64 @blood_perform(i64 4100, i32 0, ptr %stale_args, i64 2, i64 0)
   unreachable
 
 snapshot_valid7:                                  ; preds = %bb1
+  call void @blood_effect_context_set_snapshot(i64 %saved_snap3)
   br label %bb2
 
 snapshot_stale8:                                  ; preds = %bb1
-  call void @blood_stale_reference_panic(i32 0, i32 0)
+  %stale_args10 = alloca [2 x i64], align 8
+  %stale_arg_011 = getelementptr [2 x i64], ptr %stale_args10, i64 0, i64 0
+  store i64 0, ptr %stale_arg_011, align 8
+  %stale_arg_112 = getelementptr [2 x i64], ptr %stale_args10, i64 0, i64 1
+  store i64 0, ptr %stale_arg_112, align 8
+  %1 = call i64 @blood_perform(i64 4100, i32 0, ptr %stale_args10, i64 2, i64 0)
   unreachable
 }

@@ -730,6 +730,9 @@ fn cmd_parse(args: &FileArgs, verbosity: u8) -> ExitCode {
 
     match result {
         Ok(program) => {
+            for warning in &parser.take_warnings() {
+                emitter.emit(warning);
+            }
             println!("{:#?}", program);
             if verbosity > 0 {
                 eprintln!(
@@ -768,6 +771,9 @@ fn cmd_check(args: &FileArgs, verbosity: u8) -> ExitCode {
 
     let mut program = match result {
         Ok(program) => {
+            for warning in &parser.take_warnings() {
+                emitter.emit(warning);
+            }
             if verbosity > 0 {
                 eprintln!("Parsed {} declarations.", program.declarations.len());
             }
@@ -1026,6 +1032,11 @@ fn cmd_build(args: &FileArgs, verbosity: u8, timings: bool) -> ExitCode {
             return ExitCode::from(1);
         }
     };
+
+    // Emit any parser warnings (e.g., deprecated :: syntax)
+    for warning in &parser.take_warnings() {
+        emitter.emit(warning);
+    }
 
     // Take interner from parser for type checking
     let interner = parser.take_interner();

@@ -243,7 +243,7 @@ fn test_struct_access_nonexistent_field() {
 fn test_enum_unit_variant() {
     assert_typechecks(r#"
         enum Color { Red, Green, Blue }
-        fn main() { let c = Color::Red; }
+        fn main() { let c = Color.Red; }
     "#);
 }
 
@@ -251,7 +251,7 @@ fn test_enum_unit_variant() {
 fn test_enum_tuple_variant() {
     assert_typechecks(r#"
         enum MyOption { Some(i32), None }
-        fn main() { let x = MyOption::Some(42); let y = MyOption::None; }
+        fn main() { let x = MyOption.Some(42); let y = MyOption.None; }
     "#);
 }
 
@@ -259,7 +259,7 @@ fn test_enum_tuple_variant() {
 fn test_enum_struct_variant() {
     assert_typechecks(r#"
         enum Message { Move { x: i32, y: i32 }, Quit }
-        fn main() { let m = Message::Move { x: 10, y: 20 }; }
+        fn main() { let m = Message.Move { x: 10, y: 20 }; }
     "#);
 }
 
@@ -267,7 +267,7 @@ fn test_enum_struct_variant() {
 fn test_enum_variant_wrong_args() {
     assert_type_fails(r#"
         enum MyOption { Some(i32), None }
-        fn main() { let x = MyOption::Some(true); }
+        fn main() { let x = MyOption.Some(true); }
     "#);
 }
 
@@ -280,10 +280,10 @@ fn test_match_exhaustive() {
     assert_typechecks(r#"
         enum Bool { True, False }
         fn main() {
-            let b = Bool::True;
+            let b = Bool.True;
             match b {
-                Bool::True => 1,
-                Bool::False => 0,
+                Bool.True => 1,
+                Bool.False => 0,
             };
         }
     "#);
@@ -308,10 +308,10 @@ fn test_match_binding_type() {
     assert_typechecks(r#"
         enum MyOption { Some(i32), None }
         fn main() {
-            let opt = MyOption::Some(42);
+            let opt = MyOption.Some(42);
             match opt {
-                MyOption::Some(x) => x,
-                MyOption::None => 0,
+                MyOption.Some(x) => x,
+                MyOption.None => 0,
             };
         }
     "#);
@@ -418,7 +418,7 @@ fn test_generic_struct() {
 fn test_generic_enum() {
     assert_typechecks(r#"
         enum MyOption<T> { Some(T), None }
-        fn main() { let x = MyOption::Some(42); }
+        fn main() { let x = MyOption.Some(42); }
     "#);
 }
 
@@ -529,7 +529,7 @@ fn test_impl_method() {
         impl Point {
             fn new(x: i32, y: i32) -> Point { Point { x, y } }
         }
-        fn main() { let p = Point::new(1, 2); }
+        fn main() { let p = Point.new(1, 2); }
     "#);
 }
 

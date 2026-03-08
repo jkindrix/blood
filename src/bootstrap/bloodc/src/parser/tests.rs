@@ -2552,7 +2552,8 @@ mod proptest_tests {
 
 #[test]
 fn test_op_keyword_in_struct_pattern() {
-    // Issue #5: op keyword should work in struct patterns
+    // `op` is a hard keyword (effect operations) — it should NOT parse as a field name.
+    // Use raw identifier `r#op` if needed.
     let source = r#"
         struct Test { op: i32 }
         fn main() -> i32 {
@@ -2563,7 +2564,7 @@ fn test_op_keyword_in_struct_pattern() {
         }
     "#;
     let result = parse_program(source);
-    assert!(result.is_ok(), "Failed to parse: {:?}", result.err());
+    assert!(result.is_err(), "`op` is a keyword and should not be accepted as a field name");
 }
 
 #[test]
