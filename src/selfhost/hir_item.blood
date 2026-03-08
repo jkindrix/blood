@@ -190,12 +190,21 @@ pub struct StructDef {
     pub generics: hir_ty.Generics,
     /// The struct body (fields or tuple elements).
     pub body: StructBody,
+    /// Whether this struct is packed (no padding).
+    pub is_packed: bool,
+    /// Explicit minimum alignment (from `#[repr(align(N))]`), 0 = none.
+    pub align: u32,
 }
 
 impl StructDef {
     /// Creates a new struct definition.
     pub fn new(generics: hir_ty.Generics, body: StructBody) -> StructDef {
-        StructDef { generics, body }
+        StructDef { generics, body, is_packed: false, align: 0 }
+    }
+
+    /// Creates a new struct definition with layout attributes.
+    pub fn new_with_layout(generics: hir_ty.Generics, body: StructBody, is_packed: bool, align: u32) -> StructDef {
+        StructDef { generics, body, is_packed, align }
     }
 }
 

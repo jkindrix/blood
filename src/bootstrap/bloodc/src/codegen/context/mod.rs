@@ -678,6 +678,8 @@ pub struct CodegenContext<'ctx, 'a> {
     pub errors: Vec<Diagnostic>,
     /// Struct definitions for type lowering.
     pub struct_defs: HashMap<DefId, Vec<Type>>,
+    /// Layout attributes for structs (is_packed, align).
+    pub struct_layout_attrs: HashMap<DefId, (bool, Option<u32>)>,
     /// Enum definitions for type lowering: DefId -> (variants, each with field types).
     pub enum_defs: HashMap<DefId, Vec<Vec<Type>>>,
     /// Stack of loop contexts for break/continue.
@@ -834,6 +836,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             current_fn: None,
             errors: Vec::new(),
             struct_defs: HashMap::new(),
+            struct_layout_attrs: HashMap::new(),
             enum_defs: HashMap::new(),
             loop_stack: Vec::new(),
             closure_bodies: HashMap::new(),
@@ -1056,6 +1059,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                         hir::StructKind::Unit => Vec::new(),
                     };
                     self.struct_defs.insert(*def_id, field_types);
+                    if struct_def.is_packed || struct_def.align.is_some() {
+                        self.struct_layout_attrs.insert(*def_id, (struct_def.is_packed, struct_def.align));
+                    }
                 }
                 hir::ItemKind::Enum(enum_def) => {
                     // For enums, we need to collect ALL field types across ALL variants
@@ -2304,6 +2310,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                         hir::StructKind::Unit => Vec::new(),
                     };
                     self.struct_defs.insert(*def_id, field_types);
+                    if struct_def.is_packed || struct_def.align.is_some() {
+                        self.struct_layout_attrs.insert(*def_id, (struct_def.is_packed, struct_def.align));
+                    }
                 }
                 hir::ItemKind::Enum(enum_def) => {
                     // For enums, we need to collect ALL field types across ALL variants

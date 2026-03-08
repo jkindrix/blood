@@ -143,7 +143,10 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                             // Unit struct - use i8 placeholder
                             self.context.i8_type().into()
                         } else {
-                            self.context.struct_type(&field_types, false).into()
+                            let is_packed = self.struct_layout_attrs.get(def_id)
+                                .map(|(packed, _)| *packed)
+                                .unwrap_or(false);
+                            self.context.struct_type(&field_types, is_packed).into()
                         }
                     } else if let Some(variants) = self.enum_defs.get(def_id).cloned() {
                         // Enum: { i32 tag, payload }

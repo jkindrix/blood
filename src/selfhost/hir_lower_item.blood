@@ -558,7 +558,10 @@ fn lower_struct_decl(ctx: &mut hir_lower_ctx.LoweringCtx, s: &ast.StructDecl) {
     // Pop type param scope after lowering all types that reference generics
     ctx.resolver.pop_scope();
 
-    let struct_def = hir_item.StructDef.new(generics, struct_body);
+    // Extract layout attributes (#[repr(packed)], #[repr(align(N))])
+    let layout = extract_repr_attrs(ctx, &s.attrs);
+
+    let struct_def = hir_item.StructDef.new_with_layout(generics, struct_body, layout.0, layout.1);
     let item_kind = hir_item.ItemKind.Struct(struct_def);
     let item = hir_item.Item.new(
         def_id,
@@ -2114,4 +2117,81 @@ pub fn lower_module_contents(
         name_span,
     );
     ctx.add_item(module_def_id, item);
+}
+
+/// Extract #[repr(packed)] and #[repr(align(N))] from attribute list.
+/// Returns (is_packed, align) where align=0 means no explicit alignment.
+fn extract_repr_attrs(ctx: &mut hir_lower_ctx.LoweringCtx, attrs: &Vec<ast.Attribute>) -> (bool, u32) {
+    let mut is_packed = false;
+    let mut align_val: u32 = 0;
+    for i in 0usize..attrs.len() {
+        let attr = &attrs[i];
+        if attr.path.len() != 1 { continue; }
+        let attr_name = ctx.span_to_string(attr.path[0].span);
+        if !attr_name_is_repr(attr_name.as_str()) { continue; }
+        match &attr.args {
+            &Option.Some(ref args_val) => {
+                match args_val {
+                    &ast.AttributeArgs.List(ref arg_list) => {
+                        for j in 0usize..arg_list.len() {
+                            match &arg_list[j] {
+                                &ast.AttributeArg.Ident(ref ident) => {
+                                    let ident_str = ctx.span_to_string(ident.span);
+                                    if attr_name_is_packed(ident_str.as_str()) {
+                                        is_packed = true;
+                                    }
+                                }
+                                &ast.AttributeArg.Call { ref name, ref arg } => {
+                                    let call_name = ctx.span_to_string(name.span);
+                                    if attr_name_is_align(call_name.as_str()) {
+                                        match &arg.kind {
+                                            &ast.LiteralKind.Str(ref s) => {
+                                                let parsed = parse_align_value(s.as_str());
+                                                if parsed > 0 {
+                                                    align_val = parsed;
+                                                }
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            &Option.None => {}
+        }
+    }
+    (is_packed, align_val)
+}
+
+fn attr_name_is_repr(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    bytes.len() == 4 && bytes[0] == 114 && bytes[1] == 101 && bytes[2] == 112 && bytes[3] == 114
+}
+
+fn attr_name_is_packed(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    bytes.len() == 6 && bytes[0] == 112 && bytes[1] == 97 && bytes[2] == 99
+        && bytes[3] == 107 && bytes[4] == 101 && bytes[5] == 100
+}
+
+fn attr_name_is_align(s: &str) -> bool {
+    let bytes = s.as_bytes();
+    bytes.len() == 5 && bytes[0] == 97 && bytes[1] == 108 && bytes[2] == 105
+        && bytes[3] == 103 && bytes[4] == 110
+}
+
+fn parse_align_value(s: &str) -> u32 {
+    let bytes = s.as_bytes();
+    let mut result: u32 = 0;
+    for i in 0usize..bytes.len() {
+        let b = bytes[i];
+        if b < 48 || b > 57 { return 0; }
+        result = result * 10 + (b as u32 - 48);
+    }
+    result
 }

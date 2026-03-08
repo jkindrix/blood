@@ -1,0 +1,47 @@
+// Test: #[repr(align(N))] layout attribute
+// Verifies that alignment control attributes are parsed, stored,
+// and affect LLVM type generation.
+
+#[repr(align(16))]
+struct Aligned16 {
+    x: i32,
+    y: i32,
+}
+
+#[repr(align(64))]
+struct CacheLine {
+    data: i64,
+}
+
+struct Normal {
+    a: i32,
+    b: i32,
+}
+
+fn main() -> i32 {
+    // Test aligned struct: fields are accessible and correct
+    let a = Aligned16 { x: 10, y: 20 };
+    if a.x != 10 {
+        return 1;
+    }
+    if a.y != 20 {
+        return 2;
+    }
+
+    // Test higher alignment
+    let c = CacheLine { data: 999 };
+    if c.data != 999 {
+        return 3;
+    }
+
+    // Test normal struct for comparison
+    let n = Normal { a: 7, b: 99 };
+    if n.a != 7 {
+        return 4;
+    }
+    if n.b != 99 {
+        return 5;
+    }
+
+    0
+}

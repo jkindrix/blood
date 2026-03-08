@@ -179,6 +179,10 @@ pub struct StructDef {
     pub generics: Generics,
     /// The kind of struct.
     pub kind: StructKind,
+    /// Whether this struct is packed (no padding).
+    pub is_packed: bool,
+    /// Explicit minimum alignment (from `#[repr(align(N))]`).
+    pub align: Option<u32>,
 }
 
 /// The kind of struct.

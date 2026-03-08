@@ -145,6 +145,10 @@ pub struct StructLayout {
     pub fields: Vec<AdtFieldInfo>,
     /// The complete LLVM type string (e.g., "{ i32, i64, ptr }").
     pub llvm_type: String,
+    /// Whether this struct is packed (no padding between fields).
+    pub is_packed: bool,
+    /// Explicit minimum alignment (from #[repr(align(N))]), 0 = none.
+    pub align: u32,
 }
 
 /// Layout of a single enum variant.
@@ -2355,6 +2359,8 @@ impl CodegenCtx {
                         def_id: sl.def_id,
                         fields: cloned_fields,
                         llvm_type: clone_string(&sl.llvm_type),
+                        is_packed: sl.is_packed,
+                        align: sl.align,
                     }));
                 }
                 &AdtEntry.Enum(ref el) => {

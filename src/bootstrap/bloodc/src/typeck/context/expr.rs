@@ -8231,6 +8231,8 @@ impl<'a> TypeContext<'a> {
                             name: handler_info.name.clone(),
                             fields: handler_info.fields.clone(),
                             generics: handler_info.generics.clone(),
+                            is_packed: false,
+                            align: None,
                         };
                         let result_ty = Type::adt(def_id, Vec::new());
                         (def_id, struct_info, result_ty)

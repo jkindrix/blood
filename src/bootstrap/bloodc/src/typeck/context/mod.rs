@@ -211,6 +211,8 @@ pub struct StructInfo {
     pub name: String,
     pub fields: Vec<FieldInfo>,
     pub generics: Vec<TyVarId>,
+    pub is_packed: bool,
+    pub align: Option<u32>,
 }
 
 /// Information about a field.
@@ -1408,6 +1410,8 @@ impl<'a> TypeContext<'a> {
                         hir::ItemKind::Struct(hir::StructDef {
                             generics: hir::Generics::empty(),
                             kind: hir::StructKind::Record(fields),
+                            is_packed: struct_info.is_packed,
+                            align: struct_info.align,
                         })
                     } else {
                         continue;

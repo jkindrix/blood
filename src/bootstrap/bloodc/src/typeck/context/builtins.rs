@@ -748,6 +748,8 @@ impl<'a> TypeContext<'a> {
             name: "Vec".to_string(),
             fields: vec![],  // opaque - no exposed fields
             generics: vec![vec_t_var_id],
+            is_packed: false,
+            align: None,
         });
 
         self.vec_def_id = Some(vec_def_id);
@@ -770,6 +772,8 @@ impl<'a> TypeContext<'a> {
             name: "Box".to_string(),
             fields: vec![],  // opaque - no exposed fields
             generics: vec![box_t_var_id],
+            is_packed: false,
+            align: None,
         });
 
         self.box_def_id = Some(box_def_id);
@@ -792,6 +796,8 @@ impl<'a> TypeContext<'a> {
             name: "Iter".to_string(),
             fields: vec![],  // opaque - no exposed fields
             generics: vec![iter_t_var_id],
+            is_packed: false,
+            align: None,
         });
 
         self.iter_def_id = Some(iter_def_id);

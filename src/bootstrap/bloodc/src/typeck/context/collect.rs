@@ -994,14 +994,15 @@ impl<'a> TypeContext<'a> {
                         })
                         .collect();
 
+                    // Extract packed and align from attributes
+                    let (is_packed, align) = self.extract_struct_attrs(&s.attrs);
                     self.struct_defs.insert(def_id, super::StructInfo {
                         name: name.clone(),
                         fields: struct_fields,
                         generics: Vec::new(), // Bridge structs don't have generics
+                        is_packed,
+                        align,
                     });
-
-                    // Extract packed and align from attributes
-                    let (is_packed, align) = self.extract_struct_attrs(&s.attrs);
 
                     structs.push(BridgeStructInfo {
                         def_id,
@@ -1577,10 +1578,13 @@ impl<'a> TypeContext<'a> {
         self.const_params = saved_const_params;
         self.lifetime_params = saved_lifetime_params;
 
+        let (is_packed, align) = self.extract_struct_attrs(&struct_decl.attrs);
         self.struct_defs.insert(def_id, StructInfo {
             name: name.clone(),
             fields,
             generics: generics_vec,
+            is_packed,
+            align,
         });
 
         // Extract derive macros from attributes
