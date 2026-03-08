@@ -952,10 +952,60 @@ impl<'a> TypeContext<'a> {
             None
         };
 
+        // Type-check finally clause if present
+        let finally_clause_body_id = if let Some(ref finally_block) = handler.finally_clause {
+            self.resolver.push_scope(ScopeKind::Function, handler.span);
+            self.resolver.reset_local_ids();
+            self.locals.clear();
+
+            // Add handler state fields as locals (no result parameter for finally)
+            for (i, state_field) in handler.state.iter().enumerate() {
+                let field_name = self.symbol_to_string(state_field.name.node);
+                let field_ty = handler_info.fields[i].ty.clone();
+
+                let local_id = self.resolver.define_local(
+                    field_name.clone(),
+                    field_ty.clone(),
+                    state_field.is_mut,
+                    state_field.span,
+                )?;
+                self.locals.push(hir::Local {
+                    id: local_id,
+                    ty: field_ty,
+                    mutable: state_field.is_mut,
+                    name: Some(field_name),
+                    span: state_field.span,
+                });
+            }
+
+            // Finally clause body returns unit (void)
+            let expected_body_ty = Type::unit();
+            let body_expr = self.check_block(finally_block, &expected_body_ty)?;
+
+            let body_id = hir::BodyId::new(self.next_body_id);
+            self.next_body_id += 1;
+
+            let hir_body = hir::Body {
+                locals: std::mem::take(&mut self.locals),
+                param_count: handler.state.len(), // State fields are the params
+                expr: body_expr,
+                span: finally_block.span,
+                tuple_destructures: std::mem::take(&mut self.tuple_destructures),
+            };
+
+            self.bodies.insert(body_id, hir_body);
+            self.resolver.pop_scope();
+
+            Some(body_id)
+        } else {
+            None
+        };
+
         // Update handler info with body IDs and stored inference variables
         if let Some(info) = self.handler_defs.get_mut(&handler_def_id) {
             info.operations = operation_body_ids;
             info.return_clause_body_id = return_clause_body_id;
+            info.finally_clause_body_id = finally_clause_body_id;
             info.continuation_result_ty = handler_continuation_ty;
             info.return_clause_input_ty = return_clause_input_ty_holder;
             info.return_clause_output_ty = return_clause_output_ty_holder;

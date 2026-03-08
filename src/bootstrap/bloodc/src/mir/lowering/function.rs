@@ -930,10 +930,17 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
 
         self.push_stmt(StatementKind::CallReturnClause {
             handler_id,
-            handler_name,
+            handler_name: handler_name.clone(),
             body_result,
-            state_place,
+            state_place: state_place.clone(),
             destination: dest_place.clone(),
+        });
+
+        // Step 6: Call the finally clause for cleanup (if present)
+        self.push_stmt(StatementKind::CallFinallyClause {
+            handler_id,
+            handler_name,
+            state_place,
         });
 
         Ok(Operand::Copy(dest_place))

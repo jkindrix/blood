@@ -1402,6 +1402,53 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                     )])?;
             }
 
+            StatementKind::CallFinallyClause { handler_id: _, handler_name, ref state_place } => {
+                // Call the handler's finally clause for cleanup after handler scope exit.
+                // The finally clause signature is: fn(state_ptr: *void) -> void
+                let i8_ptr_ty = self.context.ptr_type(AddressSpace::default());
+
+                let finally_fn_name = format!("{}_finally", handler_name);
+
+                // Declare or get the finally clause function
+                let void_type = self.context.void_type();
+                let finally_fn = self.module.get_function(&finally_fn_name)
+                    .unwrap_or_else(|| {
+                        let fn_type = void_type.fn_type(&[i8_ptr_ty.into()], false);
+                        self.module.add_function(&finally_fn_name, fn_type, None)
+                    });
+
+                // Get state pointer: prefer shadow alloca if available
+                let state_void_ptr = if let Some(state_local) = state_place.as_local() {
+                    if let Some(&shadow_ptr) = self.handler_state_shadows.get(&state_local) {
+                        self.builder.build_pointer_cast(shadow_ptr, i8_ptr_ty, "finally_state_ptr")
+                            .map_err(|e| vec![Diagnostic::error(
+                                format!("LLVM cast error: {}", e), stmt.span
+                            )])?
+                    } else {
+                        let state_ptr = self.compile_mir_place(state_place, body, escape_results)?;
+                        self.builder.build_pointer_cast(state_ptr, i8_ptr_ty, "finally_state_ptr")
+                            .map_err(|e| vec![Diagnostic::error(
+                                format!("LLVM cast error: {}", e), stmt.span
+                            )])?
+                    }
+                } else {
+                    let state_ptr = self.compile_mir_place(state_place, body, escape_results)?;
+                    self.builder.build_pointer_cast(state_ptr, i8_ptr_ty, "finally_state_ptr")
+                        .map_err(|e| vec![Diagnostic::error(
+                            format!("LLVM cast error: {}", e), stmt.span
+                        )])?
+                };
+
+                // Call finally clause: fn(state_ptr: *void) -> void
+                self.builder.build_call(
+                    finally_fn,
+                    &[state_void_ptr.into()],
+                    ""
+                ).map_err(|e| vec![Diagnostic::error(
+                    format!("LLVM call error: {}", e), stmt.span
+                )])?;
+            }
+
             StatementKind::EnterUnchecked(ref checks) => {
                 for check in checks {
                     self.unchecked_checks.insert(*check);

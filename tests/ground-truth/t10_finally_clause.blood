@@ -1,0 +1,38 @@
+// Test: finally clause runs after handler scope exits (normal path)
+// Tests INFRA-02 Phase 5a: handler finally clause
+// EXPECT: 9999
+// EXPECT: 25
+
+effect Logger {
+    op log(msg: i32) -> ();
+}
+
+// Handler with return clause + finally clause
+deep handler CountingLogger for Logger {
+    let mut log_count: i32
+    return(x) { x + log_count }
+    finally {
+        // Cleanup: print a marker to verify finally ran
+        println_int(9999);
+    }
+    op log(msg) { log_count = log_count + 1; resume(()) }
+}
+
+fn compute_with_logging() -> i32 / {Logger} {
+    perform Logger.log(1);
+    perform Logger.log(2);
+    perform Logger.log(3);
+    perform Logger.log(4);
+    perform Logger.log(5);
+    20
+}
+
+fn main() -> i32 {
+    // Normal exit: return clause runs (20 + 5 = 25), then finally clause runs (prints 9999)
+    let result: i32 = with CountingLogger { log_count: 0 } handle {
+        compute_with_logging()
+    };
+    println_int(result);
+    if result != 25 { return 1; }
+    0
+}

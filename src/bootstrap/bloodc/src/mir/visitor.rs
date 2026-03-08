@@ -166,6 +166,9 @@ pub trait Visitor: Sized {
                 self.visit_place(state_place, PlaceContext::Read, location);
                 self.visit_place(destination, PlaceContext::Store, location);
             }
+            StatementKind::CallFinallyClause { handler_id: _, handler_name: _, state_place } => {
+                self.visit_place(state_place, PlaceContext::Read, location);
+            }
             StatementKind::EnterUnchecked(_) | StatementKind::ExitUnchecked(_) => {
                 // No places or operands to visit
             }

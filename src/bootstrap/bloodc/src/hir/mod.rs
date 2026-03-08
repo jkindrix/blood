@@ -32,7 +32,7 @@ pub use item::{
     Item, ItemKind, FnSig, FnDef, StructDef, StructKind, FieldDef, EnumDef, Variant,
     Generics, GenericParam, GenericParamKind, VarianceAnnotation, TraitRef, WherePredicate,
     TraitItem, TraitItemKind, ImplItem, ImplItemKind,
-    EffectOp, HandlerState, HandlerOp, ReturnClause, HandlerKind,
+    EffectOp, HandlerState, HandlerOp, ReturnClause, FinallyClause, HandlerKind,
     // FFI types
     ExternFnDef, BridgeDef, LinkSpec, LinkKind, ExternFnItem, OpaqueType,
     BridgeTypeAlias, FfiStruct, FfiField, FfiEnum, FfiEnumVariant, FfiUnion, FfiConst, FfiCallback,

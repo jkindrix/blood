@@ -314,6 +314,8 @@ pub struct HandlerInfo {
     pub fields: Vec<FieldInfo>,
     /// Return clause body ID, if present.
     pub return_clause_body_id: Option<hir::BodyId>,
+    /// Finally clause body ID, if present.
+    pub finally_clause_body_id: Option<hir::BodyId>,
     /// For deep handlers: the inference variable representing what `resume()` returns.
     /// Created during handler body type-checking; unified at the handle site with the
     /// body's result type. None for shallow handlers.
@@ -1510,6 +1512,14 @@ impl<'a> TypeContext<'a> {
                             }
                         });
 
+                        // Build finally clause if present
+                        let finally_clause = handler_info.finally_clause_body_id.map(|body_id| {
+                            hir::FinallyClause {
+                                body_id,
+                                span: info.span,
+                            }
+                        });
+
                         hir::ItemKind::Handler {
                             generics: hir::Generics::empty(),
                             kind: hir_kind,
@@ -1517,6 +1527,7 @@ impl<'a> TypeContext<'a> {
                             state,
                             operations,
                             return_clause,
+                            finally_clause,
                         }
                     } else {
                         continue;

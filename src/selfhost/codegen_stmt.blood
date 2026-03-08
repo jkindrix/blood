@@ -534,6 +534,31 @@ pub fn emit_statement(
                 ctx.emit_store_cg(result_ty.as_str(), &narrowed, dest_ptr.as_str());
             }
         }
+        &mir_stmt.StatementKind.CallFinallyClause {
+            handler_id,
+            ref state_place,
+        } => {
+            // Call the finally clause wrapper: handler{N}_finally(ptr state) -> void
+            let state_ptr = match ctx.get_handler_state_shadow(handler_id.index) {
+                Option.Some(shadow) => clone_string(shadow),
+                Option.None => {
+                    let addr = codegen_expr.emit_place_addr(ctx, state_place);
+                    cgname_to_string(&addr)
+                }
+            };
+
+            let mut finally_fn = common.make_string("handler");
+            let id_str = codegen_types.format_u64(handler_id.index as u64);
+            finally_fn.push_str(id_str.as_str());
+            finally_fn.push_str("_finally");
+
+            ctx.write_indent();
+            ctx.write("call void @");
+            ctx.write_string(&finally_fn);
+            ctx.write("(ptr ");
+            ctx.write_string(&state_ptr);
+            ctx.write(")\n");
+        }
         &mir_stmt.StatementKind.RegionEnter { region_local } => {
             // Emit region lifecycle: create + activate
             // %region_id = call i64 @blood_region_create(i64 1048576, i64 1073741824)

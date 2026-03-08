@@ -9,6 +9,7 @@ use inkwell::AddressSpace;
 
 use crate::hir::{self, DefId, LocalId, TypeKind};
 use crate::diagnostics::Diagnostic;
+use crate::span::Span;
 
 
 use super::CodegenContext;
@@ -77,7 +78,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         item: &hir::Item,
         hir_crate: &hir::Crate,
     ) -> Result<(), Vec<Diagnostic>> {
-        if let hir::ItemKind::Handler { operations, return_clause, state, .. } = &item.kind {
+        if let hir::ItemKind::Handler { operations, return_clause, finally_clause, state, .. } = &item.kind {
             // Compile each operation (both tail-resumptive and non-tail-resumptive)
             // Non-tail-resumptive handlers use continuation capture via blood_continuation_resume
             for (op_idx, handler_op) in operations.iter().enumerate() {
@@ -94,6 +95,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     self.compile_return_clause(def_id, &item.name, body, ret_clause, state)?;
                 }
             }
+
+            // Compile finally clause (generates no-op if not present)
+            self.compile_finally_clause(&item.name, finally_clause.as_ref(), hir_crate, state)?;
         }
         Ok(())
     }
@@ -109,7 +113,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         sorted_items.sort_by_key(|(&def_id, _)| def_id.index());
         // Compile all handler operations
         for (&def_id, item) in &sorted_items {
-            if let hir::ItemKind::Handler { operations, return_clause, state, .. } = &item.kind {
+            if let hir::ItemKind::Handler { operations, return_clause, finally_clause, state, .. } = &item.kind {
                 // Compile each operation
                 for (op_idx, handler_op) in operations.iter().enumerate() {
                     if let Some(&fn_value) = self.handler_ops.get(&(def_id, op_idx)) {
@@ -125,6 +129,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                         self.compile_return_clause(def_id, &item.name, body, ret_clause, state)?;
                     }
                 }
+
+                // Compile finally clause (generates no-op if not present)
+                self.compile_finally_clause(&item.name, finally_clause.as_ref(), hir_crate, state)?;
             }
         }
         Ok(())
@@ -399,6 +406,182 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // Restore context
         self.current_fn = saved_fn;
         self.locals = saved_locals;
+
+        Ok(())
+    }
+
+    /// Compile a handler's finally clause.
+    ///
+    /// The finally clause runs after the return clause for cleanup.
+    /// Signature: fn(state_ptr: *void) -> void
+    ///
+    /// If no finally clause is present, generates a no-op function that just returns void.
+    pub(super) fn compile_finally_clause(
+        &mut self,
+        handler_name: &str,
+        finally_clause: Option<&hir::FinallyClause>,
+        hir_crate: &hir::Crate,
+        state_fields: &[hir::HandlerState],
+    ) -> Result<(), Vec<Diagnostic>> {
+        let void_type = self.context.void_type();
+        let ptr_type = self.context.ptr_type(AddressSpace::default());
+
+        // Finally clause function signature: fn(state_ptr: *void) -> void
+        let finally_fn_type = void_type.fn_type(&[ptr_type.into()], false);
+        let fn_name = format!("{}_finally", handler_name);
+
+        // Check if function was already declared; if so, reuse it
+        let fn_value = self.module.get_function(&fn_name).unwrap_or_else(|| {
+            self.module.add_function(&fn_name, finally_fn_type, None)
+        });
+
+        // Create entry block
+        let entry_block = self.context.append_basic_block(fn_value, "entry");
+        self.builder.position_at_end(entry_block);
+
+        if let Some(fc) = finally_clause {
+            if let Some(body) = hir_crate.bodies.get(&fc.body_id) {
+                let span = body.span;
+                let i64_type = self.context.i64_type();
+
+                // Save and set context
+                let saved_fn = self.current_fn;
+                let saved_locals = std::mem::take(&mut self.locals);
+                self.current_fn = Some(fn_value);
+
+                // Get the state pointer parameter
+                let state_ptr = fn_value.get_nth_param(0)
+                    .ok_or_else(|| vec![Diagnostic::error("Missing state pointer parameter".to_string(), span)])?;
+
+                // Build the handler state struct type using TYPED layout
+                let state_field_types: Vec<BasicTypeEnum> = self.handler_state_field_types(state_fields);
+                let state_struct_type = self.context.struct_type(&state_field_types, false);
+                let typed_state_ptr = state_ptr.into_pointer_value();
+
+                // Build a map of state field names to their index in the struct
+                let state_field_indices: std::collections::HashMap<&str, u32> = state_fields.iter()
+                    .enumerate()
+                    .map(|(i, s)| (s.name.as_str(), i as u32))
+                    .collect();
+
+                // Set up locals from the body — finally clause has only state fields as params
+                for local in &body.locals {
+                    let local_type = self.lower_type(&local.ty);
+                    let local_name = local.name.as_deref().unwrap_or("local");
+
+                    let is_unresolved = matches!(local.ty.kind(),
+                        TypeKind::Param(_) | TypeKind::Infer(_) | TypeKind::Error);
+                    let effective_type: BasicTypeEnum = if is_unresolved {
+                        i64_type.into()
+                    } else {
+                        local_type
+                    };
+
+                    // Check if this local corresponds to a state field
+                    if let Some(&field_idx) = state_field_indices.get(local_name) {
+                        let field_ptr = self.builder
+                            .build_struct_gep(state_struct_type, typed_state_ptr, field_idx, &format!("{}_ptr", local_name))
+                            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+
+                        let alloca = self.builder
+                            .build_alloca(effective_type, local_name)
+                            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+
+                        let state_field_ty = state_field_types[field_idx as usize];
+
+                        if state_field_ty == effective_type {
+                            let loaded = self.builder
+                                .build_load(effective_type, field_ptr, &format!("{}_val", local_name))
+                                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+                            self.builder.build_store(alloca, loaded)
+                                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+                        } else {
+                            let i64_value = self.builder
+                                .build_load(i64_type, field_ptr, &format!("{}_i64_val", local_name))
+                                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+
+                            let converted = if effective_type.is_int_type() {
+                                let target_int = effective_type.into_int_type();
+                                let i64_int = i64_value.into_int_value();
+                                if target_int.get_bit_width() == 64 {
+                                    i64_value
+                                } else if target_int.get_bit_width() < 64 {
+                                    self.builder.build_int_truncate(i64_int, target_int, &format!("{}_trunc", local_name))
+                                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
+                                        .into()
+                                } else {
+                                    self.builder.build_int_s_extend(i64_int, target_int, &format!("{}_sext", local_name))
+                                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
+                                        .into()
+                                }
+                            } else if effective_type.is_pointer_type() {
+                                self.builder.build_int_to_ptr(i64_value.into_int_value(), effective_type.into_pointer_type(), &format!("{}_ptr", local_name))
+                                    .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
+                                    .into()
+                            } else if effective_type.is_float_type() {
+                                self.builder.build_bit_cast(i64_value, effective_type, &format!("{}_float", local_name))
+                                    .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?
+                            } else {
+                                return Err(vec![Diagnostic::error(
+                                    format!(
+                                        "ICE: finally clause state field '{}' has i64 layout but local has non-scalar effective type {:?}",
+                                        local_name, effective_type
+                                    ),
+                                    span,
+                                )]);
+                            };
+                            self.builder.build_store(alloca, converted)
+                                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+                        }
+
+                        self.locals.insert(local.id, alloca);
+                        self.local_types.insert(local.id, effective_type);
+                        continue;
+                    }
+
+                    // Non-state locals
+                    let alloca = self.builder
+                        .build_alloca(effective_type, local_name)
+                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+
+                    if effective_type.is_int_type() {
+                        let zero_val = effective_type.into_int_type().const_zero();
+                        self.builder.build_store(alloca, zero_val)
+                            .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+                    }
+
+                    self.locals.insert(local.id, alloca);
+                    self.local_types.insert(local.id, effective_type);
+                }
+
+                // Compile the finally clause body (result is ignored, returns void)
+                let _result = self.compile_expr(&body.expr)?;
+
+                // Return void
+                self.builder.build_return(None)
+                    .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), span)])?;
+
+                // Set WeakODR linkage for cross-object deduplication
+                use inkwell::module::Linkage;
+                fn_value.set_linkage(Linkage::WeakODR);
+
+                // Restore context
+                self.current_fn = saved_fn;
+                self.locals = saved_locals;
+            } else {
+                // Body not found — generate no-op
+                self.builder.build_return(None)
+                    .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), Span::dummy())])?;
+                use inkwell::module::Linkage;
+                fn_value.set_linkage(Linkage::WeakODR);
+            }
+        } else {
+            // No finally clause — generate no-op function (just ret void)
+            self.builder.build_return(None)
+                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), Span::dummy())])?;
+            use inkwell::module::Linkage;
+            fn_value.set_linkage(Linkage::WeakODR);
+        }
 
         Ok(())
     }

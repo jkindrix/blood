@@ -1145,6 +1145,21 @@ pub fn find_fn_for_body(
                     }
                     &Option.None => {}
                 }
+                // Check finally clause body
+                match &handler_def.finally_clause {
+                    &Option.Some(ref fin_clause) => {
+                        if fin_clause.body_id.index == target_body_id.index {
+                            return Option.Some(FnInfo {
+                                def_id: fin_clause.def_id,
+                                name: entry.item.name.symbol,
+                                name_span: entry.item.name.span,
+                                return_ty: type_intern.CommonTypes.unit(),
+                                span: entry.item.name.span,
+                            });
+                        }
+                    }
+                    &Option.None => {}
+                }
                 // Check operation implementation bodies
                 for j in 0usize..handler_def.op_impls.len() {
                     let impl_entry = &handler_def.op_impls[j];

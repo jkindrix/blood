@@ -1906,10 +1906,17 @@ pub trait ExprLowering {
 
         self.push_stmt(StatementKind::CallReturnClause {
             handler_id,
-            handler_name,
-            state_place,
+            handler_name: handler_name.clone(),
+            state_place: state_place.clone(),
             body_result,
             destination: dest_place.clone(),
+        });
+
+        // Call the finally clause for cleanup (if present)
+        self.push_stmt(StatementKind::CallFinallyClause {
+            handler_id,
+            handler_name,
+            state_place,
         });
 
         Ok(Operand::Copy(dest_place))

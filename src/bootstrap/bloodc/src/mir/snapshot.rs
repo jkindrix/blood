@@ -1060,6 +1060,12 @@ impl LivenessAnalysis {
                         defs.insert(local);
                     }
                 }
+                StatementKind::CallFinallyClause { state_place, .. } => {
+                    // state_place is used (read)
+                    if let Some(local) = state_place.as_local() {
+                        uses.insert(local);
+                    }
+                }
             }
         }
 

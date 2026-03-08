@@ -2351,6 +2351,15 @@ fn lower_with_handle_expr(
             Option.None => {}
         }
 
+        // Step 9: Emit CallFinallyClause for handler cleanup
+        ctx.emit_stmt(mir_stmt.Statement.new(
+            mir_stmt.StatementKind.CallFinallyClause {
+                handler_id: handler_id,
+                state_place: copy_place(&state_place),
+            },
+            span,
+        ));
+
         // Jump to continuation
         ctx.builder.terminate(mir_term.Terminator.goto(after_block, span));
     }

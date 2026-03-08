@@ -2357,12 +2357,30 @@ struct HandlerReturnInfo {
     state_field_ty_ids: Vec<u32>,
 }
 
+/// Information about a handler's finally clause.
+struct HandlerFinallyInfo {
+    /// The handler's user-visible name (e.g., "handler19").
+    handler_name: String,
+    /// The handler's DefId.
+    handler_def_id: u32,
+    /// Whether this handler has an explicit finally clause body.
+    has_body: bool,
+    /// The body DefId of the finally clause.
+    body_def_id: u32,
+    /// Number of state fields in the handler.
+    state_field_count: u32,
+    /// TyId indices of handler state fields.
+    state_field_ty_ids: Vec<u32>,
+}
+
 /// Collected information about all handlers in the program.
 struct HandlerInfo {
     /// Handler operation infos for wrapper generation.
     ops: Vec<HandlerOpInfo>,
     /// Handler return clause infos.
     returns: Vec<HandlerReturnInfo>,
+    /// Handler finally clause infos.
+    finallys: Vec<HandlerFinallyInfo>,
 }
 
 /// Return clause classification result.
@@ -2553,6 +2571,7 @@ fn collect_handler_info(
 ) -> HandlerInfo {
     let mut ops: Vec<HandlerOpInfo> = Vec.new();
     let mut returns: Vec<HandlerReturnInfo> = Vec.new();
+    let mut finallys: Vec<HandlerFinallyInfo> = Vec.new();
 
     for i in 0usize..items.len() {
         let entry = &items[i];
@@ -2618,6 +2637,34 @@ fn collect_handler_info(
                     }
                 }
 
+                // Collect finally clause info
+                let mut finally_field_ty_ids: Vec<u32> = Vec.new();
+                for si in 0usize..handler_def.state.len() {
+                    finally_field_ty_ids.push(handler_def.state[si].ty.index);
+                }
+                match &handler_def.finally_clause {
+                    &Option.Some(ref fin_clause) => {
+                        finallys.push(HandlerFinallyInfo {
+                            handler_name: clone_string(&handler_name),
+                            handler_def_id,
+                            has_body: true,
+                            body_def_id: fin_clause.def_id.index,
+                            state_field_count: state_count,
+                            state_field_ty_ids: finally_field_ty_ids,
+                        });
+                    }
+                    &Option.None => {
+                        finallys.push(HandlerFinallyInfo {
+                            handler_name: clone_string(&handler_name),
+                            handler_def_id,
+                            has_body: false,
+                            body_def_id: 0,
+                            state_field_count: state_count,
+                            state_field_ty_ids: finally_field_ty_ids,
+                        });
+                    }
+                }
+
                 // Collect operation infos
                 for oi in 0usize..handler_def.op_impls.len() {
                     let op_impl = &handler_def.op_impls[oi];
@@ -2668,7 +2715,7 @@ fn collect_handler_info(
         }
     }
 
-    HandlerInfo { ops, returns }
+    HandlerInfo { ops, returns, finallys }
 }
 
 /// Finds the operation index within an effect definition by op DefId.
@@ -2702,7 +2749,7 @@ fn generate_handler_wrappers(
 ) -> String {
     let mut ir = String.new();
 
-    if handler_info.ops.len() == 0 && handler_info.returns.len() == 0 {
+    if handler_info.ops.len() == 0 && handler_info.returns.len() == 0 && handler_info.finallys.len() == 0 {
         return ir;
     }
 
@@ -3087,6 +3134,82 @@ fn generate_handler_wrappers(
 
         ir.push_str("}\n\n");
 
+    }
+
+    // Generate finally clause wrappers
+    // Signature: void (ptr %state)
+    for fi in 0usize..handler_info.finallys.len() {
+        let fin_info = &handler_info.finallys[fi];
+
+        let mut wrapper_name = clone_string(&fin_info.handler_name);
+        wrapper_name.push_str("_finally");
+
+        ir.push_str("define weak_odr void @");
+        ir.push_str(wrapper_name.as_str());
+        ir.push_str("(ptr %state) {\n");
+        ir.push_str("entry:\n");
+
+        if !fin_info.has_body {
+            // No finally clause — just return void
+            ir.push_str("  ret void\n");
+        } else {
+            // Call the compiled finally clause body function.
+            // Body takes state fields by value (same as return clause kind=2).
+            let body_name = ctx.lookup_def_name(fin_info.body_def_id);
+            match &body_name {
+                &Option.Some(ref fn_name) => {
+                    let field_count = fin_info.state_field_ty_ids.len();
+                    let mut offset: u64 = 0;
+                    for fld_i in 0usize..field_count {
+                        let ty_id = type_intern.TyId.new(fin_info.state_field_ty_ids[fld_i]);
+                        let llvm_ty = codegen_size.type_to_llvm_with_ctx_id(ctx, ty_id);
+                        let ty_size = codegen_size.llvm_type_size(llvm_ty.as_str());
+                        if offset == 0 {
+                            ir.push_str("  %fld");
+                            push_usize(&mut ir, fld_i);
+                            ir.push_str(" = load ");
+                            ir.push_str(llvm_ty.as_str());
+                            ir.push_str(", ptr %state\n");
+                        } else {
+                            ir.push_str("  %fld_ptr");
+                            push_usize(&mut ir, fld_i);
+                            ir.push_str(" = getelementptr i8, ptr %state, i64 ");
+                            push_usize(&mut ir, offset as usize);
+                            ir.push_str("\n");
+                            ir.push_str("  %fld");
+                            push_usize(&mut ir, fld_i);
+                            ir.push_str(" = load ");
+                            ir.push_str(llvm_ty.as_str());
+                            ir.push_str(", ptr %fld_ptr");
+                            push_usize(&mut ir, fld_i);
+                            ir.push_str("\n");
+                        }
+                        offset = offset + ((ty_size + 7) / 8) * 8;
+                    }
+                    // Build the call: void @body_fn(field0, field1, ...)
+                    ir.push_str("  call void @");
+                    ir.push_str(fn_name.as_str());
+                    ir.push_str("(");
+                    for ai in 0usize..field_count {
+                        if ai > 0 {
+                            ir.push_str(", ");
+                        }
+                        let ty_id = type_intern.TyId.new(fin_info.state_field_ty_ids[ai]);
+                        let llvm_ty = codegen_size.type_to_llvm_with_ctx_id(ctx, ty_id);
+                        ir.push_str(llvm_ty.as_str());
+                        ir.push_str(" %fld");
+                        push_usize(&mut ir, ai);
+                    }
+                    ir.push_str(")\n");
+                    ir.push_str("  ret void\n");
+                }
+                &Option.None => {
+                    ir.push_str("  ret void\n");
+                }
+            }
+        }
+
+        ir.push_str("}\n\n");
     }
 
     // Generate __blood_register_handlers

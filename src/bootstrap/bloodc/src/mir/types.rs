@@ -287,6 +287,19 @@ pub enum StatementKind {
         destination: Place,
     },
 
+    /// Call a handler's finally clause for cleanup after handler scope exit.
+    ///
+    /// This calls the handler's finally clause function: `{handler_name}_finally(state)`.
+    /// The finally clause runs after the return clause (or body result) on normal exit.
+    CallFinallyClause {
+        /// The handler DefId (used for handler metadata lookup).
+        handler_id: DefId,
+        /// The handler name (used for content-based function naming).
+        handler_name: String,
+        /// The handler state place (pointer to state struct).
+        state_place: Place,
+    },
+
     /// Enter an unchecked block — disables specified runtime checks.
     /// Checks are purely lexical; no propagation across effect boundaries.
     EnterUnchecked(Vec<crate::ast::UncheckedCheck>),

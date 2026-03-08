@@ -96,6 +96,7 @@ pub enum ItemKind {
         state: Vec<HandlerState>,
         operations: Vec<HandlerOp>,
         return_clause: Option<ReturnClause>,
+        finally_clause: Option<FinallyClause>,
     },
     /// An external (FFI) function.
     ExternFn(ExternFnDef),
@@ -444,6 +445,18 @@ pub struct ReturnClause {
     /// The parameter name for the result value.
     pub param: String,
     /// The transformation body.
+    pub body_id: BodyId,
+    /// Source span.
+    pub span: Span,
+}
+
+/// Finally clause for cleanup after handler scope exit.
+///
+/// The finally clause is called after the return clause (or body result)
+/// with access to handler state fields. It returns void.
+#[derive(Debug, Clone)]
+pub struct FinallyClause {
+    /// The cleanup body.
     pub body_id: BodyId,
     /// Source span.
     pub span: Span,

@@ -507,6 +507,7 @@ fn substitute_statement_types_with_ctx(stmt: &mut crate::mir::types::Statement, 
         | StatementKind::PushHandler { .. }
         | StatementKind::PopHandler
         | StatementKind::CallReturnClause { .. }
+        | StatementKind::CallFinallyClause { .. }
         | StatementKind::EnterUnchecked(_)
         | StatementKind::ExitUnchecked(_)
         | StatementKind::Safepoint => {}

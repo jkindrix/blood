@@ -597,7 +597,7 @@ fn hash_item_kind(
                 hash_type(&op.output, items, hasher);
             }
         }
-        hir::ItemKind::Handler { generics, kind, effect, state, operations, return_clause } => {
+        hir::ItemKind::Handler { generics, kind, effect, state, operations, return_clause, finally_clause } => {
             hasher.update_u8(0x0A);
             hash_generics(generics, hasher);
             // Hash handler kind: 0 = Deep, 1 = Shallow
@@ -609,6 +609,7 @@ fn hash_item_kind(
             hasher.update_u32(state.len() as u32);
             hasher.update_u32(operations.len() as u32);
             hasher.update_u8(if return_clause.is_some() { 1 } else { 0 });
+            hasher.update_u8(if finally_clause.is_some() { 1 } else { 0 });
         }
         hir::ItemKind::ExternFn(extern_fn) => {
             hasher.update_u8(0x0B);

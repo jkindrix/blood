@@ -540,6 +540,8 @@ pub struct HandlerDef {
     pub state: Vec<HandlerState>,
     /// Return clause (if present).
     pub return_clause: Option<HandlerReturn>,
+    /// Finally clause (if present).
+    pub finally_clause: Option<HandlerFinally>,
     /// Operation implementations.
     pub op_impls: Vec<OpImpl>,
 }
@@ -552,9 +554,10 @@ impl HandlerDef {
         kind: common.HandlerKind,
         state: Vec<HandlerState>,
         return_clause: Option<HandlerReturn>,
+        finally_clause: Option<HandlerFinally>,
         op_impls: Vec<OpImpl>,
     ) -> HandlerDef {
-        HandlerDef { generics, handled_effect, kind, state, return_clause, op_impls }
+        HandlerDef { generics, handled_effect, kind, state, return_clause, finally_clause, op_impls }
     }
 }
 
@@ -597,6 +600,20 @@ impl HandlerReturn {
     /// Creates a new handler return clause.
     pub fn new(param_name: common.SpannedSymbol, body_id: hir_def.BodyId) -> HandlerReturn {
         HandlerReturn { param_name, body_id }
+    }
+}
+
+/// The finally clause of a handler.
+pub struct HandlerFinally {
+    /// The DefId of the finally clause function.
+    pub def_id: hir_def.DefId,
+    /// The body of the finally clause.
+    pub body_id: hir_def.BodyId,
+}
+
+impl HandlerFinally {
+    pub fn new(def_id: hir_def.DefId, body_id: hir_def.BodyId) -> HandlerFinally {
+        HandlerFinally { def_id, body_id }
     }
 }
 

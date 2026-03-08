@@ -52,6 +52,8 @@ pub struct Handler {
     pub operations: Vec<OperationImpl>,
     /// Return clause (transforms the final result).
     pub return_clause: Option<ReturnClause>,
+    /// Finally clause (cleanup after handler scope exit).
+    pub finally_clause: Option<FinallyClause>,
 }
 
 /// Handler state variable.
@@ -84,6 +86,13 @@ pub struct ReturnClause {
     /// The result parameter name.
     pub param: String,
     /// The transformation body.
+    pub body: Expr,
+}
+
+/// Finally clause for cleanup after handler scope exit.
+#[derive(Debug, Clone)]
+pub struct FinallyClause {
+    /// The cleanup body.
     pub body: Expr,
 }
 
