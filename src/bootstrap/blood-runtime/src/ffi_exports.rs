@@ -11806,3 +11806,150 @@ pub unsafe extern "C" fn blood_thread_join(handle: u64) -> u64 {
         Err(_) => 1,
     }
 }
+
+// ============================================================================
+// Fiber Builtins (INFRA-02 Phase 1)
+//
+// These are the __builtin_fiber_* functions called by stdlib handler bodies.
+// All use u64 for opaque handles (fiber IDs, function pointers). The Blood
+// type system tracks typed wrappers (FiberHandle<T>, FiberId, etc.).
+//
+// Phase 1 uses OS threads as backing (one fiber = one thread). The scheduler
+// infrastructure exists but fiber-to-builtin wiring is deferred to Phase 2.
+// ============================================================================
+
+use std::collections::HashMap as StdHashMap;
+use std::sync::Mutex as StdMutex;
+
+/// Completed fiber results, keyed by fiber ID.
+static FIBER_RESULTS: std::sync::LazyLock<StdMutex<StdHashMap<u64, u64>>> =
+    std::sync::LazyLock::new(|| StdMutex::new(StdHashMap::new()));
+
+/// Thread handles for joinable fibers, keyed by fiber ID.
+static FIBER_THREADS: std::sync::LazyLock<StdMutex<StdHashMap<u64, std::thread::JoinHandle<u64>>>> =
+    std::sync::LazyLock::new(|| StdMutex::new(StdHashMap::new()));
+
+/// Next fiber ID counter.
+static BUILTIN_FIBER_NEXT_ID: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(1);
+
+/// Spawn a new fiber running the given function.
+///
+/// `fn_ptr` is a function pointer cast to u64. The function must be
+/// `extern "C" fn() -> u64` (no arguments, returns opaque result).
+///
+/// Returns the fiber ID (u64), or 0 on failure.
+#[no_mangle]
+pub unsafe extern "C" fn __builtin_fiber_spawn(fn_ptr: u64) -> u64 {
+    let fiber_id = BUILTIN_FIBER_NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let f: extern "C" fn() -> u64 = std::mem::transmute(fn_ptr);
+
+    let handle = std::thread::spawn(move || {
+        let result = f();
+        FIBER_RESULTS.lock().unwrap().insert(fiber_id, result);
+        result
+    });
+
+    FIBER_THREADS.lock().unwrap().insert(fiber_id, handle);
+    fiber_id
+}
+
+/// Spawn a fiber with configuration (config ignored in Phase 1).
+#[no_mangle]
+pub unsafe extern "C" fn __builtin_fiber_spawn_with(config_ptr: u64, fn_ptr: u64) -> u64 {
+    let _ = config_ptr;
+    __builtin_fiber_spawn(fn_ptr)
+}
+
+/// Join a fiber, blocking until it completes.
+///
+/// Returns the fiber's result value, or 0 if not found.
+#[no_mangle]
+pub extern "C" fn __builtin_fiber_join(fiber_id: u64) -> u64 {
+    // Take the thread handle (if it exists) and join it
+    let handle = FIBER_THREADS.lock().unwrap().remove(&fiber_id);
+    if let Some(h) = handle {
+        match h.join() {
+            Ok(result) => result,
+            Err(_) => 0,
+        }
+    } else {
+        // Already joined or never spawned — check results
+        FIBER_RESULTS.lock().unwrap().remove(&fiber_id).unwrap_or(0)
+    }
+}
+
+/// Get the current fiber's ID (0 if not in a fiber).
+#[no_mangle]
+pub extern "C" fn __builtin_fiber_current() -> u64 {
+    0 // Phase 1: no fiber-local context tracking
+}
+
+/// Yield execution to the scheduler.
+#[no_mangle]
+pub extern "C" fn __builtin_fiber_yield() {
+    std::thread::yield_now();
+}
+
+/// Sleep for the given number of nanoseconds.
+#[no_mangle]
+pub extern "C" fn __builtin_fiber_sleep(nanos: u64) {
+    std::thread::sleep(std::time::Duration::from_nanos(nanos));
+}
+
+/// Park the current fiber until unparked.
+#[no_mangle]
+pub extern "C" fn __builtin_fiber_park() {
+    std::thread::park();
+}
+
+/// Unpark a fiber by ID (no-op in Phase 1).
+#[no_mangle]
+pub extern "C" fn __builtin_fiber_unpark(_fiber_id: u64) {
+    // Phase 1: no fiber-to-thread mapping for unpark
+}
+
+/// Check if a fiber has completed.
+#[no_mangle]
+pub extern "C" fn __builtin_fiber_is_finished(fiber_id: u64) -> i64 {
+    if FIBER_RESULTS.lock().unwrap().contains_key(&fiber_id) { 1 } else { 0 }
+}
+
+/// Cancel a fiber (no-op in Phase 1).
+#[no_mangle]
+pub extern "C" fn __builtin_fiber_cancel(_fiber_id: u64) {
+    // Phase 1: cooperative cancellation not yet wired
+}
+
+/// Race multiple fibers — returns the ID of the first to complete.
+#[no_mangle]
+pub unsafe extern "C" fn __builtin_fiber_race(handles_ptr: u64, count: u64) -> u64 {
+    let handles = std::slice::from_raw_parts(handles_ptr as *const u64, count as usize);
+    loop {
+        {
+            let results = FIBER_RESULTS.lock().unwrap();
+            for &id in handles {
+                if results.contains_key(&id) {
+                    return id;
+                }
+            }
+        }
+        std::thread::yield_now();
+    }
+}
+
+/// Initialize the fiber scheduler.
+#[no_mangle]
+pub extern "C" fn __builtin_scheduler_init(_num_workers: u64) {
+    // Phase 1: OS threads, no scheduler init needed
+}
+
+/// Shut down the fiber scheduler.
+#[no_mangle]
+pub extern "C" fn __builtin_scheduler_shutdown() {
+    // Phase 1: join all remaining fiber threads
+    let mut threads = FIBER_THREADS.lock().unwrap();
+    for (_, handle) in threads.drain() {
+        let _ = handle.join();
+    }
+}

@@ -4195,6 +4195,60 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let thread_join_type = i64_type.fn_type(&[i64_type.into()], false);
         self.module.add_function("blood_thread_join", thread_join_type, None);
 
+        // === Fiber/Concurrency Builtins (INFRA-02 Phase 1) ===
+
+        // __builtin_fiber_spawn(fn_ptr: i64) -> i64
+        let fiber_spawn_type = i64_type.fn_type(&[i64_type.into()], false);
+        self.module.add_function("__builtin_fiber_spawn", fiber_spawn_type, None);
+
+        // __builtin_fiber_spawn_with(config_ptr: i64, fn_ptr: i64) -> i64
+        let fiber_spawn_with_type = i64_type.fn_type(&[i64_type.into(), i64_type.into()], false);
+        self.module.add_function("__builtin_fiber_spawn_with", fiber_spawn_with_type, None);
+
+        // __builtin_fiber_join(fiber_id: i64) -> i64
+        let fiber_join_type = i64_type.fn_type(&[i64_type.into()], false);
+        self.module.add_function("__builtin_fiber_join", fiber_join_type, None);
+
+        // __builtin_fiber_current() -> i64
+        let fiber_current_type = i64_type.fn_type(&[], false);
+        self.module.add_function("__builtin_fiber_current", fiber_current_type, None);
+
+        // __builtin_fiber_yield() -> void
+        let fiber_yield_type = void_type.fn_type(&[], false);
+        self.module.add_function("__builtin_fiber_yield", fiber_yield_type, None);
+
+        // __builtin_fiber_sleep(nanos: i64) -> void
+        let fiber_sleep_type = void_type.fn_type(&[i64_type.into()], false);
+        self.module.add_function("__builtin_fiber_sleep", fiber_sleep_type, None);
+
+        // __builtin_fiber_park() -> void
+        let fiber_park_type = void_type.fn_type(&[], false);
+        self.module.add_function("__builtin_fiber_park", fiber_park_type, None);
+
+        // __builtin_fiber_unpark(fiber_id: i64) -> void
+        let fiber_unpark_type = void_type.fn_type(&[i64_type.into()], false);
+        self.module.add_function("__builtin_fiber_unpark", fiber_unpark_type, None);
+
+        // __builtin_fiber_is_finished(fiber_id: i64) -> i1
+        let fiber_is_finished_type = bool_type.fn_type(&[i64_type.into()], false);
+        self.module.add_function("__builtin_fiber_is_finished", fiber_is_finished_type, None);
+
+        // __builtin_fiber_cancel(fiber_id: i64) -> void
+        let fiber_cancel_type = void_type.fn_type(&[i64_type.into()], false);
+        self.module.add_function("__builtin_fiber_cancel", fiber_cancel_type, None);
+
+        // __builtin_fiber_race(handles_ptr: i64, count: i64) -> i64
+        let fiber_race_type = i64_type.fn_type(&[i64_type.into(), i64_type.into()], false);
+        self.module.add_function("__builtin_fiber_race", fiber_race_type, None);
+
+        // __builtin_scheduler_init(num_workers: i64) -> void
+        let scheduler_init_builtin_type = void_type.fn_type(&[i64_type.into()], false);
+        self.module.add_function("__builtin_scheduler_init", scheduler_init_builtin_type, None);
+
+        // __builtin_scheduler_shutdown() -> void
+        let scheduler_shutdown_builtin_type = void_type.fn_type(&[], false);
+        self.module.add_function("__builtin_scheduler_shutdown", scheduler_shutdown_builtin_type, None);
+
         // === Runtime Lifecycle ===
 
         // blood_runtime_init() -> i32

@@ -504,6 +504,49 @@ impl<'a> TypeContext<'a> {
             vec![u64_ty.clone()], u64_ty.clone(),
         );
 
+        // === Fiber/Concurrency Builtins (INFRA-02 Phase 1) ===
+        // All fiber builtins use u64 for opaque handles (fiber IDs, function pointers).
+        // The stdlib wraps/unwraps typed values (FiberHandle<T>, FiberId, etc.).
+
+        // __builtin_fiber_spawn(fn_ptr: u64) -> u64 - spawn fiber, returns fiber_id
+        self.register_builtin_fn("__builtin_fiber_spawn", vec![u64_ty.clone()], u64_ty.clone());
+
+        // __builtin_fiber_spawn_with(config_ptr: u64, fn_ptr: u64) -> u64 - spawn with config
+        self.register_builtin_fn("__builtin_fiber_spawn_with", vec![u64_ty.clone(), u64_ty.clone()], u64_ty.clone());
+
+        // __builtin_fiber_join(fiber_id: u64) -> u64 - join fiber, returns result value
+        self.register_builtin_fn("__builtin_fiber_join", vec![u64_ty.clone()], u64_ty.clone());
+
+        // __builtin_fiber_current() -> u64 - get current fiber's ID
+        self.register_builtin_fn("__builtin_fiber_current", vec![], u64_ty.clone());
+
+        // __builtin_fiber_yield() -> () - yield to scheduler
+        self.register_builtin_fn("__builtin_fiber_yield", vec![], unit_ty.clone());
+
+        // __builtin_fiber_sleep(nanos: u64) -> () - sleep for nanoseconds
+        self.register_builtin_fn("__builtin_fiber_sleep", vec![u64_ty.clone()], unit_ty.clone());
+
+        // __builtin_fiber_park() -> () - park current fiber
+        self.register_builtin_fn("__builtin_fiber_park", vec![], unit_ty.clone());
+
+        // __builtin_fiber_unpark(fiber_id: u64) -> () - unpark a fiber
+        self.register_builtin_fn("__builtin_fiber_unpark", vec![u64_ty.clone()], unit_ty.clone());
+
+        // __builtin_fiber_is_finished(fiber_id: u64) -> bool - check if fiber completed
+        self.register_builtin_fn("__builtin_fiber_is_finished", vec![u64_ty.clone()], bool_ty.clone());
+
+        // __builtin_fiber_cancel(fiber_id: u64) -> () - cancel a fiber
+        self.register_builtin_fn("__builtin_fiber_cancel", vec![u64_ty.clone()], unit_ty.clone());
+
+        // __builtin_fiber_race(handles_ptr: u64, count: u64) -> u64 - race multiple fibers
+        self.register_builtin_fn("__builtin_fiber_race", vec![u64_ty.clone(), u64_ty.clone()], u64_ty.clone());
+
+        // __builtin_scheduler_init(num_workers: u64) -> () - initialize scheduler
+        self.register_builtin_fn("__builtin_scheduler_init", vec![u64_ty.clone()], unit_ty.clone());
+
+        // __builtin_scheduler_shutdown() -> () - shut down scheduler
+        self.register_builtin_fn("__builtin_scheduler_shutdown", vec![], unit_ty.clone());
+
         // === Memory Tier Promotion ===
 
         // persist<T>(value: T) -> T - promote value to persistent (Tier 3) allocation

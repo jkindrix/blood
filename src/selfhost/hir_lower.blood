@@ -886,6 +886,21 @@ fn register_builtin_functions(ctx: &mut hir_lower_ctx.LoweringCtx) {
     register_builtin_fn(ctx, &mut items, "thread_spawn", bi_params_2(bi_u64(), bi_u64()), bi_u64());
     register_builtin_fn(ctx, &mut items, "thread_join", bi_params_1(bi_u64()), bi_u64());
 
+    // === Fiber/Concurrency Builtins (INFRA-02 Phase 1) ===
+    register_builtin_fn(ctx, &mut items, "__builtin_fiber_spawn", bi_params_1(bi_u64()), bi_u64());
+    register_builtin_fn(ctx, &mut items, "__builtin_fiber_spawn_with", bi_params_2(bi_u64(), bi_u64()), bi_u64());
+    register_builtin_fn(ctx, &mut items, "__builtin_fiber_join", bi_params_1(bi_u64()), bi_u64());
+    register_builtin_fn(ctx, &mut items, "__builtin_fiber_current", bi_params_0(), bi_u64());
+    register_builtin_fn(ctx, &mut items, "__builtin_fiber_yield", bi_params_0(), type_intern.CommonTypes.unit());
+    register_builtin_fn(ctx, &mut items, "__builtin_fiber_sleep", bi_params_1(bi_u64()), type_intern.CommonTypes.unit());
+    register_builtin_fn(ctx, &mut items, "__builtin_fiber_park", bi_params_0(), type_intern.CommonTypes.unit());
+    register_builtin_fn(ctx, &mut items, "__builtin_fiber_unpark", bi_params_1(bi_u64()), type_intern.CommonTypes.unit());
+    register_builtin_fn(ctx, &mut items, "__builtin_fiber_is_finished", bi_params_1(bi_u64()), type_intern.CommonTypes.bool_ty());
+    register_builtin_fn(ctx, &mut items, "__builtin_fiber_cancel", bi_params_1(bi_u64()), type_intern.CommonTypes.unit());
+    register_builtin_fn(ctx, &mut items, "__builtin_fiber_race", bi_params_2(bi_u64(), bi_u64()), bi_u64());
+    register_builtin_fn(ctx, &mut items, "__builtin_scheduler_init", bi_params_1(bi_u64()), type_intern.CommonTypes.unit());
+    register_builtin_fn(ctx, &mut items, "__builtin_scheduler_shutdown", bi_params_0(), type_intern.CommonTypes.unit());
+
     // Wrap all builtins in a single ForeignDef item for the type checker.
     // The typeck_driver's collect_item_signatures will process this via
     // the Foreign pipeline, registering FnSig for each ForeignFn.
