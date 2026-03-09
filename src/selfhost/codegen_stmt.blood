@@ -997,8 +997,23 @@ fn rebuild_struct_from_info(
         }
         let field_ty = match &fields[fi].hir_type {
             &Option.Some(ty_id) => {
-                let field_hir_ty = type_intern.ty_id_to_type(ty_id);
-                substitute_param_type(ctx, &field_hir_ty, args, &mut param_idx)
+                let kind = type_intern.type_interner().get(ty_id);
+                let var_idx = match kind {
+                    &type_intern.InternedTypeKind.Param(var_id) => var_id.index,
+                    &type_intern.InternedTypeKind.Infer(var_id) => var_id.index,
+                    _ => 4294967295,
+                };
+                if var_idx != 4294967295 {
+                    let arg_idx = find_param_arg_index_stmt(fields, fi, var_idx, &mut param_idx);
+                    if arg_idx < args.len() {
+                        type_to_llvm_with_ctx(ctx, &args[arg_idx])
+                    } else {
+                        common.make_string("ptr")
+                    }
+                } else {
+                    let field_hir_ty = type_intern.ty_id_to_type(ty_id);
+                    type_to_llvm_with_ctx(ctx, &field_hir_ty)
+                }
             }
             &Option.None => {
                 clone_string(&fields[fi].llvm_type)
@@ -1008,6 +1023,59 @@ fn rebuild_struct_from_info(
     }
     result.push_str(" }");
     result
+}
+
+/// Finds the arg index for a param field by checking if the same TyVarId
+/// appeared in a previous field. If so, returns that field's arg index.
+/// Otherwise, assigns the next value from param_idx and increments it.
+fn find_param_arg_index_stmt(
+    fields: &Vec<FieldBuildInfo>,
+    field_idx: usize,
+    var_index: u32,
+    param_idx: &mut usize,
+) -> usize {
+    let mut unique_count: usize = 0;
+    for prev in 0usize..field_idx {
+        let prev_var = match &fields[prev].hir_type {
+            &Option.Some(prev_id) => {
+                let pk = type_intern.type_interner().get(prev_id);
+                match pk {
+                    &type_intern.InternedTypeKind.Param(v) => v.index,
+                    &type_intern.InternedTypeKind.Infer(v) => v.index,
+                    _ => 4294967295,
+                }
+            }
+            &Option.None => 4294967295,
+        };
+        if prev_var == var_index {
+            return unique_count;
+        }
+        if prev_var != 4294967295 {
+            let mut is_dup = false;
+            for pp in 0usize..prev {
+                let pp_var = match &fields[pp].hir_type {
+                    &Option.Some(pp_id) => {
+                        let ppk = type_intern.type_interner().get(pp_id);
+                        match ppk {
+                            &type_intern.InternedTypeKind.Param(v) => v.index,
+                            &type_intern.InternedTypeKind.Infer(v) => v.index,
+                            _ => 4294967295,
+                        }
+                    }
+                    &Option.None => 4294967295,
+                };
+                if pp_var == prev_var {
+                    is_dup = true;
+                }
+            }
+            if !is_dup {
+                unique_count += 1;
+            }
+        }
+    }
+    let idx = *param_idx;
+    *param_idx = idx + 1;
+    idx
 }
 
 /// Substitutes Param/Infer types with concrete args, tracking the param index.

@@ -501,23 +501,57 @@ fn substitute_struct_field_param(
     let interner = type_intern.type_interner();
     let args_len = interner.ty_list_len(adt_args);
     if args_len == 0 { return Option.None; }
-    let mut param_idx: usize = 0;
-    for fi in 0usize..layout.fields.len() {
-        let is_param = match &layout.fields[fi].hir_type {
-            &Option.Some(ht_id) => type_intern.is_param_or_infer_id(ht_id),
-            &Option.None => false,
-        };
-        if fi == field_idx {
-            if is_param && param_idx < args_len {
-                return Option.Some(interner.get_ty_list_element(adt_args, param_idx));
+    // Compute the arg index for the target field using dedup
+    let target_is_param = match &layout.fields[field_idx].hir_type {
+        &Option.Some(ht_id) => type_intern.is_param_or_infer_id(ht_id),
+        &Option.None => false,
+    };
+    if !target_is_param {
+        return Option.None;
+    }
+    let target_var = get_field_var_index_layout(layout, field_idx);
+    let mut unique_count: usize = 0;
+    for fi in 0usize..field_idx {
+        let fi_var = get_field_var_index_layout(layout, fi);
+        if fi_var == target_var {
+            // Same var appeared before — use its arg position
+            if unique_count < args_len {
+                return Option.Some(interner.get_ty_list_element(adt_args, unique_count));
             }
             return Option.None;
         }
-        if is_param {
-            param_idx += 1;
+        if fi_var != 4294967295 {
+            let mut is_dup = false;
+            for pp in 0usize..fi {
+                if get_field_var_index_layout(layout, pp) == fi_var {
+                    is_dup = true;
+                }
+            }
+            if !is_dup {
+                unique_count += 1;
+            }
         }
     }
+    // First occurrence of this var
+    if unique_count < args_len {
+        return Option.Some(interner.get_ty_list_element(adt_args, unique_count));
+    }
     Option.None
+}
+
+/// Gets the TyVarId.index for a struct layout field if it's Param or Infer.
+fn get_field_var_index_layout(layout: &codegen_ctx.StructLayout, idx: usize) -> u32 {
+    match &layout.fields[idx].hir_type {
+        &Option.Some(ty_id) => {
+            let kind = type_intern.type_interner().get(ty_id);
+            match kind {
+                &type_intern.InternedTypeKind.Param(var_id) => var_id.index,
+                &type_intern.InternedTypeKind.Infer(var_id) => var_id.index,
+                _ => 4294967295,
+            }
+        }
+        &Option.None => 4294967295,
+    }
 }
 
 /// Resolves a generic enum variant field type from the ADT's type args.
@@ -1373,25 +1407,41 @@ fn resolve_generic_field_type(
     if args_len == 0 {
         return Option.None;
     }
-    // Count which param index this field corresponds to
-    let mut param_idx: usize = 0;
-    for fi in 0usize..layout.fields.len() {
-        let is_param = match &layout.fields[fi].hir_type {
-            &Option.Some(ht_id) => {
-                type_intern.is_param_or_infer_id(ht_id)
-            }
-            &Option.None => false,
-        };
-        if fi == field_idx {
-            if is_param && param_idx < args_len {
-                let arg_id = interner.get_ty_list_element(adt_args, param_idx);
+    // Compute the arg index for the target field using dedup
+    let target_is_param = match &layout.fields[field_idx].hir_type {
+        &Option.Some(ht_id) => type_intern.is_param_or_infer_id(ht_id),
+        &Option.None => false,
+    };
+    if !target_is_param {
+        return Option.None;
+    }
+    let target_var = get_field_var_index_layout(layout, field_idx);
+    let mut unique_count: usize = 0;
+    for fi in 0usize..field_idx {
+        let fi_var = get_field_var_index_layout(layout, fi);
+        if fi_var == target_var {
+            if unique_count < args_len {
+                let arg_id = interner.get_ty_list_element(adt_args, unique_count);
                 return Option.Some(codegen_size.type_to_llvm_with_ctx_id(ctx, arg_id));
             }
             return Option.None;
         }
-        if is_param {
-            param_idx += 1;
+        if fi_var != 4294967295 {
+            let mut is_dup = false;
+            for pp in 0usize..fi {
+                if get_field_var_index_layout(layout, pp) == fi_var {
+                    is_dup = true;
+                }
+            }
+            if !is_dup {
+                unique_count += 1;
+            }
         }
+    }
+    // First occurrence of this var
+    if unique_count < args_len {
+        let arg_id = interner.get_ty_list_element(adt_args, unique_count);
+        return Option.Some(codegen_size.type_to_llvm_with_ctx_id(ctx, arg_id));
     }
     Option.None
 }
@@ -3017,6 +3067,11 @@ fn emit_aggregate_adt(
             // If the struct has param/infer fields and concrete type args are available,
             // compute concrete field types by substituting type args for param fields.
             if has_params && type_args.len() > 0 {
+                // Collect field hir_type TyIds for dedup scanning
+                let mut field_hir_tys: Vec<Option<type_intern.TyId>> = Vec.new();
+                for fj in 0usize..layout.fields.len() {
+                    field_hir_tys.push(layout.fields[fj].hir_type);
+                }
                 let mut param_idx: usize = 0;
                 for fj in 0usize..layout.fields.len() {
                     let is_param = match &layout.fields[fj].hir_type {
@@ -3025,9 +3080,21 @@ fn emit_aggregate_adt(
                         }
                         &Option.None => false,
                     };
-                    if is_param && param_idx < type_args.len() {
-                        field_types[fj] = codegen_types.type_to_llvm(&type_args[param_idx]);
-                        param_idx += 1;
+                    if is_param {
+                        // Check if a previous field has the same TyVarId
+                        let cur_var = get_field_var_index(&field_hir_tys, fj);
+                        let prev_pos = find_previous_param_pos(&field_hir_tys, fj, cur_var);
+                        let arg_idx = match &prev_pos {
+                            &Option.Some(pos) => pos,
+                            &Option.None => {
+                                let idx = param_idx;
+                                param_idx += 1;
+                                idx
+                            }
+                        };
+                        if arg_idx < type_args.len() {
+                            field_types[fj] = codegen_types.type_to_llvm(&type_args[arg_idx]);
+                        }
                     }
                 }
             }
@@ -3261,6 +3328,60 @@ fn layout_has_param_fields(layout: &codegen_ctx.StructLayout) -> bool {
         }
     }
     false
+}
+
+/// Gets the TyVarId.index for a field's HIR type if it's Param or Infer.
+/// Returns u32::MAX for non-param types.
+fn get_field_var_index(
+    field_hir_tys: &Vec<Option<type_intern.TyId>>,
+    idx: usize,
+) -> u32 {
+    match &field_hir_tys[idx] {
+        &Option.Some(ty_id) => {
+            let kind = type_intern.type_interner().get(ty_id);
+            match kind {
+                &type_intern.InternedTypeKind.Param(var_id) => var_id.index,
+                &type_intern.InternedTypeKind.Infer(var_id) => var_id.index,
+                _ => 4294967295,
+            }
+        }
+        &Option.None => 4294967295,
+    }
+}
+
+/// Finds the arg index of a previous field with the same TyVarId.
+/// Scans fields [0..field_idx) and counts unique param vars to determine
+/// what arg position the first occurrence of var_index was assigned.
+fn find_previous_param_pos(
+    field_hir_tys: &Vec<Option<type_intern.TyId>>,
+    field_idx: usize,
+    var_index: u32,
+) -> Option<usize> {
+    if var_index == 4294967295 {
+        return Option.None;
+    }
+    let mut unique_count: usize = 0;
+    for prev in 0usize..field_idx {
+        let prev_var = get_field_var_index(field_hir_tys, prev);
+        if prev_var == var_index {
+            // Found a previous field with the same var — return its position
+            return Option.Some(unique_count);
+        }
+        if prev_var != 4294967295 {
+            // Different param var — check if it's a first occurrence
+            let mut is_dup = false;
+            for pp in 0usize..prev {
+                if get_field_var_index(field_hir_tys, pp) == prev_var {
+                    is_dup = true;
+                }
+            }
+            if !is_dup {
+                unique_count += 1;
+            }
+        }
+    }
+    // No previous field with same var
+    Option.None
 }
 
 /// Emits an aggregate construction.

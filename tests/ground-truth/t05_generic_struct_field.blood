@@ -1,0 +1,37 @@
+// Test: Multi-field generic struct field access
+// Verifies: GEP layout uses substituted concrete types, not erased { i64 }
+// EXPECT: 42
+// EXPECT: 100
+// EXPECT: 7
+// EXPECT: 200
+
+struct Pair<T> {
+    first: T,
+    second: i32,
+}
+
+struct Triple<A, B> {
+    a: A,
+    b: B,
+    c: i32,
+}
+
+fn make_pair(x: i32, y: i32) -> Pair<i32> {
+    Pair { first: x, second: y }
+}
+
+fn make_triple(a: i32, b: i32, c: i32) -> Triple<i32, i32> {
+    Triple { a: a, b: b, c: c }
+}
+
+fn main() -> i32 {
+    let p: Pair<i32> = make_pair(42, 100);
+    println_int(p.first);
+    println_int(p.second);
+
+    let t: Triple<i32, i32> = make_triple(7, 200, 999);
+    println_int(t.a);
+    println_int(t.b);
+
+    0
+}

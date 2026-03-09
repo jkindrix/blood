@@ -498,7 +498,30 @@ fn rebuild_struct_with_args_id(
         }
         let field_ty = match &field_hir_types[fi] {
             &Option.Some(ty_id) => {
-                substitute_param_type_id(ctx, ty_id, args, arg_len, &mut param_idx)
+                let kind = type_intern.type_interner().get(ty_id);
+                let var_idx = match kind {
+                    &type_intern.InternedTypeKind.Param(var_id) => var_id.index,
+                    &type_intern.InternedTypeKind.Infer(var_id) => var_id.index,
+                    _ => 4294967295,
+                };
+                if var_idx != 4294967295 {
+                    // Check if this var appeared in a previous field
+                    let arg_idx = find_param_arg_index(&field_hir_types, fi, var_idx, &mut param_idx);
+                    if arg_idx < arg_len {
+                        let arg_id = type_intern.type_interner().get_ty_list_element(args, arg_idx);
+                        type_to_llvm_with_ctx_id(ctx, arg_id)
+                    } else {
+                        let mut err_msg = common.make_string("Param type index ");
+                        err_msg.push_str(codegen_types.format_u64(arg_idx as u64).as_str());
+                        err_msg.push_str(" exceeds available type args (");
+                        err_msg.push_str(codegen_types.format_u64(arg_len as u64).as_str());
+                        err_msg.push(')');
+                        ctx.codegen_error(codegen_ctx.CodegenErrorKind.TypeSubstitutionFailed, err_msg);
+                        common.make_string("ptr")
+                    }
+                } else {
+                    type_to_llvm_with_ctx_id(ctx, ty_id)
+                }
             }
             &Option.None => {
                 common.make_string(field_llvm_types[fi].as_str())
@@ -508,6 +531,63 @@ fn rebuild_struct_with_args_id(
     }
     result.push_str(" }");
     result
+}
+
+/// Finds the arg index for a param field by checking if the same TyVarId
+/// appeared in a previous field. If so, returns that field's arg index.
+/// Otherwise, assigns the next value from param_idx and increments it.
+fn find_param_arg_index(
+    field_hir_types: &Vec<Option<type_intern.TyId>>,
+    field_idx: usize,
+    var_index: u32,
+    param_idx: &mut usize,
+) -> usize {
+    // Scan previous fields for the same var_index
+    let mut unique_count: usize = 0;
+    for prev in 0usize..field_idx {
+        let prev_var = match &field_hir_types[prev] {
+            &Option.Some(prev_id) => {
+                let pk = type_intern.type_interner().get(prev_id);
+                match pk {
+                    &type_intern.InternedTypeKind.Param(v) => v.index,
+                    &type_intern.InternedTypeKind.Infer(v) => v.index,
+                    _ => 4294967295,
+                }
+            }
+            &Option.None => 4294967295,
+        };
+        if prev_var == var_index {
+            // Same var appeared before — return its arg position
+            return unique_count;
+        }
+        if prev_var != 4294967295 {
+            // Different param var — check if it's a first occurrence
+            let mut is_dup = false;
+            for pp in 0usize..prev {
+                let pp_var = match &field_hir_types[pp] {
+                    &Option.Some(pp_id) => {
+                        let ppk = type_intern.type_interner().get(pp_id);
+                        match ppk {
+                            &type_intern.InternedTypeKind.Param(v) => v.index,
+                            &type_intern.InternedTypeKind.Infer(v) => v.index,
+                            _ => 4294967295,
+                        }
+                    }
+                    &Option.None => 4294967295,
+                };
+                if pp_var == prev_var {
+                    is_dup = true;
+                }
+            }
+            if !is_dup {
+                unique_count += 1;
+            }
+        }
+    }
+    // First occurrence of this var — assign next param_idx
+    let idx = *param_idx;
+    *param_idx = idx + 1;
+    idx
 }
 
 /// Substitutes Param/Infer types with concrete args from a TyListId.
