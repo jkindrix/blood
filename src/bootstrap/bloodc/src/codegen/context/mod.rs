@@ -1171,6 +1171,14 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 match self.effect_lowering.lower_handler_decl(item, Some(&hir_crate.bodies)) {
                     Ok(handler_info) => {
                         self.handler_defs.insert(*def_id, handler_info);
+                        // Pre-create registry index global for PushHandler to reference
+                        let global_name = format!("__handler_registry_idx_{}", def_id.index);
+                        if self.module.get_global(&global_name).is_none() {
+                            let i64_type = self.context.i64_type();
+                            let global = self.module.add_global(i64_type, None, &global_name);
+                            global.set_initializer(&i64_type.const_int(0, false));
+                            global.set_linkage(inkwell::module::Linkage::Common);
+                        }
                     }
                     Err(err) => {
                         return Err(vec![Diagnostic::error(
@@ -2410,6 +2418,14 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 match self.effect_lowering.lower_handler_decl(item, Some(&hir_crate.bodies)) {
                     Ok(handler_info) => {
                         self.handler_defs.insert(*def_id, handler_info);
+                        // Pre-create registry index global for PushHandler to reference
+                        let global_name = format!("__handler_registry_idx_{}", def_id.index);
+                        if self.module.get_global(&global_name).is_none() {
+                            let i64_type = self.context.i64_type();
+                            let global = self.module.add_global(i64_type, None, &global_name);
+                            global.set_initializer(&i64_type.const_int(0, false));
+                            global.set_linkage(inkwell::module::Linkage::Common);
+                        }
                     }
                     Err(err) => {
                         return Err(vec![Diagnostic::error(
@@ -3934,15 +3950,23 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let ev_get_type = i64_type.fn_type(&[void_ptr_type.into(), i64_type.into()], false);
         self.module.add_function("blood_evidence_get", ev_get_type, None);
 
-        // blood_evidence_register(ev: *void, effect_id: i64, ops: **void, op_count: i64) -> void
+        // blood_evidence_register(ev: *void, effect_id: i64, ops: **void, op_count: i64) -> i64
         let void_ptr_ptr_type = self.context.ptr_type(AddressSpace::default());
-        let ev_register_type = void_type.fn_type(&[
+        let ev_register_type = i64_type.fn_type(&[
             void_ptr_type.into(),
             i64_type.into(),
             void_ptr_ptr_type.into(),  // ops is **void (pointer to array of function pointers)
             i64_type.into(),
         ], false);
         self.module.add_function("blood_evidence_register", ev_register_type, None);
+
+        // blood_evidence_push_by_index(ev: *void, registry_index: i64, state: *void) -> void
+        let ev_push_by_index_type = void_type.fn_type(&[
+            void_ptr_type.into(),
+            i64_type.into(),
+            void_ptr_type.into(),
+        ], false);
+        self.module.add_function("blood_evidence_push_by_index", ev_push_by_index_type, None);
 
         // blood_evidence_set_state(ev: *void, state: *void) -> void
         let ev_set_state_type = void_type.fn_type(&[void_ptr_type.into(), void_ptr_type.into()], false);

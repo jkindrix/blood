@@ -949,10 +949,10 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let ptr_type = self.context.ptr_type(AddressSpace::default());
         let void_type = self.context.void_type();
 
-        // Get or declare the registration function
+        // Get or declare the registration function (returns registry index)
         let register_fn = self.module.get_function("blood_evidence_register")
             .unwrap_or_else(|| {
-                let fn_type = void_type.fn_type(
+                let fn_type = i64_type.fn_type(
                     &[
                         ptr_type.into(), // evidence handle
                         i64_type.into(), // effect_id
@@ -1012,16 +1012,32 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             }.map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
 
             // Call blood_evidence_register(null, effect_id, ops, op_count)
-            // Note: We pass null for evidence handle - registration is global
+            // Returns the registry index for this handler
             let effect_id_val = i64_type.const_int(handler_info.effect_id.index as u64, false);
             let op_count_val = i64_type.const_int(op_count as u64, false);
             let null_ev = ptr_type.const_null();
 
-            self.builder.build_call(
+            let reg_result = self.builder.build_call(
                 register_fn,
                 &[null_ev.into(), effect_id_val.into(), ops_ptr.into(), op_count_val.into()],
-                "",
+                "reg_idx",
             ).map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
+
+            // Store the registry index in the pre-created global variable
+            let global_name = format!("__handler_registry_idx_{}", handler_id.index);
+            let global = self.module.get_global(&global_name)
+                .ok_or_else(|| vec![Diagnostic::error(
+                    format!("Handler registry global '{}' not found", global_name),
+                    self.current_span(),
+                )])?;
+
+            let reg_idx_val = reg_result.try_as_basic_value()
+                .basic()
+                .ok_or_else(|| vec![Diagnostic::error(
+                    "blood_evidence_register returned void", self.current_span()
+                )])?;
+            self.builder.build_store(global.as_pointer_value(), reg_idx_val)
+                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
         }
 
         self.builder.build_return(None)

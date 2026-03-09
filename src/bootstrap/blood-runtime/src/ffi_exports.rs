@@ -3263,6 +3263,32 @@ pub unsafe extern "C" fn blood_evidence_push_with_state(
     );
 }
 
+/// Push a handler onto the evidence vector using its registry index directly.
+///
+/// Unlike `blood_evidence_push_with_state` which searches by effect_id (and
+/// always finds the first registered handler), this function uses the exact
+/// registry index returned by `blood_evidence_register`. This is essential
+/// when multiple handlers are registered for the same effect type.
+///
+/// # Safety
+/// The handle must be valid and registry_index must be a valid index.
+#[no_mangle]
+pub unsafe extern "C" fn blood_evidence_push_by_index(
+    ev: EvidenceHandle,
+    registry_index: i64,
+    state: *mut c_void,
+) {
+    if ev.is_null() || registry_index < 0 {
+        return;
+    }
+
+    let vec = &mut *(ev as *mut Vec<EvidenceEntry>);
+    vec.push(EvidenceEntry {
+        registry_index: registry_index as u64,
+        state,
+    });
+}
+
 /// Pop a handler from the evidence vector.
 ///
 /// # Safety
@@ -3354,10 +3380,10 @@ pub unsafe extern "C" fn blood_evidence_register(
     effect_id: i64,
     ops: *const *const c_void,
     op_count: i64,
-) {
+) -> i64 {
     // ops must be valid
     if ops.is_null() {
-        return;
+        return -1;
     }
 
     // Collect operation function pointers
@@ -3378,13 +3404,15 @@ pub unsafe extern "C" fn blood_evidence_register(
     let registry = get_effect_registry();
     let mut reg = registry.lock();
     reg.push(entry);
+    let handler_index = (reg.len() - 1) as i64;
 
     // Push handler index onto evidence vector (if evidence is provided)
     // If ev is null, this is a global registration at program startup
     if !ev.is_null() {
-        let handler_index = (reg.len() - 1) as u64;
-        blood_evidence_push(ev, handler_index);
+        blood_evidence_push(ev, handler_index as u64);
     }
+
+    handler_index
 }
 
 /// Set state for the topmost handler in the evidence vector.

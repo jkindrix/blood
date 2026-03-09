@@ -1,0 +1,30 @@
+// RUN: blood run %s
+// CHECK: LOUD
+// CHECK: 42
+// CHECK: silent
+// CHECK: 42
+
+effect Foo { op bar() -> (); }
+
+deep handler Loud for Foo {
+    return(x) { x }
+    op bar() { println_str("LOUD"); resume(()) }
+}
+
+deep handler Silent for Foo {
+    return(x) { x }
+    op bar() { println_str("silent"); resume(()) }
+}
+
+fn body() -> i32 / {Foo} {
+    perform Foo.bar();
+    42
+}
+
+fn main() -> i32 {
+    let r1: i32 = with Loud {} handle { body() };
+    println_int(r1);
+    let r2: i32 = with Silent {} handle { body() };
+    println_int(r2);
+    0
+}

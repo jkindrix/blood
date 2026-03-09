@@ -25,7 +25,7 @@
 | Date | Category | Symptom | Root Cause | Status |
 |------|----------|---------|------------|--------|
 | 2026-03-09 | codegen | LLVM verification "Instruction does not dominate all uses" when user-defined effect named `StaleReference` is nested with other handlers | `StaleReference` is a built-in effect (ID 0x1004) with special runtime codegen; user-defined effect with same name collides with built-in handler registration | Workaround: use different effect name (e.g., `StaleAccess`) |
-| 2026-03-09 | codegen | Two named handlers for same effect type both execute first handler's op code | Handler op dispatch resolved by effect DefId + op index, not handler DefId; second handler's op implementations are ignored | Open: handler resolution needs per-handler op dispatch |
+| 2026-03-09 | codegen | Two named handlers for same effect type both execute first handler's op code | `blood_evidence_push_with_state` searched registry by effect_id, always found first match; also registry index globals used Internal linkage, invisible across incremental compilation object files | Resolved: see below |
 | 2026-03-09 | typeck | Functions with effectful code inside `with...handle` blocks still inferred as performing those effects | Effect inference scans function body without subtracting effects handled by in-scope handlers | Workaround: extract body into separate function with explicit `/ {Effect}` annotation |
 | 2026-02-20 | runtime | Effect handler tests (26) crash with exit code 1 | `blood_push_handler`/`blood_pop_handler`/`blood_resume` not in static lib — blood-rust generates inline via LLVM | Blocked: needs runtime library changes |
 | 2026-02-20 | parser | 3 closure tests fail (COMPILE_FAIL) | Closure syntax not implemented in self-hosted parser | Feature gap |
@@ -37,6 +37,7 @@
 
 | Date | Category | Symptom | Root Cause | Resolution | Files |
 |------|----------|---------|------------|------------|-------|
+| 2026-03-09 | codegen/runtime | Two named handlers for same effect type both execute first handler's ops | Two causes: (1) `blood_evidence_push_with_state` searched registry by effect_id, always returning first match; (2) per-handler registry index globals used Internal linkage, invisible across incremental compilation object files | Added `blood_evidence_push_by_index(ev, registry_index, state)` runtime function; `blood_evidence_register` now returns i64 registry index; codegen stores index in per-handler Common-linkage globals; PushHandler uses `push_by_index` with loaded index | `ffi_exports.rs`, `handlers.rs`, `mod.rs`, `statement.rs` |
 | 2026-02-15 | codegen | Trait default method calls dispatch to void stub | DefId resolves to trait abstract method, not concrete impl | Call remapping table: `inject_default_methods` builds `CallRemapEntry`, applied in `extract_direct_fn_name` via `ctx.remap_def_id()` | `typeck_driver.blood`, `codegen_term.blood`, `main.blood` |
 | 2026-02-15 | codegen | Stateless effect handlers crash on null state pointer | Codegen accessed handler state for stateless handlers | Added null state pointer guard in codegen | `codegen.blood` |
 | 2026-02-14 | typeck | Resume type mismatch not caught | Missing resume validation in shallow handlers | Added `resume_ty`, `in_shallow_handler`, `resume_count` fields on TypeChecker; `setup_handler_op_context()` sets context | `typeck_driver.blood` |

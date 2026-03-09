@@ -411,13 +411,13 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                         let fn_type = i8_ptr_ty.fn_type(&[], false);
                         self.module.add_function("blood_evidence_create", fn_type, None)
                     });
-                let ev_push_with_state = self.module.get_function("blood_evidence_push_with_state")
+                let ev_push_by_index = self.module.get_function("blood_evidence_push_by_index")
                     .unwrap_or_else(|| {
                         let fn_type = self.context.void_type().fn_type(
                             &[i8_ptr_ty.into(), i64_ty.into(), i8_ptr_ty.into()],
                             false
                         );
-                        self.module.add_function("blood_evidence_push_with_state", fn_type, None)
+                        self.module.add_function("blood_evidence_push_by_index", fn_type, None)
                     });
                 let ev_set_current = self.module.get_function("blood_evidence_set_current")
                     .unwrap_or_else(|| {
@@ -592,7 +592,20 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                     ev
                 };
 
-                // Push handler with effect_id and state pointer
+                // Load handler's registry index from global (set during startup registration)
+                let global_name = format!("__handler_registry_idx_{}", handler_id.index);
+                let registry_idx_global = self.module.get_global(&global_name)
+                    .ok_or_else(|| vec![Diagnostic::error(
+                        format!("Handler registry index global '{}' not found", global_name),
+                        stmt.span,
+                    )])?;
+                let registry_idx_val = self.builder.build_load(
+                    i64_ty, registry_idx_global.as_pointer_value(), "handler_reg_idx"
+                ).map_err(|e| vec![Diagnostic::error(
+                    format!("LLVM load error: {}", e), stmt.span
+                )])?;
+
+                // Keep effect_id_val for inline evidence hint
                 let effect_id_val = i64_ty.const_int(effect_id.index as u64, false);
 
                 // EFF-OPT-001: Resolve state pointer based on handler state kind.
@@ -756,8 +769,8 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                     }
                 };
                 self.builder.build_call(
-                    ev_push_with_state,
-                    &[ev.into(), effect_id_val.into(), state_void_ptr.into()],
+                    ev_push_by_index,
+                    &[ev.into(), registry_idx_val.into(), state_void_ptr.into()],
                     ""
                 ).map_err(|e| vec![Diagnostic::error(
                     format!("LLVM call error: {}", e), stmt.span
