@@ -1,0 +1,20 @@
+// Test: struct with non-Freeze field (&mut i32) is rejected for T: Freeze bound
+// compile-fail
+// error: does not satisfy.*Freeze
+
+trait Freeze {}
+
+struct HasMutRef {
+    value: &mut i32,
+}
+
+fn require_freeze<T: Freeze>(val: T) -> T {
+    val
+}
+
+fn main() -> i32 {
+    let mut x: i32 = 42;
+    let h: HasMutRef = HasMutRef { value: &mut x };
+    let h2: HasMutRef = require_freeze(h);
+    0
+}

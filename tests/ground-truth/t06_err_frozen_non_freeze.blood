@@ -1,0 +1,20 @@
+// Test: Frozen.new() wrapper rejects non-Freeze type
+// compile-fail
+// error: does not satisfy.*Freeze|does not implement trait
+
+trait Freeze {}
+
+struct Frozen<T> {
+    value: T,
+}
+
+fn freeze<T: Freeze>(val: T) -> Frozen<T> {
+    Frozen { value: val }
+}
+
+fn main() -> i32 {
+    let mut x: i32 = 42;
+    let r: &mut i32 = &mut x;
+    let f: Frozen<&mut i32> = freeze(r);
+    0
+}

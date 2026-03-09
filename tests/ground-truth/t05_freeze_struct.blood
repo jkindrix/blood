@@ -1,0 +1,27 @@
+// Test: struct with all-Freeze fields passes T: Freeze bound
+// Requires ADT auto-derivation: struct is Freeze if all fields are Freeze
+
+trait Freeze {}
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+fn require_freeze<T: Freeze>(val: T) -> T {
+    val
+}
+
+fn main() -> i32 {
+    let p: Point = Point { x: 42, y: 99 };
+    let p2: Point = require_freeze(p);
+    println_int(p2.x);
+    println_int(p2.y);
+    if p2.x != 42 {
+        return 1;
+    }
+    if p2.y != 99 {
+        return 2;
+    }
+    0
+}
