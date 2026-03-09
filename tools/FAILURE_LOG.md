@@ -24,6 +24,9 @@
 
 | Date | Category | Symptom | Root Cause | Status |
 |------|----------|---------|------------|--------|
+| 2026-03-09 | codegen | LLVM verification "Instruction does not dominate all uses" when user-defined effect named `StaleReference` is nested with other handlers | `StaleReference` is a built-in effect (ID 0x1004) with special runtime codegen; user-defined effect with same name collides with built-in handler registration | Workaround: use different effect name (e.g., `StaleAccess`) |
+| 2026-03-09 | codegen | Two named handlers for same effect type both execute first handler's op code | Handler op dispatch resolved by effect DefId + op index, not handler DefId; second handler's op implementations are ignored | Open: handler resolution needs per-handler op dispatch |
+| 2026-03-09 | typeck | Functions with effectful code inside `with...handle` blocks still inferred as performing those effects | Effect inference scans function body without subtracting effects handled by in-scope handlers | Workaround: extract body into separate function with explicit `/ {Effect}` annotation |
 | 2026-02-20 | runtime | Effect handler tests (26) crash with exit code 1 | `blood_push_handler`/`blood_pop_handler`/`blood_resume` not in static lib — blood-rust generates inline via LLVM | Blocked: needs runtime library changes |
 | 2026-02-20 | parser | 3 closure tests fail (COMPILE_FAIL) | Closure syntax not implemented in self-hosted parser | Feature gap |
 | 2026-02-20 | codegen | 5 effect tests SIGSEGV | Effect handler codegen incomplete in first_gen | Feature gap |
