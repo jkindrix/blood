@@ -26,21 +26,26 @@ pub struct ValidationResults {
 
 /// Validate all MIR bodies for well-formedness.
 ///
+/// `generic_def_ids` contains DefIds of generic function templates whose
+/// MIR bodies naturally contain Param types. These are skipped for the
+/// unsubstituted-type check since they'll be monomorphized before codegen.
+///
 /// Returns validation results containing both fatal errors and non-fatal
 /// warnings. Callers should emit warnings but only abort on errors.
 pub fn validate_mir_bodies(
     mir_bodies: &HashMap<DefId, MirBody>,
+    generic_def_ids: &std::collections::HashSet<DefId>,
 ) -> ValidationResults {
     let mut errors = Vec::new();
     let mut warnings = Vec::new();
     for (&def_id, body) in mir_bodies {
-        validate_body(def_id, body, &mut errors, &mut warnings);
+        validate_body(def_id, body, generic_def_ids, &mut errors, &mut warnings);
     }
     ValidationResults { errors, warnings }
 }
 
 /// Validate a single MIR body for well-formedness.
-fn validate_body(def_id: DefId, body: &MirBody, errors: &mut Vec<Diagnostic>, warnings: &mut Vec<Diagnostic>) {
+fn validate_body(def_id: DefId, body: &MirBody, generic_def_ids: &std::collections::HashSet<DefId>, errors: &mut Vec<Diagnostic>, warnings: &mut Vec<Diagnostic>) {
     let num_blocks = body.basic_blocks.len();
     let num_locals = body.locals.len();
 
@@ -111,8 +116,12 @@ fn validate_body(def_id: DefId, body: &MirBody, errors: &mut Vec<Diagnostic>, wa
     }
 
     // Check 6: No unresolved type parameters or inference variables in locals
-    for local in &body.locals {
-        check_type_resolved(&local.ty, def_id, body, errors, warnings);
+    // Skip for generic function templates — they naturally have Param types
+    // that will be substituted during monomorphization.
+    if !generic_def_ids.contains(&def_id) {
+        for local in &body.locals {
+            check_type_resolved(&local.ty, def_id, body, errors, warnings);
+        }
     }
 }
 

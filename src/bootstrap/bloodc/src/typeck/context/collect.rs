@@ -2358,9 +2358,11 @@ impl<'a> TypeContext<'a> {
                     // Store the Self type for this method
                     self.method_self_types.insert(method_def_id, self_ty.clone());
 
-                    // Handle method-level type parameters
-                    // Note: impl-level params are already in scope from earlier
-                    let mut method_generics = Vec::new();
+                    // Include impl-level generics in method signature so that
+                    // monomorphization can substitute them. Without this, methods
+                    // in `impl<T: Bound> Foo<T>` have empty sig.generics and are
+                    // compiled as non-generic, leaving Param types unsubstituted.
+                    let mut method_generics = generics_vec.clone();
                     if let Some(ref type_params) = func.type_params {
                         for generic_param in &type_params.params {
                             match generic_param {

@@ -1394,8 +1394,29 @@ fn cmd_build(args: &FileArgs, verbosity: u8, timings: bool) -> ExitCode {
             }
 
             // Validate MIR well-formedness
+            // Collect DefIds of generic functions (including trait defaults)
+            // so the validator can skip their template bodies — they naturally
+            // contain Param types that will be substituted during monomorphization.
+            let mut generic_def_ids: std::collections::HashSet<bloodc::hir::DefId> = std::collections::HashSet::new();
+            for (&def_id, item) in &hir_crate.items {
+                match &item.kind {
+                    bloodc::hir::ItemKind::Fn(fn_def) if !fn_def.sig.generics.is_empty() => {
+                        generic_def_ids.insert(def_id);
+                    }
+                    bloodc::hir::ItemKind::Trait { items, .. } => {
+                        for ti in items {
+                            if let bloodc::hir::TraitItemKind::Fn(sig, Some(_)) = &ti.kind {
+                                if !sig.generics.is_empty() {
+                                    generic_def_ids.insert(ti.def_id);
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
             let t = Instant::now();
-            let validation = mir::validate::validate_mir_bodies(&mir_bodies);
+            let validation = mir::validate::validate_mir_bodies(&mir_bodies, &generic_def_ids);
             for warning in &validation.warnings {
                 emitter.emit(warning);
             }
