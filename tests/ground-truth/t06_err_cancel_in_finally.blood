@@ -1,0 +1,21 @@
+// COMPILE_FAIL: Cancel not available in finally clause
+// EXPECT: undeclared effect
+// Test: perform Cancel.check_cancelled() inside finally should be rejected
+
+effect Cancel {
+    op check_cancelled() -> i32;
+}
+
+deep handler AlwaysCancel for Cancel {
+    return(x) { x }
+    finally {
+        perform Cancel.check_cancelled();
+    }
+    op check_cancelled() {
+        -1
+    }
+}
+
+fn main() -> i32 {
+    0
+}
