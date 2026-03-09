@@ -1,0 +1,21 @@
+// Test: dispatch resolution through nested method calls
+// EXPECT: 100
+
+struct Calc {}
+
+impl Calc {
+    fn compute(self, x: i32, y: i32) -> i32 {
+        x + y
+    }
+    fn compute(self, x: i32, y: bool) -> i32 {
+        if y { x * 2 } else { x }
+    }
+}
+
+fn main() -> i32 {
+    let c: Calc = Calc {};
+    let a: i32 = c.compute(25, 25);
+    let b: i32 = c.compute(a, true);
+    println_int(b);
+    0
+}

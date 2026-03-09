@@ -1,0 +1,26 @@
+// Test: dispatch on multiple parameter types
+// EXPECT: 11
+// EXPECT: 22
+// EXPECT: 33
+
+struct Math {}
+
+impl Math {
+    fn combine(self, x: i32, y: i32) -> i32 {
+        x + y
+    }
+    fn combine(self, x: i32, y: bool) -> i32 {
+        if y { x } else { 0 - x }
+    }
+    fn combine(self, x: bool, y: i32) -> i32 {
+        if x { y * 2 } else { y }
+    }
+}
+
+fn main() -> i32 {
+    let m: Math = Math {};
+    println_int(m.combine(5, 6));
+    println_int(m.combine(22, true));
+    println_int(m.combine(false, 33));
+    0
+}

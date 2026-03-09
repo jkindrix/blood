@@ -1,0 +1,30 @@
+// Test: method dispatch chain — result of one dispatch feeds into another
+// EXPECT: 7
+
+struct Builder { value: i32 }
+
+impl Builder {
+    fn add(self, x: i32) -> Builder {
+        Builder { value: self.value + x }
+    }
+    fn add(self, x: bool) -> Builder {
+        if x {
+            Builder { value: self.value + 1 }
+        } else {
+            Builder { value: self.value }
+        }
+    }
+    fn build(self) -> i32 {
+        self.value
+    }
+}
+
+fn main() -> i32 {
+    let b: Builder = Builder { value: 0 };
+    let b1: Builder = b.add(5);
+    let b2: Builder = b1.add(true);
+    let b3: Builder = b2.add(true);
+    let result: i32 = b3.build();
+    println_int(result);
+    0
+}

@@ -1,0 +1,32 @@
+// Test: type implementing multiple traits, direct method dispatch
+// EXPECT: 10
+// EXPECT: hello
+
+trait Numeric {
+    fn value(self: &Self) -> i32;
+}
+
+trait Textual {
+    fn text(self: &Self) -> ();
+}
+
+struct Dual { n: i32 }
+
+impl Numeric for Dual {
+    fn value(self: &Self) -> i32 {
+        self.n
+    }
+}
+
+impl Textual for Dual {
+    fn text(self: &Self) -> () {
+        println_str("hello");
+    }
+}
+
+fn main() -> i32 {
+    let d: Dual = Dual { n: 10 };
+    println_int(d.value());
+    d.text();
+    0
+}

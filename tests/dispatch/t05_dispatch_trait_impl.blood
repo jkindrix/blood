@@ -1,0 +1,34 @@
+// Test: dispatch selects correct trait implementation for different types
+// EXPECT: 10
+// EXPECT: 99
+
+trait Measure {
+    fn size(self: &Self) -> i32;
+}
+
+struct Small { val: i32 }
+struct Big { val: i32 }
+
+impl Measure for Small {
+    fn size(self: &Self) -> i32 {
+        self.val
+    }
+}
+
+impl Measure for Big {
+    fn size(self: &Self) -> i32 {
+        self.val
+    }
+}
+
+fn print_size<T: Measure>(item: &T) -> () {
+    println_int(item.size());
+}
+
+fn main() -> i32 {
+    let s: Small = Small { val: 10 };
+    let b: Big = Big { val: 99 };
+    print_size(&s);
+    print_size(&b);
+    0
+}

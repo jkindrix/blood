@@ -1,0 +1,29 @@
+// Test: dispatch on enum parameter types
+// EXPECT: circle
+// EXPECT: square
+
+enum Shape {
+    Circle { radius: i32 },
+    Square { side: i32 },
+}
+
+struct Renderer {}
+
+impl Renderer {
+    fn draw(self, s: Shape) -> () {
+        match s {
+            Shape.Circle { radius } => println_str("circle"),
+            Shape.Square { side } => println_str("square"),
+        }
+    }
+    fn draw(self, x: i32) -> () {
+        println_int(x);
+    }
+}
+
+fn main() -> i32 {
+    let r: Renderer = Renderer {};
+    r.draw(Shape.Circle { radius: 5 });
+    r.draw(Shape.Square { side: 3 });
+    0
+}

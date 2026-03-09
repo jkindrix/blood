@@ -1,0 +1,24 @@
+// Test: concrete method more specific than generic method
+// When both fn process(x: i32) and fn process<T>(x: T) exist,
+// calling process(42) should select the concrete version.
+// EXPECT: concrete: 42
+// EXPECT: generic
+
+struct Processor {}
+
+impl Processor {
+    fn process(self, x: i32) -> () {
+        println_str("concrete:");
+        println_int(x);
+    }
+    fn process<T>(self, x: T) -> () {
+        println_str("generic");
+    }
+}
+
+fn main() -> i32 {
+    let p: Processor = Processor {};
+    p.process(42);
+    p.process(true);
+    0
+}

@@ -1,0 +1,23 @@
+// Test: dispatch on parameter types with different return types
+// EXPECT: 42
+// EXPECT: true
+
+struct Converter {}
+
+impl Converter {
+    fn convert(self, x: i32) -> bool {
+        x != 0
+    }
+    fn convert(self, x: bool) -> i32 {
+        if x { 1 } else { 0 }
+    }
+}
+
+fn main() -> i32 {
+    let c: Converter = Converter {};
+    let a: i32 = c.convert(true);
+    println_int(a * 42);
+    let b: bool = c.convert(99);
+    println_bool(b);
+    0
+}

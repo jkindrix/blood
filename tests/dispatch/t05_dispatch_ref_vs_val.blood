@@ -1,0 +1,22 @@
+// Test: dispatch distinguishing reference vs value parameter types
+// EXPECT: by_ref
+// EXPECT: by_val
+
+struct Handler {}
+
+impl Handler {
+    fn handle(self, x: &i32) -> () {
+        println_str("by_ref");
+    }
+    fn handle(self, x: i32) -> () {
+        println_str("by_val");
+    }
+}
+
+fn main() -> i32 {
+    let h: Handler = Handler {};
+    let val: i32 = 42;
+    h.handle(&val);
+    h.handle(val);
+    0
+}

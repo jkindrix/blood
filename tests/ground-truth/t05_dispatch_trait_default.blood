@@ -1,0 +1,30 @@
+// Test: dispatch with overridden trait methods called directly
+// EXPECT: 42
+// EXPECT: 0
+
+trait Describable {
+    fn describe(self: &Self) -> i32;
+}
+
+struct Custom { val: i32 }
+struct Plain {}
+
+impl Describable for Custom {
+    fn describe(self: &Self) -> i32 {
+        self.val
+    }
+}
+
+impl Describable for Plain {
+    fn describe(self: &Self) -> i32 {
+        0
+    }
+}
+
+fn main() -> i32 {
+    let c: Custom = Custom { val: 42 };
+    let p: Plain = Plain {};
+    println_int(c.describe());
+    println_int(p.describe());
+    0
+}

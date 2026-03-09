@@ -1,0 +1,28 @@
+// Test: dispatch on struct parameter types
+// EXPECT: point: 30
+// EXPECT: rect: 200
+
+struct Point { x: i32, y: i32 }
+struct Rect { w: i32, h: i32 }
+
+struct Measurer {}
+
+impl Measurer {
+    fn measure(self, p: Point) -> i32 {
+        println_str("point:");
+        p.x + p.y
+    }
+    fn measure(self, r: Rect) -> i32 {
+        println_str("rect:");
+        r.w * r.h
+    }
+}
+
+fn main() -> i32 {
+    let m: Measurer = Measurer {};
+    let p: Point = Point { x: 10, y: 20 };
+    let r: Rect = Rect { w: 10, h: 20 };
+    println_int(m.measure(p));
+    println_int(m.measure(r));
+    0
+}

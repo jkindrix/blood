@@ -1,0 +1,16 @@
+// COMPILE_FAIL: no matching method
+// Test: calling a method with arguments that match no overload
+
+struct Ops {}
+
+impl Ops {
+    fn run(self, x: i32) -> i32 { x }
+    fn run(self, x: bool) -> i32 { 0 }
+}
+
+fn main() -> i32 {
+    let o: Ops = Ops {};
+    // &str doesn't match i32 or bool — should be a type error
+    o.run("hello");
+    0
+}

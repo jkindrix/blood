@@ -1,0 +1,22 @@
+// Test: dispatch with self-referential return types (builder pattern)
+// EXPECT: 3
+
+struct Counter { val: i32 }
+
+impl Counter {
+    fn inc(self) -> Counter {
+        Counter { val: self.val + 1 }
+    }
+    fn get(self) -> i32 {
+        self.val
+    }
+}
+
+fn main() -> i32 {
+    let c0: Counter = Counter { val: 0 };
+    let c1: Counter = c0.inc();
+    let c2: Counter = c1.inc();
+    let c3: Counter = c2.inc();
+    println_int(c3.get());
+    0
+}
