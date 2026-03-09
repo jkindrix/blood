@@ -1,0 +1,55 @@
+// Test: Nested handlers — inner cancel, both finally clauses run
+// Verifies: inner handler abort still allows outer handler normal exit with finally
+// EXPECT: 1
+// EXPECT: 99
+// EXPECT: 88
+// EXPECT: -1
+
+effect Cancel {
+    op check_cancelled() -> i32;
+}
+
+effect Logger {
+    op log(x: i32) -> ();
+}
+
+deep handler AlwaysCancel for Cancel {
+    return(x) { x }
+    finally {
+        println_int(99);
+    }
+    op check_cancelled() {
+        -1
+    }
+}
+
+deep handler PrintLogger for Logger {
+    return(x) { x }
+    finally {
+        println_int(88);
+    }
+    op log(x) {
+        println_int(x);
+        resume(())
+    }
+}
+
+fn cancellable_work() -> i32 / {Cancel, Logger} {
+    println_int(1);
+    perform Cancel.check_cancelled();
+    println_int(2);
+    42
+}
+
+fn main() -> i32 {
+    let result: i32 = with PrintLogger {} handle {
+        with AlwaysCancel {} handle {
+            cancellable_work()
+        }
+    };
+    println_int(result);
+    if result != -1 {
+        return 1;
+    }
+    0
+}

@@ -423,6 +423,7 @@ pub fn emit_statement(
                 ctx.emit_br_cg(&abort_store_label);
 
                 ctx.push_abort_labels(
+                    handler_id.index,
                     cgname_to_string(&abort_store_label),
                     cgname_to_string(&merge_label),
                     cgname_to_string(&abort_result),
@@ -432,7 +433,7 @@ pub fn emit_statement(
                 ctx.emit_label_cg(&normal_label);
             }
         }
-        &mir_stmt.StatementKind.PopHandler => {
+        &mir_stmt.StatementKind.PopHandler { handler_id } => {
             // Effect handler pop via evidence API
             let ev_cur = ctx.fresh_temp_cg();
             ctx.write_indent();
@@ -455,8 +456,8 @@ pub fn emit_statement(
                 ctx.handler_depth = ctx.handler_depth - 1;
             }
 
-            // Pop abort target if one was pushed
-            if ctx.has_abort_labels() {
+            // Pop abort target if one was pushed for this handler
+            if ctx.has_abort_labels_for(handler_id.index) {
                 ctx.write_indent();
                 ctx.write("call void @blood_handler_pop_abort_target()\n");
             }
@@ -633,10 +634,10 @@ pub fn emit_statement(
             //   Normal path: store return clause result → br merge
             //   Abort store block: load abort value → store to dest → br merge
             //   Merge block: continue
-            if ctx.has_abort_labels() {
-                let abort_store_str = clone_string(ctx.get_abort_store_label());
-                let merge_str = clone_string(ctx.get_abort_merge_label());
-                let abort_alloca_str = clone_string(ctx.get_abort_result_alloca());
+            if ctx.has_abort_labels_for(handler_id.index) {
+                let abort_store_str = clone_string(ctx.get_abort_store_label(handler_id.index));
+                let merge_str = clone_string(ctx.get_abort_merge_label(handler_id.index));
+                let abort_alloca_str = clone_string(ctx.get_abort_result_alloca(handler_id.index));
 
                 // Normal path: branch to merge
                 ctx.write_indent();
@@ -679,7 +680,7 @@ pub fn emit_statement(
                 ctx.write(":\n");
 
                 // Clear pending abort info
-                ctx.pop_abort_labels();
+                ctx.pop_abort_labels(handler_id.index);
             }
         }
         &mir_stmt.StatementKind.CallFinallyClause {

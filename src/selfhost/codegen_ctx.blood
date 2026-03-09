@@ -340,10 +340,12 @@ pub struct CodegenCtx {
     /// Packed into a single Vec<u64> to minimize struct layout impact.
     /// [0..N): effect DefIds, [N]: abort label string index, etc.
     non_tail_resumptive_effects: hashmap.HashMapU64U32,
-    /// Stack of abort label strings for non-tail-resumptive handler codegen.
-    /// Each abort handler pushes 3 strings: [abort_store_label, merge_label, result_alloca].
-    /// Consumed by CallReturnClause, popped after use.
+    /// Abort label strings for non-tail-resumptive handler codegen, keyed by handler DefId.
+    /// Each entry is 3 consecutive strings: [abort_store_label, merge_label, result_alloca].
+    /// Index via handler_abort_hash: handler_def_id → base index in this Vec.
     abort_label_stack: Vec<String>,
+    /// Maps handler DefId → base index in abort_label_stack (each entry is 3 strings).
+    handler_abort_hash: hashmap.HashMapU64U32,
 }
 
 /// Entry mapping a handler DefId to its effect DefId.
@@ -536,6 +538,7 @@ impl CodegenCtx {
             active_regions: Vec.with_capacity(4),
             non_tail_resumptive_effects: hashmap.HashMapU64U32.with_capacity(8),
             abort_label_stack: Vec.new(),
+            handler_abort_hash: hashmap.HashMapU64U32.new(),
         }
     }
 
@@ -614,6 +617,7 @@ impl CodegenCtx {
             active_regions: Vec.with_capacity(4),
             non_tail_resumptive_effects: hashmap.HashMapU64U32.with_capacity(8),
             abort_label_stack: Vec.new(),
+            handler_abort_hash: hashmap.HashMapU64U32.new(),
         }
     }
 
@@ -926,38 +930,53 @@ impl CodegenCtx {
         }
     }
 
-    /// Pushes abort label state onto the stack (3 strings: abort_store, merge, result_alloca).
-    pub fn push_abort_labels(self: &mut CodegenCtx, abort_store: String, merge: String, result_alloca: String) {
+    /// Stores abort label state for a handler (3 strings: abort_store, merge, result_alloca).
+    pub fn push_abort_labels(self: &mut CodegenCtx, handler_def_id: u32, abort_store: String, merge: String, result_alloca: String) {
+        let base = self.abort_label_stack.len() as u32;
+        self.handler_abort_hash.insert(handler_def_id as u64, base);
         self.abort_label_stack.push(abort_store);
         self.abort_label_stack.push(merge);
         self.abort_label_stack.push(result_alloca);
     }
 
-    /// Returns true if there is pending abort label state.
-    pub fn has_abort_labels(self: &CodegenCtx) -> bool {
-        self.abort_label_stack.len() > 0
+    /// Returns true if a specific handler has pending abort label state.
+    pub fn has_abort_labels_for(self: &CodegenCtx, handler_def_id: u32) -> bool {
+        match self.handler_abort_hash.get(handler_def_id as u64) {
+            Option.Some(_) => true,
+            Option.None => false,
+        }
     }
 
-    /// Gets the abort store label (top - 2).
-    pub fn get_abort_store_label(self: &CodegenCtx) -> &String {
-        &self.abort_label_stack[self.abort_label_stack.len() - 3]
+    /// Gets the abort store label for a handler.
+    pub fn get_abort_store_label(self: &CodegenCtx, handler_def_id: u32) -> &String {
+        let base = match self.handler_abort_hash.get(handler_def_id as u64) {
+            Option.Some(b) => b as usize,
+            Option.None => 0,
+        };
+        &self.abort_label_stack[base]
     }
 
-    /// Gets the abort merge label (top - 1).
-    pub fn get_abort_merge_label(self: &CodegenCtx) -> &String {
-        &self.abort_label_stack[self.abort_label_stack.len() - 2]
+    /// Gets the abort merge label for a handler.
+    pub fn get_abort_merge_label(self: &CodegenCtx, handler_def_id: u32) -> &String {
+        let base = match self.handler_abort_hash.get(handler_def_id as u64) {
+            Option.Some(b) => b as usize,
+            Option.None => 0,
+        };
+        &self.abort_label_stack[base + 1]
     }
 
-    /// Gets the abort result alloca name (top).
-    pub fn get_abort_result_alloca(self: &CodegenCtx) -> &String {
-        &self.abort_label_stack[self.abort_label_stack.len() - 1]
+    /// Gets the abort result alloca name for a handler.
+    pub fn get_abort_result_alloca(self: &CodegenCtx, handler_def_id: u32) -> &String {
+        let base = match self.handler_abort_hash.get(handler_def_id as u64) {
+            Option.Some(b) => b as usize,
+            Option.None => 0,
+        };
+        &self.abort_label_stack[base + 2]
     }
 
-    /// Pops the top abort label state (3 strings) from the stack.
-    pub fn pop_abort_labels(self: &mut CodegenCtx) {
-        self.abort_label_stack.pop();
-        self.abort_label_stack.pop();
-        self.abort_label_stack.pop();
+    /// Removes a handler's abort label state.
+    pub fn pop_abort_labels(self: &mut CodegenCtx, handler_def_id: u32) {
+        self.handler_abort_hash.remove(handler_def_id as u64);
     }
 
     /// Registers handler DefId → state field count mapping.
@@ -2526,6 +2545,7 @@ impl CodegenCtx {
             active_regions: Vec.with_capacity(4),
             non_tail_resumptive_effects: hashmap.HashMapU64U32.new(),
             abort_label_stack: Vec.new(),
+            handler_abort_hash: hashmap.HashMapU64U32.new(),
         };
 
         // Copy handler_op_body_ids with state counts (read-only, needed to flag handler op bodies)
