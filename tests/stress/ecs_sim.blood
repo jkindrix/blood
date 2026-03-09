@@ -1,0 +1,844 @@
+// ECS Simulation — Blood Pillar Stress Test
+//
+// A non-trivial entity-component-system designed to exercise the interactions
+// between Blood's five pillars:
+//   - Veracity: generational entity IDs (stale reference detection)
+//   - Identity: content-hashed component snapshots
+//   - Composability: layered algebraic effect handlers
+//   - Extensibility: multiple dispatch over component types
+//   - Isolation: linear access tokens / region-scoped temporaries
+//
+// EXPECT: === Layer 1: Generational Entity IDs ===
+// EXPECT: created e0 gen1
+// EXPECT: created e1 gen1
+// EXPECT: created e2 gen1
+// EXPECT: e0 alive: 1
+// EXPECT: e1 alive: 1
+// EXPECT: e2 alive: 1
+// EXPECT: destroyed e1
+// EXPECT: e1 alive after destroy: 0
+// EXPECT: e0 still alive: 1
+// EXPECT: e2 still alive: 1
+// EXPECT: reused e3 index=1 gen2
+// EXPECT: stale e1(gen1) alive: 0
+// EXPECT: new e3(gen2) alive: 1
+// EXPECT: entity count: 3
+// EXPECT: layer 1 passed
+// EXPECT: === Layer 2: Components + Effects ===
+// EXPECT: [log] entity 0 created
+// EXPECT: [log] entity 1 created
+// EXPECT: e0 pos: 10, 20
+// EXPECT: e1 pos: 50, 60
+// EXPECT: e1 has no velocity
+// EXPECT: [log] physics tick
+// EXPECT: after tick: e0 pos: 11, 22
+// EXPECT: after tick: e1 pos: 50, 60
+// EXPECT: [log] physics tick
+// EXPECT: [log] physics tick
+// EXPECT: [log] physics tick
+// EXPECT: [log] physics tick
+// EXPECT: [log] physics tick
+// EXPECT: [log] physics tick
+// EXPECT: [log] physics tick
+// EXPECT: [log] physics tick
+// EXPECT: [log] physics tick
+// EXPECT: after 10 ticks: e0 pos: 20, 40
+// EXPECT: tick count: 10
+// EXPECT: layer 2 passed
+// EXPECT: === Layer 3: Error Effects + Stale Detection ===
+// EXPECT: get_position on alive entity: 10
+// EXPECT: get_position on stale entity: -1
+// EXPECT: get_position on dead entity: -1
+// EXPECT: safe tick with error: completed
+// EXPECT: layer 3 passed
+// EXPECT: === Layer 4: Content Hashing (Identity) ===
+// EXPECT: initial hash: non-zero
+// EXPECT: same state same hash: 1
+// EXPECT: different state different hash: 1
+// EXPECT: restored state same hash: 1
+// EXPECT: layer 4 passed
+// EXPECT: === Layer 5: Integration Stress Test ===
+// EXPECT: [log] entity 0 created
+// EXPECT: [log] entity 1 created
+// EXPECT: [log] entity 2 created
+// EXPECT: [log] entity 3 created
+// EXPECT: [log] entity 4 created
+// EXPECT: [log] entity 5 created
+// EXPECT: [log] entity 6 created
+// EXPECT: [log] entity 7 created
+// EXPECT: [log] entity 8 created
+// EXPECT: [log] entity 9 created
+// EXPECT: created 10 entities
+// EXPECT: [log] physics tick
+// EXPECT: [log] physics tick
+// EXPECT: [log] physics tick
+// EXPECT: [log] physics tick
+// EXPECT: [log] physics tick
+// EXPECT: e0 after 5 ticks: 0, 5
+// EXPECT: e3 after 5 ticks: 45, 80
+// EXPECT: hash changed after ticks: 1
+// EXPECT: alive after culling: 6
+// EXPECT: stale entity 4 access: -1
+// EXPECT: alive after respawn: 10
+// EXPECT: [log] physics tick
+// EXPECT: [log] physics tick
+// EXPECT: [log] physics tick
+// EXPECT: [log] physics tick
+// EXPECT: [log] physics tick
+// EXPECT: e1 after 10 total ticks: 20, 40
+// EXPECT: total ticks: 10
+// EXPECT: layer 5 passed
+// EXPECT: === ALL LAYERS PASSED ===
+
+// ============================================================
+// Layer 1: Generational Entity IDs (Veracity pillar)
+// ============================================================
+
+struct EntityId {
+    index: u32,
+    generation: u32,
+}
+
+struct EntityEntry {
+    generation: u32,
+    alive: bool,
+}
+
+struct EntityAllocator {
+    entries: Vec<EntityEntry>,
+    free_indices: Vec<u32>,
+    count: u32,
+}
+
+impl EntityAllocator {
+    fn new() -> EntityAllocator {
+        EntityAllocator {
+            entries: Vec.new(),
+            free_indices: Vec.new(),
+            count: 0,
+        }
+    }
+
+    fn create(self: &mut Self) -> EntityId {
+        // Reuse a freed slot if available
+        let len: u32 = self.free_indices.len() as u32;
+        if len > 0 {
+            // Pop last free index
+            let idx: u32 = self.free_indices[len as usize - 1];
+            self.free_indices.pop();
+            // Bump generation on reuse
+            let new_gen: u32 = self.entries[idx as usize].generation + 1;
+            self.entries[idx as usize].generation = new_gen;
+            self.entries[idx as usize].alive = true;
+            self.count = self.count + 1;
+            EntityId { index: idx, generation: new_gen }
+        } else {
+            // Allocate new slot
+            let idx: u32 = self.entries.len() as usize as u32;
+            self.entries.push(EntityEntry { generation: 1, alive: true });
+            self.count = self.count + 1;
+            EntityId { index: idx, generation: 1 }
+        }
+    }
+
+    fn destroy(self: &mut Self, id: EntityId) -> bool {
+        let idx: usize = id.index as usize;
+        if idx >= self.entries.len() as usize {
+            return false;
+        }
+        if self.entries[idx].generation != id.generation {
+            return false;
+        }
+        if !self.entries[idx].alive {
+            return false;
+        }
+        self.entries[idx].alive = false;
+        self.free_indices.push(id.index);
+        self.count = self.count - 1;
+        true
+    }
+
+    fn is_alive(self: &Self, id: EntityId) -> bool {
+        let idx: usize = id.index as usize;
+        if idx >= self.entries.len() as usize {
+            return false;
+        }
+        if self.entries[idx].generation != id.generation {
+            return false;
+        }
+        self.entries[idx].alive
+    }
+}
+
+// ============================================================
+// Layer 2: Component Storage + Effects (Composability pillar)
+// ============================================================
+
+struct Position {
+    x: i32,
+    y: i32,
+}
+
+struct Velocity {
+    dx: i32,
+    dy: i32,
+}
+
+// Sparse component slots — one per entity index
+enum PosSlot {
+    Empty,
+    Set(Position),
+}
+
+enum VelSlot {
+    Empty,
+    Set(Velocity),
+}
+
+struct World {
+    alloc: EntityAllocator,
+    positions: Vec<PosSlot>,
+    velocities: Vec<VelSlot>,
+}
+
+impl World {
+    fn new() -> World {
+        World {
+            alloc: EntityAllocator.new(),
+            positions: Vec.new(),
+            velocities: Vec.new(),
+        }
+    }
+
+    fn create_entity(self: &mut Self) -> EntityId {
+        let id: EntityId = self.alloc.create();
+        // Extend component vecs to cover new index
+        while self.positions.len() as usize <= id.index as usize {
+            self.positions.push(PosSlot.Empty);
+        }
+        while self.velocities.len() as usize <= id.index as usize {
+            self.velocities.push(VelSlot.Empty);
+        }
+        id
+    }
+
+    fn set_position(self: &mut Self, id: EntityId, pos: Position) {
+        if self.alloc.is_alive(id) {
+            self.positions[id.index as usize] = PosSlot.Set(pos);
+        }
+    }
+
+    fn set_velocity(self: &mut Self, id: EntityId, vel: Velocity) {
+        if self.alloc.is_alive(id) {
+            self.velocities[id.index as usize] = VelSlot.Set(vel);
+        }
+    }
+
+    fn get_pos_x(self: &Self, id: EntityId) -> i32 {
+        match &self.positions[id.index as usize] {
+            PosSlot.Set(p) => p.x,
+            PosSlot.Empty => 0,
+        }
+    }
+
+    fn get_pos_y(self: &Self, id: EntityId) -> i32 {
+        match &self.positions[id.index as usize] {
+            PosSlot.Set(p) => p.y,
+            PosSlot.Empty => 0,
+        }
+    }
+
+    fn has_velocity(self: &Self, id: EntityId) -> bool {
+        match &self.velocities[id.index as usize] {
+            VelSlot.Set(_) => true,
+            VelSlot.Empty => false,
+        }
+    }
+}
+
+// Effects: simulation logging and tick counting
+effect SimLog {
+    op log(msg: i32) -> ();
+}
+
+effect TickCounter {
+    op count_tick() -> ();
+    op get_ticks() -> i32;
+}
+
+deep handler ConsoleLog for SimLog {
+    return(x) { x }
+    op log(msg) {
+        print_str("[log] ");
+        if msg == 1 {
+            println_str("physics tick");
+        } else if msg == 2 {
+            println_str("entity destroyed");
+        } else {
+            print_str("entity ");
+            print_int(msg - 100);
+            println_str(" created");
+        }
+        resume(())
+    }
+}
+
+deep handler SimpleTickCounter for TickCounter {
+    let mut ticks: i32
+    return(x) { x }
+    op count_tick() { ticks = ticks + 1; resume(()) }
+    op get_ticks() { resume(ticks) }
+}
+
+// Physics system: apply velocity to position (operates on World directly)
+fn physics_tick(w: &mut World) / {SimLog, TickCounter} {
+    perform SimLog.log(1);
+    perform TickCounter.count_tick();
+    let entity_count: usize = w.alloc.entries.len() as usize;
+    let mut i: usize = 0;
+    while i < entity_count {
+        if w.alloc.entries[i].alive {
+            let has_pos: bool = match &w.positions[i] {
+                PosSlot.Set(_) => true,
+                PosSlot.Empty => false,
+            };
+            let has_vel: bool = match &w.velocities[i] {
+                VelSlot.Set(_) => true,
+                VelSlot.Empty => false,
+            };
+            if has_pos && has_vel {
+                let px: i32 = match &w.positions[i] {
+                    PosSlot.Set(p) => p.x,
+                    PosSlot.Empty => 0,
+                };
+                let py: i32 = match &w.positions[i] {
+                    PosSlot.Set(p) => p.y,
+                    PosSlot.Empty => 0,
+                };
+                let vx: i32 = match &w.velocities[i] {
+                    VelSlot.Set(v) => v.dx,
+                    VelSlot.Empty => 0,
+                };
+                let vy: i32 = match &w.velocities[i] {
+                    VelSlot.Set(v) => v.dy,
+                    VelSlot.Empty => 0,
+                };
+                w.positions[i] = PosSlot.Set(Position { x: px + vx, y: py + vy });
+            }
+        }
+        i = i + 1;
+    }
+}
+
+// ============================================================
+// Layer 3: Error Effects + Stale Entity Detection
+//          (Veracity × Composability interaction)
+// ============================================================
+
+// Error effect: raise_err returns a sentinel value through resume
+effect SimError {
+    op raise_err(code: i32) -> i32;
+}
+
+deep handler CatchError for SimError {
+    return(x) { x }
+    op raise_err(code) {
+        // Resume with negative error code as sentinel
+        resume(0 - code)
+    }
+}
+
+// Safe position access — returns negative error code on stale/dead entity
+fn safe_get_pos_x(w: &World, id: EntityId) -> i32 / {SimError} {
+    if !w.alloc.is_alive(id) {
+        perform SimError.raise_err(1)
+    } else {
+        w.get_pos_x(id)
+    }
+}
+
+// Run a physics tick with error handling for stale entities
+fn safe_physics_tick(w: &mut World) / {SimLog, TickCounter, SimError} {
+    perform SimLog.log(1);
+    perform TickCounter.count_tick();
+    let entity_count: usize = w.alloc.entries.len() as usize;
+    let mut i: usize = 0;
+    while i < entity_count {
+        if w.alloc.entries[i].alive {
+            let has_pos: bool = match &w.positions[i] {
+                PosSlot.Set(_) => true,
+                PosSlot.Empty => false,
+            };
+            let has_vel: bool = match &w.velocities[i] {
+                VelSlot.Set(_) => true,
+                VelSlot.Empty => false,
+            };
+            if has_pos && has_vel {
+                let px: i32 = match &w.positions[i] {
+                    PosSlot.Set(p) => p.x,
+                    PosSlot.Empty => 0,
+                };
+                let py: i32 = match &w.positions[i] {
+                    PosSlot.Set(p) => p.y,
+                    PosSlot.Empty => 0,
+                };
+                let vx: i32 = match &w.velocities[i] {
+                    VelSlot.Set(v) => v.dx,
+                    VelSlot.Empty => 0,
+                };
+                let vy: i32 = match &w.velocities[i] {
+                    VelSlot.Set(v) => v.dy,
+                    VelSlot.Empty => 0,
+                };
+                w.positions[i] = PosSlot.Set(Position { x: px + vx, y: py + vy });
+            }
+        }
+        i = i + 1;
+    }
+}
+
+// ============================================================
+// Layer 4: Content Hashing for Snapshots (Identity pillar)
+// ============================================================
+
+// FNV-1a hash (64-bit) — deterministic content hash for component data
+fn fnv_init() -> u64 {
+    14695981039346656037 as u64
+}
+
+fn fnv_mix(hash: u64, byte: u64) -> u64 {
+    let xored: u64 = hash ^ byte;
+    xored * (1099511628211 as u64)
+}
+
+fn fnv_mix_i32(hash: u64, val: i32) -> u64 {
+    let h1: u64 = fnv_mix(hash, (val & 255) as u64);
+    let h2: u64 = fnv_mix(h1, ((val >> 8) & 255) as u64);
+    let h3: u64 = fnv_mix(h2, ((val >> 16) & 255) as u64);
+    fnv_mix(h3, ((val >> 24) & 255) as u64)
+}
+
+fn fnv_mix_u32(hash: u64, val: u32) -> u64 {
+    fnv_mix_i32(hash, val as i32)
+}
+
+fn fnv_mix_bool(hash: u64, val: bool) -> u64 {
+    if val { fnv_mix(hash, 1) } else { fnv_mix(hash, 0) }
+}
+
+// Hash all position components in the world
+fn hash_positions(w: &World) -> u64 {
+    let mut hash: u64 = fnv_init();
+    let count: usize = w.positions.len() as usize;
+    let mut i: usize = 0;
+    while i < count {
+        match &w.positions[i] {
+            PosSlot.Empty => {
+                hash = fnv_mix(hash, 0);
+            }
+            PosSlot.Set(p) => {
+                hash = fnv_mix(hash, 1);
+                hash = fnv_mix_i32(hash, p.x);
+                hash = fnv_mix_i32(hash, p.y);
+            }
+        }
+        i = i + 1;
+    }
+    hash
+}
+
+// Hash all velocity components
+fn hash_velocities(w: &World) -> u64 {
+    let mut hash: u64 = fnv_init();
+    let count: usize = w.velocities.len() as usize;
+    let mut i: usize = 0;
+    while i < count {
+        match &w.velocities[i] {
+            VelSlot.Empty => {
+                hash = fnv_mix(hash, 0);
+            }
+            VelSlot.Set(v) => {
+                hash = fnv_mix(hash, 1);
+                hash = fnv_mix_i32(hash, v.dx);
+                hash = fnv_mix_i32(hash, v.dy);
+            }
+        }
+        i = i + 1;
+    }
+    hash
+}
+
+// Composite world snapshot hash
+fn hash_world_snapshot(w: &World) -> u64 {
+    let h1: u64 = hash_positions(w);
+    let h2: u64 = hash_velocities(w);
+    // Mix the two sub-hashes
+    let combined: u64 = fnv_mix(h1, h2 & 255);
+    let combined2: u64 = fnv_mix(combined, (h2 >> 8) & 255);
+    combined2
+}
+
+fn main() -> i32 {
+    println_str("=== Layer 1: Generational Entity IDs ===");
+
+    let mut alloc: EntityAllocator = EntityAllocator.new();
+
+    // Create three entities
+    let e0: EntityId = alloc.create();
+    print_str("created e0 gen");
+    println_int(e0.generation as i32);
+
+    let e1: EntityId = alloc.create();
+    print_str("created e1 gen");
+    println_int(e1.generation as i32);
+
+    let e2: EntityId = alloc.create();
+    print_str("created e2 gen");
+    println_int(e2.generation as i32);
+
+    // All alive
+    print_str("e0 alive: ");
+    println_int(alloc.is_alive(e0) as i32);
+    print_str("e1 alive: ");
+    println_int(alloc.is_alive(e1) as i32);
+    print_str("e2 alive: ");
+    println_int(alloc.is_alive(e2) as i32);
+
+    // Destroy e1
+    let ok: bool = alloc.destroy(e1);
+    println_str("destroyed e1");
+
+    // e1 is now dead
+    print_str("e1 alive after destroy: ");
+    println_int(alloc.is_alive(e1) as i32);
+
+    // e0 and e2 still alive
+    print_str("e0 still alive: ");
+    println_int(alloc.is_alive(e0) as i32);
+    print_str("e2 still alive: ");
+    println_int(alloc.is_alive(e2) as i32);
+
+    // Create new entity — should reuse e1's slot with bumped generation
+    let e3: EntityId = alloc.create();
+    print_str("reused e3 index=");
+    print_int(e3.index as i32);
+    print_str(" gen");
+    println_int(e3.generation as i32);
+
+    // Stale reference detection: e1 (gen1) should NOT be alive
+    print_str("stale e1(gen1) alive: ");
+    println_int(alloc.is_alive(e1) as i32);
+
+    // But e3 (gen2, same index) IS alive
+    print_str("new e3(gen2) alive: ");
+    println_int(alloc.is_alive(e3) as i32);
+
+    // Count check
+    print_str("entity count: ");
+    println_int(alloc.count as i32);
+
+    // Verify
+    if !alloc.is_alive(e0) { return 1; }
+    if alloc.is_alive(e1) { return 2; }
+    if !alloc.is_alive(e2) { return 3; }
+    if !alloc.is_alive(e3) { return 4; }
+    if e3.index != e1.index { return 5; }
+    if e3.generation != 2 { return 6; }
+    if alloc.count != 3 { return 7; }
+
+    println_str("layer 1 passed");
+
+    // ========== Layer 2 tests ==========
+    println_str("=== Layer 2: Components + Effects ===");
+
+    let layer2_ok: i32 = with ConsoleLog {} handle {
+        with SimpleTickCounter { ticks: 0 } handle {
+            let mut w: World = World.new();
+
+            // Create entities
+            let a: EntityId = w.create_entity();
+            perform SimLog.log(100 + a.index as i32);
+            w.set_position(a, Position { x: 10, y: 20 });
+            w.set_velocity(a, Velocity { dx: 1, dy: 2 });
+
+            let b: EntityId = w.create_entity();
+            perform SimLog.log(100 + b.index as i32);
+            w.set_position(b, Position { x: 50, y: 60 });
+            // b has no velocity — physics should not move it
+
+            // Read back
+            print_str("e0 pos: ");
+            print_int(w.get_pos_x(a));
+            print_str(", ");
+            println_int(w.get_pos_y(a));
+            print_str("e1 pos: ");
+            print_int(w.get_pos_x(b));
+            print_str(", ");
+            println_int(w.get_pos_y(b));
+            if w.has_velocity(b) {
+                println_str("e1 has velocity");
+            } else {
+                println_str("e1 has no velocity");
+            }
+
+            // Run one physics tick
+            physics_tick(&mut w);
+
+            print_str("after tick: e0 pos: ");
+            print_int(w.get_pos_x(a));
+            print_str(", ");
+            println_int(w.get_pos_y(a));
+            print_str("after tick: e1 pos: ");
+            print_int(w.get_pos_x(b));
+            print_str(", ");
+            println_int(w.get_pos_y(b));
+
+            // Verify tick 1
+            let ok1: bool = w.get_pos_x(a) == 11 && w.get_pos_y(a) == 22;
+            let ok2: bool = w.get_pos_x(b) == 50 && w.get_pos_y(b) == 60;
+
+            // Run 9 more ticks (total 10)
+            let mut tick: i32 = 0;
+            while tick < 9 {
+                physics_tick(&mut w);
+                tick = tick + 1;
+            }
+
+            print_str("after 10 ticks: e0 pos: ");
+            print_int(w.get_pos_x(a));
+            print_str(", ");
+            println_int(w.get_pos_y(a));
+            let ok3: bool = w.get_pos_x(a) == 20 && w.get_pos_y(a) == 40;
+
+            let total_ticks: i32 = perform TickCounter.get_ticks();
+            print_str("tick count: ");
+            println_int(total_ticks);
+
+            if ok1 && ok2 && ok3 { 0 } else { 1 }
+        }
+    };
+
+    if layer2_ok != 0 { return 10 + layer2_ok; }
+    println_str("layer 2 passed");
+
+    // ========== Layer 3 tests ==========
+    println_str("=== Layer 3: Error Effects + Stale Detection ===");
+
+    // Test: safe access on alive entity
+    let mut w3: World = World.new();
+    let alive_e: EntityId = w3.create_entity();
+    w3.set_position(alive_e, Position { x: 10, y: 20 });
+
+    let result_alive: i32 = with CatchError {} handle {
+        let px: i32 = safe_get_pos_x(&w3, alive_e);
+        px
+    };
+    print_str("get_position on alive entity: ");
+    println_int(result_alive);
+
+    // Test: safe access on stale entity (destroyed, slot reused)
+    let stale_e: EntityId = w3.create_entity();
+    w3.alloc.destroy(stale_e);
+    let reused_e: EntityId = w3.create_entity();
+    // stale_e now has wrong generation
+
+    let result_stale: i32 = with CatchError {} handle {
+        safe_get_pos_x(&w3, stale_e)
+    };
+    print_str("get_position on stale entity: ");
+    println_int(result_stale);
+
+    // Test: safe access on dead entity (destroyed, not reused)
+    let dead_e: EntityId = w3.create_entity();
+    w3.set_position(dead_e, Position { x: 99, y: 99 });
+    w3.alloc.destroy(dead_e);
+
+    let result_dead: i32 = with CatchError {} handle {
+        safe_get_pos_x(&w3, dead_e)
+    };
+    print_str("get_position on dead entity: ");
+    println_int(result_dead);
+
+    // Test: triple-nested effects (SimLog + TickCounter + SimError)
+    let nested_ok: i32 = with ConsoleLog {} handle {
+        with SimpleTickCounter { ticks: 0 } handle {
+            with CatchError {} handle {
+                safe_physics_tick(&mut w3);
+                0
+            }
+        }
+    };
+    println_str("safe tick with error: completed");
+
+    if result_alive != 10 { return 20; }
+    if result_stale != 0 - 1 { return 21; }
+    if result_dead != 0 - 1 { return 22; }
+    if nested_ok != 0 { return 23; }
+
+    println_str("layer 3 passed");
+
+    // ========== Layer 4 tests ==========
+    println_str("=== Layer 4: Content Hashing (Identity) ===");
+
+    let mut w4: World = World.new();
+    let h_e0: EntityId = w4.create_entity();
+    w4.set_position(h_e0, Position { x: 100, y: 200 });
+    w4.set_velocity(h_e0, Velocity { dx: 5, dy: 10 });
+
+    let hash1: u64 = hash_world_snapshot(&w4);
+    if hash1 != 0 {
+        println_str("initial hash: non-zero");
+    } else {
+        println_str("initial hash: ZERO (unexpected)");
+    }
+
+    // Same state should produce same hash
+    let hash2: u64 = hash_world_snapshot(&w4);
+    print_str("same state same hash: ");
+    println_int((hash1 == hash2) as i32);
+
+    // Modify position — hash should change
+    w4.set_position(h_e0, Position { x: 101, y: 200 });
+    let hash3: u64 = hash_world_snapshot(&w4);
+    print_str("different state different hash: ");
+    println_int((hash1 != hash3) as i32);
+
+    // Restore original position — hash should match original
+    w4.set_position(h_e0, Position { x: 100, y: 200 });
+    let hash4: u64 = hash_world_snapshot(&w4);
+    print_str("restored state same hash: ");
+    println_int((hash1 == hash4) as i32);
+
+    if hash1 == 0 { return 30; }
+    if hash1 != hash2 { return 31; }
+    if hash1 == hash3 { return 32; }
+    if hash1 != hash4 { return 33; }
+
+    println_str("layer 4 passed");
+
+    // ========== Layer 5: Integration Stress Test ==========
+    // All pillars combined: generational entities, effects, hashing,
+    // error handling, entity lifecycle across ticks
+    println_str("=== Layer 5: Integration Stress Test ===");
+
+    let stress_ok: i32 = with ConsoleLog {} handle {
+        with SimpleTickCounter { ticks: 0 } handle {
+            let mut world: World = World.new();
+
+            // Phase 1: Create 10 entities with positions and velocities
+            let mut ids: [EntityId; 10] = [EntityId { index: 0, generation: 0 }; 10];
+            let mut ci: i32 = 0;
+            while ci < 10 {
+                let eid: EntityId = world.create_entity();
+                perform SimLog.log(100 + ci);
+                world.set_position(eid, Position { x: ci * 10, y: ci * 20 });
+                world.set_velocity(eid, Velocity { dx: ci, dy: ci + 1 });
+                ids[ci as usize] = eid;
+                ci = ci + 1;
+            }
+            print_str("created ");
+            print_int(world.alloc.count as i32);
+            println_str(" entities");
+
+            // Take snapshot hash before simulation
+            let hash_before: u64 = hash_world_snapshot(&world);
+
+            // Phase 2: Run 5 ticks
+            let mut ti: i32 = 0;
+            while ti < 5 {
+                physics_tick(&mut world);
+                ti = ti + 1;
+            }
+
+            // Verify entity 0 moved correctly: (0,0) + 5*(0,1) = (0,5)
+            let e0_x: i32 = world.get_pos_x(ids[0]);
+            let e0_y: i32 = world.get_pos_y(ids[0]);
+            print_str("e0 after 5 ticks: ");
+            print_int(e0_x);
+            print_str(", ");
+            println_int(e0_y);
+
+            // Verify entity 3 moved: (30,60) + 5*(3,4) = (45,80)
+            let e3_x: i32 = world.get_pos_x(ids[3]);
+            let e3_y: i32 = world.get_pos_y(ids[3]);
+            print_str("e3 after 5 ticks: ");
+            print_int(e3_x);
+            print_str(", ");
+            println_int(e3_y);
+
+            // Hash changed after simulation
+            let hash_after: u64 = hash_world_snapshot(&world);
+            print_str("hash changed after ticks: ");
+            println_int((hash_before != hash_after) as i32);
+
+            // Phase 3: Destroy entities 2,4,6,8 (even indices)
+            let mut di: i32 = 2;
+            while di < 10 {
+                world.alloc.destroy(ids[di as usize]);
+                di = di + 2;
+            }
+            print_str("alive after culling: ");
+            println_int(world.alloc.count as i32);
+
+            // Phase 4: Stale reference detection on destroyed entities
+            let stale_ok: i32 = with CatchError {} handle {
+                let result: i32 = safe_get_pos_x(&world, ids[4]);
+                result
+            };
+            print_str("stale entity 4 access: ");
+            println_int(stale_ok);
+
+            // Phase 5: Reuse slots — create 4 new entities
+            let mut ni: i32 = 0;
+            while ni < 4 {
+                let new_eid: EntityId = world.create_entity();
+                world.set_position(new_eid, Position { x: 999, y: 999 });
+                world.set_velocity(new_eid, Velocity { dx: 0, dy: 0 });
+                ni = ni + 1;
+            }
+            print_str("alive after respawn: ");
+            println_int(world.alloc.count as i32);
+
+            // Phase 6: Run 5 more ticks — original entities keep moving,
+            //          new entities at (999,999) stay put (vel=0)
+            ti = 0;
+            while ti < 5 {
+                physics_tick(&mut world);
+                ti = ti + 1;
+            }
+
+            // Entity 1 (survived culling): (10,20) + 10*(1,2) = (20,40)
+            let e1_x: i32 = world.get_pos_x(ids[1]);
+            let e1_y: i32 = world.get_pos_y(ids[1]);
+            print_str("e1 after 10 total ticks: ");
+            print_int(e1_x);
+            print_str(", ");
+            println_int(e1_y);
+
+            let total_ticks: i32 = perform TickCounter.get_ticks();
+            print_str("total ticks: ");
+            println_int(total_ticks);
+
+            // Verify all assertions
+            let mut all_ok: bool = true;
+            if e0_x != 0 { all_ok = false; }
+            if e0_y != 5 { all_ok = false; }
+            if e3_x != 45 { all_ok = false; }
+            if e3_y != 80 { all_ok = false; }
+            if hash_before == hash_after { all_ok = false; }
+            if world.alloc.count != 10 { all_ok = false; }
+            if stale_ok != 0 - 1 { all_ok = false; }
+            if e1_x != 20 { all_ok = false; }
+            if e1_y != 40 { all_ok = false; }
+            if total_ticks != 10 { all_ok = false; }
+
+            if all_ok { 0 } else { 1 }
+        }
+    };
+
+    if stress_ok != 0 { return 40 + stress_ok; }
+    println_str("layer 5 passed");
+
+    println_str("=== ALL LAYERS PASSED ===");
+    0
+}
