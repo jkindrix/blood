@@ -316,6 +316,305 @@ fn compute_specificity_bounded(ty: type_intern.TyId, depth: u32) -> u32 {
 }
 
 // ============================================================
+// Subtype-Based Specificity (DIS-01)
+// ============================================================
+
+/// Maximum recursion depth for subtype checking.
+fn max_subtype_depth() -> u32 { 64 }
+
+/// Checks if type `a` is a subtype of type `b` (a is at least as specific as b).
+///
+/// Implements structural subtyping with variance:
+/// - Covariant: &T (immutable), slices, arrays, tuples
+/// - Invariant: &mut T
+/// - Contravariant: fn parameters (reversed), covariant fn return
+/// - Never <: everything (bottom type)
+/// - Infer/Param on b side → true (type variables accept anything)
+/// - ADT: same def_id + pairwise subtype on args
+pub fn is_subtype_id(a: type_intern.TyId, b: type_intern.TyId, depth: u32) -> bool {
+    if depth >= max_subtype_depth() {
+        return false;
+    }
+
+    // Same type → always subtype
+    if a.index == b.index {
+        return true;
+    }
+
+    let interner = type_intern.type_interner();
+    let ka = interner.get(a);
+    let kb = interner.get(b);
+
+    // Never is subtype of everything
+    match ka {
+        &type_intern.InternedTypeKind.Never => { return true; }
+        _ => {}
+    }
+    // Nothing is subtype of Never (except Never itself, handled above)
+    match kb {
+        &type_intern.InternedTypeKind.Never => { return false; }
+        _ => {}
+    }
+
+    // Type variables on b side accept anything during dispatch
+    match kb {
+        &type_intern.InternedTypeKind.Infer(_) => { return true; }
+        &type_intern.InternedTypeKind.Param(_) => { return true; }
+        _ => {}
+    }
+
+    // Strip Ownership wrappers from both sides before structural comparison
+    match kb {
+        &type_intern.InternedTypeKind.Ownership { qualifier: _, inner: b_inner } => {
+            return is_subtype_id(a, b_inner, depth + 1);
+        }
+        _ => {}
+    }
+
+    // Structural variance rules
+    match ka {
+        &type_intern.InternedTypeKind.Primitive(pa) => {
+            match kb {
+                &type_intern.InternedTypeKind.Primitive(pb) => pa == pb,
+                _ => false,
+            }
+        }
+        &type_intern.InternedTypeKind.Ref { inner: a_inner, mutable: a_mut } => {
+            match kb {
+                &type_intern.InternedTypeKind.Ref { inner: b_inner, mutable: b_mut } => {
+                    if a_mut && !b_mut {
+                        // &mut T can be used where &T is expected (covariant)
+                        is_subtype_id(a_inner, b_inner, depth + 1)
+                    } else if !a_mut && b_mut {
+                        // &T is NOT subtype of &mut T
+                        false
+                    } else if a_mut && b_mut {
+                        // &mut T is invariant — require exact inner match
+                        types_equal_id(a_inner, b_inner, depth + 1)
+                    } else {
+                        // Both immutable — covariant
+                        is_subtype_id(a_inner, b_inner, depth + 1)
+                    }
+                }
+                _ => false,
+            }
+        }
+        &type_intern.InternedTypeKind.Ptr { inner: a_inner, mutable: a_mut } => {
+            match kb {
+                &type_intern.InternedTypeKind.Ptr { inner: b_inner, mutable: b_mut } => {
+                    if a_mut == b_mut {
+                        if a_mut {
+                            types_equal_id(a_inner, b_inner, depth + 1)
+                        } else {
+                            is_subtype_id(a_inner, b_inner, depth + 1)
+                        }
+                    } else {
+                        false
+                    }
+                }
+                _ => false,
+            }
+        }
+        &type_intern.InternedTypeKind.Adt { def_id: a_def, args: a_args } => {
+            match kb {
+                &type_intern.InternedTypeKind.Adt { def_id: b_def, args: b_args } => {
+                    if a_def.index != b_def.index {
+                        return false;
+                    }
+                    let a_len = interner.ty_list_len(a_args);
+                    let b_len = interner.ty_list_len(b_args);
+                    if a_len != b_len {
+                        return false;
+                    }
+                    for i in 0usize..a_len {
+                        let a_arg = interner.get_ty_list_element(a_args, i);
+                        let b_arg = interner.get_ty_list_element(b_args, i);
+                        if !is_subtype_id(a_arg, b_arg, depth + 1) {
+                            return false;
+                        }
+                    }
+                    true
+                }
+                // Concrete ADT is subtype of Param/Infer (handled above)
+                _ => false,
+            }
+        }
+        &type_intern.InternedTypeKind.Tuple(a_list) => {
+            match kb {
+                &type_intern.InternedTypeKind.Tuple(b_list) => {
+                    let a_len = interner.ty_list_len(a_list);
+                    let b_len = interner.ty_list_len(b_list);
+                    if a_len != b_len {
+                        return false;
+                    }
+                    for i in 0usize..a_len {
+                        let a_elem = interner.get_ty_list_element(a_list, i);
+                        let b_elem = interner.get_ty_list_element(b_list, i);
+                        if !is_subtype_id(a_elem, b_elem, depth + 1) {
+                            return false;
+                        }
+                    }
+                    true
+                }
+                _ => false,
+            }
+        }
+        &type_intern.InternedTypeKind.Array { element: a_elem, size: a_size } => {
+            match kb {
+                &type_intern.InternedTypeKind.Array { element: b_elem, size: b_size } => {
+                    a_size == b_size && is_subtype_id(a_elem, b_elem, depth + 1)
+                }
+                _ => false,
+            }
+        }
+        &type_intern.InternedTypeKind.Slice { element: a_elem } => {
+            match kb {
+                &type_intern.InternedTypeKind.Slice { element: b_elem } => {
+                    is_subtype_id(a_elem, b_elem, depth + 1)
+                }
+                _ => false,
+            }
+        }
+        &type_intern.InternedTypeKind.Fn { params: a_params, ret: a_ret, effects: _ } => {
+            match kb {
+                &type_intern.InternedTypeKind.Fn { params: b_params, ret: b_ret, effects: _ } => {
+                    let a_len = interner.ty_list_len(a_params);
+                    let b_len = interner.ty_list_len(b_params);
+                    if a_len != b_len {
+                        return false;
+                    }
+                    // Contravariant in parameters: b_param <: a_param
+                    for i in 0usize..a_len {
+                        let a_p = interner.get_ty_list_element(a_params, i);
+                        let b_p = interner.get_ty_list_element(b_params, i);
+                        if !is_subtype_id(b_p, a_p, depth + 1) {
+                            return false;
+                        }
+                    }
+                    // Covariant in return type
+                    is_subtype_id(a_ret, b_ret, depth + 1)
+                }
+                _ => false,
+            }
+        }
+        &type_intern.InternedTypeKind.Ownership { qualifier: _, inner: a_inner } => {
+            // Strip ownership wrapper and recurse
+            is_subtype_id(a_inner, b, depth + 1)
+        }
+        &type_intern.InternedTypeKind.Param(_) => {
+            // Param on the `a` side: a type variable is NOT more specific than a concrete type.
+            // Param <: Param if same id (handled by index equality above).
+            // Param <: concrete → false (generic is less specific than concrete).
+            match kb {
+                &type_intern.InternedTypeKind.Param(_) => false,
+                &type_intern.InternedTypeKind.Infer(_) => true,
+                _ => false,
+            }
+        }
+        &type_intern.InternedTypeKind.Infer(_) => {
+            // Infer is the least specific — subtype of Infer/Param only
+            match kb {
+                &type_intern.InternedTypeKind.Infer(_) => true,
+                &type_intern.InternedTypeKind.Param(_) => true,
+                _ => false,
+            }
+        }
+        _ => false,
+    }
+}
+
+/// Checks structural equality of two interned types (depth-bounded).
+fn types_equal_id(a: type_intern.TyId, b: type_intern.TyId, depth: u32) -> bool {
+    if a.index == b.index {
+        return true;
+    }
+    if depth >= max_subtype_depth() {
+        return false;
+    }
+    let interner = type_intern.type_interner();
+    let ka = interner.get(a);
+    let kb = interner.get(b);
+    match ka {
+        &type_intern.InternedTypeKind.Primitive(pa) => {
+            match kb {
+                &type_intern.InternedTypeKind.Primitive(pb) => pa == pb,
+                _ => false,
+            }
+        }
+        &type_intern.InternedTypeKind.Adt { def_id: a_def, args: a_args } => {
+            match kb {
+                &type_intern.InternedTypeKind.Adt { def_id: b_def, args: b_args } => {
+                    if a_def.index != b_def.index {
+                        return false;
+                    }
+                    let a_len = interner.ty_list_len(a_args);
+                    let b_len = interner.ty_list_len(b_args);
+                    if a_len != b_len {
+                        return false;
+                    }
+                    for i in 0usize..a_len {
+                        let a_arg = interner.get_ty_list_element(a_args, i);
+                        let b_arg = interner.get_ty_list_element(b_args, i);
+                        if !types_equal_id(a_arg, b_arg, depth + 1) {
+                            return false;
+                        }
+                    }
+                    true
+                }
+                _ => false,
+            }
+        }
+        &type_intern.InternedTypeKind.Ref { inner: a_inner, mutable: a_mut } => {
+            match kb {
+                &type_intern.InternedTypeKind.Ref { inner: b_inner, mutable: b_mut } => {
+                    a_mut == b_mut && types_equal_id(a_inner, b_inner, depth + 1)
+                }
+                _ => false,
+            }
+        }
+        &type_intern.InternedTypeKind.Tuple(a_list) => {
+            match kb {
+                &type_intern.InternedTypeKind.Tuple(b_list) => {
+                    let a_len = interner.ty_list_len(a_list);
+                    let b_len = interner.ty_list_len(b_list);
+                    if a_len != b_len {
+                        return false;
+                    }
+                    for i in 0usize..a_len {
+                        let a_elem = interner.get_ty_list_element(a_list, i);
+                        let b_elem = interner.get_ty_list_element(b_list, i);
+                        if !types_equal_id(a_elem, b_elem, depth + 1) {
+                            return false;
+                        }
+                    }
+                    true
+                }
+                _ => false,
+            }
+        }
+        &type_intern.InternedTypeKind.Never => {
+            match kb {
+                &type_intern.InternedTypeKind.Never => true,
+                _ => false,
+            }
+        }
+        &type_intern.InternedTypeKind.Param(a_id) => {
+            match kb {
+                &type_intern.InternedTypeKind.Param(b_id) => a_id.index == b_id.index,
+                _ => false,
+            }
+        }
+        &type_intern.InternedTypeKind.Infer(a_id) => {
+            match kb {
+                &type_intern.InternedTypeKind.Infer(b_id) => a_id.index == b_id.index,
+                _ => false,
+            }
+        }
+        _ => false,
+    }
+}
+
+// ============================================================
 // Definition-Time Ambiguity Detection
 // ============================================================
 
@@ -435,26 +734,28 @@ fn types_could_unify(a: type_intern.TyId, b: type_intern.TyId, depth: u32) -> bo
 }
 
 /// Checks if method m1 is strictly more specific than m2.
-/// m1 is more specific if all its parameter types are at least as specific
-/// and at least one is strictly more specific.
-fn is_more_specific(m1: &typeck_info.MethodInfo, m2: &typeck_info.MethodInfo) -> bool {
+/// m1 is more specific if all its parameter types are subtypes of m2's
+/// and at least one is strictly more specific (subtype but not supertype).
+pub fn is_more_specific(m1: &typeck_info.MethodInfo, m2: &typeck_info.MethodInfo) -> bool {
     if m1.param_tys.len() != m2.param_tys.len() {
         return false;
     }
-    let mut at_least_as_specific = true;
-    let mut strictly_more = false;
+    let mut all_at_least: bool = true;
+    let mut some_strictly: bool = false;
     for i in 0usize..m1.param_tys.len() {
-        let s1 = compute_specificity(m1.param_tys[i]);
-        let s2 = compute_specificity(m2.param_tys[i]);
-        if s1 < s2 {
-            at_least_as_specific = false;
+        let p1 = m1.param_tys[i];
+        let p2 = m2.param_tys[i];
+        // p1 must be a subtype of p2 (at least as specific)
+        if !is_subtype_id(p1, p2, 0) {
+            all_at_least = false;
             break;
         }
-        if s1 > s2 {
-            strictly_more = true;
+        // Strictly more specific if p1 <: p2 but not p2 <: p1
+        if !is_subtype_id(p2, p1, 0) {
+            some_strictly = true;
         }
     }
-    at_least_as_specific && strictly_more
+    all_at_least && some_strictly
 }
 
 /// An ambiguity found between two methods.
