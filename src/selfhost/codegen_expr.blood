@@ -990,9 +990,14 @@ pub fn emit_place_addr(
                 // data pointer before indexing.
                 match &current_hir_type {
                     &Option.Some(ty_id) => {
+                        // Use type_to_llvm_with_ctx_id for correct layout (handles
+                        // generic ADT substitution via rebuild_struct_with_args_id).
+                        let resolved_base = codegen_size.type_to_llvm_with_ctx_id(ctx, ty_id);
+                        if is_struct_or_array_type(&resolved_base) {
+                            current_base = resolved_base;
+                        }
                         match type_intern.get_adt_def_id(ty_id) {
                             Option.Some(def_id) => {
-                                current_base = ctx.adt_llvm_type(def_id.index);
                                 current_adt_def_id = Option.Some(def_id.index);
                             }
                             Option.None => {}
@@ -1452,8 +1457,14 @@ fn resolve_base_type_from_hir(
     hir_type: &hir_ty.Type,
 ) -> String {
     match &hir_type.kind {
-        &hir_ty.TypeKind.Adt { def_id, args: _ } => {
-            ctx.adt_llvm_type(def_id.index)
+        &hir_ty.TypeKind.Adt { def_id, ref args } => {
+            if args.len() > 0 {
+                // Generic ADT: use type_to_llvm_with_ctx_id for correct substituted layout
+                let ty_id = type_intern.type_to_ty_id(hir_type);
+                codegen_size.type_to_llvm_with_ctx_id(ctx, ty_id)
+            } else {
+                ctx.adt_llvm_type(def_id.index)
+            }
         }
         &hir_ty.TypeKind.Tuple(ref _elems) => {
             ctx.type_to_llvm_with_ctx(hir_type)
