@@ -755,24 +755,63 @@ fn lower_unary_expr(
             }
         }
         common.UnaryOp.Ref => {
-            // Take an immutable reference — copy to temp first.
-            // For immutable borrows, copying is safe because the caller
-            // cannot modify through the reference.
-            let temp = ctx.new_temp(operand.ty, span);
-            lower_expr(ctx, operand, mir_lower_ctx.destination_local(temp));
-
-            match dest.as_place() {
-                Option.Some(place) => {
-                    ctx.emit_assign(
-                        place,
-                        mir_types.Rvalue.Ref {
-                            place: mir_types.Place.local(temp),
-                            mutable: false,
-                        },
-                        span,
-                    );
+            // For place expressions (field access, locals, index), build the Place
+            // directly and take a reference INTO the original storage. This avoids
+            // the dangling-pointer bug where copying to a temp and taking &temp
+            // returns a pointer to a stack local that goes out of scope on return.
+            // Same pattern as RefMut below.
+            match &operand.kind {
+                &hir_expr.ExprKind.Field { ref base, ref field } => {
+                    let src_place = expr_to_place(ctx, operand, span);
+                    match dest.as_place() {
+                        Option.Some(place) => {
+                            ctx.emit_assign(
+                                place,
+                                mir_types.Rvalue.Ref {
+                                    place: src_place,
+                                    mutable: false,
+                                },
+                                span,
+                            );
+                        }
+                        Option.None => {}
+                    }
                 }
-                Option.None => {}
+                &hir_expr.ExprKind.Local(_) => {
+                    let src_place = expr_to_place(ctx, operand, span);
+                    match dest.as_place() {
+                        Option.Some(place) => {
+                            ctx.emit_assign(
+                                place,
+                                mir_types.Rvalue.Ref {
+                                    place: src_place,
+                                    mutable: false,
+                                },
+                                span,
+                            );
+                        }
+                        Option.None => {}
+                    }
+                }
+                _ => {
+                    // Non-place expression: evaluate to temp, take reference to temp.
+                    let temp = ctx.new_temp(operand.ty, span);
+                    lower_expr(ctx, operand, mir_lower_ctx.destination_local(temp));
+
+                    match dest.as_place() {
+                        Option.Some(place) => {
+                            ctx.emit_assign(
+                                place,
+                                mir_types.Rvalue.Ref {
+                                    place: mir_types.Place.local(temp),
+                                    mutable: false,
+                                },
+                                span,
+                            );
+                        }
+                        Option.None => {}
+                    }
+                }
             }
         }
         common.UnaryOp.RefMut => {
@@ -1635,6 +1674,10 @@ fn lower_assign_op_expr(
     }
 }
 
+// NOTE: This function handles ExprKind.AddrOf, which is DEAD CODE — no HIR
+// lowering path creates AddrOf expressions. The parser produces Unary { Ref/RefMut }
+// instead, which is handled by lower_unary_expr (UnaryOp.Ref / UnaryOp.RefMut).
+// If you need to fix `&expr` behavior, modify lower_unary_expr, NOT this function.
 fn lower_addr_of_expr(
     ctx: &mut mir_lower_ctx.MirLowerCtx,
     mutable: bool,
