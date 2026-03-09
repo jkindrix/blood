@@ -18,13 +18,18 @@
 //!
 //! Then link compiled Blood programs with `-lblood_runtime`.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell, UnsafeCell};
 use std::collections::HashMap;
 use std::ffi::{c_char, c_int, c_void, CStr};
 use std::io::{self, Write};
 use std::sync::OnceLock;
 
 use parking_lot::Mutex;
+
+// C library setjmp/longjmp for handler abort mechanism
+extern "C" {
+    fn longjmp(env: *mut c_void, val: c_int) -> !;
+}
 
 use crate::memory::{
     BloodPtr, PointerMetadata, generation, get_slot_generation, Region,
@@ -107,6 +112,124 @@ thread_local! {
     /// Supports nested region activation: inner regions push onto the stack,
     /// deactivation pops and restores the previous region.
     static ACTIVE_REGION_STACK: RefCell<Vec<u64>> = RefCell::new(Vec::new());
+}
+
+// ============================================================================
+// Handler Abort Mechanism (setjmp/longjmp for non-resuming handlers)
+// ============================================================================
+//
+// When a handler operation doesn't call resume(), the handler's return value
+// should become the result of the entire `with...handle` expression, skipping
+// any remaining computation in the effectful body.
+//
+// This is implemented via setjmp/longjmp:
+// - PushHandler emits setjmp() to establish a jump target
+// - blood_perform checks if the handler called resume (via WAS_RESUMED flag)
+// - If not resumed: longjmp back to the with-handle block with the result
+//
+// The abort state uses UnsafeCell (no RAII guards) to be longjmp-safe.
+
+const MAX_ABORT_TARGETS: usize = 64;
+
+/// Per-entry state for a handler abort target.
+struct AbortTarget {
+    /// Pointer to the jmp_buf (allocated by codegen on the stack).
+    jmpbuf_ptr: *mut u8,
+    /// The handler's return value when aborting (set before longjmp).
+    abort_value: i64,
+}
+
+thread_local! {
+    /// Whether the handler called resume() during the current blood_perform call.
+    /// Set to false before calling handler, set to true by blood_set_was_resumed().
+    static WAS_RESUMED: Cell<bool> = Cell::new(false);
+
+    /// Stack of abort targets for non-resuming handler unwinding.
+    /// Uses UnsafeCell to avoid RefCell borrow guards that conflict with longjmp.
+    static ABORT_TARGETS: UnsafeCell<[AbortTarget; MAX_ABORT_TARGETS]> = UnsafeCell::new(
+        // Safety: AbortTarget contains a raw pointer and i64, both are valid when zeroed
+        unsafe { std::mem::zeroed() }
+    );
+
+    /// Current depth of the abort target stack.
+    static ABORT_DEPTH: Cell<usize> = Cell::new(0);
+}
+
+/// Mark that the handler called resume() during the current perform.
+///
+/// Called from compiled handler code before invoking the continuation.
+#[no_mangle]
+pub unsafe extern "C" fn blood_set_was_resumed() {
+    WAS_RESUMED.with(|f| f.set(true));
+}
+
+/// Push a new abort target onto the stack.
+///
+/// Called from codegen at the start of a `with...handle` block.
+/// The jmpbuf_ptr points to a setjmp buffer allocated by the codegen on the stack.
+#[no_mangle]
+pub unsafe extern "C" fn blood_handler_push_abort_target(jmpbuf_ptr: *mut u8) {
+    let depth = ABORT_DEPTH.with(|d| d.get());
+    if depth >= MAX_ABORT_TARGETS {
+        eprintln!("BLOOD RUNTIME ERROR: handler abort target stack overflow (depth {})", depth);
+        std::process::abort();
+    }
+    ABORT_TARGETS.with(|targets| {
+        let arr = &mut *targets.get();
+        arr[depth].jmpbuf_ptr = jmpbuf_ptr;
+        arr[depth].abort_value = 0;
+    });
+    ABORT_DEPTH.with(|d| d.set(depth + 1));
+}
+
+/// Pop the abort target from the stack.
+///
+/// Called from codegen at the end of a `with...handle` block (normal exit path).
+#[no_mangle]
+pub unsafe extern "C" fn blood_handler_pop_abort_target() {
+    ABORT_DEPTH.with(|d| {
+        let depth = d.get();
+        if depth > 0 {
+            d.set(depth - 1);
+        }
+    });
+}
+
+/// Get the abort value after a longjmp.
+///
+/// Called from codegen in the setjmp return path (when setjmp returns non-zero).
+#[no_mangle]
+pub unsafe extern "C" fn blood_handler_get_abort_value() -> i64 {
+    let depth = ABORT_DEPTH.with(|d| d.get());
+    // After longjmp, depth has already been decremented by the abort path,
+    // so the abort value is at `depth` (current top after pop).
+    ABORT_TARGETS.with(|targets| {
+        let arr = &*targets.get();
+        arr[depth].abort_value
+    })
+}
+
+/// Abort back to the nearest with-handle block.
+///
+/// Called from blood_perform when the handler didn't resume.
+/// This does longjmp and never returns.
+#[no_mangle]
+pub unsafe extern "C" fn blood_handler_abort(value: i64) -> ! {
+    let depth = ABORT_DEPTH.with(|d| d.get());
+    if depth == 0 {
+        eprintln!("BLOOD RUNTIME ERROR: handler abort with no abort target");
+        std::process::abort();
+    }
+    let idx = depth - 1;
+    let jmpbuf_ptr = ABORT_TARGETS.with(|targets| {
+        let arr = &mut *targets.get();
+        arr[idx].abort_value = value;
+        arr[idx].jmpbuf_ptr
+    });
+    // Pop the target before longjmp (so get_abort_value reads from the right index)
+    ABORT_DEPTH.with(|d| d.set(idx));
+    // longjmp back to the setjmp in the with-handle block
+    longjmp(jmpbuf_ptr as *mut c_void, 1);
 }
 
 /// Get the currently active region ID (top of stack), or 0 if none.
@@ -3403,10 +3526,26 @@ pub unsafe extern "C" fn blood_perform(
                                 // Use extern "C" ABI matching compiled handler signatures
                                 type OpHandler = unsafe extern "C" fn(*mut c_void, *const i64, i64, i64) -> i64;
                                 let handler: OpHandler = std::mem::transmute(op_fn);
+
+                                // For non-tail-resumptive effects (continuation != 0),
+                                // track whether the handler calls resume()
+                                if continuation != 0 {
+                                    WAS_RESUMED.with(|f| f.set(false));
+                                }
+
                                 let result = handler(instance_state, args, arg_count, continuation);
 
                                 // Restore the handler entry
                                 vec.insert(idx, removed_entry);
+
+                                // If handler didn't resume a non-tail-resumptive effect,
+                                // abort back to the with-handle block
+                                if continuation != 0 && !WAS_RESUMED.with(|f| f.get())
+                                    && ABORT_DEPTH.with(|d| d.get()) > 0
+                                {
+                                    blood_handler_abort(result);
+                                    // Never reaches here
+                                }
 
                                 return result;
                             }
@@ -3469,11 +3608,27 @@ pub unsafe extern "C" fn blood_perform(
         // The handler signature is: fn(state: *void, args: *i64, arg_count: i64, continuation: i64) -> i64
         type OpHandler = unsafe extern "C" fn(*mut c_void, *const i64, i64, i64) -> i64;
         let handler: OpHandler = std::mem::transmute(op_fn);
+
+        // For non-tail-resumptive effects (continuation != 0),
+        // track whether the handler calls resume()
+        if continuation != 0 {
+            WAS_RESUMED.with(|f| f.set(false));
+        }
+
         let result = handler(instance_state, args, arg_count, continuation);
 
         // Restore the handler entry after the handler returns
         // Insert at the same position to maintain the correct order
         vec.insert(idx, removed_entry);
+
+        // If handler didn't resume a non-tail-resumptive effect,
+        // abort back to the with-handle block
+        if continuation != 0 && !WAS_RESUMED.with(|f| f.get())
+            && ABORT_DEPTH.with(|d| d.get()) > 0
+        {
+            blood_handler_abort(result);
+            // Never reaches here
+        }
 
         return result;
     }

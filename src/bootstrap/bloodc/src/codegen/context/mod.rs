@@ -819,6 +819,19 @@ pub struct CodegenContext<'ctx, 'a> {
     /// codegen helpers can produce diagnostics with source locations.
     /// Uses Cell<Span> because Span is Copy and we only need interior mutability.
     pub(super) current_mir_span: Cell<Span>,
+    /// Pending handler abort state for non-resuming handler support.
+    /// Set during PushHandler for handlers that may not resume (non-tail-resumptive).
+    /// The abort block is left unterminated and wired up at CallReturnClause time.
+    pub(super) handler_abort_pending: Option<HandlerAbortInfo<'ctx>>,
+}
+
+/// State for the setjmp/longjmp abort path of a non-resuming handler.
+pub(crate) struct HandlerAbortInfo<'ctx> {
+    /// The LLVM basic block where abort cleanup happens (pop handler, get value).
+    /// Left unterminated during PushHandler — terminated at CallReturnClause time.
+    pub abort_block: inkwell::basic_block::BasicBlock<'ctx>,
+    /// Alloca where the abort result value is stored.
+    pub abort_result: PointerValue<'ctx>,
 }
 
 impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
@@ -885,6 +898,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             lowering_adts: RefCell::new(HashSet::new()),
             type_lowering_errors: RefCell::new(Vec::new()),
             current_mir_span: Cell::new(Span::dummy()),
+            handler_abort_pending: None,
         }
     }
 
@@ -3955,6 +3969,36 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // blood_handler_depth(effect_id: i64) -> i64
         let handler_depth_type = i64_type.fn_type(&[i64_type.into()], false);
         self.module.add_function("blood_handler_depth", handler_depth_type, None);
+
+        // === Handler Abort Support (non-resuming handlers) ===
+
+        // setjmp(jmp_buf: ptr) -> i32
+        // Marked with returns_twice attribute for correct LLVM optimization
+        let setjmp_type = i32_type.fn_type(&[void_ptr_type.into()], false);
+        let setjmp_fn = self.module.add_function("setjmp", setjmp_type, None);
+        setjmp_fn.add_attribute(
+            inkwell::attributes::AttributeLoc::Function,
+            self.context.create_enum_attribute(
+                inkwell::attributes::Attribute::get_named_enum_kind_id("returns_twice"),
+                0,
+            ),
+        );
+
+        // blood_set_was_resumed() -> void
+        let set_resumed_type = void_type.fn_type(&[], false);
+        self.module.add_function("blood_set_was_resumed", set_resumed_type, None);
+
+        // blood_handler_push_abort_target(jmpbuf_ptr: ptr) -> void
+        let push_abort_type = void_type.fn_type(&[void_ptr_type.into()], false);
+        self.module.add_function("blood_handler_push_abort_target", push_abort_type, None);
+
+        // blood_handler_pop_abort_target() -> void
+        let pop_abort_type = void_type.fn_type(&[], false);
+        self.module.add_function("blood_handler_pop_abort_target", pop_abort_type, None);
+
+        // blood_handler_get_abort_value() -> i64
+        let get_abort_type = i64_type.fn_type(&[], false);
+        self.module.add_function("blood_handler_get_abort_value", get_abort_type, None);
 
         // === Fiber/Continuation Support ===
 

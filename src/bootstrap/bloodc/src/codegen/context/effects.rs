@@ -707,6 +707,13 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                     self.module.add_function("blood_continuation_resume_with_regions", fn_type, None)
                 });
 
+            // Mark that the handler called resume — blood_perform checks this
+            // to detect non-resuming handlers that should abort
+            let set_resumed_fn = self.module.get_function("blood_set_was_resumed")
+                .expect("blood_set_was_resumed should be declared");
+            self.builder.build_call(set_resumed_fn, &[], "")
+                .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
+
             // Call blood_continuation_resume_with_regions(resume_cont_handle, resume_value)
             let call_result = self.builder
                 .build_call(cont_resume_fn, &[resume_cont_handle.into(), resume_value.into()], "cont_result")

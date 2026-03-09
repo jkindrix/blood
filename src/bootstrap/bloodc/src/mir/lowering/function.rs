@@ -815,9 +815,21 @@ impl<'hir, 'ctx> FunctionLowering<'hir, 'ctx> {
 
         // Determine if this effect operation is tail-resumptive.
         // Standard effects have known tail-resumptive status.
+        // For user-defined effects, check the effect name against well-known
+        // names (e.g., Cancel must be non-tail-resumptive so the handler can
+        // discard the continuation to actually cancel).
         // Unknown effects default to tail-resumptive (optimistic assumption).
         let is_tail_resumptive = StandardEffects::is_tail_resumptive(effect_id)
-            .unwrap_or(true);
+            .unwrap_or_else(|| {
+                // Check if this user-defined effect has a well-known name
+                if let Some(item) = self.hir.get_item(effect_id) {
+                    if matches!(item.kind, hir::ItemKind::Effect { .. }) {
+                        return StandardEffects::is_tail_resumptive_by_name(&item.name)
+                            .unwrap_or(true);
+                    }
+                }
+                true
+            });
 
         // Emit the Perform terminator
         self.terminate(TerminatorKind::Perform {

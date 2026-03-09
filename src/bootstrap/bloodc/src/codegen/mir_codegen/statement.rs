@@ -8,6 +8,7 @@ use inkwell::{AddressSpace, IntPredicate};
 
 use crate::diagnostics::Diagnostic;
 use crate::effects::evidence::HandlerStateKind;
+use crate::effects::std_effects::StandardEffects;
 use crate::hir::TypeKind;
 use crate::mir::body::MirBody;
 use crate::mir::ptr::MemoryTier;
@@ -784,6 +785,139 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                         format!("LLVM call error: {}", e), stmt.span
                     )])?;
                 }
+
+                // === Handler Abort Support (setjmp for non-resuming handlers) ===
+                //
+                // For handlers whose effects may be non-tail-resumptive (e.g., Cancel, Error),
+                // set up a setjmp so blood_perform can longjmp back when the handler
+                // doesn't call resume().
+                let needs_abort_target = {
+                    let by_id = StandardEffects::is_tail_resumptive(effect_id);
+                    let result = match by_id {
+                        Some(true) => false,
+                        Some(false) => true,
+                        None => {
+                            if let Some(effect_info) = self.effect_defs.get(&effect_id) {
+                                StandardEffects::is_tail_resumptive_by_name(&effect_info.name)
+                                    .map(|tr| !tr)
+                                    .unwrap_or(false)
+                            } else {
+                                false
+                            }
+                        }
+                    };
+                    result
+                };
+
+                if needs_abort_target {
+                    let i32_ty = self.context.i32_type();
+                    let i8_ty = self.context.i8_type();
+
+                    // Allocate jmp_buf on stack (256 bytes, enough for x86-64 Linux jmp_buf)
+                    let jmpbuf_ty = i8_ty.array_type(256);
+                    let jmpbuf_alloca = self.builder.build_alloca(jmpbuf_ty, "handler_jmpbuf")
+                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), stmt.span)])?;
+
+                    // Allocate space for the abort result value
+                    let abort_result_alloca = self.builder.build_alloca(i64_ty, "handler_abort_result")
+                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), stmt.span)])?;
+
+                    // Push abort target onto the runtime stack
+                    let push_abort_fn = self.module.get_function("blood_handler_push_abort_target")
+                        .unwrap_or_else(|| {
+                            let fn_type = self.context.void_type().fn_type(
+                                &[self.context.ptr_type(AddressSpace::default()).into()], false);
+                            self.module.add_function("blood_handler_push_abort_target", fn_type, None)
+                        });
+                    self.builder.build_call(push_abort_fn, &[jmpbuf_alloca.into()], "")
+                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), stmt.span)])?;
+
+                    // Call setjmp — returns 0 on first call, non-zero on longjmp
+                    let setjmp_fn = self.module.get_function("setjmp")
+                        .unwrap_or_else(|| {
+                            let ptr_ty = self.context.ptr_type(AddressSpace::default());
+                            let i32_fn_ty = self.context.i32_type().fn_type(&[ptr_ty.into()], false);
+                            let f = self.module.add_function("setjmp", i32_fn_ty, None);
+                            f.add_attribute(inkwell::attributes::AttributeLoc::Function,
+                                self.context.create_enum_attribute(
+                                    inkwell::attributes::Attribute::get_named_enum_kind_id("returns_twice"), 0));
+                            f
+                        });
+                    let setjmp_result = self.builder.build_call(setjmp_fn, &[jmpbuf_alloca.into()], "setjmp_ret")
+                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), stmt.span)])?
+                        .try_as_basic_value()
+                        .basic()
+                        .ok_or_else(|| vec![Diagnostic::error("setjmp returned void", stmt.span)])?
+                        .into_int_value();
+
+                    // Branch: setjmp returned 0 (normal) vs non-zero (abort from longjmp)
+                    let is_abort = self.builder.build_int_compare(
+                        inkwell::IntPredicate::NE, setjmp_result, i32_ty.const_zero(), "is_abort"
+                    ).map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), stmt.span)])?;
+
+                    let current_fn = self.current_fn.ok_or_else(|| {
+                        vec![Diagnostic::error("No current function", stmt.span)]
+                    })?;
+                    let abort_block = self.context.append_basic_block(current_fn, "handler_abort");
+                    let normal_block = self.context.append_basic_block(current_fn, "handler_normal");
+
+                    self.builder.build_conditional_branch(is_abort, abort_block, normal_block)
+                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), stmt.span)])?;
+
+                    // --- Abort block: handler didn't resume, clean up and store abort value ---
+                    self.builder.position_at_end(abort_block);
+
+                    // Pop handler from evidence vector
+                    let ev_pop = self.module.get_function("blood_evidence_pop")
+                        .unwrap_or_else(|| {
+                            let fn_type = self.context.void_type().fn_type(&[i8_ptr_ty.into()], false);
+                            self.module.add_function("blood_evidence_pop", fn_type, None)
+                        });
+                    let ev_current_fn = self.module.get_function("blood_evidence_current")
+                        .unwrap_or_else(|| {
+                            let fn_type = i8_ptr_ty.fn_type(&[], false);
+                            self.module.add_function("blood_evidence_current", fn_type, None)
+                        });
+                    let ev = self.builder.build_call(ev_current_fn, &[], "abort_ev")
+                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), stmt.span)])?
+                        .try_as_basic_value().basic()
+                        .ok_or_else(|| vec![Diagnostic::error("blood_evidence_current returned void", stmt.span)])?;
+                    self.builder.build_call(ev_pop, &[ev.into()], "")
+                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), stmt.span)])?;
+
+                    // Clear inline evidence hint
+                    let ev_clear = self.module.get_function("blood_evidence_clear_inline")
+                        .unwrap_or_else(|| {
+                            let fn_type = self.context.void_type().fn_type(&[], false);
+                            self.module.add_function("blood_evidence_clear_inline", fn_type, None)
+                        });
+                    self.builder.build_call(ev_clear, &[], "")
+                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), stmt.span)])?;
+
+                    // Get the abort value from the runtime
+                    let get_abort_fn = self.module.get_function("blood_handler_get_abort_value")
+                        .unwrap_or_else(|| {
+                            let fn_type = i64_ty.fn_type(&[], false);
+                            self.module.add_function("blood_handler_get_abort_value", fn_type, None)
+                        });
+                    let abort_val = self.builder.build_call(get_abort_fn, &[], "abort_val")
+                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), stmt.span)])?
+                        .try_as_basic_value().basic()
+                        .ok_or_else(|| vec![Diagnostic::error("get_abort_value returned void", stmt.span)])?
+                        .into_int_value();
+                    self.builder.build_store(abort_result_alloca, abort_val)
+                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), stmt.span)])?;
+
+                    // Leave abort block unterminated — will be wired up at CallReturnClause time
+                    // Store the abort info for later use
+                    self.handler_abort_pending = Some(crate::codegen::context::HandlerAbortInfo {
+                        abort_block,
+                        abort_result: abort_result_alloca,
+                    });
+
+                    // --- Normal block: continue with body evaluation ---
+                    self.builder.position_at_end(normal_block);
+                }
             }
 
             StatementKind::PushInlineHandler { effect_id, operations, allocation_tier, inline_mode } => {
@@ -1210,6 +1344,144 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                         format!("LLVM call error: {}", e), stmt.span
                     )])?;
                 }
+
+                // === Handler Abort Support (setjmp for non-resuming handlers) ===
+                //
+                // For handlers whose effects may be non-tail-resumptive (e.g., Cancel, Error),
+                // set up a setjmp so blood_perform can longjmp back when the handler
+                // doesn't call resume().
+                //
+                // Check if this handler's effect is non-tail-resumptive
+                let needs_abort_target = {
+                    // Check well-known effect IDs first
+                    let by_id = StandardEffects::is_tail_resumptive(*effect_id);
+                    let result = match by_id {
+                        Some(true) => false,   // Definitely tail-resumptive, no abort needed
+                        Some(false) => true,   // Definitely non-tail-resumptive, need abort
+                        None => {
+                            // User-defined effect: check by name via effect_defs
+                            if let Some(effect_info) = self.effect_defs.get(effect_id) {
+                                StandardEffects::is_tail_resumptive_by_name(&effect_info.name)
+                                    .map(|tr| !tr) // true if non-tail-resumptive
+                                    .unwrap_or(false) // unknown effects: assume tail-resumptive (no abort)
+                            } else {
+                                false
+                            }
+                        }
+                    };
+                    result
+                };
+
+                if needs_abort_target {
+                    let i32_ty = self.context.i32_type();
+                    let i8_ptr_ty = self.context.ptr_type(AddressSpace::default());
+                    let i8_ty = self.context.i8_type();
+
+                    // Allocate jmp_buf on stack (256 bytes, enough for x86-64 Linux jmp_buf)
+                    let jmpbuf_ty = i8_ty.array_type(256);
+                    let jmpbuf_alloca = self.builder.build_alloca(jmpbuf_ty, "handler_jmpbuf")
+                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), stmt.span)])?;
+
+                    // Allocate space for the abort result value
+                    let abort_result_alloca = self.builder.build_alloca(i64_ty, "handler_abort_result")
+                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), stmt.span)])?;
+
+                    // Push abort target onto the runtime stack
+                    let push_abort_fn = self.module.get_function("blood_handler_push_abort_target")
+                        .unwrap_or_else(|| {
+                            let fn_type = self.context.void_type().fn_type(
+                                &[self.context.ptr_type(AddressSpace::default()).into()], false);
+                            self.module.add_function("blood_handler_push_abort_target", fn_type, None)
+                        });
+                    self.builder.build_call(push_abort_fn, &[jmpbuf_alloca.into()], "")
+                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), stmt.span)])?;
+
+                    // Call setjmp — returns 0 on first call, non-zero on longjmp
+                    let setjmp_fn = self.module.get_function("setjmp")
+                        .unwrap_or_else(|| {
+                            let ptr_ty = self.context.ptr_type(AddressSpace::default());
+                            let i32_fn_ty = self.context.i32_type().fn_type(&[ptr_ty.into()], false);
+                            let f = self.module.add_function("setjmp", i32_fn_ty, None);
+                            f.add_attribute(inkwell::attributes::AttributeLoc::Function,
+                                self.context.create_enum_attribute(
+                                    inkwell::attributes::Attribute::get_named_enum_kind_id("returns_twice"), 0));
+                            f
+                        });
+                    let setjmp_result = self.builder.build_call(setjmp_fn, &[jmpbuf_alloca.into()], "setjmp_ret")
+                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), stmt.span)])?
+                        .try_as_basic_value()
+                        .basic()
+                        .ok_or_else(|| vec![Diagnostic::error("setjmp returned void", stmt.span)])?
+                        .into_int_value();
+
+                    // Branch: setjmp returned 0 (normal) vs non-zero (abort from longjmp)
+                    let is_abort = self.builder.build_int_compare(
+                        inkwell::IntPredicate::NE, setjmp_result, i32_ty.const_zero(), "is_abort"
+                    ).map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), stmt.span)])?;
+
+                    let current_fn = self.current_fn.ok_or_else(|| {
+                        vec![Diagnostic::error("No current function", stmt.span)]
+                    })?;
+                    let abort_block = self.context.append_basic_block(current_fn, "handler_abort");
+                    let normal_block = self.context.append_basic_block(current_fn, "handler_normal");
+
+                    self.builder.build_conditional_branch(is_abort, abort_block, normal_block)
+                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), stmt.span)])?;
+
+                    // --- Abort block: handler didn't resume, clean up and store abort value ---
+                    self.builder.position_at_end(abort_block);
+
+                    // Pop handler from evidence vector (it was pushed before body ran)
+                    let ev_pop = self.module.get_function("blood_evidence_pop")
+                        .unwrap_or_else(|| {
+                            let fn_type = self.context.void_type().fn_type(&[i8_ptr_ty.into()], false);
+                            self.module.add_function("blood_evidence_pop", fn_type, None)
+                        });
+                    let ev_current_inline = self.module.get_function("blood_evidence_current")
+                        .unwrap_or_else(|| {
+                            let fn_type = i8_ptr_ty.fn_type(&[], false);
+                            self.module.add_function("blood_evidence_current", fn_type, None)
+                        });
+                    let ev = self.builder.build_call(ev_current_inline, &[], "abort_ev")
+                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), stmt.span)])?
+                        .try_as_basic_value().basic()
+                        .ok_or_else(|| vec![Diagnostic::error("blood_evidence_current returned void", stmt.span)])?;
+                    self.builder.build_call(ev_pop, &[ev.into()], "")
+                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), stmt.span)])?;
+
+                    // Clear inline evidence hint
+                    let ev_clear = self.module.get_function("blood_evidence_clear_inline")
+                        .unwrap_or_else(|| {
+                            let fn_type = self.context.void_type().fn_type(&[], false);
+                            self.module.add_function("blood_evidence_clear_inline", fn_type, None)
+                        });
+                    self.builder.build_call(ev_clear, &[], "")
+                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), stmt.span)])?;
+
+                    // Get the abort value from the runtime
+                    let get_abort_fn = self.module.get_function("blood_handler_get_abort_value")
+                        .unwrap_or_else(|| {
+                            let fn_type = i64_ty.fn_type(&[], false);
+                            self.module.add_function("blood_handler_get_abort_value", fn_type, None)
+                        });
+                    let abort_val = self.builder.build_call(get_abort_fn, &[], "abort_val")
+                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), stmt.span)])?
+                        .try_as_basic_value().basic()
+                        .ok_or_else(|| vec![Diagnostic::error("get_abort_value returned void", stmt.span)])?
+                        .into_int_value();
+                    self.builder.build_store(abort_result_alloca, abort_val)
+                        .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), stmt.span)])?;
+
+                    // Leave abort block unterminated — will be wired up at CallReturnClause time
+                    // Store the abort info for later use
+                    self.handler_abort_pending = Some(crate::codegen::context::HandlerAbortInfo {
+                        abort_block,
+                        abort_result: abort_result_alloca,
+                    });
+
+                    // --- Normal block: continue with body evaluation ---
+                    self.builder.position_at_end(normal_block);
+                }
             }
 
             StatementKind::PopHandler => {
@@ -1258,6 +1530,19 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                     .map_err(|e| vec![Diagnostic::error(
                         format!("LLVM call error: {}", e), stmt.span
                     )])?;
+
+                // Pop abort target if one was pushed (for non-resuming handler support)
+                if self.handler_abort_pending.is_some() {
+                    let pop_abort_fn = self.module.get_function("blood_handler_pop_abort_target")
+                        .unwrap_or_else(|| {
+                            let fn_type = self.context.void_type().fn_type(&[], false);
+                            self.module.add_function("blood_handler_pop_abort_target", fn_type, None)
+                        });
+                    self.builder.build_call(pop_abort_fn, &[], "")
+                        .map_err(|e| vec![Diagnostic::error(
+                            format!("LLVM call error: {}", e), stmt.span
+                        )])?;
+                }
             }
 
             StatementKind::CallReturnClause { handler_id: _, handler_name, body_result, state_place, destination } => {
@@ -1400,6 +1685,71 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                     .map_err(|e| vec![Diagnostic::error(
                         format!("LLVM store error: {}", e), stmt.span
                     )])?;
+
+                // Wire up the abort path if there's a pending handler abort
+                if let Some(abort_info) = self.handler_abort_pending.take() {
+                    let current_fn = self.current_fn.ok_or_else(|| {
+                        vec![Diagnostic::error("No current function", stmt.span)]
+                    })?;
+                    let merge_block = self.context.append_basic_block(current_fn, "handler_merge");
+
+                    // Normal path: branch to merge after storing return clause result
+                    self.builder.build_unconditional_branch(merge_block)
+                        .map_err(|e| vec![Diagnostic::error(
+                            format!("LLVM error: {}", e), stmt.span
+                        )])?;
+
+                    // Abort path: load abort value, convert to dest type, store to dest, branch to merge
+                    self.builder.position_at_end(abort_info.abort_block);
+
+                    let abort_val = self.builder.build_load(i64_ty, abort_info.abort_result, "abort_val_load")
+                        .map_err(|e| vec![Diagnostic::error(
+                            format!("LLVM error: {}", e), stmt.span
+                        )])?
+                        .into_int_value();
+
+                    // Convert abort value to destination type (same logic as return clause result)
+                    let abort_converted: BasicValueEnum = if dest_llvm_ty.is_int_type() {
+                        let dest_int_ty = dest_llvm_ty.into_int_type();
+                        if dest_int_ty.get_bit_width() == 64 {
+                            abort_val.into()
+                        } else if dest_int_ty.get_bit_width() < 64 {
+                            self.builder.build_int_truncate(abort_val, dest_int_ty, "abort_trunc")
+                                .map_err(|e| vec![Diagnostic::error(
+                                    format!("LLVM error: {}", e), stmt.span
+                                )])?
+                                .into()
+                        } else {
+                            self.builder.build_int_s_extend(abort_val, dest_int_ty, "abort_ext")
+                                .map_err(|e| vec![Diagnostic::error(
+                                    format!("LLVM error: {}", e), stmt.span
+                                )])?
+                                .into()
+                        }
+                    } else if dest_llvm_ty.is_pointer_type() {
+                        self.builder.build_int_to_ptr(
+                            abort_val, dest_llvm_ty.into_pointer_type(), "abort_ptr"
+                        ).map_err(|e| vec![Diagnostic::error(
+                            format!("LLVM error: {}", e), stmt.span
+                        )])?
+                        .into()
+                    } else {
+                        abort_val.into()
+                    };
+
+                    self.builder.build_store(dest_ptr, abort_converted)
+                        .map_err(|e| vec![Diagnostic::error(
+                            format!("LLVM error: {}", e), stmt.span
+                        )])?;
+
+                    self.builder.build_unconditional_branch(merge_block)
+                        .map_err(|e| vec![Diagnostic::error(
+                            format!("LLVM error: {}", e), stmt.span
+                        )])?;
+
+                    // Continue from merge block
+                    self.builder.position_at_end(merge_block);
+                }
             }
 
             StatementKind::CallFinallyClause { handler_id: _, handler_name, ref state_place } => {

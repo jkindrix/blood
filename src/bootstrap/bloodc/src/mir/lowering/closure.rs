@@ -649,7 +649,15 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
 
         // Determine tail-resumptiveness
         let is_tail_resumptive = StandardEffects::is_tail_resumptive(effect_id)
-            .unwrap_or(true);
+            .unwrap_or_else(|| {
+                if let Some(item) = self.hir.get_item(effect_id) {
+                    if matches!(item.kind, hir::ItemKind::Effect { .. }) {
+                        return StandardEffects::is_tail_resumptive_by_name(&item.name)
+                            .unwrap_or(true);
+                    }
+                }
+                true
+            });
 
         // Emit the Perform terminator
         self.terminate(TerminatorKind::Perform {

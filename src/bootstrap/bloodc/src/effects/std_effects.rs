@@ -17,6 +17,7 @@
 //! | State  | get, put, modify | Yes |
 //! | Error  | throw, try/catch | No (final ctl) |
 //! | IO     | print, read, write | Yes |
+//! | Cancel | check_cancelled | Yes |
 //!
 //! ## Implementation Notes
 //!
@@ -44,6 +45,11 @@ pub const CONSOLE_EFFECT_ID: u32 = 0x1003;
 /// Well-known DefId for the StaleReference effect.
 /// This effect is raised when a generational pointer validation fails.
 pub const STALE_REFERENCE_EFFECT_ID: u32 = 0x1004;
+
+/// Well-known DefId for the Cancel effect.
+/// Cooperative cancellation: `check_cancelled()` checks a flag and
+/// triggers abnormal exit when cancelled. Tail-resumptive (returns unit).
+pub const CANCEL_EFFECT_ID: u32 = 0x1005;
 
 // ============================================================================
 // State Effect (WI-018)
@@ -347,6 +353,54 @@ impl Default for ConsoleEffect {
 }
 
 // ============================================================================
+// Cancel Effect (ADR-036)
+// ============================================================================
+
+/// Cancel effect for cooperative cancellation.
+///
+/// Provides a single operation `check_cancelled()` that checks whether
+/// the current fiber has been requested to cancel. When cancelled, the
+/// handler triggers abnormal exit and finally clause execution.
+///
+/// ```text
+/// effect Cancel {
+///     op check_cancelled() -> ()
+/// }
+/// ```
+#[derive(Debug, Clone)]
+pub struct CancelEffect;
+
+impl CancelEffect {
+    /// Create a new Cancel effect.
+    pub fn new() -> Self {
+        Self
+    }
+
+    /// Get the DefId for this effect.
+    pub fn def_id() -> DefId {
+        DefId::new(CANCEL_EFFECT_ID)
+    }
+
+    /// Get operation index for `check_cancelled`.
+    pub const CHECK_CANCELLED_OP: u32 = 0;
+
+    /// Check if this effect is tail-resumptive.
+    ///
+    /// Cancel is NOT tail-resumptive: the handler may choose not to resume
+    /// (when cancelled), discarding the continuation. This requires a full
+    /// continuation capture at each check_cancelled() call site.
+    pub fn is_tail_resumptive() -> bool {
+        false
+    }
+}
+
+impl Default for CancelEffect {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+// ============================================================================
 // Effect Registry
 // ============================================================================
 
@@ -386,6 +440,7 @@ impl StandardEffects {
             || id == IO_EFFECT_ID
             || id == CONSOLE_EFFECT_ID
             || id == STALE_REFERENCE_EFFECT_ID
+            || id == CANCEL_EFFECT_ID
     }
 
     /// Get the name of a standard effect by DefId.
@@ -396,6 +451,21 @@ impl StandardEffects {
             x if x == IO_EFFECT_ID => Some("IO"),
             x if x == CONSOLE_EFFECT_ID => Some("Console"),
             x if x == STALE_REFERENCE_EFFECT_ID => Some("StaleReference"),
+            x if x == CANCEL_EFFECT_ID => Some("Cancel"),
+            _ => None,
+        }
+    }
+
+    /// Check if an effect is tail-resumptive by name.
+    /// Used for user-defined effects that match well-known effect names.
+    pub fn is_tail_resumptive_by_name(name: &str) -> Option<bool> {
+        match name {
+            "State" => Some(true),
+            "Error" => Some(false),
+            "IO" => Some(true),
+            "Console" => Some(true),
+            "StaleReference" => Some(false),
+            "Cancel" => Some(false),
             _ => None,
         }
     }
@@ -409,6 +479,7 @@ impl StandardEffects {
             x if x == IO_EFFECT_ID => Some(true),
             x if x == CONSOLE_EFFECT_ID => Some(true),
             x if x == STALE_REFERENCE_EFFECT_ID => Some(false),
+            x if x == CANCEL_EFFECT_ID => Some(false),
             _ => None,
         }
     }
