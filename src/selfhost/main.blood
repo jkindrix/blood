@@ -3306,14 +3306,16 @@ fn generate_handler_wrappers(
                 }
             }
 
-            // Call blood_evidence_register
-            ir.push_str("  call void @blood_evidence_register(ptr null, i64 ");
+            // Call blood_evidence_register (default to deep=1; selfhost groups by effect)
+            ir.push_str("  %reg_idx_");
+            ir.push_str(eid_str.as_str());
+            ir.push_str(" = call i64 @blood_evidence_register(ptr null, i64 ");
             ir.push_str(eid_str.as_str());
             ir.push_str(", ptr %handler_ops_");
             ir.push_str(eid_str.as_str());
             ir.push_str(", i64 ");
             push_usize(&mut ir, op_count);
-            ir.push_str(")\n");
+            ir.push_str(", i64 1)\n");
         }
 
     }

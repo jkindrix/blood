@@ -3950,13 +3950,14 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let ev_get_type = i64_type.fn_type(&[void_ptr_type.into(), i64_type.into()], false);
         self.module.add_function("blood_evidence_get", ev_get_type, None);
 
-        // blood_evidence_register(ev: *void, effect_id: i64, ops: **void, op_count: i64) -> i64
+        // blood_evidence_register(ev: *void, effect_id: i64, ops: **void, op_count: i64, is_deep: i64) -> i64
         let void_ptr_ptr_type = self.context.ptr_type(AddressSpace::default());
         let ev_register_type = i64_type.fn_type(&[
             void_ptr_type.into(),
             i64_type.into(),
             void_ptr_ptr_type.into(),  // ops is **void (pointer to array of function pointers)
             i64_type.into(),
+            i64_type.into(),           // is_deep: 1 = deep, 0 = shallow
         ], false);
         self.module.add_function("blood_evidence_register", ev_register_type, None);
 

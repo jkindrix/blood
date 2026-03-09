@@ -958,6 +958,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                         i64_type.into(), // effect_id
                         ptr_type.into(), // ops array (pointer to pointer array)
                         i64_type.into(), // op_count
+                        i64_type.into(), // is_deep (1 = deep, 0 = shallow)
                     ],
                     false,
                 );
@@ -1011,15 +1012,22 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 self.builder.build_gep(array_type, ops_alloca, &[zero, zero], "ops_ptr")
             }.map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
 
-            // Call blood_evidence_register(null, effect_id, ops, op_count)
+            // Call blood_evidence_register(null, effect_id, ops, op_count, is_deep)
             // Returns the registry index for this handler
             let effect_id_val = i64_type.const_int(handler_info.effect_id.index as u64, false);
             let op_count_val = i64_type.const_int(op_count as u64, false);
             let null_ev = ptr_type.const_null();
+            let is_deep_val = i64_type.const_int(
+                match handler_info.kind {
+                    crate::effects::handler::HandlerKind::Deep => 1,
+                    crate::effects::handler::HandlerKind::Shallow => 0,
+                },
+                false,
+            );
 
             let reg_result = self.builder.build_call(
                 register_fn,
-                &[null_ev.into(), effect_id_val.into(), ops_ptr.into(), op_count_val.into()],
+                &[null_ev.into(), effect_id_val.into(), ops_ptr.into(), op_count_val.into(), is_deep_val.into()],
                 "reg_idx",
             ).map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), self.current_span())])?;
 

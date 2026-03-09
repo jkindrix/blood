@@ -3326,6 +3326,7 @@ struct EffectHandlerEntry {
     effect_id: i64,
     operations: Vec<*const c_void>,  // Function pointers for each operation
     state: *mut c_void,               // Handler state (for State<T> effect)
+    is_deep: bool,                    // Deep handler re-wraps continuation on resume
 }
 
 // Safety: The raw pointers are only accessed through the mutex,
@@ -3340,6 +3341,13 @@ static EFFECT_REGISTRY: OnceLock<Mutex<Vec<EffectHandlerEntry>>> = OnceLock::new
 // Thread-local current evidence vector for effect dispatch.
 thread_local! {
     static CURRENT_EVIDENCE: std::cell::RefCell<Option<EvidenceHandle>> = const { std::cell::RefCell::new(None) };
+}
+
+// Thread-local stack of deep handler entries removed during blood_perform.
+// When a deep handler's op body calls resume(), the entry is re-pushed onto
+// the evidence vector so subsequent performs are caught by the same handler.
+thread_local! {
+    static DEEP_HANDLER_STACK: std::cell::RefCell<Vec<EvidenceEntry>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// Inline evidence entry for single-handler scopes (EFF-OPT-003).
@@ -3371,6 +3379,7 @@ fn get_effect_registry() -> &'static Mutex<Vec<EffectHandlerEntry>> {
 /// * `effect_id` - Unique identifier for the effect type
 /// * `ops` - Pointer to array of operation function pointers
 /// * `op_count` - Number of operations
+/// * `is_deep` - 1 for deep handler (re-wraps on resume), 0 for shallow
 ///
 /// # Safety
 /// The ops pointer must point to a valid array of function pointers.
@@ -3380,6 +3389,7 @@ pub unsafe extern "C" fn blood_evidence_register(
     effect_id: i64,
     ops: *const *const c_void,
     op_count: i64,
+    is_deep: i64,
 ) -> i64 {
     // ops must be valid
     if ops.is_null() {
@@ -3398,6 +3408,7 @@ pub unsafe extern "C" fn blood_evidence_register(
         effect_id,
         operations,
         state: std::ptr::null_mut(),
+        is_deep: is_deep != 0,
     };
 
     // Add to registry
@@ -3543,6 +3554,7 @@ pub unsafe extern "C" fn blood_perform(
                         if let Some(&op_fn) = registry_entry.operations.get(op_index as usize) {
                             if !op_fn.is_null() {
                                 let instance_state = ev_entry.state;
+                                let handler_is_deep = registry_entry.is_deep;
                                 drop(reg);
 
                                 // Temporarily remove handler entry to implement delimited
@@ -3550,6 +3562,15 @@ pub unsafe extern "C" fn blood_perform(
                                 // effects it performs itself (e.g., forwarding to outer handler)
                                 let idx = vec.len() - 1;
                                 let removed_entry = vec.remove(idx);
+
+                                // For deep handlers, push onto thread-local stack so
+                                // blood_continuation_resume can re-insert it before
+                                // running the continuation (deep re-wrap semantics)
+                                if handler_is_deep {
+                                    DEEP_HANDLER_STACK.with(|s| {
+                                        s.borrow_mut().push(removed_entry);
+                                    });
+                                }
 
                                 // Use extern "C" ABI matching compiled handler signatures
                                 type OpHandler = unsafe extern "C" fn(*mut c_void, *const i64, i64, i64) -> i64;
@@ -3562,6 +3583,13 @@ pub unsafe extern "C" fn blood_perform(
                                 }
 
                                 let result = handler(instance_state, args, arg_count, continuation);
+
+                                // Pop deep handler entry from thread-local stack
+                                if handler_is_deep {
+                                    DEEP_HANDLER_STACK.with(|s| {
+                                        s.borrow_mut().pop();
+                                    });
+                                }
 
                                 // Restore the handler entry
                                 vec.insert(idx, removed_entry);
@@ -3616,7 +3644,7 @@ pub unsafe extern "C" fn blood_perform(
                 if let Some(&op_fn) = registry_entry.operations.get(op_index as usize) {
                     if !op_fn.is_null() {
                         found_idx = Some(i);
-                        handler_info = Some((ev_entry.state, op_fn));
+                        handler_info = Some((ev_entry.state, op_fn, registry_entry.is_deep));
                         break;
                     }
                 }
@@ -3627,10 +3655,19 @@ pub unsafe extern "C" fn blood_perform(
     // Drop the registry lock before calling handler (handler may need it)
     drop(reg);
 
-    if let (Some(idx), Some((instance_state, op_fn))) = (found_idx, handler_info) {
+    if let (Some(idx), Some((instance_state, op_fn, handler_is_deep))) = (found_idx, handler_info) {
         // Remove the handler entry temporarily to implement delimited continuation semantics
         // This prevents the handler from catching effects it performs itself
         let removed_entry = vec.remove(idx);
+
+        // For deep handlers, push onto thread-local stack so
+        // blood_continuation_resume can re-insert it before
+        // running the continuation (deep re-wrap semantics)
+        if handler_is_deep {
+            DEEP_HANDLER_STACK.with(|s| {
+                s.borrow_mut().push(removed_entry);
+            });
+        }
 
         // Call the operation handler
         // The handler signature is: fn(state: *void, args: *i64, arg_count: i64, continuation: i64) -> i64
@@ -3644,6 +3681,13 @@ pub unsafe extern "C" fn blood_perform(
         }
 
         let result = handler(instance_state, args, arg_count, continuation);
+
+        // Pop deep handler entry from thread-local stack
+        if handler_is_deep {
+            DEEP_HANDLER_STACK.with(|s| {
+                s.borrow_mut().pop();
+            });
+        }
 
         // Restore the handler entry after the handler returns
         // Insert at the same position to maintain the correct order
@@ -5039,9 +5083,24 @@ pub extern "C" fn blood_continuation_resume(continuation: ContinuationHandle, va
     let k_ref = ContinuationRef { id: continuation };
 
     if let Some(k) = take_continuation(k_ref) {
+        // Deep handler re-wrap: if a deep handler is on the thread-local stack,
+        // re-push it onto the evidence vector before running the continuation.
+        // This ensures subsequent performs of the same effect within the resumed
+        // computation are caught by the same handler (deep semantics).
+        let deep_entry = DEEP_HANDLER_STACK.with(|s| {
+            s.borrow().last().copied()
+        });
+
+        if let Some(entry) = deep_entry {
+            let ev = blood_evidence_current();
+            if !ev.is_null() {
+                let vec = unsafe { &mut *(ev as *mut Vec<EvidenceEntry>) };
+                vec.push(entry);
+            }
+        }
+
         // Resume the continuation with the provided value
-        // For now, we use i64 as the universal value type
-        match k.try_resume::<i64, i64>(value) {
+        let result = match k.try_resume::<i64, i64>(value) {
             Some(result) => result,
             None => {
                 eprintln!(
@@ -5051,7 +5110,18 @@ pub extern "C" fn blood_continuation_resume(continuation: ContinuationHandle, va
                 );
                 std::process::abort();
             }
+        };
+
+        // Pop the re-pushed deep handler entry after continuation returns
+        if deep_entry.is_some() {
+            let ev = blood_evidence_current();
+            if !ev.is_null() {
+                let vec = unsafe { &mut *(ev as *mut Vec<EvidenceEntry>) };
+                vec.pop();
+            }
         }
+
+        result
     } else {
         // Continuation not found: either the handle is invalid (never created)
         // or the continuation was already consumed (single-shot used twice).
@@ -10336,7 +10406,7 @@ mod tests {
         unsafe {
             extern "C" fn mock_op(_state: *mut c_void, _args: *const i64, _arg_count: i64, _continuation: i64) -> i64 { 0 }
             let ops: [*const c_void; 1] = [mock_op as *const c_void];
-            blood_evidence_register(ev, 1, ops.as_ptr(), 1);
+            blood_evidence_register(ev, 1, ops.as_ptr(), 1, 1);
         }
 
         // Now depth should be 1
@@ -10367,7 +10437,7 @@ mod tests {
                 }
             }
             let ops: [*const c_void; 1] = [double_op as *const c_void];
-            blood_evidence_register(ev, 100, ops.as_ptr(), 1);
+            blood_evidence_register(ev, 100, ops.as_ptr(), 1, 1);
         }
 
         // Perform the effect operation
@@ -10389,7 +10459,7 @@ mod tests {
         unsafe {
             extern "C" fn noop(_state: *mut c_void, _args: *const i64, _arg_count: i64, _continuation: i64) -> i64 { 0 }
             let ops: [*const c_void; 1] = [noop as *const c_void];
-            blood_evidence_register(ev, 50, ops.as_ptr(), 1);
+            blood_evidence_register(ev, 50, ops.as_ptr(), 1, 1);
         }
 
         // Set state

@@ -1,0 +1,31 @@
+// RUN: blood run %s
+// CHECK: deep count: 3
+
+// Test that deep handlers remain active across multiple performs.
+// The handler counts ticks and the return clause reports the total.
+
+effect Counter { op tick() -> (); }
+
+deep handler DeepCounter for Counter {
+    let mut count: i32
+
+    return(x) { count }
+    op tick() {
+        count = count + 1;
+        resume(())
+    }
+}
+
+fn tick_three() -> i32 / {Counter} {
+    perform Counter.tick();
+    perform Counter.tick();
+    perform Counter.tick();
+    0
+}
+
+fn main() -> i32 {
+    let result: i32 = with DeepCounter { count: 0 } handle { tick_three() };
+    println_str("deep count:");
+    println_int(result);
+    0
+}
