@@ -343,6 +343,94 @@ pub fn emit_statement(
                 ctx.write_string(&effect_id_val);
                 ctx.write(")\n");
             }
+
+            // Handler abort support: for non-tail-resumptive effects (Cancel, Error, etc.),
+            // set up setjmp so blood_perform can longjmp back when handler doesn't resume.
+            if ctx.handler_needs_abort(handler_id.index) {
+                // Allocate jmp_buf (256 bytes) and abort result on stack
+                let jmpbuf = ctx.fresh_temp_cg();
+                ctx.write_indent();
+                ctx.write_cgname(&jmpbuf);
+                ctx.write(" = alloca [256 x i8], align 16\n");
+
+                let abort_result = ctx.fresh_temp_cg();
+                ctx.write_indent();
+                ctx.write_cgname(&abort_result);
+                ctx.write(" = alloca i64\n");
+
+                // Push abort target
+                ctx.write_indent();
+                ctx.write("call void @blood_handler_push_abort_target(ptr ");
+                ctx.write_cgname(&jmpbuf);
+                ctx.write(")\n");
+
+                // setjmp returns 0 normally, non-zero on longjmp
+                let setjmp_ret = ctx.fresh_temp_cg();
+                ctx.write_indent();
+                ctx.write_cgname(&setjmp_ret);
+                ctx.write(" = call i32 @setjmp(ptr ");
+                ctx.write_cgname(&jmpbuf);
+                ctx.write(") #0\n");
+
+                let is_abort = ctx.fresh_temp_cg();
+                ctx.write_indent();
+                ctx.write_cgname(&is_abort);
+                ctx.write(" = icmp ne i32 ");
+                ctx.write_cgname(&setjmp_ret);
+                ctx.write(", 0\n");
+
+                let abort_label = ctx.fresh_label_cg();
+                let normal_label = ctx.fresh_label_cg();
+
+                ctx.emit_cond_br_cg(&is_abort, &abort_label, &normal_label);
+
+                // Abort block: pop evidence, clear inline hint, get abort value
+                ctx.emit_label_cg(&abort_label);
+
+                let abort_ev = ctx.fresh_temp_cg();
+                ctx.write_indent();
+                ctx.write_cgname(&abort_ev);
+                ctx.write(" = call ptr @blood_evidence_current()\n");
+
+                let abort_pop = ctx.fresh_temp_cg();
+                ctx.write_indent();
+                ctx.write_cgname(&abort_pop);
+                ctx.write(" = call i64 @blood_evidence_pop(ptr ");
+                ctx.write_cgname(&abort_ev);
+                ctx.write(")\n");
+
+                ctx.write_indent();
+                ctx.write("call void @blood_evidence_clear_inline()\n");
+
+                let abort_val = ctx.fresh_temp_cg();
+                ctx.write_indent();
+                ctx.write_cgname(&abort_val);
+                ctx.write(" = call i64 @blood_handler_get_abort_value()\n");
+
+                ctx.write_indent();
+                ctx.write("store i64 ");
+                ctx.write_cgname(&abort_val);
+                ctx.write(", ptr ");
+                ctx.write_cgname(&abort_result);
+                ctx.write("\n");
+
+                // Generate a merge label for after CallReturnClause.
+                // The abort block branches to an "abort_store" block (emitted by CallReturnClause)
+                // which stores abort value to dest and branches to merge.
+                // The normal path also branches to merge after CallReturnClause.
+                let abort_store_label = ctx.fresh_label_cg();
+                let merge_label = ctx.fresh_label_cg();
+                ctx.emit_br_cg(&abort_store_label);
+
+                ctx.push_abort_labels(
+                    cgname_to_string(&abort_store_label),
+                    cgname_to_string(&merge_label),
+                    cgname_to_string(&abort_result),
+                );
+
+                // Normal block: continue with handler body
+                ctx.emit_label_cg(&normal_label);
+            }
         }
         &mir_stmt.StatementKind.PopHandler => {
             // Effect handler pop via evidence API
@@ -365,6 +453,12 @@ pub fn emit_statement(
             }
             if ctx.handler_depth > 0 {
                 ctx.handler_depth = ctx.handler_depth - 1;
+            }
+
+            // Pop abort target if one was pushed
+            if ctx.has_abort_labels() {
+                ctx.write_indent();
+                ctx.write("call void @blood_handler_pop_abort_target()\n");
             }
         }
         &mir_stmt.StatementKind.PushInlineHandler { effect_id, operations: _ } => {
@@ -532,6 +626,60 @@ pub fn emit_statement(
                 ctx.write_string(&result_ty);
                 ctx.write("\n");
                 ctx.emit_store_cg(result_ty.as_str(), &narrowed, dest_ptr.as_str());
+            }
+
+            // Wire abort path if handler had an abort target.
+            // Structure:
+            //   Normal path: store return clause result → br merge
+            //   Abort store block: load abort value → store to dest → br merge
+            //   Merge block: continue
+            if ctx.has_abort_labels() {
+                let abort_store_str = clone_string(ctx.get_abort_store_label());
+                let merge_str = clone_string(ctx.get_abort_merge_label());
+                let abort_alloca_str = clone_string(ctx.get_abort_result_alloca());
+
+                // Normal path: branch to merge
+                ctx.write_indent();
+                ctx.write("br label %");
+                ctx.write_string(&merge_str);
+                ctx.write("\n");
+
+                // Abort store block: load abort value, convert, store to dest
+                ctx.write(abort_store_str.as_str());
+                ctx.write(":\n");
+
+                let abort_loaded = ctx.fresh_temp_cg();
+                ctx.write_indent();
+                ctx.write_cgname(&abort_loaded);
+                ctx.write(" = load i64, ptr ");
+                ctx.write_string(&abort_alloca_str);
+                ctx.write("\n");
+
+                if strs_equal(result_ty.as_str(), "i64") {
+                    ctx.emit_store_cg("i64", &abort_loaded, dest_ptr.as_str());
+                } else {
+                    let abort_narrowed = ctx.fresh_temp_cg();
+                    ctx.write_indent();
+                    ctx.write_cgname(&abort_narrowed);
+                    ctx.write(" = trunc i64 ");
+                    ctx.write_cgname(&abort_loaded);
+                    ctx.write(" to ");
+                    ctx.write_string(&result_ty);
+                    ctx.write("\n");
+                    ctx.emit_store_cg(result_ty.as_str(), &abort_narrowed, dest_ptr.as_str());
+                }
+
+                ctx.write_indent();
+                ctx.write("br label %");
+                ctx.write_string(&merge_str);
+                ctx.write("\n");
+
+                // Merge block
+                ctx.write(merge_str.as_str());
+                ctx.write(":\n");
+
+                // Clear pending abort info
+                ctx.pop_abort_labels();
             }
         }
         &mir_stmt.StatementKind.CallFinallyClause {

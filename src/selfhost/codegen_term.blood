@@ -277,6 +277,10 @@ pub fn emit_terminator(
             // The inner body returns the resume value in its natural return type.
             // The wrapper function handles widening to i64 and continuation resume.
 
+            // Mark that this handler called resume, so blood_perform won't trigger abort
+            ctx.write_indent();
+            ctx.write("call void @blood_set_was_resumed()\n");
+
             // --- Snapshot: validate before resume ---
             ctx.write("    ; snapshot: validate before resume\n");
             let resume_snap = ctx.fresh_temp_cg();

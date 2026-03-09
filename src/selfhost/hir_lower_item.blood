@@ -1023,9 +1023,15 @@ fn lower_effect_decl(ctx: &mut hir_lower_ctx.LoweringCtx, e: &ast.EffectDecl) {
     let effect_def = hir_item.EffectDef.new(generics, parents, operations);
     let item_kind = hir_item.ItemKind.Effect(effect_def);
     // Effects don't have visibility in the AST, use public
+    // Re-intern the name symbol so it resolves via the HIR interner
+    // (e.name uses the AST parser's interner which differs from the HIR interner)
+    let reintern_name = common.SpannedSymbol {
+        symbol: lookup_symbol,
+        span: e.name.span,
+    };
     let item = hir_item.Item.new(
         def_id,
-        e.name,
+        reintern_name,
         item_kind,
         common.Visibility.Public,
         e.span,

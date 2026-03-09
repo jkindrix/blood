@@ -336,6 +336,14 @@ pub struct CodegenCtx {
     /// Pushed when blood_region_activate is called, popped when blood_region_deactivate is called.
     /// Used during Perform codegen to emit blood_continuation_add_suspended_region calls.
     pub active_regions: Vec<String>,
+    /// Non-tail-resumptive effect set + abort state (Cancel/Error support).
+    /// Packed into a single Vec<u64> to minimize struct layout impact.
+    /// [0..N): effect DefIds, [N]: abort label string index, etc.
+    non_tail_resumptive_effects: hashmap.HashMapU64U32,
+    /// Stack of abort label strings for non-tail-resumptive handler codegen.
+    /// Each abort handler pushes 3 strings: [abort_store_label, merge_label, result_alloca].
+    /// Consumed by CallReturnClause, popped after use.
+    abort_label_stack: Vec<String>,
 }
 
 /// Entry mapping a handler DefId to its effect DefId.
@@ -526,6 +534,8 @@ impl CodegenCtx {
             vtable_name_entries: Vec.with_capacity(32),
             effect_captured_locals: Vec.new(),
             active_regions: Vec.with_capacity(4),
+            non_tail_resumptive_effects: hashmap.HashMapU64U32.with_capacity(8),
+            abort_label_stack: Vec.new(),
         }
     }
 
@@ -602,6 +612,8 @@ impl CodegenCtx {
             vtable_name_entries: Vec.with_capacity(32),
             effect_captured_locals: Vec.new(),
             active_regions: Vec.with_capacity(4),
+            non_tail_resumptive_effects: hashmap.HashMapU64U32.with_capacity(8),
+            abort_label_stack: Vec.new(),
         }
     }
 
@@ -891,6 +903,61 @@ impl CodegenCtx {
             Option.Some(v) => Option.Some(v),
             Option.None => Option.None,
         }
+    }
+
+    /// Registers an effect DefId as non-tail-resumptive (handler may not call resume).
+    pub fn register_non_tail_resumptive_effect(self: &mut CodegenCtx, effect_def_id: u32) {
+        self.non_tail_resumptive_effects.insert(effect_def_id as u64, 1);
+    }
+
+    /// Checks if an effect DefId is non-tail-resumptive.
+    pub fn is_non_tail_resumptive_effect(self: &CodegenCtx, effect_def_id: u32) -> bool {
+        match self.non_tail_resumptive_effects.get(effect_def_id as u64) {
+            Option.Some(_) => true,
+            Option.None => false,
+        }
+    }
+
+    /// Checks if a handler needs an abort target (its effect is non-tail-resumptive).
+    pub fn handler_needs_abort(self: &CodegenCtx, handler_def_id: u32) -> bool {
+        match self.lookup_handler_effect(handler_def_id) {
+            Option.Some(effect_id) => self.is_non_tail_resumptive_effect(effect_id),
+            Option.None => false,
+        }
+    }
+
+    /// Pushes abort label state onto the stack (3 strings: abort_store, merge, result_alloca).
+    pub fn push_abort_labels(self: &mut CodegenCtx, abort_store: String, merge: String, result_alloca: String) {
+        self.abort_label_stack.push(abort_store);
+        self.abort_label_stack.push(merge);
+        self.abort_label_stack.push(result_alloca);
+    }
+
+    /// Returns true if there is pending abort label state.
+    pub fn has_abort_labels(self: &CodegenCtx) -> bool {
+        self.abort_label_stack.len() > 0
+    }
+
+    /// Gets the abort store label (top - 2).
+    pub fn get_abort_store_label(self: &CodegenCtx) -> &String {
+        &self.abort_label_stack[self.abort_label_stack.len() - 3]
+    }
+
+    /// Gets the abort merge label (top - 1).
+    pub fn get_abort_merge_label(self: &CodegenCtx) -> &String {
+        &self.abort_label_stack[self.abort_label_stack.len() - 2]
+    }
+
+    /// Gets the abort result alloca name (top).
+    pub fn get_abort_result_alloca(self: &CodegenCtx) -> &String {
+        &self.abort_label_stack[self.abort_label_stack.len() - 1]
+    }
+
+    /// Pops the top abort label state (3 strings) from the stack.
+    pub fn pop_abort_labels(self: &mut CodegenCtx) {
+        self.abort_label_stack.pop();
+        self.abort_label_stack.pop();
+        self.abort_label_stack.pop();
     }
 
     /// Registers handler DefId → state field count mapping.
@@ -2457,6 +2524,8 @@ impl CodegenCtx {
             vtable_name_entries: Vec.new(),
             effect_captured_locals: Vec.new(),
             active_regions: Vec.with_capacity(4),
+            non_tail_resumptive_effects: hashmap.HashMapU64U32.new(),
+            abort_label_stack: Vec.new(),
         };
 
         // Copy handler_op_body_ids with state counts (read-only, needed to flag handler op bodies)
@@ -2472,6 +2541,14 @@ impl CodegenCtx {
             worker.register_handler_effect(he.handler_def_id, he.effect_def_id);
             worker.register_handler_state_count(he.handler_def_id, self.lookup_handler_state_count(he.handler_def_id));
             worker.register_handler_state_byte_size(he.handler_def_id, self.lookup_handler_state_byte_size(he.handler_def_id));
+        }
+
+        // Copy non-tail-resumptive effect set (read-only, needed for PushHandler abort targets)
+        for ntri in 0usize..self.handler_effect_entries.len() {
+            let ntr_eid = self.handler_effect_entries[ntri].effect_def_id;
+            if self.is_non_tail_resumptive_effect(ntr_eid) {
+                worker.register_non_tail_resumptive_effect(ntr_eid);
+            }
         }
 
         // Copy op_def_index_entries (read-only, needed for Perform op_index resolution)
