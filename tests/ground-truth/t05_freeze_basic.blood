@@ -1,0 +1,23 @@
+// Test: Freeze marker trait — primitives and shared refs are Freeze
+// EXPECT: 42
+// EXPECT: 100
+
+trait Freeze {}
+
+fn freeze_val<T: Freeze>(x: T) -> T {
+    x
+}
+
+fn main() -> i32 {
+    // Primitives are Freeze
+    let a: i32 = freeze_val(42);
+    println_int(a);
+    if a != 42 { return 1; }
+
+    // Calling with another primitive
+    let b: i32 = freeze_val(100);
+    println_int(b);
+    if b != 100 { return 2; }
+
+    0
+}

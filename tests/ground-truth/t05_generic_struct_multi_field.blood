@@ -1,0 +1,37 @@
+// Test: generic struct with multiple fields, verifying correct GEP offsets
+// at field > 0. Previously, GEP used unsubstituted layout (e.g., { i64 })
+// instead of concrete layout (e.g., { i32, i32 }), producing wrong offsets.
+
+struct Pair<T> {
+    first: T,
+    second: T,
+}
+
+impl<T> Pair<T> {
+    fn new(a: T, b: T) -> Pair<T> {
+        Pair { first: a, second: b }
+    }
+
+    fn get_first(self: &Self) -> &T {
+        &self.first
+    }
+
+    fn get_second(self: &Self) -> &T {
+        &self.second
+    }
+}
+
+fn main() -> i32 {
+    let p: Pair<i32> = Pair.new(42, 99);
+    let f: &i32 = p.get_first();
+    let s: &i32 = p.get_second();
+    println_int(*f);
+    println_int(*s);
+    if *f != 42 {
+        return 1;
+    }
+    if *s != 99 {
+        return 2;
+    }
+    0
+}

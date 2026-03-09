@@ -1,0 +1,14 @@
+// COMPILE_FAIL: trait bound not satisfied
+// EXPECT: [E0206] the trait bound `&mut i32: Freeze` is not satisfied
+// Test: &mut T should NOT satisfy Freeze bound
+
+trait Freeze {}
+
+fn freeze_val<T: Freeze>(x: T) -> i32 {
+    42
+}
+
+fn main() -> i32 {
+    let mut x: i32 = 10;
+    freeze_val(&mut x)
+}

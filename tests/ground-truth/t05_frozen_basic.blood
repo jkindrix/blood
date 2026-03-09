@@ -1,0 +1,38 @@
+// Test: Frozen<T> basic usage — wrap a Freeze type, access via get()
+trait Freeze {}
+
+struct Frozen<T> {
+    value: T,
+}
+
+impl<T: Freeze> Frozen<T> {
+    fn new(value: T) -> Frozen<T> {
+        Frozen { value }
+    }
+
+    fn get(self: &Self) -> &T {
+        &self.value
+    }
+}
+
+fn main() -> i32 {
+    // Create a frozen i32
+    let f: Frozen<i32> = Frozen.new(42);
+
+    // Access via get()
+    let v: &i32 = f.get();
+    println_int(*v);
+    if *v != 42 {
+        return 1;
+    }
+
+    // Create another frozen value
+    let f2: Frozen<i32> = Frozen.new(100);
+    let v2: &i32 = f2.get();
+    println_int(*v2);
+    if *v2 != 100 {
+        return 2;
+    }
+
+    0
+}
