@@ -1,0 +1,38 @@
+// Test: Cancel effect with finally clause on normal (non-cancelled) path
+// Verifies: finally clause runs after return clause when Cancel handler resumes
+// EXPECT: 10
+// EXPECT: 20
+// EXPECT: 99
+// EXPECT: 42
+
+effect Cancel {
+    op check_cancelled() -> ();
+}
+
+deep handler NeverCancel for Cancel {
+    return(x) { x }
+    finally {
+        println_int(99);
+    }
+    op check_cancelled() {
+        resume(())
+    }
+}
+
+fn cancellable_work() -> i32 / {Cancel} {
+    println_int(10);
+    perform Cancel.check_cancelled();
+    println_int(20);
+    42
+}
+
+fn main() -> i32 {
+    let result: i32 = with NeverCancel {} handle {
+        cancellable_work()
+    };
+    println_int(result);
+    if result != 42 {
+        return 1;
+    }
+    0
+}

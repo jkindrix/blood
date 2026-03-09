@@ -1,0 +1,50 @@
+// Blood Standard Library - Cancel Effect
+//
+// Cooperative cancellation through algebraic effects (ADR-036).
+// Cancellation is a separate effect from Fiber, making cancellation
+// points visible in function signatures.
+//
+// See: SPECIFICATION.md §9.2.3, CONCURRENCY.md §4.5, FORMAL_SEMANTICS.md §6.3
+
+/// Cancel effect for cooperative cancellation
+///
+/// Functions that can be cancelled declare `/ {Cancel}` in their effect row.
+/// Cancellation only occurs at explicit `check_cancelled()` points — it is
+/// cooperative, not preemptive.
+///
+/// # Example
+///
+/// ```blood
+/// fn long_running_task() -> i32 / {Cancel} {
+///     for i in 0..1000 {
+///         check_cancelled();  // Cancellation point
+///         do_work(i);
+///     }
+///     42
+/// }
+/// ```
+pub effect Cancel {
+    /// Checks whether cancellation has been requested.
+    ///
+    /// If the handler has set a cancellation flag, this operation triggers
+    /// abnormal exit and finally clause execution. Otherwise, it resumes
+    /// immediately (tail-resumptive, returns unit).
+    op check_cancelled() -> ();
+}
+
+/// Checks whether the current fiber has been cancelled.
+///
+/// This is a convenience wrapper around `perform Cancel.check_cancelled()`.
+/// Place this at natural breakpoints in long-running computations.
+pub fn check_cancelled() / {Cancel} {
+    perform Cancel.check_cancelled();
+}
+
+/// Default handler that never cancels — all check_cancelled() calls resume.
+pub deep handler NeverCancel for Cancel {
+    return(x) { x }
+
+    op check_cancelled() {
+        resume(())
+    }
+}

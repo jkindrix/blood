@@ -1,0 +1,34 @@
+// Test: Cancel effect — handler does NOT resume, cancelling execution
+// Verifies: non-resuming handler aborts continuation via setjmp/longjmp
+// EXPECT: 1
+// EXPECT: -1
+
+effect Cancel {
+    op check_cancelled() -> i32;
+}
+
+deep handler AlwaysCancel for Cancel {
+    return(x) { x }
+
+    op check_cancelled() {
+        -1
+    }
+}
+
+fn cancellable_work() -> i32 / {Cancel} {
+    println_int(1);
+    perform Cancel.check_cancelled();
+    println_int(2);
+    42
+}
+
+fn main() -> i32 {
+    let result: i32 = with AlwaysCancel {} handle {
+        cancellable_work()
+    };
+    println_int(result);
+    if result != -1 {
+        return 1;
+    }
+    0
+}

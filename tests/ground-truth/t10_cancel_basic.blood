@@ -1,0 +1,36 @@
+// Test: Cancel effect — define, perform check_cancelled, handle with resume
+// Verifies: effect definition, handler dispatch, resume pipeline for Cancel
+// EXPECT: 10
+// EXPECT: 20
+// EXPECT: 42
+
+effect Cancel {
+    op check_cancelled() -> ();
+}
+
+deep handler NeverCancel for Cancel {
+    return(x) { x }
+
+    op check_cancelled() {
+        resume(())
+    }
+}
+
+fn cancellable_work() -> i32 / {Cancel} {
+    println_int(10);
+    perform Cancel.check_cancelled();
+    println_int(20);
+    perform Cancel.check_cancelled();
+    42
+}
+
+fn main() -> i32 {
+    let result: i32 = with NeverCancel {} handle {
+        cancellable_work()
+    };
+    println_int(result);
+    if result != 42 {
+        return 1;
+    }
+    0
+}
