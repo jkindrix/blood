@@ -240,8 +240,11 @@ fn lower_expr_inner(
             lower_expr(ctx, body.as_ref(), dest);
             // Pop handlers in reverse order
             for pi in 0usize..handlers.len() {
+                let rev_idx = handlers.len() - 1 - pi;
                 ctx.emit_stmt(mir_stmt.Statement.new(
-                    mir_stmt.StatementKind.PopHandler,
+                    mir_stmt.StatementKind.PopHandler {
+                        handler_id: handlers[rev_idx].effect_id,
+                    },
                     expr.span,
                 ));
             }
@@ -2428,7 +2431,9 @@ fn lower_with_handle_expr(
     // Step 7: Emit PopHandler statement (only if block not terminated)
     if !ctx.is_terminated() {
         ctx.emit_stmt(mir_stmt.Statement.new(
-            mir_stmt.StatementKind.PopHandler,
+            mir_stmt.StatementKind.PopHandler {
+                handler_id: handler_id,
+            },
             span,
         ));
 
