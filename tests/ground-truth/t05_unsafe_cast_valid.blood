@@ -1,0 +1,17 @@
+// EXPECT: 42
+
+// Test that Ptr↔usize casts work inside @unsafe blocks.
+
+fn main() -> i32 {
+    let x: i32 = 42;
+    let ptr: *const i32 = &x as *const i32;
+
+    // This should work — Ptr→usize inside @unsafe
+    let addr: usize = @unsafe { ptr as usize };
+
+    // Round-trip: usize→Ptr inside @unsafe
+    let ptr2: *const i32 = @unsafe { addr as *const i32 };
+
+    println_int(@unsafe { *(ptr2) });
+    0
+}

@@ -383,6 +383,9 @@ pub struct TypeChecker {
     pub deref_target_types: hashmap.HashMapU64U64,
     /// Maps ADT DefId.index → deref method DefId.index for custom Deref impls.
     pub deref_method_ids: hashmap.HashMapU64U64,
+    /// Whether we are currently inside an @unsafe block.
+    /// Used to gate safety-sensitive casts (Ptr↔usize, Ptr→Ref, fn→integer).
+    pub in_unsafe_context: bool,
 }
 
 impl TypeChecker {
@@ -438,6 +441,7 @@ impl TypeChecker {
             pending_bound_check_spans: Vec.new(),
             deref_target_types: hashmap.HashMapU64U64.new(),
             deref_method_ids: hashmap.HashMapU64U64.new(),
+            in_unsafe_context: false,
         }
     }
 
@@ -494,6 +498,7 @@ impl TypeChecker {
             pending_bound_check_spans: Vec.new(),
             deref_target_types: hashmap.HashMapU64U64.new(),
             deref_method_ids: hashmap.HashMapU64U64.new(),
+            in_unsafe_context: false,
         }
     }
 

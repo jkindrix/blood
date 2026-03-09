@@ -115,7 +115,13 @@ pub fn infer_expr(checker: &mut typeck.TypeChecker, expr: &hir_expr.Expr) -> typ
         }
         &hir_expr.ExprKind.Resume(ref val) => infer_resume(checker, val.as_ref(), expr.span),
         &hir_expr.ExprKind.Try(ref inner) => infer_try(checker, inner.as_ref(), expr.span),
-        &hir_expr.ExprKind.Unsafe(ref inner) => infer_expr(checker, inner.as_ref()),
+        &hir_expr.ExprKind.Unsafe(ref inner) => {
+            let prev = checker.in_unsafe_context;
+            checker.in_unsafe_context = true;
+            let ty = infer_expr(checker, inner.as_ref());
+            checker.in_unsafe_context = prev;
+            ty
+        }
         &hir_expr.ExprKind.Unchecked { ref body, .. } => infer_expr(checker, body.as_ref()),
         &hir_expr.ExprKind.Heap(ref inner) => infer_expr(checker, inner.as_ref()),
         &hir_expr.ExprKind.Stack(ref inner) => infer_expr(checker, inner.as_ref()),
@@ -1850,6 +1856,16 @@ fn infer_cast(
         checker.error_with_note(typeck.TypeErrorKind.InvalidCast, span, note);
     }
 
+    // Check if this valid cast requires @unsafe context
+    if !checker.in_unsafe_context && cast_requires_unsafe_context(&resolved_src_hir, &resolved_dst_hir) {
+        let mut note = common.make_string("cast from ");
+        note.push_str(type_intern.format_ty_id(resolved_src).as_str());
+        note.push_str(" to ");
+        note.push_str(type_intern.format_ty_id(resolved_dst).as_str());
+        note.push_str(" requires @unsafe block");
+        checker.error_with_note(typeck.TypeErrorKind.InvalidCast, span, note);
+    }
+
     // Check object safety for dyn Trait coercions
     check_dyn_trait_object_safety(checker, resolved_dst, span);
 
@@ -1984,6 +2000,41 @@ fn is_valid_cast(src_ty: &hir_ty.Type, dst_ty: &hir_ty.Type) -> bool {
             is_valid_cast(src_ty, inner.as_ref())
         }
         // Other casts are invalid
+        _ => false,
+    }
+}
+
+/// Checks if a valid cast requires @unsafe context.
+/// Returns true for: Ptr↔usize/isize, Ptr→Ref, fn→integer.
+fn cast_requires_unsafe_context(src_ty: &hir_ty.Type, dst_ty: &hir_ty.Type) -> bool {
+    match (&src_ty.kind, &dst_ty.kind) {
+        // Ptr → usize/isize
+        (&hir_ty.TypeKind.Ptr { inner: _, mutable: _ }, &hir_ty.TypeKind.Primitive(dst_prim)) => {
+            match dst_prim {
+                hir_ty.PrimitiveTy.Usize => true,
+                hir_ty.PrimitiveTy.Isize => true,
+                _ => false,
+            }
+        }
+        // usize/isize → Ptr
+        (&hir_ty.TypeKind.Primitive(src_prim), &hir_ty.TypeKind.Ptr { inner: _, mutable: _ }) => {
+            match src_prim {
+                hir_ty.PrimitiveTy.Usize => true,
+                hir_ty.PrimitiveTy.Isize => true,
+                _ => false,
+            }
+        }
+        // Ptr → Ref
+        (&hir_ty.TypeKind.Ptr { inner: _, mutable: _ }, &hir_ty.TypeKind.Ref { inner: _, mutable: _ }) => true,
+        // fn → integer
+        (&hir_ty.TypeKind.Fn { params: _, ret: _, effects: _ }, &hir_ty.TypeKind.Primitive(_)) => true,
+        // Ownership wrapper — check inner
+        (&hir_ty.TypeKind.Ownership { qualifier: _, ref inner }, _) => {
+            cast_requires_unsafe_context(inner.as_ref(), dst_ty)
+        }
+        (_, &hir_ty.TypeKind.Ownership { qualifier: _, ref inner }) => {
+            cast_requires_unsafe_context(src_ty, inner.as_ref())
+        }
         _ => false,
     }
 }

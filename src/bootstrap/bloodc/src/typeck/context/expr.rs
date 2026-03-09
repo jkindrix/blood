@@ -9395,6 +9395,17 @@ impl<'a> TypeContext<'a> {
             )));
         }
 
+        // Check if this valid cast requires @unsafe context
+        if !self.in_unsafe_context && Self::cast_requires_unsafe_context(&source_ty, &resolved_target) {
+            return Err(Box::new(TypeError::new(
+                TypeErrorKind::InvalidCast {
+                    source: source_ty,
+                    target: resolved_target,
+                },
+                span,
+            )));
+        }
+
         Ok(hir::Expr::new(
             hir::ExprKind::Cast {
                 expr: Box::new(inner_expr),
@@ -9478,6 +9489,28 @@ impl<'a> TypeContext<'a> {
         }
     }
 
+    /// Check whether a valid cast requires @unsafe context.
+    /// Returns true for: Ptr↔usize, Ptr→Ref, fn→integer.
+    fn cast_requires_unsafe_context(source: &Type, target: &Type) -> bool {
+        use crate::hir::{PrimitiveTy, TypeKind};
+        match (source.kind(), target.kind()) {
+            // Ptr → usize/isize
+            (TypeKind::Ptr { .. }, TypeKind::Primitive(PrimitiveTy::Uint(UintTy::Usize))) => true,
+            // usize → Ptr
+            (TypeKind::Primitive(PrimitiveTy::Uint(UintTy::Usize)), TypeKind::Ptr { .. }) => true,
+            // Ptr → Ref
+            (TypeKind::Ptr { .. }, TypeKind::Ref { .. }) => true,
+            // Fn → integer
+            (TypeKind::Fn { .. }, TypeKind::Primitive(PrimitiveTy::Uint(UintTy::Usize))) => true,
+            (TypeKind::Fn { .. }, TypeKind::Primitive(PrimitiveTy::Uint(UintTy::U64))) => true,
+            (TypeKind::Fn { .. }, TypeKind::Primitive(PrimitiveTy::Int(IntTy::I64))) => true,
+            // Ownership wrappers — check inner
+            (TypeKind::Ownership { inner, .. }, _) => Self::cast_requires_unsafe_context(inner, target),
+            (_, TypeKind::Ownership { inner, .. }) => Self::cast_requires_unsafe_context(source, inner),
+            _ => false,
+        }
+    }
+
     /// Infer type of a compound assignment.
     fn infer_assign_op(
         &mut self,
@@ -9526,8 +9559,11 @@ impl<'a> TypeContext<'a> {
 
     /// Infer type of an unsafe block.
     fn infer_unsafe(&mut self, block: &ast::Block, span: Span) -> Result<hir::Expr, Box<TypeError>> {
+        let prev = self.in_unsafe_context;
+        self.in_unsafe_context = true;
         let expected = self.unifier.fresh_var();
         let block_expr = self.check_block(block, &expected)?;
+        self.in_unsafe_context = prev;
         let result_ty = block_expr.ty.clone();
 
         Ok(hir::Expr::new(

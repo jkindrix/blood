@@ -207,6 +207,9 @@ pub struct TypeContext<'a> {
     /// Maps trait DefId to whether the trait is object-safe.
     /// Computed during check_all_bodies Phase 1b and used for dyn Trait coercion checking.
     pub(crate) object_safe_traits: HashMap<DefId, bool>,
+    /// Whether we are currently inside an @unsafe block.
+    /// Used to gate safety-sensitive casts (Ptr↔usize, Ptr→Ref, fn→integer).
+    pub(crate) in_unsafe_context: bool,
 }
 
 /// Information about a struct.
@@ -781,6 +784,7 @@ impl<'a> TypeContext<'a> {
             deref_mut_trait_def_id: None,
             builtin_methods: Vec::new(),
             object_safe_traits: HashMap::new(),
+            in_unsafe_context: false,
         };
         ctx.register_builtins();
         ctx.register_builtin_types();
