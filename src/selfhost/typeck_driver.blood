@@ -182,8 +182,9 @@ pub fn check_lower_result(result: &hir_lower_ctx.LowerResult) -> TypeCheckResult
     // Phase 1: Collect type information from items
     collect_item_signatures(&mut checker, &result.items);
 
-    // Phase 1a1: Detect builtin Deref trait by name
+    // Phase 1a1: Detect builtin traits by name
     detect_deref_trait(&mut checker, &result.items, &result.interner);
+    detect_freeze_trait(&mut checker, &result.items, &result.interner);
 
     // Phase 1a2: Register synthetic impl blocks for dyn Trait types
     // so that lookup_method can resolve methods on dyn Trait receivers.
@@ -380,6 +381,30 @@ fn detect_deref_trait(
             }
         }
         &Option.None => {}
+    }
+}
+
+/// Detects the Freeze marker trait by name.
+fn detect_freeze_trait(
+    checker: &mut typeck.TypeChecker,
+    items: &Vec<hir_lower_ctx.ItemEntry>,
+    interner: &interner.StringInterner,
+) {
+    for i in 0usize..items.len() {
+        let entry = &items[i];
+        match &entry.item.kind {
+            &hir_item.ItemKind.Trait(_) => {
+                match interner.resolve(entry.item.name.symbol) {
+                    Option.Some(name) => {
+                        if string_eq(name, "Freeze") {
+                            checker.freeze_trait_def_id = Option.Some(entry.def_id);
+                        }
+                    }
+                    Option.None => {}
+                }
+            }
+            _ => {}
+        }
     }
 }
 
@@ -1545,6 +1570,9 @@ fn check_body(checker: &mut typeck.TypeChecker, body: &hir_expr.Body, return_ty:
         }
         &None => {}
     }
+
+    // Resolve deferred trait bound checks now that inference is complete
+    checker.flush_pending_bound_checks();
 
     // Check for unresolved inference variables in non-generic function let-bindings.
     // Only runs for bodies that belong to a known non-generic function.

@@ -141,6 +141,9 @@ impl<'a> ConstraintChecker<'a> {
             // Sized: almost everything except [T], str, dyn Trait
             "Sized" => self.type_is_sized(ty),
 
+            // Freeze: types with no interior mutability
+            "Freeze" => self.type_is_freeze(ty),
+
             // Send: most types can be sent across threads
             "Send" => self.type_is_send(ty),
 
@@ -268,6 +271,30 @@ impl<'a> ConstraintChecker<'a> {
             TypeKind::Record { fields, .. } => fields.iter().all(|f| self.type_is_sync(&f.ty)),
             TypeKind::Ownership { inner, .. } => self.type_is_sync(inner),
             TypeKind::Forall { body, .. } => self.type_is_sync(body),
+        }
+    }
+
+    /// Check if a type implements Freeze (no interior mutability).
+    fn type_is_freeze(&self, ty: &Type) -> bool {
+        match ty.kind.as_ref() {
+            TypeKind::Primitive(_) => true,
+            TypeKind::Ref { mutable: false, inner, .. } => self.type_is_freeze(inner),
+            TypeKind::Ref { mutable: true, .. } => false,
+            TypeKind::Ptr { .. } => true,
+            TypeKind::Fn { .. } => true,
+            TypeKind::Never => true,
+            TypeKind::Array { element, .. } => self.type_is_freeze(element),
+            TypeKind::Slice { element } => self.type_is_freeze(element),
+            TypeKind::Tuple(elements) => elements.iter().all(|e| self.type_is_freeze(e)),
+            TypeKind::Range { element, .. } => self.type_is_freeze(element),
+            TypeKind::Closure { .. } => false,
+            TypeKind::Adt { .. } => false,
+            TypeKind::DynTrait { .. } => false,
+            TypeKind::Error => true,
+            TypeKind::Infer(_) | TypeKind::Param(_) => false,
+            TypeKind::Record { fields, .. } => fields.iter().all(|f| self.type_is_freeze(&f.ty)),
+            TypeKind::Ownership { inner, .. } => self.type_is_freeze(inner),
+            TypeKind::Forall { .. } => false,
         }
     }
 

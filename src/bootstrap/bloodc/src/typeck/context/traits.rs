@@ -47,17 +47,23 @@ impl<'a> TypeContext<'a> {
             }
         }
 
-        // If the trait is defined in trait_defs, it's a user-defined trait.
-        // User-defined traits can ONLY be satisfied by explicit impl blocks,
-        // NOT by builtin impls. This prevents false positives when a user
-        // defines a trait with the same name as a builtin trait (e.g., Display).
+        // Check if this trait has a well-known name that maps to builtin impls.
+        // Marker traits like Copy, Send, Sync, Freeze are auto-derived by the
+        // compiler based on type structure, even when defined in user code.
+        if let Some(def_info) = self.resolver.def_info.get(&trait_def_id) {
+            if self.is_auto_derived_trait(&def_info.name) {
+                return self.type_has_builtin_impl(ty, &def_info.name);
+            }
+        }
+
+        // For other user-defined traits in trait_defs, only explicit impl blocks
+        // satisfy the bound. This prevents false positives when a user defines
+        // a trait with the same name as a builtin trait (e.g., Display).
         if self.trait_defs.contains_key(&trait_def_id) {
-            // User-defined trait - no impl block found, so return false
             return false;
         }
 
         // For builtin traits (not in trait_defs), check builtin implementations
-        // Get the trait name from def_info
         if let Some(def_info) = self.resolver.def_info.get(&trait_def_id) {
             return self.type_has_builtin_impl(ty, &def_info.name);
         }
@@ -109,6 +115,15 @@ impl<'a> TypeContext<'a> {
         }
     }
 
+    /// Check if a trait name is an auto-derived marker trait.
+    ///
+    /// These traits are automatically implemented by the compiler based on type
+    /// structure, even when defined in user code. This allows user code to define
+    /// `trait Freeze {}` and have the compiler auto-derive it for primitives, etc.
+    fn is_auto_derived_trait(&self, name: &str) -> bool {
+        matches!(name, "Copy" | "Clone" | "Sized" | "Send" | "Sync" | "Freeze")
+    }
+
     /// Check if a type has a built-in implementation of a well-known trait.
     ///
     /// This handles traits like Copy, Clone, Sized that primitives and certain
@@ -118,6 +133,7 @@ impl<'a> TypeContext<'a> {
             "Copy" => self.type_is_copy(ty),
             "Clone" => self.type_is_clone(ty),
             "Sized" => self.type_is_sized(ty),
+            "Freeze" => self.type_is_freeze(ty),
             "Send" => self.type_is_send(ty),
             "Sync" => self.type_is_sync(ty),
             "Fn" => self.type_is_fn(ty),
@@ -272,6 +288,90 @@ impl<'a> TypeContext<'a> {
                 })
             }
             _ => true,
+        }
+    }
+
+    /// Check if a type implements Freeze (no interior mutability).
+    ///
+    /// Freeze types guarantee that if you have &T, no mutation can occur
+    /// through that reference. This is the key requirement for Frozen<T>.
+    ///
+    /// Freeze types:
+    /// - All primitives (bool, char, integers, floats, unit)
+    /// - Shared references &T (if T: Freeze)
+    /// - Raw pointers *const T (pointer itself is frozen, not target)
+    /// - Arrays [T; N] where T: Freeze
+    /// - Tuples where all elements are Freeze
+    /// - Function pointers
+    /// - Never type
+    /// - ADTs where all fields are Freeze (recursive check)
+    ///
+    /// NOT Freeze:
+    /// - &mut T (mutable reference = interior mutation)
+    /// - Closures (captured mutable state)
+    pub(crate) fn type_is_freeze(&self, ty: &Type) -> bool {
+        match ty.kind() {
+            // Primitives are Freeze
+            TypeKind::Primitive(_) => true,
+            // Shared references are Freeze if inner is Freeze
+            TypeKind::Ref { mutable: false, inner, .. } => self.type_is_freeze(inner),
+            // Mutable references are NOT Freeze (they allow mutation)
+            TypeKind::Ref { mutable: true, .. } => false,
+            // Raw pointers are Freeze (the pointer value itself is immutable)
+            TypeKind::Ptr { .. } => true,
+            // Function pointers are Freeze
+            TypeKind::Fn { .. } => true,
+            // Never type is Freeze (vacuously)
+            TypeKind::Never => true,
+            // Arrays are Freeze if element is Freeze
+            TypeKind::Array { element, .. } => self.type_is_freeze(element),
+            // Tuples are Freeze if all elements are Freeze
+            TypeKind::Tuple(elements) => elements.iter().all(|e| self.type_is_freeze(e)),
+            // Range is Freeze if element is Freeze
+            TypeKind::Range { element, .. } => self.type_is_freeze(element),
+            // Slices are Freeze if element is Freeze (unsized, but the data is immutable)
+            TypeKind::Slice { element, .. } => self.type_is_freeze(element),
+            // Closures are NOT Freeze (captured mutable environment)
+            TypeKind::Closure { .. } => false,
+            // ADTs: Freeze if all type args are Freeze AND all concrete fields are Freeze
+            TypeKind::Adt { def_id, args } => {
+                // Check all type args are Freeze (covers generic type parameters)
+                if !args.iter().all(|a| self.type_is_freeze(a)) {
+                    return false;
+                }
+                // Check all concrete (non-generic) field types are Freeze
+                if let Some(struct_info) = self.struct_defs.get(def_id) {
+                    for field in &struct_info.fields {
+                        match field.ty.kind() {
+                            // Skip Infer/Param — these are unsubstituted generic params,
+                            // already covered by the type args check above.
+                            TypeKind::Infer(_) | TypeKind::Param(_) => {}
+                            _ => {
+                                if !self.type_is_freeze(&field.ty) {
+                                    return false;
+                                }
+                            }
+                        }
+                    }
+                    true
+                } else {
+                    // Unknown struct — conservatively not Freeze
+                    false
+                }
+            }
+            // Trait objects are NOT Freeze (unknown interior)
+            TypeKind::DynTrait { .. } => false,
+            // Error type — be conservative
+            TypeKind::Error => true,
+            // Inference/param — not resolved yet
+            TypeKind::Infer(_) => false,
+            TypeKind::Param(_) => false,
+            // Records are Freeze if all fields are Freeze
+            TypeKind::Record { fields, .. } => fields.iter().all(|f| self.type_is_freeze(&f.ty)),
+            // Forall types are NOT Freeze
+            TypeKind::Forall { .. } => false,
+            // Ownership types are NOT Freeze
+            TypeKind::Ownership { .. } => false,
         }
     }
 

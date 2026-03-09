@@ -1006,30 +1006,7 @@ fn infer_unary(
 // ============================================================
 
 /// Checks trait bounds from where clauses after argument type inference.
-fn check_call_trait_bounds(
-    checker: &mut typeck.TypeChecker,
-    def_id: hir_def.DefId,
-    args: &Vec<hir_expr.Expr>,
-    span: common.Span,
-) {
-    match checker.get_fn_sig(def_id) {
-        Option.Some(fn_info) => {
-            if fn_info.where_predicates.len() == 0 {
-                return;
-            }
-            // Collect resolved argument types
-            let mut resolved_arg_types: Vec<type_intern.TyId> = Vec.new();
-            for ai in 0usize..args.len() {
-                let arg_ty = infer_expr(checker, &args[ai]);
-                let resolved = checker.resolve(arg_ty);
-                resolved_arg_types.push(resolved);
-            }
-            checker.check_where_clause_bounds(fn_info, &resolved_arg_types, span);
-        }
-        Option.None => {}
-    }
-}
-
+/// Checks trait bounds using already-resolved argument types.
 /// Infers the type of a function call.
 fn infer_call(
     checker: &mut typeck.TypeChecker,
@@ -1086,10 +1063,14 @@ fn infer_call(
                 return type_intern.CommonTypes.error();
             }
 
-            // Check each argument against parameter type
+            // Check each argument against parameter type and collect resolved types.
+            // After check_expr unifies arg with param, resolve the PARAM type to
+            // get the concrete type (the param's Infer has been unified with the arg).
+            let mut resolved_arg_types: Vec<type_intern.TyId> = Vec.new();
             for i in 0usize..args.len() {
                 let param_id = type_intern.type_to_ty_id(&params[i]);
                 check_expr(checker, &args[i], param_id);
+                resolved_arg_types.push(checker.resolve(param_id));
             }
 
             // Check that callee's effects are handled by caller (if not in handler)
@@ -1098,7 +1079,7 @@ fn infer_call(
                 &Option.Some(def_idx) => {
                     let sig_def_id = hir_def.DefId.new(def_idx);
                     match checker.get_fn_sig(sig_def_id) {
-                        Option.Some(ref fn_info) => {
+                        Option.Some(fn_info) => {
                             if fn_info.effect_def_ids.len() > 0 && !checker.in_handler {
                                 for efi in 0usize..fn_info.effect_def_ids.len() {
                                     let eff_id = fn_info.effect_def_ids[efi];
@@ -1114,8 +1095,10 @@ fn infer_call(
                                 }
                             }
 
-                            // Check trait bounds from where clauses
-                            check_call_trait_bounds(checker, sig_def_id, args, span);
+                            // Check trait bounds from where clauses using resolved arg types
+                            if fn_info.where_predicates.len() > 0 {
+                                checker.check_where_clause_bounds(fn_info, &resolved_arg_types, span);
+                            }
                         }
                         Option.None => {}
                     }

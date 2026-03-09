@@ -13,7 +13,7 @@ pub struct Frozen<T> {
     value: T,
 }
 
-impl<T> Frozen<T> {
+impl<T: Freeze> Frozen<T> {
     /// Creates a new frozen value
     ///
     /// After creation, the value cannot be mutated.
@@ -34,19 +34,13 @@ impl<T> Frozen<T> {
     }
 
     /// Maps the frozen value to a new frozen value
-    pub fn map<U, F>(self: Self, f: F) -> Frozen<U> / pure
-    where
-        F: FnOnce(T) -> U,
-    {
-        Frozen::new(f(self.value))
+    pub fn map<U>(self: Self, f: fn(T) -> U / pure) -> Frozen<U> / pure {
+        Frozen.new(f(self.value))
     }
 
     /// Maps the frozen value by reference
-    pub fn map_ref<U, F>(self: &Self, f: F) -> Frozen<U> / pure
-    where
-        F: FnOnce(&T) -> U,
-    {
-        Frozen::new(f(&self.value))
+    pub fn map_ref<U>(self: &Self, f: fn(&T) -> U / pure) -> Frozen<U> / pure {
+        Frozen.new(f(&self.value))
     }
 }
 
@@ -58,13 +52,13 @@ impl<T: Clone> Frozen<T> {
 
     /// Creates a new Frozen by cloning the inner value
     pub fn clone(self: &Self) -> Frozen<T> / pure {
-        Frozen::new(self.value.clone())
+        Frozen.new(self.value.clone())
     }
 }
 
 impl<T: Clone> Clone for Frozen<T> {
     fn clone(self: &Self) -> Self / pure {
-        Frozen::new(self.value.clone())
+        Frozen.new(self.value.clone())
     }
 }
 
@@ -116,13 +110,13 @@ impl<T: Display> Display for Frozen<T> {
 
 impl<T: Default> Default for Frozen<T> {
     fn default() -> Self / pure {
-        Frozen::new(T::default())
+        Frozen.new(T::default())
     }
 }
 
 impl<T> From<T> for Frozen<T> {
     fn from(value: T) -> Self / pure {
-        Frozen::new(value)
+        Frozen.new(value)
     }
 }
 
@@ -142,22 +136,15 @@ impl<T> AsRef<T> for Frozen<T> {
     }
 }
 
-impl<T: Borrow<U>, U: ?Sized> Borrow<U> for Frozen<T> {
+impl<T: Borrow<U>, U> Borrow<U> for Frozen<T> {
     fn borrow(self: &Self) -> &U / pure {
         self.value.borrow()
     }
 }
 
-/// Extension trait for freezing values
-pub trait Freeze: Sized {
-    /// Wraps the value in a Frozen container
-    fn freeze(self: Self) -> Frozen<Self> / pure {
-        Frozen::new(self)
-    }
-}
-
-// Implement Freeze for all types
-impl<T> Freeze for T {}
+// Note: Freeze marker trait is defined in traits/marker.blood.
+// Only types with no interior mutability implement Freeze.
+// The Frozen.new() constructor enforces the T: Freeze bound.
 
 /// Creates a Frozen value in-place
 ///
@@ -168,6 +155,6 @@ impl<T> Freeze for T {}
 #[macro_export]
 macro_rules! frozen {
     ($expr:expr) => {
-        Frozen::new($expr)
+        Frozen.new($expr)
     };
 }

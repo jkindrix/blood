@@ -367,6 +367,17 @@ pub struct TypeChecker {
     pub pending_field_accesses: Vec<common.PendingFieldAccess>,
     /// DefId of the builtin Deref trait, if registered.
     pub deref_trait_def_id: Option<hir_def.DefId>,
+    /// DefId of the builtin Freeze marker trait, if registered.
+    pub freeze_trait_def_id: Option<hir_def.DefId>,
+    /// Deferred trait bound checks (type IDs).
+    /// When a where clause bound is checked before type inference has
+    /// resolved the type (e.g., unsuffixed integer literals), the check
+    /// is deferred and resolved after the function body is fully typed.
+    pub pending_bound_check_tys: Vec<type_intern.TyId>,
+    /// Deferred trait bound checks (trait DefId indices, parallel with tys).
+    pub pending_bound_check_trait_ids: Vec<u32>,
+    /// Deferred trait bound checks (spans, parallel with tys).
+    pub pending_bound_check_spans: Vec<common.Span>,
     /// Maps ADT DefId.index → Deref Target TyId.index for custom Deref impls.
     /// Populated when processing impl Deref blocks.
     pub deref_target_types: hashmap.HashMapU64U64,
@@ -421,6 +432,10 @@ impl TypeChecker {
             persist_def_id_index: Option.None,
             pending_field_accesses: Vec.new(),
             deref_trait_def_id: Option.None,
+            freeze_trait_def_id: Option.None,
+            pending_bound_check_tys: Vec.new(),
+            pending_bound_check_trait_ids: Vec.new(),
+            pending_bound_check_spans: Vec.new(),
             deref_target_types: hashmap.HashMapU64U64.new(),
             deref_method_ids: hashmap.HashMapU64U64.new(),
         }
@@ -473,6 +488,10 @@ impl TypeChecker {
             persist_def_id_index: Option.None,
             pending_field_accesses: Vec.new(),
             deref_trait_def_id: Option.None,
+            freeze_trait_def_id: Option.None,
+            pending_bound_check_tys: Vec.new(),
+            pending_bound_check_trait_ids: Vec.new(),
+            pending_bound_check_spans: Vec.new(),
             deref_target_types: hashmap.HashMapU64U64.new(),
             deref_method_ids: hashmap.HashMapU64U64.new(),
         }
@@ -1371,6 +1390,18 @@ impl TypeChecker {
     /// Checks if a type implements a trait.
     /// Returns true if an implementation exists.
     pub fn type_implements_trait(self: &Self, ty: type_intern.TyId, trait_ref: &hir_ty.TraitRef) -> bool {
+        // Check builtin auto-derived traits first (Freeze, Copy, Send, Sync, etc.)
+        match &self.freeze_trait_def_id {
+            &Option.Some(ref freeze_id) => {
+                if trait_ref.def_id.index == freeze_id.index {
+                    // Resolve inference variables before checking
+                    let resolved = self.resolve(ty);
+                    return type_is_freeze(resolved, &self.structs);
+                }
+            }
+            &Option.None => {}
+        }
+
         // Quick O(1) check: if no impl exists for this trait, return false immediately
         match self.trait_impl_hash.get(trait_ref.def_id.index as u64) {
             Option.Some(_) => {}
@@ -1441,10 +1472,31 @@ impl TypeChecker {
                     let concrete_ty = self.resolve_where_param_type(ty, fn_sig, arg_types);
                     match &concrete_ty {
                         &Option.Some(resolved_ty) => {
-                            // Check each trait bound
-                            for bi in 0usize..bounds.len() {
-                                if !self.type_implements_trait(resolved_ty, &bounds[bi]) {
-                                    self.error(typeck_types.TypeErrorKind.TraitNotImplemented, span);
+                            // Resolve through subst table to get concrete types
+                            let final_ty = self.resolve(resolved_ty);
+                            // Check if the type is still an unresolved Infer variable.
+                            // If so, defer the check until after the full expression
+                            // has been type-checked (e.g., unsuffixed integer literals
+                            // get their concrete type from context like `let a: i32`).
+                            let interner = type_intern.type_interner();
+                            let final_kind = interner.get(final_ty);
+                            let is_infer = match final_kind {
+                                &type_intern.InternedTypeKind.Infer(_) => true,
+                                _ => false,
+                            };
+                            if is_infer {
+                                // Defer: store the Infer TyId, trait DefId, and span
+                                for bi in 0usize..bounds.len() {
+                                    self.pending_bound_check_tys.push(final_ty);
+                                    self.pending_bound_check_trait_ids.push(bounds[bi].def_id.index);
+                                    self.pending_bound_check_spans.push(span);
+                                }
+                            } else {
+                                // Check each trait bound immediately
+                                for bi in 0usize..bounds.len() {
+                                    if !self.type_implements_trait(final_ty, &bounds[bi]) {
+                                        self.error(typeck_types.TypeErrorKind.TraitNotImplemented, span);
+                                    }
                                 }
                             }
                         }
@@ -1516,6 +1568,29 @@ impl TypeChecker {
                 self.error(typeck_types.TypeErrorKind.TraitNotImplemented, obligations[i].span);
             }
         }
+    }
+
+    /// Resolves deferred trait bound checks.
+    /// Called after the function body is fully type-checked so that
+    /// inference variables have been resolved to concrete types.
+    pub fn flush_pending_bound_checks(self: &mut Self) {
+        for i in 0usize..self.pending_bound_check_tys.len() {
+            let ty = self.pending_bound_check_tys[i];
+            let trait_id = self.pending_bound_check_trait_ids[i];
+            let span = self.pending_bound_check_spans[i];
+            let resolved = self.resolve(ty);
+            let trait_ref = hir_ty.TraitRef.new(
+                hir_def.DefId.new(trait_id),
+                Vec.new(),
+                span,
+            );
+            if !self.type_implements_trait(resolved, &trait_ref) {
+                self.error(typeck_types.TypeErrorKind.TraitNotImplemented, span);
+            }
+        }
+        self.pending_bound_check_tys = Vec.new();
+        self.pending_bound_check_trait_ids = Vec.new();
+        self.pending_bound_check_spans = Vec.new();
     }
 }
 
@@ -1608,6 +1683,97 @@ fn types_match_for_impl(impl_ty: &hir_ty.Type, target_ty: &hir_ty.Type) -> bool 
         }
         // Other combinations don't match
         _ => false,
+    }
+}
+
+/// Checks if a type implements the Freeze marker trait (no interior mutability).
+/// Primitives, shared refs (if inner is Freeze), ptrs, fn types, arrays/tuples
+/// of Freeze types are all Freeze. Mutable refs and closures are NOT Freeze.
+/// ADTs are Freeze if all type args AND all concrete field types are Freeze.
+fn type_is_freeze(ty: type_intern.TyId, structs: &Vec<Option<typeck_info.StructInfo>>) -> bool {
+    let interner = type_intern.type_interner();
+    let kind = interner.get(ty);
+    match kind {
+        &type_intern.InternedTypeKind.Primitive(_) => true,
+        &type_intern.InternedTypeKind.Ref { inner, mutable } => {
+            if mutable { false }
+            else { type_is_freeze(type_intern.TyId.new(inner.index), structs) }
+        }
+        &type_intern.InternedTypeKind.Ptr { inner: _, mutable: _ } => true,
+        &type_intern.InternedTypeKind.Fn { params: _, ret: _, effects: _ } => true,
+        &type_intern.InternedTypeKind.Never => true,
+        &type_intern.InternedTypeKind.Array { element, size: _ } => {
+            type_is_freeze(type_intern.TyId.new(element.index), structs)
+        }
+        &type_intern.InternedTypeKind.Tuple(list_id) => {
+            let len: usize = interner.ty_list_len(list_id);
+            let mut i: usize = 0;
+            while i < len {
+                if !type_is_freeze(interner.get_ty_list_element(list_id, i), structs) {
+                    return false;
+                }
+                i += 1;
+            }
+            true
+        }
+        &type_intern.InternedTypeKind.Slice { element } => {
+            type_is_freeze(type_intern.TyId.new(element.index), structs)
+        }
+        &type_intern.InternedTypeKind.Closure { def_id: _, params: _, ret: _ } => false,
+        &type_intern.InternedTypeKind.Adt { def_id, args } => {
+            // Check all type args are Freeze (covers generic type parameters)
+            let num_args: usize = interner.ty_list_len(args);
+            let mut ai: usize = 0;
+            while ai < num_args {
+                if !type_is_freeze(interner.get_ty_list_element(args, ai), structs) {
+                    return false;
+                }
+                ai += 1;
+            }
+            // Check all concrete (non-generic) field types are Freeze
+            let def_idx = def_id.index as usize;
+            if def_idx < structs.len() {
+                match &structs[def_idx] {
+                    &Option.Some(ref info) => {
+                        let mut fi: usize = 0;
+                        while fi < info.fields.len() {
+                            let field_ty = info.fields[fi].ty;
+                            let field_kind = interner.get(field_ty);
+                            // Skip Infer/Param — these are unsubstituted generic params,
+                            // already covered by the type args check above.
+                            match field_kind {
+                                &type_intern.InternedTypeKind.Infer(_) => {}
+                                &type_intern.InternedTypeKind.Param(_) => {}
+                                _ => {
+                                    if !type_is_freeze(field_ty, structs) {
+                                        return false;
+                                    }
+                                }
+                            }
+                            fi += 1;
+                        }
+                    }
+                    &Option.None => {
+                        // Unknown struct — conservatively not Freeze
+                        return false;
+                    }
+                }
+            } else {
+                // def_id out of range — conservatively not Freeze
+                return false;
+            }
+            true
+        }
+        &type_intern.InternedTypeKind.DynTrait { trait_id: _, auto_traits: _ } => false,
+        &type_intern.InternedTypeKind.Record { fields: _, row_var: _ } => false,
+        &type_intern.InternedTypeKind.Infer(_) => false,
+        &type_intern.InternedTypeKind.Param(_) => false,
+        &type_intern.InternedTypeKind.Error => true,
+        &type_intern.InternedTypeKind.Range { element, inclusive: _ } => {
+            type_is_freeze(type_intern.TyId.new(element.index), structs)
+        }
+        &type_intern.InternedTypeKind.Forall { params: _, body: _ } => false,
+        &type_intern.InternedTypeKind.Ownership { qualifier: _, inner: _ } => false,
     }
 }
 
