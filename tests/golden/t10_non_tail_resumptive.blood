@@ -1,0 +1,25 @@
+// Test: Non-tail-resumptive handler ops (EFF-07)
+// Verifies: resume() is NOT the last expression in handler op body,
+//           post-resume code executes using continuation's return value.
+// EXPECT: 110
+
+effect Ask {
+    op ask() -> i32;
+}
+
+deep handler Answerer for Ask {
+    return(x) { x }
+
+    op ask() {
+        let val: i32 = resume(10);
+        val + 100
+    }
+}
+
+fn main() -> i32 {
+    let result: i32 = with Answerer {} handle {
+        perform Ask.ask()
+    };
+    println_int(result);
+    0
+}
