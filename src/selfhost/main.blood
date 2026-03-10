@@ -2587,8 +2587,13 @@ fn collect_handler_info(
                 let mut handler_name = common.make_string("handler");
                 push_usize(&mut handler_name, handler_def_id as usize);
 
-                // Register handler→effect mapping and state count
+                // Register handler→effect mapping, kind, and state count
                 ctx.register_handler_effect(handler_def_id, effect_def_id);
+                let kind_val: u32 = match &handler_def.kind {
+                    &common.HandlerKind.Deep => 0,
+                    &common.HandlerKind.Shallow => 1,
+                };
+                ctx.register_handler_kind(handler_def_id, kind_val);
                 let state_count = handler_def.state.len() as u32;
                 ctx.register_handler_state_count(handler_def_id, state_count);
 
@@ -3308,7 +3313,8 @@ fn generate_handler_wrappers(
                 }
             }
 
-            // Call blood_evidence_register (default to deep=1; selfhost groups by effect)
+            // Call blood_evidence_register with handler kind from HIR
+            let is_deep_val = if ctx.handler_is_deep(opentry.handler_def_id) { 1usize } else { 0usize };
             ir.push_str("  %reg_idx_");
             ir.push_str(eid_str.as_str());
             ir.push_str(" = call i64 @blood_evidence_register(ptr null, i64 ");
@@ -3317,7 +3323,9 @@ fn generate_handler_wrappers(
             ir.push_str(eid_str.as_str());
             ir.push_str(", i64 ");
             push_usize(&mut ir, op_count);
-            ir.push_str(", i64 1)\n");
+            ir.push_str(", i64 ");
+            push_usize(&mut ir, is_deep_val);
+            ir.push_str(")\n");
         }
 
     }

@@ -263,6 +263,8 @@ pub struct CodegenCtx {
     /// Vec entries allow iteration for cloning; hash for O(1) lookup.
     pub handler_effect_entries: Vec<HandlerEffectEntry>,
     handler_effect_hash: hashmap.HashMapU64U32,
+    /// Mapping from handler DefId to handler kind (0=Deep, 1=Shallow).
+    handler_kind_hash: hashmap.HashMapU64U32,
     /// Mapping from handler DefId to state field count.
     /// Used during PushHandler codegen to determine if handler is truly stateless.
     handler_state_count_hash: hashmap.HashMapU64U32,
@@ -509,6 +511,7 @@ impl CodegenCtx {
             call_remaps: Vec.new(),
             handler_effect_entries: Vec.with_capacity(32),
             handler_effect_hash: hashmap.HashMapU64U32.with_capacity(32),
+            handler_kind_hash: hashmap.HashMapU64U32.with_capacity(16),
             handler_state_count_hash: hashmap.HashMapU64U32.with_capacity(16),
             handler_state_byte_size_hash: hashmap.HashMapU64U32.with_capacity(16),
             is_handler_op: false,
@@ -588,6 +591,7 @@ impl CodegenCtx {
             call_remaps: Vec.new(),
             handler_effect_entries: Vec.with_capacity(32),
             handler_effect_hash: hashmap.HashMapU64U32.with_capacity(32),
+            handler_kind_hash: hashmap.HashMapU64U32.with_capacity(16),
             handler_state_count_hash: hashmap.HashMapU64U32.with_capacity(16),
             handler_state_byte_size_hash: hashmap.HashMapU64U32.with_capacity(16),
             is_handler_op: false,
@@ -899,6 +903,19 @@ impl CodegenCtx {
     pub fn register_handler_effect(self: &mut CodegenCtx, handler_def_id: u32, effect_def_id: u32) {
         self.handler_effect_entries.push(HandlerEffectEntry { handler_def_id, effect_def_id });
         self.handler_effect_hash.insert(handler_def_id as u64, effect_def_id);
+    }
+
+    /// Registers a handler DefId → kind mapping (0=Deep, 1=Shallow).
+    pub fn register_handler_kind(self: &mut CodegenCtx, handler_def_id: u32, kind: u32) {
+        self.handler_kind_hash.insert(handler_def_id as u64, kind);
+    }
+
+    /// Returns whether a handler is deep (true) or shallow (false).
+    pub fn handler_is_deep(self: &CodegenCtx, handler_def_id: u32) -> bool {
+        match self.handler_kind_hash.get(handler_def_id as u64) {
+            Option.Some(v) => v == 0,
+            Option.None => true,
+        }
     }
 
     /// Looks up the effect DefId for a handler DefId.
@@ -2516,6 +2533,7 @@ impl CodegenCtx {
             call_remaps: Vec.new(),
             handler_effect_entries: Vec.new(),
             handler_effect_hash: hashmap.HashMapU64U32.new(),
+            handler_kind_hash: hashmap.HashMapU64U32.new(),
             handler_state_count_hash: hashmap.HashMapU64U32.new(),
             handler_state_byte_size_hash: hashmap.HashMapU64U32.new(),
             is_handler_op: false,
@@ -2561,6 +2579,8 @@ impl CodegenCtx {
             worker.register_handler_effect(he.handler_def_id, he.effect_def_id);
             worker.register_handler_state_count(he.handler_def_id, self.lookup_handler_state_count(he.handler_def_id));
             worker.register_handler_state_byte_size(he.handler_def_id, self.lookup_handler_state_byte_size(he.handler_def_id));
+            let kind_val = if self.handler_is_deep(he.handler_def_id) { 0u32 } else { 1u32 };
+            worker.register_handler_kind(he.handler_def_id, kind_val);
         }
 
         // Copy non-tail-resumptive effect set (read-only, needed for PushHandler abort targets)
