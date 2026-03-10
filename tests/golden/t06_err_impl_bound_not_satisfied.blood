@@ -1,0 +1,25 @@
+// COMPILE_FAIL: impl-level trait bound not satisfied
+// Test: methods on `impl<T: Freeze> Wrapper<T>` should not be callable
+// when the concrete type argument does not satisfy the Freeze bound.
+
+trait Freeze {}
+
+struct Wrapper<T> {
+    value: T,
+}
+
+impl<T: Freeze> Wrapper<T> {
+    fn get(self: &Wrapper<T>) -> i32 {
+        42
+    }
+}
+
+struct Mutable {
+    x: i32,
+}
+
+fn main() -> i32 {
+    let w: Wrapper<&mut i32> = Wrapper { value: &mut 0 };
+    // &mut i32 does NOT satisfy Freeze — this call should be rejected
+    w.get()
+}
