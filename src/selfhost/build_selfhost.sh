@@ -118,6 +118,18 @@ build_first_gen() {
     fi
 }
 
+# Workaround: first_gen has a latent memory corruption bug that only manifests
+# when stdout/stderr are not TTYs (file redirect, pipe, tee).  The `exec > >(tee ...)`
+# on line 92 makes both fds non-TTY.  Wrapping in `script -qc` provides a pseudo-TTY,
+# which changes libc buffering and memory layout enough to avoid the crash.
+# Root cause: unknown use-after-free or buffer overrun in MIR region allocations.
+# See: place_has_deref crash at fn 1900/2246 (analyze_statement NULL ptr).
+run_with_pty() {
+    local rc=0
+    script -qc "$*" /dev/null || rc=$?
+    return "$rc"
+}
+
 # Self-compile: first_gen → second_gen
 build_second_gen() {
     [ -f "$BUILD_DIR/first_gen" ] || die "first_gen not found at $BUILD_DIR/first_gen. Run './build_selfhost.sh' first."
@@ -126,7 +138,7 @@ build_second_gen() {
     local start_ts
     start_ts=$(date +%s)
     local rc=0
-    "$BUILD_DIR/first_gen" build main.blood --timings -o "$BUILD_DIR/second_gen.ll" || rc=$?
+    run_with_pty "$BUILD_DIR/first_gen" build main.blood --timings -o "$BUILD_DIR/second_gen.ll" || rc=$?
     local wall_time
     wall_time=$(elapsed_since "$start_ts")
 
