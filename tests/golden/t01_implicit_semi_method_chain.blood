@@ -1,0 +1,26 @@
+// Test: dot-continuation allows method chains across lines.
+// The dot operator is a continuation token, so `.method()` on a new
+// line continues the previous expression.
+
+struct Counter {
+    value: i32,
+}
+
+impl Counter {
+    fn inc(self: &Counter) -> Counter {
+        Counter { value: self.value + 1 }
+    }
+
+    fn get(self: &Counter) -> i32 {
+        self.value
+    }
+}
+
+fn main() -> i32 {
+    let c: Counter = Counter { value: 0 }
+    let c2: Counter = c
+        .inc()
+        .inc()
+        .inc()
+    c2.get() - 3
+}
