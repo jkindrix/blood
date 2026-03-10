@@ -213,10 +213,12 @@ Run each tool with `--help` or see its header comments for detailed usage.
 
 ## Current Work Intake
 
-Active work is tracked in `.tmp/WORKLOAD.md`, derived from the spec/implementation divergence audit in `.tmp/AUDIT.md`.
+Start with `.tmp/ACTION_PLAN.md` — the consolidated, prioritized action plan. It summarizes all active work, known bugs, blockers, and deferred items with recommended priority order.
+
+For detail, drill into: `.tmp/WORKLOAD.md` (per-item status with scores and tiers), `.tmp/AUDIT.md` (spec/implementation divergence audit), `.tmp/BLOCKERS.md` (root blocker dependency chains), `.tmp/GOLDEN_TEST_EXPANSION.md` (golden test plan with open items).
 
 **To pick up work:**
-1. Read `.tmp/WORKLOAD.md` — items are organized by tier (Tier 1 = active correctness bugs, down to Tier 5 = open design questions)
+1. Read `.tmp/ACTION_PLAN.md` for priorities, then `.tmp/WORKLOAD.md` for detail — items are organized by tier (Tier 1 = active correctness bugs, down to Tier 5 = open design questions)
 2. Work tiers in order: clear all actionable items in Tier N before moving to Tier N+1
 3. Within a tier, prioritize by danger score (higher = more urgent)
 4. For each item: read the AUDIT.md section for context, the relevant spec, and both compilers
