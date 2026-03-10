@@ -1142,6 +1142,10 @@ impl TypeChecker {
 
             // Check if this impl's self_ty matches the target type
             if types_match_for_impl_id(impl_info.self_ty, ty) {
+                // Check impl-level trait bounds are satisfied
+                if !self.impl_bounds_satisfied(impl_info, ty) {
+                    continue;
+                }
                 // Search methods in this impl
                 for method_idx in 0usize..impl_info.methods.len() {
                     let method = &impl_info.methods[method_idx];
@@ -1163,6 +1167,9 @@ impl TypeChecker {
         for impl_idx in 0usize..self.impls.len() {
             let impl_info = &self.impls[impl_idx];
             if types_match_for_impl_id(impl_info.self_ty, ty) {
+                if !self.impl_bounds_satisfied(impl_info, ty) {
+                    continue;
+                }
                 for method_idx in 0usize..impl_info.methods.len() {
                     let method = &impl_info.methods[method_idx];
                     if method.name.index == method_name.index {
@@ -1182,6 +1189,54 @@ impl TypeChecker {
     /// Gets the impl info from a lookup result.
     pub fn get_impl_from_lookup(self: &Self, result: &MethodLookupResult) -> &typeck_info.ImplInfo {
         &self.impls[result.impl_index]
+    }
+
+    /// Checks whether the concrete type args of `target_ty` satisfy all trait bounds
+    /// on the impl's generic parameters. Returns true if no bounds exist or all are satisfied.
+    fn impl_bounds_satisfied(self: &Self, impl_info: &typeck_info.ImplInfo, target_ty: type_intern.TyId) -> bool {
+        if impl_info.impl_bounds.len() == 0 {
+            return true;
+        }
+        // Extract concrete type args from the target type
+        let target_args = type_intern.get_adt_args(target_ty);
+        match &target_args {
+            &Option.None => { return true; }
+            &Option.Some(args_list) => {
+                let interner = type_intern.type_interner();
+                let num_args = interner.ty_list_len(args_list);
+                for param_idx in 0usize..impl_info.impl_bounds.len() {
+                    let bounds = &impl_info.impl_bounds[param_idx];
+                    if bounds.len() == 0 {
+                        continue;
+                    }
+                    if param_idx >= num_args {
+                        break;
+                    }
+                    let concrete_ty = interner.get_ty_list_element(args_list, param_idx);
+                    // Skip bound checking for unresolved inference variables
+                    let concrete_kind = interner.get(concrete_ty);
+                    let is_unresolved = match concrete_kind {
+                        &type_intern.InternedTypeKind.Infer(_) => true,
+                        &type_intern.InternedTypeKind.Param(_) => true,
+                        _ => false,
+                    };
+                    if is_unresolved {
+                        continue;
+                    }
+                    for bi in 0usize..bounds.len() {
+                        let trait_ref = hir_ty.TraitRef.new(
+                            hir_def.DefId.new(bounds[bi]),
+                            Vec.new(),
+                            common.Span { start: 0, end: 0, line: 0, column: 0 },
+                        );
+                        if !self.type_implements_trait(concrete_ty, &trait_ref) {
+                            return false;
+                        }
+                    }
+                }
+                true
+            }
+        }
     }
 
     /// Looks up a method on a type by name with overload resolution using argument types.
@@ -1204,6 +1259,10 @@ impl TypeChecker {
         for impl_idx in 0usize..self.impls.len() {
             let impl_info = &self.impls[impl_idx];
             if types_match_for_impl_id(impl_info.self_ty, ty) {
+                // Check impl-level trait bounds are satisfied
+                if !self.impl_bounds_satisfied(impl_info, ty) {
+                    continue;
+                }
                 for method_idx in 0usize..impl_info.methods.len() {
                     let method = &impl_info.methods[method_idx];
                     if method.name.index == method_name.index && method.param_tys.len() == arg_tys.len() {
@@ -1440,7 +1499,9 @@ impl TypeChecker {
             let impl_info = &self.impls[i];
             if impl_info.trait_def_id_index == target_trait_idx {
                 if types_match_for_impl_id(impl_info.self_ty, ty) {
-                    return true;
+                    if self.impl_bounds_satisfied(impl_info, ty) {
+                        return true;
+                    }
                 }
             }
         }

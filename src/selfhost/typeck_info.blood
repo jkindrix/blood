@@ -392,6 +392,11 @@ pub struct ImplInfo {
     pub trait_def_id_index: u32,
     /// Methods in this impl block.
     pub methods: Vec<MethodInfo>,
+    /// Per-type-parameter trait bound DefIds for the impl's own generics.
+    /// E.g., for `impl<T: Freeze, U: Clone> Foo<T, U>`:
+    ///   impl_bounds[0] = [Freeze_def_id]
+    ///   impl_bounds[1] = [Clone_def_id]
+    pub impl_bounds: Vec<Vec<u32>>,
 }
 
 impl ImplInfo {
@@ -402,7 +407,7 @@ impl ImplInfo {
         num_generics: u32,
         methods: Vec<MethodInfo>,
     ) -> ImplInfo {
-        ImplInfo { def_id, self_ty, num_generics, trait_def_id_index: no_trait_def_id(), methods }
+        ImplInfo { def_id, self_ty, num_generics, trait_def_id_index: no_trait_def_id(), methods, impl_bounds: Vec.new() }
     }
 
     /// Creates a new impl info for a trait impl.
@@ -413,7 +418,7 @@ impl ImplInfo {
         trait_def_id: hir_def.DefId,
         methods: Vec<MethodInfo>,
     ) -> ImplInfo {
-        ImplInfo { def_id, self_ty, num_generics, trait_def_id_index: trait_def_id.index, methods }
+        ImplInfo { def_id, self_ty, num_generics, trait_def_id_index: trait_def_id.index, methods, impl_bounds: Vec.new() }
     }
 
     /// Returns true if this is a trait impl (not inherent).

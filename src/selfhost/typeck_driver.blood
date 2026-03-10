@@ -699,7 +699,8 @@ fn register_impl(
 
     // Create and register impl info
     let num_generics = count_type_params(&impl_def.generics.params);
-    let impl_info = match &impl_def.trait_ref {
+    let impl_bounds = extract_type_param_bounds(&impl_def.generics);
+    let mut impl_info = match &impl_def.trait_ref {
         &Option.Some(ref trait_ref) => {
             typeck.ImplInfo.new_trait(
                 def_id,
@@ -718,6 +719,7 @@ fn register_impl(
             )
         }
     };
+    impl_info.impl_bounds = impl_bounds;
     checker.register_impl(impl_info);
 }
 
