@@ -383,6 +383,13 @@ pub extern "C" fn blood_region_deactivate() {
     ACTIVE_REGION_STACK.with(|stack| { stack.borrow_mut().pop(); });
 }
 
+/// Deactivate the current region and return its handle.
+/// Returns 0 if no region is active.
+#[no_mangle]
+pub extern "C" fn blood_region_deactivate_get() -> u64 {
+    ACTIVE_REGION_STACK.with(|stack| stack.borrow_mut().pop().unwrap_or(0))
+}
+
 // ============================================================================
 // I/O Functions
 // ============================================================================

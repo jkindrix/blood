@@ -218,6 +218,12 @@ impl<'a> TypeContext<'a> {
             vec![], unit_ty.clone(),
         );
 
+        // region_deactivate_get() -> u64 - pop current region and return its handle
+        self.register_builtin_fn_aliased(
+            "region_deactivate_get", "blood_region_deactivate_get",
+            vec![], u64_ty.clone(),
+        );
+
         // region_alloc(region_id: u64, size: u64, align: u64) -> u64 - allocate from a region
         self.register_builtin_fn_aliased(
             "region_alloc", "blood_region_alloc",

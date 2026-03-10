@@ -643,10 +643,15 @@ impl TypeInterner {
                 // Hash collision — fall through to linear scan
             }
             Option.None => {
-                // Not in hash index — new type, add it
+                // Not in hash index — new type, add it.
+                // Deactivate the current region so Vec/HashMap growth allocations
+                // go to the parent region (or global allocator), NOT a transient
+                // region like mir_region that will be reset between functions.
+                let saved_region = region_deactivate_get();
                 let index = self.types.len() as u32;
                 self.types.push(kind);
                 self.type_hash_index.insert(hash, index);
+                if saved_region != 0 { region_activate(saved_region); }
                 return TyId.new(index);
             }
         }
@@ -659,8 +664,10 @@ impl TypeInterner {
         }
 
         // Not found — new type (collision case, hash already in use)
+        let saved_region = region_deactivate_get();
         let index = self.types.len() as u32;
         self.types.push(kind);
+        if saved_region != 0 { region_activate(saved_region); }
         TyId.new(index)
     }
 
@@ -763,6 +770,8 @@ impl TypeInterner {
 
     /// Internal: push a new type list and register its hash.
     fn push_ty_list(self: &mut TypeInterner, ids: &Vec<TyId>, hash: u64) -> TyListId {
+        // Deactivate current region so growth allocations go to parent/global
+        let saved_region = region_deactivate_get();
         let start = self.ty_list_data.len() as u32;
         let len = ids.len() as u32;
         for i in 0usize..ids.len() {
@@ -771,11 +780,14 @@ impl TypeInterner {
         let index = self.ty_list_meta.len() as u32;
         self.ty_list_meta.push(TyListMeta.new(start, len));
         self.ty_list_hash_index.insert(hash, index);
+        if saved_region != 0 { region_activate(saved_region); }
         TyListId.new(index)
     }
 
     /// Internal: push a new type list without registering hash (collision case).
     fn push_ty_list_no_hash(self: &mut TypeInterner, ids: &Vec<TyId>) -> TyListId {
+        // Deactivate current region so growth allocations go to parent/global
+        let saved_region = region_deactivate_get();
         let start = self.ty_list_data.len() as u32;
         let len = ids.len() as u32;
         for i in 0usize..ids.len() {
@@ -783,6 +795,7 @@ impl TypeInterner {
         }
         let index = self.ty_list_meta.len() as u32;
         self.ty_list_meta.push(TyListMeta.new(start, len));
+        if saved_region != 0 { region_activate(saved_region); }
         TyListId.new(index)
     }
 
@@ -818,8 +831,10 @@ impl TypeInterner {
 
     /// Interns an effect row (no dedup — sequential allocation).
     pub fn intern_effect_row(self: &mut TypeInterner, row: InternedEffectRow) -> EffectRowId {
+        let saved_region = region_deactivate_get();
         let index = self.effect_rows.len() as u32;
         self.effect_rows.push(row);
+        if saved_region != 0 { region_activate(saved_region); }
         EffectRowId.new(index)
     }
 
@@ -838,8 +853,10 @@ impl TypeInterner {
 
     /// Interns a record field list (no dedup — sequential allocation).
     pub fn intern_record_field_list(self: &mut TypeInterner, list: InternedRecordFieldList) -> RecordFieldListId {
+        let saved_region = region_deactivate_get();
         let index = self.record_field_lists.len() as u32;
         self.record_field_lists.push(list);
+        if saved_region != 0 { region_activate(saved_region); }
         RecordFieldListId.new(index)
     }
 

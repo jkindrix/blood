@@ -4180,6 +4180,11 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let region_deactivate_type = void_type.fn_type(&[], false);
         self.module.add_function("blood_region_deactivate", region_deactivate_type, None);
 
+        // blood_region_deactivate_get() -> i64
+        // Deactivates and returns the current region handle (0 if none)
+        let region_deactivate_get_type = i64_type.fn_type(&[], false);
+        self.module.add_function("blood_region_deactivate_get", region_deactivate_get_type, None);
+
         // blood_continuation_add_suspended_region(continuation_id: i64, region_id: i64) -> void
         // Associates a suspended region with a continuation
         let cont_add_region_type = void_type.fn_type(&[i64_type.into(), i64_type.into()], false);
