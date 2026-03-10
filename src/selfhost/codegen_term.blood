@@ -272,11 +272,8 @@ pub fn emit_terminator(
                 }
             }
         }
-        &mir_term.TerminatorKind.Resume { ref value } => {
+        &mir_term.TerminatorKind.Resume { ref value, ref destination, ref target } => {
             // Resume from handler op body.
-            // The inner body returns the resume value in its natural return type.
-            // The wrapper function handles widening to i64 and continuation resume.
-
             // Mark that this handler called resume, so blood_perform won't trigger abort
             ctx.write_indent();
             ctx.write("call void @blood_set_was_resumed()\n");
@@ -321,22 +318,215 @@ pub fn emit_terminator(
             // OK path: proceed with resume
             ctx.emit_label_cg(&snap_ok_label);
 
-            // Write back handler state fields before returning.
+            // Write back handler state fields before resuming.
             emit_handler_state_writeback(ctx);
 
-            match value {
+            // Emit the resume value
+            let resume_val = ctx.fresh_temp_cg();
+            let resume_ty = match value {
                 &Option.Some(ref v) => {
                     let (val, ty) = codegen_expr.emit_operand_typed(ctx, v);
                     if str_eq(ty.as_str(), "{}") || is_void_type(ty.as_str()) {
-                        // Unit-typed resume value → ret void
-                        ctx.emit_ret("void", Option.None);
+                        // Unit-typed resume: use 0 as the i64 value
+                        ctx.write_indent();
+                        ctx.write_cgname(&resume_val);
+                        ctx.write(" = add i64 0, 0\n");
+                        common.make_string("void")
                     } else {
-                        ctx.emit_ret(ty.as_str(), Option.Some(val.as_str()));
+                        // Widen the resume value to i64 for the continuation call
+                        let widened = ctx.fresh_temp_cg();
+                        if str_eq(ty.as_str(), "i64") {
+                            ctx.write_indent();
+                            ctx.write_cgname(&resume_val);
+                            ctx.write(" = add i64 ");
+                            ctx.write(val.as_str());
+                            ctx.write(", 0\n");
+                        } else if str_eq(ty.as_str(), "i32") || str_eq(ty.as_str(), "i16") || str_eq(ty.as_str(), "i8") || str_eq(ty.as_str(), "i1") {
+                            ctx.write_indent();
+                            ctx.write_cgname(&resume_val);
+                            ctx.write(" = zext ");
+                            ctx.write(ty.as_str());
+                            ctx.write(" ");
+                            ctx.write(val.as_str());
+                            ctx.write(" to i64\n");
+                        } else if str_eq(ty.as_str(), "ptr") {
+                            ctx.write_indent();
+                            ctx.write_cgname(&resume_val);
+                            ctx.write(" = ptrtoint ptr ");
+                            ctx.write(val.as_str());
+                            ctx.write(" to i64\n");
+                        } else {
+                            // Struct or other aggregate type: store to alloca, load as i64
+                            let tmp_alloca = ctx.fresh_temp_cg();
+                            ctx.write_indent();
+                            ctx.write_cgname(&tmp_alloca);
+                            ctx.write(" = alloca i64\n");
+                            ctx.write_indent();
+                            ctx.write("store i64 0, ptr ");
+                            ctx.write_cgname(&tmp_alloca);
+                            ctx.write("\n");
+                            ctx.write_indent();
+                            ctx.write("store ");
+                            ctx.write(ty.as_str());
+                            ctx.write(" ");
+                            ctx.write(val.as_str());
+                            ctx.write(", ptr ");
+                            ctx.write_cgname(&tmp_alloca);
+                            ctx.write("\n");
+                            ctx.write_indent();
+                            ctx.write_cgname(&resume_val);
+                            ctx.write(" = load i64, ptr ");
+                            ctx.write_cgname(&tmp_alloca);
+                            ctx.write("\n");
+                        }
+                        ty
                     }
                 }
                 &Option.None => {
-                    // Unit-resume: ret void
-                    ctx.emit_ret("void", Option.None);
+                    ctx.write_indent();
+                    ctx.write_cgname(&resume_val);
+                    ctx.write(" = add i64 0, 0\n");
+                    common.make_string("void")
+                }
+            };
+
+            // Branch based on whether we have a continuation (non-tail-resumptive)
+            // and whether there's a target block for post-resume code.
+            match target {
+                &Option.Some(tgt) => {
+                    // Non-tail-resumptive: check cont at runtime.
+                    // %__cont is the continuation handle passed as the last parameter
+                    // to handler op body functions.
+                    ctx.write("    ; non-tail-resumptive resume: check cont\n");
+                    let cont_val = ctx.fresh_temp_cg();
+                    ctx.write_indent();
+                    ctx.write_cgname(&cont_val);
+                    ctx.write(" = add i64 %__cont, 0\n");
+
+                    let is_tail = ctx.fresh_temp_cg();
+                    ctx.emit_icmp_cg2(&is_tail, "eq", "i64", &cont_val, "0");
+
+                    let tail_label = ctx.fresh_label_cg();
+                    let nontail_label = ctx.fresh_label_cg();
+                    ctx.emit_cond_br_cg(&is_tail, &tail_label, &nontail_label);
+
+                    // Tail path: return the resume value directly.
+                    // Handler op bodies always return i64, and resume_val is already i64.
+                    ctx.emit_label_cg(&tail_label);
+                    if str_eq(resume_ty.as_str(), "void") {
+                        ctx.emit_ret("i64", Option.Some("0"));
+                    } else {
+                        ctx.emit_ret_cg("i64", &resume_val);
+                    }
+
+                    // Non-tail path: call continuation and continue to target block
+                    ctx.emit_label_cg(&nontail_label);
+                    let cont_result = ctx.fresh_temp_cg();
+                    ctx.begin_call(Option.Some(&cont_result), "i64", "@blood_continuation_resume_with_regions");
+                    ctx.call_arg_cg(true, "i64", &cont_val);
+                    ctx.call_arg_cg(false, "i64", &resume_val);
+                    ctx.end_call();
+
+                    // Store continuation result in destination
+                    match destination {
+                        &Option.Some(ref dest) => {
+                            let dest_addr = codegen_expr.emit_place_addr(ctx, dest);
+                            // Determine destination type from MIR local
+                            let dest_ty = ctx.get_local_type(dest.local);
+                            if str_eq(dest_ty.as_str(), "{}") || str_eq(dest_ty.as_str(), "void") {
+                                // Unit/void destination — nothing to store
+                            } else if str_eq(dest_ty.as_str(), "i64") {
+                                ctx.emit_store_cg2("i64", &cont_result, &dest_addr);
+                            } else if str_eq(dest_ty.as_str(), "i32") {
+                                let narrowed = ctx.fresh_temp_cg();
+                                ctx.write_indent();
+                                ctx.write_cgname(&narrowed);
+                                ctx.write(" = trunc i64 ");
+                                ctx.write_cgname(&cont_result);
+                                ctx.write(" to i32\n");
+                                ctx.emit_store_cg2("i32", &narrowed, &dest_addr);
+                            } else if str_eq(dest_ty.as_str(), "ptr") {
+                                let ptr_val = ctx.fresh_temp_cg();
+                                ctx.write_indent();
+                                ctx.write_cgname(&ptr_val);
+                                ctx.write(" = inttoptr i64 ");
+                                ctx.write_cgname(&cont_result);
+                                ctx.write(" to ptr\n");
+                                ctx.emit_store_cg2("ptr", &ptr_val, &dest_addr);
+                            } else {
+                                // Struct or other aggregate: store i64 to alloca, load as dest type
+                                let tmp_alloca = ctx.fresh_temp_cg();
+                                ctx.write_indent();
+                                ctx.write_cgname(&tmp_alloca);
+                                ctx.write(" = alloca i64\n");
+                                ctx.write_indent();
+                                ctx.write("store i64 ");
+                                ctx.write_cgname(&cont_result);
+                                ctx.write(", ptr ");
+                                ctx.write_cgname(&tmp_alloca);
+                                ctx.write("\n");
+                                let narrowed = ctx.fresh_temp_cg();
+                                ctx.write_indent();
+                                ctx.write_cgname(&narrowed);
+                                ctx.write(" = load ");
+                                ctx.write(dest_ty.as_str());
+                                ctx.write(", ptr ");
+                                ctx.write_cgname(&tmp_alloca);
+                                ctx.write("\n");
+                                ctx.emit_store_cg2(dest_ty.as_str(), &narrowed, &dest_addr);
+                            }
+                        }
+                        &Option.None => {
+                            // No destination — discard continuation result
+                        }
+                    }
+
+                    // Branch to post-resume code
+                    let target_label = ctx.block_label_cg(tgt);
+                    ctx.emit_br_cg(&target_label);
+                }
+                &Option.None => {
+                    // Tail-resumptive: the inner body handles the continuation.
+                    // Check %__cont: if 0 (identity), just return resume value.
+                    // If non-zero, call the continuation and return its result.
+                    if ctx.is_handler_op {
+                        ctx.write("    ; tail-resumptive resume: check cont\n");
+                        let cont_val = ctx.fresh_temp_cg();
+                        ctx.write_indent();
+                        ctx.write_cgname(&cont_val);
+                        ctx.write(" = add i64 %__cont, 0\n");
+
+                        let is_tail = ctx.fresh_temp_cg();
+                        ctx.emit_icmp_cg2(&is_tail, "eq", "i64", &cont_val, "0");
+
+                        let tail_label = ctx.fresh_label_cg();
+                        let nontail_label = ctx.fresh_label_cg();
+                        ctx.emit_cond_br_cg(&is_tail, &tail_label, &nontail_label);
+
+                        // Tail path: return the resume value directly
+                        ctx.emit_label_cg(&tail_label);
+                        if str_eq(resume_ty.as_str(), "void") {
+                            ctx.emit_ret("i64", Option.Some("0"));
+                        } else {
+                            ctx.emit_ret_cg("i64", &resume_val);
+                        }
+
+                        // Non-tail path: call continuation and return its result
+                        ctx.emit_label_cg(&nontail_label);
+                        let cont_result = ctx.fresh_temp_cg();
+                        ctx.begin_call(Option.Some(&cont_result), "i64", "@blood_continuation_resume_with_regions");
+                        ctx.call_arg_cg(true, "i64", &cont_val);
+                        ctx.call_arg_cg(false, "i64", &resume_val);
+                        ctx.end_call();
+                        ctx.emit_ret_cg("i64", &cont_result);
+                    } else {
+                        // Not a handler op — plain return (resume in non-handler context)
+                        if str_eq(resume_ty.as_str(), "void") {
+                            ctx.emit_ret("void", Option.None);
+                        } else {
+                            ctx.emit_ret_cg("i64", &resume_val);
+                        }
+                    }
                 }
             }
         }
@@ -449,7 +639,69 @@ fn emit_return(ctx: &mut codegen_ctx.CodegenCtx) {
     let is_void = is_void_type(ret_ty.as_str());
 
     if is_void {
-        ctx.emit_ret("void", Option.None);
+        if ctx.is_handler_op {
+            // Handler op bodies always return i64 (even for void ops)
+            ctx.emit_ret("i64", Option.Some("0"));
+        } else {
+            ctx.emit_ret("void", Option.None);
+        }
+    } else if ctx.is_handler_op {
+        // Handler op bodies always return i64 — widen the native return value
+        let ret_val = ctx.fresh_temp_cg();
+        if ctx.is_region_allocated(ret_local) || ctx.is_persistent_allocated(ret_local) {
+            let heap_ptr = ctx.fresh_temp_cg();
+            ctx.emit_load_cg2(&heap_ptr, "ptr", &ret_name);
+            ctx.emit_load_cg2(&ret_val, ret_ty.as_str(), &heap_ptr);
+        } else {
+            ctx.emit_load_cg2(&ret_val, ret_ty.as_str(), &ret_name);
+        }
+        // Widen to i64
+        if str_eq(ret_ty.as_str(), "i64") {
+            ctx.emit_ret_cg("i64", &ret_val);
+        } else if str_eq(ret_ty.as_str(), "i32") || str_eq(ret_ty.as_str(), "i16") || str_eq(ret_ty.as_str(), "i8") || str_eq(ret_ty.as_str(), "i1") {
+            let widened = ctx.fresh_temp_cg();
+            ctx.write_indent();
+            ctx.write_cgname(&widened);
+            ctx.write(" = zext ");
+            ctx.write(ret_ty.as_str());
+            ctx.write(" ");
+            ctx.write_cgname(&ret_val);
+            ctx.write(" to i64\n");
+            ctx.emit_ret_cg("i64", &widened);
+        } else if str_eq(ret_ty.as_str(), "ptr") {
+            let widened = ctx.fresh_temp_cg();
+            ctx.write_indent();
+            ctx.write_cgname(&widened);
+            ctx.write(" = ptrtoint ptr ");
+            ctx.write_cgname(&ret_val);
+            ctx.write(" to i64\n");
+            ctx.emit_ret_cg("i64", &widened);
+        } else {
+            // Struct or other: store to alloca, load as i64
+            let tmp_alloca = ctx.fresh_temp_cg();
+            ctx.write_indent();
+            ctx.write_cgname(&tmp_alloca);
+            ctx.write(" = alloca i64\n");
+            ctx.write_indent();
+            ctx.write("store i64 0, ptr ");
+            ctx.write_cgname(&tmp_alloca);
+            ctx.write("\n");
+            ctx.write_indent();
+            ctx.write("store ");
+            ctx.write(ret_ty.as_str());
+            ctx.write(" ");
+            ctx.write_cgname(&ret_val);
+            ctx.write(", ptr ");
+            ctx.write_cgname(&tmp_alloca);
+            ctx.write("\n");
+            let widened = ctx.fresh_temp_cg();
+            ctx.write_indent();
+            ctx.write_cgname(&widened);
+            ctx.write(" = load i64, ptr ");
+            ctx.write_cgname(&tmp_alloca);
+            ctx.write("\n");
+            ctx.emit_ret_cg("i64", &widened);
+        }
     } else {
         // For heap-allocated locals (_0 can be region/persistent allocated),
         // the alloca holds a ptr to the heap buffer. Dereference it first.

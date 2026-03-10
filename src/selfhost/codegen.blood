@@ -290,11 +290,23 @@ pub fn generate_function_with_ctx(
     } else {
         common.make_string("void")
     };
-    let ret_ty = if is_empty_struct_type(ret_ty_raw.as_str()) {
+    let ret_ty = if ctx.is_handler_op {
+        // Handler op body functions always return i64 — the wrapper widens anyway,
+        // and this allows Resume codegen to return i64 values uniformly
+        // (continuation results, widened resume values, etc.)
+        common.make_string("i64")
+    } else if is_empty_struct_type(ret_ty_raw.as_str()) {
         common.make_string("void")
     } else {
         ret_ty_raw
     };
+
+    // Handler op bodies get an extra i64 %__cont parameter for continuation access.
+    // This allows Resume codegen to call blood_continuation_resume_with_regions
+    // and continue execution with post-resume code (non-tail-resumptive handlers).
+    if ctx.is_handler_op {
+        params.push((common.make_string("i64"), common.make_string("%__cont")));
+    }
 
     // Store function signature for generic call fixup at call sites
     let mut sig_param_types: Vec<String> = Vec.new();

@@ -195,10 +195,16 @@ fn validate_terminator_locals(
             }
             validate_place_local(errors, destination, bb_idx, stmt_idx, num_locals, "Perform dest");
         }
-        &mir_term.TerminatorKind.Resume { ref value } => {
+        &mir_term.TerminatorKind.Resume { ref value, ref destination, target: _ } => {
             match value {
                 &Option.Some(ref v) => {
                     validate_operand_local(errors, v, bb_idx, stmt_idx, num_locals, "Resume value");
+                }
+                &Option.None => {}
+            }
+            match destination {
+                &Option.Some(ref dest) => {
+                    validate_place_local(errors, dest, bb_idx, stmt_idx, num_locals, "Resume dest");
                 }
                 &Option.None => {}
             }

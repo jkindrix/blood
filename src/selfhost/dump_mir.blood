@@ -1056,8 +1056,16 @@ pub fn format_terminator(term: &mir_term.Terminator) -> String {
             }
             out
         }
-        &mir_term.TerminatorKind.Resume { ref value } => {
+        &mir_term.TerminatorKind.Resume { ref value, ref destination, ref target } => {
             let mut out = String.new();
+            match destination {
+                &Option.Some(ref dest) => {
+                    let dest_str = format_place(dest);
+                    out.push_str(dest_str.as_str());
+                    out.push_str(" = ");
+                }
+                &Option.None => {}
+            }
             out.push_str("resume");
             match value {
                 &Option.Some(ref v) => {
@@ -1065,6 +1073,13 @@ pub fn format_terminator(term: &mir_term.Terminator) -> String {
                     let val = format_operand(v);
                     out.push_str(val.as_str());
                     out.push(')');
+                }
+                &Option.None => {}
+            }
+            match target {
+                &Option.Some(t) => {
+                    out.push_str(" -> bb");
+                    push_u32(&mut out, t.index);
                 }
                 &Option.None => {}
             }

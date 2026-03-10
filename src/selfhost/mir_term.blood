@@ -95,7 +95,14 @@ impl Terminator {
                 }
                 result
             }
-            &TerminatorKind.Resume { value: _ } => Vec.new(),
+            &TerminatorKind.Resume { value: _, destination: _, ref target } => {
+                let mut result = Vec.new();
+                match target {
+                    &Option.Some(t) => result.push(t),
+                    &Option.None => {}
+                }
+                result
+            }
             &TerminatorKind.Unreachable => Vec.new(),
             &TerminatorKind.Drop { target, ref unwind, place: _ } => {
                 let mut result = Vec.new();
@@ -115,7 +122,12 @@ impl Terminator {
         match &self.kind {
             &TerminatorKind.Return => true,
             &TerminatorKind.Unreachable => true,
-            &TerminatorKind.Resume { value: _ } => true,
+            &TerminatorKind.Resume { value: _, destination: _, ref target } => {
+                match target {
+                    &Option.None => true,
+                    &Option.Some(_) => false,
+                }
+            }
             &TerminatorKind.StaleReference { ptr: _, expected_gen: _, actual_gen: _ } => true,
             &TerminatorKind.Goto { target: _ } => false,
             &TerminatorKind.SwitchInt { discr: _, targets: _ } => false,
@@ -190,8 +202,12 @@ pub enum TerminatorKind {
     },
     /// Resume from an effect handler.
     Resume {
-        /// The value to return to the continuation (None for unit-resume).
+        /// The value to send to the continuation (None for unit-resume).
         value: Option<mir_types.Operand>,
+        /// Where to store the continuation's return value (None for tail-resumptive).
+        destination: Option<mir_types.Place>,
+        /// Block to jump to after the continuation returns (None for tail-resumptive).
+        target: Option<mir_def.BasicBlockId>,
     },
     /// Indicate unreachable code.
     Unreachable,

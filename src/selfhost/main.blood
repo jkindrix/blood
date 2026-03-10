@@ -2825,46 +2825,44 @@ fn generate_handler_wrappers(
 
         // Build call to inner function
         // Pass ptr %state only if the handler has state fields.
+        // All inner body functions now receive i64 %cont as their last parameter
+        // for non-tail-resumptive continuation access.
         if param_count == 0 {
             if has_state {
-                // State-only — call inner with just the state pointer
+                // State-only — call inner with state pointer + cont
                 if str_eq(inner_ret_ty.as_str(), "void") {
                     ir.push_str("  call void @");
                     ir.push_str(inner_name.as_str());
-                    ir.push_str("(ptr %state)\n");
-                    ir.push_str("  br label %do_resume\n");
-                    ir.push_str("do_resume:\n");
-                    emit_resume_logic(&mut ir, "0");
+                    ir.push_str("(ptr %state, i64 %cont)\n");
+                    ir.push_str("  ret i64 0\n");
                 } else {
                     ir.push_str("  %inner_result = call ");
                     ir.push_str(inner_ret_ty.as_str());
                     ir.push_str(" @");
                     ir.push_str(inner_name.as_str());
-                    ir.push_str("(ptr %state)\n");
+                    ir.push_str("(ptr %state, i64 %cont)\n");
                     let widened = widen_to_i64(&mut ir, "inner_result", inner_ret_ty.as_str());
-                    ir.push_str("  br label %do_resume\n");
-                    ir.push_str("do_resume:\n");
-                    emit_resume_logic(&mut ir, widened.as_str());
+                    ir.push_str("  ret i64 ");
+                    ir.push_str(widened.as_str());
+                    ir.push_str("\n");
                 }
             } else {
-                // No state, no params — call inner with no args
+                // No state, no params — call inner with just cont
                 if str_eq(inner_ret_ty.as_str(), "void") {
                     ir.push_str("  call void @");
                     ir.push_str(inner_name.as_str());
-                    ir.push_str("()\n");
-                    ir.push_str("  br label %do_resume\n");
-                    ir.push_str("do_resume:\n");
-                    emit_resume_logic(&mut ir, "0");
+                    ir.push_str("(i64 %cont)\n");
+                    ir.push_str("  ret i64 0\n");
                 } else {
                     ir.push_str("  %inner_result = call ");
                     ir.push_str(inner_ret_ty.as_str());
                     ir.push_str(" @");
                     ir.push_str(inner_name.as_str());
-                    ir.push_str("()\n");
+                    ir.push_str("(i64 %cont)\n");
                     let widened = widen_to_i64(&mut ir, "inner_result", inner_ret_ty.as_str());
-                    ir.push_str("  br label %do_resume\n");
-                    ir.push_str("do_resume:\n");
-                    emit_resume_logic(&mut ir, widened.as_str());
+                    ir.push_str("  ret i64 ");
+                    ir.push_str(widened.as_str());
+                    ir.push_str("\n");
                 }
             }
         } else {
@@ -2963,8 +2961,8 @@ fn generate_handler_wrappers(
             }
 
             // Build call to inner function.
-            // For stateful handlers: call @inner(ptr %state, args...)
-            // For stateless handlers: call @inner(args...)
+            // For stateful handlers: call @inner(ptr %state, args..., i64 %cont)
+            // For stateless handlers: call @inner(args..., i64 %cont)
             if str_eq(inner_ret_ty.as_str(), "void") {
                 ir.push_str("  call void @");
                 ir.push_str(inner_name.as_str());
@@ -2976,10 +2974,11 @@ fn generate_handler_wrappers(
                     }
                 }
                 emit_call_args(&mut ir, ctx, opinfo.body_def_id, param_count, sig_offset);
-                ir.push_str(")\n");
-                ir.push_str("  br label %do_resume\n");
-                ir.push_str("do_resume:\n");
-                emit_resume_logic(&mut ir, "0");
+                if has_state || param_count > 0 {
+                    ir.push_str(", ");
+                }
+                ir.push_str("i64 %cont)\n");
+                ir.push_str("  ret i64 0\n");
             } else {
                 ir.push_str("  %inner_result = call ");
                 ir.push_str(inner_ret_ty.as_str());
@@ -2993,11 +2992,14 @@ fn generate_handler_wrappers(
                     }
                 }
                 emit_call_args(&mut ir, ctx, opinfo.body_def_id, param_count, sig_offset);
-                ir.push_str(")\n");
+                if has_state || param_count > 0 {
+                    ir.push_str(", ");
+                }
+                ir.push_str("i64 %cont)\n");
                 let widened = widen_to_i64(&mut ir, "inner_result", inner_ret_ty.as_str());
-                ir.push_str("  br label %do_resume\n");
-                ir.push_str("do_resume:\n");
-                emit_resume_logic(&mut ir, widened.as_str());
+                ir.push_str("  ret i64 ");
+                ir.push_str(widened.as_str());
+                ir.push_str("\n");
             }
         }
 

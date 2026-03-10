@@ -647,16 +647,16 @@ impl<'hir, 'ctx> ClosureLowering<'hir, 'ctx> {
         // Create continuation block
         let resume_block = self.builder.new_block();
 
-        // Determine tail-resumptiveness
+        // Determine tail-resumptiveness (default to false — safe for NTR handlers)
         let is_tail_resumptive = StandardEffects::is_tail_resumptive(effect_id)
             .unwrap_or_else(|| {
                 if let Some(item) = self.hir.get_item(effect_id) {
                     if matches!(item.kind, hir::ItemKind::Effect { .. }) {
                         return StandardEffects::is_tail_resumptive_by_name(&item.name)
-                            .unwrap_or(true);
+                            .unwrap_or(false);
                     }
                 }
-                true
+                false
             });
 
         // Emit the Perform terminator

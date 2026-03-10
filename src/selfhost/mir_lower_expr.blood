@@ -2638,10 +2638,10 @@ fn lower_resume_expr(
     ctx: &mut mir_lower_ctx.MirLowerCtx,
     val: &hir_expr.Expr,
     _ty: &hir_ty.Type,
-    _dest: mir_lower_ctx.Destination,
+    dest: mir_lower_ctx.Destination,
     span: common.Span,
 ) {
-    // Evaluate value
+    // Evaluate the value to send to the continuation
     let temp = ctx.new_temp(val.ty, span);
     lower_expr(ctx, val, mir_lower_ctx.destination_local(temp));
 
@@ -2650,10 +2650,28 @@ fn lower_resume_expr(
         val.ty,
     );
 
+    // Resume is non-tail-resumptive: create a successor block for post-resume code.
+    // The destination stores the continuation's return value (the result of the
+    // handled block). The target block is where execution continues after resume.
+    let dest_place = match dest.as_place() {
+        Option.Some(p) => p,
+        Option.None => {
+            // If no destination, create a temp for the return value
+            let ret_temp = ctx.new_temp(val.ty, span);
+            mir_types.Place.local(ret_temp)
+        }
+    };
+    let next_block = ctx.new_block();
+
     ctx.builder.terminate(mir_term.Terminator.new(
-        mir_term.TerminatorKind.Resume { value: Option.Some(operand) },
+        mir_term.TerminatorKind.Resume {
+            value: Option.Some(operand),
+            destination: Option.Some(dest_place),
+            target: Option.Some(next_block),
+        },
         span,
     ));
+    ctx.set_current_block(next_block);
 }
 
 fn lower_try_expr(
