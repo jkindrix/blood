@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Ground-truth test suite for the Blood compiler.
+# Golden test suite for the Blood compiler.
 # Compiles and runs each .blood file, checks exit code and expected output.
 #
 # Usage: ./run_tests.sh [BLOOD_BINARY] [FILTER]
@@ -172,7 +172,7 @@ run_one_test() {
 }
 
 # Header
-echo -e "${BOLD}Blood Ground-Truth Test Suite${RESET}"
+echo -e "${BOLD}Blood Golden Test Suite${RESET}"
 echo "Compiler: $BLOOD"
 echo "$("$BLOOD" --version 2>&1 || echo "unknown version")"
 echo "---"

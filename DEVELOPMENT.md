@@ -15,7 +15,7 @@ This document defines the CCV methodology — *what* to do and *why*. Operationa
 | **AGENT_PROTOCOL.md** | `tools/AGENT_PROTOCOL.md` | Session start/end procedures, investigation workflow, hard stop conditions, tool escalation chain |
 | **FAILURE_LOG.md** | `tools/FAILURE_LOG.md` | Structured bug history — root causes, resolutions, lessons learned |
 | **CLAUDE.md** | `CLAUDE.md` | Build commands, tool quick-reference, key patterns, active limitations |
-| **build_selfhost.sh** | `src/selfhost/build_selfhost.sh` | All build modes (`--help` for full list); CCV uses `timings`, `ground-truth`, `rebuild` |
+| **build_selfhost.sh** | `src/selfhost/build_selfhost.sh` | All build modes (`--help` for full list); CCV uses `timings`, `golden`, `rebuild` |
 
 **Tool escalation chain** (for debugging regressions — see AGENT_PROTOCOL.md for full workflow):
 
@@ -31,7 +31,7 @@ All mechanical or semantic changes to the self-hosted compiler follow this three
 
 ### Step 1: Canary
 
-Before mass-converting any pattern, write a targeted ground-truth test that exercises the pattern with all relevant types (`i32`, `u32`, `usize`, `u64`, `bool`, etc.). Run against both blood-rust and first_gen.
+Before mass-converting any pattern, write a targeted golden test that exercises the pattern with all relevant types (`i32`, `u32`, `usize`, `u64`, `bool`, etc.). Run against both blood-rust and first_gen.
 
 **Purpose:** Catch type-specific bugs (e.g., a feature that works for `i32` but segfaults for `usize`) *before* making hundreds of changes, not after.
 
@@ -71,8 +71,8 @@ cd src/selfhost
 # 1. Build first_gen (blood-rust compiles the modified self-hosted source)
 ./build_selfhost.sh timings
 
-# 2. Run ground-truth — all tests must pass (check the "Passed: N" total in output)
-./build_selfhost.sh ground-truth
+# 2. Run golden — all tests must pass (check the "Passed: N" total in output)
+./build_selfhost.sh golden
 
 # 3. Build second_gen + third_gen, verify byte-identical
 #    (first_gen compiles itself → second_gen; second_gen compiles itself → third_gen)
@@ -90,7 +90,7 @@ git add <cluster files> && git commit -m "refactor(selfhost): <description> (Clu
 **Commit after each verified cluster.** This gives clean rollback points — if cluster F regresses, `git revert` the cluster F commit. Without per-cluster commits, reverting requires manually identifying which files belong to which cluster.
 
 **Why bootstrap after every cluster, not just at the end:**
-- Ground-truth tests verify that user programs compile correctly.
+- Golden tests verify that user programs compile correctly.
 - Bootstrap verification verifies that the *compiler itself* compiles correctly when it contains the new patterns.
 - These are different questions. A feature can work in user code but break when used in the compiler's own source (different code paths, different type contexts, different optimization interactions).
 - If bootstrap breaks after cluster E but not after cluster D, the bug is in the typeck files. If you only check at the end, it could be any cluster.
@@ -102,7 +102,7 @@ git add <cluster files> && git commit -m "refactor(selfhost): <description> (Clu
 4. If root cause is in blood-rust, invoke the Bootstrap Gate.
 5. If root cause is in the self-hosted compiler, fix it, rebuild, re-verify from scratch.
 6. Log the bug in `tools/FAILURE_LOG.md` with root cause and resolution.
-7. Only proceed to the next cluster after a clean pass (ground-truth + bootstrap).
+7. Only proceed to the next cluster after a clean pass (golden + bootstrap).
 
 ---
 
@@ -124,7 +124,7 @@ git add <cluster files> && git commit -m "refactor(selfhost): <description> (Clu
      cd src/bootstrap && cargo build --release
 5. Rebuild first_gen from the CURRENT self-hosted source:
      cd src/selfhost && ./build_selfhost.sh timings
-6. Re-verify ground-truth (all tests must pass — check reported total).
+6. Re-verify golden (all tests must pass — check reported total).
 7. Log the bug in tools/FAILURE_LOG.md.
 8. Only THEN resume self-hosted compiler work.
 ```
@@ -218,8 +218,8 @@ When a regression is found:
 | Symptom | Likely Source |
 |---------|-------------|
 | Compile error in first_gen build | Parser or type checker change in the cluster |
-| Ground-truth test compile failure | Self-hosted compiler bug in changed code |
-| Ground-truth test wrong result | Codegen or runtime bug |
+| Golden test compile failure | Self-hosted compiler bug in changed code |
+| Golden test wrong result | Codegen or runtime bug |
 | Segmentation fault during compilation | Memory corruption, type mismatch, or blood-rust bug |
 | Segmentation fault in test binary | Codegen bug or blood-rust miscompilation |
 | Non-deterministic failure (heisenbug) | Memory corruption — likely blood-rust or runtime |
@@ -250,7 +250,7 @@ See `tools/AGENT_PROTOCOL.md` for the full investigation workflow and tool escal
 
 When a bug is found and resolved during CCV:
 - Add an entry to `tools/FAILURE_LOG.md` with: symptom, root cause, resolution, and which cluster/phase triggered it.
-- If the bug required a code fix (not just a revert), add a regression test to `tests/ground-truth/`.
+- If the bug required a code fix (not just a revert), add a regression test to `tests/golden/`.
 
 ### 6. Never Do These Things
 

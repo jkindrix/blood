@@ -42,7 +42,7 @@ As of 2026-02-28, the specification documents have reached a mature state:
 - **CONTENT_ADDRESSED.md** (v0.4.0) now specifies monomorphized instance hashing (three-level cache model, ADR-030).
 - **SPECIFICATION.md** (v0.3.0) body is current and comprehensive. Dead links fixed, MACROS.md added to hierarchy.
 
-All 351 ground-truth test files exist. Bootstrap is stable (second_gen/third_gen byte-identical). Both compilers accept GRAMMAR.md v0.6.0 syntax — Phase A alignment is complete.
+All 351 golden test files exist. Bootstrap is stable (second_gen/third_gen byte-identical). Both compilers accept GRAMMAR.md v0.6.0 syntax — Phase A alignment is complete.
 
 **However**, two factors require resolution before compiler alignment:
 
@@ -348,13 +348,13 @@ All 47 `.blood` files in `src/selfhost/` migrated. Key steps:
 3. Batch conversion of ~1,960 `lowercase::lowercase` expression paths (`f6fbc79`)
 4. `FinallyClause` parsing added to selfhost parser (`4797be9`)
 
-**Verification**: 339/339 ground-truth, second_gen/third_gen byte-identical (13,079,128 bytes).
+**Verification**: 339/339 golden, second_gen/third_gen byte-identical (13,079,128 bytes).
 
 **All `::` path separators resolved** — zero remain in `.blood` files. Final 8 three-segment type paths fixed in `b8d7f0e` (2026-03-03).
 
 ### A.4 — Update Tests and Examples — **COMPLETE** (2026-02-28)
 
-- [x] `tests/ground-truth/*.blood` — all expression-path `::` converted to `.` (`c8bc323`, `788df5a`)
+- [x] `tests/golden/*.blood` — all expression-path `::` converted to `.` (`c8bc323`, `788df5a`)
 - [x] `stdlib/*.blood` — converted in earlier commit (`3ea4e4f`)
 - [x] All 339/339 tests pass
 
@@ -367,7 +367,7 @@ All 47 `.blood` files in `src/selfhost/` migrated. Key steps:
 
 > **Stale Documents Warning (Phase B)**
 >
-> - **`docs/planning/IMPLEMENTATION_STATUS.md`** (v0.5.3, 2026-01-29) — **STALE. Do not use.** Missing all 337 ground-truth tests, closures, array-to-slice coercion, MIR region fixes, self-hosted compiler progress, and ADR-001 through ADR-037. Must be regenerated from current compiler state before use.
+> - **`docs/planning/IMPLEMENTATION_STATUS.md`** (v0.5.3, 2026-01-29) — **STALE. Do not use.** Missing all 337 golden tests, closures, array-to-slice coercion, MIR region fixes, self-hosted compiler progress, and ADR-001 through ADR-037. Must be regenerated from current compiler state before use.
 
 Audit whether compiler behavior matches the formal semantics we've specified:
 
@@ -423,7 +423,7 @@ Enforced [Linear-No-Ref] and [Linear-Closure] in bootstrap:
 ### C.3 — Region Lifecycle (B.2) — **DEFERRED**
 
 Self-hosted compiler has stub MIR region lifecycle. Bootstrap has complete implementation.
-Deferred because self-hosted MIR changes require adding builtin DefId resolution infrastructure (4+ files, 5 call sites). Gap doesn't affect current tests (ground-truth uses blood-rust).
+Deferred because self-hosted MIR changes require adding builtin DefId resolution infrastructure (4+ files, 5 call sites). Gap doesn't affect current tests (golden uses blood-rust).
 
 ### C.4 — Or-Pattern Binding Consistency (B.5) — **DONE** (`8b952ee`)
 
@@ -442,7 +442,7 @@ Verified both features work correctly in bootstrap:
 
 ### Phase C Verification
 
-- 351 ground-truth test files, all passing
+- 351 golden test files, all passing
 - second_gen/third_gen byte-identical
 - Bootstrap: 1269 lib tests
 
@@ -527,8 +527,8 @@ See `proofs/PROOF_ROADMAP.md` (v1.6) for complete per-file inventory and detaile
 | E.3 | Implement Tier 2 codegen in bootstrap compiler | src/bootstrap/bloodc/ | ✅ Done (GlobalEscape → Persistent mapping, blood_persistent_alloc/decrement) |
 | E.4 | Implement Tier 2 codegen in self-hosted compiler | src/selfhost/ | ✅ Done (slot_id tracking fix, emit_persistent_local, StorageDead decrement) |
 | E.5 | Implement escape analysis (GlobalEscape → Tier 2 promotion) | Both compilers | ✅ Done (3-state lattice: NoEscape→Stack, ArgEscape→Region, GlobalEscape→Persistent) |
-| E.6 | Write ground-truth tests for Tier 2 | tests/ground-truth/ | ✅ Done (t02_persistent_basic/nested/scope/vec — 4 tests) |
-| E.7 | Write ground-truth tests for cycle collection | tests/ground-truth/ | DEFERRED (cycle collector integration not needed for MVP) |
+| E.6 | Write golden tests for Tier 2 | tests/golden/ | ✅ Done (t02_persistent_basic/nested/scope/vec — 4 tests) |
+| E.7 | Write golden tests for cycle collection | tests/golden/ | DEFERRED (cycle collector integration not needed for MVP) |
 | E.8 | Validate spec matches implementation, update MEMORY_MODEL.md | docs/spec/ | ✅ Done |
 
 ---
@@ -724,5 +724,5 @@ Tier 1 triage (Phase 0.2) evaluates #20 and the other grammar-affecting proposal
 | 2.0 | 2026-02-28 | Added Phase 0 (design space resolution) from DESIGN_SPACE_AUDIT.md |
 | 3.0 | 2026-02-28 | Restructured Phase 0: added proposal triage (0.2), grammar pre-update (0.3); 26 proposals evaluated in 3 tiers; align-once strategy |
 | 3.1 | 2026-02-28 | Added Phase 0 Methodology (design-first principle); reframed F-06/F-07 as design questions; added sequencing rationale for design-first methodology |
-| 3.2 | 2026-03-01 | Phase C complete (C.1–C.5); added Rust-ism audit findings (DEF-009 through DEF-015); updated deferred items with design-space conflicts; 344/344 ground-truth |
+| 3.2 | 2026-03-01 | Phase C complete (C.1–C.5); added Rust-ism audit findings (DEF-009 through DEF-015); updated deferred items with design-space conflicts; 344/344 golden |
 | 3.3 | 2026-03-04 | Phase A fully complete (residual resolved `b8d7f0e`); Phase D complete — all 43/43 Coq theorems proved, 0 Admitted, 227 Qed, 7 Defined; updated test counts (351 files); updated totals |

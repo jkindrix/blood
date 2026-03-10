@@ -81,7 +81,7 @@ Audit search terms: `_ =>`, `unwrap_or_default`, `unwrap_or_else`, `Type::error(
 
 **Blood-rust bugs: report, do NOT work around.** Write the correct code. If blood-rust miscompiles it, that's a blood-rust bug. STOP, isolate, document, report, wait. Signs: DefId errors, works in one context but not another, mutations lost through references, runtime mismatch. See `tools/FAILURE_LOG.md` for history.
 
-**Canary-Cluster-Verify (CCV) method:** All batch changes to the self-hosted compiler follow the CCV protocol. Canary-test new patterns before mass conversion. Cluster changes by compiler phase. Verify (build + ground-truth + bootstrap) after each cluster. See `DEVELOPMENT.md` for the full protocol, cluster definitions, and bootstrap gate rules.
+**Canary-Cluster-Verify (CCV) method:** All batch changes to the self-hosted compiler follow the CCV protocol. Canary-test new patterns before mass conversion. Cluster changes by compiler phase. Verify (build + golden tests + bootstrap) after each cluster. See `DEVELOPMENT.md` for the full protocol, cluster definitions, and bootstrap gate rules.
 
 **Document discoveries:** Test in isolation, document in this file, comment in code. Distinguish bugs (report and wait) from documented limitations (work around).
 
@@ -102,31 +102,59 @@ All fixed bugs (BUG-001 through BUG-013) are documented in `tools/FAILURE_LOG.md
 ## Build & Test Commands
 
 ```bash
-# Check syntax/types
+# Check syntax/types (blood-rust directly)
 src/bootstrap/target/release/blood check file.blood
 
-# Build executable (output: build/debug/<stem> relative to source file)
+# Build/run a file (blood-rust directly)
 src/bootstrap/target/release/blood build file.blood
-
-# Build with custom output directory
-src/bootstrap/target/release/blood build file.blood --build-dir /tmp/mybuild
-
-# Build with explicit output path (-o overrides only the final binary)
-src/bootstrap/target/release/blood build file.blood -o /tmp/mybin
-
-# Run
 src/bootstrap/target/release/blood run file.blood
 
 # Build the Rust bootstrap compiler
 cd src/bootstrap && cargo build --release
-
-# Build first_gen (self-hosted, via build script)
-cd src/selfhost && ./build_selfhost.sh timings
-# Output: src/selfhost/build/first_gen
-
-# Run ground-truth tests
-cd src/selfhost && ./build_selfhost.sh ground-truth
 ```
+
+### Build Script (`src/selfhost/build_selfhost.sh`)
+
+All selfhost building and testing goes through the build script. No arguments shows status.
+
+```bash
+cd src/selfhost
+
+# Build stages
+./build_selfhost.sh build cargo         # Rebuild blood-rust (cargo build --release)
+./build_selfhost.sh build first_gen     # Build first_gen from blood-rust
+./build_selfhost.sh build second_gen    # Self-compile first_gen → second_gen
+./build_selfhost.sh build third_gen     # Bootstrap second_gen → third_gen + byte-compare
+./build_selfhost.sh build runtime       # Recompile runtime.o from runtime.c
+./build_selfhost.sh build all           # Full chain: cargo → first_gen → GT → second_gen → GT → third_gen
+
+# Test suites (compiler arg accepts names: bootstrap, first_gen, second_gen, third_gen, or a path)
+./build_selfhost.sh test golden              # Default: first_gen
+./build_selfhost.sh test golden bootstrap     # Test against blood-rust
+./build_selfhost.sh test golden second_gen    # Verify first_gen codegen
+./build_selfhost.sh test dispatch                   # Compare bootstrap vs first_gen output
+./build_selfhost.sh test blood                      # Run tests/blood-test/ through bootstrap
+
+# Diagnostics
+./build_selfhost.sh verify              # IR verification + declaration diff + FileCheck
+./build_selfhost.sh ir-check            # FileCheck tests only
+./build_selfhost.sh asan                # Build ASan-instrumented binary
+./build_selfhost.sh bisect              # Binary search for miscompiled function
+./build_selfhost.sh emit llvm-ir        # Emit intermediate IR
+
+# Workflow
+./build_selfhost.sh run file.blood              # Compile and run (default: first_gen)
+./build_selfhost.sh run file.blood bootstrap    # Run through bootstrap
+./build_selfhost.sh diff file.blood             # Compare blood-rust vs first_gen output
+./build_selfhost.sh status                      # Show compiler status, ages, processes
+./build_selfhost.sh clean                       # Remove build artifacts (preserves .logs)
+./build_selfhost.sh clean-all                   # Remove everything including logs
+
+# Flags
+-q, --quiet         # Suppress per-test output (only failures + summary)
+```
+
+**Golden test behavior:** COMPILE_FAIL tests pass when the compiler correctly rejects the code. `// EXPECT:` diagnostic pattern mismatches are reported separately as warnings, not counted as failures. Test binaries have a 30s timeout to prevent infinite-loop hangs.
 
 ### Build Directory Layout
 
@@ -154,14 +182,13 @@ Override hierarchy (highest priority first):
 | `tools/minimize.sh` | Reduce failing test to minimal reproduction |
 | `tools/phase-compare.sh` | Identify which compilation phase first diverges |
 | `tools/memprofile.sh` | Profile memory usage with per-phase breakdown |
-| `tools/asan-selfcompile.sh` | Build ASan-instrumented second_gen for memory debugging |
 | `tools/filecheck-audit.sh` | Audit FileCheck test coverage and recommend gaps |
 | `tools/validate-all-mir.sh` | Pre-codegen MIR validation gate |
-| `tools/track-regression.sh` | Detect ground-truth test regressions vs baseline |
+| `tools/track-regression.sh` | Detect golden test regressions vs baseline |
 | `tools/FAILURE_LOG.md` | Structured log of past bugs, root causes, resolutions |
 | `tools/AGENT_PROTOCOL.md` | Session protocol: investigation workflow, stop conditions |
 
-**Environment variables:** `BLOOD_REF` (reference compiler), `BLOOD_TEST` (test compiler), `BLOOD_RUNTIME` (runtime.o), `BLOOD_RUST_RUNTIME` (libblood_runtime.a), `BLOOD_BUILD_DIR` (build output directory), `BLOOD_CACHE` (compilation cache directory).
+**Environment variables:** `BLOOD_RUST` (bootstrap compiler path), `RUNTIME_O` (runtime.o), `RUNTIME_A` (libblood_runtime.a), `BLOOD_RUNTIME` (runtime.o, exported), `BLOOD_RUST_RUNTIME` (libblood_runtime.a, exported), `BLOOD_BUILD_DIR` (build output directory), `BLOOD_CACHE` (compilation cache directory).
 
 Run each tool with `--help` or see its header comments for detailed usage.
 
@@ -197,7 +224,7 @@ Active work is tracked in `.tmp/WORKLOAD.md`, derived from the spec/implementati
    - If the spec is right and the implementation is wrong → fix the code (`close-impl-to-spec`)
    - If the spec has a genuine omission or Rust-ism → fix the spec with documented justification (`close-spec-to-impl`)
    - If the answer is unclear → write a design evaluation, research the problem space (`open-question`)
-6. After completing work, update WORKLOAD.md with results and verify (build + ground-truth + bootstrap)
+6. After completing work, update WORKLOAD.md with results and verify (build + golden tests + bootstrap)
 
 **Tier-skip rules:** You may skip an item within a tier only if it is genuinely blocked (marked `open-question` with no resolution path, or has unmet prerequisites). When skipping, state the specific reason for each skipped item — do not dismiss a tier as a group. If all remaining items in a tier are blocked or deferred, you may proceed to the next tier after documenting why each was skipped.
 

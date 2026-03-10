@@ -44,10 +44,10 @@ The compiler binary is produced at `target/release/blood`.
 # Run unit tests (~2,000 tests)
 cargo test --workspace
 
-# Run ground-truth integration tests (requires built compiler)
-make ground-truth
+# Run golden integration tests (requires built compiler)
+make golden
 
-# Full test suite (unit + ground-truth)
+# Full test suite (unit + golden)
 make test
 
 # Full bootstrap cycle (build → compile self-hosted → self-compile)

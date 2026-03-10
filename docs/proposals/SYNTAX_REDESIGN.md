@@ -723,7 +723,7 @@ Process:
 Verification after batch:
 ```bash
 cd src/selfhost && ./build_selfhost.sh timings
-./build_selfhost.sh ground-truth
+./build_selfhost.sh golden
 ./build_selfhost.sh rebuild
 # Build third_gen from second_gen, verify byte-identical
 ```
@@ -752,14 +752,14 @@ Order of implementation:
 3. **Parser:** Parse spec clauses after effect row; parse unchecked blocks
 4. **HIR:** Store spec clauses in `FnDef`; store unchecked flags
 5. **Codegen:** Check unchecked flags, skip corresponding checks
-6. **Tests:** Add t09_spec_* and t09_unchecked_* ground-truth tests
+6. **Tests:** Add t09_spec_* and t09_unchecked_* golden tests
 
 ### 8.3 Phase 2: Semicolon Flexibility
 
 1. **Parser:** When expecting `;`, check if next token starts a new line
 2. **Continuation detection:** Check if current token is a continuation token
 3. **Implicit insert:** If new line and not continuation, treat as implicit `;`
-4. **Tests:** Add t09_semicolon_optional ground-truth test
+4. **Tests:** Add t09_semicolon_optional golden test
 5. **Grammar update:** Bump GRAMMAR.md to v0.4.0
 
 ### 8.4 Bootstrap Verification Protocol
@@ -770,8 +770,8 @@ After every batch of changes:
 # Step 1: Build first_gen from blood-rust
 cd src/selfhost && ./build_selfhost.sh timings
 
-# Step 2: Run all ground-truth tests
-./build_selfhost.sh ground-truth
+# Step 2: Run all golden tests
+./build_selfhost.sh golden
 # Expected: 336/336 pass (or more with new tests)
 
 # Step 3: Build second_gen from first_gen
@@ -793,10 +793,10 @@ diff build/second_gen build/third_gen
 ### New Files
 | File | Purpose |
 |------|---------|
-| `tests/ground-truth/t09_spec_requires.blood` | Specification requires clause test |
-| `tests/ground-truth/t09_spec_ensures.blood` | Specification ensures clause test |
-| `tests/ground-truth/t09_unchecked_bounds.blood` | Unchecked bounds attribute test |
-| `tests/ground-truth/t09_semicolon_optional.blood` | Semicolonless code test |
+| `tests/golden/t09_spec_requires.blood` | Specification requires clause test |
+| `tests/golden/t09_spec_ensures.blood` | Specification ensures clause test |
+| `tests/golden/t09_unchecked_bounds.blood` | Unchecked bounds attribute test |
+| `tests/golden/t09_semicolon_optional.blood` | Semicolonless code test |
 
 ### Modified Files (Grammar Implementation)
 | File | Changes |

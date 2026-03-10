@@ -65,7 +65,7 @@ The Synthetic Safety Model achieves:
 > - Region reset (O(1) deallocation): ~41ns regardless of allocation count (`benchmarks/micro/bench_region_dealloc.blood`)
 > - Persistent allocation (Tier 3, explicit alloc+free): ~34ns (`benchmarks/micro/bench_persistent_alloc.blood`)
 > - Pointer dereference overhead: ~0% with inlining (`benchmarks/micro/bench_pointer_overhead.blood`)
-> - Escape analysis validated by 346 ground-truth tests
+> - Escape analysis validated by 346 golden tests
 >
 > See `benchmarks/micro/` for reproduction. Run `benchmarks/micro/run_micro.sh --release`.
 

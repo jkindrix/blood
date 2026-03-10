@@ -23,7 +23,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 COMPILER_DIR="${COMPILER_DIR:-$REPO_ROOT/src/selfhost}"
 TEST_DIR="${TEST_DIR:-$COMPILER_DIR/tests}"
-GROUND_TRUTH="${GROUND_TRUTH:-$REPO_ROOT/tests/ground-truth}"
+GOLDEN_TESTS="${GOLDEN_TESTS:-$REPO_ROOT/tests/golden}"
 
 MODE="full"
 for arg in "$@"; do
@@ -195,16 +195,16 @@ scan_compiler_patterns() {
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Part 3: Ground-Truth Test Coverage
+# Part 3: Golden Test Coverage
 # ═══════════════════════════════════════════════════════════════════════════════
 
-scan_ground_truth() {
+scan_golden() {
     echo ""
-    echo -e "${BOLD}Ground-Truth Test Feature Coverage${RESET}"
+    echo -e "${BOLD}Golden Test Feature Coverage${RESET}"
     echo ""
 
-    if [[ ! -d "$GROUND_TRUTH" ]]; then
-        echo -e "  ${RED}Ground-truth directory not found: $GROUND_TRUTH${RESET}"
+    if [[ ! -d "$GOLDEN_TESTS" ]]; then
+        echo -e "  ${RED}Golden directory not found: $GOLDEN_TESTS${RESET}"
         return
     fi
 
@@ -214,18 +214,18 @@ scan_ground_truth() {
     # Count tests by tier
     for tier in t00 t01 t02 t03 t04 t05 t06; do
         local count
-        count=$(ls "$GROUND_TRUTH"/${tier}_*.blood 2>/dev/null | wc -l)
+        count=$(ls "$GOLDEN_TESTS"/${tier}_*.blood 2>/dev/null | wc -l)
         total=$((total + count))
         if [[ $count -gt 0 ]]; then
             printf "  %-6s %3d tests\n" "$tier:" "$count"
         fi
     done
 
-    echo -e "  ${BOLD}Total: $total ground-truth tests${RESET}"
+    echo -e "  ${BOLD}Total: $total golden tests${RESET}"
 
-    # Scan for feature coverage in ground-truth
+    # Scan for feature coverage in golden
     echo ""
-    echo -e "  ${CYAN}Feature coverage in ground-truth tests:${RESET}"
+    echo -e "  ${CYAN}Feature coverage in golden tests:${RESET}"
 
     local gt_features=(
         "struct:struct "
@@ -258,7 +258,7 @@ scan_ground_truth() {
         local label="${entry%%:*}"
         local pattern="${entry#*:}"
         local count
-        count=$(grep -rlE "$pattern" "$GROUND_TRUTH"/*.blood 2>/dev/null | wc -l)
+        count=$(grep -rlE "$pattern" "$GOLDEN_TESTS"/*.blood 2>/dev/null | wc -l)
         local pct=0
         if [[ $total -gt 0 ]]; then
             pct=$((count * 100 / total))
@@ -369,13 +369,13 @@ report_gaps() {
 echo -e "${BOLD}FileCheck Test Coverage Audit${RESET}"
 echo -e "${DIM}  compiler:     $COMPILER_DIR${RESET}"
 echo -e "${DIM}  tests:        $TEST_DIR${RESET}"
-echo -e "${DIM}  ground-truth: $GROUND_TRUTH${RESET}"
+echo -e "${DIM}  golden: $GOLDEN_TESTS${RESET}"
 
 case "$MODE" in
     full)
         inventory_tests
         scan_compiler_patterns
-        scan_ground_truth
+        scan_golden
         report_gaps
         ;;
     tests)

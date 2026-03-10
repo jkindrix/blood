@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# track-regression.sh — Ground-Truth Regression Tracker
+# track-regression.sh — Golden Regression Tracker
 #
-# Runs ground-truth tests, compares results against a stored baseline,
+# Runs golden tests, compares results against a stored baseline,
 # and reports new passes, new failures, and flips.
 #
 # Usage:
@@ -26,7 +26,7 @@ BLOOD_REF="${BLOOD_REF:-$REPO_ROOT/src/bootstrap/target/release/blood}"
 BLOOD_TEST="${BLOOD_TEST:-$REPO_ROOT/src/selfhost/build/first_gen}"
 export BLOOD_RUNTIME="${BLOOD_RUNTIME:-$REPO_ROOT/runtime/runtime.o}"
 export BLOOD_RUST_RUNTIME="${BLOOD_RUST_RUNTIME:-$REPO_ROOT/src/bootstrap/target/release/libblood_runtime.a}"
-GROUND_TRUTH="${GROUND_TRUTH:-$REPO_ROOT/tests/ground-truth}"
+GOLDEN_TESTS="${GOLDEN_TESTS:-$REPO_ROOT/tests/golden}"
 BASELINE_FILE="$SCRIPT_DIR/.baseline_results.txt"
 
 MODE="compare"
@@ -96,9 +96,9 @@ trap "rm -rf '$WORK'" EXIT
 RESULTS_FILE="$WORK/results.txt"
 echo "# $(date '+%Y-%m-%d %H:%M:%S') compiler=$COMPILER_LABEL" > "$RESULTS_FILE"
 
-echo -e "${BOLD}Ground-Truth Regression Test${RESET}"
+echo -e "${BOLD}Golden Regression Test${RESET}"
 echo -e "${DIM}  compiler:     $COMPILER ($COMPILER_LABEL)${RESET}"
-echo -e "${DIM}  ground-truth: $GROUND_TRUTH${RESET}"
+echo -e "${DIM}  golden: $GOLDEN_TESTS${RESET}"
 echo ""
 
 total=0
@@ -107,7 +107,7 @@ fail=0
 compile_fail=0
 crash=0
 
-for src in "$GROUND_TRUTH"/*.blood; do
+for src in "$GOLDEN_TESTS"/*.blood; do
     [[ -f "$src" ]] || continue
     name="$(basename "$src" .blood)"
     total=$((total + 1))

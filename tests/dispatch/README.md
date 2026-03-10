@@ -4,7 +4,7 @@ Tests that pass with the bootstrap compiler (blood-rust) but fail with the selfh
 These document the DIS-01 cluster gap — the selfhost's numeric specificity dispatch vs the
 spec's pairwise subtype-based dispatch.
 
-**Purpose:** After DIS-01 is implemented, move these into `tests/ground-truth/` as regression tests.
+**Purpose:** After DIS-01 is implemented, move these into `tests/golden/` as regression tests.
 
 **To run with bootstrap:**
 ```bash

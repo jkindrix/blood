@@ -97,7 +97,7 @@ unchecked(checks) { }   — Elides runtime checks (bounds, overflow, generation,
 
 Audit the ~237 Ptr↔usize instances. Most already have `@unsafe`. For the ~10-15 that don't, wrap in `@unsafe { ... }`. This is a mechanical fix.
 
-### Phase 3: Ground-truth tests
+### Phase 3: Golden tests
 
 1. **Compile-fail test:** Ptr↔usize cast outside `@unsafe` → error
 2. **Run-pass test:** Same cast inside `@unsafe` → accepted

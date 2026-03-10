@@ -16,7 +16,7 @@ Blood synthesizes five cutting-edge programming language innovations:
 
 > **Version: 0.2.0**
 
-Core compiler is functional and tested. Programs compile and run with full type checking, effect tracking, and generational memory safety. Bootstrap compiler passes 2,047 unit tests; self-hosted compiler passes 356/357 ground-truth integration tests. See [IMPLEMENTATION_STATUS.md](docs/planning/IMPLEMENTATION_STATUS.md) for detailed component status.
+Core compiler is functional and tested. Programs compile and run with full type checking, effect tracking, and generational memory safety. Bootstrap compiler passes 2,047 unit tests; self-hosted compiler passes 356/357 golden integration tests. See [IMPLEMENTATION_STATUS.md](docs/planning/IMPLEMENTATION_STATUS.md) for detailed component status.
 
 | Component | Status | Details |
 |-----------|--------|---------|

@@ -40,7 +40,7 @@
 | Static vs. dynamic | Static | **Decided** | Type stability requirement (DISPATCH.md) |
 | Inference strategy | Bidirectional | **Decided** | ROADMAP.md |
 | Generics implementation | Monomorphization | **Inherited** | No document evaluating monomorphization vs. erasure vs. dictionary passing; see Finding F-01 |
-| Parametric polymorphism | Generics + const generics | **Decided** | GRAMMAR.md, ground-truth tests |
+| Parametric polymorphism | Generics + const generics | **Decided** | GRAMMAR.md, golden tests |
 | Ad-hoc polymorphism | Traits + multiple dispatch | **Decided** | ADR-005 |
 | Subtyping | Structural via row polymorphism (records + effects) | **Decided** | ADR-009, FORMAL_SEMANTICS.md |
 | Nominal vs. structural types | Hybrid: nominal structs/enums, structural records | **Decided** | FORMAL_SEMANTICS.md |

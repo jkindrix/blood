@@ -1,45 +1,31 @@
 #!/bin/bash
-# build_selfhost.sh - Automates the self-hosting pipeline
+# build_selfhost.sh — Blood self-hosting build and test driver
 #
-# Usage:
-#   ./build_selfhost.sh              # Full pipeline: blood-rust → first_gen → second_gen
-#   ./build_selfhost.sh rebuild      # Skip blood-rust, reuse existing first_gen
-#   ./build_selfhost.sh test [bin]   # Smoke test a binary (default: build/second_gen)
-#   ./build_selfhost.sh ground-truth [bin] # Run ground-truth tests (default: BLOOD_TEST or first_gen)
-#   ./build_selfhost.sh blood-test [bin]   # Run blood test suite (default: blood-rust)
-#   ./build_selfhost.sh emit [stage] # Emit intermediate IR (ast|hir|mir|llvm-ir|llvm-ir-unopt)
-#   ./build_selfhost.sh verify [ir]  # Run all verification checks on IR
-#   ./build_selfhost.sh ir-check [ir]# Run FileCheck tests against compiler output
-#   ./build_selfhost.sh asan         # Build second_gen with AddressSanitizer
-#   ./build_selfhost.sh bisect       # Binary search for miscompiled function
-#   ./build_selfhost.sh timings      # Build first_gen with per-phase timing
-#   ./build_selfhost.sh release      # Build first_gen with --release optimizations
-#   ./build_selfhost.sh clean        # Remove build artifacts
+# Usage: ./build_selfhost.sh [command] [args] [-q|--quiet]
+# No arguments shows status. Run --help for full command list.
 set -euo pipefail
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$DIR"
 
-# Repository root and build output directory
 REPO_ROOT="$(cd "$DIR/../.." && pwd)"
 BUILD_DIR="$DIR/build"
 mkdir -p "$BUILD_DIR"
 
-# Paths (configurable via environment, defaults relative to repo root)
+# Paths (configurable via environment)
 BLOOD_RUST="${BLOOD_RUST:-$REPO_ROOT/src/bootstrap/target/release/blood}"
 RUNTIME_O="${RUNTIME_O:-$REPO_ROOT/runtime/runtime.o}"
 RUNTIME_A="${RUNTIME_A:-$REPO_ROOT/src/bootstrap/target/release/libblood_runtime.a}"
-GROUND_TRUTH="${GROUND_TRUTH:-$REPO_ROOT/tests/ground-truth}"
+GOLDEN_TESTS="${GOLDEN_TESTS:-$REPO_ROOT/tests/golden}"
 BLOOD_TESTS="${BLOOD_TESTS:-$REPO_ROOT/tests/blood-test}"
 STDLIB_PATH="${STDLIB_PATH:-$REPO_ROOT/stdlib}"
 
-# Export for first_gen/second_gen runtime discovery
 export BLOOD_RUNTIME="${RUNTIME_O}"
 export BLOOD_RUST_RUNTIME="${RUNTIME_A}"
-
-# Direct build artifacts and cache to build directory during scripted builds
 export BLOOD_BUILD_DIR="${BUILD_DIR}"
 export BLOOD_CACHE="${BUILD_DIR}/.blood-cache"
+
+# ── Output helpers ──────────────────────────────────────────────────────────
 
 step()  { printf "\n\033[1;34m==> [%s] %s\033[0m\n" "$(date +%H:%M:%S)" "$1"; }
 ok()    { printf "  \033[1;32m✓\033[0m %s\n" "$1"; }
@@ -47,33 +33,23 @@ fail()  { printf "  \033[1;31m✗\033[0m %s\n" "$1"; }
 warn()  { printf "  \033[1;33m!\033[0m %s\n" "$1"; }
 die()   { printf "\033[1;31mERROR:\033[0m %s\n" "$1" >&2; exit 1; }
 
-# Wall-clock elapsed time helper: call elapsed_since $SECONDS_VAR
 elapsed_since() {
     local start="$1"
-    local now
-    now=$(date +%s)
-    local diff=$((now - start))
-    local mins=$((diff / 60))
-    local secs=$((diff % 60))
-    if [ "$mins" -gt 0 ]; then
-        printf "%dm%02ds" "$mins" "$secs"
-    else
-        printf "%ds" "$secs"
-    fi
+    local diff=$(( $(date +%s) - start ))
+    local mins=$((diff / 60)) secs=$((diff % 60))
+    if [ "$mins" -gt 0 ]; then printf "%dm%02ds" "$mins" "$secs"
+    else printf "%ds" "$secs"; fi
 }
 
-# Decode process exit code into human-readable signal name
 decode_exit() {
     local code="$1"
-    if [ "$code" -eq 0 ]; then
-        echo "success"
-    elif [ "$code" -le 128 ]; then
-        echo "exit $code"
+    if [ "$code" -eq 0 ]; then echo "success"
+    elif [ "$code" -le 128 ]; then echo "exit $code"
     else
         local sig=$((code - 128))
         case "$sig" in
             6)  echo "SIGABRT (abort/assert)" ;;
-            8)  echo "SIGFPE (arithmetic error, e.g. division by zero)" ;;
+            8)  echo "SIGFPE (arithmetic error)" ;;
             9)  echo "SIGKILL (killed)" ;;
             11) echo "SIGSEGV (segmentation fault)" ;;
             13) echo "SIGPIPE (broken pipe)" ;;
@@ -83,61 +59,127 @@ decode_exit() {
     fi
 }
 
-# Log file setup — tee output to timestamped log (skip for clean)
-if [ "${1:-full}" != "clean" ]; then
-    LOG_DIR="$DIR/.logs"
-    mkdir -p "$LOG_DIR"
-    LOG_FILE="$LOG_DIR/build_$(date +%Y%m%d_%H%M%S).log"
+# ── Parse global flags ──────────────────────────────────────────────────────
 
-    exec > >(tee -a "$LOG_FILE") 2>&1
-    printf "=== Build started: %s ===\n" "$(date '+%Y-%m-%d %H:%M:%S')"
-    printf "=== Log: %s ===\n" "$LOG_FILE"
-fi
+QUIET=""
+clean_args=()
+for arg in "$@"; do
+    case "$arg" in
+        -q|--quiet) QUIET="--quiet" ;;
+        *) clean_args+=("$arg") ;;
+    esac
+done
+set -- "${clean_args[@]+"${clean_args[@]}"}"
 
-# Build first_gen from blood-rust
-build_first_gen() {
-    local flags="${1:-}"
-    [ -f "$BLOOD_RUST" ] || die "blood-rust not found at $BLOOD_RUST"
+# ── Log setup (skip for lightweight commands) ───────────────────────────────
 
-    step "Clearing all build caches"
-    rm -rf "$BUILD_DIR/obj" "$BUILD_DIR/debug" "$BUILD_DIR/release"
-    rm -rf "${DIR}"/*.blood_objs "${DIR}"/tests/*.blood_objs  # Legacy cleanup
-    rm -rf "${HOME}"/.blood*/cache/
-    ok "Caches cleared"
+case "${1:-status}" in
+    status|run|diff|clean|clean-all|--help|-h) ;;
+    *)
+        LOG_DIR="$DIR/.logs"
+        mkdir -p "$LOG_DIR"
+        LOG_FILE="$LOG_DIR/build_$(date +%Y%m%d_%H%M%S).log"
 
-    step "Building first_gen with blood-rust"
-    local start_ts
-    start_ts=$(date +%s)
-    if $BLOOD_RUST build main.blood --no-cache --build-dir "$BUILD_DIR" $flags; then
-        mv "$BUILD_DIR/debug/main" "$BUILD_DIR/first_gen"
-        ok "first_gen created ($(wc -c < "$BUILD_DIR/first_gen") bytes) in $(elapsed_since "$start_ts")"
-    else
-        local rc=$?
-        fail "blood-rust build failed: $(decode_exit $rc)"
-        return 1
-    fi
+        # Log rotation: keep last 20
+        log_count=$(ls -1 "$LOG_DIR"/build_*.log 2>/dev/null | wc -l)
+        if [ "$log_count" -gt 20 ]; then
+            ls -1t "$LOG_DIR"/build_*.log | tail -n +21 | xargs rm -f
+        fi
+
+        exec > >(tee -a "$LOG_FILE") 2>&1
+        printf "=== Build started: %s ===\n" "$(date '+%Y-%m-%d %H:%M:%S')"
+        printf "=== Log: %s ===\n" "$LOG_FILE"
+        ;;
+esac
+
+# ── Compiler name resolution ──────────────────────────────────────────────
+
+resolve_compiler() {
+    case "${1:-first_gen}" in
+        bootstrap|blood-rust) echo "$BLOOD_RUST" ;;
+        first_gen)            echo "$BUILD_DIR/first_gen" ;;
+        second_gen)           echo "$BUILD_DIR/second_gen" ;;
+        third_gen)            echo "$BUILD_DIR/third_gen" ;;
+        *)                    echo "$1" ;;  # treat as path
+    esac
 }
 
-# Workaround: first_gen has a latent memory corruption bug that only manifests
-# when stdout/stderr are not TTYs (file redirect, pipe, tee).  The `exec > >(tee ...)`
-# on line 92 makes both fds non-TTY.  Wrapping in `script -qc` provides a pseudo-TTY,
-# which changes libc buffering and memory layout enough to avoid the crash.
-# Root cause: unknown use-after-free or buffer overrun in MIR region allocations.
-# See: place_has_deref crash at fn 1900/2246 (analyze_statement NULL ptr).
+# ── Operational helpers ─────────────────────────────────────────────────────
+
+# Workaround: first_gen has had region-related memory issues during large
+# compilations (self-compile).  Wrapping in `script -qc` provides a pseudo-TTY.
+# The TypeInterner region corruption (commit 0a32199) and expanded_source
+# UAF (type-check error path) have been fixed.  This wrapper may no longer
+# be necessary but is kept as a safety net until verified.
 run_with_pty() {
     local rc=0
     script -qec "$*" /dev/null || rc=$?
     return "$rc"
 }
 
-# Self-compile: first_gen → second_gen
-build_second_gen() {
-    [ -f "$BUILD_DIR/first_gen" ] || die "first_gen not found at $BUILD_DIR/first_gen. Run './build_selfhost.sh' first."
+copy_runtime() {
+    cp -f "$RUNTIME_O" "$BUILD_DIR/runtime.o" 2>/dev/null || true
+    cp -f "$RUNTIME_A" "$BUILD_DIR/libblood_runtime.a" 2>/dev/null || true
+}
 
-    step "Self-compiling (first_gen → second_gen)"
+check_zombies() {
+    local procs
+    procs=$(pgrep -af "(first_gen|second_gen|third_gen) build" 2>/dev/null | grep -v "$$" || true)
+    if [ -n "$procs" ]; then
+        warn "Existing compiler processes detected:"
+        printf "%s\n" "$procs" | sed 's/^/    /'
+    fi
+}
+
+check_staleness() {
+    local bin="$1"
+    [ -f "$bin" ] || return 0
+    local newer
+    newer=$(find "$DIR" -maxdepth 1 -name '*.blood' -newer "$bin" -print -quit 2>/dev/null)
+    if [ -n "$newer" ]; then
+        warn "$(basename "$bin") may be stale (source files are newer)"
+    fi
+}
+
+# ── Build stages ────────────────────────────────────────────────────────────
+
+do_build_cargo() {
+    step "Building blood-rust (cargo build --release)"
     local start_ts
     start_ts=$(date +%s)
-    local rc=0
+    (cd "$REPO_ROOT/src/bootstrap" && cargo build --release)
+    ok "blood-rust built in $(elapsed_since "$start_ts")"
+}
+
+do_build_first_gen() {
+    local flags="${1:-}"
+    [ -f "$BLOOD_RUST" ] || die "blood-rust not found at $BLOOD_RUST"
+
+    step "Clearing build caches"
+    rm -rf "$BUILD_DIR/obj" "$BUILD_DIR/debug" "$BUILD_DIR/release"
+    rm -rf "${DIR}"/*.blood_objs "${DIR}"/tests/*.blood_objs
+    rm -rf "${HOME}"/.blood*/cache/
+    ok "Caches cleared"
+
+    step "Building first_gen with blood-rust"
+    local start_ts rc=0
+    start_ts=$(date +%s)
+    $BLOOD_RUST build main.blood --no-cache --build-dir "$BUILD_DIR" $flags || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        fail "blood-rust build failed: $(decode_exit $rc)"
+        return 1
+    fi
+    mv "$BUILD_DIR/debug/main" "$BUILD_DIR/first_gen"
+    ok "first_gen built ($(wc -c < "$BUILD_DIR/first_gen") bytes) in $(elapsed_since "$start_ts")"
+    copy_runtime
+}
+
+do_build_second_gen() {
+    [ -f "$BUILD_DIR/first_gen" ] || die "first_gen not found. Run: ./build_selfhost.sh build first_gen"
+
+    step "Self-compiling (first_gen → second_gen)"
+    local start_ts rc=0
+    start_ts=$(date +%s)
     run_with_pty "$BUILD_DIR/first_gen" build main.blood --timings -o "$BUILD_DIR/second_gen.ll" || rc=$?
     local wall_time
     wall_time=$(elapsed_since "$start_ts")
@@ -146,56 +188,281 @@ build_second_gen() {
         fail "first_gen failed: $(decode_exit $rc) (wall time: $wall_time)"
         if [ "$rc" -gt 128 ]; then
             printf "  \033[1;31mCrash detected!\033[0m Signal: %s\n" "$(decode_exit $rc)"
-            printf "  Check log: %s\n" "$LOG_FILE"
+            printf "  Check log: %s\n" "${LOG_FILE:-<no log>}"
         fi
         return 1
     fi
 
-    # IR sanity checks (quick — catches obvious problems before expensive llc-18)
+    # IR sanity checks
     if [ -f "$BUILD_DIR/second_gen.ll" ]; then
-        local ll_lines ll_size ll_defines ll_declares
-        ll_lines=$(wc -l < "$BUILD_DIR/second_gen.ll")
-        ll_size=$(wc -c < "$BUILD_DIR/second_gen.ll")
+        local ll_defines ll_declares
         ll_defines=$(grep -c '^define ' "$BUILD_DIR/second_gen.ll" || true)
         ll_declares=$(grep -c '^declare ' "$BUILD_DIR/second_gen.ll" || true)
         printf "  IR: %s lines, %s bytes, %d defines, %d declares\n" \
-            "$ll_lines" "$ll_size" "$ll_defines" "$ll_declares"
-
-        # Sanity: should have >1000 function definitions for self-hosting
+            "$(wc -l < "$BUILD_DIR/second_gen.ll")" "$(wc -c < "$BUILD_DIR/second_gen.ll")" \
+            "$ll_defines" "$ll_declares"
         if [ "$ll_defines" -lt 100 ]; then
-            warn "Suspiciously few function definitions ($ll_defines) — possible codegen issue"
+            warn "Suspiciously few function definitions ($ll_defines)"
         fi
     fi
 
     ok "second_gen built ($(wc -c < "$BUILD_DIR/second_gen") bytes) in $wall_time"
 }
 
-# Generate reference IR from blood-rust (used as baseline for comparisons)
-# Uses --emit llvm-ir-unopt which emits all declarations (the full runtime ABI surface)
-# even though function definitions may be partial due to build caching.
+do_build_third_gen() {
+    [ -f "$BUILD_DIR/second_gen" ] || die "second_gen not found. Run: ./build_selfhost.sh build second_gen"
+
+    step "Bootstrap (second_gen → third_gen)"
+    local start_ts rc=0
+    start_ts=$(date +%s)
+    run_with_pty "$BUILD_DIR/second_gen" build main.blood --timings -o "$BUILD_DIR/third_gen.ll" || rc=$?
+    local wall_time
+    wall_time=$(elapsed_since "$start_ts")
+
+    if [ "$rc" -ne 0 ]; then
+        fail "second_gen build failed: $(decode_exit $rc) (wall time: $wall_time)"
+        return 1
+    fi
+
+    ok "third_gen built ($(wc -c < "$BUILD_DIR/third_gen") bytes) in $wall_time"
+
+    step "Comparing second_gen vs third_gen"
+    local hash2 hash3
+    hash2=$(md5sum "$BUILD_DIR/second_gen" | cut -d' ' -f1)
+    hash3=$(md5sum "$BUILD_DIR/third_gen" | cut -d' ' -f1)
+    printf "  second_gen: %s (%s bytes)\n" "$hash2" "$(wc -c < "$BUILD_DIR/second_gen")"
+    printf "  third_gen:  %s (%s bytes)\n" "$hash3" "$(wc -c < "$BUILD_DIR/third_gen")"
+
+    if [ "$hash2" = "$hash3" ]; then
+        ok "Byte-identical — bootstrap verified"
+    else
+        fail "NOT byte-identical — bootstrap FAILED"
+        return 1
+    fi
+}
+
+do_build_runtime() {
+    local runtime_c="$REPO_ROOT/runtime/runtime.c"
+    [ -f "$runtime_c" ] || die "runtime.c not found at $runtime_c"
+    step "Compiling runtime.o"
+    cc -c -O2 -o "$REPO_ROOT/runtime/runtime.o" "$runtime_c"
+    ok "runtime.o compiled ($(wc -c < "$REPO_ROOT/runtime/runtime.o") bytes)"
+    copy_runtime
+}
+
+# ── Test suites ─────────────────────────────────────────────────────────────
+
+do_test_golden() {
+    local bin="${1:-$BUILD_DIR/first_gen}"
+    [ -f "$bin" ] || die "$bin not found"
+    [ -d "$GOLDEN_TESTS" ] || die "Golden tests not found at $GOLDEN_TESTS"
+
+    check_staleness "$bin"
+    step "Running golden tests through $(basename "$bin")"
+
+    # In quiet mode, only print failures and summary
+    ok_gt() { [ "$QUIET" = "--quiet" ] || ok "$1"; }
+
+    local pass=0 total=0 comp_fail=0 run_fail=0 skip=0 diag_miss=0
+
+    for src in "$GOLDEN_TESTS"/t[0-9][0-9]_*.blood; do
+        local name
+        name="$(basename "$src" .blood)"
+        total=$((total + 1))
+
+        # Compile-fail tests
+        if head -1 "$src" | grep -q '^// COMPILE_FAIL:'; then
+            local tmpdir_cf
+            tmpdir_cf=$(mktemp -d)
+            local stderr_file="$tmpdir_cf/stderr.txt"
+            if "$bin" build "$src" --build-dir "$tmpdir_cf" -o "$tmpdir_cf/out" --stdlib-path "$STDLIB_PATH" >/dev/null 2>"$stderr_file"; then
+                fail "$name (expected compile failure, but succeeded)"
+                comp_fail=$((comp_fail + 1))
+            else
+                # Compilation correctly failed — test passes
+                # Check EXPECT patterns separately as diagnostic quality signal
+                local diag_ok=1
+                if grep -q '^// EXPECT: ' "$src"; then
+                    while IFS= read -r expect_line; do
+                        local pattern="${expect_line#// EXPECT: }"
+                        if ! grep -qF "$pattern" "$stderr_file"; then
+                            diag_ok=0
+                            break
+                        fi
+                    done < <(grep '^// EXPECT: ' "$src")
+                fi
+                if [ "$diag_ok" -eq 1 ]; then
+                    ok_gt "$name"
+                else
+                    ok_gt "$name (reject ok, diagnostic mismatch)"
+                    diag_miss=$((diag_miss + 1))
+                fi
+                pass=$((pass + 1))
+            fi
+            rm -rf "$tmpdir_cf"
+            continue
+        fi
+
+        # XFAIL tests
+        if head -1 "$src" | grep -q '^// XFAIL:'; then
+            skip=$((skip + 1))
+            continue
+        fi
+
+        # Normal tests: compile and run
+        local tmpdir
+        tmpdir=$(mktemp -d)
+        if ! "$bin" build "$src" --build-dir "$tmpdir" -o "$tmpdir/out" --stdlib-path "$STDLIB_PATH" >/dev/null 2>&1; then
+            fail "$name (compile)"
+            comp_fail=$((comp_fail + 1))
+            rm -rf "$tmpdir"
+            continue
+        fi
+
+        local actual stderr_file exit_code=0
+        stderr_file="$tmpdir/stderr"
+        actual=$(timeout 30 "$tmpdir/out" 2>"$stderr_file") || exit_code=$?
+
+        local expected=""
+        expected=$(grep '^// EXPECT:' "$src" | sed 's|^// EXPECT: *||' || true)
+
+        if [ -n "$expected" ]; then
+            if [ "$actual" = "$expected" ]; then
+                ok_gt "$name"
+                pass=$((pass + 1))
+            else
+                fail "$name (output mismatch)"
+                printf "      expected: %s\n" "$expected"
+                printf "      actual:   %s\n" "$actual"
+                if [ -s "$stderr_file" ]; then
+                    printf "      stderr: %s\n" "$(head -5 "$stderr_file")"
+                fi
+                run_fail=$((run_fail + 1))
+            fi
+        else
+            local expect_exit=""
+            expect_exit=$(grep '^// EXPECT_EXIT:' "$src" | head -1 | sed 's|^// EXPECT_EXIT: *||' || true)
+            if [ -z "$expect_exit" ]; then expect_exit="0"; fi
+
+            if [ "$expect_exit" = "nonzero" ] && [ "$exit_code" -ne 0 ]; then
+                ok_gt "$name"
+                pass=$((pass + 1))
+            elif [ "$exit_code" = "$expect_exit" ]; then
+                ok_gt "$name"
+                pass=$((pass + 1))
+            else
+                fail "$name (exit $exit_code, expected $expect_exit)"
+                if [ -s "$stderr_file" ]; then
+                    printf "      stderr: %s\n" "$(head -5 "$stderr_file")"
+                fi
+                run_fail=$((run_fail + 1))
+            fi
+        fi
+
+        rm -rf "$tmpdir"
+    done
+
+    printf "\n  Passed: %d  Compile fail: %d  Run fail: %d  Skipped: %d  Total: %d\n" \
+        "$pass" "$comp_fail" "$run_fail" "$skip" "$total"
+    if [ "$diag_miss" -gt 0 ]; then
+        warn "Diagnostic mismatches: $diag_miss (compile-fail tests that reject correctly but emit wrong message)"
+    fi
+    [ "$((comp_fail + run_fail))" -eq 0 ] && return 0 || return 1
+}
+
+do_test_dispatch() {
+    local bin1="${1:-$BLOOD_RUST}"
+    local bin2="${2:-$BUILD_DIR/first_gen}"
+    [ -f "$bin1" ] || die "Compiler 1 not found: $bin1"
+    [ -f "$bin2" ] || die "Compiler 2 not found: $bin2"
+    local dispatch_dir="$REPO_ROOT/tests/dispatch"
+    [ -d "$dispatch_dir" ] || die "Dispatch tests not found at $dispatch_dir"
+
+    step "Dispatch tests: $(basename "$bin1") vs $(basename "$bin2")"
+    local match=0 mismatch=0 total=0
+
+    for src in "$dispatch_dir"/t05_*.blood; do
+        [ -f "$src" ] || continue
+        local name
+        name="$(basename "$src" .blood)"
+        total=$((total + 1))
+
+        local out1="" out2="" rc1=0 rc2=0
+        out1=$("$bin1" run "$src" --stdlib-path "$STDLIB_PATH" 2>/dev/null) || rc1=$?
+        out2=$("$bin2" run "$src" --stdlib-path "$STDLIB_PATH" 2>/dev/null) || rc2=$?
+
+        if [ "$out1" = "$out2" ] && [ "$rc1" = "$rc2" ]; then
+            ok "$name"
+            match=$((match + 1))
+        else
+            fail "$name"
+            [ "$out1" != "$out2" ] && printf "      output differs\n"
+            [ "$rc1" != "$rc2" ] && printf "      exit: %s vs %s\n" "$rc1" "$rc2"
+            mismatch=$((mismatch + 1))
+        fi
+    done
+
+    printf "\n  Match: %d  Mismatch: %d  Total: %d\n" "$match" "$mismatch" "$total"
+    [ "$mismatch" -eq 0 ] && return 0 || return 1
+}
+
+do_test_blood() {
+    local compiler="${1:-$BLOOD_RUST}"
+    [ -f "$compiler" ] || die "$compiler not found"
+    [ -d "$BLOOD_TESTS" ] || die "blood-test directory not found at $BLOOD_TESTS"
+
+    step "Running blood test suite through $(basename "$compiler")"
+
+    local pass=0 fail_count=0 total=0
+
+    for src in "$BLOOD_TESTS"/*.blood; do
+        [ -f "$src" ] || continue
+        local name
+        name="$(basename "$src" .blood)"
+        total=$((total + 1))
+
+        local output rc=0
+        local stdlib_flag=""
+        if grep -qE '^(mod std;|use std\.)' "$src"; then
+            stdlib_flag="--stdlib-path $STDLIB_PATH"
+        fi
+        output=$("$compiler" test "$src" $stdlib_flag 2>&1) || rc=$?
+
+        if [ "$rc" -eq 0 ]; then
+            local summary
+            summary=$(echo "$output" | grep '^test result:' || true)
+            ok "$name ${summary:+($summary)}"
+            pass=$((pass + 1))
+        else
+            fail "$name (exit $rc)"
+            echo "$output" | tail -5 | sed 's/^/      /'
+            fail_count=$((fail_count + 1))
+        fi
+    done
+
+    printf "\n  %d/%d test files passed\n" "$pass" "$total"
+    [ "$fail_count" -eq 0 ] && return 0 || return 1
+}
+
+# ── Verification ────────────────────────────────────────────────────────────
+
 generate_reference_ir() {
     [ -f "$BLOOD_RUST" ] || die "blood-rust not found at $BLOOD_RUST"
-
     step "Generating reference IR from blood-rust"
     $BLOOD_RUST build --emit llvm-ir-unopt -o "$BUILD_DIR/reference_ir.ll" main.blood 2>/dev/null
     [ -s "$BUILD_DIR/reference_ir.ll" ] || die "blood-rust did not produce reference_ir.ll"
     ok "reference_ir.ll generated ($(wc -l < "$BUILD_DIR/reference_ir.ll") lines)"
 }
 
-# Verify IR correctness and ABI compatibility
-# Args: $1 = IR file to verify (default: build/second_gen.ll)
 verify_ir() {
     local ir_file="${1:-$BUILD_DIR/second_gen.ll}"
     [ -f "$ir_file" ] || die "$ir_file not found"
 
     local errors=0
 
-    # Ensure reference IR exists
-    if [ ! -f "$BUILD_DIR/reference_ir.ll" ]; then
-        generate_reference_ir
-    fi
+    [ -f "$BUILD_DIR/reference_ir.ll" ] || generate_reference_ir
 
-    # Step A: Structural IR verification with opt-18
+    # A: Structural IR verification
     step "Verifying IR structure ($ir_file)"
     local verify_output
     if verify_output=$(opt-18 -passes=verify "$ir_file" -disable-output 2>&1); then
@@ -206,16 +473,21 @@ verify_ir() {
         errors=$((errors + 1))
     fi
 
-    # Step B: Declaration diff
+    # B: Declaration signature diff
     step "Comparing declarations against reference"
-    if bash "$DIR/tests/check_declarations.sh" "$BUILD_DIR/reference_ir.ll" "$ir_file"; then
-        ok "Declaration check passed"
+    local ref_sigs self_sigs decl_diff
+    ref_sigs=$(grep -E '^(declare|define) ' "$BUILD_DIR/reference_ir.ll" | sed 's/ {$//' | sed 's/^define /declare /' | sort)
+    self_sigs=$(grep -E '^(declare|define) ' "$ir_file" | sed 's/ {$//' | sed 's/^define /declare /' | sort)
+    decl_diff=$(diff <(echo "$ref_sigs") <(echo "$self_sigs") || true)
+    if [ -z "$decl_diff" ]; then
+        ok "Declaration signatures match"
     else
         fail "Declaration mismatches detected"
+        echo "$decl_diff" | head -20
         errors=$((errors + 1))
     fi
 
-    # Step C: FileCheck tests
+    # C: FileCheck tests
     step "Running FileCheck tests"
     local fc_pass=0 fc_fail=0 fc_total=0
     for check_src in "$DIR"/tests/check_*.blood; do
@@ -224,7 +496,6 @@ verify_ir() {
         check_name="$(basename "$check_src" .blood)"
         fc_total=$((fc_total + 1))
 
-        # Compile the test with first_gen to produce IR
         local check_tmpdir
         check_tmpdir=$(mktemp -d)
 
@@ -235,7 +506,6 @@ verify_ir() {
             continue
         fi
 
-        # Run FileCheck against the produced IR
         if FileCheck-18 --input-file="$check_tmpdir/check_out.ll" "$check_src" 2>/dev/null; then
             ok "$check_name"
             fc_pass=$((fc_pass + 1))
@@ -254,10 +524,7 @@ verify_ir() {
         if [ "$fc_fail" -gt 0 ]; then errors=$((errors + 1)); fi
     fi
 
-    # Step D: Function count sanity check
-    # Note: reference_ir.ll from --emit llvm-ir-unopt may have fewer definitions
-    # due to build caching, so we compare declarations (full ABI surface) and
-    # just report definition counts for awareness.
+    # D: Function count sanity check
     step "Checking function counts"
     local ref_decls self_decls self_defines
     ref_decls=$(grep -c '^declare ' "$BUILD_DIR/reference_ir.ll")
@@ -267,7 +534,6 @@ verify_ir() {
     printf "  Self-compiled: %d definitions, %d declarations\n" "$self_defines" "$self_decls"
     printf "  Reference:     %d declarations\n" "$ref_decls"
 
-    # Declaration count should be close (self may have fewer if it doesn't use all runtime fns)
     if [ "$self_decls" -gt "$ref_decls" ]; then
         local extra=$(( self_decls - ref_decls ))
         warn "Self-compiled has $extra more declarations than reference"
@@ -275,17 +541,16 @@ verify_ir() {
         ok "Self-compiled declarations ($self_decls) <= reference ($ref_decls)"
     fi
 
-    # Summary
     if [ "$errors" -gt 0 ]; then
         printf "\n\033[1;31mVerification failed: %d error(s)\033[0m\n" "$errors"
         return 1
     else
         printf "\n\033[1;32mAll verification checks passed.\033[0m\n"
-        return 0
     fi
 }
 
-# Build second_gen with AddressSanitizer instrumentation
+# ── Diagnostic tools ────────────────────────────────────────────────────────
+
 build_asan() {
     local ir_file="${1:-$BUILD_DIR/second_gen.ll}"
     [ -f "$ir_file" ] || die "$ir_file not found"
@@ -294,36 +559,28 @@ build_asan() {
 
     step "Building ASan-instrumented binary from $ir_file"
 
-    # Assemble IR to bitcode
     llvm-as-18 "$ir_file" -o "$BUILD_DIR/second_gen_asan.bc"
     ok "Assembled to bitcode"
 
-    # Run ASan instrumentation pass
-    opt-18 \
-        -passes='module(asan-module),function(asan)' \
+    opt-18 -passes='module(asan-module),function(asan)' \
         "$BUILD_DIR/second_gen_asan.bc" -o "$BUILD_DIR/second_gen_asan_inst.bc"
     ok "ASan instrumentation applied"
 
-    # Compile to object
     llc-18 "$BUILD_DIR/second_gen_asan_inst.bc" \
         -o "$BUILD_DIR/second_gen_asan.o" -filetype=obj -relocation-model=pic
     ok "Compiled to object"
 
-    # Link with clang (handles ASan runtime linkage)
-    # runtime.o already contains main() → blood_main(), no need for main_wrapper.c
     clang-18 "$BUILD_DIR/second_gen_asan.o" "$RUNTIME_O" "$RUNTIME_A" \
         -fsanitize=address -lstdc++ -lm -lpthread -ldl -no-pie \
         -o "$BUILD_DIR/second_gen_asan"
     ok "Linked second_gen_asan ($(wc -c < "$BUILD_DIR/second_gen_asan") bytes)"
 
-    # Clean intermediates
     rm -f "$BUILD_DIR/second_gen_asan.bc" "$BUILD_DIR/second_gen_asan_inst.bc" "$BUILD_DIR/second_gen_asan.o"
 
     printf "\n  Run with: ./build/second_gen_asan version\n"
     printf "  ASan will report memory errors with stack traces.\n"
 }
 
-# Binary search for the miscompiled function
 bisect_functions() {
     local self_ir="${1:-$BUILD_DIR/second_gen.ll}"
     [ -f "$self_ir" ] || die "$self_ir not found"
@@ -337,12 +594,10 @@ bisect_functions() {
     bisect_dir=$(mktemp -d "$DIR/.bisect_XXXXXX")
     trap "rm -rf '$bisect_dir'" EXIT
 
-    # Convert both IR files to bitcode
     llvm-as-18 "$BUILD_DIR/reference_ir.ll" -o "$bisect_dir/ref.bc"
     llvm-as-18 "$self_ir" -o "$bisect_dir/self.bc"
     ok "Assembled both IR files to bitcode"
 
-    # Extract function names from self-compiled IR (only user functions, not declarations)
     grep '^define ' "$self_ir" | sed 's/^define [^@]*@\([^ (]*\).*/\1/' | sort -u > "$bisect_dir/all_funcs.txt"
     local total_funcs
     total_funcs=$(wc -l < "$bisect_dir/all_funcs.txt")
@@ -353,34 +608,26 @@ bisect_functions() {
         return 1
     fi
 
-    # Test function: builds a hybrid binary and checks if it crashes on 'version'
-    # Returns 0 if crash, 1 if no crash
     test_hybrid() {
         local func_list="$1"
         local hybrid_bc="$bisect_dir/hybrid.bc"
 
-        # Start with reference bitcode
         cp "$bisect_dir/ref.bc" "$hybrid_bc"
 
-        # Replace specified functions with self-compiled versions
         local extract_args=""
         while IFS= read -r fname; do
             [ -z "$fname" ] && continue
             extract_args="$extract_args --func=$fname"
         done < "$func_list"
 
-        if [ -z "$extract_args" ]; then
-            return 1  # No functions to test → no crash
-        fi
+        if [ -z "$extract_args" ]; then return 1; fi
 
-        # Extract specified functions from self-compiled bitcode
         if ! llvm-extract-18 $extract_args \
                 "$bisect_dir/self.bc" -o "$bisect_dir/extracted.bc" 2>/dev/null; then
             warn "Could not extract functions (some may be missing)"
             return 1
         fi
 
-        # Remove those functions from reference and link with self-compiled versions
         local delete_args=""
         while IFS= read -r fname; do
             [ -z "$fname" ] && continue
@@ -389,7 +636,6 @@ bisect_functions() {
 
         if ! llvm-extract-18 $delete_args \
                 "$bisect_dir/ref.bc" -o "$bisect_dir/ref_trimmed.bc" 2>/dev/null; then
-            # If deletion fails, try linking directly
             cp "$bisect_dir/ref.bc" "$bisect_dir/ref_trimmed.bc"
         fi
 
@@ -400,7 +646,6 @@ bisect_functions() {
             return 1
         fi
 
-        # Build hybrid binary
         if ! llc-18 "$hybrid_bc" \
                 -o "$bisect_dir/hybrid.o" -filetype=obj -relocation-model=pic 2>/dev/null; then
             warn "LLC failed for hybrid"
@@ -413,21 +658,15 @@ bisect_functions() {
             return 1
         fi
 
-        # Test: does it crash?
         if timeout 10 "$bisect_dir/hybrid" version >/dev/null 2>&1; then
             return 1  # No crash
         else
-            return 0  # Crash!
+            return 0  # Crash
         fi
     }
 
-    # Binary search
-    local lo=0
-    local hi=$((total_funcs - 1))
-    local iteration=0
-    local max_iterations=20  # log2(3678) ≈ 12, with margin
+    local lo=0 hi=$((total_funcs - 1)) iteration=0 max_iterations=20
 
-    # First verify: does the full self-compiled set crash?
     cp "$bisect_dir/all_funcs.txt" "$bisect_dir/test_funcs.txt"
     if ! test_hybrid "$bisect_dir/test_funcs.txt"; then
         fail "Full self-compiled set does NOT crash — cannot bisect"
@@ -439,26 +678,21 @@ bisect_functions() {
     while [ "$lo" -lt "$hi" ] && [ "$iteration" -lt "$max_iterations" ]; do
         iteration=$((iteration + 1))
         local mid=$(( (lo + hi) / 2 ))
-        local count=$((mid - lo + 1))
 
         printf "  Bisect iteration %d: testing functions %d-%d of %d (range %d-%d)\n" \
             "$iteration" "$lo" "$mid" "$total_funcs" "$lo" "$hi"
 
-        # Extract first half
         sed -n "$((lo + 1)),$((mid + 1))p" "$bisect_dir/all_funcs.txt" > "$bisect_dir/test_funcs.txt"
 
         if test_hybrid "$bisect_dir/test_funcs.txt"; then
-            # Crash is in first half
             hi=$mid
             ok "Crash in first half (narrowed to $((hi - lo + 1)) functions)"
         else
-            # Crash is in second half
             lo=$((mid + 1))
             ok "Crash in second half (narrowed to $((hi - lo + 1)) functions)"
         fi
     done
 
-    # Report result
     local suspect
     suspect=$(sed -n "$((lo + 1))p" "$bisect_dir/all_funcs.txt")
 
@@ -476,366 +710,192 @@ bisect_functions() {
     printf "\n  To inspect, compare this function between build/reference_ir.ll and %s\n" "$self_ir"
 }
 
-# Smoke test a binary
-smoke_test() {
-    local bin="$1"
-    [ -f "$bin" ] || die "$bin not found"
-    local pass=0
-    local total=0
+# ── Status ──────────────────────────────────────────────────────────────────
 
-    step "Smoke testing $bin"
+show_status() {
+    step "Blood compiler status"
+    printf "  %-20s %s\n" "Git HEAD:" "$(git -C "$REPO_ROOT" log --oneline -1 2>/dev/null || echo 'N/A')"
+    printf "  %-20s %s\n" "Branch:" "$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo 'N/A')"
+    printf "\n"
 
-    run_smoke() {
-        local name="$1"
-        shift
-        total=$((total + 1))
-        local start_ts rc=0
-        start_ts=$(date +%s)
-        "$bin" "$@" >/dev/null 2>&1 || rc=$?
-        local elapsed
-        elapsed=$(elapsed_since "$start_ts")
-        if [ "$rc" -eq 0 ]; then
-            ok "$name ($elapsed)"; pass=$((pass + 1))
+    for entry in "blood-rust:$BLOOD_RUST" "first_gen:$BUILD_DIR/first_gen" "second_gen:$BUILD_DIR/second_gen" "third_gen:$BUILD_DIR/third_gen"; do
+        local label="${entry%%:*}"
+        local path="${entry#*:}"
+        if [ -f "$path" ]; then
+            local size ago_mins
+            size=$(wc -c < "$path")
+            ago_mins=$(( ($(date +%s) - $(stat -c '%Y' "$path")) / 60 ))
+            printf "  %-20s %s bytes, %dm ago\n" "$label:" "$size" "$ago_mins"
         else
-            fail "$name: $(decode_exit $rc) ($elapsed)"
-        fi
-    }
-
-    run_smoke "version"             version
-    run_smoke "check common.blood"  check common.blood
-    run_smoke "check token.blood"   check token.blood
-    run_smoke "check lexer.blood"   check lexer.blood
-    run_smoke "check main.blood"    check main.blood
-
-    printf "\n  %d/%d passed\n" "$pass" "$total"
-    [ "$pass" -eq "$total" ] && return 0 || return 1
-}
-
-# Run ground-truth tests through a compiler binary
-run_ground_truth() {
-    local bin="$1"
-    [ -f "$bin" ] || die "$bin not found"
-    [ -d "$GROUND_TRUTH" ] || die "Ground-truth tests not found at $GROUND_TRUTH"
-
-    step "Running ground-truth tests through $bin"
-
-    local pass=0 total=0 comp_fail=0 run_fail=0 skip=0
-
-    for src in "$GROUND_TRUTH"/t[0-9][0-9]_*.blood; do
-        local name
-        name="$(basename "$src" .blood)"
-        total=$((total + 1))
-
-        # Handle compile-fail tests (they should fail to compile)
-        if head -1 "$src" | grep -q '^// COMPILE_FAIL:'; then
-            local tmpdir_cf
-            tmpdir_cf=$(mktemp -d)
-            local stderr_file="$tmpdir_cf/stderr.txt"
-            if "$bin" build "$src" --build-dir "$tmpdir_cf" -o "$tmpdir_cf/out" --stdlib-path "$STDLIB_PATH" >/dev/null 2>"$stderr_file"; then
-                fail "$name (expected compile failure, but succeeded)"
-                comp_fail=$((comp_fail + 1))
-            else
-                # Verify EXPECT: directives if present.
-                # Only check when testing with blood-rust (bootstrap compiler).
-                # The selfhost has different message formatting (e.g. Adt(N) vs type names),
-                # so we only verify exit code for first_gen/second_gen.
-                local expect_failed=0
-                local bin_base
-                bin_base="$(basename "$bin")"
-                if [ "$bin_base" != "first_gen" ] && [ "$bin_base" != "second_gen" ] && [ "$bin_base" != "third_gen" ] && grep -q '^// EXPECT: ' "$src"; then
-                    while IFS= read -r expect_line; do
-                        local pattern="${expect_line#// EXPECT: }"
-                        if ! grep -qF "$pattern" "$stderr_file"; then
-                            if [ "$expect_failed" -eq 0 ]; then
-                                fail "$name (missing expected diagnostic)"
-                                expect_failed=1
-                            fi
-                            echo "    expected: $pattern" >&2
-                            echo "    stderr was: $(head -5 "$stderr_file")" >&2
-                        fi
-                    done < <(grep '^// EXPECT: ' "$src")
-                fi
-                if [ "$expect_failed" -eq 0 ]; then
-                    ok "$name"
-                    pass=$((pass + 1))
-                else
-                    comp_fail=$((comp_fail + 1))
-                fi
-            fi
-            rm -rf "$tmpdir_cf"
-            continue
-        fi
-        # Skip XFAIL tests
-        if head -1 "$src" | grep -q '^// XFAIL:'; then
-            skip=$((skip + 1))
-            continue
-        fi
-
-        # Compile with our compiler (--build-dir keeps artifacts out of BLOOD_BUILD_DIR)
-        local tmpdir
-        tmpdir=$(mktemp -d)
-        if ! "$bin" build "$src" --build-dir "$tmpdir" -o "$tmpdir/out" --stdlib-path "$STDLIB_PATH" >/dev/null 2>&1; then
-            fail "$name (compile)"
-            comp_fail=$((comp_fail + 1))
-            rm -rf "$tmpdir"
-            continue
-        fi
-
-        # Run the compiled binary (capture stderr for diagnostics on failure)
-        local actual stderr_file exit_code=0
-        stderr_file="$tmpdir/stderr"
-        actual=$("$tmpdir/out" 2>"$stderr_file") || exit_code=$?
-
-        # Check expected output
-        local expected=""
-        expected=$(grep '^// EXPECT:' "$src" | sed 's|^// EXPECT: *||' || true)
-
-        if [ -n "$expected" ]; then
-            if [ "$actual" = "$expected" ]; then
-                ok "$name"
-                pass=$((pass + 1))
-            else
-                fail "$name (output mismatch)"
-                printf "      expected: %s\n" "$expected"
-                printf "      actual:   %s\n" "$actual"
-                if [ -s "$stderr_file" ]; then
-                    printf "      stderr: %s\n" "$(head -5 "$stderr_file")"
-                fi
-                run_fail=$((run_fail + 1))
-            fi
-        else
-            # No expected output — just check exit code
-            local expect_exit=""
-            expect_exit=$(grep '^// EXPECT_EXIT:' "$src" | head -1 | sed 's|^// EXPECT_EXIT: *||' || true)
-            if [ -z "$expect_exit" ]; then expect_exit="0"; fi
-
-            if [ "$expect_exit" = "nonzero" ] && [ "$exit_code" -ne 0 ]; then
-                ok "$name"
-                pass=$((pass + 1))
-            elif [ "$exit_code" = "$expect_exit" ]; then
-                ok "$name"
-                pass=$((pass + 1))
-            else
-                fail "$name (exit $exit_code, expected $expect_exit)"
-                if [ -s "$stderr_file" ]; then
-                    printf "      stderr: %s\n" "$(head -5 "$stderr_file")"
-                fi
-                run_fail=$((run_fail + 1))
-            fi
-        fi
-
-        rm -rf "$tmpdir"
-    done
-
-    printf "\n  Passed: %d  Compile fail: %d  Run fail: %d  Skipped: %d  Total: %d\n" \
-        "$pass" "$comp_fail" "$run_fail" "$skip" "$total"
-    [ "$((comp_fail + run_fail))" -eq 0 ] && return 0 || return 1
-}
-
-# Run smoke tests (tests/ directory) through a compiler binary
-run_smoke_tests() {
-    local bin="$1"
-    [ -f "$bin" ] || die "$bin not found"
-    local test_dir="$DIR/tests"
-    [ -d "$test_dir" ] || die "Test directory not found at $test_dir"
-
-    step "Running smoke tests through $bin"
-
-    local pass=0 total=0 fail_count=0
-
-    for src in "$test_dir"/t*.blood; do
-        [ -f "$src" ] || continue
-        local name
-        name="$(basename "$src" .blood)"
-        total=$((total + 1))
-
-        # Compile and run with the compiler
-        # Use --quiet to suppress build progress; filter remaining "Build successful:" line
-        local actual exit_code=0
-        actual=$("$bin" run --quiet "$src" 2>/dev/null | grep -v '^Build successful:\|^Running:') || exit_code=$?
-
-        if [ "$exit_code" -ne 0 ]; then
-            fail "$name (exit code $exit_code)"
-            fail_count=$((fail_count + 1))
-            continue
-        fi
-
-        # Check expected output
-        local expected=""
-        expected=$(grep '^// EXPECT:' "$src" | sed 's|^// EXPECT: *||')
-
-        if [ "$actual" = "$expected" ]; then
-            ok "$name"
-            pass=$((pass + 1))
-        else
-            fail "$name (output mismatch)"
-            printf "      expected: %s\n" "$expected"
-            printf "      actual:   %s\n" "$actual"
-            fail_count=$((fail_count + 1))
-        fi
-
-        # Clean up compiled binary and cache
-        local src_base="${src%.blood}"
-        rm -f "$src_base"
-        rm -rf "${src}.blood_objs" "${src_base}.blood_objs"
-    done
-
-    printf "\n  %d/%d passed\n" "$pass" "$total"
-    [ "$fail_count" -eq 0 ] && return 0 || return 1
-}
-
-# Run blood test files (tests with #[test] attributes, no main())
-run_blood_tests() {
-    local compiler="$1"
-    [ -f "$compiler" ] || die "$compiler not found"
-    [ -d "$BLOOD_TESTS" ] || die "blood-test directory not found at $BLOOD_TESTS"
-
-    step "Running blood test suite through $compiler"
-
-    local pass=0 fail_count=0 total=0
-
-    for src in "$BLOOD_TESTS"/*.blood; do
-        [ -f "$src" ] || continue
-        local name
-        name="$(basename "$src" .blood)"
-        total=$((total + 1))
-
-        local output rc=0
-        # Only pass --stdlib-path if the test file uses stdlib (has 'mod std;' or 'use std.')
-        local stdlib_flag=""
-        if grep -qE '^(mod std;|use std\.)' "$src"; then
-            stdlib_flag="--stdlib-path $STDLIB_PATH"
-        fi
-        output=$("$compiler" test "$src" $stdlib_flag 2>&1) || rc=$?
-
-        if [ "$rc" -eq 0 ]; then
-            # Extract summary line
-            local summary
-            summary=$(echo "$output" | grep '^test result:' || true)
-            ok "$name ${summary:+($summary)}"
-            pass=$((pass + 1))
-        else
-            fail "$name (exit $rc)"
-            echo "$output" | tail -5 | sed 's/^/      /'
-            fail_count=$((fail_count + 1))
+            printf "  %-20s (not built)\n" "$label:"
         fi
     done
 
-    printf "\n  %d/%d test files passed\n" "$pass" "$total"
-    [ "$fail_count" -eq 0 ] && return 0 || return 1
+    printf "\n"
+    local procs
+    procs=$(pgrep -af "(first_gen|second_gen|third_gen) build" 2>/dev/null | grep -v "$$\|build_selfhost" || true)
+    if [ -n "$procs" ]; then
+        warn "Running compiler processes:"
+        printf "%s\n" "$procs" | sed 's/^/    /'
+    else
+        printf "  No running compiler processes.\n"
+    fi
+
+    local last_gt
+    last_gt=$(grep -h 'Passed:.*Compile fail:.*Run fail:' "$DIR/.logs"/build_*.log 2>/dev/null | tail -1 || true)
+    if [ -n "$last_gt" ]; then
+        printf "\n  Last golden:%s\n" "$last_gt"
+    fi
 }
 
-case "${1:-full}" in
-    full)
-        PIPELINE_START=$(date +%s)
+# ── Usage ───────────────────────────────────────────────────────────────────
 
-        build_first_gen "--timings"
+show_usage() {
+    cat <<'USAGE'
+Usage: ./build_selfhost.sh [command] [args] [-q|--quiet]
 
-        build_second_gen
+Build:
+  build cargo         Rebuild blood-rust (cargo build --release)
+  build first_gen     Build first_gen from blood-rust
+  build second_gen    Self-compile first_gen → second_gen
+  build third_gen     Bootstrap second_gen → third_gen + byte-compare
+  build runtime       Recompile runtime.o from runtime.c
+  build all           Full chain: cargo → first_gen → GT → second_gen → GT → third_gen
 
-        step "Verification"
-        if verify_ir "$BUILD_DIR/second_gen.ll"; then
-            ok "Verification passed"
-        else
-            warn "Verification had issues (see above)"
-        fi
+Test:
+  test golden [compiler]    Run golden suite (default: first_gen)
+  test dispatch [bin1] [bin2]     Compare dispatch behavior (default: bootstrap vs first_gen)
+  test blood [compiler]           Run tests/blood-test/ (default: bootstrap)
 
-        step "Smoke test"
-        if smoke_test "$BUILD_DIR/second_gen"; then
-            printf "\n\033[1;32mSelf-hosting pipeline complete.\033[0m Total: %s\n" "$(elapsed_since "$PIPELINE_START")"
-        else
-            printf "\n\033[1;33mSmoke test had failures.\033[0m Total: %s\n" "$(elapsed_since "$PIPELINE_START")"
-            exit 1
-        fi
-        printf "Log: %s\n" "$LOG_FILE"
+  Compiler names: bootstrap, first_gen, second_gen, third_gen (or a path)
+
+Diagnostics:
+  verify [ir]         Structural IR verification + declaration diff + FileCheck
+  ir-check [ir]       FileCheck tests only
+  asan [ir]           Build ASan-instrumented binary
+  bisect [ir]         Binary search for miscompiled function
+  emit [stage]        Emit intermediate IR (ast|hir|mir|llvm-ir|llvm-ir-unopt)
+
+Workflow:
+  run <file> [bin]    Compile and run a file (default: first_gen)
+  diff <file>         Compare blood-rust vs first_gen output
+  status              Show compiler status, ages, processes (default command)
+  clean               Remove build artifacts (preserves .logs)
+  clean-all           Remove build artifacts and logs
+
+Flags:
+  -q, --quiet         Suppress per-test output (only failures + summary)
+USAGE
+}
+
+# ── Command dispatch ────────────────────────────────────────────────────────
+
+case "${1:-status}" in
+
+    # ── build ───────────────────────────────────────────────────────────────
+
+    build)
+        check_zombies
+        case "${2:-}" in
+            cargo)
+                do_build_cargo
+                ;;
+            first_gen)
+                do_build_first_gen "--timings"
+                ;;
+            second_gen)
+                do_build_second_gen
+                ;;
+            third_gen)
+                do_build_third_gen
+                ;;
+            runtime)
+                do_build_runtime
+                ;;
+            all)
+                PIPELINE_START=$(date +%s)
+
+                do_build_cargo
+                do_build_first_gen "--timings"
+                do_test_golden "$BUILD_DIR/first_gen"
+                do_build_second_gen
+                do_test_golden "$BUILD_DIR/second_gen"
+                do_build_third_gen
+
+                printf "\n\033[1;32mFull pipeline complete.\033[0m Total: %s\n" "$(elapsed_since "$PIPELINE_START")"
+                printf "Log: %s\n" "${LOG_FILE:-<none>}"
+                ;;
+            "")
+                die "build requires a stage: cargo, first_gen, second_gen, third_gen, runtime, all"
+                ;;
+            *)
+                die "Unknown build stage: $2. Expected: cargo, first_gen, second_gen, third_gen, runtime, all"
+                ;;
+        esac
         ;;
 
-    rebuild)
-        PIPELINE_START=$(date +%s)
-
-        build_second_gen
-
-        step "Verification"
-        if verify_ir "$BUILD_DIR/second_gen.ll"; then
-            ok "Verification passed"
-        else
-            warn "Verification had issues (see above)"
-        fi
-
-        step "Smoke test"
-        if smoke_test "$BUILD_DIR/second_gen"; then
-            printf "\n\033[1;32mRebuild complete.\033[0m Total: %s\n" "$(elapsed_since "$PIPELINE_START")"
-        else
-            printf "\n\033[1;33mSmoke test had failures.\033[0m Total: %s\n" "$(elapsed_since "$PIPELINE_START")"
-            exit 1
-        fi
-        printf "Log: %s\n" "$LOG_FILE"
-        ;;
+    # ── test ────────────────────────────────────────────────────────────────
 
     test)
-        smoke_test "${2:-$BUILD_DIR/second_gen}"
+        case "${2:-golden}" in
+            golden)
+                do_test_golden "$(resolve_compiler "${3:-first_gen}")"
+                ;;
+            dispatch)
+                do_test_dispatch "$(resolve_compiler "${3:-bootstrap}")" "$(resolve_compiler "${4:-first_gen}")"
+                ;;
+            blood)
+                do_test_blood "$(resolve_compiler "${3:-bootstrap}")"
+                ;;
+            *)
+                die "Unknown test suite: $2. Expected: golden, dispatch, blood"
+                ;;
+        esac
         ;;
 
-    ground-truth)
-        run_ground_truth "${2:-${BLOOD_TEST:-$BUILD_DIR/first_gen}}"
-        ;;
-
-    smoke-tests)
-        run_smoke_tests "${2:-$BLOOD_RUST}"
-        ;;
-
-    blood-test)
-        run_blood_tests "${2:-$BLOOD_RUST}"
-        ;;
+    # ── diagnostics ─────────────────────────────────────────────────────────
 
     verify)
         verify_ir "${2:-$BUILD_DIR/second_gen.ll}"
         ;;
 
     ir-check)
-        # Run just the FileCheck tests (subset of verify)
-        local_ir="${2:-$BUILD_DIR/second_gen.ll}"
         [ -f "$BUILD_DIR/first_gen" ] || die "first_gen not found. Build it first."
 
         step "Running FileCheck tests"
-        local_pass=0
-        local_fail=0
-        local_total=0
+        fc_pass=0 fc_fail=0 fc_total=0
 
         for check_src in "$DIR"/tests/check_*.blood; do
             [ -f "$check_src" ] || continue
-            local_name="$(basename "$check_src" .blood)"
-            local_total=$((local_total + 1))
+            check_name="$(basename "$check_src" .blood)"
+            fc_total=$((fc_total + 1))
 
-            local_tmpdir=$(mktemp -d)
+            tmpdir=$(mktemp -d)
 
-            if ! "$BUILD_DIR/first_gen" build "$check_src" -o "$local_tmpdir/check_out.ll" >/dev/null 2>&1; then
-                fail "$local_name (compile failed)"
-                local_fail=$((local_fail + 1))
-                rm -rf "$local_tmpdir"
+            if ! "$BUILD_DIR/first_gen" build "$check_src" -o "$tmpdir/check_out.ll" >/dev/null 2>&1; then
+                fail "$check_name (compile failed)"
+                fc_fail=$((fc_fail + 1))
+                rm -rf "$tmpdir"
                 continue
             fi
 
-            if FileCheck-18 --input-file="$local_tmpdir/check_out.ll" "$check_src" 2>/dev/null; then
-                ok "$local_name"
-                local_pass=$((local_pass + 1))
+            if FileCheck-18 --input-file="$tmpdir/check_out.ll" "$check_src" 2>/dev/null; then
+                ok "$check_name"
+                fc_pass=$((fc_pass + 1))
             else
-                fail "$local_name"
-                # Show FileCheck output for debugging
-                FileCheck-18 --input-file="$local_tmpdir/check_out.ll" "$check_src" 2>&1 | head -10 || true
-                local_fail=$((local_fail + 1))
+                fail "$check_name"
+                FileCheck-18 --input-file="$tmpdir/check_out.ll" "$check_src" 2>&1 | head -10 || true
+                fc_fail=$((fc_fail + 1))
             fi
 
-            rm -rf "$local_tmpdir"
+            rm -rf "$tmpdir"
         done
 
-        if [ "$local_total" -eq 0 ]; then
+        if [ "$fc_total" -eq 0 ]; then
             warn "No FileCheck tests found in tests/check_*.blood"
         else
-            printf "\n  %d/%d FileCheck tests passed\n" "$local_pass" "$local_total"
-            if [ "$local_fail" -gt 0 ]; then
-                exit 1
-            fi
+            printf "\n  %d/%d FileCheck tests passed\n" "$fc_pass" "$fc_total"
+            if [ "$fc_fail" -gt 0 ]; then exit 1; fi
         fi
         ;;
 
@@ -848,70 +908,77 @@ case "${1:-full}" in
         ;;
 
     emit)
-        # Emit intermediate representation using blood-rust
-        local_stage="${2:-llvm-ir}"
+        stage="${2:-llvm-ir}"
         [ -f "$BLOOD_RUST" ] || die "blood-rust not found at $BLOOD_RUST"
-
-        step "Emitting $local_stage for main.blood"
-        $BLOOD_RUST build --emit "$local_stage" -o "$BUILD_DIR/${local_stage}.ll" main.blood
+        step "Emitting $stage for main.blood"
+        $BLOOD_RUST build --emit "$stage" -o "$BUILD_DIR/${stage}.ll" main.blood
         ;;
 
-    timings)
-        build_first_gen "--timings"
+    # ── workflow ────────────────────────────────────────────────────────────
+
+    run)
+        src="${2:?Usage: ./build_selfhost.sh run <file.blood> [compiler]}"
+        bin="$(resolve_compiler "${3:-first_gen}")"
+        [ -f "$src" ] || die "Source file not found: $src"
+        [ -f "$bin" ] || die "Compiler not found: $bin"
+        exec "$bin" run "$src" --stdlib-path "$STDLIB_PATH"
         ;;
 
-    release)
-        build_first_gen "--release --timings"
+    diff)
+        src="${2:?Usage: ./build_selfhost.sh diff <file.blood>}"
+        [ -f "$src" ] || die "Source file not found: $src"
+        [ -f "$BLOOD_RUST" ] || die "blood-rust not found at $BLOOD_RUST"
+        [ -f "$BUILD_DIR/first_gen" ] || die "first_gen not found"
+
+        tmpdir=$(mktemp -d)
+        step "Comparing output: blood-rust vs first_gen"
+        out1="" out2="" rc1=0 rc2=0
+        out1=$("$BLOOD_RUST" run "$src" --stdlib-path "$STDLIB_PATH" 2>"$tmpdir/stderr1") || rc1=$?
+        out2=$("$BUILD_DIR/first_gen" run "$src" --stdlib-path "$STDLIB_PATH" 2>"$tmpdir/stderr2") || rc2=$?
+        rm -rf "$tmpdir"
+
+        if [ "$out1" = "$out2" ] && [ "$rc1" = "$rc2" ]; then
+            ok "Output matches (exit $rc1)"
+        else
+            fail "Output differs"
+            diff <(echo "$out1") <(echo "$out2") || true
+            [ "$rc1" != "$rc2" ] && printf "  Exit codes: blood-rust=%s first_gen=%s\n" "$rc1" "$rc2"
+        fi
+        ;;
+
+    status)
+        show_status
         ;;
 
     clean)
         step "Cleaning build artifacts"
         rm -rf "$BUILD_DIR"
-        rm -rf .bisect_* .logs
+        rm -rf .bisect_*
         find "${DIR}" -name ".blood-cache" -type d -exec rm -rf {} + 2>/dev/null || true
-        # Legacy artifacts from before build-dir support (next to source files)
         rm -rf "${DIR}"/*.blood_objs "${DIR}"/tests/*.blood_objs
         rm -f "${DIR}"/*.ll "${DIR}"/*.o
-        # Global per-definition object cache
         rm -rf "${HOME}"/.blood*/cache/
-        ok "Build artifacts and all caches removed"
+        ok "Build artifacts and caches removed"
+        ;;
+
+    clean-all)
+        step "Cleaning build artifacts and logs"
+        rm -rf "$BUILD_DIR"
+        rm -rf .bisect_* .logs
+        find "${DIR}" -name ".blood-cache" -type d -exec rm -rf {} + 2>/dev/null || true
+        rm -rf "${DIR}"/*.blood_objs "${DIR}"/tests/*.blood_objs
+        rm -f "${DIR}"/*.ll "${DIR}"/*.o
+        rm -rf "${HOME}"/.blood*/cache/
+        ok "Build artifacts, caches, and logs removed"
+        ;;
+
+    --help|-h)
+        show_usage
         ;;
 
     *)
-        cat <<'USAGE'
-Usage: ./build_selfhost.sh <command> [args]
-
-Commands:
-  full              Build from scratch (blood-rust → first_gen → second_gen)
-  rebuild           Reuse existing first_gen to rebuild second_gen
-  test [binary]     Smoke test a binary (default: build/second_gen)
-  ground-truth [b]  Run ground-truth tests through binary (default: BLOOD_TEST or first_gen)
-  blood-test [b]    Run blood test suite (tests/blood-test/) through binary (default: blood-rust)
-  smoke-tests [b]   Run smoke tests (tests/) through binary (default: blood-rust)
-  verify [ir]       Run all verification checks (default: build/second_gen.ll)
-  ir-check [ir]     Run FileCheck tests against compiler output
-  asan [ir]         Build with AddressSanitizer (default: build/second_gen.ll)
-  bisect [ir]       Binary search for miscompiled function
-  emit [stage]      Emit intermediate IR (ast|hir|mir|llvm-ir|llvm-ir-unopt)
-  timings           Build first_gen with per-phase compilation timing
-  release           Build first_gen with --release optimizations
-  clean             Remove build artifacts
-
-Verification commands:
-  verify            Runs: opt verify + declaration diff + FileCheck + function counts
-  ir-check          Runs: FileCheck tests only (quick check)
-  asan              Produces: build/second_gen_asan (run to get memory error reports)
-  bisect            Identifies: which function causes second_gen to crash
-
-Environment:
-  BLOOD_RUST        Path to blood-rust compiler (default: <repo>/src/bootstrap/target/release/blood)
-  BLOOD_BUILD_DIR   Build output directory (default: <script_dir>/build)
-  BLOOD_CACHE       Cache directory (default: <build_dir>/.blood-cache)
-  RUNTIME_O         Path to runtime.o (default: <repo>/runtime/runtime.o)
-  RUNTIME_A         Path to libblood_runtime.a (default: <repo>/src/bootstrap/target/release/libblood_runtime.a)
-  GROUND_TRUTH      Path to ground-truth test dir (default: <repo>/tests/ground-truth)
-  BLOOD_TESTS       Path to blood-test dir (default: <repo>/tests/blood-test)
-USAGE
+        printf "Unknown command: %s\n\n" "$1"
+        show_usage
         exit 1
         ;;
 esac

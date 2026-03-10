@@ -6,7 +6,7 @@
 #   ./debug_test.sh run <test>        Build with first_gen, run, check output
 #   ./debug_test.sh ir <test>         Quick IR inspection (first_gen)
 #   ./debug_test.sh status            Show binary provenance and environment info
-#   ./debug_test.sh sweep [filter]    Run all ground-truth tests, categorize results
+#   ./debug_test.sh sweep [filter]    Run all golden tests, categorize results
 set -uo pipefail
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -19,7 +19,7 @@ REPO_ROOT="$(cd "$DIR/../.." && pwd)"
 BLOOD_RUST="${BLOOD_RUST:-$REPO_ROOT/src/bootstrap/target/release/blood}"
 RUNTIME_O="${RUNTIME_O:-$REPO_ROOT/runtime/runtime.o}"
 RUNTIME_A="${RUNTIME_A:-$REPO_ROOT/src/bootstrap/target/release/libblood_runtime.a}"
-GROUND_TRUTH="${GROUND_TRUTH:-$REPO_ROOT/tests/ground-truth}"
+GOLDEN_TESTS="${GOLDEN_TESTS:-$REPO_ROOT/tests/golden}"
 FIRST_GEN="${FIRST_GEN:-$DIR/first_gen}"
 
 export BLOOD_RUNTIME="${RUNTIME_O}"
@@ -72,16 +72,16 @@ resolve_test() {
     # Strip .blood extension if present
     local bare="${input%.blood}"
 
-    # Search ground-truth directory
-    local match="$GROUND_TRUTH/${bare}.blood"
+    # Search golden test directory
+    local match="$GOLDEN_TESTS/${bare}.blood"
     if [ -f "$match" ]; then
         echo "$match"
         return 0
     fi
 
-    # Try glob match in ground-truth
+    # Try glob match in golden tests
     local found
-    found=$(find "$GROUND_TRUTH" -name "${bare}*.blood" -type f 2>/dev/null | head -1)
+    found=$(find "$GOLDEN_TESTS" -name "${bare}*.blood" -type f 2>/dev/null | head -1)
     if [ -n "$found" ]; then
         echo "$found"
         return 0
@@ -94,7 +94,7 @@ resolve_test() {
         return 0
     fi
 
-    die "Test not found: $input (searched $GROUND_TRUTH and $DIR/tests)"
+    die "Test not found: $input (searched $GOLDEN_TESTS and $DIR/tests)"
 }
 
 ensure_first_gen() {
@@ -322,19 +322,19 @@ mode_status() {
         dim "No .blood_objs/ directory"
     fi
 
-    # Ground-truth test count
-    hdr "Ground-truth tests"
-    if [ -d "$GROUND_TRUTH" ]; then
+    # Golden test count
+    hdr "Golden tests"
+    if [ -d "$GOLDEN_TESTS" ]; then
         local total
-        total=$(find "$GROUND_TRUTH" -name "*.blood" | wc -l)
-        info "$total tests in $GROUND_TRUTH"
+        total=$(find "$GOLDEN_TESTS" -name "*.blood" | wc -l)
+        info "$total tests in $GOLDEN_TESTS"
         for tier in t00 t01 t02 t03 t04 t05 t06; do
             local count
-            count=$(find "$GROUND_TRUTH" -name "${tier}_*.blood" | wc -l)
+            count=$(find "$GOLDEN_TESTS" -name "${tier}_*.blood" | wc -l)
             [ "$count" -gt 0 ] && dim "  $tier: $count tests"
         done
     else
-        fail "Ground-truth directory not found"
+        fail "Golden test directory not found"
     fi
 
     # Last debug run
@@ -840,9 +840,9 @@ mode_sweep() {
 
     ensure_first_gen
 
-    hdr "Sweep: ground-truth tests${filter:+ (filter: $filter)}"
+    hdr "Sweep: golden tests${filter:+ (filter: $filter)}"
 
-    [ -d "$GROUND_TRUTH" ] || die "Ground-truth directory not found at $GROUND_TRUTH"
+    [ -d "$GOLDEN_TESTS" ] || die "Golden test directory not found at $GOLDEN_TESTS"
 
     mkdir -p "$SWEEP_DIR"
 
@@ -860,11 +860,11 @@ mode_sweep() {
     if [ -n "$filter" ]; then
         while IFS= read -r -d '' f; do
             test_files+=("$f")
-        done < <(find "$GROUND_TRUTH" -name "${filter}*.blood" -type f -print0 | sort -z)
+        done < <(find "$GOLDEN_TESTS" -name "${filter}*.blood" -type f -print0 | sort -z)
     else
         while IFS= read -r -d '' f; do
             test_files+=("$f")
-        done < <(find "$GROUND_TRUTH" -name "*.blood" -type f -print0 | sort -z)
+        done < <(find "$GOLDEN_TESTS" -name "*.blood" -type f -print0 | sort -z)
     fi
 
     local test_count=${#test_files[@]}
@@ -1045,14 +1045,14 @@ usage() {
     echo "  run <test>        Build with first_gen, run, check output"
     echo "  ir <test>         Quick IR inspection (first_gen)"
     echo "  status            Show binary provenance and environment info"
-    echo "  sweep [filter]    Run all ground-truth tests, categorize results"
+    echo "  sweep [filter]    Run all golden tests, categorize results"
     echo ""
     echo "Test names: bare name (t00_arithmetic), .blood extension, or full path"
     echo ""
     echo "Environment variables:"
     echo "  BLOOD_RUST     blood-rust binary (default: ~/blood/src/bootstrap/target/release/blood)"
     echo "  FIRST_GEN      first_gen binary  (default: ./first_gen)"
-    echo "  GROUND_TRUTH   test directory    (default: ~/blood/tests/ground-truth)"
+    echo "  GOLDEN_TESTS   test directory    (default: ~/blood/tests/golden)"
     exit 1
 }
 

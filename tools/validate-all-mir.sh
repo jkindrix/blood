@@ -6,7 +6,7 @@
 # Intended as a pre-codegen quality gate to catch MIR issues early.
 #
 # Usage:
-#   ./tools/validate-all-mir.sh                              # Validate ground-truth tests
+#   ./tools/validate-all-mir.sh                              # Validate golden tests
 #   ./tools/validate-all-mir.sh path/to/file.blood           # Validate single file
 #   ./tools/validate-all-mir.sh path/to/dir/                 # Validate all .blood in directory
 #   ./tools/validate-all-mir.sh --self                       # Validate compiler source files
@@ -25,7 +25,7 @@ BLOOD_REF="${BLOOD_REF:-$REPO_ROOT/src/bootstrap/target/release/blood}"
 BLOOD_TEST="${BLOOD_TEST:-$REPO_ROOT/src/selfhost/build/first_gen}"
 export BLOOD_RUNTIME="${BLOOD_RUNTIME:-$REPO_ROOT/runtime/runtime.o}"
 export BLOOD_RUST_RUNTIME="${BLOOD_RUST_RUNTIME:-$REPO_ROOT/src/bootstrap/target/release/libblood_runtime.a}"
-GROUND_TRUTH="${GROUND_TRUTH:-$REPO_ROOT/tests/ground-truth}"
+GOLDEN_TESTS="${GOLDEN_TESTS:-$REPO_ROOT/tests/golden}"
 COMPILER_DIR="${COMPILER_DIR:-$REPO_ROOT/src/selfhost}"
 
 COMPILER="$BLOOD_TEST"
@@ -102,9 +102,9 @@ elif [[ -n "$TARGET" ]]; then
         exit 1
     fi
 else
-    # Default: ground-truth tests
-    echo -e "${DIM}  source:   $GROUND_TRUTH (ground-truth tests)${RESET}"
-    for f in "$GROUND_TRUTH"/*.blood; do
+    # Default: golden tests
+    echo -e "${DIM}  source:   $GOLDEN_TESTS (golden tests)${RESET}"
+    for f in "$GOLDEN_TESTS"/*.blood; do
         [[ -f "$f" ]] && FILES+=("$f")
     done
 fi

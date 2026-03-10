@@ -11,7 +11,7 @@
 | Investigation & planning | 15 minutes | Commit findings, propose plan |
 | Single feature implementation | 30 minutes | Commit progress, reassess |
 | Bug investigation | 20 minutes | Log findings to FAILURE_LOG.md |
-| Full ground-truth test run | 10 minutes | If stuck, check env vars and paths |
+| Full golden test run | 10 minutes | If stuck, check env vars and paths |
 
 **Wall-clock awareness:** AI agents lack clocks. Use these proxies:
 - **3+ failed attempts** at the same approach = time to reassess
@@ -58,7 +58,7 @@ Commit immediately after:
 
 1. **Same error 3 times:** If the same compilation error or test failure persists after 3 different fix attempts, stop. The approach is wrong.
 
-2. **Score regression:** If ground-truth score drops below the saved baseline, immediately:
+2. **Score regression:** If golden score drops below the saved baseline, immediately:
    - Run `./tools/track-regression.sh` to identify regressed tests
    - Revert the offending change
    - Log the regression in FAILURE_LOG.md
@@ -185,7 +185,7 @@ Update the failure log when:
 **Severity:** critical | high | medium | low
 **Symptom:** What the user/test observes
 **Root cause:** (if known) Technical explanation
-**Affected tests:** List of ground-truth tests
+**Affected tests:** List of golden tests
 **Status:** investigating | workaround | fixed
 ```
 

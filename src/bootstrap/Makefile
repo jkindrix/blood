@@ -4,8 +4,8 @@
 #   make build        - Build bootstrap compiler (cargo build --release)
 #   make bootstrap    - Full bootstrap cycle (build + compile self-hosted)
 #   make self-host    - Compile self-hosted compiler with itself
-#   make test         - Run all tests (cargo test + ground-truth)
-#   make ground-truth - Run ground-truth test suite only
+#   make test         - Run all tests (cargo test + golden)
+#   make golden - Run golden test suite only
 #   make clean        - Clean build artifacts
 #
 # Configuration:
@@ -35,14 +35,14 @@ self-host: bootstrap
 	$(SELF_HOSTED:.blood=) build "$(SELF_HOSTED)" --stdlib-path "$(STDLIB_PATH)"
 	@echo "Stage 2 complete (self-hosted)."
 
-# Run all tests: cargo tests + ground-truth suite
+# Run all tests: cargo tests + golden suite
 test: build
 	cargo test --workspace
-	../../tests/ground-truth/run_tests.sh $(BOOTSTRAP)
+	../../tests/golden/run_tests.sh $(BOOTSTRAP)
 
-# Run only the ground-truth test suite
-ground-truth: build
-	../../tests/ground-truth/run_tests.sh $(BOOTSTRAP)
+# Run only the golden test suite
+golden: build
+	../../tests/golden/run_tests.sh $(BOOTSTRAP)
 
 # Run only cargo tests
 cargo-test:
@@ -54,4 +54,4 @@ clean:
 	find . -name '*.blood_objs' -type d -exec rm -rf {} + 2>/dev/null || true
 	@echo "Clean complete."
 
-.PHONY: build bootstrap self-host test ground-truth cargo-test clean
+.PHONY: build bootstrap self-host test golden cargo-test clean

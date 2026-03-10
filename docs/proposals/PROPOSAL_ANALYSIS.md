@@ -241,9 +241,9 @@ These proposals have no upstream dependencies and can be implemented in parallel
 
 | Task | Scope | Verification |
 |------|-------|-------------|
-| Replace `while i < N` → `for i in 0..N` | ~1,024 loops across 65 files | 336/336 ground-truth + bootstrap |
-| Replace `x = x + 1` → `x += 1` | ~1,294 instances | 336/336 ground-truth + bootstrap |
-| Adopt `continue`, `|>` where natural | Opportunistic | 336/336 ground-truth + bootstrap |
+| Replace `while i < N` → `for i in 0..N` | ~1,024 loops across 65 files | 336/336 golden + bootstrap |
+| Replace `x = x + 1` → `x += 1` | ~1,294 instances | 336/336 golden + bootstrap |
+| Adopt `continue`, `|>` where natural | Opportunistic | 336/336 golden + bootstrap |
 
 ### Phase 1: Foundation Syntax (v0.4.0)
 

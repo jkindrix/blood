@@ -62,7 +62,7 @@ Items are removed only when fully resolved, with a completion date and commit ha
 | **Resolved** | 2026-03-08 |
 | **Severity** | Medium — tokens exist in lexer but no parse rules |
 
-**Resolution**: Full pipeline in both compilers (SYN-05 Phase 1+2). Parser/AST/HIR/typeck + MIR/escape analysis. `@heap` forces HeapEscape (region tier), `@stack` forces NoEscape (stack tier). Test: `t10_alloc_expr.blood`. 367/367 ground-truth.
+**Resolution**: Full pipeline in both compilers (SYN-05 Phase 1+2). Parser/AST/HIR/typeck + MIR/escape analysis. `@heap` forces HeapEscape (region tier), `@stack` forces NoEscape (stack tier). Test: `t10_alloc_expr.blood`. 367/367 golden.
 
 ---
 
@@ -109,7 +109,7 @@ Items are removed only when fully resolved, with a completion date and commit ha
 | **Resolved** | 2026-03-01 |
 | **Severity** | High — naming mismatch between spec (CONCURRENCY.md v0.4.0) and compilers |
 
-**Resolution**: Renamed `Async`→`Fiber` and `Await`→`Suspend` across both compilers and all spec/guide documents. Bootstrap compiler: lexer (token variants + keyword aliases), syntax_kind, parser, AST (`is_async`→`is_fiber`), HIR, typeck, codegen, VFT, build cache, LSP, macro expansion. Self-hosted compiler: token.blood, lexer.blood, interner.blood, common.blood, parser_item.blood, parser_expr.blood, parser_base.blood. Both compilers accept both `async`/`await` (backward compat) and `fiber`/`suspend` (new canonical). All spec documents updated: STDLIB.md (effect definition + 11 annotations + handler section), 10 guide/comparison docs. Verification: 1269/1269 lib tests, 344/344 ground-truth, second_gen/third_gen byte-identical (13,079,144 bytes).
+**Resolution**: Renamed `Async`→`Fiber` and `Await`→`Suspend` across both compilers and all spec/guide documents. Bootstrap compiler: lexer (token variants + keyword aliases), syntax_kind, parser, AST (`is_async`→`is_fiber`), HIR, typeck, codegen, VFT, build cache, LSP, macro expansion. Self-hosted compiler: token.blood, lexer.blood, interner.blood, common.blood, parser_item.blood, parser_expr.blood, parser_base.blood. Both compilers accept both `async`/`await` (backward compat) and `fiber`/`suspend` (new canonical). All spec documents updated: STDLIB.md (effect definition + 11 annotations + handler section), 10 guide/comparison docs. Verification: 1269/1269 lib tests, 344/344 golden, second_gen/third_gen byte-identical (13,079,144 bytes).
 
 ---
 
@@ -148,7 +148,7 @@ Items are removed only when fully resolved, with a completion date and commit ha
 
 **Result**: ~1,960 `lowercase::lowercase` expression paths converted to dot syntax across 47 selfhost files. Final 8 three-segment type paths (`token::common.Span` × 6, `codegen::codegen_ctx.CodegenError` × 2) resolved by extending both compilers' type-path parsers to accept `.lowercase` continuation when the previous segment is also lowercase (module chain heuristic). Zero `::` path separators remain in `.blood` files (only turbofish `::<T>` syntax).
 
-**Verification**: 344/344 ground-truth (342 pass + 2 pre-existing first_gen COMPILE_FAIL limitations), second_gen/third_gen byte-identical (13,079,144 bytes), 1269/1269 bootstrap lib tests.
+**Verification**: 344/344 golden (342 pass + 2 pre-existing first_gen COMPILE_FAIL limitations), second_gen/third_gen byte-identical (13,079,144 bytes), 1269/1269 bootstrap lib tests.
 
 ---
 

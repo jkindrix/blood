@@ -7,7 +7,7 @@
 # Reports any "drift" where one compiler accepts a file the other rejects.
 #
 # Usage:
-#   ./tools/parse-parity.sh                        # default: ground-truth + selfhost
+#   ./tools/parse-parity.sh                        # default: golden + selfhost
 #   ./tools/parse-parity.sh <file.blood>           # single file
 #   ./tools/parse-parity.sh <directory>            # all .blood files in directory
 #   ./tools/parse-parity.sh --verbose              # show all per-file results
@@ -65,7 +65,7 @@ usage() {
     echo "  --help, -h      Show this help"
     echo ""
     echo "Defaults:"
-    echo "  No arguments: tests ground-truth + selfhost corpora"
+    echo "  No arguments: tests golden + selfhost corpora"
     echo ""
     echo "Environment:"
     echo "  BLOOD_REF          Reference compiler (default: blood-rust)"
@@ -223,9 +223,9 @@ if [[ -n "$TARGET" ]]; then
         exit 2
     fi
 else
-    # Default: ground-truth + selfhost
-    mapfile -t gt_files < <(find "$REPO_ROOT/tests/ground-truth" -maxdepth 1 -name 't*.blood' -type f | sort)
-    check_corpus "ground-truth" "${gt_files[@]}"
+    # Default: golden + selfhost
+    mapfile -t gt_files < <(find "$REPO_ROOT/tests/golden" -maxdepth 1 -name 't*.blood' -type f | sort)
+    check_corpus "golden" "${gt_files[@]}"
 
     mapfile -t sh_files < <(find "$REPO_ROOT/src/selfhost" -maxdepth 1 -name '*.blood' -type f | sort)
     check_corpus "selfhost" "${sh_files[@]}"
