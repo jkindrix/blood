@@ -1,0 +1,27 @@
+// Test: nested regions — inner region reads reference to outer region data
+// Verifies: a reference created in the outer region scope is valid in the inner
+// region scope (outer outlives inner).
+// EXPECT: 30
+// EXPECT: 70
+
+fn main() -> i32 {
+    let result: i32 = region {
+        let a: i32 = 30;
+        let b: i32 = 40;
+        let a_ref: &i32 = &a;
+
+        let inner_sum: i32 = region {
+            // Read through reference to outer region data — this is safe
+            // because the outer region outlives the inner region.
+            let inner_val: i32 = *a_ref + b;
+            inner_val
+        };
+
+        println_int(*a_ref);
+        println_int(inner_sum);
+        inner_sum
+    };
+
+    if result != 70 { return 1; }
+    0
+}

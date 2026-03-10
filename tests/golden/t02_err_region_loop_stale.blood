@@ -1,0 +1,22 @@
+// COMPILE_FAIL: reference escapes region in loop
+// Test: reference from region in loop iteration N must not be usable in iteration N+1
+// SPEC: MEMORY_MODEL.md §7.5 — region deallocation invalidates all pointers
+// This is Pillar 1 (Veracity) — generational reference safety across loop iterations.
+// Even if both compilers fail this today, the test documents the expectation.
+fn main() -> i32 {
+    let mut stale: &i32 = &0;
+    for i in 0..3 {
+        let current: &i32 = region {
+            let val: i32 = i * 10;
+            &val
+        };
+        // 'current' is a reference to region-allocated data.
+        // After the region block ends, this reference is stale.
+        // Using 'stale' from a previous iteration should be detected.
+        if i > 0 {
+            println_int(*stale);
+        }
+        stale = current;
+    }
+    0
+}
