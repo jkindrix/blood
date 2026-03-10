@@ -61,6 +61,125 @@ fn is_block_like_expr(expr: &ast.Expr) -> bool {
     }
 }
 
+/// Returns true if there is a newline between the previous token and the current token.
+fn has_newline_before_current(parser: &mut parser_base.Parser) -> bool {
+    for i in 0usize..parser.current.leading_trivia.len() {
+        match parser.current.leading_trivia[i].kind {
+            token.TriviaKind.Newline => { return true; }
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Returns true if the token kind is a continuation token per §5.2.1.
+/// When a line ends with a continuation token, the next line continues the expression.
+fn is_continuation_token(kind: token.TokenKind) -> bool {
+    match kind {
+        // Binary operators
+        token.TokenKind.Plus => true,
+        token.TokenKind.Minus => true,
+        token.TokenKind.Star => true,
+        token.TokenKind.Slash => true,
+        token.TokenKind.Percent => true,
+        // Logical
+        token.TokenKind.AndAnd => true,
+        token.TokenKind.OrOr => true,
+        // Dot, comma
+        token.TokenKind.Dot => true,
+        token.TokenKind.Comma => true,
+        // Open delimiters
+        token.TokenKind.LParen => true,
+        token.TokenKind.LBracket => true,
+        token.TokenKind.LBrace => true,
+        // Bitwise
+        token.TokenKind.And => true,
+        token.TokenKind.Or => true,
+        token.TokenKind.Pipe => true,
+        token.TokenKind.Caret => true,
+        token.TokenKind.Shl => true,
+        token.TokenKind.Shr => true,
+        // Comparison
+        token.TokenKind.EqEq => true,
+        token.TokenKind.NotEq => true,
+        token.TokenKind.Lt => true,
+        token.TokenKind.Gt => true,
+        token.TokenKind.LtEq => true,
+        token.TokenKind.GtEq => true,
+        // Assignment
+        token.TokenKind.Eq => true,
+        token.TokenKind.PlusEq => true,
+        token.TokenKind.MinusEq => true,
+        token.TokenKind.StarEq => true,
+        token.TokenKind.SlashEq => true,
+        token.TokenKind.PercentEq => true,
+        token.TokenKind.AndEq => true,
+        token.TokenKind.OrEq => true,
+        token.TokenKind.CaretEq => true,
+        token.TokenKind.ShlEq => true,
+        token.TokenKind.ShrEq => true,
+        // Keywords
+        token.TokenKind.As => true,
+        token.TokenKind.In => true,
+        // Range
+        token.TokenKind.DotDot => true,
+        token.TokenKind.DotDotEq => true,
+        _ => false,
+    }
+}
+
+/// Returns true if the token kind can begin a new statement per §5.2.1.
+fn is_statement_start_token(kind: token.TokenKind) -> bool {
+    match kind {
+        // Delimiters that can start expressions
+        token.TokenKind.LParen => true,
+        token.TokenKind.LBracket => true,
+        token.TokenKind.LBrace => true,
+        // Unary prefix operators
+        token.TokenKind.And => true,
+        token.TokenKind.Star => true,
+        token.TokenKind.Not => true,
+        token.TokenKind.Minus => true,
+        // Attribute
+        token.TokenKind.Hash => true,
+        // Literals
+        token.TokenKind.IntLit => true,
+        token.TokenKind.FloatLit => true,
+        token.TokenKind.StringLit => true,
+        token.TokenKind.CharLit => true,
+        token.TokenKind.True => true,
+        token.TokenKind.False => true,
+        // Identifiers
+        token.TokenKind.Ident => true,
+        // Keywords that start statements/expressions
+        token.TokenKind.Let => true,
+        token.TokenKind.Fn => true,
+        token.TokenKind.If => true,
+        token.TokenKind.Match => true,
+        token.TokenKind.While => true,
+        token.TokenKind.For => true,
+        token.TokenKind.Loop => true,
+        token.TokenKind.Return => true,
+        token.TokenKind.Break => true,
+        token.TokenKind.Continue => true,
+        token.TokenKind.Struct => true,
+        token.TokenKind.Enum => true,
+        token.TokenKind.Trait => true,
+        token.TokenKind.Impl => true,
+        token.TokenKind.Mod => true,
+        token.TokenKind.Use => true,
+        token.TokenKind.Type => true,
+        token.TokenKind.Const => true,
+        token.TokenKind.Static => true,
+        token.TokenKind.Pub => true,
+        token.TokenKind.Effect => true,
+        token.TokenKind.Perform => true,
+        token.TokenKind.With => true,
+        token.TokenKind.Unsafe => true,
+        _ => false,
+    }
+}
+
 /// Parse an expression with a minimum precedence level (Pratt parser).
 pub fn parse_expr_with_precedence(parser: &mut parser_base.Parser, min_prec: u8) -> ast.Expr {
     // Parse prefix/primary expression
@@ -81,6 +200,15 @@ pub fn parse_expr_with_precedence(parser: &mut parser_base.Parser, min_prec: u8)
                 token.TokenKind.LBracket => { break; }
                 _ => {}
             }
+        }
+
+        // Implicit semicolon: at a line boundary, if the previous token is not
+        // a continuation token and the current token can start a new statement,
+        // stop extending the expression (§5.2.1).
+        if has_newline_before_current(parser)
+            && !is_continuation_token(parser.previous.kind)
+            && is_statement_start_token(parser.current.kind) {
+            break;
         }
 
         left = parse_infix_expr(parser, left, prec);

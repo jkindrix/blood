@@ -189,6 +189,17 @@ impl<'src> Parser<'src> {
             {
                 break;
             }
+
+            // Implicit semicolon: at a line boundary, if the previous line does not
+            // end with a continuation token and the current token can start a new
+            // statement, stop extending the expression (§5.2.1).
+            if self.previous.span.start_line != self.current.span.start_line
+                && !is_continuation_token(self.previous.kind)
+                && is_statement_start_token(self.current.kind)
+            {
+                break;
+            }
+
             if prec < min_prec {
                 break;
             }
@@ -496,6 +507,16 @@ impl<'src> Parser<'src> {
     /// Continue parsing postfix operators on an already-parsed expression.
     fn parse_postfix_continuation(&mut self, mut expr: Expr) -> Expr {
         loop {
+            // Implicit semicolon: at a line boundary, if the current token can
+            // start a new statement and is not a continuation token, stop
+            // extending the expression (§5.2.1).
+            if self.previous.span.start_line != self.current.span.start_line
+                && !is_continuation_token(self.current.kind)
+                && is_statement_start_token(self.current.kind)
+            {
+                break;
+            }
+
             match self.current.kind {
                 // Function call - but NOT after block-like expressions
                 // In `match x { ... } (y)`, the `(y)` is NOT a function call to the match result;
@@ -2575,4 +2596,114 @@ impl<'src> Parser<'src> {
             }
         }
     }
+}
+
+/// Returns true if `kind` is a continuation token per §5.2.1.
+/// When a continuation token appears at the start of a new line, the expression
+/// continues across the line boundary (no implicit semicolon is inserted).
+fn is_continuation_token(kind: TokenKind) -> bool {
+    matches!(
+        kind,
+        TokenKind::Plus
+            | TokenKind::Minus
+            | TokenKind::Star
+            | TokenKind::Slash
+            | TokenKind::Percent
+            | TokenKind::AndAnd
+            | TokenKind::OrOr
+            | TokenKind::Dot
+            | TokenKind::Comma
+            | TokenKind::LParen
+            | TokenKind::LBracket
+            | TokenKind::LBrace
+            | TokenKind::And
+            | TokenKind::Pipe
+            | TokenKind::Caret
+            | TokenKind::Shl
+            | TokenKind::Shr
+            | TokenKind::EqEq
+            | TokenKind::NotEq
+            | TokenKind::Lt
+            | TokenKind::Gt
+            | TokenKind::LtEq
+            | TokenKind::GtEq
+            | TokenKind::Eq
+            | TokenKind::PlusEq
+            | TokenKind::MinusEq
+            | TokenKind::StarEq
+            | TokenKind::SlashEq
+            | TokenKind::PercentEq
+            | TokenKind::AndEq
+            | TokenKind::OrEq
+            | TokenKind::CaretEq
+            | TokenKind::ShlEq
+            | TokenKind::ShrEq
+            | TokenKind::As
+            | TokenKind::In
+            | TokenKind::DotDot
+            | TokenKind::DotDotEq
+    )
+}
+
+/// Returns true if `kind` can start a new statement.
+/// Used with `is_continuation_token` to decide implicit semicolon insertion.
+fn is_statement_start_token(kind: TokenKind) -> bool {
+    matches!(
+        kind,
+        // Keywords that start statements/expressions
+        TokenKind::Let
+            | TokenKind::If
+            | TokenKind::Match
+            | TokenKind::While
+            | TokenKind::For
+            | TokenKind::Loop
+            | TokenKind::Return
+            | TokenKind::Break
+            | TokenKind::Continue
+            | TokenKind::Fn
+            | TokenKind::Struct
+            | TokenKind::Enum
+            | TokenKind::Trait
+            | TokenKind::Impl
+            | TokenKind::Use
+            | TokenKind::Mod
+            | TokenKind::Pub
+            | TokenKind::Type
+            | TokenKind::Const
+            | TokenKind::Static
+            | TokenKind::Extern
+            | TokenKind::Unsafe
+            | TokenKind::Perform
+            | TokenKind::Region
+            | TokenKind::Linear
+            | TokenKind::Effect
+            | TokenKind::Handle
+            | TokenKind::With
+            // Identifiers and literals
+            | TokenKind::Ident
+            | TokenKind::TypeIdent
+            | TokenKind::SelfLower
+            | TokenKind::SelfUpper
+            | TokenKind::IntLit
+            | TokenKind::FloatLit
+            | TokenKind::StringLit
+            | TokenKind::ByteStringLit
+            | TokenKind::RawStringLit
+            | TokenKind::RawStringLitHash1
+            | TokenKind::RawStringLitHash2
+            | TokenKind::CharLit
+            | TokenKind::True
+            | TokenKind::False
+            // Delimiters that can start expressions
+            | TokenKind::LParen
+            | TokenKind::LBracket
+            | TokenKind::LBrace
+            // Prefix operators
+            | TokenKind::And
+            | TokenKind::Star
+            | TokenKind::Not
+            | TokenKind::Minus
+            // Attribute
+            | TokenKind::Hash
+    )
 }
