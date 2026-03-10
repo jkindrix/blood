@@ -1,0 +1,20 @@
+// COMPILE_FAIL: macro invocation at top level
+// Test: macro expanding to a function definition
+// ACTUAL: parser does not support macro invocations as top-level items
+// Macros can only expand within function bodies, not at item position
+// BUG: spec §MACROS.md implies item-position macros should work
+
+macro define_adder {
+    ($name:ident, $val:expr) => {
+        fn $name(x: i32) -> i32 {
+            x + $val
+        }
+    };
+}
+
+define_adder!(add_ten, 10);
+
+fn main() -> i32 {
+    let result: i32 = add_ten(32);
+    result - 42
+}

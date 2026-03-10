@@ -1,0 +1,45 @@
+// Test: more-constrained generic vs less-constrained generic dispatch
+// method<T: Display>(x: T) vs method<T: Display + Debug>(x: T)
+// SPEC: more-constrained should win (§3.7 constraint-based specificity)
+// ACTUAL: bootstrap selects the less-constrained overload (first match wins)
+// BUG: constraint-based specificity not implemented in bootstrap dispatch
+// DIVERGENCE: first_gen rejects at HIR lowering (E0101 duplicate method in impl block)
+// This test documents bootstrap behavior (returns 100), not spec behavior (200)
+
+trait Display {
+    fn display(self: &Self) -> i32;
+}
+
+trait Debug {
+    fn debug(self: &Self) -> i32;
+}
+
+struct MyType {}
+
+impl Display for MyType {
+    fn display(self: &Self) -> i32 { 1 }
+}
+
+impl Debug for MyType {
+    fn debug(self: &Self) -> i32 { 2 }
+}
+
+struct Dispatcher {}
+
+impl Dispatcher {
+    fn process<T: Display>(self, x: T) -> i32 {
+        100
+    }
+    fn process<T: Display + Debug>(self, x: T) -> i32 {
+        200
+    }
+}
+
+fn main() -> i32 {
+    let d: Dispatcher = Dispatcher {};
+    let m: MyType = MyType {};
+    let result: i32 = d.process(m);
+    // SPEC says: should return 200 (more-constrained wins)
+    // ACTUAL: returns 100 (first matching overload wins)
+    result - 100
+}

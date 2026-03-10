@@ -1,0 +1,28 @@
+// COMPILE_FAIL: E0214
+// Test: effect-row dispatch — pure method vs effectful method
+// SPEC: methods differing only in effect row should be distinct overloads (§3.7)
+// ACTUAL: bootstrap treats them as duplicate definitions (E0214)
+// BUG: effect-row dispatch not implemented — effect rows not considered during overload resolution
+// Blocks tests 17-19 in golden expansion plan
+
+effect IO {
+    op print(msg: i32) -> ();
+}
+
+struct Service {}
+
+impl Service {
+    fn process(self, x: i32) -> i32 {
+        x + 1
+    }
+    fn process(self, x: i32) -> i32 / {IO} {
+        perform IO.print(x);
+        x + 2
+    }
+}
+
+fn main() -> i32 {
+    let s: Service = Service {};
+    let result: i32 = s.process(42);
+    result - 43
+}

@@ -1,0 +1,17 @@
+// COMPILE_FAIL: no matching method
+// EXPECT: no method named `handle`
+// Test: dispatch with no matching overload and 3+ candidates
+
+struct Multi {}
+
+impl Multi {
+    fn handle(self, x: i32) -> i32 { x }
+    fn handle(self, x: bool) -> i32 { 0 }
+    fn handle(self, x: &str) -> i32 { 1 }
+}
+
+fn main() -> i32 {
+    let m: Multi = Multi {};
+    // f64 doesn't match i32, bool, or &str — should list 3 candidates
+    m.handle(3.14)
+}

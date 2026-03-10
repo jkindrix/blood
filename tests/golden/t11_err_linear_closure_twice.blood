@@ -1,0 +1,12 @@
+// COMPILE_FAIL: linear closure not callable
+// EXPECT: [E0210] expected function, found `linear fn() -> i32`
+// Test: move closure capturing linear value creates a linear fn type
+// Linear fn types are currently not callable (missing linear fn -> fn coercion)
+// When linear fn calling is implemented, this should fail with E0802 instead
+fn main() -> i32 {
+    let x: linear i32 = 42;
+    let f = move || -> i32 { x };
+    let a: i32 = f();
+    let b: i32 = f();
+    a + b
+}

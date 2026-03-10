@@ -1,0 +1,12 @@
+// COMPILE_FAIL: reference escapes region
+// Test: reference to region-allocated value must not escape the region block
+// SPEC: MEMORY_MODEL.md §6.5 "Values allocated in a region cannot escape without copying"
+// This is Pillar 1 (Veracity) — generational reference safety
+// Even if both compilers fail this today, the test documents the expectation.
+fn main() -> i32 {
+    let r: &i32 = region {
+        let x: i32 = 42;
+        &x
+    };
+    *r
+}

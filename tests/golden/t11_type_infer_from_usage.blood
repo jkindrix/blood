@@ -1,0 +1,18 @@
+// Test: return type inferred from single concrete usage site
+// When a generic function's type parameter can be inferred from how
+// its return value is used, type inference should succeed
+
+fn identity<T>(x: T) -> T {
+    x
+}
+
+fn main() -> i32 {
+    let a: i32 = identity(42);
+    let b: bool = identity(true);
+    // Both type parameters should be inferred from usage
+    if b {
+        a - 42
+    } else {
+        1
+    }
+}

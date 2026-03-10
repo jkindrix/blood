@@ -1,0 +1,15 @@
+// Test: nested generic calls where return type feeds into next call
+// f(g(x)) where g's return type determines f's type parameter
+fn identity<T>(x: T) -> T {
+    x
+}
+
+fn add_one(x: i32) -> i32 {
+    x + 1
+}
+
+fn main() -> i32 {
+    // identity(42) -> i32, then add_one(i32) -> i32
+    let result: i32 = add_one(identity(41));
+    result - 42
+}

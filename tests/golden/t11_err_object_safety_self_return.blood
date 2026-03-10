@@ -1,0 +1,19 @@
+// COMPILE_FAIL: trait with Self return type is not object-safe
+// Test: Self in return position prevents dyn Trait usage
+// BUG: bootstrap does not currently check object safety (t06_err_object_safety also broken)
+
+trait Clonable {
+    fn clone_self(self: &Self) -> Self;
+}
+
+struct Foo {}
+
+impl Clonable for Foo {
+    fn clone_self(self: &Self) -> Self { Foo {} }
+}
+
+fn main() -> i32 {
+    let f: Foo = Foo {};
+    let d: &dyn Clonable = &f as &dyn Clonable;
+    0
+}

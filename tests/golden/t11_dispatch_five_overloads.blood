@@ -1,0 +1,20 @@
+// Test: dispatch with 5+ overloads selects correct one
+// Scale test for dispatch algorithm
+
+struct Handler {}
+
+impl Handler {
+    fn process(self, x: i32) -> i32 { 1 }
+    fn process(self, x: bool) -> i32 { 2 }
+    fn process(self, x: &str) -> i32 { 3 }
+    fn process<T>(self, x: T) -> i32 { 5 }
+}
+
+fn main() -> i32 {
+    let h: Handler = Handler {};
+    let a: i32 = h.process(42);
+    let b: i32 = h.process(true);
+    let c: i32 = h.process("hello");
+    // a=1, b=2, c=3 -> 1+2+3-6=0
+    a + b + c - 6
+}

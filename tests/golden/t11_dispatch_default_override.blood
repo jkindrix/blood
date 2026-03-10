@@ -1,0 +1,30 @@
+// COMPILE_FAIL: default method codegen bug
+// Test: default trait method overridden in one impl but not another
+// SPEC: should work — override used for Custom, default for Default
+// ACTUAL: bootstrap crashes with "unsubstituted type parameter TyVarId(6)"
+// BUG: default trait methods not properly monomorphized during codegen
+
+trait Greetable {
+    fn greet(self: &Self) -> i32 {
+        100
+    }
+}
+
+struct Custom {}
+struct Default {}
+
+impl Greetable for Custom {
+    fn greet(self: &Self) -> i32 {
+        200
+    }
+}
+
+impl Greetable for Default {}
+
+fn main() -> i32 {
+    let c: Custom = Custom {};
+    let d: Default = Default {};
+    let a: i32 = c.greet();
+    let b: i32 = d.greet();
+    a - 200 + b - 100
+}

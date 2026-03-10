@@ -1,0 +1,21 @@
+// Test: cross-parameter incomparable specificity
+// fn route<T>(x: T, y: i32) vs fn route<T>(x: i32, y: T) — call with (i32, i32)
+// SPEC: should be ambiguous (§3.7 — neither is uniformly more specific)
+// ACTUAL: bootstrap silently selects first matching overload (returns 1)
+// BUG: cross-parameter ambiguity detection not implemented in bootstrap
+// DIVERGENCE: first_gen correctly rejects with E0602 (ambiguous dispatch)
+// This test documents bootstrap behavior (first-match-wins), not spec behavior (compile error)
+
+struct Router {}
+
+impl Router {
+    fn route<T>(self, x: T, y: i32) -> i32 { 1 }
+    fn route<T>(self, x: i32, y: T) -> i32 { 2 }
+}
+
+fn main() -> i32 {
+    let r: Router = Router {};
+    // SPEC: should fail with ambiguous dispatch error
+    // ACTUAL: selects first overload, returns 1
+    r.route(42, 42) - 1
+}

@@ -1,0 +1,21 @@
+// COMPILE_FAIL: trait with Self by-value parameter is not object-safe
+// Test: Self in parameter position (other than &Self receiver) prevents dyn Trait usage
+// BUG: bootstrap does not currently check object safety (t06_err_object_safety also broken)
+
+trait Mergeable {
+    fn merge(self: &Self, other: Self) -> i32;
+}
+
+struct Bar {
+    val: i32,
+}
+
+impl Mergeable for Bar {
+    fn merge(self: &Self, other: Self) -> i32 { self.val + other.val }
+}
+
+fn main() -> i32 {
+    let b: Bar = Bar { val: 1 };
+    let d: &dyn Mergeable = &b as &dyn Mergeable;
+    0
+}
