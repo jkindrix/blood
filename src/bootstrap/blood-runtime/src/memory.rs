@@ -1837,7 +1837,22 @@ impl Region {
     }
 
     /// Reset the region, freeing all allocations and clearing free lists.
+    ///
+    /// When BLOOD_POISON_REGIONS is set, fills the used memory with 0xDE bytes
+    /// before resetting. This makes use-after-reset bugs immediately visible
+    /// as crashes (reading 0xDEDEDEDE... as pointers) rather than silent corruption.
     pub fn reset(&mut self) {
+        // Poison used memory before reset (when enabled)
+        #[cfg(unix)]
+        if std::env::var("BLOOD_POISON_REGIONS").is_ok() {
+            let used = self.offset.load(Ordering::Acquire);
+            if used > 0 && !self.base.is_null() {
+                unsafe {
+                    std::ptr::write_bytes(self.base, 0xDE, used);
+                }
+            }
+        }
+
         // Clear all free lists
         {
             let mut lists = self.free_lists.lock();
@@ -1850,6 +1865,32 @@ impl Region {
         self.closed.store(0, Ordering::Release);
         self.suspend_count.store(0, Ordering::Release);
         self.status.store(RegionStatus::Active as u32, Ordering::Release);
+    }
+
+    /// Set memory protection on the committed pages of this region.
+    /// `readonly=true` makes pages read-only; `readonly=false` restores read-write.
+    /// Used for debugging: make MIR region read-only after deactivation to catch
+    /// any wild writes that corrupt MIR data.
+    #[cfg(unix)]
+    pub fn protect(&self, readonly: bool) {
+        let committed = self.committed.load(Ordering::Acquire);
+        if committed > 0 && !self.base.is_null() {
+            let prot = if readonly {
+                libc::PROT_READ
+            } else {
+                libc::PROT_READ | libc::PROT_WRITE
+            };
+            let ret = unsafe {
+                libc::mprotect(
+                    self.base as *mut libc::c_void,
+                    committed,
+                    prot,
+                )
+            };
+            if ret != 0 {
+                eprintln!("[runtime] mprotect failed: errno={}", std::io::Error::last_os_error());
+            }
+        }
     }
 
     /// Trim committed pages above the current allocation offset.

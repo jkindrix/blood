@@ -4104,6 +4104,11 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let region_reset_type = void_type.fn_type(&[i64_type.into()], false);
         self.module.add_function("blood_region_reset", region_reset_type, None);
 
+        // blood_region_protect(region_id: i64, readonly: i32) -> void
+        // Set memory protection on a region's committed pages
+        let region_protect_type = void_type.fn_type(&[i64_type.into(), i32_type.into()], false);
+        self.module.add_function("blood_region_protect", region_protect_type, None);
+
         // blood_region_alloc(region_id: i64, size: i64, align: i64) -> i64 (address)
         // Allocates memory from a region
         let region_alloc_type = i64_type.fn_type(&[i64_type.into(), i64_type.into(), i64_type.into()], false);

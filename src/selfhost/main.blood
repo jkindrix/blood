@@ -1727,6 +1727,7 @@ fn is_region_builtin(name: &str) -> bool {
     if str_eq(name, "region_create") { return true; }
     if str_eq(name, "region_destroy") { return true; }
     if str_eq(name, "region_reset") { return true; }
+    if str_eq(name, "region_protect") { return true; }
     if str_eq(name, "region_activate") { return true; }
     if str_eq(name, "region_deactivate") { return true; }
     if str_eq(name, "region_alloc") { return true; }
@@ -3773,7 +3774,7 @@ fn codegen_pass2(
         };
 
         // Pop mir_region — codegen_region becomes active again.
-        // MIR data remains valid until region_destroy below.
+        // MIR data remains valid until region_reset below.
         region_deactivate();
 
         // Update next_mono_def_id counter
@@ -3857,7 +3858,7 @@ fn codegen_pass2(
             ctx.is_handler_op = true;
         }
 
-        // Codegen (no region active — all allocations in global allocator)
+        // Codegen (codegen_region active, mir_region read-only)
         let fn_ir = codegen.generate_function_with_ctx(ctx, &mir_result.body, work.fn_name.as_str());
         file_append_string(output_path, fn_ir.as_str());
 

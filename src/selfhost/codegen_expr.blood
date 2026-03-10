@@ -1510,7 +1510,9 @@ fn resolve_base_type_from_hir(
         &hir_ty.TypeKind.Adt { def_id, ref args } => {
             if args.len() > 0 {
                 // Generic ADT: use type_to_llvm_with_ctx_id for correct substituted layout
-                let ty_id = type_intern.type_to_ty_id(hir_type);
+                // Use readonly variant — codegen must NOT write to the TypeInterner's
+                // hash maps, whose backing may live in a deactivated/reset region.
+                let ty_id = type_intern.type_to_ty_id_readonly(hir_type);
                 codegen_size.type_to_llvm_with_ctx_id(ctx, ty_id)
             } else {
                 ctx.adt_llvm_type(def_id.index)

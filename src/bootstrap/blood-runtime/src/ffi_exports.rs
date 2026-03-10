@@ -52,7 +52,25 @@ pub type ContinuationHandle = u64;
 // Realloc Diagnostics
 // ============================================================================
 
-use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering as AtomicOrdering};
+
+/// When true, region_activate/deactivate become no-ops, forcing all allocations
+/// through the system allocator (malloc/free). This enables ASan to track all
+/// memory accesses and detect buffer overflows within what would normally be
+/// bump-allocated region memory.
+static REGIONS_DISABLED: AtomicBool = AtomicBool::new(false);
+
+/// Check BLOOD_NO_REGIONS env var once at startup.
+fn regions_disabled() -> bool {
+    static INIT: std::sync::Once = std::sync::Once::new();
+    INIT.call_once(|| {
+        if std::env::var("BLOOD_NO_REGIONS").is_ok() {
+            REGIONS_DISABLED.store(true, AtomicOrdering::Relaxed);
+            eprintln!("[runtime] BLOOD_NO_REGIONS=1: region allocation disabled, using system allocator");
+        }
+    });
+    REGIONS_DISABLED.load(AtomicOrdering::Relaxed)
+}
 
 /// Total realloc calls inside a region.
 static REALLOC_COUNT: AtomicU64 = AtomicU64::new(0);
@@ -233,7 +251,11 @@ pub unsafe extern "C" fn blood_handler_abort(value: i64) -> ! {
 }
 
 /// Get the currently active region ID (top of stack), or 0 if none.
+/// Returns 0 when BLOOD_NO_REGIONS is set, forcing system allocator usage.
 fn current_active_region() -> u64 {
+    if regions_disabled() {
+        return 0;
+    }
     ACTIVE_REGION_STACK.with(|stack| {
         stack.borrow().last().copied().unwrap_or(0)
     })
@@ -4898,6 +4920,20 @@ pub extern "C" fn blood_region_trim(region_id: u64) {
     if let Some(region) = reg.get(&region_id) {
         #[cfg(unix)]
         region.trim();
+    }
+}
+
+/// Set memory protection on a region's committed pages.
+/// `readonly=1` makes pages read-only; `readonly=0` restores read-write.
+/// Used for debugging: catch wild writes to deactivated MIR regions.
+#[no_mangle]
+pub extern "C" fn blood_region_protect(region_id: u64, readonly: i32) {
+    let registry = get_region_registry();
+    let reg = registry.lock();
+
+    if let Some(region) = reg.get(&region_id) {
+        #[cfg(unix)]
+        region.protect(readonly != 0);
     }
 }
 

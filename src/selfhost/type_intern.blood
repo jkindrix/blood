@@ -664,6 +664,32 @@ impl TypeInterner {
         TyId.new(index)
     }
 
+    /// Read-only lookup: returns TyId if already interned, panics if not found.
+    /// Safe to call during codegen — does NOT write to any hash maps or Vecs.
+    pub fn find(self: &TypeInterner, kind: &InternedTypeKind) -> TyId {
+        let hash = hash_interned_type_kind(kind);
+
+        // Fast path: check hash index
+        match self.type_hash_index.get(hash) {
+            Option.Some(idx) => {
+                if interned_type_kind_eq(&self.types[idx as usize], kind) {
+                    return TyId.new(idx);
+                }
+                // Hash collision — fall through to linear scan
+            }
+            Option.None => {}
+        }
+
+        // Linear scan fallback
+        for i in 0usize..self.types.len() {
+            if interned_type_kind_eq(&self.types[i], kind) {
+                return TyId.new(i as u32);
+            }
+        }
+
+        panic("ICE: TypeInterner.find: type not previously interned")
+    }
+
     /// Gets the InternedTypeKind for a TyId.
     /// Panics with diagnostic if id is out of bounds (indicates corrupt TyId).
     pub fn get(self: &TypeInterner, id: TyId) -> &InternedTypeKind {
@@ -709,6 +735,30 @@ impl TypeInterner {
 
         // Not found — new list (collision case)
         self.push_ty_list_no_hash(ids)
+    }
+
+    /// Read-only lookup for type lists. Returns TyListId if found, panics if not.
+    pub fn find_ty_list(self: &TypeInterner, ids: &Vec<TyId>) -> TyListId {
+        let hash = hash_ty_list(ids);
+
+        // Fast path: check hash index
+        match self.ty_list_hash_index.get(hash) {
+            Option.Some(idx) => {
+                if ty_lists_equal(&self.ty_list_meta, &self.ty_list_data, TyListId.new(idx), ids) {
+                    return TyListId.new(idx);
+                }
+            }
+            Option.None => {}
+        }
+
+        // Linear scan fallback
+        for i in 0usize..self.ty_list_meta.len() {
+            if ty_lists_equal(&self.ty_list_meta, &self.ty_list_data, TyListId.new(i as u32), ids) {
+                return TyListId.new(i as u32);
+            }
+        }
+
+        panic("ICE: TypeInterner.find_ty_list: type list not previously interned")
     }
 
     /// Internal: push a new type list and register its hash.
@@ -1047,6 +1097,86 @@ pub fn type_to_ty_id(ty: &hir_ty.Type) -> TyId {
             type_interner().intern(InternedTypeKind.Ownership { qualifier, inner: inner_id })
         }
     }
+}
+
+/// Read-only version of type_to_ty_id. Uses find() instead of intern().
+/// Safe to call during codegen — does NOT write to any hash maps or Vecs.
+/// Panics if the type was not previously interned during type checking/MIR lowering.
+pub fn type_to_ty_id_readonly(ty: &hir_ty.Type) -> TyId {
+    let interner = type_interner();
+    match &ty.kind {
+        &hir_ty.TypeKind.Primitive(prim) => {
+            interner.find(&InternedTypeKind.Primitive(prim))
+        }
+        &hir_ty.TypeKind.Never => CommonTypes.never(),
+        &hir_ty.TypeKind.Error => CommonTypes.error(),
+        &hir_ty.TypeKind.Infer(var_id) => {
+            interner.find(&InternedTypeKind.Infer(var_id))
+        }
+        &hir_ty.TypeKind.Param(var_id) => {
+            interner.find(&InternedTypeKind.Param(var_id))
+        }
+        &hir_ty.TypeKind.Tuple(ref types) => {
+            let ids = find_type_vec(types);
+            let list_id = type_interner().find_ty_list(&ids);
+            type_interner().find(&InternedTypeKind.Tuple(list_id))
+        }
+        &hir_ty.TypeKind.Array { ref element, size } => {
+            let elem_id = type_to_ty_id_readonly(element.as_ref());
+            type_interner().find(&InternedTypeKind.Array { element: elem_id, size })
+        }
+        &hir_ty.TypeKind.Slice { ref element } => {
+            let elem_id = type_to_ty_id_readonly(element.as_ref());
+            type_interner().find(&InternedTypeKind.Slice { element: elem_id })
+        }
+        &hir_ty.TypeKind.Ref { ref inner, mutable } => {
+            let inner_id = type_to_ty_id_readonly(inner.as_ref());
+            type_interner().find(&InternedTypeKind.Ref { inner: inner_id, mutable })
+        }
+        &hir_ty.TypeKind.Ptr { ref inner, mutable } => {
+            let inner_id = type_to_ty_id_readonly(inner.as_ref());
+            type_interner().find(&InternedTypeKind.Ptr { inner: inner_id, mutable })
+        }
+        &hir_ty.TypeKind.Fn { ref params, ref ret, ref effects } => {
+            // Fn types with effects need intern_effect_row which writes.
+            // Not expected during codegen; panic if reached.
+            panic("ICE: type_to_ty_id_readonly called with Fn type — use type_to_ty_id instead")
+        }
+        &hir_ty.TypeKind.Closure { def_id, ref params, ref ret } => {
+            panic("ICE: type_to_ty_id_readonly called with Closure type — use type_to_ty_id instead")
+        }
+        &hir_ty.TypeKind.Adt { def_id, ref args } => {
+            let arg_ids = find_type_vec(args);
+            let arg_list = type_interner().find_ty_list(&arg_ids);
+            type_interner().find(&InternedTypeKind.Adt { def_id, args: arg_list })
+        }
+        &hir_ty.TypeKind.Record { ref fields, ref row_var } => {
+            panic("ICE: type_to_ty_id_readonly called with Record type — use type_to_ty_id instead")
+        }
+        &hir_ty.TypeKind.Forall { ref params, ref body } => {
+            panic("ICE: type_to_ty_id_readonly called with Forall type — use type_to_ty_id instead")
+        }
+        &hir_ty.TypeKind.Range { ref element, inclusive } => {
+            let elem_id = type_to_ty_id_readonly(element.as_ref());
+            type_interner().find(&InternedTypeKind.Range { element: elem_id, inclusive })
+        }
+        &hir_ty.TypeKind.DynTrait { trait_id, ref auto_traits } => {
+            panic("ICE: type_to_ty_id_readonly called with DynTrait type — use type_to_ty_id instead")
+        }
+        &hir_ty.TypeKind.Ownership { qualifier, ref inner } => {
+            let inner_id = type_to_ty_id_readonly(inner.as_ref());
+            type_interner().find(&InternedTypeKind.Ownership { qualifier, inner: inner_id })
+        }
+    }
+}
+
+/// Helper for type_to_ty_id_readonly: converts a Vec<Type> to Vec<TyId> using find.
+fn find_type_vec(types: &Vec<hir_ty.Type>) -> Vec<TyId> {
+    let mut ids: Vec<TyId> = Vec.new();
+    for i in 0usize..types.len() {
+        ids.push(type_to_ty_id_readonly(&types[i]));
+    }
+    ids
 }
 
 /// Converts a TyId back into a hir_ty.Type tree.

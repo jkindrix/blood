@@ -200,6 +200,12 @@ impl<'a> TypeContext<'a> {
             vec![u64_ty.clone()], unit_ty.clone(),
         );
 
+        // region_protect(region_id: u64, readonly: i32) -> () - set memory protection on region pages
+        self.register_builtin_fn_aliased(
+            "region_protect", "blood_region_protect",
+            vec![u64_ty.clone(), i32_ty.clone()], unit_ty.clone(),
+        );
+
         // region_activate(region_id: u64) -> () - route String/Vec/Box allocations to this region
         self.register_builtin_fn_aliased(
             "region_activate", "blood_region_activate",
