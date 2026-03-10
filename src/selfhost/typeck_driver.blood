@@ -231,6 +231,20 @@ pub fn check_lower_result(result: &hir_lower_ctx.LowerResult) -> TypeCheckResult
         }
     }
 
+    // Phase 1e: Type stability check (DIS-03, DISPATCH.md §4).
+    let instabilities = typeck_dispatch.check_type_stability(&checker.impls);
+    for si in 0usize..instabilities.len() {
+        let inst = &instabilities[si];
+        let m2 = &checker.impls[inst.impl2_idx].methods[inst.method2_idx];
+        let m1 = &checker.impls[inst.impl1_idx].methods[inst.method1_idx];
+        checker.error_with_spanned_note(
+            typeck_types.TypeErrorKind.TypeInstability,
+            m2.span,
+            common.make_string("return type incompatible with this method"),
+            m1.span,
+        );
+    }
+
     // Phase 2: Type check main file bodies (determines success/failure).
     let body_limit = result.main_body_count;
     for i in 0usize..body_limit {

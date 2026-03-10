@@ -1,0 +1,26 @@
+// COMPILE_FAIL: type instability
+// Test: methods with overlapping inputs but incompatible return types
+// SPEC: DISPATCH.md §4 "Type Stability"
+// Two methods on the same type with the same name and overlapping parameter
+// types must return compatible types. Otherwise the return type cannot be
+// determined from input types at compile time.
+// Methods are in separate impl blocks to avoid E0101 duplicate rejection.
+
+struct Converter {}
+
+impl Converter {
+    fn convert(self: &Self, x: i32) -> i32 {
+        x
+    }
+}
+
+impl Converter {
+    fn convert(self: &Self, x: i32) -> bool {
+        true
+    }
+}
+
+fn main() -> i32 {
+    let c: Converter = Converter {};
+    0
+}

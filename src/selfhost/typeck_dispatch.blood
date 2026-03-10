@@ -838,6 +838,112 @@ pub fn check_all_dispatch_ambiguity(
     results
 }
 
+/// A type instability found between two methods.
+pub struct TypeInstabilityInfo {
+    /// Impl index of the first method.
+    pub impl1_idx: usize,
+    /// Method index within the first impl.
+    pub method1_idx: usize,
+    /// Impl index of the second method.
+    pub impl2_idx: usize,
+    /// Method index within the second impl.
+    pub method2_idx: usize,
+}
+
+/// Checks all registered impls for type stability violations (DISPATCH.md §4).
+/// Two methods are type-unstable if their input types overlap but their
+/// return types are incompatible — meaning the return type cannot be
+/// determined from the input types alone at compile time.
+pub fn check_type_stability(
+    impls: &Vec<typeck_info.ImplInfo>,
+) -> Vec<TypeInstabilityInfo> {
+    let mut results: Vec<TypeInstabilityInfo> = Vec.new();
+
+    for i in 0usize..impls.len() {
+        for mi in 0usize..impls[i].methods.len() {
+            let m1 = &impls[i].methods[mi];
+
+            for j in i..impls.len() {
+                if !types_match_self(impls[i].self_ty, impls[j].self_ty) {
+                    continue;
+                }
+                let start_mj = if j == i { mi + 1 } else { 0usize };
+                for mj in start_mj..impls[j].methods.len() {
+                    let m2 = &impls[j].methods[mj];
+
+                    // Must have same name
+                    if m1.name.index != m2.name.index {
+                        continue;
+                    }
+
+                    // Different arities cannot conflict
+                    if m1.param_tys.len() != m2.param_tys.len() {
+                        continue;
+                    }
+
+                    // Check if input types could overlap
+                    let mut overlap = true;
+                    for k in 0usize..m1.param_tys.len() {
+                        if !types_could_unify(m1.param_tys[k], m2.param_tys[k], 0) {
+                            overlap = false;
+                            break;
+                        }
+                    }
+                    if !overlap {
+                        continue;
+                    }
+
+                    // Inputs overlap — check return type compatibility
+                    if return_types_compatible(m1.return_ty, m2.return_ty) {
+                        continue;
+                    }
+
+                    // Type instability detected
+                    results.push(TypeInstabilityInfo {
+                        impl1_idx: i,
+                        method1_idx: mi,
+                        impl2_idx: j,
+                        method2_idx: mj,
+                    });
+                }
+            }
+        }
+    }
+    results
+}
+
+/// Checks if two return types are compatible for type stability.
+/// Compatible means: structurally equal, or both are type parameters
+/// (which will be determined by their input positions at call sites).
+fn return_types_compatible(a: type_intern.TyId, b: type_intern.TyId) -> bool {
+    if a.index == b.index {
+        return true;
+    }
+    let interner = type_intern.type_interner();
+    let ka = interner.get(a);
+    let kb = interner.get(b);
+    // Type params/infer are compatible with each other (both determined by inputs)
+    let a_is_param = match ka {
+        &type_intern.InternedTypeKind.Param(_) => true,
+        &type_intern.InternedTypeKind.Infer(_) => true,
+        _ => false,
+    };
+    let b_is_param = match kb {
+        &type_intern.InternedTypeKind.Param(_) => true,
+        &type_intern.InternedTypeKind.Infer(_) => true,
+        _ => false,
+    };
+    if a_is_param && b_is_param {
+        return true;
+    }
+    // A concrete type is compatible with a param (concrete specialization)
+    if a_is_param || b_is_param {
+        return true;
+    }
+    // Otherwise fall through to structural check
+    types_equal_id(a, b, 0)
+}
+
 /// Checks if two self types match for dispatch purposes.
 /// This mirrors the logic in typeck.blood types_match_for_impl_id.
 fn types_match_self(a: type_intern.TyId, b: type_intern.TyId) -> bool {
