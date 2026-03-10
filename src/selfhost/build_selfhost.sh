@@ -126,7 +126,7 @@ build_first_gen() {
 # See: place_has_deref crash at fn 1900/2246 (analyze_statement NULL ptr).
 run_with_pty() {
     local rc=0
-    script -qc "$*" /dev/null || rc=$?
+    script -qec "$*" /dev/null || rc=$?
     return "$rc"
 }
 
