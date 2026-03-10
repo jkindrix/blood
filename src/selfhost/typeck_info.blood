@@ -349,6 +349,13 @@ pub struct MethodInfo {
     pub takes_self_ref: bool,
     /// Whether the method takes self by mutable reference.
     pub takes_self_mut: bool,
+    /// Effect DefId indices this method may perform (from its effect row).
+    pub effect_def_ids: Vec<u32>,
+    /// Per-type-parameter trait bound DefIds (indexed by type param ordinal).
+    /// E.g., for `<T: Display + Debug, U: Clone>`:
+    ///   type_param_bounds[0] = [Display_def_id, Debug_def_id]
+    ///   type_param_bounds[1] = [Clone_def_id]
+    pub type_param_bounds: Vec<Vec<u32>>,
     /// Source span for error reporting.
     pub span: common.Span,
 }
@@ -362,9 +369,11 @@ impl MethodInfo {
         return_ty: type_intern.TyId,
         takes_self_ref: bool,
         takes_self_mut: bool,
+        effect_def_ids: Vec<u32>,
+        type_param_bounds: Vec<Vec<u32>>,
         span: common.Span,
     ) -> MethodInfo {
-        MethodInfo { def_id, name, param_tys, return_ty, takes_self_ref, takes_self_mut, span }
+        MethodInfo { def_id, name, param_tys, return_ty, takes_self_ref, takes_self_mut, effect_def_ids, type_param_bounds, span }
     }
 }
 

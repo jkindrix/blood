@@ -598,6 +598,8 @@ fn register_trait(
                         pm_tys.push(assoc_fn.sig.params[pj].ty);
                     }
                 }
+                let eff_ids = extract_effect_def_ids(&assoc_fn.sig.effects);
+                let tp_bounds = extract_type_param_bounds(&assoc_fn.sig.generics);
                 let mi = typeck.MethodInfo.new(
                     assoc_fn.def_id,
                     assoc_fn.name.symbol,
@@ -605,6 +607,8 @@ fn register_trait(
                     assoc_fn.sig.return_ty,
                     takes_sr,
                     takes_sm,
+                    eff_ids,
+                    tp_bounds,
                     assoc_fn.name.span,
                 );
                 impl_methods.push(mi);
@@ -655,6 +659,8 @@ fn register_impl(
                     }
                 }
 
+                let eff_ids = extract_effect_def_ids(&assoc_fn.sig.effects);
+                let tp_bounds = extract_type_param_bounds(&assoc_fn.sig.generics);
                 let method_info = typeck.MethodInfo.new(
                     assoc_fn.def_id,
                     assoc_fn.name.symbol,
@@ -662,6 +668,8 @@ fn register_impl(
                     assoc_fn.sig.return_ty,
                     takes_self_ref,
                     takes_self_mut,
+                    eff_ids,
+                    tp_bounds,
                     assoc_fn.name.span,
                 );
                 methods.push(method_info);
@@ -757,6 +765,8 @@ fn inject_default_methods(
                             type_intern.TyId.new(trait_method.return_ty.index),
                             trait_method.takes_self_ref,
                             trait_method.takes_self_mut,
+                            Vec.new(),
+                            Vec.new(),
                             common.Span { start: 0, end: 0, line: 0, column: 0 },
                         );
                         methods.push(method_info);
@@ -1953,6 +1963,73 @@ fn make_param(n: u32) -> type_intern.TyId {
     interner.intern(type_intern.InternedTypeKind.Param(hir_def.TyVarId.new(n)))
 }
 
+/// Extracts effect DefId indices from an HIR EffectRow.
+fn extract_effect_def_ids(effects: &hir_ty.EffectRow) -> Vec<u32> {
+    let mut ids: Vec<u32> = Vec.new();
+    for i in 0usize..effects.effects.len() {
+        ids.push(effects.effects[i].def_id.index);
+    }
+    ids
+}
+
+/// Extracts per-type-parameter trait bound DefIds from HIR Generics.
+/// Returns a Vec<Vec<u32>> indexed by type param ordinal.
+fn extract_type_param_bounds(generics: &hir_ty.Generics) -> Vec<Vec<u32>> {
+    // Count type params to size the result
+    let mut num_params: usize = 0;
+    for i in 0usize..generics.params.len() {
+        match &generics.params[i] {
+            &hir_ty.GenericParam.TypeParam(_) => { num_params += 1; }
+            _ => {}
+        }
+    }
+    // Initialize with empty vecs
+    let mut result: Vec<Vec<u32>> = Vec.new();
+    for i in 0usize..num_params {
+        result.push(Vec.new());
+    }
+    // Build TyVarId → ordinal mapping
+    let mut var_to_ordinal: Vec<u32> = Vec.new();
+    let mut var_ids: Vec<u32> = Vec.new();
+    let mut ordinal: u32 = 0;
+    for i in 0usize..generics.params.len() {
+        match &generics.params[i] {
+            &hir_ty.GenericParam.TypeParam(ref tp) => {
+                var_ids.push(tp.var_id.index);
+                var_to_ordinal.push(ordinal);
+                ordinal += 1;
+            }
+            _ => {}
+        }
+    }
+    // Extract trait bounds from where predicates
+    for i in 0usize..generics.where_predicates.len() {
+        match &generics.where_predicates[i] {
+            &hir_ty.WherePredicate.TypeBound { ref ty, ref bounds, span: _ } => {
+                // Find which type param this predicate binds
+                match &ty.kind {
+                    &hir_ty.TypeKind.Param(var_id) => {
+                        // Look up ordinal for this TyVarId
+                        for vi in 0usize..var_ids.len() {
+                            if var_ids[vi] == var_id.index {
+                                let ord = var_to_ordinal[vi] as usize;
+                                // Add each trait bound's DefId
+                                for bi in 0usize..bounds.len() {
+                                    result[ord].push(bounds[bi].def_id.index);
+                                }
+                                break;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+    result
+}
+
 /// Helper: add a method to the methods list and record its runtime function name.
 /// The interner must be the same interner used during HIR lowering so that
 /// method name symbols match.
@@ -1971,7 +2048,7 @@ fn add_method(
     // All builtin method names are pre-interned, so find() will always succeed.
     let found = interner.find(name);
     let sym = found.unwrap();
-    methods.push(typeck.MethodInfo.new(def_id, sym, params, ret, true, self_mut, common.Span { start: 0, end: 0, line: 0, column: 0 }));
+    methods.push(typeck.MethodInfo.new(def_id, sym, params, ret, true, self_mut, Vec.new(), Vec.new(), common.Span { start: 0, end: 0, line: 0, column: 0 }));
     // Record mapping from synthetic DefId to runtime function name for codegen
     checker.builtin_def_names.push(
         typeck.BuiltinDefName.new(def_id.index, common.make_string(runtime_name)),

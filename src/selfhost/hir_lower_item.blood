@@ -1526,6 +1526,85 @@ fn compare_param_type_spans(ctx: &mut hir_lower_ctx.LoweringCtx, f: &ast.FnDecl,
     f_idx >= f.params.len() && g_idx >= g.params.len()
 }
 
+/// Checks if two functions have different effect rows (DISPATCH.md §7).
+/// Returns true if one is pure and the other is effectful, or if both are
+/// effectful but with different effect sets.
+fn effect_rows_differ(ctx: &mut hir_lower_ctx.LoweringCtx, f: &ast.FnDecl, g: &ast.FnDecl) -> bool {
+    match &f.effects {
+        &Option.Some(ref f_eff) => {
+            match &g.effects {
+                &Option.Some(ref g_eff) => {
+                    // Both have effect rows — compare span text
+                    let f_str = ctx.span_to_string(f_eff.span);
+                    let g_str = ctx.span_to_string(g_eff.span);
+                    !strings_equal(&f_str, &g_str)
+                }
+                &Option.None => {
+                    // f has effects, g is pure — they differ
+                    true
+                }
+            }
+        }
+        &Option.None => {
+            match &g.effects {
+                &Option.Some(_) => {
+                    // f is pure, g has effects — they differ
+                    true
+                }
+                &Option.None => {
+                    // Both pure — no difference
+                    false
+                }
+            }
+        }
+    }
+}
+
+/// Checks if two functions have different where clauses (DISPATCH.md §3.7).
+/// Returns true if the where clauses differ in text, allowing methods with
+/// the same name and param types but different constraints to coexist.
+fn where_clauses_differ(ctx: &mut hir_lower_ctx.LoweringCtx, f: &ast.FnDecl, g: &ast.FnDecl) -> bool {
+    match &f.where_clause {
+        &Option.Some(ref f_wc) => {
+            match &g.where_clause {
+                &Option.Some(ref g_wc) => {
+                    let f_str = ctx.span_to_string(f_wc.span);
+                    let g_str = ctx.span_to_string(g_wc.span);
+                    !strings_equal(&f_str, &g_str)
+                }
+                &Option.None => true,
+            }
+        }
+        &Option.None => {
+            match &g.where_clause {
+                &Option.Some(_) => true,
+                &Option.None => {
+                    // Both have no where clause — check inline type param bounds.
+                    // E.g., <T: Display> vs <T: Display + Debug>
+                    match &f.type_params {
+                        &Option.Some(ref f_tp) => {
+                            match &g.type_params {
+                                &Option.Some(ref g_tp) => {
+                                    let f_str = ctx.span_to_string(f_tp.span);
+                                    let g_str = ctx.span_to_string(g_tp.span);
+                                    !strings_equal(&f_str, &g_str)
+                                }
+                                &Option.None => true,
+                            }
+                        }
+                        &Option.None => {
+                            match &g.type_params {
+                                &Option.Some(_) => true,
+                                &Option.None => false,
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 // ============================================================
 // Impl Declaration Lowering
 // ============================================================
@@ -1718,14 +1797,20 @@ fn lower_impl_decl(ctx: &mut hir_lower_ctx.LoweringCtx, imp: &ast.ImplBlock) {
                                     // Same arity — compare type span text
                                     let params_match = compare_param_type_spans(ctx, f, g);
                                     if params_match {
-                                        let method_name = ctx.span_to_string(f.name.span);
-                                        let mn_r = method_name.as_str();
-                                        let mut msg = String.new();
-                                        msg.push_str("duplicate method `");
-                                        msg.push_str(mn_r);
-                                        msg.push_str("` in impl block");
-                                        ctx.error(hir.DiagnosticCode.E0101, msg, f.name.span);
-                                        break;
+                                        // Same name and param types — check if effect rows differ.
+                                        // Methods with different effect rows are distinct overloads (DISPATCH.md §7).
+                                        let effects_differ = effect_rows_differ(ctx, f, g);
+                                        let constraints_differ = where_clauses_differ(ctx, f, g);
+                                        if !effects_differ && !constraints_differ {
+                                            let method_name = ctx.span_to_string(f.name.span);
+                                            let mn_r = method_name.as_str();
+                                            let mut msg = String.new();
+                                            msg.push_str("duplicate method `");
+                                            msg.push_str(mn_r);
+                                            msg.push_str("` in impl block");
+                                            ctx.error(hir.DiagnosticCode.E0101, msg, f.name.span);
+                                            break;
+                                        }
                                     }
                                 }
                                 // Different param types: valid overload, not a duplicate

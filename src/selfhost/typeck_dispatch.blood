@@ -615,6 +615,108 @@ fn types_equal_id(a: type_intern.TyId, b: type_intern.TyId, depth: u32) -> bool 
 }
 
 // ============================================================
+// Effect Row Comparison
+// ============================================================
+
+/// Checks if two effect rows are equal (same set of effect DefIds).
+/// Empty rows (pure) are equal to each other. Order does not matter.
+fn effect_rows_equal(a: &Vec<u32>, b: &Vec<u32>) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    // For small effect sets (typical case), O(n²) is fine
+    for i in 0usize..a.len() {
+        let mut found = false;
+        for j in 0usize..b.len() {
+            if a[i] == b[j] {
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            return false;
+        }
+    }
+    true
+}
+
+/// Checks if effect row `a` is a subset of `b` (a subsumes b).
+/// pure <: {E1} <: {E1, E2} — fewer effects is more specific.
+fn effect_row_subsumes(a: &Vec<u32>, b: &Vec<u32>) -> bool {
+    // Every effect in a must be in b
+    for i in 0usize..a.len() {
+        let mut found = false;
+        for j in 0usize..b.len() {
+            if a[i] == b[j] {
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            return false;
+        }
+    }
+    true
+}
+
+// ============================================================
+// Constraint-Based Specificity
+// ============================================================
+
+/// Checks if a set of trait bound DefIds is a superset of another.
+fn bounds_superset(sup: &Vec<u32>, sub: &Vec<u32>) -> bool {
+    for i in 0usize..sub.len() {
+        let mut found = false;
+        for j in 0usize..sup.len() {
+            if sub[i] == sup[j] {
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            return false;
+        }
+    }
+    true
+}
+
+/// Checks if m1 is more constrained than m2 per DISPATCH.md §3.7.2.
+/// m1 is more constrained if, for every type param position, m1's bounds
+/// are a superset of m2's bounds, and at least one is strictly greater.
+fn constraint_more_specific(m1: &typeck_info.MethodInfo, m2: &typeck_info.MethodInfo) -> bool {
+    // Both must have type_param_bounds to compare
+    if m1.type_param_bounds.len() == 0 && m2.type_param_bounds.len() == 0 {
+        return false;
+    }
+    // Compare corresponding type param bounds
+    let max_params = if m1.type_param_bounds.len() > m2.type_param_bounds.len() {
+        m1.type_param_bounds.len()
+    } else {
+        m2.type_param_bounds.len()
+    };
+    let mut all_at_least: bool = true;
+    let mut some_strictly: bool = false;
+    for i in 0usize..max_params {
+        let b1 = if i < m1.type_param_bounds.len() { &m1.type_param_bounds[i] } else { &m1.type_param_bounds[0] };
+        let b2 = if i < m2.type_param_bounds.len() { &m2.type_param_bounds[i] } else { &m2.type_param_bounds[0] };
+        // Handle when we're outside range — treat as empty
+        let empty: Vec<u32> = Vec.new();
+        let bounds1 = if i < m1.type_param_bounds.len() { b1 } else { &empty };
+        let bounds2 = if i < m2.type_param_bounds.len() { b2 } else { &empty };
+        // m1's bounds must be a superset of m2's bounds for this param
+        if !bounds_superset(bounds1, bounds2) {
+            all_at_least = false;
+            break;
+        }
+        // Strictly more constrained if m1 has more bounds
+        if bounds1.len() > bounds2.len() {
+            some_strictly = true;
+        }
+    }
+    all_at_least && some_strictly
+}
+
+// ============================================================
 // Definition-Time Ambiguity Detection
 // ============================================================
 
@@ -736,6 +838,8 @@ fn types_could_unify(a: type_intern.TyId, b: type_intern.TyId, depth: u32) -> bo
 /// Checks if method m1 is strictly more specific than m2.
 /// m1 is more specific if all its parameter types are subtypes of m2's
 /// and at least one is strictly more specific (subtype but not supertype).
+/// Per DISPATCH.md §7.3, effect rows serve as a tiebreaker: when types
+/// are equal, fewer effects (pure <: effectful) is more specific.
 pub fn is_more_specific(m1: &typeck_info.MethodInfo, m2: &typeck_info.MethodInfo) -> bool {
     if m1.param_tys.len() != m2.param_tys.len() {
         return false;
@@ -755,7 +859,24 @@ pub fn is_more_specific(m1: &typeck_info.MethodInfo, m2: &typeck_info.MethodInfo
             some_strictly = true;
         }
     }
-    all_at_least && some_strictly
+    if !all_at_least {
+        return false;
+    }
+    if some_strictly {
+        return true;
+    }
+    // Types are equal — use constraint specificity as tiebreaker (DISPATCH.md §3.7).
+    // m1 is more specific if its type param bounds are a strict superset of m2's.
+    if constraint_more_specific(m1, m2) {
+        return true;
+    }
+    // Effect subsumption as final tiebreaker (DISPATCH.md §7.3).
+    // m1 is more specific if its effect row is a strict subset of m2's.
+    if effect_row_subsumes(&m1.effect_def_ids, &m2.effect_def_ids)
+        && !effect_row_subsumes(&m2.effect_def_ids, &m1.effect_def_ids) {
+        return true;
+    }
+    false
 }
 
 /// An ambiguity found between two methods.
@@ -800,6 +921,11 @@ pub fn check_all_dispatch_ambiguity(
 
                     // Different arities are not ambiguous
                     if m1.param_tys.len() != m2.param_tys.len() {
+                        continue;
+                    }
+
+                    // Methods with different effect rows are distinct overloads (DISPATCH.md §7)
+                    if !effect_rows_equal(&m1.effect_def_ids, &m2.effect_def_ids) {
                         continue;
                     }
 
@@ -878,6 +1004,11 @@ pub fn check_type_stability(
 
                     // Different arities cannot conflict
                     if m1.param_tys.len() != m2.param_tys.len() {
+                        continue;
+                    }
+
+                    // Methods with different effect rows are distinct (DISPATCH.md §7)
+                    if !effect_rows_equal(&m1.effect_def_ids, &m2.effect_def_ids) {
                         continue;
                     }
 

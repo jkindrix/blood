@@ -1,9 +1,8 @@
-// COMPILE_FAIL: E0214
+// RUN: exit 0
 // Test: effect-row dispatch — pure method vs effectful method
-// SPEC: methods differing only in effect row should be distinct overloads (§3.7)
-// ACTUAL: bootstrap treats them as duplicate definitions (E0214)
-// BUG: effect-row dispatch not implemented — effect rows not considered during overload resolution
-// Blocks tests 17-19 in golden expansion plan
+// SPEC: DISPATCH.md §7 — methods differing only in effect row are distinct overloads
+// Pure method is more specific than effectful method (pure <: {IO}).
+// Dispatch should prefer the pure overload when no effects are in scope.
 
 effect IO {
     op print(msg: i32) -> ();
@@ -12,10 +11,10 @@ effect IO {
 struct Service {}
 
 impl Service {
-    fn process(self, x: i32) -> i32 {
+    fn process(self: &Self, x: i32) -> i32 {
         x + 1
     }
-    fn process(self, x: i32) -> i32 / {IO} {
+    fn process(self: &Self, x: i32) -> i32 / {IO} {
         perform IO.print(x);
         x + 2
     }
