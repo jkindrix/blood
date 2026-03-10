@@ -4158,11 +4158,15 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     eprint_str("  Parsing...");
     let parse_start = blood_clock_millis();
 
+    // Preprocess macros BEFORE activating parse_region so expanded_source
+    // lands on the global heap.  It is used for error reporting after
+    // parse_region is destroyed; allocating it inside the region causes
+    // use-after-free on type-check error paths.
+    let expanded_source = macro_expand.preprocess_macros(content);
+
     let parse_region = region_create(2097152, 10737418240);
     region_activate(parse_region);
 
-    // Preprocess macros before parsing (source-level expansion)
-    let expanded_source = macro_expand.preprocess_macros(content);
     let parse_result = parser.parse_file(expanded_source.as_str());
     let parse_elapsed = blood_clock_millis() - parse_start;
     if parse_result.errors.len() > 0 {
