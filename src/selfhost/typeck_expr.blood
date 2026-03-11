@@ -592,7 +592,10 @@ fn infer_literal(checker: &mut typeck.TypeChecker, lit: &hir_expr.Literal) -> ty
                 &None => {
                     // Unsuffixed integer literal - create inference variable
                     // Default to i32 if not constrained
-                    checker.fresh_infer()
+                    let var_id = checker.unifier.next_ty_var;
+                    let ty_id = checker.fresh_infer();
+                    checker.numeric_infer_ids.push(var_id);
+                    ty_id
                 }
             }
         }
@@ -602,7 +605,10 @@ fn infer_literal(checker: &mut typeck.TypeChecker, lit: &hir_expr.Literal) -> ty
                 &None => {
                     // Unsuffixed float literal - create inference variable
                     // Default to f64 if not constrained
-                    checker.fresh_infer()
+                    let var_id = checker.unifier.next_ty_var;
+                    let ty_id = checker.fresh_infer();
+                    checker.numeric_infer_ids.push(var_id);
+                    ty_id
                 }
             }
         }

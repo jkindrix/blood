@@ -386,6 +386,10 @@ pub struct TypeChecker {
     /// Whether we are currently inside an @unsafe block.
     /// Used to gate safety-sensitive casts (Ptr↔usize, Ptr→Ref, fn→integer).
     pub in_unsafe_context: bool,
+    /// TyVarId indices for inference variables created from unsuffixed numeric literals.
+    /// These will be defaulted to i32/f64 during MIR lowering, so they should not be
+    /// flagged as "undetermined type variables" during the post-typeck check.
+    pub numeric_infer_ids: Vec<u32>,
 }
 
 impl TypeChecker {
@@ -442,6 +446,7 @@ impl TypeChecker {
             deref_target_types: hashmap.HashMapU64U64.new(),
             deref_method_ids: hashmap.HashMapU64U64.new(),
             in_unsafe_context: false,
+            numeric_infer_ids: Vec.new(),
         }
     }
 
@@ -499,6 +504,7 @@ impl TypeChecker {
             deref_target_types: hashmap.HashMapU64U64.new(),
             deref_method_ids: hashmap.HashMapU64U64.new(),
             in_unsafe_context: false,
+            numeric_infer_ids: Vec.new(),
         }
     }
 
