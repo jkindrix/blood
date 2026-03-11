@@ -19,8 +19,15 @@ use super::super::resolve::{Binding, ScopeKind};
 /// (effect_id, op_name, param_types, return_type, ast_handler, effect_type_args).
 type HandlerInfo<'b> = Vec<(DefId, String, Vec<Type>, Type, &'b ast::TryWithHandler, Vec<Type>)>;
 
-/// Resolved method information: (def_id, return_type, first_param_type, impl_generics, method_generics).
-type MethodLookup = Option<(DefId, Type, Option<Type>, Vec<TyVarId>, Vec<TyVarId>)>;
+/// Resolved method information from find_method_for_type.
+pub(crate) enum MethodLookup {
+    /// Method found uniquely.
+    Found(DefId, Type, Option<Type>, Vec<TyVarId>, Vec<TyVarId>),
+    /// No matching method found.
+    NotFound,
+    /// Multiple methods match with equal specificity.
+    Ambiguous { method_name: String, candidates: Vec<String> },
+}
 
 /// Full method resolution result: (def_id, return_type, first_param_type, impl_generics, method_generics, needs_auto_ref).
 type MethodResolution = (DefId, Type, Option<Type>, Vec<TyVarId>, Vec<TyVarId>, bool);
@@ -3657,24 +3664,40 @@ impl<'a> TypeContext<'a> {
         span: Span,
     ) -> Result<MethodResolution, Box<TypeError>> {
         // Try to find the method on the receiver type directly
-        if let Some((def_id, ret_ty, first_param, impl_generics, method_generics)) = self.find_method_for_type(receiver_ty, method_name, args) {
-            // Check if we need to auto-ref the receiver
-            let needs_auto_ref = if let Some(ref param_ty) = first_param {
-                // If first param is a reference and receiver is not, we need auto-ref
-                matches!(param_ty.kind(), TypeKind::Ref { .. }) && !matches!(receiver_ty.kind(), TypeKind::Ref { .. })
-            } else {
-                false
-            };
-            return Ok((def_id, ret_ty, first_param, impl_generics, method_generics, needs_auto_ref));
+        match self.find_method_for_type(receiver_ty, method_name, args) {
+            MethodLookup::Found(def_id, ret_ty, first_param, impl_generics, method_generics) => {
+                // Check if we need to auto-ref the receiver
+                let needs_auto_ref = if let Some(ref param_ty) = first_param {
+                    matches!(param_ty.kind(), TypeKind::Ref { .. }) && !matches!(receiver_ty.kind(), TypeKind::Ref { .. })
+                } else {
+                    false
+                };
+                return Ok((def_id, ret_ty, first_param, impl_generics, method_generics, needs_auto_ref));
+            }
+            MethodLookup::Ambiguous { method_name: name, candidates } => {
+                return Err(Box::new(TypeError::new(
+                    TypeErrorKind::AmbiguousDispatch { name, candidates },
+                    span,
+                )));
+            }
+            MethodLookup::NotFound => {}
         }
 
         // Try iterative auto-deref: peel references (&T, &&T, etc.) to find method
         let mut deref_ty = receiver_ty.clone();
         while let TypeKind::Ref { inner, .. } = deref_ty.kind() {
             let inner_resolved = self.unifier.resolve(inner);
-            if let Some((def_id, ret_ty, first_param, impl_generics, method_generics)) = self.find_method_for_type(&inner_resolved, method_name, args) {
-                // When auto-deref is used, we don't need auto-ref
-                return Ok((def_id, ret_ty, first_param, impl_generics, method_generics, false));
+            match self.find_method_for_type(&inner_resolved, method_name, args) {
+                MethodLookup::Found(def_id, ret_ty, first_param, impl_generics, method_generics) => {
+                    return Ok((def_id, ret_ty, first_param, impl_generics, method_generics, false));
+                }
+                MethodLookup::Ambiguous { method_name: name, candidates } => {
+                    return Err(Box::new(TypeError::new(
+                        TypeErrorKind::AmbiguousDispatch { name, candidates },
+                        span,
+                    )));
+                }
+                MethodLookup::NotFound => {}
             }
             deref_ty = inner_resolved;
         }
@@ -3717,13 +3740,13 @@ impl<'a> TypeContext<'a> {
                 if let Some(sig) = self.fn_sigs.get(&method.def_id) {
                     let subst_output = self.substitute_type_vars(&sig.output, &subst);
                     let first_param = sig.inputs.first().map(|p| self.substitute_type_vars(p, &subst));
-                    return Some((
+                    return MethodLookup::Found(
                         method.def_id,
                         subst_output,
                         first_param,
                         impl_block.generics.clone(),
                         sig.generics.clone(),
-                    ));
+                    );
                 }
             }
 
@@ -3768,7 +3791,7 @@ impl<'a> TypeContext<'a> {
 
             if applicable.len() == 1 {
                 let (def_id, _, output, first_param, impl_generics, method_generics) = applicable.into_iter().next().unwrap();
-                return Some((def_id, output, first_param, impl_generics, method_generics));
+                return MethodLookup::Found(def_id, output, first_param, impl_generics, method_generics);
             }
 
             if applicable.len() > 1 {
@@ -3788,9 +3811,19 @@ impl<'a> TypeContext<'a> {
                     }
                     if is_maximal {
                         if maximal_idx.is_some() {
-                            // Multiple maximals = ambiguous, fall through
-                            maximal_idx = None;
-                            break;
+                            // Multiple maximals = ambiguous
+                            let candidate_sigs: Vec<String> = applicable.iter()
+                                .map(|(_, params, _, _, _, _)| {
+                                    let param_strs: Vec<String> = params.iter()
+                                        .map(|t| format!("{:?}", t))
+                                        .collect();
+                                    format!("({})", param_strs.join(", "))
+                                })
+                                .collect();
+                            return MethodLookup::Ambiguous {
+                                method_name: method_name.to_string(),
+                                candidates: candidate_sigs,
+                            };
                         }
                         maximal_idx = Some(i);
                     }
@@ -3798,7 +3831,7 @@ impl<'a> TypeContext<'a> {
 
                 if let Some(idx) = maximal_idx {
                     let (def_id, _, output, first_param, impl_generics, method_generics) = applicable.into_iter().nth(idx).unwrap();
-                    return Some((def_id, output, first_param, impl_generics, method_generics));
+                    return MethodLookup::Found(def_id, output, first_param, impl_generics, method_generics);
                 }
             }
         }
@@ -3828,13 +3861,13 @@ impl<'a> TypeContext<'a> {
                     if let Some(sig) = self.fn_sigs.get(&method.def_id) {
                         let subst_output = self.substitute_type_vars(&sig.output, &subst);
                         let first_param = sig.inputs.first().map(|p| self.substitute_type_vars(p, &subst));
-                        return Some((
+                        return MethodLookup::Found(
                             method.def_id,
                             subst_output,
                             first_param,
                             impl_block.generics.clone(),
                             sig.generics.clone(),
-                        ));
+                        );
                     }
                 }
             }
@@ -3846,13 +3879,13 @@ impl<'a> TypeContext<'a> {
                         if let Some(sig) = self.fn_sigs.get(&trait_method.def_id) {
                             let subst_output = self.substitute_type_vars(&sig.output, &subst);
                             let first_param = sig.inputs.first().map(|p| self.substitute_type_vars(p, &subst));
-                            return Some((
+                            return MethodLookup::Found(
                                 trait_method.def_id,
                                 subst_output,
                                 first_param,
                                 impl_block.generics.clone(),
                                 sig.generics.clone(),
-                            ));
+                            );
                         }
                     }
                 }
@@ -3868,13 +3901,13 @@ impl<'a> TypeContext<'a> {
                             if method.name == method_name {
                                 if let Some(sig) = self.fn_sigs.get(&method.def_id) {
                                     let first_param = sig.inputs.first().cloned();
-                                    return Some((
+                                    return MethodLookup::Found(
                                         method.def_id,
                                         sig.output.clone(),
                                         first_param,
                                         Vec::new(),
                                         sig.generics.clone(),
-                                    ));
+                                    );
                                 }
                             }
                         }
@@ -3902,13 +3935,13 @@ impl<'a> TypeContext<'a> {
                     if method.name == method_name {
                         if let Some(sig) = self.fn_sigs.get(&method.def_id) {
                             let first_param = sig.inputs.first().cloned();
-                            return Some((
+                            return MethodLookup::Found(
                                 method.def_id,
                                 sig.output.clone(),
                                 first_param,
                                 Vec::new(),
                                 sig.generics.clone(),
-                            ));
+                            );
                         }
                     }
                 }
@@ -3916,11 +3949,12 @@ impl<'a> TypeContext<'a> {
         }
 
         // Fifth, look for builtin methods on primitive/builtin types
-        if let Some(result) = self.find_builtin_method(ty, method_name) {
-            return Some(result);
+        let builtin_result = self.find_builtin_method(ty, method_name);
+        if !matches!(builtin_result, MethodLookup::NotFound) {
+            return builtin_result;
         }
 
-        None
+        MethodLookup::NotFound
     }
 
     /// Check if method m1 (given by its substituted param types and generics) is strictly
@@ -4032,7 +4066,10 @@ impl<'a> TypeContext<'a> {
             _ => None,
         };
 
-        let type_match = type_match?;
+        let type_match = match type_match {
+            Some(tm) => tm,
+            None => return MethodLookup::NotFound,
+        };
 
         // Search for matching builtin method
         for builtin_method in &self.builtin_methods {
@@ -4199,10 +4236,10 @@ impl<'a> TypeContext<'a> {
                                     if let TypeKind::Slice { element } = inner.kind() {
                                         element.clone()
                                     } else {
-                                        return None;
+                                        return MethodLookup::NotFound;
                                     }
                                 }
-                                _ => return None,
+                                _ => return MethodLookup::NotFound,
                             };
 
                             // first(), last(), get() return Option<&T>
@@ -4242,18 +4279,18 @@ impl<'a> TypeContext<'a> {
                     };
 
                     // Return method generics from signature so they get instantiated with fresh vars
-                    return Some((
+                    return MethodLookup::Found(
                         builtin_method.def_id,
                         return_type,
                         first_param,
                         impl_generics,
                         sig.generics.clone(),
-                    ));
+                    );
                 }
             }
         }
 
-        None
+        MethodLookup::NotFound
     }
 
     /// Find a builtin static method (e.g., String::new(), Vec::new()).

@@ -1,8 +1,7 @@
-// Test: two generics with incomparable constraints — ambiguity not detected
-// SPEC: should be COMPILE_FAIL (ambiguous dispatch — neither constraint subsumes the other)
-// ACTUAL: bootstrap selects first matching overload (first-match-wins)
-// BUG: constraint-based ambiguity detection not implemented in bootstrap
-// DIVERGENCE: first_gen may reject at HIR lowering (E0101 duplicate method)
+// COMPILE_FAIL: ambiguous dispatch — incomparable constraint overloads
+// EXPECT: [E0602] ambiguous dispatch
+// Test: two generics with incomparable constraints — ambiguity detected
+// SPEC: §3.7 — neither constraint subsumes the other, so dispatch is ambiguous
 
 trait Numeric {
     fn value(self: &Self) -> i32;
@@ -32,7 +31,6 @@ impl Processor {
 fn main() -> i32 {
     let p: Processor = Processor {};
     let b: Both = Both {};
-    // SPEC: ambiguous — Numeric and Textual are incomparable
-    // ACTUAL: selects first overload, returns 100
+    // Ambiguous — Numeric and Textual are incomparable
     p.run(b) - 100
 }
