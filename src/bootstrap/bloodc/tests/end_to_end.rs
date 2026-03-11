@@ -113,13 +113,18 @@ struct CompileResult {
 fn compile_with_cache(source_path: &Path, cache_dir: &Path) -> CompileResult {
     ensure_compiler_built();
 
+    // Isolate build outputs inside the cache dir to avoid polluting source dirs
+    let build_dir = cache_dir.join("build");
+
     let output = Command::new(compiler_path())
         .args(["build", source_path.to_str().unwrap()])
         .env("BLOOD_CACHE", cache_dir)
+        .env("BLOOD_BUILD_DIR", &build_dir)
         .output()
         .expect("Failed to run compiler");
 
-    let executable = source_path.with_extension("");
+    let stem = source_path.file_stem().unwrap_or_default();
+    let executable = build_dir.join("debug").join(stem);
 
     // Wait for the executable to appear on disk (handles async filesystem operations)
     if output.status.success() {
