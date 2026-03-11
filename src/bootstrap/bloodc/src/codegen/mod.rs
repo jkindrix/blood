@@ -472,6 +472,7 @@ pub fn compile_definition_to_object(
     output_path: &Path,
     builtin_def_ids: (Option<DefId>, Option<DefId>, Option<DefId>, Option<DefId>),
     closure_analysis: Option<&ClosureAnalysisResults>,
+    opt_level: BloodOptLevel,
 ) -> Result<(), Vec<Diagnostic>> {
     let context = Context::create();
     let module_name = format!("blood_def_{}", def_id.index());
@@ -479,7 +480,7 @@ pub fn compile_definition_to_object(
     let builder = context.create_builder();
 
     // Configure module with target data layout BEFORE compilation.
-    let target_machine = get_native_target_machine_with_opt(BloodOptLevel::Default)
+    let target_machine = get_native_target_machine_with_opt(opt_level)
         .map_err(|e| vec![Diagnostic::error(e, crate::span::Span::dummy())])?;
     configure_module_target(&module, &target_machine);
 
@@ -579,7 +580,7 @@ pub fn compile_definition_to_object(
     // due to LLVM miscompilation bug with nested struct field access through Vec.
     let use_opt = std::env::var("BLOOD_DEBUG_NO_OPT").is_err();
     if use_opt {
-        optimize_module(&module, BloodOptLevel::Default, &target_machine);
+        optimize_module(&module, opt_level, &target_machine);
     }
 
     // Dump IR after optimization if requested
@@ -682,7 +683,7 @@ pub fn compile_definitions_to_objects(
         let escape_results = escape_analysis.get(&def_id);
         let output_path = output_dir.join(format!("def_{}.o", def_id.index()));
 
-        match compile_definition_to_object(def_id, hir_crate, mir_body, escape_results, Some(mir_bodies), inline_handler_bodies, &output_path, builtin_def_ids, closure_analysis) {
+        match compile_definition_to_object(def_id, hir_crate, mir_body, escape_results, Some(mir_bodies), inline_handler_bodies, &output_path, builtin_def_ids, closure_analysis, BloodOptLevel::Default) {
             Ok(()) => {
                 results.push((def_id, output_path));
             }

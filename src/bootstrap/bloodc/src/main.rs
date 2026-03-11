@@ -1657,6 +1657,7 @@ fn cmd_build(args: &FileArgs, verbosity: u8, timings: bool) -> ExitCode {
 
         let mut cached_count = 0;
         let mut compiled_count = 0;
+        let mut def_timings: Vec<(bloodc::hir::DefId, std::time::Duration)> = Vec::new();
 
         // For each function with a MIR body, check cache and compile if needed
         for (&def_id, mir_body) in mir_bodies {
@@ -1718,6 +1719,7 @@ fn cmd_build(args: &FileArgs, verbosity: u8, timings: bool) -> ExitCode {
             // Compile this definition
             let escape_results = escape_map.get(&def_id);
 
+            let def_start = Instant::now();
             match codegen::compile_definition_to_object(
                 def_id,
                 &hir_crate,
@@ -1728,11 +1730,16 @@ fn cmd_build(args: &FileArgs, verbosity: u8, timings: bool) -> ExitCode {
                 &obj_path,
                 builtin_def_ids,
                 Some(closure_analysis),
+                codegen::BloodOptLevel::Default,
             ) {
                 Ok(()) => {
+                    let def_elapsed = def_start.elapsed();
                     compiled_count += 1;
+                    if timings {
+                        def_timings.push((def_id, def_elapsed));
+                    }
                     if verbosity > 2 {
-                        eprintln!("  Compiled: {:?} ({})", def_id, def_hash.short_display());
+                        eprintln!("  Compiled: {:?} ({}) in {:.0}ms", def_id, def_hash.short_display(), def_elapsed.as_secs_f64() * 1000.0);
                     }
 
                     // Cache the compiled object (local and optionally remote)
@@ -1792,7 +1799,7 @@ fn cmd_build(args: &FileArgs, verbosity: u8, timings: bool) -> ExitCode {
             }
 
             // Compile this handler
-            match codegen::compile_definition_to_object(def_id, &hir_crate, None, None, Some(mir_bodies), Some(inline_handler_bodies), &obj_path, builtin_def_ids, Some(closure_analysis)) {
+            match codegen::compile_definition_to_object(def_id, &hir_crate, None, None, Some(mir_bodies), Some(inline_handler_bodies), &obj_path, builtin_def_ids, Some(closure_analysis), codegen::BloodOptLevel::Default) {
                 Ok(()) => {
                     compiled_count += 1;
                     if verbosity > 2 {
@@ -1825,6 +1832,32 @@ fn cmd_build(args: &FileArgs, verbosity: u8, timings: bool) -> ExitCode {
                 compiled_count,
                 cached_count + compiled_count
             );
+        }
+
+        // Print per-definition timing distribution
+        if timings && !def_timings.is_empty() {
+            def_timings.sort_by(|a, b| b.1.cmp(&a.1));
+            let total_def_ms: f64 = def_timings.iter().map(|(_, d)| d.as_secs_f64() * 1000.0).sum();
+            let count = def_timings.len();
+            let median_ms = def_timings[count / 2].1.as_secs_f64() * 1000.0;
+            let p90_idx = count * 90 / 100;
+            let p99_idx = count * 99 / 100;
+
+            eprintln!();
+            eprintln!("Per-definition codegen ({} defs, {:.0}ms total):", count, total_def_ms);
+            eprintln!("  Median: {:.1}ms  P90: {:.1}ms  P99: {:.1}ms  Max: {:.1}ms",
+                median_ms,
+                def_timings[p90_idx].1.as_secs_f64() * 1000.0,
+                def_timings[p99_idx].1.as_secs_f64() * 1000.0,
+                def_timings[0].1.as_secs_f64() * 1000.0,
+            );
+            eprintln!("  Top 10 slowest:");
+            for (def_id, dur) in def_timings.iter().take(10) {
+                let name = hir_crate.items.get(def_id)
+                    .map(|item| item.name.as_str())
+                    .unwrap_or("<unnamed>");
+                eprintln!("    {:>7.0}ms  {:?} ({})", dur.as_secs_f64() * 1000.0, def_id, name);
+            }
         }
     }
 
