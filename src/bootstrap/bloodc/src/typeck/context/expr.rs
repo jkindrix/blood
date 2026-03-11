@@ -6360,8 +6360,17 @@ impl<'a> TypeContext<'a> {
                 left_expr.ty.clone()
             }
             ast::BinOp::Pipe => {
-                match right_expr.ty.kind() {
-                    TypeKind::Fn { params, ret, .. } => {
+                // Extract fn signature, unwrapping ownership qualifier if present
+                let fn_sig = match right_expr.ty.kind() {
+                    TypeKind::Fn { params, ret, .. } => Some((params.clone(), ret.clone())),
+                    TypeKind::Ownership { inner, .. } => match inner.kind() {
+                        TypeKind::Fn { params, ret, .. } => Some((params.clone(), ret.clone())),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                match fn_sig {
+                    Some((params, ret)) => {
                         if params.is_empty() {
                             return Err(Box::new(TypeError::new(
                                 TypeErrorKind::WrongArity {
@@ -6372,9 +6381,9 @@ impl<'a> TypeContext<'a> {
                             )));
                         }
                         self.unifier.unify(&left_expr.ty, &params[0], span)?;
-                        ret.clone()
+                        ret
                     }
-                    _ => {
+                    None => {
                         return Err(Box::new(TypeError::new(
                             TypeErrorKind::NotAFunction { ty: right_expr.ty.clone() },
                             span,
@@ -6604,6 +6613,16 @@ impl<'a> TypeContext<'a> {
 
         let (param_types, return_type) = match instantiated_ty.kind() {
             TypeKind::Fn { params, ret, .. } => (params.clone(), ret.clone()),
+            // linear fn / affine fn — unwrap ownership qualifier and extract fn signature
+            TypeKind::Ownership { inner, .. } => match inner.kind() {
+                TypeKind::Fn { params, ret, .. } => (params.clone(), ret.clone()),
+                _ => {
+                    return Err(Box::new(TypeError::new(
+                        TypeErrorKind::NotAFunction { ty: callee_expr.ty.clone() },
+                        span,
+                    )));
+                }
+            },
             _ => {
                 return Err(Box::new(TypeError::new(
                     TypeErrorKind::NotAFunction { ty: callee_expr.ty.clone() },
@@ -6638,7 +6657,15 @@ impl<'a> TypeContext<'a> {
         } else {
             // For function-typed expressions (e.g., calling a function parameter),
             // check effect compatibility using the effects from the function type
-            if let TypeKind::Fn { effects, .. } = instantiated_ty.kind() {
+            let fn_effects = match instantiated_ty.kind() {
+                TypeKind::Fn { effects, .. } => Some(effects),
+                TypeKind::Ownership { inner, .. } => match inner.kind() {
+                    TypeKind::Fn { effects, .. } => Some(effects),
+                    _ => None,
+                },
+                _ => None,
+            };
+            if let Some(effects) = fn_effects {
                 if !effects.is_empty() {
                     self.check_effect_compatibility_from_type(effects, span)?;
                 }
