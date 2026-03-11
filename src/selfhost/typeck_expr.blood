@@ -1258,6 +1258,23 @@ fn infer_method_call(
                 }
             }
 
+            // Create fresh inference variables for method-level generic type parameters.
+            // Without this, calling a generic method like `id<T>` multiple times with
+            // different types reuses the same Infer variables (locked from the first call).
+            match checker.get_fn_sig(method_info.def_id) {
+                Option.Some(ref fn_sig) => {
+                    if fn_sig.num_generics > 0 {
+                        for i in 0u32..fn_sig.num_generics {
+                            let fresh_var = checker.fresh_infer();
+                            if (i as usize) < fn_sig.type_param_ids.len() {
+                                subst.add_id(fn_sig.type_param_ids[i as usize], fresh_var);
+                            }
+                        }
+                    }
+                }
+                Option.None => {}
+            }
+
             // Check arity (excluding self parameter)
             if method_info.param_tys.len() != args.len() {
                 let mut note = common.make_string("expected ");
