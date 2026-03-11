@@ -8,6 +8,8 @@ declare double @parse_f64({ ptr, i64 })
 
 declare double @ptr_read_f64(i64)
 
+declare i1 @__builtin_fiber_is_finished(i64)
+
 declare i1 @file_append_string({ ptr, i64 }, { ptr, i64 })
 
 declare i1 @file_delete({ ptr, i64 })
@@ -68,6 +70,8 @@ declare i32 @result_is_ok(ptr)
 
 declare i32 @result_try(ptr, i64, ptr)
 
+declare i32 @setjmp(ptr) #0
+
 declare i32 @string_contains(ptr, ptr)
 
 declare i32 @string_ends_with(ptr, ptr)
@@ -85,6 +89,16 @@ declare i32 @vec_get(ptr, i64, i64, ptr)
 declare i32 @vec_is_empty(ptr)
 
 declare i32 @vec_pop(ptr, i64, ptr)
+
+declare i64 @__builtin_fiber_current()
+
+declare i64 @__builtin_fiber_join(i64)
+
+declare i64 @__builtin_fiber_race(i64, i64)
+
+declare i64 @__builtin_fiber_spawn(i64)
+
+declare i64 @__builtin_fiber_spawn_with(i64, i64)
 
 declare i64 @blood_alloc_or_abort(i64, ptr)
 
@@ -106,6 +120,8 @@ declare i64 @blood_evidence_get(ptr, i64)
 
 declare i64 @blood_evidence_pop(ptr)
 
+declare i64 @blood_evidence_register(ptr, i64, ptr, i64, i64)
+
 declare i64 @blood_fiber_create()
 
 declare i64 @blood_fiber_suspend()
@@ -115,6 +131,10 @@ declare i64 @blood_float64_to_bits(double)
 declare i64 @blood_get_type_tag(ptr)
 
 declare i64 @blood_handler_depth(i64)
+
+; Function Attrs: returns_twice
+
+declare i64 @blood_handler_get_abort_value()
 
 declare i64 @blood_memcpy(i64, i64, i64)
 
@@ -139,6 +159,8 @@ declare i64 @blood_region_alloc_count(i64)
 declare i64 @blood_region_committed(i64)
 
 declare i64 @blood_region_create(i64, i64)
+
+declare i64 @blood_region_deactivate_get()
 
 declare i64 @blood_region_used(i64)
 
@@ -216,6 +238,26 @@ declare ptr @box_new(ptr, i64)
 
 declare ptr @vec_get_ptr(ptr, i64, i64)
 
+declare void @__builtin_fiber_cancel(i64)
+
+declare void @__builtin_fiber_park()
+
+declare void @__builtin_fiber_sleep(i64)
+
+declare void @__builtin_fiber_unpark(i64)
+
+declare void @__builtin_fiber_yield()
+
+declare void @__builtin_safepoint_check()
+
+declare void @__builtin_safepoint_clear()
+
+declare void @__builtin_safepoint_request()
+
+declare void @__builtin_scheduler_init(i64)
+
+declare void @__builtin_scheduler_shutdown()
+
 declare void @blood_alloc_hist_reset()
 
 declare void @blood_assert(i32)
@@ -246,7 +288,7 @@ declare void @blood_evidence_destroy(ptr)
 
 declare void @blood_evidence_push(ptr, i64)
 
-declare void @blood_evidence_register(ptr, i64, ptr, i64)
+declare void @blood_evidence_push_by_index(ptr, i64, ptr)
 
 declare void @blood_evidence_set_state(ptr, ptr)
 
@@ -255,6 +297,10 @@ declare void @blood_fiber_resume(i64, i64)
 declare void @blood_free(i64, i64)
 
 declare void @blood_free_simple(i64)
+
+declare void @blood_handler_pop_abort_target()
+
+declare void @blood_handler_push_abort_target(ptr)
 
 declare void @blood_increment_generation(ptr)
 
@@ -270,6 +316,8 @@ declare void @blood_region_deactivate()
 
 declare void @blood_region_destroy(i64)
 
+declare void @blood_region_protect(i64, i32)
+
 declare void @blood_region_reset(i64)
 
 declare void @blood_region_trim(i64)
@@ -283,6 +331,8 @@ declare void @blood_scheduler_shutdown()
 declare void @blood_scheduler_wait()
 
 declare void @blood_scheduler_yield()
+
+declare void @blood_set_was_resumed()
 
 declare void @blood_snapshot_add_entry(i64, i64, i32)
 

@@ -4,11 +4,14 @@ expression: ir
 ---
 ; ModuleID = 'blood_program'
 
+@__handler_registry_idx_379 = common global i64 0
 @llvm.global_ctors = appending global [1 x { i32, ptr, ptr }] [{ i32, ptr, ptr } { i32 65535, ptr @__blood_register_handlers, ptr null }]
 
 declare double @parse_f64({ ptr, i64 })
 
 declare double @ptr_read_f64(i64)
+
+declare i1 @__builtin_fiber_is_finished(i64)
 
 declare i1 @file_append_string({ ptr, i64 }, { ptr, i64 })
 
@@ -70,6 +73,8 @@ declare i32 @result_is_ok(ptr)
 
 declare i32 @result_try(ptr, i64, ptr)
 
+declare i32 @setjmp(ptr) #0
+
 declare i32 @string_contains(ptr, ptr)
 
 declare i32 @string_ends_with(ptr, ptr)
@@ -87,6 +92,16 @@ declare i32 @vec_get(ptr, i64, i64, ptr)
 declare i32 @vec_is_empty(ptr)
 
 declare i32 @vec_pop(ptr, i64, ptr)
+
+declare i64 @__builtin_fiber_current()
+
+declare i64 @__builtin_fiber_join(i64)
+
+declare i64 @__builtin_fiber_race(i64, i64)
+
+declare i64 @__builtin_fiber_spawn(i64)
+
+declare i64 @__builtin_fiber_spawn_with(i64, i64)
 
 declare i64 @blood_alloc_or_abort(i64, ptr)
 
@@ -108,6 +123,8 @@ declare i64 @blood_evidence_get(ptr, i64)
 
 declare i64 @blood_evidence_pop(ptr)
 
+declare i64 @blood_evidence_register(ptr, i64, ptr, i64, i64)
+
 declare i64 @blood_fiber_create()
 
 declare i64 @blood_fiber_suspend()
@@ -117,6 +134,10 @@ declare i64 @blood_float64_to_bits(double)
 declare i64 @blood_get_type_tag(ptr)
 
 declare i64 @blood_handler_depth(i64)
+
+; Function Attrs: returns_twice
+
+declare i64 @blood_handler_get_abort_value()
 
 declare i64 @blood_memcpy(i64, i64, i64)
 
@@ -141,6 +162,8 @@ declare i64 @blood_region_alloc_count(i64)
 declare i64 @blood_region_committed(i64)
 
 declare i64 @blood_region_create(i64, i64)
+
+declare i64 @blood_region_deactivate_get()
 
 declare i64 @blood_region_used(i64)
 
@@ -218,6 +241,26 @@ declare ptr @box_new(ptr, i64)
 
 declare ptr @vec_get_ptr(ptr, i64, i64)
 
+declare void @__builtin_fiber_cancel(i64)
+
+declare void @__builtin_fiber_park()
+
+declare void @__builtin_fiber_sleep(i64)
+
+declare void @__builtin_fiber_unpark(i64)
+
+declare void @__builtin_fiber_yield()
+
+declare void @__builtin_safepoint_check()
+
+declare void @__builtin_safepoint_clear()
+
+declare void @__builtin_safepoint_request()
+
+declare void @__builtin_scheduler_init(i64)
+
+declare void @__builtin_scheduler_shutdown()
+
 declare void @blood_alloc_hist_reset()
 
 declare void @blood_assert(i32)
@@ -250,9 +293,7 @@ declare void @blood_evidence_destroy(ptr)
 
 declare void @blood_evidence_push(ptr, i64)
 
-declare void @blood_evidence_push_with_state(ptr, i64, ptr)
-
-declare void @blood_evidence_register(ptr, i64, ptr, i64)
+declare void @blood_evidence_push_by_index(ptr, i64, ptr)
 
 declare void @blood_evidence_set_current(ptr)
 
@@ -263,6 +304,10 @@ declare void @blood_fiber_resume(i64, i64)
 declare void @blood_free(i64, i64)
 
 declare void @blood_free_simple(i64)
+
+declare void @blood_handler_pop_abort_target()
+
+declare void @blood_handler_push_abort_target(ptr)
 
 declare void @blood_increment_generation(ptr)
 
@@ -278,6 +323,8 @@ declare void @blood_region_deactivate()
 
 declare void @blood_region_destroy(i64)
 
+declare void @blood_region_protect(i64, i32)
+
 declare void @blood_region_reset(i64)
 
 declare void @blood_region_trim(i64)
@@ -291,6 +338,8 @@ declare void @blood_scheduler_shutdown()
 declare void @blood_scheduler_wait()
 
 declare void @blood_scheduler_yield()
+
+declare void @blood_set_was_resumed()
 
 declare void @blood_snapshot_add_entry(i64, i64, i32)
 
@@ -537,7 +586,7 @@ bb3:                                              ; preds = %bb2
   %saved_snap = call i64 @blood_effect_context_take_snapshot()
   %snapshot = call i64 @blood_snapshot_create()
   call void @blood_effect_context_set_snapshot(i64 %snapshot)
-  %perform_result = call i64 @blood_perform(i64 358, i32 0, ptr null, i64 0, i64 0)
+  %perform_result = call i64 @blood_perform(i64 376, i32 0, ptr null, i64 0, i64 0)
   %perform_trunc = trunc i64 %perform_result to i32
   store i32 %perform_trunc, ptr %_7_stack, align 4
   %validation = call i64 @blood_snapshot_validate(i64 %snapshot)
@@ -554,6 +603,7 @@ bb4:                                              ; preds = %snapshot_valid
   %return_clause_result = call i64 @LocalState_return(i64 %result_ext, ptr %state_shadow)
   %ret_trunc = trunc i64 %return_clause_result to i32
   store i32 %ret_trunc, ptr %_8_stack, align 4
+  call void @LocalState_finally(ptr %state_shadow)
   %load3 = load i32, ptr %_8_stack, align 4
   store i32 %load3, ptr %_1_stack, align 4
   %load4 = load i32, ptr %_1_stack, align 4
@@ -593,13 +643,14 @@ region_clone_ev:                                  ; preds = %bb0
 region_merge_ev:                                  ; preds = %region_clone_ev, %region_create_ev
   %evidence = phi ptr [ %new_evidence, %region_create_ev ], [ %cloned_evidence, %region_clone_ev ]
   call void @blood_evidence_set_current(ptr %evidence)
+  %handler_reg_idx = load i64, ptr @__handler_registry_idx_379, align 8
   %state_shadow = alloca { i64 }, align 8
   %state_field_0_ptr = getelementptr inbounds { ptr }, ptr %_3_stack, i32 0, i32 0
   %state_field_0 = load ptr, ptr %state_field_0_ptr, align 8
   %shadow_0_ptr = getelementptr inbounds { i64 }, ptr %state_shadow, i32 0, i32 0
   %state_field_0_ptoi = ptrtoint ptr %state_field_0 to i64
   store i64 %state_field_0_ptoi, ptr %shadow_0_ptr, align 8
-  call void @blood_evidence_push_with_state(ptr %evidence, i64 358, ptr %state_shadow)
+  call void @blood_evidence_push_by_index(ptr %evidence, i64 %handler_reg_idx, ptr %state_shadow)
   call void @"blood$increment"()
   br label %bb1
 
@@ -625,7 +676,8 @@ entry:
   %op_ptr1 = getelementptr [2 x ptr], ptr %handler_ops, i32 0, i32 1
   store ptr @LocalState_put, ptr %op_ptr1, align 8
   %ops_ptr = getelementptr [2 x ptr], ptr %handler_ops, i32 0, i32 0
-  call void @blood_evidence_register(ptr null, i64 358, ptr %ops_ptr, i64 2)
+  %reg_idx = call i64 @blood_evidence_register(ptr null, i64 376, ptr %ops_ptr, i64 2, i64 1)
+  store i64 %reg_idx, ptr @__handler_registry_idx_379, align 8
   ret void
 }
 
@@ -634,11 +686,8 @@ entry:
   %continuation = alloca i64, align 8
   store i64 %3, ptr %continuation, align 8
   %state_ptr = getelementptr inbounds { i64 }, ptr %0, i32 0, i32 0
-  %state = alloca i64, align 8
-  %state_val = load i64, ptr %state_ptr, align 8
-  store i64 %state_val, ptr %state, align 8
   %resume_placeholder = alloca i64, align 8
-  %load = load i64, ptr %state, align 8
+  %load = load i64, ptr %state_ptr, align 8
   %cont_handle = load i64, ptr %continuation, align 8
   %is_tail = icmp eq i64 %cont_handle, 0
   br i1 %is_tail, label %resume_tail, label %resume_cont
@@ -647,15 +696,13 @@ resume_tail:                                      ; preds = %entry
   ret i64 %load
 
 resume_cont:                                      ; preds = %entry
+  call void @blood_set_was_resumed()
   %cont_result = call i64 @blood_continuation_resume_with_regions(i64 %cont_handle, i64 %load)
   br label %resume_merge
 
 resume_merge:                                     ; preds = %resume_cont
   %resume_result = phi i64 [ %cont_result, %resume_cont ]
   %resume_trunc = trunc i64 %resume_result to i32
-  %state_writeback_ptr = getelementptr inbounds { i64 }, ptr %0, i32 0, i32 0
-  %state_writeback_val = load i64, ptr %state, align 8
-  store i64 %state_writeback_val, ptr %state_writeback_ptr, align 8
   %ret_ext = sext i32 %resume_trunc to i64
   ret i64 %ret_ext
 }
@@ -665,9 +712,6 @@ entry:
   %continuation = alloca i64, align 8
   store i64 %3, ptr %continuation, align 8
   %state_ptr = getelementptr inbounds { i64 }, ptr %0, i32 0, i32 0
-  %state = alloca i64, align 8
-  %state_val = load i64, ptr %state_ptr, align 8
-  store i64 %state_val, ptr %state, align 8
   %s = alloca i64, align 8
   store i64 0, ptr %s, align 8
   %resume_placeholder = alloca i64, align 8
@@ -675,7 +719,7 @@ entry:
   %arg_0 = load i64, ptr %arg_0_ptr, align 8
   store i64 %arg_0, ptr %s, align 8
   %load = load i64, ptr %s, align 8
-  store i64 %load, ptr %state, align 8
+  store i64 %load, ptr %state_ptr, align 8
   %cont_handle = load i64, ptr %continuation, align 8
   %is_tail = icmp eq i64 %cont_handle, 0
   br i1 %is_tail, label %resume_tail, label %resume_cont
@@ -684,15 +728,13 @@ resume_tail:                                      ; preds = %entry
   ret i64 0
 
 resume_cont:                                      ; preds = %entry
+  call void @blood_set_was_resumed()
   %cont_result = call i64 @blood_continuation_resume_with_regions(i64 %cont_handle, i64 0)
   br label %resume_merge
 
 resume_merge:                                     ; preds = %resume_cont
   %resume_result = phi i64 [ %cont_result, %resume_cont ]
   %resume_trunc = trunc i64 %resume_result to i32
-  %state_writeback_ptr = getelementptr inbounds { i64 }, ptr %0, i32 0, i32 0
-  %state_writeback_val = load i64, ptr %state, align 8
-  store i64 %state_writeback_val, ptr %state_writeback_ptr, align 8
   %ret_ext = sext i32 %resume_trunc to i64
   ret i64 %ret_ext
 }
@@ -722,7 +764,7 @@ bb0:
   %saved_snap = call i64 @blood_effect_context_take_snapshot()
   %snapshot = call i64 @blood_snapshot_create()
   call void @blood_effect_context_set_snapshot(i64 %snapshot)
-  %perform_result = call i64 @blood_perform(i64 358, i32 0, ptr null, i64 0, i64 0)
+  %perform_result = call i64 @blood_perform(i64 376, i32 0, ptr null, i64 0, i64 0)
   %perform_trunc = trunc i64 %perform_result to i32
   store i32 %perform_trunc, ptr %_2_stack, align 4
   %validation = call i64 @blood_snapshot_validate(i64 %snapshot)
@@ -744,7 +786,7 @@ bb1:                                              ; preds = %snapshot_valid
   %arg_0 = getelementptr [1 x i64], ptr %perform_args, i64 0, i64 0
   %arg_i64 = zext i32 %load2 to i64
   store i64 %arg_i64, ptr %arg_0, align 8
-  %perform_result5 = call i64 @blood_perform(i64 358, i32 1, ptr %perform_args, i64 1, i64 0)
+  %perform_result5 = call i64 @blood_perform(i64 376, i32 1, ptr %perform_args, i64 1, i64 0)
   %validation6 = call i64 @blood_snapshot_validate(i64 %snapshot4)
   call void @blood_snapshot_destroy(i64 %snapshot4)
   %is_valid9 = icmp eq i64 %validation6, 0
@@ -781,4 +823,9 @@ snapshot_stale8:                                  ; preds = %bb1
   store i64 0, ptr %stale_arg_112, align 8
   %1 = call i64 @blood_perform(i64 4100, i32 0, ptr %stale_args10, i64 2, i64 0)
   unreachable
+}
+
+define weak_odr void @LocalState_finally(ptr %0) {
+entry:
+  ret void
 }
