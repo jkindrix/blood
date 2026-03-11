@@ -43,7 +43,7 @@ use bloodc::project::{self, Manifest};
 use bloodc::content::{ContentHash, BuildCache, hash_hir_item, extract_dependencies, VFT, VFTEntry};
 use bloodc::content::hash::ContentHasher;
 use bloodc::content::namespace::{NameRegistry, NameBinding, BindingKind};
-use bloodc::content::distributed_cache::{DistributedCache, FetchResult};
+use bloodc::content::distributed_cache::DistributedCache;
 
 /// The Blood Programming Language Compiler
 ///
@@ -1648,215 +1648,33 @@ fn cmd_build(args: &FileArgs, verbosity: u8, timings: bool) -> ExitCode {
             }
         }
     } else {
-        // Debug mode: Per-definition incremental compilation
-        // Each function gets its own object file, cached by content hash.
-        // This enables fast incremental rebuilds but prevents cross-function inlining.
+        // Debug mode: Whole-module compilation (same as release but with default opt level).
+        // Previously used per-definition incremental compilation, but the per-def cache
+        // is disabled (--no-cache) and broken (PERF-03), so the 2,264× repeated
+        // compile_crate_declarations calls were pure overhead (~219s → ~22s).
         if verbosity > 0 {
-            eprintln!("Using per-definition incremental compilation");
+            eprintln!("Using whole-module compilation (debug mode)");
         }
 
-        let mut cached_count = 0;
-        let mut compiled_count = 0;
-        let mut def_timings: Vec<(bloodc::hir::DefId, std::time::Duration)> = Vec::new();
-
-        // For each function with a MIR body, check cache and compile if needed
-        for (&def_id, mir_body) in mir_bodies {
-            // Get the content hash for this definition
-            let def_hash = if let Some(item) = hir_crate.items.get(&def_id) {
-                hash_hir_item(def_id, item, &hir_crate.bodies, &hir_crate.items, Some(&args.file))
-            } else {
-                // Synthetic definition (closure) - hash based on MIR content and source file
-                let mut hasher = ContentHasher::new();
-                // Include source file path to prevent cross-file cache collisions
-                if let Some(path_str) = args.file.to_str() {
-                    hasher.update(path_str.as_bytes());
-                }
-                // Include DefId for symbol name consistency (deterministic after
-                // sorting HIR items in lower_crate), plus MIR body characteristics
-                // for content-addressability
-                hasher.update(format!("closure_{}", def_id.index()).as_bytes());
-                hasher.update(&mir_body.locals.len().to_le_bytes());
-                hasher.update(&mir_body.basic_blocks.len().to_le_bytes());
-                hasher.update(&mir_body.param_count.to_le_bytes());
-                hasher.finalize()
-            };
-
-            // Check cache for this definition (local and remote)
-            let obj_path = obj_dir.join(format!("def_{}.o", def_id.index()));
-
-            if !args.no_cache {
-                match distributed_cache.fetch(&def_hash) {
-                    FetchResult::LocalHit(data) => {
-                        // Local cache hit - write to obj file and use
-                        if std::fs::write(&obj_path, &data).is_ok() {
-                            object_files.push(obj_path);
-                            cached_count += 1;
-                            if verbosity > 2 {
-                                eprintln!("  Cache hit (local): {:?} ({})", def_id, def_hash.short_display());
-                            }
-                            continue;
-                        }
-                        // If write fails, fall through to compile
-                    }
-                    FetchResult::RemoteHit { data, source } => {
-                        // Remote cache hit - already stored locally by fetch(), write to obj file
-                        if std::fs::write(&obj_path, &data).is_ok() {
-                            object_files.push(obj_path);
-                            cached_count += 1;
-                            if verbosity > 1 {
-                                eprintln!("  Cache hit (remote): {:?} ({}) from {}", def_id, def_hash.short_display(), source);
-                            }
-                            continue;
-                        }
-                        // If write fails, fall through to compile
-                    }
-                    FetchResult::NotFound | FetchResult::Error(_) => {
-                        // Cache miss - need to compile
-                    }
+        let output_obj = obj_dir.join("whole_module.o");
+        match codegen::compile_mir_to_object_with_opt(
+            &hir_crate,
+            mir_bodies,
+            escape_map,
+            inline_handler_bodies,
+            &output_obj,
+            codegen::BloodOptLevel::Default,
+            builtin_def_ids,
+            Some(closure_analysis),
+        ) {
+            Ok(()) => {
+                object_files.push(output_obj);
+                if verbosity > 0 {
+                    eprintln!("Compiled {} functions into single module", mir_bodies.len());
                 }
             }
-
-            // Compile this definition
-            let escape_results = escape_map.get(&def_id);
-
-            let def_start = Instant::now();
-            match codegen::compile_definition_to_object(
-                def_id,
-                &hir_crate,
-                Some(mir_body),
-                escape_results,
-                Some(mir_bodies),
-                Some(inline_handler_bodies),
-                &obj_path,
-                builtin_def_ids,
-                Some(closure_analysis),
-                codegen::BloodOptLevel::Default,
-            ) {
-                Ok(()) => {
-                    let def_elapsed = def_start.elapsed();
-                    compiled_count += 1;
-                    if timings {
-                        def_timings.push((def_id, def_elapsed));
-                    }
-                    if verbosity > 2 {
-                        eprintln!("  Compiled: {:?} ({}) in {:.0}ms", def_id, def_hash.short_display(), def_elapsed.as_secs_f64() * 1000.0);
-                    }
-
-                    // Cache the compiled object (local and optionally remote)
-                    if let Ok(obj_data) = std::fs::read(&obj_path) {
-                        let publish_to_remote = distributed_cache.is_enabled();
-                        if let Err(e) = distributed_cache.store(def_hash, &obj_data, publish_to_remote) {
-                            if verbosity > 1 {
-                                eprintln!("  Warning: Failed to cache {:?}: {}", def_id, e);
-                            }
-                        }
-                    }
-
-                    object_files.push(obj_path);
-                }
-                Err(errors) => {
-                    compile_errors.extend(errors);
-                }
-            }
-        }
-
-        // Compile handler definitions (they don't have MIR bodies, so not in the loop above)
-        for (&def_id, item) in &hir_crate.items {
-            if !matches!(item.kind, bloodc::hir::ItemKind::Handler { .. }) {
-                continue;
-            }
-
-            // Hash the handler item
-            let def_hash = hash_hir_item(def_id, item, &hir_crate.bodies, &hir_crate.items, Some(&args.file));
-
-            // Check cache for this handler (local and remote)
-            let obj_path = obj_dir.join(format!("handler_{}.o", def_id.index()));
-
-            if !args.no_cache {
-                match distributed_cache.fetch(&def_hash) {
-                    FetchResult::LocalHit(data) => {
-                        if std::fs::write(&obj_path, &data).is_ok() {
-                            object_files.push(obj_path);
-                            cached_count += 1;
-                            if verbosity > 2 {
-                                eprintln!("  Cache hit (handler, local): {:?} ({})", def_id, def_hash.short_display());
-                            }
-                            continue;
-                        }
-                    }
-                    FetchResult::RemoteHit { data, source } => {
-                        if std::fs::write(&obj_path, &data).is_ok() {
-                            object_files.push(obj_path);
-                            cached_count += 1;
-                            if verbosity > 1 {
-                                eprintln!("  Cache hit (handler, remote): {:?} ({}) from {}", def_id, def_hash.short_display(), source);
-                            }
-                            continue;
-                        }
-                    }
-                    FetchResult::NotFound | FetchResult::Error(_) => {}
-                }
-            }
-
-            // Compile this handler
-            match codegen::compile_definition_to_object(def_id, &hir_crate, None, None, Some(mir_bodies), Some(inline_handler_bodies), &obj_path, builtin_def_ids, Some(closure_analysis), codegen::BloodOptLevel::Default) {
-                Ok(()) => {
-                    compiled_count += 1;
-                    if verbosity > 2 {
-                        eprintln!("  Compiled (handler): {:?} ({})", def_id, def_hash.short_display());
-                    }
-
-                    // Cache the compiled object (local and optionally remote)
-                    if let Ok(obj_data) = std::fs::read(&obj_path) {
-                        let publish_to_remote = distributed_cache.is_enabled();
-                        if let Err(e) = distributed_cache.store(def_hash, &obj_data, publish_to_remote) {
-                            if verbosity > 1 {
-                                eprintln!("  Warning: Failed to cache {:?}: {}", def_id, e);
-                            }
-                        }
-                    }
-
-                    object_files.push(obj_path);
-                }
-                Err(errors) => {
-                    compile_errors.extend(errors);
-                }
-            }
-        }
-
-        // Report compilation results
-        if verbosity > 0 {
-            eprintln!(
-                "Compilation: {} cached, {} compiled, {} total",
-                cached_count,
-                compiled_count,
-                cached_count + compiled_count
-            );
-        }
-
-        // Print per-definition timing distribution
-        if timings && !def_timings.is_empty() {
-            def_timings.sort_by(|a, b| b.1.cmp(&a.1));
-            let total_def_ms: f64 = def_timings.iter().map(|(_, d)| d.as_secs_f64() * 1000.0).sum();
-            let count = def_timings.len();
-            let median_ms = def_timings[count / 2].1.as_secs_f64() * 1000.0;
-            let p90_idx = count * 90 / 100;
-            let p99_idx = count * 99 / 100;
-
-            eprintln!();
-            eprintln!("Per-definition codegen ({} defs, {:.0}ms total):", count, total_def_ms);
-            eprintln!("  Median: {:.1}ms  P90: {:.1}ms  P99: {:.1}ms  Max: {:.1}ms",
-                median_ms,
-                def_timings[p90_idx].1.as_secs_f64() * 1000.0,
-                def_timings[p99_idx].1.as_secs_f64() * 1000.0,
-                def_timings[0].1.as_secs_f64() * 1000.0,
-            );
-            eprintln!("  Top 10 slowest:");
-            for (def_id, dur) in def_timings.iter().take(10) {
-                let name = hir_crate.items.get(def_id)
-                    .map(|item| item.name.as_str())
-                    .unwrap_or("<unnamed>");
-                eprintln!("    {:>7.0}ms  {:?} ({})", dur.as_secs_f64() * 1000.0, def_id, name);
+            Err(errors) => {
+                compile_errors.extend(errors);
             }
         }
     }
@@ -1884,21 +1702,8 @@ fn cmd_build(args: &FileArgs, verbosity: u8, timings: bool) -> ExitCode {
         }
     }
 
-    // Generate handler registration object (needed for effect handlers in debug mode)
-    // In release mode, handler registration is included in whole_module.o via
-    // compile_mir_to_object, so we skip generating a separate object file.
-    // In debug mode, we need a separate object for per-definition compilation.
-    if !args.release {
-        let handler_reg_path = obj_dir.join("handler_registration.o");
-        if let Err(errors) = codegen::compile_handler_registration_to_object(&hir_crate, &handler_reg_path, builtin_def_ids) {
-            for error in &errors {
-                emitter.emit(error);
-            }
-            eprintln!("Build failed: handler registration codegen error.");
-            return ExitCode::from(1);
-        }
-        object_files.push(handler_reg_path);
-    }
+    // Handler registration is included in whole_module.o for both debug and release
+    // modes via compile_mir_to_object's register_handlers_with_runtime() pass.
     phase_timings.push(("Codegen", t.elapsed()));
 
     // Link with runtimes (for both cached and freshly compiled objects)
