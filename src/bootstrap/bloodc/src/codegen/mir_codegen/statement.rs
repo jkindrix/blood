@@ -1131,15 +1131,21 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                 // All operations are compiled first, then registered together via blood_evidence_register
 
                 // Declare or get the evidence registration function
-                // Signature: void blood_evidence_register(
-                //   EvidenceHandle ev, i64 effect_id, *const *const c_void ops, i64 op_count
+                // Signature: i64 blood_evidence_register(
+                //   EvidenceHandle ev, i64 effect_id, *const *const c_void ops, i64 op_count, i64 is_deep
                 // )
                 let ev_register = self.module.get_function("blood_evidence_register")
                     .unwrap_or_else(|| {
                         // ops is **void (pointer to array of function pointers)
                         let ptr_ptr_ty = self.context.ptr_type(AddressSpace::default());
-                        let fn_type = self.context.void_type().fn_type(
-                            &[i8_ptr_ty.into(), i64_ty.into(), ptr_ptr_ty.into(), i64_ty.into()],
+                        let fn_type = i64_ty.fn_type(
+                            &[
+                                i8_ptr_ty.into(),
+                                i64_ty.into(),
+                                ptr_ptr_ty.into(),
+                                i64_ty.into(),
+                                i64_ty.into(),
+                            ],
                             false,
                         );
                         self.module.add_function("blood_evidence_register", fn_type, None)
@@ -1230,10 +1236,17 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                     // Register all operations with the evidence system
                     let effect_id_val = i64_ty.const_int(effect_id.index as u64, false);
                     let op_count_val = i64_ty.const_int(op_count as u64, false);
+                    let is_deep_val = i64_ty.const_int(1, false);
 
                     self.builder.build_call(
                         ev_register,
-                        &[ev.into(), effect_id_val.into(), ops_ptr.into(), op_count_val.into()],
+                        &[
+                            ev.into(),
+                            effect_id_val.into(),
+                            ops_ptr.into(),
+                            op_count_val.into(),
+                            is_deep_val.into(),
+                        ],
                         ""
                     ).map_err(|e| vec![Diagnostic::error(
                         format!("LLVM call error: {}", e), stmt.span
