@@ -50,7 +50,7 @@
 //! // The handler handles Error, so inferred effects: {} (pure)
 //! ```
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::row::{EffectRef, EffectRow, RowVar};
 use crate::hir::{Body, DefId, Expr, ExprKind, Stmt};
@@ -65,6 +65,8 @@ use crate::hir::{Body, DefId, Expr, ExprKind, Stmt};
 pub struct EffectInferencer {
     /// Counter for generating fresh row variables.
     row_var_counter: u32,
+    /// Mapping from handler DefId to the effect DefId it handles.
+    handler_effects: HashMap<DefId, DefId>,
 }
 
 /// Context for tracking effect information during inference.
@@ -75,7 +77,7 @@ pub struct EffectInferencer {
 pub struct InferenceContext {
     /// Effects that are performed in the current scope.
     performed: HashSet<EffectRef>,
-    /// Effects that are handled in the current scope.
+    /// Effects handled anywhere in this function (for reporting).
     handled: HashSet<DefId>,
     /// Whether this function may be row-polymorphic.
     is_polymorphic: bool,
@@ -90,7 +92,13 @@ impl EffectInferencer {
     pub fn new() -> Self {
         Self {
             row_var_counter: 0,
+            handler_effects: HashMap::new(),
         }
+    }
+
+    /// Register a handler and the effect it handles.
+    pub fn register_handler(&mut self, handler_id: DefId, effect_id: DefId) {
+        self.handler_effects.insert(handler_id, effect_id);
     }
 
     /// Generate a fresh row variable for effect polymorphism.
@@ -145,15 +153,22 @@ impl EffectInferencer {
                 let mut child_ctx = InferenceContext::default();
                 self.infer_expr(body, &mut child_ctx);
 
-                // The handler reduces its effect - we need to know which effect
-                // the handler handles. This requires looking up the handler.
-                // For now, we mark the handler_id as handled.
-                ctx.handled.insert(*handler_id);
-
-                // Effects performed in the body that are NOT handled propagate up
-                for effect in child_ctx.performed {
-                    if !ctx.handled.contains(&effect.def_id) {
-                        ctx.performed.insert(effect);
+                // The handler reduces its effect - look up which effect it handles.
+                // Effects performed in the body that are NOT handled propagate up.
+                match self.handler_effects.get(handler_id) {
+                    Some(effect_id) => {
+                        ctx.handled.insert(*effect_id);
+                        for effect in child_ctx.performed {
+                            if effect.def_id != *effect_id {
+                                ctx.performed.insert(effect);
+                            }
+                        }
+                    }
+                    None => {
+                        // Unknown handler; conservatively treat as unhandled.
+                        for effect in child_ctx.performed {
+                            ctx.performed.insert(effect);
+                        }
                     }
                 }
 
@@ -167,14 +182,16 @@ impl EffectInferencer {
                 let mut child_ctx = InferenceContext::default();
                 self.infer_expr(body, &mut child_ctx);
 
-                // Mark all handled effects as handled
+                // Collect handled effects for this inline handler set
+                let mut handled_effects: HashSet<DefId> = HashSet::new();
                 for handler in handlers {
                     ctx.handled.insert(handler.effect_id);
+                    handled_effects.insert(handler.effect_id);
                 }
 
                 // Effects performed in the body that are NOT handled propagate up
                 for effect in child_ctx.performed {
-                    if !ctx.handled.contains(&effect.def_id) {
+                    if !handled_effects.contains(&effect.def_id) {
                         ctx.performed.insert(effect);
                     }
                 }
@@ -447,10 +464,8 @@ impl EffectInferencer {
 
     /// Build the final effect row from the inference context.
     fn build_effect_row(&mut self, ctx: InferenceContext) -> EffectRow {
-        // Filter out handled effects
         let remaining: Vec<EffectRef> = ctx.performed
             .into_iter()
-            .filter(|e| !ctx.handled.contains(&e.def_id))
             .collect();
 
         if remaining.is_empty() && !ctx.is_polymorphic {
@@ -483,6 +498,30 @@ impl Default for EffectInferencer {
 pub fn infer_effects(body: &Body) -> EffectRow {
     let mut inferencer = EffectInferencer::new();
     inferencer.infer_effects(body)
+}
+
+/// Infer effects for a function body using a handler→effect mapping.
+pub fn infer_effects_with_handlers(
+    body: &Body,
+    handler_effects: &HashMap<DefId, DefId>,
+) -> EffectRow {
+    let mut inferencer = EffectInferencer::new();
+    for (handler_id, effect_id) in handler_effects {
+        inferencer.register_handler(*handler_id, *effect_id);
+    }
+    inferencer.infer_effects(body)
+}
+
+/// Infer effects with detailed tracking using a handler→effect mapping.
+pub fn infer_effects_detailed_with_handlers(
+    body: &Body,
+    handler_effects: &HashMap<DefId, DefId>,
+) -> InferenceResult {
+    let mut inferencer = DetailedEffectInferencer::new();
+    for (handler_id, effect_id) in handler_effects {
+        inferencer.register_handler(*handler_id, *effect_id);
+    }
+    inferencer.infer_effects_detailed(body)
 }
 
 /// Verify that inferred effects are a subset of declared effects.
@@ -553,10 +592,6 @@ impl InferenceResult {
 pub struct DetailedEffectInferencer {
     /// The base inferencer.
     inner: EffectInferencer,
-    /// Effects handled in the current function.
-    handled: HashSet<DefId>,
-    /// Mapping from handler DefId to the effect it handles.
-    handler_effects: std::collections::HashMap<DefId, DefId>,
 }
 
 impl DetailedEffectInferencer {
@@ -564,8 +599,6 @@ impl DetailedEffectInferencer {
     pub fn new() -> Self {
         Self {
             inner: EffectInferencer::new(),
-            handled: HashSet::new(),
-            handler_effects: std::collections::HashMap::new(),
         }
     }
 
@@ -574,7 +607,7 @@ impl DetailedEffectInferencer {
     /// This information is used during inference to properly reduce effects
     /// when a handler is encountered.
     pub fn register_handler(&mut self, handler_id: DefId, effect_id: DefId) {
-        self.handler_effects.insert(handler_id, effect_id);
+        self.inner.register_handler(handler_id, effect_id);
     }
 
     /// Infer effects with detailed tracking.
@@ -585,19 +618,13 @@ impl DetailedEffectInferencer {
         let mut ctx = InferenceContext::default();
         self.inner.infer_expr(&body.expr, &mut ctx);
 
-        // Track handled effects
-        for handler_id in &ctx.handled {
-            if let Some(&effect_id) = self.handler_effects.get(handler_id) {
-                self.handled.insert(effect_id);
-            }
-        }
-
-        let row = self.inner.build_effect_row(ctx.clone());
+        let handled_effects = ctx.handled.clone();
+        let row = self.inner.build_effect_row(ctx);
 
         InferenceResult {
             has_effects: !row.is_pure(),
             is_polymorphic: row.is_polymorphic(),
-            handled_effects: self.handled.clone(),
+            handled_effects,
             effect_row: row,
         }
     }
@@ -741,6 +768,8 @@ mod tests {
         // The effect should be handled - the handler's effect_id should be tracked
         assert!(result.handled_effects.contains(&effect_id),
             "Expected effect {:?} to be tracked as handled", effect_id);
+        // And it should be eliminated from the inferred effect row
+        assert!(result.effect_row.is_pure(), "Expected handled effect to be reduced");
     }
 
     #[test]

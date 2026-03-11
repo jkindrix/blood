@@ -76,6 +76,14 @@ pub use evidence::{Evidence, EvidenceVector, EvidenceEntry, EvidenceContext, Tra
 pub use evidence::{EvidenceCache, HandlerPattern, CacheStats};
 pub use handler::{Handler, HandlerKind, Continuation, ResumeMode};
 pub use handler::{analyze_tail_resumptive, analyze_handler_tail_resumptive, analyze_resume_mode};
-pub use infer::{EffectInferencer, DetailedEffectInferencer, InferenceResult, infer_effects, verify_effects_subset};
+pub use infer::{
+    EffectInferencer,
+    DetailedEffectInferencer,
+    InferenceResult,
+    infer_effects,
+    infer_effects_with_handlers,
+    infer_effects_detailed_with_handlers,
+    verify_effects_subset,
+};
 pub use lowering::{EffectLowering, EffectInfo, OperationInfo, EvidenceRequirement, HandlerInfo};
 pub use row::{EffectRow, RowVar, EffectRef};

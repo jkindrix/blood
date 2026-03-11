@@ -434,7 +434,11 @@ impl EffectLowering {
     /// the previous two-pass approach (separate effect collection + polymorphism
     /// detection).
     pub fn analyze_function(&mut self, def_id: DefId, body: &Body) -> EvidenceRequirement {
-        let row = super::infer::infer_effects(body);
+        let mut handler_effects: HashMap<DefId, DefId> = HashMap::new();
+        for (handler_id, info) in &self.handlers {
+            handler_effects.insert(*handler_id, info.effect_id);
+        }
+        let row = super::infer::infer_effects_with_handlers(body, &handler_effects);
         let effects: Vec<DefId> = row.effects().map(|e| e.def_id).collect();
         let polymorphic = row.is_polymorphic();
         let req = EvidenceRequirement {

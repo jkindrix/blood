@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use crate::ast;
-use crate::effects::{infer_effects, verify_effects_subset, EffectRow, EffectRef as EffectsEffectRef};
+use crate::effects::{infer_effects_with_handlers, verify_effects_subset, EffectRow, EffectRef as EffectsEffectRef};
 use crate::hir::{self, DefId, LocalId, Type, TypeKind, TyVarId};
 use crate::diagnostics::Diagnostic;
 use crate::span::Span;
@@ -1279,8 +1279,12 @@ impl<'a> TypeContext<'a> {
         body: &hir::Body,
         span: Span,
     ) -> Result<(), Box<TypeError>> {
-        // Infer effects from the function body
-        let inferred_row = infer_effects(body);
+        // Infer effects from the function body (handler-aware)
+        let mut handler_effects: HashMap<DefId, DefId> = HashMap::new();
+        for (handler_id, info) in &self.handler_defs {
+            handler_effects.insert(*handler_id, info.effect_id);
+        }
+        let inferred_row = infer_effects_with_handlers(body, &handler_effects);
 
         // Check if the function has declared effects
         let has_declared_effects = self.fn_effects.contains_key(&def_id);
