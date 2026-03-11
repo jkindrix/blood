@@ -3727,26 +3727,23 @@ impl<'a> TypeContext<'a> {
                 }
             }
 
-            // Multiple methods with same name - perform overload resolution
+            // Multiple methods with same name - collect all applicable, then find most specific
+            let mut applicable: Vec<(DefId, Vec<Type>, Type, Option<Type>, Vec<TyVarId>, Vec<TyVarId>)> = Vec::new();
+
             for method in &matching_methods {
                 if let Some(sig) = self.fn_sigs.get(&method.def_id) {
-                    // Apply substitution to parameter types
                     let subst_inputs: Vec<Type> = sig.inputs.iter()
                         .map(|t| self.substitute_type_vars(t, &subst))
                         .collect();
 
-                    // Check if argument count matches (params[1..] are the non-receiver args)
-                    let param_count = subst_inputs.len().saturating_sub(1); // exclude receiver
+                    let param_count = subst_inputs.len().saturating_sub(1);
                     if args.len() != param_count {
                         continue;
                     }
 
-                    // Check if argument types are compatible
                     let mut matches = true;
                     for (i, arg) in args.iter().enumerate() {
                         if let Some(param_ty) = subst_inputs.get(i + 1) {
-                            // For overload resolution, check structural compatibility
-                            // This handles cases like i32 vs bool without full unification
                             if !self.types_compatible_for_overload(&arg.ty, param_ty) {
                                 matches = false;
                                 break;
@@ -3757,14 +3754,51 @@ impl<'a> TypeContext<'a> {
                     if matches {
                         let subst_output = self.substitute_type_vars(&sig.output, &subst);
                         let first_param = sig.inputs.first().map(|p| self.substitute_type_vars(p, &subst));
-                        return Some((
+                        applicable.push((
                             method.def_id,
+                            subst_inputs,
                             subst_output,
                             first_param,
                             impl_block.generics.clone(),
                             sig.generics.clone(),
                         ));
                     }
+                }
+            }
+
+            if applicable.len() == 1 {
+                let (def_id, _, output, first_param, impl_generics, method_generics) = applicable.into_iter().next().unwrap();
+                return Some((def_id, output, first_param, impl_generics, method_generics));
+            }
+
+            if applicable.len() > 1 {
+                // Find maximal: candidate where no other is strictly more specific
+                let resolver = crate::typeck::dispatch::DispatchResolver::new(&self.unifier);
+                let mut maximal_idx: Option<usize> = None;
+
+                for i in 0..applicable.len() {
+                    let mut is_maximal = true;
+                    for j in 0..applicable.len() {
+                        if i == j { continue; }
+                        // Check if j is more specific than i (pairwise subtype on params)
+                        if self.method_more_specific(&resolver, &applicable[j].1, &applicable[j].5, &applicable[i].1, &applicable[i].5) {
+                            is_maximal = false;
+                            break;
+                        }
+                    }
+                    if is_maximal {
+                        if maximal_idx.is_some() {
+                            // Multiple maximals = ambiguous, fall through
+                            maximal_idx = None;
+                            break;
+                        }
+                        maximal_idx = Some(i);
+                    }
+                }
+
+                if let Some(idx) = maximal_idx {
+                    let (def_id, _, output, first_param, impl_generics, method_generics) = applicable.into_iter().nth(idx).unwrap();
+                    return Some((def_id, output, first_param, impl_generics, method_generics));
                 }
             }
         }
@@ -3887,6 +3921,78 @@ impl<'a> TypeContext<'a> {
         }
 
         None
+    }
+
+    /// Check if method m1 (given by its substituted param types and generics) is strictly
+    /// more specific than m2, using the three-tier ordering: types → constraints → effects.
+    fn method_more_specific(
+        &self,
+        resolver: &crate::typeck::dispatch::DispatchResolver,
+        m1_params: &[Type],
+        m1_generics: &[TyVarId],
+        m2_params: &[Type],
+        m2_generics: &[TyVarId],
+    ) -> bool {
+        if m1_params.len() != m2_params.len() {
+            return false;
+        }
+
+        let mut all_at_least = true;
+        let mut some_strictly = false;
+
+        for (p1, p2) in m1_params.iter().zip(m2_params) {
+            if !resolver.is_subtype(p1, p2) {
+                all_at_least = false;
+                break;
+            }
+            if !resolver.is_subtype(p2, p1) {
+                some_strictly = true;
+            }
+        }
+
+        // Tier 1: type-based specificity
+        if all_at_least && some_strictly {
+            return true;
+        }
+
+        if all_at_least && !some_strictly {
+            // Tier 2: constraint-based specificity
+            // m1 is more specific if its type params have strictly more bounds
+            let m1_bounds: Vec<&Vec<DefId>> = m1_generics.iter()
+                .filter_map(|tv| self.type_param_bounds.get(tv))
+                .collect();
+            let m2_bounds: Vec<&Vec<DefId>> = m2_generics.iter()
+                .filter_map(|tv| self.type_param_bounds.get(tv))
+                .collect();
+
+            if !m1_bounds.is_empty() || !m2_bounds.is_empty() {
+                let max_params = m1_bounds.len().max(m2_bounds.len());
+                let mut c_all_at_least = true;
+                let mut c_some_strictly = false;
+                let empty_bounds: Vec<DefId> = Vec::new();
+
+                for i in 0..max_params {
+                    let b1 = m1_bounds.get(i).copied().unwrap_or(&empty_bounds);
+                    let b2 = m2_bounds.get(i).copied().unwrap_or(&empty_bounds);
+
+                    // m1's bounds must be a superset of m2's
+                    let is_superset = b2.iter().all(|b| b1.contains(b));
+                    if !is_superset {
+                        c_all_at_least = false;
+                        break;
+                    }
+                    if b1.len() > b2.len() {
+                        c_some_strictly = true;
+                    }
+                }
+
+                if c_all_at_least && c_some_strictly {
+                    return true;
+                }
+            }
+        }
+
+        false
     }
 
     /// Find a builtin method for a type.

@@ -2372,6 +2372,7 @@ impl<'a> TypeContext<'a> {
                                     self.next_type_param_id += 1;
                                     self.generic_params.insert(param_name, ty_var_id);
                                     method_generics.push(ty_var_id);
+                                    self.register_type_param_bounds(ty_var_id, &type_param.bounds);
                                 }
                                 ast::GenericParam::Lifetime(_) => {}
                                 ast::GenericParam::Const(_) => {}
@@ -2411,9 +2412,9 @@ impl<'a> TypeContext<'a> {
 
                     self.fn_sigs.insert(method_def_id, sig);
 
-                    // Check for duplicate method signatures (same name AND same parameter types).
-                    // Multiple dispatch allows same-name methods with different signatures,
-                    // but identical signatures are an error.
+                    // Check for duplicate method signatures (same name AND same parameter types
+                    // AND same type parameter bounds). Multiple dispatch allows same-name methods
+                    // with different signatures or different constraints.
                     if let Some(Binding::Methods(ref method_ids)) = self.resolver.current_scope().bindings.get(&qualified_name) {
                         for &other_id in method_ids {
                             if other_id == method_def_id {
@@ -2424,10 +2425,26 @@ impl<'a> TypeContext<'a> {
                                 if other_sig.inputs.len() == current_sig.inputs.len()
                                     && other_sig.inputs.iter().zip(current_sig.inputs.iter()).all(|(a, b)| a == b)
                                 {
-                                    return Err(Box::new(TypeError::new(
-                                        TypeErrorKind::DuplicateDefinition { name: qualified_name },
-                                        func.span,
-                                    )));
+                                    // Same param types — check if constraints differ
+                                    let mut constraints_differ = false;
+                                    for (cur_tv, oth_tv) in current_sig.generics.iter().zip(other_sig.generics.iter()) {
+                                        let cur_bounds = self.type_param_bounds.get(cur_tv);
+                                        let oth_bounds = self.type_param_bounds.get(oth_tv);
+                                        if cur_bounds != oth_bounds {
+                                            constraints_differ = true;
+                                            break;
+                                        }
+                                    }
+                                    // Different generic arity also means different overloads
+                                    if current_sig.generics.len() != other_sig.generics.len() {
+                                        constraints_differ = true;
+                                    }
+                                    if !constraints_differ {
+                                        return Err(Box::new(TypeError::new(
+                                            TypeErrorKind::DuplicateDefinition { name: qualified_name },
+                                            func.span,
+                                        )));
+                                    }
                                 }
                             }
                         }

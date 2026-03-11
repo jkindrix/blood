@@ -947,23 +947,69 @@ impl<'a> DispatchResolver<'a> {
             }
         }
 
-        // If parameter types make m1 strictly more specific, we're done
+        // Tier 1: If parameter types make m1 strictly more specific, we're done
         if all_at_least && some_strictly {
             return true;
         }
 
-        // If parameter types are at least as specific but not strictly more specific,
-        // use effect specificity as a tiebreaker
         if all_at_least && !some_strictly {
-            // Check if m1 has strictly more specific effects
+            // Tier 2: Constraint-based specificity (DISPATCH.md §3.7.2)
+            // m1 is more specific if its type params have strictly more trait bounds
+            if self.constraint_more_specific(m1, m2) {
+                return true;
+            }
+
+            // Tier 3: Effect specificity as final tiebreaker
             let effect_cmp = self.effect_specificity(&m1.effects, &m2.effects);
             if effect_cmp == Ordering::Less {
-                // m1 has more restrictive effects - use as tiebreaker
                 return true;
             }
         }
 
         false
+    }
+
+    /// Check if m1 has strictly more constrained type parameters than m2.
+    ///
+    /// m1 is more constrained if for every type parameter position, m1's trait
+    /// bounds are a superset of m2's, and at least one position is a strict superset.
+    /// Per DISPATCH.md §3.7.2.
+    fn constraint_more_specific(&self, m1: &MethodCandidate, m2: &MethodCandidate) -> bool {
+        // Both must have type params to compare
+        if m1.type_params.is_empty() && m2.type_params.is_empty() {
+            return false;
+        }
+
+        let max_params = m1.type_params.len().max(m2.type_params.len());
+        let mut all_at_least = true;
+        let mut some_strictly = false;
+
+        for i in 0..max_params {
+            let bounds1: Vec<&str> = if i < m1.type_params.len() {
+                m1.type_params[i].constraints.iter().map(|c| c.trait_name.as_str()).collect()
+            } else {
+                Vec::new()
+            };
+            let bounds2: Vec<&str> = if i < m2.type_params.len() {
+                m2.type_params[i].constraints.iter().map(|c| c.trait_name.as_str()).collect()
+            } else {
+                Vec::new()
+            };
+
+            // m1's bounds must be a superset of m2's bounds for this param
+            let is_superset = bounds2.iter().all(|b| bounds1.contains(b));
+            if !is_superset {
+                all_at_least = false;
+                break;
+            }
+
+            // Strictly more constrained if m1 has more bounds
+            if bounds1.len() > bounds2.len() {
+                some_strictly = true;
+            }
+        }
+
+        all_at_least && some_strictly
     }
 
     /// Compare the specificity of two methods.
