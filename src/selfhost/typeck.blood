@@ -390,6 +390,16 @@ pub struct TypeChecker {
     /// These will be defaulted to i32/f64 during MIR lowering, so they should not be
     /// flagged as "undetermined type variables" during the post-typeck check.
     pub numeric_infer_ids: Vec<u32>,
+    /// Temporary: fresh Infer mappings from the most recent instantiate_fn_sig call.
+    /// Each entry is (body_ty_var_index, fresh_ty_var_index).
+    /// Read by infer_call to extract type param → concrete type bindings.
+    pub last_type_param_bindings: Vec<u32>,
+    /// Records of calls to type-generic functions with resolved concrete types.
+    /// Used by MIR lowering to create monomorphization requests.
+    pub type_generic_calls: Vec<common.TypeGenericCallInfo>,
+    /// Flat table of impl methods for resolving trait methods during monomorphization.
+    /// Each entry maps (self_ty_id, method_name) → method_def_id.
+    pub impl_method_table: Vec<common.ImplMethodEntry>,
 }
 
 impl TypeChecker {
@@ -447,6 +457,9 @@ impl TypeChecker {
             deref_method_ids: hashmap.HashMapU64U64.new(),
             in_unsafe_context: false,
             numeric_infer_ids: Vec.new(),
+            last_type_param_bindings: Vec.new(),
+            type_generic_calls: Vec.new(),
+            impl_method_table: Vec.new(),
         }
     }
 
@@ -505,6 +518,9 @@ impl TypeChecker {
             deref_method_ids: hashmap.HashMapU64U64.new(),
             in_unsafe_context: false,
             numeric_infer_ids: Vec.new(),
+            last_type_param_bindings: Vec.new(),
+            type_generic_calls: Vec.new(),
+            impl_method_table: Vec.new(),
         }
     }
 

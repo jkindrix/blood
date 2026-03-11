@@ -58,6 +58,14 @@ pub struct TypeCheckResult {
     /// Array-to-slice coercion side table from type checking.
     /// Records expressions that need &[T; N] to &[T] conversion during MIR lowering.
     pub coercion_entries: Vec<common.CoercionEntry>,
+    /// Type-generic call info for monomorphization.
+    /// Records calls to type-generic functions with resolved concrete type bindings.
+    pub type_generic_calls: Vec<common.TypeGenericCallInfo>,
+    /// Pending method calls that remained unresolved after type checking.
+    /// Used to identify which generic functions need monomorphization.
+    pub pending_method_calls: Vec<common.PendingMethodCall>,
+    /// Flat impl method table for resolving trait methods during monomorphization.
+    pub impl_method_table: Vec<common.ImplMethodEntry>,
 }
 
 impl TypeCheckResult {
@@ -70,6 +78,9 @@ impl TypeCheckResult {
         field_resolutions: Vec<common.FieldResEntry>,
         default_method_remaps: Vec<common.DefaultMethodRemap>,
         coercion_entries: Vec<common.CoercionEntry>,
+        type_generic_calls: Vec<common.TypeGenericCallInfo>,
+        pending_method_calls: Vec<common.PendingMethodCall>,
+        impl_method_table: Vec<common.ImplMethodEntry>,
     ) -> TypeCheckResult {
         TypeCheckResult {
             success: true,
@@ -80,6 +91,9 @@ impl TypeCheckResult {
             field_resolutions: field_resolutions,
             default_method_remaps: default_method_remaps,
             coercion_entries: coercion_entries,
+            type_generic_calls: type_generic_calls,
+            pending_method_calls: pending_method_calls,
+            impl_method_table: impl_method_table,
         }
     }
 
@@ -99,6 +113,9 @@ impl TypeCheckResult {
             field_resolutions: field_resolutions,
             default_method_remaps: Vec.new(),
             coercion_entries: Vec.new(),
+            type_generic_calls: Vec.new(),
+            pending_method_calls: Vec.new(),
+            impl_method_table: Vec.new(),
         }
     }
 
@@ -149,7 +166,7 @@ pub fn check_types(ctx: &hir_lower_ctx.LoweringCtx) -> TypeCheckResult {
     if checker.has_errors() {
         TypeCheckResult.failed(checker.errors, checker.subst_table, checker.method_resolutions, checker.field_resolutions)
     } else {
-        TypeCheckResult.ok(checker.subst_table, checker.builtin_def_names, checker.method_resolutions, checker.field_resolutions, checker.default_method_remaps, checker.coercion_entries)
+        TypeCheckResult.ok(checker.subst_table, checker.builtin_def_names, checker.method_resolutions, checker.field_resolutions, checker.default_method_remaps, checker.coercion_entries, checker.type_generic_calls, Vec.new(), Vec.new())
     }
 }
 
@@ -293,12 +310,49 @@ pub fn check_lower_result(result: &hir_lower_ctx.LowerResult) -> TypeCheckResult
     resolve_pending_methods(&mut checker);
     resolve_pending_field_accesses(&mut checker);
 
+    // Phase 4: Build impl method table and collect unresolved pending method calls
+    // for type-generic monomorphization.
+    let impl_method_table = build_impl_method_table(&mut checker);
+    let unresolved_pending = collect_unresolved_pending_methods(&mut checker);
+
     // Return result with substitution table for type resolution in MIR lowering
     if checker.has_errors() {
         TypeCheckResult.failed(checker.errors, checker.subst_table, checker.method_resolutions, checker.field_resolutions)
     } else {
-        TypeCheckResult.ok(checker.subst_table, checker.builtin_def_names, checker.method_resolutions, checker.field_resolutions, checker.default_method_remaps, checker.coercion_entries)
+        TypeCheckResult.ok(checker.subst_table, checker.builtin_def_names, checker.method_resolutions, checker.field_resolutions, checker.default_method_remaps, checker.coercion_entries, checker.type_generic_calls, unresolved_pending, impl_method_table)
     }
+}
+
+/// Builds a flat table of impl methods for type-generic monomorphization.
+/// Scans all registered impls and extracts (self_ty, method_name, method_def_id) tuples.
+fn build_impl_method_table(checker: &mut typeck.TypeChecker) -> Vec<common.ImplMethodEntry> {
+    let mut table: Vec<common.ImplMethodEntry> = Vec.new();
+    for i in 0usize..checker.impls.len() {
+        let impl_info = &checker.impls[i];
+        let self_ty_id = impl_info.self_ty.index;
+        for mi in 0usize..impl_info.methods.len() {
+            table.push(common.ImplMethodEntry.new(
+                self_ty_id,
+                impl_info.methods[mi].name,
+                impl_info.methods[mi].def_id.index,
+            ));
+        }
+    }
+    table
+}
+
+/// Collects pending method calls that remained unresolved after resolve_pending_methods.
+fn collect_unresolved_pending_methods(checker: &mut typeck.TypeChecker) -> Vec<common.PendingMethodCall> {
+    let mut unresolved: Vec<common.PendingMethodCall> = Vec.new();
+    for i in 0usize..checker.pending_method_calls.len() {
+        let pmc = &checker.pending_method_calls[i];
+        if !is_already_resolved(checker, pmc.body_def_id, pmc.span_start) {
+            unresolved.push(common.PendingMethodCall.new(
+                pmc.body_def_id, pmc.span_start, pmc.receiver_var, pmc.method_symbol, pmc.return_ty_var,
+            ));
+        }
+    }
+    unresolved
 }
 
 /// Detects the Deref trait by name and registers Deref impl target types.

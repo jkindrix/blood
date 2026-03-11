@@ -249,6 +249,12 @@ pub struct MirLowerCtx {
     pub const_generic_param_counts: Vec<u32>,
     /// Counter for allocating specialized DefIds.
     pub next_mono_def_id: u32,
+    /// DefId indices of all type-generic functions in the program.
+    /// Used during caller body lowering to detect calls that need type-generic specialization.
+    pub type_generic_fn_set: Vec<u32>,
+    /// Type-generic call info from the type checker.
+    /// Records concrete type bindings for each call to a type-generic function.
+    pub type_generic_calls: Vec<common.TypeGenericCallInfo>,
 }
 
 /// A const parameter binding: maps a const param DefId to a concrete value.
@@ -275,17 +281,26 @@ impl TurbofishConstArg {
     }
 }
 
-/// A monomorphization request: records a needed specialization of a const-generic function.
+/// A monomorphization request: records a needed specialization of a const-generic or type-generic function.
 pub struct MonoRequest {
     pub original_def_id: u32,
     pub const_values: Vec<u64>,
     pub specialized_def_id: u32,
     pub fn_name: String,
+    /// Type bindings for type-generic monomorphization.
+    /// Empty for const-generic mono requests.
+    pub type_bindings: Vec<common.TypeMonoBinding>,
+    /// Whether this is a type-generic (vs const-generic) mono request.
+    pub is_type_mono: bool,
 }
 
 impl MonoRequest {
     pub fn new(original_def_id: u32, const_values: Vec<u64>, specialized_def_id: u32, fn_name: String) -> MonoRequest {
-        MonoRequest { original_def_id, const_values, specialized_def_id, fn_name }
+        MonoRequest { original_def_id, const_values, specialized_def_id, fn_name, type_bindings: Vec.new(), is_type_mono: false }
+    }
+
+    pub fn new_type_mono(original_def_id: u32, type_bindings: Vec<common.TypeMonoBinding>, specialized_def_id: u32, fn_name: String) -> MonoRequest {
+        MonoRequest { original_def_id, const_values: Vec.new(), specialized_def_id, fn_name, type_bindings, is_type_mono: true }
     }
 }
 
@@ -351,6 +366,8 @@ impl MirLowerCtx {
             mono_requests: Vec.new(),
             const_generic_param_counts: Vec.new(),
             next_mono_def_id: 0,
+            type_generic_fn_set: Vec.new(),
+            type_generic_calls: Vec.new(),
         }
     }
 
@@ -389,6 +406,27 @@ impl MirLowerCtx {
     }
 
     /// Returns true if the given DefId is a const-generic function.
+    /// Checks if a function is type-generic (has type params, needs monomorphization).
+    pub fn is_type_generic_fn(self: &MirLowerCtx, def_id_index: u32) -> bool {
+        for i in 0usize..self.type_generic_fn_set.len() {
+            if self.type_generic_fn_set[i] == def_id_index {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Looks up type-generic call info by call span start.
+    /// Returns the index into type_generic_calls if found.
+    pub fn lookup_type_generic_call(self: &MirLowerCtx, span_start: usize) -> Option<usize> {
+        for i in 0usize..self.type_generic_calls.len() {
+            if self.type_generic_calls[i].call_span_start == span_start {
+                return Option.Some(i);
+            }
+        }
+        Option.None
+    }
+
     pub fn is_const_generic_fn(self: &MirLowerCtx, def_id_index: u32) -> bool {
         for i in 0usize..self.const_generic_fn_set.len() {
             if self.const_generic_fn_set[i] == def_id_index {

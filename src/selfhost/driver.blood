@@ -315,6 +315,8 @@ impl Compiler {
                     clone_turbofish_args(&turbofish_const_args),
                     clone_u32_vec(&const_generic_param_counts),
                     next_mono_def_id,
+                    Vec.new(), // No type_generic_fn_set in driver mode
+                    Vec.new(), // No type_generic_calls in driver mode
                 )
             } else {
                 mir_lower.lower_body(
@@ -403,6 +405,8 @@ impl Compiler {
                             Vec.new(), // No turbofish for specialized bodies
                             Vec.new(), // No param counts for specialized bodies
                             0,          // No mono alloc needed
+                            Vec.new(), // No type_generic_fn_set
+                            Vec.new(), // No type_generic_calls
                         );
 
                         // Collect errors
@@ -1505,6 +1509,45 @@ fn count_const_params(generics: &hir_ty.Generics) -> u32 {
     count
 }
 
+/// Collects type-generic functions (functions with type params but no const params).
+/// Populates fn_set with DefId indices.
+pub fn collect_type_generic_fns(
+    items: &Vec<hir_lower_ctx.ItemEntry>,
+    fn_set: &mut Vec<u32>,
+) {
+    for i in 0usize..items.len() {
+        let entry = &items[i];
+        match &entry.item.kind {
+            &hir_item.ItemKind.Fn(ref fn_def) => {
+                let type_param_count = count_type_params(&fn_def.sig.generics);
+                if type_param_count > 0 {
+                    // Only add if it's NOT already a const-generic function
+                    let const_count = count_const_params(&fn_def.sig.generics);
+                    if const_count == 0 {
+                        fn_set.push(entry.item.def_id.index);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Counts the number of type generic parameters in a Generics.
+fn count_type_params(generics: &hir_ty.Generics) -> u32 {
+    let mut count: u32 = 0;
+    for i in 0usize..generics.params.len() {
+        match &generics.params[i] {
+            &hir_ty.GenericParam.TypeParam(_) => {
+                count += 1;
+            }
+            &hir_ty.GenericParam.ConstParam(_) => {}
+            &hir_ty.GenericParam.LifetimeParam(_) => {}
+        }
+    }
+    count
+}
+
 /// Checks if a body_id belongs to a const-generic function.
 pub fn is_const_generic_body(body_id_index: u32, const_generic_body_ids: &Vec<u32>) -> bool {
     for i in 0usize..const_generic_body_ids.len() {
@@ -1607,6 +1650,28 @@ pub fn clone_turbofish_args(
         result.push(mir_lower_ctx.TurbofishConstArg.new(
             args[i].span_start,
             vals,
+        ));
+    }
+    result
+}
+
+/// Clones a Vec<TypeGenericCallInfo>.
+pub fn clone_type_generic_calls(
+    calls: &Vec<common.TypeGenericCallInfo>,
+) -> Vec<common.TypeGenericCallInfo> {
+    let mut result: Vec<common.TypeGenericCallInfo> = Vec.new();
+    for i in 0usize..calls.len() {
+        let mut bindings: Vec<common.TypeMonoBinding> = Vec.new();
+        for bi in 0usize..calls[i].type_bindings.len() {
+            bindings.push(common.TypeMonoBinding.new(
+                calls[i].type_bindings[bi].ty_var_index,
+                calls[i].type_bindings[bi].concrete_ty_id,
+            ));
+        }
+        result.push(common.TypeGenericCallInfo.new(
+            calls[i].call_span_start,
+            calls[i].callee_def_id,
+            bindings,
         ));
     }
     result

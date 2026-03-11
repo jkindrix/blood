@@ -357,6 +357,53 @@ impl CoercionEntry {
     }
 }
 
+/// A single type parameter → concrete type binding for monomorphization.
+pub struct TypeMonoBinding {
+    /// The TyVarId.index of the body's type parameter.
+    pub ty_var_index: u32,
+    /// The TyId.index of the resolved concrete type.
+    pub concrete_ty_id: u32,
+}
+
+impl TypeMonoBinding {
+    pub fn new(ty_var_index: u32, concrete_ty_id: u32) -> TypeMonoBinding {
+        TypeMonoBinding { ty_var_index, concrete_ty_id }
+    }
+}
+
+/// Records a call to a type-generic function with resolved concrete types.
+/// Used by MIR lowering to create monomorphization requests.
+pub struct TypeGenericCallInfo {
+    /// Byte offset of the call expression span.
+    pub call_span_start: usize,
+    /// DefId.index of the called generic function.
+    pub callee_def_id: u32,
+    /// Concrete type bindings: body's type param → concrete type.
+    pub type_bindings: Vec<TypeMonoBinding>,
+}
+
+impl TypeGenericCallInfo {
+    pub fn new(call_span_start: usize, callee_def_id: u32, type_bindings: Vec<TypeMonoBinding>) -> TypeGenericCallInfo {
+        TypeGenericCallInfo { call_span_start, callee_def_id, type_bindings }
+    }
+}
+
+/// A flat entry for looking up impl methods by self type and name.
+pub struct ImplMethodEntry {
+    /// TyId.index of the impl's Self type.
+    pub self_ty_id: u32,
+    /// Method name symbol.
+    pub method_name: Symbol,
+    /// DefId.index of the method.
+    pub method_def_id: u32,
+}
+
+impl ImplMethodEntry {
+    pub fn new(self_ty_id: u32, method_name: Symbol, method_def_id: u32) -> ImplMethodEntry {
+        ImplMethodEntry { self_ty_id, method_name, method_def_id }
+    }
+}
+
 /// A deferred method call whose receiver was an unresolved Infer type
 /// during initial type checking. After all bodies are checked, Infer
 /// variables may be resolved, allowing the method to be looked up.

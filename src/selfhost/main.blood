@@ -3718,6 +3718,8 @@ fn codegen_pass2(
     const_generic_param_counts: &Vec<u32>,
     turbofish_const_args: &Vec<mir_lower_ctx.TurbofishConstArg>,
     next_mono_def_id_in: u32,
+    type_generic_fn_set: &Vec<u32>,
+    type_generic_calls: &Vec<common.TypeGenericCallInfo>,
 ) -> CodegenPass2Result {
     let mut all_mono_requests: Vec<mir_lower_ctx.MonoRequest> = Vec.new();
     let mut next_mono_def_id: u32 = next_mono_def_id_in;
@@ -3755,7 +3757,8 @@ fn codegen_pass2(
         // the parent codegen_region (persistent across all functions).
         region_activate(mir_region);
 
-        let mir_result = if has_const_generics {
+        let has_generics = has_const_generics || type_generic_fn_set.len() > 0;
+        let mir_result = if has_generics {
             mir_lower.lower_body_with_const_info(
                 work.def_id,
                 hir_body,
@@ -3770,6 +3773,8 @@ fn codegen_pass2(
                 driver.clone_turbofish_args(turbofish_const_args),
                 driver.clone_u32_vec(const_generic_param_counts),
                 next_mono_def_id,
+                driver.clone_u32_vec(type_generic_fn_set),
+                driver.clone_type_generic_calls(type_generic_calls),
             )
         } else {
             mir_lower.lower_body(
@@ -3800,12 +3805,29 @@ fn codegen_pass2(
                 let req_ref = &mir_result.mono_requests[ri];
                 // Register the specialized name BEFORE codegen of this function
                 ctx.register_def_name(req_ref.specialized_def_id, common.make_string(req_ref.fn_name.as_str()));
-                all_mono_requests.push(mir_lower_ctx.MonoRequest.new(
-                    req_ref.original_def_id,
-                    driver.clone_u64_vec(&req_ref.const_values),
-                    req_ref.specialized_def_id,
-                    common.make_string(req_ref.fn_name.as_str()),
-                ));
+                if req_ref.is_type_mono {
+                    // Clone type bindings
+                    let mut bindings: Vec<common.TypeMonoBinding> = Vec.new();
+                    for tbi in 0usize..req_ref.type_bindings.len() {
+                        bindings.push(common.TypeMonoBinding.new(
+                            req_ref.type_bindings[tbi].ty_var_index,
+                            req_ref.type_bindings[tbi].concrete_ty_id,
+                        ));
+                    }
+                    all_mono_requests.push(mir_lower_ctx.MonoRequest.new_type_mono(
+                        req_ref.original_def_id,
+                        bindings,
+                        req_ref.specialized_def_id,
+                        common.make_string(req_ref.fn_name.as_str()),
+                    ));
+                } else {
+                    all_mono_requests.push(mir_lower_ctx.MonoRequest.new(
+                        req_ref.original_def_id,
+                        driver.clone_u64_vec(&req_ref.const_values),
+                        req_ref.specialized_def_id,
+                        common.make_string(req_ref.fn_name.as_str()),
+                    ));
+                }
             }
         }
 
@@ -3916,6 +3938,82 @@ struct CodegenPass2Result {
 /// Finds the call remapping entries for a given default method DefId.
 /// Returns a Vec of CallRemapEntry if the def_id matches a default method,
 /// or an empty Vec if not.
+/// Resolves pending method calls for a type-generic function body being monomorphized.
+/// Takes the original method_resolutions, finds pending (unresolved) method calls
+/// for the given body, resolves them using the mono_subst and impl_method_table,
+/// and returns a new method_resolutions vec with the resolved entries added.
+fn resolve_methods_for_type_mono(
+    method_resolutions: &Vec<common.MethodResEntry>,
+    pending_method_calls: &Vec<common.PendingMethodCall>,
+    impl_method_table: &Vec<common.ImplMethodEntry>,
+    mono_subst: &unify.SubstTable,
+    body_def_id: u32,
+    specialized_def_id: u32,
+) -> Vec<common.MethodResEntry> {
+    // Start with a clone of the existing method resolutions
+    let mut result: Vec<common.MethodResEntry> = Vec.new();
+    for i in 0usize..method_resolutions.len() {
+        result.push(common.MethodResEntry.new(
+            method_resolutions[i].body_def_id,
+            method_resolutions[i].span_start,
+            method_resolutions[i].def_id_index,
+        ));
+    }
+
+    // Find pending method calls for this body and resolve them.
+    // Use specialized_def_id as the body_def_id in new resolution entries,
+    // because MirLowerCtx.body_def_id will be the specialized DefId.
+    for pi in 0usize..pending_method_calls.len() {
+        let pending = &pending_method_calls[pi];
+        if pending.body_def_id != body_def_id {
+            continue;
+        }
+
+        // Resolve the receiver type through the mono subst table
+        let receiver_infer = type_intern.type_interner().mk_infer(hir_def.TyVarId.new(pending.receiver_var));
+        let resolved_ty = unify.apply_substs_id(mono_subst, receiver_infer);
+
+        // Strip references to get the base type
+        let base_ty = strip_refs(resolved_ty);
+
+        // Look up the method in the impl_method_table by self type and method name
+        let mut found = false;
+        let mut mi: usize = 0;
+        while mi < impl_method_table.len() && !found {
+            let entry = &impl_method_table[mi];
+            if entry.self_ty_id == base_ty.index && entry.method_name.index == pending.method_symbol.index {
+                // Found the method — add resolution with SPECIALIZED def_id
+                result.push(common.MethodResEntry.new(
+                    specialized_def_id,
+                    pending.span_start,
+                    entry.method_def_id,
+                ));
+                found = true;
+            }
+            mi += 1;
+        }
+    }
+
+    result
+}
+
+/// Strips reference wrappers from a TyId to get the base type.
+fn strip_refs(ty_id: type_intern.TyId) -> type_intern.TyId {
+    let interner = type_intern.type_interner();
+    let mut current = ty_id;
+    let mut depth: i32 = 0;
+    while depth < 10 {
+        match interner.get(current) {
+            &type_intern.InternedTypeKind.Ref { inner, mutable: _ } => {
+                current = inner;
+                depth += 1;
+            }
+            _ => { return current; }
+        }
+    }
+    current
+}
+
 fn find_call_remaps_for_def(
     remaps: &Vec<common.DefaultMethodRemap>,
     def_id: u32,
@@ -4437,6 +4535,13 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
 
     let has_const_generics: bool = const_generic_fn_set.len() > 0;
 
+    // Pre-analysis: identify type-generic functions for monomorphization.
+    let mut type_generic_fn_set: Vec<u32> = Vec.new();
+    driver.collect_type_generic_fns(
+        &lower_result.items,
+        &mut type_generic_fn_set,
+    );
+
     // Generate vtables for dyn Trait dispatch (after ADT registry and def_names)
     codegen.generate_vtables(&mut ctx, &lower_result.interner, &lower_result.items);
     // Emit vtable global constants to output file
@@ -4446,6 +4551,8 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
 
     // Build work list: scan bodies once to identify which functions to codegen.
     // Filters out static bodies, duplicates, and const-generic bodies.
+    // Type-generic bodies are NOT skipped — they're compiled with type erasure as fallback.
+    // Monomorphized copies are generated in pass 2b for calls needing concrete types.
     let worklist = build_codegen_worklist(&lower_result, &static_def_ids, &const_generic_body_ids);
     eprint_str("[worklist:");
     eprint_str(int_to_string(worklist.items.len() as i32));
@@ -4469,10 +4576,11 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
         &mut ctx, &worklist, &lower_result, &typeck_result, output_path, args,
         has_const_generics, &const_generic_fn_set, &const_generic_param_counts,
         &turbofish_const_args, 0,
+        &type_generic_fn_set, &typeck_result.type_generic_calls,
     );
     eprint_str("[pass2_done]");
 
-    // Pass 2b: Monomorphization — generate specialized copies of const-generic functions.
+    // Pass 2b: Monomorphization — generate specialized copies of const-generic and type-generic functions.
     if pass2_result.mono_requests.len() > 0 {
         eprint_str("[mono:");
         eprint_str(int_to_string(pass2_result.mono_requests.len() as i32));
@@ -4495,30 +4603,79 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
                     let body_entry = &lower_result.bodies[info.body_index];
                     let hir_body = &body_entry.body;
 
-                    // Build const_bindings using Phase 4 DefIds from the BodyEntry
-                    let const_bindings = driver.build_const_bindings_from_body(
-                        &body_entry.const_param_def_ids,
-                        &req.const_values,
-                    );
-
                     // Activate MIR region for lowering
                     region_activate(mono_mir_region);
 
-                    let mono_mir = mir_lower.lower_body_with_const_info(
-                        hir_def.DefId.new(req.specialized_def_id),
-                        hir_body,
-                        info.return_ty,
-                        info.span,
-                        &typeck_result.subst_table,
-                        &typeck_result.method_resolutions,
-                        &typeck_result.field_resolutions,
-                        &typeck_result.coercion_entries,
-                        const_bindings,
-                        Vec.new(), // No further const-generic interception in specialized body
-                        Vec.new(), // No turbofish in specialized body
-                        Vec.new(), // No param counts needed
-                        pass2_result.next_mono_def_id,
-                    );
+                    let mono_mir = if req.is_type_mono {
+                        // Type-generic monomorphization:
+                        // Clone the subst table and inject type bindings so that
+                        // body type params resolve to concrete types.
+                        let mut mono_subst = unify.clone_subst_table(&typeck_result.subst_table);
+                        // Use Phase 4 body TyVarIds (from body_entry.type_param_var_ids)
+                        // instead of Phase 3 signature TyVarIds (from req.type_bindings.ty_var_index).
+                        // Phase 3 and Phase 4 allocate separate TyVarIds for the same type params;
+                        // the body uses Phase 4 IDs, so we must inject those into the subst table.
+                        for tbi in 0usize..req.type_bindings.len() {
+                            let concrete = type_intern.TyId.new(req.type_bindings[tbi].concrete_ty_id);
+                            if tbi < body_entry.type_param_var_ids.len() {
+                                let body_var_id = hir_def.TyVarId.new(body_entry.type_param_var_ids[tbi]);
+                                mono_subst.add_ty_subst_id(body_var_id, concrete);
+                            }
+                        }
+
+                        // Resolve method calls for concrete types using impl_method_table.
+                        // Clone method_resolutions and inject resolved methods for this body.
+                        let mono_method_res = resolve_methods_for_type_mono(
+                            &typeck_result.method_resolutions,
+                            &typeck_result.pending_method_calls,
+                            &typeck_result.impl_method_table,
+                            &mono_subst,
+                            req.original_def_id,
+                            req.specialized_def_id,
+                        );
+
+                        mir_lower.lower_body_with_const_info(
+                            hir_def.DefId.new(req.specialized_def_id),
+                            hir_body,
+                            info.return_ty,
+                            info.span,
+                            &mono_subst,
+                            &mono_method_res,
+                            &typeck_result.field_resolutions,
+                            &typeck_result.coercion_entries,
+                            Vec.new(), // No const_bindings
+                            Vec.new(), // No const_generic_fn_set
+                            Vec.new(), // No turbofish
+                            Vec.new(), // No param counts
+                            pass2_result.next_mono_def_id,
+                            Vec.new(), // No type_generic_fn_set
+                            Vec.new(), // No type_generic_calls
+                        )
+                    } else {
+                        // Const-generic monomorphization
+                        let const_bindings = driver.build_const_bindings_from_body(
+                            &body_entry.const_param_def_ids,
+                            &req.const_values,
+                        );
+
+                        mir_lower.lower_body_with_const_info(
+                            hir_def.DefId.new(req.specialized_def_id),
+                            hir_body,
+                            info.return_ty,
+                            info.span,
+                            &typeck_result.subst_table,
+                            &typeck_result.method_resolutions,
+                            &typeck_result.field_resolutions,
+                            &typeck_result.coercion_entries,
+                            const_bindings,
+                            Vec.new(), // No further const-generic interception
+                            Vec.new(), // No turbofish
+                            Vec.new(), // No param counts
+                            pass2_result.next_mono_def_id,
+                            Vec.new(), // No type_generic_fn_set
+                            Vec.new(), // No type_generic_calls
+                        )
+                    };
 
                     region_deactivate();
 

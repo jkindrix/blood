@@ -782,10 +782,22 @@ fn instantiate_fn_sig(checker: &mut typeck.TypeChecker, fn_info: &typeck.FnSigIn
     // Build a mapping from type-parameter Infer IDs to fresh Infer variables.
     // type_param_ids contains the actual TyVarId indices assigned during HIR lowering.
     let mut subst = unify.TypeParamSubst.new();
+    // Save fresh Infer mappings for type-generic monomorphization.
+    // Each pair is (body_ty_var_index, fresh_ty_var_index).
+    // Stored as flat Vec: [body0, fresh0, body1, fresh1, ...].
+    checker.last_type_param_bindings.clear();
     for i in 0u32..fn_info.num_generics {
         let fresh_var = checker.fresh_infer();
         if (i as usize) < fn_info.type_param_ids.len() {
-            subst.add_id(fn_info.type_param_ids[i as usize], fresh_var);
+            let body_tv = fn_info.type_param_ids[i as usize];
+            // Save mapping: body's type param → fresh Infer
+            let fresh_tv = match type_intern.type_interner().get(fresh_var) {
+                &type_intern.InternedTypeKind.Infer(v) => v.index,
+                _ => 0,
+            };
+            checker.last_type_param_bindings.push(body_tv);
+            checker.last_type_param_bindings.push(fresh_tv);
+            subst.add_id(body_tv, fresh_var);
         } else {
             subst.add_id(i, fresh_var);
         }
@@ -1033,6 +1045,14 @@ fn infer_call(
     };
 
     let callee_ty = infer_expr(checker, callee);
+    // Save type param bindings IMMEDIATELY — before args processing may overwrite them.
+    // last_type_param_bindings is set by instantiate_fn_sig during infer_expr(callee).
+    let mut saved_type_param_bindings: Vec<u32> = Vec.new();
+    for tbi in 0usize..checker.last_type_param_bindings.len() {
+        saved_type_param_bindings.push(checker.last_type_param_bindings[tbi]);
+    }
+    checker.last_type_param_bindings.clear();
+
     let resolved_callee = checker.resolve(callee_ty);
     // Use ty_id_to_type for matching on the resolved callee type structure
     let resolved_callee_hir = type_intern.ty_id_to_type(resolved_callee);
@@ -1116,6 +1136,42 @@ fn infer_call(
                     }
                 }
                 &Option.None => {}
+            }
+
+            // Extract type param → concrete type bindings for type-generic monomorphization.
+            // saved_type_param_bindings is flat: [body_tv0, fresh_tv0, body_tv1, fresh_tv1, ...].
+            // After args unification, each fresh_tv resolves to a concrete type.
+            if saved_type_param_bindings.len() >= 2 {
+                match &callee_def_id {
+                    &Option.Some(def_idx) => {
+                        let interner = type_intern.type_interner();
+                        let mut bindings: Vec<common.TypeMonoBinding> = Vec.new();
+                        let mut all_concrete = true;
+                        let mut bpi: usize = 0;
+                        while bpi + 1 < saved_type_param_bindings.len() {
+                            let body_tv = saved_type_param_bindings[bpi];
+                            let fresh_tv = saved_type_param_bindings[bpi + 1];
+                            let fresh_infer = interner.mk_infer(hir_def.TyVarId.new(fresh_tv));
+                            let concrete = checker.resolve(fresh_infer);
+                            // Check if actually concrete (not still Infer)
+                            match interner.get(concrete) {
+                                &type_intern.InternedTypeKind.Infer(_) => {
+                                    all_concrete = false;
+                                }
+                                _ => {
+                                    bindings.push(common.TypeMonoBinding.new(body_tv, concrete.index));
+                                }
+                            }
+                            bpi += 2;
+                        }
+                        if all_concrete && bindings.len() > 0 {
+                            checker.type_generic_calls.push(common.TypeGenericCallInfo.new(
+                                span.start, def_idx, bindings,
+                            ));
+                        }
+                    }
+                    &Option.None => {}
+                }
             }
 
             // Return the return type

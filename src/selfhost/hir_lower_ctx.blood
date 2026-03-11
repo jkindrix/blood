@@ -375,11 +375,16 @@ pub struct BodyEntry {
     /// Empty for non-const-generic functions. Used by monomorphization to
     /// build const_bindings mapping DefId → concrete value.
     pub const_param_def_ids: Vec<u32>,
+    /// TyVarId indices assigned to type generic params during Phase 4 body lowering.
+    /// These are the BODY's TyVarIds (re-allocated in Phase 4), which differ from
+    /// the Phase 3 signature TyVarIds stored in FnSigInfo.type_param_ids.
+    /// Used by type-generic monomorphization to inject correct substitutions.
+    pub type_param_var_ids: Vec<u32>,
 }
 
 impl BodyEntry {
     pub fn new(body_id: hir_def.BodyId, body: hir_expr.Body) -> BodyEntry {
-        BodyEntry { body_id, body, const_param_def_ids: Vec.new() }
+        BodyEntry { body_id, body, const_param_def_ids: Vec.new(), type_param_var_ids: Vec.new() }
     }
 }
 
