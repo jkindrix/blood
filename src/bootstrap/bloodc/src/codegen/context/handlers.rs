@@ -171,7 +171,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // Save and set context
         let saved_fn = self.current_fn;
         let saved_locals = std::mem::take(&mut self.locals);
+        let saved_in_handler_body = self.in_handler_body;
         self.current_fn = Some(fn_value);
+        self.in_handler_body = true;
 
         // Get the result parameter and bind to the param local
         let result_param = fn_value.get_nth_param(0)
@@ -406,6 +408,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // Restore context
         self.current_fn = saved_fn;
         self.locals = saved_locals;
+        self.in_handler_body = saved_in_handler_body;
 
         Ok(())
     }
@@ -447,7 +450,9 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 // Save and set context
                 let saved_fn = self.current_fn;
                 let saved_locals = std::mem::take(&mut self.locals);
+                let saved_in_handler_body = self.in_handler_body;
                 self.current_fn = Some(fn_value);
+                self.in_handler_body = true;
 
                 // Get the state pointer parameter
                 let state_ptr = fn_value.get_nth_param(0)
@@ -568,6 +573,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 // Restore context
                 self.current_fn = saved_fn;
                 self.locals = saved_locals;
+                self.in_handler_body = saved_in_handler_body;
             } else {
                 // Body not found — generate no-op
                 self.builder.build_return(None)
@@ -620,8 +626,10 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let saved_locals = std::mem::take(&mut self.locals);
         let saved_continuation = self.current_continuation.take();
         let saved_is_multishot = self.is_multishot_handler;
+        let saved_in_handler_body = self.in_handler_body;
         self.current_fn = Some(fn_value);
         self.is_multishot_handler = is_multishot;
+        self.in_handler_body = true;
 
         // Get parameters: (state: *mut void, args: *const i64, arg_count: i64, continuation: i64)
         let state_ptr = fn_value.get_nth_param(0)
@@ -669,18 +677,17 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 continue;
             }
 
-            let local_type = self.lower_type(&local.ty);
             let local_name = local.name.as_deref().unwrap_or("local");
 
-            // For unresolved types (Param/Infer/Error), lower_type returns i8 or i8*
-            // which is wrong — it truncates values. Use i64 instead, matching the
-            // uniform protocol width. For concrete types (i32, etc.), keep the real type.
+            // For unresolved types (Param/Infer/Error), use i64 matching the
+            // uniform handler protocol width. Only call lower_type for concrete types
+            // to avoid spurious "unsubstituted type parameter" errors.
             let is_unresolved = matches!(local.ty.kind(),
                 TypeKind::Param(_) | TypeKind::Infer(_) | TypeKind::Error);
             let effective_type: BasicTypeEnum = if is_unresolved {
                 i64_type.into()
             } else {
-                local_type
+                self.lower_type(&local.ty)
             };
 
             // Check if this is a "resume" local - it's a function type
@@ -931,6 +938,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         self.locals = saved_locals;
         self.current_continuation = saved_continuation;
         self.is_multishot_handler = saved_is_multishot;
+        self.in_handler_body = saved_in_handler_body;
 
         Ok(())
     }
@@ -1124,8 +1132,10 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let saved_locals = std::mem::take(&mut self.locals);
         let saved_continuation = self.current_continuation.take();
         let saved_is_multishot = self.is_multishot_handler;
+        let saved_in_handler_body = self.in_handler_body;
         self.current_fn = Some(fn_value);
         self.is_multishot_handler = is_multishot;
+        self.in_handler_body = true;
 
         // Get parameters: (state: *mut void, args: *const i64, arg_count: i64, continuation: i64)
         let state_ptr = fn_value.get_nth_param(0)
@@ -1335,6 +1345,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         self.locals = saved_locals;
         self.current_continuation = saved_continuation;
         self.is_multishot_handler = saved_is_multishot;
+        self.in_handler_body = saved_in_handler_body;
 
         Ok(fn_value)
     }

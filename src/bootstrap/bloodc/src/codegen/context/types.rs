@@ -273,19 +273,22 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 self.context.i8_type().into()
             }
             TypeKind::Param(id) => {
-                // Unsubstituted type parameter reached codegen — this is a
-                // monomorphization bug. Report it instead of silently emitting i8*.
-                self.type_lowering_errors.borrow_mut().push(
-                    crate::diagnostics::Diagnostic::error(
-                        format!(
-                            "unsubstituted type parameter {:?} reached codegen; \
-                             monomorphization should have replaced this",
-                            id
-                        ),
-                        self.current_span(),
-                    )
-                );
-                // Return opaque ptr as placeholder to allow continued error collection
+                if !self.in_handler_body {
+                    // Unsubstituted type parameter reached codegen — this is a
+                    // monomorphization bug. Report it instead of silently emitting i8*.
+                    self.type_lowering_errors.borrow_mut().push(
+                        crate::diagnostics::Diagnostic::error(
+                            format!(
+                                "unsubstituted type parameter {:?} reached codegen; \
+                                 monomorphization should have replaced this",
+                                id
+                            ),
+                            self.current_span(),
+                        )
+                    );
+                }
+                // Return opaque ptr as placeholder — handler bodies use the i64
+                // uniform protocol so this is fine for generic handlers.
                 self.context.ptr_type(AddressSpace::default()).into()
             }
             TypeKind::Closure { .. } => {

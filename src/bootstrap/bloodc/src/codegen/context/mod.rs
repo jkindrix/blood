@@ -745,6 +745,10 @@ pub struct CodegenContext<'ctx, 'a> {
     /// Whether the current handler operation is multi-shot.
     /// When true, compile_resume clones the continuation before resuming.
     pub(super) is_multishot_handler: bool,
+    /// Whether we are currently compiling a handler body (op or return clause).
+    /// When true, unsubstituted Param types are expected (handlers aren't monomorphized)
+    /// and should not trigger errors.
+    pub(super) in_handler_body: bool,
     /// The DefId of the main function, if it exists.
     /// Used to handle main's special return type (must return i32 for C runtime).
     pub(super) main_fn_def_id: Option<DefId>,
@@ -877,6 +881,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             static_types: HashMap::new(),
             current_continuation: None,
             is_multishot_handler: false,
+            in_handler_body: false,
             main_fn_def_id: None,
             generic_fn_defs: HashMap::new(),
             trait_default_fn_defs: HashMap::new(),

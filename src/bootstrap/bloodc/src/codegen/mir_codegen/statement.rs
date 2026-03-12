@@ -659,8 +659,9 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                                 )])?;
 
                             // Build the typed struct type for GEP into the original state
+                            // Use i64 for unresolved generic params, matching shadow layout
                             let typed_field_llvm_types: Vec<inkwell::types::BasicTypeEnum> = handler_field_types.iter()
-                                .map(|t| self.lower_type(t))
+                                .map(|t| if t.has_type_vars() { i64_ty.into() } else { self.lower_type(t) })
                                 .collect();
                             let typed_struct_type = self.context.struct_type(&typed_field_llvm_types, false);
                             // With opaque pointers, all pointers are the same type.
