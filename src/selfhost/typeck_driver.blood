@@ -1148,12 +1148,21 @@ fn find_handler_state_count_for_body(
 /// Unify handler op parameter types with their effect-declared types.
 /// This resolves the `Type.infer()` variables created in `lower_op_impl`
 /// so that the op body's parameter locals have correct types during type checking.
+///
+/// For generic effects (e.g., `effect Emit<T>`), also unifies the effect's type
+/// parameters with the handler's concrete type arguments (e.g., T → i32 when
+/// handling `Emit<i32>`), so that op param types resolve transitively.
 fn unify_handler_op_params(
     checker: &mut typeck.TypeChecker,
     items: &Vec<hir_lower_ctx.ItemEntry>,
     body: &hir_expr.Body,
     body_id: hir_def.BodyId,
 ) {
+    // First, unify effect-level type params with handler type args.
+    // This must happen before param type unification so that transitive
+    // resolution works (e.g., op param T resolves to i32).
+    unify_effect_type_params_for_body(checker, items, body_id);
+
     match find_op_param_types_for_body(items, body_id) {
         Option.Some(ref param_tys) => {
             let state_count = find_handler_state_count_for_body(items, body_id);
@@ -1168,6 +1177,58 @@ fn unify_handler_op_params(
             }
         }
         Option.None => {}
+    }
+}
+
+/// Unifies effect-level type parameters with the handler's concrete type arguments.
+/// For example, if handling `Emit<i32>` where `effect Emit<T>`, this unifies T → i32.
+fn unify_effect_type_params_for_body(
+    checker: &mut typeck.TypeChecker,
+    items: &Vec<hir_lower_ctx.ItemEntry>,
+    body_id: hir_def.BodyId,
+) {
+    // Find the handler that owns this body
+    for i in 0usize..items.len() {
+        match &items[i].item.kind {
+            &hir_item.ItemKind.Handler(ref handler_def) => {
+                for j in 0usize..handler_def.op_impls.len() {
+                    if handler_def.op_impls[j].body_id.index == body_id.index {
+                        let effect_ref = &handler_def.handled_effect;
+                        if effect_ref.args.len() == 0 {
+                            return;
+                        }
+                        // Find the effect definition to get its type param TyVarIds
+                        for ei in 0usize..items.len() {
+                            match &items[ei].item.kind {
+                                &hir_item.ItemKind.Effect(ref effect_def) => {
+                                    if items[ei].item.def_id.index == effect_ref.def_id.index {
+                                        // Unify each effect type param with the handler's arg
+                                        let mut pi: usize = 0;
+                                        for gp in 0usize..effect_def.generics.params.len() {
+                                            match &effect_def.generics.params[gp] {
+                                                &hir_ty.GenericParam.TypeParam(ref tp) => {
+                                                    if pi < effect_ref.args.len() {
+                                                        let param_ty_id = type_intern.type_interner().mk_infer(tp.var_id);
+                                                        let arg_ty_id = type_intern.type_to_ty_id(&effect_ref.args[pi]);
+                                                        checker.unify(param_ty_id, arg_ty_id, items[i].item.span);
+                                                    }
+                                                    pi += 1;
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+                                        return;
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        return;
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 }
 

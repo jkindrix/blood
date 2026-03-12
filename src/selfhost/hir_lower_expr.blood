@@ -2852,13 +2852,16 @@ fn lower_try_with_expr(
             match &_pat_hir.kind {
                 &hir_expr.PatternKind.Binding { local_id, name: _, mode: _, subpattern: _ } => {
                     param_ids.push(local_id);
-                    param_types.push(type_intern.type_interner().mk_infer(ctx.alloc_ty_var()));
+                    // Use the pattern's type (same TyId as the local) so that
+                    // typeck unification of param_types with effect op param types
+                    // directly resolves the local's type.
+                    param_types.push(_pat_hir.ty);
                 }
                 _ => {
                     // Non-binding patterns still get a fresh local for positional tracking
                     let fresh_id = ctx.alloc_local_id();
                     param_ids.push(fresh_id);
-                    param_types.push(type_intern.type_interner().mk_infer(ctx.alloc_ty_var()));
+                    param_types.push(_pat_hir.ty);
                 }
             }
         }
