@@ -403,6 +403,26 @@ impl Compiler {
                             &req.const_values,
                         );
 
+                        // Remap field_resolutions: the originals are keyed by original_def_id
+                        // but the mono body uses specialized_def_id for lookups.
+                        let mut mono_field_res: Vec<common.FieldResEntry> = Vec.new();
+                        for fri in 0usize..typeck_result.field_resolutions.len() {
+                            let fentry = &typeck_result.field_resolutions[fri];
+                            if fentry.body_def_id == req.original_def_id {
+                                mono_field_res.push(common.FieldResEntry.new(
+                                    req.specialized_def_id,
+                                    fentry.span_start,
+                                    fentry.field_idx,
+                                ));
+                            } else {
+                                mono_field_res.push(common.FieldResEntry.new(
+                                    fentry.body_def_id,
+                                    fentry.span_start,
+                                    fentry.field_idx,
+                                ));
+                            }
+                        }
+
                         // Lower the body with const_bindings
                         let mut spec_result = mir_lower.lower_body_with_const_info(
                             hir_def.DefId.new(req.specialized_def_id),
@@ -411,7 +431,7 @@ impl Compiler {
                             binfo.span,
                             &typeck_result.subst_table,
                             &typeck_result.method_resolutions,
-                            &typeck_result.field_resolutions,
+                            &mono_field_res,
                             &typeck_result.coercion_entries,
                             const_bindings,
                             Vec.new(), // No const_generic_fn_set for specialized bodies

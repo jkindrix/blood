@@ -4637,6 +4637,12 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
                         // the body uses Phase 4 IDs, so we must inject those into the subst table.
                         for tbi in 0usize..req.type_bindings.len() {
                             let concrete = type_intern.TyId.new(req.type_bindings[tbi].concrete_ty_id);
+                            // Add Phase 3 signature TyVarId binding so that the function
+                            // return type (which uses Phase 3 IDs) resolves correctly.
+                            let sig_var_id = hir_def.TyVarId.new(req.type_bindings[tbi].ty_var_index);
+                            mono_subst.add_ty_subst_id(sig_var_id, concrete);
+                            // Also add Phase 4 body TyVarId binding so that body-internal
+                            // type references resolve correctly.
                             if tbi < body_entry.type_param_var_ids.len() {
                                 let body_var_id = hir_def.TyVarId.new(body_entry.type_param_var_ids[tbi]);
                                 mono_subst.add_ty_subst_id(body_var_id, concrete);
@@ -4654,6 +4660,26 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
                             req.specialized_def_id,
                         );
 
+                        // Remap field_resolutions: the originals are keyed by original_def_id
+                        // but the mono body uses specialized_def_id for lookups.
+                        let mut mono_field_res: Vec<common.FieldResEntry> = Vec.new();
+                        for fri in 0usize..typeck_result.field_resolutions.len() {
+                            let entry = &typeck_result.field_resolutions[fri];
+                            if entry.body_def_id == req.original_def_id {
+                                mono_field_res.push(common.FieldResEntry.new(
+                                    req.specialized_def_id,
+                                    entry.span_start,
+                                    entry.field_idx,
+                                ));
+                            } else {
+                                mono_field_res.push(common.FieldResEntry.new(
+                                    entry.body_def_id,
+                                    entry.span_start,
+                                    entry.field_idx,
+                                ));
+                            }
+                        }
+
                         mir_lower.lower_body_with_const_info(
                             hir_def.DefId.new(req.specialized_def_id),
                             hir_body,
@@ -4661,7 +4687,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
                             info.span,
                             &mono_subst,
                             &mono_method_res,
-                            &typeck_result.field_resolutions,
+                            &mono_field_res,
                             &typeck_result.coercion_entries,
                             Vec.new(), // No const_bindings
                             Vec.new(), // No const_generic_fn_set
