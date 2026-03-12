@@ -567,7 +567,7 @@ handler GracefulStale for StaleReference {
 
 ### 4.6 Standard Effects
 
-#### Error<E>
+#### Error\<E>
 
 ```blood
 effect Error<E> {
@@ -580,7 +580,7 @@ deep handler Propagate<E> for Error<E> {
 }
 ```
 
-#### State<S>
+#### State\<S>
 
 ```blood
 effect State<S> {
@@ -597,7 +597,7 @@ deep handler LocalState<S> for State<S> {
 }
 ```
 
-#### Yield<T>
+#### Yield\<T>
 
 ```blood
 effect Yield<T> {
