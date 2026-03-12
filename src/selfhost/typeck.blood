@@ -276,8 +276,11 @@ pub struct TypeChecker {
     pub in_loop: bool,
     /// Type of the current loop (for break values).
     pub loop_ty: Option<type_intern.TyId>,
-    /// Local variable types by LocalId index.
+    /// Local variable types by LocalId index (offset by local_base).
     pub locals: Vec<typeck_types.LocalInfo>,
+    /// Base offset for local variable indices in the current body.
+    /// HIR allocates LocalIds globally; we subtract this to index into locals Vec.
+    pub local_base: u32,
     /// Type errors collected during checking.
     pub errors: Vec<typeck_types.TypeError>,
     /// Function signature info by DefId.index for O(1) lookup.
@@ -390,6 +393,11 @@ pub struct TypeChecker {
     /// These will be defaulted to i32/f64 during MIR lowering, so they should not be
     /// flagged as "undetermined type variables" during the post-typeck check.
     pub numeric_infer_ids: Vec<u32>,
+    /// Cached resolved numeric var IDs. Built incrementally across bodies to avoid O(n²).
+    /// Contains var IDs of Infer types that trace back to numeric literals.
+    pub resolved_numeric_cache: Vec<u32>,
+    /// Index into numeric_infer_ids marking how far the cache has been built.
+    pub resolved_numeric_cursor: usize,
     /// Temporary: fresh Infer mappings from the most recent instantiate_fn_sig call.
     /// Each entry is (body_ty_var_index, fresh_ty_var_index).
     /// Read by infer_call to extract type param → concrete type bindings.
@@ -416,6 +424,7 @@ impl TypeChecker {
             in_loop: false,
             loop_ty: Option.None,
             locals: Vec.new(),
+            local_base: 0,
             errors: Vec.new(),
             fn_sigs: Vec.new(),
             structs: Vec.new(),
@@ -461,6 +470,8 @@ impl TypeChecker {
             deref_method_ids: hashmap.HashMapU64U64.new(),
             in_unsafe_context: false,
             numeric_infer_ids: Vec.new(),
+            resolved_numeric_cache: Vec.new(),
+            resolved_numeric_cursor: 0,
             last_type_param_bindings: Vec.new(),
             type_generic_calls: Vec.new(),
             impl_method_table: Vec.new(),
@@ -478,6 +489,7 @@ impl TypeChecker {
             in_loop: false,
             loop_ty: Option.None,
             locals: Vec.new(),
+            local_base: 0,
             errors: Vec.new(),
             fn_sigs: Vec.new(),
             structs: Vec.new(),
@@ -523,6 +535,8 @@ impl TypeChecker {
             deref_method_ids: hashmap.HashMapU64U64.new(),
             in_unsafe_context: false,
             numeric_infer_ids: Vec.new(),
+            resolved_numeric_cache: Vec.new(),
+            resolved_numeric_cursor: 0,
             last_type_param_bindings: Vec.new(),
             type_generic_calls: Vec.new(),
             impl_method_table: Vec.new(),
@@ -545,7 +559,10 @@ impl TypeChecker {
 
     /// Gets the type of a local variable.
     pub fn get_local_ty(self: &Self, id: hir_def.LocalId) -> Option<type_intern.TyId> {
-        let idx = id.index as usize;
+        if id.index < self.local_base {
+            return Option.None;
+        }
+        let idx = (id.index - self.local_base) as usize;
         if idx < self.locals.len() {
             let local_ref = &self.locals[idx];
             Some(type_intern.TyId.new(local_ref.ty.index))
@@ -556,7 +573,10 @@ impl TypeChecker {
 
     /// Checks if a local variable is mutable.
     pub fn is_local_mutable(self: &Self, id: hir_def.LocalId) -> bool {
-        let idx = id.index as usize;
+        if id.index < self.local_base {
+            return false;
+        }
+        let idx = (id.index - self.local_base) as usize;
         if idx < self.locals.len() {
             self.locals[idx].mutable
         } else {
@@ -732,6 +752,7 @@ impl TypeChecker {
     /// Clears local variables (for entering a new function body).
     pub fn clear_locals(self: &mut Self) {
         self.locals = Vec.new();
+        self.local_base = 0;
     }
 
     // ========================================================
