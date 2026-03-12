@@ -400,6 +400,10 @@ pub struct TypeChecker {
     /// Flat table of impl methods for resolving trait methods during monomorphization.
     /// Each entry maps (self_ty_id, method_name) → method_def_id.
     pub impl_method_table: Vec<common.ImplMethodEntry>,
+    /// DefId indices of methods that belong to generic impls (impl<T>).
+    /// Used by get_fn_generic_status to treat these as generic even when
+    /// the method's own signature has no explicit generics.
+    pub generic_impl_method_defs: Vec<u32>,
 }
 
 impl TypeChecker {
@@ -460,6 +464,7 @@ impl TypeChecker {
             last_type_param_bindings: Vec.new(),
             type_generic_calls: Vec.new(),
             impl_method_table: Vec.new(),
+            generic_impl_method_defs: Vec.new(),
         }
     }
 
@@ -521,6 +526,7 @@ impl TypeChecker {
             last_type_param_bindings: Vec.new(),
             type_generic_calls: Vec.new(),
             impl_method_table: Vec.new(),
+            generic_impl_method_defs: Vec.new(),
         }
     }
 

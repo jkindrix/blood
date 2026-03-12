@@ -687,6 +687,11 @@ fn register_impl(
     impl_def: &hir_item.ImplDef,
     items: &Vec<hir_lower_ctx.ItemEntry>,
 ) {
+    // Count impl-level generics (e.g., T in impl<T> Foo<T>).
+    // Methods in generic impls inherit these type parameters, so their fn_sigs
+    // must reflect the combined count to avoid false "cannot infer type" errors.
+    let impl_num_generics = count_type_params(&impl_def.generics.params);
+
     // Extract method info from associated items
     let mut methods: Vec<typeck.MethodInfo> = Vec.new();
     for i in 0usize..impl_def.items.len() {
@@ -733,6 +738,12 @@ fn register_impl(
                 // calls like Counter.new(10) would fail to resolve the return type,
                 // leaving downstream method call receivers as Infer variables.
                 checker.register_fn_sig(assoc_fn.def_id, &assoc_fn.sig);
+
+                // If the impl has generics, mark this method as being in a generic
+                // impl so get_fn_generic_status treats it as generic.
+                if impl_num_generics > 0 {
+                    checker.generic_impl_method_defs.push(assoc_fn.def_id.index);
+                }
             }
             &hir_item.AssocItem.Type(_) => {
                 // Associated types don't need registration for basic method resolution
@@ -1718,9 +1729,17 @@ fn get_fn_generic_status(checker: &mut typeck.TypeChecker) -> i32 {
             &Option.Some(ref sig) => {
                 if sig.num_generics > 0 {
                     return 2;
-                } else {
-                    return 1;
                 }
+                // Check if this method belongs to a generic impl (impl<T>).
+                // Such methods inherit type parameters even though their own
+                // signature has num_generics == 0.
+                let def_id_u32 = checker.current_body_def_id;
+                for gi in 0usize..checker.generic_impl_method_defs.len() {
+                    if checker.generic_impl_method_defs[gi] == def_id_u32 {
+                        return 2;
+                    }
+                }
+                return 1;
             }
             &Option.None => {}
         }
