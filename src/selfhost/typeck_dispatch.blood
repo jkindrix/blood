@@ -187,6 +187,8 @@ pub enum ObjectSafetyResult {
 pub fn check_trait_object_safety(
     trait_info: &typeck_info.TraitInfo,
 ) -> ObjectSafetyResult {
+    let trait_def_id = trait_info.def_id;
+
     // Check each method
     let num_methods: u32 = trait_info.methods.len() as u32;
     for i in 0u32..num_methods {
@@ -200,16 +202,18 @@ pub fn check_trait_object_safety(
         }
 
         // Rule 2: [No-Self-By-Value]
-        // A method must take &self or &mut self, not self by value.
-        // Static methods (no self at all) are OK — they just can't be
-        // called through the vtable. Blood currently always desugars
-        // `self` to `&self`, so self-by-value is not representable yet.
-        // When self-by-value is added, this check will need a
-        // `takes_self_val` field on TraitMethodInfo.
+        // Check all non-receiver parameters for bare Self.
+        // Self behind a reference is OK (known size).
+        let num_params: u32 = method.param_tys.len() as u32;
+        for p in 0u32..num_params {
+            if type_contains_self(method.param_tys[p as usize], trait_def_id) {
+                return ObjectSafetyResult.Unsafe(ObjectSafetyViolation.SelfByValue);
+            }
+        }
 
         // Rule 3: [No-Self-Return]
-        // Check if return type contains Self (Param type) not behind a reference.
-        if return_type_contains_self(method.return_ty) {
+        // Check if return type contains Self not behind a reference.
+        if type_contains_self(method.return_ty, trait_def_id) {
             return ObjectSafetyResult.Unsafe(ObjectSafetyViolation.SelfReturn);
         }
     }
@@ -228,28 +232,35 @@ pub fn check_trait_object_safety(
     ObjectSafetyResult.Safe
 }
 
-/// Checks if a return type contains Self (Param type) not behind a reference.
+/// Checks if a type contains Self not behind a reference.
+/// Self in trait HIR is lowered as Adt(trait_def_id), so we check both
+/// Param (generic) and Adt matching the trait's own DefId.
 /// Recursively checks tuples and ADT type arguments.
-fn return_type_contains_self(ty: type_intern.TyId) -> bool {
+fn type_contains_self(ty: type_intern.TyId, trait_def_id: hir_def.DefId) -> bool {
     let interner = type_intern.type_interner();
     let kind = interner.get(ty);
     match kind {
         &type_intern.InternedTypeKind.Param(_) => true,
-        &type_intern.InternedTypeKind.Tuple(list_id) => {
-            let len = interner.ty_list_len(list_id);
+        &type_intern.InternedTypeKind.Adt { def_id, args } => {
+            // Self in trait methods is lowered as Adt(trait_def_id) with no args
+            if def_id.index == trait_def_id.index {
+                return true;
+            }
+            // Otherwise check type arguments recursively
+            let len = interner.ty_list_len(args);
             for k in 0usize..len {
-                let elem = interner.get_ty_list_element(list_id, k);
-                if return_type_contains_self(elem) {
+                let arg = interner.get_ty_list_element(args, k);
+                if type_contains_self(arg, trait_def_id) {
                     return true;
                 }
             }
             false
         }
-        &type_intern.InternedTypeKind.Adt { def_id: _, args } => {
-            let len = interner.ty_list_len(args);
+        &type_intern.InternedTypeKind.Tuple(list_id) => {
+            let len = interner.ty_list_len(list_id);
             for k in 0usize..len {
-                let arg = interner.get_ty_list_element(args, k);
-                if return_type_contains_self(arg) {
+                let elem = interner.get_ty_list_element(list_id, k);
+                if type_contains_self(elem, trait_def_id) {
                     return true;
                 }
             }
