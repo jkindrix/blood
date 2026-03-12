@@ -1,0 +1,38 @@
+// Test: nested non-resumptive handlers (inner aborts, outer resumes)
+// Verifies abort mechanism works correctly with nested handler scopes.
+// EXPECT: 99
+effect Inner {
+    op fail() -> i32;
+}
+
+effect Outer {
+    op transform(x: i32) -> i32;
+}
+
+deep handler InnerAbort for Inner {
+    return(x) { x }
+    op fail() { 99 }
+}
+
+deep handler OuterPass for Outer {
+    return(x) { x }
+    op transform(x) { resume(x) }
+}
+
+fn do_work() -> i32 / {Inner, Outer} {
+    let a: i32 = perform Outer.transform(10);
+    let b: i32 = perform Inner.fail();
+    println_int(777);
+    a + b
+}
+
+fn main() -> i32 {
+    let result: i32 = with OuterPass {} handle {
+        with InnerAbort {} handle {
+            do_work()
+        }
+    };
+    println_int(result);
+    if result != 99 { return 1; }
+    0
+}

@@ -1,0 +1,29 @@
+// Test: non-resumptive handler aborts continuation (exception/abort pattern)
+// Handler op does NOT call resume — computation after perform must NOT execute.
+// EXPECT: 42
+effect Abort {
+    op abort() -> i32;
+}
+
+deep handler AbortH for Abort {
+    return(x) { x }
+
+    op abort() {
+        42
+    }
+}
+
+fn might_abort() -> i32 / {Abort} {
+    let x: i32 = perform Abort.abort();
+    println_int(888);
+    x + 1
+}
+
+fn main() -> i32 {
+    let result: i32 = with AbortH {} handle {
+        might_abort()
+    };
+    println_int(result);
+    if result != 42 { return 1; }
+    0
+}

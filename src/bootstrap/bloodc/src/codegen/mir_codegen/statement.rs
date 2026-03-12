@@ -805,23 +805,10 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                 // For handlers whose effects may be non-tail-resumptive (e.g., Cancel, Error),
                 // set up a setjmp so blood_perform can longjmp back when the handler
                 // doesn't call resume().
-                let needs_abort_target = {
-                    let by_id = StandardEffects::is_tail_resumptive(effect_id);
-                    let result = match by_id {
-                        Some(true) => false,
-                        Some(false) => true,
-                        None => {
-                            if let Some(effect_info) = self.effect_defs.get(&effect_id) {
-                                StandardEffects::is_tail_resumptive_by_name(&effect_info.name)
-                                    .map(|tr| !tr)
-                                    .unwrap_or(false)
-                            } else {
-                                false
-                            }
-                        }
-                    };
-                    result
-                };
+                // Use the handler's own all_tail_resumptive flag, which is computed
+                // from analyzing the handler op bodies. This correctly handles
+                // user-defined effects — not just hardcoded standard effect names.
+                let needs_abort_target = !handler_info.all_tail_resumptive;
 
                 if needs_abort_target {
                     let i32_ty = self.context.i32_type();
@@ -923,8 +910,8 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                         .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), stmt.span)])?;
 
                     // Leave abort block unterminated — will be wired up at CallReturnClause time
-                    // Store the abort info for later use
-                    self.handler_abort_pending = Some(crate::codegen::context::HandlerAbortInfo {
+                    // Push abort info onto stack (supports nested handlers)
+                    self.handler_abort_stack.push(crate::codegen::context::HandlerAbortInfo {
                         abort_block,
                         abort_result: abort_result_alloca,
                     });
@@ -1379,24 +1366,25 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                 // doesn't call resume().
                 //
                 // Check if this handler's effect is non-tail-resumptive
+                // For inline handlers, check standard effects by ID/name.
+                // Inline handlers don't have CallReturnClause to wire up the abort
+                // block, so we can only enable abort for known non-tail-resumptive
+                // standard effects (Cancel, Error, StaleReference).
                 let needs_abort_target = {
-                    // Check well-known effect IDs first
                     let by_id = StandardEffects::is_tail_resumptive(*effect_id);
-                    let result = match by_id {
-                        Some(true) => false,   // Definitely tail-resumptive, no abort needed
-                        Some(false) => true,   // Definitely non-tail-resumptive, need abort
+                    match by_id {
+                        Some(true) => false,
+                        Some(false) => true,
                         None => {
-                            // User-defined effect: check by name via effect_defs
                             if let Some(effect_info) = self.effect_defs.get(effect_id) {
                                 StandardEffects::is_tail_resumptive_by_name(&effect_info.name)
-                                    .map(|tr| !tr) // true if non-tail-resumptive
-                                    .unwrap_or(false) // unknown effects: assume tail-resumptive (no abort)
+                                    .map(|tr| !tr)
+                                    .unwrap_or(false) // inline handlers: no abort wiring available
                             } else {
                                 false
                             }
                         }
-                    };
-                    result
+                    }
                 };
 
                 if needs_abort_target {
@@ -1500,8 +1488,8 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                         .map_err(|e| vec![Diagnostic::error(format!("LLVM error: {}", e), stmt.span)])?;
 
                     // Leave abort block unterminated — will be wired up at CallReturnClause time
-                    // Store the abort info for later use
-                    self.handler_abort_pending = Some(crate::codegen::context::HandlerAbortInfo {
+                    // Push abort info onto stack (supports nested handlers)
+                    self.handler_abort_stack.push(crate::codegen::context::HandlerAbortInfo {
                         abort_block,
                         abort_result: abort_result_alloca,
                     });
@@ -1559,7 +1547,7 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                     )])?;
 
                 // Pop abort target if one was pushed (for non-resuming handler support)
-                if self.handler_abort_pending.is_some() {
+                if !self.handler_abort_stack.is_empty() {
                     let pop_abort_fn = self.module.get_function("blood_handler_pop_abort_target")
                         .unwrap_or_else(|| {
                             let fn_type = self.context.void_type().fn_type(&[], false);
@@ -1714,7 +1702,7 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                     )])?;
 
                 // Wire up the abort path if there's a pending handler abort
-                if let Some(abort_info) = self.handler_abort_pending.take() {
+                if let Some(abort_info) = self.handler_abort_stack.pop() {
                     let current_fn = self.current_fn.ok_or_else(|| {
                         vec![Diagnostic::error("No current function", stmt.span)]
                     })?;

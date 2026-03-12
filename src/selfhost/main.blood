@@ -2715,16 +2715,17 @@ fn collect_handler_info(
                     );
                 }
 
-                // Check if this effect is non-tail-resumptive by name.
-                // Effects like Cancel, Error, StaleReference have handlers that
-                // may not call resume(), requiring setjmp/longjmp abort targets.
+                // Register all effects as non-tail-resumptive by default (safe).
+                // Only known tail-resumptive builtins (State, IO, Console) are
+                // excluded — their handlers always resume in tail position.
                 // Use span-based extraction because item name symbols use the AST
                 // parser's interner, not the HIR interner.
                 let effect_name = resolve_symbol(intern, entry.item.name.symbol);
-                if str_equals(&effect_name, "Cancel")
-                    || str_equals(&effect_name, "Error")
-                    || str_equals(&effect_name, "StaleReference")
-                {
+                let is_known_tail_resumptive =
+                    str_equals(&effect_name, "State")
+                    || str_equals(&effect_name, "IO")
+                    || str_equals(&effect_name, "Console");
+                if !is_known_tail_resumptive {
                     ctx.register_non_tail_resumptive_effect(effect_item_def_id);
                 }
             }

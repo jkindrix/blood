@@ -823,10 +823,11 @@ pub struct CodegenContext<'ctx, 'a> {
     /// codegen helpers can produce diagnostics with source locations.
     /// Uses Cell<Span> because Span is Copy and we only need interior mutability.
     pub(super) current_mir_span: Cell<Span>,
-    /// Pending handler abort state for non-resuming handler support.
-    /// Set during PushHandler for handlers that may not resume (non-tail-resumptive).
-    /// The abort block is left unterminated and wired up at CallReturnClause time.
-    pub(super) handler_abort_pending: Option<HandlerAbortInfo<'ctx>>,
+    /// Stack of pending handler abort states for non-resuming handler support.
+    /// Pushed during PushHandler for handlers that may not resume (non-tail-resumptive).
+    /// Each abort block is left unterminated and wired up at CallReturnClause time.
+    /// Uses a Vec to support nested handlers (inner pushed last, popped first).
+    pub(super) handler_abort_stack: Vec<HandlerAbortInfo<'ctx>>,
 }
 
 /// State for the setjmp/longjmp abort path of a non-resuming handler.
@@ -903,7 +904,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             lowering_adts: RefCell::new(HashSet::new()),
             type_lowering_errors: RefCell::new(Vec::new()),
             current_mir_span: Cell::new(Span::dummy()),
-            handler_abort_pending: None,
+            handler_abort_stack: Vec::new(),
         }
     }
 
