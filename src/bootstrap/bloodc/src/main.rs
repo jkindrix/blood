@@ -1405,10 +1405,11 @@ fn cmd_build(args: &FileArgs, verbosity: u8, timings: bool) -> ExitCode {
                     }
                     bloodc::hir::ItemKind::Trait { items, .. } => {
                         for ti in items {
-                            if let bloodc::hir::TraitItemKind::Fn(sig, Some(_)) = &ti.kind {
-                                if !sig.generics.is_empty() {
-                                    generic_def_ids.insert(ti.def_id);
-                                }
+                            // All trait default methods have an implicit Self type parameter,
+                            // so their MIR bodies naturally contain Param types even when
+                            // they have no explicit generics in their signature.
+                            if let bloodc::hir::TraitItemKind::Fn(_, Some(_)) = &ti.kind {
+                                generic_def_ids.insert(ti.def_id);
                             }
                         }
                     }
