@@ -753,7 +753,12 @@ impl<'a> TypeContext<'a> {
                     // All operations share this variable so it can be unified at the
                     // handle site with the body's result type.
                     let continuation_result_ty = handler_continuation_ty.clone().unwrap();
-                    (continuation_result_ty.clone(), continuation_result_ty)
+                    // The op body itself is NOT constrained to continuation_result_ty.
+                    // Non-resumptive ops (e.g., raise/abort) may return a different type
+                    // than the continuation — the body's return value is discarded by the
+                    // runtime when resume is not called.
+                    let body_ty = self.unifier.fresh_var();
+                    (continuation_result_ty, body_ty)
                 }
                 ast::HandlerKind::Shallow => {
                     // Shallow handler: resume is tail-resumptive only, returns unit
