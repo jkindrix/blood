@@ -4589,6 +4589,11 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
         // Shared MIR region for monomorphization — created once, reset between functions.
         let mono_mir_region = region_create(4194304, 8589934592);
 
+        // Track compiled mono function names to skip duplicates.
+        // Multiple call sites can generate MonoRequests for the same function+types;
+        // we compile the first and register aliases for the rest.
+        let mut compiled_mono_names: Vec<String> = Vec.new();
+
         for mono_i in 0usize..pass2_result.mono_requests.len() {
             let req = &pass2_result.mono_requests[mono_i];
 
@@ -4600,6 +4605,21 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
             );
             match &body_info {
                 &Option.Some(ref info) => {
+                    // Check if this mono function was already compiled (dedup).
+                    // Register the def name regardless so call sites resolve correctly.
+                    ctx.register_def_name(req.specialized_def_id, common.make_string(req.fn_name.as_str()));
+                    let mut already_compiled: bool = false;
+                    for ci in 0usize..compiled_mono_names.len() {
+                        if str_equals(&compiled_mono_names[ci], req.fn_name.as_str()) {
+                            already_compiled = true;
+                        }
+                    }
+                    if already_compiled {
+                        // Skip — function already emitted by a previous request
+                        region_reset(mono_mir_region);
+                    } else {
+                    compiled_mono_names.push(common.make_string(req.fn_name.as_str()));
+
                     let body_entry = &lower_result.bodies[info.body_index];
                     let hir_body = &body_entry.body;
 
@@ -4679,15 +4699,13 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
 
                     region_deactivate();
 
-                    // Register the specialized function name
-                    ctx.register_def_name(req.specialized_def_id, common.make_string(req.fn_name.as_str()));
-
                     // Codegen the specialized body
                     let mono_ir = codegen.generate_function_with_ctx(&mut ctx, &mono_mir.body, req.fn_name.as_str());
                     file_append_string(output_path, mono_ir.as_str());
 
                     // Reset MIR region for next mono function
                     region_reset(mono_mir_region);
+                    } // end else (not already_compiled)
                 }
                 &Option.None => {
                     eprint_str("[mono_err: body not found for def ");

@@ -376,8 +376,21 @@ impl Compiler {
         // For each mono request, find the original HIR body, lower it with const_bindings,
         // and add the specialized function to mir_functions.
         {
+            let mut compiled_mono_names: Vec<String> = Vec.new();
             for mi in 0usize..all_mono_requests.len() {
                 let req = &all_mono_requests[mi];
+
+                // Dedup: skip if a mono function with the same name was already compiled
+                let mut already_compiled: bool = false;
+                for ci in 0usize..compiled_mono_names.len() {
+                    if str_equals(&compiled_mono_names[ci], req.fn_name.as_str()) {
+                        already_compiled = true;
+                    }
+                }
+                if already_compiled {
+                } else {
+
+                compiled_mono_names.push(common.make_string(req.fn_name.as_str()));
 
                 // Find the HIR body and FnInfo for the original const-generic function
                 let body_and_info = find_body_for_def_id(&lower_result.bodies, &lower_result.items, req.original_def_id);
@@ -420,6 +433,7 @@ impl Compiler {
                     Option.None => {}
                 }
 
+                } // end else (not already_compiled)
             }
         }
 
