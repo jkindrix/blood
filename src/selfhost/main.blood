@@ -317,10 +317,10 @@ fn run_check(args: &Args) -> i32 {
                     &Option.Some(ref c) => c.as_str(),
                     &Option.None => "",
                 };
-                // Format and print errors
+                // Format and print errors to stderr
                 let error_reporter = reporter.ErrorReporter.new(content, path.as_str());
                 let formatted = error_reporter.format_errors(&result.errors);
-                print_string(&formatted);
+                eprint_str(formatted.as_str());
                 1
             };
 
@@ -1410,13 +1410,13 @@ pub struct CompileOutput {
 // Output Helpers
 // ============================================================
 
-/// Prints an error message.
+/// Prints an error message to stderr.
 fn print_error(msg: &str) {
     let mut output = String.new();
     output.push_str("error: ");
     output.push_str(msg);
     output.push('\n');
-    print_string(&output);
+    eprint_str(output.as_str());
 }
 
 /// Prints a success message.
@@ -4274,7 +4274,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
         let error_reporter = reporter.ErrorReporter.new(expanded_source.as_str(), path);
         let parse_errors = driver.convert_parse_errors(&parse_result.errors);
         let formatted = error_reporter.format_errors(&parse_errors);
-        print_str(formatted.as_str());
+        eprint_str(formatted.as_str());
         region_deactivate();
         region_destroy(parse_region);
         return false;
@@ -4329,7 +4329,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
         let error_reporter = reporter.ErrorReporter.new(expanded_source.as_str(), path);
         let hir_errors = driver.convert_hir_diagnostics(&lower_result.diagnostics);
         let formatted = error_reporter.format_errors(&hir_errors);
-        print_str(formatted.as_str());
+        eprint_str(formatted.as_str());
         region_deactivate();
         region_destroy(hir_region);
         region_destroy(parse_region);
@@ -4371,7 +4371,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
         let error_reporter = reporter.ErrorReporter.new(expanded_source.as_str(), path);
         let type_errors = driver.convert_type_errors(&typeck_result.errors);
         let formatted = error_reporter.format_errors(&type_errors);
-        print_str(formatted.as_str());
+        eprint_str(formatted.as_str());
         region_deactivate();
         region_destroy(hir_region);
         return false;
