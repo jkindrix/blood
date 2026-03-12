@@ -4994,6 +4994,13 @@ impl<'a> TypeContext<'a> {
             ast::TypeKind::DynTrait { trait_path, auto_traits } => {
                 // Resolve the main trait path to a DefId
                 let trait_id = self.resolve_type_path_to_def_id(trait_path, ty.span)?;
+                // Check object safety before accepting dyn Trait
+                if !self.is_trait_object_safe(trait_id) {
+                    // Get detailed reason from check_object_safety
+                    if let Err(e) = self.check_object_safety(trait_id, ty.span) {
+                        return Err(e);
+                    }
+                }
                 // Resolve auto trait paths
                 let mut auto_trait_ids = Vec::new();
                 for auto_path in auto_traits {

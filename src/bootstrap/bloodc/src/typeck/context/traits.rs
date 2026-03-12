@@ -525,23 +525,24 @@ impl<'a> TypeContext<'a> {
                 )));
             }
 
-            // Rule 2: [No-Self-By-Value] — Self not taken by value as parameter
-            // In FnSig, if the first input is Self by value (not behind a reference),
-            // the method takes self by value
-            if !method.sig.inputs.is_empty() {
-                let first_param = &method.sig.inputs[0];
-                if self.is_self_by_value(first_param) {
+            // Rule 2: [No-Self-By-Value] — Self not taken by value as any parameter
+            // Check ALL params (including receiver) for bare Self.
+            // Self by value requires known size at call site; dyn Trait is unsized.
+            for (param_idx, param_ty) in method.sig.inputs.iter().enumerate() {
+                if self.param_contains_self(param_ty) {
+                    let reason = if param_idx == 0 {
+                        format!("method `{}` takes `self` by value", method.name)
+                    } else {
+                        format!("method `{}` has a parameter of type `Self`", method.name)
+                    };
                     return Err(Box::new(TypeError::new(
                         TypeErrorKind::TraitNotObjectSafe {
                             trait_name: trait_info.name.clone(),
-                            reason: format!(
-                                "method `{}` takes `self` by value",
-                                method.name
-                            ),
+                            reason,
                         },
                         span,
                     ).with_help(
-                        "methods on trait objects must take `&self` or `&mut self`, not `self` by value"
+                        "parameters of type `Self` require known size at the call site, which is incompatible with `dyn Trait`"
                     )));
                 }
             }
@@ -584,16 +585,16 @@ impl<'a> TypeContext<'a> {
         Ok(())
     }
 
-    /// Check if a type represents `Self` by value (not behind a reference).
-    fn is_self_by_value(&self, ty: &Type) -> bool {
-        // Self by value would be represented as TypeKind::Param for the Self type
-        // parameter, without a Ref wrapper. We check that the first parameter
-        // is NOT a reference (which would be &self or &mut self).
+    /// Check if a parameter type contains bare Self (not behind a reference/pointer).
+    /// Used for object safety Rule 2 — params with Self require known size.
+    fn param_contains_self(&self, ty: &Type) -> bool {
         match ty.kind() {
-            TypeKind::Ref { .. } => false, // &self or &mut self — OK
-            TypeKind::Ptr { .. } => false, // *self — OK
-            TypeKind::Param(_) => true,    // Self by value — NOT object-safe
-            _ => false,                     // Other types (e.g., concrete) — OK
+            TypeKind::Param(_) => true,
+            TypeKind::Tuple(elems) => elems.iter().any(|e| self.param_contains_self(e)),
+            TypeKind::Ref { .. } => false,
+            TypeKind::Ptr { .. } => false,
+            TypeKind::Adt { args, .. } => args.iter().any(|a| self.param_contains_self(a)),
+            _ => false,
         }
     }
 
