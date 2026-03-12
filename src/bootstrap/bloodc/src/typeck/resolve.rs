@@ -3,7 +3,7 @@
 //! This module resolves identifiers to their definitions, building
 //! a scope hierarchy and populating the DefId map.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::ast::Visibility;
 use crate::hir::{DefId, DefKind, LocalId, Type, PrimitiveTy};
@@ -32,6 +32,8 @@ pub struct Resolver<'a> {
     globals: HashMap<String, DefId>,
     /// Errors encountered during resolution.
     pub errors: Vec<TypeError>,
+    /// DefIds imported from the prelude — user definitions may shadow these.
+    pub prelude_def_ids: HashSet<DefId>,
 }
 
 /// Information about a definition.
@@ -120,6 +122,7 @@ impl<'a> Resolver<'a> {
             def_info: HashMap::new(),
             globals: HashMap::new(),
             errors: Vec::new(),
+            prelude_def_ids: HashSet::new(),
         };
 
         // Create root scope
@@ -228,29 +231,38 @@ impl<'a> Resolver<'a> {
     ) -> Result<DefId, Box<TypeError>> {
         // Check for duplicates in current scope
         if let Some(existing) = self.current_scope().bindings.get(&name) {
-            let mut err = TypeError::new(
-                TypeErrorKind::DuplicateDefinition { name },
-                span,
-            );
-            // Add secondary label pointing to the previous definition
-            match existing {
-                Binding::Def(prev_def_id) => {
-                    if let Some(prev_info) = self.def_info.get(prev_def_id) {
+            // Allow user definitions to shadow prelude imports
+            let is_prelude = match existing {
+                Binding::Def(prev_def_id) => self.prelude_def_ids.contains(prev_def_id),
+                Binding::Methods(def_ids) => def_ids.iter().all(|id| self.prelude_def_ids.contains(id)),
+                _ => false,
+            };
+            if !is_prelude {
+                let mut err = TypeError::new(
+                    TypeErrorKind::DuplicateDefinition { name },
+                    span,
+                );
+                // Add secondary label pointing to the previous definition
+                match existing {
+                    Binding::Def(prev_def_id) => {
+                        if let Some(prev_info) = self.def_info.get(prev_def_id) {
+                            err = err.with_secondary_label(
+                                prev_info.span,
+                                "previous definition here",
+                            );
+                        }
+                    }
+                    Binding::Local { span: prev_span, .. } => {
                         err = err.with_secondary_label(
-                            prev_info.span,
+                            *prev_span,
                             "previous definition here",
                         );
                     }
+                    Binding::Methods(_) => {}
                 }
-                Binding::Local { span: prev_span, .. } => {
-                    err = err.with_secondary_label(
-                        *prev_span,
-                        "previous definition here",
-                    );
-                }
-                Binding::Methods(_) => {}
+                return Err(Box::new(err));
             }
-            return Err(Box::new(err));
+            // Prelude binding — fall through to replace it with user's definition
         }
 
         let def_id = self.next_def_id();
@@ -330,6 +342,18 @@ impl<'a> Resolver<'a> {
 
         // Check if a binding with this name already exists
         if let Some(existing) = self.current_scope().bindings.get(&name).cloned() {
+            // Check if the existing binding is from the prelude — if so, replace it
+            let is_prelude = match &existing {
+                Binding::Def(prev_def_id) => self.prelude_def_ids.contains(prev_def_id),
+                Binding::Methods(def_ids) => def_ids.iter().all(|id| self.prelude_def_ids.contains(id)),
+                _ => false,
+            };
+            if is_prelude {
+                // User definition shadows the prelude import
+                self.current_scope_mut()
+                    .bindings
+                    .insert(name.clone(), Binding::Def(def_id));
+            } else {
             match existing {
                 Binding::Def(existing_def_id) => {
                     // Check if the existing definition is a function
@@ -368,6 +392,7 @@ impl<'a> Resolver<'a> {
                         span,
                     )));
                 }
+            }
             }
         } else {
             // No existing binding - create new single definition

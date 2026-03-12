@@ -333,13 +333,15 @@ impl<'a> TypeContext<'a> {
                 // Only import public items (check visibility in def_info)
                 if let Some(def_info) = self.resolver.def_info.get(&def_id) {
                     if def_info.visibility == crate::ast::Visibility::Public {
-                        // Import into global scope
+                        // Import into global scope and track as prelude-imported
                         if let Err(e) = self.resolver.import_binding(name.clone(), def_id, prelude_span) {
                             // Ignore conflicts with user-defined items (user takes precedence)
                             // DuplicateDefinition errors are expected when user code shadows prelude
                             if !matches!(e.kind, TypeErrorKind::DuplicateDefinition { .. }) {
                                 self.errors.push(*e);
                             }
+                        } else {
+                            self.resolver.prelude_def_ids.insert(def_id);
                         }
                         // Only import the first def_id for a given name to avoid conflicts
                         break;
@@ -353,12 +355,14 @@ impl<'a> TypeContext<'a> {
             // Only import public types (check visibility in def_info)
             if let Some(def_info) = self.resolver.def_info.get(&def_id) {
                 if def_info.visibility == crate::ast::Visibility::Public {
-                    // Import type into global scope
+                    // Import type into global scope and track as prelude-imported
                     if let Err(e) = self.resolver.import_type_binding(name.clone(), def_id, prelude_span) {
                         // Ignore conflicts with user-defined types (user takes precedence)
                         if !matches!(e.kind, TypeErrorKind::DuplicateDefinition { .. }) {
                             self.errors.push(*e);
                         }
+                    } else {
+                        self.resolver.prelude_def_ids.insert(def_id);
                     }
                 }
             }
