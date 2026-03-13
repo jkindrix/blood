@@ -65,8 +65,8 @@ pub fn lower_program_with_base_dir(program: &ast.Program, base_dir: String, sour
     let mut parsed_module_cache: Vec<CachedParsedModule> = Vec.new();
 
     // Phase 1: Register type names (structs, enums, traits, effects)
-    // Tag 1000 = main file Phase 1; modules tagged by load_external_module
-    alloc_tag_set(1000 as u64);
+    // Tag 3000 = main file Phase 1; modules tagged by load_external_module
+    alloc_tag_set(3000 as u64);
     register_type_names(&mut ctx, &program.declarations, &mut parsed_module_cache);
     alloc_tag_set(0 as u64);
 
@@ -166,48 +166,89 @@ pub fn lower_program_with_base_dir(program: &ast.Program, base_dir: String, sour
     result.turbofish_const_entries = turbofish_entries;
 
     // Print combined tag→module allocation report if profiling is active.
-    // Check if tag 1000 (main file Phase 1) was ever used as a signal.
-    if alloc_tag_count(1000 as u64) > 0 {
-        eprint_str("\n  [alloc-profile] Per-module allocation breakdown:\n");
+    // Tag scheme: 1-N = Phase 1 (parse), 1001-N = Phase 3a (decls), 2001-N = Phase 4b (bodies).
+    if alloc_tag_count(3000 as u64) > 0 {
+        // Phase summaries
+        let mut p1_bytes: u64 = 0;
+        let mut p1_count: u64 = 0;
+        let mut p3a_bytes: u64 = 0;
+        let mut p3a_count: u64 = 0;
+        let mut p4b_bytes: u64 = 0;
+        let mut p4b_count: u64 = 0;
 
-        // Print untagged allocations (tag 0)
+        let num_modules = parsed_module_cache.len();
+
+        // Accumulate per-phase totals
+        for ci in 0usize..num_modules {
+            let tag1 = (ci + 1) as u64;
+            p1_bytes += alloc_tag_bytes(tag1);
+            p1_count += alloc_tag_count(tag1);
+
+            let tag3a = (ci + 1) as u64 + 1000;
+            p3a_bytes += alloc_tag_bytes(tag3a);
+            p3a_count += alloc_tag_count(tag3a);
+
+            let tag4b = (ci + 1) as u64 + 2000;
+            p4b_bytes += alloc_tag_bytes(tag4b);
+            p4b_count += alloc_tag_count(tag4b);
+        }
+
+        // Add main file Phase 1
+        let main_bytes = alloc_tag_bytes(3000 as u64);
+        let main_count = alloc_tag_count(3000 as u64);
+        p1_bytes += main_bytes;
+        p1_count += main_count;
+
         let t0_bytes = alloc_tag_bytes(0 as u64);
         let t0_count = alloc_tag_count(0 as u64);
-        if t0_count > 0 {
-            let mut line = common.make_string("    ");
-            append_alloc_mb(&mut line, t0_bytes);
-            line.push_str("  (");
-            append_alloc_count(&mut line, t0_count);
-            line.push_str(" allocs)  <untagged>\n");
-            eprint_str(line.as_str());
-        }
 
-        // Print main file allocations (tag 1000)
-        let tm_bytes = alloc_tag_bytes(1000 as u64);
-        let tm_count = alloc_tag_count(1000 as u64);
-        if tm_count > 0 {
-            let mut line = common.make_string("    ");
-            append_alloc_mb(&mut line, tm_bytes);
-            line.push_str("  (");
-            append_alloc_count(&mut line, tm_count);
-            line.push_str(" allocs)  <main file>\n");
-            eprint_str(line.as_str());
-        }
+        let total_bytes = t0_bytes + p1_bytes + p3a_bytes + p4b_bytes;
+        let total_count = t0_count + p1_count + p3a_count + p4b_count;
 
-        // Print per-module allocations
-        let mut total_bytes: u64 = t0_bytes + tm_bytes;
-        let mut total_count: u64 = t0_count + tm_count;
-        for ci in 0usize..parsed_module_cache.len() {
-            let tag_id = (ci + 1) as u64;
-            let tag_bytes = alloc_tag_bytes(tag_id);
-            let tag_count = alloc_tag_count(tag_id);
-            total_bytes += tag_bytes;
-            total_count += tag_count;
-            if tag_count == 0 {
+        // Print phase summary
+        eprint_str("\n  [alloc-profile] Phase breakdown:\n");
+
+        let mut line = common.make_string("    ");
+        append_alloc_mb(&mut line, p1_bytes);
+        line.push_str("  (");
+        append_alloc_count(&mut line, p1_count);
+        line.push_str(" allocs)  Phase 1: parse + type registration\n    ");
+        append_alloc_mb(&mut line, p3a_bytes);
+        line.push_str("  (");
+        append_alloc_count(&mut line, p3a_count);
+        line.push_str(" allocs)  Phase 3a: declaration lowering\n    ");
+        append_alloc_mb(&mut line, p4b_bytes);
+        line.push_str("  (");
+        append_alloc_count(&mut line, p4b_count);
+        line.push_str(" allocs)  Phase 4b: body lowering\n    ");
+        append_alloc_mb(&mut line, t0_bytes);
+        line.push_str("  (");
+        append_alloc_count(&mut line, t0_count);
+        line.push_str(" allocs)  Untagged (registration, imports, builtins)\n    ────────────────────────────────────────────\n    ");
+        append_alloc_mb(&mut line, total_bytes);
+        line.push_str("  (");
+        append_alloc_count(&mut line, total_count);
+        line.push_str(" allocs)  TOTAL\n");
+        eprint_str(line.as_str());
+
+        // Print per-module detail with phase split
+        eprint_str("\n  [alloc-profile] Per-module breakdown (parse | decls | bodies):\n");
+
+        for ci in 0usize..num_modules {
+            let tag1 = (ci + 1) as u64;
+            let tag3a = (ci + 1) as u64 + 1000;
+            let tag4b = (ci + 1) as u64 + 2000;
+
+            let b1 = alloc_tag_bytes(tag1);
+            let b3a = alloc_tag_bytes(tag3a);
+            let b4b = alloc_tag_bytes(tag4b);
+            let mod_total = b1 + b3a + b4b;
+
+            if mod_total == 0 {
                 continue;
             }
 
-            // Find module path from loaded_modules
+            // Find module path
             let mut mod_name = common.make_string("<unknown>");
             for li in 0usize..ctx.loaded_modules.len() {
                 if ctx.loaded_modules[li].def_id.index == parsed_module_cache[ci].def_id.index {
@@ -215,23 +256,21 @@ pub fn lower_program_with_base_dir(program: &ast.Program, base_dir: String, sour
                 }
             }
 
-            let mut line = common.make_string("    ");
-            append_alloc_mb(&mut line, tag_bytes);
-            line.push_str("  (");
-            append_alloc_count(&mut line, tag_count);
-            line.push_str(" allocs)  ");
-            line.push_str(mod_name.as_str());
-            line.push('\n');
-            eprint_str(line.as_str());
+            let mut mline = common.make_string("    ");
+            append_alloc_mb(&mut mline, mod_total);
+            mline.push_str("  (");
+            append_alloc_mb_short(&mut mline, b1);
+            mline.push_str(" | ");
+            append_alloc_mb_short(&mut mline, b3a);
+            mline.push_str(" | ");
+            append_alloc_mb_short(&mut mline, b4b);
+            mline.push_str(")  ");
+            mline.push_str(mod_name.as_str());
+            mline.push('\n');
+            eprint_str(mline.as_str());
         }
 
-        // Print total
-        let mut total_line = common.make_string("    ────────────────────────────────────────────\n    ");
-        append_alloc_mb(&mut total_line, total_bytes);
-        total_line.push_str("  (");
-        append_alloc_count(&mut total_line, total_count);
-        total_line.push_str(" allocs)  TOTAL\n\n");
-        eprint_str(total_line.as_str());
+        eprint_str("\n");
 
         // Reset tags so main.blood doesn't double-print
         alloc_tag_reset();
@@ -1426,8 +1465,8 @@ fn load_external_module(
         }
     };
 
-    // Tag this module for allocation profiling.
-    // Use cache.len() + 1 as the tag (1-based module index).
+    // Tag this module for allocation profiling (Phase 1: parse + type registration).
+    // Tags 1-N for Phase 1, 1001-N for Phase 3a, 2001-N for Phase 4b.
     let module_tag = (cache.len() + 1) as u64;
     alloc_tag_set(module_tag);
 
@@ -1628,8 +1667,8 @@ fn lower_external_module_declarations(ctx: &mut hir_lower_ctx.LoweringCtx, cache
             }
         };
 
-        // Tag this module for allocation profiling
-        alloc_tag_set((cache_idx as u64) + 1);
+        // Tag this module for allocation profiling (Phase 3a: declaration lowering)
+        alloc_tag_set((cache_idx as u64) + 1001);
 
         // Save current source and switch to the module's source
         let saved_source = ctx.source;
@@ -1657,8 +1696,8 @@ fn lower_external_module_fn_bodies(ctx: &mut hir_lower_ctx.LoweringCtx, cache: &
             }
         };
 
-        // Tag this module for allocation profiling
-        alloc_tag_set((i + 1) as u64);
+        // Tag this module for allocation profiling (Phase 4b: body lowering)
+        alloc_tag_set((i + 1) as u64 + 2000);
 
         // Save current source (struct copy — no heap allocation) and switch
         let saved_source = ctx.source;
@@ -1709,6 +1748,16 @@ fn append_alloc_mb(s: &mut String, bytes: u64) {
     }
     append_u32(s, frac as u32);
     s.push_str(" MB");
+}
+
+/// Compact MB format without padding (e.g. "629.0", "12.1", "0.0").
+fn append_alloc_mb_short(s: &mut String, bytes: u64) {
+    let mb_x10 = bytes / 104857;  // bytes / (1048576 / 10)
+    let whole = mb_x10 / 10;
+    let frac = mb_x10 % 10;
+    append_u32(s, whole as u32);
+    s.push('.');
+    append_u32(s, frac as u32);
 }
 
 /// Formats a count with K/M suffix (e.g. "3.80M", "118.3K", "114").
