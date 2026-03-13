@@ -53,8 +53,16 @@ pub fn lower_program(program: &ast.Program, source: &str) -> hir_lower_ctx.Lower
 /// The base directory is used for resolving external module paths.
 /// stdlib_path optionally overrides the path for `mod std;` resolution.
 pub fn lower_program_with_base_dir(program: &ast.Program, base_dir: String, source: &str, stdlib_path: Option<String>) -> hir_lower_ctx.LowerResult {
+    lower_program_with_ast_region(program, base_dir, source, stdlib_path, 0 as u64)
+}
+
+/// Lower an AST Program to HIR with a separate AST region.
+/// When ast_region is non-zero, parser allocations are directed there instead of
+/// hir_region, allowing AST data to be freed after HIR lowering.
+pub fn lower_program_with_ast_region(program: &ast.Program, base_dir: String, source: &str, stdlib_path: Option<String>, ast_region: u64) -> hir_lower_ctx.LowerResult {
     let mut ctx = hir_lower_ctx.LoweringCtx.with_base_dir(base_dir, common.make_string(source));
     ctx.stdlib_path = stdlib_path;
+    ctx.ast_region = ast_region;
 
     // Allocate root module DefId
     let root_def_id = ctx.alloc_def_id();
@@ -1470,8 +1478,16 @@ fn load_external_module(
     let module_tag = (cache.len() + 1) as u64;
     alloc_tag_set(module_tag);
 
-    // Parse the file
+    // Parse the file. If ast_region is set, activate it so parser allocations
+    // go there instead of hir_region. This allows AST data to be freed after
+    // HIR lowering completes.
+    if ctx.ast_region != 0 {
+        region_activate(ctx.ast_region);
+    }
     let parse_result = parser.parse_file(content.as_str());
+    if ctx.ast_region != 0 {
+        region_deactivate();
+    }
     if parse_result.errors.len() > 0 {
         let mut msg = common.make_string("parse error in module '");
         append_string(&mut msg, &module_name);

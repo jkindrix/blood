@@ -318,6 +318,10 @@ pub struct LoweringCtx {
     /// Turbofish const arg entries recorded during expression lowering.
     /// Each entry records explicit const values from turbofish syntax (e.g., `f::<3, 4>()`).
     pub turbofish_const_entries: Vec<TurbofishEntry>,
+    /// Optional region handle for AST/parse data. When non-zero, parser allocations
+    /// are directed here instead of hir_region, allowing AST data to be freed after
+    /// HIR lowering completes. 0 = disabled (parse data goes to hir_region).
+    pub ast_region: u64,
 }
 
 /// Tracks a const generic parameter during HIR lowering.
@@ -434,6 +438,7 @@ impl LoweringCtx {
             stdlib_path: Option.None,
             const_param_defs: Vec.new(),
             turbofish_const_entries: Vec.new(),
+            ast_region: 0 as u64,
         }
     }
 
@@ -475,6 +480,7 @@ impl LoweringCtx {
             stdlib_path: Option.None,
             const_param_defs: Vec.new(),
             turbofish_const_entries: Vec.new(),
+            ast_region: 0 as u64,
         }
     }
 
