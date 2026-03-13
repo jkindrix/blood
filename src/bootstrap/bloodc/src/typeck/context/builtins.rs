@@ -306,6 +306,32 @@ impl<'a> TypeContext<'a> {
             vec![], unit_ty.clone(),
         );
 
+        // Allocation tagging
+        self.register_builtin_fn_aliased(
+            "alloc_tag_set", "blood_alloc_tag_set",
+            vec![u64_ty.clone()], unit_ty.clone(),
+        );
+        self.register_builtin_fn_aliased(
+            "alloc_tag_get", "blood_alloc_tag_get",
+            vec![], u64_ty.clone(),
+        );
+        self.register_builtin_fn_aliased(
+            "alloc_tag_reset", "blood_alloc_tag_reset",
+            vec![], unit_ty.clone(),
+        );
+        self.register_builtin_fn_aliased(
+            "alloc_tag_report", "blood_alloc_tag_report",
+            vec![], unit_ty.clone(),
+        );
+        self.register_builtin_fn_aliased(
+            "alloc_tag_count", "blood_alloc_tag_count",
+            vec![u64_ty.clone()], u64_ty.clone(),
+        );
+        self.register_builtin_fn_aliased(
+            "alloc_tag_bytes", "blood_alloc_tag_bytes",
+            vec![u64_ty.clone()], u64_ty.clone(),
+        );
+
         // ptr_read_i32(ptr: u64) -> i32 - read i32 from memory address
         self.register_builtin_fn("ptr_read_i32", vec![u64_ty.clone()], i32_ty.clone());
 

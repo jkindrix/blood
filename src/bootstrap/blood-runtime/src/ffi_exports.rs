@@ -122,6 +122,45 @@ fn record_alloc_hist(size: usize) {
 }
 
 // ============================================================================
+// Allocation Tagging
+// ============================================================================
+//
+// A global tag that Blood code sets at code boundaries. The allocator records
+// per-tag (count, bytes) so we can attribute allocations to specific phases,
+// modules, or functions. Tag 0 = untagged (default).
+//
+// Usage from Blood:
+//   alloc_tag_set(42)     // all subsequent allocations tagged as 42
+//   ... do work ...
+//   alloc_tag_set(0)      // back to untagged
+//   alloc_tag_report()    // print per-tag summary to stderr
+//
+const MAX_ALLOC_TAGS: usize = 4096;
+static ALLOC_TAG: AtomicU64 = AtomicU64::new(0);
+static TAG_COUNTS: [AtomicU64; MAX_ALLOC_TAGS] = {
+    const ZERO: AtomicU64 = AtomicU64::new(0);
+    [ZERO; MAX_ALLOC_TAGS]
+};
+static TAG_BYTES: [AtomicU64; MAX_ALLOC_TAGS] = {
+    const ZERO: AtomicU64 = AtomicU64::new(0);
+    [ZERO; MAX_ALLOC_TAGS]
+};
+
+/// Whether allocation tagging is enabled. Set to true on first alloc_tag_set
+/// call with a non-zero tag. Once enabled, stays enabled for the process.
+static ALLOC_TAG_ENABLED: AtomicU64 = AtomicU64::new(0);
+
+#[inline]
+fn record_alloc_tag(size: usize) {
+    if ALLOC_TAG_ENABLED.load(AtomicOrdering::Relaxed) == 0 { return; }
+    let tag = ALLOC_TAG.load(AtomicOrdering::Relaxed) as usize;
+    if tag < MAX_ALLOC_TAGS {
+        TAG_COUNTS[tag].fetch_add(1, AtomicOrdering::Relaxed);
+        TAG_BYTES[tag].fetch_add(size as u64, AtomicOrdering::Relaxed);
+    }
+}
+
+// ============================================================================
 // Region-Aware Allocation
 // ============================================================================
 
@@ -4724,6 +4763,7 @@ pub extern "C" fn blood_region_get_status(region_id: u64) -> u32 {
 #[no_mangle]
 pub extern "C" fn blood_region_alloc(region_id: u64, size: usize, align: usize) -> u64 {
     record_alloc_hist(size);
+    record_alloc_tag(size);
     let registry = get_region_registry();
     let mut reg = registry.lock();
 
@@ -4903,6 +4943,71 @@ pub extern "C" fn blood_print_alloc_hist() {
     eprintln!("    {:>12}  count={:>12}  bytes={:>14}",
         "TOTAL", format_count(total_count), format_bytes(total_bytes));
     blood_alloc_hist_reset();
+}
+
+// ============================================================================
+// Allocation Tag FFI
+// ============================================================================
+
+/// Set the current allocation tag. All subsequent region allocations will be
+/// attributed to this tag until changed. Tag 0 = untagged.
+#[no_mangle]
+pub extern "C" fn blood_alloc_tag_set(tag: u64) {
+    ALLOC_TAG.store(tag, AtomicOrdering::Relaxed);
+    if tag != 0 {
+        ALLOC_TAG_ENABLED.store(1, AtomicOrdering::Relaxed);
+    }
+}
+
+/// Get the current allocation tag.
+#[no_mangle]
+pub extern "C" fn blood_alloc_tag_get() -> u64 {
+    ALLOC_TAG.load(AtomicOrdering::Relaxed)
+}
+
+/// Reset all tag counters to zero.
+#[no_mangle]
+pub extern "C" fn blood_alloc_tag_reset() {
+    for i in 0..MAX_ALLOC_TAGS {
+        TAG_COUNTS[i].store(0, AtomicOrdering::Relaxed);
+        TAG_BYTES[i].store(0, AtomicOrdering::Relaxed);
+    }
+}
+
+/// Print non-zero tag entries to stderr: tag, count, bytes.
+/// Does NOT reset counters (call blood_alloc_tag_reset separately).
+#[no_mangle]
+pub extern "C" fn blood_alloc_tag_report() {
+    let mut total_count: u64 = 0;
+    let mut total_bytes: u64 = 0;
+    for i in 0..MAX_ALLOC_TAGS {
+        let count = TAG_COUNTS[i].load(AtomicOrdering::Relaxed);
+        let bytes = TAG_BYTES[i].load(AtomicOrdering::Relaxed);
+        if count > 0 {
+            total_count += count;
+            total_bytes += bytes;
+            eprintln!("    tag {:>4}  count={:>12}  bytes={:>14}",
+                i, format_count(count), format_bytes(bytes));
+        }
+    }
+    eprintln!("    {:>8}  count={:>12}  bytes={:>14}",
+        "TOTAL", format_count(total_count), format_bytes(total_bytes));
+}
+
+/// Get allocation count for a specific tag.
+#[no_mangle]
+pub extern "C" fn blood_alloc_tag_count(tag: u64) -> u64 {
+    let idx = tag as usize;
+    if idx >= MAX_ALLOC_TAGS { return 0; }
+    TAG_COUNTS[idx].load(AtomicOrdering::Relaxed)
+}
+
+/// Get allocation bytes for a specific tag.
+#[no_mangle]
+pub extern "C" fn blood_alloc_tag_bytes(tag: u64) -> u64 {
+    let idx = tag as usize;
+    if idx >= MAX_ALLOC_TAGS { return 0; }
+    TAG_BYTES[idx].load(AtomicOrdering::Relaxed)
 }
 
 fn format_count(n: u64) -> String {

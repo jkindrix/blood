@@ -65,7 +65,10 @@ pub fn lower_program_with_base_dir(program: &ast.Program, base_dir: String, sour
     let mut parsed_module_cache: Vec<CachedParsedModule> = Vec.new();
 
     // Phase 1: Register type names (structs, enums, traits, effects)
+    // Tag 1000 = main file Phase 1; modules tagged by load_external_module
+    alloc_tag_set(1000 as u64);
     register_type_names(&mut ctx, &program.declarations, &mut parsed_module_cache);
+    alloc_tag_set(0 as u64);
 
     // Phase 1b: Register builtin stdlib types (String, Vec, Option, Box, HashMap)
     // Only registers names not already defined by user code
@@ -161,6 +164,79 @@ pub fn lower_program_with_base_dir(program: &ast.Program, base_dir: String, sour
         ctx.builtin_fn_defs,
     );
     result.turbofish_const_entries = turbofish_entries;
+
+    // Print combined tag→module allocation report if profiling is active.
+    // Check if tag 1000 (main file Phase 1) was ever used as a signal.
+    if alloc_tag_count(1000 as u64) > 0 {
+        eprint_str("\n  [alloc-profile] Per-module allocation breakdown:\n");
+
+        // Print untagged allocations (tag 0)
+        let t0_bytes = alloc_tag_bytes(0 as u64);
+        let t0_count = alloc_tag_count(0 as u64);
+        if t0_count > 0 {
+            let mut line = common.make_string("    ");
+            append_alloc_mb(&mut line, t0_bytes);
+            line.push_str("  (");
+            append_alloc_count(&mut line, t0_count);
+            line.push_str(" allocs)  <untagged>\n");
+            eprint_str(line.as_str());
+        }
+
+        // Print main file allocations (tag 1000)
+        let tm_bytes = alloc_tag_bytes(1000 as u64);
+        let tm_count = alloc_tag_count(1000 as u64);
+        if tm_count > 0 {
+            let mut line = common.make_string("    ");
+            append_alloc_mb(&mut line, tm_bytes);
+            line.push_str("  (");
+            append_alloc_count(&mut line, tm_count);
+            line.push_str(" allocs)  <main file>\n");
+            eprint_str(line.as_str());
+        }
+
+        // Print per-module allocations
+        let mut total_bytes: u64 = t0_bytes + tm_bytes;
+        let mut total_count: u64 = t0_count + tm_count;
+        for ci in 0usize..parsed_module_cache.len() {
+            let tag_id = (ci + 1) as u64;
+            let tag_bytes = alloc_tag_bytes(tag_id);
+            let tag_count = alloc_tag_count(tag_id);
+            total_bytes += tag_bytes;
+            total_count += tag_count;
+            if tag_count == 0 {
+                continue;
+            }
+
+            // Find module path from loaded_modules
+            let mut mod_name = common.make_string("<unknown>");
+            for li in 0usize..ctx.loaded_modules.len() {
+                if ctx.loaded_modules[li].def_id.index == parsed_module_cache[ci].def_id.index {
+                    mod_name = common.make_string(ctx.loaded_modules[li].path.as_str());
+                }
+            }
+
+            let mut line = common.make_string("    ");
+            append_alloc_mb(&mut line, tag_bytes);
+            line.push_str("  (");
+            append_alloc_count(&mut line, tag_count);
+            line.push_str(" allocs)  ");
+            line.push_str(mod_name.as_str());
+            line.push('\n');
+            eprint_str(line.as_str());
+        }
+
+        // Print total
+        let mut total_line = common.make_string("    ────────────────────────────────────────────\n    ");
+        append_alloc_mb(&mut total_line, total_bytes);
+        total_line.push_str("  (");
+        append_alloc_count(&mut total_line, total_count);
+        total_line.push_str(" allocs)  TOTAL\n\n");
+        eprint_str(total_line.as_str());
+
+        // Reset tags so main.blood doesn't double-print
+        alloc_tag_reset();
+    }
+
     result
 }
 
@@ -883,6 +959,14 @@ fn register_builtin_functions(ctx: &mut hir_lower_ctx.LoweringCtx) {
     register_builtin_fn(ctx, &mut items, "print_alloc_hist", bi_params_0(), type_intern.CommonTypes.unit());
     register_builtin_fn(ctx, &mut items, "alloc_hist_reset", bi_params_0(), type_intern.CommonTypes.unit());
 
+    // Allocation tagging
+    register_builtin_fn(ctx, &mut items, "alloc_tag_set", bi_params_1(bi_u64()), type_intern.CommonTypes.unit());
+    register_builtin_fn(ctx, &mut items, "alloc_tag_get", bi_params_0(), bi_u64());
+    register_builtin_fn(ctx, &mut items, "alloc_tag_reset", bi_params_0(), type_intern.CommonTypes.unit());
+    register_builtin_fn(ctx, &mut items, "alloc_tag_report", bi_params_0(), type_intern.CommonTypes.unit());
+    register_builtin_fn(ctx, &mut items, "alloc_tag_count", bi_params_1(bi_u64()), bi_u64());
+    register_builtin_fn(ctx, &mut items, "alloc_tag_bytes", bi_params_1(bi_u64()), bi_u64());
+
     // === Parse/char builtins (return unwrapped values, matching blood-rust ABI) ===
     register_builtin_fn(ctx, &mut items, "parse_f64", bi_params_1(bi_ref_str()), bi_f64());
     register_builtin_fn(ctx, &mut items, "parse_i64_radix", bi_params_2(bi_ref_str(), bi_u32()), bi_i64());
@@ -978,7 +1062,7 @@ fn register_bridge_functions(
                 );
 
                 // Convert parameter types to TyId
-                let mut param_tys: Vec<type_intern.TyId> = Vec.new();
+                let mut param_tys: Vec<type_intern.TyId> = Vec.with_capacity(f.params.len());
                 for pi in 0usize..f.params.len() {
                     let param_ty = hir_lower_type.lower_type_id(ctx, &f.params[pi].ty);
                     param_tys.push(param_ty);
@@ -1342,6 +1426,11 @@ fn load_external_module(
         }
     };
 
+    // Tag this module for allocation profiling.
+    // Use cache.len() + 1 as the tag (1-based module index).
+    let module_tag = (cache.len() + 1) as u64;
+    alloc_tag_set(module_tag);
+
     // Parse the file
     let parse_result = parser.parse_file(content.as_str());
     if parse_result.errors.len() > 0 {
@@ -1349,6 +1438,7 @@ fn load_external_module(
         append_string(&mut msg, &module_name);
         msg.push_str("'");
         ctx.error(hir.DiagnosticCode.E0104, msg, span);
+        alloc_tag_set(0 as u64);
         return;
     }
 
@@ -1360,6 +1450,7 @@ fn load_external_module(
                 common.make_string("no program produced from module file"),
                 span,
             );
+            alloc_tag_set(0 as u64);
             return;
         }
     };
@@ -1420,6 +1511,9 @@ fn load_external_module(
     // Add to loaded_modules AFTER sub-modules have been loaded (post-order).
     // This ensures Phase 3a processes dependencies before dependents.
     ctx.add_loaded_module(re_interned_name, def_id, common.make_string(file_path.as_str()));
+
+    // Restore parent tag (or 0 if top-level)
+    alloc_tag_set(0 as u64);
 }
 
 /// Resolves a symbol to a string for file path construction.
@@ -1497,7 +1591,7 @@ struct CachedParsedModule {
 
 /// Collects info about all external modules.
 fn collect_external_modules(ctx: &mut hir_lower_ctx.LoweringCtx) -> Vec<ExternalModuleInfo> {
-    let mut result: Vec<ExternalModuleInfo> = Vec.new();
+    let mut result: Vec<ExternalModuleInfo> = Vec.with_capacity(ctx.loaded_modules.len());
     for i in 0usize..ctx.loaded_modules.len() {
         let path = common.make_string(ctx.loaded_modules[i].path.as_str());
         let def_id = hir_def.DefId.new(ctx.loaded_modules[i].def_id.index);
@@ -1534,6 +1628,9 @@ fn lower_external_module_declarations(ctx: &mut hir_lower_ctx.LoweringCtx, cache
             }
         };
 
+        // Tag this module for allocation profiling
+        alloc_tag_set((cache_idx as u64) + 1);
+
         // Save current source and switch to the module's source
         let saved_source = ctx.source;
         ctx.source = common.make_string(cached.content.as_str());
@@ -1543,6 +1640,7 @@ fn lower_external_module_declarations(ctx: &mut hir_lower_ctx.LoweringCtx, cache
 
         // Restore source
         ctx.source = saved_source;
+        alloc_tag_set(0 as u64);
     }
 }
 
@@ -1558,6 +1656,9 @@ fn lower_external_module_fn_bodies(ctx: &mut hir_lower_ctx.LoweringCtx, cache: &
                 continue;
             }
         };
+
+        // Tag this module for allocation profiling
+        alloc_tag_set((i + 1) as u64);
 
         // Save current source (struct copy — no heap allocation) and switch
         let saved_source = ctx.source;
@@ -1577,7 +1678,62 @@ fn lower_external_module_fn_bodies(ctx: &mut hir_lower_ctx.LoweringCtx, cache: &
 
         // Restore source
         ctx.source = saved_source;
+        alloc_tag_set(0 as u64);
+    }
+}
 
+/// Formats bytes as right-aligned MB with 2 decimal places (e.g. "  629.02 MB").
+/// Output is always 10 chars wide for alignment.
+fn append_alloc_mb(s: &mut String, bytes: u64) {
+    // Convert to MB * 100 for 2 decimal places
+    let mb_x100 = bytes / 10485;  // bytes / (1048576 / 100)
+    let whole = mb_x100 / 100;
+    let frac = mb_x100 % 100;
+
+    // Right-align in 6 chars for the whole part
+    if whole < 10 {
+        s.push_str("     ");
+    } else if whole < 100 {
+        s.push_str("    ");
+    } else if whole < 1000 {
+        s.push_str("   ");
+    } else if whole < 10000 {
+        s.push_str("  ");
+    } else if whole < 100000 {
+        s.push(' ');
+    }
+    append_u32(s, whole as u32);
+    s.push('.');
+    if frac < 10 {
+        s.push('0');
+    }
+    append_u32(s, frac as u32);
+    s.push_str(" MB");
+}
+
+/// Formats a count with K/M suffix (e.g. "3.80M", "118.3K", "114").
+fn append_alloc_count(s: &mut String, count: u64) {
+    if count >= 1000000 {
+        let m_x100 = count / 10000;
+        let whole = m_x100 / 100;
+        let frac = m_x100 % 100;
+        append_u32(s, whole as u32);
+        s.push('.');
+        if frac < 10 {
+            s.push('0');
+        }
+        append_u32(s, frac as u32);
+        s.push('M');
+    } else if count >= 1000 {
+        let k_x10 = count / 100;
+        let whole = k_x10 / 10;
+        let frac = k_x10 % 10;
+        append_u32(s, whole as u32);
+        s.push('.');
+        append_u32(s, frac as u32);
+        s.push('K');
+    } else {
+        append_u32(s, count as u32);
     }
 }
 
@@ -1869,7 +2025,7 @@ fn register_declaration(ctx: &mut hir_lower_ctx.LoweringCtx, decl: &ast.Declarat
                         // Using only segments[0] would resolve to the module for
                         // qualified paths, causing method name collisions when two
                         // types in the same module have methods with the same name.
-                        let mut seg_names: Vec<common.SpannedSymbol> = Vec.new();
+                        let mut seg_names: Vec<common.SpannedSymbol> = Vec.with_capacity(type_path.segments.len());
                         for si in 0usize..type_path.segments.len() {
                             let seg_str = ctx.span_to_string(type_path.segments[si].name.span);
                             let seg_sym = ctx.intern(seg_str.as_str());
@@ -2058,7 +2214,7 @@ fn register_module_declaration(
                             }
                         } else {
                             // Multi-segment: resolve full qualified path
-                            let mut seg_names: Vec<common.SpannedSymbol> = Vec.new();
+                            let mut seg_names: Vec<common.SpannedSymbol> = Vec.with_capacity(type_path.segments.len());
                             for si in 0usize..type_path.segments.len() {
                                 let s_str = ctx.span_to_string(type_path.segments[si].name.span);
                                 let s_sym = ctx.intern(s_str.as_str());
@@ -2274,7 +2430,7 @@ fn lower_single_fn_body(ctx: &mut hir_lower_ctx.LoweringCtx, f: &ast.FnDecl) {
     ctx.resolver.pop_scope();
 
     // Extract const param DefIds before clearing (for monomorphization)
-    let mut cp_def_ids: Vec<u32> = Vec.new();
+    let mut cp_def_ids: Vec<u32> = Vec.with_capacity(ctx.const_param_defs.len());
     {
         for cpi in 0usize..ctx.const_param_defs.len() {
             cp_def_ids.push(ctx.const_param_defs[cpi].def_id.index);

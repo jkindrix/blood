@@ -4180,6 +4180,16 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         self.module.add_function("blood_print_alloc_hist", diag_void_type, None);
         self.module.add_function("blood_alloc_hist_reset", diag_void_type, None);
 
+        // Allocation tagging
+        let tag_set_type = void_type.fn_type(&[i64_type.into()], false);
+        self.module.add_function("blood_alloc_tag_set", tag_set_type, None);
+        self.module.add_function("blood_alloc_tag_get", diag_u64_type, None);
+        self.module.add_function("blood_alloc_tag_reset", diag_void_type, None);
+        self.module.add_function("blood_alloc_tag_report", diag_void_type, None);
+        let tag_query_type = i64_type.fn_type(&[i64_type.into()], false);
+        self.module.add_function("blood_alloc_tag_count", tag_query_type, None);
+        self.module.add_function("blood_alloc_tag_bytes", tag_query_type, None);
+
         // blood_region_activate(region_id: i64) -> void
         // Activates a region for the current thread so String/Vec/Box allocations route to it
         let region_activate_type = void_type.fn_type(&[i64_type.into()], false);

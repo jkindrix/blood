@@ -111,6 +111,8 @@ pub struct Args {
     pub validate_mir: bool,
     /// Whether to print memory profile at each phase boundary.
     pub mem_profile: bool,
+    /// Whether to print per-module allocation profile.
+    pub alloc_profile: bool,
     /// Controls how far the build pipeline runs (Full, LlvmIr, or Obj).
     pub emit_mode: EmitMode,
     /// Optimization level for llc (0-3). Default 0; --release sets to 2.
@@ -154,6 +156,7 @@ impl Args {
             dump_layouts: false,
             validate_mir: false,
             mem_profile: false,
+            alloc_profile: false,
             emit_mode: EmitMode.Full,
             opt_level: 0,
             strip: false,
@@ -186,6 +189,7 @@ impl Args {
             dump_layouts: false,
             validate_mir: false,
             mem_profile: false,
+            alloc_profile: false,
             emit_mode: EmitMode.Full,
             opt_level: 0,
             strip: false,
@@ -218,6 +222,7 @@ impl Args {
             dump_layouts: false,
             validate_mir: false,
             mem_profile: false,
+            alloc_profile: false,
             emit_mode: EmitMode.Full,
             opt_level: 0,
             strip: false,
@@ -733,6 +738,7 @@ fn run_help(_args: &Args) -> i32 {
     help.push_str("    --no-color         Disable colored output\n");
     help.push_str("    --timings          Print per-phase timing\n");
     help.push_str("    --mem-profile      Print per-phase memory diagnostics\n");
+    help.push_str("    --alloc-profile    Print per-module allocation breakdown\n");
     help.push_str("    --no-cache         Skip the build cache\n");
     help.push_str("    --release          Build with -O2 and strip symbols\n");
     help.push_str("    -O0/-O1/-O2/-O3   Set optimization level (default: -O0)\n");
@@ -1547,6 +1553,8 @@ pub fn parse_args(argc: i32, argv: &Vec<String>) -> Args {
                 args.validate_mir = true;
             } else if str_equals(arg, "--mem-profile") {
                 args.mem_profile = true;
+            } else if str_equals(arg, "--alloc-profile") {
+                args.alloc_profile = true;
             } else if str_equals(arg, "--list") {
                 args.test_list = true;
             } else if str_equals(arg, "--fail-fast") {
@@ -1747,6 +1755,12 @@ fn is_region_builtin(name: &str) -> bool {
     if str_eq(name, "realloc_stats_reset") { return true; }
     if str_eq(name, "print_alloc_hist") { return true; }
     if str_eq(name, "alloc_hist_reset") { return true; }
+    if str_eq(name, "alloc_tag_set") { return true; }
+    if str_eq(name, "alloc_tag_get") { return true; }
+    if str_eq(name, "alloc_tag_reset") { return true; }
+    if str_eq(name, "alloc_tag_report") { return true; }
+    if str_eq(name, "alloc_tag_count") { return true; }
+    if str_eq(name, "alloc_tag_bytes") { return true; }
     false
 }
 
@@ -4363,6 +4377,9 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     if args.mem_profile {
         print_mem_phase("After HIR lowering", parse_region, hir_region, 0 as u64);
     }
+
+    // alloc-profile report is printed from hir_lower.blood (has module name mapping).
+    // Tags are reset there too, so nothing to do here.
 
     // Trim hir_region to release pages used during lowering but no longer needed
     region_trim(hir_region);
