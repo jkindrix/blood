@@ -59,8 +59,13 @@ pub fn lower_program_with_base_dir(program: &ast.Program, base_dir: String, sour
     // Allocate root module DefId
     let root_def_id = ctx.alloc_def_id();
 
+    // Parse cache: populated during Phase 1 (load_external_module), reused in
+    // Phase 3a (lower declarations) and Phase 4b (lower bodies). Eliminates the
+    // double-parse that previously caused ~50% of HIR region memory usage.
+    let mut parsed_module_cache: Vec<CachedParsedModule> = Vec.new();
+
     // Phase 1: Register type names (structs, enums, traits, effects)
-    register_type_names(&mut ctx, &program.declarations);
+    register_type_names(&mut ctx, &program.declarations, &mut parsed_module_cache);
 
     // Phase 1b: Register builtin stdlib types (String, Vec, Option, Box, HashMap)
     // Only registers names not already defined by user code
@@ -79,11 +84,7 @@ pub fn lower_program_with_base_dir(program: &ast.Program, base_dir: String, sour
         return hir_lower_ctx.LowerResult.failure(ctx.diagnostics);
     }
 
-    // Phase 3a: Lower external module declarations first, so their enum
-    // variants and impl methods are registered before the current file's
-    // declarations reference them.
-    // The cache stores parsed modules for reuse in Phase 4b.
-    let mut parsed_module_cache: Vec<CachedParsedModule> = Vec.new();
+    // Phase 3a: Lower external module declarations using cached parses from Phase 1.
     lower_external_module_declarations(&mut ctx, &mut parsed_module_cache);
 
     // Phase 3a.25: Auto-import stdlib prelude when --stdlib-path is set.
@@ -252,14 +253,14 @@ fn resolve_import(ctx: &mut hir_lower_ctx.LoweringCtx, imp: &ast.Import) {
 // ============================================================
 
 /// First pass: register all type names so they can be referenced.
-fn register_type_names(ctx: &mut hir_lower_ctx.LoweringCtx, decls: &Vec<ast.Declaration>) {
+fn register_type_names(ctx: &mut hir_lower_ctx.LoweringCtx, decls: &Vec<ast.Declaration>, cache: &mut Vec<CachedParsedModule>) {
     for i in 0usize..decls.len() {
-        register_type_name(ctx, &decls[i]);
+        register_type_name(ctx, &decls[i], cache);
     }
 }
 
 /// Register a single declaration's type name if applicable.
-fn register_type_name(ctx: &mut hir_lower_ctx.LoweringCtx, decl: &ast.Declaration) {
+fn register_type_name(ctx: &mut hir_lower_ctx.LoweringCtx, decl: &ast.Declaration, cache: &mut Vec<CachedParsedModule>) {
     match decl {
         &ast.Declaration.Struct(ref s) => {
             let def_id = ctx.alloc_def_id();
@@ -424,12 +425,12 @@ fn register_type_name(ctx: &mut hir_lower_ctx.LoweringCtx, decl: &ast.Declaratio
                             Option.None,
                         );
                         // Recursively register nested type names
-                        register_module_type_names(ctx, def_id, declarations);
+                        register_module_type_names(ctx, def_id, declarations, cache);
                     }
                 }
                 &Option.None => {
                     // External module - load from file
-                    load_external_module(ctx, m.name.symbol, m.name.span, m.vis, m.span);
+                    load_external_module(ctx, m.name.symbol, m.name.span, m.vis, m.span, cache);
                 }
             }
         }
@@ -1234,6 +1235,7 @@ fn load_external_module(
     name_span: common.Span,
     vis: common.Visibility,
     span: common.Span,
+    cache: &mut Vec<CachedParsedModule>,
 ) {
     // Build the file path: base_dir/module_name.blood
     // Use span_to_string instead of resolve_symbol_to_string because the symbol
@@ -1397,7 +1399,7 @@ fn load_external_module(
     // Phase 1: Register nested type names from the loaded module
     // This recursively loads sub-modules, which will be added to loaded_modules
     // BEFORE this module (post-order), ensuring dependencies are processed first in Phase 3a.
-    register_module_type_names(ctx, def_id, &program.declarations);
+    register_module_type_names(ctx, def_id, &program.declarations, cache);
 
     // Phase 2: Register declarations (functions, consts, statics) from the loaded module
     register_module_declarations(ctx, def_id, &program.declarations);
@@ -1405,6 +1407,15 @@ fn load_external_module(
     // Restore the original source text and base_dir
     ctx.source = saved_source;
     ctx.base_dir = saved_base_dir;
+
+    // Cache the parse result for reuse in Phase 3a and 4b (avoids re-parsing).
+    let cache_index = cache.len();
+    cache.push(CachedParsedModule {
+        module_index: cache_index,
+        content: common.make_string(content.as_str()),
+        parse: parse_result,
+        def_id: def_id,
+    });
 
     // Add to loaded_modules AFTER sub-modules have been loaded (post-order).
     // This ensures Phase 3a processes dependencies before dependents.
@@ -1495,71 +1506,43 @@ fn collect_external_modules(ctx: &mut hir_lower_ctx.LoweringCtx) -> Vec<External
     result
 }
 
-/// Phase 3b: Lower declarations from external modules.
-/// Populates the cache with parsed modules for reuse in Phase 4b.
+/// Phase 3a: Lower declarations from external modules using cached parses from Phase 1.
 fn lower_external_module_declarations(ctx: &mut hir_lower_ctx.LoweringCtx, cache: &mut Vec<CachedParsedModule>) {
     // Collect module info first to avoid borrow conflicts
     let modules = collect_external_modules(ctx);
 
     for i in 0usize..modules.len() {
-        let path = &modules[i].path;
         let def_id = modules[i].def_id;
 
-        // Parse the external module (cached for Phase 4b reuse)
-        let read_result = source.read_file_string(path);
-        if !read_result.success {
-            // Skip - error should have been reported in Phase 1
-            continue;
-        }
-
-        let content = match read_result.content {
-            Option.Some(c) => c,
-            Option.None => {
-                continue;
+        // Find cached parse result from Phase 1
+        let mut cache_idx: i64 = -1;
+        for ci in 0usize..cache.len() {
+            if cache[ci].def_id.index == def_id.index {
+                cache_idx = ci as i64;
             }
-        };
-
-        let parse_result = parser.parse_file(content.as_str());
-        if parse_result.errors.len() > 0 {
-            // Skip - error should have been reported in Phase 1
+        }
+        if cache_idx < 0 {
+            // No cached parse — module had errors in Phase 1, skip
             continue;
         }
+        let cached = &cache[cache_idx as usize];
 
-        let has_program = match &parse_result.program {
-            &Option.Some(ref _p) => true,
-            &Option.None => false,
-        };
-
-        if !has_program {
-            continue;
-        }
-
-        // Save current source (struct copy — no heap allocation) and switch
-        let saved_source = ctx.source;
-        ctx.source = common.make_string(content.as_str());
-
-        let program = match &parse_result.program {
+        let program = match &cached.parse.program {
             &Option.Some(ref p) => p,
             &Option.None => {
-                ctx.source = saved_source;
                 continue;
             }
         };
+
+        // Save current source and switch to the module's source
+        let saved_source = ctx.source;
+        ctx.source = common.make_string(cached.content.as_str());
 
         // Lower the module's declarations as if they're inside the module
         hir_lower_item.lower_module_contents(ctx, def_id, &program.declarations);
 
         // Restore source
         ctx.source = saved_source;
-
-        // Cache the parsed module for Phase 4b
-        cache.push(CachedParsedModule {
-            module_index: i,
-            content: content,
-            parse: parse_result,
-            def_id: def_id,
-        });
-
     }
 }
 
@@ -1626,9 +1609,10 @@ fn register_module_type_names(
     ctx: &mut hir_lower_ctx.LoweringCtx,
     parent_def_id: hir_def.DefId,
     decls: &Vec<ast.Declaration>,
+    cache: &mut Vec<CachedParsedModule>,
 ) {
     for i in 0usize..decls.len() {
-        register_module_type_name(ctx, parent_def_id, &decls[i]);
+        register_module_type_name(ctx, parent_def_id, &decls[i], cache);
     }
 }
 
@@ -1639,6 +1623,7 @@ fn register_module_type_name(
     ctx: &mut hir_lower_ctx.LoweringCtx,
     parent_def_id: hir_def.DefId,
     decl: &ast.Declaration,
+    cache: &mut Vec<CachedParsedModule>,
 ) {
     match decl {
         &ast.Declaration.Struct(ref s) => {
@@ -1723,11 +1708,11 @@ fn register_module_type_name(
                     );
                     ctx.resolver.set_def_visibility(def_id, m.vis);
                     // Recursively register nested module's type names
-                    register_module_type_names(ctx, def_id, nested_decls);
+                    register_module_type_names(ctx, def_id, nested_decls, cache);
                 }
                 &Option.None => {
                     // Nested external module - load recursively
-                    load_external_module(ctx, m.name.symbol, m.name.span, m.vis, m.span);
+                    load_external_module(ctx, m.name.symbol, m.name.span, m.vis, m.span, cache);
                     // Also register as a child of the parent module so that
                     // chained paths like parent.submodule.Type work.
                     let name_str = ctx.span_to_string(m.name.span);
