@@ -28,7 +28,7 @@ mod type_intern;
 
 /// Lower function parameters.
 pub fn lower_fn_params(ctx: &mut hir_lower_ctx.LoweringCtx, params: &Vec<ast.Param>) -> Vec<hir_item.FnParam> {
-    let mut result: Vec<hir_item.FnParam> = Vec.new();
+    let mut result: Vec<hir_item.FnParam> = Vec.with_capacity(params.len());
     for i in 0usize..params.len() {
         let param = lower_fn_param(ctx, &params[i], i as u32);
         result.push(param);
@@ -128,7 +128,7 @@ pub fn lower_struct_body(ctx: &mut hir_lower_ctx.LoweringCtx, body: &ast.StructB
     match body {
         &ast.StructBody.Unit => hir_item.StructBody.Unit,
         &ast.StructBody.Tuple(ref types) => {
-            let mut lowered: Vec<type_intern.TyId> = Vec.new();
+            let mut lowered: Vec<type_intern.TyId> = Vec.with_capacity(types.len());
             for i in 0usize..types.len() {
                 let ty = hir_lower_type.lower_type_id(ctx, &types[i]);
                 lowered.push(ty);
@@ -136,7 +136,7 @@ pub fn lower_struct_body(ctx: &mut hir_lower_ctx.LoweringCtx, body: &ast.StructB
             hir_item.StructBody.Tuple(lowered)
         }
         &ast.StructBody.Record(ref fields) => {
-            let mut lowered: Vec<hir_item.StructField> = Vec.new();
+            let mut lowered: Vec<hir_item.StructField> = Vec.with_capacity(fields.len());
             // Check for duplicate field names using span bytes
             for i in 0usize..fields.len() {
                 let mut j: usize = 0;
@@ -193,7 +193,7 @@ pub fn lower_struct_field(ctx: &mut hir_lower_ctx.LoweringCtx, field: &ast.Struc
 
 /// Lower enum variants to HIR.
 pub fn lower_enum_variants(ctx: &mut hir_lower_ctx.LoweringCtx, parent_def_id: hir_def.DefId, variants: &Vec<ast.EnumVariant>) -> Vec<hir_item.Variant> {
-    let mut result: Vec<hir_item.Variant> = Vec.new();
+    let mut result: Vec<hir_item.Variant> = Vec.with_capacity(variants.len());
     for i in 0usize..variants.len() {
         // Check for duplicate variant name using interned symbol index
         // NOTE: Avoid chained method calls to work around first_gen codegen bug
@@ -255,7 +255,7 @@ fn lower_variant_kind(ctx: &mut hir_lower_ctx.LoweringCtx, body: &ast.StructBody
             hir_item.VariantKind.Unit
         }
         &ast.StructBody.Tuple(ref types) => {
-            let mut lowered: Vec<type_intern.TyId> = Vec.new();
+            let mut lowered: Vec<type_intern.TyId> = Vec.with_capacity(types.len());
             for i in 0usize..types.len() {
                 let ty = hir_lower_type.lower_type_id(ctx, &types[i]);
                 lowered.push(ty);
@@ -263,7 +263,7 @@ fn lower_variant_kind(ctx: &mut hir_lower_ctx.LoweringCtx, body: &ast.StructBody
             hir_item.VariantKind.Tuple(lowered)
         }
         &ast.StructBody.Record(ref fields) => {
-            let mut lowered: Vec<hir_item.StructField> = Vec.new();
+            let mut lowered: Vec<hir_item.StructField> = Vec.with_capacity(fields.len());
             for i in 0usize..fields.len() {
                 let field = lower_struct_field(ctx, &fields[i]);
                 lowered.push(field);
@@ -969,7 +969,7 @@ fn type_to_trait_ref(ty: &hir_ty.Type, span: common.Span) -> Option<hir_ty.Trait
     match &ty.kind {
         &hir_ty.TypeKind.Adt { def_id, ref args } => {
             // Copy the args vector
-            let mut args_copy: Vec<hir_ty.Type> = Vec.new();
+            let mut args_copy: Vec<hir_ty.Type> = Vec.with_capacity(args.len());
             for i in 0usize..args.len() {
                 args_copy.push(hir_ty.copy_type(&args[i]));
             }
@@ -1011,7 +1011,7 @@ fn lower_effect_decl(ctx: &mut hir_lower_ctx.LoweringCtx, e: &ast.EffectDecl) {
     }
 
     // Lower operations
-    let mut operations: Vec<hir_item.EffectOp> = Vec.new();
+    let mut operations: Vec<hir_item.EffectOp> = Vec.with_capacity(e.operations.len());
     for i in 0usize..e.operations.len() {
         let eff_op = lower_effect_op(ctx, &e.operations[i]);
         operations.push(eff_op);
@@ -1046,7 +1046,7 @@ fn lower_effect_op(ctx: &mut hir_lower_ctx.LoweringCtx, oper: &ast.OperationDecl
     let generics = hir_lower_type.lower_generics(ctx, &oper.type_params, &no_where);
 
     // Lower parameter types
-    let mut param_tys: Vec<type_intern.TyId> = Vec.new();
+    let mut param_tys: Vec<type_intern.TyId> = Vec.with_capacity(oper.params.len());
     for i in 0usize..oper.params.len() {
         let ty = hir_lower_type.lower_type_id(ctx, &oper.params[i].ty);
         param_tys.push(ty);
@@ -1068,7 +1068,7 @@ fn lower_effect_op(ctx: &mut hir_lower_ctx.LoweringCtx, oper: &ast.OperationDecl
 fn type_to_effect_ref(ty: &hir_ty.Type) -> Option<hir_ty.EffectRef> {
     match &ty.kind {
         &hir_ty.TypeKind.Adt { def_id, ref args } => {
-            let mut args_copy: Vec<hir_ty.Type> = Vec.new();
+            let mut args_copy: Vec<hir_ty.Type> = Vec.with_capacity(args.len());
             for i in 0usize..args.len() {
                 args_copy.push(hir_ty.copy_type(&args[i]));
             }
@@ -1111,7 +1111,7 @@ fn lower_handler_decl(ctx: &mut hir_lower_ctx.LoweringCtx, h: &ast.HandlerDecl) 
     }
 
     // Lower state fields
-    let mut state: Vec<hir_item.HandlerState> = Vec.new();
+    let mut state: Vec<hir_item.HandlerState> = Vec.with_capacity(h.state.len());
     let mut i: usize = 0;
     while i < h.state.len() {
         let hs = lower_handler_state(ctx, &h.state[i]);
@@ -1129,7 +1129,7 @@ fn lower_handler_decl(ctx: &mut hir_lower_ctx.LoweringCtx, h: &ast.HandlerDecl) 
     };
 
     // Lower operation implementations
-    let mut op_impls: Vec<hir_item.OpImpl> = Vec.new();
+    let mut op_impls: Vec<hir_item.OpImpl> = Vec.with_capacity(h.operations.len());
     for i in 0usize..h.operations.len() {
         let oper_impl = lower_op_impl(ctx, &h.operations[i], &state);
         op_impls.push(oper_impl);
@@ -1647,7 +1647,7 @@ fn lower_impl_decl(ctx: &mut hir_lower_ctx.LoweringCtx, imp: &ast.ImplBlock) {
                 // DefId collisions when two types in the same module have
                 // methods with the same name (e.g., Place.clone and
                 // PlaceElem.clone both under mir_types).
-                let mut seg_names: Vec<common.SpannedSymbol> = Vec.new();
+                let mut seg_names: Vec<common.SpannedSymbol> = Vec.with_capacity(type_path.segments.len());
                 for si in 0usize..type_path.segments.len() {
                     let seg_str = ctx.span_to_string(type_path.segments[si].name.span);
                     let seg_sym = ctx.intern(seg_str.as_str());

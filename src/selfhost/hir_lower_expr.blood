@@ -270,7 +270,7 @@ pub fn lower_expr(ctx: &mut hir_lower_ctx.LoweringCtx, expr: &ast.Expr) -> hir_e
         &ast.ExprKind.Unchecked { ref checks, ref when_condition, ref body } => {
             let block_hir = lower_block_to_expr(ctx, body);
             let ty = type_intern.type_interner().mk_infer(ctx.alloc_ty_var());
-            let mut check_vec: Vec<ast.UncheckedCheck> = Vec.new();
+            let mut check_vec: Vec<ast.UncheckedCheck> = Vec.with_capacity(checks.len());
             for i in 0usize..checks.len() {
                 match &checks[i] {
                     &ast.UncheckedCheck.Bounds => { check_vec.push(ast.UncheckedCheck.Bounds); }
@@ -316,7 +316,7 @@ pub fn lower_expr(ctx: &mut hir_lower_ctx.LoweringCtx, expr: &ast.Expr) -> hir_e
             // Lower region block preserving region semantics
             ctx.resolver.push_scope(resolve.ScopeKind.Block);
 
-            let mut stmts_hir: Vec<hir_expr.Stmt> = Vec.new();
+            let mut stmts_hir: Vec<hir_expr.Stmt> = Vec.with_capacity(body.statements.len());
             for i in 0usize..body.statements.len() {
                 let stmt_hir = lower_stmt(ctx, &body.statements[i]);
                 stmts_hir.push(stmt_hir);
@@ -431,7 +431,7 @@ fn lower_literal_expr(ctx: &mut hir_lower_ctx.LoweringCtx, lit: &ast.Literal, sp
         }
         &ast.LiteralKind.ByteStr(ref bytes) => {
             // Copy the bytes
-            let mut bytes_copy: Vec<u8> = Vec.new();
+            let mut bytes_copy: Vec<u8> = Vec.with_capacity(bytes.len());
             for i in 0usize..bytes.len() {
                 bytes_copy.push(bytes[i]);
             }
@@ -569,7 +569,7 @@ fn lower_path_expr(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.ExprPath, spa
 
     // Multi-segment paths (e.g., module.item or Type.method)
     // Extract the names from path segments, re-interning for consistent indices
-    let mut names: Vec<common.SpannedSymbol> = Vec.new();
+    let mut names: Vec<common.SpannedSymbol> = Vec.with_capacity(path.segments.len());
     for i in 0usize..path.segments.len() {
         let seg = &path.segments[i];
         let name_str = ctx.span_to_string(seg.name.span);
@@ -641,7 +641,7 @@ fn lower_path_expr(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.ExprPath, spa
 fn lower_call_expr(ctx: &mut hir_lower_ctx.LoweringCtx, callee: &ast.Expr, args: &Vec<ast.CallArg>, span: common.Span) -> hir_expr.Expr {
     let callee_hir = lower_expr(ctx, callee);
 
-    let mut args_hir: Vec<hir_expr.Expr> = Vec.new();
+    let mut args_hir: Vec<hir_expr.Expr> = Vec.with_capacity(args.len());
     for i in 0usize..args.len() {
         let arg_hir = lower_expr(ctx, &args[i].val);
         args_hir.push(arg_hir);
@@ -685,7 +685,7 @@ fn try_extract_module_chain(ctx: &mut hir_lower_ctx.LoweringCtx, expr: &ast.Expr
                         return Option.None;
                     }
                 }
-                let mut result: Vec<common.SpannedSymbol> = Vec.new();
+                let mut result: Vec<common.SpannedSymbol> = Vec.with_capacity(1);
                 result.push(common.SpannedSymbol { symbol: name_sym, span: seg.name.span });
                 Option.Some(result)
             } else {
@@ -757,7 +757,7 @@ fn lower_method_call_expr(
                     &None => Vec.new(),
                 };
                 // Lower call args
-                let mut args_hir: Vec<hir_expr.Expr> = Vec.new();
+                let mut args_hir: Vec<hir_expr.Expr> = Vec.with_capacity(args.len());
                 for i in 0usize..args.len() {
                     let arg_hir = lower_expr(ctx, &args[i].val);
                     args_hir.push(arg_hir);
@@ -789,7 +789,7 @@ fn lower_method_call_expr(
         &None => Vec.new(),
     };
 
-    let mut args_hir: Vec<hir_expr.Expr> = Vec.new();
+    let mut args_hir: Vec<hir_expr.Expr> = Vec.with_capacity(args.len());
     for i in 0usize..args.len() {
         let arg_hir = lower_expr(ctx, &args[i].val);
         args_hir.push(arg_hir);
@@ -897,7 +897,7 @@ fn lower_field_expr(ctx: &mut hir_lower_ctx.LoweringCtx, base: &ast.Expr, field:
 
 /// Lower a tuple expression.
 fn lower_tuple_expr(ctx: &mut hir_lower_ctx.LoweringCtx, elems: &Vec<ast.Expr>, span: common.Span) -> hir_expr.Expr {
-    let mut elems_hir: Vec<hir_expr.Expr> = Vec.new();
+    let mut elems_hir: Vec<hir_expr.Expr> = Vec.with_capacity(elems.len());
     for i in 0usize..elems.len() {
         let elem_hir = lower_expr(ctx, &elems[i]);
         elems_hir.push(elem_hir);
@@ -915,7 +915,7 @@ fn lower_tuple_expr(ctx: &mut hir_lower_ctx.LoweringCtx, elems: &Vec<ast.Expr>, 
 fn lower_array_expr(ctx: &mut hir_lower_ctx.LoweringCtx, arr: &ast.ArrayExpr, span: common.Span) -> hir_expr.Expr {
     let arr_hir = match arr {
         &ast.ArrayExpr.List(ref elems) => {
-            let mut elems_hir: Vec<hir_expr.Expr> = Vec.new();
+            let mut elems_hir: Vec<hir_expr.Expr> = Vec.with_capacity(elems.len());
             for i in 0usize..elems.len() {
                 let elem_hir = lower_expr(ctx, &elems[i]);
                 elems_hir.push(elem_hir);
@@ -990,7 +990,7 @@ fn lower_record_expr(
     } else {
         // Multi-segment path (e.g., module.StructName): use qualified path resolution
         // Re-intern all segment names from their spans
-        let mut names: Vec<common.SpannedSymbol> = Vec.new();
+        let mut names: Vec<common.SpannedSymbol> = Vec.with_capacity(p.segments.len());
         for i in 0usize..p.segments.len() {
             let seg = &p.segments[i];
             let name_str = ctx.span_to_string(seg.name.span);
@@ -1044,7 +1044,7 @@ fn lower_record_expr(
     };
 
     // Lower fields
-    let mut fields_hir: Vec<hir_expr.FieldExpr> = Vec.new();
+    let mut fields_hir: Vec<hir_expr.FieldExpr> = Vec.with_capacity(fields.len());
     for i in 0usize..fields.len() {
         let f = &fields[i];
         // Handle shorthand fields (e.g., `Foo { bar }` where bar is a variable)
@@ -1125,7 +1125,7 @@ fn lower_anon_record_expr(
     fields: &Vec<ast.RecordExprField>,
     span: common.Span,
 ) -> hir_expr.Expr {
-    let mut fields_hir: Vec<hir_expr.AnonRecordField> = Vec.new();
+    let mut fields_hir: Vec<hir_expr.AnonRecordField> = Vec.with_capacity(fields.len());
     for i in 0usize..fields.len() {
         let f = &fields[i];
         let val_hir = match &f.val {
@@ -1196,7 +1196,7 @@ fn lower_block_expr(ctx: &mut hir_lower_ctx.LoweringCtx, block: &ast.Block, span
 pub fn lower_block(ctx: &mut hir_lower_ctx.LoweringCtx, block: &ast.Block) -> hir_expr.Block {
     ctx.resolver.push_scope(resolve.ScopeKind.Block);
 
-    let mut stmts_hir: Vec<hir_expr.Stmt> = Vec.new();
+    let mut stmts_hir: Vec<hir_expr.Stmt> = Vec.with_capacity(block.statements.len());
     for i in 0usize..block.statements.len() {
         let stmt_hir = lower_stmt(ctx, &block.statements[i]);
         stmts_hir.push(stmt_hir);
@@ -1415,7 +1415,7 @@ fn lower_local_fn(
     let generics = hir_lower_type.lower_generics(ctx, &f.type_params, &f.where_clause);
 
     // Lower parameters inline (simplified version of hir_lower_item.lower_fn_params)
-    let mut hir_params: Vec<hir_item.FnParam> = Vec.new();
+    let mut hir_params: Vec<hir_item.FnParam> = Vec.with_capacity(f.params.len());
     for i in 0usize..f.params.len() {
         let param = &f.params[i];
         let param_ty = hir_lower_type.lower_type_id(ctx, &param.ty);
@@ -1478,7 +1478,7 @@ fn lower_local_fn(
                     ctx.resolver.push_scope(resolve.ScopeKind.Function);
 
                     // Register parameters as locals
-                    let mut locals: Vec<hir_expr.Local> = Vec.new();
+                    let mut locals: Vec<hir_expr.Local> = Vec.with_capacity(f.params.len());
                     let mut param_count: u32 = 0;
 
                     for pi in 0usize..f.params.len() {
@@ -1498,7 +1498,7 @@ fn lower_local_fn(
                     }
 
                     // Save and clear body_locals
-                    let mut saved_body_locals: Vec<hir_expr.Local> = Vec.new();
+                    let mut saved_body_locals: Vec<hir_expr.Local> = Vec.with_capacity(ctx.body_locals.len());
                     for si in 0usize..ctx.body_locals.len() {
                         let saved_local = &ctx.body_locals[si];
                         saved_body_locals.push(hir_expr.Local.new(
@@ -1628,7 +1628,7 @@ fn collect_binding_spans_recursive(pattern: &ast.Pattern, spans: &mut Vec<common
 
 /// Extract binding name strings from spans.
 fn binding_names_from_spans(ctx: &mut hir_lower_ctx.LoweringCtx, spans: &Vec<common.Span>) -> Vec<String> {
-    let mut names: Vec<String> = Vec.new();
+    let mut names: Vec<String> = Vec.with_capacity(spans.len());
     for i in 0usize..spans.len() {
         names.push(ctx.span_to_string(spans[i]));
     }
@@ -1759,7 +1759,7 @@ pub fn lower_pattern(ctx: &mut hir_lower_ctx.LoweringCtx, pattern: &ast.Pattern)
             lower_tuple_struct_pattern(ctx, path, fields, span)
         }
         &ast.PatternKind.Tuple { ref fields, rest_pos: _ } => {
-            let mut fields_hir: Vec<hir_expr.Pattern> = Vec.new();
+            let mut fields_hir: Vec<hir_expr.Pattern> = Vec.with_capacity(fields.len());
             for i in 0usize..fields.len() {
                 let f_hir = lower_pattern(ctx, &fields[i]);
                 fields_hir.push(f_hir);
@@ -1767,7 +1767,7 @@ pub fn lower_pattern(ctx: &mut hir_lower_ctx.LoweringCtx, pattern: &ast.Pattern)
             hir_expr.PatternKind.Tuple(fields_hir)
         }
         &ast.PatternKind.Slice { ref elements, rest_pos: _ } => {
-            let mut elements_hir: Vec<hir_expr.Pattern> = Vec.new();
+            let mut elements_hir: Vec<hir_expr.Pattern> = Vec.with_capacity(elements.len());
             for i in 0usize..elements.len() {
                 elements_hir.push(lower_pattern(ctx, &elements[i]));
             }
@@ -1835,7 +1835,7 @@ pub fn lower_pattern(ctx: &mut hir_lower_ctx.LoweringCtx, pattern: &ast.Pattern)
                 }
             }
 
-            let mut pats_hir: Vec<hir_expr.Pattern> = Vec.new();
+            let mut pats_hir: Vec<hir_expr.Pattern> = Vec.with_capacity(patterns.len());
             for i in 0usize..patterns.len() {
                 let p_hir = lower_pattern(ctx, &patterns[i]);
                 pats_hir.push(p_hir);
@@ -1892,7 +1892,7 @@ fn lower_pattern_literal(ctx: &mut hir_lower_ctx.LoweringCtx, lit: &ast.Literal)
             hir_expr.LiteralKind.Str(s_copy)
         }
         &ast.LiteralKind.ByteStr(ref bytes) => {
-            let mut bytes_copy: Vec<u8> = Vec.new();
+            let mut bytes_copy: Vec<u8> = Vec.with_capacity(bytes.len());
             for i in 0usize..bytes.len() {
                 bytes_copy.push(bytes[i]);
             }
@@ -1921,7 +1921,7 @@ fn lower_struct_pattern(
     let resolved = resolve_type_path_for_pattern(ctx, path, span);
 
     // Lower field patterns
-    let mut fields_hir: Vec<hir_expr.FieldPattern> = Vec.new();
+    let mut fields_hir: Vec<hir_expr.FieldPattern> = Vec.with_capacity(fields.len());
     for i in 0usize..fields.len() {
         let f = &fields[i];
         // Handle shorthand patterns (Foo { bar } binds to variable named bar)
@@ -1976,7 +1976,7 @@ fn lower_tuple_struct_pattern(
 ) -> hir_expr.PatternKind {
     let resolved = resolve_type_path_for_pattern(ctx, path, span);
 
-    let mut fields_hir: Vec<hir_expr.Pattern> = Vec.new();
+    let mut fields_hir: Vec<hir_expr.Pattern> = Vec.with_capacity(fields.len());
     for i in 0usize..fields.len() {
         let f_hir = lower_pattern(ctx, &fields[i]);
         fields_hir.push(f_hir);
@@ -1997,7 +1997,7 @@ fn lower_path_pattern(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.TypePath, 
 /// Resolve a type path for use in a pattern.
 fn resolve_type_path_for_pattern(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.TypePath, span: common.Span) -> hir_def.ResolvedPath {
     // Extract the names from path segments, re-interning for consistent indices
-    let mut names: Vec<common.SpannedSymbol> = Vec.new();
+    let mut names: Vec<common.SpannedSymbol> = Vec.with_capacity(path.segments.len());
     for i in 0usize..path.segments.len() {
         let seg = &path.segments[i];
         let name_str = ctx.span_to_string(seg.name.span);
@@ -2142,7 +2142,7 @@ fn lower_if_let_expr(
         span,
     );
 
-    let mut arms: Vec<hir_expr.MatchArm> = Vec.new();
+    let mut arms: Vec<hir_expr.MatchArm> = Vec.with_capacity(2);
     arms.push(then_arm);
     arms.push(else_arm);
 
@@ -2166,7 +2166,7 @@ fn lower_match_expr(
 ) -> hir_expr.Expr {
     let scrutinee_hir = lower_expr(ctx, scrutinee);
 
-    let mut arms_hir: Vec<hir_expr.MatchArm> = Vec.new();
+    let mut arms_hir: Vec<hir_expr.MatchArm> = Vec.with_capacity(arms.len());
     for i in 0usize..arms.len() {
         let arm = &arms[i];
         ctx.resolver.push_scope(resolve.ScopeKind.MatchArm);
@@ -2315,7 +2315,7 @@ fn lower_while_let_expr(
         span,
     );
 
-    let mut arms: Vec<hir_expr.MatchArm> = Vec.new();
+    let mut arms: Vec<hir_expr.MatchArm> = Vec.with_capacity(2);
     arms.push(match_arm);
     arms.push(break_arm);
 
@@ -2584,7 +2584,7 @@ fn lower_for_range(
     // Create body block: { let i = _for_idx; _for_idx += 1; body; }
     // Increment BEFORE body so that `continue` (which jumps to loop header)
     // doesn't skip the index advancement. User var `i` is already bound.
-    let mut body_stmts: Vec<hir_expr.Stmt> = Vec.new();
+    let mut body_stmts: Vec<hir_expr.Stmt> = Vec.with_capacity(3);
     body_stmts.push(bind_user_var);
     body_stmts.push(hir_expr.Stmt.Expr { expr: increment_assign, has_semi: true });
     body_stmts.push(hir_expr.Stmt.Expr { expr: body_hir, has_semi: true });
@@ -2627,7 +2627,7 @@ fn lower_for_range(
     );
 
     // Wrap in block with init: { let mut _for_idx = start; loop { ... } }
-    let mut outer_stmts: Vec<hir_expr.Stmt> = Vec.new();
+    let mut outer_stmts: Vec<hir_expr.Stmt> = Vec.with_capacity(1);
     outer_stmts.push(init_let);
     let outer_block = hir_expr.Block.new(outer_stmts, Some(Box.new(loop_expr)), span);
     hir_expr.Expr.new(
@@ -2664,7 +2664,7 @@ fn lower_closure_expr(
     let body_id = ctx.alloc_body_id();
 
     // Lower parameters
-    let mut params_hir: Vec<hir_expr.ClosureParam> = Vec.new();
+    let mut params_hir: Vec<hir_expr.ClosureParam> = Vec.with_capacity(params.len());
     for i in 0usize..params.len() {
         let p = &params[i];
         let pattern_hir = lower_pattern(ctx, &p.pattern);
@@ -2762,7 +2762,7 @@ fn lower_perform_expr(
     };
 
     // Lower arguments
-    let mut args_hir: Vec<hir_expr.Expr> = Vec.new();
+    let mut args_hir: Vec<hir_expr.Expr> = Vec.with_capacity(args.len());
     for i in 0usize..args.len() {
         let arg_hir = lower_expr(ctx, &args[i]);
         args_hir.push(arg_hir);
@@ -2803,7 +2803,7 @@ fn lower_try_with_expr(
     let body_hir = lower_block_to_expr(ctx, body);
 
     // Lower each handler
-    let mut hir_handlers: Vec<hir_expr.InlineOpHandler> = Vec.new();
+    let mut hir_handlers: Vec<hir_expr.InlineOpHandler> = Vec.with_capacity(handlers.len());
     for i in 0usize..handlers.len() {
         let hdlr = &handlers[i];
 
@@ -2842,8 +2842,8 @@ fn lower_try_with_expr(
         ctx.resolver.push_scope(resolve.ScopeKind.Block);
 
         // Allocate locals for handler parameters
-        let mut param_ids: Vec<hir_def.LocalId> = Vec.new();
-        let mut param_types: Vec<type_intern.TyId> = Vec.new();
+        let mut param_ids: Vec<hir_def.LocalId> = Vec.with_capacity(hdlr.params.len());
+        let mut param_types: Vec<type_intern.TyId> = Vec.with_capacity(hdlr.params.len());
         for j in 0usize..hdlr.params.len() {
             let param = &hdlr.params[j];
             // Lower the pattern (which allocates local IDs and registers bindings)
@@ -2989,37 +2989,37 @@ fn lower_macro_call_expr(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.ExprPat
             if args.len() == 0 {
                 let mn = macro_name.as_str();
                 if str_eq(mn, "println") {
-                    let mut a: Vec<hir_expr.Expr> = Vec.new();
+                    let mut a: Vec<hir_expr.Expr> = Vec.with_capacity(1);
                     a.push(make_str_literal_expr(span, format_str.value.as_str()));
                     return make_builtin_call_expr(ctx, "println_str", a, span);
                 }
                 if str_eq(mn, "print") {
-                    let mut a: Vec<hir_expr.Expr> = Vec.new();
+                    let mut a: Vec<hir_expr.Expr> = Vec.with_capacity(1);
                     a.push(make_str_literal_expr(span, format_str.value.as_str()));
                     return make_builtin_call_expr(ctx, "print_str", a, span);
                 }
                 if str_eq(mn, "eprintln") {
-                    let mut a: Vec<hir_expr.Expr> = Vec.new();
+                    let mut a: Vec<hir_expr.Expr> = Vec.with_capacity(1);
                     a.push(make_str_literal_expr(span, format_str.value.as_str()));
                     return make_builtin_call_expr(ctx, "eprintln_str", a, span);
                 }
                 if str_eq(mn, "eprint") {
-                    let mut a: Vec<hir_expr.Expr> = Vec.new();
+                    let mut a: Vec<hir_expr.Expr> = Vec.with_capacity(1);
                     a.push(make_str_literal_expr(span, format_str.value.as_str()));
                     return make_builtin_call_expr(ctx, "eprint_str", a, span);
                 }
                 if str_eq(mn, "panic") {
-                    let mut a: Vec<hir_expr.Expr> = Vec.new();
+                    let mut a: Vec<hir_expr.Expr> = Vec.with_capacity(1);
                     a.push(make_str_literal_expr(span, format_str.value.as_str()));
                     return make_builtin_call_expr(ctx, "panic", a, span);
                 }
                 if str_eq(mn, "todo") {
-                    let mut a: Vec<hir_expr.Expr> = Vec.new();
+                    let mut a: Vec<hir_expr.Expr> = Vec.with_capacity(1);
                     a.push(make_str_literal_expr(span, "not yet implemented"));
                     return make_builtin_call_expr(ctx, "panic", a, span);
                 }
                 if str_eq(mn, "unreachable") {
-                    let mut a: Vec<hir_expr.Expr> = Vec.new();
+                    let mut a: Vec<hir_expr.Expr> = Vec.with_capacity(1);
                     a.push(make_str_literal_expr(span, "internal error: entered unreachable code"));
                     return make_builtin_call_expr(ctx, "panic", a, span);
                 }
@@ -3029,7 +3029,7 @@ fn lower_macro_call_expr(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.ExprPat
 
             // === With-args case ===
             // Lower all format args to HIR
-            let mut args_hir: Vec<hir_expr.Expr> = Vec.new();
+            let mut args_hir: Vec<hir_expr.Expr> = Vec.with_capacity(args.len());
             for ai in 0usize..args.len() {
                 let arg_hir = lower_expr(ctx, &args[ai]);
                 args_hir.push(arg_hir);
@@ -3047,7 +3047,7 @@ fn lower_macro_call_expr(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.ExprPat
                             parts.push(args_hir[placeholder_idx]);
                         } else {
                             // Non-string arg: convert via int_to_string (handles i32)
-                            let mut conv_args: Vec<hir_expr.Expr> = Vec.new();
+                            let mut conv_args: Vec<hir_expr.Expr> = Vec.with_capacity(1);
                             conv_args.push(args_hir[placeholder_idx]);
                             let converted = make_builtin_call_expr(ctx, "int_to_string", conv_args, span);
                             parts.push(converted);
@@ -3069,7 +3069,7 @@ fn lower_macro_call_expr(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.ExprPat
             } else {
                 let mut result: hir_expr.Expr = parts[0];
                 for pi in 1usize..parts.len() {
-                    let mut concat_args: Vec<hir_expr.Expr> = Vec.new();
+                    let mut concat_args: Vec<hir_expr.Expr> = Vec.with_capacity(2);
                     concat_args.push(result);
                     concat_args.push(parts[pi]);
                     result = make_builtin_call_expr(ctx, "str_concat", concat_args, span);
@@ -3080,27 +3080,27 @@ fn lower_macro_call_expr(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.ExprPat
             // Dispatch based on macro name
             let mn = macro_name.as_str();
             if str_eq(mn, "println") {
-                let mut print_args: Vec<hir_expr.Expr> = Vec.new();
+                let mut print_args: Vec<hir_expr.Expr> = Vec.with_capacity(1);
                 print_args.push(formatted);
                 return make_builtin_call_expr(ctx, "println_str", print_args, span);
             }
             if str_eq(mn, "print") {
-                let mut print_args: Vec<hir_expr.Expr> = Vec.new();
+                let mut print_args: Vec<hir_expr.Expr> = Vec.with_capacity(1);
                 print_args.push(formatted);
                 return make_builtin_call_expr(ctx, "print_str", print_args, span);
             }
             if str_eq(mn, "eprintln") {
-                let mut print_args: Vec<hir_expr.Expr> = Vec.new();
+                let mut print_args: Vec<hir_expr.Expr> = Vec.with_capacity(1);
                 print_args.push(formatted);
                 return make_builtin_call_expr(ctx, "eprintln_str", print_args, span);
             }
             if str_eq(mn, "eprint") {
-                let mut print_args: Vec<hir_expr.Expr> = Vec.new();
+                let mut print_args: Vec<hir_expr.Expr> = Vec.with_capacity(1);
                 print_args.push(formatted);
                 return make_builtin_call_expr(ctx, "eprint_str", print_args, span);
             }
             if str_eq(mn, "panic") {
-                let mut panic_args: Vec<hir_expr.Expr> = Vec.new();
+                let mut panic_args: Vec<hir_expr.Expr> = Vec.with_capacity(1);
                 panic_args.push(formatted);
                 return make_builtin_call_expr(ctx, "panic", panic_args, span);
             }
@@ -3111,7 +3111,7 @@ fn lower_macro_call_expr(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.ExprPat
             match vec_args {
                 &ast.VecMacroArgs.List(ref elems) => {
                     // Lower each element into HIR
-                    let mut elems_hir: Vec<hir_expr.Expr> = Vec.new();
+                    let mut elems_hir: Vec<hir_expr.Expr> = Vec.with_capacity(elems.len());
                     for i in 0usize..elems.len() {
                         let elem_hir = lower_expr(ctx, &elems[i]);
                         elems_hir.push(elem_hir);
@@ -3256,7 +3256,7 @@ fn lower_macro_call_expr(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.ExprPat
                 span,
             );
 
-            let mut stmts: Vec<hir_expr.Stmt> = Vec.new();
+            let mut stmts: Vec<hir_expr.Stmt> = Vec.with_capacity(2);
             stmts.push(let_stmt);
             stmts.push(print_stmt);
             let block = hir_expr.Block.new(stmts, Option.Some(Box.new(local_ref)), span);
@@ -3308,7 +3308,7 @@ fn lower_macro_call_expr(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.ExprPat
                 span,
             );
 
-            let mut arms: Vec<hir_expr.MatchArm> = Vec.new();
+            let mut arms: Vec<hir_expr.MatchArm> = Vec.with_capacity(2);
             arms.push(match_arm);
             arms.push(else_arm);
 

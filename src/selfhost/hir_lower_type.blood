@@ -48,7 +48,7 @@ pub fn lower_type_id(ctx: &mut hir_lower_ctx.LoweringCtx, ty: &ast.Type) -> type
             type_intern.type_interner().mk_slice(elem_id)
         }
         &ast.TypeKind.Tuple(ref types) => {
-            let mut ids: Vec<type_intern.TyId> = Vec.new();
+            let mut ids: Vec<type_intern.TyId> = Vec.with_capacity(types.len());
             for i in 0usize..types.len() {
                 let t = lower_type_id(ctx, &types[i]);
                 ids.push(t);
@@ -57,7 +57,7 @@ pub fn lower_type_id(ctx: &mut hir_lower_ctx.LoweringCtx, ty: &ast.Type) -> type
             type_intern.type_interner().mk_tuple(list_id)
         }
         &ast.TypeKind.Function { ref params, ref return_type, ref effects } => {
-            let mut param_ids: Vec<type_intern.TyId> = Vec.new();
+            let mut param_ids: Vec<type_intern.TyId> = Vec.with_capacity(params.len());
             for i in 0usize..params.len() {
                 let t = lower_type_id(ctx, &params[i]);
                 param_ids.push(t);
@@ -74,7 +74,7 @@ pub fn lower_type_id(ctx: &mut hir_lower_ctx.LoweringCtx, ty: &ast.Type) -> type
             type_intern.type_interner().mk_fn(param_list, ret_id, effect_row_id)
         }
         &ast.TypeKind.Record { ref fields, ref rest } => {
-            let mut interned_fields: Vec<type_intern.InternedRecordField> = Vec.new();
+            let mut interned_fields: Vec<type_intern.InternedRecordField> = Vec.with_capacity(fields.len());
             for i in 0usize..fields.len() {
                 let f = &fields[i];
                 let field_id = lower_type_id(ctx, &f.ty);
@@ -104,7 +104,7 @@ pub fn lower_type_id(ctx: &mut hir_lower_ctx.LoweringCtx, ty: &ast.Type) -> type
         &ast.TypeKind.Forall { ref params, ref body } => {
             ctx.resolver.push_scope(resolve.ScopeKind.TypeParams);
 
-            let mut param_ids: Vec<hir_def.TyVarId> = Vec.new();
+            let mut param_ids: Vec<hir_def.TyVarId> = Vec.with_capacity(params.len());
             for i in 0usize..params.len() {
                 let var_id = ctx.alloc_ty_var();
                 param_ids.push(var_id);
@@ -190,7 +190,7 @@ pub fn lower_type(ctx: &mut hir_lower_ctx.LoweringCtx, ty: &ast.Type) -> hir_ty.
             })
         }
         &ast.TypeKind.Tuple(ref types) => {
-            let mut lowered: Vec<hir_ty.Type> = Vec.new();
+            let mut lowered: Vec<hir_ty.Type> = Vec.with_capacity(types.len());
             for i in 0usize..types.len() {
                 let t = lower_type(ctx, &types[i]);
                 lowered.push(t);
@@ -198,7 +198,7 @@ pub fn lower_type(ctx: &mut hir_lower_ctx.LoweringCtx, ty: &ast.Type) -> hir_ty.
             hir_ty.Type.new(hir_ty.TypeKind.Tuple(lowered))
         }
         &ast.TypeKind.Function { ref params, ref return_type, ref effects } => {
-            let mut param_tys: Vec<hir_ty.Type> = Vec.new();
+            let mut param_tys: Vec<hir_ty.Type> = Vec.with_capacity(params.len());
             for i in 0usize..params.len() {
                 let t = lower_type(ctx, &params[i]);
                 param_tys.push(t);
@@ -215,7 +215,7 @@ pub fn lower_type(ctx: &mut hir_lower_ctx.LoweringCtx, ty: &ast.Type) -> hir_ty.
             })
         }
         &ast.TypeKind.Record { ref fields, ref rest } => {
-            let mut hir_fields: Vec<hir_ty.RecordField> = Vec.new();
+            let mut hir_fields: Vec<hir_ty.RecordField> = Vec.with_capacity(fields.len());
             for i in 0usize..fields.len() {
                 let f = &fields[i];
                 let field_ty = lower_type(ctx, &f.ty);
@@ -250,7 +250,7 @@ pub fn lower_type(ctx: &mut hir_lower_ctx.LoweringCtx, ty: &ast.Type) -> hir_ty.
         &ast.TypeKind.Forall { ref params, ref body } => {
             ctx.resolver.push_scope(resolve.ScopeKind.TypeParams);
 
-            let mut param_ids: Vec<hir_def.TyVarId> = Vec.new();
+            let mut param_ids: Vec<hir_def.TyVarId> = Vec.with_capacity(params.len());
             for i in 0usize..params.len() {
                 let var_id = ctx.alloc_ty_var();
                 param_ids.push(var_id);
@@ -328,7 +328,7 @@ fn resolve_type_path_to_def_id(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.T
     }
 
     // Multi-segment path (e.g., module.Trait)
-    let mut names: Vec<common.SpannedSymbol> = Vec.new();
+    let mut names: Vec<common.SpannedSymbol> = Vec.with_capacity(path.segments.len());
     for i in 0usize..path.segments.len() {
         let seg = &path.segments[i];
         let name_str = ctx.span_to_string(seg.name.span);
@@ -521,7 +521,7 @@ fn lower_type_path_id(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.TypePath) 
 
     // Multi-segment paths (e.g., module.Type)
     // Extract the names from path segments, re-interning for consistent indices
-    let mut names: Vec<common.SpannedSymbol> = Vec.new();
+    let mut names: Vec<common.SpannedSymbol> = Vec.with_capacity(path.segments.len());
     for i in 0usize..path.segments.len() {
         let seg = &path.segments[i];
         let name_str = ctx.span_to_string(seg.name.span);
@@ -696,7 +696,7 @@ fn lower_type_path(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.TypePath) -> 
     }
 
     // Multi-segment paths (e.g., module.Type)
-    let mut names: Vec<common.SpannedSymbol> = Vec.new();
+    let mut names: Vec<common.SpannedSymbol> = Vec.with_capacity(path.segments.len());
     for i in 0usize..path.segments.len() {
         let seg = &path.segments[i];
         let name_str = ctx.span_to_string(seg.name.span);
@@ -1245,7 +1245,7 @@ fn type_to_trait_ref(ty: &hir_ty.Type, span: common.Span) -> Option<hir_ty.Trait
     match &ty.kind {
         &hir_ty.TypeKind.Adt { def_id, ref args } => {
             // Manually copy the args vector since Blood doesn't have clone
-            let mut args_copy: Vec<hir_ty.Type> = Vec.new();
+            let mut args_copy: Vec<hir_ty.Type> = Vec.with_capacity(args.len());
             for i in 0usize..args.len() {
                 args_copy.push(hir_ty.copy_type(&args[i]));
             }
