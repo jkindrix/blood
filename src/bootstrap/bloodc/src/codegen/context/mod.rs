@@ -4160,6 +4160,10 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let region_alloc_count_type = i64_type.fn_type(&[i64_type.into()], false);
         self.module.add_function("blood_region_alloc_count", region_alloc_count_type, None);
 
+        // blood_region_active_id() -> i64 (current active region handle)
+        let region_active_id_type = i64_type.fn_type(&[], false);
+        self.module.add_function("blood_region_active_id", region_active_id_type, None);
+
         // blood_system_alloc_live_bytes() -> i64 (non-region live bytes)
         let system_alloc_live_type = i64_type.fn_type(&[], false);
         self.module.add_function("blood_system_alloc_live_bytes", system_alloc_live_type, None);

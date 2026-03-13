@@ -260,6 +260,12 @@ impl<'a> TypeContext<'a> {
             vec![u64_ty.clone()], u64_ty.clone(),
         );
 
+        // region_active_id() -> u64 - current active region handle
+        self.register_builtin_fn_aliased(
+            "region_active_id", "blood_region_active_id",
+            vec![], u64_ty.clone(),
+        );
+
         // system_alloc_live_bytes() -> u64 - non-region live heap bytes
         self.register_builtin_fn_aliased(
             "system_alloc_live_bytes", "blood_system_alloc_live_bytes",

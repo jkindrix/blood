@@ -1495,7 +1495,7 @@ impl Region {
             }
             drop(lists);
 
-            // Free list empty - bump allocate with slot size for alignment
+            // Free list empty - bump allocate at slab size
             return self.bump_allocate_unix(slot_size.max(size), align);
         }
 
@@ -1573,6 +1573,7 @@ impl Region {
             }
             drop(lists);
 
+            // Free list empty - bump allocate at slab size
             return self.bump_allocate_non_unix(slot_size.max(size), align);
         }
 
@@ -1629,12 +1630,10 @@ impl Region {
 
         let offset = self.offset.load(Ordering::Acquire);
 
-        // Compute the actual allocation size including slab rounding.
-        // The bump allocator uses slot_size.max(size) for slab-sized allocs.
+        // Recover the slab-rounded size that was actually bumped.
         let class = size_class_for(old_size);
         let actual_old_size = if class != SIZE_CLASS_LARGE {
-            let slot = slot_size_for_class(class);
-            slot.max(old_size)
+            slot_size_for_class(class).max(old_size)
         } else {
             old_size
         };
@@ -1654,11 +1653,10 @@ impl Region {
             return false;
         }
 
-        // Compute new allocation size with slab rounding for the new size
+        // Recover the slab-rounded new size to match allocate's behavior.
         let new_class = size_class_for(new_size);
         let actual_new_size = if new_class != SIZE_CLASS_LARGE {
-            let slot = slot_size_for_class(new_class);
-            slot.max(new_size)
+            slot_size_for_class(new_class).max(new_size)
         } else {
             new_size
         };
@@ -1718,10 +1716,10 @@ impl Region {
 
         let offset = self.offset.load(Ordering::Acquire);
 
+        // Recover slab-rounded sizes to match allocate's behavior.
         let class = size_class_for(old_size);
         let actual_old_size = if class != SIZE_CLASS_LARGE {
-            let slot = slot_size_for_class(class);
-            slot.max(old_size)
+            slot_size_for_class(class).max(old_size)
         } else {
             old_size
         };
@@ -1741,8 +1739,7 @@ impl Region {
 
         let new_class = size_class_for(new_size);
         let actual_new_size = if new_class != SIZE_CLASS_LARGE {
-            let slot = slot_size_for_class(new_class);
-            slot.max(new_size)
+            slot_size_for_class(new_class).max(new_size)
         } else {
             new_size
         };

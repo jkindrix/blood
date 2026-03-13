@@ -473,11 +473,15 @@ pub fn emit_statement(
             let stub_id_str = codegen_types.format_u64(stub_id as u64);
             stub_name.push_str(stub_id_str.as_str());
 
-            // Add the stub function definition (emitted at module level after all bodies)
+            // Add the stub function definition (emitted at module level after all bodies).
+            // Deactivate temp region so the stub string persists across function resets.
+            let had_temp_stub = ctx.fn_temp_region != 0;
+            if had_temp_stub { region_deactivate(); }
             let mut stub_def = common.make_string("define internal i64 @");
             stub_def.push_str(stub_name.as_str());
             stub_def.push_str("(ptr %state, ptr %args, i64 %arg_count, i64 %cont) {\nentry:\n  ret i64 0\n}\n\n");
             ctx.inline_stubs.push(stub_def);
+            if had_temp_stub { region_activate(ctx.fn_temp_region); }
 
             // Get or create evidence vector (using alloca to avoid phi predecessor issue)
             let ev_alloca = ctx.fresh_temp_cg();

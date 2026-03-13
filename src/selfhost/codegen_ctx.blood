@@ -249,6 +249,10 @@ pub struct CodegenCtx {
     /// Function signatures for generic call fixup: def_id -> index in fn_signatures vec
     fn_signatures: Vec<FnSigEntry>,
     fn_sigs_hash: hashmap.HashMapU64U32,
+    /// Per-function temporary region ID. When non-zero, add_string_constant
+    /// deactivates this region before allocating so string_table entries
+    /// persist in the parent codegen_region rather than the resettable temp region.
+    pub fn_temp_region: u64,
     /// Write buffer for batching file I/O during streaming codegen.
     write_buffer: String,
     /// Output file path for streaming codegen.
@@ -505,6 +509,7 @@ impl CodegenCtx {
             const_defs_hash: hashmap.HashMapU64U32.with_capacity(64),
             fn_signatures: Vec.with_capacity(512),
             fn_sigs_hash: hashmap.HashMapU64U32.with_capacity(512),
+            fn_temp_region: 0 as u64,
             write_buffer: String.new(),
             output_path: String.new(),
             trace_codegen: false,
@@ -585,6 +590,7 @@ impl CodegenCtx {
             const_defs_hash: hashmap.HashMapU64U32.with_capacity(64),
             fn_signatures: Vec.with_capacity(512),
             fn_sigs_hash: hashmap.HashMapU64U32.with_capacity(512),
+            fn_temp_region: 0 as u64,
             write_buffer: String.new(),
             output_path: String.new(),
             trace_codegen: false,
@@ -670,9 +676,19 @@ impl CodegenCtx {
 
     /// Registers LLVM function signature for a compiled function (keyed by def_id).
     pub fn register_fn_signature(self: &mut CodegenCtx, def_id: u32, param_types: Vec<String>, return_type: String) {
+        // Deactivate temp region so signature data persists across function resets.
+        // Must deep-clone param_types and return_type since they may point into the temp region.
+        let had_temp_sig = self.fn_temp_region != 0;
+        if had_temp_sig { region_deactivate(); }
+        let mut cloned_params: Vec<String> = Vec.with_capacity(param_types.len());
+        for pi in 0usize..param_types.len() {
+            cloned_params.push(clone_string(&param_types[pi]));
+        }
+        let cloned_ret = clone_string(&return_type);
         let idx = self.fn_signatures.len() as u32;
-        self.fn_signatures.push(FnSigEntry { def_id, param_types, return_type });
+        self.fn_signatures.push(FnSigEntry { def_id, param_types: cloned_params, return_type: cloned_ret });
         self.fn_sigs_hash.insert(def_id as u64, idx);
+        if had_temp_sig { region_activate(self.fn_temp_region); }
     }
 
     /// Looks up the LLVM function signature for a given def_id.
@@ -725,10 +741,17 @@ impl CodegenCtx {
             Option.None => {}
         }
 
+        // Deactivate temp region so wrapper strings persist across function resets.
+        let had_temp_wrap = self.fn_temp_region != 0;
+        if had_temp_wrap { region_deactivate(); }
+
         // Get the original function name
         let fn_name = match self.lookup_def_name(def_id) {
             Option.Some(name) => name,
-            Option.None => { return Option.None; }
+            Option.None => {
+                if had_temp_wrap { region_activate(self.fn_temp_region); }
+                return Option.None;
+            }
         };
 
         // Build wrapper name
@@ -819,6 +842,7 @@ impl CodegenCtx {
         self.fn_ptr_wrapper_defs.push(def);
         self.fn_ptr_wrapper_hash.insert(def_id as u64, idx);
 
+        if had_temp_wrap { region_activate(self.fn_temp_region); }
         Option.Some(wrapper_name)
     }
 
@@ -1478,29 +1502,33 @@ impl CodegenCtx {
     }
 
     /// Clears all local names, types, and signedness (for reuse between functions).
+    /// Uses Vec.new() / HashMap.new() instead of .clear() so allocations go to
+    /// whichever region is currently active (enabling per-function temp region reset).
     pub fn clear_locals(self: &mut CodegenCtx) {
-        self.local_names.clear();
-        self.local_types.clear();
-        self.local_signedness.clear();
-        self.local_hir_types.clear();
-        self.region_locals.clear();
-        self.persistent_locals.clear();
-        // Clear hash indexes too
+        self.local_names = Vec.new();
+        self.local_types = Vec.new();
+        self.local_signedness = Vec.new();
+        self.local_hir_types = Vec.new();
+        self.region_locals = Vec.new();
+        self.persistent_locals = Vec.new();
         self.local_names_hash = hashmap.HashMapU64U32.new();
         self.local_types_hash = hashmap.HashMapU64U32.new();
         self.local_signedness_hash = hashmap.HashMapU64U32.new();
         self.local_hir_types_hash = hashmap.HashMapU64U32.new();
         self.region_locals_hash = hashmap.HashMapU64U32.new();
         self.persistent_locals_hash = hashmap.HashMapU64U32.new();
-        self.local_generations.clear();
+        self.local_generations = Vec.new();
         self.local_generations_hash = hashmap.HashMapU64U32.new();
-        self.effect_captured_locals.clear();
+        self.effect_captured_locals = Vec.new();
     }
 
     // ======== Error Reporting ========
 
     /// Records a codegen error with the current function and span context.
+    /// Deactivates temp region so error data persists across function resets.
     pub fn codegen_error(self: &mut CodegenCtx, kind: CodegenErrorKind, message: String) {
+        let had_temp_err = self.fn_temp_region != 0;
+        if had_temp_err { region_deactivate(); }
         let fn_name = match &self.current_fn {
             &Option.Some(ref name) => Option.Some(clone_string(name)),
             &Option.None => Option.None,
@@ -1516,10 +1544,14 @@ impl CodegenCtx {
             span: span,
             notes: Vec.new(),
         });
+        if had_temp_err { region_activate(self.fn_temp_region); }
     }
 
     /// Records a codegen error with the current context and an attached note.
+    /// Deactivates temp region so error data persists across function resets.
     pub fn codegen_error_with_note(self: &mut CodegenCtx, kind: CodegenErrorKind, message: String, note: String) {
+        let had_temp_err2 = self.fn_temp_region != 0;
+        if had_temp_err2 { region_deactivate(); }
         let fn_name = match &self.current_fn {
             &Option.Some(ref name) => Option.Some(clone_string(name)),
             &Option.None => Option.None,
@@ -1537,6 +1569,7 @@ impl CodegenCtx {
             span: span,
             notes: notes,
         });
+        if had_temp_err2 { region_activate(self.fn_temp_region); }
     }
 
     /// Returns true if any codegen errors have been recorded.
@@ -1768,14 +1801,24 @@ impl CodegenCtx {
     // ======== String Constants ========
 
     /// Adds a string constant to the table and returns its global label.
+    /// When fn_temp_region is active, deactivates it so allocations go to
+    /// the parent region (string_table must outlive per-function temp regions).
     pub fn add_string_constant(self: &mut CodegenCtx, content: &String) -> String {
+        // Deactivate temp region so string_table allocations persist
+        let had_temp = self.fn_temp_region != 0;
+        if had_temp {
+            region_deactivate();
+        }
+
         // Fast path: check hash index
         let hash = hashmap.hash_string(content);
         match self.string_table_hash.get(hash) {
             Option.Some(idx) => {
                 // Verify it's the same string (handle hash collisions)
                 if string_equal(&self.string_table[idx as usize].content, content) {
-                    return clone_string(&self.string_table[idx as usize].label);
+                    let result = clone_string(&self.string_table[idx as usize].label);
+                    if had_temp { region_activate(self.fn_temp_region); }
+                    return result;
                 }
                 // Hash collision - fall through to linear scan
             }
@@ -1797,6 +1840,7 @@ impl CodegenCtx {
                 });
                 self.string_table_hash.insert(hash, idx);
 
+                if had_temp { region_activate(self.fn_temp_region); }
                 return label;
             }
         }
@@ -1804,7 +1848,9 @@ impl CodegenCtx {
         // Hash collision case: linear scan
         for i in 0usize..self.string_table.len() {
             if string_equal(&self.string_table[i].content, content) {
-                return clone_string(&self.string_table[i].label);
+                let result = clone_string(&self.string_table[i].label);
+                if had_temp { region_activate(self.fn_temp_region); }
+                return result;
             }
         }
 
@@ -1823,6 +1869,7 @@ impl CodegenCtx {
             length: length,
         });
 
+        if had_temp { region_activate(self.fn_temp_region); }
         label
     }
 
@@ -2527,6 +2574,7 @@ impl CodegenCtx {
             const_defs_hash: hashmap.HashMapU64U32.new(),
             fn_signatures: Vec.new(),
             fn_sigs_hash: hashmap.HashMapU64U32.new(),
+            fn_temp_region: 0 as u64,
             write_buffer: String.new(),
             output_path: String.new(),
             trace_codegen: self.trace_codegen,

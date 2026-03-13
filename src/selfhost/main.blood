@@ -1737,6 +1737,7 @@ fn is_region_builtin(name: &str) -> bool {
     if str_eq(name, "region_trim") { return true; }
     if str_eq(name, "region_committed") { return true; }
     if str_eq(name, "region_alloc_count") { return true; }
+    if str_eq(name, "region_active_id") { return true; }
     if str_eq(name, "system_alloc_live_bytes") { return true; }
     if str_eq(name, "realloc_diag_count") { return true; }
     if str_eq(name, "realloc_diag_wasted") { return true; }
@@ -3730,6 +3731,7 @@ fn codegen_pass2(
         return CodegenPass2Result {
             mono_requests: all_mono_requests,
             next_mono_def_id: next_mono_def_id,
+            fn_temp_region: 0 as u64,
         };
     }
 
@@ -3737,16 +3739,20 @@ fn codegen_pass2(
     // Avoids mmap/munmap cycling that causes memory layout instability.
     let mir_region = region_create(4194304, 8589934592);
 
+    // Per-function temp region for codegen temporaries (output buffer, local maps).
+    // Reset after each function to reclaim memory that would otherwise leak
+    // in the bump allocator. String table allocations bypass this region
+    // (see add_string_constant) so they persist across functions.
+    let fn_temp_region = region_create(2097152, 4294967296);
+
     for i in 0usize..total_items {
         let work = &worklist.items[i];
 
-        if i % 100 == 0 {
+        if i % 500 == 0 {
             eprint_str("\n  [fn ");
             eprint_str(int_to_string(i as i32));
             eprint_str("/");
             eprint_str(int_to_string(total_items as i32));
-            eprint_str(" ");
-            eprint_str(work.fn_name.as_str());
             eprint_str("]");
         }
 
@@ -3892,7 +3898,12 @@ fn codegen_pass2(
             ctx.is_handler_op = true;
         }
 
-        // Codegen (codegen_region active, mir_region read-only)
+        // Activate temp region for codegen temporaries (output buffer, local maps).
+        // add_string_constant deactivates this to allocate in the parent region.
+        region_activate(fn_temp_region);
+        ctx.fn_temp_region = fn_temp_region;
+
+        // Codegen (fn_temp_region active, mir_region read-only)
         let fn_ir = codegen.generate_function_with_ctx(ctx, &mir_result.body, work.fn_name.as_str());
         file_append_string(output_path, fn_ir.as_str());
 
@@ -3906,6 +3917,10 @@ fn codegen_pass2(
             cli += 1;
         }
 
+        // Deactivate and reset temp region — reclaims all per-function temporaries.
+        ctx.fn_temp_region = 0 as u64;
+        region_deactivate();
+        region_reset(fn_temp_region);
         // Reset MIR region — bump pointer back to start, keep virtual mapping
         region_reset(mir_region);
 
@@ -3921,12 +3936,16 @@ fn codegen_pass2(
 
     }
 
-    // Destroy MIR region after all functions processed
+    // Destroy MIR region after all functions processed.
+    // NOTE: fn_temp_region is NOT destroyed here — ctx still holds dangling
+    // references into it (local maps, output buffer from last iteration).
+    // The caller destroys it after all ctx access is complete.
     region_destroy(mir_region);
 
     CodegenPass2Result {
         mono_requests: all_mono_requests,
         next_mono_def_id: next_mono_def_id,
+        fn_temp_region: fn_temp_region,
     }
 }
 
@@ -3934,6 +3953,9 @@ fn codegen_pass2(
 struct CodegenPass2Result {
     mono_requests: Vec<mir_lower_ctx.MonoRequest>,
     next_mono_def_id: u32,
+    /// Per-function temp region handle. Must be destroyed by the caller after
+    /// all CodegenCtx access is complete (ctx holds dangling refs into it).
+    fn_temp_region: u64,
 }
 
 /// Finds the call remapping entries for a given default method DefId.
@@ -4397,6 +4419,9 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
 
     // Deactivate hir_region — data remains readable for codegen.
     // New allocations (codegen ctx, def_names) go to global allocator.
+    // NOTE: CodegenCtx MUST stay on the system heap, not in a region.
+    // Its Vecs/HashMaps grow incrementally — on the system heap, old buffers
+    // are freed and reused; in a bump region, they'd leak (~6 GB waste).
     region_deactivate();
 
     // Phase 5: Streaming codegen (global allocator for ctx persistent state)
@@ -4563,9 +4588,10 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
         print_mem_phase("Before codegen pass2", 0 as u64, hir_region, 0 as u64);
     }
 
-    // Codegen region: holds all codegen temporaries, string_table growth, etc.
+    // Codegen region: holds per-function codegen temporaries, string_table growth, etc.
     // Persists across all function compilations. Per-function mir_regions sit
     // on top for MIR lowering, then pop so codegen uses this region.
+    // CodegenCtx itself stays on the system heap (see comment above at region_deactivate).
     // 32 MB initial, 16 GB max — codegen produces ~50-100 MB of IR + metadata.
     let codegen_region = region_create(33554432, 17179869184);
     region_activate(codegen_region);
@@ -4789,6 +4815,11 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
 
     if args.mem_profile {
         print_mem_phase("After codegen complete", 0 as u64, hir_region, codegen_region);
+    }
+
+    // Free per-function temp region (deferred from codegen_pass2 — ctx held dangling refs)
+    if pass2_result.fn_temp_region != 0 {
+        region_destroy(pass2_result.fn_temp_region);
     }
 
     // Free codegen temporaries and ctx growth

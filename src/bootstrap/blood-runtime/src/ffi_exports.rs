@@ -33,7 +33,7 @@ extern "C" {
 
 use crate::memory::{
     BloodPtr, PointerMetadata, generation, get_slot_generation, Region,
-    size_class_for, slot_size_for_class, unregister_allocation, register_allocation,
+    size_class_for, slot_size_for_class, SIZE_CLASS_LARGE, unregister_allocation, register_allocation,
     register_allocation_with_region, get_slot_info, record_system_alloc, record_system_free,
     system_alloc_stats, system_alloc_live_bytes, collect_cycles,
 };
@@ -310,21 +310,16 @@ unsafe fn runtime_realloc(ptr: *mut u8, old_layout: std::alloc::Layout, new_size
         // --- Diagnostic counters ---
         REALLOC_COUNT.fetch_add(1, AtomicOrdering::Relaxed);
 
-        // Compute actual allocation size including slab rounding, for accurate
-        // waste tracking. The bump allocator rounds up to slot_size for slab allocs.
-        let class = crate::memory::size_class_for(old_size);
-        let actual_old_size = if class != crate::memory::SIZE_CLASS_LARGE {
-            let slot = crate::memory::slot_size_for_class(class);
-            slot.max(old_size)
+        // Recover slab-rounded sizes for diagnostic reporting.
+        let old_class = size_class_for(old_size);
+        let actual_old_size = if old_class != SIZE_CLASS_LARGE {
+            slot_size_for_class(old_class).max(old_size)
         } else {
             old_size
         };
-
-        // Compute slab-rounded new size for offset delta tracking
-        let new_class = crate::memory::size_class_for(new_size);
-        let actual_new_size = if new_class != crate::memory::SIZE_CLASS_LARGE {
-            let slot = crate::memory::slot_size_for_class(new_class);
-            slot.max(new_size)
+        let new_class = size_class_for(new_size);
+        let actual_new_size = if new_class != SIZE_CLASS_LARGE {
+            slot_size_for_class(new_class).max(new_size)
         } else {
             new_size
         };
@@ -388,6 +383,16 @@ pub extern "C" fn blood_region_deactivate() {
 #[no_mangle]
 pub extern "C" fn blood_region_deactivate_get() -> u64 {
     ACTIVE_REGION_STACK.with(|stack| stack.borrow_mut().pop().unwrap_or(0))
+}
+
+/// Return the currently active region handle without deactivating it.
+/// Returns 0 if no region is active.
+#[no_mangle]
+pub extern "C" fn blood_region_active_id() -> u64 {
+    ACTIVE_REGION_STACK.with(|stack| {
+        let s = stack.borrow();
+        s.last().copied().unwrap_or(0)
+    })
 }
 
 // ============================================================================
@@ -11640,11 +11645,10 @@ pub extern "C" fn blood_realloc(ptr: i64, new_size: i64) -> i64 {
             // --- Diagnostic counters ---
             REALLOC_COUNT.fetch_add(1, AtomicOrdering::Relaxed);
 
-            // Compute slab-rounded old size for accurate waste tracking
-            let class = crate::memory::size_class_for(old_size);
-            let actual_old_size = if class != crate::memory::SIZE_CLASS_LARGE {
-                let slot = crate::memory::slot_size_for_class(class);
-                slot.max(old_size)
+            // Recover slab-rounded old size for diagnostics.
+            let old_class = size_class_for(old_size);
+            let actual_old_size = if old_class != SIZE_CLASS_LARGE {
+                slot_size_for_class(old_class).max(old_size)
             } else {
                 old_size
             };
