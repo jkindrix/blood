@@ -90,7 +90,7 @@ pub fn emit_terminator(
                         ctx.write_cgname(&widened_val);
                         ctx.write(", ptr ");
                         ctx.write_cgname(&args_alloca);
-                        ctx.write("\n");
+                        ctx.write(", align 8\n");
                     } else {
                         // Subsequent elements: GEP to index
                         let idx_str = codegen_types.format_u64(ai as u64);
@@ -110,7 +110,7 @@ pub fn emit_terminator(
                         ctx.write_cgname(&widened_val);
                         ctx.write(", ptr ");
                         ctx.write_cgname(&elem_ptr);
-                        ctx.write("\n");
+                        ctx.write(", align 8\n");
                     }
 
                 }
@@ -364,7 +364,7 @@ pub fn emit_terminator(
                             ctx.write_indent();
                             ctx.write("store i64 0, ptr ");
                             ctx.write_cgname(&tmp_alloca);
-                            ctx.write("\n");
+                            ctx.write(", align 8\n");
                             ctx.write_indent();
                             ctx.write("store ");
                             ctx.write(ty.as_str());
@@ -372,12 +372,12 @@ pub fn emit_terminator(
                             ctx.write(val.as_str());
                             ctx.write(", ptr ");
                             ctx.write_cgname(&tmp_alloca);
-                            ctx.write("\n");
+                            ctx.write(", align 8\n");
                             ctx.write_indent();
                             ctx.write_cgname(&resume_val);
                             ctx.write(" = load i64, ptr ");
                             ctx.write_cgname(&tmp_alloca);
-                            ctx.write("\n");
+                            ctx.write(", align 8\n");
                         }
                         ty
                     }
@@ -464,7 +464,7 @@ pub fn emit_terminator(
                                 ctx.write_cgname(&cont_result);
                                 ctx.write(", ptr ");
                                 ctx.write_cgname(&tmp_alloca);
-                                ctx.write("\n");
+                                ctx.write(", align 8\n");
                                 let narrowed = ctx.fresh_temp_cg();
                                 ctx.write_indent();
                                 ctx.write_cgname(&narrowed);
@@ -472,7 +472,7 @@ pub fn emit_terminator(
                                 ctx.write(dest_ty.as_str());
                                 ctx.write(", ptr ");
                                 ctx.write_cgname(&tmp_alloca);
-                                ctx.write("\n");
+                                ctx.write(", align 8\n");
                                 ctx.emit_store_cg2(dest_ty.as_str(), &narrowed, &dest_addr);
                             }
                         }
@@ -685,7 +685,7 @@ fn emit_return(ctx: &mut codegen_ctx.CodegenCtx) {
             ctx.write_indent();
             ctx.write("store i64 0, ptr ");
             ctx.write_cgname(&tmp_alloca);
-            ctx.write("\n");
+            ctx.write(", align 8\n");
             ctx.write_indent();
             ctx.write("store ");
             ctx.write(ret_ty.as_str());
@@ -693,13 +693,13 @@ fn emit_return(ctx: &mut codegen_ctx.CodegenCtx) {
             ctx.write_cgname(&ret_val);
             ctx.write(", ptr ");
             ctx.write_cgname(&tmp_alloca);
-            ctx.write("\n");
+            ctx.write(", align 8\n");
             let widened = ctx.fresh_temp_cg();
             ctx.write_indent();
             ctx.write_cgname(&widened);
             ctx.write(" = load i64, ptr ");
             ctx.write_cgname(&tmp_alloca);
-            ctx.write("\n");
+            ctx.write(", align 8\n");
             ctx.emit_ret_cg("i64", &widened);
         }
     } else {
@@ -1533,7 +1533,7 @@ fn emit_struct_widening(
             ctx.write(dst_fields[fi].as_str());
             ctx.write(", ptr ");
             ctx.write_cgname(&cast_alloca);
-            ctx.write("\n");
+            ctx.write(", align 8\n");
             field_val = cast_result;
         }
 
@@ -1561,7 +1561,7 @@ fn emit_struct_widening(
     ctx.write(dst_ty);
     ctx.write(", ptr ");
     ctx.write_cgname(&dst_alloca);
-    ctx.write("\n");
+    ctx.write(", align 8\n");
     result
 }
 
@@ -1642,7 +1642,7 @@ fn emit_struct_narrowing(
             ctx.write(dst_fields[fi].as_str());
             ctx.write(", ptr ");
             ctx.write_cgname(&cast_alloca);
-            ctx.write("\n");
+            ctx.write(", align 8\n");
             field_val = cast_result;
         }
 
@@ -1668,7 +1668,7 @@ fn emit_struct_narrowing(
     ctx.write(dst_ty);
     ctx.write(", ptr ");
     ctx.write_cgname(&dst_alloca);
-    ctx.write("\n");
+    ctx.write(", align 8\n");
     result
 }
 
@@ -1785,7 +1785,7 @@ fn widen_operand_to_i64(ctx: &mut codegen_ctx.CodegenCtx, val: &str, ty: &str) -
     ctx.write(val);
     ctx.write(", ptr ");
     ctx.write_cgname(&tmp_alloca);
-    ctx.write("\n");
+    ctx.write(", align 8\n");
     let widened = ctx.fresh_temp_cg();
     ctx.write_indent();
     ctx.write_cgname(&widened);

@@ -2893,7 +2893,7 @@ fn generate_handler_wrappers(
 
                 if pi == 0 {
                     // First arg: load directly from args ptr
-                    ir.push_str("  %arg_i64_0 = load i64, ptr %args\n");
+                    ir.push_str("  %arg_i64_0 = load i64, ptr %args, align 8\n");
                 } else {
                     // Subsequent args: GEP into args array
                     ir.push_str("  %arg_ptr_");
@@ -2905,7 +2905,7 @@ fn generate_handler_wrappers(
                     push_usize(&mut ir, pi);
                     ir.push_str(" = load i64, ptr %arg_ptr_");
                     push_usize(&mut ir, pi);
-                    ir.push_str("\n");
+                    ir.push_str(", align 8\n");
                 }
 
                 // Narrow i64 to param type if needed
@@ -3046,7 +3046,7 @@ fn generate_handler_wrappers(
             // For multi-field state, GEP to the correct field offset.
             if ret_info.state_field_count == 1 {
                 // Single field: load i32 directly from state pointer
-                ir.push_str("  %state_val = load i32, ptr %state\n");
+                ir.push_str("  %state_val = load i32, ptr %state, align 4\n");
                 ir.push_str("  %ret_ext = sext i32 %state_val to i64\n");
                 ir.push_str("  ret i64 %ret_ext\n");
             } else {
@@ -3054,7 +3054,7 @@ fn generate_handler_wrappers(
                 ir.push_str("  %field_ptr = getelementptr i64, ptr %state, i64 ");
                 push_usize(&mut ir, ret_info.state_field_index as usize);
                 ir.push_str("\n");
-                ir.push_str("  %state_val = load i32, ptr %field_ptr\n");
+                ir.push_str("  %state_val = load i32, ptr %field_ptr, align 4\n");
                 ir.push_str("  %ret_ext = sext i32 %state_val to i64\n");
                 ir.push_str("  ret i64 %ret_ext\n");
             }
@@ -3063,12 +3063,12 @@ fn generate_handler_wrappers(
             // Truncate result to i32, load state field as i32, add, extend back.
             ir.push_str("  %res_i32 = trunc i64 %result to i32\n");
             if ret_info.state_field_count == 1 {
-                ir.push_str("  %state_val = load i32, ptr %state\n");
+                ir.push_str("  %state_val = load i32, ptr %state, align 4\n");
             } else {
                 ir.push_str("  %field_ptr = getelementptr i64, ptr %state, i64 ");
                 push_usize(&mut ir, ret_info.state_field_index as usize);
                 ir.push_str("\n");
-                ir.push_str("  %state_val = load i32, ptr %field_ptr\n");
+                ir.push_str("  %state_val = load i32, ptr %field_ptr, align 4\n");
             }
             ir.push_str("  %sum = add i32 %res_i32, %state_val\n");
             ir.push_str("  %ret_ext = sext i32 %sum to i64\n");
@@ -3085,12 +3085,12 @@ fn generate_handler_wrappers(
             // Sub result - state field: return(x) { x - state_field }
             ir.push_str("  %res_i32 = trunc i64 %result to i32\n");
             if ret_info.state_field_count == 1 {
-                ir.push_str("  %state_val = load i32, ptr %state\n");
+                ir.push_str("  %state_val = load i32, ptr %state, align 4\n");
             } else {
                 ir.push_str("  %field_ptr = getelementptr i64, ptr %state, i64 ");
                 push_usize(&mut ir, ret_info.state_field_index as usize);
                 ir.push_str("\n");
-                ir.push_str("  %state_val = load i32, ptr %field_ptr\n");
+                ir.push_str("  %state_val = load i32, ptr %field_ptr, align 4\n");
             }
             ir.push_str("  %diff = sub i32 %res_i32, %state_val\n");
             ir.push_str("  %ret_ext = sext i32 %diff to i64\n");
@@ -3430,12 +3430,12 @@ fn widen_to_i64(ir: &mut String, val_name: &str, ty: &str) -> String {
     ir.push_str(val_name);
     ir.push_str(", ptr %");
     ir.push_str(val_name);
-    ir.push_str("_alloca\n");
+    ir.push_str("_alloca, align 8\n");
     ir.push_str("  %");
     ir.push_str(val_name);
     ir.push_str("_wide = load i64, ptr %");
     ir.push_str(val_name);
-    ir.push_str("_alloca\n");
+    ir.push_str("_alloca, align 8\n");
     let mut s = common.make_string("%");
     s.push_str(val_name);
     s.push_str("_wide");

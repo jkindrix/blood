@@ -440,7 +440,7 @@ fn emit_capture_loads(
     ctx.write_cgname(&env_load);
     ctx.write(" = load ptr, ptr ");
     ctx.write_cgname(&local1_name);
-    ctx.write("\n");
+    ctx.write(", align 8\n");
 
     // For each capture, GEP into env struct and load value into the capture local's alloca
     let mut ci: usize = 0;
@@ -468,7 +468,7 @@ fn emit_capture_loads(
         ctx.write_string(&cap_ty_llvm);
         ctx.write(", ptr ");
         ctx.write_cgname(&field_ptr);
-        ctx.write("\n");
+        ctx.write(", align 8\n");
 
         // Store into the capture local's alloca
         let cap_local = ctx.local_cg(mir_def.MirLocalId.new(local_idx));
@@ -479,7 +479,7 @@ fn emit_capture_loads(
         ctx.write_cgname(&cap_val);
         ctx.write(", ptr ");
         ctx.write_cgname(&cap_local);
-        ctx.write("\n");
+        ctx.write(", align 8\n");
 
         ci += 1;
     }

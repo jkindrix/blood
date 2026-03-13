@@ -1966,7 +1966,7 @@ impl CodegenCtx {
         self.write(val);
         self.write(", ptr ");
         self.write(ptr);
-        self.write("\n");
+        self.write(", align 8\n");
     }
 
     /// Emits a getelementptr instruction.
@@ -2051,7 +2051,7 @@ impl CodegenCtx {
         self.write(ty);
         self.write(", ptr ");
         self.write(ptr);
-        self.write("\n");
+        self.write(", align 8\n");
     }
 
     /// Emits a load instruction using CgName for both result and ptr.
@@ -2062,7 +2062,7 @@ impl CodegenCtx {
         self.write(ty);
         self.write(", ptr ");
         self.write_cgname(ptr);
-        self.write("\n");
+        self.write(", align 8\n");
     }
 
     /// Emits a store instruction using CgName for val.
@@ -2074,19 +2074,21 @@ impl CodegenCtx {
         self.write_cgname(val);
         self.write(", ptr ");
         self.write(ptr);
+        self.write(", align 8");
         self.write("\n");
     }
 
     /// Emits a store instruction using CgName for both val and ptr.
     pub fn emit_store_cg2(self: &mut CodegenCtx, ty: &str, val: &CgName, ptr: &CgName) {
         self.write_indent();
+
         self.write("store ");
         self.write(ty);
         self.write(" ");
         self.write_cgname(val);
         self.write(", ptr ");
         self.write_cgname(ptr);
-        self.write("\n");
+        self.write(", align 8\n");
     }
 
     /// Emits a store with &str val and CgName ptr.
@@ -2098,7 +2100,7 @@ impl CodegenCtx {
         self.write(val);
         self.write(", ptr ");
         self.write_cgname(ptr);
-        self.write("\n");
+        self.write(", align 8\n");
     }
 
     /// Emits a binary operation using CgName for result.
