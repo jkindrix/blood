@@ -2399,7 +2399,19 @@ fn infer_stmt(checker: &mut typeck.TypeChecker, stmt: &hir_expr.Stmt) -> type_in
             type_intern.CommonTypes.unit()
         }
         &hir_expr.Stmt.Expr { ref expr, has_semi: _ } => {
-            infer_expr(checker, expr)
+            let ty = infer_expr(checker, expr);
+            // perform always transfers control to the handler, so a
+            // perform statement diverges (the handler may or may not
+            // resume, but from the block's perspective control leaves).
+            // Returning Never here lets infer_block recognise that
+            // blocks ending in `perform ...; ` diverge, which prevents
+            // spurious type mismatches in if/else branches.
+            match &expr.kind {
+                &hir_expr.ExprKind.Perform { effect_def: _, op_def: _, op_name: _, args: _ } => {
+                    type_intern.CommonTypes.never()
+                }
+                _ => ty,
+            }
         }
         &hir_expr.Stmt.Item(_def_id) => {
             // Item statements are handled during item collection
