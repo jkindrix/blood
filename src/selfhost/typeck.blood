@@ -823,9 +823,10 @@ impl TypeChecker {
 
         // Count only type parameters (not lifetime or const params)
         let num_generics = count_type_params(&struct_def.generics.params);
+        let type_param_var_ids = extract_type_param_ids(&struct_def.generics.params);
 
         // Create the info
-        let info = typeck_info.StructInfo.new(def_id, name, num_generics, field_names, fields);
+        let info = typeck_info.StructInfo.new(def_id, name, num_generics, field_names, fields, type_param_var_ids);
 
         // Store at def_id.index
         let def_idx = def_id.index as usize;
@@ -875,9 +876,10 @@ impl TypeChecker {
 
         // Count only type parameters (not lifetime or const params)
         let num_generics = count_type_params(&enum_def.generics.params);
+        let type_param_var_ids = extract_type_param_ids(&enum_def.generics.params);
 
         // Create the info
-        let info = typeck_info.EnumInfo.new(def_id, name, num_generics, variant_names, variants);
+        let info = typeck_info.EnumInfo.new(def_id, name, num_generics, variant_names, variants, type_param_var_ids);
 
         // Store at def_id.index
         let def_idx = def_id.index as usize;
@@ -1019,12 +1021,17 @@ impl TypeChecker {
                                 for k in 0usize..enum_info.variants[variant_idx].field_names.len() {
                                     fn_vec.push(enum_info.variants[variant_idx].field_names[k]);
                                 }
+                                let mut tpvi: Vec<u32> = Vec.new();
+                                for tpi in 0usize..enum_info.type_param_var_ids.len() {
+                                    tpvi.push(enum_info.type_param_var_ids[tpi]);
+                                }
                                 return Option.Some(EnumVariantLookup {
                                     enum_def_id: enum_info.def_id,
                                     num_generics: enum_info.num_generics,
                                     variant_index: enum_info.variants[variant_idx].variant_index,
                                     field_tys: copy_ty_id_vec(&enum_info.variants[variant_idx].field_tys),
                                     field_names: fn_vec,
+                                    type_param_var_ids: tpvi,
                                 });
                             }
                         }
@@ -1044,12 +1051,17 @@ impl TypeChecker {
                             for k in 0usize..enum_info.variants[j].field_names.len() {
                                 fn_vec.push(enum_info.variants[j].field_names[k]);
                             }
+                            let mut tpvi2: Vec<u32> = Vec.new();
+                            for tpi2 in 0usize..enum_info.type_param_var_ids.len() {
+                                tpvi2.push(enum_info.type_param_var_ids[tpi2]);
+                            }
                             return Option.Some(EnumVariantLookup {
                                 enum_def_id: enum_info.def_id,
                                 num_generics: enum_info.num_generics,
                                 variant_index: enum_info.variants[j].variant_index,
                                 field_tys: copy_ty_id_vec(&enum_info.variants[j].field_tys),
                                 field_names: fn_vec,
+                                type_param_var_ids: tpvi2,
                             });
                         }
                     }
@@ -1772,6 +1784,8 @@ pub struct EnumVariantLookup {
     pub field_tys: Vec<type_intern.TyId>,
     /// Field names for record variants (empty for tuple/unit variants).
     pub field_names: Vec<common.Symbol>,
+    /// Actual TyVarId indices for each type parameter.
+    pub type_param_var_ids: Vec<u32>,
 }
 
 /// Copies a Vec of TyId values.

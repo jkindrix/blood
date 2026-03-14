@@ -2442,9 +2442,23 @@ fn resolve_pending_field_accesses(checker: &mut typeck.TypeChecker) {
                                 let args_len = interner.ty_list_len(*args);
                                 let actual_field_ty = if args_len > 0 {
                                     let mut subst = unify.TypeParamSubst.new();
-                                    for ai in 0usize..args_len {
-                                        let arg_id = interner.get_ty_list_element(*args, ai);
-                                        subst.add_id(ai as u32, arg_id);
+                                    match checker.get_struct(*def_id) {
+                                        Option.Some(ref si) => {
+                                            for ai in 0usize..args_len {
+                                                let arg_id = interner.get_ty_list_element(*args, ai);
+                                                if ai < si.type_param_var_ids.len() {
+                                                    subst.add_id(si.type_param_var_ids[ai], arg_id);
+                                                } else {
+                                                    subst.add_id(ai as u32, arg_id);
+                                                }
+                                            }
+                                        }
+                                        Option.None => {
+                                            for ai in 0usize..args_len {
+                                                let arg_id = interner.get_ty_list_element(*args, ai);
+                                                subst.add_id(ai as u32, arg_id);
+                                            }
+                                        }
                                     }
                                     unify.substitute_type_params_id(field_ty, &subst)
                                 } else {
@@ -3063,7 +3077,7 @@ fn register_builtin_enums(
                             }
                         }
 
-                        let info = typeck.EnumInfo.new(option_def, name_sym, 1, variant_names, variants);
+                        let info = typeck.EnumInfo.new(option_def, name_sym, 1, variant_names, variants, Vec.new());
                         while checker.enums.len() <= def_idx {
                             checker.enums.push(Option.None);
                         }
@@ -3134,7 +3148,7 @@ fn register_builtin_enums(
                     }
                 }
 
-                let info = typeck.EnumInfo.new(result_def, name_sym, 2, variant_names, variants);
+                let info = typeck.EnumInfo.new(result_def, name_sym, 2, variant_names, variants, Vec.new());
                 while checker.enums.len() <= def_idx {
                     checker.enums.push(Option.None);
                 }

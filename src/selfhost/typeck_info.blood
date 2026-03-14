@@ -25,6 +25,9 @@ pub struct StructInfo {
     pub field_names: Vec<common.Symbol>,
     /// Field info with types (for type checking).
     pub fields: Vec<FieldInfo>,
+    /// Actual TyVarId indices for each type parameter (from HIR lowering).
+    /// Used to build correct substitution maps for generic field type resolution.
+    pub type_param_var_ids: Vec<u32>,
 }
 
 impl StructInfo {
@@ -35,6 +38,7 @@ impl StructInfo {
         num_generics: u32,
         field_names: Vec<common.Symbol>,
         fields: Vec<FieldInfo>,
+        type_param_var_ids: Vec<u32>,
     ) -> StructInfo {
         StructInfo {
             def_id: def_id,
@@ -42,6 +46,7 @@ impl StructInfo {
             num_generics: num_generics,
             field_names: field_names,
             fields: fields,
+            type_param_var_ids: type_param_var_ids,
         }
     }
 }
@@ -58,6 +63,8 @@ pub struct EnumInfo {
     pub variant_names: Vec<common.Symbol>,
     /// Variant info with types (for type checking).
     pub variants: Vec<VariantInfo>,
+    /// Actual TyVarId indices for each type parameter (from HIR lowering).
+    pub type_param_var_ids: Vec<u32>,
 }
 
 impl EnumInfo {
@@ -68,6 +75,7 @@ impl EnumInfo {
         num_generics: u32,
         variant_names: Vec<common.Symbol>,
         variants: Vec<VariantInfo>,
+        type_param_var_ids: Vec<u32>,
     ) -> EnumInfo {
         EnumInfo {
             def_id: def_id,
@@ -75,6 +83,7 @@ impl EnumInfo {
             num_generics: num_generics,
             variant_names: variant_names,
             variants: variants,
+            type_param_var_ids: type_param_var_ids,
         }
     }
 }
