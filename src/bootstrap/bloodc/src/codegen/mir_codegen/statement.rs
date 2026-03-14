@@ -652,11 +652,36 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                                 .map(|t| if t.has_type_vars() { i64_ty.into() } else { self.lower_type(t) })
                                 .collect();
                             let shadow_struct_type = self.context.struct_type(&shadow_field_llvm_types, false);
+
+                            // Place the shadow alloca in the entry block so it dominates all uses,
+                            // including CallFinallyClause cleanup in later basic blocks.
+                            let current_block = self.builder.get_insert_block()
+                                .ok_or_else(|| vec![Diagnostic::error(
+                                    "No current block for shadow alloca".to_string(), stmt.span
+                                )])?;
+                            let function = current_block.get_parent()
+                                .ok_or_else(|| vec![Diagnostic::error(
+                                    "No parent function for shadow alloca".to_string(), stmt.span
+                                )])?;
+                            let entry_block = function.get_first_basic_block()
+                                .ok_or_else(|| vec![Diagnostic::error(
+                                    "No entry block for shadow alloca".to_string(), stmt.span
+                                )])?;
+
+                            if let Some(first_inst) = entry_block.get_first_instruction() {
+                                self.builder.position_before(&first_inst);
+                            } else {
+                                self.builder.position_at_end(entry_block);
+                            }
+
                             let shadow_alloca = self.builder
                                 .build_alloca(shadow_struct_type, "state_shadow")
                                 .map_err(|e| vec![Diagnostic::error(
                                     format!("LLVM error: {}", e), stmt.span
                                 )])?;
+
+                            // Restore insertion point to the current block
+                            self.builder.position_at_end(current_block);
 
                             // Build the typed struct type for GEP into the original state
                             // Use i64 for unresolved generic params, matching shadow layout
