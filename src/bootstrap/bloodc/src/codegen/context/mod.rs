@@ -828,6 +828,10 @@ pub struct CodegenContext<'ctx, 'a> {
     /// Each abort block is left unterminated and wired up at CallReturnClause time.
     /// Uses a Vec to support nested handlers (inner pushed last, popped first).
     pub(super) handler_abort_stack: Vec<HandlerAbortInfo<'ctx>>,
+    /// Sentinel stack tracking whether each PushHandler pushed an abort target.
+    /// Pushed in PushHandler (true = NTR, pushed abort; false = TR, didn't push).
+    /// Popped in PopHandler to decide whether to call blood_handler_pop_abort_target.
+    pub(super) handler_pushed_abort: Vec<bool>,
 }
 
 /// State for the setjmp/longjmp abort path of a non-resuming handler.
@@ -905,6 +909,7 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             type_lowering_errors: RefCell::new(Vec::new()),
             current_mir_span: Cell::new(Span::dummy()),
             handler_abort_stack: Vec::new(),
+            handler_pushed_abort: Vec::new(),
         }
     }
 
@@ -3844,6 +3849,10 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         // blood_panic(msg: *i8) -> void (noreturn)
         let panic_msg_type = void_type.fn_type(&[i8_ptr_type.into()], false);
         self.module.add_function("blood_panic", panic_msg_type, None);
+
+        // blood_panic_div_zero() -> void (noreturn)
+        let panic_div_zero_type = void_type.fn_type(&[], false);
+        self.module.add_function("blood_panic_div_zero", panic_div_zero_type, None);
 
         // blood_register_allocation(address: i64, size: i64) -> i32 (generation)
         let register_alloc_type = i32_type.fn_type(&[i64_type.into(), i64_type.into()], false);

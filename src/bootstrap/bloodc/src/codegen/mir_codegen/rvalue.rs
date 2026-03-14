@@ -886,15 +886,25 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             BinOp::Add => self.builder.build_int_add(lhs_int, rhs_int, "add"),
             BinOp::Sub => self.builder.build_int_sub(lhs_int, rhs_int, "sub"),
             BinOp::Mul => self.builder.build_int_mul(lhs_int, rhs_int, "mul"),
-            BinOp::Div => if is_signed {
-                self.builder.build_int_signed_div(lhs_int, rhs_int, "sdiv")
-            } else {
-                self.builder.build_int_unsigned_div(lhs_int, rhs_int, "udiv")
+            BinOp::Div => {
+                if !self.unchecked_checks.contains(&crate::ast::UncheckedCheck::Overflow) {
+                    self.emit_div_zero_check(rhs_int)?;
+                }
+                if is_signed {
+                    self.builder.build_int_signed_div(lhs_int, rhs_int, "sdiv")
+                } else {
+                    self.builder.build_int_unsigned_div(lhs_int, rhs_int, "udiv")
+                }
             },
-            BinOp::Rem => if is_signed {
-                self.builder.build_int_signed_rem(lhs_int, rhs_int, "srem")
-            } else {
-                self.builder.build_int_unsigned_rem(lhs_int, rhs_int, "urem")
+            BinOp::Rem => {
+                if !self.unchecked_checks.contains(&crate::ast::UncheckedCheck::Overflow) {
+                    self.emit_div_zero_check(rhs_int)?;
+                }
+                if is_signed {
+                    self.builder.build_int_signed_rem(lhs_int, rhs_int, "srem")
+                } else {
+                    self.builder.build_int_unsigned_rem(lhs_int, rhs_int, "urem")
+                }
             },
             BinOp::BitAnd => self.builder.build_and(lhs_int, rhs_int, "and"),
             BinOp::BitOr => self.builder.build_or(lhs_int, rhs_int, "or"),
@@ -928,6 +938,46 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         )])?;
 
         Ok(result.into())
+    }
+
+    /// Emit a division-by-zero check before a div/rem instruction.
+    /// Branches to a panic block if the divisor is zero.
+    fn emit_div_zero_check(
+        &mut self,
+        divisor: inkwell::values::IntValue<'ctx>,
+    ) -> Result<(), Vec<Diagnostic>> {
+        let zero = divisor.get_type().const_zero();
+        let is_zero = self.builder.build_int_compare(
+            inkwell::IntPredicate::EQ, divisor, zero, "div_zero_check"
+        ).map_err(|e| vec![Diagnostic::error(
+            format!("LLVM icmp error: {}", e), self.current_span()
+        )])?;
+
+        let current_fn = self.current_fn.expect("no current function");
+        let div_panic_bb = self.context.append_basic_block(current_fn, "div_panic");
+        let div_ok_bb = self.context.append_basic_block(current_fn, "div_ok");
+
+        self.builder.build_conditional_branch(is_zero, div_panic_bb, div_ok_bb)
+            .map_err(|e| vec![Diagnostic::error(
+                format!("LLVM branch error: {}", e), self.current_span()
+            )])?;
+
+        // Panic block
+        self.builder.position_at_end(div_panic_bb);
+        let panic_fn = self.module.get_function("blood_panic_div_zero")
+            .expect("blood_panic_div_zero not declared");
+        self.builder.build_call(panic_fn, &[], "")
+            .map_err(|e| vec![Diagnostic::error(
+                format!("LLVM call error: {}", e), self.current_span()
+            )])?;
+        self.builder.build_unreachable()
+            .map_err(|e| vec![Diagnostic::error(
+                format!("LLVM unreachable error: {}", e), self.current_span()
+            )])?;
+
+        // Continue in the ok block
+        self.builder.position_at_end(div_ok_bb);
+        Ok(())
     }
 
     /// Compile a floating-point binary operation.

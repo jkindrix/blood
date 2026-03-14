@@ -1,0 +1,52 @@
+// Test: resume(false) and resume(true) must preserve bool values
+// through the i64 widening/narrowing of effect resumption.
+// EXPECT: false_true_false
+
+effect BoolQuery {
+    op get_false() -> bool;
+    op get_true() -> bool;
+}
+
+deep handler BoolProvider for BoolQuery {
+    return(x) { x }
+
+    op get_false() {
+        resume(false)
+    }
+
+    op get_true() {
+        resume(true)
+    }
+}
+
+fn ask_bools() -> i32 / {BoolQuery} {
+    let f: bool = perform BoolQuery.get_false();
+    let t: bool = perform BoolQuery.get_true();
+    // Double-check: get_false again
+    let f2: bool = perform BoolQuery.get_false();
+    if f {
+        print("true");
+    } else {
+        print("false");
+    }
+    print("_");
+    if t {
+        print("true");
+    } else {
+        print("false");
+    }
+    print("_");
+    if f2 {
+        println("true");
+    } else {
+        println("false");
+    }
+    0
+}
+
+fn main() -> i32 {
+    let result: i32 = with BoolProvider {} handle {
+        ask_bools()
+    };
+    result
+}

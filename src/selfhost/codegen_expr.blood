@@ -2502,6 +2502,24 @@ fn emit_binop(
     emit_binop_typed(ctx, bin_op, left, right, "i64", true)
 }
 
+/// Emits a division-by-zero check before a div/rem instruction.
+/// Branches to a panic block if the divisor is zero.
+fn emit_div_zero_check(ctx: &mut codegen_ctx.CodegenCtx, llvm_ty: &str, divisor: &str) {
+    let is_zero = ctx.fresh_temp_cg();
+    ctx.emit_icmp_cg(&is_zero, "eq", llvm_ty, divisor, "0");
+
+    let panic_label = ctx.fresh_label_cg();
+    let ok_label = ctx.fresh_label_cg();
+    ctx.emit_cond_br_cg(&is_zero, &panic_label, &ok_label);
+
+    ctx.emit_label_cg(&panic_label);
+    ctx.write_indent();
+    ctx.write("call void @blood_panic_div_zero()\n");
+    ctx.emit_unreachable();
+
+    ctx.emit_label_cg(&ok_label);
+}
+
 /// Emits a binary operation with explicit type, returning the result value.
 /// Handles both integer and floating-point operations based on the type.
 /// The `signed` parameter indicates whether the operands are signed integers
@@ -2613,6 +2631,7 @@ pub fn emit_binop_typed(
             &mir_types.MirBinOp.Sub => ctx.emit_binop_cg(&result, "sub", llvm_ty, l, r),
             &mir_types.MirBinOp.Mul => ctx.emit_binop_cg(&result, "mul", llvm_ty, l, r),
             &mir_types.MirBinOp.Div => {
+                emit_div_zero_check(ctx, llvm_ty, r);
                 if is_unsigned {
                     ctx.emit_binop_cg(&result, "udiv", llvm_ty, l, r);
                 } else {
@@ -2620,6 +2639,7 @@ pub fn emit_binop_typed(
                 }
             }
             &mir_types.MirBinOp.Rem => {
+                emit_div_zero_check(ctx, llvm_ty, r);
                 if is_unsigned {
                     ctx.emit_binop_cg(&result, "urem", llvm_ty, l, r);
                 } else {

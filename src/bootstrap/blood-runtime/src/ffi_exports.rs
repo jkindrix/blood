@@ -5875,6 +5875,13 @@ pub unsafe extern "C" fn blood_panic(msg: *const c_char) -> ! {
     std::process::abort();
 }
 
+/// Called when a division or remainder operation has a zero divisor.
+#[no_mangle]
+pub extern "C" fn blood_panic_div_zero() -> ! {
+    eprintln!("BLOOD RUNTIME PANIC: division by zero");
+    std::process::abort();
+}
+
 /// Panic with a Blood str slice message.
 ///
 /// # Safety

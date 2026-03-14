@@ -834,6 +834,7 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                 // from analyzing the handler op bodies. This correctly handles
                 // user-defined effects — not just hardcoded standard effect names.
                 let needs_abort_target = !handler_info.all_tail_resumptive;
+                self.handler_pushed_abort.push(needs_abort_target);
 
                 if needs_abort_target {
                     let i32_ty = self.context.i32_type();
@@ -1412,6 +1413,8 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                     }
                 };
 
+                self.handler_pushed_abort.push(needs_abort_target);
+
                 if needs_abort_target {
                     let i32_ty = self.context.i32_type();
                     let i8_ptr_ty = self.context.ptr_type(AddressSpace::default());
@@ -1571,8 +1574,9 @@ impl<'ctx, 'a> MirStatementCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                         format!("LLVM call error: {}", e), stmt.span
                     )])?;
 
-                // Pop abort target if one was pushed (for non-resuming handler support)
-                if !self.handler_abort_stack.is_empty() {
+                // Pop abort target only if THIS handler pushed one (per-handler sentinel)
+                let this_handler_pushed = self.handler_pushed_abort.pop().unwrap_or(false);
+                if this_handler_pushed {
                     let pop_abort_fn = self.module.get_function("blood_handler_pop_abort_target")
                         .unwrap_or_else(|| {
                             let fn_type = self.context.void_type().fn_type(&[], false);

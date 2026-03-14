@@ -1,0 +1,51 @@
+// Test: Nested handlers — NTR outer wrapping TR inner.
+// Inner handler completes normally, then outer handler is used.
+// EXPECT: inner:10_outer:42
+
+effect Outer {
+    op get_outer() -> i32;
+}
+
+effect Inner {
+    op get_val() -> i32;
+}
+
+deep handler OuterHandler for Outer {
+    return(x) { x }
+
+    op get_outer() {
+        resume(42)
+    }
+}
+
+deep handler InnerHandler for Inner {
+    return(x) { x }
+
+    op get_val() {
+        resume(10)
+    }
+}
+
+fn use_inner() -> i32 / {Inner} {
+    perform Inner.get_val()
+}
+
+fn use_outer() -> i32 / {Outer} {
+    perform Outer.get_outer()
+}
+
+fn main() -> i32 {
+    let result: i32 = with OuterHandler {} handle {
+        let inner_val: i32 = with InnerHandler {} handle {
+            use_inner()
+        };
+        let outer_val: i32 = use_outer();
+        print("inner:");
+        print_int(inner_val);
+        print("_outer:");
+        println_int(outer_val);
+        inner_val + outer_val
+    };
+    if result != 52 { return 1; }
+    0
+}
