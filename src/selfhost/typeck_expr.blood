@@ -2729,6 +2729,27 @@ fn infer_closure(
     let prev_return = copy_option_ty_id(&checker.return_ty);
     checker.set_return_ty(ret_ty_id);
 
+    // Unify closure param types with the locals that infer_local will resolve
+    // them to. When the body references param `x`, infer_local looks up the
+    // checker's local at x's LocalId. By unifying the param type with that
+    // local's type, the param type stays connected to the body's usage type.
+    // Without this, the param type and body usage type are disconnected
+    // inference variables (e.g., |x| x > 10 where literal 10's type
+    // chains to the body's var but never reaches the param's var).
+    for i in 0usize..params.len() {
+        match &params[i].pattern.kind {
+            &hir_expr.PatternKind.Binding { local_id, name: _, mode: _, subpattern: _ } => {
+                match checker.get_local_ty(local_id) {
+                    Some(local_ty) => {
+                        checker.unify(params[i].ty, local_ty, span);
+                    }
+                    Option.None => {}
+                }
+            }
+            _ => {}
+        }
+    }
+
     // Check body
     let body_ty = infer_expr(checker, body);
     checker.unify(body_ty, ret_ty_id, body.span);

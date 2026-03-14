@@ -79,6 +79,8 @@ Audit search terms: `_ =>`, `unwrap_or_default`, `unwrap_or_else`, `Type::error(
 
 **Incremental development:** Write 10-50 lines, compile, fix, repeat. Never write hundreds of lines without compiling.
 
+**IR before code (codegen bugs):** Before writing ANY codegen fix, dump the LLVM IR for a minimal repro through both bootstrap (`--emit=llvm-ir`) and first_gen (`--dump-ir --no-cache`). Find the relevant function, trace the actual instruction sequence, identify the exact divergence, THEN trace back to the codegen source. Do NOT hypothesize what the IR looks like — read it. This takes 5 minutes and prevents 30-60 minutes of wrong fixes.
+
 **Blood-rust bugs: report, do NOT work around.** Write the correct code. If blood-rust miscompiles it, that's a blood-rust bug. STOP, isolate, document, report, wait. Signs: DefId errors, works in one context but not another, mutations lost through references, runtime mismatch. See `tools/FAILURE_LOG.md` for history.
 
 **Canary-Cluster-Verify (CCV) method:** All batch changes to the self-hosted compiler follow the CCV protocol. Canary-test new patterns before mass conversion. Cluster changes by compiler phase. Verify (build + golden tests + bootstrap) after each cluster. See `DEVELOPMENT.md` for the full protocol, cluster definitions, and bootstrap gate rules.
