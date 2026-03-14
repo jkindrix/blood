@@ -2183,6 +2183,15 @@ fn check_body(checker: &mut typeck.TypeChecker, body: &hir_expr.Body, return_ty:
         match resolved_kind {
             &type_intern.InternedTypeKind.Infer(resolved_var) => {
                 checker.resolved_numeric_cache.push(resolved_var.index);
+                // Default unresolved numeric inference variables to i32.
+                // This handles cases where a numeric literal's type variable
+                // is chained through other inference vars that were never
+                // directly unified with a concrete type (e.g., |x| x > 10
+                // where the literal's type is only indirectly constrained).
+                checker.subst_table.add_ty_subst_id(
+                    resolved_var,
+                    type_intern.CommonTypes.i32_ty(),
+                );
             }
             _ => {}
         }
