@@ -711,6 +711,34 @@ pub fn emit_statement(
             ctx.write("(ptr ");
             ctx.write_string(&state_ptr);
             ctx.write(")\n");
+
+            // Wire abort path if handler had an abort target.
+            // For finally clauses there is no result destination, so both
+            // the normal path and the abort path simply converge at the merge label.
+            if ctx.has_abort_labels_for(handler_id.index) {
+                let abort_store_str = clone_string(ctx.get_abort_store_label(handler_id.index));
+                let merge_str = clone_string(ctx.get_abort_merge_label(handler_id.index));
+
+                // Normal path: branch to merge
+                ctx.write_indent();
+                ctx.write("br label %");
+                ctx.write_string(&merge_str);
+                ctx.write("\n");
+
+                // Abort store block: branch to merge (no result to store)
+                ctx.write(abort_store_str.as_str());
+                ctx.write(":\n");
+                ctx.write_indent();
+                ctx.write("br label %");
+                ctx.write_string(&merge_str);
+                ctx.write("\n");
+
+                // Merge block
+                ctx.write(merge_str.as_str());
+                ctx.write(":\n");
+
+                ctx.pop_abort_labels(handler_id.index);
+            }
         }
         &mir_stmt.StatementKind.RegionEnter { region_local } => {
             // Emit region lifecycle: create + activate
