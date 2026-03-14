@@ -352,6 +352,10 @@ pub struct CodegenCtx {
     abort_label_stack: Vec<String>,
     /// Maps handler DefId → base index in abort_label_stack (each entry is 3 strings).
     handler_abort_hash: hashmap.HashMapU64U32,
+    /// Deferred alloca instructions that must appear in the entry block.
+    /// Collected during basic block codegen (e.g., PushHandler shadow allocas),
+    /// emitted at the end of the entry block before the branch to BB0.
+    pub deferred_entry_allocas: Vec<String>,
 }
 
 /// Entry mapping a handler DefId to its effect DefId.
@@ -547,6 +551,7 @@ impl CodegenCtx {
             non_tail_resumptive_effects: hashmap.HashMapU64U32.with_capacity(8),
             abort_label_stack: Vec.new(),
             handler_abort_hash: hashmap.HashMapU64U32.new(),
+            deferred_entry_allocas: Vec.new(),
         }
     }
 
@@ -628,14 +633,20 @@ impl CodegenCtx {
             non_tail_resumptive_effects: hashmap.HashMapU64U32.with_capacity(8),
             abort_label_stack: Vec.new(),
             handler_abort_hash: hashmap.HashMapU64U32.new(),
+            deferred_entry_allocas: Vec.new(),
         }
     }
 
     /// Registers a DefId with its global name.
+    /// Deactivates temp region so the name string persists across function resets.
     pub fn register_def_name(self: &mut CodegenCtx, def_id: u32, name: String) {
+        let had_temp = self.fn_temp_region != 0;
+        if had_temp { region_deactivate(); }
+        let cloned = clone_string(&name);
         let idx = self.def_names.len() as u32;
-        self.def_names.push(DefNameEntry { def_id, name });
+        self.def_names.push(DefNameEntry { def_id, name: cloned });
         self.def_names_hash.insert(def_id as u64, idx);
+        if had_temp { region_activate(self.fn_temp_region); }
     }
 
     /// Looks up the global name for a DefId.
@@ -1520,6 +1531,7 @@ impl CodegenCtx {
         self.local_generations = Vec.new();
         self.local_generations_hash = hashmap.HashMapU64U32.new();
         self.effect_captured_locals = Vec.new();
+        self.deferred_entry_allocas = Vec.new();
     }
 
     // ======== Error Reporting ========
@@ -2041,6 +2053,26 @@ impl CodegenCtx {
         self.write(" = alloca ");
         self.write(ty);
         self.write("\n");
+    }
+
+    /// Defers an alloca instruction to be emitted in the entry block.
+    /// Used for handler state shadow allocas that are created during basic block
+    /// codegen but must dominate all uses (LLVM requires allocas in the entry block).
+    pub fn defer_entry_alloca_cg(self: &mut CodegenCtx, result: &CgName, ty: &str) {
+        let mut ir = common.make_string("  ");
+        match result {
+            &CgName.Temp(n) => {
+                ir.push_str("%tmp");
+                ir.push_str(codegen_types.format_u64(n as u64).as_str());
+            }
+            _ => {
+                ir.push_str("%unknown");
+            }
+        }
+        ir.push_str(" = alloca ");
+        ir.push_str(ty);
+        ir.push_str("\n");
+        self.deferred_entry_allocas.push(ir);
     }
 
     /// Emits a load instruction using CgName for result and &str for ptr.
@@ -2614,6 +2646,7 @@ impl CodegenCtx {
             non_tail_resumptive_effects: hashmap.HashMapU64U32.new(),
             abort_label_stack: Vec.new(),
             handler_abort_hash: hashmap.HashMapU64U32.new(),
+            deferred_entry_allocas: Vec.new(),
         };
 
         // Copy handler_op_body_ids with state counts (read-only, needed to flag handler op bodies)

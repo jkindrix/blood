@@ -381,22 +381,40 @@ pub fn generate_function_with_ctx(
         emit_capture_loads(ctx, body);
     }
 
-    // Jump to first basic block if there are any
+    // Emit basic blocks into a separate buffer so we can collect deferred
+    // entry-block allocas (e.g., handler state shadows) before the branch.
     if body.basic_blocks.len() > 0 {
+        let saved_output = ctx.output;
+        ctx.output = String.new();
+
+        for block_idx in 0usize..body.basic_blocks.len() {
+            let block_id = mir_def.BasicBlockId.new(block_idx as u32);
+            codegen_term.emit_basic_block(ctx, block_id, &body.basic_blocks[block_idx]);
+        }
+
+        let blocks_ir = ctx.output;
+        ctx.output = saved_output;
+
+        // Emit deferred allocas (collected during basic block codegen) into the entry block.
+        // Clone the vec to avoid borrow conflict with ctx.write().
+        let deferred = ctx.deferred_entry_allocas;
+        ctx.deferred_entry_allocas = Vec.new();
+        for dai in 0usize..deferred.len() {
+            ctx.write(deferred[dai].as_str());
+        }
+
+        // Branch to first basic block
         let first_label = ctx.block_label_cg(mir_def.BasicBlockId.new(0));
         ctx.indent();
         ctx.emit_br_cg(&first_label);
         ctx.dedent();
+
+        // Append basic block IR
+        ctx.write(blocks_ir.as_str());
     } else {
         ctx.indent();
         ctx.emit_unreachable();
         ctx.dedent();
-    }
-
-    // Emit all basic blocks
-    for block_idx in 0usize..body.basic_blocks.len() {
-        let block_id = mir_def.BasicBlockId.new(block_idx as u32);
-        codegen_term.emit_basic_block(ctx, block_id, &body.basic_blocks[block_idx]);
     }
 
     ctx.emit_fn_footer();
