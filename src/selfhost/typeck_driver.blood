@@ -501,13 +501,18 @@ pub fn check_types(ctx: &hir_lower_ctx.LoweringCtx) -> TypeCheckResult {
     for i in 0usize..ctx.bodies.len() {
         let body_entry = &ctx.bodies[i];
         let mut return_ty = find_return_type_cached(&ctx.items, body_entry.body_id, &body_cache);
-        if is_handler_return_cached(&ctx.items, body_entry.body_id, &body_cache) {
+        let is_handler_ret = is_handler_return_cached(&ctx.items, body_entry.body_id, &body_cache);
+        if is_handler_ret {
             return_ty = checker.fresh_infer();
         }
         checker.current_body_def_id = find_def_id_cached(&ctx.items, body_entry.body_id, &body_cache);
         checker.current_effect_row = find_effect_row_cached(&ctx.items, body_entry.body_id, &body_cache);
         unify_handler_op_params_cached(&mut checker, &ctx.items, &body_entry.body, body_entry.body_id, &body_cache);
         setup_handler_op_context_cached(&mut checker, &ctx.items, body_entry.body_id, &body_cache);
+        // Mark handler return bodies after setup_handler_op_context (which resets resume_ty)
+        if is_handler_ret {
+            checker.resume_ty = Option.Some(return_ty);
+        }
         check_body(&mut checker, &body_entry.body, return_ty);
     }
 
@@ -623,7 +628,8 @@ pub fn check_lower_result(result: &hir_lower_ctx.LowerResult) -> TypeCheckResult
     for i in 0usize..body_limit {
         let body_entry = &result.bodies[i];
         let mut return_ty = find_return_type_cached(&result.items, body_entry.body_id, &body_cache);
-        if is_handler_return_cached(&result.items, body_entry.body_id, &body_cache) {
+        let is_handler_ret = is_handler_return_cached(&result.items, body_entry.body_id, &body_cache);
+        if is_handler_ret {
             return_ty = checker.fresh_infer();
         }
         let found_def_id = find_def_id_cached(&result.items, body_entry.body_id, &body_cache);
@@ -631,6 +637,9 @@ pub fn check_lower_result(result: &hir_lower_ctx.LowerResult) -> TypeCheckResult
         checker.current_effect_row = find_effect_row_cached(&result.items, body_entry.body_id, &body_cache);
         unify_handler_op_params_cached(&mut checker, &result.items, &body_entry.body, body_entry.body_id, &body_cache);
         setup_handler_op_context_cached(&mut checker, &result.items, body_entry.body_id, &body_cache);
+        if is_handler_ret {
+            checker.resume_ty = Option.Some(return_ty);
+        }
         check_body(&mut checker, &body_entry.body, return_ty);
     }
 
@@ -645,7 +654,8 @@ pub fn check_lower_result(result: &hir_lower_ctx.LowerResult) -> TypeCheckResult
     while j < result.bodies.len() {
         let body_entry = &result.bodies[j];
         let mut return_ty = find_return_type_cached(&result.items, body_entry.body_id, &body_cache);
-        if is_handler_return_cached(&result.items, body_entry.body_id, &body_cache) {
+        let is_handler_ret_ext = is_handler_return_cached(&result.items, body_entry.body_id, &body_cache);
+        if is_handler_ret_ext {
             return_ty = checker.fresh_infer();
         }
         let found_def_id = find_def_id_cached(&result.items, body_entry.body_id, &body_cache);
@@ -653,6 +663,9 @@ pub fn check_lower_result(result: &hir_lower_ctx.LowerResult) -> TypeCheckResult
         checker.current_effect_row = find_effect_row_cached(&result.items, body_entry.body_id, &body_cache);
         unify_handler_op_params_cached(&mut checker, &result.items, &body_entry.body, body_entry.body_id, &body_cache);
         setup_handler_op_context_cached(&mut checker, &result.items, body_entry.body_id, &body_cache);
+        if is_handler_ret_ext {
+            checker.resume_ty = Option.Some(return_ty);
+        }
         check_body(&mut checker, &body_entry.body, return_ty);
         j += 1;
     }
