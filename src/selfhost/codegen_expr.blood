@@ -1050,9 +1050,11 @@ pub fn emit_place_addr(
                     // When the local is a reference to a Vec (LLVM type "ptr") and there's
                     // no preceding Deref projection, current points to the alloca containing
                     // the reference. Load through the reference first to get the Vec struct address.
+                    // Handler state ptr locals also need this: their alloca is ptr (holding a
+                    // pointer to the state shadow), but get_local_type returns the value type.
                     if i == 0 {
                         let local_llvm_ty = ctx.get_local_type(place.local);
-                        if string_eq_str(local_llvm_ty.as_str(), "ptr") {
+                        if string_eq_str(local_llvm_ty.as_str(), "ptr") || ctx.is_handler_state_ptr(place.local) {
                             let vec_ptr = ctx.fresh_temp_cg();
                             ctx.emit_load_cg2(&vec_ptr, "ptr", &current);
                             current = vec_ptr;
