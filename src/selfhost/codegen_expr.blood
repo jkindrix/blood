@@ -2468,12 +2468,15 @@ fn is_struct_or_array_type(ty: &String) -> bool {
 /// field is a data pointer. These types have layout { ptr, ... } and require
 /// loading the data pointer before indexing into the heap-allocated array.
 fn is_vec_like_type(ty: &String) -> bool {
-    // Check for "{ ptr" at the start — this matches Vec<T> = { ptr, i64, i64 }
-    // and similar container types where field 0 is the heap data pointer.
+    // Check for "{ ptr, i64" at the start — this matches Vec<T> = { ptr, i64, i64 }
+    // and similar container types where field 0 is a heap data pointer and field 1
+    // is i64 (length). Excludes fat references { ptr, i32 } which also start with
+    // "{ ptr" but have a generation field, not a length field.
     let bytes = ty.as_bytes();
-    if bytes.len() >= 5 {
+    if bytes.len() >= 10 {
         bytes[0] == 123 && bytes[1] == 32 && bytes[2] == 112 && bytes[3] == 116 && bytes[4] == 114
-        // '{' ' ' 'p' 't' 'r'
+        && bytes[5] == 44 && bytes[6] == 32 && bytes[7] == 105 && bytes[8] == 54 && bytes[9] == 52
+        // '{' ' ' 'p' 't' 'r' ',' ' ' 'i' '6' '4'
     } else {
         false
     }
