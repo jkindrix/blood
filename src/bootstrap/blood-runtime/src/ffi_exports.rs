@@ -5841,6 +5841,7 @@ pub extern "C" fn blood_stale_reference_panic(expected: u32, actual: u32) -> ! {
          Expected generation: {expected}, Actual: {actual}\n\
          This indicates use-after-free. Aborting."
     );
+    eprintln!("Backtrace:\n{}", std::backtrace::Backtrace::force_capture());
     std::process::abort();
 }
 
@@ -5898,6 +5899,7 @@ pub unsafe extern "C" fn blood_panic(msg: *const c_char) -> ! {
         CStr::from_ptr(msg).to_str().unwrap_or("invalid UTF-8")
     };
     eprintln!("BLOOD RUNTIME PANIC: {message}");
+    eprintln!("Backtrace:\n{}", std::backtrace::Backtrace::force_capture());
     std::process::abort();
 }
 
@@ -5905,6 +5907,7 @@ pub unsafe extern "C" fn blood_panic(msg: *const c_char) -> ! {
 #[no_mangle]
 pub extern "C" fn blood_panic_div_zero() -> ! {
     eprintln!("BLOOD RUNTIME PANIC: division by zero");
+    eprintln!("Backtrace:\n{}", std::backtrace::Backtrace::force_capture());
     std::process::abort();
 }
 
@@ -5912,6 +5915,7 @@ pub extern "C" fn blood_panic_div_zero() -> ! {
 #[no_mangle]
 pub extern "C" fn blood_panic_index_out_of_bounds(index: i64, length: i64) -> ! {
     eprintln!("BLOOD RUNTIME PANIC: index out of bounds: index {} but length is {}", index, length);
+    eprintln!("Backtrace:\n{}", std::backtrace::Backtrace::force_capture());
     std::process::abort();
 }
 
