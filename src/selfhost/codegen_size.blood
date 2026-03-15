@@ -182,18 +182,22 @@ pub fn type_to_llvm_fast_id(ty_id: type_intern.TyId) -> Option<&str> {
         }
         &type_intern.InternedTypeKind.Never => Option.Some("void"),
         &type_intern.InternedTypeKind.Ref { inner, mutable: _ } => {
-            // Fat pointer for unsized types (&str, &[T], &dyn Trait)
+            // Fat references: sized &T → { ptr, i32 } (pointer + generation)
+            // Unsized types keep their existing representations (gen added later):
+            // &str → { ptr, i64 } (data + len)
+            // &[T] → { ptr, i64 } (data + len)
+            // &dyn Trait → { ptr, ptr } (data + vtable)
             let inner_kind = type_intern.type_interner().get(inner);
             match inner_kind {
                 &type_intern.InternedTypeKind.Primitive(ref p) => {
                     match p {
                         &hir_ty.PrimitiveTy.Str => Option.Some("{ ptr, i64 }"),
-                        _ => Option.Some("ptr"),
+                        _ => Option.Some("{ ptr, i32 }"),
                     }
                 }
                 &type_intern.InternedTypeKind.Slice { element: _ } => Option.Some("{ ptr, i64 }"),
                 &type_intern.InternedTypeKind.DynTrait { trait_id: _, auto_traits: _ } => Option.Some("{ ptr, ptr }"),
-                _ => Option.Some("ptr"),
+                _ => Option.Some("{ ptr, i32 }"),
             }
         }
         &type_intern.InternedTypeKind.Ptr { inner, mutable: _ } => {

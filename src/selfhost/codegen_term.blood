@@ -941,6 +941,12 @@ fn emit_call(
                             let widened_cg = emit_struct_widening(ctx, &arg_val, arg_ty.as_str(), expected_ty.as_str());
                             final_val = cgname_to_string(&widened_cg);
                             final_ty = expected_ty;
+                        } else if codegen_expr.is_sized_fat_ref(arg_ty.as_str()) && str_eq(expected_ty.as_str(), "ptr") {
+                            // Fat reference → thin pointer: extract ptr (field 0)
+                            let val_cg = codegen_ctx.CgName.Str(clone_string(&arg_val));
+                            let extracted = codegen_expr.extract_fat_ref_ptr(ctx, &val_cg, "{ ptr, i32 }");
+                            final_val = codegen_expr.cgname_to_string(&extracted);
+                            final_ty = expected_ty;
                         } else if str_eq(arg_ty.as_str(), "ptr") && is_struct_type(expected_ty.as_str()) {
                             // Argument is a pointer (reference) but parameter expects a struct by value.
                             // This happens when a MIR operand is a reference-typed local passed to
@@ -1557,26 +1563,13 @@ fn emit_struct_widening(
             } else {
                 ctx.emit_alloca_cg(&cast_alloca, dst_fields[fi].as_str());
             }
-            // Zero-initialize the alloca to avoid reading uninitialized bytes
-            let zero_val = ctx.fresh_temp_cg();
-            ctx.write_indent();
-            ctx.write_cgname(&zero_val);
+            // Zero-initialize the alloca to avoid reading uninitialized bytes.
+            // Use store of zeroinitializer directly (bitcast between aggregates
+            // is invalid in modern LLVM).
             if src_size > dst_size {
-                ctx.write(" = bitcast ");
-                ctx.write(src_fields[fi].as_str());
-                ctx.write(" zeroinitializer to ");
-                ctx.write(src_fields[fi].as_str());
+                ctx.emit_store_str_cg(src_fields[fi].as_str(), "zeroinitializer", &cast_alloca);
             } else {
-                ctx.write(" = bitcast ");
-                ctx.write(dst_fields[fi].as_str());
-                ctx.write(" zeroinitializer to ");
-                ctx.write(dst_fields[fi].as_str());
-            }
-            ctx.write("\n");
-            if src_size > dst_size {
-                ctx.emit_store_cg2(src_fields[fi].as_str(), &zero_val, &cast_alloca);
-            } else {
-                ctx.emit_store_cg2(dst_fields[fi].as_str(), &zero_val, &cast_alloca);
+                ctx.emit_store_str_cg(dst_fields[fi].as_str(), "zeroinitializer", &cast_alloca);
             }
             // Store source value into the alloca
             ctx.emit_store_cg2(src_fields[fi].as_str(), &extracted, &cast_alloca);
@@ -1677,15 +1670,7 @@ fn emit_struct_narrowing(
                 // Destination is larger: alloca dest type, zero-init, then store source
                 ctx.emit_alloca_cg(&cast_alloca, dst_fields[fi].as_str());
                 // Zero-initialize to avoid reading uninitialized bytes
-                let zero_val = ctx.fresh_temp_cg();
-                ctx.write_indent();
-                ctx.write_cgname(&zero_val);
-                ctx.write(" = bitcast ");
-                ctx.write(dst_fields[fi].as_str());
-                ctx.write(" zeroinitializer to ");
-                ctx.write(dst_fields[fi].as_str());
-                ctx.write("\n");
-                ctx.emit_store_cg2(dst_fields[fi].as_str(), &zero_val, &cast_alloca);
+                ctx.emit_store_str_cg(dst_fields[fi].as_str(), "zeroinitializer", &cast_alloca);
             } else {
                 ctx.emit_alloca_cg(&cast_alloca, src_fields[fi].as_str());
             }
@@ -1944,7 +1929,7 @@ fn emit_vec_with_capacity_call(
     };
 
     // Get capacity from first argument
-    let cap_val = codegen_expr.emit_operand(ctx, &args[0]);
+    let cap_val = codegen_expr.emit_operand_as_ptr(ctx, &args[0]);
 
     // Emit: call void @vec_with_capacity(i64 elem_size, i64 capacity, ptr out_ptr)
     let elem_size_str = codegen_types.format_u64(elem_size);
@@ -2072,9 +2057,8 @@ fn emit_vec_push_call(
         return;
     }
 
-    // Get vec pointer - emit_operand loads the &mut Vec reference value,
-    // which is already a pointer to the Vec struct (no extra deref needed).
-    let vec_ptr = codegen_expr.emit_operand(ctx, &args[0]);
+    // Get vec pointer - emit_operand_as_ptr extracts ptr from fat ref if needed.
+    let vec_ptr = codegen_expr.emit_operand_as_ptr(ctx, &args[0]);
 
     // Get element value and type
     let (elem_val, elem_ty) = codegen_expr.emit_operand_typed(ctx, &args[1]);
@@ -2163,7 +2147,7 @@ fn emit_vec_len_call(
 
     // Get vec pointer - emit_operand loads the reference value,
     // which is already a pointer to the Vec struct.
-    let vec_ptr = codegen_expr.emit_operand(ctx, &args[0]);
+    let vec_ptr = codegen_expr.emit_operand_as_ptr(ctx, &args[0]);
 
     // Emit: %result = call i64 @vec_len(ptr vec)
     let result = ctx.fresh_temp_cg();
@@ -2204,7 +2188,7 @@ fn emit_vec_pop_call(
 
     // Get vec pointer - emit_operand loads the reference value,
     // which is already a pointer to the Vec struct.
-    let vec_ptr = codegen_expr.emit_operand(ctx, &args[0]);
+    let vec_ptr = codegen_expr.emit_operand_as_ptr(ctx, &args[0]);
 
     // Get element size from destination's HIR type (Option<T>)
     // pop returns Option<T>, so we need to extract T's size
@@ -2290,7 +2274,7 @@ fn emit_vec_clear_call(
 
     // Get vec pointer - emit_operand loads the reference value,
     // which is already a pointer to the Vec struct.
-    let vec_ptr = codegen_expr.emit_operand(ctx, &args[0]);
+    let vec_ptr = codegen_expr.emit_operand_as_ptr(ctx, &args[0]);
 
     // Emit: call void @vec_clear(ptr vec)
     ctx.begin_call(Option.None, "void", "@vec_clear");
@@ -2393,7 +2377,7 @@ fn emit_string_push_str_call(
 
     // Get string pointer - emit_operand loads the reference value,
     // which is already a pointer to the String struct.
-    let str_ptr = codegen_expr.emit_operand(ctx, &args[0]);
+    let str_ptr = codegen_expr.emit_operand_as_ptr(ctx, &args[0]);
 
     // Get the &str argument (fat pointer)
     let (arg_val, arg_ty) = codegen_expr.emit_operand_typed(ctx, &args[1]);
@@ -2438,7 +2422,7 @@ fn emit_string_len_call(
 
     // Get string pointer - emit_operand loads the reference value,
     // which is already a pointer to the String struct.
-    let str_ptr = codegen_expr.emit_operand(ctx, &args[0]);
+    let str_ptr = codegen_expr.emit_operand_as_ptr(ctx, &args[0]);
 
     // Emit: %result = call i64 @string_len(ptr self)
     let result = ctx.fresh_temp_cg();
@@ -2476,7 +2460,7 @@ fn emit_string_push_call(
 
     // Get string pointer - emit_operand loads the reference value,
     // which is already a pointer to the String struct.
-    let str_ptr = codegen_expr.emit_operand(ctx, &args[0]);
+    let str_ptr = codegen_expr.emit_operand_as_ptr(ctx, &args[0]);
 
     // Get char argument - it may be { i32 } struct, need to extract i32
     let (char_val, char_ty) = codegen_expr.emit_operand_typed(ctx, &args[1]);
@@ -2527,7 +2511,7 @@ fn emit_string_as_str_call(
 
     // Get string pointer - emit_operand loads the reference value,
     // which is already a pointer to the String struct.
-    let str_ptr = codegen_expr.emit_operand(ctx, &args[0]);
+    let str_ptr = codegen_expr.emit_operand_as_ptr(ctx, &args[0]);
 
     // Emit: %result = call { ptr, i64 } @string_as_str(ptr self)
     let result = ctx.fresh_temp_cg();
@@ -2566,7 +2550,7 @@ fn emit_string_as_bytes_call(
 
     // Get string pointer - emit_operand loads the reference value,
     // which is already a pointer to the String struct.
-    let str_ptr = codegen_expr.emit_operand(ctx, &args[0]);
+    let str_ptr = codegen_expr.emit_operand_as_ptr(ctx, &args[0]);
 
     // Emit: %result = call { ptr, i64 } @string_as_bytes(ptr self)
     let result = ctx.fresh_temp_cg();
@@ -2630,9 +2614,17 @@ fn load_str_fat_ptr(ctx: &mut codegen_ctx.CodegenCtx, operand: &mir_types.Operan
     if string_eq_str(arg_ty.as_str(), "{ ptr, i64 }") {
         return codegen_ctx.CgName.Str(arg_val);
     }
-    // Otherwise it's a ptr — load the { ptr, i64 } from it
+    // Fat reference to &str: extract ptr, then load { ptr, i64 } from it
+    let addr = if codegen_expr.is_sized_fat_ref(arg_ty.as_str()) {
+        let val_cg = codegen_ctx.CgName.Str(arg_val);
+        let extracted = codegen_expr.extract_fat_ref_ptr(ctx, &val_cg, "{ ptr, i32 }");
+        codegen_expr.cgname_to_string(&extracted)
+    } else {
+        arg_val
+    };
+    // Load the { ptr, i64 } from the address
     let loaded = ctx.fresh_temp_cg();
-    ctx.emit_load_cg(&loaded, "{ ptr, i64 }", arg_val.as_str());
+    ctx.emit_load_cg(&loaded, "{ ptr, i64 }", addr.as_str());
     loaded
 }
 
@@ -2968,7 +2960,7 @@ fn emit_option_is_some_call(
 
     // Get option pointer - emit_operand loads the reference value,
     // which is already a pointer to the Option struct.
-    let opt_ptr = codegen_expr.emit_operand(ctx, &args[0]);
+    let opt_ptr = codegen_expr.emit_operand_as_ptr(ctx, &args[0]);
 
     // Load i32 discriminant (enum discriminant type is always i32)
     let disc = ctx.fresh_temp_cg();
@@ -3009,7 +3001,7 @@ fn emit_option_is_none_call(
 
     // Get option pointer - emit_operand loads the reference value,
     // which is already a pointer to the Option struct.
-    let opt_ptr = codegen_expr.emit_operand(ctx, &args[0]);
+    let opt_ptr = codegen_expr.emit_operand_as_ptr(ctx, &args[0]);
 
     // Load i32 discriminant (enum discriminant type is always i32)
     let disc = ctx.fresh_temp_cg();
@@ -3049,7 +3041,7 @@ fn emit_option_unwrap_call(
 
     // Get option pointer - emit_operand loads the reference value,
     // which is already a pointer to the Option struct.
-    let opt_ptr = codegen_expr.emit_operand(ctx, &args[0]);
+    let opt_ptr = codegen_expr.emit_operand_as_ptr(ctx, &args[0]);
 
     // Get destination pointer and its size
     let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
@@ -3104,7 +3096,7 @@ fn emit_option_as_ref_call(
 
     // Get option pointer - emit_operand loads the reference value,
     // which is already a pointer to the Option struct.
-    let opt_ptr = codegen_expr.emit_operand(ctx, &args[0]);
+    let opt_ptr = codegen_expr.emit_operand_as_ptr(ctx, &args[0]);
 
     // Get destination pointer
     let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);

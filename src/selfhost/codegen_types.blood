@@ -81,7 +81,7 @@ pub fn type_to_llvm_fast(ty: &hir_ty.Type) -> Option<&str> {
             }
         }
         &hir_ty.TypeKind.Never => Option.Some("void"),
-        &hir_ty.TypeKind.Ref { inner: _, mutable: _ } => Option.Some("ptr"),
+        &hir_ty.TypeKind.Ref { inner: _, mutable: _ } => Option.None, // needs slow path for fat ref vs unsized
         &hir_ty.TypeKind.Ptr { inner: _, mutable: _ } => Option.Some("ptr"),
         &hir_ty.TypeKind.Fn { params: _, ret: _, effects: _ } => Option.Some("{ ptr, ptr }"),
         &hir_ty.TypeKind.Closure { def_id: _, params: _, ret: _ } => Option.Some("{ ptr, ptr }"),
@@ -247,7 +247,8 @@ fn ref_to_llvm(inner: &hir_ty.Type) -> String {
         // Fat pointer for unsized types
         common.make_string("{ ptr, i64 }")
     } else {
-        common.make_string("ptr")
+        // Fat reference: pointer + generation
+        common.make_string("{ ptr, i32 }")
     }
 }
 

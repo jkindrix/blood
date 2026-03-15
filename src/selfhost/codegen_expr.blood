@@ -156,11 +156,13 @@ pub fn emit_operand_typed(
                         }
                         _ => common.make_string("i64"),
                     };
-                    // Alloca a temp, store the value, return pointer
+                    // Alloca a temp, store the value, return fat reference
                     let ref_temp = ctx.fresh_temp_cg();
                     ctx.emit_alloca_cg(&ref_temp, inner_ty.as_str());
                     ctx.emit_store_str_cg(inner_ty.as_str(), val.as_str(), &ref_temp);
-                    (cgname_to_string(&ref_temp), common.make_string("ptr"))
+                    let ref_temp_str = cgname_to_string(&ref_temp);
+                    let fat_ref = make_fat_ref_val(ctx, ref_temp_str.as_str(), "0");
+                    (cgname_to_string(&fat_ref), common.make_string("{ ptr, i32 }"))
                 } else {
                     let ty = codegen_types.type_to_llvm(&const_hir_ty);
                     (val, ty)
@@ -896,8 +898,18 @@ pub fn emit_place_addr(
             // Peel all reference layers until we reach a non-reference type
             let mut keep_peeling = true;
             while keep_peeling {
-                let loaded = ctx.fresh_temp_cg();
-                ctx.emit_load_cg2(&loaded, "ptr", &current);
+                // Check if current ref type is a fat reference
+                let ref_ty = match &current_hir_type {
+                    &Option.Some(ty_id) => codegen_size.type_to_llvm_with_ctx_id(ctx, ty_id),
+                    &Option.None => common.make_string("ptr"),
+                };
+                let loaded = if is_sized_fat_ref(ref_ty.as_str()) {
+                    load_fat_ref_ptr(ctx, "{ ptr, i32 }", &current)
+                } else {
+                    let tmp = ctx.fresh_temp_cg();
+                    ctx.emit_load_cg2(&tmp, "ptr", &current);
+                    tmp
+                };
                 current = loaded;
                 // Update HIR type through implicit deref
                 current_hir_type = match &current_hir_type {
@@ -917,12 +929,34 @@ pub fn emit_place_addr(
         let proj = &place.projection[i];
         match proj {
             &mir_types.PlaceElem.Deref => {
-                // Load the pointer value
-                let result = ctx.fresh_temp_cg();
-                ctx.emit_load_cg2(&result, "ptr", &current);
-                // Emit generation check if the local has a tracked generation
-                emit_generation_check(ctx, place.local, &result);
-                current = result;
+                // Determine the LLVM type of the reference being dereferenced.
+                // For sized &T this is { ptr, i32 } (fat ref), for unsized it's
+                // { ptr, i64 } (&str/&[T]) or { ptr, ptr } (&dyn).
+                let ref_ty = match &current_hir_type {
+                    &Option.Some(ty_id) => {
+                        if type_intern.is_ref_id(ty_id) {
+                            codegen_size.type_to_llvm_with_ctx_id(ctx, ty_id)
+                        } else {
+                            common.make_string("ptr")
+                        }
+                    }
+                    &Option.None => common.make_string("ptr"),
+                };
+                if is_sized_fat_ref(ref_ty.as_str()) {
+                    // Fat reference: load { ptr, i32 }, extract pointer
+                    let fat = ctx.fresh_temp_cg();
+                    ctx.emit_load_cg2(&fat, "{ ptr, i32 }", &current);
+                    let ptr_val = extract_fat_ref_ptr(ctx, &fat, "{ ptr, i32 }");
+                    // Generation check: compare fat ref gen against [ptr-8]
+                    emit_fat_ref_gen_check(ctx, &fat, &ptr_val);
+                    current = ptr_val;
+                } else {
+                    // Thin pointer (unsized ref or raw ptr): load as ptr
+                    let result = ctx.fresh_temp_cg();
+                    ctx.emit_load_cg2(&result, "ptr", &current);
+                    emit_generation_check(ctx, place.local, &result);
+                    current = result;
+                }
                 // After deref, try to get the inner type's ADT info
                 current_adt_def_id = resolve_deref_adt_def_id(ctx, place.local, i);
                 current_base = match &current_adt_def_id {
@@ -1059,6 +1093,9 @@ pub fn emit_place_addr(
                             let vec_ptr = ctx.fresh_temp_cg();
                             ctx.emit_load_cg2(&vec_ptr, "ptr", &current);
                             current = vec_ptr;
+                        } else if is_sized_fat_ref(local_llvm_ty.as_str()) {
+                            // Fat reference to Vec: load { ptr, i32 }, extract ptr
+                            current = load_fat_ref_ptr(ctx, "{ ptr, i32 }", &current);
                         }
                     }
                     // Save Vec struct pointer for bounds check
@@ -1886,7 +1923,12 @@ pub fn emit_rvalue(
         }
         &mir_types.Rvalue.Ref { ref place, mutable: _ } => {
             let addr = emit_place_data_ptr(ctx, place);
-            ctx.emit_store("ptr", addr.as_str(), dest);
+            // Construct fat reference { ptr, i32 } with gen=0 (stack-tier sentinel).
+            // Generation capture from [ptr-8] for region-tier locals will be added
+            // once per-local memory tier tracking is wired into codegen.
+            let fat_ref = make_fat_ref_val(ctx, addr.as_str(), "0");
+            let fat_ref_str = cgname_to_string(&fat_ref);
+            ctx.emit_store("{ ptr, i32 }", fat_ref_str.as_str(), dest);
         }
         &mir_types.Rvalue.BinaryOp { operator: ref bin_op, ref left, ref right } => {
             // Get typed operands
@@ -1938,7 +1980,9 @@ pub fn emit_rvalue(
         &mir_types.Rvalue.ArrayToSlice { ref array_ref, array_len } => {
             // Convert array ref to fat pointer (ptr + len).
             // Slices are represented as { ptr, i64 } in LLVM IR.
-            let arr_val = emit_operand(ctx, array_ref);
+            // The array_ref operand may be a fat reference { ptr, i32 } —
+            // extract the raw pointer for the slice data field.
+            let arr_val = emit_operand_as_ptr(ctx, array_ref);
 
             // Store pointer at offset 0 of the fat pointer
             let ptr_field = ctx.fresh_temp_cg();
@@ -2052,6 +2096,11 @@ pub fn emit_rvalue(
                                         let mut data_ptr: String;
                                         if str_eq(src_ty.as_str(), "ptr") {
                                             data_ptr = val;
+                                        } else if is_sized_fat_ref(src_ty.as_str()) {
+                                            // Fat reference: extract ptr
+                                            let val_cg = codegen_ctx.CgName.Str(val);
+                                            let extracted = extract_fat_ref_ptr(ctx, &val_cg, "{ ptr, i32 }");
+                                            data_ptr = cgname_to_string(&extracted);
                                         } else {
                                             // Value type: alloca + store, use alloca as ptr
                                             let alloca = ctx.fresh_temp_cg();
@@ -2133,9 +2182,16 @@ pub fn emit_rvalue(
                 match ctx.get_local_hir_type(place.local) {
                     Option.Some(ty_id) => {
                         if type_intern.is_ref_id(ty_id) {
-                            let deref = ctx.fresh_temp_cg();
-                            ctx.emit_load_cg(&deref, "ptr", ptr.as_str());
-                            ptr = cgname_to_string(&deref);
+                            let ref_llvm = codegen_size.type_to_llvm_with_ctx_id(ctx, ty_id);
+                            if is_sized_fat_ref(ref_llvm.as_str()) {
+                                let ptr_cg = codegen_ctx.CgName.Str(clone_string(&ptr));
+                                let extracted = load_fat_ref_ptr(ctx, "{ ptr, i32 }", &ptr_cg);
+                                ptr = cgname_to_string(&extracted);
+                            } else {
+                                let deref = ctx.fresh_temp_cg();
+                                ctx.emit_load_cg(&deref, "ptr", ptr.as_str());
+                                ptr = cgname_to_string(&deref);
+                            }
                         }
                     }
                     Option.None => {}
@@ -2159,9 +2215,16 @@ pub fn emit_rvalue(
                 match ctx.get_local_hir_type(place.local) {
                     Option.Some(ty_id) => {
                         if type_intern.is_ref_id(ty_id) {
-                            let deref = ctx.fresh_temp_cg();
-                            ctx.emit_load_cg(&deref, "ptr", ptr.as_str());
-                            ptr = cgname_to_string(&deref);
+                            let ref_llvm = codegen_size.type_to_llvm_with_ctx_id(ctx, ty_id);
+                            if is_sized_fat_ref(ref_llvm.as_str()) {
+                                let ptr_cg = codegen_ctx.CgName.Str(clone_string(&ptr));
+                                let extracted = load_fat_ref_ptr(ctx, "{ ptr, i32 }", &ptr_cg);
+                                ptr = cgname_to_string(&extracted);
+                            } else {
+                                let deref = ctx.fresh_temp_cg();
+                                ctx.emit_load_cg(&deref, "ptr", ptr.as_str());
+                                ptr = cgname_to_string(&deref);
+                            }
                         }
                     }
                     Option.None => {}
@@ -2321,7 +2384,18 @@ fn emit_cast_from_llvm_types(
         // Int to pointer (but not fat pointer source)
         ctx.emit_cast_cg(&result, "inttoptr", src_ty, val.as_str(), tgt_ty);
     } else if src_is_ptr && tgt_is_ptr {
-        // Pointer to pointer - bitcast
+        // Pointer to pointer conversion
+        if str_eq(src_ty, tgt_ty) {
+            // Identity cast: no conversion needed
+            return codegen_ctx.CgName.Str(clone_string(val));
+        } else if str_eq(src_ty, "ptr") && is_sized_fat_ref(tgt_ty) {
+            // Raw pointer → fat reference: wrap with gen=0
+            return make_fat_ref_val(ctx, val.as_str(), "0");
+        } else if is_sized_fat_ref(src_ty) && str_eq(tgt_ty, "ptr") {
+            // Fat reference → raw pointer: extract ptr
+            let val_cg = codegen_ctx.CgName.Str(clone_string(val));
+            return extract_fat_ref_ptr(ctx, &val_cg, "{ ptr, i32 }");
+        }
         ctx.emit_cast_cg(&result, "bitcast", src_ty, val.as_str(), tgt_ty);
     } else {
         // Int to int - determine by size
@@ -3026,9 +3100,16 @@ fn emit_cast_with_types(
             // Fat pointer to fat pointer: just copy
             return codegen_ctx.CgName.Str(clone_string(val));
         } else {
-            // Thin pointer to pointer: bitcast or just copy if same
+            // Thin pointer to pointer: bitcast, copy, or wrap as fat ref
             if string_eq_str(src_llvm.as_str(), tgt_llvm.as_str()) {
                 return codegen_ctx.CgName.Str(clone_string(val));
+            } else if str_eq(src_llvm.as_str(), "ptr") && is_sized_fat_ref(tgt_llvm.as_str()) {
+                // Raw pointer → fat reference: wrap with gen=0
+                return make_fat_ref_val(ctx, val.as_str(), "0");
+            } else if is_sized_fat_ref(src_llvm.as_str()) && str_eq(tgt_llvm.as_str(), "ptr") {
+                // Fat reference → raw pointer: extract ptr
+                let val_cg = codegen_ctx.CgName.Str(clone_string(val));
+                return extract_fat_ref_ptr(ctx, &val_cg, "{ ptr, i32 }");
             } else {
                 ctx.emit_cast_cg(&result, "bitcast", src_llvm.as_str(), val.as_str(), tgt_llvm.as_str());
             }
@@ -3633,7 +3714,7 @@ fn clone_string(s: &String) -> String {
 }
 
 /// Converts a CgName to String for use at boundaries where String is required.
-fn cgname_to_string(name: &codegen_ctx.CgName) -> String {
+pub fn cgname_to_string(name: &codegen_ctx.CgName) -> String {
     match name {
         &codegen_ctx.CgName.Temp(n) => {
             let mut s = common.make_string("%tmp");
@@ -3663,4 +3744,129 @@ fn cgname_to_string(name: &codegen_ctx.CgName) -> String {
             clone_string(s)
         }
     }
+}
+
+// ============================================================
+// Fat Reference Helpers
+// ============================================================
+
+/// Check if an LLVM type string is a sized fat reference { ptr, i32 }.
+pub fn is_sized_fat_ref(ty: &str) -> bool {
+    str_eq(ty, "{ ptr, i32 }")
+}
+
+/// Extract the pointer (field 0) from a loaded fat reference value.
+pub fn extract_fat_ref_ptr(ctx: &mut codegen_ctx.CodegenCtx, fat_val: &codegen_ctx.CgName, fat_ty: &str) -> codegen_ctx.CgName {
+    let ptr = ctx.fresh_temp_cg();
+    ctx.write("  ");
+    ctx.write_cgname(&ptr);
+    ctx.write(" = extractvalue ");
+    ctx.write(fat_ty);
+    ctx.write(" ");
+    ctx.write_cgname(fat_val);
+    ctx.write(", 0\n");
+    ptr
+}
+
+/// Construct a fat reference { ptr, i32 } from a pointer and generation value.
+fn make_fat_ref_val(ctx: &mut codegen_ctx.CodegenCtx, ptr_val: &str, gen_val: &str) -> codegen_ctx.CgName {
+    let tmp1 = ctx.fresh_temp_cg();
+    ctx.write("  ");
+    ctx.write_cgname(&tmp1);
+    ctx.write(" = insertvalue { ptr, i32 } undef, ptr ");
+    ctx.write(ptr_val);
+    ctx.write(", 0\n");
+    let tmp2 = ctx.fresh_temp_cg();
+    ctx.write("  ");
+    ctx.write_cgname(&tmp2);
+    ctx.write(" = insertvalue { ptr, i32 } ");
+    ctx.write_cgname(&tmp1);
+    ctx.write(", i32 ");
+    ctx.write(gen_val);
+    ctx.write(", 1\n");
+    tmp2
+}
+
+/// Load a fat reference from an address and extract the pointer.
+/// Returns the raw pointer CgName for use in GEP/load/store.
+fn load_fat_ref_ptr(ctx: &mut codegen_ctx.CodegenCtx, ref_ty: &str, addr: &codegen_ctx.CgName) -> codegen_ctx.CgName {
+    let fat = ctx.fresh_temp_cg();
+    ctx.emit_load_cg2(&fat, ref_ty, addr);
+    extract_fat_ref_ptr(ctx, &fat, ref_ty)
+}
+
+/// Get the LLVM type string for a reference from its HIR type id.
+/// Returns "{ ptr, i32 }" for sized refs, "{ ptr, i64 }" for &str/&[T], etc.
+fn ref_llvm_type_from_hir(ctx: &codegen_ctx.CodegenCtx, ty_id: type_intern.TyId) -> String {
+    codegen_size.type_to_llvm_with_ctx_id(ctx, ty_id)
+}
+
+/// Emit an operand as a raw pointer. If the operand is a fat reference
+/// { ptr, i32 }, extracts the ptr (field 0). Otherwise returns the value as-is.
+/// Use this when passing reference operands to FFI/builtin functions that expect ptr.
+pub fn emit_operand_as_ptr(ctx: &mut codegen_ctx.CodegenCtx, operand: &mir_types.Operand) -> String {
+    let (val, ty) = emit_operand_typed(ctx, operand);
+    if is_sized_fat_ref(ty.as_str()) {
+        let val_cg = codegen_ctx.CgName.Str(val);
+        let extracted = extract_fat_ref_ptr(ctx, &val_cg, "{ ptr, i32 }");
+        cgname_to_string(&extracted)
+    } else {
+        val
+    }
+}
+
+/// Emit a generation check using the gen field from a fat reference.
+/// If gen == 0 (stack-tier sentinel), skip the check entirely.
+/// Otherwise compare gen against the current generation at [ptr-8].
+fn emit_fat_ref_gen_check(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    fat_ref: &codegen_ctx.CgName,
+    ptr_val: &codegen_ctx.CgName,
+) {
+    // Skip if generation checks are suppressed by unchecked(generation) { }
+    if ctx.is_check_suppressed(&ast.UncheckedCheck.Generation) {
+        return;
+    }
+
+    // Extract generation from fat ref (field 1)
+    let expected_gen = ctx.fresh_temp_cg();
+    ctx.write("  ");
+    ctx.write_cgname(&expected_gen);
+    ctx.write(" = extractvalue { ptr, i32 } ");
+    ctx.write_cgname(fat_ref);
+    ctx.write(", 1\n");
+
+    // If generation == 0, skip check (stack-tier sentinel)
+    let is_zero = ctx.fresh_temp_cg();
+    ctx.emit_icmp_cg2(&is_zero, "eq", "i32", &expected_gen, "0");
+    let skip_label = ctx.fresh_label_cg();
+    let check_label = ctx.fresh_label_cg();
+    ctx.emit_cond_br_cg(&is_zero, &skip_label, &check_label);
+
+    // Check path: read current generation from header at [ptr - 8]
+    ctx.emit_label_cg(&check_label);
+    let header_ptr = ctx.fresh_temp_cg();
+    let mut header_indices: Vec<String> = Vec.new();
+    header_indices.push(common.make_string("-8"));
+    ctx.emit_gep_cg(&header_ptr, "i8", ptr_val, &header_indices);
+    let current_gen = ctx.fresh_temp_cg();
+    ctx.emit_load_cg2(&current_gen, "i32", &header_ptr);
+
+    // Compare expected (from fat ref) against current (from header)
+    let current_gen_str = cgname_to_string(&current_gen);
+    let is_stale = ctx.fresh_temp_cg();
+    ctx.emit_icmp_cg2(&is_stale, "ne", "i32", &expected_gen, current_gen_str.as_str());
+    let stale_label = ctx.fresh_label_cg();
+    ctx.emit_cond_br_cg(&is_stale, &stale_label, &skip_label);
+
+    // Stale path: panic
+    ctx.emit_label_cg(&stale_label);
+    ctx.begin_call(Option.None, "void", "@blood_stale_reference_panic");
+    ctx.call_arg_cg(true, "i32", &expected_gen);
+    ctx.call_arg_cg(false, "i32", &current_gen);
+    ctx.end_call();
+    ctx.emit_unreachable();
+
+    // Continue
+    ctx.emit_label_cg(&skip_label);
 }
