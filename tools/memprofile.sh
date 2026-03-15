@@ -7,6 +7,7 @@
 #   --summary (default): Peak RSS via /usr/bin/time, with --timings phase breakdown
 #   --sample:            Poll /proc/PID/status during compilation, report RSS timeline
 #   --massif:            Full heap profile via valgrind massif (slow but detailed)
+#   --perf:              CPU flame graph via perf record + flamegraph (requires linux-tools)
 #
 # Usage:
 #   ./tools/memprofile.sh <file.blood>                    # summary of both compilers
@@ -38,6 +39,7 @@ for arg in "$@"; do
         --summary)  MODE="summary" ;;
         --sample)   MODE="sample" ;;
         --massif)   MODE="massif" ;;
+        --perf)     MODE="perf" ;;
         --compare)  MODE="compare" ;;
         --ref-only) WHICH="ref" ;;
         --test-only) WHICH="test" ;;
@@ -421,5 +423,23 @@ case "$MODE" in
         ;;
     compare)
         run_compare
+        ;;
+    perf)
+        if ! command -v perf &>/dev/null; then
+            echo "ERROR: 'perf' not found. Install linux-tools-$(uname -r)" >&2
+            exit 1
+        fi
+        echo "Recording CPU profile with perf..."
+        local compiler="${BLOOD_TEST:-./build/first_gen}"
+        local perf_data="/tmp/blood_perf.data"
+        perf record -g -o "$perf_data" "$compiler" build "$INPUT" --no-cache 2>/dev/null
+        echo "Generating flame graph..."
+        if command -v flamegraph &>/dev/null; then
+            perf script -i "$perf_data" | flamegraph > /tmp/blood_flamegraph.svg
+            echo "Flame graph: /tmp/blood_flamegraph.svg"
+        else
+            echo "Install flamegraph (cargo install flamegraph) for SVG output."
+            echo "Raw data: $perf_data (use: perf report -i $perf_data)"
+        fi
         ;;
 esac
