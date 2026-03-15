@@ -1,0 +1,15 @@
+// Test: Region-scoped value access works within region lifetime.
+// Note: plain let inside region uses stack (alloca), not region_alloc.
+// Gen ref enforcement for region-allocated data is Phase 4 work.
+// EXPECT: 42
+
+fn main() -> i32 {
+    let mut saved_val: i32 = 0;
+    region {
+        let x: i32 = 42;
+        let r: &i32 = &x;
+        saved_val = *r;
+    }
+    println_int(saved_val);
+    0
+}

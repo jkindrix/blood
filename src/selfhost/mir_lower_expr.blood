@@ -2078,12 +2078,46 @@ fn lower_for_iter_expr(
         _ => {}
     }
 
+    // Check for Vec-like types: Adt with one type arg (Vec<T>)
+    let mut found_vec = false;
     if !found_array {
+        match iter_kind {
+            &type_intern.InternedTypeKind.Adt { def_id: _, args } => {
+                let num_args = interner.ty_list_len(args);
+                if num_args == 1 {
+                    element_ty_id = interner.get_ty_list_element(args, 0);
+                    found_vec = true;
+                }
+            }
+            &type_intern.InternedTypeKind.Ref { inner, mutable: _ } => {
+                let inner_resolved = ctx.resolve_type_to_id(inner);
+                let inner_kind = interner.get(inner_resolved);
+                match inner_kind {
+                    &type_intern.InternedTypeKind.Adt { def_id: _, args } => {
+                        let num_args = interner.ty_list_len(args);
+                        if num_args == 1 {
+                            element_ty_id = interner.get_ty_list_element(args, 0);
+                            found_vec = true;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if !found_array && !found_vec {
         ctx.mir_error(
             mir_lower_ctx.MirLowerErrorKind.InternalError,
-            common.make_string("for-in loop: iterator type is not an array"),
+            common.make_string("for-in loop: iterator type is not an array or Vec"),
             span,
         );
+        return;
+    }
+
+    if found_vec {
+        lower_for_vec_iter(ctx, label, pattern, iter, body, dest, span, resolved_iter_id, element_ty_id, iter_kind);
         return;
     }
 
@@ -2600,6 +2634,166 @@ fn extract_handler_def_id(ty: &hir_ty.Type) -> hir_def.DefId {
 }
 
 /// Creates a copy of a Place (helper for handler lowering).
+/// Lowers a for-in loop over a Vec-like type (Adt with one type arg).
+/// Desugars to index-based loop: load vec.len (field 1), loop i in 0..len, access vec[i].
+fn lower_for_vec_iter(
+    ctx: &mut mir_lower_ctx.MirLowerCtx,
+    label: &Option<common.Symbol>,
+    pattern: &hir_expr.Pattern,
+    iter: &hir_expr.Expr,
+    body: &hir_expr.Expr,
+    dest: mir_lower_ctx.Destination,
+    span: common.Span,
+    resolved_iter_id: type_intern.TyId,
+    element_ty_id: type_intern.TyId,
+    iter_kind: &type_intern.InternedTypeKind,
+) {
+    let idx_ty_id = type_intern.CommonTypes.i64_ty();
+
+    // Step 1: Evaluate the Vec into a temporary
+    let vec_temp = ctx.new_temp(resolved_iter_id, span);
+    lower_expr(ctx, iter, mir_lower_ctx.destination_local(vec_temp));
+
+    // Step 2: Load the length from vec.len (field 1)
+    let len_local = ctx.new_temp(idx_ty_id, span);
+    let mut vec_place = mir_types.Place.local(vec_temp);
+    // If iter is a reference (&Vec<T>), deref first
+    match iter_kind {
+        &type_intern.InternedTypeKind.Ref { inner: _, mutable: _ } => {
+            vec_place = vec_place.project(mir_types.PlaceElem.Deref);
+        }
+        _ => {}
+    }
+    let len_place = vec_place.project(mir_types.PlaceElem.Field(1));
+    let len_hir = type_intern.ty_id_to_type(idx_ty_id);
+    let len_operand = mir_lower_util.operand_from_place(len_place, &len_hir);
+    ctx.emit_assign(
+        mir_types.Place.local(len_local),
+        mir_types.Rvalue.Use(len_operand),
+        span,
+    );
+
+    // Step 3: Create a mutable index variable, initialized to 0
+    let idx_local = ctx.new_var(idx_ty_id, common.make_string("_loop_idx"), true, span);
+    ctx.emit_assign(
+        mir_types.Place.local(idx_local),
+        mir_types.Rvalue.Use(mir_types.Operand.Constant(
+            mir_types.Constant.new(idx_ty_id, mir_types.ConstantKind.Int(0)),
+        )),
+        span,
+    );
+
+    // Step 4: Create basic blocks
+    let loop_header = ctx.new_block();
+    let loop_body = ctx.new_block();
+    let increment_block = ctx.new_block();
+    let break_block = ctx.new_block();
+
+    ctx.terminate_goto(loop_header, span);
+
+    // Step 5: Loop header — compare idx < len
+    ctx.set_current_block(loop_header);
+
+    let cond_temp = ctx.new_temp(type_intern.CommonTypes.bool_ty(), span);
+    let idx_operand = mir_types.Operand.Copy(mir_types.Place.local(idx_local));
+    let len_operand2 = mir_types.Operand.Copy(mir_types.Place.local(len_local));
+    ctx.emit_assign(
+        mir_types.Place.local(cond_temp),
+        mir_types.Rvalue.BinaryOp {
+            operator: mir_types.MirBinOp.Lt,
+            left: idx_operand,
+            right: len_operand2,
+        },
+        span,
+    );
+
+    let cond_for_branch = mir_types.Operand.Copy(mir_types.Place.local(cond_temp));
+    ctx.terminate_if(cond_for_branch, loop_body, break_block, span);
+
+    // Step 6: Push loop context
+    ctx.push_loop(*label, break_block, increment_block, dest);
+
+    // Step 7: Loop body — index vec[idx], bind pattern, execute body
+    ctx.set_current_block(loop_body);
+
+    let resolved_elem_id = ctx.resolve_type_to_id(element_ty_id);
+    let elem_temp = ctx.new_temp(resolved_elem_id, span);
+
+    // Build place: vec_temp[idx_local]
+    let mut index_base = mir_types.Place.local(vec_temp);
+    match iter_kind {
+        &type_intern.InternedTypeKind.Ref { inner: _, mutable: _ } => {
+            index_base = index_base.project(mir_types.PlaceElem.Deref);
+        }
+        _ => {}
+    }
+    let indexed_place = index_base.project(mir_types.PlaceElem.Index(idx_local));
+
+    let elem_ty_hir = type_intern.ty_id_to_type(resolved_elem_id);
+    let elem_operand = mir_lower_util.operand_from_place(indexed_place, &elem_ty_hir);
+    ctx.emit_assign(
+        mir_types.Place.local(elem_temp),
+        mir_types.Rvalue.Use(elem_operand),
+        span,
+    );
+
+    // Bind pattern
+    mir_lower_pattern.lower_irrefutable_pattern(
+        ctx,
+        pattern,
+        mir_types.Place.local(elem_temp),
+        span,
+    );
+
+    // Lower body
+    lower_expr(ctx, body, mir_lower_ctx.destination_ignore());
+
+    if !ctx.is_terminated() {
+        ctx.terminate_goto(increment_block, span);
+    }
+
+    ctx.pop_loop();
+
+    // Increment block: idx += 1
+    ctx.set_current_block(increment_block);
+    let idx_for_add = mir_types.Operand.Copy(mir_types.Place.local(idx_local));
+    let one_operand = mir_types.Operand.Constant(
+        mir_types.Constant.new(idx_ty_id, mir_types.ConstantKind.Int(1)),
+    );
+
+    let inc_temp = ctx.new_temp(idx_ty_id, span);
+    ctx.emit_assign(
+        mir_types.Place.local(inc_temp),
+        mir_types.Rvalue.BinaryOp {
+            operator: mir_types.MirBinOp.Add,
+            left: idx_for_add,
+            right: one_operand,
+        },
+        span,
+    );
+    let inc_operand = mir_types.Operand.Move(mir_types.Place.local(inc_temp));
+    ctx.emit_assign(
+        mir_types.Place.local(idx_local),
+        mir_types.Rvalue.Use(inc_operand),
+        span,
+    );
+    ctx.terminate_goto(loop_header, span);
+
+    // Break block
+    ctx.set_current_block(break_block);
+    // for loop produces unit
+    match dest.as_place() {
+        Option.Some(p) => {
+            ctx.emit_assign(
+                p,
+                mir_types.Rvalue.ZeroInit(type_intern.CommonTypes.unit()),
+                span,
+            );
+        }
+        Option.None => {}
+    }
+}
+
 fn copy_unchecked_checks(checks: &Vec<ast.UncheckedCheck>) -> Vec<ast.UncheckedCheck> {
     let mut result: Vec<ast.UncheckedCheck> = Vec.new();
     for i in 0usize..checks.len() {
