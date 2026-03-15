@@ -14,6 +14,7 @@ mod codegen_types;
 mod codegen_ctx;
 mod codegen_emit;
 mod codegen_expr;
+mod codegen_place;
 mod codegen_size;
 mod mir_escape;
 mod dump_mir;
@@ -37,7 +38,7 @@ pub fn emit_statement(
     }
     match &stmt.kind {
         &mir_stmt.StatementKind.Assign { ref place, ref rvalue } => {
-            let dest = codegen_expr.emit_place_data_ptr(ctx, place);
+            let dest = codegen_place.emit_place_data_ptr(ctx, place);
             codegen_expr.emit_rvalue(ctx, dest.as_str(), rvalue);
             // Gen ref propagation: when _dest = &source where source is
             // region/persistent-allocated, propagate generation to dest.
@@ -123,7 +124,7 @@ pub fn emit_statement(
             }
             if is_ref_region {
                 // Region-allocated reference: free the pointed-to memory
-                let ptr = codegen_expr.emit_place_addr(ctx, place);
+                let ptr = codegen_place.emit_place_addr(ctx, place);
                 ctx.write("    ; drop (region free)\n");
                 let addr_val = ctx.fresh_temp_cg();
                 ctx.emit_load_cg2(&addr_val, "ptr", &ptr);
@@ -135,18 +136,18 @@ pub fn emit_statement(
                 ctx.call_arg_str(false, "i64", size_str.as_str());
                 ctx.end_call();
             } else {
-                let _ptr = codegen_expr.emit_place_addr(ctx, place);
+                let _ptr = codegen_place.emit_place_addr(ctx, place);
                 ctx.write("    ; drop (no-op)\n");
             }
         }
         &mir_stmt.StatementKind.Deinit(ref place) => {
             // Deinit - mark as uninitialized (no-op in simple codegen)
-            let _ptr = codegen_expr.emit_place_addr(ctx, place);
+            let _ptr = codegen_place.emit_place_addr(ctx, place);
             ctx.write("    ; deinit\n");
         }
         &mir_stmt.StatementKind.SetDiscriminant { ref place, variant_idx } => {
             // Set the discriminant field of an enum
-            let ptr = codegen_expr.emit_place_data_ptr(ctx, place);
+            let ptr = codegen_place.emit_place_data_ptr(ctx, place);
             let discr_val = codegen_types.format_u64(variant_idx as u64);
 
             // Try to look up enum layout for correct discriminant type
@@ -231,7 +232,7 @@ pub fn emit_statement(
             };
 
             // Get state pointer
-            let state_void_ptr = codegen_expr.emit_place_addr(ctx, state_place);
+            let state_void_ptr = codegen_place.emit_place_addr(ctx, state_place);
 
             // Get or create evidence vector (using alloca to avoid phi predecessor issue)
             let ev_alloca = ctx.fresh_temp_cg();
@@ -597,12 +598,12 @@ pub fn emit_statement(
             let state_ptr = match ctx.get_handler_state_shadow(handler_id.index) {
                 Option.Some(shadow) => clone_string(shadow),
                 Option.None => {
-                    let addr = codegen_expr.emit_place_addr(ctx, state_place);
+                    let addr = codegen_place.emit_place_addr(ctx, state_place);
                     cgname_to_string(&addr)
                 }
             };
             let dest_ptr = {
-                let addr = codegen_expr.emit_place_addr(ctx, destination);
+                let addr = codegen_place.emit_place_addr(ctx, destination);
                 cgname_to_string(&addr)
             };
 
@@ -716,7 +717,7 @@ pub fn emit_statement(
             let state_ptr = match ctx.get_handler_state_shadow(handler_id.index) {
                 Option.Some(shadow) => clone_string(shadow),
                 Option.None => {
-                    let addr = codegen_expr.emit_place_addr(ctx, state_place);
+                    let addr = codegen_place.emit_place_addr(ctx, state_place);
                     cgname_to_string(&addr)
                 }
             };

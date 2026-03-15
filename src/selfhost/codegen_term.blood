@@ -14,6 +14,7 @@ mod codegen_types;
 mod codegen_ctx;
 mod codegen_emit;
 mod codegen_expr;
+mod codegen_place;
 mod dump_mir;
 mod type_intern;
 mod codegen_size;
@@ -66,7 +67,7 @@ pub fn emit_terminator(
                 ctx.codegen_error(codegen_ctx.CodegenErrorKind.EffectOpLookupFailed, err_msg);
             }
             let op_index_val = codegen_types.format_u64(resolved_op_index as u64);
-            let dest = codegen_expr.emit_place_data_ptr(ctx, destination);
+            let dest = codegen_place.emit_place_data_ptr(ctx, destination);
 
             // Pack arguments into [N x i64] stack array, widening each arg to i64
             let num_args = args.len();
@@ -432,7 +433,7 @@ pub fn emit_terminator(
                     // Store continuation result in destination
                     match destination {
                         &Option.Some(ref dest) => {
-                            let dest_addr = codegen_expr.emit_place_addr(ctx, dest);
+                            let dest_addr = codegen_place.emit_place_addr(ctx, dest);
                             // Determine destination type from MIR local
                             let dest_ty = ctx.get_local_type(dest.local);
                             if str_eq(dest_ty.as_str(), "{}") || str_eq(dest_ty.as_str(), "void") {
@@ -539,7 +540,7 @@ pub fn emit_terminator(
         }
         &mir_term.TerminatorKind.Drop { ref place, target, unwind: _ } => {
             // Drop - call destructor if needed, then continue
-            let _ptr = codegen_expr.emit_place_addr(ctx, place);
+            let _ptr = codegen_place.emit_place_addr(ctx, place);
             // For now, just continue to target
             let label = ctx.block_label_cg(target);
             ctx.emit_br_cg(&label);
@@ -992,7 +993,7 @@ fn emit_call(
     }
 
     // Get return type from destination
-    let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
+    let dest_ptr = codegen_place.emit_place_data_ptr(ctx, destination);
     let call_site_ret_ty = ctx.get_local_type(destination.local);
 
     // Determine the actual return type to use for the call instruction
@@ -1276,7 +1277,7 @@ fn emit_vtable_dispatch_call(
     }
 
     // Get return type from destination
-    let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
+    let dest_ptr = codegen_place.emit_place_data_ptr(ctx, destination);
     let ret_ty = ctx.get_local_type(destination.local);
     let is_void = is_void_type(ret_ty.as_str());
     let fn_ptr_str = cgname_to_string(&fn_ptr);

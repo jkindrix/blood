@@ -7,6 +7,7 @@
 mod codegen_ctx;
 mod codegen_emit;
 mod codegen_expr;
+mod codegen_place;
 mod codegen_types;
 mod codegen_size;
 mod common;
@@ -115,7 +116,7 @@ pub fn emit_vec_with_capacity_call(
     target: &Option<mir_def.BasicBlockId>,
 ) {
     // Get data pointer (handles region/persistent heap indirection)
-    let out_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
+    let out_ptr = codegen_place.emit_place_data_ptr(ctx, destination);
 
     // Get element size from the destination's HIR type (Vec<T>)
     // Must resolve through Place projections: if destination is _0.Field(5),
@@ -211,7 +212,7 @@ pub fn emit_vec_new_call(
     target: &Option<mir_def.BasicBlockId>,
 ) {
     // Get data pointer (handles region/persistent heap indirection)
-    let out_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
+    let out_ptr = codegen_place.emit_place_data_ptr(ctx, destination);
 
     // Get element size from the destination's HIR type (Vec<T>)
     // Must resolve through Place projections: if destination is _0.Field(5),
@@ -354,7 +355,7 @@ pub fn emit_vec_len_call(
     ctx.end_call();
 
     // Store result to destination
-    let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
+    let dest_ptr = codegen_place.emit_place_data_ptr(ctx, destination);
     ctx.emit_store_cg("i64", &result, dest_ptr.as_str());
 
     // Jump to continuation
@@ -415,7 +416,7 @@ pub fn emit_vec_pop_call(
     // Build Option<T> in destination
     // Option is typically { i8 tag, T value }
     // tag = 0 for None, tag = 1 for Some
-    let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
+    let dest_ptr = codegen_place.emit_place_data_ptr(ctx, destination);
 
     // Store the tag (result from vec_pop: 0=empty/None, 1=success/Some)
     let tag_i8 = ctx.fresh_temp_cg();
@@ -542,7 +543,7 @@ pub fn emit_string_new_call(
     target: &Option<mir_def.BasicBlockId>,
 ) {
     // Get data pointer (handles region/persistent heap indirection)
-    let out_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
+    let out_ptr = codegen_place.emit_place_data_ptr(ctx, destination);
 
     // Emit: call void @string_new(ptr out_ptr)
     ctx.begin_call(Option.None, "void", "@string_new");
@@ -629,7 +630,7 @@ pub fn emit_string_len_call(
     ctx.end_call();
 
     // Store result to destination
-    let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
+    let dest_ptr = codegen_place.emit_place_data_ptr(ctx, destination);
     ctx.emit_store_cg("i64", &result, dest_ptr.as_str());
 
     // Jump to continuation
@@ -718,7 +719,7 @@ pub fn emit_string_as_str_call(
     ctx.end_call();
 
     // Store result to destination
-    let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
+    let dest_ptr = codegen_place.emit_place_data_ptr(ctx, destination);
     ctx.emit_store_cg("{ ptr, i64 }", &result, dest_ptr.as_str());
 
     // Jump to continuation
@@ -757,7 +758,7 @@ pub fn emit_string_as_bytes_call(
     ctx.end_call();
 
     // Store result to destination
-    let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
+    let dest_ptr = codegen_place.emit_place_data_ptr(ctx, destination);
     ctx.emit_store_cg("{ ptr, i64 }", &result, dest_ptr.as_str());
 
     // Jump to continuation
@@ -841,7 +842,7 @@ pub fn emit_str_len_call(
     ctx.end_call();
 
     // Store result to destination
-    let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
+    let dest_ptr = codegen_place.emit_place_data_ptr(ctx, destination);
     ctx.emit_store_cg("i64", &result, dest_ptr.as_str());
 
     // Jump to continuation
@@ -881,7 +882,7 @@ pub fn emit_str_eq_call(
     ctx.end_call();
 
     // Store result to destination
-    let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
+    let dest_ptr = codegen_place.emit_place_data_ptr(ctx, destination);
     ctx.emit_store_cg("i1", &result, dest_ptr.as_str());
 
     // Jump to continuation
@@ -921,7 +922,7 @@ pub fn emit_str_concat_call(
     ctx.end_call();
 
     // Store result to destination
-    let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
+    let dest_ptr = codegen_place.emit_place_data_ptr(ctx, destination);
     ctx.emit_store_cg("{ ptr, i64 }", &result, dest_ptr.as_str());
 
     // Jump to continuation
@@ -1030,7 +1031,7 @@ pub fn emit_box_new_call(
     ctx.end_call();
 
     // Store result pointer to destination
-    let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
+    let dest_ptr = codegen_place.emit_place_data_ptr(ctx, destination);
     ctx.emit_store_cg("ptr", &result, dest_ptr.as_str());
 
     // Jump to continuation
@@ -1082,7 +1083,7 @@ pub fn emit_box_as_ref_call(
     ctx.end_call();
 
     // Store result pointer to destination
-    let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
+    let dest_ptr = codegen_place.emit_place_data_ptr(ctx, destination);
     ctx.emit_store_cg("ptr", &result, dest_ptr.as_str());
 
     // Jump to continuation
@@ -1119,7 +1120,7 @@ pub fn emit_persist_call(
     let (arg_val, arg_ty) = codegen_expr.emit_operand_typed(ctx, &args[0]);
 
     // Get the destination data pointer (for persistent locals, this loads the heap ptr)
-    let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
+    let dest_ptr = codegen_place.emit_place_data_ptr(ctx, destination);
 
     // Store the value through the persistent buffer pointer
     if !string_eq_str(arg_ty.as_str(), "{}") {
@@ -1164,7 +1165,7 @@ pub fn emit_option_is_some_call(
     let cmp_result = ctx.fresh_temp_cg();
     ctx.emit_icmp_cg2(&cmp_result, "eq", "i32", &disc, "1");
 
-    let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
+    let dest_ptr = codegen_place.emit_place_data_ptr(ctx, destination);
     ctx.emit_store_cg("i1", &cmp_result, dest_ptr.as_str());
 
     // Jump to continuation
@@ -1205,7 +1206,7 @@ pub fn emit_option_is_none_call(
     let cmp_result = ctx.fresh_temp_cg();
     ctx.emit_icmp_cg2(&cmp_result, "eq", "i32", &disc, "0");
 
-    let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
+    let dest_ptr = codegen_place.emit_place_data_ptr(ctx, destination);
     ctx.emit_store_cg("i1", &cmp_result, dest_ptr.as_str());
 
     // Jump to continuation
@@ -1238,7 +1239,7 @@ pub fn emit_option_unwrap_call(
     let opt_ptr = codegen_expr.emit_operand(ctx, &args[0]);
 
     // Get destination pointer and its size
-    let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
+    let dest_ptr = codegen_place.emit_place_data_ptr(ctx, destination);
     let dest_ty = ctx.get_local_type(destination.local);
 
     // Get element size from destination type
@@ -1293,7 +1294,7 @@ pub fn emit_option_as_ref_call(
     let opt_ptr = codegen_expr.emit_operand(ctx, &args[0]);
 
     // Get destination pointer
-    let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
+    let dest_ptr = codegen_place.emit_place_data_ptr(ctx, destination);
 
     // Get element size from destination type (Option<&T>)
     let elem_size: u64 = match ctx.get_local_hir_type(destination.local) {
