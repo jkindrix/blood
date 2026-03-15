@@ -43,6 +43,7 @@ mod source;
 mod build_cache;
 mod dump_mir;
 mod validate_mir;
+mod mir_init;
 mod codegen_size;
 mod type_intern;
 mod macro_expand;
@@ -3889,6 +3890,19 @@ fn codegen_pass2(
                 for ei in 0usize..errors.len() {
                     eprint_str("  ");
                     eprint_str(errors[ei].as_str());
+                    eprint_str("\n");
+                }
+            }
+
+            // Definite initialization analysis
+            let init_result = mir_init.analyze_init(&mir_result.body);
+            if init_result.errors.len() > 0 {
+                eprint_str("=== INIT ERRORS: ");
+                eprint_str(fn_name_str);
+                eprint_str(" ===\n");
+                for ii in 0usize..init_result.errors.len() {
+                    eprint_str("  ");
+                    eprint_str(init_result.errors[ii].message.as_str());
                     eprint_str("\n");
                 }
             }
