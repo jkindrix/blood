@@ -41,6 +41,16 @@ elapsed_since() {
     else printf "%ds" "$secs"; fi
 }
 
+log_metric() {
+    local stage="$1" size="$2" wall_secs="$3"
+    local ts ir_lines
+    ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    ir_lines=$(wc -l < "$BUILD_DIR/${stage}.ll" 2>/dev/null || echo 0)
+    printf '{"ts":"%s","stage":"%s","size":%s,"wall_secs":%s,"ir_lines":%s}\n' \
+        "$ts" "$stage" "$size" "$wall_secs" "$ir_lines" \
+        >> "$DIR/.logs/metrics.jsonl"
+}
+
 decode_exit() {
     local code="$1"
     if [ "$code" -eq 0 ]; then echo "success"
@@ -172,7 +182,11 @@ do_build_first_gen() {
         return 1
     fi
     mv "$BUILD_DIR/debug/main" "$BUILD_DIR/first_gen"
-    ok "first_gen built ($(wc -c < "$BUILD_DIR/first_gen") bytes) in $(elapsed_since "$start_ts")"
+    local fg_size fg_wall
+    fg_size=$(wc -c < "$BUILD_DIR/first_gen")
+    fg_wall=$(($(date +%s) - start_ts))
+    ok "first_gen built ($fg_size bytes) in $(elapsed_since "$start_ts")"
+    log_metric "first_gen" "$fg_size" "$fg_wall"
     copy_runtime
 }
 
@@ -208,7 +222,11 @@ do_build_second_gen() {
         fi
     fi
 
-    ok "second_gen built ($(wc -c < "$BUILD_DIR/second_gen") bytes) in $wall_time"
+    local sg_size sg_wall
+    sg_size=$(wc -c < "$BUILD_DIR/second_gen")
+    sg_wall=$(($(date +%s) - start_ts))
+    ok "second_gen built ($sg_size bytes) in $wall_time"
+    log_metric "second_gen" "$sg_size" "$sg_wall"
 }
 
 do_build_third_gen() {
@@ -226,7 +244,11 @@ do_build_third_gen() {
         return 1
     fi
 
-    ok "third_gen built ($(wc -c < "$BUILD_DIR/third_gen") bytes) in $wall_time"
+    local tg_size tg_wall
+    tg_size=$(wc -c < "$BUILD_DIR/third_gen")
+    tg_wall=$(($(date +%s) - start_ts))
+    ok "third_gen built ($tg_size bytes) in $wall_time"
+    log_metric "third_gen" "$tg_size" "$tg_wall"
 
     step "Comparing second_gen vs third_gen"
     local hash2 hash3
@@ -1091,6 +1113,23 @@ case "${1:-status}" in
             fail "Output differs"
             diff <(echo "$out1") <(echo "$out2") || true
             [ "$rc1" != "$rc2" ] && printf "  Exit codes: blood-rust=%s first_gen=%s\n" "$rc1" "$rc2"
+        fi
+        ;;
+
+    metrics)
+        local mfile="$DIR/.logs/metrics.jsonl"
+        if [ ! -f "$mfile" ]; then
+            echo "No metrics yet. Run a build first."
+        else
+            echo "=== Build Metrics (last 10) ==="
+            tail -10 "$mfile" | while IFS= read -r line; do
+                printf "  %s\n" "$line"
+            done
+            echo ""
+            echo "=== Trends ==="
+            echo "  first_gen sizes:  $(grep '"first_gen"' "$mfile" | tail -5 | sed 's/.*"size":\([0-9]*\).*/\1/' | tr '\n' ' ')"
+            echo "  second_gen sizes: $(grep '"second_gen"' "$mfile" | tail -5 | sed 's/.*"size":\([0-9]*\).*/\1/' | tr '\n' ' ')"
+            echo "  second_gen times: $(grep '"second_gen"' "$mfile" | tail -5 | sed 's/.*"wall_secs":\([0-9]*\).*/\1s/' | tr '\n' ' ')"
         fi
         ;;
 
