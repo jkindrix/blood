@@ -1193,6 +1193,37 @@ impl CodegenCtx {
         self.write("\n");
     }
 
+    /// Emit a debug variable declaration for a local alloca.
+    /// Call after emit_alloca_cg for named user variables (not temporaries).
+    pub fn emit_debug_variable(self: &mut CodegenCtx, alloca_name: &CgName, var_name: &str, line: u32) {
+        if self.debug_subprogram_id == 0 || var_name.len() == 0 {
+            return;
+        }
+        let had_temp = self.fn_temp_region != 0;
+        if had_temp { region_deactivate(); }
+        // Allocate DILocalVariable metadata
+        let var_id = self.debug_metadata_counter;
+        self.debug_metadata_counter = var_id + 1;
+        let mut md = common.make_string("!");
+        md.push_str(codegen_types.format_u64(var_id as u64).as_str());
+        md.push_str(" = !DILocalVariable(name: \"");
+        md.push_str(var_name);
+        md.push_str("\", scope: !");
+        md.push_str(codegen_types.format_u64(self.debug_subprogram_id as u64).as_str());
+        md.push_str(", file: !1, line: ");
+        md.push_str(codegen_types.format_u64(line as u64).as_str());
+        md.push_str(")\n");
+        self.debug_metadata.push(md);
+        if had_temp { region_activate(self.fn_temp_region); }
+        // Emit llvm.dbg.declare intrinsic call
+        self.write("  call void @llvm.dbg.declare(metadata ptr ");
+        self.write_cgname(alloca_name);
+        self.write(", metadata !");
+        self.write(codegen_types.format_u64(var_id as u64).as_str());
+        self.write(", metadata !DIExpression())");
+        self.end_insn();
+    }
+
     /// Enter an unchecked block — suppress the specified checks.
     pub fn enter_unchecked(self: &mut CodegenCtx, checks: &Vec<ast.UncheckedCheck>) {
         for i in 0usize..checks.len() {

@@ -1590,6 +1590,12 @@ pub fn emit_allocas_with_escapes(
         ctx.register_local_type(local_id, common.make_string(ty_str.as_str()));
         ctx.register_local_signedness(local_id, codegen_types.is_signed(&local_hir_ty));
         ctx.register_local_hir_type(local_id, local.ty);
+
+        // Variable-level DWARF (DILocalVariable + dbg.declare) is implemented
+        // in emit_debug_variable but disabled: llc-18 segfaults when processing
+        // dbg.declare without type info on the DILocalVariable. Enabling this
+        // requires adding DIBasicType metadata for Blood types.
+        // See GAP-10 in TOOLING_GAPS.md.
     }
     ctx.dedent();
 }
