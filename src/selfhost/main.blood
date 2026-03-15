@@ -3778,6 +3778,7 @@ fn codegen_pass2(
     // in the bump allocator. String table allocations bypass this region
     // (see add_string_constant) so they persist across functions.
     let fn_temp_region = region_create(2097152, 4294967296);
+    let mut mir_validation_errors: usize = 0;
 
     for i in 0usize..total_items {
         let work = &worklist.items[i];
@@ -3903,6 +3904,7 @@ fn codegen_pass2(
             let fn_name_str = work.fn_name.as_str();
             let errors = validate_mir.validate_body(&mir_result.body, fn_name_str);
             if errors.len() > 0 {
+                mir_validation_errors += errors.len();
                 eprint_str("=== MIR VALIDATION ERRORS: ");
                 eprint_str(fn_name_str);
                 eprint_str(" ===\n");
@@ -3916,6 +3918,7 @@ fn codegen_pass2(
             // Definite initialization analysis
             let init_result = mir_init.analyze_init(&mir_result.body);
             if init_result.errors.len() > 0 {
+                mir_validation_errors += init_result.errors.len();
                 eprint_str("=== INIT ERRORS: ");
                 eprint_str(fn_name_str);
                 eprint_str(" ===\n");
@@ -3988,6 +3991,14 @@ fn codegen_pass2(
     // references into it (local maps, output buffer from last iteration).
     // The caller destroys it after all ctx access is complete.
     region_destroy(mir_region);
+
+    // Abort if MIR validation found errors (--validate-mir makes validation blocking)
+    if mir_validation_errors > 0 {
+        eprint_str("\n  MIR validation found ");
+        eprint_str(int_to_string(mir_validation_errors as i32));
+        eprint_str(" error(s). Aborting.\n");
+        panic("MIR validation failed — aborting compilation");
+    }
 
     CodegenPass2Result {
         mono_requests: all_mono_requests,
