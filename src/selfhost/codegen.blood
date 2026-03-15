@@ -657,64 +657,13 @@ pub fn register_builtin_adts(
 
 /// Creates a synthetic StructLayout for a builtin type with the given LLVM type string.
 fn make_builtin_struct_layout(def_id: u32, llvm_type_str: &str) -> codegen_ctx.StructLayout {
-    // Parse field types from the LLVM type string so that field-level
-    // type resolution works. Without this, resolve_place_elem_type falls
-    // back to the base local's type, which is wrong for fat references.
-    let fields = parse_builtin_fields(llvm_type_str);
     codegen_ctx.StructLayout {
         def_id: def_id,
-        fields: fields,
+        fields: Vec.new(),
         llvm_type: common.make_string(llvm_type_str),
         is_packed: false,
         align: 0,
     }
-}
-
-/// Parse field types from a builtin LLVM type string like "{ ptr, i64, i64 }".
-fn parse_builtin_fields(llvm_type_str: &str) -> Vec<codegen_ctx.AdtFieldInfo> {
-    let mut fields: Vec<codegen_ctx.AdtFieldInfo> = Vec.new();
-    let bytes = llvm_type_str.as_bytes();
-    if bytes.len() < 3 || bytes[0] != 123 {
-        // Not a struct type — return empty (e.g., "ptr" for Box)
-        return fields;
-    }
-    // Skip "{ " prefix, split on ", ", strip " }" suffix
-    let mut start: usize = 2; // skip "{ "
-    let end: usize = bytes.len() - 2; // skip " }"
-    let mut i: usize = start;
-    while i <= end {
-        if i < end && bytes[i] == 44 && bytes[i + 1] == 32 {
-            // Found ", " separator
-            let field_ty = substr(llvm_type_str, start, i);
-            fields.push(codegen_ctx.AdtFieldInfo {
-                llvm_type: field_ty,
-                hir_type: Option.None,
-            });
-            start = i + 2;
-            i = start;
-        } else {
-            i += 1;
-        }
-    }
-    // Last field (from start to end)
-    if start < end {
-        let field_ty = substr(llvm_type_str, start, end);
-        fields.push(codegen_ctx.AdtFieldInfo {
-            llvm_type: field_ty,
-            hir_type: Option.None,
-        });
-    }
-    fields
-}
-
-/// Extract a substring from start (inclusive) to end (exclusive).
-fn substr(s: &str, start: usize, end: usize) -> String {
-    let bytes = s.as_bytes();
-    let mut result = String.new();
-    for i in start..end {
-        result.push(bytes[i] as char);
-    }
-    result
 }
 
 /// Creates a synthetic EnumLayout for a builtin enum (Option or Result).
