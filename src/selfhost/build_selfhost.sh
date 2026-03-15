@@ -1042,6 +1042,36 @@ case "${1:-status}" in
         exec "$bin" run "$src" --stdlib-path "$STDLIB_PATH"
         ;;
 
+    debug-test)
+        src="${2:?Usage: ./build_selfhost.sh debug-test <file.blood> [compiler]}"
+        bin="$(resolve_compiler "${3:-first_gen}")"
+        [ -f "$src" ] || die "Source file not found: $src"
+        [ -f "$bin" ] || die "Compiler not found: $bin"
+        name="$(basename "$src" .blood)"
+        tmpdir="$BUILD_DIR/debug/$name"
+        mkdir -p "$tmpdir"
+        step "Debug-compiling $name with $bin"
+        echo "  MIR dump: $tmpdir/$name.mir"
+        echo "  LLVM IR:  $tmpdir/$name.ll"
+        echo "  Binary:   $tmpdir/$name"
+        "$bin" build "$src" \
+            --dump-mir --validate-mir --no-cache \
+            --build-dir "$tmpdir" \
+            --stdlib-path "$STDLIB_PATH" \
+            2>"$tmpdir/$name.stderr" && {
+            echo "  Running..."
+            "$tmpdir/$name" 2>"$tmpdir/$name.run-stderr" && ok "$name" || {
+                fail "$name (exit $?)"
+                echo "  Runtime stderr: $tmpdir/$name.run-stderr"
+                tail -20 "$tmpdir/$name.run-stderr"
+            }
+        } || {
+            fail "$name (compile)"
+            echo "  Compile stderr:"
+            tail -30 "$tmpdir/$name.stderr"
+        }
+        ;;
+
     diff)
         src="${2:?Usage: ./build_selfhost.sh diff <file.blood>}"
         [ -f "$src" ] || die "Source file not found: $src"
