@@ -194,6 +194,21 @@ pub fn emit_statement(
             let count_val = codegen_expr.emit_operand(ctx, count);
             emit_memcpy(ctx, &dst_val, &src_val, &count_val);
         }
+        &mir_stmt.StatementKind.IncrementGeneration(_) => {
+            // Gen ref codegen — not yet implemented (blocked on DD-1)
+        }
+        &mir_stmt.StatementKind.CaptureSnapshot(_) => {
+            // Gen ref codegen — not yet implemented (blocked on DD-1)
+        }
+        &mir_stmt.StatementKind.ValidateGeneration { ptr: _, expected_gen: _ } => {
+            // Gen ref codegen — not yet implemented (blocked on DD-1)
+        }
+        &mir_stmt.StatementKind.EnterUnchecked(_) => {
+            // Unchecked block entry — codegen for check disabling not yet implemented
+        }
+        &mir_stmt.StatementKind.ExitUnchecked(_) => {
+            // Unchecked block exit — codegen for check re-enabling not yet implemented
+        }
         &mir_stmt.StatementKind.Nop => {
             // No operation - do nothing
         }
@@ -201,7 +216,7 @@ pub fn emit_statement(
             // Emit call to safepoint check runtime function
             ctx.write("  call void @__builtin_safepoint_check()\n");
         }
-        &mir_stmt.StatementKind.PushHandler { handler_id, ref state_place, ref state_kind } => {
+        &mir_stmt.StatementKind.PushHandler { handler_id, ref state_place, ref state_kind, allocation_tier: _, inline_mode: _ } => {
             // Effect handler push via evidence API.
             // Look up the effect_id for this handler.
             let effect_id_val = match ctx.lookup_handler_effect(handler_id.index) {

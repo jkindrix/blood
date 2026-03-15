@@ -849,7 +849,7 @@ pub fn format_statement(stmt: &mir_stmt.Statement) -> String {
             out.push(')');
             out
         }
-        &mir_stmt.StatementKind.PushHandler { handler_id, ref state_place, ref state_kind } => {
+        &mir_stmt.StatementKind.PushHandler { handler_id, ref state_place, ref state_kind, allocation_tier: _, inline_mode: _ } => {
             let mut out = String.new();
             out.push_str("PushHandler(def");
             push_u32(&mut out, handler_id.index);
@@ -926,6 +926,34 @@ pub fn format_statement(stmt: &mir_stmt.Statement) -> String {
             out.push(')');
             out
         }
+        &mir_stmt.StatementKind.IncrementGeneration(ref place) => {
+            let mut out = String.new();
+            out.push_str("IncrementGeneration(");
+            let p = format_place(place);
+            out.push_str(p.as_str());
+            out.push(')');
+            out
+        }
+        &mir_stmt.StatementKind.CaptureSnapshot(ref local_id) => {
+            let mut out = String.new();
+            out.push_str("CaptureSnapshot(_");
+            push_u32(&mut out, local_id.index);
+            out.push(')');
+            out
+        }
+        &mir_stmt.StatementKind.ValidateGeneration { ref ptr, ref expected_gen } => {
+            let mut out = String.new();
+            out.push_str("ValidateGeneration(");
+            let p = format_place(ptr);
+            out.push_str(p.as_str());
+            out.push_str(", gen=");
+            let g = format_operand(expected_gen);
+            out.push_str(g.as_str());
+            out.push(')');
+            out
+        }
+        &mir_stmt.StatementKind.EnterUnchecked(_) => common.make_string("EnterUnchecked"),
+        &mir_stmt.StatementKind.ExitUnchecked(_) => common.make_string("ExitUnchecked"),
         &mir_stmt.StatementKind.Nop => common.make_string("Nop"),
         &mir_stmt.StatementKind.Safepoint => common.make_string("SafepointCheck"),
         &mir_stmt.StatementKind.RegionEnter { region_local } => {

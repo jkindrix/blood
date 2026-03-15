@@ -132,7 +132,7 @@ fn validate_statement_locals(
             validate_operand_local(errors, src, bb_idx, stmt_idx, num_locals, "CopyNonOverlapping src");
             validate_operand_local(errors, dst, bb_idx, stmt_idx, num_locals, "CopyNonOverlapping dst");
         }
-        &mir_stmt.StatementKind.PushHandler { handler_id: _, ref state_place, state_kind: _ } => {
+        &mir_stmt.StatementKind.PushHandler { handler_id: _, ref state_place, state_kind: _, allocation_tier: _, inline_mode: _ } => {
             validate_place_local(errors, state_place, bb_idx, stmt_idx, num_locals, "PushHandler state");
         }
         &mir_stmt.StatementKind.PopHandler { handler_id: _ } => {}
@@ -154,6 +154,21 @@ fn validate_statement_locals(
         } => {
             validate_place_local(errors, state_place, bb_idx, stmt_idx, num_locals, "CallFinallyClause state");
         }
+        &mir_stmt.StatementKind.IncrementGeneration(ref place) => {
+            validate_place_local(errors, place, bb_idx, stmt_idx, num_locals, "IncrementGeneration");
+        }
+        &mir_stmt.StatementKind.CaptureSnapshot(ref local_id) => {
+            if (local_id.index as usize) >= num_locals {
+                let mut msg = common.make_string("CaptureSnapshot local out of range");
+                errors.push(msg);
+            }
+        }
+        &mir_stmt.StatementKind.ValidateGeneration { ref ptr, ref expected_gen } => {
+            validate_place_local(errors, ptr, bb_idx, stmt_idx, num_locals, "ValidateGeneration ptr");
+            validate_operand_local(errors, expected_gen, bb_idx, stmt_idx, num_locals, "ValidateGeneration gen");
+        }
+        &mir_stmt.StatementKind.EnterUnchecked(_) => {}
+        &mir_stmt.StatementKind.ExitUnchecked(_) => {}
         &mir_stmt.StatementKind.Nop => {}
         &mir_stmt.StatementKind.Safepoint => {}
         &mir_stmt.StatementKind.RegionEnter { region_local: _ } => {}

@@ -3,6 +3,7 @@
 // This module handles lowering HIR expressions to MIR. Each HIR expression
 // is translated into a sequence of MIR statements and terminators.
 
+mod ast;
 mod common;
 mod hir_def;
 mod hir_ty;
@@ -262,9 +263,19 @@ fn lower_expr_inner(
             // Unsafe blocks are transparent in MIR
             lower_expr(ctx, inner.as_ref(), dest);
         }
-        &hir_expr.ExprKind.Unchecked { ref body, .. } => {
-            // Unchecked blocks are transparent in MIR (check disabling not yet wired)
+        &hir_expr.ExprKind.Unchecked { ref checks, when_condition: _, ref body } => {
+            // Emit EnterUnchecked before body, ExitUnchecked after
+            let check_list = copy_unchecked_checks(checks);
+            let check_list2 = copy_unchecked_checks(checks);
+            ctx.emit_stmt(mir_stmt.Statement.new(
+                mir_stmt.StatementKind.EnterUnchecked(check_list),
+                expr.span,
+            ));
             lower_expr(ctx, body.as_ref(), dest);
+            ctx.emit_stmt(mir_stmt.Statement.new(
+                mir_stmt.StatementKind.ExitUnchecked(check_list2),
+                expr.span,
+            ));
         }
         &hir_expr.ExprKind.Heap(ref inner) => {
             // Allocation directives are transparent in MIR (escape analysis override not yet wired)
@@ -2448,6 +2459,8 @@ fn lower_with_handle_expr(
             handler_id: handler_id,
             state_place: copy_place(&state_place),
             state_kind: state_kind,
+            allocation_tier: mir_stmt.MemoryTier.Stack,
+            inline_mode: mir_stmt.InlineEvidenceMode.Vector,
         },
         span,
     ));
@@ -2587,6 +2600,20 @@ fn extract_handler_def_id(ty: &hir_ty.Type) -> hir_def.DefId {
 }
 
 /// Creates a copy of a Place (helper for handler lowering).
+fn copy_unchecked_checks(checks: &Vec<ast.UncheckedCheck>) -> Vec<ast.UncheckedCheck> {
+    let mut result: Vec<ast.UncheckedCheck> = Vec.new();
+    for i in 0usize..checks.len() {
+        match &checks[i] {
+            &ast.UncheckedCheck.Bounds => { result.push(ast.UncheckedCheck.Bounds); }
+            &ast.UncheckedCheck.Overflow => { result.push(ast.UncheckedCheck.Overflow); }
+            &ast.UncheckedCheck.Generation => { result.push(ast.UncheckedCheck.Generation); }
+            &ast.UncheckedCheck.Null => { result.push(ast.UncheckedCheck.Null); }
+            &ast.UncheckedCheck.Alignment => { result.push(ast.UncheckedCheck.Alignment); }
+        }
+    }
+    result
+}
+
 fn copy_place(place: &mir_types.Place) -> mir_types.Place {
     mir_types.Place {
         local: place.local,

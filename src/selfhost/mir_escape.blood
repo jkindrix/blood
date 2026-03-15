@@ -327,7 +327,7 @@ fn analyze_statement(stmt: &mir_stmt.Statement, result: &mut EscapeAnalysis) {
         &mir_stmt.StatementKind.StorageLive(_) => {}
         &mir_stmt.StatementKind.StorageDead(_) => {}
         &mir_stmt.StatementKind.Drop(_) => {}
-        &mir_stmt.StatementKind.PushHandler { handler_id: _, ref state_place, state_kind: _ } => {
+        &mir_stmt.StatementKind.PushHandler { handler_id: _, ref state_place, state_kind: _, allocation_tier: _, inline_mode: _ } => {
             // Handler state is captured by the handler closure (EffectCapture).
             if state_place.is_local() {
                 result.mark_effect_capture(state_place.local);
@@ -350,6 +350,11 @@ fn analyze_statement(stmt: &mir_stmt.Statement, result: &mut EscapeAnalysis) {
             let _ = src;
             let _ = dst;
         }
+        &mir_stmt.StatementKind.IncrementGeneration(_) => {}
+        &mir_stmt.StatementKind.CaptureSnapshot(_) => {}
+        &mir_stmt.StatementKind.ValidateGeneration { ptr: _, expected_gen: _ } => {}
+        &mir_stmt.StatementKind.EnterUnchecked(_) => {}
+        &mir_stmt.StatementKind.ExitUnchecked(_) => {}
         &mir_stmt.StatementKind.Nop => {}
         &mir_stmt.StatementKind.Safepoint => {}
         &mir_stmt.StatementKind.RegionEnter { region_local: _ } => {}

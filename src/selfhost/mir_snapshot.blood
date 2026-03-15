@@ -187,7 +187,7 @@ pub fn analyze_snapshots(body: &mir_body.MirBody) -> SnapshotAnalysis {
         // Scan statements for handler push/pop
         for stmt_idx in 0usize..block.statements.len() {
             match &block.statements[stmt_idx].kind {
-                &mir_stmt.StatementKind.PushHandler { handler_id, ref state_place, state_kind: _ } => {
+                &mir_stmt.StatementKind.PushHandler { handler_id, ref state_place, state_kind: _, allocation_tier: _, inline_mode: _ } => {
                     let snapshot_id = next_id;
                     next_id += 1;
 
@@ -253,6 +253,11 @@ pub fn analyze_snapshots(body: &mir_body.MirBody) -> SnapshotAnalysis {
                 &mir_stmt.StatementKind.Deinit(_) => {}
                 &mir_stmt.StatementKind.SetDiscriminant { place: _, variant_idx: _ } => {}
                 &mir_stmt.StatementKind.CopyNonOverlapping { src: _, dst: _, count: _ } => {}
+                &mir_stmt.StatementKind.IncrementGeneration(_) => {}
+                &mir_stmt.StatementKind.CaptureSnapshot(_) => {}
+                &mir_stmt.StatementKind.ValidateGeneration { ptr: _, expected_gen: _ } => {}
+                &mir_stmt.StatementKind.EnterUnchecked(_) => {}
+                &mir_stmt.StatementKind.ExitUnchecked(_) => {}
                 &mir_stmt.StatementKind.Nop => {}
                 &mir_stmt.StatementKind.Safepoint => {}
                 &mir_stmt.StatementKind.RegionEnter { region_local: _ } => {}
