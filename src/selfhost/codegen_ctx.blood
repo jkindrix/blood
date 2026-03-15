@@ -365,6 +365,8 @@ pub struct CodegenCtx {
     pub debug_subprogram_id: u32,
     /// Current function's DILocation metadata ID for instructions (0 = none).
     pub debug_location_id: u32,
+    /// Last emitted source line (to avoid duplicate DILocation allocation).
+    pub debug_last_line: u32,
     /// Counter for assigning unique metadata node IDs (!0, !1, ...).
     pub debug_metadata_counter: u32,
     /// Accumulated debug metadata nodes to emit at end of module.
@@ -570,6 +572,7 @@ impl CodegenCtx {
             unchecked_active: vec_bool_5_false(),
             debug_subprogram_id: 0,
             debug_location_id: 0,
+            debug_last_line: 0,
             debug_metadata_counter: 0,
             debug_metadata: Vec.new(),
             debug_source_file: String.new(),
@@ -658,6 +661,7 @@ impl CodegenCtx {
             unchecked_active: vec_bool_5_false(),
             debug_subprogram_id: 0,
             debug_location_id: 0,
+            debug_last_line: 0,
             debug_metadata_counter: 0,
             debug_metadata: Vec.new(),
             debug_source_file: String.new(),
@@ -1064,11 +1068,14 @@ impl CodegenCtx {
     pub fn setup_debug_function(self: &mut CodegenCtx, fn_name: &str, source_line: u32) {
         if self.debug_source_file.len() == 0 {
             self.debug_subprogram_id = 0;
+            self.debug_location_id = 0;
+            self.debug_last_line = 0;
             return;
         }
         let id = self.debug_metadata_counter;
         self.debug_metadata_counter = id + 1;
         self.debug_subprogram_id = id;
+        self.debug_last_line = 0;
         // Emit: !N = distinct !DISubprogram(name: "fn_name", scope: !1, file: !1,
         //        line: L, type: !2, scopeLine: L, spFlags: DISPFlagDefinition,
         //        unit: !0, retainedNodes: !3)
@@ -1143,9 +1150,37 @@ impl CodegenCtx {
     }
 
     /// Emit the debug location suffix for the current instruction.
-    /// Appends `, !dbg !N` where N is a DILocation referencing the current
-    /// function's DISubprogram. Call at the end of every LLVM instruction.
+    /// Uses the current statement's span line if available, otherwise
+    /// falls back to the function-level location.
     pub fn emit_dbg(self: &mut CodegenCtx) {
+        if self.debug_subprogram_id == 0 {
+            return;
+        }
+        // Get the current line from the span if available
+        let current_line = match &self.current_span {
+            &Option.Some(ref span) => {
+                if span.line > 0 { span.line } else { 0 }
+            }
+            &Option.None => 0,
+        };
+        if current_line > 0 && current_line != self.debug_last_line {
+            // Line changed — allocate a new DILocation
+            let had_temp = self.fn_temp_region != 0;
+            if had_temp { region_deactivate(); }
+            let loc_id = self.debug_metadata_counter;
+            self.debug_metadata_counter = loc_id + 1;
+            self.debug_location_id = loc_id;
+            self.debug_last_line = current_line;
+            let mut loc = common.make_string("!");
+            loc.push_str(codegen_types.format_u64(loc_id as u64).as_str());
+            loc.push_str(" = !DILocation(line: ");
+            loc.push_str(codegen_types.format_u64(current_line as u64).as_str());
+            loc.push_str(", column: 1, scope: !");
+            loc.push_str(codegen_types.format_u64(self.debug_subprogram_id as u64).as_str());
+            loc.push_str(")\n");
+            self.debug_metadata.push(loc);
+            if had_temp { region_activate(self.fn_temp_region); }
+        }
         if self.debug_location_id > 0 {
             self.write(", !dbg !");
             self.write(codegen_types.format_u64(self.debug_location_id as u64).as_str());
@@ -2812,6 +2847,7 @@ impl CodegenCtx {
             unchecked_active: vec_bool_5_false(),
             debug_subprogram_id: 0,
             debug_location_id: 0,
+            debug_last_line: 0,
             debug_metadata_counter: 0,
             debug_metadata: Vec.new(),
             debug_source_file: String.new(),
