@@ -81,6 +81,18 @@ Audit search terms: `_ =>`, `unwrap_or_default`, `unwrap_or_else`, `Type::error(
 
 **IR before code (codegen bugs):** Before writing ANY codegen fix, dump the LLVM IR for a minimal repro through both bootstrap (`--emit=llvm-ir`) and first_gen (`--dump-ir --no-cache`). Find the relevant function, trace the actual instruction sequence, identify the exact divergence, THEN trace back to the codegen source. Do NOT hypothesize what the IR looks like — read it. This takes 5 minutes and prevents 30-60 minutes of wrong fixes.
 
+**When something crashes or produces wrong results — use the debugging toolkit:**
+
+1. **Read the build log first.** Every build writes to `.logs/`. Don't re-run the build — read `tail -50 src/selfhost/.logs/build_*.log | tail -1` to find the latest log. Crash backtraces, error messages, and timing are all captured.
+2. **Backtraces show source locations.** All runtime panic functions (`blood_panic`, `blood_panic_div_zero`, `blood_panic_index_out_of_bounds`, `blood_stale_reference_panic`) print full backtraces. Second_gen and later binaries have DWARF debug info — use `addr2line -e binary -f ADDRESS` to resolve to `file.blood:line`.
+3. **Use `--validate-mir`** to catch MIR structural errors before codegen. The definite initialization analysis also runs with this flag.
+4. **Use `--dump-mir` or `--dump-mir=fn_name`** to inspect MIR for a specific function.
+5. **Use `--trace-codegen`** for per-function codegen tracing.
+6. **Use `./build_selfhost.sh asan`** for AddressSanitizer-instrumented builds when chasing memory corruption.
+7. **Use `./build_selfhost.sh bisect`** to binary search for the miscompiled function when the selfhost produces wrong output.
+8. **Use `./build_selfhost.sh diff file.blood`** to compare bootstrap vs first_gen output for a specific file.
+9. **Don't run the same 2-minute build repeatedly** trying to filter different output. Build ONCE, read the log, use addr2line and dump tools on the existing artifacts.
+
 **Blood-rust bugs: report, do NOT work around.** Write the correct code. If blood-rust miscompiles it, that's a blood-rust bug. STOP, isolate, document, report, wait. Signs: DefId errors, works in one context but not another, mutations lost through references, runtime mismatch. See `tools/FAILURE_LOG.md` for history.
 
 **Canary-Cluster-Verify (CCV) method:** All batch changes to the self-hosted compiler follow the CCV protocol. Canary-test new patterns before mass conversion. Cluster changes by compiler phase. Verify (build + golden tests + bootstrap) after each cluster. See `DEVELOPMENT.md` for the full protocol, cluster definitions, and bootstrap gate rules.
