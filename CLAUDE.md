@@ -95,6 +95,9 @@ Audit search terms: `_ =>`, `unwrap_or_default`, `unwrap_or_else`, `Type::error(
 10. **Use `./build_selfhost.sh debug-test file.blood`** to compile a single test with `--dump-mir --validate-mir` and preserve all artifacts (IR, MIR, binary, stderr) in `build/debug/`.
 11. **Use `tools/blood-diag`** as the unified entry point for all diagnostic tools: `ir-diff`, `minimize`, `parity`, `memprofile`, `phase`, `asan`, `bisect`, `debug-test`, `metrics`.
 12. **Use `./build_selfhost.sh metrics`** to check build size and time trends. Every build writes JSON metrics to `.logs/metrics.jsonl`.
+13. **Use `--alloc-profile`** to see the top 10 functions by IR size (identifies codegen hotspots and binary size contributors).
+14. **Use `tools/memprofile.sh --perf`** for CPU flame graphs via perf record (requires linux-tools).
+15. **gdb variable inspection works.** Binaries have DILocalVariable DWARF metadata. `gdb print variable_name` shows values for named Blood variables.
 
 **Blood-rust bugs: report, do NOT work around.** Write the correct code. If blood-rust miscompiles it, that's a blood-rust bug. STOP, isolate, document, report, wait. Signs: DefId errors, works in one context but not another, mutations lost through references, runtime mismatch. See `tools/FAILURE_LOG.md` for history.
 
