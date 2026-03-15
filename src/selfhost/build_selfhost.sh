@@ -45,7 +45,8 @@ log_metric() {
     local stage="$1" size="$2" wall_secs="$3"
     local ts ir_lines
     ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-    ir_lines=$(wc -l < "$BUILD_DIR/${stage}.ll" 2>/dev/null || echo 0)
+    ir_lines=0
+    [ -f "$BUILD_DIR/${stage}.ll" ] && ir_lines=$(wc -l < "$BUILD_DIR/${stage}.ll")
     printf '{"ts":"%s","stage":"%s","size":%s,"wall_secs":%s,"ir_lines":%s}\n' \
         "$ts" "$stage" "$size" "$wall_secs" "$ir_lines" \
         >> "$DIR/.logs/metrics.jsonl"

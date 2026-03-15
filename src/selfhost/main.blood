@@ -3779,6 +3779,9 @@ fn codegen_pass2(
     // (see add_string_constant) so they persist across functions.
     let fn_temp_region = region_create(2097152, 4294967296);
     let mut mir_validation_errors: usize = 0;
+    // Per-function IR size tracking for --alloc-profile
+    let mut fn_ir_sizes: Vec<usize> = Vec.new();
+    let mut fn_ir_names: Vec<String> = Vec.new();
 
     for i in 0usize..total_items {
         let work = &worklist.items[i];
@@ -3955,6 +3958,12 @@ fn codegen_pass2(
 
         // Codegen (fn_temp_region active, mir_region read-only)
         let fn_ir = codegen.generate_function_with_ctx(ctx, &mir_result.body, work.fn_name.as_str());
+        if args.alloc_profile {
+            fn_ir_sizes.push(fn_ir.len());
+            region_deactivate();
+            fn_ir_names.push(common.make_string(work.fn_name.as_str()));
+            region_activate(fn_temp_region);
+        }
         file_append_string(output_path, fn_ir.as_str());
 
         // Generate closure bodies discovered during MIR lowering
@@ -3991,6 +4000,32 @@ fn codegen_pass2(
     // references into it (local maps, output buffer from last iteration).
     // The caller destroys it after all ctx access is complete.
     region_destroy(mir_region);
+
+    // Report top functions by IR size if --alloc-profile
+    if args.alloc_profile && fn_ir_sizes.len() > 0 {
+        eprint_str("\n  === Top 10 functions by IR size ===\n");
+        // Simple selection of top 10 by finding max, zeroing, repeat
+        for rank in 0usize..10 {
+            if rank >= fn_ir_sizes.len() { break; }
+            let mut max_idx: usize = 0;
+            let mut max_val: usize = 0;
+            for j in 0usize..fn_ir_sizes.len() {
+                if fn_ir_sizes[j] > max_val {
+                    max_val = fn_ir_sizes[j];
+                    max_idx = j;
+                }
+            }
+            if max_val == 0 { break; }
+            eprint_str("    ");
+            eprint_str(int_to_string((rank + 1) as i32));
+            eprint_str(". ");
+            eprint_str(fn_ir_names[max_idx].as_str());
+            eprint_str(" (");
+            eprint_str(int_to_string((max_val / 1024) as i32));
+            eprint_str(" KB)\n");
+            fn_ir_sizes[max_idx] = 0;
+        }
+    }
 
     // Abort if MIR validation found errors (--validate-mir makes validation blocking)
     if mir_validation_errors > 0 {
