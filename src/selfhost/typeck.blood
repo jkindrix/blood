@@ -1451,6 +1451,11 @@ impl TypeChecker {
         for trait_idx in 0usize..self.traits.len() {
             match &self.traits[trait_idx] {
                 &Option.Some(ref trait_info) => {
+                    // Skip object-unsafe traits
+                    match typeck_dispatch.check_trait_object_safety(trait_info) {
+                        typeck_dispatch.ObjectSafetyResult.Unsafe(_) => { continue; }
+                        typeck_dispatch.ObjectSafetyResult.Safe => {}
+                    }
                     // Create a DynTrait type for this trait
                     let empty_auto: Vec<hir_def.DefId> = Vec.new();
                     let dyn_ty = type_intern.type_interner().intern(

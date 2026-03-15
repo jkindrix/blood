@@ -104,12 +104,9 @@ pub mod hir;
 pub mod lexer;
 pub mod macro_expand;
 pub mod mir;
-pub mod package;
 pub mod parser;
 pub mod project;
 pub mod span;
-pub mod syntax_kind;
-pub mod trivia;
 pub mod typeck;
 
 #[cfg(test)]
@@ -120,4 +117,3 @@ pub use diagnostics::{Diagnostic, DiagnosticEmitter, DiagnosticKind, ErrorCode};
 pub use lexer::{Lexer, Token, TokenKind};
 pub use parser::Parser;
 pub use span::{Span, Spanned};
-pub use syntax_kind::SyntaxKind;

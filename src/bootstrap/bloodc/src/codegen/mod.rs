@@ -30,7 +30,6 @@ pub mod context;
 pub mod debug_info;
 pub mod types;
 pub mod expr;
-pub mod runtime;
 pub mod mir_codegen;
 
 pub use context::CodegenContext;

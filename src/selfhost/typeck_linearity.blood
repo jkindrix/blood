@@ -259,9 +259,122 @@ pub fn collect_usages(checker: &mut LinearityChecker, expr: &hir_expr.Expr) {
         &hir_expr.ExprKind.Loop { label: _, ref body } => {
             collect_usages(checker, body.as_ref());
         }
-        _ => {
-            // Literal, Path, Error, Default, Tuple, etc. — no local usage to track
+        &hir_expr.ExprKind.AssignOp { operator: _, ref target, ref val } => {
+            collect_usages(checker, target.as_ref());
+            collect_usages(checker, val.as_ref());
         }
+        &hir_expr.ExprKind.Tuple(ref elems) => {
+            for i in 0usize..elems.len() {
+                collect_usages(checker, &elems[i]);
+            }
+        }
+        &hir_expr.ExprKind.Array(ref arr_expr) => {
+            match arr_expr {
+                &hir_expr.ArrayExpr.List(ref elems) => {
+                    for i in 0usize..elems.len() {
+                        collect_usages(checker, &elems[i]);
+                    }
+                }
+                &hir_expr.ArrayExpr.Repeat { ref val, count: _ } => {
+                    collect_usages(checker, val.as_ref());
+                }
+            }
+        }
+        &hir_expr.ExprKind.Struct { path: _, ref fields, ref base } => {
+            for i in 0usize..fields.len() {
+                collect_usages(checker, &fields[i].val);
+            }
+            match base {
+                &Option.Some(ref b) => { collect_usages(checker, b.as_ref()); }
+                &Option.None => {}
+            }
+        }
+        &hir_expr.ExprKind.AnonRecord { ref fields } => {
+            for i in 0usize..fields.len() {
+                collect_usages(checker, &fields[i].val);
+            }
+        }
+        &hir_expr.ExprKind.Range { ref start, ref end_val, inclusive: _ } => {
+            match start {
+                &Option.Some(ref s) => { collect_usages(checker, s.as_ref()); }
+                &Option.None => {}
+            }
+            match end_val {
+                &Option.Some(ref e) => { collect_usages(checker, e.as_ref()); }
+                &Option.None => {}
+            }
+        }
+        &hir_expr.ExprKind.Break { label: _, ref val } => {
+            match val {
+                &Option.Some(ref v) => { collect_usages(checker, v.as_ref()); }
+                &Option.None => {}
+            }
+        }
+        &hir_expr.ExprKind.Closure { captures: _, params: _, return_ty: _, effects: _, ref body, body_id: _ } => {
+            collect_usages(checker, body.as_ref());
+        }
+        &hir_expr.ExprKind.WithHandle { ref handler, ref body } => {
+            collect_usages(checker, handler.as_ref());
+            collect_usages(checker, body.as_ref());
+        }
+        &hir_expr.ExprKind.InlineHandle { ref body, ref handlers } => {
+            collect_usages(checker, body.as_ref());
+            for i in 0usize..handlers.len() {
+                collect_usages(checker, &handlers[i].body);
+            }
+        }
+        &hir_expr.ExprKind.Perform { effect_def: _, op_def: _, op_name: _, ref args } => {
+            for i in 0usize..args.len() {
+                collect_usages(checker, &args[i]);
+            }
+        }
+        &hir_expr.ExprKind.Resume(ref inner) => {
+            collect_usages(checker, inner.as_ref());
+        }
+        &hir_expr.ExprKind.Try(ref inner) => {
+            collect_usages(checker, inner.as_ref());
+        }
+        &hir_expr.ExprKind.Region { name: _, ref stmts, ref expr } => {
+            for i in 0usize..stmts.len() {
+                match &stmts[i] {
+                    &hir_expr.Stmt.Expr { ref expr, has_semi: _ } => {
+                        collect_usages(checker, expr);
+                    }
+                    &hir_expr.Stmt.Let { pattern: _, ty: _, ref init, span: _ } => {
+                        match init {
+                            &Option.Some(ref e) => { collect_usages(checker, e); }
+                            &Option.None => {}
+                        }
+                    }
+                    &hir_expr.Stmt.Item(_) => {}
+                }
+            }
+            match expr {
+                &Option.Some(ref e) => { collect_usages(checker, e.as_ref()); }
+                &Option.None => {}
+            }
+        }
+        &hir_expr.ExprKind.Unsafe(ref inner) => {
+            collect_usages(checker, inner.as_ref());
+        }
+        &hir_expr.ExprKind.Unchecked { checks: _, when_condition: _, ref body } => {
+            collect_usages(checker, body.as_ref());
+        }
+        &hir_expr.ExprKind.Heap(ref inner) => {
+            collect_usages(checker, inner.as_ref());
+        }
+        &hir_expr.ExprKind.Stack(ref inner) => {
+            collect_usages(checker, inner.as_ref());
+        }
+        &hir_expr.ExprKind.ForIter { label: _, pattern: _, ref iter, ref body } => {
+            collect_usages(checker, iter.as_ref());
+            collect_usages(checker, body.as_ref());
+        }
+        &hir_expr.ExprKind.Literal(_) => {}
+        &hir_expr.ExprKind.Path(_) => {}
+        &hir_expr.ExprKind.Continue { label: _ } => {}
+        &hir_expr.ExprKind.Default => {}
+        &hir_expr.ExprKind.Error => {}
     }
 }
 
