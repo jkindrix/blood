@@ -1,0 +1,1327 @@
+// Blood Self-Hosted Compiler - Builtin Type Method Codegen
+//
+// Codegen for builtin type methods: Vec, String, str, Option, Box.
+// These functions emit LLVM IR for runtime calls with special calling
+// conventions that differ from the generic function call path.
+
+mod codegen_ctx;
+mod codegen_expr;
+mod codegen_types;
+mod codegen_size;
+mod common;
+mod mir_types;
+mod mir_def;
+mod mir_body;
+mod type_intern;
+
+// ============================================================
+// Utility Helpers (local copies — standard per-file pattern)
+// ============================================================
+
+pub fn clone_string(s: &String) -> String {
+    let mut result = String.new();
+    result.push_str(s.as_str());
+    result
+}
+
+pub fn cgname_to_string(name: &codegen_ctx.CgName) -> String {
+    match name {
+        &codegen_ctx.CgName.Temp(n) => {
+            let mut s = common.make_string("%tmp");
+            let ns = codegen_types.format_u64(n as u64);
+            s.push_str(ns.as_str());
+            s
+        }
+        &codegen_ctx.CgName.Local(n) => {
+            let mut s = common.make_string("%_");
+            let ns = codegen_types.format_u64(n as u64);
+            s.push_str(ns.as_str());
+            s
+        }
+        &codegen_ctx.CgName.Label(n) => {
+            let mut s = common.make_string("label");
+            let ns = codegen_types.format_u64(n as u64);
+            s.push_str(ns.as_str());
+            s
+        }
+        &codegen_ctx.CgName.Block(n) => {
+            let mut s = common.make_string("bb");
+            let ns = codegen_types.format_u64(n as u64);
+            s.push_str(ns.as_str());
+            s
+        }
+        &codegen_ctx.CgName.Str(ref s) => {
+            clone_string(s)
+        }
+    }
+}
+
+pub fn string_eq_str(a: &str, b: &str) -> bool {
+    let a_bytes = a.as_bytes();
+    let b_bytes = b.as_bytes();
+    if a_bytes.len() != b_bytes.len() {
+        return false;
+    }
+    for i in 0usize..a_bytes.len() {
+        if a_bytes[i] != b_bytes[i] {
+            return false;
+        }
+    }
+    true
+}
+
+// ============================================================
+// Builtin Type Method Codegen
+// ============================================================
+
+pub fn is_vec_new(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@vec_new")
+}
+
+/// Checks if the function name is @vec_push.
+pub fn is_vec_push(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@vec_push")
+}
+
+/// Checks if the function name is @vec_len.
+pub fn is_vec_len(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@vec_len")
+}
+
+/// Checks if the function name is @vec_pop.
+pub fn is_vec_pop(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@vec_pop")
+}
+
+/// Checks if the function name is @vec_clear.
+pub fn is_vec_clear(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@vec_clear")
+}
+
+/// Checks if the function name is @vec_with_capacity.
+pub fn is_vec_with_capacity(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@vec_with_capacity")
+}
+
+/// Emits a vec_with_capacity call with correct calling convention.
+/// Runtime signature: void @vec_with_capacity(i64 elem_size, i64 capacity, ptr out_ptr)
+///
+/// Uses emit_place_data_ptr to handle region/persistent indirection.
+pub fn emit_vec_with_capacity_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    // Get data pointer (handles region/persistent heap indirection)
+    let out_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
+
+    // Get element size from the destination's HIR type (Vec<T>)
+    // Must resolve through Place projections: if destination is _0.Field(5),
+    // the local's type is the struct, not Vec<T>. We need the field's type.
+    let elem_size: u64 = match resolve_place_hir_type(ctx, destination) {
+        Option.Some(ty_id) => extract_vec_element_size_id(ctx, ty_id),
+        Option.None => 8,
+    };
+
+    // Get capacity from first argument
+    let cap_val = codegen_expr.emit_operand(ctx, &args[0]);
+
+    // Emit: call void @vec_with_capacity(i64 elem_size, i64 capacity, ptr out_ptr)
+    let elem_size_str = codegen_types.format_u64(elem_size);
+    ctx.begin_call(Option.None, "void", "@vec_with_capacity");
+    ctx.call_arg_str(true, "i64", elem_size_str.as_str());
+    ctx.call_arg_str(false, "i64", cap_val.as_str());
+    ctx.call_arg_str(false, "ptr", out_ptr.as_str());
+    ctx.end_call();
+
+    // Jump to continuation
+    match target {
+        &Option.Some(t) => {
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
+        }
+        &Option.None => {
+            ctx.emit_unreachable();
+        }
+    }
+}
+
+/// Extracts element size from a Vec<T> or &Vec<T> TyId (via interner, no Type tree).
+pub fn extract_vec_element_size_id(ctx: &mut codegen_ctx.CodegenCtx, ty_id: type_intern.TyId) -> u64 {
+    let unwrapped = type_intern.unwrap_ref_id(ty_id);
+    match type_intern.get_adt_args(unwrapped) {
+        Option.Some(args) => {
+            let interner = type_intern.type_interner();
+            if interner.ty_list_len(args) > 0 {
+                let elem_id = interner.get_ty_list_element(args, 0);
+                codegen_size.type_size_with_ctx_id(ctx, elem_id)
+            } else {
+                8
+            }
+        }
+        Option.None => 8,
+    }
+}
+
+/// Resolves a Place's final HIR type by walking through projections.
+/// For `_local.Field(5)`, returns the type of field 5 of the local's struct.
+/// Falls back to the local's direct type if no projections or resolution fails.
+pub fn resolve_place_hir_type(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    place: &mir_types.Place,
+) -> Option<type_intern.TyId> {
+    let mut current_ty = match ctx.get_local_hir_type(place.local) {
+        Option.Some(ty_id) => ty_id,
+        Option.None => { return Option.None; }
+    };
+    for i in 0usize..place.projection.len() {
+        match &place.projection[i] {
+            &mir_types.PlaceElem.Field(idx) => {
+                let unwrapped = type_intern.unwrap_ref_id(current_ty);
+                match type_intern.get_adt_def_id(unwrapped) {
+                    Option.Some(def_id) => {
+                        match ctx.lookup_field_hir_type(def_id.index, idx) {
+                            Option.Some(field_ty) => {
+                                current_ty = field_ty;
+                            }
+                            Option.None => { return Option.Some(current_ty); }
+                        }
+                    }
+                    Option.None => { return Option.Some(current_ty); }
+                }
+            }
+            &mir_types.PlaceElem.Deref => {
+                current_ty = type_intern.unwrap_ref_id(current_ty);
+            }
+            _ => {}
+        }
+    }
+    Option.Some(current_ty)
+}
+
+/// Emits a vec_new call with correct calling convention.
+/// Runtime signature: void @vec_new(i64 elem_size, ptr out_ptr)
+///
+/// Uses emit_place_data_ptr to handle region/persistent indirection.
+pub fn emit_vec_new_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    // Get data pointer (handles region/persistent heap indirection)
+    let out_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
+
+    // Get element size from the destination's HIR type (Vec<T>)
+    // Must resolve through Place projections: if destination is _0.Field(5),
+    // the local's type is the struct, not Vec<T>. We need the field's type.
+    let elem_size: u64 = match resolve_place_hir_type(ctx, destination) {
+        Option.Some(ty_id) => extract_vec_element_size_id(ctx, ty_id),
+        Option.None => 8,
+    };
+
+    // Emit: call void @vec_new(i64 elem_size, ptr out_ptr)
+    let elem_size_str = codegen_types.format_u64(elem_size);
+    ctx.begin_call(Option.None, "void", "@vec_new");
+    ctx.call_arg_str(true, "i64", elem_size_str.as_str());
+    ctx.call_arg_str(false, "ptr", out_ptr.as_str());
+    ctx.end_call();
+
+    // Jump to continuation
+    match target {
+        &Option.Some(t) => {
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
+        }
+        &Option.None => {
+            ctx.emit_unreachable();
+        }
+    }
+}
+
+/// Emits a vec_push call with correct calling convention.
+/// Runtime signature: void @vec_push(ptr vec, ptr elem_ptr, i64 elem_size)
+pub fn emit_vec_push_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    // args[0] is the vec (&mut Vec<T>)
+    // args[1] is the element (T)
+    if args.len() < 2 {
+        ctx.emit_unreachable();
+        return;
+    }
+
+    // Get vec pointer - emit_operand loads the &mut Vec reference value,
+    // which is already a pointer to the Vec struct (no extra deref needed).
+    let vec_ptr = codegen_expr.emit_operand(ctx, &args[0]);
+
+    // Get element value and type
+    let (elem_val, elem_ty) = codegen_expr.emit_operand_typed(ctx, &args[1]);
+
+    // Save stack pointer before alloca so we can restore after vec_push.
+    // Without this, allocas inside loops cause unbounded stack growth.
+    let stack_save = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&stack_save);
+    ctx.write(" = call ptr @llvm.stacksave()\n");
+
+    // Allocate temporary storage for the element
+    let elem_alloca = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&elem_alloca);
+    ctx.write(" = alloca ");
+    ctx.write_string(&elem_ty);
+    ctx.write(", align 8\n");
+
+    // Store element value to alloca
+    ctx.emit_store_str_cg(elem_ty.as_str(), elem_val.as_str(), &elem_alloca);
+
+    // Get element size from the element's HIR type
+    let elem_size: u64 = match &args[1] {
+        &mir_types.Operand.Copy(ref place) => {
+            match ctx.get_local_hir_type(place.local) {
+                Option.Some(ty_id) => {
+                    codegen_size.type_size_with_ctx_id(ctx, ty_id)
+                }
+                Option.None => 8,
+            }
+        }
+        &mir_types.Operand.Move(ref place) => {
+            match ctx.get_local_hir_type(place.local) {
+                Option.Some(ty_id) => {
+                    codegen_size.type_size_with_ctx_id(ctx, ty_id)
+                }
+                Option.None => 8,
+            }
+        }
+        &mir_types.Operand.Constant(ref c) => {
+            codegen_size.type_size_with_ctx_id(ctx, c.ty)
+        }
+    };
+
+    // Emit: call void @vec_push(ptr vec, ptr elem_ptr, i64 elem_size)
+    let elem_size_str = codegen_types.format_u64(elem_size);
+    ctx.begin_call(Option.None, "void", "@vec_push");
+    ctx.call_arg_str(true, "ptr", vec_ptr.as_str());
+    ctx.call_arg_cg(false, "ptr", &elem_alloca);
+    ctx.call_arg_str(false, "i64", elem_size_str.as_str());
+    ctx.end_call();
+
+    // Restore stack pointer to reclaim the alloca.
+    // This prevents unbounded stack growth when vec_push is called in a loop.
+    ctx.write_indent();
+    ctx.write("call void @llvm.stackrestore(ptr ");
+    ctx.write_cgname(&stack_save);
+    ctx.write(")\n");
+
+    // Jump to continuation
+    match target {
+        &Option.Some(t) => {
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
+        }
+        &Option.None => {
+            ctx.emit_unreachable();
+        }
+    }
+}
+
+/// Emits a vec_len call with correct calling convention.
+/// Runtime signature: i64 @vec_len(ptr vec)
+pub fn emit_vec_len_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    // args[0] is the vec (&Vec<T>)
+    if args.len() < 1 {
+        ctx.emit_unreachable();
+        return;
+    }
+
+    // Get vec pointer - emit_operand loads the reference value,
+    // which is already a pointer to the Vec struct.
+    let vec_ptr = codegen_expr.emit_operand(ctx, &args[0]);
+
+    // Emit: %result = call i64 @vec_len(ptr vec)
+    let result = ctx.fresh_temp_cg();
+    ctx.begin_call(Option.Some(&result), "i64", "@vec_len");
+    ctx.call_arg_str(true, "ptr", vec_ptr.as_str());
+    ctx.end_call();
+
+    // Store result to destination
+    let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
+    ctx.emit_store_cg("i64", &result, dest_ptr.as_str());
+
+    // Jump to continuation
+    match target {
+        &Option.Some(t) => {
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
+        }
+        &Option.None => {
+            ctx.emit_unreachable();
+        }
+    }
+}
+
+/// Emits a vec_pop call with correct calling convention.
+/// Runtime signature: i32 @vec_pop(ptr vec, i64 elem_size, ptr out_ptr)
+/// Returns 1 on success (element popped), 0 if vec was empty.
+pub fn emit_vec_pop_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    // args[0] is the vec (&mut Vec<T>)
+    if args.len() < 1 {
+        ctx.emit_unreachable();
+        return;
+    }
+
+    // Get vec pointer - emit_operand loads the reference value,
+    // which is already a pointer to the Vec struct.
+    let vec_ptr = codegen_expr.emit_operand(ctx, &args[0]);
+
+    // Get element size from destination's HIR type (Option<T>)
+    // pop returns Option<T>, so we need to extract T's size
+    let elem_size: u64 = match ctx.get_local_hir_type(destination.local) {
+        Option.Some(ty_id) => extract_vec_element_size_id(ctx, ty_id),
+        Option.None => 8,
+    };
+
+    // Allocate output pointer for the popped element
+    let out_alloca = ctx.fresh_temp_cg();
+    let elem_size_str = codegen_types.format_u64(elem_size);
+    ctx.write_indent();
+    ctx.write_cgname(&out_alloca);
+    ctx.write(" = alloca [");
+    ctx.write_string(&elem_size_str);
+    ctx.write(" x i8], align 8\n");
+
+    // Emit: %result = call i32 @vec_pop(ptr vec, i64 elem_size, ptr out_ptr)
+    let result = ctx.fresh_temp_cg();
+    ctx.begin_call(Option.Some(&result), "i32", "@vec_pop");
+    ctx.call_arg_str(true, "ptr", vec_ptr.as_str());
+    ctx.call_arg_str(false, "i64", elem_size_str.as_str());
+    ctx.call_arg_cg(false, "ptr", &out_alloca);
+    ctx.end_call();
+
+    // Build Option<T> in destination
+    // Option is typically { i8 tag, T value }
+    // tag = 0 for None, tag = 1 for Some
+    let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
+
+    // Store the tag (result from vec_pop: 0=empty/None, 1=success/Some)
+    let tag_i8 = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&tag_i8);
+    ctx.write(" = trunc i32 ");
+    ctx.write_cgname(&result);
+    ctx.write(" to i8\n");
+    ctx.emit_store_cg("i8", &tag_i8, dest_ptr.as_str());
+
+    // If result was 1 (Some), copy the element data
+    // Calculate offset for the value field (after tag, with alignment)
+    let value_offset = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&value_offset);
+    ctx.write(" = getelementptr i8, ptr ");
+    ctx.write_string(&dest_ptr);
+    ctx.write(", i64 8\n"); // Assuming 8-byte alignment for Option payload
+
+    // Copy element data from out_alloca to Option's value field
+    ctx.write_indent();
+    ctx.write("call void @llvm.memcpy.p0.p0.i64(ptr ");
+    ctx.write_cgname(&value_offset);
+    ctx.write(", ptr ");
+    ctx.write_cgname(&out_alloca);
+    ctx.write(", i64 ");
+    ctx.write_string(&elem_size_str);
+    ctx.write(", i1 false)\n");
+
+    // Jump to continuation
+    match target {
+        &Option.Some(t) => {
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
+        }
+        &Option.None => {
+            ctx.emit_unreachable();
+        }
+    }
+}
+
+/// Emits a vec_clear call with correct calling convention.
+/// Runtime signature: void @vec_clear(ptr vec)
+pub fn emit_vec_clear_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    // args[0] is the vec (&mut Vec<T>)
+    if args.len() < 1 {
+        ctx.emit_unreachable();
+        return;
+    }
+
+    // Get vec pointer - emit_operand loads the reference value,
+    // which is already a pointer to the Vec struct.
+    let vec_ptr = codegen_expr.emit_operand(ctx, &args[0]);
+
+    // Emit: call void @vec_clear(ptr vec)
+    ctx.begin_call(Option.None, "void", "@vec_clear");
+    ctx.call_arg_str(true, "ptr", vec_ptr.as_str());
+    ctx.end_call();
+
+    // Jump to continuation
+    match target {
+        &Option.Some(t) => {
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
+        }
+        &Option.None => {
+            ctx.emit_unreachable();
+        }
+    }
+}
+
+// ============================================================
+// String Builtin Handling
+// ============================================================
+// String runtime functions have special calling conventions:
+//   string_new(ptr out_ptr) -> void
+//   string_len(ptr self) -> i64
+//   string_push(ptr self, i32 char) -> void
+//   string_push_str(ptr self, ptr str_ref) -> void     (str_ref = ptr to {ptr, i64})
+//   string_as_str(ptr self) -> {ptr, i64}
+//   string_as_bytes(ptr self) -> {ptr, i64}
+
+/// Checks if the function name is @string_new.
+pub fn is_string_new(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@string_new")
+}
+
+/// Checks if the function name is @string_push_str.
+pub fn is_string_push_str(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@string_push_str")
+}
+
+/// Checks if the function name is @string_len.
+pub fn is_string_len(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@string_len")
+}
+
+/// Checks if the function name is @string_push.
+pub fn is_string_push(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@string_push")
+}
+
+/// Checks if the function name is @string_as_str.
+pub fn is_string_as_str(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@string_as_str")
+}
+
+/// Checks if the function name is @string_as_bytes.
+pub fn is_string_as_bytes(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@string_as_bytes")
+}
+
+/// Emits a string_new call with correct calling convention.
+/// Runtime signature: void @string_new(ptr out_ptr)
+///
+/// Emits a string_new call. Uses emit_place_data_ptr for region/persistent indirection.
+pub fn emit_string_new_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    // Get data pointer (handles region/persistent heap indirection)
+    let out_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
+
+    // Emit: call void @string_new(ptr out_ptr)
+    ctx.begin_call(Option.None, "void", "@string_new");
+    ctx.call_arg_str(true, "ptr", out_ptr.as_str());
+    ctx.end_call();
+
+    // Jump to continuation
+    match target {
+        &Option.Some(t) => {
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
+        }
+        &Option.None => {
+            ctx.emit_unreachable();
+        }
+    }
+}
+
+/// Emits a string_push_str call with correct calling convention.
+/// Runtime signature: void @string_push_str(ptr self, ptr str_ref)
+pub fn emit_string_push_str_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    if args.len() < 2 {
+        ctx.emit_unreachable();
+        return;
+    }
+
+    // Get string pointer - emit_operand loads the reference value,
+    // which is already a pointer to the String struct.
+    let str_ptr = codegen_expr.emit_operand(ctx, &args[0]);
+
+    // Get the &str argument (fat pointer)
+    let (arg_val, arg_ty) = codegen_expr.emit_operand_typed(ctx, &args[1]);
+
+    // Alloca temp for the &str fat pointer (runtime expects ptr to BloodStr)
+    let str_tmp = ctx.fresh_temp_cg();
+    ctx.emit_alloca_cg(&str_tmp, "{ ptr, i64 }");
+
+    // Store the &str value into the temp
+    ctx.emit_store_str_cg("{ ptr, i64 }", arg_val.as_str(), &str_tmp);
+
+    // Emit: call void @string_push_str(ptr self, ptr str_ptr)
+    ctx.begin_call(Option.None, "void", "@string_push_str");
+    ctx.call_arg_str(true, "ptr", str_ptr.as_str());
+    ctx.call_arg_cg(false, "ptr", &str_tmp);
+    ctx.end_call();
+
+    // Jump to continuation
+    match target {
+        &Option.Some(t) => {
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
+        }
+        &Option.None => {
+            ctx.emit_unreachable();
+        }
+    }
+}
+
+/// Emits a string_len call with correct calling convention.
+/// Runtime signature: i64 @string_len(ptr self)
+pub fn emit_string_len_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    if args.len() < 1 {
+        ctx.emit_unreachable();
+        return;
+    }
+
+    // Get string pointer - emit_operand loads the reference value,
+    // which is already a pointer to the String struct.
+    let str_ptr = codegen_expr.emit_operand(ctx, &args[0]);
+
+    // Emit: %result = call i64 @string_len(ptr self)
+    let result = ctx.fresh_temp_cg();
+    ctx.begin_call(Option.Some(&result), "i64", "@string_len");
+    ctx.call_arg_str(true, "ptr", str_ptr.as_str());
+    ctx.end_call();
+
+    // Store result to destination
+    let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
+    ctx.emit_store_cg("i64", &result, dest_ptr.as_str());
+
+    // Jump to continuation
+    match target {
+        &Option.Some(t) => {
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
+        }
+        &Option.None => {
+            ctx.emit_unreachable();
+        }
+    }
+}
+
+/// Emits a string_push call with correct calling convention.
+/// Runtime signature: void @string_push(ptr self, i32 char)
+pub fn emit_string_push_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    if args.len() < 2 {
+        ctx.emit_unreachable();
+        return;
+    }
+
+    // Get string pointer - emit_operand loads the reference value,
+    // which is already a pointer to the String struct.
+    let str_ptr = codegen_expr.emit_operand(ctx, &args[0]);
+
+    // Get char argument - it may be { i32 } struct, need to extract i32
+    let (char_val, char_ty) = codegen_expr.emit_operand_typed(ctx, &args[1]);
+
+    // If char type is a struct { i32 }, extract the i32
+    let char_i32 = if string_eq_str(char_ty.as_str(), "{ i32 }") {
+        let extracted = ctx.fresh_temp_cg();
+        ctx.write_indent();
+        ctx.write_cgname(&extracted);
+        ctx.write(" = extractvalue { i32 } ");
+        ctx.write_string(&char_val);
+        ctx.write(", 0\n");
+        cgname_to_string(&extracted)
+    } else {
+        char_val
+    };
+
+    // Emit: call void @string_push(ptr self, i32 char)
+    ctx.begin_call(Option.None, "void", "@string_push");
+    ctx.call_arg_str(true, "ptr", str_ptr.as_str());
+    ctx.call_arg_str(false, "i32", char_i32.as_str());
+    ctx.end_call();
+
+    // Jump to continuation
+    match target {
+        &Option.Some(t) => {
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
+        }
+        &Option.None => {
+            ctx.emit_unreachable();
+        }
+    }
+}
+
+/// Emits a string_as_str call with correct calling convention.
+/// Runtime signature: { ptr, i64 } @string_as_str(ptr self)
+pub fn emit_string_as_str_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    if args.len() < 1 {
+        ctx.emit_unreachable();
+        return;
+    }
+
+    // Get string pointer - emit_operand loads the reference value,
+    // which is already a pointer to the String struct.
+    let str_ptr = codegen_expr.emit_operand(ctx, &args[0]);
+
+    // Emit: %result = call { ptr, i64 } @string_as_str(ptr self)
+    let result = ctx.fresh_temp_cg();
+    ctx.begin_call(Option.Some(&result), "{ ptr, i64 }", "@string_as_str");
+    ctx.call_arg_str(true, "ptr", str_ptr.as_str());
+    ctx.end_call();
+
+    // Store result to destination
+    let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
+    ctx.emit_store_cg("{ ptr, i64 }", &result, dest_ptr.as_str());
+
+    // Jump to continuation
+    match target {
+        &Option.Some(t) => {
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
+        }
+        &Option.None => {
+            ctx.emit_unreachable();
+        }
+    }
+}
+
+/// Emits a string_as_bytes call with correct calling convention.
+/// Runtime signature: { ptr, i64 } @string_as_bytes(ptr self)
+pub fn emit_string_as_bytes_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    if args.len() < 1 {
+        ctx.emit_unreachable();
+        return;
+    }
+
+    // Get string pointer - emit_operand loads the reference value,
+    // which is already a pointer to the String struct.
+    let str_ptr = codegen_expr.emit_operand(ctx, &args[0]);
+
+    // Emit: %result = call { ptr, i64 } @string_as_bytes(ptr self)
+    let result = ctx.fresh_temp_cg();
+    ctx.begin_call(Option.Some(&result), "{ ptr, i64 }", "@string_as_bytes");
+    ctx.call_arg_str(true, "ptr", str_ptr.as_str());
+    ctx.end_call();
+
+    // Store result to destination
+    let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
+    ctx.emit_store_cg("{ ptr, i64 }", &result, dest_ptr.as_str());
+
+    // Jump to continuation
+    match target {
+        &Option.Some(t) => {
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
+        }
+        &Option.None => {
+            ctx.emit_unreachable();
+        }
+    }
+}
+
+// ============================================================
+// Option Builtin Handling
+// ============================================================
+// Option runtime functions have special calling conventions:
+//   option_is_some(ptr self) -> i32
+//   option_is_none(ptr self) -> i32
+//   option_unwrap(ptr self, i64 elem_size, ptr out_ptr) -> void
+//   option_as_ref(ptr self, i64 elem_size, ptr out_ptr) -> void
+
+// ============================================================
+// &str runtime functions have special calling conventions:
+//   str_len({ ptr, i64 }) -> i64
+//   str_eq({ ptr, i64 }, { ptr, i64 }) -> i1
+//   str_concat({ ptr, i64 }, { ptr, i64 }) -> { ptr, i64 }
+//
+// The generic call path passes &str by pointer (creating &&str),
+// but the runtime expects { ptr, i64 } by value. These handlers
+// load the fat pointer from the pointer before calling.
+
+pub fn is_str_len(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@str_len")
+}
+
+pub fn is_str_eq(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@str_eq")
+}
+
+pub fn is_str_concat(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@str_concat")
+}
+
+/// Helper: load a { ptr, i64 } fat pointer from a pointer operand.
+/// The generic call path for &str methods produces a pointer to the
+/// fat pointer alloca. This loads the actual { ptr, i64 } value.
+pub fn load_str_fat_ptr(ctx: &mut codegen_ctx.CodegenCtx, operand: &mir_types.Operand) -> codegen_ctx.CgName {
+    let (arg_val, arg_ty) = codegen_expr.emit_operand_typed(ctx, operand);
+    // If it's already a { ptr, i64 }, return as-is
+    if string_eq_str(arg_ty.as_str(), "{ ptr, i64 }") {
+        return codegen_ctx.CgName.Str(arg_val);
+    }
+    // Otherwise it's a ptr — load the { ptr, i64 } from it
+    let loaded = ctx.fresh_temp_cg();
+    ctx.emit_load_cg(&loaded, "{ ptr, i64 }", arg_val.as_str());
+    loaded
+}
+
+/// Emits a str_len call with correct calling convention.
+/// Runtime signature: i64 @str_len({ ptr, i64 })
+pub fn emit_str_len_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    if args.len() < 1 {
+        ctx.emit_unreachable();
+        return;
+    }
+
+    // Load the &str fat pointer from the operand
+    let str_val = load_str_fat_ptr(ctx, &args[0]);
+
+    // Emit: %result = call i64 @str_len({ ptr, i64 } %str_val)
+    let result = ctx.fresh_temp_cg();
+    ctx.begin_call(Option.Some(&result), "i64", "@str_len");
+    ctx.call_arg_cg(true, "{ ptr, i64 }", &str_val);
+    ctx.end_call();
+
+    // Store result to destination
+    let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
+    ctx.emit_store_cg("i64", &result, dest_ptr.as_str());
+
+    // Jump to continuation
+    match target {
+        &Option.Some(t) => {
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
+        }
+        &Option.None => {
+            ctx.emit_unreachable();
+        }
+    }
+}
+
+/// Emits a str_eq call with correct calling convention.
+/// Runtime signature: i1 @str_eq({ ptr, i64 }, { ptr, i64 })
+pub fn emit_str_eq_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    if args.len() < 2 {
+        ctx.emit_unreachable();
+        return;
+    }
+
+    // Load both &str fat pointers
+    let str_a = load_str_fat_ptr(ctx, &args[0]);
+    let str_b = load_str_fat_ptr(ctx, &args[1]);
+
+    // Emit: %result = call i1 @str_eq({ ptr, i64 } %a, { ptr, i64 } %b)
+    let result = ctx.fresh_temp_cg();
+    ctx.begin_call(Option.Some(&result), "i1", "@str_eq");
+    ctx.call_arg_cg(true, "{ ptr, i64 }", &str_a);
+    ctx.call_arg_cg(false, "{ ptr, i64 }", &str_b);
+    ctx.end_call();
+
+    // Store result to destination
+    let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
+    ctx.emit_store_cg("i1", &result, dest_ptr.as_str());
+
+    // Jump to continuation
+    match target {
+        &Option.Some(t) => {
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
+        }
+        &Option.None => {
+            ctx.emit_unreachable();
+        }
+    }
+}
+
+/// Emits a str_concat call with correct calling convention.
+/// Runtime signature: { ptr, i64 } @str_concat({ ptr, i64 }, { ptr, i64 })
+pub fn emit_str_concat_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    if args.len() < 2 {
+        ctx.emit_unreachable();
+        return;
+    }
+
+    // Load both &str fat pointers
+    let str_a = load_str_fat_ptr(ctx, &args[0]);
+    let str_b = load_str_fat_ptr(ctx, &args[1]);
+
+    // Emit: %result = call { ptr, i64 } @str_concat({ ptr, i64 } %a, { ptr, i64 } %b)
+    let result = ctx.fresh_temp_cg();
+    ctx.begin_call(Option.Some(&result), "{ ptr, i64 }", "@str_concat");
+    ctx.call_arg_cg(true, "{ ptr, i64 }", &str_a);
+    ctx.call_arg_cg(false, "{ ptr, i64 }", &str_b);
+    ctx.end_call();
+
+    // Store result to destination
+    let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
+    ctx.emit_store_cg("{ ptr, i64 }", &result, dest_ptr.as_str());
+
+    // Jump to continuation
+    match target {
+        &Option.Some(t) => {
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
+        }
+        &Option.None => {
+            ctx.emit_unreachable();
+        }
+    }
+}
+
+/// Checks if the function name is @option_is_some.
+pub fn is_option_is_some(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@option_is_some")
+}
+
+/// Checks if the function name is @option_is_none.
+pub fn is_option_is_none(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@option_is_none")
+}
+
+/// Checks if the function name is @option_unwrap.
+pub fn is_option_unwrap(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@option_unwrap")
+}
+
+/// Checks if the function name is @option_as_ref.
+pub fn is_option_as_ref(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@option_as_ref")
+}
+
+// ============================================================
+// Box runtime functions have special calling conventions:
+//   box_new(ptr value_ptr, i64 value_size) -> ptr
+
+/// Checks if the function name is @box_new.
+pub fn is_box_new(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@box_new")
+}
+
+/// Emits a box_new call with correct calling convention.
+/// Runtime signature: ptr @box_new(ptr value_ptr, i64 value_size)
+///
+/// The generic call path passes the value by-value (as an LLVM aggregate),
+/// which LLVM decomposes into register-sized chunks per ABI. box_new expects
+/// a pointer to the value and its size. This handler stores the value to a
+/// temp alloca and passes (ptr, i64) correctly.
+pub fn emit_box_new_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    // args[0] is the value to box (type T)
+    if args.len() < 1 {
+        ctx.emit_unreachable();
+        return;
+    }
+
+    // Get value and its LLVM type
+    let (val, val_ty) = codegen_expr.emit_operand_typed(ctx, &args[0]);
+
+    // Allocate temporary storage for the value
+    let val_alloca = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&val_alloca);
+    ctx.write(" = alloca ");
+    ctx.write_string(&val_ty);
+    ctx.write(", align 8\n");
+
+    // Store value to alloca
+    ctx.emit_store_str_cg(val_ty.as_str(), val.as_str(), &val_alloca);
+
+    // Get value size from HIR type
+    let val_size: u64 = match &args[0] {
+        &mir_types.Operand.Copy(ref place) => {
+            match ctx.get_local_hir_type(place.local) {
+                Option.Some(ty_id) => {
+                    codegen_size.type_size_with_ctx_id(ctx, ty_id)
+                }
+                Option.None => 8,
+            }
+        }
+        &mir_types.Operand.Move(ref place) => {
+            match ctx.get_local_hir_type(place.local) {
+                Option.Some(ty_id) => {
+                    codegen_size.type_size_with_ctx_id(ctx, ty_id)
+                }
+                Option.None => 8,
+            }
+        }
+        &mir_types.Operand.Constant(ref c) => {
+            codegen_size.type_size_with_ctx_id(ctx, c.ty)
+        }
+    };
+
+    // Emit: %result = call ptr @box_new(ptr val_alloca, i64 val_size)
+    let result = ctx.fresh_temp_cg();
+    let val_size_str = codegen_types.format_u64(val_size);
+    ctx.begin_call(Option.Some(&result), "ptr", "@box_new");
+    ctx.call_arg_cg(true, "ptr", &val_alloca);
+    ctx.call_arg_str(false, "i64", val_size_str.as_str());
+    ctx.end_call();
+
+    // Store result pointer to destination
+    let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
+    ctx.emit_store_cg("ptr", &result, dest_ptr.as_str());
+
+    // Jump to continuation
+    match target {
+        &Option.Some(t) => {
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
+        }
+        &Option.None => {
+            ctx.emit_unreachable();
+        }
+    }
+}
+
+/// Checks if the function name is @box_as_ref.
+pub fn is_box_as_ref(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@box_as_ref")
+}
+
+/// Emits a box_as_ref call with correct calling convention.
+/// Runtime signature: ptr @box_as_ref(ptr boxed) -> ptr
+///
+/// MIR method calls auto-borrow the receiver, so args[0] is &Box<T> (a pointer
+/// to the variable holding the Box pointer). We must load through it once to get
+/// the actual Box value (the data pointer) before passing to box_as_ref.
+pub fn emit_box_as_ref_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    // args[0] is &Box<T> — a reference to the Box variable
+    if args.len() < 1 {
+        ctx.emit_unreachable();
+        return;
+    }
+
+    // Emit the operand to get the &Box<T> pointer
+    let (ref_val, _ref_ty) = codegen_expr.emit_operand_typed(ctx, &args[0]);
+
+    // Load through the reference to get the Box value (the data pointer)
+    let box_val = ctx.fresh_temp_cg();
+    ctx.emit_load_cg2(&box_val, "ptr", &codegen_ctx.CgName.Str(ref_val));
+
+    // Emit: %result = call ptr @box_as_ref(ptr box_val)
+    let result = ctx.fresh_temp_cg();
+    ctx.begin_call(Option.Some(&result), "ptr", "@box_as_ref");
+    ctx.call_arg_cg(true, "ptr", &box_val);
+    ctx.end_call();
+
+    // Store result pointer to destination
+    let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
+    ctx.emit_store_cg("ptr", &result, dest_ptr.as_str());
+
+    // Jump to continuation
+    match target {
+        &Option.Some(t) => {
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
+        }
+        &Option.None => {
+            ctx.emit_unreachable();
+        }
+    }
+}
+
+pub fn is_persist(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@persist")
+}
+
+/// Emits a persist() call — copies the argument value into the destination.
+/// The destination local was already allocated as persistent (ptr to heap buffer)
+/// by emit_allocas_with_escapes, so this is just a value copy through the heap pointer.
+pub fn emit_persist_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    if args.len() < 1 {
+        ctx.emit_unreachable();
+        return;
+    }
+
+    // Evaluate the argument
+    let (arg_val, arg_ty) = codegen_expr.emit_operand_typed(ctx, &args[0]);
+
+    // Get the destination data pointer (for persistent locals, this loads the heap ptr)
+    let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
+
+    // Store the value through the persistent buffer pointer
+    if !string_eq_str(arg_ty.as_str(), "{}") {
+        ctx.emit_store(arg_ty.as_str(), arg_val.as_str(), dest_ptr.as_str());
+    }
+
+    // Jump to continuation
+    match target {
+        &Option.Some(t) => {
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
+        }
+        &Option.None => {
+            ctx.emit_unreachable();
+        }
+    }
+}
+
+/// Emits an inline is_some check using i32 discriminant.
+/// Standard enum convention: None = discriminant 0, Some = discriminant 1.
+/// Discriminant type is i32, matching the enum layout (codegen.blood:662).
+pub fn emit_option_is_some_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    if args.len() < 1 {
+        ctx.emit_unreachable();
+        return;
+    }
+
+    // Get option pointer - emit_operand loads the reference value,
+    // which is already a pointer to the Option struct.
+    let opt_ptr = codegen_expr.emit_operand(ctx, &args[0]);
+
+    // Load i32 discriminant (enum discriminant type is always i32)
+    let disc = ctx.fresh_temp_cg();
+    ctx.emit_load_cg(&disc, "i32", opt_ptr.as_str());
+
+    // is_some = (discriminant == 1), since Some is variant index 1
+    let cmp_result = ctx.fresh_temp_cg();
+    ctx.emit_icmp_cg2(&cmp_result, "eq", "i32", &disc, "1");
+
+    let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
+    ctx.emit_store_cg("i1", &cmp_result, dest_ptr.as_str());
+
+    // Jump to continuation
+    match target {
+        &Option.Some(t) => {
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
+        }
+        &Option.None => {
+            ctx.emit_unreachable();
+        }
+    }
+}
+
+/// Emits an inline is_none check using i32 discriminant.
+/// Standard enum convention: None = discriminant 0, Some = discriminant 1.
+/// Discriminant type is i32, matching the enum layout (codegen.blood:662).
+pub fn emit_option_is_none_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    if args.len() < 1 {
+        ctx.emit_unreachable();
+        return;
+    }
+
+    // Get option pointer - emit_operand loads the reference value,
+    // which is already a pointer to the Option struct.
+    let opt_ptr = codegen_expr.emit_operand(ctx, &args[0]);
+
+    // Load i32 discriminant (enum discriminant type is always i32)
+    let disc = ctx.fresh_temp_cg();
+    ctx.emit_load_cg(&disc, "i32", opt_ptr.as_str());
+
+    // is_none = (discriminant == 0), since None is variant index 0
+    let cmp_result = ctx.fresh_temp_cg();
+    ctx.emit_icmp_cg2(&cmp_result, "eq", "i32", &disc, "0");
+
+    let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
+    ctx.emit_store_cg("i1", &cmp_result, dest_ptr.as_str());
+
+    // Jump to continuation
+    match target {
+        &Option.Some(t) => {
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
+        }
+        &Option.None => {
+            ctx.emit_unreachable();
+        }
+    }
+}
+
+/// Emits an option_unwrap call with correct calling convention.
+/// Runtime signature: void @option_unwrap(ptr self, i64 elem_size, ptr out_ptr)
+pub fn emit_option_unwrap_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    if args.len() < 1 {
+        ctx.emit_unreachable();
+        return;
+    }
+
+    // Get option pointer - emit_operand loads the reference value,
+    // which is already a pointer to the Option struct.
+    let opt_ptr = codegen_expr.emit_operand(ctx, &args[0]);
+
+    // Get destination pointer and its size
+    let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
+    let dest_ty = ctx.get_local_type(destination.local);
+
+    // Get element size from destination type
+    let elem_size: u64 = match ctx.get_local_hir_type(destination.local) {
+        Option.Some(ty_id) => {
+            codegen_size.type_size_with_ctx_id(ctx, ty_id)
+        }
+        Option.None => 8,
+    };
+
+    // Encode payload alignment in upper 32 bits.
+    // Option enum layout is { i32, [N x i64] } — payload at offset 8 (i64-aligned).
+    // The runtime's decode_size_and_offset uses: offset = max(4, align).
+    let payload_align: u64 = 8;
+    let packed_size = (payload_align << 32) | elem_size;
+
+    // Emit: call void @option_unwrap(ptr self, i64 packed_size, ptr out_ptr)
+    let elem_size_str = codegen_types.format_u64(packed_size);
+    ctx.begin_call(Option.None, "void", "@option_unwrap");
+    ctx.call_arg_str(true, "ptr", opt_ptr.as_str());
+    ctx.call_arg_str(false, "i64", elem_size_str.as_str());
+    ctx.call_arg_str(false, "ptr", dest_ptr.as_str());
+    ctx.end_call();
+
+    // Jump to continuation
+    match target {
+        &Option.Some(t) => {
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
+        }
+        &Option.None => {
+            ctx.emit_unreachable();
+        }
+    }
+}
+
+/// Emits an option_as_ref call with correct calling convention.
+/// Runtime signature: void @option_as_ref(ptr self, i64 elem_size, ptr out_ptr)
+pub fn emit_option_as_ref_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    if args.len() < 1 {
+        ctx.emit_unreachable();
+        return;
+    }
+
+    // Get option pointer - emit_operand loads the reference value,
+    // which is already a pointer to the Option struct.
+    let opt_ptr = codegen_expr.emit_operand(ctx, &args[0]);
+
+    // Get destination pointer
+    let dest_ptr = codegen_expr.emit_place_data_ptr(ctx, destination);
+
+    // Get element size from destination type (Option<&T>)
+    let elem_size: u64 = match ctx.get_local_hir_type(destination.local) {
+        Option.Some(ty_id) => extract_vec_element_size_id(ctx, ty_id),
+        Option.None => 8,
+    };
+
+    // Encode payload alignment in upper 32 bits.
+    // Option enum layout is { i32, [N x i64] } — payload at offset 8 (i64-aligned).
+    // The runtime's decode_size_and_offset uses: offset = max(4, align).
+    let payload_align: u64 = 8;
+    let packed_size = (payload_align << 32) | elem_size;
+
+    // Emit: call void @option_as_ref(ptr self, i64 packed_size, ptr out_ptr)
+    let elem_size_str = codegen_types.format_u64(packed_size);
+    ctx.begin_call(Option.None, "void", "@option_as_ref");
+    ctx.call_arg_str(true, "ptr", opt_ptr.as_str());
+    ctx.call_arg_str(false, "i64", elem_size_str.as_str());
+    ctx.call_arg_str(false, "ptr", dest_ptr.as_str());
+    ctx.end_call();
+
+    // Jump to continuation
+    match target {
+        &Option.Some(t) => {
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
+        }
+        &Option.None => {
+            ctx.emit_unreachable();
+        }
+    }
+}
