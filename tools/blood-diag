@@ -1,0 +1,47 @@
+#!/bin/bash
+# Blood diagnostic tool dispatcher
+# Usage: blood-diag <command> [args]
+set -euo pipefail
+
+DIR="$(cd "$(dirname "$0")/.." && pwd)"
+TOOLS="$DIR/tools"
+BUILD="$DIR/src/selfhost"
+
+case "${1:-help}" in
+    ir-diff)    shift; exec "$TOOLS/difftest.sh" "$@" ;;
+    minimize)   shift; exec "$TOOLS/minimize.sh" "$@" ;;
+    parity)     shift; exec "$TOOLS/parse-parity.sh" "$@" ;;
+    memprofile) shift; exec "$TOOLS/memprofile.sh" "$@" ;;
+    phase)      shift; exec "$TOOLS/phase-compare.sh" "$@" ;;
+    filecheck)  shift; exec "$TOOLS/filecheck-audit.sh" "$@" ;;
+    validate)   shift; exec "$TOOLS/validate-all-mir.sh" "$@" ;;
+    regression) shift; exec "$TOOLS/track-regression.sh" "$@" ;;
+    asan)       shift; exec "$BUILD/build_selfhost.sh" asan "$@" ;;
+    bisect)     shift; exec "$BUILD/build_selfhost.sh" bisect "$@" ;;
+    debug-test) shift; exec "$BUILD/build_selfhost.sh" debug-test "$@" ;;
+    metrics)    shift; exec "$BUILD/build_selfhost.sh" metrics "$@" ;;
+    help|--help|-h)
+        cat <<'EOF'
+blood-diag — Blood compiler diagnostic toolkit
+
+Commands:
+  ir-diff FILE      Compare blood-rust vs first_gen LLVM IR
+  minimize FILE     Reduce failing test to minimal reproduction
+  parity            Detect accept/reject drift between compilers
+  memprofile        Profile memory usage with per-phase breakdown
+  phase FILE        Identify which compilation phase first diverges
+  filecheck         Audit FileCheck test coverage and gaps
+  validate          Pre-codegen MIR validation gate
+  regression        Detect golden test regressions vs baseline
+  asan              Build ASan-instrumented binary
+  bisect            Binary search for miscompiled function
+  debug-test FILE   Compile test with all diagnostics, preserve artifacts
+  metrics           Show build size/time trends
+EOF
+        ;;
+    *)
+        echo "Unknown command: $1" >&2
+        echo "Run 'blood-diag help' for usage." >&2
+        exit 1
+        ;;
+esac
