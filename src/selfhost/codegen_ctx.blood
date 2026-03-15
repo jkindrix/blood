@@ -3,6 +3,7 @@
 // This module defines the context used during MIR to LLVM IR codegen.
 // It manages register allocation, local variable tracking, and IR emission.
 
+mod ast;
 mod common;
 mod hir_def;
 mod hir_ty;
@@ -356,6 +357,10 @@ pub struct CodegenCtx {
     /// Collected during basic block codegen (e.g., PushHandler shadow allocas),
     /// emitted at the end of the entry block before the branch to BB0.
     pub deferred_entry_allocas: Vec<String>,
+    /// Active unchecked checks. Indexed by UncheckedCheck ordinal:
+    /// 0=Bounds, 1=Overflow, 2=Generation, 3=Null, 4=Alignment.
+    /// True means the check is currently suppressed.
+    pub unchecked_active: Vec<bool>,
 }
 
 /// Entry mapping a handler DefId to its effect DefId.
@@ -552,6 +557,7 @@ impl CodegenCtx {
             abort_label_stack: Vec.new(),
             handler_abort_hash: hashmap.HashMapU64U32.new(),
             deferred_entry_allocas: Vec.new(),
+            unchecked_active: vec_bool_5_false(),
         }
     }
 
@@ -634,6 +640,7 @@ impl CodegenCtx {
             abort_label_stack: Vec.new(),
             handler_abort_hash: hashmap.HashMapU64U32.new(),
             deferred_entry_allocas: Vec.new(),
+            unchecked_active: vec_bool_5_false(),
         }
     }
 
@@ -1029,6 +1036,28 @@ impl CodegenCtx {
     /// Removes a handler's abort label state.
     pub fn pop_abort_labels(self: &mut CodegenCtx, handler_def_id: u32) {
         self.handler_abort_hash.remove(handler_def_id as u64);
+    }
+
+    /// Enter an unchecked block — suppress the specified checks.
+    pub fn enter_unchecked(self: &mut CodegenCtx, checks: &Vec<ast.UncheckedCheck>) {
+        for i in 0usize..checks.len() {
+            let idx = unchecked_check_index(&checks[i]);
+            self.unchecked_active[idx] = true;
+        }
+    }
+
+    /// Exit an unchecked block — re-enable the specified checks.
+    pub fn exit_unchecked(self: &mut CodegenCtx, checks: &Vec<ast.UncheckedCheck>) {
+        for i in 0usize..checks.len() {
+            let idx = unchecked_check_index(&checks[i]);
+            self.unchecked_active[idx] = false;
+        }
+    }
+
+    /// Returns true if the specified check is currently suppressed.
+    pub fn is_check_suppressed(self: &CodegenCtx, check: &ast.UncheckedCheck) -> bool {
+        let idx = unchecked_check_index(check);
+        self.unchecked_active[idx]
     }
 
     /// Registers handler DefId → state field count mapping.
@@ -2647,6 +2676,7 @@ impl CodegenCtx {
             abort_label_stack: Vec.new(),
             handler_abort_hash: hashmap.HashMapU64U32.new(),
             deferred_entry_allocas: Vec.new(),
+            unchecked_active: vec_bool_5_false(),
         };
 
         // Copy handler_op_body_ids with state counts (read-only, needed to flag handler op bodies)
@@ -2882,6 +2912,26 @@ pub fn error_kind_code(kind: &CodegenErrorKind) -> &str {
 }
 
 /// Clones a String.
+fn vec_bool_5_false() -> Vec<bool> {
+    let mut v: Vec<bool> = Vec.with_capacity(5);
+    v.push(false);
+    v.push(false);
+    v.push(false);
+    v.push(false);
+    v.push(false);
+    v
+}
+
+fn unchecked_check_index(check: &ast.UncheckedCheck) -> usize {
+    match check {
+        &ast.UncheckedCheck.Bounds => 0,
+        &ast.UncheckedCheck.Overflow => 1,
+        &ast.UncheckedCheck.Generation => 2,
+        &ast.UncheckedCheck.Null => 3,
+        &ast.UncheckedCheck.Alignment => 4,
+    }
+}
+
 fn clone_string(s: &String) -> String {
     let mut result = String.new();
     result.push_str(s.as_str());

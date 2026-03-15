@@ -2,6 +2,7 @@
 //
 // This module handles generating LLVM IR for MIR operands and rvalues.
 
+mod ast;
 mod common;
 mod hir_def;
 mod hir_ty;
@@ -1078,6 +1079,8 @@ pub fn emit_place_addr(
                     ctx.emit_label_cg(&ok_label);
 
                     // Bounds check: load Vec length (field 1), compare index >= length
+                    // Skipped inside unchecked(bounds) { } blocks.
+                    if !ctx.is_check_suppressed(&ast.UncheckedCheck.Bounds) {
                     let len_ptr = ctx.fresh_temp_cg();
                     let mut len_indices: Vec<String> = Vec.new();
                     len_indices.push(common.make_string("0"));
@@ -1111,6 +1114,7 @@ pub fn emit_place_addr(
                     ctx.end_call();
                     ctx.emit_unreachable();
                     ctx.emit_label_cg(&oob_ok_label);
+                    }
 
                     current = data_ptr;
                 }
@@ -1337,6 +1341,11 @@ fn emit_generation_check(
     local: mir_def.MirLocalId,
     ptr_name: &codegen_ctx.CgName,
 ) {
+    // Skip if generation checks are suppressed by unchecked(generation) { }
+    if ctx.is_check_suppressed(&ast.UncheckedCheck.Generation) {
+        return;
+    }
+
     // Header-field gen ref check: read generation from [ptr - 8].
     // The generation was written by blood_alloc_or_abort into the 8-byte
     // header preceding the user data. On region destroy or dealloc, the
@@ -2519,7 +2528,11 @@ fn emit_binop(
 
 /// Emits a division-by-zero check before a div/rem instruction.
 /// Branches to a panic block if the divisor is zero.
+/// Skipped inside unchecked(overflow) { } blocks.
 fn emit_div_zero_check(ctx: &mut codegen_ctx.CodegenCtx, llvm_ty: &str, divisor: &str) {
+    if ctx.is_check_suppressed(&ast.UncheckedCheck.Overflow) {
+        return;
+    }
     let is_zero = ctx.fresh_temp_cg();
     ctx.emit_icmp_cg(&is_zero, "eq", llvm_ty, divisor, "0");
 

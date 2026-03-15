@@ -208,11 +208,11 @@ pub fn emit_statement(
         &mir_stmt.StatementKind.ValidateGeneration { ptr: _, expected_gen: _ } => {
             // Gen ref codegen — not yet implemented (blocked on DD-1)
         }
-        &mir_stmt.StatementKind.EnterUnchecked(_) => {
-            // Unchecked block entry — codegen for check disabling not yet implemented
+        &mir_stmt.StatementKind.EnterUnchecked(ref checks) => {
+            ctx.enter_unchecked(checks);
         }
-        &mir_stmt.StatementKind.ExitUnchecked(_) => {
-            // Unchecked block exit — codegen for check re-enabling not yet implemented
+        &mir_stmt.StatementKind.ExitUnchecked(ref checks) => {
+            ctx.exit_unchecked(checks);
         }
         &mir_stmt.StatementKind.Nop => {
             // No operation - do nothing
