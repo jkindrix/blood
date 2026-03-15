@@ -2057,7 +2057,24 @@ impl Drop for Region {
     fn drop(&mut self) {
         if !self.base.is_null() {
             unsafe {
-                libc::munmap(self.base as *mut libc::c_void, self.reserved);
+                // Release physical pages via madvise(MADV_DONTNEED) but keep the
+                // virtual mapping. This is critical for generational reference safety:
+                // after region destroy, stale references may read [ptr-8] to check
+                // the generation. With munmap, this would segfault. With MADV_DONTNEED,
+                // reads return zeros — generation 0, which never matches any valid
+                // allocation (generations start at 1), producing a clean "stale
+                // reference" detection instead of a crash.
+                //
+                // Trade-off: virtual address space is consumed but physical memory is
+                // freed. For a compiler workload with few regions, this is acceptable.
+                // Production use may need a deferred munmap with grace period.
+                libc::madvise(
+                    self.base as *mut libc::c_void,
+                    self.reserved,
+                    libc::MADV_DONTNEED,
+                );
+                // DO NOT munmap — stale references must be able to read [ptr-8]
+                // and get zeros (generation 0) instead of segfaulting.
             }
         }
     }
