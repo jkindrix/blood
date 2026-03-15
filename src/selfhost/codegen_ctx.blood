@@ -1112,10 +1112,11 @@ impl CodegenCtx {
     /// compile unit, file, subroutine type, and empty tuple.
     pub fn init_debug_info(self: &mut CodegenCtx, source_file: &str) {
         self.debug_source_file = common.make_string(source_file);
-        // Reserve IDs 0-5 for fixed metadata nodes
+        // Reserve IDs 0-6 for fixed metadata nodes
         // !0 = DICompileUnit, !1 = DIFile, !2 = DISubroutineType, !3 = !{}
         // !4 = module flag (Dwarf Version), !5 = module flag (Debug Info Version)
-        self.debug_metadata_counter = 6;
+        // !6 = DIBasicType for variables (generic i64)
+        self.debug_metadata_counter = 7;
     }
 
     /// Emit all accumulated debug metadata as a string (for appending to module IR).
@@ -1141,6 +1142,8 @@ impl CodegenCtx {
         // !4, !5 = module flags
         out.push_str("!4 = !{i32 7, !\"Dwarf Version\", i32 4}\n");
         out.push_str("!5 = !{i32 2, !\"Debug Info Version\", i32 3}\n");
+        // !6 = generic type for variable debug info
+        out.push_str("!6 = !DIBasicType(name: \"i64\", size: 64, encoding: DW_ATE_signed)\n");
         out.push_str("\n");
         // Emit all DISubprogram nodes
         for i in 0usize..self.debug_metadata.len() {
@@ -1212,7 +1215,7 @@ impl CodegenCtx {
         md.push_str(codegen_types.format_u64(self.debug_subprogram_id as u64).as_str());
         md.push_str(", file: !1, line: ");
         md.push_str(codegen_types.format_u64(line as u64).as_str());
-        md.push_str(")\n");
+        md.push_str(", type: !6)\n");
         self.debug_metadata.push(md);
         if had_temp { region_activate(self.fn_temp_region); }
         // Emit llvm.dbg.declare intrinsic call
