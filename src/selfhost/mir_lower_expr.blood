@@ -2687,6 +2687,10 @@ fn lower_perform_expr(
 
     // Store the op_name symbol index in op_index.
     // Codegen resolves (effect_def_id, op_name_sym) to positional index.
+    // Default to non-tail-resumptive (safe conservative assumption).
+    // Creating an unnecessary continuation for TR handlers is harmless;
+    // skipping it for an NTR handler breaks post-resume code execution.
+    let is_tail_resumptive = false;
     let next_block = ctx.new_block();
     ctx.builder.terminate(mir_term.effect_perform(
         effect_def,
@@ -2694,6 +2698,7 @@ fn lower_perform_expr(
         arg_operands,
         dest_place,
         next_block,
+        is_tail_resumptive,
         span,
     ));
     ctx.set_current_block(next_block);
