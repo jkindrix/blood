@@ -361,6 +361,14 @@ pub struct CodegenCtx {
     /// 0=Bounds, 1=Overflow, 2=Generation, 3=Null, 4=Alignment.
     /// True means the check is currently suppressed.
     pub unchecked_active: Vec<bool>,
+    /// Current function's DISubprogram metadata ID (0 = none).
+    pub debug_subprogram_id: u32,
+    /// Counter for assigning unique metadata node IDs (!0, !1, ...).
+    pub debug_metadata_counter: u32,
+    /// Accumulated debug metadata nodes to emit at end of module.
+    pub debug_metadata: Vec<String>,
+    /// Source filename for debug info.
+    pub debug_source_file: String,
 }
 
 /// Entry mapping a handler DefId to its effect DefId.
@@ -558,6 +566,10 @@ impl CodegenCtx {
             handler_abort_hash: hashmap.HashMapU64U32.new(),
             deferred_entry_allocas: Vec.new(),
             unchecked_active: vec_bool_5_false(),
+            debug_subprogram_id: 0,
+            debug_metadata_counter: 0,
+            debug_metadata: Vec.new(),
+            debug_source_file: String.new(),
         }
     }
 
@@ -641,6 +653,10 @@ impl CodegenCtx {
             handler_abort_hash: hashmap.HashMapU64U32.new(),
             deferred_entry_allocas: Vec.new(),
             unchecked_active: vec_bool_5_false(),
+            debug_subprogram_id: 0,
+            debug_metadata_counter: 0,
+            debug_metadata: Vec.new(),
+            debug_source_file: String.new(),
         }
     }
 
@@ -1036,6 +1052,78 @@ impl CodegenCtx {
     /// Removes a handler's abort label state.
     pub fn pop_abort_labels(self: &mut CodegenCtx, handler_def_id: u32) {
         self.handler_abort_hash.remove(handler_def_id as u64);
+    }
+
+    /// Set up debug info for a function. Call before emit_fn_header.
+    /// Records the DISubprogram and sets debug_subprogram_id so emit_fn_header
+    /// attaches !dbg to the define line.
+    pub fn setup_debug_function(self: &mut CodegenCtx, fn_name: &str, source_line: u32) {
+        if self.debug_source_file.len() == 0 {
+            self.debug_subprogram_id = 0;
+            return;
+        }
+        let id = self.debug_metadata_counter;
+        self.debug_metadata_counter = id + 1;
+        self.debug_subprogram_id = id;
+        // Emit: !N = distinct !DISubprogram(name: "fn_name", scope: !1, file: !1,
+        //        line: L, type: !2, scopeLine: L, spFlags: DISPFlagDefinition,
+        //        unit: !0, retainedNodes: !3)
+        // Allocate metadata string outside fn_temp_region so it survives reset.
+        let had_temp = self.fn_temp_region != 0;
+        if had_temp { region_deactivate(); }
+        let mut md = common.make_string("!");
+        md.push_str(codegen_types.format_u64(id as u64).as_str());
+        md.push_str(" = distinct !DISubprogram(name: \"");
+        md.push_str(fn_name);
+        md.push_str("\", scope: !1, file: !1, line: ");
+        md.push_str(codegen_types.format_u64(source_line as u64).as_str());
+        md.push_str(", type: !2, scopeLine: ");
+        md.push_str(codegen_types.format_u64(source_line as u64).as_str());
+        md.push_str(", spFlags: DISPFlagDefinition, unit: !0, retainedNodes: !3)\n");
+        self.debug_metadata.push(md);
+        if had_temp { region_activate(self.fn_temp_region); }
+    }
+
+    /// Initialize debug info for the module. Must be called once before any
+    /// setup_debug_function calls. Reserves metadata IDs 0-3 for the fixed
+    /// compile unit, file, subroutine type, and empty tuple.
+    pub fn init_debug_info(self: &mut CodegenCtx, source_file: &str) {
+        self.debug_source_file = common.make_string(source_file);
+        // Reserve IDs 0-5 for fixed metadata nodes
+        // !0 = DICompileUnit, !1 = DIFile, !2 = DISubroutineType, !3 = !{}
+        // !4 = module flag (Dwarf Version), !5 = module flag (Debug Info Version)
+        self.debug_metadata_counter = 6;
+    }
+
+    /// Emit all accumulated debug metadata as a string (for appending to module IR).
+    pub fn emit_debug_metadata(self: &CodegenCtx) -> String {
+        if self.debug_source_file.len() == 0 {
+            return String.new();
+        }
+        let mut out = String.new();
+        out.push_str("\n; Debug metadata\n");
+        out.push_str("!llvm.dbg.cu = !{!0}\n");
+        out.push_str("!llvm.module.flags = !{!4, !5}\n");
+        out.push_str("\n");
+        // !0 = DICompileUnit
+        out.push_str("!0 = distinct !DICompileUnit(language: DW_LANG_C99, file: !1, producer: \"bloodc\", isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug, enums: !3)\n");
+        // !1 = DIFile
+        out.push_str("!1 = !DIFile(filename: \"");
+        out.push_str(self.debug_source_file.as_str());
+        out.push_str("\", directory: \".\")\n");
+        // !2 = DISubroutineType
+        out.push_str("!2 = !DISubroutineType(types: !3)\n");
+        // !3 = empty tuple
+        out.push_str("!3 = !{}\n");
+        // !4, !5 = module flags
+        out.push_str("!4 = !{i32 7, !\"Dwarf Version\", i32 4}\n");
+        out.push_str("!5 = !{i32 2, !\"Debug Info Version\", i32 3}\n");
+        out.push_str("\n");
+        // Emit all DISubprogram nodes
+        for i in 0usize..self.debug_metadata.len() {
+            out.push_str(self.debug_metadata[i].as_str());
+        }
+        out
     }
 
     /// Enter an unchecked block — suppress the specified checks.
@@ -1990,7 +2078,13 @@ impl CodegenCtx {
             self.write_string(&param.1);
         }
 
-        self.write(") {\n");
+        self.write(")");
+        // Attach debug metadata if available
+        if self.debug_subprogram_id > 0 {
+            self.write(" !dbg !");
+            self.write(codegen_types.format_u64(self.debug_subprogram_id as u64).as_str());
+        }
+        self.write(" {\n");
     }
 
     /// Emits a function definition footer.
@@ -2677,6 +2771,10 @@ impl CodegenCtx {
             handler_abort_hash: hashmap.HashMapU64U32.new(),
             deferred_entry_allocas: Vec.new(),
             unchecked_active: vec_bool_5_false(),
+            debug_subprogram_id: 0,
+            debug_metadata_counter: 0,
+            debug_metadata: Vec.new(),
+            debug_source_file: String.new(),
         };
 
         // Copy handler_op_body_ids with state counts (read-only, needed to flag handler op bodies)

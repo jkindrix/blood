@@ -4867,6 +4867,12 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     let foreign_decls = generate_foreign_declarations(&lower_result.interner, &lower_result.items);
     ctx.buffer_write(foreign_decls.as_str());
 
+    // Emit DWARF debug metadata at end of module
+    let debug_md = ctx.emit_debug_metadata();
+    if debug_md.len() > 0 {
+        ctx.buffer_write(debug_md.as_str());
+    }
+
     // Final flush: write any remaining buffered IR to disk
     ctx.flush_write_buffer();
     let codegen_elapsed = blood_clock_millis() - codegen_start;

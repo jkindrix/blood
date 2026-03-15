@@ -38,6 +38,11 @@ pub fn begin_streaming_module(
 ) -> codegen_ctx.CodegenCtx {
     let mut ctx = codegen_ctx.CodegenCtx.new();
 
+    // Initialize DWARF debug info for source-level backtraces
+    let mut source_file = common.make_string(module_name);
+    source_file.push_str(".blood");
+    ctx.init_debug_info(source_file.as_str());
+
     // NOTE: ADT registry population is done by the caller after registering
     // builtin ADTs (Vec, String, HashMap, Box). This ensures builtins are
     // available during populate_adt_registry so Box<T> resolves to "ptr"
