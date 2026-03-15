@@ -38,11 +38,11 @@ pub fn emit_statement(
         &mir_stmt.StatementKind.Assign { ref place, ref rvalue } => {
             let dest = codegen_expr.emit_place_data_ptr(ctx, place);
             codegen_expr.emit_rvalue(ctx, dest.as_str(), rvalue);
-            // Gen ref propagation disabled: propagating generation from source
-            // to dest on Rvalue.Ref caused false positives when the dest local
-            // was later reassigned to a stack pointer. The gen check read [ptr-8]
-            // from a stack pointer (no header), producing garbage.
-            // TODO: Track "has header" per pointer value, not per local.
+            // Gen ref propagation: when _dest = &source where source is
+            // region/persistent-allocated, propagate generation to dest.
+            // Only for simple locals (no projections) — projections may
+            // produce pointers into sub-fields that aren't separately tracked.
+            propagate_ref_generation(ctx, place, rvalue);
         }
         &mir_stmt.StatementKind.StorageLive(ref local) => {
             // In LLVM IR, storage is typically handled by alloca placement
@@ -1589,8 +1589,9 @@ pub fn emit_allocas_with_escapes(
     ctx.dedent();
 }
 
-/// Checks if an assignment is `dest = &source` where source is region-allocated,
-/// and if so, propagates the source's generation to the dest local.
+/// Checks if an assignment is `dest = &source` where source is heap-allocated
+/// (has a generation header), and if so, propagates the source's generation
+/// to the dest local so that dereferences through dest can be gen-checked.
 fn propagate_ref_generation(
     ctx: &mut codegen_ctx.CodegenCtx,
     dest_place: &mir_types.Place,
@@ -1601,7 +1602,13 @@ fn propagate_ref_generation(
     }
     match rvalue {
         &mir_types.Rvalue.Ref { ref place, mutable: _ } => {
-            propagate_generation(ctx, place.local, dest_place.local);
+            // Only propagate if source is heap-allocated (has generation header).
+            // Stack locals don't have headers — reading [ptr-8] would be UB.
+            if place.projection.len() == 0 {
+                if ctx.is_region_allocated(place.local) || ctx.is_persistent_allocated(place.local) {
+                    propagate_generation(ctx, place.local, dest_place.local);
+                }
+            }
         }
         _ => {}
     }

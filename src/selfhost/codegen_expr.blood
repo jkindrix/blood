@@ -1359,16 +1359,17 @@ fn emit_generation_check(
         };
         ctx.emit_load_cg(&expected_gen, "i32", gen_alloca.as_str());
     } else {
-        // No local gen — skip check. Header-field read from [ptr-8] for
-        // cross-function refs requires knowing if the pointer came from
-        // blood_alloc_or_abort (has header) vs stack alloca (no header).
-        // Without that knowledge, reading [ptr-8] from a stack pointer is UB.
-        // TODO: Track "has generation header" per reference type.
+        // No local gen tracking — can't validate without captured expected gen.
+        // Cross-function gen ref enforcement needs the caller to capture the
+        // generation at reference creation time, which requires either:
+        // 1. Fat pointers (carrying gen alongside ptr) — rejected by DD-1
+        // 2. Callee-side gen propagation via return value annotation
+        // 3. Whole-program escape analysis
+        // For now, only same-allocation-scope checks are enforced.
         return;
     }
 
     // Read current generation from header at [ptr - 8]
-    let ptr_str = cgname_to_string(ptr_name);
     let header_ptr = ctx.fresh_temp_cg();
     let mut header_indices: Vec<String> = Vec.new();
     header_indices.push(common.make_string("-8"));
