@@ -142,8 +142,8 @@ pub fn generate_module_with_items(
 
     // Create the shared codegen context with def names
     let mut ctx = codegen_ctx.CodegenCtx.new();
-    for di in 0usize..def_names.len() {
-        ctx.register_def_name(def_names[di].def_id, clone_string(&def_names[di].name));
+    for entry in &def_names {
+        ctx.register_def_name(entry.def_id, clone_string(&entry.name));
     }
 
     // Populate ADT registry from HIR items
@@ -200,13 +200,13 @@ pub fn generate_module_with_items(
     }
 
     // Emit fn pointer wrapper functions collected during codegen
-    for wpi in 0usize..ctx.fn_ptr_wrapper_defs.len() {
-        output.push_str(ctx.fn_ptr_wrapper_defs[wpi].as_str());
+    for wrapper in &ctx.fn_ptr_wrapper_defs {
+        output.push_str(wrapper.as_str());
     }
 
     // Emit vtable global constants
-    for vti in 0usize..ctx.vtable_defs.len() {
-        output.push_str(ctx.vtable_defs[vti].as_str());
+    for vtable in &ctx.vtable_defs {
+        output.push_str(vtable.as_str());
     }
 
     // Append string constants from the context
@@ -402,8 +402,8 @@ pub fn generate_function_with_ctx(
         // Clone the vec to avoid borrow conflict with ctx.write().
         let deferred = ctx.deferred_entry_allocas;
         ctx.deferred_entry_allocas = Vec.new();
-        for dai in 0usize..deferred.len() {
-            ctx.write(deferred[dai].as_str());
+        for alloca_ir in &deferred {
+            ctx.write(alloca_ir.as_str());
         }
 
         // Branch to first basic block
