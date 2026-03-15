@@ -363,6 +363,8 @@ pub struct CodegenCtx {
     pub unchecked_active: Vec<bool>,
     /// Current function's DISubprogram metadata ID (0 = none).
     pub debug_subprogram_id: u32,
+    /// Current function's DILocation metadata ID for instructions (0 = none).
+    pub debug_location_id: u32,
     /// Counter for assigning unique metadata node IDs (!0, !1, ...).
     pub debug_metadata_counter: u32,
     /// Accumulated debug metadata nodes to emit at end of module.
@@ -567,6 +569,7 @@ impl CodegenCtx {
             deferred_entry_allocas: Vec.new(),
             unchecked_active: vec_bool_5_false(),
             debug_subprogram_id: 0,
+            debug_location_id: 0,
             debug_metadata_counter: 0,
             debug_metadata: Vec.new(),
             debug_source_file: String.new(),
@@ -654,6 +657,7 @@ impl CodegenCtx {
             deferred_entry_allocas: Vec.new(),
             unchecked_active: vec_bool_5_false(),
             debug_subprogram_id: 0,
+            debug_location_id: 0,
             debug_metadata_counter: 0,
             debug_metadata: Vec.new(),
             debug_source_file: String.new(),
@@ -1081,6 +1085,18 @@ impl CodegenCtx {
         md.push_str(codegen_types.format_u64(source_line as u64).as_str());
         md.push_str(", spFlags: DISPFlagDefinition, unit: !0, retainedNodes: !3)\n");
         self.debug_metadata.push(md);
+        // Emit a DILocation for this function's instructions
+        let loc_id = self.debug_metadata_counter;
+        self.debug_metadata_counter = loc_id + 1;
+        self.debug_location_id = loc_id;
+        let mut loc = common.make_string("!");
+        loc.push_str(codegen_types.format_u64(loc_id as u64).as_str());
+        loc.push_str(" = !DILocation(line: ");
+        loc.push_str(codegen_types.format_u64(source_line as u64).as_str());
+        loc.push_str(", column: 1, scope: !");
+        loc.push_str(codegen_types.format_u64(id as u64).as_str());
+        loc.push_str(")\n");
+        self.debug_metadata.push(loc);
         if had_temp { region_activate(self.fn_temp_region); }
     }
 
@@ -1124,6 +1140,22 @@ impl CodegenCtx {
             out.push_str(self.debug_metadata[i].as_str());
         }
         out
+    }
+
+    /// Emit the debug location suffix for the current instruction.
+    /// Appends `, !dbg !N` where N is a DILocation referencing the current
+    /// function's DISubprogram. Call at the end of every LLVM instruction.
+    pub fn emit_dbg(self: &mut CodegenCtx) {
+        if self.debug_location_id > 0 {
+            self.write(", !dbg !");
+            self.write(codegen_types.format_u64(self.debug_location_id as u64).as_str());
+        }
+    }
+
+    /// Write a newline terminating an LLVM instruction, with optional !dbg suffix.
+    pub fn end_insn(self: &mut CodegenCtx) {
+        self.emit_dbg();
+        self.write("\n");
     }
 
     /// Enter an unchecked block — suppress the specified checks.
@@ -2101,7 +2133,8 @@ impl CodegenCtx {
         self.write(val);
         self.write(", ptr ");
         self.write(ptr);
-        self.write(", align 8\n");
+        self.write(", align 8");
+        self.end_insn();
     }
 
     /// Emits a getelementptr instruction.
@@ -2152,7 +2185,7 @@ impl CodegenCtx {
             }
             Option.None => {}
         }
-        self.write("\n");
+        self.end_insn();
     }
 
     /// Emits a label.
@@ -2164,7 +2197,8 @@ impl CodegenCtx {
     /// Emits an unreachable instruction.
     pub fn emit_unreachable(self: &mut CodegenCtx) {
         self.write_indent();
-        self.write("unreachable\n");
+        self.write("unreachable");
+        self.end_insn();
     }
 
     // ======== CgName-Based Emit Methods (Zero Allocation) ========
@@ -2175,7 +2209,7 @@ impl CodegenCtx {
         self.write_cgname(result);
         self.write(" = alloca ");
         self.write(ty);
-        self.write("\n");
+        self.end_insn();
     }
 
     /// Defers an alloca instruction to be emitted in the entry block.
@@ -2206,7 +2240,8 @@ impl CodegenCtx {
         self.write(ty);
         self.write(", ptr ");
         self.write(ptr);
-        self.write(", align 8\n");
+        self.write(", align 8");
+        self.end_insn();
     }
 
     /// Emits a load instruction using CgName for both result and ptr.
@@ -2217,7 +2252,8 @@ impl CodegenCtx {
         self.write(ty);
         self.write(", ptr ");
         self.write_cgname(ptr);
-        self.write(", align 8\n");
+        self.write(", align 8");
+        self.end_insn();
     }
 
     /// Emits a store instruction using CgName for val.
@@ -2243,7 +2279,8 @@ impl CodegenCtx {
         self.write_cgname(val);
         self.write(", ptr ");
         self.write_cgname(ptr);
-        self.write(", align 8\n");
+        self.write(", align 8");
+        self.end_insn();
     }
 
     /// Emits a store with &str val and CgName ptr.
@@ -2255,7 +2292,8 @@ impl CodegenCtx {
         self.write(val);
         self.write(", ptr ");
         self.write_cgname(ptr);
-        self.write(", align 8\n");
+        self.write(", align 8");
+        self.end_insn();
     }
 
     /// Emits a binary operation using CgName for result.
@@ -2277,7 +2315,7 @@ impl CodegenCtx {
         self.write(left);
         self.write(", ");
         self.write(right);
-        self.write("\n");
+        self.end_insn();
     }
 
     /// Emits a binary operation using CgName for result and both operands.
@@ -2299,7 +2337,7 @@ impl CodegenCtx {
         self.write_cgname(left);
         self.write(", ");
         self.write_cgname(right);
-        self.write("\n");
+        self.end_insn();
     }
 
     /// Emits an icmp instruction using CgName for result.
@@ -2321,7 +2359,7 @@ impl CodegenCtx {
         self.write(left);
         self.write(", ");
         self.write(right);
-        self.write("\n");
+        self.end_insn();
     }
 
     /// Emits an icmp instruction using CgName for result and left operand.
@@ -2343,7 +2381,7 @@ impl CodegenCtx {
         self.write_cgname(left);
         self.write(", ");
         self.write(right);
-        self.write("\n");
+        self.end_insn();
     }
 
     /// Emits an fcmp instruction using CgName for result.
@@ -2365,7 +2403,7 @@ impl CodegenCtx {
         self.write(left);
         self.write(", ");
         self.write(right);
-        self.write("\n");
+        self.end_insn();
     }
 
     /// Emits a cast instruction using CgName for result.
@@ -2387,7 +2425,7 @@ impl CodegenCtx {
         self.write(val);
         self.write(" to ");
         self.write(tgt_ty);
-        self.write("\n");
+        self.end_insn();
     }
 
     /// Emits a cast with CgName result and CgName val.
@@ -2409,7 +2447,7 @@ impl CodegenCtx {
         self.write_cgname(val);
         self.write(" to ");
         self.write(tgt_ty);
-        self.write("\n");
+        self.end_insn();
     }
 
     /// Emits a br instruction using CgName for label.
@@ -2417,7 +2455,7 @@ impl CodegenCtx {
         self.write_indent();
         self.write("br label %");
         self.write_cgname(label);
-        self.write("\n");
+        self.end_insn();
     }
 
     /// Emits a conditional br using CgName for condition and labels.
@@ -2434,7 +2472,7 @@ impl CodegenCtx {
         self.write_cgname(true_label);
         self.write(", label %");
         self.write_cgname(false_label);
-        self.write("\n");
+        self.end_insn();
     }
 
     /// Emits a conditional br with &str cond and CgName labels.
@@ -2451,7 +2489,7 @@ impl CodegenCtx {
         self.write_cgname(true_label);
         self.write(", label %");
         self.write_cgname(false_label);
-        self.write("\n");
+        self.end_insn();
     }
 
     /// Emits a ret instruction using CgName for val.
@@ -2461,7 +2499,7 @@ impl CodegenCtx {
         self.write(ty);
         self.write(" ");
         self.write_cgname(val);
-        self.write("\n");
+        self.end_insn();
     }
 
     /// Emits a label using CgName.
@@ -2524,7 +2562,8 @@ impl CodegenCtx {
 
     /// Ends a call instruction.
     pub fn end_call(self: &mut CodegenCtx) {
-        self.write(")\n");
+        self.write(")");
+        self.end_insn();
     }
 
     /// Begins a GEP instruction with CgName result and ptr.
@@ -2575,7 +2614,7 @@ impl CodegenCtx {
 
     /// Ends a GEP instruction.
     pub fn end_gep(self: &mut CodegenCtx) {
-        self.write("\n");
+        self.end_insn();
     }
 
     /// Begins a switch instruction with CgName val and default label.
@@ -2772,6 +2811,7 @@ impl CodegenCtx {
             deferred_entry_allocas: Vec.new(),
             unchecked_active: vec_bool_5_false(),
             debug_subprogram_id: 0,
+            debug_location_id: 0,
             debug_metadata_counter: 0,
             debug_metadata: Vec.new(),
             debug_source_file: String.new(),
