@@ -1874,6 +1874,22 @@ fn make_def_name(def_id: u32, name: &String) -> String {
     result
 }
 
+/// Generates a function name for impl methods: def{id}_{TypeName}_{method_name}
+/// This makes backtraces show `def1351_MirBody_get_local` instead of `def1351_get_local`.
+fn make_impl_def_name(def_id: u32, type_name: &String, method_name: &String) -> String {
+    let mut result = String.new();
+    result.push_str("def");
+    push_usize(&mut result, def_id as usize);
+    result.push(95 as char); // '_'
+    if type_name.len() > 0 {
+        result.push_str(type_name.as_str());
+        result.push(95 as char); // '_'
+    }
+    result.push_str(method_name.as_str());
+    result
+}
+
+
 /// Generates minimal stub declarations for functions that are referenced but not defined.
 /// This handles enum variant constructors that are used as discriminant values in match.
 /// Buffers output via ctx.buffer_write for batched file I/O.
@@ -1984,11 +2000,13 @@ fn register_all_item_names(
                 }
             }
             &hir_item.ItemKind.Impl(ref impl_def) => {
+                // Resolve the impl's type name for richer function names in backtraces
+                let impl_ty_name = resolve_symbol(intern, entry.item.name.symbol);
                 for ai in 0usize..impl_def.items.len() {
                     match &impl_def.items[ai] {
                         &hir_item.AssocItem.Fn(ref assoc_fn) => {
                             let name = resolve_symbol(intern, assoc_fn.name.symbol);
-                            let mangled = make_def_name(assoc_fn.def_id.index, &name);
+                            let mangled = make_impl_def_name(assoc_fn.def_id.index, &impl_ty_name, &name);
                             ctx.register_def_name(assoc_fn.def_id.index, mangled);
                         }
                         &hir_item.AssocItem.Type(ref _at) => {}
@@ -1997,11 +2015,12 @@ fn register_all_item_names(
                 }
             }
             &hir_item.ItemKind.Trait(ref trait_def) => {
+                let trait_name = resolve_symbol(intern, entry.item.name.symbol);
                 for ti in 0usize..trait_def.items.len() {
                     match &trait_def.items[ti] {
                         &hir_item.AssocItem.Fn(ref assoc_fn) => {
                             let name = resolve_symbol(intern, assoc_fn.name.symbol);
-                            let mangled = make_def_name(assoc_fn.def_id.index, &name);
+                            let mangled = make_impl_def_name(assoc_fn.def_id.index, &trait_name, &name);
                             ctx.register_def_name(assoc_fn.def_id.index, mangled);
                         }
                         &hir_item.AssocItem.Type(ref _at) => {}
