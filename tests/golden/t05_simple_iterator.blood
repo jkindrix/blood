@@ -1,0 +1,37 @@
+// Test: Manual iterator pattern — struct with next() method returning Option.
+// Tests the building blocks needed for Iterator trait support.
+// EXPECT: 1_2_3_done
+
+fn main() -> i32 {
+    let mut iter = RangeIter { current: 1, end_val: 4 };
+    loop {
+        match iter.next() {
+            Option.Some(val) => {
+                print_int(val);
+                print("_");
+            }
+            Option.None => {
+                println("done");
+                break;
+            }
+        }
+    }
+    0
+}
+
+struct RangeIter {
+    current: i32,
+    end_val: i32,
+}
+
+impl RangeIter {
+    fn next(self: &mut RangeIter) -> Option<i32> {
+        if self.current < self.end_val {
+            let val = self.current;
+            self.current = self.current + 1;
+            Option.Some(val)
+        } else {
+            Option.None
+        }
+    }
+}
