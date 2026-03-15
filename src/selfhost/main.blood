@@ -47,6 +47,7 @@ mod mir_init;
 mod codegen_size;
 mod type_intern;
 mod macro_expand;
+mod main_helpers;
 
 // ============================================================
 // Command Line Arguments
@@ -309,7 +310,7 @@ fn run_check(args: &Args) -> i32 {
             eprint_str(" done\n");
 
             let exit_code = if result.success {
-                print_success("Check passed");
+                main_helpers.print_success("Check passed");
                 if args.timings {
                     print_str("\nTimings:\n");
                     print_str("  Check total          ");
@@ -337,7 +338,7 @@ fn run_check(args: &Args) -> i32 {
             exit_code
         }
         &Option.None => {
-            print_error("No source file specified");
+            main_helpers.print_error("No source file specified");
             1
         }
     }
@@ -447,7 +448,7 @@ fn find_runtime_paths() -> Option<RuntimePaths> {
     }
 
     // Print helpful error
-    print_error("Could not find Blood runtime libraries for linking.");
+    main_helpers.print_error("Could not find Blood runtime libraries for linking.");
     if !c_ok {
         print_str("  missing: runtime.o (C runtime stub)\n");
     }
@@ -486,15 +487,15 @@ fn run_build(args: &Args) -> i32 {
             // Resolve build directory and create profile subdirectory
             let build_dir = resolve_build_dir(args);
             let profile_dir = source.join_path(build_dir.as_str(), profile_subdir(args));
-            ensure_dir(profile_dir.as_str());
+            main_helpers.ensure_dir(profile_dir.as_str());
 
-            let stem = file_stem(path);
+            let stem = main_helpers.file_stem(path);
 
             // Determine output path for LLVM IR
             let ll_path = match &args.output_file {
-                &Option.Some(ref out) => clone_string(out),
+                &Option.Some(ref out) => main_helpers.clone_string(out),
                 &Option.None => {
-                    let mut p = clone_string(&profile_dir);
+                    let mut p = main_helpers.clone_string(&profile_dir);
                     p.push('/');
                     p.push_str(stem.as_str());
                     p.push_str(".ll");
@@ -507,7 +508,7 @@ fn run_build(args: &Args) -> i32 {
             if !result {
                 return 1;
             }
-            print_success("Wrote LLVM IR to: ");
+            main_helpers.print_success("Wrote LLVM IR to: ");
             print_str(ll_path.as_str());
             print_newline();
 
@@ -520,7 +521,7 @@ fn run_build(args: &Args) -> i32 {
 
             // Phase 2: Compile IR to object file with llc-18
             // Derive obj and bin paths from ll_path base (strip .ll extension)
-            let base_path = strip_ll_ext(&ll_path);
+            let base_path = main_helpers.strip_ll_ext(&ll_path);
             let mut obj_path = common.make_string(base_path.as_str());
             obj_path.push_str(".o");
             let mut llc_cmd = String.new();
@@ -541,10 +542,10 @@ fn run_build(args: &Args) -> i32 {
             let llc_result = system(llc_cmd.as_str());
             let llc_elapsed = blood_clock_millis() - llc_start;
             if llc_result != 0 {
-                print_error("llc-18 failed to compile IR to object file");
+                main_helpers.print_error("llc-18 failed to compile IR to object file");
                 return 1;
             }
-            print_success("Wrote object file to: ");
+            main_helpers.print_success("Wrote object file to: ");
             print_str(obj_path.as_str());
             print_newline();
 
@@ -578,10 +579,10 @@ fn run_build(args: &Args) -> i32 {
             let clang_result = system(clang_cmd.as_str());
             let clang_elapsed = blood_clock_millis() - clang_start;
             if clang_result != 0 {
-                print_error("clang-18 linking failed");
+                main_helpers.print_error("clang-18 linking failed");
                 return 1;
             }
-            print_success("Wrote executable to: ");
+            main_helpers.print_success("Wrote executable to: ");
             print_str(bin_path.as_str());
             print_newline();
 
@@ -595,7 +596,7 @@ fn run_build(args: &Args) -> i32 {
             0
         }
         &Option.None => {
-            print_error("No source file specified");
+            main_helpers.print_error("No source file specified");
             1
         }
     }
@@ -615,13 +616,13 @@ fn run_run(args: &Args) -> i32 {
             // Resolve build directory and create profile subdirectory
             let build_dir = resolve_build_dir(args);
             let profile_dir = source.join_path(build_dir.as_str(), profile_subdir(args));
-            ensure_dir(profile_dir.as_str());
+            main_helpers.ensure_dir(profile_dir.as_str());
 
-            let stem = file_stem(path);
+            let stem = main_helpers.file_stem(path);
 
             // Phase 1: Generate LLVM IR
             let ll_path = {
-                let mut p = clone_string(&profile_dir);
+                let mut p = main_helpers.clone_string(&profile_dir);
                 p.push('/');
                 p.push_str(stem.as_str());
                 p.push_str(".ll");
@@ -635,7 +636,7 @@ fn run_run(args: &Args) -> i32 {
             // Early return for --emit llvm-ir
             match &args.emit_mode {
                 &EmitMode.LlvmIr => {
-                    print_success("Wrote LLVM IR to: ");
+                    main_helpers.print_success("Wrote LLVM IR to: ");
                     print_str(ll_path.as_str());
                     print_newline();
                     return 0;
@@ -645,7 +646,7 @@ fn run_run(args: &Args) -> i32 {
             }
 
             // Phase 2: Compile IR to object file with llc-18
-            let base_path = strip_ll_ext(&ll_path);
+            let base_path = main_helpers.strip_ll_ext(&ll_path);
             let mut obj_path = common.make_string(base_path.as_str());
             obj_path.push_str(".o");
             let mut llc_cmd = String.new();
@@ -664,14 +665,14 @@ fn run_run(args: &Args) -> i32 {
             llc_cmd.push_str(obj_path.as_str());
             let llc_result = system(llc_cmd.as_str());
             if llc_result != 0 {
-                print_error("llc-18 failed to compile IR to object file");
+                main_helpers.print_error("llc-18 failed to compile IR to object file");
                 return 1;
             }
 
             // Early return for --emit obj
             match &args.emit_mode {
                 &EmitMode.Obj => {
-                    print_success("Wrote object file to: ");
+                    main_helpers.print_success("Wrote object file to: ");
                     print_str(obj_path.as_str());
                     print_newline();
                     return 0;
@@ -701,7 +702,7 @@ fn run_run(args: &Args) -> i32 {
             clang_cmd.push_str(bin_path.as_str());
             let clang_result = system(clang_cmd.as_str());
             if clang_result != 0 {
-                print_error("clang-18 linking failed");
+                main_helpers.print_error("clang-18 linking failed");
                 return 1;
             }
 
@@ -710,7 +711,7 @@ fn run_run(args: &Args) -> i32 {
             exit_code
         }
         &Option.None => {
-            print_error("No source file specified");
+            main_helpers.print_error("No source file specified");
             1
         }
     }
@@ -762,7 +763,7 @@ fn run_help(_args: &Args) -> i32 {
     help.push_str("    --ignored           Run only ignored tests\n");
     help.push_str("    --include-ignored   Include ignored tests in run\n");
     help.push_str("    --fail-fast         Stop on first test failure\n");
-    print_string(&help);
+    main_helpers.print_string(&help);
     0
 }
 
@@ -772,7 +773,7 @@ fn run_version(_args: &Args) -> i32 {
     version.push_str("Blood Compiler 0.1.0\n");
     version.push_str("Host: x86_64-unknown-linux-gnu\n");
     version.push_str("LLVM: 18\n");
-    print_string(&version);
+    main_helpers.print_string(&version);
     0
 }
 
@@ -784,7 +785,7 @@ fn run_clean(args: &Args) -> i32 {
     if file_exists(build_dir.as_str()) {
         let mut rm_build = String.new();
         rm_build.push_str("rm -rf ");
-        shell_quote_into(&mut rm_build, build_dir.as_str());
+        main_helpers.shell_quote_into(&mut rm_build, build_dir.as_str());
         system(rm_build.as_str());
         print_str("info: Removed build directory: ");
         print_str(build_dir.as_str());
@@ -807,7 +808,7 @@ fn run_clean(args: &Args) -> i32 {
     if file_exists(cache_dir.as_str()) {
         let mut rm_cache = String.new();
         rm_cache.push_str("rm -rf ");
-        shell_quote_into(&mut rm_cache, cache_dir.as_str());
+        main_helpers.shell_quote_into(&mut rm_cache, cache_dir.as_str());
         system(rm_cache.as_str());
         print_str("info: Removed cache: ");
         print_str(cache_dir.as_str());
@@ -817,14 +818,14 @@ fn run_clean(args: &Args) -> i32 {
     // Legacy cleanup: remove artifacts next to source files from before build-dir support
     match &args.source_file {
         &Option.Some(ref path) => {
-            let ll = default_ll_path(path);
-            let obj = replace_ext(path, ".o");
-            let bin = strip_blood_ext(path);
+            let ll = main_helpers.default_ll_path(path);
+            let obj = main_helpers.replace_ext(path, ".o");
+            let bin = main_helpers.strip_blood_ext(path);
 
             if file_exists(ll.as_str()) {
                 let mut rm_ll = String.new();
                 rm_ll.push_str("rm -f ");
-                shell_quote_into(&mut rm_ll, ll.as_str());
+                main_helpers.shell_quote_into(&mut rm_ll, ll.as_str());
                 system(rm_ll.as_str());
                 print_str("info: Removed legacy ");
                 print_str(ll.as_str());
@@ -833,7 +834,7 @@ fn run_clean(args: &Args) -> i32 {
             if file_exists(obj.as_str()) {
                 let mut rm_obj = String.new();
                 rm_obj.push_str("rm -f ");
-                shell_quote_into(&mut rm_obj, obj.as_str());
+                main_helpers.shell_quote_into(&mut rm_obj, obj.as_str());
                 system(rm_obj.as_str());
                 print_str("info: Removed legacy ");
                 print_str(obj.as_str());
@@ -842,7 +843,7 @@ fn run_clean(args: &Args) -> i32 {
             if file_exists(bin.as_str()) {
                 let mut rm_bin = String.new();
                 rm_bin.push_str("rm -f ");
-                shell_quote_into(&mut rm_bin, bin.as_str());
+                main_helpers.shell_quote_into(&mut rm_bin, bin.as_str());
                 system(rm_bin.as_str());
                 print_str("info: Removed legacy ");
                 print_str(bin.as_str());
@@ -935,11 +936,11 @@ fn extract_test_config(attrs: &Vec<ast.Attribute>, source: &str) -> TestConfig {
         // Each attribute path is a Vec<SpannedSymbol>; simple attrs have one element
         if attr.path.len() > 0 {
             let name = span_to_str(source, &attr.path[0].span);
-            if str_equals(&name, "test") {
+            if main_helpers.str_equals(&name, "test") {
                 is_test = true;
-            } else if str_equals(&name, "ignore") {
+            } else if main_helpers.str_equals(&name, "ignore") {
                 ignore = true;
-            } else if str_equals(&name, "should_panic") {
+            } else if main_helpers.str_equals(&name, "should_panic") {
                 should_panic = true;
             }
         }
@@ -1037,7 +1038,7 @@ fn run_single_test(
     bin_path.push_str(test.name.as_str());
 
     // Build Args for compilation (no cache, quiet)
-    let mut build_args = Args.build(clone_string(&harness_path));
+    let mut build_args = Args.build(main_helpers.clone_string(&harness_path));
     build_args.no_cache = true;
 
     // Phase 1: Compile to LLVM IR via streaming codegen
@@ -1221,14 +1222,14 @@ fn run_test(args: &Args) -> i32 {
             // Phase 1: Read source file
             let read_result = source.read_file(path.as_str());
             if !read_result.success {
-                print_error("Failed to read source file");
+                main_helpers.print_error("Failed to read source file");
                 return 1;
             }
 
             let content = match &read_result.content {
                 &Option.Some(ref c) => c,
                 &Option.None => {
-                    print_error("No content in file");
+                    main_helpers.print_error("No content in file");
                     return 1;
                 }
             };
@@ -1241,7 +1242,7 @@ fn run_test(args: &Args) -> i32 {
             let program = match &parse_result.program {
                 &Option.Some(ref p) => p,
                 &Option.None => {
-                    print_error("Failed to parse source file");
+                    main_helpers.print_error("Failed to parse source file");
                     region_deactivate();
                     region_destroy(parse_region);
                     return 1;
@@ -1271,7 +1272,7 @@ fn run_test(args: &Args) -> i32 {
                 // Filter by name substring
                 match &args.test_filter {
                     &Option.Some(ref filter) => {
-                        if !str_contains_ref(t.name.as_str(), filter.as_str()) {
+                        if !main_helpers.str_contains_ref(t.name.as_str(), filter.as_str()) {
                             include = false;
                         }
                     }
@@ -1285,7 +1286,7 @@ fn run_test(args: &Args) -> i32 {
 
                 if include {
                     tests.push(TestInfo {
-                        name: clone_string(&t.name),
+                        name: main_helpers.clone_string(&t.name),
                         config: TestConfig {
                             is_test: t.config.is_test,
                             ignore: t.config.ignore,
@@ -1350,8 +1351,8 @@ fn run_test(args: &Args) -> i32 {
                         print_str("FAILED\n");
                         results.failed = results.failed + 1;
                         results.failures.push(TestFailure {
-                            name: clone_string(&t.name),
-                            message: clone_string(msg),
+                            name: main_helpers.clone_string(&t.name),
+                            message: main_helpers.clone_string(msg),
                         });
                         if args.test_fail_fast {
                             ri = tests.len(); // break
@@ -1372,7 +1373,7 @@ fn run_test(args: &Args) -> i32 {
             if results.failed > 0 { 1 } else { 0 }
         }
         &Option.None => {
-            print_error("No source file specified");
+            main_helpers.print_error("No source file specified");
             1
         }
     }
@@ -1414,45 +1415,6 @@ pub struct CompileOutput {
 }
 
 // ============================================================
-// Output Helpers
-// ============================================================
-
-/// Prints an error message to stderr.
-fn print_error(msg: &str) {
-    let mut output = String.new();
-    output.push_str("error: ");
-    output.push_str(msg);
-    output.push('\n');
-    eprint_str(output.as_str());
-}
-
-/// Prints a success message.
-fn print_success(msg: &str) {
-    let mut output = String.new();
-    output.push_str("success: ");
-    output.push_str(msg);
-    output.push('\n');
-    print_string(&output);
-}
-
-/// Prints an info message.
-fn print_info(msg: &str) {
-    let mut output = String.new();
-    output.push_str("info: ");
-    output.push_str(msg);
-    output.push('\n');
-    print_string(&output);
-}
-
-/// Prints a string to stdout using blood-rust println_str builtin.
-fn print_string(s: &String) {
-    // Convert String to &str for builtin call
-    // Note: We iterate and print char by char because
-    // println_str expects &str, not &String
-    print_str(s.as_str());
-}
-
-// ============================================================
 // Argument Parsing (Structure for when FFI is available)
 // ============================================================
 
@@ -1477,116 +1439,116 @@ pub fn parse_args(argc: i32, argv: &Vec<String>) -> Args {
 
         if bytes.len() > 0 && bytes[0] == 45 { // '-'
             // Option flag
-            if str_equals(arg, "-o") {
+            if main_helpers.str_equals(arg, "-o") {
                 if i + 1 < argv.len() {
                     i += 1;
-                    args.output_file = Option.Some(clone_string(&argv[i]));
+                    args.output_file = Option.Some(main_helpers.clone_string(&argv[i]));
                 } else {
-                    print_error("missing value for -o");
+                    main_helpers.print_error("missing value for -o");
                 }
-            } else if str_equals(arg, "-v") {
+            } else if main_helpers.str_equals(arg, "-v") {
                 args.verbose = true;
-            } else if str_equals(arg, "--no-color") {
+            } else if main_helpers.str_equals(arg, "--no-color") {
                 args.colors = false;
-            } else if str_equals(arg, "--timings") {
+            } else if main_helpers.str_equals(arg, "--timings") {
                 args.timings = true;
-            } else if str_equals(arg, "--no-cache") {
+            } else if main_helpers.str_equals(arg, "--no-cache") {
                 args.no_cache = true;
-            } else if str_equals(arg, "--build-dir") {
+            } else if main_helpers.str_equals(arg, "--build-dir") {
                 if i + 1 < argv.len() {
                     i += 1;
-                    args.build_dir = Option.Some(clone_string(&argv[i]));
+                    args.build_dir = Option.Some(main_helpers.clone_string(&argv[i]));
                 } else {
-                    print_error("missing value for --build-dir");
+                    main_helpers.print_error("missing value for --build-dir");
                 }
-            } else if str_equals(arg, "--stdlib-path") {
+            } else if main_helpers.str_equals(arg, "--stdlib-path") {
                 if i + 1 < argv.len() {
                     i += 1;
-                    args.stdlib_path = Option.Some(clone_string(&argv[i]));
+                    args.stdlib_path = Option.Some(main_helpers.clone_string(&argv[i]));
                 } else {
-                    print_error("missing value for --stdlib-path");
+                    main_helpers.print_error("missing value for --stdlib-path");
                 }
-            } else if str_equals(arg, "--release") {
+            } else if main_helpers.str_equals(arg, "--release") {
                 args.release = true;
                 args.opt_level = 2;
                 args.strip = true;
-            } else if str_equals(arg, "--emit=llvm-ir") {
+            } else if main_helpers.str_equals(arg, "--emit=llvm-ir") {
                 args.emit_mode = EmitMode.LlvmIr;
-            } else if str_equals(arg, "--emit=obj") {
+            } else if main_helpers.str_equals(arg, "--emit=obj") {
                 args.emit_mode = EmitMode.Obj;
-            } else if str_equals(arg, "--emit") {
+            } else if main_helpers.str_equals(arg, "--emit") {
                 // Space-separated: --emit llvm-ir / --emit obj
                 if i + 1 < argv.len() {
                     i += 1;
                     let emit_val = &argv[i];
-                    if str_equals(emit_val, "llvm-ir") {
+                    if main_helpers.str_equals(emit_val, "llvm-ir") {
                         args.emit_mode = EmitMode.LlvmIr;
-                    } else if str_equals(emit_val, "obj") {
+                    } else if main_helpers.str_equals(emit_val, "obj") {
                         args.emit_mode = EmitMode.Obj;
                     } else {
-                        print_error("unknown --emit mode (expected 'llvm-ir' or 'obj')");
+                        main_helpers.print_error("unknown --emit mode (expected 'llvm-ir' or 'obj')");
                     }
                 } else {
-                    print_error("missing value for --emit (expected 'llvm-ir' or 'obj')");
+                    main_helpers.print_error("missing value for --emit (expected 'llvm-ir' or 'obj')");
                 }
-            } else if str_equals(arg, "-O0") {
+            } else if main_helpers.str_equals(arg, "-O0") {
                 args.opt_level = 0;
-            } else if str_equals(arg, "-O1") {
+            } else if main_helpers.str_equals(arg, "-O1") {
                 args.opt_level = 1;
-            } else if str_equals(arg, "-O2") {
+            } else if main_helpers.str_equals(arg, "-O2") {
                 args.opt_level = 2;
-            } else if str_equals(arg, "-O3") {
+            } else if main_helpers.str_equals(arg, "-O3") {
                 args.opt_level = 3;
-            } else if str_equals(arg, "--sanitize=address") {
+            } else if main_helpers.str_equals(arg, "--sanitize=address") {
                 args.sanitize_address = true;
-            } else if str_equals(arg, "--dump-mir") {
+            } else if main_helpers.str_equals(arg, "--dump-mir") {
                 args.dump_mir = true;
-            } else if str_starts_with(arg, "--dump-mir=") {
+            } else if main_helpers.str_starts_with(arg, "--dump-mir=") {
                 args.dump_mir = true;
-                args.dump_mir_filter = Option.Some(substr_after(arg, 11));
-            } else if str_equals(arg, "--trace-codegen") {
+                args.dump_mir_filter = Option.Some(main_helpers.substr_after(arg, 11));
+            } else if main_helpers.str_equals(arg, "--trace-codegen") {
                 args.trace_codegen = true;
-            } else if str_equals(arg, "--dump-types") {
+            } else if main_helpers.str_equals(arg, "--dump-types") {
                 args.dump_types = true;
-            } else if str_equals(arg, "--dump-layouts") {
+            } else if main_helpers.str_equals(arg, "--dump-layouts") {
                 args.dump_layouts = true;
-            } else if str_equals(arg, "--validate-mir") {
+            } else if main_helpers.str_equals(arg, "--validate-mir") {
                 args.validate_mir = true;
-            } else if str_equals(arg, "--no-validate-mir") {
+            } else if main_helpers.str_equals(arg, "--no-validate-mir") {
                 args.validate_mir = false;
-            } else if str_equals(arg, "--mem-profile") {
+            } else if main_helpers.str_equals(arg, "--mem-profile") {
                 args.mem_profile = true;
-            } else if str_equals(arg, "--alloc-profile") {
+            } else if main_helpers.str_equals(arg, "--alloc-profile") {
                 args.alloc_profile = true;
-            } else if str_equals(arg, "--list") {
+            } else if main_helpers.str_equals(arg, "--list") {
                 args.test_list = true;
-            } else if str_equals(arg, "--fail-fast") {
+            } else if main_helpers.str_equals(arg, "--fail-fast") {
                 args.test_fail_fast = true;
-            } else if str_equals(arg, "--ignored") {
+            } else if main_helpers.str_equals(arg, "--ignored") {
                 args.test_only_ignored = true;
-            } else if str_equals(arg, "--include-ignored") {
+            } else if main_helpers.str_equals(arg, "--include-ignored") {
                 args.test_include_ignored = true;
-            } else if str_equals(arg, "--filter") {
+            } else if main_helpers.str_equals(arg, "--filter") {
                 if i + 1 < argv.len() {
                     i += 1;
-                    args.test_filter = Option.Some(clone_string(&argv[i]));
+                    args.test_filter = Option.Some(main_helpers.clone_string(&argv[i]));
                 } else {
-                    print_error("missing value for --filter");
+                    main_helpers.print_error("missing value for --filter");
                 }
-            } else if str_equals(arg, "-F") {
+            } else if main_helpers.str_equals(arg, "-F") {
                 if i + 1 < argv.len() {
                     i += 1;
-                    args.test_filter = Option.Some(clone_string(&argv[i]));
+                    args.test_filter = Option.Some(main_helpers.clone_string(&argv[i]));
                 } else {
-                    print_error("missing value for -F");
+                    main_helpers.print_error("missing value for -F");
                 }
-            } else if str_starts_with(arg, "--filter=") {
-                args.test_filter = Option.Some(substr_after(arg, 9));
+            } else if main_helpers.str_starts_with(arg, "--filter=") {
+                args.test_filter = Option.Some(main_helpers.substr_after(arg, 9));
             }
         } else {
             // Positional argument (source file)
             if args.source_file.is_none() {
-                args.source_file = Option.Some(clone_string(arg));
+                args.source_file = Option.Some(main_helpers.clone_string(arg));
             }
         }
         i += 1;
@@ -1597,19 +1559,19 @@ pub fn parse_args(argc: i32, argv: &Vec<String>) -> Args {
 
 /// Parses a command string into Command enum.
 fn parse_command(cmd: &String) -> Command {
-    if str_equals(cmd, "check") {
+    if main_helpers.str_equals(cmd, "check") {
         Command.Check
-    } else if str_equals(cmd, "build") {
+    } else if main_helpers.str_equals(cmd, "build") {
         Command.Build
-    } else if str_equals(cmd, "run") {
+    } else if main_helpers.str_equals(cmd, "run") {
         Command.Run
-    } else if str_equals(cmd, "test") {
+    } else if main_helpers.str_equals(cmd, "test") {
         Command.Test
-    } else if str_equals(cmd, "help") {
+    } else if main_helpers.str_equals(cmd, "help") {
         Command.Help
-    } else if str_equals(cmd, "version") {
+    } else if main_helpers.str_equals(cmd, "version") {
         Command.Version
-    } else if str_equals(cmd, "clean") {
+    } else if main_helpers.str_equals(cmd, "clean") {
         Command.Clean
     } else {
         Command.Help
@@ -1617,560 +1579,10 @@ fn parse_command(cmd: &String) -> Command {
 }
 
 // ============================================================
-// String Helpers
-// ============================================================
-
-/// Compares a String with a &str.
-fn str_equals(s: &String, other: &str) -> bool {
-    let bytes = s.as_bytes();
-    let other_bytes = other.as_bytes();
-
-    if bytes.len() != other_bytes.len() {
-        return false;
-    }
-
-    for i in 0usize..bytes.len() {
-        if bytes[i] != other_bytes[i] {
-            return false;
-        }
-    }
-
-    true
-}
-
-/// Clones a String.
-fn clone_string(s: &String) -> String {
-    common.make_string(s.as_str())
-}
-
-/// Checks if a String starts with a given &str prefix.
-fn str_starts_with(s: &String, prefix: &str) -> bool {
-    let bytes = s.as_bytes();
-    let prefix_bytes = prefix.as_bytes();
-    if bytes.len() < prefix_bytes.len() {
-        return false;
-    }
-    for i in 0usize..prefix_bytes.len() {
-        if bytes[i] != prefix_bytes[i] {
-            return false;
-        }
-    }
-    true
-}
-
-/// Returns the substring of a String starting at the given byte offset.
-fn substr_after(s: &String, offset: usize) -> String {
-    let bytes = s.as_bytes();
-    let mut result = String.new();
-    let mut i: usize = offset;
-    while i < bytes.len() {
-        result.push(bytes[i] as char);
-        i += 1;
-    }
-    result
-}
-
-/// Checks if &str `haystack` contains &str `needle` as a substring.
-fn str_contains_ref(haystack: &str, needle: &str) -> bool {
-    let h_bytes = haystack.as_bytes();
-    let n_bytes = needle.as_bytes();
-    if n_bytes.len() == 0 {
-        return true;
-    }
-    if h_bytes.len() < n_bytes.len() {
-        return false;
-    }
-    let limit = h_bytes.len() - n_bytes.len() + 1;
-    for i in 0usize..limit {
-        let mut matched = true;
-        let mut j: usize = 0;
-        while j < n_bytes.len() {
-            if h_bytes[i + j] != n_bytes[j] {
-                matched = false;
-                j = n_bytes.len(); // break
-            }
-            j += 1;
-        }
-        if matched {
-            return true;
-        }
-    }
-    false
-}
-
-/// Constructs a unique, mangled function name for LLVM IR.
-///
-/// Uses the lowering context's interner to resolve the bare name, then
-/// qualifies it with the DefId to ensure uniqueness (many types share
-/// method names like "new", "len", etc.).
-///
-/// Format: `def{N}_{name}` for regular functions, `blood_main` for the
-/// entry point (matching blood-rust's runtime convention).
-fn make_mangled_fn_name(intern: &interner.StringInterner, info: &driver.FnInfo) -> String {
-    // Resolve bare name from interner
-    let bare_name = match intern.resolve(info.name) {
-        Option.Some(s) => common.make_string(s.as_str()),
-        Option.None => {
-            // Fallback: use DefId-based name
-            return driver.make_fn_name(info.def_id.index as usize);
-        }
-    };
-
-    // Entry point: blood-rust runtime expects "blood_main"
-    if str_equals(&bare_name, "main") {
-        return common.make_string("blood_main");
-    }
-
-    // Regular function: def{N}_{name}
-    let mut result = String.new();
-    result.push_str("def");
-    push_usize(&mut result, info.def_id.index as usize);
-    result.push(95 as char); // '_'
-    result.push_str(bare_name.as_str());
-    result
-}
-
-/// Resolves a Symbol to a string using the lowering interner.
-/// Returns the bare name or a fallback "sym_{index}".
-/// Returns true if the given name is a region_* builtin that is handled
-/// by intrinsic_declarations() as a wrapper around blood_region_*.
-fn is_region_builtin(name: &str) -> bool {
-    if str_eq(name, "region_create") { return true; }
-    if str_eq(name, "region_destroy") { return true; }
-    if str_eq(name, "region_reset") { return true; }
-    if str_eq(name, "region_protect") { return true; }
-    if str_eq(name, "region_activate") { return true; }
-    if str_eq(name, "region_deactivate") { return true; }
-    if str_eq(name, "region_deactivate_get") { return true; }
-    if str_eq(name, "region_alloc") { return true; }
-    if str_eq(name, "region_exit_scope") { return true; }
-    if str_eq(name, "region_used") { return true; }
-    if str_eq(name, "region_trim") { return true; }
-    if str_eq(name, "region_committed") { return true; }
-    if str_eq(name, "region_alloc_count") { return true; }
-    if str_eq(name, "region_active_id") { return true; }
-    if str_eq(name, "system_alloc_live_bytes") { return true; }
-    if str_eq(name, "realloc_diag_count") { return true; }
-    if str_eq(name, "realloc_diag_wasted") { return true; }
-    if str_eq(name, "realloc_diag_inplace") { return true; }
-    if str_eq(name, "realloc_diag_inplace_bytes") { return true; }
-    if str_eq(name, "realloc_diag_offset_delta") { return true; }
-    if str_eq(name, "realloc_stats_reset") { return true; }
-    if str_eq(name, "print_alloc_hist") { return true; }
-    if str_eq(name, "alloc_hist_reset") { return true; }
-    if str_eq(name, "alloc_tag_set") { return true; }
-    if str_eq(name, "alloc_tag_get") { return true; }
-    if str_eq(name, "alloc_tag_reset") { return true; }
-    if str_eq(name, "alloc_tag_report") { return true; }
-    if str_eq(name, "alloc_tag_count") { return true; }
-    if str_eq(name, "alloc_tag_bytes") { return true; }
-    false
-}
-
-/// Returns true if the given name is a format runtime function that is
-/// already declared with correct { ptr, i64 } return type in
-/// intrinsic_declarations(). These must be skipped in the dynamic
-/// foreign function declaration loop to avoid duplicate declarations
-/// with conflicting signatures.
-fn is_format_runtime_builtin(name: &str) -> bool {
-    if str_eq(name, "int_to_string") { return true; }
-    if str_eq(name, "bool_to_string") { return true; }
-    if str_eq(name, "float_to_string") { return true; }
-    if str_eq(name, "char_to_string") { return true; }
-    false
-}
-
-/// Returns true if the given name is a builtin that has a wrapper/define
-/// in intrinsic_declarations(). These must be skipped in generate_foreign_declarations
-/// to avoid duplicate declarations or conflicting signatures.
-fn is_intrinsic_wrapper_builtin(name: &str) -> bool {
-    // print/println/eprint/eprintln wrappers → *_str runtime variants
-    // Both the Blood-side wrapper names AND the runtime target names must be skipped,
-    // since intrinsic_declarations() declares both (define @print + declare @print_str).
-    if str_eq(name, "print") { return true; }
-    if str_eq(name, "println") { return true; }
-    if str_eq(name, "eprint") { return true; }
-    if str_eq(name, "eprintln") { return true; }
-    if str_eq(name, "print_str") { return true; }
-    if str_eq(name, "println_str") { return true; }
-    if str_eq(name, "eprint_str") { return true; }
-    if str_eq(name, "eprintln_str") { return true; }
-    // assert wrappers → blood_assert* runtime functions
-    if str_eq(name, "assert") { return true; }
-    if str_eq(name, "assert_eq_int") { return true; }
-    if str_eq(name, "assert_eq_bool") { return true; }
-    if str_eq(name, "assert_eq_i64") { return true; }
-    if str_eq(name, "assert_eq_u32") { return true; }
-    if str_eq(name, "assert_eq_u64") { return true; }
-    if str_eq(name, "assert_eq_usize") { return true; }
-    if str_eq(name, "assert_eq_str") { return true; }
-    if str_eq(name, "assert_ne_int") { return true; }
-    if str_eq(name, "blood_assert") { return true; }
-    if str_eq(name, "blood_assert_eq_int") { return true; }
-    if str_eq(name, "blood_assert_eq_bool") { return true; }
-    if str_eq(name, "blood_assert_eq_i64") { return true; }
-    if str_eq(name, "blood_assert_eq_u32") { return true; }
-    if str_eq(name, "blood_assert_eq_u64") { return true; }
-    if str_eq(name, "blood_assert_eq_usize") { return true; }
-    if str_eq(name, "blood_assert_eq_str") { return true; }
-    if str_eq(name, "blood_assert_ne_int") { return true; }
-    // unreachable/todo → inline panic implementations
-    if str_eq(name, "unreachable") { return true; }
-    if str_eq(name, "todo") { return true; }
-    // process_exit → libc exit
-    if str_eq(name, "process_exit") { return true; }
-    if str_eq(name, "exit") { return true; }
-    // Low-level memory → blood_alloc_simple etc.
-    if str_eq(name, "alloc") { return true; }
-    if str_eq(name, "realloc") { return true; }
-    if str_eq(name, "free") { return true; }
-    if str_eq(name, "memcpy") { return true; }
-    if str_eq(name, "blood_alloc_simple") { return true; }
-    if str_eq(name, "blood_realloc") { return true; }
-    if str_eq(name, "blood_free_simple") { return true; }
-    if str_eq(name, "blood_memcpy") { return true; }
-    // str_concat → blood_str_concat
-    if str_eq(name, "str_concat") { return true; }
-    if str_eq(name, "blood_str_concat") { return true; }
-    // Math library name mismatches (Blood name → libm name)
-    if str_eq(name, "abs") { return true; }
-    if str_eq(name, "abs_f32") { return true; }
-    if str_eq(name, "sqrt_f32") { return true; }
-    if str_eq(name, "fabs") { return true; }
-    if str_eq(name, "fabsf") { return true; }
-    if str_eq(name, "sqrtf") { return true; }
-    // Builtins whose Blood types don't match runtime ABI:
-    // Blood registers these with Option<T>/String return types which codegen
-    // converts to ptr, but the runtime uses concrete types (double, i64, i32, {ptr,i64}).
-    if str_eq(name, "parse_f64") { return true; }
-    if str_eq(name, "parse_i64_radix") { return true; }
-    if str_eq(name, "char_from_u32") { return true; }
-    if str_eq(name, "read_line") { return true; }
-    // Thread builtins → blood_thread_spawn / blood_thread_join runtime functions
-    if str_eq(name, "thread_spawn") { return true; }
-    if str_eq(name, "thread_join") { return true; }
-    if str_eq(name, "blood_thread_spawn") { return true; }
-    if str_eq(name, "blood_thread_join") { return true; }
-    false
-}
-
-fn resolve_symbol(intern: &interner.StringInterner, sym: common.Symbol) -> String {
-    match intern.resolve(sym) {
-        Option.Some(s) => common.make_string(s.as_str()),
-        Option.None => {
-            let mut fallback = String.new();
-            fallback.push_str("sym");
-            push_usize(&mut fallback, sym.index as usize);
-            fallback
-        }
-    }
-}
-
-/// Builds a DefId-qualified name: def{N}_{name}.
-fn make_def_name(def_id: u32, name: &String) -> String {
-    let mut result = String.new();
-    result.push_str("def");
-    push_usize(&mut result, def_id as usize);
-    result.push(95 as char); // '_'
-    result.push_str(name.as_str());
-    result
-}
-
-/// Generates a function name for impl methods: def{id}_{TypeName}_{method_name}
-/// This makes backtraces show `def1351_MirBody_get_local` instead of `def1351_get_local`.
-fn make_impl_def_name(def_id: u32, type_name: &String, method_name: &String) -> String {
-    let mut result = String.new();
-    result.push_str("def");
-    push_usize(&mut result, def_id as usize);
-    result.push(95 as char); // '_'
-    if type_name.len() > 0 {
-        result.push_str(type_name.as_str());
-        result.push(95 as char); // '_'
-    }
-    result.push_str(method_name.as_str());
-    result
-}
-
-
-/// Generates minimal stub declarations for functions that are referenced but not defined.
-/// This handles enum variant constructors that are used as discriminant values in match.
-/// Buffers output via ctx.buffer_write for batched file I/O.
-fn generate_missing_stubs(
-    ctx: &mut codegen_ctx.CodegenCtx,
-    defined_names: &Vec<String>,
-) {
-    // Collect all referenced function names from the generated IR
-    // that need stub declarations (used as pointer values in match)
-    // Track which stubs we've already generated to avoid duplicates
-    let mut generated_stubs: Vec<String> = Vec.new();
-    let count = ctx.def_names_count();
-    let mut stubs = String.new();
-    stubs.push_str("\n; Stub functions for enum variant constructors\n");
-    for stub_idx in 0usize..count {
-        let entry = ctx.def_name_at(stub_idx);
-        let def_id = entry.0; // (def_id, name) tuple - get def_id
-        let name = entry.1; // (def_id, name) tuple - get name
-
-        // Skip static global variables - they are declared as globals, not functions
-        if ctx.is_static(def_id) {
-            continue;
-        }
-
-        // Only generate stubs for user-defined functions (names starting with "def" or "fn_")
-        // Skip runtime/intrinsic functions (like box_new, vec_new, etc.) which are
-        // already declared in intrinsic_declarations()
-        let name_bytes = name.as_bytes();
-        let is_user_fn = (name_bytes.len() >= 3
-            && name_bytes[0] == 100  // 'd'
-            && name_bytes[1] == 101  // 'e'
-            && name_bytes[2] == 102) // 'f'
-            || (name_bytes.len() >= 3
-            && name_bytes[0] == 102  // 'f'
-            && name_bytes[1] == 110  // 'n'
-            && name_bytes[2] == 95); // '_'
-        if !is_user_fn {
-            continue;
-        }
-
-        // Check if already defined in Pass 2
-        let mut is_defined = false;
-        let mut di: usize = 0;
-        while di < defined_names.len() {
-            if str_equals(&defined_names[di], name.as_str()) {
-                is_defined = true;
-                di = defined_names.len(); // break
-            }
-            di += 1;
-        }
-        // Also check if we already generated a stub for this name
-        if !is_defined {
-            let mut already_stubbed = false;
-            let mut si: usize = 0;
-            while si < generated_stubs.len() {
-                if str_equals(&generated_stubs[si], name.as_str()) {
-                    already_stubbed = true;
-                    si = generated_stubs.len(); // break
-                }
-                si += 1;
-            }
-            if !already_stubbed {
-                // Generate stub and track it
-                stubs.push_str("define void @");
-                stubs.push_str(name.as_str());
-                stubs.push_str("() { ret void }\n");
-                generated_stubs.push(clone_string(&name));
-            }
-        }
-    }
-    // Buffer stubs for batched file I/O
-    ctx.buffer_write(stubs.as_str());
-}
-
-/// Registers def_names for all function-like items in the items list.
-///
-/// This covers functions without bodies (foreign/builtin functions, trait declarations)
-/// and associated functions in impl/trait blocks. Foreign functions use their bare
-/// names (matching blood-rust runtime symbols); all others use def{N}_{name} format.
-fn register_all_item_names(
-    ctx: &mut codegen_ctx.CodegenCtx,
-    intern: &interner.StringInterner,
-    items: &Vec<hir_lower_ctx.ItemEntry>,
-) {
-    for i in 0usize..items.len() {
-        let entry = &items[i];
-        match &entry.item.kind {
-            &hir_item.ItemKind.Fn(ref fn_def) => {
-                let name = resolve_symbol(intern, entry.item.name.symbol);
-                if str_equals(&name, "main") {
-                    ctx.register_def_name(entry.def_id.index, common.make_string("blood_main"));
-                } else {
-                    let mangled = make_def_name(entry.def_id.index, &name);
-                    ctx.register_def_name(entry.def_id.index, mangled);
-                }
-            }
-            &hir_item.ItemKind.Foreign(ref foreign_def) => {
-                // Foreign functions use bare names (matching runtime symbols)
-                for fi in 0usize..foreign_def.items.len() {
-                    match &foreign_def.items[fi] {
-                        &hir_item.ForeignItem.Fn(ref ff) => {
-                            let name = resolve_symbol(intern, ff.name.symbol);
-                            ctx.register_def_name(ff.def_id.index, name);
-                        }
-                        &hir_item.ForeignItem.Static(ref _fs) => {}
-                        &hir_item.ForeignItem.OpaqueType(ref _ot) => {}
-                    }
-                }
-            }
-            &hir_item.ItemKind.Impl(ref impl_def) => {
-                // Resolve the impl's type name for richer function names in backtraces
-                let impl_ty_name = resolve_symbol(intern, entry.item.name.symbol);
-                for ai in 0usize..impl_def.items.len() {
-                    match &impl_def.items[ai] {
-                        &hir_item.AssocItem.Fn(ref assoc_fn) => {
-                            let name = resolve_symbol(intern, assoc_fn.name.symbol);
-                            let mangled = make_impl_def_name(assoc_fn.def_id.index, &impl_ty_name, &name);
-                            ctx.register_def_name(assoc_fn.def_id.index, mangled);
-                        }
-                        &hir_item.AssocItem.Type(ref _at) => {}
-                        &hir_item.AssocItem.Const(ref _ac) => {}
-                    }
-                }
-            }
-            &hir_item.ItemKind.Trait(ref trait_def) => {
-                let trait_name = resolve_symbol(intern, entry.item.name.symbol);
-                for ti in 0usize..trait_def.items.len() {
-                    match &trait_def.items[ti] {
-                        &hir_item.AssocItem.Fn(ref assoc_fn) => {
-                            let name = resolve_symbol(intern, assoc_fn.name.symbol);
-                            let mangled = make_impl_def_name(assoc_fn.def_id.index, &trait_name, &name);
-                            ctx.register_def_name(assoc_fn.def_id.index, mangled);
-                        }
-                        &hir_item.AssocItem.Type(ref _at) => {}
-                        &hir_item.AssocItem.Const(ref _ac) => {}
-                    }
-                }
-            }
-            &hir_item.ItemKind.Struct(ref _s) => {}
-            &hir_item.ItemKind.Enum(ref _e) => {}
-            &hir_item.ItemKind.TypeAlias(ref _ta) => {}
-            &hir_item.ItemKind.Const(ref _c) => {}
-            &hir_item.ItemKind.Static(ref _s) => {}
-            &hir_item.ItemKind.Effect(ref _ef) => {}
-            &hir_item.ItemKind.Handler(ref _h) => {}
-            &hir_item.ItemKind.Module(ref _m) => {}
-            &hir_item.ItemKind.Macro(ref _m) => {}
-        }
-    }
-}
-
-/// Registers def_names for all enum variant constructors.
-/// Each variant gets a name like def{enum_def_id}_{variant_name} so the codegen
-/// can emit identifiable references instead of @fn_NNN.
-fn register_enum_variant_names(
-    ctx: &mut codegen_ctx.CodegenCtx,
-    intern: &interner.StringInterner,
-    items: &Vec<hir_lower_ctx.ItemEntry>,
-) {
-    for i in 0usize..items.len() {
-        let entry = &items[i];
-        match &entry.item.kind {
-            &hir_item.ItemKind.Enum(ref enum_def) => {
-                let enum_name = resolve_symbol(intern, entry.item.name.symbol);
-                for vi in 0usize..enum_def.variants.len() {
-                    let variant = &enum_def.variants[vi];
-                    let variant_name = resolve_symbol(intern, variant.name.symbol);
-                    let mut mangled = String.new();
-                    mangled.push_str("def");
-                    push_usize(&mut mangled, entry.def_id.index as usize);
-                    mangled.push(95 as char); // '_'
-                    mangled.push_str(enum_name.as_str());
-                    mangled.push_str("__");
-                    mangled.push_str(variant_name.as_str());
-                    ctx.register_def_name(variant.def_id.index, mangled);
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
-/// Generates LLVM `declare` statements for all foreign functions in the items list.
-/// Builtins (Abi.Rust) apply skip filters for intrinsic wrappers.
-/// Bridge FFI (Abi.C) always emits declarations for C library linking.
-fn generate_foreign_declarations(
-    intern: &interner.StringInterner,
-    items: &Vec<hir_lower_ctx.ItemEntry>,
-) -> String {
-    let mut output = String.new();
-    output.push_str("\n; Foreign function declarations (blood-rust runtime)\n");
-
-    for i in 0usize..items.len() {
-        let entry = &items[i];
-        match &entry.item.kind {
-            &hir_item.ItemKind.Foreign(ref foreign_def) => {
-                // Bridge FFI uses Abi.C; builtins use Abi.Rust.
-                // Only apply intrinsic/region/format skip filters for builtins.
-                let is_builtin = match &foreign_def.abi {
-                    &hir_item.Abi.C => false,
-                    &hir_item.Abi.Rust => true,
-                    &hir_item.Abi.System => true,
-                    &hir_item.Abi.Stdcall => true,
-                    &hir_item.Abi.Fastcall => true,
-                    &hir_item.Abi.Other(ref _s) => true,
-                };
-                for fi in 0usize..foreign_def.items.len() {
-                    match &foreign_def.items[fi] {
-                        &hir_item.ForeignItem.Fn(ref ff) => {
-                            let name = resolve_symbol(intern, ff.name.symbol);
-                            if is_builtin {
-                                // Skip region_* functions - they are defined as
-                                // wrappers around blood_region_* in intrinsic_declarations()
-                                if is_region_builtin(name.as_str()) {
-                                    continue;
-                                }
-                                // Skip format runtime builtins - they are declared with
-                                // correct { ptr, i64 } return type in intrinsic_declarations()
-                                if is_format_runtime_builtin(name.as_str()) {
-                                    continue;
-                                }
-                                // Skip builtins that have wrapper definitions in
-                                // intrinsic_declarations() (print→print_str, assert→blood_assert, etc.)
-                                if is_intrinsic_wrapper_builtin(name.as_str()) {
-                                    continue;
-                                }
-                            }
-                            let ret_hir_ty = type_intern.ty_id_to_type(ff.return_ty);
-                            let ret_ty = codegen_types.return_type_to_llvm(&ret_hir_ty);
-                            output.push_str("declare ");
-                            output.push_str(ret_ty.as_str());
-                            output.push_str(" @");
-                            output.push_str(name.as_str());
-                            output.push_str("(");
-                            for pi in 0usize..ff.param_tys.len() {
-                                if pi > 0 {
-                                    output.push_str(", ");
-                                }
-                                let param_hir_ty = type_intern.ty_id_to_type(ff.param_tys[pi]);
-                                let param_ty = codegen_types.type_to_llvm(&param_hir_ty);
-                                output.push_str(param_ty.as_str());
-                            }
-                            output.push_str(")\n");
-                        }
-                        &hir_item.ForeignItem.Static(ref _fs) => {}
-                        &hir_item.ForeignItem.OpaqueType(ref _ot) => {}
-                    }
-                }
-            }
-            &hir_item.ItemKind.Fn(ref _f) => {}
-            &hir_item.ItemKind.Struct(ref _s) => {}
-            &hir_item.ItemKind.Enum(ref _e) => {}
-            &hir_item.ItemKind.TypeAlias(ref _ta) => {}
-            &hir_item.ItemKind.Const(ref _c) => {}
-            &hir_item.ItemKind.Static(ref _s) => {}
-            &hir_item.ItemKind.Trait(ref _t) => {}
-            &hir_item.ItemKind.Effect(ref _ef) => {}
-            &hir_item.ItemKind.Handler(ref _h) => {}
-            &hir_item.ItemKind.Module(ref _m) => {}
-            &hir_item.ItemKind.Impl(ref _im) => {}
-            &hir_item.ItemKind.Macro(ref _m) => {}
-        }
-    }
-
-    output
-}
-
-// ============================================================
-// Build Directory Helpers
-// ============================================================
-
-/// Resolve the build output directory using the override hierarchy:
-/// 1. CLI flag (--build-dir)
-/// 2. BLOOD_BUILD_DIR environment variable
-/// 3. Default: build/ relative to source file parent
 fn resolve_build_dir(args: &Args) -> String {
     // 1. CLI flag
     match &args.build_dir {
-        &Option.Some(ref dir) => { return clone_string(dir); }
+        &Option.Some(ref dir) => { return main_helpers.clone_string(dir); }
         &Option.None => {}
     }
     // 2. BLOOD_BUILD_DIR env var
@@ -2193,7 +1605,7 @@ fn resolve_build_dir(args: &Args) -> String {
 fn resolve_stdlib_path(args: &Args) -> Option<String> {
     // 1. CLI flag
     match &args.stdlib_path {
-        &Option.Some(ref dir) => { return Option.Some(clone_string(dir)); }
+        &Option.Some(ref dir) => { return Option.Some(main_helpers.clone_string(dir)); }
         &Option.None => {}
     }
     // 2. BLOOD_STDLIB_PATH env var
@@ -2211,137 +1623,6 @@ fn profile_subdir(args: &Args) -> &str {
 }
 
 /// Create a directory (and parents) if it doesn't exist. Uses mkdir -p.
-fn ensure_dir(path: &str) {
-    let mut cmd = String.new();
-    cmd.push_str("mkdir -p ");
-    shell_quote_into(&mut cmd, path);
-    system(cmd.as_str());
-}
-
-/// Append a shell-quoted version of `s` to `out`.
-/// Uses single quotes with embedded single quotes escaped as `'\''`.
-fn shell_quote_into(out: &mut String, s: &str) {
-    out.push('\'');
-    let bytes = s.as_bytes();
-    for i in 0usize..bytes.len() {
-        if bytes[i] == 39 { // single quote
-            // End current quoted segment, add escaped quote, resume quoting
-            out.push('\'');
-            out.push('\\');
-            out.push('\'');
-            out.push('\'');
-        } else {
-            out.push(bytes[i] as char);
-        }
-    }
-    out.push('\'');
-}
-
-/// Extract the file stem (filename without the last extension) from a path.
-fn file_stem(path: &String) -> String {
-    // Get the filename part (after last /)
-    let bytes = path.as_bytes();
-    let mut last_sep: i32 = -1;
-    let mut i: usize = 0;
-    while i < bytes.len() {
-        if bytes[i] == 47 { // '/'
-            last_sep = i as i32;
-        }
-        i += 1;
-    }
-    let name_start: usize = if last_sep < 0 { 0 } else { (last_sep as usize) + 1 };
-
-    // Find the last dot in the filename part
-    let mut last_dot: i32 = -1;
-    i = name_start;
-    while i < bytes.len() {
-        if bytes[i] == 46 { // '.'
-            last_dot = i as i32;
-        }
-        i += 1;
-    }
-
-    // Extract stem
-    let name_end: usize = if last_dot < (name_start as i32) { bytes.len() } else { last_dot as usize };
-    let mut result = String.new();
-    i = name_start;
-    while i < name_end {
-        result.push(bytes[i] as char);
-        i += 1;
-    }
-    result
-}
-
-// ============================================================
-// Path Helpers
-// ============================================================
-
-/// Returns the default .ll output path for a source file.
-/// Replaces .blood extension with .ll, or appends .ll if no .blood extension.
-fn default_ll_path(source_path: &String) -> String {
-    replace_ext(source_path, ".ll")
-}
-
-/// Replaces the .blood extension with a new extension.
-fn replace_ext(source_path: &String, new_ext: &str) -> String {
-    let bytes = source_path.as_bytes();
-    let blood_ext = ".blood";
-    let ext_bytes = blood_ext.as_bytes();
-
-    if bytes.len() >= ext_bytes.len() {
-        let start = bytes.len() - ext_bytes.len();
-        let mut matches = true;
-        for k in 0usize..ext_bytes.len() {
-            if bytes[start + k] != ext_bytes[k] {
-                matches = false;
-            }
-        }
-        if matches {
-            // Strip .blood and add new extension
-            let mut result = String.new();
-            for j in 0usize..start {
-                result.push(bytes[j] as char);
-            }
-            result.push_str(new_ext);
-            return result;
-        }
-    }
-    // No .blood extension found, just append
-    let mut result = common.make_string(source_path.as_str());
-    result.push_str(new_ext);
-    result
-}
-
-/// Strips the .blood extension from a path.
-fn strip_blood_ext(source_path: &String) -> String {
-    replace_ext(source_path, "")
-}
-
-/// Strips the .ll extension from a path.
-fn strip_ll_ext(path: &String) -> String {
-    let bytes = path.as_bytes();
-    let ll_ext = ".ll";
-    let ext_bytes = ll_ext.as_bytes();
-    if bytes.len() >= ext_bytes.len() {
-        let start = bytes.len() - ext_bytes.len();
-        let mut matches = true;
-        for k in 0usize..ext_bytes.len() {
-            if bytes[start + k] != ext_bytes[k] {
-                matches = false;
-            }
-        }
-        if matches {
-            let mut result = String.new();
-            for j in 0usize..start {
-                result.push(bytes[j] as char);
-            }
-            return result;
-        }
-    }
-    common.make_string(path.as_str())
-}
-
-// ============================================================
 // Effect Handler Info Collection
 // ============================================================
 
@@ -2650,7 +1931,7 @@ fn collect_handler_info(
                         let ret_kind = classify_return_clause(bodies, ret_clause.body_id.index, state_count);
 
                         returns.push(HandlerReturnInfo {
-                            handler_name: clone_string(&handler_name),
+                            handler_name: main_helpers.clone_string(&handler_name),
                             handler_def_id,
                             effect_def_id,
                             body_def_id: ret_clause.body_id.index,
@@ -2689,7 +1970,7 @@ fn collect_handler_info(
                 match &handler_def.finally_clause {
                     &Option.Some(ref fin_clause) => {
                         finallys.push(HandlerFinallyInfo {
-                            handler_name: clone_string(&handler_name),
+                            handler_name: main_helpers.clone_string(&handler_name),
                             handler_def_id,
                             has_body: true,
                             body_def_id: fin_clause.def_id.index,
@@ -2699,7 +1980,7 @@ fn collect_handler_info(
                     }
                     &Option.None => {
                         finallys.push(HandlerFinallyInfo {
-                            handler_name: clone_string(&handler_name),
+                            handler_name: main_helpers.clone_string(&handler_name),
                             handler_def_id,
                             has_body: false,
                             body_def_id: 0,
@@ -2721,7 +2002,7 @@ fn collect_handler_info(
                     let op_index = find_op_index(items, effect_def_id, op_impl.op_def_id.index);
 
                     ops.push(HandlerOpInfo {
-                        handler_name: clone_string(&handler_name),
+                        handler_name: main_helpers.clone_string(&handler_name),
                         op_name,
                         op_index,
                         handler_def_id,
@@ -2757,11 +2038,11 @@ fn collect_handler_info(
                 // excluded — their handlers always resume in tail position.
                 // Use span-based extraction because item name symbols use the AST
                 // parser's interner, not the HIR interner.
-                let effect_name = resolve_symbol(intern, entry.item.name.symbol);
+                let effect_name = main_helpers.resolve_symbol(intern, entry.item.name.symbol);
                 let is_known_tail_resumptive =
-                    str_equals(&effect_name, "State")
-                    || str_equals(&effect_name, "IO")
-                    || str_equals(&effect_name, "Console");
+                    main_helpers.str_equals(&effect_name, "State")
+                    || main_helpers.str_equals(&effect_name, "IO")
+                    || main_helpers.str_equals(&effect_name, "Console");
                 if !is_known_tail_resumptive {
                     ctx.register_non_tail_resumptive_effect(effect_item_def_id);
                 }
@@ -2820,7 +2101,7 @@ fn generate_handler_wrappers(
         let opinfo = &handler_info.ops[oi];
 
         // Wrapper function name: {HandlerName}_{OpName}
-        let mut wrapper_name = clone_string(&opinfo.handler_name);
+        let mut wrapper_name = main_helpers.clone_string(&opinfo.handler_name);
         wrapper_name.push(95 as char); // '_'
         wrapper_name.push_str(opinfo.op_name.as_str());
 
@@ -3050,7 +2331,7 @@ fn generate_handler_wrappers(
     for ri in 0usize..handler_info.returns.len() {
         let ret_info = &handler_info.returns[ri];
 
-        let mut wrapper_name = clone_string(&ret_info.handler_name);
+        let mut wrapper_name = main_helpers.clone_string(&ret_info.handler_name);
         wrapper_name.push_str("_return");
 
         ir.push_str("define weak_odr i64 @");
@@ -3201,7 +2482,7 @@ fn generate_handler_wrappers(
     for fi in 0usize..handler_info.finallys.len() {
         let fin_info = &handler_info.finallys[fi];
 
-        let mut wrapper_name = clone_string(&fin_info.handler_name);
+        let mut wrapper_name = main_helpers.clone_string(&fin_info.handler_name);
         wrapper_name.push_str("_finally");
 
         ir.push_str("define weak_odr void @");
@@ -3319,7 +2600,7 @@ fn generate_handler_wrappers(
             for si in 0usize..handler_info.ops.len() {
                 if handler_info.ops[si].effect_def_id == eid {
                     let sop = &handler_info.ops[si];
-                    let mut wrapper_name = clone_string(&sop.handler_name);
+                    let mut wrapper_name = main_helpers.clone_string(&sop.handler_name);
                     wrapper_name.push(95 as char); // '_'
                     wrapper_name.push_str(sop.op_name.as_str());
 
@@ -3544,7 +2825,7 @@ fn build_codegen_worklist(
             &Option.None => common.Span.new(0, 0, 1, 1),
         };
         let fn_name = match &fn_info {
-            &Option.Some(ref info) => make_mangled_fn_name(&lower_result.interner, info),
+            &Option.Some(ref info) => main_helpers.make_mangled_fn_name(&lower_result.interner, info),
             &Option.None => driver.make_fn_name(body_idx),
         };
         let def_id = match &fn_info {
@@ -3586,7 +2867,7 @@ fn build_codegen_worklist(
         }
 
         defined_def_ids.push(def_id.index);
-        defined_names.push(clone_string(&fn_name));
+        defined_names.push(main_helpers.clone_string(&fn_name));
 
         items.push(CodegenWorkItem {
             body_idx,
@@ -3891,7 +3172,7 @@ fn codegen_pass2(
         if args.dump_mir {
             let fn_name_str = work.fn_name.as_str();
             let should_dump = match &args.dump_mir_filter {
-                &Option.Some(ref filter) => str_contains_ref(fn_name_str, filter.as_str()),
+                &Option.Some(ref filter) => main_helpers.str_contains_ref(fn_name_str, filter.as_str()),
                 &Option.None => true,
             };
             if should_dump {
@@ -4358,14 +3639,14 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     // Phase 1: Read source file and compute base_dir (global allocator — small)
     let read_result = source.read_file(path);
     if !read_result.success {
-        print_error("Failed to read source file");
+        main_helpers.print_error("Failed to read source file");
         return false;
     }
 
     let content = match &read_result.content {
         &Option.Some(ref c) => c,
         &Option.None => {
-            print_error("No content in file");
+            main_helpers.print_error("No content in file");
             return false;
         }
     };
@@ -4402,7 +3683,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
         &Option.Some(ref p) => p,
         &Option.None => {
             eprint_str(" FAILED\n");
-            print_error("No program produced by parser");
+            main_helpers.print_error("No program produced by parser");
             region_deactivate();
             region_destroy(parse_region);
             return false;
@@ -4602,7 +3883,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
         }
         if !is_static {
             let fn_name = match &fn_info {
-                &Option.Some(ref info) => make_mangled_fn_name(&lower_result.interner, info),
+                &Option.Some(ref info) => main_helpers.make_mangled_fn_name(&lower_result.interner, info),
                 &Option.None => driver.make_fn_name(body_idx),
             };
             ctx.register_def_name(def_id, fn_name);
@@ -4611,25 +3892,25 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
 
     // Pass 1b: Register def_names for ALL function-like items (including those without bodies).
     // This ensures that calls to foreign/builtin functions resolve to the correct name.
-    register_all_item_names(&mut ctx, &lower_result.interner, &lower_result.items);
+    main_helpers.register_all_item_names(&mut ctx, &lower_result.interner, &lower_result.items);
     eprint_str("[pass1_done]");
 
     // Pass 1c: Register def_names for builtin constructors (String.new, Vec.new, etc.).
     // These DefIds are allocated by the HIR lowering and map to runtime function names.
     for bfi in 0usize..lower_result.builtin_fn_defs.len() {
         let entry = &lower_result.builtin_fn_defs[bfi];
-        ctx.register_def_name(entry.def_id_index, clone_string(&entry.runtime_name));
+        ctx.register_def_name(entry.def_id_index, main_helpers.clone_string(&entry.runtime_name));
     }
 
     // Pass 1e: Register def_names for enum variant constructors.
     // Enum variants have their own DefIds used when constructing variants (e.g., TokenKind.Ident(...)).
-    register_enum_variant_names(&mut ctx, &lower_result.interner, &lower_result.items);
+    main_helpers.register_enum_variant_names(&mut ctx, &lower_result.interner, &lower_result.items);
 
     // Pass 1d: Register def_names for synthetic builtin methods (String.push_str, Vec.push, etc.).
     // These DefIds are allocated by the type checker and map to runtime function names.
     for bi in 0usize..typeck_result.builtin_def_names.len() {
         let entry = &typeck_result.builtin_def_names[bi];
-        ctx.register_def_name(entry.def_id_index, clone_string(&entry.runtime_name));
+        ctx.register_def_name(entry.def_id_index, main_helpers.clone_string(&entry.runtime_name));
     }
 
     // Collect handler→effect mappings and handler op info for wrapper generation.
@@ -4745,7 +4026,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
                     ctx.register_def_name(req.specialized_def_id, common.make_string(req.fn_name.as_str()));
                     let mut already_compiled: bool = false;
                     for ci in 0usize..compiled_mono_names.len() {
-                        if str_equals(&compiled_mono_names[ci], req.fn_name.as_str()) {
+                        if main_helpers.str_equals(&compiled_mono_names[ci], req.fn_name.as_str()) {
                             already_compiled = true;
                         }
                     }
@@ -4888,7 +4169,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     // Pass 3: Generate stub functions for registered names without bodies.
     // These are enum variant constructors and other synthetic functions that are
     // referenced as function pointers but don't have HIR bodies.
-    generate_missing_stubs(&mut ctx, &worklist.defined_names);
+    main_helpers.generate_missing_stubs(&mut ctx, &worklist.defined_names);
 
     // Pass 4: Generate handler op wrapper functions and __blood_register_handlers.
     // These wrappers adapt the inner handler op bodies to the standard ABI
@@ -4898,14 +4179,14 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
 
     // Emit inline handler stub functions collected during PushInlineHandler codegen.
     for stub_i in 0usize..ctx.inline_stubs.len() {
-        let stub_ir = clone_string(&ctx.inline_stubs[stub_i]);
+        let stub_ir = main_helpers.clone_string(&ctx.inline_stubs[stub_i]);
         ctx.buffer_write(stub_ir.as_str());
     }
 
     // Emit fn pointer wrapper functions (fn_name$fnptr) for named functions
     // used as fn() values.  These are deferred to emit at module scope.
     for wpi in 0usize..ctx.fn_ptr_wrapper_defs.len() {
-        let wrapper_ir = clone_string(&ctx.fn_ptr_wrapper_defs[wpi]);
+        let wrapper_ir = main_helpers.clone_string(&ctx.fn_ptr_wrapper_defs[wpi]);
         ctx.buffer_write(wrapper_ir.as_str());
     }
 
@@ -4913,7 +4194,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     codegen_streaming.finish_streaming_module(&mut ctx);
 
     // Write foreign function declarations (runtime builtins)
-    let foreign_decls = generate_foreign_declarations(&lower_result.interner, &lower_result.items);
+    let foreign_decls = main_helpers.generate_foreign_declarations(&lower_result.interner, &lower_result.items);
     ctx.buffer_write(foreign_decls.as_str());
 
     // Emit DWARF debug metadata at end of module
