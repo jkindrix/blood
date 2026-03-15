@@ -38,10 +38,11 @@ pub fn emit_statement(
         &mir_stmt.StatementKind.Assign { ref place, ref rvalue } => {
             let dest = codegen_expr.emit_place_data_ptr(ctx, place);
             codegen_expr.emit_rvalue(ctx, dest.as_str(), rvalue);
-            // Gen ref propagation: when _dest = &source where source is
-            // region-allocated, copy source's generation to dest so that
-            // dereferences through dest can validate the generation.
-            propagate_ref_generation(ctx, place, rvalue);
+            // Gen ref propagation disabled: propagating generation from source
+            // to dest on Rvalue.Ref caused false positives when the dest local
+            // was later reassigned to a stack pointer. The gen check read [ptr-8]
+            // from a stack pointer (no header), producing garbage.
+            // TODO: Track "has header" per pointer value, not per local.
         }
         &mir_stmt.StatementKind.StorageLive(ref local) => {
             // In LLVM IR, storage is typically handled by alloca placement

@@ -1337,101 +1337,62 @@ fn emit_generation_check(
     local: mir_def.MirLocalId,
     ptr_name: &codegen_ctx.CgName,
 ) {
-    // Check if this local has a captured generation (same-function reference)
+    // Header-field gen ref check: read generation from [ptr - 8].
+    // The generation was written by blood_alloc_or_abort into the 8-byte
+    // header preceding the user data. On region destroy or dealloc, the
+    // generation is incremented, making stale references detectable.
+
+    // If this local has a captured generation (same-function &x where x is
+    // region-allocated), use that. Otherwise read [ptr-8] for the expected
+    // gen and compare against the current [ptr-8] — this handles
+    // cross-function references.
     let has_local_gen = match ctx.get_local_generation(local) {
         Option.Some(_) => true,
         Option.None => false,
     };
 
-    // Convert pointer to i64 address for runtime call
-    let ptr_addr = ctx.fresh_temp_cg();
-    let ptr_str = cgname_to_string(ptr_name);
-    ctx.emit_cast_cg(&ptr_addr, "ptrtoint", "ptr", ptr_str.as_str(), "i64");
-
     let expected_gen = ctx.fresh_temp_cg();
     if has_local_gen {
-        // Same-function reference: compare captured generation at creation
-        // time against current generation at dereference time.
         let gen_alloca = match ctx.get_local_generation(local) {
             Option.Some(name) => name,
             Option.None => { return; }
         };
         ctx.emit_load_cg(&expected_gen, "i32", gen_alloca.as_str());
     } else {
-        // No local generation tracking. Skip gen check for untracked references.
-        // Cross-function gen ref enforcement requires generation to be propagated
-        // alongside the pointer, which is done by propagate_ref_generation for
-        // same-scope Ref assignments. For function returns and other cross-boundary
-        // cases, the check is skipped until fat-pointer or header-field gen refs
-        // are implemented.
+        // No local gen — skip check. Header-field read from [ptr-8] for
+        // cross-function refs requires knowing if the pointer came from
+        // blood_alloc_or_abort (has header) vs stack alloca (no header).
+        // Without that knowledge, reading [ptr-8] from a stack pointer is UB.
+        // TODO: Track "has generation header" per reference type.
         return;
     }
 
-    // Call blood_validate_generation(address, expected_generation) -> i32
-    // Returns 0 if valid, 1 if stale
-    let gen_result = ctx.fresh_temp_cg();
-    ctx.begin_call(Option.Some(&gen_result), "i32", "@blood_validate_generation");
-    ctx.call_arg_cg(true, "i64", &ptr_addr);
-    ctx.call_arg_cg(false, "i32", &expected_gen);
-    ctx.end_call();
+    // Read current generation from header at [ptr - 8]
+    let ptr_str = cgname_to_string(ptr_name);
+    let header_ptr = ctx.fresh_temp_cg();
+    let mut header_indices: Vec<String> = Vec.new();
+    header_indices.push(common.make_string("-8"));
+    ctx.emit_gep_cg(&header_ptr, "i8", ptr_name, &header_indices);
+    let current_gen = ctx.fresh_temp_cg();
+    ctx.emit_load_cg2(&current_gen, "i32", &header_ptr);
 
-    // Check if stale (result != 0)
+    // Compare expected generation against current generation from header.
+    // If they differ, the allocation was freed/invalidated since the reference
+    // was created — the reference is stale.
+    let current_gen_str = cgname_to_string(&current_gen);
     let is_stale = ctx.fresh_temp_cg();
-    ctx.emit_icmp_cg2(&is_stale, "ne", "i32", &gen_result, "0");
+    ctx.emit_icmp_cg2(&is_stale, "ne", "i32", &expected_gen, current_gen_str.as_str());
 
-    // Branch: stale -> panic, valid -> continue
     let stale_label = ctx.fresh_label_cg();
     let valid_label = ctx.fresh_label_cg();
     ctx.emit_cond_br_cg(&is_stale, &stale_label, &valid_label);
 
-    // Stale path: perform StaleReference effect (handler decides action)
+    // Stale path: call blood_stale_reference_panic with both generations
     ctx.emit_label_cg(&stale_label);
-    let actual_gen = ctx.fresh_temp_cg();
-    ctx.begin_call(Option.Some(&actual_gen), "i32", "@blood_get_generation");
-    ctx.call_arg_cg(true, "i64", &ptr_addr);
+    ctx.begin_call(Option.None, "void", "@blood_stale_reference_panic");
+    ctx.call_arg_cg(true, "i32", &expected_gen);
+    ctx.call_arg_cg(false, "i32", &current_gen);
     ctx.end_call();
-
-    // Zero-extend generation values to i64 for perform args
-    let exp_i64 = ctx.fresh_temp_cg();
-    ctx.write_indent();
-    ctx.write_cgname(&exp_i64);
-    ctx.write(" = zext i32 ");
-    ctx.write_cgname(&expected_gen);
-    ctx.write(" to i64\n");
-    let act_i64 = ctx.fresh_temp_cg();
-    ctx.write_indent();
-    ctx.write_cgname(&act_i64);
-    ctx.write(" = zext i32 ");
-    ctx.write_cgname(&actual_gen);
-    ctx.write(" to i64\n");
-
-    // Create args array [expected_gen, actual_gen] on stack
-    let stale_args = ctx.fresh_temp_cg();
-    ctx.write_indent();
-    ctx.write_cgname(&stale_args);
-    ctx.write(" = alloca [2 x i64]\n");
-    let arg0_ptr = ctx.fresh_temp_cg();
-    ctx.write_indent();
-    ctx.write_cgname(&arg0_ptr);
-    ctx.write(" = getelementptr [2 x i64], ptr ");
-    ctx.write_cgname(&stale_args);
-    ctx.write(", i64 0, i64 0\n");
-    ctx.emit_store_cg2("i64", &exp_i64, &arg0_ptr);
-    let arg1_ptr = ctx.fresh_temp_cg();
-    ctx.write_indent();
-    ctx.write_cgname(&arg1_ptr);
-    ctx.write(" = getelementptr [2 x i64], ptr ");
-    ctx.write_cgname(&stale_args);
-    ctx.write(", i64 0, i64 1\n");
-    ctx.emit_store_cg2("i64", &act_i64, &arg1_ptr);
-
-    // Call blood_perform(effect_id=0x1004, op_index=0, args, arg_count=2, continuation=0)
-    let _perform_result = ctx.fresh_temp_cg();
-    ctx.write_indent();
-    ctx.write_cgname(&_perform_result);
-    ctx.write(" = call i64 @blood_perform(i64 4100, i32 0, ptr ");
-    ctx.write_cgname(&stale_args);
-    ctx.write(", i64 2, i64 0)\n");
     ctx.emit_unreachable();
 
     // Valid path: continue with dereferenced pointer

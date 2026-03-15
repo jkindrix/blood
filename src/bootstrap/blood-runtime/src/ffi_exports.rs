@@ -3115,24 +3115,35 @@ pub unsafe extern "C" fn blood_alloc_or_abort(
         blood_panic(c"blood_alloc_or_abort: null out_generation pointer".as_ptr());
     }
 
+    // Header-field generation: allocate 8 extra bytes for generation header.
+    // Layout: [generation: u32][padding: u32][user data...]
+    //                                        ^--- returned pointer
+    // The generation is readable at [ptr - 8] for any pointer into this allocation.
+    let header_size: usize = 8;
+    let total_size = size + header_size;
+
     // Check if a region is active — if so, allocate from it.
     let region_id = current_active_region();
     if region_id != 0 {
         let align = 16.max(std::mem::align_of::<usize>());
-        let addr = blood_region_alloc(region_id, size, align);
-        if addr == 0 {
+        let header_addr = blood_region_alloc(region_id, total_size, align);
+        if header_addr == 0 {
             blood_panic(c"blood_alloc_or_abort: region allocation failed (out of region memory)".as_ptr());
         }
-        // Register region allocation in slot registry WITH region_id so that
-        // blood_region_destroy can invalidate all allocations in the region.
-        let gen = register_allocation_with_region(addr, size, region_id);
+        // Register with region_id for invalidation on region destroy
+        let gen = register_allocation_with_region(header_addr, total_size, region_id);
+        // Write generation into header
+        let header_ptr = header_addr as *mut u32;
+        *header_ptr = gen;
+        // Return data pointer (past header)
+        let data_addr = header_addr + header_size as u64;
         *out_generation = gen;
-        return addr;
+        return data_addr;
     }
 
     // No active region — use global allocator with generation tracking.
     let align = 16.max(std::mem::align_of::<usize>());
-    let layout = match std::alloc::Layout::from_size_align(size, align) {
+    let layout = match std::alloc::Layout::from_size_align(total_size, align) {
         Ok(l) => l,
         Err(_) => {
             blood_panic(c"blood_alloc_or_abort: invalid layout".as_ptr());
@@ -3144,14 +3155,18 @@ pub unsafe extern "C" fn blood_alloc_or_abort(
         blood_panic(c"blood_alloc_or_abort: out of memory".as_ptr());
     }
 
-    let address = ptr as u64;
+    let header_address = ptr as u64;
 
     // Register the allocation in the global slot registry
-    // This enables generation validation on dereference
-    let gen = register_allocation(address, size);
+    let gen = register_allocation(header_address, total_size);
+    // Write generation into header
+    let header_ptr = ptr as *mut u32;
+    *header_ptr = gen;
+    // Return data pointer (past header)
+    let data_addr = header_address + header_size as u64;
 
     *out_generation = gen;
-    address
+    data_addr
 }
 
 /// Free memory allocated with blood_alloc.
@@ -3168,18 +3183,24 @@ pub unsafe extern "C" fn blood_free(addr: u64, size: usize) {
         return;
     }
 
+    // The data pointer is past the 8-byte generation header.
+    // Recover the original allocation address for registry lookup and dealloc.
+    let header_size: u64 = 8;
+    let header_addr = addr - header_size;
+
     // Unregister from slot registry BEFORE deallocation
     // This increments the generation, invalidating any existing references
-    let _ = unregister_allocation(addr);
+    let _ = unregister_allocation(header_addr);
 
     // Use matching alignment from blood_alloc
     let align = 16.max(std::mem::align_of::<usize>());
-    let layout = match std::alloc::Layout::from_size_align(size, align) {
+    let total_size = size + header_size as usize;
+    let layout = match std::alloc::Layout::from_size_align(total_size, align) {
         Ok(l) => l,
         Err(_) => return,
     };
 
-    std::alloc::dealloc(addr as *mut u8, layout);
+    std::alloc::dealloc(header_addr as *mut u8, layout);
 }
 
 /// Check if a generational reference is valid.
