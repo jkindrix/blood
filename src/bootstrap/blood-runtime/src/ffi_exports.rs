@@ -5842,6 +5842,7 @@ pub extern "C" fn blood_stale_reference_panic(expected: u32, actual: u32) -> ! {
          This indicates use-after-free. Aborting."
     );
     eprintln!("Backtrace:\n{}", std::backtrace::Backtrace::force_capture());
+    eprintln!("Tip: resolve source lines with: addr2line -e <binary> -f <address>");
     std::process::abort();
 }
 
@@ -5900,6 +5901,7 @@ pub unsafe extern "C" fn blood_panic(msg: *const c_char) -> ! {
     };
     eprintln!("BLOOD RUNTIME PANIC: {message}");
     eprintln!("Backtrace:\n{}", std::backtrace::Backtrace::force_capture());
+    eprintln!("Tip: resolve source lines with: addr2line -e <binary> -f <address>");
     std::process::abort();
 }
 
@@ -5908,6 +5910,7 @@ pub unsafe extern "C" fn blood_panic(msg: *const c_char) -> ! {
 pub extern "C" fn blood_panic_div_zero() -> ! {
     eprintln!("BLOOD RUNTIME PANIC: division by zero");
     eprintln!("Backtrace:\n{}", std::backtrace::Backtrace::force_capture());
+    eprintln!("Tip: resolve source lines with: addr2line -e <binary> -f <address>");
     std::process::abort();
 }
 
@@ -5916,6 +5919,7 @@ pub extern "C" fn blood_panic_div_zero() -> ! {
 pub extern "C" fn blood_panic_index_out_of_bounds(index: i64, length: i64) -> ! {
     eprintln!("BLOOD RUNTIME PANIC: index out of bounds: index {} but length is {}", index, length);
     eprintln!("Backtrace:\n{}", std::backtrace::Backtrace::force_capture());
+    eprintln!("Tip: resolve source lines with: addr2line -e <binary> -f <address>");
     std::process::abort();
 }
 

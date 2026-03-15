@@ -97,6 +97,32 @@ pub fn validate_body(body: &mir_body.MirBody, fn_name: &str) -> Vec<String> {
 
     }
 
+    // Check 8: Unreachable blocks (no predecessors except entry)
+    // Informational only — dead blocks are harmless but indicate potential
+    // MIR lowering issues. Not counted as errors.
+    // TODO: Add a separate warnings Vec to distinguish from blocking errors.
+
+    // Check 9: Return terminator only in blocks that dominate the exit
+    // (simplified: just check that Return exists in at least one block)
+    let mut has_return = false;
+    for bb_idx in 0usize..num_blocks {
+        let block = &body.basic_blocks[bb_idx];
+        match &block.terminator {
+            &Option.Some(ref term) => {
+                match &term.kind {
+                    &mir_term.TerminatorKind.Return => { has_return = true; }
+                    _ => {}
+                }
+            }
+            &Option.None => {}
+        }
+    }
+    if !has_return && num_blocks > 0 {
+        let mut msg = String.new();
+        msg.push_str("no Return terminator in any block");
+        errors.push(msg);
+    }
+
     errors
 }
 
