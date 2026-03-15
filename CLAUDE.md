@@ -84,7 +84,7 @@ Audit search terms: `_ =>`, `unwrap_or_default`, `unwrap_or_else`, `Type::error(
 **When something crashes or produces wrong results — use the debugging toolkit:**
 
 1. **Read the build log first.** Every build writes to `.logs/`. Don't re-run the build — read `tail -50 src/selfhost/.logs/build_*.log | tail -1` to find the latest log. Crash backtraces, error messages, and timing are all captured.
-2. **Backtraces show source locations.** All runtime panic functions (`blood_panic`, `blood_panic_div_zero`, `blood_panic_index_out_of_bounds`, `blood_stale_reference_panic`) print full backtraces. Second_gen and later binaries have DWARF debug info — use `addr2line -e binary -f ADDRESS` to resolve to `file.blood:line`.
+2. **Backtraces show source locations.** All runtime panic functions print full backtraces with DWARF source mapping. Binaries compiled by the selfhost have per-instruction source line debug info. Use `addr2line -e binary -f ADDRESS` to resolve to `file.blood:line`. Different offsets within a function resolve to different source lines.
 3. **Use `--validate-mir`** to catch MIR structural errors before codegen. The definite initialization analysis also runs with this flag.
 4. **Use `--dump-mir` or `--dump-mir=fn_name`** to inspect MIR for a specific function.
 5. **Use `--trace-codegen`** for per-function codegen tracing.
@@ -92,6 +92,9 @@ Audit search terms: `_ =>`, `unwrap_or_default`, `unwrap_or_else`, `Type::error(
 7. **Use `./build_selfhost.sh bisect`** to binary search for the miscompiled function when the selfhost produces wrong output.
 8. **Use `./build_selfhost.sh diff file.blood`** to compare bootstrap vs first_gen output for a specific file.
 9. **Don't run the same 2-minute build repeatedly** trying to filter different output. Build ONCE, read the log, use addr2line and dump tools on the existing artifacts.
+10. **Use `./build_selfhost.sh debug-test file.blood`** to compile a single test with `--dump-mir --validate-mir` and preserve all artifacts (IR, MIR, binary, stderr) in `build/debug/`.
+11. **Use `tools/blood-diag`** as the unified entry point for all diagnostic tools: `ir-diff`, `minimize`, `parity`, `memprofile`, `phase`, `asan`, `bisect`, `debug-test`, `metrics`.
+12. **Use `./build_selfhost.sh metrics`** to check build size and time trends. Every build writes JSON metrics to `.logs/metrics.jsonl`.
 
 **Blood-rust bugs: report, do NOT work around.** Write the correct code. If blood-rust miscompiles it, that's a blood-rust bug. STOP, isolate, document, report, wait. Signs: DefId errors, works in one context but not another, mutations lost through references, runtime mismatch. See `tools/FAILURE_LOG.md` for history.
 
