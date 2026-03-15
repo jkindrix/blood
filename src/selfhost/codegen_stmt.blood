@@ -1530,11 +1530,16 @@ pub fn emit_allocas_with_escapes(
         let ty_str = codegen_size.type_to_llvm_with_ctx_id(ctx, local.ty);
         let local_hir_ty = type_intern.ty_id_to_type(local.ty);
 
-        // Get recommended tier from escape analysis
-        // Small fixed-size types always use stack regardless of escape state.
-        // Gen ref enforcement for primitives is deferred to Phase 4 (header-field).
+        // Get recommended tier from escape analysis.
+        // Small types use stack unless escape analysis says GlobalEscape
+        // (reference flows to return place). ArgEscape from &x in method
+        // calls is too common and doesn't require heap — keep on stack.
+        let raw_tier = escapes.recommended_tier(local_id);
         let tier = if is_always_stack_type(&local_hir_ty) {
-            mir_escape.MemoryTier.Stack
+            match &raw_tier {
+                &mir_escape.MemoryTier.Persistent => raw_tier, // GlobalEscape: &x returned
+                _ => mir_escape.MemoryTier.Stack, // ArgEscape/Region: temporary borrow
+            }
         } else {
             let t = escapes.recommended_tier(local_id);
             // Promote large NoEscape locals to Region to prevent stack overflow.

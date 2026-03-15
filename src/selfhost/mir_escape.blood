@@ -426,10 +426,11 @@ fn place_has_deref(place: &mir_types.Place) -> bool {
 }
 
 /// Marks locals in an rvalue as HeapEscape (stored through pointer dereference).
+/// Only Ref/AddressOf cause source to escape — value copies don't.
 fn mark_rvalue_escape_heap(rvalue: &mir_types.Rvalue, result: &mut EscapeAnalysis) {
     match rvalue {
         &mir_types.Rvalue.Use(ref operand) => {
-            mark_operand_escape_heap(operand, result);
+            // Value copy through deref — source doesn't escape.
         }
         &mir_types.Rvalue.Ref { ref place, mutable: _ } => {
             result.mark_heap_escape(place.local);
@@ -438,29 +439,20 @@ fn mark_rvalue_escape_heap(rvalue: &mir_types.Rvalue, result: &mut EscapeAnalysi
             result.mark_heap_escape(place.local);
         }
         &mir_types.Rvalue.BinaryOp { operator: _, ref left, ref right } => {
-            mark_operand_escape_heap(left, result);
-            mark_operand_escape_heap(right, result);
+            // Value computation — sources don't escape.
         }
         &mir_types.Rvalue.UnaryOp { operator: _, ref operand } => {
-            mark_operand_escape_heap(operand, result);
+            // Value computation — source doesn't escape.
         }
         &mir_types.Rvalue.Cast { ref operand, target_ty: _ } => {
-            mark_operand_escape_heap(operand, result);
+            // Value cast — source doesn't escape.
         }
-        &mir_types.Rvalue.Aggregate { kind: _, ref operands } => {
-            for i in 0usize..operands.len() {
-                mark_operand_escape_heap(&operands[i], result);
-            }
+        &mir_types.Rvalue.Aggregate { kind: _, operands: _ } => {
+            // Aggregate copies values — sources don't escape.
         }
-        &mir_types.Rvalue.Discriminant(ref place) => {
-            let _ = place;
-        }
-        &mir_types.Rvalue.Len(ref place) => {
-            let _ = place;
-        }
-        &mir_types.Rvalue.ArrayToSlice { ref array_ref, array_len: _ } => {
-            mark_operand_escape_heap(array_ref, result);
-        }
+        &mir_types.Rvalue.Discriminant(_) => {}
+        &mir_types.Rvalue.Len(_) => {}
+        &mir_types.Rvalue.ArrayToSlice { array_ref: _, array_len: _ } => {}
         &mir_types.Rvalue.ZeroInit(_) => {}
     }
 }
@@ -505,41 +497,39 @@ fn mark_operand_escape_global(operand: &mir_types.Operand, result: &mut EscapeAn
 }
 
 /// Marks locals in an rvalue as GlobalEscape (used when assigned to return place).
+/// Only Ref and AddressOf cause the source local to escape — these create
+/// pointers to the local's storage that outlive the function scope.
+/// Value operations (Use, BinaryOp, etc.) COPY the value, so the source
+/// local's storage doesn't need to escape — only the value does.
 fn mark_rvalue_escape_global(rvalue: &mir_types.Rvalue, result: &mut EscapeAnalysis) {
     match rvalue {
         &mir_types.Rvalue.Use(ref operand) => {
-            mark_operand_escape_global(operand, result);
+            // Value copy to return place — source doesn't escape.
+            // The value is copied, not the storage address.
         }
         &mir_types.Rvalue.Ref { ref place, mutable: _ } => {
+            // Reference to local returned — local's storage MUST outlive caller.
             result.mark_global_escape(place.local);
         }
         &mir_types.Rvalue.AddressOf { ref place, mutable: _ } => {
+            // Raw pointer to local returned — local's storage MUST outlive caller.
             result.mark_global_escape(place.local);
         }
         &mir_types.Rvalue.BinaryOp { operator: _, ref left, ref right } => {
-            mark_operand_escape_global(left, result);
-            mark_operand_escape_global(right, result);
+            // Value computation — sources don't escape.
         }
         &mir_types.Rvalue.UnaryOp { operator: _, ref operand } => {
-            mark_operand_escape_global(operand, result);
+            // Value computation — source doesn't escape.
         }
         &mir_types.Rvalue.Cast { ref operand, target_ty: _ } => {
-            mark_operand_escape_global(operand, result);
+            // Value cast — source doesn't escape.
         }
-        &mir_types.Rvalue.Aggregate { kind: _, ref operands } => {
-            for i in 0usize..operands.len() {
-                mark_operand_escape_global(&operands[i], result);
-            }
+        &mir_types.Rvalue.Aggregate { kind: _, operands: _ } => {
+            // Aggregate copies values — sources don't escape.
         }
-        &mir_types.Rvalue.Discriminant(ref place) => {
-            let _ = place;
-        }
-        &mir_types.Rvalue.Len(ref place) => {
-            let _ = place;
-        }
-        &mir_types.Rvalue.ArrayToSlice { ref array_ref, array_len: _ } => {
-            mark_operand_escape_global(array_ref, result);
-        }
+        &mir_types.Rvalue.Discriminant(_) => {}
+        &mir_types.Rvalue.Len(_) => {}
+        &mir_types.Rvalue.ArrayToSlice { array_ref: _, array_len: _ } => {}
         &mir_types.Rvalue.ZeroInit(_) => {}
     }
 }
