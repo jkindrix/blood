@@ -5923,6 +5923,24 @@ pub extern "C" fn blood_panic_index_out_of_bounds(index: i64, length: i64) -> ! 
     std::process::abort();
 }
 
+/// Called when an index is out of bounds, with source location context.
+///
+/// # Safety
+/// `location` must be a valid C string pointer.
+#[no_mangle]
+pub unsafe extern "C" fn blood_panic_index_out_of_bounds_loc(index: i64, length: i64, location: *const c_char) -> ! {
+    let loc = if location.is_null() {
+        "<unknown>"
+    } else {
+        CStr::from_ptr(location).to_str().unwrap_or("<invalid>")
+    };
+    eprintln!("BLOOD RUNTIME PANIC: index out of bounds: index {} but length is {}", index, length);
+    eprintln!("  at: {}", loc);
+    eprintln!("Backtrace:\n{}", std::backtrace::Backtrace::force_capture());
+    eprintln!("Tip: resolve source lines with: addr2line -e <binary> -f <address>");
+    std::process::abort();
+}
+
 /// Panic with a Blood str slice message.
 ///
 /// # Safety

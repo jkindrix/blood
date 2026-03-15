@@ -1108,9 +1108,13 @@ pub fn emit_place_addr(
                     let oob_ok_label = ctx.fresh_label_cg();
                     ctx.emit_cond_br_cg(&is_oob, &oob_panic_label, &oob_ok_label);
                     ctx.emit_label_cg(&oob_panic_label);
-                    ctx.begin_call(Option.None, "void", "@blood_panic_index_out_of_bounds");
+                    // Build location string: "fn_name:line"
+                    let loc_str = build_panic_location(ctx);
+                    let loc_global = ctx.add_string_constant(&loc_str);
+                    ctx.begin_call_str(Option.None, "void", "@blood_panic_index_out_of_bounds_loc");
                     ctx.call_arg_cg(true, "i64", &idx_i64);
                     ctx.call_arg_cg(false, "i64", &vec_len);
+                    ctx.call_arg_str(false, "ptr", loc_global.as_str());
                     ctx.end_call();
                     ctx.emit_unreachable();
                     ctx.emit_label_cg(&oob_ok_label);
@@ -2385,6 +2389,23 @@ fn is_struct_or_array_type(ty: &String) -> bool {
 /// Returns true if the LLVM type looks like a Vec/container type whose first
 /// field is a data pointer. These types have layout { ptr, ... } and require
 /// loading the data pointer before indexing into the heap-allocated array.
+/// Build a location string for panic messages: "fn_name:line"
+fn build_panic_location(ctx: &mut codegen_ctx.CodegenCtx) -> String {
+    let mut loc = String.new();
+    match &ctx.current_fn {
+        &Option.Some(ref name) => { loc.push_str(name.as_str()); }
+        &Option.None => { loc.push_str("<unknown>"); }
+    }
+    loc.push(':');
+    match &ctx.current_span {
+        &Option.Some(ref span) => {
+            loc.push_str(codegen_types.format_u64(span.line as u64).as_str());
+        }
+        &Option.None => { loc.push_str("0"); }
+    }
+    loc
+}
+
 fn is_vec_like_type(ty: &String) -> bool {
     // Check for "{ ptr" at the start — this matches Vec<T> = { ptr, i64, i64 }
     // and similar container types where field 0 is the heap data pointer.
