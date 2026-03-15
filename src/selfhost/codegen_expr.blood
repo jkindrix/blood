@@ -929,18 +929,26 @@ pub fn emit_place_addr(
         let proj = &place.projection[i];
         match proj {
             &mir_types.PlaceElem.Deref => {
-                // Determine the LLVM type of the reference being dereferenced.
-                // For sized &T this is { ptr, i32 } (fat ref), for unsized it's
-                // { ptr, i64 } (&str/&[T]) or { ptr, ptr } (&dyn).
+                // Determine if this is a fat reference deref.
+                // Check HIR type first; fallback to local's LLVM type for first deref
+                // (handles cases where HIR type is unset or miscategorized).
                 let ref_ty = match &current_hir_type {
                     &Option.Some(ty_id) => {
                         if type_intern.is_ref_id(ty_id) {
                             codegen_size.type_to_llvm_with_ctx_id(ctx, ty_id)
+                        } else if i == 0 {
+                            ctx.get_local_type(place.local)
                         } else {
                             common.make_string("ptr")
                         }
                     }
-                    &Option.None => common.make_string("ptr"),
+                    &Option.None => {
+                        if i == 0 {
+                            ctx.get_local_type(place.local)
+                        } else {
+                            common.make_string("ptr")
+                        }
+                    }
                 };
                 if is_sized_fat_ref(ref_ty.as_str()) {
                     // Fat reference: load { ptr, i32 }, extract pointer

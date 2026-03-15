@@ -2878,12 +2878,13 @@ fn emit_box_as_ref_call(
         return;
     }
 
-    // Emit the operand to get the &Box<T> pointer
-    let (ref_val, _ref_ty) = codegen_expr.emit_operand_typed(ctx, &args[0]);
+    // Emit the operand to get the &Box<T> pointer.
+    // With fat references, extract the ptr from { ptr, i32 } first.
+    let ref_ptr = codegen_expr.emit_operand_as_ptr(ctx, &args[0]);
 
     // Load through the reference to get the Box value (the data pointer)
     let box_val = ctx.fresh_temp_cg();
-    ctx.emit_load_cg2(&box_val, "ptr", &codegen_ctx.CgName.Str(ref_val));
+    ctx.emit_load_cg2(&box_val, "ptr", &codegen_ctx.CgName.Str(ref_ptr));
 
     // Emit: %result = call ptr @box_as_ref(ptr box_val)
     let result = ctx.fresh_temp_cg();
