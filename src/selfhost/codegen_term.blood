@@ -1080,6 +1080,59 @@ fn emit_call(
         }
     }
 
+    // Cross-function gen ref capture: if the call returned a pointer type,
+    // read the generation from [ptr-8] and associate it with the destination
+    // local. This enables gen checks when the returned pointer is dereferenced.
+    // Safe because Blood's escape analysis promotes locals whose references
+    // escape to heap via blood_alloc_or_abort, which adds the 8-byte header.
+    if destination.projection.len() == 0 {
+        let dest_ty = ctx.get_local_type(destination.local);
+        if string_eq_str(dest_ty.as_str(), "ptr") && !ctx.is_handler_state_ptr(destination.local) {
+            // The destination holds a pointer — check if it came from heap alloc
+            // by reading [ptr-8]. Only do this for non-handler-state locals.
+            let dest_cg = ctx.local_cg(destination.local);
+            let loaded_ptr = ctx.fresh_temp_cg();
+            ctx.emit_load_cg2(&loaded_ptr, "ptr", &dest_cg);
+            // Read generation from header at [ptr - 8]
+            let header_ptr = ctx.fresh_temp_cg();
+            let mut indices: Vec<String> = Vec.new();
+            indices.push(common.make_string("-8"));
+            ctx.emit_gep_cg(&header_ptr, "i8", &loaded_ptr, &indices);
+            let captured_gen = ctx.fresh_temp_cg();
+            ctx.emit_load_cg2(&captured_gen, "i32", &header_ptr);
+            // Create or update gen alloca for this local
+            match ctx.get_local_generation(destination.local) {
+                Option.Some(gen_name) => {
+                    // Already has gen alloca — store new gen value
+                    ctx.write_indent();
+                    ctx.write("store i32 ");
+                    ctx.write_cgname(&captured_gen);
+                    ctx.write(", ptr ");
+                    ctx.write(gen_name.as_str());
+                    ctx.write(", align 4\n");
+                }
+                Option.None => {
+                    // Create gen alloca via deferred entry block allocas
+                    let dest_name = ctx.local_alloca_name(destination.local);
+                    let mut gen_name = common.make_string(dest_name.as_str());
+                    gen_name.push_str("_gen");
+                    let mut alloca_str = common.make_string("  ");
+                    alloca_str.push_str(gen_name.as_str());
+                    alloca_str.push_str(" = alloca i32\n");
+                    ctx.deferred_entry_allocas.push(alloca_str);
+                    // Store captured gen
+                    ctx.write_indent();
+                    ctx.write("store i32 ");
+                    ctx.write_cgname(&captured_gen);
+                    ctx.write(", ptr ");
+                    ctx.write_string(&gen_name);
+                    ctx.write(", align 4\n");
+                    ctx.set_local_generation(destination.local, gen_name);
+                }
+            }
+        }
+    }
+
     // Jump to continuation
     match target {
         &Option.Some(t) => {
