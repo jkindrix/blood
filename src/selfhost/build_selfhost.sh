@@ -62,10 +62,12 @@ decode_exit() {
 # ── Parse global flags ──────────────────────────────────────────────────────
 
 QUIET=""
+FORCE=""
 clean_args=()
 for arg in "$@"; do
     case "$arg" in
         -q|--quiet) QUIET="--quiet" ;;
+        --force) FORCE="--force" ;;
         *) clean_args+=("$arg") ;;
     esac
 done
@@ -258,69 +260,108 @@ do_test_golden() {
     [ -d "$GOLDEN_TESTS" ] || die "Golden tests not found at $GOLDEN_TESTS"
 
     check_staleness "$bin"
-    step "Running golden tests through $(basename "$bin")"
 
-    # In quiet mode, only print failures and summary
-    ok_gt() { [ "$QUIET" = "--quiet" ] || ok "$1"; }
+    # Parallelism: use available cores
+    local jobs
+    jobs=$(nproc 2>/dev/null || echo 4)
 
-    local pass=0 total=0 comp_fail=0 run_fail=0 skip=0 diag_miss=0
+    # Incremental cache: per-compiler, invalidated when compiler changes
+    local cache_dir="$BUILD_DIR/.golden-cache/$(basename "$bin")"
+    local compiler_mtime
+    compiler_mtime=$(stat -c '%Y' "$bin")
 
-    for src in "$GOLDEN_TESTS"/t[0-9][0-9]_*.blood; do
+    if [ "$FORCE" = "--force" ]; then
+        rm -rf "$cache_dir"
+    elif [ -f "$cache_dir/.mtime" ]; then
+        if [ "$(cat "$cache_dir/.mtime")" != "$compiler_mtime" ]; then
+            rm -rf "$cache_dir"
+        fi
+    fi
+    mkdir -p "$cache_dir"
+    echo "$compiler_mtime" > "$cache_dir/.mtime"
+
+    # Temp dir for per-test result files
+    local results_dir
+    results_dir=$(mktemp -d)
+
+    # Enumerate tests
+    local test_files=("$GOLDEN_TESTS"/t[0-9][0-9]_*.blood)
+    local total=${#test_files[@]}
+
+    step "Running golden tests through $(basename "$bin") ($total tests, $jobs workers)"
+
+    # ── Per-test worker (runs in subshell via xargs) ──────────────────────
+    _gt_worker() {
+        local src="$1" bin="$2" stdlib="$3" cache_dir="$4" results_dir="$5"
         local name
-        name="$(basename "$src" .blood)"
-        total=$((total + 1))
+        name=$(basename "$src" .blood)
+        local rf="$results_dir/$name.result"
+        local of="$results_dir/$name.output"
 
-        # Compile-fail tests
+        # Incremental: check source hash against cache
+        local src_hash
+        src_hash=$(md5sum "$src" | cut -d' ' -f1)
+        if [ -f "$cache_dir/$name" ]; then
+            local cached
+            cached=$(cat "$cache_dir/$name")
+            if [ "${cached%%:*}" = "$src_hash" ]; then
+                echo "CACHED_${cached#*:}" > "$rf"
+                return 0
+            fi
+        fi
+
+        # ── COMPILE_FAIL ──
         if head -1 "$src" | grep -q '^// COMPILE_FAIL:'; then
-            local tmpdir_cf
-            tmpdir_cf=$(mktemp -d)
-            local stderr_file="$tmpdir_cf/stderr.txt"
-            if "$bin" build "$src" --build-dir "$tmpdir_cf" -o "$tmpdir_cf/out" --stdlib-path "$STDLIB_PATH" >/dev/null 2>"$stderr_file"; then
-                fail "$name (expected compile failure, but succeeded)"
-                comp_fail=$((comp_fail + 1))
+            local tmpdir stderr_file
+            tmpdir=$(mktemp -d)
+            stderr_file="$tmpdir/stderr.txt"
+            # Use 'check' (no codegen/link needed) with compile timeout
+            if timeout 30 "$bin" check "$src" --stdlib-path "$stdlib" \
+                    >/dev/null 2>"$stderr_file"; then
+                echo "COMP_FAIL" > "$rf"
+                echo "(expected compile failure, but succeeded)" > "$of"
             else
-                # Compilation correctly failed — test passes
-                # Check EXPECT patterns separately as diagnostic quality signal
                 local diag_ok=1
                 if grep -q '^// EXPECT: ' "$src"; then
-                    while IFS= read -r expect_line; do
-                        local pattern="${expect_line#// EXPECT: }"
-                        if ! grep -qF "$pattern" "$stderr_file"; then
+                    while IFS= read -r line; do
+                        local pat="${line#// EXPECT: }"
+                        if ! grep -qF "$pat" "$stderr_file"; then
                             diag_ok=0
                             break
                         fi
                     done < <(grep '^// EXPECT: ' "$src")
                 fi
                 if [ "$diag_ok" -eq 1 ]; then
-                    ok_gt "$name"
+                    echo "PASS" > "$rf"
+                    echo "$src_hash:PASS" > "$cache_dir/$name"
                 else
-                    ok_gt "$name (reject ok, diagnostic mismatch)"
-                    diag_miss=$((diag_miss + 1))
+                    echo "PASS_DIAG" > "$rf"
+                    echo "$src_hash:PASS_DIAG" > "$cache_dir/$name"
                 fi
-                pass=$((pass + 1))
             fi
-            rm -rf "$tmpdir_cf"
-            continue
+            rm -rf "$tmpdir"
+            return 0
         fi
 
-        # XFAIL tests
+        # ── XFAIL ──
         if head -1 "$src" | grep -q '^// XFAIL:'; then
-            skip=$((skip + 1))
-            continue
+            echo "SKIP" > "$rf"
+            return 0
         fi
 
-        # Normal tests: compile and run
+        # ── Normal test: compile + run ──
         local tmpdir
         tmpdir=$(mktemp -d)
-        if ! "$bin" build "$src" --build-dir "$tmpdir" -o "$tmpdir/out" --stdlib-path "$STDLIB_PATH" >/dev/null 2>&1; then
-            fail "$name (compile)"
-            comp_fail=$((comp_fail + 1))
+        # Compile with timeout (prevents compiler hangs)
+        if ! timeout 30 "$bin" build "$src" --build-dir "$tmpdir" \
+                -o "$tmpdir/out" --stdlib-path "$stdlib" >/dev/null 2>&1; then
+            echo "COMP_FAIL" > "$rf"
+            echo "(compile)" > "$of"
             rm -rf "$tmpdir"
-            continue
+            return 0
         fi
 
-        local actual stderr_file exit_code=0
-        stderr_file="$tmpdir/stderr"
+        local actual exit_code=0 stderr_file="$tmpdir/stderr"
         actual=$(timeout 30 "$tmpdir/out" 2>"$stderr_file") || exit_code=$?
 
         local expected=""
@@ -328,42 +369,118 @@ do_test_golden() {
 
         if [ -n "$expected" ]; then
             if [ "$actual" = "$expected" ]; then
-                ok_gt "$name"
-                pass=$((pass + 1))
+                echo "PASS" > "$rf"
+                echo "$src_hash:PASS" > "$cache_dir/$name"
             else
-                fail "$name (output mismatch)"
-                printf "      expected: %s\n" "$expected"
-                printf "      actual:   %s\n" "$actual"
-                if [ -s "$stderr_file" ]; then
-                    printf "      stderr: %s\n" "$(head -5 "$stderr_file")"
-                fi
-                run_fail=$((run_fail + 1))
+                echo "RUN_FAIL" > "$rf"
+                {
+                    echo "(output mismatch)"
+                    printf "      expected: %s\n" "$expected"
+                    printf "      actual:   %s\n" "$actual"
+                    [ -s "$stderr_file" ] && printf "      stderr: %s\n" "$(head -5 "$stderr_file")"
+                } > "$of"
             fi
         else
             local expect_exit=""
-            expect_exit=$(grep '^// EXPECT_EXIT:' "$src" | head -1 | sed 's|^// EXPECT_EXIT: *||' || true)
-            if [ -z "$expect_exit" ]; then expect_exit="0"; fi
+            expect_exit=$(grep '^// EXPECT_EXIT:' "$src" | head -1 \
+                | sed 's|^// EXPECT_EXIT: *||' || true)
+            [ -z "$expect_exit" ] && expect_exit="0"
 
+            local passed=0
             if [ "$expect_exit" = "nonzero" ] && [ "$exit_code" -ne 0 ]; then
-                ok_gt "$name"
-                pass=$((pass + 1))
+                passed=1
             elif [ "$exit_code" = "$expect_exit" ]; then
-                ok_gt "$name"
-                pass=$((pass + 1))
+                passed=1
+            fi
+
+            if [ "$passed" -eq 1 ]; then
+                echo "PASS" > "$rf"
+                echo "$src_hash:PASS" > "$cache_dir/$name"
             else
-                fail "$name (exit $exit_code, expected $expect_exit)"
-                if [ -s "$stderr_file" ]; then
-                    printf "      stderr: %s\n" "$(head -5 "$stderr_file")"
-                fi
-                run_fail=$((run_fail + 1))
+                echo "RUN_FAIL" > "$rf"
+                {
+                    echo "(exit $exit_code, expected $expect_exit)"
+                    [ -s "$stderr_file" ] && printf "      stderr: %s\n" "$(head -5 "$stderr_file")"
+                } > "$of"
             fi
         fi
 
         rm -rf "$tmpdir"
+        return 0
+    }
+    export -f _gt_worker
+
+    # ── Dispatch tests in parallel ────────────────────────────────────────
+    printf '%s\n' "${test_files[@]}" | \
+        xargs -P "$jobs" -I{} bash -c '_gt_worker "$@"' _ {} \
+            "$bin" "$STDLIB_PATH" "$cache_dir" "$results_dir" || true
+
+    # ── Aggregate results (in test-name order) ────────────────────────────
+    local pass=0 comp_fail=0 run_fail=0 skip=0 diag_miss=0 cached=0
+
+    for src in "${test_files[@]}"; do
+        local name
+        name=$(basename "$src" .blood)
+        local rf="$results_dir/$name.result"
+
+        if [ ! -f "$rf" ]; then
+            fail "$name (no result — worker crashed?)"
+            comp_fail=$((comp_fail + 1))
+            continue
+        fi
+
+        local result
+        result=$(cat "$rf")
+        local of="$results_dir/$name.output"
+
+        case "$result" in
+            PASS)
+                [ "$QUIET" = "--quiet" ] || ok "$name"
+                pass=$((pass + 1))
+                ;;
+            PASS_DIAG)
+                [ "$QUIET" = "--quiet" ] || ok "$name (reject ok, diagnostic mismatch)"
+                pass=$((pass + 1))
+                diag_miss=$((diag_miss + 1))
+                ;;
+            CACHED_PASS)
+                [ "$QUIET" = "--quiet" ] || ok "$name (cached)"
+                pass=$((pass + 1))
+                cached=$((cached + 1))
+                ;;
+            CACHED_PASS_DIAG)
+                [ "$QUIET" = "--quiet" ] || ok "$name (cached, diagnostic mismatch)"
+                pass=$((pass + 1))
+                diag_miss=$((diag_miss + 1))
+                cached=$((cached + 1))
+                ;;
+            COMP_FAIL)
+                local detail=""
+                [ -f "$of" ] && detail=$(cat "$of")
+                fail "$name $detail"
+                comp_fail=$((comp_fail + 1))
+                ;;
+            RUN_FAIL)
+                if [ -f "$of" ]; then
+                    fail "$name $(head -1 "$of")"
+                    tail -n +2 "$of"
+                else
+                    fail "$name (run)"
+                fi
+                run_fail=$((run_fail + 1))
+                ;;
+            SKIP)
+                skip=$((skip + 1))
+                ;;
+        esac
     done
 
-    printf "\n  Passed: %d  Compile fail: %d  Run fail: %d  Skipped: %d  Total: %d\n" \
+    rm -rf "$results_dir"
+
+    printf "\n  Passed: %d  Compile fail: %d  Run fail: %d  Skipped: %d  Total: %d" \
         "$pass" "$comp_fail" "$run_fail" "$skip" "$total"
+    [ "$cached" -gt 0 ] && printf "  (cached: %d)" "$cached"
+    printf "\n"
     if [ "$diag_miss" -gt 0 ]; then
         warn "Diagnostic mismatches: $diag_miss (compile-fail tests that reject correctly but emit wrong message)"
     fi
@@ -785,6 +902,7 @@ Workflow:
 
 Flags:
   -q, --quiet         Suppress per-test output (only failures + summary)
+  --force             Ignore incremental cache, re-run all tests
 USAGE
 }
 
