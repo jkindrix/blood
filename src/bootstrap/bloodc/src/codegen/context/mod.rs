@@ -3854,6 +3854,10 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
         let panic_div_zero_type = void_type.fn_type(&[], false);
         self.module.add_function("blood_panic_div_zero", panic_div_zero_type, None);
 
+        // blood_panic_index_out_of_bounds(index: i64, length: i64) -> void (noreturn)
+        let panic_oob_type = void_type.fn_type(&[i64_type.into(), i64_type.into()], false);
+        self.module.add_function("blood_panic_index_out_of_bounds", panic_oob_type, None);
+
         // blood_register_allocation(address: i64, size: i64) -> i32 (generation)
         let register_alloc_type = i32_type.fn_type(&[i64_type.into(), i64_type.into()], false);
         self.module.add_function("blood_register_allocation", register_alloc_type, None);

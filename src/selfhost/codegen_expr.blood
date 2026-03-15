@@ -1060,6 +1060,9 @@ pub fn emit_place_addr(
                             current = vec_ptr;
                         }
                     }
+                    // Save Vec struct pointer for bounds check
+                    let vec_struct_ptr_str = cgname_to_string(&current);
+                    let vec_struct_ptr = codegen_ctx.CgName.Str(vec_struct_ptr_str);
                     let data_ptr = ctx.fresh_temp_cg();
                     ctx.emit_load_cg2(&data_ptr, "ptr", &current);
 
@@ -1073,6 +1076,41 @@ pub fn emit_place_addr(
                     ctx.write("    call void @llvm.trap()\n");
                     ctx.emit_unreachable();
                     ctx.emit_label_cg(&ok_label);
+
+                    // Bounds check: load Vec length (field 1), compare index >= length
+                    let len_ptr = ctx.fresh_temp_cg();
+                    let mut len_indices: Vec<String> = Vec.new();
+                    len_indices.push(common.make_string("0"));
+                    len_indices.push(common.make_string("1"));
+                    ctx.emit_gep_cg(&len_ptr, "{ ptr, i64, i64 }", &vec_struct_ptr, &len_indices);
+                    let vec_len = ctx.fresh_temp_cg();
+                    ctx.emit_load_cg2(&vec_len, "i64", &len_ptr);
+                    // Load index value for comparison (pre-load before main index load)
+                    let idx_for_check = ctx.fresh_temp_cg();
+                    let idx_check_alloca = ctx.local_cg(*local);
+                    let idx_check_ty = ctx.get_local_type(*local);
+                    ctx.emit_load_cg2(&idx_for_check, idx_check_ty.as_str(), &idx_check_alloca);
+                    let idx_i64 = if string_eq_str(idx_check_ty.as_str(), "i64") {
+                        idx_for_check
+                    } else {
+                        let ext = ctx.fresh_temp_cg();
+                        let raw_str = cgname_to_string(&idx_for_check);
+                        ctx.emit_cast_cg(&ext, "sext", idx_check_ty.as_str(), raw_str.as_str(), "i64");
+                        ext
+                    };
+                    let is_oob = ctx.fresh_temp_cg();
+                    let vec_len_str = cgname_to_string(&vec_len);
+                    ctx.emit_icmp_cg2(&is_oob, "uge", "i64", &idx_i64, vec_len_str.as_str());
+                    let oob_panic_label = ctx.fresh_label_cg();
+                    let oob_ok_label = ctx.fresh_label_cg();
+                    ctx.emit_cond_br_cg(&is_oob, &oob_panic_label, &oob_ok_label);
+                    ctx.emit_label_cg(&oob_panic_label);
+                    ctx.begin_call(Option.None, "void", "@blood_panic_index_out_of_bounds");
+                    ctx.call_arg_cg(true, "i64", &idx_i64);
+                    ctx.call_arg_cg(false, "i64", &vec_len);
+                    ctx.end_call();
+                    ctx.emit_unreachable();
+                    ctx.emit_label_cg(&oob_ok_label);
 
                     current = data_ptr;
                 }

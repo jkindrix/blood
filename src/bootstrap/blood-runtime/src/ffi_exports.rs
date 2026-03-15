@@ -5882,6 +5882,13 @@ pub extern "C" fn blood_panic_div_zero() -> ! {
     std::process::abort();
 }
 
+/// Called when an index is out of bounds for an array, slice, or Vec.
+#[no_mangle]
+pub extern "C" fn blood_panic_index_out_of_bounds(index: i64, length: i64) -> ! {
+    eprintln!("BLOOD RUNTIME PANIC: index out of bounds: index {} but length is {}", index, length);
+    std::process::abort();
+}
+
 /// Panic with a Blood str slice message.
 ///
 /// # Safety
