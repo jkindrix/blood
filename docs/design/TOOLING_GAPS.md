@@ -85,7 +85,39 @@ Memory profiling exists via massif. No perf/flame graph integration.
 Function/line mapping works. Local variable tracking (DILocalVariable)
 would enable `gdb print x` for Blood variables.
 
-## Priority Order
+## Remaining Open Items (from review scorecard)
+
+### GAP-1 Residual: Multi-file DWARF filename
+**Status:** Single-file fixed (b4f807b). Multi-file selfhost compilation
+still shows "main.blood" for all functions because Span has no file_id.
+**Root cause:** The bootstrap's `collect_module` resolves external modules
+and parses them, but doesn't export a source map (byte_offset → filename)
+to the selfhost codegen.
+**Fix:** Bootstrap records `{start_byte, end_byte, filename}` per module
+during `collect_module`. Exports via a runtime FFI or embedded metadata.
+Selfhost codegen queries the source map in `setup_debug_function` to
+emit the correct `!DIFile` per function.
+**Effort:** 1 session (cross-compiler: bootstrap Rust + selfhost Blood).
+
+### GAP-2 Residual: MIR validation depth
+**Status:** Return terminator check added (2ac5336). Unreachable block
+detection infrastructure added. Still lacks: dominance checking, use-def
+chains, type consistency.
+**Fix:** Implement proper dominance tree computation, then check that every
+local use is dominated by at least one assignment. Type consistency requires
+resolving Rvalue types and comparing against destination place types.
+**Effort:** 2-3 sessions for dominance + use-def. 1 session for basic type
+consistency.
+
+### GAP-6 Residual: Panic inline context
+**Status:** Backtraces + DWARF + addr2line hint added. Panic messages still
+show only values (index, length) not source context.
+**Fix fully:** Either pass function/variable context from codegen to panic
+FFI (adds string constant per check site), or implement runtime DWARF
+self-parsing to auto-resolve addresses in backtraces.
+**Effort:** 0.5 session for context strings, 2 sessions for self-parsing.
+
+## Priority Order (original, all resolved except residuals above)
 
 1. GAP-1 (DWARF filename) — highest debuggability impact, 1 session
 2. GAP-2 (per-instruction lines) — makes gdb usable, 1 session
