@@ -1337,20 +1337,35 @@ fn emit_generation_check(
     local: mir_def.MirLocalId,
     ptr_name: &codegen_ctx.CgName,
 ) {
-    // Only emit check for locals with tracked generations
-    let gen_alloca = match ctx.get_local_generation(local) {
-        Option.Some(name) => name,
-        Option.None => { return; }
+    // Check if this local has a captured generation (same-function reference)
+    let has_local_gen = match ctx.get_local_generation(local) {
+        Option.Some(_) => true,
+        Option.None => false,
     };
-
-    // Load expected generation from stack alloca
-    let expected_gen = ctx.fresh_temp_cg();
-    ctx.emit_load_cg(&expected_gen, "i32", gen_alloca.as_str());
 
     // Convert pointer to i64 address for runtime call
     let ptr_addr = ctx.fresh_temp_cg();
     let ptr_str = cgname_to_string(ptr_name);
     ctx.emit_cast_cg(&ptr_addr, "ptrtoint", "ptr", ptr_str.as_str(), "i64");
+
+    let expected_gen = ctx.fresh_temp_cg();
+    if has_local_gen {
+        // Same-function reference: compare captured generation at creation
+        // time against current generation at dereference time.
+        let gen_alloca = match ctx.get_local_generation(local) {
+            Option.Some(name) => name,
+            Option.None => { return; }
+        };
+        ctx.emit_load_cg(&expected_gen, "i32", gen_alloca.as_str());
+    } else {
+        // No local generation tracking. Skip gen check for untracked references.
+        // Cross-function gen ref enforcement requires generation to be propagated
+        // alongside the pointer, which is done by propagate_ref_generation for
+        // same-scope Ref assignments. For function returns and other cross-boundary
+        // cases, the check is skipped until fat-pointer or header-field gen refs
+        // are implemented.
+        return;
+    }
 
     // Call blood_validate_generation(address, expected_generation) -> i32
     // Returns 0 if valid, 1 if stale

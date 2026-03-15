@@ -324,6 +324,23 @@ impl SlotRegistry {
         slots.get(&address).map(|e| e.generation)
     }
 
+    /// Invalidate all allocations belonging to a specific region.
+    /// Increments the generation of each entry so that references captured
+    /// before destruction will fail validation.
+    pub fn invalidate_region(&self, region_id: u64) {
+        let mut slots = self.slots.write();
+        for (_addr, entry) in slots.iter_mut() {
+            if entry.region_id == region_id && entry.is_allocated {
+                entry.generation = if entry.generation < generation::OVERFLOW_GUARD {
+                    entry.generation + 1
+                } else {
+                    generation::OVERFLOW_GUARD
+                };
+                entry.is_allocated = false;
+            }
+        }
+    }
+
     /// Check if an address is currently allocated.
     pub fn is_allocated(&self, address: u64) -> bool {
         let slots = self.slots.read();

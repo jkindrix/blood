@@ -3123,9 +3123,10 @@ pub unsafe extern "C" fn blood_alloc_or_abort(
         if addr == 0 {
             blood_panic(c"blood_alloc_or_abort: region allocation failed (out of region memory)".as_ptr());
         }
-        // Region allocations use generation 0 — their lifetime is scoped to the
-        // region, so generational tracking is unnecessary.
-        *out_generation = 0;
+        // Register region allocation in slot registry WITH region_id so that
+        // blood_region_destroy can invalidate all allocations in the region.
+        let gen = register_allocation_with_region(addr, size, region_id);
+        *out_generation = gen;
         return addr;
     }
 
@@ -4645,6 +4646,10 @@ pub extern "C" fn blood_region_create(initial_size: usize, max_size: usize) -> u
 /// Any pointers into this region become stale.
 #[no_mangle]
 pub extern "C" fn blood_region_destroy(region_id: u64) {
+    // Invalidate all allocations in this region — increment their generations
+    // so that references captured before destruction will fail validation.
+    crate::memory::slot_registry().invalidate_region(region_id);
+
     let registry = get_region_registry();
     let mut reg = registry.lock();
     reg.remove(&region_id);

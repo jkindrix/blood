@@ -38,6 +38,10 @@ pub fn emit_statement(
         &mir_stmt.StatementKind.Assign { ref place, ref rvalue } => {
             let dest = codegen_expr.emit_place_data_ptr(ctx, place);
             codegen_expr.emit_rvalue(ctx, dest.as_str(), rvalue);
+            // Gen ref propagation: when _dest = &source where source is
+            // region-allocated, copy source's generation to dest so that
+            // dereferences through dest can validate the generation.
+            propagate_ref_generation(ctx, place, rvalue);
         }
         &mir_stmt.StatementKind.StorageLive(ref local) => {
             // In LLVM IR, storage is typically handled by alloca placement
@@ -1526,7 +1530,8 @@ pub fn emit_allocas_with_escapes(
         let local_hir_ty = type_intern.ty_id_to_type(local.ty);
 
         // Get recommended tier from escape analysis
-        // Small fixed-size types always use stack regardless of escape state
+        // Small fixed-size types always use stack regardless of escape state.
+        // Gen ref enforcement for primitives is deferred to Phase 4 (header-field).
         let tier = if is_always_stack_type(&local_hir_ty) {
             mir_escape.MemoryTier.Stack
         } else {
@@ -1581,6 +1586,71 @@ pub fn emit_allocas_with_escapes(
         ctx.register_local_hir_type(local_id, local.ty);
     }
     ctx.dedent();
+}
+
+/// Checks if an assignment is `dest = &source` where source is region-allocated,
+/// and if so, propagates the source's generation to the dest local.
+fn propagate_ref_generation(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    dest_place: &mir_types.Place,
+    rvalue: &mir_types.Rvalue,
+) {
+    if dest_place.projection.len() != 0 {
+        return; // Only propagate for direct local assignments
+    }
+    match rvalue {
+        &mir_types.Rvalue.Ref { ref place, mutable: _ } => {
+            propagate_generation(ctx, place.local, dest_place.local);
+        }
+        _ => {}
+    }
+}
+
+/// Propagates generation from a source local to a destination local.
+/// Called when `_dest = &_source` where source is region-allocated.
+/// Creates a generation alloca for dest if it doesn't have one, and copies
+/// source's generation value into it.
+fn propagate_generation(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    source: mir_def.MirLocalId,
+    dest: mir_def.MirLocalId,
+) {
+    let src_gen = match ctx.get_local_generation(source) {
+        Option.Some(name) => name,
+        Option.None => { return; } // Source has no generation — nothing to propagate
+    };
+
+    // Create gen alloca for dest if it doesn't have one
+    match ctx.get_local_generation(dest) {
+        Option.Some(_) => {} // Already has one — will be overwritten below
+        Option.None => {
+            // Create a new gen alloca for dest
+            let dest_name = ctx.local_alloca_name(dest);
+            let mut gen_name = common.make_string(dest_name.as_str());
+            gen_name.push_str("_gen");
+            // Emit alloca in entry block via deferred allocas
+            let mut alloca_str = common.make_string("  ");
+            alloca_str.push_str(gen_name.as_str());
+            alloca_str.push_str(" = alloca i32\n");
+            ctx.deferred_entry_allocas.push(alloca_str);
+            ctx.set_local_generation(dest, gen_name);
+        }
+    }
+
+    let dest_gen = match ctx.get_local_generation(dest) {
+        Option.Some(name) => name,
+        Option.None => { return; }
+    };
+
+    // Copy: load source gen, store to dest gen
+    let gen_val = ctx.fresh_temp_cg();
+    ctx.emit_load_cg(&gen_val, "i32", src_gen.as_str());
+    ctx.write_indent();
+    ctx.write("store i32 ");
+    ctx.write_cgname(&gen_val);
+    ctx.write(", ptr ");
+    ctx.write(dest_gen.as_str());
+    ctx.write(", align 4\n");
 }
 
 /// Emits a stack-allocated local (alloca).
@@ -1677,6 +1747,14 @@ fn emit_persistent_local(
 /// Returns true if the type is small and fixed-size (always stack-allocated
 /// regardless of escape analysis). This is an allocation tier decision, not
 /// a value semantics distinction — Blood uses MVS (copy-by-default for all types).
+fn is_stack_tier(tier: &mir_escape.MemoryTier) -> bool {
+    match tier {
+        &mir_escape.MemoryTier.Stack => true,
+        &mir_escape.MemoryTier.Region => false,
+        &mir_escape.MemoryTier.Persistent => false,
+    }
+}
+
 fn is_always_stack_type(ty: &hir_ty.Type) -> bool {
     match &ty.kind {
         &hir_ty.TypeKind.Primitive(_) => true,

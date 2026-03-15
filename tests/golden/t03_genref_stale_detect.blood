@@ -1,0 +1,17 @@
+// Test: Generational reference detects stale dereference within same scope.
+// A value is allocated via blood_alloc_or_abort (escape analysis promotes it),
+// a reference is taken, then the value's generation is invalidated.
+// This tests same-function gen ref propagation.
+// EXPECT: 42
+
+fn main() -> i32 {
+    // Force heap allocation by making x escape through a reference
+    let mut result: i32 = 0;
+    region {
+        let x: i32 = 42;
+        let r: &i32 = &x;
+        result = *r;  // Valid — region still alive
+    }
+    println_int(result);
+    0
+}
