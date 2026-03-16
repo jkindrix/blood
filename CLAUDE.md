@@ -167,6 +167,7 @@ cd src/selfhost
 ./build_selfhost.sh run file.blood bootstrap    # Run through bootstrap
 ./build_selfhost.sh diff file.blood             # Compare blood-rust vs first_gen output
 ./build_selfhost.sh status                      # Show compiler status, ages, processes
+./build_selfhost.sh install                     # Install toolchain to ~/.blood/{bin,lib}/
 ./build_selfhost.sh clean                       # Remove build artifacts (preserves .logs)
 ./build_selfhost.sh clean-all                   # Remove everything including logs
 
@@ -208,7 +209,9 @@ Override hierarchy (highest priority first):
 | `tools/FAILURE_LOG.md` | Structured log of past bugs, root causes, resolutions |
 | `tools/AGENT_PROTOCOL.md` | Session protocol: investigation workflow, stop conditions |
 
-**Environment variables:** `BLOOD_RUST` (bootstrap compiler path), `RUNTIME_O` (runtime.o), `RUNTIME_A` (libblood_runtime.a), `BLOOD_RUNTIME` (runtime.o, exported), `BLOOD_RUST_RUNTIME` (libblood_runtime.a, exported), `BLOOD_BUILD_DIR` (build output directory), `BLOOD_CACHE` (compilation cache directory).
+**Environment variables:** `BLOOD_RUST` (bootstrap compiler path), `RUNTIME_O` (runtime.o), `RUNTIME_A` (libblood_runtime.a), `BLOOD_RUNTIME` (runtime.o, exported), `BLOOD_RUST_RUNTIME` (libblood_runtime.a, exported), `BLOOD_STDLIB_PATH` (stdlib directory), `BLOOD_BUILD_DIR` (build output directory), `BLOOD_CACHE` (compilation cache directory).
+
+**Installed toolchain:** `./build_selfhost.sh install` copies compiler, runtime, and stdlib to `~/.blood/{bin,lib}/`. The compiler falls back to `~/.blood/lib/` for runtime and stdlib when env vars and CLI flags aren't set. Resolution: CLI flag > env var > `~/.blood/lib/` > exe-relative.
 
 Run each tool with `--help` or see its header comments for detailed usage.
 
@@ -233,23 +236,27 @@ Run each tool with `--help` or see its header comments for detailed usage.
 
 ## Current Work Intake
 
-Start with `.tmp/ACTION_PLAN.md` — the consolidated, prioritized action plan. It summarizes all active work, known bugs, blockers, and deferred items with recommended priority order.
+Start with `.tmp/INDEX.md` for the file index. Working documents are organized by content type:
 
-For detail, drill into: `.tmp/WORKLOAD.md` (per-item status with scores and tiers), `.tmp/AUDIT.md` (spec/implementation divergence audit), `.tmp/BLOCKERS.md` (root blocker dependency chains), `.tmp/GOLDEN_TEST_EXPANSION.md` (golden test plan with open items).
+- **`.tmp/WORK.md`** — What to work on next. Phases, milestones, blockers, deferred items.
+- **`.tmp/BUGS.md`** — All known bugs by compiler and severity.
+- **`.tmp/DECISIONS.md`** — Design decisions with the spec-first principle, 223-entry design reference, and decision provenance.
+- **`.tmp/GAPS.md`** — What's designed but not built, what was never designed.
+
+For methodology see `.tmp/METHODS.md`. For long-term plans see `.tmp/PLANS.md`. For deep-dive investigation logs see `.tmp/INVESTIGATIONS.md`.
+
+Source material preserved in `.tmp/archive/` (30 files).
 
 **To pick up work:**
-1. Read `.tmp/ACTION_PLAN.md` for priorities, then `.tmp/WORKLOAD.md` for detail — items are organized by tier (Tier 1 = active correctness bugs, down to Tier 5 = open design questions)
-2. Work tiers in order: clear all actionable items in Tier N before moving to Tier N+1
-3. Within a tier, prioritize by danger score (higher = more urgent)
-4. For each item: read the AUDIT.md section for context, the relevant spec, and both compilers
-5. Follow the decision procedure:
+1. Read `.tmp/WORK.md` — items are organized by remediation phase (Phase 0 = soundness, up to Phase 6 = bounds/init), then non-remediation sections (compiler bugs, performance, test expansion, deferred items)
+2. Work phases in order: complete Phase N before moving to Phase N+1. Within non-remediation sections, prioritize by severity.
+3. For each item: read the relevant spec and both compilers. Check `.tmp/DECISIONS.md` for design context and `.tmp/GAPS.md` for implementation status.
+4. Follow the decision procedure:
    - If the spec is right and the implementation is wrong → fix the code (`close-impl-to-spec`)
    - If the spec has a genuine omission or Rust-ism → fix the spec with documented justification (`close-spec-to-impl`)
    - If the answer is unclear → write a design evaluation, research the problem space (`open-question`)
-6. After completing work, update WORKLOAD.md with results and verify (build + golden tests + bootstrap)
+5. After completing work, update `.tmp/WORK.md` with results and verify (build + golden tests + bootstrap)
 
-**Tier-skip rules:** You may skip an item within a tier only if it is genuinely blocked (marked `open-question` with no resolution path, or has unmet prerequisites). When skipping, state the specific reason for each skipped item — do not dismiss a tier as a group. If all remaining items in a tier are blocked or deferred, you may proceed to the next tier after documenting why each was skipped.
+**Phase-skip rules:** You may skip an item within a phase only if it is genuinely blocked (marked `open-question` with no resolution path, or has unmet prerequisites). When skipping, state the specific reason for each skipped item — do not dismiss a phase as a group. If all remaining items in a phase are blocked or deferred, you may proceed to the next phase after documenting why each was skipped.
 
-Items marked `[-]` are **deferred with re-evaluation triggers** — do not pick them up unless the trigger condition described in WORKLOAD.md is met.
-
-**Score vs tier:** Tiers group by *type* (bugs → spec gaps → missing features → deferred → design questions). Scores indicate *urgency within and across types*. A high-score Tier 3 item does NOT automatically override a low-score Tier 2 item — clear the tier first, skip only with per-item justification.
+Items marked `[-]` are **deferred with re-evaluation triggers** — do not pick them up unless the trigger condition described in WORK.md is met.
