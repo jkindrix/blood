@@ -72,6 +72,25 @@ pub fn string_eq_str(a: &str, b: &str) -> bool {
     true
 }
 
+/// Emits an operand as a bare pointer. If the operand is a gen ref { ptr, i32 },
+/// extracts field 0 (the data pointer). Otherwise returns the value unchanged.
+fn emit_operand_as_ptr(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    operand: &mir_types.Operand,
+) -> String {
+    let (val, ty) = codegen_expr.emit_operand_typed(ctx, operand);
+    if string_eq_str(ty.as_str(), "{ ptr, i32 }") {
+        let stripped = ctx.fresh_temp_cg();
+        ctx.write_indent();
+        ctx.write_cgname(&stripped);
+        ctx.write(" = extractvalue { ptr, i32 } ");
+        ctx.write_string(&val);
+        ctx.write(", 0\n");
+        return cgname_to_string(&stripped);
+    }
+    val
+}
+
 // ============================================================
 // Builtin Type Method Codegen
 // ============================================================
@@ -255,9 +274,8 @@ pub fn emit_vec_push_call(
         return;
     }
 
-    // Get vec pointer - emit_operand loads the &mut Vec reference value,
-    // which is already a pointer to the Vec struct (no extra deref needed).
-    let vec_ptr = codegen_expr.emit_operand(ctx, &args[0]);
+    // Get vec pointer - strip gen ref if present (FFI expects bare ptr).
+    let vec_ptr = emit_operand_as_ptr(ctx, &args[0]);
 
     // Get element value and type
     let (elem_val, elem_ty) = codegen_expr.emit_operand_typed(ctx, &args[1]);
@@ -344,9 +362,8 @@ pub fn emit_vec_len_call(
         return;
     }
 
-    // Get vec pointer - emit_operand loads the reference value,
-    // which is already a pointer to the Vec struct.
-    let vec_ptr = codegen_expr.emit_operand(ctx, &args[0]);
+    // Get vec pointer - strip gen ref if present (FFI expects bare ptr).
+    let vec_ptr = emit_operand_as_ptr(ctx, &args[0]);
 
     // Emit: %result = call i64 @vec_len(ptr vec)
     let result = ctx.fresh_temp_cg();
@@ -385,9 +402,8 @@ pub fn emit_vec_pop_call(
         return;
     }
 
-    // Get vec pointer - emit_operand loads the reference value,
-    // which is already a pointer to the Vec struct.
-    let vec_ptr = codegen_expr.emit_operand(ctx, &args[0]);
+    // Get vec pointer - strip gen ref if present (FFI expects bare ptr).
+    let vec_ptr = emit_operand_as_ptr(ctx, &args[0]);
 
     // Get element size from destination's HIR type (Option<T>)
     // pop returns Option<T>, so we need to extract T's size
@@ -471,9 +487,8 @@ pub fn emit_vec_clear_call(
         return;
     }
 
-    // Get vec pointer - emit_operand loads the reference value,
-    // which is already a pointer to the Vec struct.
-    let vec_ptr = codegen_expr.emit_operand(ctx, &args[0]);
+    // Get vec pointer - strip gen ref if present (FFI expects bare ptr).
+    let vec_ptr = emit_operand_as_ptr(ctx, &args[0]);
 
     // Emit: call void @vec_clear(ptr vec)
     ctx.begin_call(Option.None, "void", "@vec_clear");
@@ -574,9 +589,8 @@ pub fn emit_string_push_str_call(
         return;
     }
 
-    // Get string pointer - emit_operand loads the reference value,
-    // which is already a pointer to the String struct.
-    let str_ptr = codegen_expr.emit_operand(ctx, &args[0]);
+    // Get string pointer - strip gen ref if present (FFI expects bare ptr).
+    let str_ptr = emit_operand_as_ptr(ctx, &args[0]);
 
     // Get the &str argument (fat pointer)
     let (arg_val, arg_ty) = codegen_expr.emit_operand_typed(ctx, &args[1]);
@@ -619,9 +633,8 @@ pub fn emit_string_len_call(
         return;
     }
 
-    // Get string pointer - emit_operand loads the reference value,
-    // which is already a pointer to the String struct.
-    let str_ptr = codegen_expr.emit_operand(ctx, &args[0]);
+    // Get string pointer - strip gen ref if present (FFI expects bare ptr).
+    let str_ptr = emit_operand_as_ptr(ctx, &args[0]);
 
     // Emit: %result = call i64 @string_len(ptr self)
     let result = ctx.fresh_temp_cg();
@@ -657,9 +670,8 @@ pub fn emit_string_push_call(
         return;
     }
 
-    // Get string pointer - emit_operand loads the reference value,
-    // which is already a pointer to the String struct.
-    let str_ptr = codegen_expr.emit_operand(ctx, &args[0]);
+    // Get string pointer - strip gen ref if present (FFI expects bare ptr).
+    let str_ptr = emit_operand_as_ptr(ctx, &args[0]);
 
     // Get char argument - it may be { i32 } struct, need to extract i32
     let (char_val, char_ty) = codegen_expr.emit_operand_typed(ctx, &args[1]);
@@ -708,9 +720,8 @@ pub fn emit_string_as_str_call(
         return;
     }
 
-    // Get string pointer - emit_operand loads the reference value,
-    // which is already a pointer to the String struct.
-    let str_ptr = codegen_expr.emit_operand(ctx, &args[0]);
+    // Get string pointer - strip gen ref if present (FFI expects bare ptr).
+    let str_ptr = emit_operand_as_ptr(ctx, &args[0]);
 
     // Emit: %result = call { ptr, i64 } @string_as_str(ptr self)
     let result = ctx.fresh_temp_cg();
@@ -747,9 +758,8 @@ pub fn emit_string_as_bytes_call(
         return;
     }
 
-    // Get string pointer - emit_operand loads the reference value,
-    // which is already a pointer to the String struct.
-    let str_ptr = codegen_expr.emit_operand(ctx, &args[0]);
+    // Get string pointer - strip gen ref if present (FFI expects bare ptr).
+    let str_ptr = emit_operand_as_ptr(ctx, &args[0]);
 
     // Emit: %result = call { ptr, i64 } @string_as_bytes(ptr self)
     let result = ctx.fresh_temp_cg();
@@ -1069,12 +1079,12 @@ pub fn emit_box_as_ref_call(
         return;
     }
 
-    // Emit the operand to get the &Box<T> pointer
-    let (ref_val, _ref_ty) = codegen_expr.emit_operand_typed(ctx, &args[0]);
+    // Emit the operand as bare pointer (strip gen ref if present)
+    let ref_ptr = emit_operand_as_ptr(ctx, &args[0]);
 
     // Load through the reference to get the Box value (the data pointer)
     let box_val = ctx.fresh_temp_cg();
-    ctx.emit_load_cg2(&box_val, "ptr", &codegen_ctx.CgName.Str(ref_val));
+    ctx.emit_load_cg2(&box_val, "ptr", &codegen_ctx.CgName.Str(ref_ptr));
 
     // Emit: %result = call ptr @box_as_ref(ptr box_val)
     let result = ctx.fresh_temp_cg();
@@ -1153,9 +1163,8 @@ pub fn emit_option_is_some_call(
         return;
     }
 
-    // Get option pointer - emit_operand loads the reference value,
-    // which is already a pointer to the Option struct.
-    let opt_ptr = codegen_expr.emit_operand(ctx, &args[0]);
+    // Get option pointer - strip gen ref if present (FFI expects bare ptr).
+    let opt_ptr = emit_operand_as_ptr(ctx, &args[0]);
 
     // Load i32 discriminant (enum discriminant type is always i32)
     let disc = ctx.fresh_temp_cg();
@@ -1194,9 +1203,8 @@ pub fn emit_option_is_none_call(
         return;
     }
 
-    // Get option pointer - emit_operand loads the reference value,
-    // which is already a pointer to the Option struct.
-    let opt_ptr = codegen_expr.emit_operand(ctx, &args[0]);
+    // Get option pointer - strip gen ref if present (FFI expects bare ptr).
+    let opt_ptr = emit_operand_as_ptr(ctx, &args[0]);
 
     // Load i32 discriminant (enum discriminant type is always i32)
     let disc = ctx.fresh_temp_cg();
@@ -1234,9 +1242,8 @@ pub fn emit_option_unwrap_call(
         return;
     }
 
-    // Get option pointer - emit_operand loads the reference value,
-    // which is already a pointer to the Option struct.
-    let opt_ptr = codegen_expr.emit_operand(ctx, &args[0]);
+    // Get option pointer - strip gen ref if present (FFI expects bare ptr).
+    let opt_ptr = emit_operand_as_ptr(ctx, &args[0]);
 
     // Get destination pointer and its size
     let dest_ptr = codegen_place.emit_place_data_ptr(ctx, destination);
@@ -1289,9 +1296,8 @@ pub fn emit_option_as_ref_call(
         return;
     }
 
-    // Get option pointer - emit_operand loads the reference value,
-    // which is already a pointer to the Option struct.
-    let opt_ptr = codegen_expr.emit_operand(ctx, &args[0]);
+    // Get option pointer - strip gen ref if present (FFI expects bare ptr).
+    let opt_ptr = emit_operand_as_ptr(ctx, &args[0]);
 
     // Get destination pointer
     let dest_ptr = codegen_place.emit_place_data_ptr(ctx, destination);
