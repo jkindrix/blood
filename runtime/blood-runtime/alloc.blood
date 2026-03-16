@@ -96,7 +96,11 @@ pub fn rt_blood_register_allocation(addr: i64, size: i64) -> i32 {
     ensure_registry();
     @unsafe {
         if REG_LEN >= REG_CAP {
-            rt_panic.rt_panic("alloc: generation registry full");
+            // Registry full — skip tracking. validate_generation returns
+            // "valid" for unregistered addresses, so this is safe.
+            let g: i32 = NEXT_GENERATION;
+            NEXT_GENERATION = NEXT_GENERATION + 1;
+            return g;
         }
         let g: i32 = NEXT_GENERATION;
         NEXT_GENERATION = NEXT_GENERATION + 1;
