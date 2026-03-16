@@ -1110,53 +1110,12 @@ fn emit_call(
         }
     }
 
-    // Cross-function gen ref capture: if the call returned a pointer type,
-    // read the generation from [ptr-8] and associate it with the destination
-    // local. This enables gen checks when the returned pointer is dereferenced.
-    // Skip for foreign/bridge calls — FFI pointers don't have Blood alloc headers.
-    let is_foreign_call = match extract_call_def_id(func) {
-        Option.Some(def_id) => ctx.is_foreign_def(def_id),
-        Option.None => false,
-    };
-    if !is_foreign_call && destination.projection.len() == 0 {
-        let dest_ty = ctx.get_local_type(destination.local);
-        if string_eq_str(dest_ty.as_str(), "ptr") && !ctx.is_handler_state_ptr(destination.local) {
-            let dest_cg = ctx.local_cg(destination.local);
-            let loaded_ptr = ctx.fresh_temp_cg();
-            ctx.emit_load_cg2(&loaded_ptr, "ptr", &dest_cg);
-            let header_ptr = ctx.fresh_temp_cg();
-            let mut indices: Vec<String> = Vec.new();
-            indices.push(common.make_string("-8"));
-            ctx.emit_gep_cg(&header_ptr, "i8", &loaded_ptr, &indices);
-            let captured_gen = ctx.fresh_temp_cg();
-            ctx.emit_load_cg2(&captured_gen, "i32", &header_ptr);
-            match ctx.get_local_generation(destination.local) {
-                Option.Some(gen_name) => {
-                    ctx.write_indent();
-                    ctx.write("store i32 ");
-                    ctx.write_cgname(&captured_gen);
-                    ctx.write(", ptr ");
-                    ctx.write(gen_name.as_str());
-                    ctx.write(", align 4\n");
-                }
-                Option.None => {
-                    let dest_name = ctx.local_alloca_name(destination.local);
-                    let mut gen_name = common.make_string(dest_name.as_str());
-                    gen_name.push_str("_gen");
-                    let mut alloca_str = common.make_string("  ");
-                    alloca_str.push_str(gen_name.as_str());
-                    alloca_str.push_str(" = alloca i32\n");
-                    ctx.deferred_entry_allocas.push(alloca_str);
-                    ctx.write_indent();
-                    ctx.write("store i32 ");
-                    ctx.write_cgname(&captured_gen);
-                    ctx.write(", ptr ");
-                    ctx.write_string(&gen_name);
-                    ctx.write(", align 4\n");
-                    ctx.set_local_generation(destination.local, gen_name);
-                }
-            }
-        }
+    // V1 cross-function gen capture DISABLED.
+    // With fat refs, references are { ptr, i32 } (gen embedded). The only
+    // ptr-typed returns are raw pointers (*T), which never have Blood alloc
+    // headers. Reading [ptr-8] on raw pointers causes segfaults (e.g., mmap
+    // wrapper returning foreign-allocated memory).
+    if false {
     }
 
     // Jump to continuation
