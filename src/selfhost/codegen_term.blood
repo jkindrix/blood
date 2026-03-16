@@ -131,8 +131,8 @@ pub fn emit_terminator(
             ctx.end_call();
 
             // Add entries for effect-captured locals that have generation tracking
-            for ec_idx in 0usize..ctx.effect_captured_locals.len() {
-                let ec_local_index = ctx.effect_captured_locals[ec_idx];
+            for ec_ref in &ctx.effect_captured_locals {
+                let ec_local_index = *ec_ref;
                 let ec_local_id = mir_def.MirLocalId.new(ec_local_index);
                 match ctx.get_local_generation(ec_local_id) {
                     Option.Some(gen_name) => {
@@ -180,8 +180,8 @@ pub fn emit_terminator(
             // regions so they aren't destroyed while the continuation exists.
             if !is_tail_resumptive && ctx.active_regions.len() > 0 {
                 ctx.write("    ; suspend active regions for non-tail-resumptive perform\n");
-                for ri in 0usize..ctx.active_regions.len() {
-                    let region_str = ctx.active_regions[ri].as_str();
+                for active_reg in &ctx.active_regions {
+                    let region_str = active_reg.as_str();
                     ctx.write_indent();
                     ctx.write("call void @blood_continuation_add_suspended_region(i64 ");
                     ctx.write_cgname(&continuation);
@@ -1894,8 +1894,8 @@ pub fn emit_basic_block(
 
     // Emit statements
     ctx.indent();
-    for i in 0usize..block.statements.len() {
-        codegen_stmt.emit_statement(ctx, &block.statements[i]);
+    for stmt in &block.statements {
+        codegen_stmt.emit_statement(ctx, stmt);
     }
     ctx.dedent();
 
