@@ -303,6 +303,7 @@ fn emit_constant(
 pub fn emit_rvalue(
     ctx: &mut codegen_ctx.CodegenCtx,
     dest: &str,
+    dest_type: &str,
     rvalue: &mir_types.Rvalue,
 ) {
     match rvalue {
@@ -595,7 +596,7 @@ pub fn emit_rvalue(
             }
         }
         &mir_types.Rvalue.Aggregate { ref kind, ref operands } => {
-            emit_aggregate(ctx, dest, kind, operands);
+            emit_aggregate(ctx, dest, dest_type, kind, operands);
         }
         &mir_types.Rvalue.Len(ref place) => {
             // For slices - load the length field
@@ -1591,6 +1592,7 @@ fn llvm_type_size_estimate(ty: &str) -> u64 {
 fn emit_aggregate_adt(
     ctx: &mut codegen_ctx.CodegenCtx,
     dest: &str,
+    dest_type: &str,
     def_id: u32,
     variant_idx: u32,
     operands: &Vec<mir_types.Operand>,
@@ -1724,7 +1726,14 @@ fn emit_aggregate_adt(
     // Try enum
     match ctx.lookup_enum(def_id) {
         Option.Some(layout) => {
-            let enum_ty = clone_string(&layout.llvm_type);
+            // Use dest_type (from alloca) for GEP consistency with the alloca type.
+            // layout.llvm_type may be wrong for generic enums (keyed by def_id only,
+            // so Option<ConstInfo> and Option<&T> share the same cached layout).
+            let enum_ty = if dest_type.len() > 2 {
+                common.make_string(dest_type)
+            } else {
+                clone_string(&layout.llvm_type)
+            };
             let discr_ty = clone_string(&layout.discriminant_type);
             // Find the variant's payload type and field types
             let mut payload_ty = common.make_string("{}");
@@ -1931,6 +1940,7 @@ fn find_previous_param_pos(
 fn emit_aggregate(
     ctx: &mut codegen_ctx.CodegenCtx,
     dest: &str,
+    dest_type: &str,
     kind: &mir_types.AggregateKind,
     operands: &Vec<mir_types.Operand>,
 ) {
@@ -1981,7 +1991,7 @@ fn emit_aggregate(
                 hir_type_args.push(type_intern.ty_id_to_type(type_args[ta]));
             }
             // Look up the ADT in the registry to determine if it's a struct or enum
-            emit_aggregate_adt(ctx, dest, def_id.index, variant_idx, operands, &hir_type_args);
+            emit_aggregate_adt(ctx, dest, dest_type, def_id.index, variant_idx, operands, &hir_type_args);
         }
         &mir_types.AggregateKind.Record => {
             // Extensible records - store fields with actual types

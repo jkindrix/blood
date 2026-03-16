@@ -39,7 +39,8 @@ pub fn emit_statement(
     match &stmt.kind {
         &mir_stmt.StatementKind.Assign { ref place, ref rvalue } => {
             let dest = codegen_place.emit_place_data_ptr(ctx, place);
-            codegen_expr.emit_rvalue(ctx, dest.as_str(), rvalue);
+            let dest_ty = ctx.get_local_type(place.local);
+            codegen_expr.emit_rvalue(ctx, dest.as_str(), dest_ty.as_str(), rvalue);
             // Gen ref propagation: when _dest = &source where source is
             // region/persistent-allocated, propagate generation to dest.
             // Only for simple locals (no projections) — projections may
