@@ -556,11 +556,25 @@ pub fn emit_rvalue(
                     }
                 };
                 let target_hir_ty = type_intern.ty_id_to_type(*target_ty);
-                let result = match src_ty_opt {
-                    Option.Some(ref src_type) => emit_cast_with_types(ctx, &val, src_type, &target_hir_ty),
-                    Option.None => {
-                        // Fallback: construct approximate source type from LLVM type
-                        emit_cast_from_llvm_types(ctx, &val, src_ty.as_str(), tgt_llvm.as_str())
+                // If the actual operand LLVM type differs from the HIR-derived type,
+                // use the actual type to avoid type mismatches (e.g., extractvalue
+                // { ptr, i32 } on a value that is actually ptr).
+                let src_hir_llvm = match &src_ty_opt {
+                    &Option.Some(ref src_type) => ctx.type_to_llvm_with_ctx(src_type),
+                    &Option.None => common.make_string(""),
+                };
+                let use_llvm_path = !string_eq_str(src_hir_llvm.as_str(), "") &&
+                    !string_eq_str(src_hir_llvm.as_str(), src_ty.as_str());
+                let result = if use_llvm_path {
+                    // Actual LLVM type differs from HIR type — use actual types
+                    emit_cast_from_llvm_types(ctx, &val, src_ty.as_str(), tgt_llvm.as_str())
+                } else {
+                    match src_ty_opt {
+                        Option.Some(ref src_type) => emit_cast_with_types(ctx, &val, src_type, &target_hir_ty),
+                        Option.None => {
+                            // Fallback: construct approximate source type from LLVM type
+                            emit_cast_from_llvm_types(ctx, &val, src_ty.as_str(), tgt_llvm.as_str())
+                        }
                     }
                 };
                 ctx.emit_store_cg(tgt_llvm.as_str(), &result, dest);
