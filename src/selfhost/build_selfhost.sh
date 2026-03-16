@@ -87,7 +87,7 @@ set -- "${clean_args[@]+"${clean_args[@]}"}"
 # ── Log setup (skip for lightweight commands) ───────────────────────────────
 
 case "${1:-status}" in
-    status|run|diff|clean|clean-all|--help|-h) ;;
+    status|run|diff|install|clean|clean-all|--help|-h) ;;
     *)
         LOG_DIR="$DIR/.logs"
         mkdir -p "$LOG_DIR"
@@ -1062,7 +1062,7 @@ case "${1:-status}" in
         bin="$(resolve_compiler "${3:-first_gen}")"
         [ -f "$src" ] || die "Source file not found: $src"
         [ -f "$bin" ] || die "Compiler not found: $bin"
-        exec "$bin" run "$src" --stdlib-path "$STDLIB_PATH"
+        exec "$bin" run "$src" --build-dir "$BUILD_DIR" --stdlib-path "$STDLIB_PATH"
         ;;
 
     debug-test)
@@ -1136,6 +1136,43 @@ case "${1:-status}" in
 
     status)
         show_status
+        ;;
+
+    install)
+        step "Installing Blood toolchain to ~/.blood/"
+        install_dir="${HOME}/.blood"
+        bin_dir="${install_dir}/bin"
+        lib_dir="${install_dir}/lib"
+        mkdir -p "$bin_dir" "$lib_dir"
+
+        # Install compiler binary
+        [ -f "$BLOOD_RUST" ] || die "blood-rust not found at $BLOOD_RUST (run: build cargo)"
+        cp "$BLOOD_RUST" "$bin_dir/blood"
+        chmod +x "$bin_dir/blood"
+        ok "Compiler → $bin_dir/blood"
+
+        # Install C runtime
+        [ -f "$RUNTIME_O" ] || die "runtime.o not found at $RUNTIME_O (run: build runtime)"
+        cp "$RUNTIME_O" "$lib_dir/runtime.o"
+        ok "C runtime → $lib_dir/runtime.o"
+
+        # Install Rust runtime
+        [ -f "$RUNTIME_A" ] || die "libblood_runtime.a not found at $RUNTIME_A (run: build cargo)"
+        cp "$RUNTIME_A" "$lib_dir/libblood_runtime.a"
+        ok "Rust runtime → $lib_dir/libblood_runtime.a"
+
+        # Install stdlib
+        [ -d "$STDLIB_PATH" ] || die "stdlib not found at $STDLIB_PATH"
+        rm -rf "$lib_dir/stdlib"
+        cp -r "$STDLIB_PATH" "$lib_dir/stdlib"
+        ok "Stdlib → $lib_dir/stdlib/"
+
+        echo ""
+        if echo "$PATH" | tr ':' '\n' | grep -qx "$bin_dir"; then
+            ok "$bin_dir is already in PATH"
+        else
+            warn "Add to your shell profile: export PATH=\"$bin_dir:\$PATH\""
+        fi
         ;;
 
     clean)

@@ -813,8 +813,9 @@ fn cmd_check(args: &FileArgs, verbosity: u8) -> ExitCode {
         .with_source_path(&args.file)
         .with_no_std(args.no_std);
 
-    // Set stdlib path if provided
-    let mut ctx = if let Some(ref stdlib_path) = args.stdlib_path {
+    // Set stdlib path (CLI > env > installed toolchain)
+    let resolved_stdlib = resolve_stdlib_path(&args.stdlib_path);
+    let mut ctx = if let Some(ref stdlib_path) = resolved_stdlib {
         ctx.with_stdlib_path(stdlib_path)
     } else {
         ctx
@@ -926,6 +927,14 @@ fn find_c_runtime() -> PathBuf {
         }
     }
 
+    // Try installed toolchain
+    if let Some(home) = std::env::var_os("HOME") {
+        let installed = PathBuf::from(home).join(".blood/lib/runtime.o");
+        if installed.exists() {
+            return installed;
+        }
+    }
+
     // Fallback - will fail at link time if not found
     PathBuf::from("runtime/runtime.o")
 }
@@ -971,6 +980,45 @@ fn find_rust_runtime() -> Option<PathBuf> {
         }
     }
 
+    // Try installed toolchain
+    if let Some(home) = std::env::var_os("HOME") {
+        let home_path = PathBuf::from(home);
+        for name in &rust_runtime_names {
+            let installed = home_path.join(".blood/lib").join(name);
+            if installed.exists() {
+                return Some(installed);
+            }
+        }
+    }
+
+    None
+}
+
+/// Resolve the stdlib path using the override hierarchy:
+/// 1. CLI flag (--stdlib-path) — already in args
+/// 2. BLOOD_STDLIB_PATH environment variable
+/// 3. ~/.blood/lib/stdlib/ installed toolchain
+fn resolve_stdlib_path(cli_stdlib_path: &Option<PathBuf>) -> Option<PathBuf> {
+    // 1. CLI flag (highest priority)
+    if let Some(ref path) = cli_stdlib_path {
+        return Some(path.clone());
+    }
+    // 2. BLOOD_STDLIB_PATH env var
+    if let Ok(env_path) = std::env::var("BLOOD_STDLIB_PATH") {
+        if !env_path.is_empty() {
+            let p = PathBuf::from(&env_path);
+            if p.exists() {
+                return Some(p);
+            }
+        }
+    }
+    // 3. Installed toolchain
+    if let Some(home) = std::env::var_os("HOME") {
+        let installed = PathBuf::from(home).join(".blood/lib/stdlib");
+        if installed.exists() {
+            return Some(installed);
+        }
+    }
     None
 }
 
@@ -1083,8 +1131,9 @@ fn cmd_build(args: &FileArgs, verbosity: u8, timings: bool) -> ExitCode {
         .with_source_path(&args.file)
         .with_no_std(args.no_std);
 
-    // Set stdlib path if provided
-    let mut ctx = if let Some(ref stdlib_path) = args.stdlib_path {
+    // Set stdlib path (CLI > env > installed toolchain)
+    let resolved_stdlib = resolve_stdlib_path(&args.stdlib_path);
+    let mut ctx = if let Some(ref stdlib_path) = resolved_stdlib {
         ctx.with_stdlib_path(stdlib_path)
     } else {
         ctx

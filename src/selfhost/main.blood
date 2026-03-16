@@ -362,6 +362,7 @@ pub struct RuntimePaths {
 /// 1. BLOOD_RUNTIME environment variable
 /// 2. Relative to executable directory: <exe_dir>/runtime.o
 /// 3. Relative to executable directory: <exe_dir>/runtime/runtime.o
+/// 4. Installed toolchain: ~/.blood/lib/runtime.o
 fn find_c_runtime() -> Option<String> {
     // 1. Check BLOOD_RUNTIME environment variable
     let env_val: &str = env_get("BLOOD_RUNTIME");
@@ -388,6 +389,15 @@ fn find_c_runtime() -> Option<String> {
         return Option.Some(in_subdir);
     }
 
+    // 3. Installed toolchain: ~/.blood/lib/runtime.o
+    let home: &str = env_get("HOME");
+    if home.len() > 0 {
+        let installed = source.join_path(home, ".blood/lib/runtime.o");
+        if file_exists(installed.as_str()) {
+            return Option.Some(installed);
+        }
+    }
+
     Option.None
 }
 
@@ -396,6 +406,7 @@ fn find_c_runtime() -> Option<String> {
 /// Search order:
 /// 1. BLOOD_RUST_RUNTIME environment variable
 /// 2. Relative to executable directory: <exe_dir>/libblood_runtime.a
+/// 3. Installed toolchain: ~/.blood/lib/libblood_runtime.a
 fn find_rust_runtime() -> Option<String> {
     // 1. Check BLOOD_RUST_RUNTIME environment variable
     let env_val: &str = env_get("BLOOD_RUST_RUNTIME");
@@ -413,6 +424,15 @@ fn find_rust_runtime() -> Option<String> {
     let sibling = source.join_path(exe_dir.as_str(), "libblood_runtime.a");
     if file_exists(sibling.as_str()) {
         return Option.Some(sibling);
+    }
+
+    // 3. Installed toolchain: ~/.blood/lib/libblood_runtime.a
+    let home: &str = env_get("HOME");
+    if home.len() > 0 {
+        let installed = source.join_path(home, ".blood/lib/libblood_runtime.a");
+        if file_exists(installed.as_str()) {
+            return Option.Some(installed);
+        }
     }
 
     Option.None
@@ -462,8 +482,9 @@ fn find_runtime_paths() -> Option<RuntimePaths> {
     print_str("    2. Next to executable: ");
     print_str(exe_dir.as_str());
     print_str("/\n");
-    print_str("  Fix: set BLOOD_RUNTIME and BLOOD_RUST_RUNTIME, or copy runtime\n");
-    print_str("       files next to the compiler binary.\n");
+    print_str("    3. Installed toolchain: ~/.blood/lib/\n");
+    print_str("  Fix: run './build_selfhost.sh install' from the compiler repo,\n");
+    print_str("       or set BLOOD_RUNTIME and BLOOD_RUST_RUNTIME env vars.\n");
 
     Option.None
 }
@@ -1601,7 +1622,7 @@ fn resolve_build_dir(args: &Args) -> String {
 /// Resolve the stdlib path using the override hierarchy:
 /// 1. CLI flag (--stdlib-path)
 /// 2. BLOOD_STDLIB_PATH environment variable
-/// 3. None (no stdlib path — default behavior)
+/// 3. Installed toolchain: ~/.blood/lib/stdlib/
 fn resolve_stdlib_path(args: &Args) -> Option<String> {
     // 1. CLI flag
     match &args.stdlib_path {
@@ -1613,7 +1634,14 @@ fn resolve_stdlib_path(args: &Args) -> Option<String> {
     if env_val.len() > 0 {
         return Option.Some(common.make_string(env_val));
     }
-    // 3. No stdlib path
+    // 3. Installed toolchain: ~/.blood/lib/stdlib/
+    let home: &str = env_get("HOME");
+    if home.len() > 0 {
+        let installed = source.join_path(home, ".blood/lib/stdlib");
+        if file_exists(installed.as_str()) {
+            return Option.Some(installed);
+        }
+    }
     Option.None
 }
 
