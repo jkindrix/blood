@@ -22,6 +22,10 @@ mod hir_lower_body;
 mod resolve;
 mod type_intern;
 
+fn str_equals(s: &String, other: &str) -> bool {
+    str_eq(s.as_str(), other)
+}
+
 // ============================================================
 // Function Parameter Lowering
 // ============================================================
@@ -441,6 +445,17 @@ fn lower_function_decl(ctx: &mut hir_lower_ctx.LoweringCtx, f: &ast.FnDecl) {
         f.span,
     );
     ctx.add_item(def_id, item);
+
+    // Check for #[no_mangle] attribute
+    for ai in 0usize..f.attrs.len() {
+        let attr = &f.attrs[ai];
+        if attr.path.len() == 1 {
+            let attr_name = ctx.span_to_string(attr.path[0].span);
+            if str_equals(&attr_name, "no_mangle") {
+                ctx.no_mangle_def_ids.push(def_id.index);
+            }
+        }
+    }
 }
 
 /// Checks if a type directly contains the given def_id (not behind Ref/Ptr/Box).

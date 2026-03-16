@@ -173,6 +173,7 @@ pub fn lower_program_with_ast_region(program: &ast.Program, base_dir: String, so
         ctx.builtin_fn_defs,
     );
     result.turbofish_const_entries = turbofish_entries;
+    result.no_mangle_def_ids = ctx.no_mangle_def_ids;
 
     // Print combined tag→module allocation report if profiling is active.
     // Tag scheme: 1-N = Phase 1 (parse), 1001-N = Phase 3a (decls), 2001-N = Phase 4b (bodies).
@@ -1965,14 +1966,30 @@ fn collect_resolver_fn_defs(ctx: &mut hir_lower_ctx.LoweringCtx) {
         let name_opt = ctx.interner.resolve(ctx.resolver.def_info[i].info.name);
         match name_opt {
             Option.Some(name_str) => {
-                let mut mangled = String.new();
-                mangled.push_str("def");
-                hir_lower_ctx.append_u32_to_string(&mut mangled, def_id_index);
-                mangled.push(95 as char); // '_'
-                mangled.push_str(name_str.as_str());
-                ctx.builtin_fn_defs.push(
-                    hir_lower_ctx.BuiltinFnDef.new(def_id_index, mangled),
-                );
+                // Check if this function is #[no_mangle] — use bare name if so
+                let mut is_no_mangle: bool = false;
+                let mut nmi: usize = 0;
+                while nmi < ctx.no_mangle_def_ids.len() {
+                    if ctx.no_mangle_def_ids[nmi] == def_id_index {
+                        is_no_mangle = true;
+                        nmi = ctx.no_mangle_def_ids.len();
+                    }
+                    nmi += 1;
+                }
+                if is_no_mangle {
+                    ctx.builtin_fn_defs.push(
+                        hir_lower_ctx.BuiltinFnDef.new(def_id_index, common.make_string(name_str.as_str())),
+                    );
+                } else {
+                    let mut mangled = String.new();
+                    mangled.push_str("def");
+                    hir_lower_ctx.append_u32_to_string(&mut mangled, def_id_index);
+                    mangled.push(95 as char); // '_'
+                    mangled.push_str(name_str.as_str());
+                    ctx.builtin_fn_defs.push(
+                        hir_lower_ctx.BuiltinFnDef.new(def_id_index, mangled),
+                    );
+                }
             }
             Option.None => {}
         }

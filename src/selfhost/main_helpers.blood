@@ -137,13 +137,23 @@ pub fn str_contains_ref(haystack: &str, needle: &str) -> bool {
 
 /// Constructs a unique, mangled function name for LLVM IR.
 ///
+/// Checks if a DefId is in the no_mangle list.
+fn is_no_mangle(def_id_index: u32, no_mangle_def_ids: &Vec<u32>) -> bool {
+    for i in 0usize..no_mangle_def_ids.len() {
+        if no_mangle_def_ids[i] == def_id_index {
+            return true;
+        }
+    }
+    false
+}
+
 /// Uses the lowering context's interner to resolve the bare name, then
 /// qualifies it with the DefId to ensure uniqueness (many types share
 /// method names like "new", "len", etc.).
 ///
 /// Format: `def{N}_{name}` for regular functions, `blood_main` for the
 /// entry point (matching blood-rust's runtime convention).
-pub fn make_mangled_fn_name(intern: &interner.StringInterner, info: &driver.FnInfo) -> String {
+pub fn make_mangled_fn_name(intern: &interner.StringInterner, info: &driver.FnInfo, no_mangle_def_ids: &Vec<u32>) -> String {
     // Resolve bare name from interner
     let bare_name = match intern.resolve(info.name) {
         Option.Some(s) => common.make_string(s.as_str()),
@@ -156,6 +166,11 @@ pub fn make_mangled_fn_name(intern: &interner.StringInterner, info: &driver.FnIn
     // Entry point: blood-rust runtime expects "blood_main"
     if str_equals(&bare_name, "main") {
         return common.make_string("blood_main");
+    }
+
+    // #[no_mangle]: use bare function name
+    if is_no_mangle(info.def_id.index, no_mangle_def_ids) {
+        return bare_name;
     }
 
     // Regular function: def{N}_{name}
@@ -412,6 +427,7 @@ pub fn register_all_item_names(
     ctx: &mut codegen_ctx.CodegenCtx,
     intern: &interner.StringInterner,
     items: &Vec<hir_lower_ctx.ItemEntry>,
+    no_mangle_def_ids: &Vec<u32>,
 ) {
     for i in 0usize..items.len() {
         let entry = &items[i];
@@ -420,6 +436,9 @@ pub fn register_all_item_names(
                 let name = resolve_symbol(intern, entry.item.name.symbol);
                 if str_equals(&name, "main") {
                     ctx.register_def_name(entry.def_id.index, common.make_string("blood_main"));
+                } else if is_no_mangle(entry.def_id.index, no_mangle_def_ids) {
+                    // #[no_mangle]: use bare function name, no def{N}_ prefix
+                    ctx.register_def_name(entry.def_id.index, name);
                 } else {
                     let mangled = make_def_name(entry.def_id.index, &name);
                     ctx.register_def_name(entry.def_id.index, mangled);

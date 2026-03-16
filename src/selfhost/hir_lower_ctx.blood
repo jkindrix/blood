@@ -101,6 +101,8 @@ pub struct LowerResult {
     /// Turbofish const arg entries from HIR lowering.
     /// Used by the driver to pass explicit const values to MIR lowering for monomorphization.
     pub turbofish_const_entries: Vec<TurbofishEntry>,
+    /// DefId indices of functions marked with #[no_mangle].
+    pub no_mangle_def_ids: Vec<u32>,
 }
 
 impl LowerResult {
@@ -148,6 +150,7 @@ impl LowerResult {
             interner: interner,
             builtin_fn_defs: builtin_fn_defs,
             turbofish_const_entries: Vec.new(),
+            no_mangle_def_ids: Vec.new(),
         }
     }
 
@@ -175,6 +178,7 @@ impl LowerResult {
             interner: interner.StringInterner.new(),
             builtin_fn_defs: Vec.new(),
             turbofish_const_entries: Vec.new(),
+            no_mangle_def_ids: Vec.new(),
         }
     }
 
@@ -202,6 +206,7 @@ impl LowerResult {
             interner: interner.StringInterner.new(),
             builtin_fn_defs: Vec.new(),
             turbofish_const_entries: Vec.new(),
+            no_mangle_def_ids: Vec.new(),
         }
     }
 
@@ -322,6 +327,9 @@ pub struct LoweringCtx {
     /// are directed here instead of hir_region, allowing AST data to be freed after
     /// HIR lowering completes. 0 = disabled (parse data goes to hir_region).
     pub ast_region: u64,
+    /// DefId indices of functions marked with #[no_mangle].
+    /// These functions use their bare name in LLVM IR instead of def{N}_{name}.
+    pub no_mangle_def_ids: Vec<u32>,
 }
 
 /// Tracks a const generic parameter during HIR lowering.
@@ -439,6 +447,7 @@ impl LoweringCtx {
             const_param_defs: Vec.new(),
             turbofish_const_entries: Vec.new(),
             ast_region: 0 as u64,
+            no_mangle_def_ids: Vec.new(),
         }
     }
 
@@ -481,6 +490,7 @@ impl LoweringCtx {
             const_param_defs: Vec.new(),
             turbofish_const_entries: Vec.new(),
             ast_region: 0 as u64,
+            no_mangle_def_ids: Vec.new(),
         }
     }
 
