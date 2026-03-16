@@ -6,6 +6,21 @@ mod print;
 mod rt_panic;
 mod rt_string;
 
+// The bootstrap compiler packs size and alignment into a single i64:
+//   low 32 bits  = payload size
+//   high 32 bits = alignment (0 means legacy mode)
+fn decode_payload_size(packed: i64) -> i64 {
+    packed & 4294967295  // 0xFFFFFFFF
+}
+
+fn decode_payload_offset(packed: i64) -> i64 {
+    let align: i64 = (packed >> 32) & 4294967295;
+    if align > 4 { return align; }
+    if align > 0 { return 4; }
+    let size: i64 = decode_payload_size(packed);
+    if size > 4 { 8 } else { 4 }
+}
+
 // ptr @box_new(ptr val, i64 size) -> ptr (malloc + memcpy)
 #[export_name = "box_new"]
 pub fn rt_box_new(val: *mut u8, size: i64) -> *mut u8 {
@@ -39,54 +54,54 @@ pub fn rt_option_is_none(opt: *mut u8) -> i32 {
     }
 }
 
-// void @option_unwrap(ptr opt, i64 elem_size, ptr out)
+// void @option_unwrap(ptr opt, i64 packed_size, ptr out)
 #[export_name = "option_unwrap"]
-pub fn rt_option_unwrap(opt: *mut u8, elem_size: i64, out: *mut u8) {
+pub fn rt_option_unwrap(opt: *mut u8, packed_size: i64, out: *mut u8) {
     @unsafe {
         let tag: i32 = ptr_read_i32(alloc.ptr_to_addr(opt) as u64);
         if tag == 0 {
             libc.sys_abort();
         }
-        // Data starts after tag + alignment padding (offset 8 for alignment)
-        let data_addr: i64 = alloc.ptr_to_addr(opt) + 8;
-        libc.sys_memmove(out, alloc.addr_to_cptr(data_addr), elem_size as u64);
+        let size: i64 = decode_payload_size(packed_size);
+        let offset: i64 = decode_payload_offset(packed_size);
+        let data_addr: i64 = alloc.ptr_to_addr(opt) + offset;
+        libc.sys_memmove(out, alloc.addr_to_cptr(data_addr), size as u64);
     }
 }
 
-// void @option_as_ref(ptr opt, i64 elem_size, ptr out)
+// void @option_as_ref(ptr opt, i64 packed_size, ptr out)
 #[export_name = "option_as_ref"]
-pub fn rt_option_as_ref(opt: *mut u8, elem_size: i64, out: *mut u8) {
+pub fn rt_option_as_ref(opt: *mut u8, packed_size: i64, out: *mut u8) {
     @unsafe {
         let tag: i32 = ptr_read_i32(alloc.ptr_to_addr(opt) as u64);
         if tag == 0 {
-            // Write None to out
             ptr_write_i32(alloc.ptr_to_addr(out) as u64, 0);
         } else {
-            // Write Some(ptr-to-data) to out
             ptr_write_i32(alloc.ptr_to_addr(out) as u64, 1);
-            let data_addr: i64 = alloc.ptr_to_addr(opt) + 8;
+            let offset: i64 = decode_payload_offset(packed_size);
+            let data_addr: i64 = alloc.ptr_to_addr(opt) + offset;
             ptr_write_i64((alloc.ptr_to_addr(out) + 8) as u64, data_addr);
         }
     }
 }
 
-// i32 @str_eq(ptr a, ptr b) — compare two &str fat pointers
+// i1 @str_eq({ptr, i64}, {ptr, i64}) — compare two &str by value
 #[export_name = "str_eq"]
-pub fn rt_str_eq(a: *mut u8, b: *mut u8) -> i32 {
+pub fn rt_str_eq(a: &str, b: &str) -> bool {
     @unsafe {
-        let a_ptr: i64 = ptr_read_i64(alloc.ptr_to_addr(a) as u64);
-        let a_len: i64 = ptr_read_i64((alloc.ptr_to_addr(a) + 8) as u64);
-        let b_ptr: i64 = ptr_read_i64(alloc.ptr_to_addr(b) as u64);
-        let b_len: i64 = ptr_read_i64((alloc.ptr_to_addr(b) + 8) as u64);
-        if a_len != b_len { return 0; }
+        let a_len: i64 = str_len(a);
+        let b_len: i64 = str_len(b);
+        if a_len != b_len { return false; }
+        let a_ptr: *const u8 = a as *const u8;
+        let b_ptr: *const u8 = b as *const u8;
         let mut i: i64 = 0;
         while i < a_len {
-            let ca: u8 = ptr_read_u8((a_ptr + i) as u64);
-            let cb: u8 = ptr_read_u8((b_ptr + i) as u64);
-            if ca != cb { return 0; }
+            let ca: u8 = ptr_read_u8((alloc.ptr_to_addr(a_ptr as *mut u8) + i) as u64);
+            let cb: u8 = ptr_read_u8((alloc.ptr_to_addr(b_ptr as *mut u8) + i) as u64);
+            if ca != cb { return false; }
             i = i + 1;
         }
-        1
+        true
     }
 }
 

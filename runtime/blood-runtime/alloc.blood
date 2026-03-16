@@ -206,9 +206,8 @@ fn registry_lookup_size(addr: i64) -> i64 {
 // Allocation functions
 // ============================================================================
 
-// Region-aware allocation with generation tracking.
-// Phase 2: no region support — always uses global heap.
-#[export_name = "blood_alloc_or_abort"]
+// Heap-only allocation with generation tracking.
+// The region-aware dispatch wrapper is in rt_region.blood.
 pub fn rt_blood_alloc_or_abort(size: i64, out_gen: *mut i32) -> i64 {
     @unsafe {
         let ptr: *mut u8 = libc.sys_calloc(1, size as u64);
@@ -222,8 +221,8 @@ pub fn rt_blood_alloc_or_abort(size: i64, out_gen: *mut i32) -> i64 {
     }
 }
 
-// Simple allocation (no generation tracking)
-#[export_name = "blood_alloc_simple"]
+// Heap-only simple allocation (no generation tracking).
+// The region-aware dispatch wrapper is in rt_region.blood.
 pub fn rt_blood_alloc_simple(size: i64) -> i64 {
     @unsafe {
         let ptr: *mut u8 = libc.sys_calloc(1, size as u64);
