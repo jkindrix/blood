@@ -247,6 +247,8 @@ pub struct CodegenCtx {
     static_types: Vec<String>,
     /// Hash set for const def_ids: def_id -> 1 if const
     const_defs_hash: hashmap.HashMapU64U32,
+    /// Hash set for foreign/bridge def_ids: def_id -> 1 if foreign
+    foreign_defs_hash: hashmap.HashMapU64U32,
     /// Function signatures for generic call fixup: def_id -> index in fn_signatures vec
     fn_signatures: Vec<FnSigEntry>,
     fn_sigs_hash: hashmap.HashMapU64U32,
@@ -528,6 +530,7 @@ impl CodegenCtx {
             static_types_hash: hashmap.HashMapU64U32.with_capacity(64),
             static_types: Vec.with_capacity(64),
             const_defs_hash: hashmap.HashMapU64U32.with_capacity(64),
+            foreign_defs_hash: hashmap.HashMapU64U32.with_capacity(64),
             fn_signatures: Vec.with_capacity(512),
             fn_sigs_hash: hashmap.HashMapU64U32.with_capacity(512),
             fn_temp_region: 0 as u64,
@@ -617,6 +620,7 @@ impl CodegenCtx {
             static_types_hash: hashmap.HashMapU64U32.with_capacity(64),
             static_types: Vec.with_capacity(64),
             const_defs_hash: hashmap.HashMapU64U32.with_capacity(64),
+            foreign_defs_hash: hashmap.HashMapU64U32.with_capacity(64),
             fn_signatures: Vec.with_capacity(512),
             fn_sigs_hash: hashmap.HashMapU64U32.with_capacity(512),
             fn_temp_region: 0 as u64,
@@ -926,6 +930,19 @@ impl CodegenCtx {
     /// Returns true if the given DefId is a const item.
     pub fn is_const(self: &CodegenCtx, def_id: u32) -> bool {
         match self.const_defs_hash.get(def_id as u64) {
+            Option.Some(_) => true,
+            Option.None => false,
+        }
+    }
+
+    /// Registers a DefId as a foreign/bridge function.
+    pub fn register_foreign_def(self: &mut CodegenCtx, def_id: u32) {
+        self.foreign_defs_hash.insert(def_id as u64, 1);
+    }
+
+    /// Returns true if the given DefId is a foreign/bridge function.
+    pub fn is_foreign_def(self: &CodegenCtx, def_id: u32) -> bool {
+        match self.foreign_defs_hash.get(def_id as u64) {
             Option.Some(_) => true,
             Option.None => false,
         }
@@ -2250,6 +2267,7 @@ impl CodegenCtx {
             static_types_hash: hashmap.HashMapU64U32.new(),
             static_types: Vec.new(),
             const_defs_hash: hashmap.HashMapU64U32.new(),
+            foreign_defs_hash: hashmap.HashMapU64U32.new(),
             fn_signatures: Vec.new(),
             fn_sigs_hash: hashmap.HashMapU64U32.new(),
             fn_temp_region: 0 as u64,
@@ -2359,6 +2377,9 @@ impl CodegenCtx {
             }
             if self.is_const(entry.def_id) {
                 worker.register_const(entry.def_id);
+            }
+            if self.is_foreign_def(entry.def_id) {
+                worker.register_foreign_def(entry.def_id);
             }
         }
 

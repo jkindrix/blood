@@ -426,12 +426,21 @@ pub fn register_all_item_names(
                 }
             }
             &hir_item.ItemKind.Foreign(ref foreign_def) => {
+                // Bridge FFI (Abi.C) functions don't use Blood's allocator,
+                // so their pointer returns lack the 8-byte gen header.
+                let is_bridge_ffi = match &foreign_def.abi {
+                    &hir_item.Abi.C => true,
+                    _ => false,
+                };
                 // Foreign functions use bare names (matching runtime symbols)
                 for fi in 0usize..foreign_def.items.len() {
                     match &foreign_def.items[fi] {
                         &hir_item.ForeignItem.Fn(ref ff) => {
                             let name = resolve_symbol(intern, ff.name.symbol);
                             ctx.register_def_name(ff.def_id.index, name);
+                            if is_bridge_ffi {
+                                ctx.register_foreign_def(ff.def_id.index);
+                            }
                         }
                         &hir_item.ForeignItem.Static(ref _fs) => {}
                         &hir_item.ForeignItem.OpaqueType(ref _ot) => {}
