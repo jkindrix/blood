@@ -60,7 +60,13 @@ pub fn begin_streaming_module(
     header.push_str("target triple = \"x86_64-unknown-linux-gnu\"\n");
     header.push_str("\n");
 
-    // Write header to file (overwrite/create) and store path for buffered writes
+    // Intrinsic and runtime declarations — must come BEFORE function definitions
+    // so that `declare @foo` followed by `define @foo` is valid LLVM IR
+    // (the reverse order — define then declare — is a redefinition error).
+    let decls = codegen.intrinsic_declarations();
+    header.push_str(decls.as_str());
+
+    // Write header + declarations to file (overwrite/create) and store path for buffered writes
     file_write_string(output_path, header.as_str());
     ctx.set_output_path(output_path);
 
@@ -95,9 +101,7 @@ pub fn finish_streaming_module(
     let constants_ir = codegen_stmt.clone_string(&ctx.output);
     ctx.buffer_write(constants_ir.as_str());
 
-    // Emit intrinsic declarations
-    let decls = codegen.intrinsic_declarations();
-    ctx.buffer_write(decls.as_str());
+    // Intrinsic declarations already emitted in begin_streaming_module header
 
     true
 }

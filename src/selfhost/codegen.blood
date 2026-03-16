@@ -163,6 +163,12 @@ pub fn generate_module_with_items(
     output.push_str("target triple = \"x86_64-unknown-linux-gnu\"\n");
     output.push_str("\n");
 
+    // Intrinsic and runtime declarations — must come BEFORE function definitions
+    // so that `declare @foo` followed by `define @foo` is valid LLVM IR
+    // (the reverse order — define then declare — is a redefinition error).
+    let decls = intrinsic_declarations();
+    output.push_str(decls.as_str());
+
     // Generate each function using the shared context
     // Skip duplicate function definitions (keep only the first one with each name)
     // This is a workaround for missing proper monomorphization
@@ -212,10 +218,6 @@ pub fn generate_module_with_items(
     // Append string constants from the context
     ctx.emit_string_constants();
     output.push_str(ctx.output.as_str());
-
-    // Intrinsic and runtime declarations (consolidated in intrinsic_declarations())
-    let decls = intrinsic_declarations();
-    output.push_str(decls.as_str());
 
     // Drain accumulated errors and warnings from the context
     let errors = ctx.take_errors();
