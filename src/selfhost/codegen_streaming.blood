@@ -22,6 +22,7 @@ mod codegen_term;
 mod codegen;
 mod interner;
 mod type_intern;
+mod hir_expr;
 
 // ============================================================
 // Streaming Code Generation
@@ -101,6 +102,81 @@ pub fn finish_streaming_module(
     true
 }
 
+/// Evaluates a static item's initializer body to produce an LLVM constant string.
+/// Handles literal expressions (int, float, bool, char) and negated literals.
+/// Falls back to zeroinitializer for complex expressions.
+fn evaluate_static_initializer(
+    static_def: &hir_item.StaticDef,
+    bodies: &Vec<hir_lower_ctx.BodyEntry>,
+    llvm_type: &str,
+) -> String {
+    let body_idx = static_def.body_id.index as usize;
+    if body_idx >= bodies.len() {
+        return common.make_string("zeroinitializer");
+    }
+    let body = &bodies[body_idx].body;
+    evaluate_const_expr(&body.expr, llvm_type)
+}
+
+/// Evaluates a HIR expression to an LLVM constant string.
+/// Returns zeroinitializer for unsupported expressions.
+fn evaluate_const_expr(expr: &hir_expr.Expr, llvm_type: &str) -> String {
+    match &expr.kind {
+        &hir_expr.ExprKind.Literal(ref lit) => {
+            evaluate_literal(lit, llvm_type)
+        }
+        &hir_expr.ExprKind.Unary { operator: ref unary_op, operand: ref inner } => {
+            match unary_op {
+                &common.UnaryOp.Neg => {
+                    match &inner.as_ref().kind {
+                        &hir_expr.ExprKind.Literal(ref lit) => {
+                            evaluate_negated_literal(lit, llvm_type)
+                        }
+                        _ => common.make_string("zeroinitializer"),
+                    }
+                }
+                _ => common.make_string("zeroinitializer"),
+            }
+        }
+        _ => common.make_string("zeroinitializer"),
+    }
+}
+
+/// Converts a literal to an LLVM constant string.
+fn evaluate_literal(lit: &hir_expr.Literal, llvm_type: &str) -> String {
+    match &lit.kind {
+        &hir_expr.LiteralKind.Int { val: ref v, ty: ref _t } => {
+            codegen_types.format_u128(*v)
+        }
+        &hir_expr.LiteralKind.Float { bits: ref b, ty: ref _t } => {
+            codegen_types.f64_bits_to_llvm_hex(*b)
+        }
+        &hir_expr.LiteralKind.Bool(b) => {
+            if b { common.make_string("1") } else { common.make_string("0") }
+        }
+        &hir_expr.LiteralKind.Char(c) => {
+            codegen_types.format_u128(c as u128)
+        }
+        _ => common.make_string("zeroinitializer"),
+    }
+}
+
+/// Converts a negated literal to an LLVM constant string.
+fn evaluate_negated_literal(lit: &hir_expr.Literal, llvm_type: &str) -> String {
+    match &lit.kind {
+        &hir_expr.LiteralKind.Int { val: ref v, ty: ref _t } => {
+            let neg_val = 0i128 - (*v as i128);
+            codegen_types.format_i128(neg_val)
+        }
+        &hir_expr.LiteralKind.Float { bits: ref b, ty: ref _t } => {
+            // Flip the sign bit (bit 63)
+            let neg_bits = *b ^ 0x8000000000000000;
+            codegen_types.f64_bits_to_llvm_hex(neg_bits)
+        }
+        _ => common.make_string("zeroinitializer"),
+    }
+}
+
 /// Emits LLVM global variable declarations for static items with proper names.
 /// Should be called after begin_streaming_module but before generating functions.
 /// Uses the interner to get the actual static variable names.
@@ -108,6 +184,7 @@ pub fn emit_static_globals_with_names(
     ctx: &mut codegen_ctx.CodegenCtx,
     interner: &interner.StringInterner,
     items: &Vec<hir_lower_ctx.ItemEntry>,
+    bodies: &Vec<hir_lower_ctx.BodyEntry>,
 ) {
     let mut output = String.new();
     output.push_str("\n; Static global variables\n");
@@ -136,13 +213,18 @@ pub fn emit_static_globals_with_names(
                 let static_hir_ty = type_intern.ty_id_to_type(static_def.ty);
                 let llvm_type = codegen_stmt.type_to_llvm_with_ctx(ctx, &static_hir_ty);
 
+                // Evaluate the static's initializer expression
+                let init_str = evaluate_static_initializer(static_def, bodies, llvm_type.as_str());
+
                 // Emit global variable declaration
-                // Format: @name = global <type> zeroinitializer
+                // Format: @name = global <type> <initializer>
                 output.push('@');
                 output.push_str(name.as_str());
                 output.push_str(" = global ");
                 output.push_str(llvm_type.as_str());
-                output.push_str(" zeroinitializer\n");
+                output.push(' ');
+                output.push_str(init_str.as_str());
+                output.push('\n');
 
                 // Register the static's name (without @), mark it as static, and store its LLVM type
                 ctx.register_def_name(item.def_id.index, name);
