@@ -1,0 +1,375 @@
+// Phase 3: Region Allocator
+//
+// Bump-allocated arenas over mmap. Regions reserve virtual address space
+// upfront and commit physical pages on demand via mprotect.
+//
+// Stage 1 simplifications:
+// - No slab allocator (always bump)
+// - No atomics (single-threaded compiler)
+// - No suspension/continuation support
+// - exit_scope always returns 1 (immediate dealloc)
+// - Fixed-capacity registry (64 regions) and stack (64 deep)
+//
+// Region struct layout in parallel arrays (no struct support in bridge FFI):
+//   base_ptr[i]   : *mut u8  — stable mmap'd address
+//   reserved[i]   : i64      — total virtual address space
+//   committed[i]  : i64      — currently committed bytes
+//   offset[i]     : i64      — bump pointer (next free byte)
+//   max_size[i]   : i64      — maximum size
+//   alloc_count[i]: i64      — number of allocations
+//   closed[i]     : i32      — 1 = closed for new allocations
+
+mod libc;
+mod print;
+mod rt_panic;
+mod alloc;
+
+// ============================================================================
+// Region registry — fixed-capacity parallel arrays
+// ============================================================================
+
+static mut REG_IDS: *mut u8 = @unsafe { 0 as *mut u8 };       // i64 per slot
+static mut REG_BASE: *mut u8 = @unsafe { 0 as *mut u8 };      // i64 per slot (ptr as i64)
+static mut REG_RESERVED: *mut u8 = @unsafe { 0 as *mut u8 };  // i64 per slot
+static mut REG_COMMITTED: *mut u8 = @unsafe { 0 as *mut u8 }; // i64 per slot
+static mut REG_OFFSET: *mut u8 = @unsafe { 0 as *mut u8 };    // i64 per slot
+static mut REG_MAXSIZE: *mut u8 = @unsafe { 0 as *mut u8 };   // i64 per slot
+static mut REG_ALLOCCOUNT: *mut u8 = @unsafe { 0 as *mut u8 };// i64 per slot
+static mut REG_CLOSED: *mut u8 = @unsafe { 0 as *mut u8 };    // i32 per slot
+static mut REG_COUNT: i64 = 0;
+static mut REG_MAX: i64 = 64;
+static mut REG_INIT: i32 = 0;
+static mut NEXT_REGION_ID: i64 = 1;
+
+// Active region stack
+static mut STACK_DATA: *mut u8 = @unsafe { 0 as *mut u8 };    // i64 per slot
+static mut STACK_LEN: i64 = 0;
+static mut STACK_CAP: i64 = 64;
+
+fn ensure_region_registry() {
+    @unsafe {
+        if REG_INIT == 0 {
+            REG_IDS = libc.sys_calloc(64, 8);
+            REG_BASE = libc.sys_calloc(64, 8);
+            REG_RESERVED = libc.sys_calloc(64, 8);
+            REG_COMMITTED = libc.sys_calloc(64, 8);
+            REG_OFFSET = libc.sys_calloc(64, 8);
+            REG_MAXSIZE = libc.sys_calloc(64, 8);
+            REG_ALLOCCOUNT = libc.sys_calloc(64, 8);
+            REG_CLOSED = libc.sys_calloc(64, 4);
+            STACK_DATA = libc.sys_calloc(64, 8);
+            if alloc.ptr_to_addr(REG_IDS) == 0 {
+                rt_panic.rt_panic("region: failed to allocate registry");
+            }
+            REG_INIT = 1;
+        }
+    }
+}
+
+// Helper: read i64 from array at index
+fn read_i64(base: *mut u8, idx: i64) -> i64 {
+    @unsafe { ptr_read_i64((alloc.ptr_to_addr(base) + idx * 8) as u64) }
+}
+
+// Helper: write i64 to array at index
+fn write_i64(base: *mut u8, idx: i64, val: i64) {
+    @unsafe { ptr_write_i64((alloc.ptr_to_addr(base) + idx * 8) as u64, val); }
+}
+
+// Helper: read i32 from array at index
+fn read_i32(base: *mut u8, idx: i64) -> i32 {
+    @unsafe { ptr_read_i32((alloc.ptr_to_addr(base) + idx * 4) as u64) }
+}
+
+// Helper: write i32 to array at index
+fn write_i32(base: *mut u8, idx: i64, val: i32) {
+    @unsafe { ptr_write_i32((alloc.ptr_to_addr(base) + idx * 4) as u64, val); }
+}
+
+// Find registry slot for a region ID, returns index or -1
+fn find_region(region_id: i64) -> i64 {
+    @unsafe {
+        let mut i: i64 = 0;
+        while i < REG_COUNT {
+            if read_i64(REG_IDS, i) == region_id {
+                return i;
+            }
+            i = i + 1;
+        }
+        -1
+    }
+}
+
+// Get system page size
+fn page_size() -> i64 {
+    libc.sys_sysconf(libc.SC_PAGESIZE())
+}
+
+// Round up to alignment (power of 2)
+fn round_up(x: i64, align: i64) -> i64 {
+    (x + align - 1) / align * align
+}
+
+// ============================================================================
+// Region API
+// ============================================================================
+
+pub fn rt_blood_region_create(initial_size: i64, max_size: i64) -> i64 {
+    ensure_region_registry();
+    @unsafe {
+        if REG_COUNT >= REG_MAX {
+            rt_panic.rt_panic("region: registry full");
+        }
+
+        let ps: i64 = page_size();
+
+        // Ensure minimum sizes
+        let mut res: i64 = max_size;
+        if res < ps { res = ps; }
+        res = round_up(res, ps);
+
+        let mut init_commit: i64 = initial_size;
+        if init_commit < 1 { init_commit = 1; }
+        init_commit = round_up(init_commit, ps);
+        if init_commit > res { init_commit = res; }
+
+        // mmap: reserve virtual address space (PROT_NONE = no access)
+        let null_ptr: *mut u8 = alloc.addr_to_ptr(0);
+        let base: *mut u8 = libc.sys_mmap(
+            null_ptr, res as u64,
+            libc.PROT_NONE(),
+            libc.MAP_PRIVATE() + libc.MAP_ANONYMOUS(),
+            -1, 0
+        );
+        if alloc.ptr_to_addr(base) == libc.MAP_FAILED_ADDR() as i64 {
+            rt_panic.rt_panic("region: mmap failed");
+        }
+
+        // mprotect: commit initial pages (PROT_READ | PROT_WRITE)
+        let prot_rw: i32 = libc.PROT_READ() + libc.PROT_WRITE();
+        let ret: i32 = libc.sys_mprotect(base, init_commit as u64, prot_rw);
+        if ret != 0 {
+            libc.sys_munmap(base, res as u64);
+            rt_panic.rt_panic("region: mprotect failed");
+        }
+
+        // Allocate region ID
+        let rid: i64 = NEXT_REGION_ID;
+        NEXT_REGION_ID = NEXT_REGION_ID + 1;
+
+        // Store in registry
+        let idx: i64 = REG_COUNT;
+        write_i64(REG_IDS, idx, rid);
+        write_i64(REG_BASE, idx, alloc.ptr_to_addr(base));
+        write_i64(REG_RESERVED, idx, res);
+        write_i64(REG_COMMITTED, idx, init_commit);
+        write_i64(REG_OFFSET, idx, 0);
+        write_i64(REG_MAXSIZE, idx, max_size);
+        write_i64(REG_ALLOCCOUNT, idx, 0);
+        write_i32(REG_CLOSED, idx, 0);
+        REG_COUNT = REG_COUNT + 1;
+
+        rid
+    }
+}
+
+pub fn rt_blood_region_destroy(region_id: i64) {
+    @unsafe {
+        let idx: i64 = find_region(region_id);
+        if idx < 0 { return; }
+
+        let base: *mut u8 = alloc.addr_to_ptr(read_i64(REG_BASE, idx));
+        let reserved: i64 = read_i64(REG_RESERVED, idx);
+
+        // madvise: release physical pages (keep virtual mapping for stale ref safety)
+        libc.sys_madvise(base, reserved as u64, libc.MADV_DONTNEED());
+
+        // Remove from registry by swapping with last entry
+        let last: i64 = REG_COUNT - 1;
+        if idx != last {
+            write_i64(REG_IDS, idx, read_i64(REG_IDS, last));
+            write_i64(REG_BASE, idx, read_i64(REG_BASE, last));
+            write_i64(REG_RESERVED, idx, read_i64(REG_RESERVED, last));
+            write_i64(REG_COMMITTED, idx, read_i64(REG_COMMITTED, last));
+            write_i64(REG_OFFSET, idx, read_i64(REG_OFFSET, last));
+            write_i64(REG_MAXSIZE, idx, read_i64(REG_MAXSIZE, last));
+            write_i64(REG_ALLOCCOUNT, idx, read_i64(REG_ALLOCCOUNT, last));
+            write_i32(REG_CLOSED, idx, read_i32(REG_CLOSED, last));
+        }
+        REG_COUNT = REG_COUNT - 1;
+    }
+}
+
+pub fn rt_blood_region_reset(region_id: i64) {
+    @unsafe {
+        let idx: i64 = find_region(region_id);
+        if idx < 0 { return; }
+
+        // Reset bump pointer, alloc count, reopen
+        write_i64(REG_OFFSET, idx, 0);
+        write_i64(REG_ALLOCCOUNT, idx, 0);
+        write_i32(REG_CLOSED, idx, 0);
+    }
+}
+
+pub fn rt_blood_region_alloc(region_id: i64, size: i64, align: i64) -> i64 {
+    @unsafe {
+        let idx: i64 = find_region(region_id);
+        if idx < 0 { return 0; }
+        if read_i32(REG_CLOSED, idx) != 0 { return 0; }
+
+        let base_addr: i64 = read_i64(REG_BASE, idx);
+        let offset: i64 = read_i64(REG_OFFSET, idx);
+        let reserved: i64 = read_i64(REG_RESERVED, idx);
+        let committed: i64 = read_i64(REG_COMMITTED, idx);
+
+        // Align the offset
+        let aligned_offset: i64 = round_up(offset, align);
+        let new_offset: i64 = aligned_offset + size;
+
+        // Check reserved space
+        if new_offset > reserved { return 0; }
+
+        // Grow committed pages if needed
+        if new_offset > committed {
+            let ps: i64 = page_size();
+            // Growth strategy: min(committed, 256MB) increment
+            let max_growth: i64 = 268435456;  // 256 * 1024 * 1024
+            let mut growth: i64 = committed;
+            if growth > max_growth { growth = max_growth; }
+            let mut desired: i64 = committed + growth;
+            if desired < new_offset { desired = new_offset; }
+            desired = round_up(desired, ps);
+            if desired > reserved { desired = reserved; }
+
+            let additional: i64 = desired - committed;
+            if additional > 0 {
+                let commit_ptr: *mut u8 = alloc.addr_to_ptr(base_addr + committed);
+                let prot_rw: i32 = libc.PROT_READ() + libc.PROT_WRITE();
+                let ret: i32 = libc.sys_mprotect(commit_ptr, additional as u64, prot_rw);
+                if ret != 0 { return 0; }
+            }
+            write_i64(REG_COMMITTED, idx, desired);
+        }
+
+        // Advance bump pointer
+        write_i64(REG_OFFSET, idx, new_offset);
+
+        // Increment alloc count
+        let count: i64 = read_i64(REG_ALLOCCOUNT, idx);
+        write_i64(REG_ALLOCCOUNT, idx, count + 1);
+
+        base_addr + aligned_offset
+    }
+}
+
+pub fn rt_blood_region_activate(region_id: i64) {
+    ensure_region_registry();
+    @unsafe {
+        if STACK_LEN >= STACK_CAP {
+            rt_panic.rt_panic("region: active stack full");
+        }
+        write_i64(STACK_DATA, STACK_LEN, region_id);
+        STACK_LEN = STACK_LEN + 1;
+    }
+}
+
+pub fn rt_blood_region_deactivate() {
+    @unsafe {
+        if STACK_LEN > 0 {
+            STACK_LEN = STACK_LEN - 1;
+        }
+    }
+}
+
+pub fn rt_blood_region_deactivate_get() -> i64 {
+    @unsafe {
+        if STACK_LEN > 0 {
+            STACK_LEN = STACK_LEN - 1;
+            return read_i64(STACK_DATA, STACK_LEN);
+        }
+        0
+    }
+}
+
+pub fn rt_blood_region_active_id() -> i64 {
+    @unsafe {
+        if STACK_LEN > 0 {
+            return read_i64(STACK_DATA, STACK_LEN - 1);
+        }
+        0
+    }
+}
+
+pub fn rt_blood_region_trim(region_id: i64) {
+    @unsafe {
+        let idx: i64 = find_region(region_id);
+        if idx < 0 { return; }
+
+        let base_addr: i64 = read_i64(REG_BASE, idx);
+        let offset: i64 = read_i64(REG_OFFSET, idx);
+        let committed: i64 = read_i64(REG_COMMITTED, idx);
+        let ps: i64 = page_size();
+
+        // Round offset UP to next page boundary
+        let trim_start: i64 = round_up(offset, ps);
+        if trim_start >= committed { return; }
+
+        let trim_len: i64 = committed - trim_start;
+        let trim_ptr: *mut u8 = alloc.addr_to_ptr(base_addr + trim_start);
+        libc.sys_madvise(trim_ptr, trim_len as u64, libc.MADV_DONTNEED());
+    }
+}
+
+pub fn rt_blood_region_exit_scope(region_id: i64) -> i32 {
+    @unsafe {
+        let idx: i64 = find_region(region_id);
+        if idx < 0 { return 1; }
+
+        // Close the region
+        write_i32(REG_CLOSED, idx, 1);
+
+        // Stage 1: no suspension support, always immediate dealloc
+        1
+    }
+}
+
+pub fn rt_blood_region_protect(region_id: i64, prot: i32) {
+    @unsafe {
+        let idx: i64 = find_region(region_id);
+        if idx < 0 { return; }
+
+        let base: *mut u8 = alloc.addr_to_ptr(read_i64(REG_BASE, idx));
+        let committed: i64 = read_i64(REG_COMMITTED, idx);
+        if committed > 0 {
+            libc.sys_mprotect(base, committed as u64, prot);
+        }
+    }
+}
+
+// ============================================================================
+// Query functions
+// ============================================================================
+
+pub fn rt_blood_region_used(region_id: i64) -> i64 {
+    let idx: i64 = find_region(region_id);
+    if idx < 0 { return 0; }
+    read_i64(REG_OFFSET, idx)
+}
+
+pub fn rt_blood_region_committed(region_id: i64) -> i64 {
+    let idx: i64 = find_region(region_id);
+    if idx < 0 { return 0; }
+    read_i64(REG_COMMITTED, idx)
+}
+
+pub fn rt_blood_region_alloc_count(region_id: i64) -> i64 {
+    let idx: i64 = find_region(region_id);
+    if idx < 0 { return 0; }
+    read_i64(REG_ALLOCCOUNT, idx)
+}
+
+pub fn rt_blood_system_alloc_live_bytes() -> i64 {
+    // Stage 1: not tracked
+    0
+}

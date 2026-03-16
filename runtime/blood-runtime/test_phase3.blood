@@ -1,0 +1,93 @@
+// Phase 3.11: Smoke test — create region, allocate, reset, allocate again, destroy
+mod libc;
+mod print;
+mod rt_panic;
+mod alloc;
+mod rt_region;
+
+fn main() -> i32 {
+    // Test 1: create a region (1 page initial, 1MB max)
+    print.print_str("test 1: create...\n");
+    let rid: i64 = rt_region.rt_blood_region_create(4096, 1048576);
+    if rid < 1 { return 1; }
+    print.print_str("region created, id=");
+    println_i64(rid);
+
+    // Test 2: allocate from region
+    print.print_str("test 2: alloc...\n");
+    let addr1: i64 = rt_region.rt_blood_region_alloc(rid, 128, 8);
+    if addr1 == 0 { return 2; }
+    let addr2: i64 = rt_region.rt_blood_region_alloc(rid, 256, 16);
+    if addr2 == 0 { return 3; }
+    // addr2 should be after addr1
+    if addr2 <= addr1 { return 4; }
+    print.print_str("alloc OK\n");
+
+    // Test 3: write and read back
+    print.print_str("test 3: write/read...\n");
+    ptr_write_i64(addr1 as u64, 99999);
+    let readback: i64 = ptr_read_i64(addr1 as u64);
+    if readback != 99999 { return 5; }
+    print.print_str("write/read OK\n");
+
+    // Test 4: query functions
+    print.print_str("test 4: query...\n");
+    let used: i64 = rt_region.rt_blood_region_used(rid);
+    if used == 0 { return 6; }
+    print.print_str("used=");
+    println_i64(used);
+    let count: i64 = rt_region.rt_blood_region_alloc_count(rid);
+    if count != 2 { return 7; }
+    print.print_str("alloc_count=");
+    println_i64(count);
+
+    // Test 5: activate/deactivate stack
+    print.print_str("test 5: activate...\n");
+    rt_region.rt_blood_region_activate(rid);
+    let active: i64 = rt_region.rt_blood_region_active_id();
+    if active != rid { return 8; }
+    rt_region.rt_blood_region_deactivate();
+    let inactive: i64 = rt_region.rt_blood_region_active_id();
+    if inactive != 0 { return 9; }
+    print.print_str("activate/deactivate OK\n");
+
+    // Test 6: nested activation
+    print.print_str("test 6: nested...\n");
+    let rid2: i64 = rt_region.rt_blood_region_create(4096, 4096);
+    rt_region.rt_blood_region_activate(rid);
+    rt_region.rt_blood_region_activate(rid2);
+    let inner: i64 = rt_region.rt_blood_region_active_id();
+    if inner != rid2 { return 10; }
+    let popped: i64 = rt_region.rt_blood_region_deactivate_get();
+    if popped != rid2 { return 11; }
+    let outer: i64 = rt_region.rt_blood_region_active_id();
+    if outer != rid { return 12; }
+    rt_region.rt_blood_region_deactivate();
+    print.print_str("nested OK\n");
+
+    // Test 7: reset
+    print.print_str("test 7: reset...\n");
+    rt_region.rt_blood_region_reset(rid);
+    let used_after: i64 = rt_region.rt_blood_region_used(rid);
+    if used_after != 0 { return 13; }
+    // Can allocate again after reset
+    let addr3: i64 = rt_region.rt_blood_region_alloc(rid, 64, 8);
+    if addr3 == 0 { return 14; }
+    print.print_str("reset OK\n");
+
+    // Test 8: trim
+    print.print_str("test 8: trim...\n");
+    rt_region.rt_blood_region_trim(rid);
+    print.print_str("trim OK\n");
+
+    // Test 9: exit_scope + destroy
+    print.print_str("test 9: destroy...\n");
+    let should_dealloc: i32 = rt_region.rt_blood_region_exit_scope(rid);
+    if should_dealloc != 1 { return 15; }
+    rt_region.rt_blood_region_destroy(rid);
+    rt_region.rt_blood_region_destroy(rid2);
+    print.print_str("destroy OK\n");
+
+    print.print_str("phase 3 OK\n");
+    0
+}
