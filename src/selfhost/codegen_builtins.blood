@@ -823,6 +823,18 @@ pub fn load_str_fat_ptr(ctx: &mut codegen_ctx.CodegenCtx, operand: &mir_types.Op
     if string_eq_str(arg_ty.as_str(), "{ ptr, i64 }") {
         return codegen_ctx.CgName.Str(arg_val);
     }
+    // Gen ref { ptr, i32 } to &str: extract data ptr, then load { ptr, i64 }
+    if string_eq_str(arg_ty.as_str(), "{ ptr, i32 }") {
+        let data_ptr = ctx.fresh_temp_cg();
+        ctx.write_indent();
+        ctx.write_cgname(&data_ptr);
+        ctx.write(" = extractvalue { ptr, i32 } ");
+        ctx.write_string(&arg_val);
+        ctx.write(", 0\n");
+        let loaded = ctx.fresh_temp_cg();
+        ctx.emit_load_cg2(&loaded, "{ ptr, i64 }", &data_ptr);
+        return loaded;
+    }
     // Otherwise it's a ptr — load the { ptr, i64 } from it
     let loaded = ctx.fresh_temp_cg();
     ctx.emit_load_cg(&loaded, "{ ptr, i64 }", arg_val.as_str());

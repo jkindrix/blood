@@ -967,6 +967,19 @@ fn emit_call(
                             ctx.emit_load_cg(&load_result, expected_ty.as_str(), arg_val.as_str());
                             final_val = cgname_to_string(&load_result);
                             final_ty = expected_ty;
+                        } else if str_eq(arg_ty.as_str(), "{ ptr, i32 }") && is_struct_type(expected_ty.as_str()) && !string_eq_str(arg_ty.as_str(), expected_ty.as_str()) {
+                            // Gen ref { ptr, i32 } passed where a dereferenced value is expected.
+                            // Extract the data pointer, then load the expected type through it.
+                            let gen_ptr = ctx.fresh_temp_cg();
+                            ctx.write_indent();
+                            ctx.write_cgname(&gen_ptr);
+                            ctx.write(" = extractvalue { ptr, i32 } ");
+                            ctx.write_string(&arg_val);
+                            ctx.write(", 0\n");
+                            let load_result = ctx.fresh_temp_cg();
+                            ctx.emit_load_cg(&load_result, expected_ty.as_str(), cgname_to_string(&gen_ptr).as_str());
+                            final_val = cgname_to_string(&load_result);
+                            final_ty = expected_ty;
                         } else if !string_eq_str(expected_ty.as_str(), arg_ty.as_str()) {
                             // General type mismatch (e.g., struct { i32, i32 } vs scalar i64)
                             // Use memory-based bitcast: alloca the LARGER of the two types
@@ -1100,27 +1113,25 @@ fn emit_call(
     // Cross-function gen ref capture: if the call returned a pointer type,
     // read the generation from [ptr-8] and associate it with the destination
     // local. This enables gen checks when the returned pointer is dereferenced.
-    // Safe because Blood's escape analysis promotes locals whose references
-    // escape to heap via blood_alloc_or_abort, which adds the 8-byte header.
-    if destination.projection.len() == 0 {
+    // Skip for foreign/bridge calls — FFI pointers don't have Blood alloc headers.
+    let is_foreign_call = match extract_call_def_id(func) {
+        Option.Some(def_id) => ctx.is_foreign_def(def_id),
+        Option.None => false,
+    };
+    if !is_foreign_call && destination.projection.len() == 0 {
         let dest_ty = ctx.get_local_type(destination.local);
         if string_eq_str(dest_ty.as_str(), "ptr") && !ctx.is_handler_state_ptr(destination.local) {
-            // The destination holds a pointer — check if it came from heap alloc
-            // by reading [ptr-8]. Only do this for non-handler-state locals.
             let dest_cg = ctx.local_cg(destination.local);
             let loaded_ptr = ctx.fresh_temp_cg();
             ctx.emit_load_cg2(&loaded_ptr, "ptr", &dest_cg);
-            // Read generation from header at [ptr - 8]
             let header_ptr = ctx.fresh_temp_cg();
             let mut indices: Vec<String> = Vec.new();
             indices.push(common.make_string("-8"));
             ctx.emit_gep_cg(&header_ptr, "i8", &loaded_ptr, &indices);
             let captured_gen = ctx.fresh_temp_cg();
             ctx.emit_load_cg2(&captured_gen, "i32", &header_ptr);
-            // Create or update gen alloca for this local
             match ctx.get_local_generation(destination.local) {
                 Option.Some(gen_name) => {
-                    // Already has gen alloca — store new gen value
                     ctx.write_indent();
                     ctx.write("store i32 ");
                     ctx.write_cgname(&captured_gen);
@@ -1129,7 +1140,6 @@ fn emit_call(
                     ctx.write(", align 4\n");
                 }
                 Option.None => {
-                    // Create gen alloca via deferred entry block allocas
                     let dest_name = ctx.local_alloca_name(destination.local);
                     let mut gen_name = common.make_string(dest_name.as_str());
                     gen_name.push_str("_gen");
@@ -1137,7 +1147,6 @@ fn emit_call(
                     alloca_str.push_str(gen_name.as_str());
                     alloca_str.push_str(" = alloca i32\n");
                     ctx.deferred_entry_allocas.push(alloca_str);
-                    // Store captured gen
                     ctx.write_indent();
                     ctx.write("store i32 ");
                     ctx.write_cgname(&captured_gen);
@@ -1575,25 +1584,20 @@ fn emit_struct_widening(
                 ctx.emit_alloca_cg(&cast_alloca, dst_fields[fi].as_str());
             }
             // Zero-initialize the alloca to avoid reading uninitialized bytes
-            let zero_val = ctx.fresh_temp_cg();
-            ctx.write_indent();
-            ctx.write_cgname(&zero_val);
             if src_size > dst_size {
-                ctx.write(" = bitcast ");
+                ctx.write_indent();
+                ctx.write("store ");
                 ctx.write(src_fields[fi].as_str());
-                ctx.write(" zeroinitializer to ");
-                ctx.write(src_fields[fi].as_str());
+                ctx.write(" zeroinitializer, ptr ");
+                ctx.write_cgname(&cast_alloca);
+                ctx.write(", align 8\n");
             } else {
-                ctx.write(" = bitcast ");
+                ctx.write_indent();
+                ctx.write("store ");
                 ctx.write(dst_fields[fi].as_str());
-                ctx.write(" zeroinitializer to ");
-                ctx.write(dst_fields[fi].as_str());
-            }
-            ctx.write("\n");
-            if src_size > dst_size {
-                ctx.emit_store_cg2(src_fields[fi].as_str(), &zero_val, &cast_alloca);
-            } else {
-                ctx.emit_store_cg2(dst_fields[fi].as_str(), &zero_val, &cast_alloca);
+                ctx.write(" zeroinitializer, ptr ");
+                ctx.write_cgname(&cast_alloca);
+                ctx.write(", align 8\n");
             }
             // Store source value into the alloca
             ctx.emit_store_cg2(src_fields[fi].as_str(), &extracted, &cast_alloca);
@@ -1694,15 +1698,12 @@ fn emit_struct_narrowing(
                 // Destination is larger: alloca dest type, zero-init, then store source
                 ctx.emit_alloca_cg(&cast_alloca, dst_fields[fi].as_str());
                 // Zero-initialize to avoid reading uninitialized bytes
-                let zero_val = ctx.fresh_temp_cg();
                 ctx.write_indent();
-                ctx.write_cgname(&zero_val);
-                ctx.write(" = bitcast ");
+                ctx.write("store ");
                 ctx.write(dst_fields[fi].as_str());
-                ctx.write(" zeroinitializer to ");
-                ctx.write(dst_fields[fi].as_str());
-                ctx.write("\n");
-                ctx.emit_store_cg2(dst_fields[fi].as_str(), &zero_val, &cast_alloca);
+                ctx.write(" zeroinitializer, ptr ");
+                ctx.write_cgname(&cast_alloca);
+                ctx.write(", align 8\n");
             } else {
                 ctx.emit_alloca_cg(&cast_alloca, src_fields[fi].as_str());
             }
