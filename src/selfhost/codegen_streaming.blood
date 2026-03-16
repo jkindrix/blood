@@ -110,12 +110,13 @@ fn evaluate_static_initializer(
     bodies: &Vec<hir_lower_ctx.BodyEntry>,
     llvm_type: &str,
 ) -> String {
-    let body_idx = static_def.body_id.index as usize;
-    if body_idx >= bodies.len() {
-        return common.make_string("zeroinitializer");
+    let target_id = static_def.body_id.index;
+    for bi in 0usize..bodies.len() {
+        if bodies[bi].body_id.index == target_id {
+            return evaluate_const_expr(&bodies[bi].body.expr, llvm_type);
+        }
     }
-    let body = &bodies[body_idx].body;
-    evaluate_const_expr(&body.expr, llvm_type)
+    common.make_string("zeroinitializer")
 }
 
 /// Evaluates a HIR expression to an LLVM constant string.
