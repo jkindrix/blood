@@ -185,8 +185,8 @@ pub fn analyze_snapshots(body: &mir_body.MirBody) -> SnapshotAnalysis {
         let block_id = mir_def.BasicBlockId.new(bb_idx as u32);
 
         // Scan statements for handler push/pop
-        for stmt_idx in 0usize..block.statements.len() {
-            match &block.statements[stmt_idx].kind {
+        for stmt in &block.statements {
+            match &stmt.kind {
                 &mir_stmt.StatementKind.PushHandler { handler_id, ref state_place, state_kind: _, allocation_tier: _, inline_mode: _ } => {
                     let snapshot_id = next_id;
                     next_id += 1;
@@ -195,7 +195,7 @@ pub fn analyze_snapshots(body: &mir_body.MirBody) -> SnapshotAnalysis {
                         snapshot_id,
                         block_id,
                         handler_id,
-                        block.statements[stmt_idx].span,
+                        stmt.span,
                     );
 
                     // Set parent if we're nested inside another handler
@@ -233,7 +233,7 @@ pub fn analyze_snapshots(body: &mir_body.MirBody) -> SnapshotAnalysis {
                         snapshot_id,
                         block_id,
                         effect_id,
-                        block.statements[stmt_idx].span,
+                        stmt.span,
                     );
 
                     if handler_stack.len() > 0 {

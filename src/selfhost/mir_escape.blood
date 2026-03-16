@@ -253,16 +253,16 @@ impl EscapeAnalysis {
 
     /// Apply @heap/@stack allocation directive overrides from a MIR body.
     pub fn apply_alloc_overrides(self: &mut EscapeAnalysis, body: &mir_body.MirBody) {
-        for i in 0usize..body.heap_locals.len() {
-            let idx = body.heap_locals[i] as usize;
+        for hl in &body.heap_locals {
+            let idx = *hl as usize;
             if idx < self.local_states.len() {
                 let current = &self.local_states[idx];
                 let new_state = current.join(&EscapeState.HeapEscape);
                 self.local_states[idx] = new_state;
             }
         }
-        for i in 0usize..body.stack_locals.len() {
-            let local = mir_def.MirLocalId { index: body.stack_locals[i] };
+        for sl in &body.stack_locals {
+            let local = mir_def.MirLocalId { index: *sl };
             self.force_stack(local);
         }
     }
@@ -288,8 +288,8 @@ pub fn analyze_escapes(body: &mir_body.MirBody) -> EscapeAnalysis {
         let block = &body.basic_blocks[bb_idx];
 
         // Analyze statements
-        for stmt_idx in 0usize..block.statements.len() {
-            analyze_statement(&block.statements[stmt_idx], &mut result);
+        for stmt in &block.statements {
+            analyze_statement(stmt, &mut result);
         }
 
         // Analyze terminator
@@ -370,8 +370,8 @@ fn analyze_terminator(term: &mir_term.Terminator, result: &mut EscapeAnalysis) {
         &mir_term.TerminatorKind.Return => {}
         &mir_term.TerminatorKind.Call { func: _, ref args, ref destination, target: _, unwind: _ } => {
             // All arguments passed to a call may escape through that call
-            for i in 0usize..args.len() {
-                mark_operand_escape_arg(&args[i], result);
+            for arg in args {
+                mark_operand_escape_arg(arg, result);
             }
             // If destination is return place, the call result escapes globally
             // (but the call result isn't a local we track — it's produced by callee)
@@ -380,8 +380,8 @@ fn analyze_terminator(term: &mir_term.Terminator, result: &mut EscapeAnalysis) {
         &mir_term.TerminatorKind.Assert { cond: _, expected: _, msg: _, target: _, unwind: _ } => {}
         &mir_term.TerminatorKind.Perform { effect_id: _, op_index: _, ref args, destination: _, target: _, is_tail_resumptive: _ } => {
             // Effect operation args cross a suspension point (EffectEscape).
-            for i in 0usize..args.len() {
-                match &args[i] {
+            for arg in args {
+                match arg {
                     &mir_types.Operand.Copy(ref place) => {
                         result.mark_effect_escape(place.local);
                     }
@@ -412,8 +412,8 @@ fn analyze_terminator(term: &mir_term.Terminator, result: &mut EscapeAnalysis) {
 
 /// Returns true if the place involves a Deref projection (store through pointer).
 fn place_has_deref(place: &mir_types.Place) -> bool {
-    for i in 0usize..place.projection.len() {
-        match &place.projection[i] {
+    for proj in &place.projection {
+        match proj {
             &mir_types.PlaceElem.Deref => { return true; }
             &mir_types.PlaceElem.Field(_) => {}
             &mir_types.PlaceElem.Index(_) => {}
