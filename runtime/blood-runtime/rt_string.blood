@@ -1,0 +1,210 @@
+// Phase 4: String runtime functions
+//
+// String layout: { ptr: *mut u8, len: i64, cap: i64 } = 24 bytes
+// &str (FatStr): { ptr: *mut u8, len: i64 } = 16 bytes
+//
+// All string functions take a *mut u8 pointer to the String struct
+// and operate via ptr_read/ptr_write at offsets 0, 8, 16.
+//
+// Functions returning { ptr, i64 } (fat str) use the FatStr struct
+// which maps to the correct LLVM type.
+
+mod libc;
+mod print;
+mod rt_panic;
+mod alloc;
+
+// Return type for functions that yield { ptr, i64 }
+struct FatStr {
+    data: *mut u8,
+    len: i64,
+}
+
+// String field offsets (24-byte struct: ptr + len + cap)
+fn STR_DATA_OFF() -> i64 { 0 }
+fn STR_LEN_OFF() -> i64 { 8 }
+fn STR_CAP_OFF() -> i64 { 16 }
+
+fn get_data(s: *mut u8) -> i64 {
+    @unsafe { ptr_read_i64((alloc.ptr_to_addr(s) + STR_DATA_OFF()) as u64) }
+}
+fn set_data(s: *mut u8, val: i64) {
+    @unsafe { ptr_write_i64((alloc.ptr_to_addr(s) + STR_DATA_OFF()) as u64, val); }
+}
+fn get_len(s: *mut u8) -> i64 {
+    @unsafe { ptr_read_i64((alloc.ptr_to_addr(s) + STR_LEN_OFF()) as u64) }
+}
+fn set_len(s: *mut u8, val: i64) {
+    @unsafe { ptr_write_i64((alloc.ptr_to_addr(s) + STR_LEN_OFF()) as u64, val); }
+}
+fn get_cap(s: *mut u8) -> i64 {
+    @unsafe { ptr_read_i64((alloc.ptr_to_addr(s) + STR_CAP_OFF()) as u64) }
+}
+fn set_cap(s: *mut u8, val: i64) {
+    @unsafe { ptr_write_i64((alloc.ptr_to_addr(s) + STR_CAP_OFF()) as u64, val); }
+}
+
+// void @string_new(ptr)
+pub fn rt_string_new(out: *mut u8) {
+    set_data(out, 0);
+    set_len(out, 0);
+    set_cap(out, 0);
+}
+
+// i64 @string_len(ptr)
+pub fn rt_string_len(s: *mut u8) -> i64 {
+    get_len(s)
+}
+
+fn ensure_cap(s: *mut u8, needed: i64) {
+    let cap: i64 = get_cap(s);
+    if needed <= cap { return; }
+
+    let mut new_cap: i64 = cap * 2;
+    if new_cap < 16 { new_cap = 16; }
+    if new_cap < needed { new_cap = needed; }
+
+    let old_ptr: i64 = get_data(s);
+    let new_ptr: i64 = alloc.rt_blood_alloc_simple(new_cap);
+
+    let len: i64 = get_len(s);
+    if len > 0 {
+        alloc.rt_blood_memcpy(new_ptr, old_ptr, len);
+    }
+    if old_ptr != 0 {
+        alloc.rt_blood_free_simple(old_ptr);
+    }
+
+    set_data(s, new_ptr);
+    set_cap(s, new_cap);
+}
+
+// void @string_push_str(ptr, ptr)
+// First arg: ptr to String struct. Second arg: ptr to { ptr, i64 } fat str.
+pub fn rt_string_push_str(s: *mut u8, fat_str: *mut u8) {
+    @unsafe {
+        let src_ptr: i64 = ptr_read_i64(alloc.ptr_to_addr(fat_str) as u64);
+        let src_len: i64 = ptr_read_i64((alloc.ptr_to_addr(fat_str) + 8) as u64);
+        if src_len == 0 { return; }
+
+        let cur_len: i64 = get_len(s);
+        ensure_cap(s, cur_len + src_len);
+
+        let dst: i64 = get_data(s) + cur_len;
+        alloc.rt_blood_memcpy(dst, src_ptr, src_len);
+        set_len(s, cur_len + src_len);
+    }
+}
+
+// void @string_push(ptr, i32) — append char as UTF-8
+pub fn rt_string_push(s: *mut u8, ch: i32) {
+    if ch < 128 {
+        let cur_len: i64 = get_len(s);
+        ensure_cap(s, cur_len + 1);
+        @unsafe { ptr_write_u8((get_data(s) + cur_len) as u64, ch as u8); }
+        set_len(s, cur_len + 1);
+    } else if ch < 2048 {
+        let cur_len: i64 = get_len(s);
+        ensure_cap(s, cur_len + 2);
+        let d: i64 = get_data(s) + cur_len;
+        @unsafe {
+            ptr_write_u8(d as u64, (192 + ch / 64) as u8);
+            ptr_write_u8((d + 1) as u64, (128 + ch % 64) as u8);
+        }
+        set_len(s, cur_len + 2);
+    } else if ch < 65536 {
+        let cur_len: i64 = get_len(s);
+        ensure_cap(s, cur_len + 3);
+        let d: i64 = get_data(s) + cur_len;
+        @unsafe {
+            ptr_write_u8(d as u64, (224 + ch / 4096) as u8);
+            ptr_write_u8((d + 1) as u64, (128 + (ch / 64) % 64) as u8);
+            ptr_write_u8((d + 2) as u64, (128 + ch % 64) as u8);
+        }
+        set_len(s, cur_len + 3);
+    } else {
+        let cur_len: i64 = get_len(s);
+        ensure_cap(s, cur_len + 4);
+        let d: i64 = get_data(s) + cur_len;
+        @unsafe {
+            ptr_write_u8(d as u64, (240 + ch / 262144) as u8);
+            ptr_write_u8((d + 1) as u64, (128 + (ch / 4096) % 64) as u8);
+            ptr_write_u8((d + 2) as u64, (128 + (ch / 64) % 64) as u8);
+            ptr_write_u8((d + 3) as u64, (128 + ch % 64) as u8);
+        }
+        set_len(s, cur_len + 4);
+    }
+}
+
+// { ptr, i64 } @string_as_str(ptr)
+pub fn rt_string_as_str(s: *mut u8) -> FatStr {
+    FatStr { data: alloc.addr_to_ptr(get_data(s)), len: get_len(s) }
+}
+
+// { ptr, i64 } @string_as_bytes(ptr)
+pub fn rt_string_as_bytes(s: *mut u8) -> FatStr {
+    FatStr { data: alloc.addr_to_ptr(get_data(s)), len: get_len(s) }
+}
+
+// { ptr, i64 } @str_as_bytes(ptr) — &str is already { ptr, i64 }
+// Arg is ptr to the fat str on the stack
+pub fn rt_str_as_bytes(fat_str: *mut u8) -> FatStr {
+    @unsafe {
+        let p: i64 = ptr_read_i64(alloc.ptr_to_addr(fat_str) as u64);
+        let l: i64 = ptr_read_i64((alloc.ptr_to_addr(fat_str) + 8) as u64);
+        FatStr { data: alloc.addr_to_ptr(p), len: l }
+    }
+}
+
+// { ptr, i64 } @int_to_string(i32)
+pub fn rt_int_to_string(val: i32) -> FatStr {
+    let buf_addr: i64 = alloc.rt_blood_alloc_simple(24);
+    let mut n: i32 = val;
+    let mut negative: i32 = 0;
+    if n < 0 {
+        negative = 1;
+        n = 0 - n;
+    }
+
+    let mut pos: i64 = 23;
+    if n == 0 {
+        @unsafe { ptr_write_u8((buf_addr + pos) as u64, 48); }
+        pos = pos - 1;
+    } else {
+        while n > 0 {
+            @unsafe { ptr_write_u8((buf_addr + pos) as u64, (48 + n % 10) as u8); }
+            pos = pos - 1;
+            n = n / 10;
+        }
+    }
+    if negative == 1 {
+        @unsafe { ptr_write_u8((buf_addr + pos) as u64, 45); }
+        pos = pos - 1;
+    }
+
+    let start: i64 = pos + 1;
+    let len: i64 = 24 - start;
+
+    // Copy to compact allocation
+    let result_addr: i64 = alloc.rt_blood_alloc_simple(len);
+    alloc.rt_blood_memcpy(result_addr, buf_addr + start, len);
+    alloc.rt_blood_free_simple(buf_addr);
+
+    FatStr { data: alloc.addr_to_ptr(result_addr), len: len }
+}
+
+// { ptr, i64 } @blood_str_concat({ ptr, i64 }, { ptr, i64 })
+// Takes two fat strs by value (each is { ptr, i64 } in registers)
+pub fn rt_blood_str_concat(a: FatStr, b: FatStr) -> FatStr {
+    let a_addr: i64 = alloc.ptr_to_addr(a.data);
+    let b_addr: i64 = alloc.ptr_to_addr(b.data);
+    let total: i64 = a.len + b.len;
+    let buf: i64 = alloc.rt_blood_alloc_simple(total);
+    if a.len > 0 {
+        alloc.rt_blood_memcpy(buf, a_addr, a.len);
+    }
+    if b.len > 0 {
+        alloc.rt_blood_memcpy(buf + a.len, b_addr, b.len);
+    }
+    FatStr { data: alloc.addr_to_ptr(buf), len: total }
+}

@@ -1,0 +1,80 @@
+// Phase 5.7: Smoke test for vec module
+mod libc;
+mod print;
+mod rt_panic;
+mod alloc;
+mod rt_vec;
+
+fn main() -> i32 {
+    // Test 1: vec_new + vec_len
+    print.print_str("test 1: new...\n");
+    let v_addr: i64 = alloc.rt_blood_alloc_simple(24);
+    let v: *mut u8 = alloc.addr_to_ptr(v_addr);
+    rt_vec.rt_vec_new(4, v);  // Vec<i32>, elem_size=4
+    if rt_vec.rt_vec_len(v) != 0 { return 1; }
+    if rt_vec.rt_vec_is_empty(v) != 1 { return 2; }
+    print.print_str("new OK\n");
+
+    // Test 2: push
+    print.print_str("test 2: push...\n");
+    let mut val1: i32 = 10;
+    let mut val2: i32 = 20;
+    let mut val3: i32 = 30;
+    rt_vec.rt_vec_push(v, &mut val1 as *mut i32 as *mut u8, 4);
+    rt_vec.rt_vec_push(v, &mut val2 as *mut i32 as *mut u8, 4);
+    rt_vec.rt_vec_push(v, &mut val3 as *mut i32 as *mut u8, 4);
+    if rt_vec.rt_vec_len(v) != 3 { return 3; }
+    if rt_vec.rt_vec_is_empty(v) != 0 { return 4; }
+    print.print_str("push OK, len=");
+    println_i64(rt_vec.rt_vec_len(v));
+
+    // Test 3: get
+    print.print_str("test 3: get...\n");
+    let mut out: i32 = 0;
+    let ok: i32 = rt_vec.rt_vec_get(v, 1, 4, &mut out as *mut i32 as *mut u8);
+    if ok != 1 { return 5; }
+    if out != 20 { return 6; }
+    print.print_str("get OK, val=");
+    println_int(out);
+
+    // Test 4: pop
+    print.print_str("test 4: pop...\n");
+    let mut popped: i32 = 0;
+    let pop_ok: i32 = rt_vec.rt_vec_pop(v, 4, &mut popped as *mut i32 as *mut u8);
+    if pop_ok != 1 { return 7; }
+    if popped != 30 { return 8; }
+    if rt_vec.rt_vec_len(v) != 2 { return 9; }
+    print.print_str("pop OK, val=");
+    println_int(popped);
+
+    // Test 5: contains
+    print.print_str("test 5: contains...\n");
+    let mut needle: i32 = 10;
+    let found: i32 = rt_vec.rt_vec_contains(v, &mut needle as *mut i32 as *mut u8, 4);
+    if found != 1 { return 10; }
+    let mut missing: i32 = 99;
+    let not_found: i32 = rt_vec.rt_vec_contains(v, &mut missing as *mut i32 as *mut u8, 4);
+    if not_found != 0 { return 11; }
+    print.print_str("contains OK\n");
+
+    // Test 6: reverse
+    print.print_str("test 6: reverse...\n");
+    rt_vec.rt_vec_reverse(v, 4);
+    let mut first: i32 = 0;
+    rt_vec.rt_vec_get(v, 0, 4, &mut first as *mut i32 as *mut u8);
+    if first != 20 { return 12; }
+    let mut second: i32 = 0;
+    rt_vec.rt_vec_get(v, 1, 4, &mut second as *mut i32 as *mut u8);
+    if second != 10 { return 13; }
+    print.print_str("reverse OK\n");
+
+    // Test 7: clear + free
+    print.print_str("test 7: clear/free...\n");
+    rt_vec.rt_vec_clear(v);
+    if rt_vec.rt_vec_len(v) != 0 { return 14; }
+    rt_vec.rt_vec_free(v, 4);
+    print.print_str("clear/free OK\n");
+
+    print.print_str("phase 5 OK\n");
+    0
+}

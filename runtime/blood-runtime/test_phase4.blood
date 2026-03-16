@@ -1,0 +1,80 @@
+// Phase 4.9: Smoke test for string module
+mod libc;
+mod print;
+mod rt_panic;
+mod alloc;
+mod rt_string;
+
+fn main() -> i32 {
+    // Test 1: string_new + string_len
+    print.print_str("test 1: new...\n");
+    // Allocate 24 bytes for a String struct on the heap
+    let s_addr: i64 = alloc.rt_blood_alloc_simple(24);
+    let s_ptr: *mut u8 = alloc.addr_to_ptr(s_addr);
+    rt_string.rt_string_new(s_ptr);
+    let len: i64 = rt_string.rt_string_len(s_ptr);
+    if len != 0 { return 1; }
+    print.print_str("new OK\n");
+
+    // Test 2: string_push (single ASCII char)
+    print.print_str("test 2: push char...\n");
+    rt_string.rt_string_push(s_ptr, 72);   // 'H'
+    rt_string.rt_string_push(s_ptr, 105);  // 'i'
+    let len2: i64 = rt_string.rt_string_len(s_ptr);
+    if len2 != 2 { return 2; }
+    print.print_str("push OK\n");
+
+    // Test 3: string_as_str
+    print.print_str("test 3: as_str...\n");
+    let fat: rt_string.FatStr = rt_string.rt_string_as_str(s_ptr);
+    if fat.len != 2 { return 3; }
+    // Print via write to verify contents
+    libc.sys_write(libc.STDOUT(), fat.data, fat.len as u64);
+    print.print_str("\n");
+    print.print_str("as_str OK\n");
+
+    // Test 4: string_push_str
+    print.print_str("test 4: push_str...\n");
+    // Manually build { ptr, i64 } on heap for the &str arg
+    let src_str: &str = " world!";
+    let src_data: *const u8 = @unsafe { src_str as *const u8 };
+    let src_len: i64 = str_len(src_str);
+    let fat_addr: i64 = alloc.rt_blood_alloc_simple(16);
+    @unsafe {
+        ptr_write_i64(fat_addr as u64, @unsafe { (src_data as usize) as i64 });
+        ptr_write_i64((fat_addr + 8) as u64, src_len);
+    }
+    rt_string.rt_string_push_str(s_ptr, alloc.addr_to_ptr(fat_addr));
+    alloc.rt_blood_free_simple(fat_addr);
+    let len3: i64 = rt_string.rt_string_len(s_ptr);
+    if len3 != 9 { return 4; }  // "Hi world!" = 9
+    let fat2: rt_string.FatStr = rt_string.rt_string_as_str(s_ptr);
+    libc.sys_write(libc.STDOUT(), fat2.data, fat2.len as u64);
+    print.print_str("\n");
+    print.print_str("push_str OK\n");
+
+    // Test 5: int_to_string
+    print.print_str("test 5: int_to_string...\n");
+    let num: rt_string.FatStr = rt_string.rt_int_to_string(12345);
+    if num.len != 5 { return 5; }
+    libc.sys_write(libc.STDOUT(), num.data, num.len as u64);
+    print.print_str("\n");
+    let neg: rt_string.FatStr = rt_string.rt_int_to_string(-42);
+    if neg.len != 3 { return 6; }
+    libc.sys_write(libc.STDOUT(), neg.data, neg.len as u64);
+    print.print_str("\n");
+    print.print_str("int_to_string OK\n");
+
+    // Test 6: str_concat
+    print.print_str("test 6: concat...\n");
+    let a: rt_string.FatStr = rt_string.rt_int_to_string(100);
+    let b: rt_string.FatStr = rt_string.rt_int_to_string(200);
+    let c: rt_string.FatStr = rt_string.rt_blood_str_concat(a, b);
+    libc.sys_write(libc.STDOUT(), c.data, c.len as u64);
+    print.print_str("\n");
+    if c.len != 6 { return 7; }  // "100200" = 6
+    print.print_str("concat OK\n");
+
+    print.print_str("phase 4 OK\n");
+    0
+}
