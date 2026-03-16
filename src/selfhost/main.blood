@@ -2825,7 +2825,7 @@ fn build_codegen_worklist(
             &Option.None => common.Span.new(0, 0, 1, 1),
         };
         let fn_name = match &fn_info {
-            &Option.Some(ref info) => main_helpers.make_mangled_fn_name(&lower_result.interner, info, &lower_result.no_mangle_def_ids),
+            &Option.Some(ref info) => main_helpers.make_mangled_fn_name(&lower_result.interner, info, &lower_result.no_mangle_def_ids, &lower_result.export_name_entries),
             &Option.None => driver.make_fn_name(body_idx),
         };
         let def_id = match &fn_info {
@@ -3883,7 +3883,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
         }
         if !is_static {
             let fn_name = match &fn_info {
-                &Option.Some(ref info) => main_helpers.make_mangled_fn_name(&lower_result.interner, info, &lower_result.no_mangle_def_ids),
+                &Option.Some(ref info) => main_helpers.make_mangled_fn_name(&lower_result.interner, info, &lower_result.no_mangle_def_ids, &lower_result.export_name_entries),
                 &Option.None => driver.make_fn_name(body_idx),
             };
             ctx.register_def_name(def_id, fn_name);
@@ -3892,7 +3892,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
 
     // Pass 1b: Register def_names for ALL function-like items (including those without bodies).
     // This ensures that calls to foreign/builtin functions resolve to the correct name.
-    main_helpers.register_all_item_names(&mut ctx, &lower_result.interner, &lower_result.items, &lower_result.no_mangle_def_ids);
+    main_helpers.register_all_item_names(&mut ctx, &lower_result.interner, &lower_result.items, &lower_result.no_mangle_def_ids, &lower_result.export_name_entries);
     eprint_str("[pass1_done]");
 
     // Pass 1c: Register def_names for builtin constructors (String.new, Vec.new, etc.).

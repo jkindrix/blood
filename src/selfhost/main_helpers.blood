@@ -147,13 +147,23 @@ fn is_no_mangle(def_id_index: u32, no_mangle_def_ids: &Vec<u32>) -> bool {
     false
 }
 
+/// Looks up a custom export name for a DefId. Returns empty string if not found.
+fn lookup_export_name(def_id_index: u32, export_name_entries: &Vec<hir_lower_ctx.ExportNameEntry>) -> String {
+    for i in 0usize..export_name_entries.len() {
+        if export_name_entries[i].def_id_index == def_id_index {
+            return clone_string(&export_name_entries[i].export_name);
+        }
+    }
+    common.make_string("")
+}
+
 /// Uses the lowering context's interner to resolve the bare name, then
 /// qualifies it with the DefId to ensure uniqueness (many types share
 /// method names like "new", "len", etc.).
 ///
 /// Format: `def{N}_{name}` for regular functions, `blood_main` for the
 /// entry point (matching blood-rust's runtime convention).
-pub fn make_mangled_fn_name(intern: &interner.StringInterner, info: &driver.FnInfo, no_mangle_def_ids: &Vec<u32>) -> String {
+pub fn make_mangled_fn_name(intern: &interner.StringInterner, info: &driver.FnInfo, no_mangle_def_ids: &Vec<u32>, export_name_entries: &Vec<hir_lower_ctx.ExportNameEntry>) -> String {
     // Resolve bare name from interner
     let bare_name = match intern.resolve(info.name) {
         Option.Some(s) => common.make_string(s.as_str()),
@@ -166,6 +176,12 @@ pub fn make_mangled_fn_name(intern: &interner.StringInterner, info: &driver.FnIn
     // Entry point: blood-rust runtime expects "blood_main"
     if str_equals(&bare_name, "main") {
         return common.make_string("blood_main");
+    }
+
+    // #[export_name = "..."]: use custom export name
+    let export = lookup_export_name(info.def_id.index, export_name_entries);
+    if export.len() > 0 {
+        return export;
     }
 
     // #[no_mangle]: use bare function name
@@ -428,13 +444,18 @@ pub fn register_all_item_names(
     intern: &interner.StringInterner,
     items: &Vec<hir_lower_ctx.ItemEntry>,
     no_mangle_def_ids: &Vec<u32>,
+    export_name_entries: &Vec<hir_lower_ctx.ExportNameEntry>,
 ) {
     for i in 0usize..items.len() {
         let entry = &items[i];
         match &entry.item.kind {
             &hir_item.ItemKind.Fn(ref fn_def) => {
                 let name = resolve_symbol(intern, entry.item.name.symbol);
-                if str_equals(&name, "main") {
+                // Check #[export_name] first
+                let export = lookup_export_name(entry.def_id.index, export_name_entries);
+                if export.len() > 0 {
+                    ctx.register_def_name(entry.def_id.index, export);
+                } else if str_equals(&name, "main") {
                     ctx.register_def_name(entry.def_id.index, common.make_string("blood_main"));
                 } else if is_no_mangle(entry.def_id.index, no_mangle_def_ids) {
                     // #[no_mangle]: use bare function name, no def{N}_ prefix

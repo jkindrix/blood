@@ -23,7 +23,13 @@ mod resolve;
 mod type_intern;
 
 fn str_equals(s: &String, other: &str) -> bool {
-    str_eq(s.as_str(), other)
+    let bytes = s.as_bytes();
+    let other_bytes = other.as_bytes();
+    if bytes.len() != other_bytes.len() { return false; }
+    for i in 0usize..bytes.len() {
+        if bytes[i] != other_bytes[i] { return false; }
+    }
+    true
 }
 
 // ============================================================
@@ -446,13 +452,40 @@ fn lower_function_decl(ctx: &mut hir_lower_ctx.LoweringCtx, f: &ast.FnDecl) {
     );
     ctx.add_item(def_id, item);
 
-    // Check for #[no_mangle] attribute
+    // Check for #[no_mangle] and #[export_name = "..."] attributes
     for ai in 0usize..f.attrs.len() {
         let attr = &f.attrs[ai];
         if attr.path.len() == 1 {
             let attr_name = ctx.span_to_string(attr.path[0].span);
             if str_equals(&attr_name, "no_mangle") {
                 ctx.no_mangle_def_ids.push(def_id.index);
+            } else if str_equals(&attr_name, "export_name") {
+                // #[export_name = "custom_name"]
+                match &attr.args {
+                    &Option.Some(ref args) => {
+                        match args {
+                            &ast.AttributeArgs.Eq(ref lit) => {
+                                let lit_str = ctx.span_to_string(lit.span);
+                                // Remove surrounding quotes
+                                let mut export_name = String.new();
+                                let lit_bytes = lit_str.as_bytes();
+                                let mut li: usize = 0;
+                                while li < lit_bytes.len() {
+                                    let ch = lit_bytes[li];
+                                    if ch != 34 { // skip '"'
+                                        export_name.push(ch as char);
+                                    }
+                                    li += 1;
+                                }
+                                ctx.export_name_entries.push(
+                                    hir_lower_ctx.ExportNameEntry.new(def_id.index, export_name),
+                                );
+                            }
+                            _ => {}
+                        }
+                    }
+                    &Option.None => {}
+                }
             }
         }
     }

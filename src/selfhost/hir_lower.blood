@@ -174,6 +174,7 @@ pub fn lower_program_with_ast_region(program: &ast.Program, base_dir: String, so
     );
     result.turbofish_const_entries = turbofish_entries;
     result.no_mangle_def_ids = ctx.no_mangle_def_ids;
+    result.export_name_entries = ctx.export_name_entries;
 
     // Print combined tag→module allocation report if profiling is active.
     // Tag scheme: 1-N = Phase 1 (parse), 1001-N = Phase 3a (decls), 2001-N = Phase 4b (bodies).
@@ -1976,7 +1977,22 @@ fn collect_resolver_fn_defs(ctx: &mut hir_lower_ctx.LoweringCtx) {
                     }
                     nmi += 1;
                 }
-                if is_no_mangle {
+                // Check #[export_name = "..."]
+                let mut has_export_name: bool = false;
+                let mut eni: usize = 0;
+                while eni < ctx.export_name_entries.len() {
+                    if ctx.export_name_entries[eni].def_id_index == def_id_index {
+                        ctx.builtin_fn_defs.push(
+                            hir_lower_ctx.BuiltinFnDef.new(def_id_index, common.make_string(ctx.export_name_entries[eni].export_name.as_str())),
+                        );
+                        has_export_name = true;
+                        eni = ctx.export_name_entries.len();
+                    }
+                    eni += 1;
+                }
+                if has_export_name {
+                    // Already handled
+                } else if is_no_mangle {
                     ctx.builtin_fn_defs.push(
                         hir_lower_ctx.BuiltinFnDef.new(def_id_index, common.make_string(name_str.as_str())),
                     );

@@ -21,6 +21,18 @@ mod type_intern;
 // Builtin Function Definition Mapping
 // ============================================================
 
+/// Maps a function DefId to its exported symbol name via #[export_name = "..."].
+pub struct ExportNameEntry {
+    pub def_id_index: u32,
+    pub export_name: String,
+}
+
+impl ExportNameEntry {
+    pub fn new(def_id_index: u32, export_name: String) -> ExportNameEntry {
+        ExportNameEntry { def_id_index: def_id_index, export_name: export_name }
+    }
+}
+
 /// Maps a builtin function's DefId to its runtime function name.
 /// Used for constructors like Vec.new(), String.new(), Box.new()
 /// and variant constructors like Option.Some, Option.None.
@@ -103,6 +115,8 @@ pub struct LowerResult {
     pub turbofish_const_entries: Vec<TurbofishEntry>,
     /// DefId indices of functions marked with #[no_mangle].
     pub no_mangle_def_ids: Vec<u32>,
+    /// #[export_name = "..."] entries mapping DefId to custom export name.
+    pub export_name_entries: Vec<ExportNameEntry>,
 }
 
 impl LowerResult {
@@ -151,6 +165,7 @@ impl LowerResult {
             builtin_fn_defs: builtin_fn_defs,
             turbofish_const_entries: Vec.new(),
             no_mangle_def_ids: Vec.new(),
+            export_name_entries: Vec.new(),
         }
     }
 
@@ -179,6 +194,7 @@ impl LowerResult {
             builtin_fn_defs: Vec.new(),
             turbofish_const_entries: Vec.new(),
             no_mangle_def_ids: Vec.new(),
+            export_name_entries: Vec.new(),
         }
     }
 
@@ -207,6 +223,7 @@ impl LowerResult {
             builtin_fn_defs: Vec.new(),
             turbofish_const_entries: Vec.new(),
             no_mangle_def_ids: Vec.new(),
+            export_name_entries: Vec.new(),
         }
     }
 
@@ -330,6 +347,8 @@ pub struct LoweringCtx {
     /// DefId indices of functions marked with #[no_mangle].
     /// These functions use their bare name in LLVM IR instead of def{N}_{name}.
     pub no_mangle_def_ids: Vec<u32>,
+    /// #[export_name = "..."] entries mapping DefId to custom export name.
+    pub export_name_entries: Vec<ExportNameEntry>,
 }
 
 /// Tracks a const generic parameter during HIR lowering.
@@ -448,6 +467,7 @@ impl LoweringCtx {
             turbofish_const_entries: Vec.new(),
             ast_region: 0 as u64,
             no_mangle_def_ids: Vec.new(),
+            export_name_entries: Vec.new(),
         }
     }
 
@@ -491,6 +511,7 @@ impl LoweringCtx {
             turbofish_const_entries: Vec.new(),
             ast_region: 0 as u64,
             no_mangle_def_ids: Vec.new(),
+            export_name_entries: Vec.new(),
         }
     }
 
