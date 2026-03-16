@@ -1,0 +1,36 @@
+// Phase 1.1: Print functions
+// Runtime replacements for print_str, println_str, eprint_str, eprintln_str
+//
+// These match the LLVM IR signatures: void @print_str({ ptr, i64 })
+// In Blood, { ptr, i64 } is &str.
+
+mod libc;
+
+pub fn print_str(s: &str) {
+    let len: i64 = str_len(s);
+    let ptr: *const u8 = @unsafe { s as *const u8 };
+    libc.sys_write(libc.STDOUT(), ptr, len as u64);
+}
+
+pub fn println_str(s: &str) {
+    print_str(s);
+    let nl: u8 = 10;
+    libc.sys_write(libc.STDOUT(), &nl as *const u8, 1);
+}
+
+pub fn eprint_str(s: &str) {
+    let len: i64 = str_len(s);
+    let ptr: *const u8 = @unsafe { s as *const u8 };
+    libc.sys_write(libc.STDERR(), ptr, len as u64);
+}
+
+pub fn eprintln_str(s: &str) {
+    eprint_str(s);
+    let nl: u8 = 10;
+    libc.sys_write(libc.STDERR(), &nl as *const u8, 1);
+}
+
+pub fn print_newline() {
+    let nl: u8 = 10;
+    libc.sys_write(libc.STDOUT(), &nl as *const u8, 1);
+}
