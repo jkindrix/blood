@@ -1345,7 +1345,24 @@ fn register_module_type_name(
         &ast.Declaration.Static(_) => {}
         &ast.Declaration.Impl(_) => {}
         &ast.Declaration.Handler(_) => {}
-        &ast.Declaration.Bridge(_) => {}
+        &ast.Declaration.Bridge(ref b) => {
+            // Register bridge name as a module-like namespace for qualified path resolution.
+            // Without this, bridge names from mod-imported files are not visible during Phase 2
+            // when register_bridge_functions tries to look up the bridge DefId.
+            let def_id = ctx.alloc_def_id();
+            let name_str = ctx.span_to_string(b.name.span);
+            let name_symbol = ctx.intern(name_str.as_str());
+            let success = ctx.resolver.define_global(name_symbol, def_id);
+            if success {
+                ctx.resolver.register_def_info(
+                    def_id,
+                    hir_def.DefKind.Module,
+                    name_symbol,
+                    b.name.span,
+                    Option.Some(parent_def_id),
+                );
+            }
+        }
         &ast.Declaration.Macro(_) => {}
         &ast.Declaration.Use(ref u) => {
             resolve_use_decl_module_reexport(ctx, parent_def_id, &u.import, true);
@@ -1697,7 +1714,9 @@ fn register_module_declaration(
                 &ast.TypeKind.Paren(ref inner) => {}
             }
         }
-        &ast.Declaration.Bridge(_) => {}
+        &ast.Declaration.Bridge(ref b) => {
+            hir_lower_builtin.register_bridge_functions(ctx, b);
+        }
         &ast.Declaration.Macro(_) => {}
         &ast.Declaration.Use(ref u) => {
             resolve_use_decl_module_reexport(ctx, parent_def_id, &u.import, false);

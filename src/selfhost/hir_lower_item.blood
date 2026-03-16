@@ -2094,7 +2094,20 @@ fn add_decl_to_scope(
         }
         // Impl blocks don't have names - skip
         &ast.Declaration.Impl(_) => {}
-        &ast.Declaration.Bridge(_) => {}
+        &ast.Declaration.Bridge(ref b) => {
+            // Bridge names (e.g., LibcIO) must be added to the module scope
+            // so that functions within the module can resolve LibcIO.write.
+            let name_str = ctx.span_to_string(b.name.span);
+            let name_sym = ctx.intern(name_str.as_str());
+            // Bridge names are registered as globals; look up there
+            let lookup = ctx.resolver.lookup(name_sym);
+            if lookup.is_some() {
+                let result = lookup.unwrap();
+                let existing = ctx.resolver.scope_binding(result.scope_index, result.binding_index);
+                let binding = resolve.Binding.mod_binding(existing.def_id);
+                ctx.resolver.define(name_sym, binding);
+            }
+        }
         &ast.Declaration.Macro(_) => {}
         &ast.Declaration.Use(ref u) => {
             // Add re-exported names to the current scope
