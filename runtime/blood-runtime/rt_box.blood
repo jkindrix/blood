@@ -1,0 +1,233 @@
+// Phase 6: Box, Option, Slice, Str utilities
+
+mod libc;
+mod alloc;
+mod rt_string;
+
+// ptr @box_new(ptr val, i64 size) -> ptr (malloc + memcpy)
+pub fn rt_box_new(val: *mut u8, size: i64) -> *mut u8 {
+    let addr: i64 = alloc.rt_blood_alloc_simple(size);
+    alloc.rt_blood_memcpy(addr, alloc.ptr_to_addr(val), size);
+    alloc.addr_to_ptr(addr)
+}
+
+// ptr @box_as_ref(ptr) -> ptr (identity — box is already a pointer)
+pub fn rt_box_as_ref(ptr: *mut u8) -> *mut u8 {
+    ptr
+}
+
+// i32 @option_is_some(ptr) — Option layout: { tag: i32, padding, data... }
+// tag == 0 means None, tag == 1 means Some
+pub fn rt_option_is_some(opt: *mut u8) -> i32 {
+    @unsafe {
+        let tag: i32 = ptr_read_i32(alloc.ptr_to_addr(opt) as u64);
+        if tag != 0 { 1 } else { 0 }
+    }
+}
+
+// i32 @option_is_none(ptr)
+pub fn rt_option_is_none(opt: *mut u8) -> i32 {
+    @unsafe {
+        let tag: i32 = ptr_read_i32(alloc.ptr_to_addr(opt) as u64);
+        if tag == 0 { 1 } else { 0 }
+    }
+}
+
+// void @option_unwrap(ptr opt, i64 elem_size, ptr out)
+pub fn rt_option_unwrap(opt: *mut u8, elem_size: i64, out: *mut u8) {
+    @unsafe {
+        let tag: i32 = ptr_read_i32(alloc.ptr_to_addr(opt) as u64);
+        if tag == 0 {
+            libc.sys_abort();
+        }
+        // Data starts after tag + alignment padding (offset 8 for alignment)
+        let data_addr: i64 = alloc.ptr_to_addr(opt) + 8;
+        libc.sys_memmove(out, alloc.addr_to_cptr(data_addr), elem_size as u64);
+    }
+}
+
+// void @option_as_ref(ptr opt, i64 elem_size, ptr out)
+pub fn rt_option_as_ref(opt: *mut u8, elem_size: i64, out: *mut u8) {
+    @unsafe {
+        let tag: i32 = ptr_read_i32(alloc.ptr_to_addr(opt) as u64);
+        if tag == 0 {
+            // Write None to out
+            ptr_write_i32(alloc.ptr_to_addr(out) as u64, 0);
+        } else {
+            // Write Some(ptr-to-data) to out
+            ptr_write_i32(alloc.ptr_to_addr(out) as u64, 1);
+            let data_addr: i64 = alloc.ptr_to_addr(opt) + 8;
+            ptr_write_i64((alloc.ptr_to_addr(out) + 8) as u64, data_addr);
+        }
+    }
+}
+
+// i32 @str_eq(&str a, &str b) — not declared in codegen but may be needed
+pub fn rt_str_eq(a: *mut u8, b: *mut u8) -> i32 {
+    @unsafe {
+        let a_ptr: i64 = ptr_read_i64(alloc.ptr_to_addr(a) as u64);
+        let a_len: i64 = ptr_read_i64((alloc.ptr_to_addr(a) + 8) as u64);
+        let b_ptr: i64 = ptr_read_i64(alloc.ptr_to_addr(b) as u64);
+        let b_len: i64 = ptr_read_i64((alloc.ptr_to_addr(b) + 8) as u64);
+        if a_len != b_len { return 0; }
+        let mut i: i64 = 0;
+        while i < a_len {
+            let ca: u8 = ptr_read_u8((a_ptr + i) as u64);
+            let cb: u8 = ptr_read_u8((b_ptr + i) as u64);
+            if ca != cb { return 0; }
+            i = i + 1;
+        }
+        1
+    }
+}
+
+// { ptr, i64 } @bool_to_string(i1)
+pub fn rt_bool_to_string(val: i32) -> rt_string.FatStr {
+    if val != 0 {
+        let addr: i64 = alloc.rt_blood_alloc_simple(4);
+        @unsafe {
+            ptr_write_u8(addr as u64, 116);       // 't'
+            ptr_write_u8((addr + 1) as u64, 114); // 'r'
+            ptr_write_u8((addr + 2) as u64, 117); // 'u'
+            ptr_write_u8((addr + 3) as u64, 101); // 'e'
+        }
+        rt_string.FatStr { data: alloc.addr_to_ptr(addr), len: 4 }
+    } else {
+        let addr: i64 = alloc.rt_blood_alloc_simple(5);
+        @unsafe {
+            ptr_write_u8(addr as u64, 102);       // 'f'
+            ptr_write_u8((addr + 1) as u64, 97);  // 'a'
+            ptr_write_u8((addr + 2) as u64, 108); // 'l'
+            ptr_write_u8((addr + 3) as u64, 115); // 's'
+            ptr_write_u8((addr + 4) as u64, 101); // 'e'
+        }
+        rt_string.FatStr { data: alloc.addr_to_ptr(addr), len: 5 }
+    }
+}
+
+// { ptr, i64 } @char_to_string(i32)
+pub fn rt_char_to_string(ch: i32) -> rt_string.FatStr {
+    // Allocate small buffer, push char as UTF-8
+    let addr: i64 = alloc.rt_blood_alloc_simple(4);
+    let mut len: i64 = 0;
+    if ch < 128 {
+        @unsafe { ptr_write_u8(addr as u64, ch as u8); }
+        len = 1;
+    } else if ch < 2048 {
+        @unsafe {
+            ptr_write_u8(addr as u64, (192 + ch / 64) as u8);
+            ptr_write_u8((addr + 1) as u64, (128 + ch % 64) as u8);
+        }
+        len = 2;
+    } else if ch < 65536 {
+        @unsafe {
+            ptr_write_u8(addr as u64, (224 + ch / 4096) as u8);
+            ptr_write_u8((addr + 1) as u64, (128 + (ch / 64) % 64) as u8);
+            ptr_write_u8((addr + 2) as u64, (128 + ch % 64) as u8);
+        }
+        len = 3;
+    } else {
+        @unsafe {
+            ptr_write_u8(addr as u64, (240 + ch / 262144) as u8);
+            ptr_write_u8((addr + 1) as u64, (128 + (ch / 4096) % 64) as u8);
+            ptr_write_u8((addr + 2) as u64, (128 + (ch / 64) % 64) as u8);
+            ptr_write_u8((addr + 3) as u64, (128 + ch % 64) as u8);
+        }
+        len = 4;
+    }
+    rt_string.FatStr { data: alloc.addr_to_ptr(addr), len: len }
+}
+
+// { ptr, i64 } @float_to_string(double) — minimal stub
+pub fn rt_float_to_string(val: f64) -> rt_string.FatStr {
+    // Minimal: return "0.0" for now (full formatting is complex)
+    let addr: i64 = alloc.rt_blood_alloc_simple(3);
+    @unsafe {
+        ptr_write_u8(addr as u64, 48);       // '0'
+        ptr_write_u8((addr + 1) as u64, 46); // '.'
+        ptr_write_u8((addr + 2) as u64, 48); // '0'
+    }
+    rt_string.FatStr { data: alloc.addr_to_ptr(addr), len: 3 }
+}
+
+// i32 @char_from_u32(i32) — validate codepoint
+pub fn rt_char_from_u32(cp: i32) -> i32 {
+    if cp < 0 { return -1; }
+    if cp > 1114111 { return -1; }
+    // Surrogate range
+    if cp >= 55296 {
+        if cp <= 57343 { return -1; }
+    }
+    cp
+}
+
+// double @parse_f64({ ptr, i64 }) — minimal stub
+pub fn rt_parse_f64(s: rt_string.FatStr) -> f64 {
+    // TODO: proper float parsing
+    0.0
+}
+
+// i64 @parse_i64_radix({ ptr, i64 }, i32) — minimal decimal parser
+pub fn rt_parse_i64_radix(s: rt_string.FatStr, radix: i32) -> i64 {
+    let ptr: i64 = alloc.ptr_to_addr(s.data);
+    let mut result: i64 = 0;
+    let mut negative: i32 = 0;
+    let mut i: i64 = 0;
+
+    // Check for negative sign
+    if s.len > 0 {
+        @unsafe {
+            let first: u8 = ptr_read_u8((ptr + i) as u64);
+            if first == 45 { // '-'
+                negative = 1;
+                i = 1;
+            }
+        }
+    }
+
+    while i < s.len {
+        @unsafe {
+            let ch: u8 = ptr_read_u8((ptr + i) as u64);
+            let mut digit: i64 = -1;
+            if ch >= 48 {
+                if ch <= 57 { digit = (ch - 48) as i64; }
+            }
+            if ch >= 97 {
+                if ch <= 122 { digit = (ch - 97 + 10) as i64; }
+            }
+            if ch >= 65 {
+                if ch <= 90 { digit = (ch - 65 + 10) as i64; }
+            }
+            if digit >= 0 {
+                if digit < radix as i64 {
+                    result = result * radix as i64 + digit;
+                }
+            }
+        }
+        i = i + 1;
+    }
+
+    if negative == 1 { 0 - result } else { result }
+}
+
+// { ptr, i64 } @read_line() — read a line from stdin
+pub fn rt_read_line() -> rt_string.FatStr {
+    let buf_addr: i64 = alloc.rt_blood_alloc_simple(4096);
+    let mut total: i64 = 0;
+    let mut done: i32 = 0;
+    while done == 0 {
+        @unsafe {
+            let byte_ptr: *mut u8 = alloc.addr_to_ptr(buf_addr + total);
+            let n: i64 = libc.sys_read(libc.STDIN(), byte_ptr, 1);
+            if n <= 0 {
+                done = 1;
+            } else {
+                let ch: u8 = ptr_read_u8((buf_addr + total) as u64);
+                total = total + 1;
+                if ch == 10 { done = 1; } // newline
+                if total >= 4095 { done = 1; }
+            }
+        }
+    }
+    rt_string.FatStr { data: alloc.addr_to_ptr(buf_addr), len: total }
+}

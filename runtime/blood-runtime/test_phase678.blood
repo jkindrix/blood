@@ -1,0 +1,78 @@
+// Phase 6-8: Smoke test for box, I/O, CLI, clock
+mod libc;
+mod print;
+mod rt_panic;
+mod alloc;
+mod rt_string;
+mod rt_box;
+mod rt_io;
+mod rt_cli;
+
+fn main() -> i32 {
+    // Test 1: box_new
+    print.print_str("test 1: box...\n");
+    let mut val: i32 = 42;
+    let boxed: *mut u8 = rt_box.rt_box_new(&mut val as *mut i32 as *mut u8, 4);
+    @unsafe {
+        let read_val: i32 = ptr_read_i32((alloc.ptr_to_addr(boxed)) as u64);
+        if read_val != 42 { return 1; }
+    }
+    let ref_ptr: *mut u8 = rt_box.rt_box_as_ref(boxed);
+    @unsafe {
+        if alloc.ptr_to_addr(ref_ptr) != alloc.ptr_to_addr(boxed) { return 2; }
+    }
+    print.print_str("box OK\n");
+
+    // Test 2: bool_to_string
+    print.print_str("test 2: bool_to_string...\n");
+    let t: rt_string.FatStr = rt_box.rt_bool_to_string(1);
+    if t.len != 4 { return 3; }  // "true"
+    libc.sys_write(libc.STDOUT(), t.data, t.len as u64);
+    print.print_str("\n");
+    let f: rt_string.FatStr = rt_box.rt_bool_to_string(0);
+    if f.len != 5 { return 4; }  // "false"
+    libc.sys_write(libc.STDOUT(), f.data, f.len as u64);
+    print.print_str("\n");
+    print.print_str("bool_to_string OK\n");
+
+    // Test 3: file I/O round-trip
+    print.print_str("test 3: file I/O...\n");
+    let path: rt_string.FatStr = rt_string.FatStr {
+        data: @unsafe { (("/tmp/blood_rt_test.txt" as *const u8) as usize) as *mut u8 },
+        len: 21,
+    };
+    let content: rt_string.FatStr = rt_string.FatStr {
+        data: @unsafe { (("hello blood runtime" as *const u8) as usize) as *mut u8 },
+        len: 19,
+    };
+    let wrote: i32 = rt_io.rt_file_write_string(path, content);
+    if wrote != 1 { return 5; }
+    let exists: i32 = rt_io.rt_file_exists(path);
+    if exists != 1 { return 6; }
+    let readback: rt_string.FatStr = rt_io.rt_file_read_to_string(path);
+    if readback.len != 19 { return 7; }
+    libc.sys_write(libc.STDOUT(), readback.data, readback.len as u64);
+    print.print_str("\n");
+    print.print_str("file I/O OK\n");
+
+    // Test 4: clock
+    print.print_str("test 4: clock...\n");
+    let ms: u64 = rt_cli.rt_blood_clock_millis();
+    // Just check it returns something > 0
+    if ms == 0 { return 8; }
+    print.print_str("clock OK\n");
+
+    // Test 5: parse_i64_radix
+    print.print_str("test 5: parse...\n");
+    let num_str: rt_string.FatStr = rt_string.FatStr {
+        data: @unsafe { (("12345" as *const u8) as usize) as *mut u8 },
+        len: 5,
+    };
+    let parsed: i64 = rt_box.rt_parse_i64_radix(num_str, 10);
+    if parsed != 12345 { return 9; }
+    print.print_str("parse OK, val=");
+    println_i64(parsed);
+
+    print.print_str("phase 6-8 OK\n");
+    0
+}

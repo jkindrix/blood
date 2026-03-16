@@ -1,0 +1,167 @@
+// Phase 7: I/O & Process runtime functions
+
+mod libc;
+mod alloc;
+mod print;
+mod rt_panic;
+mod rt_string;
+
+// { ptr, i64 } @file_read_to_string(&str path) -> &str contents
+// Takes &str (fat pointer by value), returns &str (fat pointer)
+pub fn rt_file_read_to_string(path: rt_string.FatStr) -> rt_string.FatStr {
+    // Null-terminate the path for C
+    let path_addr: i64 = alloc.ptr_to_addr(path.data);
+    let cpath_addr: i64 = alloc.rt_blood_alloc_simple(path.len + 1);
+    alloc.rt_blood_memcpy(cpath_addr, path_addr, path.len);
+    @unsafe { ptr_write_u8((cpath_addr + path.len) as u64, 0); }
+
+    let fd: i32 = libc.sys_open(alloc.addr_to_cptr(cpath_addr), libc.O_RDONLY(), 0);
+    alloc.rt_blood_free_simple(cpath_addr);
+    if fd < 0 {
+        return rt_string.FatStr { data: alloc.addr_to_ptr(0), len: 0 };
+    }
+
+    // Get file size via lseek
+    let size: i64 = libc.sys_lseek(fd, 0, libc.SEEK_END());
+    libc.sys_lseek(fd, 0, libc.SEEK_SET());
+
+    if size <= 0 {
+        libc.sys_close(fd);
+        let empty: i64 = alloc.rt_blood_alloc_simple(1);
+        return rt_string.FatStr { data: alloc.addr_to_ptr(empty), len: 0 };
+    }
+
+    let buf_addr: i64 = alloc.rt_blood_alloc_simple(size);
+    let mut total_read: i64 = 0;
+    while total_read < size {
+        let n: i64 = libc.sys_read(fd, alloc.addr_to_ptr(buf_addr + total_read), (size - total_read) as u64);
+        if n <= 0 { break; }
+        total_read = total_read + n;
+    }
+    libc.sys_close(fd);
+
+    rt_string.FatStr { data: alloc.addr_to_ptr(buf_addr), len: total_read }
+}
+
+// bool @file_write_string(&str path, &str content) -> bool
+pub fn rt_file_write_string(path: rt_string.FatStr, content: rt_string.FatStr) -> i32 {
+    let path_addr: i64 = alloc.ptr_to_addr(path.data);
+    let cpath_addr: i64 = alloc.rt_blood_alloc_simple(path.len + 1);
+    alloc.rt_blood_memcpy(cpath_addr, path_addr, path.len);
+    @unsafe { ptr_write_u8((cpath_addr + path.len) as u64, 0); }
+
+    let flags: i32 = libc.O_WRONLY() + libc.O_CREAT() + libc.O_TRUNC();
+    let fd: i32 = libc.sys_open(alloc.addr_to_cptr(cpath_addr), flags, 420); // 0644
+    alloc.rt_blood_free_simple(cpath_addr);
+    if fd < 0 { return 0; }
+
+    let content_addr: i64 = alloc.ptr_to_addr(content.data);
+    let mut written: i64 = 0;
+    while written < content.len {
+        let n: i64 = libc.sys_write(fd, alloc.addr_to_cptr(content_addr + written), (content.len - written) as u64);
+        if n <= 0 { break; }
+        written = written + n;
+    }
+    libc.sys_close(fd);
+    if written == content.len { 1 } else { 0 }
+}
+
+// bool @file_append_string(&str path, &str content) -> bool
+pub fn rt_file_append_string(path: rt_string.FatStr, content: rt_string.FatStr) -> i32 {
+    let path_addr: i64 = alloc.ptr_to_addr(path.data);
+    let cpath_addr: i64 = alloc.rt_blood_alloc_simple(path.len + 1);
+    alloc.rt_blood_memcpy(cpath_addr, path_addr, path.len);
+    @unsafe { ptr_write_u8((cpath_addr + path.len) as u64, 0); }
+
+    let flags: i32 = libc.O_WRONLY() + libc.O_CREAT() + libc.O_APPEND();
+    let fd: i32 = libc.sys_open(alloc.addr_to_cptr(cpath_addr), flags, 420);
+    alloc.rt_blood_free_simple(cpath_addr);
+    if fd < 0 { return 0; }
+
+    let content_addr: i64 = alloc.ptr_to_addr(content.data);
+    let mut written: i64 = 0;
+    while written < content.len {
+        let n: i64 = libc.sys_write(fd, alloc.addr_to_cptr(content_addr + written), (content.len - written) as u64);
+        if n <= 0 { break; }
+        written = written + n;
+    }
+    libc.sys_close(fd);
+    if written == content.len { 1 } else { 0 }
+}
+
+// bool @file_exists(&str path) -> bool (uses stat)
+pub fn rt_file_exists(path: rt_string.FatStr) -> i32 {
+    let path_addr: i64 = alloc.ptr_to_addr(path.data);
+    let cpath_addr: i64 = alloc.rt_blood_alloc_simple(path.len + 1);
+    alloc.rt_blood_memcpy(cpath_addr, path_addr, path.len);
+    @unsafe { ptr_write_u8((cpath_addr + path.len) as u64, 0); }
+
+    // stat buf needs ~144 bytes on Linux x86-64
+    let statbuf_addr: i64 = alloc.rt_blood_alloc_simple(256);
+    let ret: i32 = libc.sys_stat(alloc.addr_to_cptr(cpath_addr), alloc.addr_to_ptr(statbuf_addr));
+    alloc.rt_blood_free_simple(statbuf_addr);
+    alloc.rt_blood_free_simple(cpath_addr);
+    if ret == 0 { 1 } else { 0 }
+}
+
+// i32 @system(&str cmd) — run shell command
+pub fn rt_system(cmd: rt_string.FatStr) -> i32 {
+    // Use fork + exec /bin/sh -c "cmd"
+    let cmd_addr: i64 = alloc.ptr_to_addr(cmd.data);
+    let ccmd_addr: i64 = alloc.rt_blood_alloc_simple(cmd.len + 1);
+    alloc.rt_blood_memcpy(ccmd_addr, cmd_addr, cmd.len);
+    @unsafe { ptr_write_u8((ccmd_addr + cmd.len) as u64, 0); }
+
+    let pid: i32 = libc.sys_fork();
+    if pid == 0 {
+        // Child — exec /bin/sh -c cmd
+        // Build argv: ["/bin/sh", "-c", cmd, NULL]
+        let argv_addr: i64 = alloc.rt_blood_alloc_simple(32); // 4 pointers
+        let sh_addr: i64 = alloc.rt_blood_alloc_simple(8);
+        @unsafe {
+            ptr_write_u8(sh_addr as u64, 47);       // '/'
+            ptr_write_u8((sh_addr + 1) as u64, 98); // 'b'
+            ptr_write_u8((sh_addr + 2) as u64, 105);// 'i'
+            ptr_write_u8((sh_addr + 3) as u64, 110);// 'n'
+            ptr_write_u8((sh_addr + 4) as u64, 47); // '/'
+            ptr_write_u8((sh_addr + 5) as u64, 115);// 's'
+            ptr_write_u8((sh_addr + 6) as u64, 104);// 'h'
+            ptr_write_u8((sh_addr + 7) as u64, 0);
+        }
+        let flag_addr: i64 = alloc.rt_blood_alloc_simple(3);
+        @unsafe {
+            ptr_write_u8(flag_addr as u64, 45);     // '-'
+            ptr_write_u8((flag_addr + 1) as u64, 99); // 'c'
+            ptr_write_u8((flag_addr + 2) as u64, 0);
+        }
+        @unsafe {
+            ptr_write_i64(argv_addr as u64, sh_addr);
+            ptr_write_i64((argv_addr + 8) as u64, flag_addr);
+            ptr_write_i64((argv_addr + 16) as u64, ccmd_addr);
+            ptr_write_i64((argv_addr + 24) as u64, 0);
+        }
+        libc.sys_execv(alloc.addr_to_cptr(sh_addr), alloc.addr_to_ptr(argv_addr));
+        libc.sys_abort(); // exec failed
+        0
+    } else if pid < 0 {
+        alloc.rt_blood_free_simple(ccmd_addr);
+        -1
+    } else {
+        let mut status: i32 = 0;
+        libc.sys_waitpid(pid, &mut status as *mut i32, 0);
+        alloc.rt_blood_free_simple(ccmd_addr);
+        // Extract exit code: WEXITSTATUS = (status >> 8) & 0xFF
+        (status / 256) % 256
+    }
+}
+
+// Low-level file I/O builtins (fd-based)
+// i64 @file_read(i64 fd, u64 buf, u64 count) -> i64
+pub fn rt_file_read(fd: i64, buf: u64, count: u64) -> i64 {
+    libc.sys_read(fd as i32, alloc.addr_to_ptr(buf as i64), count)
+}
+
+// i64 @file_write(i64 fd, u64 buf, u64 count) -> i64
+pub fn rt_file_write(fd: i64, buf: u64, count: u64) -> i64 {
+    libc.sys_write(fd as i32, alloc.addr_to_cptr(buf as i64), count)
+}
