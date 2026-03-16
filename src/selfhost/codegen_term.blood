@@ -924,9 +924,11 @@ fn emit_call(
                             ctx.write("\n");
                             final_val = cgname_to_string(&widened);
                             final_ty = expected_ty;
-                        } else if !string_eq_str(expected_ty.as_str(), arg_ty.as_str()) && is_struct_type(arg_ty.as_str()) && is_struct_type(expected_ty.as_str()) {
+                        } else if !string_eq_str(expected_ty.as_str(), arg_ty.as_str()) && is_struct_type(arg_ty.as_str()) && is_struct_type(expected_ty.as_str()) && !str_eq(arg_ty.as_str(), "{ ptr, i32 }") {
                             // Struct type mismatch (generic struct with different field sizes)
                             // Widen field-by-field: { i1, i32 } -> { i64, i64 }
+                            // Skip when arg is a gen ref { ptr, i32 } — gen refs need
+                            // deref (extractvalue+load), not struct widening.
                             let widened_cg = emit_struct_widening(ctx, &arg_val, arg_ty.as_str(), expected_ty.as_str());
                             final_val = cgname_to_string(&widened_cg);
                             final_ty = expected_ty;
