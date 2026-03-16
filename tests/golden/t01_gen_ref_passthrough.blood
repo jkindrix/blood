@@ -1,0 +1,19 @@
+// Test: generational reference returned from function
+// EXPECT: 55
+// EXPECT: 200
+
+fn pick_first(a: &i32, _b: &i32) -> &i32 {
+    a
+}
+
+fn main() {
+    let x: i32 = 55;
+    let y: i32 = 200;
+    let r1: &i32 = pick_first(&x, &y);
+    let v1: i32 = *r1;
+    println_int(v1);
+
+    let r2: &i32 = pick_first(&y, &x);
+    let v2: i32 = *r2;
+    println_int(v2);
+}

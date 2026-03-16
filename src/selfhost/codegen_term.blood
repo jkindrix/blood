@@ -130,33 +130,7 @@ pub fn emit_terminator(
             ctx.begin_call(Option.Some(&snapshot), "ptr", "@blood_snapshot_create");
             ctx.end_call();
 
-            // Add entries for effect-captured locals that have generation tracking
-            for ec_ref in &ctx.effect_captured_locals {
-                let ec_local_index = *ec_ref;
-                let ec_local_id = mir_def.MirLocalId.new(ec_local_index);
-                match ctx.get_local_generation(ec_local_id) {
-                    Option.Some(gen_name) => {
-                        // Load pointer from local alloca, convert to i64 address
-                        let ec_alloca_cg = ctx.local_cg(ec_local_id);
-                        let ec_ptr = ctx.fresh_temp_cg();
-                        ctx.emit_load_cg2(&ec_ptr, "ptr", &ec_alloca_cg);
-                        let ec_addr = ctx.fresh_temp_cg();
-                        ctx.emit_cast_cg2(&ec_addr, "ptrtoint", "ptr", &ec_ptr, "i64");
-                        // Load generation from generation alloca
-                        let ec_gen = ctx.fresh_temp_cg();
-                        ctx.emit_load_cg(&ec_gen, "i32", gen_name.as_str());
-                        // Add snapshot entry
-                        ctx.begin_call(Option.None, "void", "@blood_snapshot_add_entry");
-                        ctx.call_arg_cg(true, "ptr", &snapshot);
-                        ctx.call_arg_cg(false, "i64", &ec_addr);
-                        ctx.call_arg_cg(false, "i32", &ec_gen);
-                        ctx.end_call();
-                    }
-                    Option.None => {
-                        // Local has no generation tracking — skip
-                    }
-                }
-            }
+            // V1 gen snapshot entries removed — fat refs carry gen in { ptr, i32 }.
 
             // Store snapshot in effect context for handler to retrieve
             ctx.begin_call(Option.None, "void", "@blood_effect_context_set_snapshot");
@@ -924,9 +898,11 @@ fn emit_call(
                             ctx.write("\n");
                             final_val = cgname_to_string(&widened);
                             final_ty = expected_ty;
-                        } else if !string_eq_str(expected_ty.as_str(), arg_ty.as_str()) && is_struct_type(arg_ty.as_str()) && is_struct_type(expected_ty.as_str()) {
+                        } else if !string_eq_str(expected_ty.as_str(), arg_ty.as_str()) && is_struct_type(arg_ty.as_str()) && is_struct_type(expected_ty.as_str()) && !str_eq(arg_ty.as_str(), "{ ptr, i32 }") {
                             // Struct type mismatch (generic struct with different field sizes)
                             // Widen field-by-field: { i1, i32 } -> { i64, i64 }
+                            // Skip when arg is a gen ref { ptr, i32 } — gen refs need
+                            // deref (extractvalue+load), not struct widening.
                             let widened_cg = emit_struct_widening(ctx, &arg_val, arg_ty.as_str(), expected_ty.as_str());
                             final_val = cgname_to_string(&widened_cg);
                             final_ty = expected_ty;
