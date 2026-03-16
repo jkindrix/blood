@@ -146,6 +146,8 @@ cd src/selfhost
 ./build_selfhost.sh build second_gen    # Self-compile first_gen → second_gen
 ./build_selfhost.sh build third_gen     # Bootstrap second_gen → third_gen + byte-compare
 ./build_selfhost.sh build runtime       # Recompile runtime.o from runtime.c
+./build_selfhost.sh build blood_runtime # Compile Blood-native runtime → libblood_runtime_blood.a
+./build_selfhost.sh build first_gen_blood  # Link first_gen against Blood runtime (no Rust)
 ./build_selfhost.sh build all           # Full chain: cargo → first_gen → GT → second_gen → GT → third_gen
 
 # Test suites (compiler arg accepts names: bootstrap, first_gen, second_gen, third_gen, or a path)

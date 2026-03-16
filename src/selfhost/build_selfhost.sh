@@ -111,6 +111,7 @@ resolve_compiler() {
     case "${1:-first_gen}" in
         bootstrap|blood-rust) echo "$BLOOD_RUST" ;;
         first_gen)            echo "$BUILD_DIR/first_gen" ;;
+        first_gen_blood)      echo "$BUILD_DIR/first_gen_blood" ;;
         second_gen)           echo "$BUILD_DIR/second_gen" ;;
         third_gen)            echo "$BUILD_DIR/third_gen" ;;
         *)                    echo "$1" ;;  # treat as path
@@ -273,6 +274,54 @@ do_build_runtime() {
     cc -c -O2 -o "$REPO_ROOT/runtime/runtime.o" "$runtime_c"
     ok "runtime.o compiled ($(wc -c < "$REPO_ROOT/runtime/runtime.o") bytes)"
     copy_runtime
+}
+
+do_build_blood_runtime() {
+    local rt_dir="$REPO_ROOT/runtime/blood-runtime"
+    local rt_build="$rt_dir/build/debug"
+    local fg="$BUILD_DIR/first_gen"
+    [ -f "$fg" ] || die "first_gen not found. Run: ./build_selfhost.sh build first_gen"
+    [ -f "$rt_dir/lib.blood" ] || die "Blood runtime source not found at $rt_dir/lib.blood"
+    command -v python3 >/dev/null || die "python3 required for IR post-processing"
+    command -v llc-18 >/dev/null || die "llc-18 required for object compilation"
+
+    mkdir -p "$rt_build"
+
+    step "Compiling Blood runtime to LLVM IR"
+    "$fg" build --emit llvm-ir --no-cache "$rt_dir/lib.blood"
+    ok "IR generated"
+
+    step "Post-processing IR"
+    python3 "$rt_dir/build_runtime.py" "$rt_build/lib.ll" "$rt_build/lib_clean.ll"
+    ok "IR post-processed"
+
+    step "Compiling to archive"
+    llc-18 -filetype=obj -relocation-model=pic "$rt_build/lib_clean.ll" -o "$rt_build/lib.o" 2>&1 \
+        | grep -v 'inlinable function\|ignoring invalid debug' || true
+    ar rcs "$rt_build/libblood_runtime_blood.a" "$rt_build/lib.o"
+    ok "libblood_runtime_blood.a ($(stat -c%s "$rt_build/libblood_runtime_blood.a") bytes)"
+}
+
+do_build_first_gen_blood() {
+    local rt_archive="$REPO_ROOT/runtime/blood-runtime/build/debug/libblood_runtime_blood.a"
+    [ -f "$rt_archive" ] || die "Blood runtime archive not found. Run: ./build_selfhost.sh build blood_runtime"
+    [ -f "$BLOOD_RUST" ] || die "blood-rust not found at $BLOOD_RUST"
+
+    step "Linking first_gen against Blood runtime"
+    local start_ts rc=0
+    start_ts=$(date +%s)
+    BLOOD_RUST_RUNTIME="$rt_archive" \
+        $BLOOD_RUST build main.blood --no-cache --build-dir "$BUILD_DIR" -o "$BUILD_DIR/debug/first_gen_blood_tmp" || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        fail "first_gen_blood link failed: $(decode_exit $rc)"
+        return 1
+    fi
+    mv "$BUILD_DIR/debug/first_gen_blood_tmp" "$BUILD_DIR/first_gen_blood"
+    local size rust_syms
+    size=$(wc -c < "$BUILD_DIR/first_gen_blood")
+    rust_syms=$(nm "$BUILD_DIR/first_gen_blood" 2>/dev/null | grep -c '_ZN\|_RN' || true)
+    : "${rust_syms:=0}"
+    ok "first_gen_blood built ($size bytes, $rust_syms Rust symbols) in $(elapsed_since "$start_ts")"
 }
 
 # ── Test suites ─────────────────────────────────────────────────────────────
@@ -900,6 +949,8 @@ Build:
   build second_gen    Self-compile first_gen → second_gen
   build third_gen     Bootstrap second_gen → third_gen + byte-compare
   build runtime       Recompile runtime.o from runtime.c
+  build blood_runtime Compile Blood-native runtime → libblood_runtime_blood.a
+  build first_gen_blood  Link first_gen against Blood runtime (no Rust)
   build all           Full chain: cargo → first_gen → GT → second_gen → GT → third_gen
 
 Test:
@@ -953,6 +1004,12 @@ case "${1:-status}" in
             runtime)
                 do_build_runtime
                 ;;
+            blood_runtime)
+                do_build_blood_runtime
+                ;;
+            first_gen_blood)
+                do_build_first_gen_blood
+                ;;
             all)
                 PIPELINE_START=$(date +%s)
 
@@ -967,10 +1024,10 @@ case "${1:-status}" in
                 printf "Log: %s\n" "${LOG_FILE:-<none>}"
                 ;;
             "")
-                die "build requires a stage: cargo, first_gen, second_gen, third_gen, runtime, all"
+                die "build requires a stage: cargo, first_gen, second_gen, third_gen, runtime, blood_runtime, first_gen_blood, all"
                 ;;
             *)
-                die "Unknown build stage: $2. Expected: cargo, first_gen, second_gen, third_gen, runtime, all"
+                die "Unknown build stage: $2. Expected: cargo, first_gen, second_gen, third_gen, runtime, blood_runtime, first_gen_blood, all"
                 ;;
         esac
         ;;
