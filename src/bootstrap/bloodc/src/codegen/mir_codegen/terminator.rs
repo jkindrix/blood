@@ -2900,6 +2900,60 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             return Ok(alloca.into());
         }
 
+        // Struct value to gen ref: when passing a value where a reference is expected,
+        // allocate the value on stack and create a gen ref { ptr, i32 } to it.
+        // This handles auto-borrow patterns where MIR passes T but callee expects &T.
+        if val.is_struct_value() && dest_type.is_struct_type() {
+            let dest_struct_type = dest_type.into_struct_type();
+            let is_gen_ref_dest = dest_struct_type.count_fields() == 2
+                && dest_struct_type.get_field_type_at_index(0)
+                    .map_or(false, |t| t.is_pointer_type())
+                && dest_struct_type.get_field_type_at_index(1)
+                    .map_or(false, |t| t.is_int_type()
+                        && t.into_int_type().get_bit_width() == 32);
+
+            let struct_val = val.into_struct_value();
+            let val_is_gen_ref = {
+                let vt = struct_val.get_type();
+                vt.count_fields() == 2
+                    && vt.get_field_type_at_index(0).map_or(false, |t| t.is_pointer_type())
+                    && vt.get_field_type_at_index(1).map_or(false, |t| t.is_int_type()
+                        && t.into_int_type().get_bit_width() == 32)
+            };
+
+            if is_gen_ref_dest && !val_is_gen_ref {
+                // Value (e.g., String { ptr, i64, i64 }) being stored where a gen ref
+                // { ptr, i32 } is expected. Allocate the value on stack and create a
+                // gen ref pointing to the stack copy.
+                let alloca = self.builder
+                    .build_alloca(struct_val.get_type(), "auto_ref_tmp")
+                    .map_err(|e| vec![Diagnostic::error(
+                        format!("LLVM alloca error: {}", e), span
+                    )])?;
+                self.builder.build_store(alloca, struct_val)
+                    .map_err(|e| vec![Diagnostic::error(
+                        format!("LLVM store error: {}", e), span
+                    )])?;
+                let mut fat_ref = dest_struct_type.get_undef();
+                fat_ref = self.builder.build_insert_value(fat_ref, alloca, 0, "auto_ref_ptr")
+                    .map_err(|e| vec![Diagnostic::error(
+                        format!("LLVM insert_value error: {}", e), span
+                    )])?
+                    .into_struct_value();
+                let gen_val = self.context.i32_type().const_int(0, false);
+                fat_ref = self.builder.build_insert_value(fat_ref, gen_val, 1, "auto_ref_gen")
+                    .map_err(|e| vec![Diagnostic::error(
+                        format!("LLVM insert_value error: {}", e), span
+                    )])?
+                    .into_struct_value();
+                return Ok(fat_ref.into());
+            }
+
+            // Re-wrap for remaining struct-to-struct checks
+            let val = BasicValueEnum::StructValue(struct_val);
+            drop(dest_struct_type);
+        }
+
         // Struct-to-struct conversion with different field types
         // This handles cases like structs with different integer width fields
         if val.is_struct_value() && dest_type.is_struct_type() {
