@@ -2717,33 +2717,57 @@ fn lower_for_vec_iter(
     ctx.set_current_block(loop_body);
 
     let resolved_elem_id = ctx.resolve_type_to_id(element_ty_id);
-    let elem_temp = ctx.new_temp(resolved_elem_id, span);
 
     // Build place: vec_temp[idx_local]
     let mut index_base = mir_types.Place.local(vec_temp);
-    match iter_kind {
+    let is_ref_iter = match iter_kind {
         &type_intern.InternedTypeKind.Ref { inner: _, mutable: _ } => {
             index_base = index_base.project(mir_types.PlaceElem.Deref);
+            true
         }
-        _ => {}
-    }
+        _ => false,
+    };
     let indexed_place = index_base.project(mir_types.PlaceElem.Index(idx_local));
 
-    let elem_ty_hir = type_intern.ty_id_to_type(resolved_elem_id);
-    let elem_operand = mir_lower_util.operand_from_place(indexed_place, &elem_ty_hir);
-    ctx.emit_assign(
-        mir_types.Place.local(elem_temp),
-        mir_types.Rvalue.Use(elem_operand),
-        span,
-    );
+    // For &Vec<T> iteration: element type is &T (reference to element in-place)
+    // For Vec<T> iteration: element type is T (copy)
+    if is_ref_iter {
+        let ref_elem_id = type_intern.type_interner().mk_ref(resolved_elem_id, false);
+        let elem_temp = ctx.new_temp(ref_elem_id, span);
+        ctx.emit_assign(
+            mir_types.Place.local(elem_temp),
+            mir_types.Rvalue.Ref {
+                place: indexed_place,
+                mutable: false,
+            },
+            span,
+        );
 
-    // Bind pattern
-    mir_lower_pattern.lower_irrefutable_pattern(
-        ctx,
-        pattern,
-        mir_types.Place.local(elem_temp),
-        span,
-    );
+        // Bind pattern
+        mir_lower_pattern.lower_irrefutable_pattern(
+            ctx,
+            pattern,
+            mir_types.Place.local(elem_temp),
+            span,
+        );
+    } else {
+        let elem_temp = ctx.new_temp(resolved_elem_id, span);
+        let elem_ty_hir = type_intern.ty_id_to_type(resolved_elem_id);
+        let elem_operand = mir_lower_util.operand_from_place(indexed_place, &elem_ty_hir);
+        ctx.emit_assign(
+            mir_types.Place.local(elem_temp),
+            mir_types.Rvalue.Use(elem_operand),
+            span,
+        );
+
+        // Bind pattern
+        mir_lower_pattern.lower_irrefutable_pattern(
+            ctx,
+            pattern,
+            mir_types.Place.local(elem_temp),
+            span,
+        );
+    }
 
     // Lower body
     lower_expr(ctx, body, mir_lower_ctx.destination_ignore());

@@ -2603,19 +2603,21 @@ fn infer_for_iter(
             checker.unify(pattern.ty, element, span);
         }
         &type_intern.InternedTypeKind.Ref { inner, mutable: _ } => {
-            // Handle &[T; N] or &Vec<T>
+            // Handle &[T; N] or &Vec<T> — element type is &T (reference to element)
             let inner_resolved = checker.resolve(inner);
             let inner_kind = interner.get(inner_resolved);
             match inner_kind {
                 &type_intern.InternedTypeKind.Array { element, size: _ } => {
-                    checker.unify(pattern.ty, element, span);
+                    let ref_elem = interner.mk_ref(element, false);
+                    checker.unify(pattern.ty, ref_elem, span);
                 }
                 &type_intern.InternedTypeKind.Adt { def_id: _, args } => {
-                    // Vec<T> or similar — extract T from type args
+                    // Vec<T> or similar — element type is &T
                     let num_args = interner.ty_list_len(args);
                     if num_args >= 1 {
                         let elem_ty = interner.get_ty_list_element(args, 0);
-                        checker.unify(pattern.ty, elem_ty, span);
+                        let ref_elem = interner.mk_ref(elem_ty, false);
+                        checker.unify(pattern.ty, ref_elem, span);
                     } else {
                         checker.error(typeck.TypeErrorKind.TypeMismatch, span);
                     }
