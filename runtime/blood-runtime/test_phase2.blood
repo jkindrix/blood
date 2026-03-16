@@ -1,0 +1,63 @@
+// Phase 2.5: Smoke test — allocate, write, read back, free
+mod libc;
+mod print;
+mod rt_panic;
+mod alloc;
+
+fn main() -> i32 {
+    // Test 1: simple alloc + write + read
+    print.print_str("test 1: alloc_simple...\n");
+    let addr: i64 = alloc.rt_blood_alloc_simple(16);
+    if addr == 0 { return 1; }
+    ptr_write_i32(addr as u64, 42);
+    let val: i32 = ptr_read_i32(addr as u64);
+    if val != 42 { return 2; }
+    alloc.rt_blood_free_simple(addr);
+    print.print_str("simple alloc OK\n");
+
+    // Test 2: alloc_or_abort with generation tracking
+    print.print_str("test 2: alloc_or_abort...\n");
+    let mut out_gen: i32 = 0;
+    let addr2: i64 = alloc.rt_blood_alloc_or_abort(32, &mut out_gen as *mut i32);
+    if addr2 == 0 { return 3; }
+    if out_gen < 1 { return 4; }
+    print.print_str("alloc_or_abort OK, gen=");
+    println_int(out_gen);
+
+    // Test 3: validate generation
+    print.print_str("test 3: validate...\n");
+    let valid: i32 = alloc.rt_blood_validate_generation(addr2, out_gen);
+    if valid != 1 { return 5; }
+    print.print_str("validate_generation OK\n");
+
+    // Test 4: free invalidates generation
+    print.print_str("test 4: free...\n");
+    alloc.rt_blood_free(addr2, 32);
+    let invalid: i32 = alloc.rt_blood_validate_generation(addr2, out_gen);
+    if invalid != 0 { return 6; }
+    print.print_str("free invalidates gen OK\n");
+
+    // Test 5: memcpy
+    print.print_str("test 5: memcpy...\n");
+    let src: i64 = alloc.rt_blood_alloc_simple(8);
+    let dst: i64 = alloc.rt_blood_alloc_simple(8);
+    ptr_write_i64(src as u64, 12345);
+    alloc.rt_blood_memcpy(dst, src, 8);
+    let copied: i64 = ptr_read_i64(dst as u64);
+    if copied != 12345 { return 7; }
+    print.print_str("memcpy OK\n");
+
+    // Test 6: persistent alloc
+    print.print_str("test 6: persistent...\n");
+    let mut slot_id: i64 = 0;
+    let pptr: *mut u8 = alloc.rt_blood_persistent_alloc(64, 8, 0, &mut slot_id as *mut i64);
+    @unsafe {
+        if (pptr as usize) == 0 { return 8; }
+    }
+    if slot_id < 1 { return 9; }
+    print.print_str("persistent_alloc OK, slot=");
+    println_i64(slot_id);
+
+    print.print_str("phase 2 OK\n");
+    0
+}

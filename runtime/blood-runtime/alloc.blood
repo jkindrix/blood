@@ -1,0 +1,287 @@
+// Phase 2: Memory — Heap Allocation
+//
+// Address-as-i64: The compiler represents heap addresses as i64 in
+// generational fat pointers ({ i64, i32 } = { addr, generation }).
+// All alloc/free functions accept and return i64 addresses.
+//
+// Cast chain: i64 -> usize -> *mut u8 (Blood doesn't allow i64 -> ptr directly)
+
+mod libc;
+mod print;
+mod rt_panic;
+
+// Helper: i64 address to *mut u8
+fn addr_to_ptr(addr: i64) -> *mut u8 {
+    @unsafe { (addr as usize) as *mut u8 }
+}
+
+// Helper: i64 address to *const u8
+fn addr_to_cptr(addr: i64) -> *const u8 {
+    @unsafe { (addr as usize) as *const u8 }
+}
+
+// Helper: *mut u8 to i64 address
+fn ptr_to_addr(ptr: *mut u8) -> i64 {
+    @unsafe { (ptr as usize) as i64 }
+}
+
+// ============================================================================
+// Generation tracking — minimal registry for Stage 1
+// ============================================================================
+
+static mut NEXT_GENERATION: i32 = 1;
+
+// Registry: parallel arrays of (addr, generation, size)
+// Allocated lazily via calloc on first use.
+static mut REG_ADDRS: *mut u8 = @unsafe { 0 as *mut u8 };
+static mut REG_GENS: *mut u8 = @unsafe { 0 as *mut u8 };
+static mut REG_SIZES: *mut u8 = @unsafe { 0 as *mut u8 };
+static mut REG_LEN: i64 = 0;
+static mut REG_CAP: i64 = 65536;
+static mut REG_INIT: i32 = 0;
+
+fn ensure_registry() {
+    @unsafe {
+        if REG_INIT == 0 {
+            REG_ADDRS = libc.sys_calloc(65536, 8);  // i64 per entry
+            REG_GENS = libc.sys_calloc(65536, 4);    // i32 per entry
+            REG_SIZES = libc.sys_calloc(65536, 8);   // i64 per entry
+            if ptr_to_addr(REG_ADDRS) == 0 {
+                rt_panic.rt_panic("alloc: failed to allocate generation registry");
+            }
+            REG_INIT = 1;
+        }
+    }
+}
+
+// Read i64 from registry array at index
+fn reg_read_i64(base: *mut u8, idx: i64) -> i64 {
+    @unsafe {
+        let offset: i64 = idx * 8;
+        let p: *mut u8 = addr_to_ptr(ptr_to_addr(base) + offset);
+        ptr_read_i64(p)
+    }
+}
+
+// Write i64 to registry array at index
+fn reg_write_i64(base: *mut u8, idx: i64, val: i64) {
+    @unsafe {
+        let offset: i64 = idx * 8;
+        let p: *mut u8 = addr_to_ptr(ptr_to_addr(base) + offset);
+        ptr_write_i64(p, val);
+    }
+}
+
+// Read i32 from registry array at index
+fn reg_read_i32(base: *mut u8, idx: i64) -> i32 {
+    @unsafe {
+        let offset: i64 = idx * 4;
+        let p: *mut u8 = addr_to_ptr(ptr_to_addr(base) + offset);
+        ptr_read_i32(p)
+    }
+}
+
+// Write i32 to registry array at index
+fn reg_write_i32(base: *mut u8, idx: i64, val: i32) {
+    @unsafe {
+        let offset: i64 = idx * 4;
+        let p: *mut u8 = addr_to_ptr(ptr_to_addr(base) + offset);
+        ptr_write_i32(p, val);
+    }
+}
+
+// Register an allocation and return its generation
+pub fn rt_blood_register_allocation(addr: i64, size: i64) -> i32 {
+    ensure_registry();
+    @unsafe {
+        if REG_LEN >= REG_CAP {
+            rt_panic.rt_panic("alloc: generation registry full");
+        }
+        let g: i32 = NEXT_GENERATION;
+        NEXT_GENERATION = NEXT_GENERATION + 1;
+
+        let idx: i64 = REG_LEN;
+        reg_write_i64(REG_ADDRS, idx, addr);
+        reg_write_i32(REG_GENS, idx, g);
+        reg_write_i64(REG_SIZES, idx, size);
+
+        REG_LEN = REG_LEN + 1;
+        g
+    }
+}
+
+// Unregister (set generation to 0 = invalid)
+pub fn rt_blood_unregister_allocation(addr: i64) {
+    @unsafe {
+        let len: i64 = REG_LEN;
+        let mut i: i64 = 0;
+        while i < len {
+            if reg_read_i64(REG_ADDRS, i) == addr {
+                reg_write_i32(REG_GENS, i, 0);
+                return;
+            }
+            i = i + 1;
+        }
+    }
+}
+
+// Validate generation
+pub fn rt_blood_validate_generation(addr: i64, expected: i32) -> i32 {
+    @unsafe {
+        let len: i64 = REG_LEN;
+        let mut i: i64 = 0;
+        while i < len {
+            if reg_read_i64(REG_ADDRS, i) == addr {
+                let actual: i32 = reg_read_i32(REG_GENS, i);
+                if actual == expected { return 1; }
+                return 0;
+            }
+            i = i + 1;
+        }
+        // Not in registry — stack or region allocated, assume valid
+        1
+    }
+}
+
+// Get generation for an address
+pub fn rt_blood_get_generation(addr: i64) -> i32 {
+    @unsafe {
+        let len: i64 = REG_LEN;
+        let mut i: i64 = 0;
+        while i < len {
+            if reg_read_i64(REG_ADDRS, i) == addr {
+                return reg_read_i32(REG_GENS, i);
+            }
+            i = i + 1;
+        }
+        0
+    }
+}
+
+// Increment generation at a pointer
+pub fn rt_blood_increment_generation(ptr: *mut u8) {
+    @unsafe {
+        let addr: i64 = ptr_to_addr(ptr);
+        let len: i64 = REG_LEN;
+        let mut i: i64 = 0;
+        while i < len {
+            if reg_read_i64(REG_ADDRS, i) == addr {
+                let g: i32 = reg_read_i32(REG_GENS, i);
+                reg_write_i32(REG_GENS, i, g + 1);
+                return;
+            }
+            i = i + 1;
+        }
+    }
+}
+
+// Panic on stale reference
+pub fn rt_blood_stale_reference_panic(expected: i32, actual: i32) {
+    print.eprint_str("panic: stale reference detected\n");
+    libc.sys_abort();
+}
+
+// Lookup size for an address (used by realloc)
+fn registry_lookup_size(addr: i64) -> i64 {
+    @unsafe {
+        let len: i64 = REG_LEN;
+        let mut i: i64 = 0;
+        while i < len {
+            if reg_read_i64(REG_ADDRS, i) == addr {
+                return reg_read_i64(REG_SIZES, i);
+            }
+            i = i + 1;
+        }
+        0
+    }
+}
+
+// ============================================================================
+// Allocation functions
+// ============================================================================
+
+// Region-aware allocation with generation tracking.
+// Phase 2: no region support — always uses global heap.
+pub fn rt_blood_alloc_or_abort(size: i64, out_gen: *mut i32) -> i64 {
+    @unsafe {
+        let ptr: *mut u8 = libc.sys_calloc(1, size as u64);
+        let addr: i64 = ptr_to_addr(ptr);
+        if addr == 0 {
+            rt_panic.rt_panic("alloc: out of memory");
+        }
+        let g: i32 = rt_blood_register_allocation(addr, size);
+        *out_gen = g;
+        addr
+    }
+}
+
+// Simple allocation (no generation tracking)
+pub fn rt_blood_alloc_simple(size: i64) -> i64 {
+    @unsafe {
+        let ptr: *mut u8 = libc.sys_calloc(1, size as u64);
+        let addr: i64 = ptr_to_addr(ptr);
+        if addr == 0 {
+            rt_panic.rt_panic("alloc: out of memory");
+        }
+        addr
+    }
+}
+
+// Realloc: calloc new + memcpy + leak old (free unavailable due to symbol conflict)
+pub fn rt_blood_realloc(old_addr: i64, new_size: i64) -> i64 {
+    @unsafe {
+        let new_ptr: *mut u8 = libc.sys_calloc(1, new_size as u64);
+        let new_addr: i64 = ptr_to_addr(new_ptr);
+        if new_addr == 0 {
+            rt_panic.rt_panic("realloc: out of memory");
+        }
+        let old_size: i64 = registry_lookup_size(old_addr);
+        let mut copy_size: i64 = old_size;
+        if new_size < copy_size {
+            copy_size = new_size;
+        }
+        if copy_size > 0 {
+            libc.sys_memmove(new_ptr, addr_to_cptr(old_addr), copy_size as u64);
+        }
+        new_addr
+    }
+}
+
+// Free with size hint
+pub fn rt_blood_free(addr: i64, size: i64) {
+    rt_blood_unregister_allocation(addr);
+}
+
+// Free without size hint
+pub fn rt_blood_free_simple(addr: i64) {
+    rt_blood_unregister_allocation(addr);
+}
+
+// Memcpy (address-as-i64 interface)
+pub fn rt_blood_memcpy(dst: i64, src: i64, len: i64) -> i64 {
+    @unsafe {
+        libc.sys_memmove(addr_to_ptr(dst), addr_to_cptr(src), len as u64);
+        dst
+    }
+}
+
+// ============================================================================
+// Persistent allocation — minimal Stage 1
+// ============================================================================
+
+static mut NEXT_PERSISTENT_SLOT: i64 = 1;
+
+pub fn rt_blood_persistent_alloc(size: i64, align: i64, type_fp: i32, out_id: *mut i64) -> *mut u8 {
+    @unsafe {
+        let ptr: *mut u8 = libc.sys_calloc(1, size as u64);
+        if ptr_to_addr(ptr) == 0 {
+            rt_panic.rt_panic("persistent_alloc: out of memory");
+        }
+        *out_id = NEXT_PERSISTENT_SLOT;
+        NEXT_PERSISTENT_SLOT = NEXT_PERSISTENT_SLOT + 1;
+        ptr
+    }
+}
+
+pub fn rt_blood_persistent_decrement(slot_id: i64) {
+}
