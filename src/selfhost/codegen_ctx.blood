@@ -1146,8 +1146,8 @@ impl CodegenCtx {
         out.push_str("!6 = !DIBasicType(name: \"i64\", size: 64, encoding: DW_ATE_signed)\n");
         out.push_str("\n");
         // Emit all DISubprogram nodes
-        for i in 0usize..self.debug_metadata.len() {
-            out.push_str(self.debug_metadata[i].as_str());
+        for md in &self.debug_metadata {
+            out.push_str(md.as_str());
         }
         out
     }
@@ -1810,8 +1810,7 @@ impl CodegenCtx {
     /// Takes ownership of accumulated errors, leaving the error list empty.
     pub fn take_errors(self: &mut CodegenCtx) -> Vec<CodegenError> {
         let mut errors: Vec<CodegenError> = Vec.new();
-        for i in 0usize..self.codegen_errors.len() {
-            let err = &self.codegen_errors[i];
+        for err in &self.codegen_errors {
             let fn_name = match &err.fn_name {
                 &Option.Some(ref name) => Option.Some(clone_string(name)),
                 &Option.None => Option.None,
@@ -1821,13 +1820,13 @@ impl CodegenCtx {
                 &Option.None => Option.None,
             };
             let mut notes = Vec.new();
-            for ni in 0usize..err.notes.len() {
-                let note_span = match &err.notes[ni].span {
+            for note in &err.notes {
+                let note_span = match &note.span {
                     &Option.Some(ref s) => Option.Some(*s),
                     &Option.None => Option.None,
                 };
                 notes.push(CodegenNote {
-                    message: clone_string(&err.notes[ni].message),
+                    message: clone_string(&note.message),
                     span: note_span,
                 });
             }
