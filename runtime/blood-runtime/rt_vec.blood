@@ -35,6 +35,7 @@ fn set_cap(v: *mut u8, val: i64) {
 }
 
 // void @vec_new(i64 elem_size, ptr out)
+#[export_name = "vec_new"]
 pub fn rt_vec_new(elem_size: i64, out: *mut u8) {
     set_data(out, 0);
     set_len(out, 0);
@@ -42,6 +43,7 @@ pub fn rt_vec_new(elem_size: i64, out: *mut u8) {
 }
 
 // void @vec_with_capacity(i64 elem_size, i64 capacity, ptr out)
+#[export_name = "vec_with_capacity"]
 pub fn rt_vec_with_capacity(elem_size: i64, capacity: i64, out: *mut u8) {
     if capacity <= 0 {
         set_data(out, 0);
@@ -81,6 +83,7 @@ fn vec_ensure_cap(v: *mut u8, needed: i64, elem_size: i64) {
 }
 
 // void @vec_push(ptr vec, ptr elem, i64 elem_size)
+#[export_name = "vec_push"]
 pub fn rt_vec_push(v: *mut u8, elem: *mut u8, elem_size: i64) {
     let len: i64 = get_len(v);
     vec_ensure_cap(v, len + 1, elem_size);
@@ -92,6 +95,7 @@ pub fn rt_vec_push(v: *mut u8, elem: *mut u8, elem_size: i64) {
 }
 
 // i32 @vec_pop(ptr vec, i64 elem_size, ptr out) -> 1 if popped, 0 if empty
+#[export_name = "vec_pop"]
 pub fn rt_vec_pop(v: *mut u8, elem_size: i64, out: *mut u8) -> i32 {
     let len: i64 = get_len(v);
     if len == 0 { return 0; }
@@ -105,26 +109,31 @@ pub fn rt_vec_pop(v: *mut u8, elem_size: i64, out: *mut u8) -> i32 {
 }
 
 // i64 @vec_len(ptr)
+#[export_name = "vec_len"]
 pub fn rt_vec_len(v: *mut u8) -> i64 {
     get_len(v)
 }
 
 // i32 @vec_is_empty(ptr)
+#[export_name = "vec_is_empty"]
 pub fn rt_vec_is_empty(v: *mut u8) -> i32 {
     if get_len(v) == 0 { 1 } else { 0 }
 }
 
 // i64 @vec_capacity(ptr)
+#[export_name = "vec_capacity"]
 pub fn rt_vec_capacity(v: *mut u8) -> i64 {
     get_cap(v)
 }
 
 // void @vec_clear(ptr)
+#[export_name = "vec_clear"]
 pub fn rt_vec_clear(v: *mut u8) {
     set_len(v, 0);
 }
 
 // i32 @vec_get(ptr vec, i64 index, i64 elem_size, ptr out) -> 1 if ok, 0 if OOB
+#[export_name = "vec_get"]
 pub fn rt_vec_get(v: *mut u8, index: i64, elem_size: i64, out: *mut u8) -> i32 {
     let len: i64 = get_len(v);
     if index < 0 { return 0; }
@@ -137,6 +146,7 @@ pub fn rt_vec_get(v: *mut u8, index: i64, elem_size: i64, out: *mut u8) -> i32 {
 }
 
 // ptr @vec_get_ptr(ptr vec, i64 index, i64 elem_size) -> ptr to element or null
+#[export_name = "vec_get_ptr"]
 pub fn rt_vec_get_ptr(v: *mut u8, index: i64, elem_size: i64) -> *mut u8 {
     let len: i64 = get_len(v);
     if index < 0 { return alloc.addr_to_ptr(0); }
@@ -145,6 +155,7 @@ pub fn rt_vec_get_ptr(v: *mut u8, index: i64, elem_size: i64) -> *mut u8 {
 }
 
 // i32 @vec_contains(ptr vec, ptr needle, i64 elem_size) -> 1 if found
+#[export_name = "vec_contains"]
 pub fn rt_vec_contains(v: *mut u8, needle: *mut u8, elem_size: i64) -> i32 {
     let len: i64 = get_len(v);
     let data: i64 = get_data(v);
@@ -170,6 +181,7 @@ pub fn rt_vec_contains(v: *mut u8, needle: *mut u8, elem_size: i64) -> i32 {
 }
 
 // void @vec_reverse(ptr vec, i64 elem_size)
+#[export_name = "vec_reverse"]
 pub fn rt_vec_reverse(v: *mut u8, elem_size: i64) {
     let len: i64 = get_len(v);
     if len <= 1 { return; }
@@ -190,6 +202,7 @@ pub fn rt_vec_reverse(v: *mut u8, elem_size: i64) {
 }
 
 // void @vec_first(ptr vec, i64 elem_size, ptr out)
+#[export_name = "vec_first"]
 pub fn rt_vec_first(v: *mut u8, elem_size: i64, out: *mut u8) {
     let len: i64 = get_len(v);
     if len == 0 { return; }
@@ -200,6 +213,7 @@ pub fn rt_vec_first(v: *mut u8, elem_size: i64, out: *mut u8) {
 }
 
 // void @vec_last(ptr vec, i64 elem_size, ptr out)
+#[export_name = "vec_last"]
 pub fn rt_vec_last(v: *mut u8, elem_size: i64, out: *mut u8) {
     let len: i64 = get_len(v);
     if len == 0 { return; }
@@ -210,6 +224,7 @@ pub fn rt_vec_last(v: *mut u8, elem_size: i64, out: *mut u8) {
 }
 
 // void @vec_free(ptr vec, i64 elem_size)
+#[export_name = "vec_free"]
 pub fn rt_vec_free(v: *mut u8, elem_size: i64) {
     let data: i64 = get_data(v);
     if data != 0 {
@@ -221,6 +236,7 @@ pub fn rt_vec_free(v: *mut u8, elem_size: i64) {
 }
 
 // i64 @slice_len(ptr) — slice is { ptr, i64 } same as &str
+#[export_name = "slice_len"]
 pub fn rt_slice_len(fat: *mut u8) -> i64 {
     @unsafe { ptr_read_i64((alloc.ptr_to_addr(fat) + 8) as u64) }
 }

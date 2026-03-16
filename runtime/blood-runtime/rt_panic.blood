@@ -4,29 +4,29 @@
 //
 // All panic functions print a message to stderr then abort.
 // No unwinding — matches the Rust runtime's behavior exactly.
-//
-// NOTE: Function names are prefixed with rt_ to avoid collision with
-// compiler builtins. When #[no_mangle] is implemented (Phase 0.7),
-// these will be exported with their canonical names (panic, etc.).
 
 mod libc;
 mod print;
 
+#[export_name = "panic"]
 pub fn rt_panic(msg: &str) {
     print.eprint_str("panic: ");
     print.eprintln_str(msg);
     libc.sys_abort();
 }
 
+#[export_name = "blood_panic_div_zero"]
 pub fn rt_blood_panic_div_zero() {
     rt_panic("division by zero");
 }
 
+#[export_name = "blood_panic_index_out_of_bounds"]
 pub fn rt_blood_panic_index_out_of_bounds(index: i64, length: i64) {
     print.eprint_str("panic: index out of bounds\n");
     libc.sys_abort();
 }
 
+#[export_name = "blood_panic_index_out_of_bounds_loc"]
 pub fn rt_blood_panic_index_out_of_bounds_loc(index: i64, length: i64, loc: *const u8) {
     print.eprint_str("panic: index out of bounds at ");
     let loc_len: u64 = libc.sys_strlen(loc);

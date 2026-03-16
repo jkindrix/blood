@@ -15,9 +15,9 @@ mod rt_panic;
 mod alloc;
 
 // Return type for functions that yield { ptr, i64 }
-struct FatStr {
-    data: *mut u8,
-    len: i64,
+pub struct FatStr {
+    pub data: *mut u8,
+    pub len: i64,
 }
 
 // String field offsets (24-byte struct: ptr + len + cap)
@@ -45,6 +45,7 @@ fn set_cap(s: *mut u8, val: i64) {
 }
 
 // void @string_new(ptr)
+#[export_name = "string_new"]
 pub fn rt_string_new(out: *mut u8) {
     set_data(out, 0);
     set_len(out, 0);
@@ -52,6 +53,7 @@ pub fn rt_string_new(out: *mut u8) {
 }
 
 // i64 @string_len(ptr)
+#[export_name = "string_len"]
 pub fn rt_string_len(s: *mut u8) -> i64 {
     get_len(s)
 }
@@ -81,6 +83,7 @@ fn ensure_cap(s: *mut u8, needed: i64) {
 
 // void @string_push_str(ptr, ptr)
 // First arg: ptr to String struct. Second arg: ptr to { ptr, i64 } fat str.
+#[export_name = "string_push_str"]
 pub fn rt_string_push_str(s: *mut u8, fat_str: *mut u8) {
     @unsafe {
         let src_ptr: i64 = ptr_read_i64(alloc.ptr_to_addr(fat_str) as u64);
@@ -97,6 +100,7 @@ pub fn rt_string_push_str(s: *mut u8, fat_str: *mut u8) {
 }
 
 // void @string_push(ptr, i32) — append char as UTF-8
+#[export_name = "string_push"]
 pub fn rt_string_push(s: *mut u8, ch: i32) {
     if ch < 128 {
         let cur_len: i64 = get_len(s);
@@ -137,17 +141,20 @@ pub fn rt_string_push(s: *mut u8, ch: i32) {
 }
 
 // { ptr, i64 } @string_as_str(ptr)
+#[export_name = "string_as_str"]
 pub fn rt_string_as_str(s: *mut u8) -> FatStr {
     FatStr { data: alloc.addr_to_ptr(get_data(s)), len: get_len(s) }
 }
 
 // { ptr, i64 } @string_as_bytes(ptr)
+#[export_name = "string_as_bytes"]
 pub fn rt_string_as_bytes(s: *mut u8) -> FatStr {
     FatStr { data: alloc.addr_to_ptr(get_data(s)), len: get_len(s) }
 }
 
 // { ptr, i64 } @str_as_bytes(ptr) — &str is already { ptr, i64 }
 // Arg is ptr to the fat str on the stack
+#[export_name = "str_as_bytes"]
 pub fn rt_str_as_bytes(fat_str: *mut u8) -> FatStr {
     @unsafe {
         let p: i64 = ptr_read_i64(alloc.ptr_to_addr(fat_str) as u64);
@@ -157,6 +164,7 @@ pub fn rt_str_as_bytes(fat_str: *mut u8) -> FatStr {
 }
 
 // { ptr, i64 } @int_to_string(i32)
+#[export_name = "int_to_string"]
 pub fn rt_int_to_string(val: i32) -> FatStr {
     let buf_addr: i64 = alloc.rt_blood_alloc_simple(24);
     let mut n: i32 = val;
@@ -195,6 +203,7 @@ pub fn rt_int_to_string(val: i32) -> FatStr {
 
 // { ptr, i64 } @blood_str_concat({ ptr, i64 }, { ptr, i64 })
 // Takes two fat strs by value (each is { ptr, i64 } in registers)
+#[export_name = "blood_str_concat"]
 pub fn rt_blood_str_concat(a: FatStr, b: FatStr) -> FatStr {
     let a_addr: i64 = alloc.ptr_to_addr(a.data);
     let b_addr: i64 = alloc.ptr_to_addr(b.data);

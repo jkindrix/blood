@@ -114,6 +114,7 @@ fn round_up(x: i64, align: i64) -> i64 {
 // Region API
 // ============================================================================
 
+#[export_name = "blood_region_create"]
 pub fn rt_blood_region_create(initial_size: i64, max_size: i64) -> i64 {
     ensure_region_registry();
     @unsafe {
@@ -173,6 +174,7 @@ pub fn rt_blood_region_create(initial_size: i64, max_size: i64) -> i64 {
     }
 }
 
+#[export_name = "blood_region_destroy"]
 pub fn rt_blood_region_destroy(region_id: i64) {
     @unsafe {
         let idx: i64 = find_region(region_id);
@@ -200,6 +202,7 @@ pub fn rt_blood_region_destroy(region_id: i64) {
     }
 }
 
+#[export_name = "blood_region_reset"]
 pub fn rt_blood_region_reset(region_id: i64) {
     @unsafe {
         let idx: i64 = find_region(region_id);
@@ -212,6 +215,7 @@ pub fn rt_blood_region_reset(region_id: i64) {
     }
 }
 
+#[export_name = "blood_region_alloc"]
 pub fn rt_blood_region_alloc(region_id: i64, size: i64, align: i64) -> i64 {
     @unsafe {
         let idx: i64 = find_region(region_id);
@@ -263,6 +267,7 @@ pub fn rt_blood_region_alloc(region_id: i64, size: i64, align: i64) -> i64 {
     }
 }
 
+#[export_name = "blood_region_activate"]
 pub fn rt_blood_region_activate(region_id: i64) {
     ensure_region_registry();
     @unsafe {
@@ -274,6 +279,7 @@ pub fn rt_blood_region_activate(region_id: i64) {
     }
 }
 
+#[export_name = "blood_region_deactivate"]
 pub fn rt_blood_region_deactivate() {
     @unsafe {
         if STACK_LEN > 0 {
@@ -282,6 +288,7 @@ pub fn rt_blood_region_deactivate() {
     }
 }
 
+#[export_name = "blood_region_deactivate_get"]
 pub fn rt_blood_region_deactivate_get() -> i64 {
     @unsafe {
         if STACK_LEN > 0 {
@@ -292,6 +299,7 @@ pub fn rt_blood_region_deactivate_get() -> i64 {
     }
 }
 
+#[export_name = "blood_region_active_id"]
 pub fn rt_blood_region_active_id() -> i64 {
     @unsafe {
         if STACK_LEN > 0 {
@@ -301,6 +309,7 @@ pub fn rt_blood_region_active_id() -> i64 {
     }
 }
 
+#[export_name = "blood_region_trim"]
 pub fn rt_blood_region_trim(region_id: i64) {
     @unsafe {
         let idx: i64 = find_region(region_id);
@@ -321,6 +330,7 @@ pub fn rt_blood_region_trim(region_id: i64) {
     }
 }
 
+#[export_name = "blood_region_exit_scope"]
 pub fn rt_blood_region_exit_scope(region_id: i64) -> i32 {
     @unsafe {
         let idx: i64 = find_region(region_id);
@@ -334,6 +344,7 @@ pub fn rt_blood_region_exit_scope(region_id: i64) -> i32 {
     }
 }
 
+#[export_name = "blood_region_protect"]
 pub fn rt_blood_region_protect(region_id: i64, prot: i32) {
     @unsafe {
         let idx: i64 = find_region(region_id);
@@ -351,24 +362,28 @@ pub fn rt_blood_region_protect(region_id: i64, prot: i32) {
 // Query functions
 // ============================================================================
 
+#[export_name = "blood_region_used"]
 pub fn rt_blood_region_used(region_id: i64) -> i64 {
     let idx: i64 = find_region(region_id);
     if idx < 0 { return 0; }
     read_i64(REG_OFFSET, idx)
 }
 
+#[export_name = "blood_region_committed"]
 pub fn rt_blood_region_committed(region_id: i64) -> i64 {
     let idx: i64 = find_region(region_id);
     if idx < 0 { return 0; }
     read_i64(REG_COMMITTED, idx)
 }
 
+#[export_name = "blood_region_alloc_count"]
 pub fn rt_blood_region_alloc_count(region_id: i64) -> i64 {
     let idx: i64 = find_region(region_id);
     if idx < 0 { return 0; }
     read_i64(REG_ALLOCCOUNT, idx)
 }
 
+#[export_name = "blood_system_alloc_live_bytes"]
 pub fn rt_blood_system_alloc_live_bytes() -> i64 {
     // Stage 1: not tracked
     0

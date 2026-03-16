@@ -8,6 +8,7 @@ mod rt_string;
 
 // { ptr, i64 } @file_read_to_string(&str path) -> &str contents
 // Takes &str (fat pointer by value), returns &str (fat pointer)
+#[export_name = "file_read_to_string"]
 pub fn rt_file_read_to_string(path: rt_string.FatStr) -> rt_string.FatStr {
     // Null-terminate the path for C
     let path_addr: i64 = alloc.ptr_to_addr(path.data);
@@ -44,6 +45,7 @@ pub fn rt_file_read_to_string(path: rt_string.FatStr) -> rt_string.FatStr {
 }
 
 // bool @file_write_string(&str path, &str content) -> bool
+#[export_name = "file_write_string"]
 pub fn rt_file_write_string(path: rt_string.FatStr, content: rt_string.FatStr) -> i32 {
     let path_addr: i64 = alloc.ptr_to_addr(path.data);
     let cpath_addr: i64 = alloc.rt_blood_alloc_simple(path.len + 1);
@@ -67,6 +69,7 @@ pub fn rt_file_write_string(path: rt_string.FatStr, content: rt_string.FatStr) -
 }
 
 // bool @file_append_string(&str path, &str content) -> bool
+#[export_name = "file_append_string"]
 pub fn rt_file_append_string(path: rt_string.FatStr, content: rt_string.FatStr) -> i32 {
     let path_addr: i64 = alloc.ptr_to_addr(path.data);
     let cpath_addr: i64 = alloc.rt_blood_alloc_simple(path.len + 1);
@@ -90,6 +93,7 @@ pub fn rt_file_append_string(path: rt_string.FatStr, content: rt_string.FatStr) 
 }
 
 // bool @file_exists(&str path) -> bool (uses stat)
+#[export_name = "file_exists"]
 pub fn rt_file_exists(path: rt_string.FatStr) -> i32 {
     let path_addr: i64 = alloc.ptr_to_addr(path.data);
     let cpath_addr: i64 = alloc.rt_blood_alloc_simple(path.len + 1);
@@ -105,6 +109,7 @@ pub fn rt_file_exists(path: rt_string.FatStr) -> i32 {
 }
 
 // i32 @system(&str cmd) — run shell command
+#[export_name = "system"]
 pub fn rt_system(cmd: rt_string.FatStr) -> i32 {
     // Use fork + exec /bin/sh -c "cmd"
     let cmd_addr: i64 = alloc.ptr_to_addr(cmd.data);
@@ -157,11 +162,13 @@ pub fn rt_system(cmd: rt_string.FatStr) -> i32 {
 
 // Low-level file I/O builtins (fd-based)
 // i64 @file_read(i64 fd, u64 buf, u64 count) -> i64
+#[export_name = "file_read"]
 pub fn rt_file_read(fd: i64, buf: u64, count: u64) -> i64 {
     libc.sys_read(fd as i32, alloc.addr_to_ptr(buf as i64), count)
 }
 
 // i64 @file_write(i64 fd, u64 buf, u64 count) -> i64
+#[export_name = "file_write"]
 pub fn rt_file_write(fd: i64, buf: u64, count: u64) -> i64 {
     libc.sys_write(fd as i32, alloc.addr_to_cptr(buf as i64), count)
 }

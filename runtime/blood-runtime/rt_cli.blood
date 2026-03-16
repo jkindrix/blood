@@ -13,6 +13,7 @@ static mut ARG_COUNT: i32 = 0;
 static mut ARG_PTRS: *mut u8 = @unsafe { 0 as *mut u8 };  // ptr to array of char*
 
 // void @blood_init_args(i32 argc, ptr argv)
+#[export_name = "blood_init_args"]
 pub fn rt_blood_init_args(argc: i32, argv: *mut u8) {
     @unsafe {
         ARG_COUNT = argc;
@@ -21,11 +22,13 @@ pub fn rt_blood_init_args(argc: i32, argv: *mut u8) {
 }
 
 // i32 @args_count()
+#[export_name = "args_count"]
 pub fn rt_args_count() -> i32 {
     @unsafe { ARG_COUNT }
 }
 
 // { ptr, i64 } @args_get(i32 index) -> &str
+#[export_name = "args_get"]
 pub fn rt_args_get(index: i32) -> rt_string.FatStr {
     @unsafe {
         if index < 0 { return rt_string.FatStr { data: alloc.addr_to_ptr(0), len: 0 }; }
@@ -46,6 +49,7 @@ pub fn rt_args_get(index: i32) -> rt_string.FatStr {
 // ============================================================================
 
 // u64 @blood_clock_millis()
+#[export_name = "blood_clock_millis"]
 pub fn rt_blood_clock_millis() -> u64 {
     // timespec: { tv_sec: i64, tv_nsec: i64 } = 16 bytes
     let ts_addr: i64 = alloc.rt_blood_alloc_simple(16);
@@ -60,6 +64,7 @@ pub fn rt_blood_clock_millis() -> u64 {
 }
 
 // u64 @blood_clock_nanos()
+#[export_name = "blood_clock_nanos"]
 pub fn rt_blood_clock_nanos() -> u64 {
     let ts_addr: i64 = alloc.rt_blood_alloc_simple(16);
     let ts_ptr: *mut u8 = alloc.addr_to_ptr(ts_addr);
@@ -76,19 +81,33 @@ pub fn rt_blood_clock_nanos() -> u64 {
 // Diagnostics stubs — return 0 (not tracked in Stage 1)
 // ============================================================================
 
+#[export_name = "blood_realloc_diag_count"]
 pub fn rt_blood_realloc_diag_count() -> i64 { 0 }
+#[export_name = "blood_realloc_diag_wasted"]
 pub fn rt_blood_realloc_diag_wasted() -> i64 { 0 }
+#[export_name = "blood_realloc_diag_inplace"]
 pub fn rt_blood_realloc_diag_inplace() -> i64 { 0 }
+#[export_name = "blood_realloc_diag_inplace_bytes"]
 pub fn rt_blood_realloc_diag_inplace_bytes() -> i64 { 0 }
+#[export_name = "blood_realloc_diag_offset_delta"]
 pub fn rt_blood_realloc_diag_offset_delta() -> i64 { 0 }
+#[export_name = "blood_realloc_stats_reset"]
 pub fn rt_blood_realloc_stats_reset() {}
+#[export_name = "blood_print_alloc_hist"]
 pub fn rt_blood_print_alloc_hist() {}
+#[export_name = "blood_alloc_hist_reset"]
 pub fn rt_blood_alloc_hist_reset() {}
+#[export_name = "blood_alloc_tag_set"]
 pub fn rt_blood_alloc_tag_set(tag: i64) {}
+#[export_name = "blood_alloc_tag_get"]
 pub fn rt_blood_alloc_tag_get() -> i64 { 0 }
+#[export_name = "blood_alloc_tag_reset"]
 pub fn rt_blood_alloc_tag_reset() {}
+#[export_name = "blood_alloc_tag_report"]
 pub fn rt_blood_alloc_tag_report() {}
+#[export_name = "blood_alloc_tag_count"]
 pub fn rt_blood_alloc_tag_count(tag: i64) -> i64 { 0 }
+#[export_name = "blood_alloc_tag_bytes"]
 pub fn rt_blood_alloc_tag_bytes(tag: i64) -> i64 { 0 }
 
 // ============================================================================
@@ -96,6 +115,7 @@ pub fn rt_blood_alloc_tag_bytes(tag: i64) -> i64 { 0 }
 // ============================================================================
 
 // i32 @puts(ptr) — bridge to libc puts
+#[export_name = "puts"]
 pub fn rt_puts(s: *const u8) -> i32 {
     // puts writes string + newline to stdout
     let len: u64 = libc.sys_strlen(s);
@@ -107,4 +127,5 @@ pub fn rt_puts(s: *const u8) -> i32 {
 
 // void @blood_set_stack_size() — read desired stack size from ELF header
 // Stage 1: no-op (stack size set by shell ulimit or linker default)
+#[export_name = "blood_set_stack_size"]
 pub fn rt_blood_set_stack_size() {}

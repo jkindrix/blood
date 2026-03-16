@@ -1,10 +1,13 @@
-// Phase 6: Box, Option, Slice, Str utilities
+// Phase 6: Box, Option, Slice, Str utilities + assertion stubs
 
 mod libc;
 mod alloc;
+mod print;
+mod rt_panic;
 mod rt_string;
 
 // ptr @box_new(ptr val, i64 size) -> ptr (malloc + memcpy)
+#[export_name = "box_new"]
 pub fn rt_box_new(val: *mut u8, size: i64) -> *mut u8 {
     let addr: i64 = alloc.rt_blood_alloc_simple(size);
     alloc.rt_blood_memcpy(addr, alloc.ptr_to_addr(val), size);
@@ -12,12 +15,14 @@ pub fn rt_box_new(val: *mut u8, size: i64) -> *mut u8 {
 }
 
 // ptr @box_as_ref(ptr) -> ptr (identity — box is already a pointer)
+#[export_name = "box_as_ref"]
 pub fn rt_box_as_ref(ptr: *mut u8) -> *mut u8 {
     ptr
 }
 
 // i32 @option_is_some(ptr) — Option layout: { tag: i32, padding, data... }
 // tag == 0 means None, tag == 1 means Some
+#[export_name = "option_is_some"]
 pub fn rt_option_is_some(opt: *mut u8) -> i32 {
     @unsafe {
         let tag: i32 = ptr_read_i32(alloc.ptr_to_addr(opt) as u64);
@@ -26,6 +31,7 @@ pub fn rt_option_is_some(opt: *mut u8) -> i32 {
 }
 
 // i32 @option_is_none(ptr)
+#[export_name = "option_is_none"]
 pub fn rt_option_is_none(opt: *mut u8) -> i32 {
     @unsafe {
         let tag: i32 = ptr_read_i32(alloc.ptr_to_addr(opt) as u64);
@@ -34,6 +40,7 @@ pub fn rt_option_is_none(opt: *mut u8) -> i32 {
 }
 
 // void @option_unwrap(ptr opt, i64 elem_size, ptr out)
+#[export_name = "option_unwrap"]
 pub fn rt_option_unwrap(opt: *mut u8, elem_size: i64, out: *mut u8) {
     @unsafe {
         let tag: i32 = ptr_read_i32(alloc.ptr_to_addr(opt) as u64);
@@ -47,6 +54,7 @@ pub fn rt_option_unwrap(opt: *mut u8, elem_size: i64, out: *mut u8) {
 }
 
 // void @option_as_ref(ptr opt, i64 elem_size, ptr out)
+#[export_name = "option_as_ref"]
 pub fn rt_option_as_ref(opt: *mut u8, elem_size: i64, out: *mut u8) {
     @unsafe {
         let tag: i32 = ptr_read_i32(alloc.ptr_to_addr(opt) as u64);
@@ -62,7 +70,8 @@ pub fn rt_option_as_ref(opt: *mut u8, elem_size: i64, out: *mut u8) {
     }
 }
 
-// i32 @str_eq(&str a, &str b) — not declared in codegen but may be needed
+// i32 @str_eq(ptr a, ptr b) — compare two &str fat pointers
+#[export_name = "str_eq"]
 pub fn rt_str_eq(a: *mut u8, b: *mut u8) -> i32 {
     @unsafe {
         let a_ptr: i64 = ptr_read_i64(alloc.ptr_to_addr(a) as u64);
@@ -82,8 +91,10 @@ pub fn rt_str_eq(a: *mut u8, b: *mut u8) -> i32 {
 }
 
 // { ptr, i64 } @bool_to_string(i1)
-pub fn rt_bool_to_string(val: i32) -> rt_string.FatStr {
-    if val != 0 {
+// NOTE: parameter is bool (maps to i1 in LLVM) to match the compiler's declare
+#[export_name = "bool_to_string"]
+pub fn rt_bool_to_string(val: bool) -> rt_string.FatStr {
+    if val {
         let addr: i64 = alloc.rt_blood_alloc_simple(4);
         @unsafe {
             ptr_write_u8(addr as u64, 116);       // 't'
@@ -106,6 +117,7 @@ pub fn rt_bool_to_string(val: i32) -> rt_string.FatStr {
 }
 
 // { ptr, i64 } @char_to_string(i32)
+#[export_name = "char_to_string"]
 pub fn rt_char_to_string(ch: i32) -> rt_string.FatStr {
     // Allocate small buffer, push char as UTF-8
     let addr: i64 = alloc.rt_blood_alloc_simple(4);
@@ -139,6 +151,7 @@ pub fn rt_char_to_string(ch: i32) -> rt_string.FatStr {
 }
 
 // { ptr, i64 } @float_to_string(double) — minimal stub
+#[export_name = "float_to_string"]
 pub fn rt_float_to_string(val: f64) -> rt_string.FatStr {
     // Minimal: return "0.0" for now (full formatting is complex)
     let addr: i64 = alloc.rt_blood_alloc_simple(3);
@@ -151,6 +164,7 @@ pub fn rt_float_to_string(val: f64) -> rt_string.FatStr {
 }
 
 // i32 @char_from_u32(i32) — validate codepoint
+#[export_name = "char_from_u32"]
 pub fn rt_char_from_u32(cp: i32) -> i32 {
     if cp < 0 { return -1; }
     if cp > 1114111 { return -1; }
@@ -162,12 +176,13 @@ pub fn rt_char_from_u32(cp: i32) -> i32 {
 }
 
 // double @parse_f64({ ptr, i64 }) — minimal stub
+#[export_name = "parse_f64"]
 pub fn rt_parse_f64(s: rt_string.FatStr) -> f64 {
-    // TODO: proper float parsing
     0.0
 }
 
 // i64 @parse_i64_radix({ ptr, i64 }, i32) — minimal decimal parser
+#[export_name = "parse_i64_radix"]
 pub fn rt_parse_i64_radix(s: rt_string.FatStr, radix: i32) -> i64 {
     let ptr: i64 = alloc.ptr_to_addr(s.data);
     let mut result: i64 = 0;
@@ -211,6 +226,7 @@ pub fn rt_parse_i64_radix(s: rt_string.FatStr, radix: i32) -> i64 {
 }
 
 // { ptr, i64 } @read_line() — read a line from stdin
+#[export_name = "read_line"]
 pub fn rt_read_line() -> rt_string.FatStr {
     let buf_addr: i64 = alloc.rt_blood_alloc_simple(4096);
     let mut total: i64 = 0;
@@ -230,4 +246,86 @@ pub fn rt_read_line() -> rt_string.FatStr {
         }
     }
     rt_string.FatStr { data: alloc.addr_to_ptr(buf_addr), len: total }
+}
+
+// ============================================================================
+// Assertion stubs — needed by compiler-generated assert() calls
+// ============================================================================
+
+#[export_name = "blood_assert"]
+pub fn rt_blood_assert(val: i32) {
+    if val == 0 {
+        rt_panic.rt_panic("assertion failed");
+    }
+}
+
+#[export_name = "blood_assert_eq_int"]
+pub fn rt_blood_assert_eq_int(a: i32, b: i32) {
+    if a != b {
+        rt_panic.rt_panic("assertion failed: values not equal");
+    }
+}
+
+#[export_name = "blood_assert_eq_bool"]
+pub fn rt_blood_assert_eq_bool(a: bool, b: bool) {
+    if a != b {
+        rt_panic.rt_panic("assertion failed: booleans not equal");
+    }
+}
+
+#[export_name = "blood_assert_eq_i64"]
+pub fn rt_blood_assert_eq_i64(a: i64, b: i64) {
+    if a != b {
+        rt_panic.rt_panic("assertion failed: i64 values not equal");
+    }
+}
+
+#[export_name = "blood_assert_eq_u32"]
+pub fn rt_blood_assert_eq_u32(a: i32, b: i32) {
+    if a != b {
+        rt_panic.rt_panic("assertion failed: u32 values not equal");
+    }
+}
+
+#[export_name = "blood_assert_eq_u64"]
+pub fn rt_blood_assert_eq_u64(a: i64, b: i64) {
+    if a != b {
+        rt_panic.rt_panic("assertion failed: u64 values not equal");
+    }
+}
+
+#[export_name = "blood_assert_eq_usize"]
+pub fn rt_blood_assert_eq_usize(a: i64, b: i64) {
+    if a != b {
+        rt_panic.rt_panic("assertion failed: usize values not equal");
+    }
+}
+
+#[export_name = "blood_assert_eq_str"]
+pub fn rt_blood_assert_eq_str(a: &str, b: &str) {
+    let a_len: i64 = str_len(a);
+    let b_len: i64 = str_len(b);
+    if a_len != b_len {
+        rt_panic.rt_panic("assertion failed: strings not equal");
+    }
+    let a_ptr: *const u8 = @unsafe { a as *const u8 };
+    let b_ptr: *const u8 = @unsafe { b as *const u8 };
+    let mut i: i64 = 0;
+    while i < a_len {
+        @unsafe {
+            let ca: u8 = ptr_read_u8((alloc.ptr_to_addr(a_ptr as *mut u8) + i) as u64);
+            let cb: u8 = ptr_read_u8((alloc.ptr_to_addr(b_ptr as *mut u8) + i) as u64);
+            if ca != cb {
+                rt_panic.rt_panic("assertion failed: strings not equal");
+            }
+        }
+        i = i + 1;
+    }
+}
+
+#[export_name = "blood_assert_ne_int"]
+pub fn rt_blood_assert_ne_int(a: i32, b: i32) {
+    if a == b {
+        rt_panic.rt_panic("assertion failed: values unexpectedly equal");
+    }
 }

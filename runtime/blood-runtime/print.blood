@@ -6,30 +6,35 @@
 
 mod libc;
 
+#[no_mangle]
 pub fn print_str(s: &str) {
     let len: i64 = str_len(s);
     let ptr: *const u8 = @unsafe { s as *const u8 };
     libc.sys_write(libc.STDOUT(), ptr, len as u64);
 }
 
+#[no_mangle]
 pub fn println_str(s: &str) {
     print_str(s);
     let nl: u8 = 10;
     libc.sys_write(libc.STDOUT(), &nl as *const u8, 1);
 }
 
+#[no_mangle]
 pub fn eprint_str(s: &str) {
     let len: i64 = str_len(s);
     let ptr: *const u8 = @unsafe { s as *const u8 };
     libc.sys_write(libc.STDERR(), ptr, len as u64);
 }
 
+#[no_mangle]
 pub fn eprintln_str(s: &str) {
     eprint_str(s);
     let nl: u8 = 10;
     libc.sys_write(libc.STDERR(), &nl as *const u8, 1);
 }
 
+#[no_mangle]
 pub fn print_newline() {
     let nl: u8 = 10;
     libc.sys_write(libc.STDOUT(), &nl as *const u8, 1);

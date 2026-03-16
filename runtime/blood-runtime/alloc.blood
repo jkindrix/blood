@@ -11,17 +11,17 @@ mod print;
 mod rt_panic;
 
 // Helper: i64 address to *mut u8
-fn addr_to_ptr(addr: i64) -> *mut u8 {
+pub fn addr_to_ptr(addr: i64) -> *mut u8 {
     @unsafe { (addr as usize) as *mut u8 }
 }
 
 // Helper: i64 address to *const u8
-fn addr_to_cptr(addr: i64) -> *const u8 {
+pub fn addr_to_cptr(addr: i64) -> *const u8 {
     @unsafe { (addr as usize) as *const u8 }
 }
 
 // Helper: *mut u8 to i64 address
-fn ptr_to_addr(ptr: *mut u8) -> i64 {
+pub fn ptr_to_addr(ptr: *mut u8) -> i64 {
     @unsafe { (ptr as usize) as i64 }
 }
 
@@ -91,6 +91,7 @@ fn reg_write_i32(base: *mut u8, idx: i64, val: i32) {
 }
 
 // Register an allocation and return its generation
+#[export_name = "blood_register_allocation"]
 pub fn rt_blood_register_allocation(addr: i64, size: i64) -> i32 {
     ensure_registry();
     @unsafe {
@@ -111,6 +112,7 @@ pub fn rt_blood_register_allocation(addr: i64, size: i64) -> i32 {
 }
 
 // Unregister (set generation to 0 = invalid)
+#[export_name = "blood_unregister_allocation"]
 pub fn rt_blood_unregister_allocation(addr: i64) {
     @unsafe {
         let len: i64 = REG_LEN;
@@ -126,6 +128,7 @@ pub fn rt_blood_unregister_allocation(addr: i64) {
 }
 
 // Validate generation
+#[export_name = "blood_validate_generation"]
 pub fn rt_blood_validate_generation(addr: i64, expected: i32) -> i32 {
     @unsafe {
         let len: i64 = REG_LEN;
@@ -144,6 +147,7 @@ pub fn rt_blood_validate_generation(addr: i64, expected: i32) -> i32 {
 }
 
 // Get generation for an address
+#[export_name = "blood_get_generation"]
 pub fn rt_blood_get_generation(addr: i64) -> i32 {
     @unsafe {
         let len: i64 = REG_LEN;
@@ -159,6 +163,7 @@ pub fn rt_blood_get_generation(addr: i64) -> i32 {
 }
 
 // Increment generation at a pointer
+#[export_name = "blood_increment_generation"]
 pub fn rt_blood_increment_generation(ptr: *mut u8) {
     @unsafe {
         let addr: i64 = ptr_to_addr(ptr);
@@ -176,6 +181,7 @@ pub fn rt_blood_increment_generation(ptr: *mut u8) {
 }
 
 // Panic on stale reference
+#[export_name = "blood_stale_reference_panic"]
 pub fn rt_blood_stale_reference_panic(expected: i32, actual: i32) {
     print.eprint_str("panic: stale reference detected\n");
     libc.sys_abort();
@@ -202,6 +208,7 @@ fn registry_lookup_size(addr: i64) -> i64 {
 
 // Region-aware allocation with generation tracking.
 // Phase 2: no region support — always uses global heap.
+#[export_name = "blood_alloc_or_abort"]
 pub fn rt_blood_alloc_or_abort(size: i64, out_gen: *mut i32) -> i64 {
     @unsafe {
         let ptr: *mut u8 = libc.sys_calloc(1, size as u64);
@@ -216,6 +223,7 @@ pub fn rt_blood_alloc_or_abort(size: i64, out_gen: *mut i32) -> i64 {
 }
 
 // Simple allocation (no generation tracking)
+#[export_name = "blood_alloc_simple"]
 pub fn rt_blood_alloc_simple(size: i64) -> i64 {
     @unsafe {
         let ptr: *mut u8 = libc.sys_calloc(1, size as u64);
@@ -228,6 +236,7 @@ pub fn rt_blood_alloc_simple(size: i64) -> i64 {
 }
 
 // Realloc: calloc new + memcpy + leak old (free unavailable due to symbol conflict)
+#[export_name = "blood_realloc"]
 pub fn rt_blood_realloc(old_addr: i64, new_size: i64) -> i64 {
     @unsafe {
         let new_ptr: *mut u8 = libc.sys_calloc(1, new_size as u64);
@@ -248,16 +257,19 @@ pub fn rt_blood_realloc(old_addr: i64, new_size: i64) -> i64 {
 }
 
 // Free with size hint
+#[export_name = "blood_free"]
 pub fn rt_blood_free(addr: i64, size: i64) {
     rt_blood_unregister_allocation(addr);
 }
 
 // Free without size hint
+#[export_name = "blood_free_simple"]
 pub fn rt_blood_free_simple(addr: i64) {
     rt_blood_unregister_allocation(addr);
 }
 
 // Memcpy (address-as-i64 interface)
+#[export_name = "blood_memcpy"]
 pub fn rt_blood_memcpy(dst: i64, src: i64, len: i64) -> i64 {
     @unsafe {
         libc.sys_memmove(addr_to_ptr(dst), addr_to_cptr(src), len as u64);
@@ -271,6 +283,7 @@ pub fn rt_blood_memcpy(dst: i64, src: i64, len: i64) -> i64 {
 
 static mut NEXT_PERSISTENT_SLOT: i64 = 1;
 
+#[export_name = "blood_persistent_alloc"]
 pub fn rt_blood_persistent_alloc(size: i64, align: i64, type_fp: i32, out_id: *mut i64) -> *mut u8 {
     @unsafe {
         let ptr: *mut u8 = libc.sys_calloc(1, size as u64);
@@ -283,5 +296,6 @@ pub fn rt_blood_persistent_alloc(size: i64, align: i64, type_fp: i32, out_id: *m
     }
 }
 
+#[export_name = "blood_persistent_decrement"]
 pub fn rt_blood_persistent_decrement(slot_id: i64) {
 }
