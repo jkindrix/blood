@@ -41,11 +41,8 @@ pub fn emit_statement(
             let dest = codegen_place.emit_place_data_ptr(ctx, place);
             let dest_ty = ctx.get_local_type(place.local);
             codegen_expr.emit_rvalue(ctx, dest.as_str(), dest_ty.as_str(), rvalue);
-            // Gen ref propagation: when _dest = &source where source is
-            // region/persistent-allocated, propagate generation to dest.
-            // Only for simple locals (no projections) — projections may
-            // produce pointers into sub-fields that aren't separately tracked.
-            propagate_ref_generation(ctx, place, rvalue);
+            // V1 gen ref propagation removed — fat refs (V2) carry generation
+            // in the { ptr, i32 } struct itself, making _gen allocas unnecessary.
         }
         &mir_stmt.StatementKind.StorageLive(ref local) => {
             // In LLVM IR, storage is typically handled by alloca placement
@@ -1611,78 +1608,6 @@ pub fn emit_allocas_with_escapes(
     ctx.dedent();
 }
 
-/// Checks if an assignment is `dest = &source` where source is heap-allocated
-/// (has a generation header), and if so, propagates the source's generation
-/// to the dest local so that dereferences through dest can be gen-checked.
-fn propagate_ref_generation(
-    ctx: &mut codegen_ctx.CodegenCtx,
-    dest_place: &mir_types.Place,
-    rvalue: &mir_types.Rvalue,
-) {
-    if dest_place.projection.len() != 0 {
-        return; // Only propagate for direct local assignments
-    }
-    match rvalue {
-        &mir_types.Rvalue.Ref { ref place, mutable: _ } => {
-            // Only propagate if source is heap-allocated (has generation header).
-            // Stack locals don't have headers — reading [ptr-8] would be UB.
-            if place.projection.len() == 0 {
-                if ctx.is_region_allocated(place.local) || ctx.is_persistent_allocated(place.local) {
-                    propagate_generation(ctx, place.local, dest_place.local);
-                }
-            }
-        }
-        _ => {}
-    }
-}
-
-/// Propagates generation from a source local to a destination local.
-/// Called when `_dest = &_source` where source is region-allocated.
-/// Creates a generation alloca for dest if it doesn't have one, and copies
-/// source's generation value into it.
-fn propagate_generation(
-    ctx: &mut codegen_ctx.CodegenCtx,
-    source: mir_def.MirLocalId,
-    dest: mir_def.MirLocalId,
-) {
-    let src_gen = match ctx.get_local_generation(source) {
-        Option.Some(name) => name,
-        Option.None => { return; } // Source has no generation — nothing to propagate
-    };
-
-    // Create gen alloca for dest if it doesn't have one
-    match ctx.get_local_generation(dest) {
-        Option.Some(_) => {} // Already has one — will be overwritten below
-        Option.None => {
-            // Create a new gen alloca for dest
-            let dest_name = ctx.local_alloca_name(dest);
-            let mut gen_name = common.make_string(dest_name.as_str());
-            gen_name.push_str("_gen");
-            // Emit alloca in entry block via deferred allocas
-            let mut alloca_str = common.make_string("  ");
-            alloca_str.push_str(gen_name.as_str());
-            alloca_str.push_str(" = alloca i32\n");
-            ctx.deferred_entry_allocas.push(alloca_str);
-            ctx.set_local_generation(dest, gen_name);
-        }
-    }
-
-    let dest_gen = match ctx.get_local_generation(dest) {
-        Option.Some(name) => name,
-        Option.None => { return; }
-    };
-
-    // Copy: load source gen, store to dest gen
-    let gen_val = ctx.fresh_temp_cg();
-    ctx.emit_load_cg(&gen_val, "i32", src_gen.as_str());
-    ctx.write_indent();
-    ctx.write("store i32 ");
-    ctx.write_cgname(&gen_val);
-    ctx.write(", ptr ");
-    ctx.write(dest_gen.as_str());
-    ctx.write(", align 4\n");
-}
-
 /// Emits a stack-allocated local (alloca).
 fn emit_stack_local(
     ctx: &mut codegen_ctx.CodegenCtx,
@@ -1696,7 +1621,9 @@ fn emit_stack_local(
     }
 }
 
-/// Emits a region-allocated local with generation tracking.
+/// Emits a region-allocated local.
+/// The _gen alloca is kept as the out-parameter for blood_alloc_or_abort
+/// but is no longer tracked for V1 gen checking (fat refs carry gen in { ptr, i32 }).
 fn emit_region_local(
     ctx: &mut codegen_ctx.CodegenCtx,
     ty_id: type_intern.TyId,
@@ -1707,17 +1634,12 @@ fn emit_region_local(
     let name_cg = ctx.local_cg(local_id);
     ctx.emit_alloca_cg(&name_cg, "ptr");
 
-    // Allocate generation slot on stack (i32)
+    // Allocate generation slot on stack (i32) — out-parameter for blood_alloc_or_abort
     let mut gen_name = clone_string(name);
     gen_name.push_str("_gen");
     let gen_name_cg = codegen_ctx.CgName.Str(clone_string(&gen_name));
     ctx.emit_alloca_cg(&gen_name_cg, "i32");
 
-    // Use blood_alloc_or_abort(size, gen_ptr) for heap allocation with
-    // generation tracking. The generation value is written to the out-pointer.
-    // Use TyId-native size computation which correctly handles registered
-    // generic enums (e.g. Option<LargeStruct>) by checking if concrete
-    // payload exceeds registered base size.
     let size = codegen_size.type_size_with_ctx_id(ctx, ty_id);
     let size_str = codegen_types.format_u64(size);
     let result_tmp = ctx.fresh_temp_cg();
@@ -1730,9 +1652,6 @@ fn emit_region_local(
     let ptr_tmp = ctx.fresh_temp_cg();
     ctx.emit_cast_cg2(&ptr_tmp, "inttoptr", "i64", &result_tmp, "ptr");
     ctx.emit_store_cg("ptr", &ptr_tmp, name.as_str());
-
-    // Record the generation alloca name for this local
-    ctx.set_local_generation(local_id, gen_name);
 }
 
 /// Emits a persistent-allocated local. Returns the name of the alloca holding the slot_id.

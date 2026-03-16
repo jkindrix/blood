@@ -693,12 +693,7 @@ pub fn emit_place_addr(
                     // Thin pointer or unsized fat pointer: load as ptr
                     ctx.emit_load_cg2(&result, "ptr", &current);
                 }
-                // Skip old V1 [ptr-8] gen check for fat ref locals — gen is
-                // embedded in the { ptr, i32 } struct (field 1). Stack refs use
-                // gen=0 sentinel; runtime checks will use the fat ref field.
-                if !is_gen_ref {
-                    emit_generation_check(ctx, place.local, &result);
-                }
+                // V1 [ptr-8] gen check removed — fat refs carry gen in { ptr, i32 }.
                 current = result;
                 downcast_variant = Option.None;
                 // Track HIR type through deref
@@ -1103,86 +1098,6 @@ pub fn emit_place_addr(
     }
 
     current
-}
-
-/// Emits a generation validation check for a dereferenced pointer.
-/// If the local has a tracked generation (i.e., it was region-allocated),
-/// validates that the pointer's generation matches the expected generation.
-/// On stale detection, performs the StaleReference effect (0x1004) through
-/// the evidence vector. The default handler panics; users can install
-/// custom handlers that must diverge (-> never).
-/// No-ops for stack-allocated locals or locals without generation tracking.
-fn emit_generation_check(
-    ctx: &mut codegen_ctx.CodegenCtx,
-    local: mir_def.MirLocalId,
-    ptr_name: &codegen_ctx.CgName,
-) {
-    // Skip if generation checks are suppressed by unchecked(generation) { }
-    if ctx.is_check_suppressed(&ast.UncheckedCheck.Generation) {
-        return;
-    }
-
-    // Header-field gen ref check: read generation from [ptr - 8].
-    // The generation was written by blood_alloc_or_abort into the 8-byte
-    // header preceding the user data. On region destroy or dealloc, the
-    // generation is incremented, making stale references detectable.
-
-    // If this local has a captured generation (same-function &x where x is
-    // region-allocated), use that. Otherwise read [ptr-8] for the expected
-    // gen and compare against the current [ptr-8] — this handles
-    // cross-function references.
-    let has_local_gen = match ctx.get_local_generation(local) {
-        Option.Some(_) => true,
-        Option.None => false,
-    };
-
-    let expected_gen = ctx.fresh_temp_cg();
-    if has_local_gen {
-        let gen_alloca = match ctx.get_local_generation(local) {
-            Option.Some(name) => name,
-            Option.None => { return; }
-        };
-        ctx.emit_load_cg(&expected_gen, "i32", gen_alloca.as_str());
-    } else {
-        // No local gen tracking — can't validate without captured expected gen.
-        // Cross-function gen ref enforcement needs the caller to capture the
-        // generation at reference creation time, which requires either:
-        // 1. Fat pointers (carrying gen alongside ptr) — rejected by DD-1
-        // 2. Callee-side gen propagation via return value annotation
-        // 3. Whole-program escape analysis
-        // For now, only same-allocation-scope checks are enforced.
-        return;
-    }
-
-    // Read current generation from header at [ptr - 8]
-    let header_ptr = ctx.fresh_temp_cg();
-    let mut header_indices: Vec<String> = Vec.new();
-    header_indices.push(common.make_string("-8"));
-    ctx.emit_gep_cg(&header_ptr, "i8", ptr_name, &header_indices);
-    let current_gen = ctx.fresh_temp_cg();
-    ctx.emit_load_cg2(&current_gen, "i32", &header_ptr);
-
-    // Compare expected generation against current generation from header.
-    // If they differ, the allocation was freed/invalidated since the reference
-    // was created — the reference is stale.
-    let current_gen_str = cgname_to_string(&current_gen);
-    let is_stale = ctx.fresh_temp_cg();
-    ctx.emit_icmp_cg2(&is_stale, "ne", "i32", &expected_gen, current_gen_str.as_str());
-
-    let stale_label = ctx.fresh_label_cg();
-    let valid_label = ctx.fresh_label_cg();
-    ctx.emit_cond_br_cg(&is_stale, &stale_label, &valid_label);
-
-    // Stale path: call blood_stale_reference_panic with both generations
-    ctx.emit_label_cg(&stale_label);
-    ctx.begin_call(Option.None, "void", "@blood_stale_reference_panic");
-    ctx.call_arg_cg(true, "i32", &expected_gen);
-    ctx.call_arg_cg(false, "i32", &current_gen);
-    ctx.end_call();
-    ctx.emit_unreachable();
-
-    // Valid path: continue with dereferenced pointer
-    ctx.emit_label_cg(&valid_label);
 }
 
 /// For a generic struct field, resolves the concrete LLVM type by matching
