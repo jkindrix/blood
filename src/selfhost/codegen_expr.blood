@@ -831,18 +831,6 @@ fn build_panic_location(ctx: &mut codegen_ctx.CodegenCtx) -> String {
     loc
 }
 
-fn is_vec_like_type(ty: &String) -> bool {
-    // Check for "{ ptr" at the start — this matches Vec<T> = { ptr, i64, i64 }
-    // and similar container types where field 0 is the heap data pointer.
-    let bytes = ty.as_bytes();
-    if bytes.len() >= 5 {
-        bytes[0] == 123 && bytes[1] == 32 && bytes[2] == 112 && bytes[3] == 116 && bytes[4] == 114
-        // '{' ' ' 'p' 't' 'r'
-    } else {
-        false
-    }
-}
-
 /// Returns 0 for non-integer types.
 fn llvm_int_bit_width(ty: &str) -> u32 {
     let bytes = ty.as_bytes();
