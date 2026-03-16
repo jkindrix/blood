@@ -474,6 +474,20 @@ pub fn resolve_place_elem_type(
                 Option.None => {}
             }
 
+            // Fallback: extract field type from ADT's LLVM struct type string.
+            // This handles builtin types (Vec, String, HashMap) that have LLVM
+            // layouts registered but no field metadata.
+            match &adt_def_id {
+                &Option.Some(def_id) => {
+                    let adt_type = ctx.adt_llvm_type(def_id);
+                    match extract_field_from_llvm_struct(adt_type.as_str(), field_idx as usize) {
+                        Option.Some(field_ty) => { return field_ty; }
+                        Option.None => {}
+                    }
+                }
+                &Option.None => {}
+            }
+
             ctx.get_local_type(place.local)
         }
         &mir_types.PlaceElem.Index(_) => {
@@ -638,6 +652,21 @@ pub fn emit_place_addr(
                     &Option.None => false,
                 };
             }
+            // Update current_base and current_adt_def_id from the peeled HIR type.
+            // Without this, the GEP base type still reflects the reference type
+            // (e.g., { ptr, i32 }) instead of the inner struct (e.g., { i32, i32 }).
+            match &current_hir_type {
+                &Option.Some(ty_id) => {
+                    match type_intern.get_adt_def_id(ty_id) {
+                        Option.Some(def_id) => {
+                            current_adt_def_id = Option.Some(def_id.index);
+                            current_base = codegen_size.type_to_llvm_with_ctx_id(ctx, ty_id);
+                        }
+                        Option.None => {}
+                    }
+                }
+                &Option.None => {}
+            }
         }
     }
 
@@ -664,44 +693,43 @@ pub fn emit_place_addr(
                     // Thin pointer or unsized fat pointer: load as ptr
                     ctx.emit_load_cg2(&result, "ptr", &current);
                 }
-                // Emit generation check if the local has a tracked generation
-                emit_generation_check(ctx, place.local, &result);
+                // Skip old V1 [ptr-8] gen check for fat ref locals — gen is
+                // embedded in the { ptr, i32 } struct (field 1). Stack refs use
+                // gen=0 sentinel; runtime checks will use the fat ref field.
+                if !is_gen_ref {
+                    emit_generation_check(ctx, place.local, &result);
+                }
                 current = result;
-                // After deref, try to get the inner type's ADT info
-                current_adt_def_id = resolve_deref_adt_def_id(ctx, place.local, i);
-                current_base = match &current_adt_def_id {
-                    &Option.Some(def_id) => ctx.adt_llvm_type(def_id),
-                    &Option.None => common.make_string("{ i64 }"),
-                };
                 downcast_variant = Option.None;
                 // Track HIR type through deref
                 current_hir_type = match &current_hir_type {
                     &Option.Some(ty_id) => apply_deref_to_type(ty_id),
                     &Option.None => Option.None,
                 };
-                // If current_base is still the fallback "{ i64 }" but we have a
-                // valid HIR type after deref that is an ADT, use it to resolve the
-                // actual LLVM type. This handles heap-allocated enum/struct locals
-                // where resolve_deref_adt_def_id fails but the HIR type is still intact.
-                // Only do this for ADT types — primitive types like str resolve to
-                // { ptr, i64 } which would incorrectly trigger Vec-like detection.
-                if string_eq_str(current_base.as_str(), "{ i64 }") {
-                    match &current_hir_type {
-                        &Option.Some(ty_id) => {
-                            match type_intern.get_adt_def_id(ty_id) {
-                                Option.Some(def_id) => {
-                                    let resolved_ty = codegen_size.type_to_llvm_with_ctx_id(ctx, ty_id);
-                                    let rfc = count_struct_fields(&resolved_ty);
-                                    if rfc >= 2 {
-                                        current_base = resolved_ty;
-                                    }
-                                    current_adt_def_id = Option.Some(def_id.index);
-                                }
-                                Option.None => {}
+                // After deref, resolve the inner type's ADT info and GEP base.
+                // Prefer HIR type (has concrete generic args) over adt_llvm_type
+                // (returns unsubstituted layout for generic structs).
+                current_adt_def_id = resolve_deref_adt_def_id(ctx, place.local, i);
+                let mut used_hir_base = false;
+                match &current_hir_type {
+                    &Option.Some(ty_id) => {
+                        match type_intern.get_adt_def_id(ty_id) {
+                            Option.Some(def_id) => {
+                                current_adt_def_id = Option.Some(def_id.index);
+                                let resolved_ty = codegen_size.type_to_llvm_with_ctx_id(ctx, ty_id);
+                                current_base = resolved_ty;
+                                used_hir_base = true;
                             }
+                            Option.None => {}
                         }
-                        &Option.None => {}
                     }
+                    &Option.None => {}
+                }
+                if !used_hir_base {
+                    current_base = match &current_adt_def_id {
+                        &Option.Some(def_id) => ctx.adt_llvm_type(def_id),
+                        &Option.None => common.make_string("{ i64 }"),
+                    };
                 }
             }
             &mir_types.PlaceElem.Field(idx) => {
@@ -1353,6 +1381,73 @@ fn resolve_adt_def_id_from_hir(hir_type: &hir_ty.Type) -> Option<u32> {
         }
         _ => Option.None,
     }
+}
+
+/// Extracts the Nth field type from an LLVM struct type string.
+/// E.g., extract_field_from_llvm_struct("{ ptr, i64, i64 }", 1) => Some("i64")
+fn extract_field_from_llvm_struct(struct_ty: &str, field_idx: usize) -> Option<String> {
+    let bytes = struct_ty.as_bytes();
+    if bytes.len() < 3 || bytes[0] != 123 {
+        return Option.None; // Not a struct type (doesn't start with '{')
+    }
+    // Parse comma-separated fields between { and }
+    let mut field_count: usize = 0;
+    let mut field_start: usize = 0;
+    let mut depth: u32 = 0;
+    let mut i: usize = 1; // skip opening '{'
+    // Skip leading whitespace
+    while i < bytes.len() && bytes[i] == 32 {
+        i += 1;
+    }
+    field_start = i;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if c == 123 { // '{'
+            depth += 1;
+        } else if c == 125 { // '}'
+            if depth > 0 {
+                depth -= 1;
+            } else {
+                // End of struct — this is the last field
+                if field_count == field_idx {
+                    // Trim trailing whitespace
+                    let mut end = i;
+                    while end > field_start && bytes[end - 1] == 32 {
+                        end -= 1;
+                    }
+                    let mut result = String.new();
+                    for j in field_start..end {
+                        result.push(bytes[j] as char);
+                    }
+                    return Option.Some(result);
+                }
+                return Option.None;
+            }
+        } else if c == 44 && depth == 0 { // ','
+            if field_count == field_idx {
+                // Trim trailing whitespace
+                let mut end = i;
+                while end > field_start && bytes[end - 1] == 32 {
+                    end -= 1;
+                }
+                let mut result = String.new();
+                for j in field_start..end {
+                    result.push(bytes[j] as char);
+                }
+                return Option.Some(result);
+            }
+            field_count += 1;
+            i += 1;
+            // Skip whitespace after comma
+            while i < bytes.len() && bytes[i] == 32 {
+                i += 1;
+            }
+            field_start = i;
+            continue;
+        }
+        i += 1;
+    }
+    Option.None
 }
 
 /// Unwraps a reference type to get the inner type (TyId version).
