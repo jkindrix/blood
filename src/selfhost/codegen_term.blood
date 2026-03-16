@@ -930,6 +930,34 @@ fn emit_call(
                             let widened_cg = emit_struct_widening(ctx, &arg_val, arg_ty.as_str(), expected_ty.as_str());
                             final_val = cgname_to_string(&widened_cg);
                             final_ty = expected_ty;
+                        } else if str_eq(arg_ty.as_str(), "{ ptr, i32 }") && str_eq(expected_ty.as_str(), "ptr") {
+                            // Gen ref { ptr, i32 } being passed to FFI function expecting ptr.
+                            // Extract field 0 (the data pointer) to strip the generation tag.
+                            let stripped = ctx.fresh_temp_cg();
+                            ctx.write_indent();
+                            ctx.write_cgname(&stripped);
+                            ctx.write(" = extractvalue { ptr, i32 } ");
+                            ctx.write_string(&arg_val);
+                            ctx.write(", 0\n");
+                            final_val = cgname_to_string(&stripped);
+                            final_ty = expected_ty;
+                        } else if str_eq(expected_ty.as_str(), "{ ptr, i32 }") && str_eq(arg_ty.as_str(), "ptr") {
+                            // Thin ptr being passed to function expecting gen ref { ptr, i32 }.
+                            // Promote by wrapping with generation 0.
+                            let tmp1 = ctx.fresh_temp_cg();
+                            ctx.write_indent();
+                            ctx.write_cgname(&tmp1);
+                            ctx.write(" = insertvalue { ptr, i32 } zeroinitializer, ptr ");
+                            ctx.write_string(&arg_val);
+                            ctx.write(", 0\n");
+                            let tmp2 = ctx.fresh_temp_cg();
+                            ctx.write_indent();
+                            ctx.write_cgname(&tmp2);
+                            ctx.write(" = insertvalue { ptr, i32 } ");
+                            ctx.write_cgname(&tmp1);
+                            ctx.write(", i32 0, 1\n");
+                            final_val = cgname_to_string(&tmp2);
+                            final_ty = expected_ty;
                         } else if str_eq(arg_ty.as_str(), "ptr") && is_struct_type(expected_ty.as_str()) {
                             // Argument is a pointer (reference) but parameter expects a struct by value.
                             // This happens when a MIR operand is a reference-typed local passed to

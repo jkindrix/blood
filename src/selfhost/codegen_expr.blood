@@ -315,7 +315,23 @@ pub fn emit_rvalue(
         }
         &mir_types.Rvalue.Ref { ref place, mutable: _ } => {
             let addr = codegen_place.emit_place_data_ptr(ctx, place);
-            ctx.emit_store("ptr", addr.as_str(), dest);
+            // Create generational fat reference: { ptr, gen:i32 }
+            // %tmp1 = insertvalue { ptr, i32 } zeroinitializer, ptr %addr, 0
+            let tmp1 = ctx.fresh_temp_cg();
+            ctx.write("  ");
+            ctx.write_cgname(&tmp1);
+            ctx.write(" = insertvalue { ptr, i32 } zeroinitializer, ptr ");
+            ctx.write(addr.as_str());
+            ctx.write(", 0\n");
+            // %tmp2 = insertvalue { ptr, i32 } %tmp1, i32 0, 1
+            let tmp2 = ctx.fresh_temp_cg();
+            ctx.write("  ");
+            ctx.write_cgname(&tmp2);
+            ctx.write(" = insertvalue { ptr, i32 } ");
+            ctx.write_cgname(&tmp1);
+            ctx.write(", i32 0, 1\n");
+            // store { ptr, i32 } %tmp2, ptr %dest
+            ctx.emit_store_cg("{ ptr, i32 }", &tmp2, dest);
         }
         &mir_types.Rvalue.BinaryOp { operator: ref bin_op, ref left, ref right } => {
             // Get typed operands

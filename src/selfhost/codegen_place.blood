@@ -645,9 +645,25 @@ pub fn emit_place_addr(
         let proj = &place.projection[i];
         match proj {
             &mir_types.PlaceElem.Deref => {
-                // Load the pointer value
+                // Determine load type from the LLVM type of the current value.
+                // Gen refs are { ptr, i32 }, unsized refs are { ptr, i64 } or { ptr, ptr },
+                // raw pointers and Box are ptr.
+                let ref_llvm_ty = ctx.get_local_type(place.local);
+                let is_gen_ref = string_eq_str(ref_llvm_ty.as_str(), "{ ptr, i32 }");
                 let result = ctx.fresh_temp_cg();
-                ctx.emit_load_cg2(&result, "ptr", &current);
+                if is_gen_ref {
+                    // Gen ref: load { ptr, i32 }, then extract field 0 (data pointer)
+                    let fat_ref = ctx.fresh_temp_cg();
+                    ctx.emit_load_cg2(&fat_ref, "{ ptr, i32 }", &current);
+                    ctx.write("  ");
+                    ctx.write_cgname(&result);
+                    ctx.write(" = extractvalue { ptr, i32 } ");
+                    ctx.write_cgname(&fat_ref);
+                    ctx.write(", 0\n");
+                } else {
+                    // Thin pointer or unsized fat pointer: load as ptr
+                    ctx.emit_load_cg2(&result, "ptr", &current);
+                }
                 // Emit generation check if the local has a tracked generation
                 emit_generation_check(ctx, place.local, &result);
                 current = result;

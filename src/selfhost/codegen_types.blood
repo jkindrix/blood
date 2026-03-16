@@ -81,7 +81,7 @@ pub fn type_to_llvm_fast(ty: &hir_ty.Type) -> Option<&str> {
             }
         }
         &hir_ty.TypeKind.Never => Option.Some("void"),
-        &hir_ty.TypeKind.Ref { inner: _, mutable: _ } => Option.Some("ptr"),
+        &hir_ty.TypeKind.Ref { inner: _, mutable: _ } => Option.None, // needs slow path for gen ref vs unsized
         &hir_ty.TypeKind.Ptr { inner: _, mutable: _ } => Option.Some("ptr"),
         &hir_ty.TypeKind.Fn { params: _, ret: _, effects: _ } => Option.Some("{ ptr, ptr }"),
         &hir_ty.TypeKind.Closure { def_id: _, params: _, ret: _ } => Option.Some("{ ptr, ptr }"),
@@ -241,13 +241,23 @@ pub fn is_unsized_type(ty: &hir_ty.Type) -> bool {
 }
 
 /// Converts a reference type to LLVM IR.
-/// References to unsized types (str, slices, dyn Trait) are fat pointers.
+/// Sized refs are generational fat refs { ptr, i32 }.
+/// Unsized refs (str, slices, dyn Trait) are data fat pointers { ptr, i64 } or { ptr, ptr }.
 fn ref_to_llvm(inner: &hir_ty.Type) -> String {
-    if is_unsized_type(inner) {
-        // Fat pointer for unsized types
-        common.make_string("{ ptr, i64 }")
-    } else {
-        common.make_string("ptr")
+    match &inner.kind {
+        &hir_ty.TypeKind.DynTrait { trait_id: _, auto_traits: _ } => {
+            // &dyn Trait = { data_ptr, vtable_ptr }
+            common.make_string("{ ptr, ptr }")
+        }
+        _ => {
+            if is_unsized_type(inner) {
+                // &str, &[T] = { ptr, len }
+                common.make_string("{ ptr, i64 }")
+            } else {
+                // Generational reference: { ptr, gen:i32 }
+                common.make_string("{ ptr, i32 }")
+            }
+        }
     }
 }
 
@@ -297,7 +307,8 @@ pub fn get_layout(ty: &hir_ty.Type) -> TypeLayout {
                 // Fat pointer for references to unsized types
                 TypeLayout.new(16, 8, common.make_string("{ ptr, i64 }"))
             } else {
-                TypeLayout.pointer()
+                // Generational fat reference: { ptr, i32 } = 12 bytes, padded to 16
+                TypeLayout.new(16, 8, common.make_string("{ ptr, i32 }"))
             }
         }
         &hir_ty.TypeKind.Ptr { ref inner, mutable: _ } => {
