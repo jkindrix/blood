@@ -2734,6 +2734,26 @@ pub unsafe extern "C" fn blood_init_args(argc: c_int, argv: *const *const c_char
     let _ = ARGS.set(args);
 }
 
+/// Raise the stack limit to 64MB for deep recursion.
+///
+/// Uses setrlimit(RLIMIT_STACK) which the kernel honors for incremental
+/// stack growth. Called from the compiler-generated main() entry point.
+#[no_mangle]
+pub extern "C" fn blood_set_stack_size() {
+    use std::mem::MaybeUninit;
+    const TARGET: libc::rlim_t = 64 * 1024 * 1024;
+    unsafe {
+        let mut rl = MaybeUninit::<libc::rlimit>::uninit();
+        if libc::getrlimit(libc::RLIMIT_STACK, rl.as_mut_ptr()) == 0 {
+            let mut rl = rl.assume_init();
+            if rl.rlim_cur < TARGET {
+                rl.rlim_cur = TARGET;
+                libc::setrlimit(libc::RLIMIT_STACK, &rl);
+            }
+        }
+    }
+}
+
 /// Get the number of command-line arguments.
 ///
 /// # Returns

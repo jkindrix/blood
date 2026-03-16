@@ -14,13 +14,15 @@ mkdir -p "$BUILD_DIR"
 
 # Paths (configurable via environment)
 BLOOD_RUST="${BLOOD_RUST:-$REPO_ROOT/src/bootstrap/target/release/blood}"
-RUNTIME_O="${RUNTIME_O:-$REPO_ROOT/runtime/runtime.o}"
+# RUNTIME_O is no longer needed — the compiler emits main() in IR.
+# Kept as variable for backward compat with scripts that set it.
+RUNTIME_O="${RUNTIME_O:-}"
 RUNTIME_A="${RUNTIME_A:-$REPO_ROOT/src/bootstrap/target/release/libblood_runtime.a}"
 GOLDEN_TESTS="${GOLDEN_TESTS:-$REPO_ROOT/tests/golden}"
 BLOOD_TESTS="${BLOOD_TESTS:-$REPO_ROOT/tests/blood-test}"
 STDLIB_PATH="${STDLIB_PATH:-$REPO_ROOT/stdlib}"
 
-export BLOOD_RUNTIME="${RUNTIME_O}"
+# BLOOD_RUNTIME (runtime.o) no longer needed — compiler emits main() in IR
 export BLOOD_RUST_RUNTIME="${RUNTIME_A}"
 export BLOOD_BUILD_DIR="${BUILD_DIR}"
 export BLOOD_CACHE="${BUILD_DIR}/.blood-cache"
@@ -132,7 +134,6 @@ run_with_pty() {
 }
 
 copy_runtime() {
-    cp -f "$RUNTIME_O" "$BUILD_DIR/runtime.o" 2>/dev/null || true
     cp -f "$RUNTIME_A" "$BUILD_DIR/libblood_runtime.a" 2>/dev/null || true
 }
 
@@ -268,12 +269,9 @@ do_build_third_gen() {
 }
 
 do_build_runtime() {
-    local runtime_c="$REPO_ROOT/runtime/runtime.c"
-    [ -f "$runtime_c" ] || die "runtime.c not found at $runtime_c"
-    step "Compiling runtime.o"
-    cc -c -O2 -o "$REPO_ROOT/runtime/runtime.o" "$runtime_c"
-    ok "runtime.o compiled ($(wc -c < "$REPO_ROOT/runtime/runtime.o") bytes)"
-    copy_runtime
+    # runtime.o is no longer needed — the compiler emits main() in IR.
+    # This target is kept for backward compat but is now a no-op.
+    ok "runtime.o no longer needed (compiler emits main() in IR)"
 }
 
 do_build_blood_runtime() {
@@ -744,7 +742,6 @@ build_asan() {
     local ir_file="${1:-$BUILD_DIR/second_gen.ll}"
     [ -f "$ir_file" ] || die "$ir_file not found"
     [ -f "$RUNTIME_A" ] || die "Runtime library not found at $RUNTIME_A"
-    [ -f "$RUNTIME_O" ] || die "Runtime object not found at $RUNTIME_O"
 
     step "Building ASan-instrumented binary from $ir_file"
 
@@ -759,7 +756,7 @@ build_asan() {
         -o "$BUILD_DIR/second_gen_asan.o" -filetype=obj -relocation-model=pic
     ok "Compiled to object"
 
-    clang-18 "$BUILD_DIR/second_gen_asan.o" "$RUNTIME_O" "$RUNTIME_A" \
+    clang-18 "$BUILD_DIR/second_gen_asan.o" "$RUNTIME_A" \
         -fsanitize=address -lstdc++ -lm -lpthread -ldl -no-pie \
         -o "$BUILD_DIR/second_gen_asan"
     ok "Linked second_gen_asan ($(wc -c < "$BUILD_DIR/second_gen_asan") bytes)"
@@ -775,7 +772,6 @@ bisect_functions() {
     [ -f "$self_ir" ] || die "$self_ir not found"
     [ -f "$BUILD_DIR/reference_ir.ll" ] || generate_reference_ir
     [ -f "$RUNTIME_A" ] || die "Runtime library not found at $RUNTIME_A"
-    [ -f "$RUNTIME_O" ] || die "Runtime object not found at $RUNTIME_O"
 
     step "Bisecting for miscompiled function"
 
@@ -841,7 +837,7 @@ bisect_functions() {
             return 1
         fi
 
-        if ! clang-18 "$bisect_dir/hybrid.o" "$RUNTIME_O" "$RUNTIME_A" \
+        if ! clang-18 "$bisect_dir/hybrid.o" "$RUNTIME_A" \
                 -lm -ldl -lpthread -no-pie -o "$bisect_dir/hybrid" 2>/dev/null; then
             warn "Link failed for hybrid binary"
             return 1
@@ -1208,12 +1204,7 @@ case "${1:-status}" in
         chmod +x "$bin_dir/blood"
         ok "Compiler → $bin_dir/blood"
 
-        # Install C runtime
-        [ -f "$RUNTIME_O" ] || die "runtime.o not found at $RUNTIME_O (run: build runtime)"
-        cp "$RUNTIME_O" "$lib_dir/runtime.o"
-        ok "C runtime → $lib_dir/runtime.o"
-
-        # Install Rust runtime
+        # Install runtime library
         [ -f "$RUNTIME_A" ] || die "libblood_runtime.a not found at $RUNTIME_A (run: build cargo)"
         cp "$RUNTIME_A" "$lib_dir/libblood_runtime.a"
         ok "Rust runtime → $lib_dir/libblood_runtime.a"

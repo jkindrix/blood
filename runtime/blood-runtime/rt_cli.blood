@@ -125,7 +125,34 @@ pub fn rt_puts(s: *const u8) -> i32 {
     0
 }
 
-// void @blood_set_stack_size() — read desired stack size from ELF header
-// Stage 1: no-op (stack size set by shell ulimit or linker default)
+// void @blood_set_stack_size() — raise stack limit to 64MB for deep recursion.
+// Uses setrlimit(RLIMIT_STACK) which the kernel honors for incremental stack
+// growth (page faults within the limit trigger expand_stack()). No re-exec needed.
 #[export_name = "blood_set_stack_size"]
-pub fn rt_blood_set_stack_size() {}
+pub fn rt_blood_set_stack_size() {
+    let target_size: u64 = 67108864; // 64MB
+    let rlimit_stack: i32 = 3;       // RLIMIT_STACK on Linux
+
+    // struct rlimit { rlim_cur: u64, rlim_max: u64 } = 16 bytes
+    let mut buf: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let buf_ptr: *mut u8 = &mut buf[0];
+
+    let rc = libc.sys_getrlimit(rlimit_stack, buf_ptr);
+    if rc != 0 {
+        return;
+    }
+
+    // Read rlim_cur (first 8 bytes, little-endian u64)
+    let cur_ptr: *const u64 = buf_ptr as *const u64;
+    let cur: u64 = *cur_ptr;
+
+    if cur >= target_size {
+        return;
+    }
+
+    // Write target_size to rlim_cur
+    let cur_mut_ptr: *mut u64 = buf_ptr as *mut u64;
+    *cur_mut_ptr = target_size;
+
+    libc.sys_setrlimit(rlimit_stack, buf_ptr as *const u8);
+}

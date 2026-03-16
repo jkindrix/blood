@@ -350,58 +350,11 @@ fn run_check(args: &Args) -> i32 {
 
 /// Paths to the Blood runtime libraries needed for linking.
 pub struct RuntimePaths {
-    /// Path to the C runtime object (runtime.o).
-    pub c_runtime: String,
-    /// Path to the Rust runtime static library (libblood_runtime.a).
+    /// Path to the runtime static library (libblood_runtime.a).
     pub rust_runtime: String,
 }
 
-/// Finds the C runtime object (runtime.o).
-///
-/// Search order:
-/// 1. BLOOD_RUNTIME environment variable
-/// 2. Relative to executable directory: <exe_dir>/runtime.o
-/// 3. Relative to executable directory: <exe_dir>/runtime/runtime.o
-/// 4. Installed toolchain: ~/.blood/lib/runtime.o
-fn find_c_runtime() -> Option<String> {
-    // 1. Check BLOOD_RUNTIME environment variable
-    let env_val: &str = env_get("BLOOD_RUNTIME");
-    if env_val.len() > 0 {
-        if file_exists(env_val) {
-            return Option.Some(common.make_string(env_val));
-        }
-    }
-
-    // 2. Search relative to executable
-    let exe_path: &str = args_get(0);
-    let exe_dir = source.parent_dir(exe_path);
-
-    // <exe_dir>/runtime.o
-    let sibling = source.join_path(exe_dir.as_str(), "runtime.o");
-    if file_exists(sibling.as_str()) {
-        return Option.Some(sibling);
-    }
-
-    // <exe_dir>/runtime/runtime.o
-    let runtime_subdir = source.join_path(exe_dir.as_str(), "runtime");
-    let in_subdir = source.join_path(runtime_subdir.as_str(), "runtime.o");
-    if file_exists(in_subdir.as_str()) {
-        return Option.Some(in_subdir);
-    }
-
-    // 3. Installed toolchain: ~/.blood/lib/runtime.o
-    let home: &str = env_get("HOME");
-    if home.len() > 0 {
-        let installed = source.join_path(home, ".blood/lib/runtime.o");
-        if file_exists(installed.as_str()) {
-            return Option.Some(installed);
-        }
-    }
-
-    Option.None
-}
-
-/// Finds the Rust runtime static library (libblood_runtime.a).
+/// Finds the runtime static library (libblood_runtime.a).
 ///
 /// Search order:
 /// 1. BLOOD_RUST_RUNTIME environment variable
@@ -438,45 +391,24 @@ fn find_rust_runtime() -> Option<String> {
     Option.None
 }
 
-/// Finds both runtime libraries, printing a helpful error if either is missing.
+/// Finds the runtime library, printing a helpful error if missing.
 fn find_runtime_paths() -> Option<RuntimePaths> {
-    let c_rt = find_c_runtime();
     let rust_rt = find_rust_runtime();
 
-    let c_ok = match &c_rt {
-        &Option.Some(ref _p) => true,
-        &Option.None => false,
-    };
-    let rust_ok = match &rust_rt {
-        &Option.Some(ref _p) => true,
-        &Option.None => false,
-    };
-
-    if c_ok && rust_ok {
-        let c_path = match c_rt {
-            Option.Some(p) => p,
-            Option.None => { return Option.None; }
-        };
-        let r_path = match rust_rt {
-            Option.Some(p) => p,
-            Option.None => { return Option.None; }
-        };
-        return Option.Some(RuntimePaths {
-            c_runtime: c_path,
-            rust_runtime: r_path,
-        });
+    match rust_rt {
+        Option.Some(r_path) => {
+            return Option.Some(RuntimePaths {
+                rust_runtime: r_path,
+            });
+        }
+        Option.None => {}
     }
 
     // Print helpful error
-    main_helpers.print_error("Could not find Blood runtime libraries for linking.");
-    if !c_ok {
-        print_str("  missing: runtime.o (C runtime stub)\n");
-    }
-    if !rust_ok {
-        print_str("  missing: libblood_runtime.a (Rust runtime library)\n");
-    }
+    main_helpers.print_error("Could not find Blood runtime library for linking.");
+    print_str("  missing: libblood_runtime.a (runtime library)\n");
     print_str("  Searched:\n");
-    print_str("    1. BLOOD_RUNTIME / BLOOD_RUST_RUNTIME environment variables\n");
+    print_str("    1. BLOOD_RUST_RUNTIME environment variable\n");
     let exe_path: &str = args_get(0);
     let exe_dir = source.parent_dir(exe_path);
     print_str("    2. Next to executable: ");
@@ -484,7 +416,7 @@ fn find_runtime_paths() -> Option<RuntimePaths> {
     print_str("/\n");
     print_str("    3. Installed toolchain: ~/.blood/lib/\n");
     print_str("  Fix: run './build_selfhost.sh install' from the compiler repo,\n");
-    print_str("       or set BLOOD_RUNTIME and BLOOD_RUST_RUNTIME env vars.\n");
+    print_str("       or set BLOOD_RUST_RUNTIME env var.\n");
 
     Option.None
 }
@@ -582,8 +514,6 @@ fn run_build(args: &Args) -> i32 {
             let mut clang_cmd = String.new();
             clang_cmd.push_str("clang-18 ");
             clang_cmd.push_str(obj_path.as_str());
-            clang_cmd.push_str(" ");
-            clang_cmd.push_str(runtime.c_runtime.as_str());
             clang_cmd.push_str(" ");
             clang_cmd.push_str(runtime.rust_runtime.as_str());
             clang_cmd.push_str(" -Wl,-z,muldefs");
@@ -707,8 +637,6 @@ fn run_run(args: &Args) -> i32 {
             let mut clang_cmd = String.new();
             clang_cmd.push_str("clang-18 ");
             clang_cmd.push_str(obj_path.as_str());
-            clang_cmd.push_str(" ");
-            clang_cmd.push_str(runtime.c_runtime.as_str());
             clang_cmd.push_str(" ");
             clang_cmd.push_str(runtime.rust_runtime.as_str());
             clang_cmd.push_str(" -Wl,-z,muldefs");
@@ -1127,8 +1055,6 @@ fn run_single_test(
     let mut clang_cmd = String.new();
     clang_cmd.push_str("clang-18 ");
     clang_cmd.push_str(obj_path.as_str());
-    clang_cmd.push_str(" ");
-    clang_cmd.push_str(runtime.c_runtime.as_str());
     clang_cmd.push_str(" ");
     clang_cmd.push_str(runtime.rust_runtime.as_str());
     clang_cmd.push_str(" -Wl,-z,muldefs -lm -ldl -lpthread -pie -o ");
