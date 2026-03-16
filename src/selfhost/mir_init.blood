@@ -115,8 +115,8 @@ pub fn analyze_init(body: &mir_body.MirBody) -> InitAnalysisResult {
 
             // Walk statements: assignments initialize their target local
             let block = &body.basic_blocks[bb_idx];
-            for si in 0usize..block.statements.len() {
-                apply_stmt_init(&block.statements[si], &mut init_at_exit[bb_idx]);
+            for stmt in &block.statements {
+                apply_stmt_init(stmt, &mut init_at_exit[bb_idx]);
             }
 
             // Walk terminator: calls with destinations initialize the destination
@@ -153,11 +153,11 @@ pub fn analyze_init(body: &mir_body.MirBody) -> InitAnalysisResult {
             live_init.push(init_at_entry[bb_idx][li]);
         }
 
-        for si in 0usize..block.statements.len() {
+        for stmt in &block.statements {
             // Check uses in this statement
-            check_stmt_uses(&block.statements[si], &live_init, bb_idx, &mut result.errors, body);
+            check_stmt_uses(stmt, &live_init, bb_idx, &mut result.errors, body);
             // Apply initializations
-            apply_stmt_init(&block.statements[si], &mut live_init);
+            apply_stmt_init(stmt, &mut live_init);
         }
 
         // Check terminator uses
@@ -296,8 +296,8 @@ fn check_rvalue_uses(rvalue: &mir_types.Rvalue, init: &Vec<bool>, bb_idx: usize,
             check_operand_use(operand, init, bb_idx, errors, body);
         }
         &mir_types.Rvalue.Aggregate { kind: _, ref operands } => {
-            for i in 0usize..operands.len() {
-                check_operand_use(&operands[i], init, bb_idx, errors, body);
+            for operand in operands {
+                check_operand_use(operand, init, bb_idx, errors, body);
             }
         }
         &mir_types.Rvalue.Discriminant(ref place) => {
@@ -344,16 +344,16 @@ fn check_term_uses(term: &mir_term.Terminator, init: &Vec<bool>, bb_idx: usize, 
         }
         &mir_term.TerminatorKind.Call { ref func, ref args, destination: _, target: _, unwind: _ } => {
             check_operand_use(func, init, bb_idx, errors, body);
-            for i in 0usize..args.len() {
-                check_operand_use(&args[i], init, bb_idx, errors, body);
+            for arg in args {
+                check_operand_use(arg, init, bb_idx, errors, body);
             }
         }
         &mir_term.TerminatorKind.SwitchInt { ref discr, targets: _ } => {
             check_operand_use(discr, init, bb_idx, errors, body);
         }
         &mir_term.TerminatorKind.Perform { effect_id: _, op_index: _, ref args, destination: _, target: _, is_tail_resumptive: _ } => {
-            for i in 0usize..args.len() {
-                check_operand_use(&args[i], init, bb_idx, errors, body);
+            for arg in args {
+                check_operand_use(arg, init, bb_idx, errors, body);
             }
         }
         _ => {}
