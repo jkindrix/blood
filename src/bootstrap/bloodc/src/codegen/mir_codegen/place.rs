@@ -119,10 +119,13 @@ impl<'ctx, 'a> MirPlaceCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
 
             current_ptr = match elem {
                 PlaceElem::Deref => {
-                    // Save original type to check if this is a fat pointer (slice reference)
+                    // Save original type to check if this is a fat pointer
+                    // All &T refs are fat (gen ref { ptr, i32 }), &[T]/&str are fat ({ ptr, i64 })
+                    // Raw *T pointers to slices are also fat
                     let original_ty = current_ty.clone();
                     let is_fat_ptr = match original_ty.kind() {
-                        TypeKind::Ref { inner, .. } | TypeKind::Ptr { inner, .. } => {
+                        TypeKind::Ref { .. } => true, // All refs are fat (gen ref or slice)
+                        TypeKind::Ptr { inner, .. } => {
                             matches!(inner.kind(), TypeKind::Slice { .. })
                         }
                         TypeKind::Slice { .. } => true,

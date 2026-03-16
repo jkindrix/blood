@@ -77,7 +77,24 @@ impl<'ctx, 'a> MirRvalueCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
 
             Rvalue::Ref { place, mutable: _ } => {
                 let ptr = self.compile_mir_place(place, body, escape_results)?;
-                Ok(ptr.into())
+                // Create generational fat reference: { ptr, gen:i32 }
+                // Generation is 0 for now (wired to actual gen tracking later)
+                let ptr_type = self.context.ptr_type(inkwell::AddressSpace::default());
+                let gen_type = self.context.i32_type();
+                let gen_ref_type = self.context.struct_type(&[ptr_type.into(), gen_type.into()], false);
+                let fat_ref = gen_ref_type.const_zero();
+                let fat_ref = self.builder.build_insert_value(fat_ref, ptr, 0, "gen_ref_ptr")
+                    .map_err(|e| vec![Diagnostic::error(
+                        format!("LLVM insert_value error: {}", e), body.span
+                    )])?
+                    .into_struct_value();
+                let gen_val = gen_type.const_int(0, false);
+                let fat_ref = self.builder.build_insert_value(fat_ref, gen_val, 1, "gen_ref_gen")
+                    .map_err(|e| vec![Diagnostic::error(
+                        format!("LLVM insert_value error: {}", e), body.span
+                    )])?
+                    .into_struct_value();
+                Ok(fat_ref.into())
             }
 
             Rvalue::AddressOf { place, mutable: _ } => {
@@ -359,11 +376,20 @@ impl<'ctx, 'a> MirRvalueCodegen<'ctx, 'a> for CodegenContext<'ctx, 'a> {
                 // Creates a fat pointer struct { T*, i64 } from an array reference.
 
                 // The array reference is a pointer to [N x T]
+                // With gen refs, &[T; N] is { ptr, i32 } — extract field 0 (the pointer)
                 let array_ptr_val = self.compile_mir_operand(array_ref, body, escape_results)?;
                 let array_ptr = match array_ptr_val {
                     BasicValueEnum::PointerValue(ptr) => ptr,
+                    BasicValueEnum::StructValue(sv) => {
+                        // Gen ref { ptr, i32 } — extract the data pointer
+                        self.builder.build_extract_value(sv, 0, "array_ref_ptr")
+                            .map_err(|e| vec![Diagnostic::error(
+                                format!("LLVM extract_value error: {}", e), body.span
+                            )])?
+                            .into_pointer_value()
+                    }
                     _ => return Err(vec![Diagnostic::error(
-                        "ArrayToSlice expects pointer value for array reference",
+                        "ArrayToSlice expects pointer or gen ref value for array reference",
                         body.span,
                     )]),
                 };
@@ -1340,6 +1366,33 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 }
             }
 
+            // Pointer to gen ref struct { ptr, i32 } — promote with gen=0
+            // This handles thin ptr -> fat gen ref conversions (e.g., from FFI returns,
+            // address-of operations, or other code paths that produce thin pointers
+            // where the destination type expects a gen ref).
+            (BasicValueEnum::PointerValue(ptr_val), BasicTypeEnum::StructType(struct_ty))
+                if struct_ty.count_fields() == 2
+                    && struct_ty.get_field_type_at_index(0)
+                        .map_or(false, |t| t.is_pointer_type())
+                    && struct_ty.get_field_type_at_index(1)
+                        .map_or(false, |t| t.is_int_type()
+                            && t.into_int_type().get_bit_width() == 32) =>
+            {
+                let mut fat_ref = struct_ty.get_undef();
+                fat_ref = self.builder.build_insert_value(fat_ref, ptr_val, 0, "cast_gen_ref_ptr")
+                    .map_err(|e| vec![Diagnostic::error(
+                        format!("LLVM insert_value error: {}", e), self.current_span()
+                    )])?
+                    .into_struct_value();
+                let gen_val = self.context.i32_type().const_int(0, false);
+                fat_ref = self.builder.build_insert_value(fat_ref, gen_val, 1, "cast_gen_ref_gen")
+                    .map_err(|e| vec![Diagnostic::error(
+                        format!("LLVM insert_value error: {}", e), self.current_span()
+                    )])?
+                    .into_struct_value();
+                Ok(fat_ref.into())
+            }
+
             // Same type, no cast needed
             _ if val.get_type() == target_llvm => Ok(val),
 
@@ -1384,9 +1437,18 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             _ => source_ty,
         };
 
-        // Get the data pointer from the source value
+        // Get the data pointer from the source value.
+        // With gen refs, &T is { ptr, i32 } — extract field 0 (the data pointer).
         let data_ptr = match val {
             BasicValueEnum::PointerValue(ptr) => ptr,
+            BasicValueEnum::StructValue(sv) if matches!(source_ty.kind(), TypeKind::Ref { .. }) => {
+                // Gen ref { ptr, i32 } — extract the data pointer
+                self.builder.build_extract_value(sv, 0, "gen_ref_data_ptr")
+                    .map_err(|e| vec![Diagnostic::error(
+                        format!("LLVM extract_value error: {}", e), self.current_span()
+                    )])?
+                    .into_pointer_value()
+            }
             _ => {
                 // Non-pointer: allocate stack storage and take address
                 let alloca = self.builder

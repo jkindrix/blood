@@ -287,33 +287,55 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                                     (*val).into()
                                 }
                             } else if param_type.is_pointer_type() && val.is_struct_value() {
-                                // Parameter expects a pointer but we have a struct value
-                                // Allocate on stack and pass pointer (for &self method semantics)
-                                let struct_val = val.into_struct_value();
-                                let alloca = self.builder
-                                    .build_alloca(struct_val.get_type(), "arg_tmp")
-                                    .map_err(|e| vec![Diagnostic::error(
-                                        format!("LLVM alloca error: {}", e), span
-                                    )])?;
-                                // Set alignment on alloca (request full alignment)
-                                let natural_alignment = self.get_type_alignment_for_value(struct_val.into());
-                                if let Some(inst) = alloca.as_instruction() {
-                                    let _ = inst.set_alignment(natural_alignment);
-                                }
-                                let store_inst = self.builder.build_store(alloca, struct_val)
-                                    .map_err(|e| vec![Diagnostic::error(
-                                        format!("LLVM store error: {}", e), span
-                                    )])?;
-                                // Use natural alignment — alloca has correct alignment set.
-                                let _ = store_inst.set_alignment(natural_alignment);
-                                // Bitcast to expected pointer type if needed
-                                let expected_ptr_type = param_type.into_pointer_type();
-                                if alloca.get_type() != expected_ptr_type {
-                                    self.builder.build_pointer_cast(alloca, expected_ptr_type, "ptr_cast")
-                                        .map(|p| p.into())
-                                        .unwrap_or(alloca.into())
+                                // Parameter expects a pointer but we have a struct value.
+                                // Check if this is a gen ref { ptr, i32 } — if so, extract the
+                                // pointer (field 0) rather than allocating on stack.
+                                let arg_ty = if i < args.len() {
+                                    Some(self.get_operand_type(&args[i], body))
                                 } else {
-                                    alloca.into()
+                                    None
+                                };
+                                let is_gen_ref = arg_ty.as_ref().map_or(false, |t| {
+                                    matches!(t.kind(), crate::hir::TypeKind::Ref { inner, .. }
+                                        if !matches!(inner.kind(),
+                                            crate::hir::TypeKind::Slice { .. } |
+                                            crate::hir::TypeKind::Primitive(crate::hir::PrimitiveTy::Str) |
+                                            crate::hir::TypeKind::DynTrait { .. }))
+                                });
+                                if is_gen_ref {
+                                    // Gen ref: extract field 0 (the pointer) to pass to FFI
+                                    let sv = val.into_struct_value();
+                                    self.builder.build_extract_value(sv, 0, "gen_ref_strip")
+                                        .map(|v| v.into())
+                                        .unwrap_or((*val).into())
+                                } else {
+                                    // Non-gen-ref struct: allocate on stack and pass pointer
+                                    let struct_val = val.into_struct_value();
+                                    let alloca = self.builder
+                                        .build_alloca(struct_val.get_type(), "arg_tmp")
+                                        .map_err(|e| vec![Diagnostic::error(
+                                            format!("LLVM alloca error: {}", e), span
+                                        )])?;
+                                    // Set alignment on alloca (request full alignment)
+                                    let natural_alignment = self.get_type_alignment_for_value(struct_val.into());
+                                    if let Some(inst) = alloca.as_instruction() {
+                                        let _ = inst.set_alignment(natural_alignment);
+                                    }
+                                    let store_inst = self.builder.build_store(alloca, struct_val)
+                                        .map_err(|e| vec![Diagnostic::error(
+                                            format!("LLVM store error: {}", e), span
+                                        )])?;
+                                    // Use natural alignment — alloca has correct alignment set.
+                                    let _ = store_inst.set_alignment(natural_alignment);
+                                    // Bitcast to expected pointer type if needed
+                                    let expected_ptr_type = param_type.into_pointer_type();
+                                    if alloca.get_type() != expected_ptr_type {
+                                        self.builder.build_pointer_cast(alloca, expected_ptr_type, "ptr_cast")
+                                            .map(|p| p.into())
+                                            .unwrap_or(alloca.into())
+                                    } else {
+                                        alloca.into()
+                                    }
                                 }
                             } else if param_type.is_pointer_type() && val.is_pointer_value() {
                                 // Parameter expects pointer and we have pointer - cast if needed
@@ -626,33 +648,53 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                                         (*val).into()
                                     }
                                 } else if param_type.is_pointer_type() && val.is_struct_value() {
-                                    // Parameter expects a pointer but we have a struct value
-                                    // Allocate on stack and pass pointer (for &self method semantics)
-                                    let struct_val = val.into_struct_value();
-                                    let alloca = self.builder
-                                        .build_alloca(struct_val.get_type(), "method_self_tmp")
-                                        .map_err(|e| vec![Diagnostic::error(
-                                            format!("LLVM alloca error: {}", e), span
-                                        )])?;
-                                    // Set alignment on alloca (request full alignment)
-                                    let natural_alignment = self.get_type_alignment_for_value(struct_val.into());
-                                    if let Some(inst) = alloca.as_instruction() {
-                                        let _ = inst.set_alignment(natural_alignment);
-                                    }
-                                    let store_inst = self.builder.build_store(alloca, struct_val)
-                                        .map_err(|e| vec![Diagnostic::error(
-                                            format!("LLVM store error: {}", e), span
-                                        )])?;
-                                    // Use natural alignment — alloca has correct alignment set.
-                                    let _ = store_inst.set_alignment(natural_alignment);
-                                    // Bitcast to expected pointer type (e.g., i8* for void*)
-                                    let expected_ptr_type = param_type.into_pointer_type();
-                                    if alloca.get_type() != expected_ptr_type {
-                                        self.builder.build_pointer_cast(alloca, expected_ptr_type, "ptr_cast")
-                                            .map(|p| p.into())
-                                            .unwrap_or(alloca.into())
+                                    // Parameter expects a pointer but we have a struct value.
+                                    // Check if this is a gen ref { ptr, i32 } — extract pointer.
+                                    let arg_ty = if i < args.len() {
+                                        Some(self.get_operand_type(&args[i], body))
                                     } else {
-                                        alloca.into()
+                                        None
+                                    };
+                                    let is_gen_ref = arg_ty.as_ref().map_or(false, |t| {
+                                        matches!(t.kind(), crate::hir::TypeKind::Ref { inner, .. }
+                                            if !matches!(inner.kind(),
+                                                crate::hir::TypeKind::Slice { .. } |
+                                                crate::hir::TypeKind::Primitive(crate::hir::PrimitiveTy::Str)))
+                                    });
+                                    if is_gen_ref {
+                                        // Gen ref: extract field 0 (the pointer) to pass to runtime
+                                        let sv = val.into_struct_value();
+                                        self.builder.build_extract_value(sv, 0, "gen_ref_strip")
+                                            .map(|v| v.into())
+                                            .unwrap_or((*val).into())
+                                    } else {
+                                        // Non-gen-ref struct: allocate on stack and pass pointer
+                                        let struct_val = val.into_struct_value();
+                                        let alloca = self.builder
+                                            .build_alloca(struct_val.get_type(), "method_self_tmp")
+                                            .map_err(|e| vec![Diagnostic::error(
+                                                format!("LLVM alloca error: {}", e), span
+                                            )])?;
+                                        // Set alignment on alloca (request full alignment)
+                                        let natural_alignment = self.get_type_alignment_for_value(struct_val.into());
+                                        if let Some(inst) = alloca.as_instruction() {
+                                            let _ = inst.set_alignment(natural_alignment);
+                                        }
+                                        let store_inst = self.builder.build_store(alloca, struct_val)
+                                            .map_err(|e| vec![Diagnostic::error(
+                                                format!("LLVM store error: {}", e), span
+                                            )])?;
+                                        // Use natural alignment — alloca has correct alignment set.
+                                        let _ = store_inst.set_alignment(natural_alignment);
+                                        // Bitcast to expected pointer type (e.g., i8* for void*)
+                                        let expected_ptr_type = param_type.into_pointer_type();
+                                        if alloca.get_type() != expected_ptr_type {
+                                            self.builder.build_pointer_cast(alloca, expected_ptr_type, "ptr_cast")
+                                                .map(|p| p.into())
+                                                .unwrap_or(alloca.into())
+                                        } else {
+                                            alloca.into()
+                                        }
                                     }
                                 } else if param_type.is_pointer_type() && val.is_pointer_value() {
                                     // Parameter expects pointer and we have pointer - cast if needed
@@ -2890,10 +2932,10 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                                 format!("LLVM extract_value error: {}", e), span
                             )])?;
 
-                        if let Some(_dest_field_type) = dest_struct_type.get_field_type_at_index(i) {
-                            // With opaque pointers, pointer fields are always the same type
-                            // so no conversion is needed for pointer fields
-                            new_struct = self.builder.build_insert_value(new_struct, field_val, i, &format!("insert_{}", i))
+                        if let Some(dest_field_type) = dest_struct_type.get_field_type_at_index(i) {
+                            // Convert field value to match destination field type if needed
+                            let converted_field = self.convert_value_for_store(field_val.into(), dest_field_type, span)?;
+                            new_struct = self.builder.build_insert_value(new_struct, converted_field, i, &format!("insert_{}", i))
                                 .map_err(|e| vec![Diagnostic::error(
                                     format!("LLVM insert_value error: {}", e), span
                                 )])?
@@ -2906,14 +2948,39 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
             }
         }
 
-        // Pointer value being stored to struct destination: load the value from pointer.
-        // This handles cases where an enum variant field pointer is incorrectly passed as
-        // a value instead of being loaded first. This can happen with complex projection
-        // chains like Downcast + Field on reference types.
+        // Pointer value being stored to struct destination.
         if val.is_pointer_value() && dest_type.is_struct_type() {
             let ptr_val = val.into_pointer_value();
             let dest_struct_ty = dest_type.into_struct_type();
-            // Load the struct from the pointer
+
+            // Check if dest is a gen ref { ptr, i32 } — if so, promote the thin pointer
+            // to a gen ref by wrapping it with generation 0.
+            let is_gen_ref_dest = dest_struct_ty.count_fields() == 2
+                && dest_struct_ty.get_field_type_at_index(0)
+                    .map_or(false, |t| t.is_pointer_type())
+                && dest_struct_ty.get_field_type_at_index(1)
+                    .map_or(false, |t| t.is_int_type()
+                        && t.into_int_type().get_bit_width() == 32);
+
+            if is_gen_ref_dest {
+                // Promote thin pointer to gen ref { ptr, gen:0 }
+                let mut fat_ref = dest_struct_ty.get_undef();
+                fat_ref = self.builder.build_insert_value(fat_ref, ptr_val, 0, "promote_ptr")
+                    .map_err(|e| vec![Diagnostic::error(
+                        format!("LLVM insert_value error: {}", e), span
+                    )])?
+                    .into_struct_value();
+                let gen_val = self.context.i32_type().const_int(0, false);
+                fat_ref = self.builder.build_insert_value(fat_ref, gen_val, 1, "promote_gen")
+                    .map_err(|e| vec![Diagnostic::error(
+                        format!("LLVM insert_value error: {}", e), span
+                    )])?
+                    .into_struct_value();
+                return Ok(fat_ref.into());
+            }
+
+            // Other struct destinations: load the struct from the pointer.
+            // This handles enum variant field pointers from complex projection chains.
             let loaded = self.builder.build_load(dest_struct_ty, ptr_val, "store_ptr_load")
                 .map_err(|e| vec![Diagnostic::error(
                     format!("LLVM load error: {}", e), span

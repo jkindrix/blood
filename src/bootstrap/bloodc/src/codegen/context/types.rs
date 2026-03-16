@@ -43,7 +43,8 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                 let len_type = self.context.i64_type();
                 self.context.struct_type(&[ptr_type.into(), len_type.into()], false).into()
             }
-            TypeKind::Ref { inner, .. } | TypeKind::Ptr { inner, .. } => {
+            TypeKind::Ref { inner, .. } => {
+                // References carry a generation tag: { ptr, i32 }
                 // For unsized types (str, slices), the reference IS the fat pointer
                 // (there's no extra indirection - &str = {ptr, len}, not ptr to {ptr, len})
                 match inner.kind() {
@@ -55,10 +56,29 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                         // &[T] is just the {ptr, len} fat pointer
                         self.lower_type(inner)
                     }
+                    TypeKind::DynTrait { .. } => {
+                        // &dyn Trait is { data_ptr, vtable_ptr } — needs two pointers
+                        let ptr_type = self.context.ptr_type(AddressSpace::default());
+                        self.context.struct_type(&[ptr_type.into(), ptr_type.into()], false).into()
+                    }
                     _ => {
-                        // Regular references are pointers to the inner type
-                        // (opaque pointers: all pointer types are just `ptr`)
-                        let _inner_type = self.lower_type(inner);
+                        // Generational reference: { ptr, gen:i32 }
+                        let ptr_type = self.context.ptr_type(AddressSpace::default());
+                        let gen_type = self.context.i32_type();
+                        self.context.struct_type(&[ptr_type.into(), gen_type.into()], false).into()
+                    }
+                }
+            }
+            TypeKind::Ptr { inner, .. } => {
+                // Raw pointers are thin (no generation tag)
+                match inner.kind() {
+                    TypeKind::Primitive(PrimitiveTy::Str) => {
+                        self.lower_primitive(&PrimitiveTy::Str)
+                    }
+                    TypeKind::Slice { .. } => {
+                        self.lower_type(inner)
+                    }
+                    _ => {
                         self.context.ptr_type(AddressSpace::default()).into()
                     }
                 }
