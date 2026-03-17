@@ -286,7 +286,7 @@ do_build_blood_runtime() {
     mkdir -p "$rt_build"
 
     step "Compiling Blood runtime to LLVM IR"
-    "$fg" build --emit llvm-ir --no-cache "$rt_dir/lib.blood"
+    "$fg" build --emit llvm-ir --no-cache --build-dir "$rt_dir/build" "$rt_dir/lib.blood"
     ok "IR generated"
 
     step "Post-processing IR"

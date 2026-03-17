@@ -1,0 +1,175 @@
+// Layer 3: Continuations
+//
+// Continuation table for multishot continuations.
+// The selfhost always passes @__blood_identity_continuation as the callback,
+// so the callback always returns its argument. The real control flow happens
+// via the longjmp/abort path in blood_perform.
+//
+// Depends on: rt_evidence (Layer 1)
+
+mod libc;
+mod rt_panic;
+mod alloc;
+mod rt_evidence;
+
+// ============================================================================
+// Continuation table — simple growable array
+//
+// ContinuationEntry: { callback_addr: i64, context_addr: i64, consumed: i64 }
+// Size: 24 bytes per entry
+// ============================================================================
+
+fn CONT_ENTRY_SIZE() -> i64 { 24 }
+
+static mut CONT_DATA: i64 = 0;  // address of entry array
+static mut CONT_LEN: i64 = 0;
+static mut CONT_CAP: i64 = 0;
+static mut NEXT_CONT_ID: i64 = 1;  // 0 means "no continuation" (tail-resumptive)
+
+// Suspended regions per continuation — parallel array of { data_addr, len, cap }
+// Each continuation can have 0+ suspended regions.
+static mut REGION_DATA: i64 = 0;  // address of array of region list headers
+static mut REGION_CAP: i64 = 0;
+
+fn REGION_HDR_SIZE() -> i64 { 24 }  // { data_addr, len, cap } per continuation
+
+fn ensure_cont_table() {
+    @unsafe {
+        if CONT_DATA == 0 {
+            CONT_CAP = 64;
+            let p: *mut u8 = libc.sys_calloc(64, CONT_ENTRY_SIZE() as u64);
+            CONT_DATA = alloc.ptr_to_addr(p);
+            if CONT_DATA == 0 {
+                rt_panic.rt_panic("continuation: failed to init table");
+            }
+            // Also init region table
+            REGION_CAP = 64;
+            let rp: *mut u8 = libc.sys_calloc(64, REGION_HDR_SIZE() as u64);
+            REGION_DATA = alloc.ptr_to_addr(rp);
+        }
+    }
+}
+
+fn cont_entry_addr(id: i64) -> i64 {
+    // id is 1-based; index is id - 1
+    CONT_DATA + (id - 1) * CONT_ENTRY_SIZE()
+}
+
+fn cont_grow() {
+    @unsafe {
+        let new_cap: i64 = CONT_CAP * 2;
+        let new_p: *mut u8 = libc.sys_calloc(new_cap as u64, CONT_ENTRY_SIZE() as u64);
+        let new_addr: i64 = alloc.ptr_to_addr(new_p);
+        if new_addr == 0 {
+            rt_panic.rt_panic("continuation: failed to grow table");
+        }
+        libc.sys_memmove(
+            alloc.addr_to_ptr(new_addr),
+            alloc.addr_to_cptr(CONT_DATA),
+            (CONT_LEN * CONT_ENTRY_SIZE()) as u64,
+        );
+        CONT_DATA = new_addr;
+        CONT_CAP = new_cap;
+
+        // Grow region table too
+        let new_rp: *mut u8 = libc.sys_calloc(new_cap as u64, REGION_HDR_SIZE() as u64);
+        let new_raddr: i64 = alloc.ptr_to_addr(new_rp);
+        if new_raddr != 0 {
+            libc.sys_memmove(
+                alloc.addr_to_ptr(new_raddr),
+                alloc.addr_to_cptr(REGION_DATA),
+                (CONT_LEN * REGION_HDR_SIZE()) as u64,
+            );
+            REGION_DATA = new_raddr;
+            REGION_CAP = new_cap;
+        }
+    }
+}
+
+fn region_hdr_addr(id: i64) -> i64 {
+    REGION_DATA + (id - 1) * REGION_HDR_SIZE()
+}
+
+// ============================================================================
+// Exported functions
+// ============================================================================
+
+#[export_name = "blood_continuation_create_multishot"]
+pub fn rt_continuation_create_multishot(callback: *mut u8, context: *mut u8) -> i64 {
+    @unsafe {
+        ensure_cont_table();
+        if CONT_LEN >= CONT_CAP {
+            cont_grow();
+        }
+
+        let id: i64 = NEXT_CONT_ID;
+        NEXT_CONT_ID = NEXT_CONT_ID + 1;
+        CONT_LEN = CONT_LEN + 1;
+
+        let entry: i64 = cont_entry_addr(id);
+        rt_evidence.write_i64(entry, alloc.ptr_to_addr(callback));
+        rt_evidence.write_i64(entry + 8, alloc.ptr_to_addr(context));
+        rt_evidence.write_i64(entry + 16, 0);  // not consumed
+
+        id
+    }
+}
+
+#[export_name = "blood_continuation_resume_with_regions"]
+pub fn rt_continuation_resume_with_regions(cont_id: i64, value: i64) -> i64 {
+    @unsafe {
+        if cont_id <= 0 {
+            return value;
+        }
+
+        // Mark was_resumed so blood_perform won't abort
+        rt_evidence.rt_set_was_resumed();
+
+        let entry: i64 = cont_entry_addr(cont_id);
+        // Mark consumed
+        rt_evidence.write_i64(entry + 16, 1);
+
+        // Suspended regions: we don't have region resume in Stage 2, just skip
+        // (Fibers/region suspension is Stage 3)
+
+        // The callback is always @__blood_identity_continuation which returns
+        // its first argument. Rather than doing an indirect call, we return
+        // the value directly. This matches the selfhost's usage pattern.
+        value
+    }
+}
+
+#[export_name = "blood_continuation_add_suspended_region"]
+pub fn rt_continuation_add_suspended_region(cont_id: i64, region_id: i64) {
+    @unsafe {
+        if cont_id <= 0 { return; }
+
+        ensure_cont_table();
+        let hdr: i64 = region_hdr_addr(cont_id);
+        let data_addr: i64 = rt_evidence.read_i64(hdr);
+        let len: i64 = rt_evidence.read_i64(hdr + 8);
+        let cap: i64 = rt_evidence.read_i64(hdr + 16);
+
+        if len >= cap {
+            let new_cap: i64 = if cap == 0 { 4 } else { cap * 2 };
+            let new_p: *mut u8 = libc.sys_calloc(new_cap as u64, 8);
+            let new_addr: i64 = alloc.ptr_to_addr(new_p);
+            if new_addr == 0 {
+                rt_panic.rt_panic("continuation: failed to grow region list");
+            }
+            if len > 0 {
+                libc.sys_memmove(
+                    alloc.addr_to_ptr(new_addr),
+                    alloc.addr_to_cptr(data_addr),
+                    (len * 8) as u64,
+                );
+            }
+            rt_evidence.write_i64(hdr, new_addr);
+            rt_evidence.write_i64(hdr + 16, new_cap);
+        }
+
+        let data: i64 = rt_evidence.read_i64(hdr);
+        rt_evidence.write_i64(data + len * 8, region_id);
+        rt_evidence.write_i64(hdr + 8, len + 1);
+    }
+}

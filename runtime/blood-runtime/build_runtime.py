@@ -21,9 +21,9 @@ def process_ir(input_path, output_path):
         if m:
             defined.add(m.group(1))
 
-    # blood_main is a dummy entry point in the runtime library — strip it
-    # to avoid conflict with the actual program's blood_main
-    strip_defines = {'blood_main'}
+    # blood_main and main are dummy entry points in the runtime library — strip both
+    # to avoid conflict with the actual program's entry points
+    strip_defines = {'blood_main', 'main'}
 
     # Step 2: Collect ptr_read/ptr_write declares to replace
     ptr_builtins = {}
@@ -35,7 +35,8 @@ def process_ir(input_path, output_path):
     # Step 3: Collect other missing builtins we need to inject
     inject_names = {
         'str_len', 'str_len_usize', 'env_get', 'println_u64',
-        'blood_float64_to_bits', '__builtin_safepoint_check'
+        'blood_float64_to_bits', '__builtin_safepoint_check',
+        'call_handler_op', 'println_int', 'println_bool', 'print_int'
     }
 
     # Step 4: Strip conflicting declares, builtin declares, and unwanted defines
@@ -116,9 +117,48 @@ def process_ir(input_path, output_path):
     impl_lines.append('@.fmt_u64 = private unnamed_addr constant [5 x i8] c"%lu\\0A\\00"\n')
     if 'printf' not in remaining_declares and 'printf' not in defined:
         impl_lines.append('declare i32 @printf(ptr, ...)\n')
+    for decl_name in ['fflush']:
+        if decl_name not in remaining_declares and decl_name not in defined:
+            impl_lines.append(f'declare i32 @{decl_name}(ptr)\n')
     impl_lines.append('define void @println_u64(i64 %val) {\n')
     impl_lines.append('  call i32 (ptr, ...) @printf(ptr @.fmt_u64, i64 %val)\n')
+    impl_lines.append('  call i32 @fflush(ptr null)\n')
     impl_lines.append('  ret void\n')
+    impl_lines.append('}\n')
+
+    # println_int(i32) -> void : print signed 32-bit integer with newline
+    impl_lines.append('@.fmt_i32 = private unnamed_addr constant [4 x i8] c"%d\\0A\\00"\n')
+    impl_lines.append('define void @println_int(i32 %val) {\n')
+    impl_lines.append('  call i32 (ptr, ...) @printf(ptr @.fmt_i32, i32 %val)\n')
+    impl_lines.append('  call i32 @fflush(ptr null)\n')
+    impl_lines.append('  ret void\n')
+    impl_lines.append('}\n')
+
+    # print_int(i32) -> void : print signed 32-bit integer (no newline)
+    impl_lines.append('@.fmt_i32_nn = private unnamed_addr constant [3 x i8] c"%d\\00"\n')
+    impl_lines.append('define void @print_int(i32 %val) {\n')
+    impl_lines.append('  call i32 (ptr, ...) @printf(ptr @.fmt_i32_nn, i32 %val)\n')
+    impl_lines.append('  call i32 @fflush(ptr null)\n')
+    impl_lines.append('  ret void\n')
+    impl_lines.append('}\n')
+
+    # println_bool(i1) -> void : print "true" or "false" with newline
+    impl_lines.append('@.str_true = private unnamed_addr constant [5 x i8] c"true\\00"\n')
+    impl_lines.append('@.str_false = private unnamed_addr constant [6 x i8] c"false\\00"\n')
+    impl_lines.append('define void @println_bool(i1 %val) {\n')
+    impl_lines.append('  %str = select i1 %val, ptr @.str_true, ptr @.str_false\n')
+    impl_lines.append('  call i32 (ptr, ...) @printf(ptr %str)\n')
+    impl_lines.append('  call i32 @putchar(i32 10)\n')
+    impl_lines.append('  ret void\n')
+    impl_lines.append('}\n')
+    if 'putchar' not in remaining_declares and 'putchar' not in defined:
+        impl_lines.append('declare i32 @putchar(i32)\n')
+
+    # call_handler_op(ptr fn, ptr state, ptr args, i64 arg_count, i64 cont) -> i64
+    # Indirect function call for effect handler dispatch — Blood can't call raw fn ptrs
+    impl_lines.append('define i64 @call_handler_op(ptr %fn_ptr, ptr %state, ptr %args, i64 %arg_count, i64 %cont) {\n')
+    impl_lines.append('  %result = call i64 %fn_ptr(ptr %state, ptr %args, i64 %arg_count, i64 %cont)\n')
+    impl_lines.append('  ret i64 %result\n')
     impl_lines.append('}\n')
 
     # env_get({ptr, i64}) -> {ptr, i64} : get environment variable

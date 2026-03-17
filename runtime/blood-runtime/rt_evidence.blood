@@ -1,0 +1,519 @@
+// Layer 1: Evidence Management
+//
+// Evidence vectors track which effect handlers are in scope.
+// The global registry stores handler operation function pointers.
+// The abort stack enables non-tail-resumptive handler abort via longjmp.
+//
+// All state is plain globals (single-threaded). TLS when compiler supports it.
+
+mod libc;
+mod print;
+mod rt_panic;
+mod alloc;
+
+// ============================================================================
+// Data layout constants (manual pointer arithmetic)
+// ============================================================================
+
+// EvidenceEntry: { effect_id: i64, registry_index: i64, state_addr: i64 }
+pub fn EV_ENTRY_SIZE() -> i64 { 24 }
+
+// EffectHandlerEntry: { effect_id: i64, ops_ptr_addr: i64, op_count: i64, is_deep: i64 }
+pub fn REG_ENTRY_SIZE() -> i64 { 32 }
+
+// AbortEntry: { jmpbuf_addr: i64, abort_value: i64 }
+fn ABORT_ENTRY_SIZE() -> i64 { 16 }
+fn MAX_ABORT_DEPTH() -> i64 { 64 }
+
+// ============================================================================
+// Global state
+// ============================================================================
+
+// Evidence vector pointer — points to { data_addr: i64, len: i64, cap: i64 }
+static mut CURRENT_EVIDENCE: i64 = 0;
+
+// Inline evidence fast-path hint (effect_id, 0 = disabled)
+static mut INLINE_EVIDENCE_ID: i64 = 0;
+
+// Was-resumed flag for non-tail-resumptive abort detection
+static mut WAS_RESUMED: i32 = 0;
+
+// Effect registry: growable array of EffectHandlerEntry
+static mut REG_DATA: i64 = 0;  // address of entry array
+static mut REG_LEN: i64 = 0;
+static mut REG_CAP: i64 = 0;
+
+// Deep handler stack: growable array of { effect_id, registry_index, state_addr }
+static mut DEEP_DATA: i64 = 0;
+static mut DEEP_LEN: i64 = 0;
+static mut DEEP_CAP: i64 = 0;
+
+// Abort target stack (fixed-size)
+static mut ABORT_DATA: i64 = 0;
+static mut ABORT_DEPTH: i64 = 0;
+
+// ============================================================================
+// Low-level memory helpers (i64 addresses, no pointer types)
+// ============================================================================
+
+fn read_i64(addr: i64) -> i64 {
+    @unsafe { ptr_read_i64(alloc.addr_to_ptr(addr)) }
+}
+
+fn write_i64(addr: i64, val: i64) {
+    @unsafe { ptr_write_i64(alloc.addr_to_ptr(addr), val); }
+}
+
+fn read_i32(addr: i64) -> i32 {
+    @unsafe { ptr_read_i32(alloc.addr_to_ptr(addr)) }
+}
+
+fn write_i32(addr: i64, val: i32) {
+    @unsafe { ptr_write_i32(alloc.addr_to_ptr(addr), val); }
+}
+
+// ============================================================================
+// Evidence Vector (heap-allocated: { data_addr: i64, len: i64, cap: i64 })
+// ============================================================================
+
+fn ev_hdr_size() -> i64 { 24 }
+
+pub fn ev_data_addr(ev: i64) -> i64 { read_i64(ev) }
+pub fn ev_len(ev: i64) -> i64 { read_i64(ev + 8) }
+fn ev_cap(ev: i64) -> i64 { read_i64(ev + 16) }
+fn ev_set_data(ev: i64, addr: i64) { write_i64(ev, addr); }
+fn ev_set_len(ev: i64, len: i64) { write_i64(ev + 8, len); }
+fn ev_set_cap(ev: i64, cap: i64) { write_i64(ev + 16, cap); }
+
+fn ev_entry_addr(ev: i64, idx: i64) -> i64 {
+    ev_data_addr(ev) + idx * EV_ENTRY_SIZE()
+}
+
+pub fn ev_read_effect_id(ev: i64, idx: i64) -> i64 {
+    read_i64(ev_entry_addr(ev, idx))
+}
+
+pub fn ev_read_registry_index(ev: i64, idx: i64) -> i64 {
+    read_i64(ev_entry_addr(ev, idx) + 8)
+}
+
+pub fn ev_read_state_addr(ev: i64, idx: i64) -> i64 {
+    read_i64(ev_entry_addr(ev, idx) + 16)
+}
+
+fn ev_write_entry(ev: i64, idx: i64, effect_id: i64, reg_idx: i64, state_addr: i64) {
+    let base: i64 = ev_entry_addr(ev, idx);
+    write_i64(base, effect_id);
+    write_i64(base + 8, reg_idx);
+    write_i64(base + 16, state_addr);
+}
+
+fn ev_grow(ev: i64) {
+    @unsafe {
+        let old_cap: i64 = ev_cap(ev);
+        let new_cap: i64 = if old_cap == 0 { 8 } else { old_cap * 2 };
+        let new_data: *mut u8 = libc.sys_calloc(new_cap as u64, EV_ENTRY_SIZE() as u64);
+        let new_addr: i64 = alloc.ptr_to_addr(new_data);
+        if new_addr == 0 {
+            rt_panic.rt_panic("evidence: out of memory");
+        }
+        let old_addr: i64 = ev_data_addr(ev);
+        let len: i64 = ev_len(ev);
+        if len > 0 {
+            libc.sys_memmove(
+                alloc.addr_to_ptr(new_addr),
+                alloc.addr_to_cptr(old_addr),
+                (len * EV_ENTRY_SIZE()) as u64,
+            );
+        }
+        ev_set_data(ev, new_addr);
+        ev_set_cap(ev, new_cap);
+    }
+}
+
+pub fn ev_push(ev: i64, effect_id: i64, reg_idx: i64, state_addr: i64) {
+    let len: i64 = ev_len(ev);
+    if len >= ev_cap(ev) {
+        ev_grow(ev);
+    }
+    ev_write_entry(ev, len, effect_id, reg_idx, state_addr);
+    ev_set_len(ev, len + 1);
+}
+
+pub fn ev_pop(ev: i64) -> i64 {
+    let len: i64 = ev_len(ev);
+    if len <= 0 {
+        return 0;
+    }
+    let new_len: i64 = len - 1;
+    let reg_idx: i64 = ev_read_registry_index(ev, new_len);
+    ev_set_len(ev, new_len);
+    reg_idx
+}
+
+pub fn ev_remove(ev: i64, pos: i64) {
+    @unsafe {
+        let len: i64 = ev_len(ev);
+        if pos + 1 < len {
+            let src: i64 = ev_entry_addr(ev, pos + 1);
+            let dst: i64 = ev_entry_addr(ev, pos);
+            let bytes: i64 = (len - pos - 1) * EV_ENTRY_SIZE();
+            libc.sys_memmove(alloc.addr_to_ptr(dst), alloc.addr_to_cptr(src), bytes as u64);
+        }
+        ev_set_len(ev, len - 1);
+    }
+}
+
+pub fn ev_insert(ev: i64, pos: i64, effect_id: i64, reg_idx: i64, state_addr: i64) {
+    @unsafe {
+        let len: i64 = ev_len(ev);
+        if len >= ev_cap(ev) {
+            ev_grow(ev);
+        }
+        if pos < len {
+            let src: i64 = ev_entry_addr(ev, pos);
+            let dst: i64 = ev_entry_addr(ev, pos + 1);
+            let bytes: i64 = (len - pos) * EV_ENTRY_SIZE();
+            libc.sys_memmove(alloc.addr_to_ptr(dst), alloc.addr_to_cptr(src), bytes as u64);
+        }
+        ev_write_entry(ev, pos, effect_id, reg_idx, state_addr);
+        ev_set_len(ev, len + 1);
+    }
+}
+
+// ============================================================================
+// Effect Registry (global, growable array of EffectHandlerEntry)
+// ============================================================================
+
+fn ensure_registry() {
+    @unsafe {
+        if REG_DATA == 0 {
+            REG_CAP = 64;
+            let p: *mut u8 = libc.sys_calloc(64, REG_ENTRY_SIZE() as u64);
+            REG_DATA = alloc.ptr_to_addr(p);
+            if REG_DATA == 0 {
+                rt_panic.rt_panic("evidence: failed to init registry");
+            }
+        }
+    }
+}
+
+fn reg_entry_addr(idx: i64) -> i64 {
+    REG_DATA + idx * REG_ENTRY_SIZE()
+}
+
+fn reg_grow() {
+    @unsafe {
+        let new_cap: i64 = REG_CAP * 2;
+        let new_p: *mut u8 = libc.sys_calloc(new_cap as u64, REG_ENTRY_SIZE() as u64);
+        let new_addr: i64 = alloc.ptr_to_addr(new_p);
+        if new_addr == 0 {
+            rt_panic.rt_panic("evidence: failed to grow registry");
+        }
+        libc.sys_memmove(
+            alloc.addr_to_ptr(new_addr),
+            alloc.addr_to_cptr(REG_DATA),
+            (REG_LEN * REG_ENTRY_SIZE()) as u64,
+        );
+        REG_DATA = new_addr;
+        REG_CAP = new_cap;
+    }
+}
+
+pub fn reg_read_effect_id(idx: i64) -> i64 {
+    @unsafe { read_i64(reg_entry_addr(idx)) }
+}
+
+pub fn reg_read_ops_addr(idx: i64) -> i64 {
+    @unsafe { read_i64(reg_entry_addr(idx) + 8) }
+}
+
+pub fn reg_read_op_count(idx: i64) -> i64 {
+    @unsafe { read_i64(reg_entry_addr(idx) + 16) }
+}
+
+pub fn reg_read_is_deep(idx: i64) -> i64 {
+    @unsafe { read_i64(reg_entry_addr(idx) + 24) }
+}
+
+// Search registry from end (most recently registered first)
+pub fn reg_find_by_effect_id(effect_id: i64) -> i64 {
+    @unsafe {
+        let mut i: i64 = REG_LEN - 1;
+        while i >= 0 {
+            if reg_read_effect_id(i) == effect_id {
+                return i;
+            }
+            i = i - 1;
+        }
+        0 - 1
+    }
+}
+
+// Read a function pointer from ops array at index
+pub fn reg_read_op_fn_addr(reg_idx: i64, op_index: i64) -> i64 {
+    @unsafe {
+        let ops_addr: i64 = reg_read_ops_addr(reg_idx);
+        read_i64(ops_addr + op_index * 8)
+    }
+}
+
+// ============================================================================
+// Deep handler stack
+// ============================================================================
+
+fn ensure_deep_stack() {
+    @unsafe {
+        if DEEP_DATA == 0 {
+            DEEP_CAP = 16;
+            let p: *mut u8 = libc.sys_calloc(16, EV_ENTRY_SIZE() as u64);
+            DEEP_DATA = alloc.ptr_to_addr(p);
+            if DEEP_DATA == 0 {
+                rt_panic.rt_panic("evidence: failed to init deep stack");
+            }
+        }
+    }
+}
+
+pub fn deep_push(effect_id: i64, reg_idx: i64, state_addr: i64) {
+    @unsafe {
+        ensure_deep_stack();
+        if DEEP_LEN >= DEEP_CAP {
+            let new_cap: i64 = DEEP_CAP * 2;
+            let new_p: *mut u8 = libc.sys_calloc(new_cap as u64, EV_ENTRY_SIZE() as u64);
+            let new_addr: i64 = alloc.ptr_to_addr(new_p);
+            if new_addr == 0 {
+                rt_panic.rt_panic("evidence: failed to grow deep stack");
+            }
+            libc.sys_memmove(
+                alloc.addr_to_ptr(new_addr),
+                alloc.addr_to_cptr(DEEP_DATA),
+                (DEEP_LEN * EV_ENTRY_SIZE()) as u64,
+            );
+            DEEP_DATA = new_addr;
+            DEEP_CAP = new_cap;
+        }
+        let base: i64 = DEEP_DATA + DEEP_LEN * EV_ENTRY_SIZE();
+        write_i64(base, effect_id);
+        write_i64(base + 8, reg_idx);
+        write_i64(base + 16, state_addr);
+        DEEP_LEN = DEEP_LEN + 1;
+    }
+}
+
+pub fn deep_pop() {
+    @unsafe {
+        if DEEP_LEN > 0 {
+            DEEP_LEN = DEEP_LEN - 1;
+        }
+    }
+}
+
+// ============================================================================
+// Abort target stack (fixed-size, lazily allocated)
+// ============================================================================
+
+fn ensure_abort_stack() {
+    @unsafe {
+        if ABORT_DATA == 0 {
+            let p: *mut u8 = libc.sys_calloc(MAX_ABORT_DEPTH() as u64, ABORT_ENTRY_SIZE() as u64);
+            ABORT_DATA = alloc.ptr_to_addr(p);
+            if ABORT_DATA == 0 {
+                rt_panic.rt_panic("evidence: failed to init abort stack");
+            }
+        }
+    }
+}
+
+fn abort_entry_addr(depth: i64) -> i64 {
+    ABORT_DATA + depth * ABORT_ENTRY_SIZE()
+}
+
+// Called by blood_perform when handler doesn't resume — longjmp back to setjmp.
+// Does NOT decrement ABORT_DEPTH — codegen's pop_abort_target does that.
+pub fn handler_abort(result: i64) {
+    @unsafe {
+        if ABORT_DEPTH <= 0 {
+            rt_panic.rt_panic("handler_abort: no abort target");
+        }
+        let entry: i64 = abort_entry_addr(ABORT_DEPTH - 1);
+        // Store abort value
+        write_i64(entry + 8, result);
+        // Read jmpbuf address and longjmp
+        let jmpbuf_addr: i64 = read_i64(entry);
+        libc.sys_longjmp(alloc.addr_to_ptr(jmpbuf_addr), 1);
+    }
+}
+
+// ============================================================================
+// Exported functions — evidence API
+// ============================================================================
+
+#[export_name = "blood_evidence_create"]
+pub fn rt_evidence_create() -> *mut u8 {
+    @unsafe {
+        let p: *mut u8 = libc.sys_calloc(1, ev_hdr_size() as u64);
+        if alloc.ptr_to_addr(p) == 0 {
+            rt_panic.rt_panic("evidence_create: out of memory");
+        }
+        p
+    }
+}
+
+#[export_name = "blood_evidence_current"]
+pub fn rt_evidence_current() -> *mut u8 {
+    @unsafe { alloc.addr_to_ptr(CURRENT_EVIDENCE) }
+}
+
+#[export_name = "blood_evidence_set_current"]
+pub fn rt_evidence_set_current(ev: *mut u8) {
+    @unsafe { CURRENT_EVIDENCE = alloc.ptr_to_addr(ev); }
+}
+
+#[export_name = "blood_evidence_push_with_state"]
+pub fn rt_evidence_push_with_state(ev: *mut u8, effect_id: i64, state: *mut u8) {
+    @unsafe {
+        let ev_addr: i64 = alloc.ptr_to_addr(ev);
+        // Find handler in registry by effect_id (search from end)
+        let reg_idx: i64 = reg_find_by_effect_id(effect_id);
+        if reg_idx < 0 {
+            rt_panic.rt_panic("evidence_push: handler not registered for effect");
+        }
+        let state_addr: i64 = alloc.ptr_to_addr(state);
+        ev_push(ev_addr, effect_id, reg_idx, state_addr);
+    }
+}
+
+#[export_name = "blood_evidence_set_inline"]
+pub fn rt_evidence_set_inline(effect_id: i64) {
+    @unsafe { INLINE_EVIDENCE_ID = effect_id; }
+}
+
+#[export_name = "blood_evidence_clear_inline"]
+pub fn rt_evidence_clear_inline() {
+    @unsafe { INLINE_EVIDENCE_ID = 0; }
+}
+
+#[export_name = "blood_evidence_pop"]
+pub fn rt_evidence_pop(ev: *mut u8) -> i64 {
+    @unsafe {
+        ev_pop(alloc.ptr_to_addr(ev))
+    }
+}
+
+#[export_name = "blood_evidence_destroy"]
+pub fn rt_evidence_destroy(ev: *mut u8) {
+    // Free the data array and the header
+    // (In practice, selfhost never calls this — lazy singleton pattern)
+    @unsafe {
+        let ev_addr: i64 = alloc.ptr_to_addr(ev);
+        if ev_addr != 0 {
+            // Leak data array (same approach as alloc.blood — no reentrant-safe free)
+            // Leak header too
+        }
+    }
+}
+
+#[export_name = "blood_evidence_register"]
+pub fn rt_evidence_register(ev: *mut u8, effect_id: i64, ops: *mut u8, op_count: i64, is_deep: i64) -> i64 {
+    @unsafe {
+        ensure_registry();
+        if REG_LEN >= REG_CAP {
+            reg_grow();
+        }
+
+        // Copy ops array (source is stack alloca in __blood_register_handlers)
+        let ops_src: i64 = alloc.ptr_to_addr(ops);
+        let ops_bytes: i64 = op_count * 8;
+        let ops_copy: *mut u8 = libc.sys_calloc(1, ops_bytes as u64);
+        let ops_copy_addr: i64 = alloc.ptr_to_addr(ops_copy);
+        if ops_copy_addr == 0 {
+            rt_panic.rt_panic("evidence_register: failed to copy ops");
+        }
+        libc.sys_memmove(ops_copy, ops as *const u8, ops_bytes as u64);
+
+        // Write registry entry
+        let entry: i64 = reg_entry_addr(REG_LEN);
+        write_i64(entry, effect_id);
+        write_i64(entry + 8, ops_copy_addr);
+        write_i64(entry + 16, op_count);
+        write_i64(entry + 24, is_deep);
+
+        let idx: i64 = REG_LEN;
+        REG_LEN = REG_LEN + 1;
+        idx
+    }
+}
+
+// ============================================================================
+// Exported functions — WAS_RESUMED
+// ============================================================================
+
+#[export_name = "blood_set_was_resumed"]
+pub fn rt_set_was_resumed() {
+    @unsafe { WAS_RESUMED = 1; }
+}
+
+pub fn get_was_resumed() -> i32 {
+    @unsafe { WAS_RESUMED }
+}
+
+pub fn set_was_resumed_val(val: i32) {
+    @unsafe { WAS_RESUMED = val; }
+}
+
+// ============================================================================
+// Exported functions — abort target stack
+// ============================================================================
+
+#[export_name = "blood_handler_push_abort_target"]
+pub fn rt_handler_push_abort_target(target: *mut u8) {
+    @unsafe {
+        ensure_abort_stack();
+        if ABORT_DEPTH >= MAX_ABORT_DEPTH() {
+            rt_panic.rt_panic("handler abort stack overflow");
+        }
+        let entry: i64 = abort_entry_addr(ABORT_DEPTH);
+        write_i64(entry, alloc.ptr_to_addr(target));  // jmpbuf address
+        write_i64(entry + 8, 0);  // abort value (set later by handler_abort)
+        ABORT_DEPTH = ABORT_DEPTH + 1;
+    }
+}
+
+#[export_name = "blood_handler_pop_abort_target"]
+pub fn rt_handler_pop_abort_target() {
+    @unsafe {
+        if ABORT_DEPTH > 0 {
+            ABORT_DEPTH = ABORT_DEPTH - 1;
+        }
+    }
+}
+
+#[export_name = "blood_handler_get_abort_value"]
+pub fn rt_handler_get_abort_value() -> i64 {
+    @unsafe {
+        // handler_abort wrote the value to entry[ABORT_DEPTH - 1] and longjmped.
+        // ABORT_DEPTH was not decremented. Read from the same entry.
+        if ABORT_DEPTH <= 0 {
+            return 0;
+        }
+        let entry: i64 = abort_entry_addr(ABORT_DEPTH - 1);
+        read_i64(entry + 8)
+    }
+}
+
+// ============================================================================
+// Access to globals for cross-module use
+// ============================================================================
+
+pub fn get_current_evidence_addr() -> i64 {
+    @unsafe { CURRENT_EVIDENCE }
+}
+
+pub fn get_inline_evidence_id() -> i64 {
+    @unsafe { INLINE_EVIDENCE_ID }
+}
+
+pub fn get_abort_depth() -> i64 {
+    @unsafe { ABORT_DEPTH }
+}

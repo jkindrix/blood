@@ -1,0 +1,242 @@
+// Layer 2: Effect Dispatch
+//
+// blood_perform — core dispatch: finds handler in evidence, calls handler op.
+// Snapshot validation — create/add/validate/destroy for stale reference checking.
+// Effect context — snapshot save/restore for nested performs.
+//
+// Depends on: rt_evidence (Layer 1)
+
+mod libc;
+mod print;
+mod rt_panic;
+mod alloc;
+mod rt_evidence;
+
+// Bridge for indirect function calls (can't call fn ptrs from Blood source).
+// build_runtime.py strips this declare and injects the LLVM IR implementation.
+bridge "C" IndirectCall {
+    fn call_handler_op(fn_ptr: *const u8, state: *mut u8, args: *mut u8, arg_count: i64, cont: i64) -> i64;
+}
+
+// ============================================================================
+// Global state
+// ============================================================================
+
+static mut EFFECT_CONTEXT_SNAPSHOT: i64 = 0;  // address of current snapshot (or 0)
+
+// ============================================================================
+// Snapshot data structure
+//
+// Snapshot: { data_addr: i64, len: i64, cap: i64 }  (24 bytes header)
+// SnapshotEntry: { address: i64, generation: i32, pad: i32 }  (16 bytes)
+//
+// Selfhost creates snapshots but never adds entries — they're always empty.
+// blood_snapshot_validate returns 0 (all valid) for empty snapshots.
+// Implemented as real growable array for correctness.
+// ============================================================================
+
+fn SNAP_HDR_SIZE() -> i64 { 24 }
+fn SNAP_ENTRY_SIZE() -> i64 { 16 }
+
+fn snap_data_addr(snap: i64) -> i64 { rt_evidence.read_i64(snap) }
+fn snap_len(snap: i64) -> i64 { rt_evidence.read_i64(snap + 8) }
+fn snap_cap(snap: i64) -> i64 { rt_evidence.read_i64(snap + 16) }
+fn snap_set_data(snap: i64, v: i64) { rt_evidence.write_i64(snap, v); }
+fn snap_set_len(snap: i64, v: i64) { rt_evidence.write_i64(snap + 8, v); }
+fn snap_set_cap(snap: i64, v: i64) { rt_evidence.write_i64(snap + 16, v); }
+
+// ============================================================================
+// blood_perform — core effect dispatch
+// ============================================================================
+
+#[export_name = "blood_perform"]
+pub fn rt_perform(effect_id: i64, op_index: i32, args: *mut u8, arg_count: i64, continuation: i64) -> i64 {
+    @unsafe {
+        let ev: i64 = rt_evidence.get_current_evidence_addr();
+        if ev == 0 {
+            rt_panic.rt_panic("perform: no evidence vector (no handler in scope)");
+        }
+
+        let mut pos: i64 = 0 - 1;
+
+        // FAST PATH: inline evidence hint — only valid when last entry matches
+        if rt_evidence.get_inline_evidence_id() == effect_id {
+            let len: i64 = rt_evidence.ev_len(ev);
+            if len > 0 {
+                let last: i64 = len - 1;
+                if rt_evidence.ev_read_effect_id(ev, last) == effect_id {
+                    pos = last;
+                }
+            }
+        }
+
+        // SLOW PATH: reverse linear search
+        if pos < 0 {
+            let len: i64 = rt_evidence.ev_len(ev);
+            let mut i: i64 = len - 1;
+            while i >= 0 {
+                if rt_evidence.ev_read_effect_id(ev, i) == effect_id {
+                    pos = i;
+                    i = 0 - 1; // break
+                }
+                i = i - 1;
+            }
+        }
+
+        if pos < 0 {
+            rt_panic.rt_panic("perform: unhandled effect");
+        }
+
+        // Read handler info from evidence entry + registry
+        let saved_effect_id: i64 = rt_evidence.ev_read_effect_id(ev, pos);
+        let reg_idx: i64 = rt_evidence.ev_read_registry_index(ev, pos);
+        let saved_state_addr: i64 = rt_evidence.ev_read_state_addr(ev, pos);
+        let is_deep: i64 = rt_evidence.reg_read_is_deep(reg_idx);
+
+        // Get function pointer: ops_ptr[op_index]
+        let op_index_i64: i64 = op_index as i64;
+        let fn_addr: i64 = rt_evidence.reg_read_op_fn_addr(reg_idx, op_index_i64);
+        let fn_ptr: *const u8 = alloc.addr_to_cptr(fn_addr);
+
+        // DELIMITED CONTINUATION: remove handler from evidence
+        rt_evidence.ev_remove(ev, pos);
+
+        if is_deep != 0 {
+            rt_evidence.deep_push(saved_effect_id, reg_idx, saved_state_addr);
+        }
+
+        // NON-TAIL-RESUMPTIVE TRACKING
+        if continuation != 0 {
+            rt_evidence.set_was_resumed_val(0);
+        }
+
+        // INVOKE HANDLER via indirect call
+        let state_ptr: *mut u8 = alloc.addr_to_ptr(saved_state_addr);
+        let result: i64 = IndirectCall.call_handler_op(fn_ptr, state_ptr, args, arg_count, continuation);
+
+        // RESTORE HANDLER
+        if is_deep != 0 {
+            rt_evidence.deep_pop();
+        }
+        rt_evidence.ev_insert(ev, pos, saved_effect_id, reg_idx, saved_state_addr);
+
+        // ABORT IF NOT RESUMED
+        if continuation != 0 {
+            if rt_evidence.get_was_resumed() == 0 {
+                if rt_evidence.get_abort_depth() > 0 {
+                    rt_evidence.handler_abort(result);
+                    // handler_abort calls longjmp — never returns
+                }
+            }
+        }
+
+        result
+    }
+}
+
+// ============================================================================
+// Snapshot API
+// ============================================================================
+
+#[export_name = "blood_snapshot_create"]
+pub fn rt_snapshot_create() -> *mut u8 {
+    @unsafe {
+        let p: *mut u8 = libc.sys_calloc(1, SNAP_HDR_SIZE() as u64);
+        if alloc.ptr_to_addr(p) == 0 {
+            rt_panic.rt_panic("snapshot_create: out of memory");
+        }
+        p
+    }
+}
+
+#[export_name = "blood_snapshot_add_entry"]
+pub fn rt_snapshot_add_entry(snap: *mut u8, addr: i64, generation: i32) {
+    @unsafe {
+        let s: i64 = alloc.ptr_to_addr(snap);
+        if s == 0 { return; }
+
+        let len: i64 = snap_len(s);
+        let cap: i64 = snap_cap(s);
+        if len >= cap {
+            let new_cap: i64 = if cap == 0 { 8 } else { cap * 2 };
+            let new_p: *mut u8 = libc.sys_calloc(new_cap as u64, SNAP_ENTRY_SIZE() as u64);
+            let new_addr: i64 = alloc.ptr_to_addr(new_p);
+            if new_addr == 0 {
+                rt_panic.rt_panic("snapshot_add_entry: out of memory");
+            }
+            let old_addr: i64 = snap_data_addr(s);
+            if len > 0 {
+                libc.sys_memmove(
+                    alloc.addr_to_ptr(new_addr),
+                    alloc.addr_to_cptr(old_addr),
+                    (len * SNAP_ENTRY_SIZE()) as u64,
+                );
+            }
+            snap_set_data(s, new_addr);
+            snap_set_cap(s, new_cap);
+        }
+        let entry: i64 = snap_data_addr(s) + len * SNAP_ENTRY_SIZE();
+        rt_evidence.write_i64(entry, addr);
+        rt_evidence.write_i32(entry + 8, generation);
+        snap_set_len(s, len + 1);
+    }
+}
+
+#[export_name = "blood_snapshot_validate"]
+pub fn rt_snapshot_validate(snap: *mut u8) -> i64 {
+    @unsafe {
+        let s: i64 = alloc.ptr_to_addr(snap);
+        if s == 0 { return 0; }
+
+        let len: i64 = snap_len(s);
+        if len == 0 { return 0; } // empty snapshot = all valid
+
+        let mut i: i64 = 0;
+        while i < len {
+            let entry: i64 = snap_data_addr(s) + i * SNAP_ENTRY_SIZE();
+            let addr: i64 = rt_evidence.read_i64(entry);
+            let expected_gen: i32 = rt_evidence.read_i32(entry + 8);
+            let valid: i32 = alloc.rt_blood_validate_generation(addr, expected_gen);
+            if valid == 0 {
+                return i + 1; // return 1-based index of first stale entry
+            }
+            i = i + 1;
+        }
+        0 // all valid
+    }
+}
+
+#[export_name = "blood_snapshot_destroy"]
+pub fn rt_snapshot_destroy(snap: *mut u8) {
+    // Leak snapshot memory (same approach as other runtime structures)
+}
+
+#[export_name = "blood_snapshot_stale_panic"]
+pub fn rt_snapshot_stale_panic(snap: *mut u8, idx: i64) {
+    print.eprint_str("panic: stale reference detected during effect dispatch (snapshot entry ");
+    // Print index as decimal
+    libc.sys_abort();
+}
+
+// ============================================================================
+// Effect Context — snapshot save/restore for nested performs
+// ============================================================================
+
+#[export_name = "blood_effect_context_get_snapshot"]
+pub fn rt_effect_context_get_snapshot() -> *mut u8 {
+    @unsafe { alloc.addr_to_ptr(EFFECT_CONTEXT_SNAPSHOT) }
+}
+
+#[export_name = "blood_effect_context_set_snapshot"]
+pub fn rt_effect_context_set_snapshot(snap: *mut u8) {
+    @unsafe { EFFECT_CONTEXT_SNAPSHOT = alloc.ptr_to_addr(snap); }
+}
+
+#[export_name = "blood_effect_context_take_snapshot"]
+pub fn rt_effect_context_take_snapshot() -> *mut u8 {
+    @unsafe {
+        let snap: i64 = EFFECT_CONTEXT_SNAPSHOT;
+        EFFECT_CONTEXT_SNAPSHOT = 0;
+        alloc.addr_to_ptr(snap)
+    }
+}
