@@ -560,10 +560,15 @@ do_test_golden() {
 do_test_golden_blood() {
     # Run golden tests with test binaries linked against the Blood runtime
     # (instead of the Rust runtime). This validates Stage 2 runtime independence.
+    # Uses separate cache to avoid false passes from Rust-runtime cached results.
     local blood_rt="$REPO_ROOT/runtime/blood-runtime/build/debug/libblood_runtime_blood.a"
     [ -f "$blood_rt" ] || die "Blood runtime not found. Run: ./build_selfhost.sh build blood_runtime"
     step "Running golden tests linked against Blood runtime"
+    local saved_build_dir="$BUILD_DIR"
+    BUILD_DIR="$BUILD_DIR/blood-rt"
+    mkdir -p "$BUILD_DIR"
     BLOOD_RUST_RUNTIME="$blood_rt" do_test_golden "$@"
+    BUILD_DIR="$saved_build_dir"
 }
 
 do_test_dispatch() {
