@@ -49,6 +49,15 @@ def process_ir(input_path, output_path):
         'file_delete',
         # Thread spawn/join
         'blood_thread_spawn', 'blood_thread_join',
+        # Fiber/scheduler builtins
+        '__builtin_fiber_spawn', '__builtin_fiber_spawn_with',
+        '__builtin_fiber_join', '__builtin_fiber_current',
+        '__builtin_fiber_yield', '__builtin_fiber_sleep',
+        '__builtin_fiber_park', '__builtin_fiber_unpark',
+        '__builtin_fiber_is_finished', '__builtin_fiber_cancel',
+        '__builtin_fiber_race',
+        '__builtin_scheduler_init', '__builtin_scheduler_shutdown',
+        '__builtin_safepoint_request',
     }
 
     # Step 4: Strip conflicting declares, builtin declares, and unwanted defines
@@ -412,6 +421,129 @@ def process_ir(input_path, output_path):
     impl_lines.append('  %result = ptrtoint ptr %ret_ptr to i64\n')
     impl_lines.append('  ret i64 %result\n')
     impl_lines.append('}\n')
+
+    # --- Fiber/scheduler builtins ---
+    # Fiber state: global arrays indexed by fiber_id - 1 (max 256 fibers)
+    impl_lines.append('@FIBER_HANDLES = global [256 x i64] zeroinitializer\n')
+    impl_lines.append('@FIBER_RESULTS = global [256 x i64] zeroinitializer\n')
+    impl_lines.append('@FIBER_FINISHED = global [256 x i8] zeroinitializer\n')
+    impl_lines.append('@FIBER_NEXT_ID = global i64 1\n')
+
+    # Fiber entry trampoline: calls fn() -> u64 (no args, closure ABI: ptr env ignored)
+    impl_lines.append('define ptr @fiber_entry_trampoline(ptr %packed) {\n')
+    impl_lines.append('  %fn_addr = load i64, ptr %packed\n')
+    impl_lines.append('  %fiber_id_ptr = getelementptr i64, ptr %packed, i64 1\n')
+    impl_lines.append('  %fiber_id = load i64, ptr %fiber_id_ptr\n')
+    impl_lines.append('  %func = inttoptr i64 %fn_addr to ptr\n')
+    impl_lines.append('  %result = call i64 %func(ptr null)\n')
+    impl_lines.append('  ; Store result and mark finished\n')
+    impl_lines.append('  %idx = sub i64 %fiber_id, 1\n')
+    impl_lines.append('  %res_slot = getelementptr [256 x i64], ptr @FIBER_RESULTS, i64 0, i64 %idx\n')
+    impl_lines.append('  store i64 %result, ptr %res_slot\n')
+    impl_lines.append('  %fin_slot = getelementptr [256 x i8], ptr @FIBER_FINISHED, i64 0, i64 %idx\n')
+    impl_lines.append('  store i8 1, ptr %fin_slot\n')
+    impl_lines.append('  ret ptr null\n')
+    impl_lines.append('}\n')
+
+    # __builtin_fiber_spawn(fn_ptr: i64) -> i64 (fiber_id)
+    impl_lines.append('define i64 @__builtin_fiber_spawn(i64 %fn_ptr) {\n')
+    impl_lines.append('  %id = load i64, ptr @FIBER_NEXT_ID\n')
+    impl_lines.append('  %next = add i64 %id, 1\n')
+    impl_lines.append('  store i64 %next, ptr @FIBER_NEXT_ID\n')
+    impl_lines.append('  ; Pack {fn_ptr, fiber_id} for trampoline\n')
+    impl_lines.append('  %packed = call ptr @calloc(i64 16, i64 1)\n')
+    impl_lines.append('  store i64 %fn_ptr, ptr %packed\n')
+    impl_lines.append('  %id_slot = getelementptr i64, ptr %packed, i64 1\n')
+    impl_lines.append('  store i64 %id, ptr %id_slot\n')
+    impl_lines.append('  ; Store pthread handle\n')
+    impl_lines.append('  %idx = sub i64 %id, 1\n')
+    impl_lines.append('  %handle_slot = getelementptr [256 x i64], ptr @FIBER_HANDLES, i64 0, i64 %idx\n')
+    impl_lines.append('  call i32 @pthread_create(ptr %handle_slot, ptr null, ptr @fiber_entry_trampoline, ptr %packed)\n')
+    impl_lines.append('  ret i64 %id\n')
+    impl_lines.append('}\n')
+
+    # __builtin_fiber_spawn_with(fn_ptr: i64, config: i64) -> i64
+    impl_lines.append('define i64 @__builtin_fiber_spawn_with(i64 %fn_ptr, i64 %config) {\n')
+    impl_lines.append('  %r = call i64 @__builtin_fiber_spawn(i64 %fn_ptr)\n')
+    impl_lines.append('  ret i64 %r\n')
+    impl_lines.append('}\n')
+
+    # __builtin_fiber_join(fiber_id: i64) -> i64
+    impl_lines.append('define i64 @__builtin_fiber_join(i64 %id) {\n')
+    impl_lines.append('  %idx = sub i64 %id, 1\n')
+    impl_lines.append('  %handle_slot = getelementptr [256 x i64], ptr @FIBER_HANDLES, i64 0, i64 %idx\n')
+    impl_lines.append('  %handle = load i64, ptr %handle_slot\n')
+    impl_lines.append('  %retval = alloca ptr\n')
+    impl_lines.append('  call i32 @pthread_join(i64 %handle, ptr %retval)\n')
+    impl_lines.append('  %res_slot = getelementptr [256 x i64], ptr @FIBER_RESULTS, i64 0, i64 %idx\n')
+    impl_lines.append('  %result = load i64, ptr %res_slot\n')
+    impl_lines.append('  ret i64 %result\n')
+    impl_lines.append('}\n')
+
+    # __builtin_fiber_current() -> i64 : return 0 (no fiber-local context tracking)
+    impl_lines.append('define i64 @__builtin_fiber_current() {\n  ret i64 0\n}\n')
+
+    # __builtin_fiber_yield() -> void : sched_yield
+    impl_lines.append('define void @__builtin_fiber_yield() {\n')
+    impl_lines.append('  call i32 @sched_yield()\n')
+    impl_lines.append('  ret void\n')
+    impl_lines.append('}\n')
+
+    # __builtin_fiber_sleep(nanos: i64) -> void : nanosleep
+    impl_lines.append('define void @__builtin_fiber_sleep(i64 %nanos) {\n')
+    impl_lines.append('  %ts = alloca [16 x i8]\n')
+    impl_lines.append('  %sec = udiv i64 %nanos, 1000000000\n')
+    impl_lines.append('  %nsec = urem i64 %nanos, 1000000000\n')
+    impl_lines.append('  store i64 %sec, ptr %ts\n')
+    impl_lines.append('  %nsec_ptr = getelementptr i64, ptr %ts, i64 1\n')
+    impl_lines.append('  store i64 %nsec, ptr %nsec_ptr\n')
+    impl_lines.append('  call i32 @nanosleep(ptr %ts, ptr null)\n')
+    impl_lines.append('  ret void\n')
+    impl_lines.append('}\n')
+
+    # Remaining fiber builtins — no-op stubs for link compatibility
+    impl_lines.append('define void @__builtin_fiber_park() {\n  call i32 @sched_yield()\n  ret void\n}\n')
+    impl_lines.append('define void @__builtin_fiber_unpark(i64 %id) {\n  ret void\n}\n')
+    impl_lines.append('define i1 @__builtin_fiber_is_finished(i64 %id) {\n')
+    impl_lines.append('  %idx = sub i64 %id, 1\n')
+    impl_lines.append('  %slot = getelementptr [256 x i8], ptr @FIBER_FINISHED, i64 0, i64 %idx\n')
+    impl_lines.append('  %v = load i8, ptr %slot\n')
+    impl_lines.append('  %r = icmp ne i8 %v, 0\n')
+    impl_lines.append('  ret i1 %r\n')
+    impl_lines.append('}\n')
+    impl_lines.append('define void @__builtin_fiber_cancel(i64 %id) {\n  ret void\n}\n')
+    impl_lines.append('define i64 @__builtin_fiber_race(i64 %a, i64 %b) {\n  ret i64 %a\n}\n')
+
+    # __builtin_scheduler_init(config: i64) -> void : no-op
+    impl_lines.append('define void @__builtin_scheduler_init(i64 %config) {\n  ret void\n}\n')
+
+    # __builtin_scheduler_shutdown() -> void : join all remaining fibers
+    impl_lines.append('define void @__builtin_scheduler_shutdown() {\n')
+    impl_lines.append('  %max_id = load i64, ptr @FIBER_NEXT_ID\n')
+    impl_lines.append('  %has_fibers = icmp ugt i64 %max_id, 1\n')
+    impl_lines.append('  br i1 %has_fibers, label %loop, label %done\n')
+    impl_lines.append('loop:\n')
+    impl_lines.append('  %i = phi i64 [0, %0], [%next_i, %loop_cont]\n')
+    impl_lines.append('  %slot = getelementptr [256 x i64], ptr @FIBER_HANDLES, i64 0, i64 %i\n')
+    impl_lines.append('  %handle = load i64, ptr %slot\n')
+    impl_lines.append('  %is_zero = icmp eq i64 %handle, 0\n')
+    impl_lines.append('  br i1 %is_zero, label %loop_cont, label %join\n')
+    impl_lines.append('join:\n')
+    impl_lines.append('  %retval = alloca ptr\n')
+    impl_lines.append('  call i32 @pthread_join(i64 %handle, ptr %retval)\n')
+    impl_lines.append('  store i64 0, ptr %slot\n')
+    impl_lines.append('  br label %loop_cont\n')
+    impl_lines.append('loop_cont:\n')
+    impl_lines.append('  %next_i = add i64 %i, 1\n')
+    impl_lines.append('  %limit = sub i64 %max_id, 1\n')
+    impl_lines.append('  %cond = icmp ult i64 %next_i, %limit\n')
+    impl_lines.append('  br i1 %cond, label %loop, label %done\n')
+    impl_lines.append('done:\n')
+    impl_lines.append('  ret void\n')
+    impl_lines.append('}\n')
+
+    # __builtin_safepoint_request() -> void : no-op (no preemption in Blood runtime)
+    impl_lines.append('define void @__builtin_safepoint_request() {\n  ret void\n}\n')
 
     # env_get({ptr, i64}) -> {ptr, i64} : get environment variable
     # Extract name, null-terminate, call getenv, return as &str
