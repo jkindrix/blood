@@ -324,13 +324,37 @@ pub fn emit_rvalue(
             ctx.write(" = insertvalue { ptr, i32 } zeroinitializer, ptr ");
             ctx.write(addr.as_str());
             ctx.write(", 0\n");
-            // %tmp2 = insertvalue { ptr, i32 } %tmp1, i32 0, 1
+            // Determine generation: only use real gen for direct &local (no projections
+            // before the ref). If the place has projections (like &(*self).field),
+            // the deref was already gen-checked — use gen=0 for the derived ref.
+            let has_deref_projection = place.projection.len() > 0;
             let tmp2 = ctx.fresh_temp_cg();
-            ctx.write("  ");
-            ctx.write_cgname(&tmp2);
-            ctx.write(" = insertvalue { ptr, i32 } ");
-            ctx.write_cgname(&tmp1);
-            ctx.write(", i32 0, 1\n");
+            match if has_deref_projection { Option.None } else { ctx.get_heap_gen_name(place.local) } {
+                Option.Some(gen_name) => {
+                    // Load generation from the _gen alloca
+                    let gen_tmp = ctx.fresh_temp_cg();
+                    ctx.write("  ");
+                    ctx.write_cgname(&gen_tmp);
+                    ctx.write(" = load i32, ptr ");
+                    ctx.write(gen_name.as_str());
+                    ctx.write("\n");
+                    ctx.write("  ");
+                    ctx.write_cgname(&tmp2);
+                    ctx.write(" = insertvalue { ptr, i32 } ");
+                    ctx.write_cgname(&tmp1);
+                    ctx.write(", i32 ");
+                    ctx.write_cgname(&gen_tmp);
+                    ctx.write(", 1\n");
+                }
+                Option.None => {
+                    // Stack-allocated: gen=0 sentinel
+                    ctx.write("  ");
+                    ctx.write_cgname(&tmp2);
+                    ctx.write(" = insertvalue { ptr, i32 } ");
+                    ctx.write_cgname(&tmp1);
+                    ctx.write(", i32 0, 1\n");
+                }
+            };
             // store { ptr, i32 } %tmp2, ptr %dest
             ctx.emit_store_cg("{ ptr, i32 }", &tmp2, dest);
         }

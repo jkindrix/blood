@@ -681,7 +681,7 @@ pub fn emit_place_addr(
                 let is_gen_ref = string_eq_str(ref_llvm_ty.as_str(), "{ ptr, i32 }");
                 let result = ctx.fresh_temp_cg();
                 if is_gen_ref {
-                    // Gen ref: load { ptr, i32 }, then extract field 0 (data pointer)
+                    // Gen ref: load { ptr, i32 }, extract ptr (field 0) and gen (field 1)
                     let fat_ref = ctx.fresh_temp_cg();
                     ctx.emit_load_cg2(&fat_ref, "{ ptr, i32 }", &current);
                     ctx.write("  ");
@@ -689,11 +689,56 @@ pub fn emit_place_addr(
                     ctx.write(" = extractvalue { ptr, i32 } ");
                     ctx.write_cgname(&fat_ref);
                     ctx.write(", 0\n");
+                    // Extract generation for validation
+                    let gen_val = ctx.fresh_temp_cg();
+                    ctx.write("  ");
+                    ctx.write_cgname(&gen_val);
+                    ctx.write(" = extractvalue { ptr, i32 } ");
+                    ctx.write_cgname(&fat_ref);
+                    ctx.write(", 1\n");
+                    // gen == 0 means stack-tier ref — skip validation
+                    let is_zero = ctx.fresh_temp_cg();
+                    ctx.emit_icmp_cg2(&is_zero, "eq", "i32", &gen_val, "0");
+                    let skip_lbl = ctx.fresh_label_cg();
+                    let check_lbl = ctx.fresh_label_cg();
+                    ctx.emit_cond_br_cg(&is_zero, &skip_lbl, &check_lbl);
+                    // gen_check: validate generation via registry
+                    ctx.emit_label_cg(&check_lbl);
+                    let addr_i64 = ctx.fresh_temp_cg();
+                    ctx.write("  ");
+                    ctx.write_cgname(&addr_i64);
+                    ctx.write(" = ptrtoint ptr ");
+                    ctx.write_cgname(&result);
+                    ctx.write(" to i64\n");
+                    let valid = ctx.fresh_temp_cg();
+                    ctx.begin_call(Option.Some(&valid), "i32", "@blood_validate_generation");
+                    ctx.call_arg_cg(true, "i64", &addr_i64);
+                    ctx.call_arg_cg(false, "i32", &gen_val);
+                    ctx.end_call();
+                    let is_valid = ctx.fresh_temp_cg();
+                    ctx.emit_icmp_cg2(&is_valid, "ne", "i32", &valid, "0");
+                    let ok_lbl = ctx.fresh_label_cg();
+                    let stale_lbl = ctx.fresh_label_cg();
+                    ctx.emit_cond_br_cg(&is_valid, &ok_lbl, &stale_lbl);
+                    // stale: panic with expected vs actual generation
+                    ctx.emit_label_cg(&stale_lbl);
+                    let actual_gen = ctx.fresh_temp_cg();
+                    ctx.begin_call(Option.Some(&actual_gen), "i32", "@blood_get_generation");
+                    ctx.call_arg_cg(true, "i64", &addr_i64);
+                    ctx.end_call();
+                    ctx.begin_call(Option.None, "void", "@blood_stale_reference_panic");
+                    ctx.call_arg_cg(true, "i32", &gen_val);
+                    ctx.call_arg_cg(false, "i32", &actual_gen);
+                    ctx.end_call();
+                    ctx.write("  unreachable\n");
+                    // ok → skip: merge and continue
+                    ctx.emit_label_cg(&ok_lbl);
+                    ctx.emit_br_cg(&skip_lbl);
+                    ctx.emit_label_cg(&skip_lbl);
                 } else {
                     // Thin pointer or unsized fat pointer: load as ptr
                     ctx.emit_load_cg2(&result, "ptr", &current);
                 }
-                // V1 [ptr-8] gen check removed — fat refs carry gen in { ptr, i32 }.
                 current = result;
                 downcast_variant = Option.None;
                 // Track HIR type through deref

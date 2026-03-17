@@ -233,15 +233,17 @@ pub fn rt_blood_register_allocation(addr: i64, size: i64) -> i32 {
     }
 }
 
-// Unregister (tombstone the slot, set generation to 0)
+// Invalidate an allocation by incrementing its generation.
+// The entry stays in the registry (no tombstone) so that stale references
+// holding the old generation will fail validation. This means the registry
+// grows monotonically — acceptable for a compiler that runs once and exits.
 #[export_name = "blood_unregister_allocation"]
 pub fn rt_blood_unregister_allocation(addr: i64) {
     @unsafe {
         let idx: i64 = ht_find(addr);
         if idx >= 0 {
-            ht_write_addr(idx, 1); // tombstone
-            ht_write_gen(idx, 0);
-            HT_LIVE = HT_LIVE - 1;
+            let g: i32 = ht_read_gen(idx);
+            ht_write_gen(idx, g + 1);
         }
     }
 }
@@ -256,7 +258,11 @@ pub fn rt_blood_validate_generation(addr: i64, expected: i32) -> i32 {
             if actual == expected { return 1; }
             return 0;
         }
-        // Not in registry — stack or region allocated, assume valid
+        // Not in registry — either a stack allocation (never registered)
+        // or a field reference within a registered allocation (base+offset
+        // doesn't match the base address in the registry). Both are valid.
+        // Freed allocations stay in the registry with incremented gen,
+        // so they ARE found and correctly detected as stale.
         1
     }
 }
@@ -393,6 +399,9 @@ pub fn rt_blood_persistent_alloc(size: i64, align: i64, type_fp: i32, out_id: *m
         }
         *out_id = NEXT_PERSISTENT_SLOT;
         NEXT_PERSISTENT_SLOT = NEXT_PERSISTENT_SLOT + 1;
+        // Register in gen registry so gen checks work for persistent locals
+        let addr: i64 = ptr_to_addr(ptr);
+        rt_blood_register_allocation(addr, size);
         ptr
     }
 }

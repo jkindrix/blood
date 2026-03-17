@@ -450,8 +450,12 @@ struct LocalName {
 }
 
 /// Tracks a local that was allocated via a region allocator.
+/// The gen_name is the LLVM alloca holding the i32 generation returned by
+/// blood_alloc_or_abort's out-parameter. Used at `&x` sites to capture the
+/// generation into the fat reference's field 1.
 struct RegionLocalEntry {
     local_id: u32,
+    gen_name: String,
 }
 
 /// Tracks a local that was allocated via persistent (ref-counted) allocation.
@@ -461,6 +465,7 @@ struct RegionLocalEntry {
 struct PersistentLocalEntry {
     local_id: u32,
     slot_id_name: String,
+    gen_name: String,
 }
 
 /// Mapping from a DefId to its global name (for functions, consts, statics).
@@ -1621,21 +1626,40 @@ impl CodegenCtx {
     }
 
     /// Marks a local as region-allocated (will be unregistered on StorageDead).
-    pub fn mark_region_allocated(self: &mut CodegenCtx, local: mir_def.MirLocalId) {
-        self.region_locals.push(RegionLocalEntry { local_id: local.index });
-        self.region_locals_hash.insert(local.index as u64, 1);
+    /// gen_name is the LLVM alloca holding the i32 generation from blood_alloc_or_abort.
+    pub fn mark_region_allocated(self: &mut CodegenCtx, local: mir_def.MirLocalId, gen_name: String) {
+        let idx = self.region_locals.len() as u32;
+        self.region_locals.push(RegionLocalEntry { local_id: local.index, gen_name: gen_name });
+        self.region_locals_hash.insert(local.index as u64, idx);
     }
 
     /// Marks a local as persistent-allocated (will be decremented on StorageDead).
-    /// The slot_id_name is the LLVM alloca that holds the i64 slot ID.
-    pub fn mark_persistent_allocated(self: &mut CodegenCtx, local: mir_def.MirLocalId, slot_id_name: String) {
-        self.persistent_locals.push(PersistentLocalEntry { local_id: local.index, slot_id_name: slot_id_name });
-        self.persistent_locals_hash.insert(local.index as u64, self.persistent_locals.len() as u32);
+    pub fn mark_persistent_allocated(self: &mut CodegenCtx, local: mir_def.MirLocalId, slot_id_name: String, gen_name: String) {
+        let idx = self.persistent_locals.len() as u32;
+        self.persistent_locals.push(PersistentLocalEntry { local_id: local.index, slot_id_name: slot_id_name, gen_name: gen_name });
+        self.persistent_locals_hash.insert(local.index as u64, idx);
     }
 
     /// Returns true if a local is region-allocated.
     pub fn is_region_allocated(self: &CodegenCtx, local: mir_def.MirLocalId) -> bool {
         self.region_locals_hash.contains_key(local.index as u64)
+    }
+
+    /// Returns the gen alloca name for a heap-allocated local (region or persistent),
+    /// or None if the local is stack-allocated.
+    pub fn get_heap_gen_name(self: &CodegenCtx, local: mir_def.MirLocalId) -> Option<&String> {
+        match self.region_locals_hash.get(local.index as u64) {
+            Option.Some(idx) => {
+                return Option.Some(&self.region_locals[idx as usize].gen_name);
+            }
+            Option.None => {}
+        }
+        match self.persistent_locals_hash.get(local.index as u64) {
+            Option.Some(idx) => {
+                Option.Some(&self.persistent_locals[idx as usize].gen_name)
+            }
+            Option.None => Option.None,
+        }
     }
 
     /// Returns true if a local is persistent-allocated.

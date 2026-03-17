@@ -69,7 +69,6 @@ pub fn emit_statement(
                 ctx.end_call();
             } else if ctx.is_persistent_allocated(*local) {
                 // Persistent-allocated local: decrement reference count
-                // Load slot_id from the tracked slot_id alloca (NOT the pointer alloca)
                 ctx.write("    ; storage dead (persistent) ");
                 ctx.write_string(&name);
                 ctx.newline();
@@ -1572,13 +1571,15 @@ pub fn emit_allocas_with_escapes(
                     // Region allocation with generation tracking
                     let name = ctx.local_alloca_name(local_id);
                     emit_region_local(ctx, local.ty, &name, local_id);
-                    ctx.mark_region_allocated(local_id);
+                    let mut gen_name = common.make_string(name.as_str());
+                    gen_name.push_str("_gen");
+                    ctx.mark_region_allocated(local_id, gen_name);
                 }
                 &mir_escape.MemoryTier.Persistent => {
                     // Persistent allocation
                     let name = ctx.local_alloca_name(local_id);
-                    let slot_id_name: String = emit_persistent_local(ctx, local.ty, &name);
-                    ctx.mark_persistent_allocated(local_id, slot_id_name);
+                    let (slot_id_name, gen_name) = emit_persistent_local(ctx, local.ty, &name);
+                    ctx.mark_persistent_allocated(local_id, slot_id_name, gen_name);
                 }
             }
         }
@@ -1654,12 +1655,12 @@ fn emit_region_local(
     ctx.emit_store_cg("ptr", &ptr_tmp, name.as_str());
 }
 
-/// Emits a persistent-allocated local. Returns the name of the alloca holding the slot_id.
+/// Emits a persistent-allocated local. Returns (slot_id_name, gen_name).
 fn emit_persistent_local(
     ctx: &mut codegen_ctx.CodegenCtx,
     ty_id: type_intern.TyId,
     name: &String,
-) -> String {
+) -> (String, String) {
     // Allocate pointer slot on stack for the result
     let name_cg = codegen_ctx.CgName.Str(clone_string(name));
     ctx.emit_alloca_cg(&name_cg, "ptr");
@@ -1672,10 +1673,13 @@ fn emit_persistent_local(
     // Initialize slot_id to 0 (so StorageDead skips decrement if alloc wasn't called)
     ctx.emit_store_str_cg("i64", "0", &slot_id_tmp);
 
+    // Allocate generation slot on stack (i32) — populated after alloc
+    let mut gen_name = common.make_string(name.as_str());
+    gen_name.push_str("_gen");
+    let gen_name_cg = codegen_ctx.CgName.Str(clone_string(&gen_name));
+    ctx.emit_alloca_cg(&gen_name_cg, "i32");
+
     // Call @blood_persistent_alloc(size, align, type_fp, out_id)
-    // Use TyId-native size computation which correctly handles registered
-    // generic enums (e.g. Option<LargeStruct>) by checking if concrete
-    // payload exceeds registered base size.
     let size = codegen_size.type_size_with_ctx_id(ctx, ty_id);
     let size_str = codegen_types.format_u64(size);
     let result_tmp = ctx.fresh_temp_cg();
@@ -1689,8 +1693,21 @@ fn emit_persistent_local(
     // Store returned pointer
     ctx.emit_store_cg("ptr", &result_tmp, name.as_str());
 
-    // Return the slot_id alloca name for tracking
-    cgname_to_string(&slot_id_tmp)
+    // Get generation from registry and store in _gen alloca
+    let addr_i64 = ctx.fresh_temp_cg();
+    ctx.write("  ");
+    ctx.write_cgname(&addr_i64);
+    ctx.write(" = ptrtoint ptr ");
+    ctx.write_cgname(&result_tmp);
+    ctx.write(" to i64\n");
+    let gen_tmp = ctx.fresh_temp_cg();
+    ctx.begin_call(Option.Some(&gen_tmp), "i32", "@blood_get_generation");
+    ctx.call_arg_cg(true, "i64", &addr_i64);
+    ctx.end_call();
+    ctx.emit_store_cg("i32", &gen_tmp, gen_name.as_str());
+
+    // Return the slot_id and gen alloca names for tracking
+    (cgname_to_string(&slot_id_tmp), gen_name)
 }
 
 /// Returns true if the type is small and fixed-size (always stack-allocated
