@@ -75,7 +75,7 @@ Audit search terms: `_ =>`, `unwrap_or_default`, `unwrap_or_else`, `Type::error(
 
 ## Development Rules
 
-**Compile before commit:** `src/bootstrap/target/release/blood check <file.blood>`. If blood-rust rejects it, the code is wrong.
+**Compile before commit:** `src/selfhost/build/first_gen check <file.blood>`. If first_gen rejects it, the code is wrong.
 
 **Incremental development:** Write 10-50 lines, compile, fix, repeat. Never write hundreds of lines without compiling.
 
@@ -99,7 +99,7 @@ Audit search terms: `_ =>`, `unwrap_or_default`, `unwrap_or_else`, `Type::error(
 14. **Use `tools/memprofile.sh --perf`** for CPU flame graphs via perf record (requires linux-tools).
 15. **gdb variable inspection works.** Binaries have DILocalVariable DWARF metadata. `gdb print variable_name` shows values for named Blood variables.
 
-**Blood-rust bugs: report, do NOT work around.** Write the correct code. If blood-rust miscompiles it, that's a blood-rust bug. STOP, isolate, document, report, wait. Signs: DefId errors, works in one context but not another, mutations lost through references, runtime mismatch. See `tools/FAILURE_LOG.md` for history.
+**Selfhost bugs: report, do NOT work around.** Write the correct code. If the compiler miscompiles it, that's a compiler bug. STOP, isolate, document, report. Signs: DefId errors, works in one context but not another, mutations lost through references, runtime mismatch. See `tools/FAILURE_LOG.md` for history.
 
 **Canary-Cluster-Verify (CCV) method:** All batch changes to the self-hosted compiler follow the CCV protocol. Canary-test new patterns before mass conversion. Cluster changes by compiler phase. Verify (build + golden tests + bootstrap) after each cluster. See `DEVELOPMENT.md` for the full protocol, cluster definitions, and bootstrap gate rules.
 
@@ -122,41 +122,34 @@ All fixed bugs (BUG-001 through BUG-013) are documented in `tools/FAILURE_LOG.md
 ## Build & Test Commands
 
 ```bash
-# Check syntax/types (blood-rust directly)
-src/bootstrap/target/release/blood check file.blood
+# Check syntax/types
+src/selfhost/build/first_gen check file.blood
 
-# Build/run a file (blood-rust directly)
-src/bootstrap/target/release/blood build file.blood
-src/bootstrap/target/release/blood run file.blood
-
-# Build the Rust bootstrap compiler
-cd src/bootstrap && cargo build --release
+# Build/run a file
+src/selfhost/build/first_gen build file.blood
+src/selfhost/build/first_gen run file.blood
 ```
 
 ### Build Script (`src/selfhost/build_selfhost.sh`)
 
-All selfhost building and testing goes through the build script. No arguments shows status.
+All building and testing goes through the build script. No arguments shows status.
 
 ```bash
 cd src/selfhost
 
 # Build stages
-./build_selfhost.sh build cargo         # Rebuild blood-rust (cargo build --release)
-./build_selfhost.sh build first_gen     # Build first_gen from blood-rust
+./build_selfhost.sh build first_gen     # Build first_gen from seed compiler
 ./build_selfhost.sh build second_gen    # Self-compile first_gen → second_gen
 ./build_selfhost.sh build third_gen     # Bootstrap second_gen → third_gen + byte-compare
-./build_selfhost.sh build runtime       # Recompile runtime.o from runtime.c
-./build_selfhost.sh build blood_runtime # Compile Blood-native runtime → libblood_runtime_blood.a
+./build_selfhost.sh build blood_runtime # Compile Blood runtime → libblood_runtime_blood.a
 ./build_selfhost.sh build first_gen_blood  # Link first_gen against Blood runtime (no Rust)
 ./build_selfhost.sh build all           # Full chain: cargo → first_gen → GT → second_gen → GT → third_gen
 
-# Test suites (compiler arg accepts names: bootstrap, first_gen, second_gen, third_gen, or a path)
+# Test suites (compiler arg accepts names: first_gen, second_gen, third_gen, or a path)
 ./build_selfhost.sh test golden              # Default: first_gen
-./build_selfhost.sh test golden bootstrap     # Test against blood-rust
 ./build_selfhost.sh test golden second_gen    # Verify first_gen codegen
 ./build_selfhost.sh test golden-blood             # Golden tests linked against Blood runtime
-./build_selfhost.sh test dispatch                   # Compare bootstrap vs first_gen output
-./build_selfhost.sh test blood                      # Run tests/blood-test/ through bootstrap
+./build_selfhost.sh test dispatch                   # Compare first_gen vs second_gen output
 
 # Diagnostics
 ./build_selfhost.sh verify              # IR verification + declaration diff + FileCheck
@@ -188,7 +181,7 @@ All build artifacts go to `build/` by default (relative to source file parent):
 build/
 ├── debug/          # Default profile: binary, .ll, .o
 ├── release/        # --release profile
-└── obj/<stem>/     # Per-definition object files (blood-rust incremental)
+└── obj/<stem>/     # Per-definition object files (incremental compilation)
 ```
 
 Override hierarchy (highest priority first):
@@ -201,8 +194,8 @@ Override hierarchy (highest priority first):
 
 | Tool | Purpose |
 |------|---------|
-| `tools/difftest.sh` | Compare blood-rust vs first_gen output (behavioral or IR) |
-| `tools/parse-parity.sh` | Detect accept/reject drift between blood-rust and first_gen |
+| `tools/difftest.sh` | Compare first_gen vs second_gen output (behavioral or IR) |
+| `tools/parse-parity.sh` | Detect accept/reject drift between compilers |
 | `tools/minimize.sh` | Reduce failing test to minimal reproduction |
 | `tools/phase-compare.sh` | Identify which compilation phase first diverges |
 | `tools/memprofile.sh` | Profile memory usage with per-phase breakdown |
@@ -212,7 +205,7 @@ Override hierarchy (highest priority first):
 | `tools/FAILURE_LOG.md` | Structured log of past bugs, root causes, resolutions |
 | `tools/AGENT_PROTOCOL.md` | Session protocol: investigation workflow, stop conditions |
 
-**Environment variables:** `BLOOD_RUST` (bootstrap compiler path), `RUNTIME_O` (runtime.o), `RUNTIME_A` (libblood_runtime.a), `BLOOD_RUNTIME` (runtime.o, exported), `BLOOD_RUST_RUNTIME` (libblood_runtime.a, exported), `BLOOD_STDLIB_PATH` (stdlib directory), `BLOOD_BUILD_DIR` (build output directory), `BLOOD_CACHE` (compilation cache directory).
+**Environment variables:** `SEED_COMPILER` (bootstrap seed binary path), `BLOOD_RUST` (legacy bootstrap compiler path), `RUNTIME_A` (libblood_runtime_blood.a), `BLOOD_RUST_RUNTIME` (runtime linked into programs, exported), `BLOOD_STDLIB_PATH` (stdlib directory), `BLOOD_BUILD_DIR` (build output directory), `BLOOD_CACHE` (compilation cache directory).
 
 **Installed toolchain:** `./build_selfhost.sh install` copies compiler, runtime, and stdlib to `~/.blood/{bin,lib}/`. The compiler falls back to `~/.blood/lib/` for runtime and stdlib when env vars and CLI flags aren't set. Resolution: CLI flag > env var > `~/.blood/lib/` > exe-relative.
 
