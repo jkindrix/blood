@@ -154,6 +154,7 @@ cd src/selfhost
 ./build_selfhost.sh test golden              # Default: first_gen
 ./build_selfhost.sh test golden bootstrap     # Test against blood-rust
 ./build_selfhost.sh test golden second_gen    # Verify first_gen codegen
+./build_selfhost.sh test golden-blood             # Golden tests linked against Blood runtime
 ./build_selfhost.sh test dispatch                   # Compare bootstrap vs first_gen output
 ./build_selfhost.sh test blood                      # Run tests/blood-test/ through bootstrap
 
@@ -247,7 +248,7 @@ Start with `.tmp/INDEX.md` for the file index. Working documents are organized b
 
 For methodology see `.tmp/METHODS.md`. For long-term plans see `.tmp/PLANS.md`. For deep-dive investigation logs see `.tmp/INVESTIGATIONS.md`.
 
-Source material preserved in `.tmp/archive/` (31 files).
+Source material preserved in `.tmp/archive/` (26 files + tracks/).
 
 **To pick up work:**
 1. Read `.tmp/WORK.md` — items are organized by remediation phase (Phase 0 = soundness, up to Phase 6 = bounds/init), then non-remediation sections (compiler bugs, performance, test expansion, deferred items)
