@@ -36,7 +36,7 @@ Blood's Five Pillars are **Veracity** (generational refs), **Identity** (content
 
 Do not be afraid to declare that a compiler implementation is fundamentally wrong and shift back into investigation, research, and design before creating technical debt. The cost of getting the design right is always lower than the cost of building on a wrong foundation.
 
-For the full argument, examples, and the TYP-05 reversal history, see `.tmp/prompt.md`.
+For the full argument, examples, and the TYP-05 reversal history, see `.tmp/DECISIONS.md` §Spec-First Principle.
 
 ## Blood is NOT Rust
 
@@ -247,7 +247,7 @@ Start with `.tmp/INDEX.md` for the file index. Working documents are organized b
 
 For methodology see `.tmp/METHODS.md`. For long-term plans see `.tmp/PLANS.md`. For deep-dive investigation logs see `.tmp/INVESTIGATIONS.md`.
 
-Source material preserved in `.tmp/archive/` (30 files).
+Source material preserved in `.tmp/archive/` (31 files).
 
 **To pick up work:**
 1. Read `.tmp/WORK.md` — items are organized by remediation phase (Phase 0 = soundness, up to Phase 6 = bounds/init), then non-remediation sections (compiler bugs, performance, test expansion, deferred items)
