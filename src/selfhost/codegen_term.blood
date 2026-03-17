@@ -1241,8 +1241,21 @@ fn emit_vtable_dispatch_call(
 
     // Emit remaining args (skip first which is the fat pointer)
     let mut call_args: Vec<(String, String)> = Vec.new();
-    // First arg to the impl method is the data pointer (self)
-    call_args.push((common.make_string("ptr"), cgname_to_string(&data_ptr)));
+    // First arg to the impl method is the data pointer wrapped as gen ref { ptr, i32 }.
+    // Dyn dispatch uses gen=0 (no generation tracking for trait objects).
+    let self_ref_1 = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&self_ref_1);
+    ctx.write(" = insertvalue { ptr, i32 } zeroinitializer, ptr ");
+    ctx.write_cgname(&data_ptr);
+    ctx.write(", 0\n");
+    let self_ref_2 = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&self_ref_2);
+    ctx.write(" = insertvalue { ptr, i32 } ");
+    ctx.write_cgname(&self_ref_1);
+    ctx.write(", i32 0, 1\n");
+    call_args.push((common.make_string("{ ptr, i32 }"), cgname_to_string(&self_ref_2)));
     for i in 1usize..args.len() {
         let (arg_val, arg_ty) = codegen_expr.emit_operand_typed(ctx, &args[i]);
         call_args.push((arg_ty, arg_val));

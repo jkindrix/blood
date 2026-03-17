@@ -536,6 +536,15 @@ pub fn emit_rvalue(
                                         let mut data_ptr: String;
                                         if str_eq(src_ty.as_str(), "ptr") {
                                             data_ptr = val;
+                                        } else if str_eq(src_ty.as_str(), "{ ptr, i32 }") {
+                                            // Gen ref: extract inner data pointer (field 0)
+                                            let inner_ptr = ctx.fresh_temp_cg();
+                                            ctx.write_indent();
+                                            ctx.write_cgname(&inner_ptr);
+                                            ctx.write(" = extractvalue { ptr, i32 } ");
+                                            ctx.write_string(&val);
+                                            ctx.write(", 0\n");
+                                            data_ptr = cgname_to_string(&inner_ptr);
                                         } else {
                                             // Value type: alloca + store, use alloca as ptr
                                             let alloca = ctx.fresh_temp_cg();
