@@ -190,10 +190,17 @@ pub fn rt_char_from_u32(cp: i32) -> i32 {
     cp
 }
 
-// double @parse_f64({ ptr, i64 }) — minimal stub
+// double @parse_f64({ ptr, i64 }) — null-terminate, call strtod
 #[export_name = "parse_f64"]
 pub fn rt_parse_f64(s: rt_string.FatStr) -> f64 {
-    0.0
+    @unsafe {
+        // Null-terminate the input string for strtod
+        let src: i64 = alloc.ptr_to_addr(s.data);
+        let buf: *mut u8 = libc.sys_calloc((s.len + 1) as u64, 1);
+        libc.sys_memmove(buf, s.data as *const u8, s.len as u64);
+        let result: f64 = libc.sys_strtod(buf as *const u8, @unsafe { 0 as *mut u8 });
+        result
+    }
 }
 
 // i64 @parse_i64_radix({ ptr, i64 }, i32) — minimal decimal parser
