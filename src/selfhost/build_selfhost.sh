@@ -111,7 +111,6 @@ resolve_compiler() {
     case "${1:-first_gen}" in
         bootstrap|blood-rust) echo "$BLOOD_RUST" ;;
         first_gen)            echo "$BUILD_DIR/first_gen" ;;
-        first_gen_blood)      echo "$BUILD_DIR/first_gen_blood" ;;
         second_gen)           echo "$BUILD_DIR/second_gen" ;;
         third_gen)            echo "$BUILD_DIR/third_gen" ;;
         *)                    echo "$1" ;;  # treat as path
@@ -306,28 +305,6 @@ do_build_blood_runtime() {
         | grep -v 'inlinable function\|ignoring invalid debug' || true
     ar rcs "$rt_build/libblood_runtime_blood.a" "$rt_build/lib.o"
     ok "libblood_runtime_blood.a ($(stat -c%s "$rt_build/libblood_runtime_blood.a") bytes)"
-}
-
-do_build_first_gen_blood() {
-    local rt_archive="$REPO_ROOT/runtime/blood-runtime/build/debug/libblood_runtime_blood.a"
-    [ -f "$rt_archive" ] || die "Blood runtime archive not found. Run: ./build_selfhost.sh build blood_runtime"
-    [ -f "$BLOOD_RUST" ] || die "blood-rust not found at $BLOOD_RUST"
-
-    step "Linking first_gen against Blood runtime"
-    local start_ts rc=0
-    start_ts=$(date +%s)
-    BLOOD_RUST_RUNTIME="$rt_archive" \
-        $BLOOD_RUST build main.blood --no-cache --build-dir "$BUILD_DIR" -o "$BUILD_DIR/debug/first_gen_blood_tmp" || rc=$?
-    if [ "$rc" -ne 0 ]; then
-        fail "first_gen_blood link failed: $(decode_exit $rc)"
-        return 1
-    fi
-    mv "$BUILD_DIR/debug/first_gen_blood_tmp" "$BUILD_DIR/first_gen_blood"
-    local size rust_syms
-    size=$(wc -c < "$BUILD_DIR/first_gen_blood")
-    rust_syms=$(nm "$BUILD_DIR/first_gen_blood" 2>/dev/null | grep -c '_ZN\|_RN' || true)
-    : "${rust_syms:=0}"
-    ok "first_gen_blood built ($size bytes, $rust_syms Rust symbols) in $(elapsed_since "$start_ts")"
 }
 
 # ── Test suites ─────────────────────────────────────────────────────────────
@@ -962,14 +939,12 @@ show_usage() {
 Usage: ./build_selfhost.sh [command] [args] [-q|--quiet]
 
 Build:
-  build cargo         Rebuild blood-rust (cargo build --release)
-  build first_gen     Build first_gen from blood-rust
+  build first_gen     Build first_gen from seed compiler (bootstrap/seed)
   build second_gen    Self-compile first_gen → second_gen
   build third_gen     Bootstrap second_gen → third_gen + byte-compare
-  build runtime       Recompile runtime.o from runtime.c
   build blood_runtime Compile Blood-native runtime → libblood_runtime_blood.a
-  build first_gen_blood  Link first_gen against Blood runtime (no Rust)
-  build all           Full chain: cargo → first_gen → GT → second_gen → GT → third_gen
+  build all           Full chain: blood_runtime → first_gen → GT → second_gen → GT → third_gen
+  build cargo         (legacy) Rebuild blood-rust via cargo
 
 Test:
   test golden [compiler]    Run golden suite (default: first_gen)
@@ -1025,9 +1000,6 @@ case "${1:-status}" in
             blood_runtime)
                 do_build_blood_runtime
                 ;;
-            first_gen_blood)
-                do_build_first_gen_blood
-                ;;
             all)
                 PIPELINE_START=$(date +%s)
 
@@ -1042,10 +1014,10 @@ case "${1:-status}" in
                 printf "Log: %s\n" "${LOG_FILE:-<none>}"
                 ;;
             "")
-                die "build requires a stage: first_gen, second_gen, third_gen, blood_runtime, first_gen_blood, all (legacy: cargo, runtime)"
+                die "build requires a stage: first_gen, second_gen, third_gen, blood_runtime, all (legacy: cargo, runtime)"
                 ;;
             *)
-                die "Unknown build stage: $2. Expected: cargo, first_gen, second_gen, third_gen, runtime, blood_runtime, first_gen_blood, all"
+                die "Unknown build stage: $2. Expected: first_gen, second_gen, third_gen, blood_runtime, all (legacy: cargo, runtime)"
                 ;;
         esac
         ;;

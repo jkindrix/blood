@@ -24,3 +24,5 @@ cd src/selfhost
 ./build_selfhost.sh build third_gen  # must be byte-identical to second_gen
 cp build/second_gen ../../bootstrap/seed
 ```
+
+Note: `RUNTIME_A` defaults to the Blood runtime (`libblood_runtime_blood.a`), so the above commands produce a Rust-free binary automatically. If `RUNTIME_A` is overridden to point at the Rust runtime, the seed would contain Rust symbols — don't do that.
