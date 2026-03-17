@@ -158,10 +158,22 @@ pub fn infer_expr(checker: &mut typeck.TypeChecker, expr: &hir_expr.Expr) -> typ
             for i in 0usize..stmts.len() {
                 infer_stmt(checker, &stmts[i]);
             }
-            match expr {
+            let region_ty = match expr {
                 &Some(ref e) => infer_expr(checker, e.as_ref()),
                 &None => type_intern.CommonTypes.unit(),
+            };
+            // Check: region expression must not return a reference.
+            // A reference escaping a region scope becomes dangling when
+            // the region is destroyed. MEMORY_MODEL.md §7.6.
+            let resolved = checker.resolve(region_ty);
+            let resolved_kind = type_intern.type_interner().get(resolved);
+            match resolved_kind {
+                &type_intern.InternedTypeKind.Ref { inner: _, mutable: _ } => {
+                    checker.error(typeck.TypeErrorKind.RegionRefEscape, expr.span);
+                }
+                _ => {}
             }
+            region_ty
         }
         &hir_expr.ExprKind.ForIter { label: _, ref pattern, ref iter, ref body } => {
             infer_for_iter(checker, pattern.as_ref(), iter.as_ref(), body.as_ref(), expr.span)
