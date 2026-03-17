@@ -13,16 +13,14 @@ BUILD_DIR="$DIR/build"
 mkdir -p "$BUILD_DIR"
 
 # Paths (configurable via environment)
+SEED_COMPILER="${SEED_COMPILER:-$REPO_ROOT/bootstrap/seed}"
 BLOOD_RUST="${BLOOD_RUST:-$REPO_ROOT/src/bootstrap/target/release/blood}"
-# RUNTIME_O is no longer needed — the compiler emits main() in IR.
-# Kept as variable for backward compat with scripts that set it.
-RUNTIME_O="${RUNTIME_O:-}"
-RUNTIME_A="${RUNTIME_A:-$REPO_ROOT/src/bootstrap/target/release/libblood_runtime.a}"
+RUNTIME_A="${RUNTIME_A:-$REPO_ROOT/runtime/blood-runtime/build/debug/libblood_runtime_blood.a}"
+RUNTIME_A_RUST="${RUNTIME_A_RUST:-$REPO_ROOT/src/bootstrap/target/release/libblood_runtime.a}"
 GOLDEN_TESTS="${GOLDEN_TESTS:-$REPO_ROOT/tests/golden}"
 BLOOD_TESTS="${BLOOD_TESTS:-$REPO_ROOT/tests/blood-test}"
 STDLIB_PATH="${STDLIB_PATH:-$REPO_ROOT/stdlib}"
 
-# BLOOD_RUNTIME (runtime.o) no longer needed — compiler emits main() in IR
 export BLOOD_RUST_RUNTIME="${RUNTIME_A}"
 export BLOOD_BUILD_DIR="${BUILD_DIR}"
 export BLOOD_CACHE="${BUILD_DIR}/.blood-cache"
@@ -168,7 +166,17 @@ do_build_cargo() {
 
 do_build_first_gen() {
     local flags="${1:-}"
-    [ -f "$BLOOD_RUST" ] || die "blood-rust not found at $BLOOD_RUST"
+
+    # Find a compiler to bootstrap with: seed binary (preferred) or blood-rust (legacy fallback)
+    local bootstrap_compiler=""
+    if [ -f "$SEED_COMPILER" ]; then
+        bootstrap_compiler="$SEED_COMPILER"
+    elif [ -f "$BLOOD_RUST" ]; then
+        bootstrap_compiler="$BLOOD_RUST"
+        warn "Using blood-rust (legacy). Consider: ./build_selfhost.sh build second_gen && cp build/second_gen ../../bootstrap/seed"
+    else
+        die "No bootstrap compiler found. Need either:\n  bootstrap/seed (run: build second_gen && cp build/second_gen ../../bootstrap/seed)\n  blood-rust at $BLOOD_RUST (run: cd src/bootstrap && cargo build --release)"
+    fi
 
     step "Clearing build caches"
     rm -rf "$BUILD_DIR/obj" "$BUILD_DIR/debug" "$BUILD_DIR/release"
@@ -176,12 +184,12 @@ do_build_first_gen() {
     rm -rf "${HOME}"/.blood*/cache/
     ok "Caches cleared"
 
-    step "Building first_gen with blood-rust"
+    step "Building first_gen with $(basename "$bootstrap_compiler")"
     local start_ts rc=0
     start_ts=$(date +%s)
-    $BLOOD_RUST build main.blood --no-cache --build-dir "$BUILD_DIR" $flags || rc=$?
+    $bootstrap_compiler build main.blood --no-cache --build-dir "$BUILD_DIR" $flags || rc=$?
     if [ "$rc" -ne 0 ]; then
-        fail "blood-rust build failed: $(decode_exit $rc)"
+        fail "Build failed ($(basename "$bootstrap_compiler")): $(decode_exit $rc)"
         return 1
     fi
     mv "$BUILD_DIR/debug/main" "$BUILD_DIR/first_gen"
@@ -1023,7 +1031,7 @@ case "${1:-status}" in
             all)
                 PIPELINE_START=$(date +%s)
 
-                do_build_cargo
+                do_build_blood_runtime
                 do_build_first_gen "--timings"
                 do_test_golden "$BUILD_DIR/first_gen"
                 do_build_second_gen
@@ -1034,7 +1042,7 @@ case "${1:-status}" in
                 printf "Log: %s\n" "${LOG_FILE:-<none>}"
                 ;;
             "")
-                die "build requires a stage: cargo, first_gen, second_gen, third_gen, runtime, blood_runtime, first_gen_blood, all"
+                die "build requires a stage: first_gen, second_gen, third_gen, blood_runtime, first_gen_blood, all (legacy: cargo, runtime)"
                 ;;
             *)
                 die "Unknown build stage: $2. Expected: cargo, first_gen, second_gen, third_gen, runtime, blood_runtime, first_gen_blood, all"
@@ -1215,16 +1223,23 @@ case "${1:-status}" in
         lib_dir="${install_dir}/lib"
         mkdir -p "$bin_dir" "$lib_dir"
 
-        # Install compiler binary
-        [ -f "$BLOOD_RUST" ] || die "blood-rust not found at $BLOOD_RUST (run: build cargo)"
-        cp "$BLOOD_RUST" "$bin_dir/blood"
+        # Install compiler binary (prefer second_gen, fall back to first_gen)
+        local install_bin=""
+        if [ -f "$BUILD_DIR/second_gen" ]; then
+            install_bin="$BUILD_DIR/second_gen"
+        elif [ -f "$BUILD_DIR/first_gen" ]; then
+            install_bin="$BUILD_DIR/first_gen"
+        else
+            die "No compiler binary found. Run: build first_gen"
+        fi
+        cp "$install_bin" "$bin_dir/blood"
         chmod +x "$bin_dir/blood"
-        ok "Compiler → $bin_dir/blood"
+        ok "Compiler → $bin_dir/blood ($(basename "$install_bin"))"
 
-        # Install runtime library
-        [ -f "$RUNTIME_A" ] || die "libblood_runtime.a not found at $RUNTIME_A (run: build cargo)"
+        # Install runtime library (Blood runtime)
+        [ -f "$RUNTIME_A" ] || die "Blood runtime not found at $RUNTIME_A (run: build blood_runtime)"
         cp "$RUNTIME_A" "$lib_dir/libblood_runtime.a"
-        ok "Rust runtime → $lib_dir/libblood_runtime.a"
+        ok "Runtime → $lib_dir/libblood_runtime.a"
 
         # Install stdlib
         [ -d "$STDLIB_PATH" ] || die "stdlib not found at $STDLIB_PATH"
