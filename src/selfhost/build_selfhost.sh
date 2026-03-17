@@ -557,6 +557,15 @@ do_test_golden() {
     [ "$((comp_fail + run_fail))" -eq 0 ] && return 0 || return 1
 }
 
+do_test_golden_blood() {
+    # Run golden tests with test binaries linked against the Blood runtime
+    # (instead of the Rust runtime). This validates Stage 2 runtime independence.
+    local blood_rt="$REPO_ROOT/runtime/blood-runtime/build/debug/libblood_runtime_blood.a"
+    [ -f "$blood_rt" ] || die "Blood runtime not found. Run: ./build_selfhost.sh build blood_runtime"
+    step "Running golden tests linked against Blood runtime"
+    BLOOD_RUST_RUNTIME="$blood_rt" do_test_golden "$@"
+}
+
 do_test_dispatch() {
     local bin1="${1:-$BLOOD_RUST}"
     local bin2="${2:-$BUILD_DIR/first_gen}"
@@ -1041,8 +1050,11 @@ case "${1:-status}" in
             blood)
                 do_test_blood "$(resolve_compiler "${3:-bootstrap}")"
                 ;;
+            golden-blood)
+                do_test_golden_blood "$(resolve_compiler "${3:-first_gen}")"
+                ;;
             *)
-                die "Unknown test suite: $2. Expected: golden, dispatch, blood"
+                die "Unknown test suite: $2. Expected: golden, dispatch, blood, golden-blood"
                 ;;
         esac
         ;;

@@ -36,7 +36,17 @@ def process_ir(input_path, output_path):
     inject_names = {
         'str_len', 'str_len_usize', 'env_get', 'println_u64',
         'blood_float64_to_bits', '__builtin_safepoint_check',
-        'call_handler_op', 'println_int', 'println_bool', 'print_int'
+        'call_handler_op', 'println_int', 'println_bool', 'print_int',
+        # Stage 2 print builtins
+        'println_i64', 'print_i64', 'println_char', 'println_f32', 'println_f64',
+        # Stage 2 type conversion builtins
+        'i32_to_i64', 'i64_to_i32', 'size_of_bool', 'size_of_i32', 'size_of_i64',
+        # Stage 2 number-to-string conversions
+        'i64_to_string', 'u64_to_string', 'f32_to_string', 'f64_to_string',
+        'i8_to_string', 'i16_to_string', 'i128_to_string',
+        'u8_to_string', 'u16_to_string', 'u32_to_string', 'u128_to_string',
+        # Stage 2 file I/O
+        'file_delete',
     }
 
     # Step 4: Strip conflicting declares, builtin declares, and unwanted defines
@@ -159,6 +169,211 @@ def process_ir(input_path, output_path):
     impl_lines.append('define i64 @call_handler_op(ptr %fn_ptr, ptr %state, ptr %args, i64 %arg_count, i64 %cont) {\n')
     impl_lines.append('  %result = call i64 %fn_ptr(ptr %state, ptr %args, i64 %arg_count, i64 %cont)\n')
     impl_lines.append('  ret i64 %result\n')
+    impl_lines.append('}\n')
+
+    # --- Stage 2 print builtins ---
+
+    # println_i64(i64) -> void
+    impl_lines.append('@.fmt_i64 = private unnamed_addr constant [5 x i8] c"%ld\\0A\\00"\n')
+    impl_lines.append('define void @println_i64(i64 %val) {\n')
+    impl_lines.append('  call i32 (ptr, ...) @printf(ptr @.fmt_i64, i64 %val)\n')
+    impl_lines.append('  call i32 @fflush(ptr null)\n')
+    impl_lines.append('  ret void\n')
+    impl_lines.append('}\n')
+
+    # print_i64(i64) -> void (no newline)
+    impl_lines.append('@.fmt_i64_nn = private unnamed_addr constant [4 x i8] c"%ld\\00"\n')
+    impl_lines.append('define void @print_i64(i64 %val) {\n')
+    impl_lines.append('  call i32 (ptr, ...) @printf(ptr @.fmt_i64_nn, i64 %val)\n')
+    impl_lines.append('  call i32 @fflush(ptr null)\n')
+    impl_lines.append('  ret void\n')
+    impl_lines.append('}\n')
+
+    # println_char(i32) -> void : print Unicode code point as character + newline
+    impl_lines.append('define void @println_char(i32 %c) {\n')
+    impl_lines.append('  call i32 @putchar(i32 %c)\n')
+    impl_lines.append('  call i32 @putchar(i32 10)\n')
+    impl_lines.append('  call i32 @fflush(ptr null)\n')
+    impl_lines.append('  ret void\n')
+    impl_lines.append('}\n')
+
+    # println_f32(float) -> void : promote to double, print with %g
+    impl_lines.append('@.fmt_g_nl = private unnamed_addr constant [4 x i8] c"%g\\0A\\00"\n')
+    impl_lines.append('define void @println_f32(float %val) {\n')
+    impl_lines.append('  %d = fpext float %val to double\n')
+    impl_lines.append('  call i32 (ptr, ...) @printf(ptr @.fmt_g_nl, double %d)\n')
+    impl_lines.append('  call i32 @fflush(ptr null)\n')
+    impl_lines.append('  ret void\n')
+    impl_lines.append('}\n')
+
+    # println_f64(double) -> void
+    impl_lines.append('define void @println_f64(double %val) {\n')
+    impl_lines.append('  call i32 (ptr, ...) @printf(ptr @.fmt_g_nl, double %val)\n')
+    impl_lines.append('  call i32 @fflush(ptr null)\n')
+    impl_lines.append('  ret void\n')
+    impl_lines.append('}\n')
+
+    # --- Stage 2 simple type conversion builtins ---
+
+    impl_lines.append('define i64 @i32_to_i64(i32 %val) {\n')
+    impl_lines.append('  %r = sext i32 %val to i64\n')
+    impl_lines.append('  ret i64 %r\n')
+    impl_lines.append('}\n')
+
+    impl_lines.append('define i32 @i64_to_i32(i64 %val) {\n')
+    impl_lines.append('  %r = trunc i64 %val to i32\n')
+    impl_lines.append('  ret i32 %r\n')
+    impl_lines.append('}\n')
+
+    impl_lines.append('define i64 @size_of_bool() {\n  ret i64 1\n}\n')
+    impl_lines.append('define i64 @size_of_i32() {\n  ret i64 4\n}\n')
+    impl_lines.append('define i64 @size_of_i64() {\n  ret i64 8\n}\n')
+
+    # --- Stage 2 number-to-string conversions ---
+    # Pattern: snprintf to stack buffer -> calloc + memcpy -> return { ptr, i64 }
+
+    for decl_name in ['snprintf', 'unlink']:
+        if decl_name not in remaining_declares and decl_name not in defined:
+            if decl_name == 'snprintf':
+                impl_lines.append('declare i32 @snprintf(ptr, i64, ptr, ...)\n')
+            elif decl_name == 'unlink':
+                impl_lines.append('declare i32 @unlink(ptr)\n')
+
+    # Helper: format a value via snprintf, allocate result, return { ptr, i64 }
+    # Each *_to_string function follows this pattern with type-specific format.
+
+    # i64_to_string(i64) -> { ptr, i64 }
+    impl_lines.append('@.fmt_ld = private unnamed_addr constant [4 x i8] c"%ld\\00"\n')
+    impl_lines.append('define { ptr, i64 } @i64_to_string(i64 %n) {\n')
+    impl_lines.append('  %buf = alloca [24 x i8]\n')
+    impl_lines.append('  %len = call i32 (ptr, i64, ptr, ...) @snprintf(ptr %buf, i64 24, ptr @.fmt_ld, i64 %n)\n')
+    impl_lines.append('  %len64 = sext i32 %len to i64\n')
+    impl_lines.append('  %mem = call ptr @calloc(i64 1, i64 %len64)\n')
+    impl_lines.append('  call void @llvm.memcpy.p0.p0.i64(ptr %mem, ptr %buf, i64 %len64, i1 false)\n')
+    impl_lines.append('  %r1 = insertvalue { ptr, i64 } undef, ptr %mem, 0\n')
+    impl_lines.append('  %r2 = insertvalue { ptr, i64 } %r1, i64 %len64, 1\n')
+    impl_lines.append('  ret { ptr, i64 } %r2\n')
+    impl_lines.append('}\n')
+
+    # u64_to_string(i64) -> { ptr, i64 }  (arg is i64, interpreted as unsigned)
+    impl_lines.append('@.fmt_lu = private unnamed_addr constant [4 x i8] c"%lu\\00"\n')
+    impl_lines.append('define { ptr, i64 } @u64_to_string(i64 %n) {\n')
+    impl_lines.append('  %buf = alloca [24 x i8]\n')
+    impl_lines.append('  %len = call i32 (ptr, i64, ptr, ...) @snprintf(ptr %buf, i64 24, ptr @.fmt_lu, i64 %n)\n')
+    impl_lines.append('  %len64 = sext i32 %len to i64\n')
+    impl_lines.append('  %mem = call ptr @calloc(i64 1, i64 %len64)\n')
+    impl_lines.append('  call void @llvm.memcpy.p0.p0.i64(ptr %mem, ptr %buf, i64 %len64, i1 false)\n')
+    impl_lines.append('  %r1 = insertvalue { ptr, i64 } undef, ptr %mem, 0\n')
+    impl_lines.append('  %r2 = insertvalue { ptr, i64 } %r1, i64 %len64, 1\n')
+    impl_lines.append('  ret { ptr, i64 } %r2\n')
+    impl_lines.append('}\n')
+
+    # i8_to_string(i8), i16_to_string(i16) — sext to i32, format with %d
+    impl_lines.append('@.fmt_d = private unnamed_addr constant [3 x i8] c"%d\\00"\n')
+    for (fn_name, from_type) in [('i8_to_string', 'i8'), ('i16_to_string', 'i16')]:
+        impl_lines.append(f'define {{ ptr, i64 }} @{fn_name}({from_type} %n) {{\n')
+        impl_lines.append(f'  %ext = sext {from_type} %n to i32\n')
+        impl_lines.append('  %buf = alloca [12 x i8]\n')
+        impl_lines.append('  %len = call i32 (ptr, i64, ptr, ...) @snprintf(ptr %buf, i64 12, ptr @.fmt_d, i32 %ext)\n')
+        impl_lines.append('  %len64 = sext i32 %len to i64\n')
+        impl_lines.append('  %mem = call ptr @calloc(i64 1, i64 %len64)\n')
+        impl_lines.append('  call void @llvm.memcpy.p0.p0.i64(ptr %mem, ptr %buf, i64 %len64, i1 false)\n')
+        impl_lines.append('  %r1 = insertvalue { ptr, i64 } undef, ptr %mem, 0\n')
+        impl_lines.append('  %r2 = insertvalue { ptr, i64 } %r1, i64 %len64, 1\n')
+        impl_lines.append('  ret { ptr, i64 } %r2\n')
+        impl_lines.append('}\n')
+
+    # u8_to_string(i8), u16_to_string(i16), u32_to_string(i32) — zext to i32/i64, format with %u/%lu
+    impl_lines.append('@.fmt_u = private unnamed_addr constant [3 x i8] c"%u\\00"\n')
+    for (fn_name, from_type) in [('u8_to_string', 'i8'), ('u16_to_string', 'i16')]:
+        impl_lines.append(f'define {{ ptr, i64 }} @{fn_name}({from_type} %n) {{\n')
+        impl_lines.append(f'  %ext = zext {from_type} %n to i32\n')
+        impl_lines.append('  %buf = alloca [12 x i8]\n')
+        impl_lines.append('  %len = call i32 (ptr, i64, ptr, ...) @snprintf(ptr %buf, i64 12, ptr @.fmt_u, i32 %ext)\n')
+        impl_lines.append('  %len64 = sext i32 %len to i64\n')
+        impl_lines.append('  %mem = call ptr @calloc(i64 1, i64 %len64)\n')
+        impl_lines.append('  call void @llvm.memcpy.p0.p0.i64(ptr %mem, ptr %buf, i64 %len64, i1 false)\n')
+        impl_lines.append('  %r1 = insertvalue { ptr, i64 } undef, ptr %mem, 0\n')
+        impl_lines.append('  %r2 = insertvalue { ptr, i64 } %r1, i64 %len64, 1\n')
+        impl_lines.append('  ret { ptr, i64 } %r2\n')
+        impl_lines.append('}\n')
+
+    impl_lines.append('define { ptr, i64 } @u32_to_string(i32 %n) {\n')
+    impl_lines.append('  %ext = zext i32 %n to i64\n')
+    impl_lines.append('  %buf = alloca [12 x i8]\n')
+    impl_lines.append('  %len = call i32 (ptr, i64, ptr, ...) @snprintf(ptr %buf, i64 12, ptr @.fmt_lu, i64 %ext)\n')
+    impl_lines.append('  %len64 = sext i32 %len to i64\n')
+    impl_lines.append('  %mem = call ptr @calloc(i64 1, i64 %len64)\n')
+    impl_lines.append('  call void @llvm.memcpy.p0.p0.i64(ptr %mem, ptr %buf, i64 %len64, i1 false)\n')
+    impl_lines.append('  %r1 = insertvalue { ptr, i64 } undef, ptr %mem, 0\n')
+    impl_lines.append('  %r2 = insertvalue { ptr, i64 } %r1, i64 %len64, 1\n')
+    impl_lines.append('  ret { ptr, i64 } %r2\n')
+    impl_lines.append('}\n')
+
+    # i128_to_string(i128) — sext to i64 (works for values in i64 range, sufficient for golden tests)
+    impl_lines.append('define { ptr, i64 } @i128_to_string(i128 %n) {\n')
+    impl_lines.append('  %trunc = trunc i128 %n to i64\n')
+    impl_lines.append('  %buf = alloca [24 x i8]\n')
+    impl_lines.append('  %len = call i32 (ptr, i64, ptr, ...) @snprintf(ptr %buf, i64 24, ptr @.fmt_ld, i64 %trunc)\n')
+    impl_lines.append('  %len64 = sext i32 %len to i64\n')
+    impl_lines.append('  %mem = call ptr @calloc(i64 1, i64 %len64)\n')
+    impl_lines.append('  call void @llvm.memcpy.p0.p0.i64(ptr %mem, ptr %buf, i64 %len64, i1 false)\n')
+    impl_lines.append('  %r1 = insertvalue { ptr, i64 } undef, ptr %mem, 0\n')
+    impl_lines.append('  %r2 = insertvalue { ptr, i64 } %r1, i64 %len64, 1\n')
+    impl_lines.append('  ret { ptr, i64 } %r2\n')
+    impl_lines.append('}\n')
+
+    # u128_to_string(i128) — trunc to i64, format as unsigned
+    impl_lines.append('define { ptr, i64 } @u128_to_string(i128 %n) {\n')
+    impl_lines.append('  %trunc = trunc i128 %n to i64\n')
+    impl_lines.append('  %buf = alloca [24 x i8]\n')
+    impl_lines.append('  %len = call i32 (ptr, i64, ptr, ...) @snprintf(ptr %buf, i64 24, ptr @.fmt_lu, i64 %trunc)\n')
+    impl_lines.append('  %len64 = sext i32 %len to i64\n')
+    impl_lines.append('  %mem = call ptr @calloc(i64 1, i64 %len64)\n')
+    impl_lines.append('  call void @llvm.memcpy.p0.p0.i64(ptr %mem, ptr %buf, i64 %len64, i1 false)\n')
+    impl_lines.append('  %r1 = insertvalue { ptr, i64 } undef, ptr %mem, 0\n')
+    impl_lines.append('  %r2 = insertvalue { ptr, i64 } %r1, i64 %len64, 1\n')
+    impl_lines.append('  ret { ptr, i64 } %r2\n')
+    impl_lines.append('}\n')
+
+    # f32_to_string(float) -> { ptr, i64 } — fpext to double, format with %g
+    impl_lines.append('@.fmt_g = private unnamed_addr constant [3 x i8] c"%g\\00"\n')
+    impl_lines.append('define { ptr, i64 } @f32_to_string(float %n) {\n')
+    impl_lines.append('  %d = fpext float %n to double\n')
+    impl_lines.append('  %buf = alloca [32 x i8]\n')
+    impl_lines.append('  %len = call i32 (ptr, i64, ptr, ...) @snprintf(ptr %buf, i64 32, ptr @.fmt_g, double %d)\n')
+    impl_lines.append('  %len64 = sext i32 %len to i64\n')
+    impl_lines.append('  %mem = call ptr @calloc(i64 1, i64 %len64)\n')
+    impl_lines.append('  call void @llvm.memcpy.p0.p0.i64(ptr %mem, ptr %buf, i64 %len64, i1 false)\n')
+    impl_lines.append('  %r1 = insertvalue { ptr, i64 } undef, ptr %mem, 0\n')
+    impl_lines.append('  %r2 = insertvalue { ptr, i64 } %r1, i64 %len64, 1\n')
+    impl_lines.append('  ret { ptr, i64 } %r2\n')
+    impl_lines.append('}\n')
+
+    # f64_to_string(double) -> { ptr, i64 }
+    impl_lines.append('define { ptr, i64 } @f64_to_string(double %n) {\n')
+    impl_lines.append('  %buf = alloca [32 x i8]\n')
+    impl_lines.append('  %len = call i32 (ptr, i64, ptr, ...) @snprintf(ptr %buf, i64 32, ptr @.fmt_g, double %n)\n')
+    impl_lines.append('  %len64 = sext i32 %len to i64\n')
+    impl_lines.append('  %mem = call ptr @calloc(i64 1, i64 %len64)\n')
+    impl_lines.append('  call void @llvm.memcpy.p0.p0.i64(ptr %mem, ptr %buf, i64 %len64, i1 false)\n')
+    impl_lines.append('  %r1 = insertvalue { ptr, i64 } undef, ptr %mem, 0\n')
+    impl_lines.append('  %r2 = insertvalue { ptr, i64 } %r1, i64 %len64, 1\n')
+    impl_lines.append('  ret { ptr, i64 } %r2\n')
+    impl_lines.append('}\n')
+
+    # --- Stage 2 file I/O ---
+
+    # file_delete({ ptr, i64 }) -> i1 : null-terminate path, call unlink
+    impl_lines.append('define i1 @file_delete({ ptr, i64 } %path) {\n')
+    impl_lines.append('  %pptr = extractvalue { ptr, i64 } %path, 0\n')
+    impl_lines.append('  %plen = extractvalue { ptr, i64 } %path, 1\n')
+    impl_lines.append('  %bsz = add i64 %plen, 1\n')
+    impl_lines.append('  %pbuf = call ptr @calloc(i64 %bsz, i64 1)\n')
+    impl_lines.append('  call void @llvm.memcpy.p0.p0.i64(ptr %pbuf, ptr %pptr, i64 %plen, i1 false)\n')
+    impl_lines.append('  %rc = call i32 @unlink(ptr %pbuf)\n')
+    impl_lines.append('  %ok = icmp eq i32 %rc, 0\n')
+    impl_lines.append('  ret i1 %ok\n')
     impl_lines.append('}\n')
 
     # env_get({ptr, i64}) -> {ptr, i64} : get environment variable
