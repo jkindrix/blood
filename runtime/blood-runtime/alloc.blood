@@ -26,67 +26,182 @@ pub fn ptr_to_addr(ptr: *mut u8) -> i64 {
 }
 
 // ============================================================================
-// Generation tracking — minimal registry for Stage 1
+// Generation tracking — open-addressing hash table keyed on address
 // ============================================================================
+//
+// Parallel arrays: ADDRS[i] = address (0 = empty, 1 = tombstone),
+// GENS[i] = generation, SIZES[i] = allocation size.
+// Hash: Fibonacci hashing (addr * golden ratio constant) >> shift.
+// Probe: linear. Resize at 75% load (count including tombstones).
 
 static mut NEXT_GENERATION: i32 = 1;
 
-// Registry: parallel arrays of (addr, generation, size)
-// Allocated lazily via calloc on first use.
-static mut REG_ADDRS: *mut u8 = @unsafe { 0 as *mut u8 };
-static mut REG_GENS: *mut u8 = @unsafe { 0 as *mut u8 };
-static mut REG_SIZES: *mut u8 = @unsafe { 0 as *mut u8 };
-static mut REG_LEN: i64 = 0;
-static mut REG_CAP: i64 = 65536;
-static mut REG_INIT: i32 = 0;
+static mut HT_ADDRS: *mut u8 = @unsafe { 0 as *mut u8 };
+static mut HT_GENS: *mut u8 = @unsafe { 0 as *mut u8 };
+static mut HT_SIZES: *mut u8 = @unsafe { 0 as *mut u8 };
+static mut HT_CAP: i64 = 0;
+static mut HT_COUNT: i64 = 0;      // live + tombstone entries (for load factor)
+static mut HT_LIVE: i64 = 0;       // live entries only
+static mut HT_INIT: i32 = 0;
 
-fn ensure_registry() {
-    @unsafe {
-        if REG_INIT == 0 {
-            REG_ADDRS = libc.sys_calloc(65536, 8);  // i64 per entry
-            REG_GENS = libc.sys_calloc(65536, 4);    // i32 per entry
-            REG_SIZES = libc.sys_calloc(65536, 8);   // i64 per entry
-            if ptr_to_addr(REG_ADDRS) == 0 {
-                rt_panic.rt_panic("alloc: failed to allocate generation registry");
-            }
-            REG_INIT = 1;
-        }
-    }
-}
+// Sentinel values for addr slots
+// 0 = empty, 1 = tombstone, anything else = live address
+fn is_empty(a: i64) -> bool { a == 0 }
+fn is_tombstone(a: i64) -> bool { a == 1 }
+fn is_live(a: i64) -> bool { a > 1 }
 
-// Read i64 from registry array at index
-fn reg_read_i64(base: *mut u8, idx: i64) -> i64 {
+fn ht_read_addr(idx: i64) -> i64 {
     @unsafe {
-        let offset: i64 = idx * 8;
-        let p: *mut u8 = addr_to_ptr(ptr_to_addr(base) + offset);
+        let p: *mut u8 = addr_to_ptr(ptr_to_addr(HT_ADDRS) + idx * 8);
         ptr_read_i64(p)
     }
 }
-
-// Write i64 to registry array at index
-fn reg_write_i64(base: *mut u8, idx: i64, val: i64) {
+fn ht_write_addr(idx: i64, val: i64) {
     @unsafe {
-        let offset: i64 = idx * 8;
-        let p: *mut u8 = addr_to_ptr(ptr_to_addr(base) + offset);
+        let p: *mut u8 = addr_to_ptr(ptr_to_addr(HT_ADDRS) + idx * 8);
+        ptr_write_i64(p, val);
+    }
+}
+fn ht_read_gen(idx: i64) -> i32 {
+    @unsafe {
+        let p: *mut u8 = addr_to_ptr(ptr_to_addr(HT_GENS) + idx * 4);
+        ptr_read_i32(p)
+    }
+}
+fn ht_write_gen(idx: i64, val: i32) {
+    @unsafe {
+        let p: *mut u8 = addr_to_ptr(ptr_to_addr(HT_GENS) + idx * 4);
+        ptr_write_i32(p, val);
+    }
+}
+fn ht_read_size(idx: i64) -> i64 {
+    @unsafe {
+        let p: *mut u8 = addr_to_ptr(ptr_to_addr(HT_SIZES) + idx * 8);
+        ptr_read_i64(p)
+    }
+}
+fn ht_write_size(idx: i64, val: i64) {
+    @unsafe {
+        let p: *mut u8 = addr_to_ptr(ptr_to_addr(HT_SIZES) + idx * 8);
         ptr_write_i64(p, val);
     }
 }
 
-// Read i32 from registry array at index
-fn reg_read_i32(base: *mut u8, idx: i64) -> i32 {
+fn ht_hash(addr: i64, cap: i64) -> i64 {
+    // Fibonacci hashing: multiply by golden ratio constant, take high bits
     @unsafe {
-        let offset: i64 = idx * 4;
-        let p: *mut u8 = addr_to_ptr(ptr_to_addr(base) + offset);
-        ptr_read_i32(p)
+        let h: u64 = (addr as u64) * (11400714819323198485 as u64);
+        // cap is a power of two, so & (cap-1) is a fast modulo
+        (h as i64) & (cap - 1)
     }
 }
 
-// Write i32 to registry array at index
-fn reg_write_i32(base: *mut u8, idx: i64, val: i32) {
+fn ensure_registry() {
     @unsafe {
-        let offset: i64 = idx * 4;
-        let p: *mut u8 = addr_to_ptr(ptr_to_addr(base) + offset);
-        ptr_write_i32(p, val);
+        if HT_INIT == 0 {
+            HT_CAP = 4096;
+            HT_ADDRS = libc.sys_calloc(4096, 8);
+            HT_GENS = libc.sys_calloc(4096, 4);
+            HT_SIZES = libc.sys_calloc(4096, 8);
+            if ptr_to_addr(HT_ADDRS) == 0 {
+                rt_panic.rt_panic("alloc: failed to allocate generation registry");
+            }
+            HT_INIT = 1;
+        }
+    }
+}
+
+// Find the slot for an address. Returns index, or -1 if not found.
+fn ht_find(addr: i64) -> i64 {
+    @unsafe {
+        let cap: i64 = HT_CAP;
+        let mut idx: i64 = ht_hash(addr, cap);
+        let mut probes: i64 = 0;
+        while probes < cap {
+            let slot: i64 = ht_read_addr(idx);
+            if is_empty(slot) {
+                return 0 - 1;
+            }
+            if slot == addr {
+                return idx;
+            }
+            idx = (idx + 1) & (cap - 1);
+            probes = probes + 1;
+        }
+        0 - 1
+    }
+}
+
+// Find a slot for insertion. Returns index of empty/tombstone slot, or -1 if full.
+fn ht_find_insert(addr: i64) -> i64 {
+    @unsafe {
+        let cap: i64 = HT_CAP;
+        let mut idx: i64 = ht_hash(addr, cap);
+        let mut probes: i64 = 0;
+        let mut first_tombstone: i64 = 0 - 1;
+        while probes < cap {
+            let slot: i64 = ht_read_addr(idx);
+            if is_empty(slot) {
+                if first_tombstone >= 0 { return first_tombstone; }
+                return idx;
+            }
+            if is_tombstone(slot) {
+                if first_tombstone < 0 { first_tombstone = idx; }
+            }
+            if slot == addr {
+                return idx; // already exists, overwrite
+            }
+            idx = (idx + 1) & (cap - 1);
+            probes = probes + 1;
+        }
+        if first_tombstone >= 0 { return first_tombstone; }
+        0 - 1
+    }
+}
+
+fn ht_grow() {
+    @unsafe {
+        let old_cap: i64 = HT_CAP;
+        let old_addrs: *mut u8 = HT_ADDRS;
+        let old_gens: *mut u8 = HT_GENS;
+        let old_sizes: *mut u8 = HT_SIZES;
+
+        let new_cap: i64 = old_cap * 2;
+        HT_CAP = new_cap;
+        HT_ADDRS = libc.sys_calloc(new_cap, 8);
+        HT_GENS = libc.sys_calloc(new_cap, 4);
+        HT_SIZES = libc.sys_calloc(new_cap, 8);
+        HT_COUNT = 0;
+        HT_LIVE = 0;
+
+        if ptr_to_addr(HT_ADDRS) == 0 {
+            rt_panic.rt_panic("alloc: failed to grow generation registry");
+        }
+
+        // Rehash live entries from old table
+        let mut i: i64 = 0;
+        while i < old_cap {
+            let old_p: *mut u8 = addr_to_ptr(ptr_to_addr(old_addrs) + i * 8);
+            let a: i64 = ptr_read_i64(old_p);
+            if is_live(a) {
+                let gp: *mut u8 = addr_to_ptr(ptr_to_addr(old_gens) + i * 4);
+                let g: i32 = ptr_read_i32(gp);
+                let sp: *mut u8 = addr_to_ptr(ptr_to_addr(old_sizes) + i * 8);
+                let s: i64 = ptr_read_i64(sp);
+
+                let idx: i64 = ht_find_insert(a);
+                ht_write_addr(idx, a);
+                ht_write_gen(idx, g);
+                ht_write_size(idx, s);
+                HT_COUNT = HT_COUNT + 1;
+                HT_LIVE = HT_LIVE + 1;
+            }
+            i = i + 1;
+        }
+
+        // Free old arrays (manual free via memmove to avoid using blood_free which calls us)
+        // Actually just leak them — the old arrays are small relative to total memory,
+        // and the runtime has no reentrant-safe free path here. The OS reclaims on exit.
     }
 }
 
@@ -95,55 +210,51 @@ fn reg_write_i32(base: *mut u8, idx: i64, val: i32) {
 pub fn rt_blood_register_allocation(addr: i64, size: i64) -> i32 {
     ensure_registry();
     @unsafe {
-        if REG_LEN >= REG_CAP {
-            // Registry full — skip tracking. validate_generation returns
-            // "valid" for unregistered addresses, so this is safe.
-            let g: i32 = NEXT_GENERATION;
-            NEXT_GENERATION = NEXT_GENERATION + 1;
-            return g;
+        // Grow at 75% load
+        if HT_COUNT * 4 >= HT_CAP * 3 {
+            ht_grow();
         }
         let g: i32 = NEXT_GENERATION;
         NEXT_GENERATION = NEXT_GENERATION + 1;
 
-        let idx: i64 = REG_LEN;
-        reg_write_i64(REG_ADDRS, idx, addr);
-        reg_write_i32(REG_GENS, idx, g);
-        reg_write_i64(REG_SIZES, idx, size);
-
-        REG_LEN = REG_LEN + 1;
+        let idx: i64 = ht_find_insert(addr);
+        if idx < 0 {
+            return g; // table full after grow (shouldn't happen)
+        }
+        let was_empty: bool = !is_live(ht_read_addr(idx));
+        ht_write_addr(idx, addr);
+        ht_write_gen(idx, g);
+        ht_write_size(idx, size);
+        if was_empty {
+            HT_COUNT = HT_COUNT + 1;
+        }
+        HT_LIVE = HT_LIVE + 1;
         g
     }
 }
 
-// Unregister (set generation to 0 = invalid)
+// Unregister (tombstone the slot, set generation to 0)
 #[export_name = "blood_unregister_allocation"]
 pub fn rt_blood_unregister_allocation(addr: i64) {
     @unsafe {
-        let len: i64 = REG_LEN;
-        let mut i: i64 = 0;
-        while i < len {
-            if reg_read_i64(REG_ADDRS, i) == addr {
-                reg_write_i32(REG_GENS, i, 0);
-                return;
-            }
-            i = i + 1;
+        let idx: i64 = ht_find(addr);
+        if idx >= 0 {
+            ht_write_addr(idx, 1); // tombstone
+            ht_write_gen(idx, 0);
+            HT_LIVE = HT_LIVE - 1;
         }
     }
 }
 
-// Validate generation
+// Validate generation: returns 1 if valid, 0 if stale
 #[export_name = "blood_validate_generation"]
 pub fn rt_blood_validate_generation(addr: i64, expected: i32) -> i32 {
     @unsafe {
-        let len: i64 = REG_LEN;
-        let mut i: i64 = 0;
-        while i < len {
-            if reg_read_i64(REG_ADDRS, i) == addr {
-                let actual: i32 = reg_read_i32(REG_GENS, i);
-                if actual == expected { return 1; }
-                return 0;
-            }
-            i = i + 1;
+        let idx: i64 = ht_find(addr);
+        if idx >= 0 {
+            let actual: i32 = ht_read_gen(idx);
+            if actual == expected { return 1; }
+            return 0;
         }
         // Not in registry — stack or region allocated, assume valid
         1
@@ -154,13 +265,9 @@ pub fn rt_blood_validate_generation(addr: i64, expected: i32) -> i32 {
 #[export_name = "blood_get_generation"]
 pub fn rt_blood_get_generation(addr: i64) -> i32 {
     @unsafe {
-        let len: i64 = REG_LEN;
-        let mut i: i64 = 0;
-        while i < len {
-            if reg_read_i64(REG_ADDRS, i) == addr {
-                return reg_read_i32(REG_GENS, i);
-            }
-            i = i + 1;
+        let idx: i64 = ht_find(addr);
+        if idx >= 0 {
+            return ht_read_gen(idx);
         }
         0
     }
@@ -171,15 +278,10 @@ pub fn rt_blood_get_generation(addr: i64) -> i32 {
 pub fn rt_blood_increment_generation(ptr: *mut u8) {
     @unsafe {
         let addr: i64 = ptr_to_addr(ptr);
-        let len: i64 = REG_LEN;
-        let mut i: i64 = 0;
-        while i < len {
-            if reg_read_i64(REG_ADDRS, i) == addr {
-                let g: i32 = reg_read_i32(REG_GENS, i);
-                reg_write_i32(REG_GENS, i, g + 1);
-                return;
-            }
-            i = i + 1;
+        let idx: i64 = ht_find(addr);
+        if idx >= 0 {
+            let g: i32 = ht_read_gen(idx);
+            ht_write_gen(idx, g + 1);
         }
     }
 }
@@ -194,13 +296,9 @@ pub fn rt_blood_stale_reference_panic(expected: i32, actual: i32) {
 // Lookup size for an address (used by realloc)
 fn registry_lookup_size(addr: i64) -> i64 {
     @unsafe {
-        let len: i64 = REG_LEN;
-        let mut i: i64 = 0;
-        while i < len {
-            if reg_read_i64(REG_ADDRS, i) == addr {
-                return reg_read_i64(REG_SIZES, i);
-            }
-            i = i + 1;
+        let idx: i64 = ht_find(addr);
+        if idx >= 0 {
+            return ht_read_size(idx);
         }
         0
     }
