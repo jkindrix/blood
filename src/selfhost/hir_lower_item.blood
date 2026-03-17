@@ -784,6 +784,17 @@ fn lower_static_decl(ctx: &mut hir_lower_ctx.LoweringCtx, s: &ast.StaticDecl) {
         s.span,
     );
     ctx.add_item(def_id, item);
+
+    // Check for #[thread_local] attribute on statics
+    for ai in 0usize..s.attrs.len() {
+        let attr = &s.attrs[ai];
+        if attr.path.len() == 1 {
+            let attr_name = ctx.span_to_string(attr.path[0].span);
+            if str_equals(&attr_name, "thread_local") {
+                ctx.thread_local_def_ids.push(def_id.index);
+            }
+        }
+    }
 }
 
 // ============================================================

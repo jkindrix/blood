@@ -190,6 +190,7 @@ pub fn emit_static_globals_with_names(
     interner: &interner.StringInterner,
     items: &Vec<hir_lower_ctx.ItemEntry>,
     bodies: &Vec<hir_lower_ctx.BodyEntry>,
+    thread_local_def_ids: &Vec<u32>,
 ) {
     let mut output = String.new();
     output.push_str("\n; Static global variables\n");
@@ -222,10 +223,21 @@ pub fn emit_static_globals_with_names(
                 let init_str = evaluate_static_initializer(static_def, bodies, llvm_type.as_str());
 
                 // Emit global variable declaration
-                // Format: @name = global <type> <initializer>
+                // Format: @name = [thread_local] global <type> <initializer>
                 output.push('@');
                 output.push_str(name.as_str());
-                output.push_str(" = global ");
+                // Check if this static is marked #[thread_local]
+                let mut is_tl: bool = false;
+                for tli in 0usize..thread_local_def_ids.len() {
+                    if thread_local_def_ids[tli] == item.def_id.index {
+                        is_tl = true;
+                    }
+                }
+                if is_tl {
+                    output.push_str(" = thread_local global ");
+                } else {
+                    output.push_str(" = global ");
+                }
                 output.push_str(llvm_type.as_str());
                 output.push(' ');
                 output.push_str(init_str.as_str());

@@ -1,0 +1,15 @@
+// Test: #[thread_local] attribute on static mut
+// Verifies that thread_local statics are emitted with LLVM thread_local keyword
+// EXPECT: 42
+#[thread_local]
+static mut TLS_COUNTER: i32 = 0;
+
+fn main() -> i32 {
+    @unsafe {
+        TLS_COUNTER = 42;
+        let val: i32 = TLS_COUNTER;
+        println_int(val);
+        if val != 42 { return 1; }
+    }
+    0
+}
