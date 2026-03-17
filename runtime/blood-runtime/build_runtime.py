@@ -47,6 +47,8 @@ def process_ir(input_path, output_path):
         'u8_to_string', 'u16_to_string', 'u32_to_string', 'u128_to_string',
         # Stage 2 file I/O
         'file_delete',
+        # Thread spawn/join
+        'blood_thread_spawn', 'blood_thread_join',
     }
 
     # Step 4: Strip conflicting declares, builtin declares, and unwanted defines
@@ -374,6 +376,41 @@ def process_ir(input_path, output_path):
     impl_lines.append('  %rc = call i32 @unlink(ptr %pbuf)\n')
     impl_lines.append('  %ok = icmp eq i32 %rc, 0\n')
     impl_lines.append('  ret i1 %ok\n')
+    impl_lines.append('}\n')
+
+    # --- Thread spawn/join ---
+    # Trampoline: pthread start_routine that calls a Blood fn via indirect call.
+    # Blood fn ptrs use closure ABI: fn(ptr env, i64 arg) -> i64, env=null for plain fns.
+    # Receives packed args {func_addr: i64, arg: i64} as void* parameter.
+    impl_lines.append('define ptr @blood_thread_trampoline(ptr %packed) {\n')
+    impl_lines.append('  %func_addr = load i64, ptr %packed\n')
+    impl_lines.append('  %arg_ptr = getelementptr i64, ptr %packed, i64 1\n')
+    impl_lines.append('  %arg = load i64, ptr %arg_ptr\n')
+    impl_lines.append('  %func = inttoptr i64 %func_addr to ptr\n')
+    impl_lines.append('  %result = call i64 %func(ptr null, i64 %arg)\n')
+    impl_lines.append('  %ret = inttoptr i64 %result to ptr\n')
+    impl_lines.append('  ret ptr %ret\n')
+    impl_lines.append('}\n')
+
+    # blood_thread_spawn(func: i64, arg: i64) -> i64 (pthread_t handle)
+    impl_lines.append('define i64 @blood_thread_spawn(i64 %func, i64 %arg) {\n')
+    impl_lines.append('  %packed = call ptr @calloc(i64 16, i64 1)\n')
+    impl_lines.append('  store i64 %func, ptr %packed\n')
+    impl_lines.append('  %arg_slot = getelementptr i64, ptr %packed, i64 1\n')
+    impl_lines.append('  store i64 %arg, ptr %arg_slot\n')
+    impl_lines.append('  %tid = alloca i64\n')
+    impl_lines.append('  call i32 @pthread_create(ptr %tid, ptr null, ptr @blood_thread_trampoline, ptr %packed)\n')
+    impl_lines.append('  %handle = load i64, ptr %tid\n')
+    impl_lines.append('  ret i64 %handle\n')
+    impl_lines.append('}\n')
+
+    # blood_thread_join(handle: i64) -> i64
+    impl_lines.append('define i64 @blood_thread_join(i64 %handle) {\n')
+    impl_lines.append('  %retval = alloca ptr\n')
+    impl_lines.append('  call i32 @pthread_join(i64 %handle, ptr %retval)\n')
+    impl_lines.append('  %ret_ptr = load ptr, ptr %retval\n')
+    impl_lines.append('  %result = ptrtoint ptr %ret_ptr to i64\n')
+    impl_lines.append('  ret i64 %result\n')
     impl_lines.append('}\n')
 
     # env_get({ptr, i64}) -> {ptr, i64} : get environment variable
