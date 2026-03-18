@@ -720,15 +720,47 @@ pub fn emit_place_addr(
                     let ok_lbl = ctx.fresh_label_cg();
                     let stale_lbl = ctx.fresh_label_cg();
                     ctx.emit_cond_br_cg(&is_valid, &ok_lbl, &stale_lbl);
-                    // stale: panic with expected vs actual generation
+                    // stale: perform StaleReference effect (ID 4100 = 0x1004)
                     ctx.emit_label_cg(&stale_lbl);
                     let actual_gen = ctx.fresh_temp_cg();
                     ctx.begin_call(Option.Some(&actual_gen), "i32", "@blood_get_generation");
                     ctx.call_arg_cg(true, "i64", &addr_i64);
                     ctx.end_call();
-                    ctx.begin_call(Option.None, "void", "@blood_stale_reference_panic");
-                    ctx.call_arg_cg(true, "i32", &gen_val);
-                    ctx.call_arg_cg(false, "i32", &actual_gen);
+                    // Pack args: [expected_gen as i64, actual_gen as i64]
+                    let sr_args = ctx.fresh_temp_cg();
+                    ctx.write("  ");
+                    ctx.write_cgname(&sr_args);
+                    ctx.write(" = alloca [2 x i64]\n");
+                    let sr_exp_ext = ctx.fresh_temp_cg();
+                    ctx.write("  ");
+                    ctx.write_cgname(&sr_exp_ext);
+                    ctx.write(" = zext i32 ");
+                    ctx.write_cgname(&gen_val);
+                    ctx.write(" to i64\n");
+                    ctx.write("  store i64 ");
+                    ctx.write_cgname(&sr_exp_ext);
+                    ctx.write(", ptr ");
+                    ctx.write_cgname(&sr_args);
+                    ctx.write("\n");
+                    let sr_act_ext = ctx.fresh_temp_cg();
+                    ctx.write("  ");
+                    ctx.write_cgname(&sr_act_ext);
+                    ctx.write(" = zext i32 ");
+                    ctx.write_cgname(&actual_gen);
+                    ctx.write(" to i64\n");
+                    let sr_arg1 = ctx.fresh_temp_cg();
+                    ctx.write("  ");
+                    ctx.write_cgname(&sr_arg1);
+                    ctx.write(" = getelementptr i64, ptr ");
+                    ctx.write_cgname(&sr_args);
+                    ctx.write(", i64 1\n");
+                    ctx.write("  store i64 ");
+                    ctx.write_cgname(&sr_act_ext);
+                    ctx.write(", ptr ");
+                    ctx.write_cgname(&sr_arg1);
+                    ctx.write("\n");
+                    ctx.begin_call(Option.None, "void", "@blood_perform_stale_ref");
+                    ctx.call_arg_cg(true, "ptr", &sr_args);
                     ctx.end_call();
                     ctx.write("  unreachable\n");
                     // ok → skip: merge and continue

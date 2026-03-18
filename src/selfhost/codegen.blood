@@ -1523,6 +1523,26 @@ pub fn intrinsic_declarations() -> String {
     output.push_str("\n; Function attributes\n");
     output.push_str("attributes #0 = { returns_twice }\n");
 
+    // Default StaleReference handler op: aborts with diagnostic.
+    // Signature: (state: ptr, args: ptr, arg_count: i64, continuation: i64) -> i64
+    output.push_str("\n; Default StaleReference handler (aborts on stale reference)\n");
+    output.push_str("define internal i64 @__blood_stale_ref_default_handler(ptr %state, ptr %args, i64 %arg_count, i64 %cont) {\n");
+    output.push_str("  %expected_ptr = getelementptr i64, ptr %args, i64 0\n");
+    output.push_str("  %expected_i64 = load i64, ptr %expected_ptr\n");
+    output.push_str("  %expected = trunc i64 %expected_i64 to i32\n");
+    output.push_str("  %actual_ptr = getelementptr i64, ptr %args, i64 1\n");
+    output.push_str("  %actual_i64 = load i64, ptr %actual_ptr\n");
+    output.push_str("  %actual = trunc i64 %actual_i64 to i32\n");
+    output.push_str("  call void @blood_stale_reference_panic(i32 %expected, i32 %actual)\n");
+    output.push_str("  unreachable\n");
+    output.push_str("}\n");
+
+    // StaleReference perform wrapper: blood_perform(effect_id=4100, op=0, args, 2, 0)
+    output.push_str("define internal void @blood_perform_stale_ref(ptr %args) {\n");
+    output.push_str("  call i64 @blood_perform(i64 4100, i32 0, ptr %args, i64 2, i64 0)\n");
+    output.push_str("  unreachable\n");
+    output.push_str("}\n");
+
     // Entry point: main() trampoline that replaces runtime.c
     output.push_str("\n; Entry point (replaces runtime.c)\n");
     output.push_str("declare void @blood_set_stack_size()\n");
@@ -1530,6 +1550,15 @@ pub fn intrinsic_declarations() -> String {
     output.push_str("define i32 @main(i32 %argc, ptr %argv) {\n");
     output.push_str("  call void @blood_set_stack_size()\n");
     output.push_str("  call void @blood_init_args(i32 %argc, ptr %argv)\n");
+
+    // Install default StaleReference handler (effect ID 4100 = 0x1004)
+    output.push_str("  %__sr_ev = call ptr @blood_evidence_create()\n");
+    output.push_str("  call void @blood_evidence_set_current(ptr %__sr_ev)\n");
+    output.push_str("  %__sr_ops = alloca [1 x ptr]\n");
+    output.push_str("  store ptr @__blood_stale_ref_default_handler, ptr %__sr_ops\n");
+    output.push_str("  %__sr_reg = call i64 @blood_evidence_register(ptr %__sr_ev, i64 4100, ptr %__sr_ops, i64 1, i64 1)\n");
+    output.push_str("  call void @blood_evidence_push_with_state(ptr %__sr_ev, i64 4100, ptr null)\n");
+
     output.push_str("  %ret = call i32 @blood_main()\n");
     output.push_str("  ret i32 %ret\n");
     output.push_str("}\n");
