@@ -363,7 +363,7 @@ pub fn rt_blood_alloc_simple(size: i64) -> i64 {
     }
 }
 
-// Realloc: calloc new + memcpy + leak old (free unavailable due to symbol conflict)
+// Realloc: calloc new + memcpy + free old via __libc_free
 #[export_name = "blood_realloc"]
 pub fn rt_blood_realloc(old_addr: i64, new_size: i64) -> i64 {
     @unsafe {
@@ -379,6 +379,9 @@ pub fn rt_blood_realloc(old_addr: i64, new_size: i64) -> i64 {
         }
         if copy_size > 0 {
             libc.sys_memmove(new_ptr, addr_to_cptr(old_addr), copy_size as u64);
+        }
+        if old_addr > 1 {
+            libc.sys_free(addr_to_ptr(old_addr));
         }
         new_addr
     }

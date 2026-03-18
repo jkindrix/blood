@@ -2883,6 +2883,12 @@ fn codegen_thread_worker(arg: u64) -> u64 {
     // Avoids mmap/munmap cycling that causes memory layout instability.
     let mir_region = region_create(4194304, 8589934592);
 
+    // Per-function temp region for codegen temporaries (output buffer, local maps).
+    // Reset after each function to reclaim memory that would otherwise accumulate
+    // in thread_codegen_region. String table allocations bypass this region
+    // (see add_string_constant) so they persist across functions.
+    let fn_temp_region = region_create(2097152, 4294967296);
+
     let mut i: usize = targ.chunk_start;
     while i < targ.chunk_end {
         let work = &wl.items[i];
@@ -2934,8 +2940,18 @@ fn codegen_thread_worker(arg: u64) -> u64 {
             ctx.is_handler_op = true;
         }
 
-        // Codegen (thread_codegen_region active — all allocations scoped)
+        // Activate temp region for codegen temporaries (local maps, IR fragments).
+        // add_string_constant deactivates this to allocate in thread_codegen_region.
+        region_activate(fn_temp_region);
+        ctx.fn_temp_region = fn_temp_region;
+
+        // Codegen (fn_temp_region active — temporaries scoped to this function)
         let fn_ir = codegen.generate_function_with_ctx(ctx, &mir_result.body, work.fn_name.as_str());
+
+        // Deactivate temp region BEFORE appending to output String
+        // (output lives in thread_codegen_region, must not be freed on reset)
+        ctx.fn_temp_region = 0 as u64;
+        region_deactivate();
         output.push_str(fn_ir.as_str());
 
         // Generate closure bodies discovered during MIR lowering
@@ -2943,12 +2959,17 @@ fn codegen_thread_worker(arg: u64) -> u64 {
         while cli < mir_result.closure_names.len() && cli < mir_result.closure_mir.len() {
             let cname = &mir_result.closure_names[cli];
             let cbody = &mir_result.closure_mir[cli];
+            region_activate(fn_temp_region);
+            ctx.fn_temp_region = fn_temp_region;
             let closure_ir = codegen.generate_function_with_ctx(ctx, cbody, cname.as_str());
+            ctx.fn_temp_region = 0 as u64;
+            region_deactivate();
             output.push_str(closure_ir.as_str());
             cli += 1;
         }
 
-        // Reset MIR region — bump pointer back to start, keep virtual mapping
+        // Reset temp + MIR regions — reclaim per-function temporaries
+        region_reset(fn_temp_region);
         region_reset(mir_region);
 
         // Clear handler op state flags
@@ -2963,6 +2984,8 @@ fn codegen_thread_worker(arg: u64) -> u64 {
 
         i += 1;
     }
+
+    region_destroy(fn_temp_region);
 
     // Destroy MIR region after all functions processed
     region_destroy(mir_region);

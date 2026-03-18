@@ -213,6 +213,17 @@ pub fn rt_blood_region_reset(region_id: i64) {
         let idx: i64 = find_region(region_id);
         if idx < 0 { return; }
 
+        // Release physical pages back to OS (keeps virtual mapping)
+        let base: *mut u8 = alloc.addr_to_ptr(read_i64(REG_BASE, idx));
+        let committed: i64 = read_i64(REG_COMMITTED, idx);
+        if committed > 0 {
+            libc.sys_madvise(base, committed as u64, libc.MADV_DONTNEED());
+        }
+
+        // No gen invalidation — region_reset is for compiler-internal temp regions
+        // where there are no gen-tracked references. Use region_destroy for user
+        // code regions that need gen invalidation.
+
         // Reset bump pointer, alloc count, reopen
         write_i64(REG_OFFSET, idx, 0);
         write_i64(REG_ALLOCCOUNT, idx, 0);
