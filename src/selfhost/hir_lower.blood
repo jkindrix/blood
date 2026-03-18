@@ -331,7 +331,11 @@ fn resolve_import(ctx: &mut hir_lower_ctx.LoweringCtx, imp: &ast.Import) {
                     };
                     let binding = resolve.Binding.def(item_def_id);
                     ctx.resolver.define(bind_sym, binding);
+                } else {
+                    ctx.error(hir.DiagnosticCode.E0103, common.make_string("unresolved import"), path.segments[last_idx].span);
                 }
+            } else {
+                ctx.error(hir.DiagnosticCode.E0103, common.make_string("unresolved import"), path.span);
             }
         }
         &ast.Import.Group { ref path, ref items, span: _ } => {
@@ -355,8 +359,12 @@ fn resolve_import(ctx: &mut hir_lower_ctx.LoweringCtx, imp: &ast.Import) {
                         };
                         let binding = resolve.Binding.def(item_def_id);
                         ctx.resolver.define(bind_sym, binding);
+                    } else {
+                        ctx.error(hir.DiagnosticCode.E0103, common.make_string("unresolved import"), items[gi].name.span);
                     }
                 }
+            } else {
+                ctx.error(hir.DiagnosticCode.E0103, common.make_string("unresolved import"), path.span);
             }
         }
         &ast.Import.Glob { ref path, span: _ } => {
@@ -370,6 +378,8 @@ fn resolve_import(ctx: &mut hir_lower_ctx.LoweringCtx, imp: &ast.Import) {
                     let binding = resolve.Binding.def(child_def);
                     ctx.resolver.define(child_name, binding);
                 }
+            } else {
+                ctx.error(hir.DiagnosticCode.E0103, common.make_string("unresolved import"), path.span);
             }
         }
     }
