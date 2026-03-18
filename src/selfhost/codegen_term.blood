@@ -277,15 +277,9 @@ pub fn emit_terminator(
 
             // Stale path: perform StaleReference effect
             ctx.emit_label_cg(&stale_label);
-            let sr_snap_args = ctx.fresh_temp_cg();
-            ctx.write("    ");
-            ctx.write_cgname(&sr_snap_args);
-            ctx.write(" = alloca [2 x i64]\n");
-            ctx.write("    store i64 0, ptr ");
-            ctx.write_cgname(&sr_snap_args);
-            ctx.write("\n");
             ctx.begin_call(Option.None, "void", "@blood_perform_stale_ref");
-            ctx.call_arg_cg(true, "ptr", &sr_snap_args);
+            ctx.call_arg_str(true, "i32", "0");
+            ctx.call_arg_str(false, "i32", "0");
             ctx.end_call();
             ctx.emit_unreachable();
 
@@ -583,28 +577,9 @@ pub fn emit_terminator(
             dump_mir.push_u32(&mut expected_str, expected_gen);
             let mut actual_str = String.new();
             dump_mir.push_u32(&mut actual_str, actual_gen);
-            let sr_term_args = ctx.fresh_temp_cg();
-            ctx.write("    ");
-            ctx.write_cgname(&sr_term_args);
-            ctx.write(" = alloca [2 x i64]\n");
-            ctx.write("    store i64 ");
-            ctx.write(expected_str.as_str());
-            ctx.write(", ptr ");
-            ctx.write_cgname(&sr_term_args);
-            ctx.write("\n");
-            let sr_term_arg1 = ctx.fresh_temp_cg();
-            ctx.write("    ");
-            ctx.write_cgname(&sr_term_arg1);
-            ctx.write(" = getelementptr i64, ptr ");
-            ctx.write_cgname(&sr_term_args);
-            ctx.write(", i64 1\n");
-            ctx.write("    store i64 ");
-            ctx.write(actual_str.as_str());
-            ctx.write(", ptr ");
-            ctx.write_cgname(&sr_term_arg1);
-            ctx.write("\n");
-            ctx.begin_call(Option.None, "void", "@blood_perform_stale_ref");
-            ctx.call_arg_cg(true, "ptr", &sr_term_args);
+            ctx.begin_call_str(Option.None, "void", "@blood_perform_stale_ref");
+            ctx.call_arg_str(true, "i32", expected_str.as_str());
+            ctx.call_arg_str(false, "i32", actual_str.as_str());
             ctx.end_call();
             ctx.emit_unreachable();
         }

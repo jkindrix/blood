@@ -1537,8 +1537,14 @@ pub fn intrinsic_declarations() -> String {
     output.push_str("  unreachable\n");
     output.push_str("}\n");
 
-    // StaleReference perform wrapper: blood_perform(effect_id=4100, op=0, args, 2, 0)
-    output.push_str("define internal void @blood_perform_stale_ref(ptr %args) {\n");
+    // StaleReference perform wrapper: packs i32 args into [2 x i64] and performs
+    output.push_str("define internal void @blood_perform_stale_ref(i32 %expected, i32 %actual) {\n");
+    output.push_str("  %args = alloca [2 x i64]\n");
+    output.push_str("  %e = zext i32 %expected to i64\n");
+    output.push_str("  store i64 %e, ptr %args\n");
+    output.push_str("  %p1 = getelementptr i64, ptr %args, i64 1\n");
+    output.push_str("  %a = zext i32 %actual to i64\n");
+    output.push_str("  store i64 %a, ptr %p1\n");
     output.push_str("  call i64 @blood_perform(i64 4100, i32 0, ptr %args, i64 2, i64 0)\n");
     output.push_str("  unreachable\n");
     output.push_str("}\n");
