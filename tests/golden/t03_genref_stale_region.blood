@@ -1,15 +1,8 @@
-// Test: generational reference validation fires for heap-allocated struct
-// dereferenced after region destroy. The struct is allocated via
-// blood_alloc_or_abort at function entry (before region activation),
-// so it lands on the heap — not in the region. The gen check fires
-// (gen != 0) but passes (data is heap-allocated, gen not invalidated
-// by region destroy).
-//
-// NOTE: True stale detection for region-allocated data requires
-// deferring local allocation to declaration point (after region
-// activation). Currently, all locals are allocated in the entry block.
-// See WORK.md M-20 and codegen_stmt.blood emit_allocas_with_escapes.
-// EXPECT: 42
+// Test: stale reference to region-allocated data panics on dereference.
+// The struct is allocated inside the region (deferred allocation at
+// RegionEnter). After region destroy, dereferencing the stale reference
+// triggers a generation check failure.
+// EXPECT_EXIT: nonzero
 
 struct Pair {
     a: i32,
@@ -23,6 +16,7 @@ fn main() -> i32 {
         let p: Pair = Pair { a: 42, b: 99 };
         r = &p;
     }
+    // Region destroyed — r is stale
     println_int((*r).a);
     0
 }

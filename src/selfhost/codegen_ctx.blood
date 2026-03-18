@@ -208,6 +208,9 @@ pub struct CodegenCtx {
     region_locals: Vec<RegionLocalEntry>,
     /// Locals allocated via persistent (ref-counted) allocator (decremented on StorageDead).
     persistent_locals: Vec<PersistentLocalEntry>,
+    /// Region-tier locals whose blood_alloc_or_abort is deferred to RegionEnter.
+    /// Entries: (region_local_idx, local_idx, ty_id).
+    pub deferred_region_allocs: Vec<(u32, u32, type_intern.TyId)>,
     /// The current function being generated.
     current_fn: Option<String>,
     /// String constants table for global string literals.
@@ -505,6 +508,7 @@ impl CodegenCtx {
             local_hir_types: Vec.with_capacity(64),
             region_locals: Vec.with_capacity(16),
             persistent_locals: Vec.with_capacity(16),
+            deferred_region_allocs: Vec.new(),
             current_fn: Option.None,
             // Persistent cross-function Vecs: pre-allocate for typical compiler size
             string_table: Vec.with_capacity(512),
@@ -596,6 +600,7 @@ impl CodegenCtx {
             local_hir_types: Vec.with_capacity(64),
             region_locals: Vec.with_capacity(16),
             persistent_locals: Vec.with_capacity(16),
+            deferred_region_allocs: Vec.new(),
             current_fn: Option.None,
             string_table: Vec.with_capacity(512),
             string_counter: 0,
@@ -1751,6 +1756,7 @@ impl CodegenCtx {
         self.local_hir_types = Vec.new();
         self.region_locals = Vec.new();
         self.persistent_locals = Vec.new();
+        self.deferred_region_allocs = Vec.new();
         self.local_names_hash = hashmap.HashMapU64U32.new();
         self.local_types_hash = hashmap.HashMapU64U32.new();
         self.local_signedness_hash = hashmap.HashMapU64U32.new();
@@ -2240,6 +2246,7 @@ impl CodegenCtx {
             local_hir_types: Vec.new(),
             region_locals: Vec.new(),
             persistent_locals: Vec.new(),
+            deferred_region_allocs: Vec.new(),
             current_fn: Option.None,
             string_table: Vec.new(),
             string_counter: 0,

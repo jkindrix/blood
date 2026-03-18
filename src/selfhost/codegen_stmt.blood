@@ -783,6 +783,14 @@ pub fn emit_statement(
 
             // Track active region for suspension during Perform
             ctx.active_regions.push(codegen_ctx.CodegenCtx.cgname_to_string(&region_id));
+
+            // Emit deferred allocations for locals owned by this region
+            for di in 0usize..ctx.deferred_region_allocs.len() {
+                let entry = ctx.deferred_region_allocs[di];
+                if entry.0 == region_local.index {
+                    emit_deferred_region_alloc(ctx, entry.1, entry.2);
+                }
+            }
         }
         &mir_stmt.StatementKind.RegionExit { region_local } => {
             // Emit region lifecycle: deactivate + exit_scope + conditional destroy
@@ -1570,10 +1578,21 @@ pub fn emit_allocas_with_escapes(
                 &mir_escape.MemoryTier.Region => {
                     // Region allocation with generation tracking
                     let name = ctx.local_alloca_name(local_id);
-                    emit_region_local(ctx, local.ty, &name, local_id);
                     let mut gen_name = common.make_string(name.as_str());
                     gen_name.push_str("_gen");
-                    ctx.mark_region_allocated(local_id, gen_name);
+                    match body.get_region_owner(local_id) {
+                        Option.Some(region_idx) => {
+                            // Defer allocation to RegionEnter — only emit allocas here
+                            emit_region_local_allocas_only(ctx, &name, local_id);
+                            ctx.mark_region_allocated(local_id, gen_name);
+                            ctx.deferred_region_allocs.push((region_idx, local_id.index, local.ty));
+                        }
+                        Option.None => {
+                            // No region owner — allocate immediately (large struct outside region)
+                            emit_region_local(ctx, local.ty, &name, local_id);
+                            ctx.mark_region_allocated(local_id, gen_name);
+                        }
+                    }
                 }
                 &mir_escape.MemoryTier.Persistent => {
                     // Persistent allocation
@@ -1640,6 +1659,51 @@ fn emit_region_local(
     gen_name.push_str("_gen");
     let gen_name_cg = codegen_ctx.CgName.Str(clone_string(&gen_name));
     ctx.emit_alloca_cg(&gen_name_cg, "i32");
+
+    let size = codegen_size.type_size_with_ctx_id(ctx, ty_id);
+    let size_str = codegen_types.format_u64(size);
+    let result_tmp = ctx.fresh_temp_cg();
+    ctx.begin_call(Option.Some(&result_tmp), "i64", "@blood_alloc_or_abort");
+    ctx.call_arg_str(true, "i64", size_str.as_str());
+    ctx.call_arg_str(false, "ptr", gen_name.as_str());
+    ctx.end_call();
+
+    // Convert i64 to ptr and store
+    let ptr_tmp = ctx.fresh_temp_cg();
+    ctx.emit_cast_cg2(&ptr_tmp, "inttoptr", "i64", &result_tmp, "ptr");
+    ctx.emit_store_cg("ptr", &ptr_tmp, name.as_str());
+}
+
+/// Emits only the allocas for a region-local (no blood_alloc_or_abort call).
+/// The allocation is deferred to RegionEnter so it lands in the active region.
+fn emit_region_local_allocas_only(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    name: &String,
+    local_id: mir_def.MirLocalId,
+) {
+    // Allocate pointer slot on stack (will hold ptr to region allocation)
+    let name_cg = ctx.local_cg(local_id);
+    ctx.emit_alloca_cg(&name_cg, "ptr");
+
+    // Allocate generation slot on stack (i32) — out-parameter for blood_alloc_or_abort
+    let mut gen_name = clone_string(name);
+    gen_name.push_str("_gen");
+    let gen_name_cg = codegen_ctx.CgName.Str(clone_string(&gen_name));
+    ctx.emit_alloca_cg(&gen_name_cg, "i32");
+}
+
+/// Emits a deferred blood_alloc_or_abort for a region-owned local.
+/// Called at RegionEnter after the region is activated.
+pub fn emit_deferred_region_alloc(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    local_idx: u32,
+    ty_id: type_intern.TyId,
+) {
+    let local_id = mir_def.MirLocalId.new(local_idx);
+    let name = ctx.local_alloca_name(local_id);
+
+    let mut gen_name = common.make_string(name.as_str());
+    gen_name.push_str("_gen");
 
     let size = codegen_size.type_size_with_ctx_id(ctx, ty_id);
     let size_str = codegen_types.format_u64(size);

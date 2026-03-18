@@ -296,6 +296,10 @@ fn lower_expr_inner(
                 expr.span,
             ));
 
+            // Track active region so locals created inside are associated with it
+            let prev_region = ctx.active_region_local;
+            ctx.active_region_local = Option.Some(region_local.index);
+
             // Lower body statements
             for i in 0usize..stmts.len() {
                 lower_stmt(ctx, &stmts[i]);
@@ -319,6 +323,9 @@ fn lower_expr_inner(
                     }
                 }
             }
+
+            // Restore enclosing region (for nesting)
+            ctx.active_region_local = prev_region;
 
             // Emit RegionExit: codegen will call blood_region_deactivate + exit_scope + conditional destroy
             ctx.emit_stmt(mir_stmt.Statement.new(

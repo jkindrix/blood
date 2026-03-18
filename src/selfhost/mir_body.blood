@@ -45,6 +45,9 @@ pub struct MirBody {
     pub heap_locals: Vec<u32>,
     /// MIR local indices with `@stack` allocation directive.
     pub stack_locals: Vec<u32>,
+    /// Locals owned by a region block: (local_idx, region_local_idx).
+    /// These locals should be allocated at RegionEnter, not in the entry block.
+    pub region_owned_locals: Vec<(u32, u32)>,
 }
 
 impl MirBody {
@@ -61,6 +64,7 @@ impl MirBody {
             capture_tys: Vec.new(),
             heap_locals: Vec.new(),
             stack_locals: Vec.new(),
+            region_owned_locals: Vec.new(),
         }
     }
 
@@ -87,6 +91,16 @@ impl MirBody {
     /// Gets a local by its ID.
     pub fn get_local(self: &MirBody, id: mir_def.MirLocalId) -> &MirLocal {
         &self.locals[id.as_usize()]
+    }
+
+    /// Returns the region local that owns this local, or None if not region-scoped.
+    pub fn get_region_owner(self: &MirBody, local_id: mir_def.MirLocalId) -> Option<u32> {
+        for entry in &self.region_owned_locals {
+            if entry.0 == local_id.index {
+                return Option.Some(entry.1);
+            }
+        }
+        Option.None
     }
 
     /// Gets a basic block by its ID.
@@ -484,6 +498,11 @@ impl MirBodyBuilder {
     /// Allocates a new temporary.
     pub fn new_temp(self: &mut MirBodyBuilder, ty: type_intern.TyId, span: common.Span) -> mir_def.MirLocalId {
         self.body.new_temp(ty, span)
+    }
+
+    /// Associates a local with a region (for deferred allocation at RegionEnter).
+    pub fn set_region_owner(self: &mut MirBodyBuilder, local_id: mir_def.MirLocalId, region_local_idx: u32) {
+        self.body.region_owned_locals.push((local_id.index, region_local_idx));
     }
 
     /// Updates the type of an existing local.

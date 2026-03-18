@@ -255,6 +255,8 @@ pub struct MirLowerCtx {
     /// Type-generic call info from the type checker.
     /// Records concrete type bindings for each call to a type-generic function.
     pub type_generic_calls: Vec<common.TypeGenericCallInfo>,
+    /// The region local that currently encloses new locals (for deferred allocation).
+    pub active_region_local: Option<u32>,
 }
 
 /// A const parameter binding: maps a const param DefId to a concrete value.
@@ -368,6 +370,7 @@ impl MirLowerCtx {
             next_mono_def_id: 0,
             type_generic_fn_set: Vec.new(),
             type_generic_calls: Vec.new(),
+            active_region_local: Option.None,
         }
     }
 
@@ -642,7 +645,14 @@ impl MirLowerCtx {
     pub fn new_temp(self: &mut MirLowerCtx, ty_id: type_intern.TyId, span: common.Span) -> mir_def.MirLocalId {
         self.temp_counter = self.temp_counter + 1;
         let resolved = unify.apply_substs_id(self.get_subst_table(), ty_id);
-        self.builder.new_temp(resolved, span)
+        let local_id = self.builder.new_temp(resolved, span);
+        match self.active_region_local {
+            Option.Some(region_idx) => {
+                self.builder.set_region_owner(local_id, region_idx);
+            }
+            Option.None => {}
+        }
+        local_id
     }
 
     /// Creates a new user variable and returns its ID.
@@ -655,7 +665,14 @@ impl MirLowerCtx {
         span: common.Span,
     ) -> mir_def.MirLocalId {
         let resolved = unify.apply_substs_id(self.get_subst_table(), ty_id);
-        self.builder.new_var(resolved, name, mutable, span)
+        let local_id = self.builder.new_var(resolved, name, mutable, span);
+        match self.active_region_local {
+            Option.Some(region_idx) => {
+                self.builder.set_region_owner(local_id, region_idx);
+            }
+            Option.None => {}
+        }
+        local_id
     }
 
     // ======== Block Management ========
