@@ -380,8 +380,13 @@ pub fn rt_blood_realloc(old_addr: i64, new_size: i64) -> i64 {
         if copy_size > 0 {
             libc.sys_memmove(new_ptr, addr_to_cptr(old_addr), copy_size as u64);
         }
+        // Only free if calloc'd (in gen registry). Region-allocated
+        // pointers (mmap'd) must not be passed to __libc_free.
         if old_addr > 1 {
-            libc.sys_free(addr_to_ptr(old_addr));
+            let reg_idx: i64 = ht_find(old_addr);
+            if reg_idx >= 0 {
+                libc.sys_free(addr_to_ptr(old_addr));
+            }
         }
         new_addr
     }
