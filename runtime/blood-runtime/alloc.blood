@@ -292,6 +292,27 @@ pub fn rt_blood_increment_generation(ptr: *mut u8) {
     }
 }
 
+// Invalidate all allocations within an address range by incrementing their
+// generations. Used by region_destroy to make stale references detectable.
+pub fn rt_blood_invalidate_range(base: i64, size: i64) {
+    @unsafe {
+        let end: i64 = base + size;
+        let mut i: i64 = 0;
+        while i < HT_CAP {
+            let a: i64 = ht_read_addr(i);
+            if is_live(a) {
+                if a >= base {
+                    if a < end {
+                        let g: i32 = ht_read_gen(i);
+                        ht_write_gen(i, g + 1);
+                    }
+                }
+            }
+            i = i + 1;
+        }
+    }
+}
+
 // Panic on stale reference
 #[export_name = "blood_stale_reference_panic"]
 pub fn rt_blood_stale_reference_panic(expected: i32, actual: i32) {

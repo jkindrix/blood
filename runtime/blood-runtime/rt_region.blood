@@ -180,8 +180,13 @@ pub fn rt_blood_region_destroy(region_id: i64) {
         let idx: i64 = find_region(region_id);
         if idx < 0 { return; }
 
-        let base: *mut u8 = alloc.addr_to_ptr(read_i64(REG_BASE, idx));
+        let base_addr: i64 = read_i64(REG_BASE, idx);
+        let base: *mut u8 = alloc.addr_to_ptr(base_addr);
         let reserved: i64 = read_i64(REG_RESERVED, idx);
+
+        // Invalidate generations for all allocations within this region.
+        // Stale references holding old gen values will fail validation.
+        alloc.rt_blood_invalidate_range(base_addr, reserved);
 
         // madvise: release physical pages (keep virtual mapping for stale ref safety)
         libc.sys_madvise(base, reserved as u64, libc.MADV_DONTNEED());
@@ -402,7 +407,8 @@ pub fn dispatch_alloc_or_abort(size: i64, out_gen: *mut i32) -> i64 {
         if active_rid > 0 {
             let addr: i64 = rt_blood_region_alloc(active_rid, size, 16);
             if addr != 0 {
-                *out_gen = 0;
+                let g: i32 = alloc.rt_blood_register_allocation(addr, size);
+                *out_gen = g;
                 return addr;
             }
         }
