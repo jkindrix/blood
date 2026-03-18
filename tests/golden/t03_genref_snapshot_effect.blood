@@ -1,0 +1,35 @@
+// Test: generation snapshot validates refs across effect suspension.
+// A region-allocated struct's reference is live when perform is called.
+// The handler resumes immediately, so the ref is still valid. Snapshot
+// validation passes (no false positives for valid refs).
+// EXPECT: 42
+
+effect Notify {
+    op ping() -> ();
+}
+
+struct Data {
+    value: i32,
+}
+
+deep handler Sink for Notify {
+    return(x) { x }
+    op ping() {
+        resume(())
+    }
+}
+
+fn main() -> i32 {
+    let result: i32 = with Sink {} handle {
+        region {
+            let d: Data = Data { value: 42 };
+            let r: &Data = &d;
+            perform Notify.ping();
+            // After perform, snapshot should validate r is still valid
+            // (region is still alive here)
+            println_int((*r).value);
+        }
+        0
+    };
+    result
+}

@@ -1686,10 +1686,12 @@ fn emit_region_local_allocas_only(
     ctx.emit_alloca_cg(&name_cg, "ptr");
 
     // Allocate generation slot on stack (i32) — out-parameter for blood_alloc_or_abort
+    // Initialize to 0 (sentinel: unallocated, skip snapshot validation)
     let mut gen_name = clone_string(name);
     gen_name.push_str("_gen");
     let gen_name_cg = codegen_ctx.CgName.Str(clone_string(&gen_name));
     ctx.emit_alloca_cg(&gen_name_cg, "i32");
+    ctx.emit_store_str_cg("i32", "0", &gen_name_cg);
 }
 
 /// Emits a deferred blood_alloc_or_abort for a region-owned local.

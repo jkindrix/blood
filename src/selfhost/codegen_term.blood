@@ -130,7 +130,59 @@ pub fn emit_terminator(
             ctx.begin_call(Option.Some(&snapshot), "ptr", "@blood_snapshot_create");
             ctx.end_call();
 
-            // V1 gen snapshot entries removed — fat refs carry gen in { ptr, i32 }.
+            // Add snapshot entries for all gen-tracked locals (region + persistent).
+            // If gen == 0 (unallocated deferred local or stack-tier), skip the entry.
+            for ri in 0usize..ctx.region_locals.len() {
+                let rl = &ctx.region_locals[ri];
+                let local_id = mir_def.MirLocalId.new(rl.local_id);
+                let alloca_name = ctx.local_alloca_name(local_id);
+                // Load ptr from local, convert to i64
+                let snap_ptr = ctx.fresh_temp_cg();
+                ctx.emit_load_cg(&snap_ptr, "ptr", alloca_name.as_str());
+                let snap_addr = ctx.fresh_temp_cg();
+                ctx.emit_cast_cg2(&snap_addr, "ptrtoint", "ptr", &snap_ptr, "i64");
+                // Load gen from _gen alloca
+                let snap_gen = ctx.fresh_temp_cg();
+                ctx.emit_load_cg(&snap_gen, "i32", rl.gen_name.as_str());
+                // Skip if gen == 0 (unallocated or stack-tier)
+                let snap_nz = ctx.fresh_temp_cg();
+                ctx.emit_icmp_cg2(&snap_nz, "ne", "i32", &snap_gen, "0");
+                let snap_add_lbl = ctx.fresh_label_cg();
+                let snap_skip_lbl = ctx.fresh_label_cg();
+                ctx.emit_cond_br_cg(&snap_nz, &snap_add_lbl, &snap_skip_lbl);
+                ctx.emit_label_cg(&snap_add_lbl);
+                ctx.begin_call(Option.None, "void", "@blood_snapshot_add_entry");
+                ctx.call_arg_cg(true, "ptr", &snapshot);
+                ctx.call_arg_cg(false, "i64", &snap_addr);
+                ctx.call_arg_cg(false, "i32", &snap_gen);
+                ctx.end_call();
+                ctx.emit_br_cg(&snap_skip_lbl);
+                ctx.emit_label_cg(&snap_skip_lbl);
+            }
+            for pi in 0usize..ctx.persistent_locals.len() {
+                let pl = &ctx.persistent_locals[pi];
+                let local_id = mir_def.MirLocalId.new(pl.local_id);
+                let alloca_name = ctx.local_alloca_name(local_id);
+                let snap_ptr = ctx.fresh_temp_cg();
+                ctx.emit_load_cg(&snap_ptr, "ptr", alloca_name.as_str());
+                let snap_addr = ctx.fresh_temp_cg();
+                ctx.emit_cast_cg2(&snap_addr, "ptrtoint", "ptr", &snap_ptr, "i64");
+                let snap_gen = ctx.fresh_temp_cg();
+                ctx.emit_load_cg(&snap_gen, "i32", pl.gen_name.as_str());
+                let snap_nz = ctx.fresh_temp_cg();
+                ctx.emit_icmp_cg2(&snap_nz, "ne", "i32", &snap_gen, "0");
+                let snap_add_lbl = ctx.fresh_label_cg();
+                let snap_skip_lbl = ctx.fresh_label_cg();
+                ctx.emit_cond_br_cg(&snap_nz, &snap_add_lbl, &snap_skip_lbl);
+                ctx.emit_label_cg(&snap_add_lbl);
+                ctx.begin_call(Option.None, "void", "@blood_snapshot_add_entry");
+                ctx.call_arg_cg(true, "ptr", &snapshot);
+                ctx.call_arg_cg(false, "i64", &snap_addr);
+                ctx.call_arg_cg(false, "i32", &snap_gen);
+                ctx.end_call();
+                ctx.emit_br_cg(&snap_skip_lbl);
+                ctx.emit_label_cg(&snap_skip_lbl);
+            }
 
             // Store snapshot in effect context for handler to retrieve
             ctx.begin_call(Option.None, "void", "@blood_effect_context_set_snapshot");
