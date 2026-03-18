@@ -1,0 +1,31 @@
+// COMPILE_FAIL: linear closure used twice in handled block
+// EXPECT: linear value
+// Test: a move closure capturing a linear value is itself linear.
+// Using it twice violates linearity, even inside a handled block.
+effect Emit<T> {
+    op emit(value: T) -> ();
+}
+
+deep handler Collector for Emit<i32> {
+    let mut items: Vec<i32>
+
+    return(x) { x }
+
+    op emit(value) {
+        items.push(value);
+        resume(())
+    }
+}
+
+fn main() -> i32 {
+    let x: linear i32 = 42;
+    let f = move || -> i32 { x };
+    let result: i32 = with Collector { items: Vec.new() } handle {
+        let a: i32 = f();
+        perform Emit.emit(a);
+        let b: i32 = f();
+        perform Emit.emit(b);
+        0
+    };
+    result
+}

@@ -1,0 +1,22 @@
+// Test: reference from inner region must not survive inner region destroy.
+// Inner region allocates a struct, reference escapes to outer scope.
+// When inner region is destroyed, the reference becomes stale.
+// EXPECT_EXIT: nonzero
+
+struct Data {
+    value: i32,
+}
+
+fn main() -> i32 {
+    let dummy: Data = Data { value: 0 };
+    let mut r: &Data = &dummy;
+    region {
+        region {
+            let d: Data = Data { value: 42 };
+            r = &d;
+        }
+        // Inner region destroyed — r is stale
+        println_int((*r).value);
+    }
+    0
+}

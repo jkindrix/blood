@@ -1,0 +1,15 @@
+// COMPILE_FAIL: linear value consumed by perform cannot be reused
+// EXPECT: linear value
+// Test: passing a linear value to perform consumes it; subsequent use violates linearity.
+effect Sink<T> {
+    op send(value: T) -> ();
+}
+
+fn use_linear(x: linear i32) -> () / {Sink<i32>} {
+    perform Sink.send(x);
+    perform Sink.send(x);
+}
+
+fn main() -> i32 {
+    0
+}
