@@ -480,6 +480,90 @@ impl TypeCheckResult {
     }
 }
 
+/// Clones a TypeCheckResult's data to the system heap.
+/// Called with NO active region so all allocations go to calloc.
+/// The source data (in typeck_region) can then be freed.
+pub fn clone_typeck_result_to_heap(src: &TypeCheckResult) -> TypeCheckResult {
+    // Clone SubstTable (Vecs of integer-indexed structs + HashMaps)
+    let subst = unify.clone_subst_table(&src.subst_table);
+
+    // Clone Vecs of plain integer structs
+    let mut methods: Vec<common.MethodResEntry> = Vec.with_capacity(src.method_resolutions.len());
+    for i in 0usize..src.method_resolutions.len() {
+        let e = &src.method_resolutions[i];
+        methods.push(common.MethodResEntry { body_def_id: e.body_def_id, span_start: e.span_start, def_id_index: e.def_id_index });
+    }
+
+    let mut fields: Vec<common.FieldResEntry> = Vec.with_capacity(src.field_resolutions.len());
+    for i in 0usize..src.field_resolutions.len() {
+        let e = &src.field_resolutions[i];
+        fields.push(common.FieldResEntry { body_def_id: e.body_def_id, span_start: e.span_start, field_idx: e.field_idx });
+    }
+
+    let mut coercions: Vec<common.CoercionEntry> = Vec.with_capacity(src.coercion_entries.len());
+    for i in 0usize..src.coercion_entries.len() {
+        let e = &src.coercion_entries[i];
+        coercions.push(common.CoercionEntry { body_def_id: e.body_def_id, span_start: e.span_start, array_len: e.array_len });
+    }
+
+    // Clone DefaultMethodRemap (has nested Vec<CallRemapEntry>)
+    let mut remaps: Vec<common.DefaultMethodRemap> = Vec.with_capacity(src.default_method_remaps.len());
+    for i in 0usize..src.default_method_remaps.len() {
+        let e = &src.default_method_remaps[i];
+        let mut cr: Vec<common.CallRemapEntry> = Vec.with_capacity(e.call_remaps.len());
+        for j in 0usize..e.call_remaps.len() {
+            cr.push(common.CallRemapEntry { from_def_id: e.call_remaps[j].from_def_id, to_def_id: e.call_remaps[j].to_def_id });
+        }
+        remaps.push(common.DefaultMethodRemap { body_def_id: e.body_def_id, call_remaps: cr });
+    }
+
+    // Clone TypeGenericCallInfo (has nested Vec<TypeMonoBinding>)
+    let mut tgc: Vec<common.TypeGenericCallInfo> = Vec.with_capacity(src.type_generic_calls.len());
+    for i in 0usize..src.type_generic_calls.len() {
+        let e = &src.type_generic_calls[i];
+        let mut bindings: Vec<common.TypeMonoBinding> = Vec.with_capacity(e.type_bindings.len());
+        for j in 0usize..e.type_bindings.len() {
+            bindings.push(common.TypeMonoBinding { ty_var_index: e.type_bindings[j].ty_var_index, concrete_ty_id: e.type_bindings[j].concrete_ty_id });
+        }
+        tgc.push(common.TypeGenericCallInfo { call_span_start: e.call_span_start, callee_def_id: e.callee_def_id, type_bindings: bindings });
+    }
+
+    // Clone PendingMethodCall
+    let mut pending: Vec<common.PendingMethodCall> = Vec.with_capacity(src.pending_method_calls.len());
+    for i in 0usize..src.pending_method_calls.len() {
+        let e = &src.pending_method_calls[i];
+        pending.push(common.PendingMethodCall { body_def_id: e.body_def_id, span_start: e.span_start, receiver_var_id: e.receiver_var_id, method_name: e.method_name, resolved_def_id: e.resolved_def_id });
+    }
+
+    // Clone ImplMethodEntry
+    let mut impl_methods: Vec<common.ImplMethodEntry> = Vec.with_capacity(src.impl_method_table.len());
+    for i in 0usize..src.impl_method_table.len() {
+        let e = &src.impl_method_table[i];
+        impl_methods.push(common.ImplMethodEntry { self_ty_id: e.self_ty_id, method_name: e.method_name, method_def_id: e.method_def_id });
+    }
+
+    // Clone BuiltinDefName (has String — deep clone)
+    let mut builtins: Vec<typeck.BuiltinDefName> = Vec.with_capacity(src.builtin_def_names.len());
+    for i in 0usize..src.builtin_def_names.len() {
+        let e = &src.builtin_def_names[i];
+        builtins.push(typeck.BuiltinDefName { def_id_index: e.def_id_index, runtime_name: common.make_string(e.runtime_name.as_str()) });
+    }
+
+    TypeCheckResult {
+        success: src.success,
+        errors: Vec.new(),
+        subst_table: subst,
+        builtin_def_names: builtins,
+        method_resolutions: methods,
+        field_resolutions: fields,
+        default_method_remaps: remaps,
+        coercion_entries: coercions,
+        type_generic_calls: tgc,
+        pending_method_calls: pending,
+        impl_method_table: impl_methods,
+    }
+}
+
 // ============================================================
 // Main Entry Point
 // ============================================================

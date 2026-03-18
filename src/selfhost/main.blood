@@ -3746,11 +3746,16 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
         print_mem_phase("After parse+ast_region destroy", 0 as u64, hir_region, 0 as u64);
     }
 
-    // === Type Check Phase (hir_region) ===
+    // === Type Check Phase (typeck_region on top of hir_region) ===
+    // Typeck allocations go to a separate region so they can be freed after
+    // extracting results. This saves ~8 GB of type checker working data
+    // (fn_sigs, structs, enums, impls, unifier state) that codegen doesn't need.
     eprint_str("  Type checking...");
     let typeck_start = blood_clock_millis();
 
+    let typeck_region = region_create(16777216, 53687091200);
     region_activate(hir_region);
+    region_activate(typeck_region);
 
     let typeck_result = typeck_driver.check_lower_result(&lower_result);
     let typeck_elapsed = blood_clock_millis() - typeck_start;
@@ -3761,6 +3766,8 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
         let formatted = error_reporter.format_errors(&type_errors);
         eprint_str(formatted.as_str());
         region_deactivate();
+        region_deactivate();
+        region_destroy(typeck_region);
         region_destroy(hir_region);
         return false;
     }
@@ -3775,11 +3782,18 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
         dump_type_resolutions(&typeck_result);
     }
 
-    // Trim hir_region after type checking — release pages from typeck temporaries
-    region_trim(hir_region);
+    // Deactivate typeck_region — results still readable but no new allocations
+    region_deactivate();
+
+    // Clone TypeCheckResult data to system heap before destroying typeck_region.
+    // These are small (Vecs of integer-indexed structs, total ~few MB).
+    // The TypeChecker's working data (~8 GB) stays in typeck_region and is freed.
+    region_deactivate(); // deactivate hir_region too — clones go to system heap
+    let typeck_result = typeck_driver.clone_typeck_result_to_heap(&typeck_result);
+    region_destroy(typeck_region);
 
     if args.mem_profile {
-        print_mem_phase("After typeck trim", 0 as u64, hir_region, 0 as u64);
+        print_mem_phase("After typeck_region destroy", 0 as u64, hir_region, 0 as u64);
     }
 
     // Deactivate hir_region — data remains readable for codegen.
