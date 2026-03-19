@@ -30,7 +30,8 @@ pub fn ptr_to_addr(ptr: *mut u8) -> i64 {
 // ============================================================================
 //
 // Parallel arrays: ADDRS[i] = address (0 = empty, 1 = tombstone),
-// GENS[i] = generation, SIZES[i] = allocation size.
+// GENS[i] = generation, SIZES[i] = allocation size,
+// SOURCES[i] = allocation source (0 = calloc/heap, 1 = region).
 // Hash: Fibonacci hashing (addr * golden ratio constant) >> shift.
 // Probe: linear. Resize at 75% load (count including tombstones).
 
@@ -39,6 +40,7 @@ static mut NEXT_GENERATION: i32 = 1;
 static mut HT_ADDRS: *mut u8 = @unsafe { 0 as *mut u8 };
 static mut HT_GENS: *mut u8 = @unsafe { 0 as *mut u8 };
 static mut HT_SIZES: *mut u8 = @unsafe { 0 as *mut u8 };
+static mut HT_SOURCES: *mut u8 = @unsafe { 0 as *mut u8 };
 static mut HT_CAP: i64 = 0;
 static mut HT_COUNT: i64 = 0;      // live + tombstone entries (for load factor)
 static mut HT_LIVE: i64 = 0;       // live entries only
@@ -86,6 +88,18 @@ fn ht_write_size(idx: i64, val: i64) {
         ptr_write_i64(p, val);
     }
 }
+fn ht_read_source(idx: i64) -> i32 {
+    @unsafe {
+        let p: *mut u8 = addr_to_ptr(ptr_to_addr(HT_SOURCES) + idx * 4);
+        ptr_read_i32(p)
+    }
+}
+fn ht_write_source(idx: i64, val: i32) {
+    @unsafe {
+        let p: *mut u8 = addr_to_ptr(ptr_to_addr(HT_SOURCES) + idx * 4);
+        ptr_write_i32(p, val);
+    }
+}
 
 fn ht_hash(addr: i64, cap: i64) -> i64 {
     // Fibonacci hashing: multiply by golden ratio constant, take high bits
@@ -103,6 +117,7 @@ fn ensure_registry() {
             HT_ADDRS = libc.sys_calloc(4096, 8);
             HT_GENS = libc.sys_calloc(4096, 4);
             HT_SIZES = libc.sys_calloc(4096, 8);
+            HT_SOURCES = libc.sys_calloc(4096, 4);
             if ptr_to_addr(HT_ADDRS) == 0 {
                 rt_panic.rt_panic("alloc: failed to allocate generation registry");
             }
@@ -165,12 +180,14 @@ fn ht_grow() {
         let old_addrs: *mut u8 = HT_ADDRS;
         let old_gens: *mut u8 = HT_GENS;
         let old_sizes: *mut u8 = HT_SIZES;
+        let old_sources: *mut u8 = HT_SOURCES;
 
         let new_cap: i64 = old_cap * 2;
         HT_CAP = new_cap;
         HT_ADDRS = libc.sys_calloc(new_cap, 8);
         HT_GENS = libc.sys_calloc(new_cap, 4);
         HT_SIZES = libc.sys_calloc(new_cap, 8);
+        HT_SOURCES = libc.sys_calloc(new_cap, 4);
         HT_COUNT = 0;
         HT_LIVE = 0;
 
@@ -188,11 +205,14 @@ fn ht_grow() {
                 let g: i32 = ptr_read_i32(gp);
                 let sp: *mut u8 = addr_to_ptr(ptr_to_addr(old_sizes) + i * 8);
                 let s: i64 = ptr_read_i64(sp);
+                let srcp: *mut u8 = addr_to_ptr(ptr_to_addr(old_sources) + i * 4);
+                let src: i32 = ptr_read_i32(srcp);
 
                 let idx: i64 = ht_find_insert(a);
                 ht_write_addr(idx, a);
                 ht_write_gen(idx, g);
                 ht_write_size(idx, s);
+                ht_write_source(idx, src);
                 HT_COUNT = HT_COUNT + 1;
                 HT_LIVE = HT_LIVE + 1;
             }
@@ -205,9 +225,15 @@ fn ht_grow() {
     }
 }
 
-// Register an allocation and return its generation
+// Register an allocation and return its generation.
+// source: 0 = calloc (safe to __libc_free), 1 = region (freed by region destroy/reset)
 #[export_name = "blood_register_allocation"]
 pub fn rt_blood_register_allocation(addr: i64, size: i64) -> i32 {
+    rt_blood_register_allocation_tagged(addr, size, 0)
+}
+
+// Register with explicit source tag
+pub fn rt_blood_register_allocation_tagged(addr: i64, size: i64, source: i32) -> i32 {
     ensure_registry();
     @unsafe {
         // Grow at 75% load
@@ -225,11 +251,23 @@ pub fn rt_blood_register_allocation(addr: i64, size: i64) -> i32 {
         ht_write_addr(idx, addr);
         ht_write_gen(idx, g);
         ht_write_size(idx, size);
+        ht_write_source(idx, source);
         if was_empty {
             HT_COUNT = HT_COUNT + 1;
         }
         HT_LIVE = HT_LIVE + 1;
         g
+    }
+}
+
+/// Returns true if the address was registered as a calloc allocation (source=0).
+pub fn is_heap_allocated(addr: i64) -> bool {
+    @unsafe {
+        let idx: i64 = ht_find(addr);
+        if idx >= 0 {
+            return ht_read_source(idx) == 0;
+        }
+        false
     }
 }
 
@@ -380,11 +418,10 @@ pub fn rt_blood_realloc(old_addr: i64, new_size: i64) -> i64 {
         if copy_size > 0 {
             libc.sys_memmove(new_ptr, addr_to_cptr(old_addr), copy_size as u64);
         }
-        // Only free if calloc'd (in gen registry). Region-allocated
-        // pointers (mmap'd) must not be passed to __libc_free.
+        // Free old buffer only if it was heap-allocated (source=0).
+        // Region-allocated buffers (source=1) are freed by region destroy/reset.
         if old_addr > 1 {
-            let reg_idx: i64 = ht_find(old_addr);
-            if reg_idx >= 0 {
+            if is_heap_allocated(old_addr) {
                 libc.sys_free(addr_to_ptr(old_addr));
             }
         }
@@ -395,13 +432,25 @@ pub fn rt_blood_realloc(old_addr: i64, new_size: i64) -> i64 {
 // Free with size hint
 #[export_name = "blood_free"]
 pub fn rt_blood_free(addr: i64, size: i64) {
-    rt_blood_unregister_allocation(addr);
+    @unsafe {
+        let heap: bool = is_heap_allocated(addr);
+        rt_blood_unregister_allocation(addr);
+        if heap {
+            libc.sys_free(addr_to_ptr(addr));
+        }
+    }
 }
 
 // Free without size hint
 #[export_name = "blood_free_simple"]
 pub fn rt_blood_free_simple(addr: i64) {
-    rt_blood_unregister_allocation(addr);
+    @unsafe {
+        let heap: bool = is_heap_allocated(addr);
+        rt_blood_unregister_allocation(addr);
+        if heap {
+            libc.sys_free(addr_to_ptr(addr));
+        }
+    }
 }
 
 // Memcpy (address-as-i64 interface)
