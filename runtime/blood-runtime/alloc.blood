@@ -417,26 +417,10 @@ pub fn rt_blood_increment_generation(ptr: *mut u8) {
     }
 }
 
-// Invalidate all allocations within an address range by incrementing their
-// generations. Used by region_destroy to make stale references detectable.
-pub fn rt_blood_invalidate_range(base: i64, size: i64) {
-    @unsafe {
-        let end: i64 = base + size;
-        let mut i: i64 = 0;
-        while i < HT_CAP {
-            let a: i64 = ht_read_addr(i);
-            if is_live(a) {
-                if a >= base {
-                    if a < end {
-                        let g: i32 = ht_read_gen(i);
-                        ht_write_gen(i, g + 1);
-                    }
-                }
-            }
-            i = i + 1;
-        }
-    }
-}
+// No-op stub — kept for backward compatibility with seed-compiled binaries
+// that call blood_heap_diag_print from @main.
+#[export_name = "blood_heap_diag_print"]
+pub fn rt_heap_diag_print_stub() {}
 
 // Panic on stale reference
 #[export_name = "blood_stale_reference_panic"]
@@ -457,60 +441,6 @@ fn registry_lookup_size(addr: i64) -> i64 {
 }
 
 // ============================================================================
-// Heap allocation diagnostics
-// ============================================================================
-
-static mut DIAG_ALLOC_COUNT: i64 = 0;
-static mut DIAG_ALLOC_BYTES: i64 = 0;
-static mut DIAG_REALLOC_COUNT: i64 = 0;
-static mut DIAG_REALLOC_NEW_BYTES: i64 = 0;
-static mut DIAG_REALLOC_FREED_BYTES: i64 = 0;
-static mut DIAG_FREE_COUNT: i64 = 0;
-static mut DIAG_FREE_BYTES: i64 = 0;
-static mut DIAG_FREE_SKIPPED: i64 = 0;
-
-fn diag_print_i64(val: i64) {
-    @unsafe {
-        if val == 0 {
-            print.eprint_str("0");
-            return;
-        }
-        // Write digits to buffer in reverse, then emit via write(2, ...)
-        let buf: *mut u8 = libc.sys_calloc(1, 21);
-        let mut n: i64 = val;
-        let mut i: i64 = 19;
-        while n > 0 {
-            let digit: u8 = (48 + (n % 10)) as u8;
-            ptr_write_u8((ptr_to_addr(buf) + i) as u64, digit);
-            n = n / 10;
-            i = i - 1;
-        }
-        let start: i64 = i + 1;
-        let len: i64 = 20 - start;
-        let start_ptr: *const u8 = addr_to_cptr(ptr_to_addr(buf) + start);
-        libc.sys_write(2, start_ptr, len as u64);
-    }
-}
-
-#[export_name = "blood_heap_diag_print"]
-pub fn rt_heap_diag_print() {
-    @unsafe {
-        print.eprint_str("\n  [heap-diag]\n");
-        print.eprint_str("    calloc calls:     "); diag_print_i64(DIAG_ALLOC_COUNT);
-        print.eprint_str("\n    calloc bytes:     "); diag_print_i64(DIAG_ALLOC_BYTES);
-        print.eprint_str("\n    realloc calls:    "); diag_print_i64(DIAG_REALLOC_COUNT);
-        print.eprint_str("\n    realloc new bytes:"); diag_print_i64(DIAG_REALLOC_NEW_BYTES);
-        print.eprint_str("\n    realloc freed:    "); diag_print_i64(DIAG_REALLOC_FREED_BYTES);
-        print.eprint_str("\n    free calls:       "); diag_print_i64(DIAG_FREE_COUNT);
-        print.eprint_str("\n    free bytes:       "); diag_print_i64(DIAG_FREE_BYTES);
-        print.eprint_str("\n    free skipped:     "); diag_print_i64(DIAG_FREE_SKIPPED);
-        let net: i64 = DIAG_ALLOC_BYTES + DIAG_REALLOC_NEW_BYTES - DIAG_REALLOC_FREED_BYTES - DIAG_FREE_BYTES;
-        print.eprint_str("\n    net heap bytes:   "); diag_print_i64(net);
-        print.eprint_str("\n");
-    }
-}
-
-// ============================================================================
 // Allocation functions
 // ============================================================================
 
@@ -523,8 +453,6 @@ pub fn rt_blood_alloc_or_abort(size: i64, out_gen: *mut i32) -> i64 {
         if addr == 0 {
             rt_panic.rt_panic("alloc: out of memory");
         }
-        DIAG_ALLOC_COUNT = DIAG_ALLOC_COUNT + 1;
-        DIAG_ALLOC_BYTES = DIAG_ALLOC_BYTES + size;
         let g: i32 = rt_blood_register_allocation(addr, size);
         *out_gen = g;
         addr
@@ -540,8 +468,6 @@ pub fn rt_blood_alloc_simple(size: i64) -> i64 {
         if addr == 0 {
             rt_panic.rt_panic("alloc: out of memory");
         }
-        DIAG_ALLOC_COUNT = DIAG_ALLOC_COUNT + 1;
-        DIAG_ALLOC_BYTES = DIAG_ALLOC_BYTES + size;
         // NOT registered in gen hash table — Vec/String buffers don't need
         // generation tracking. Registering 12M+ alloc_simple calls inflated
         // the hash table to 25+ GB. blood_free_simple calls __libc_free
@@ -567,13 +493,10 @@ pub fn rt_blood_realloc(old_addr: i64, new_size: i64) -> i64 {
         if copy_size > 0 {
             libc.sys_memmove(new_ptr, addr_to_cptr(old_addr), copy_size as u64);
         }
-        DIAG_REALLOC_COUNT = DIAG_REALLOC_COUNT + 1;
-        DIAG_REALLOC_NEW_BYTES = DIAG_REALLOC_NEW_BYTES + new_size;
         // Free old buffer only if it was heap-allocated (source=0).
         // Region-allocated buffers (source=1) are freed by region destroy/reset.
         if old_addr > 1 {
             if is_heap_allocated(old_addr) {
-                DIAG_REALLOC_FREED_BYTES = DIAG_REALLOC_FREED_BYTES + old_size;
                 libc.sys_free(addr_to_ptr(old_addr));
             }
         }
@@ -588,11 +511,8 @@ pub fn rt_blood_free(addr: i64, size: i64) {
         let heap: bool = is_heap_allocated(addr);
         rt_blood_unregister_allocation(addr);
         if heap {
-            DIAG_FREE_COUNT = DIAG_FREE_COUNT + 1;
-            DIAG_FREE_BYTES = DIAG_FREE_BYTES + size;
             libc.sys_free(addr_to_ptr(addr));
         } else {
-            DIAG_FREE_SKIPPED = DIAG_FREE_SKIPPED + 1;
         }
     }
 }
@@ -607,17 +527,13 @@ pub fn rt_blood_free_simple(addr: i64) {
             // Registered address — check source tag
             if ht_read_source(reg_idx) == 0 {
                 // Heap-allocated (source=0): safe to __libc_free
-                DIAG_FREE_COUNT = DIAG_FREE_COUNT + 1;
-                DIAG_FREE_BYTES = DIAG_FREE_BYTES + ht_read_size(reg_idx);
                 rt_blood_unregister_allocation(addr);
                 libc.sys_free(addr_to_ptr(addr));
             } else {
                 // Region-allocated (source=1): skip free, region handles it
-                DIAG_FREE_SKIPPED = DIAG_FREE_SKIPPED + 1;
             }
         } else {
             // Not in gen registry — alloc_simple'd (calloc'd, safe to free)
-            DIAG_FREE_COUNT = DIAG_FREE_COUNT + 1;
             libc.sys_free(addr_to_ptr(addr));
         }
     }
