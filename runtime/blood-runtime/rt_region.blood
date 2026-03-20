@@ -170,13 +170,13 @@ pub fn rt_blood_region_create(initial_size: i64, max_size: i64) -> i64 {
         write_i64(REG_MAXSIZE, idx, max_size);
         write_i64(REG_ALLOCCOUNT, idx, 0);
         write_i32(REG_CLOSED, idx, 0);
-        let gen: i32 = alloc.next_gen();
-        write_i32(REG_GEN, idx, gen);
+        let region_gen: i32 = alloc.next_gen();
+        write_i32(REG_GEN, idx, region_gen);
         REG_COUNT = REG_COUNT + 1;
 
         // Register for per-region validation (read by blood_validate_generation)
         let base_addr: i64 = alloc.ptr_to_addr(base);
-        alloc.register_region_validation(base_addr, base_addr + res, gen);
+        alloc.register_region_validation(base_addr, base_addr + res, region_gen);
 
         rid
     }
