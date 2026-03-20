@@ -26,6 +26,79 @@ pub fn ptr_to_addr(ptr: *mut u8) -> i64 {
 }
 
 // ============================================================================
+// Region validation — fixed-size arrays for per-region generation checks.
+// Written by rt_region on create/destroy. Read by blood_validate_generation.
+// Avoids registering millions of individual region allocs in the gen hash table.
+// ============================================================================
+
+static mut RV_COUNT: i64 = 0;
+static mut RV_BASE: [i64; 64] = [0i64; 64];
+static mut RV_END: [i64; 64] = [0i64; 64];
+static mut RV_GEN: [i32; 64] = [0i32; 64];
+
+/// Register a region for generation validation. Called by rt_region on create.
+pub fn register_region_validation(base: i64, end: i64, gen: i32) {
+    @unsafe {
+        if RV_COUNT < 64 {
+            let i: usize = RV_COUNT as usize;
+            RV_BASE[i] = base;
+            RV_END[i] = end;
+            RV_GEN[i] = gen;
+            RV_COUNT = RV_COUNT + 1;
+        }
+    }
+}
+
+/// Update a region's generation. Called by rt_region on destroy.
+pub fn update_region_gen(base: i64, new_gen: i32) {
+    @unsafe {
+        let mut i: i64 = 0;
+        while i < RV_COUNT {
+            if RV_BASE[i as usize] == base {
+                RV_GEN[i as usize] = new_gen;
+                return;
+            }
+            i = i + 1;
+        }
+    }
+}
+
+/// Remove a region from validation. Called by rt_region on destroy.
+pub fn unregister_region_validation(base: i64) {
+    @unsafe {
+        let mut i: i64 = 0;
+        while i < RV_COUNT {
+            if RV_BASE[i as usize] == base {
+                // Swap with last
+                let last: i64 = RV_COUNT - 1;
+                RV_BASE[i as usize] = RV_BASE[last as usize];
+                RV_END[i as usize] = RV_END[last as usize];
+                RV_GEN[i as usize] = RV_GEN[last as usize];
+                RV_COUNT = RV_COUNT - 1;
+                return;
+            }
+            i = i + 1;
+        }
+    }
+}
+
+/// Check if addr falls in any registered region. Returns gen if found, -1 if not.
+fn region_lookup_gen(addr: i64) -> i32 {
+    @unsafe {
+        let mut i: i64 = 0;
+        while i < RV_COUNT {
+            if addr >= RV_BASE[i as usize] {
+                if addr < RV_END[i as usize] {
+                    return RV_GEN[i as usize];
+                }
+            }
+            i = i + 1;
+        }
+        -1
+    }
+}
+
+// ============================================================================
 // Generation tracking — open-addressing hash table keyed on address
 // ============================================================================
 //
@@ -36,6 +109,15 @@ pub fn ptr_to_addr(ptr: *mut u8) -> i64 {
 // Probe: linear. Resize at 75% load (count including tombstones).
 
 static mut NEXT_GENERATION: i32 = 1;
+
+/// Allocate a unique generation number.
+pub fn next_gen() -> i32 {
+    @unsafe {
+        let g: i32 = NEXT_GENERATION;
+        NEXT_GENERATION = NEXT_GENERATION + 1;
+        g
+    }
+}
 
 static mut HT_ADDRS: *mut u8 = @unsafe { 0 as *mut u8 };
 static mut HT_GENS: *mut u8 = @unsafe { 0 as *mut u8 };
@@ -290,17 +372,20 @@ pub fn rt_blood_unregister_allocation(addr: i64) {
 #[export_name = "blood_validate_generation"]
 pub fn rt_blood_validate_generation(addr: i64, expected: i32) -> i32 {
     @unsafe {
+        // Check per-allocation hash table first (for heap allocations)
         let idx: i64 = ht_find(addr);
         if idx >= 0 {
             let actual: i32 = ht_read_gen(idx);
             if actual == expected { return 1; }
             return 0;
         }
-        // Not in registry — either a stack allocation (never registered)
-        // or a field reference within a registered allocation (base+offset
-        // doesn't match the base address in the registry). Both are valid.
-        // Freed allocations stay in the registry with incremented gen,
-        // so they ARE found and correctly detected as stale.
+        // Check per-region generation (for region-allocated data)
+        let rg: i32 = region_lookup_gen(addr);
+        if rg >= 0 {
+            if rg == expected { return 1; }
+            return 0;
+        }
+        // Not in any registry — stack allocation or field ref within allocation
         1
     }
 }
@@ -313,6 +398,8 @@ pub fn rt_blood_get_generation(addr: i64) -> i32 {
         if idx >= 0 {
             return ht_read_gen(idx);
         }
+        let rg: i32 = region_lookup_gen(addr);
+        if rg >= 0 { return rg; }
         0
     }
 }
@@ -455,7 +542,10 @@ pub fn rt_blood_alloc_simple(size: i64) -> i64 {
         }
         DIAG_ALLOC_COUNT = DIAG_ALLOC_COUNT + 1;
         DIAG_ALLOC_BYTES = DIAG_ALLOC_BYTES + size;
-        rt_blood_register_allocation_tagged(addr, size, 0);
+        // NOT registered in gen hash table — Vec/String buffers don't need
+        // generation tracking. Registering 12M+ alloc_simple calls inflated
+        // the hash table to 25+ GB. blood_free_simple calls __libc_free
+        // directly for unregistered addresses (always calloc'd, safe to free).
         addr
     }
 }
@@ -511,15 +601,24 @@ pub fn rt_blood_free(addr: i64, size: i64) {
 #[export_name = "blood_free_simple"]
 pub fn rt_blood_free_simple(addr: i64) {
     @unsafe {
-        let heap: bool = is_heap_allocated(addr);
-        let sz: i64 = registry_lookup_size(addr);
-        rt_blood_unregister_allocation(addr);
-        if heap {
-            DIAG_FREE_COUNT = DIAG_FREE_COUNT + 1;
-            DIAG_FREE_BYTES = DIAG_FREE_BYTES + sz;
-            libc.sys_free(addr_to_ptr(addr));
+        if addr <= 1 { return; }
+        let reg_idx: i64 = ht_find(addr);
+        if reg_idx >= 0 {
+            // Registered address — check source tag
+            if ht_read_source(reg_idx) == 0 {
+                // Heap-allocated (source=0): safe to __libc_free
+                DIAG_FREE_COUNT = DIAG_FREE_COUNT + 1;
+                DIAG_FREE_BYTES = DIAG_FREE_BYTES + ht_read_size(reg_idx);
+                rt_blood_unregister_allocation(addr);
+                libc.sys_free(addr_to_ptr(addr));
+            } else {
+                // Region-allocated (source=1): skip free, region handles it
+                DIAG_FREE_SKIPPED = DIAG_FREE_SKIPPED + 1;
+            }
         } else {
-            DIAG_FREE_SKIPPED = DIAG_FREE_SKIPPED + 1;
+            // Not in gen registry — alloc_simple'd (calloc'd, safe to free)
+            DIAG_FREE_COUNT = DIAG_FREE_COUNT + 1;
+            libc.sys_free(addr_to_ptr(addr));
         }
     }
 }
