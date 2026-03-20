@@ -44,8 +44,25 @@ pub fn register_builtin_types(ctx: &mut hir_lower_ctx.LoweringCtx) {
     // Result — enum with Ok/Err variants
     ctx.builtin_result_def = Option.Some(register_one_builtin(ctx, "Result", hir_def.DefKind.Enum, dummy_span));
 
+    // StaleReference — built-in effect for generational reference stale detection (Pillar 1).
+    // Registered with reserved DefId 4100 (matching the hardcoded effect ID in codegen.blood).
+    // Sequential DefIds won't reach 4100 for typical programs (<4000 defs).
+    register_stale_ref_effect(ctx, dummy_span);
+
     // Register associated functions and variant constructors
     register_builtin_children(ctx);
+}
+
+/// Registers the StaleReference built-in effect with reserved DefId 4100.
+/// This DefId matches the hardcoded effect ID in codegen.blood's
+/// blood_perform_stale_ref wrapper and @main handler installation.
+fn register_stale_ref_effect(ctx: &mut hir_lower_ctx.LoweringCtx, span: common.Span) {
+    let sym = ctx.intern("StaleReference");
+    let def_id = hir_def.DefId.new(4100);
+    let success = ctx.resolver.define_global(sym, def_id);
+    if success {
+        ctx.resolver.register_def_info(def_id, hir_def.DefKind.Effect, sym, span, Option.None);
+    }
 }
 
 /// Registers a single builtin type if not already defined. Returns the DefId.
