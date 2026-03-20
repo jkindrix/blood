@@ -552,24 +552,33 @@ pub fn emit_rvalue(
                                             ctx.emit_store_str_cg(src_ty.as_str(), val.as_str(), &alloca);
                                             data_ptr = cgname_to_string(&alloca);
                                         }
-                                        // insertvalue { ptr, ptr } undef, ptr %data, 0
+                                        // insertvalue { ptr, ptr, i32 } zeroinitializer, ptr %data, 0
                                         let fat1 = ctx.fresh_temp_cg();
                                         ctx.write_indent();
                                         ctx.write_cgname(&fat1);
-                                        ctx.write(" = insertvalue { ptr, ptr } undef, ptr ");
+                                        ctx.write(" = insertvalue { ptr, ptr, i32 } zeroinitializer, ptr ");
                                         ctx.write_string(&data_ptr);
                                         ctx.write(", 0\n");
-                                        // insertvalue { ptr, ptr } %fat1, ptr @vtable_name, 1
+                                        // insertvalue { ptr, ptr, i32 } %fat1, ptr @vtable_name, 1
                                         let fat2 = ctx.fresh_temp_cg();
                                         ctx.write_indent();
                                         ctx.write_cgname(&fat2);
-                                        ctx.write(" = insertvalue { ptr, ptr } ");
+                                        ctx.write(" = insertvalue { ptr, ptr, i32 } ");
                                         ctx.write_cgname(&fat1);
                                         ctx.write(", ptr @");
                                         ctx.write_string(vtable_name);
                                         ctx.write(", 1\n");
+                                        // insertvalue { ptr, ptr, i32 } %fat2, i32 gen, 2
+                                        // Gen=0 for dyn trait coercion (gen tracking for the
+                                        // underlying data is handled by the concrete ref).
+                                        let fat3 = ctx.fresh_temp_cg();
+                                        ctx.write_indent();
+                                        ctx.write_cgname(&fat3);
+                                        ctx.write(" = insertvalue { ptr, ptr, i32 } ");
+                                        ctx.write_cgname(&fat2);
+                                        ctx.write(", i32 0, 2\n");
                                         // Store fat pointer to destination
-                                        ctx.emit_store_cg("{ ptr, ptr }", &fat2, dest);
+                                        ctx.emit_store_cg("{ ptr, ptr, i32 }", &fat3, dest);
                                         handled = true;
                                     }
                                     Option.None => {}

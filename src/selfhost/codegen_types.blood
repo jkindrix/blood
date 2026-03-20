@@ -240,14 +240,22 @@ pub fn is_unsized_type(ty: &hir_ty.Type) -> bool {
     }
 }
 
+/// Returns true if the type is a dyn Trait (trait object).
+pub fn is_dyn_trait_type(ty: &hir_ty.Type) -> bool {
+    match &ty.kind {
+        &hir_ty.TypeKind.DynTrait { trait_id: _, auto_traits: _ } => true,
+        _ => false,
+    }
+}
+
 /// Converts a reference type to LLVM IR.
 /// Sized refs are generational fat refs { ptr, i32 }.
 /// Unsized refs (str, slices, dyn Trait) are data fat pointers { ptr, i64 } or { ptr, ptr }.
 fn ref_to_llvm(inner: &hir_ty.Type) -> String {
     match &inner.kind {
         &hir_ty.TypeKind.DynTrait { trait_id: _, auto_traits: _ } => {
-            // &dyn Trait = { data_ptr, vtable_ptr }
-            common.make_string("{ ptr, ptr }")
+            // &dyn Trait = { data_ptr, vtable_ptr, gen:i32 }
+            common.make_string("{ ptr, ptr, i32 }")
         }
         _ => {
             if is_unsized_type(inner) {
@@ -303,11 +311,14 @@ pub fn get_layout(ty: &hir_ty.Type) -> TypeLayout {
         &hir_ty.TypeKind.Array { ref element, size } => array_layout(element.as_ref(), size),
         &hir_ty.TypeKind.Slice { element: _ } => TypeLayout.new(16, 8, common.make_string("{ ptr, i64 }")),
         &hir_ty.TypeKind.Ref { ref inner, mutable: _ } => {
-            if is_unsized_type(inner.as_ref()) {
-                // Fat pointer for references to unsized types
+            if is_dyn_trait_type(inner.as_ref()) {
+                // &dyn Trait = { data_ptr, vtable_ptr, gen:i32 } = 24 bytes
+                TypeLayout.new(24, 8, common.make_string("{ ptr, ptr, i32 }"))
+            } else if is_unsized_type(inner.as_ref()) {
+                // &str, &[T] = { ptr, len } = 16 bytes (no gen yet — Phase 2)
                 TypeLayout.new(16, 8, common.make_string("{ ptr, i64 }"))
             } else {
-                // Generational fat reference: { ptr, i32 } = 12 bytes, padded to 16
+                // Sized gen ref: { ptr, i32 } = 12 bytes, padded to 16
                 TypeLayout.new(16, 8, common.make_string("{ ptr, i32 }"))
             }
         }

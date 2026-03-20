@@ -703,27 +703,37 @@ pub fn emit_place_addr(
         match proj {
             &mir_types.PlaceElem.Deref => {
                 // Determine load type from the LLVM type of the current value.
-                // Gen refs are { ptr, i32 }, unsized refs are { ptr, i64 } or { ptr, ptr },
-                // raw pointers and Box are ptr.
+                // Gen refs: { ptr, i32 } (sized), { ptr, ptr, i32 } (dyn trait).
+                // Unsized refs without gen: { ptr, i64 } (&str, &[T]).
+                // Raw pointers and Box: ptr.
                 let ref_llvm_ty = ctx.get_local_type(place.local);
                 let is_gen_ref = string_eq_str(ref_llvm_ty.as_str(), "{ ptr, i32 }");
+                let is_dyn_gen_ref = string_eq_str(ref_llvm_ty.as_str(), "{ ptr, ptr, i32 }");
                 let result = ctx.fresh_temp_cg();
-                if is_gen_ref {
-                    // Gen ref: load { ptr, i32 }, extract ptr (field 0) and gen (field 1)
+                if is_gen_ref || is_dyn_gen_ref {
+                    // Gen ref: load fat ref, extract ptr (field 0) and gen (last field)
+                    let load_ty = if is_dyn_gen_ref { "{ ptr, ptr, i32 }" } else { "{ ptr, i32 }" };
+                    let gen_field = if is_dyn_gen_ref { 2 } else { 1 };
                     let fat_ref = ctx.fresh_temp_cg();
-                    ctx.emit_load_cg2(&fat_ref, "{ ptr, i32 }", &current);
+                    ctx.emit_load_cg2(&fat_ref, load_ty, &current);
                     ctx.write("  ");
                     ctx.write_cgname(&result);
-                    ctx.write(" = extractvalue { ptr, i32 } ");
+                    ctx.write(" = extractvalue ");
+                    ctx.write(load_ty);
+                    ctx.write(" ");
                     ctx.write_cgname(&fat_ref);
                     ctx.write(", 0\n");
-                    // Extract generation for validation
+                    // Extract generation for validation (last field)
                     let gen_val = ctx.fresh_temp_cg();
                     ctx.write("  ");
                     ctx.write_cgname(&gen_val);
-                    ctx.write(" = extractvalue { ptr, i32 } ");
+                    ctx.write(" = extractvalue ");
+                    ctx.write(load_ty);
+                    ctx.write(" ");
                     ctx.write_cgname(&fat_ref);
-                    ctx.write(", 1\n");
+                    ctx.write(", ");
+                    ctx.write(codegen_types.format_u64(gen_field as u64).as_str());
+                    ctx.write("\n");
                     // gen == 0 means stack-tier ref — skip validation
                     let is_zero = ctx.fresh_temp_cg();
                     ctx.emit_icmp_cg2(&is_zero, "eq", "i32", &gen_val, "0");
