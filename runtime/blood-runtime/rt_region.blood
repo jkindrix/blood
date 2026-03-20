@@ -195,6 +195,9 @@ pub fn rt_blood_region_destroy(region_id: i64) {
         // Increment region's generation to invalidate all references.
         // Update the validation array so blood_validate_generation detects stale refs.
         let old_gen: i32 = read_i32(REG_GEN, idx);
+        if old_gen >= 0x7FFFFFFE {
+            rt_panic.rt_panic("region generation overflow (Tier 3 promotion not yet implemented)");
+        }
         let new_gen: i32 = old_gen + 1;
         write_i32(REG_GEN, idx, new_gen);
         alloc.update_region_gen(base_addr, new_gen);

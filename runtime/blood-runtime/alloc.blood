@@ -111,9 +111,13 @@ fn region_lookup_gen(addr: i64) -> i32 {
 static mut NEXT_GENERATION: i32 = 1;
 
 /// Allocate a unique generation number.
+/// Panics if the generation counter reaches the reserved range (0x7FFFFFFE+).
 pub fn next_gen() -> i32 {
     @unsafe {
         let g: i32 = NEXT_GENERATION;
+        if g >= 0x7FFFFFFE {
+            rt_panic.rt_panic("generation counter exhausted (>2 billion unique generations)");
+        }
         NEXT_GENERATION = NEXT_GENERATION + 1;
         g
     }
@@ -363,6 +367,16 @@ pub fn rt_blood_unregister_allocation(addr: i64) {
         let idx: i64 = ht_find(addr);
         if idx >= 0 {
             let g: i32 = ht_read_gen(idx);
+            // Reserved generation values (MEMORY_MODEL.md §4.5):
+            // 0xFFFFFFFE = OVERFLOW_GUARD — triggers Tier 3 promotion
+            // 0xFFFFFFFF = PERSISTENT_MARKER — slot is Tier 3
+            // Prevent generation from reaching PERSISTENT_MARKER via increment.
+            if g >= 0x7FFFFFFE {
+                // Generation overflow: slot has been freed ~2 billion times at this address.
+                // Spec requires Tier 3 promotion (PROMOTE_TO_PERSISTENT). Until Tier 3 FFI
+                // is implemented (B1 in WORK.md), panic to prevent silent gen wrap.
+                rt_panic.rt_panic("generation overflow: slot freed 2^31 times (Tier 3 promotion not yet implemented)");
+            }
             ht_write_gen(idx, g + 1);
         }
     }
