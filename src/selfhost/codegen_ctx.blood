@@ -244,6 +244,8 @@ pub struct CodegenCtx {
     static_types_hash: hashmap.HashMapU64U32,
     /// LLVM type strings for static variables.
     static_types: Vec<String>,
+    /// HIR types for static variables: def_id -> TyId
+    static_hir_types_hash: hashmap.HashMapU64U32,
     /// Hash set for const def_ids: def_id -> 1 if const
     const_defs_hash: hashmap.HashMapU64U32,
     /// Hash set for foreign/bridge def_ids: def_id -> 1 if foreign
@@ -527,6 +529,7 @@ impl CodegenCtx {
             string_table_hash: hashmap.HashMapU64U32.with_capacity(512),
             static_defs_hash: hashmap.HashMapU64U32.with_capacity(64),
             static_types_hash: hashmap.HashMapU64U32.with_capacity(64),
+            static_hir_types_hash: hashmap.HashMapU64U32.with_capacity(64),
             static_types: Vec.with_capacity(64),
             const_defs_hash: hashmap.HashMapU64U32.with_capacity(64),
             foreign_defs_hash: hashmap.HashMapU64U32.with_capacity(64),
@@ -618,6 +621,7 @@ impl CodegenCtx {
             string_table_hash: hashmap.HashMapU64U32.with_capacity(512),
             static_defs_hash: hashmap.HashMapU64U32.with_capacity(64),
             static_types_hash: hashmap.HashMapU64U32.with_capacity(64),
+            static_hir_types_hash: hashmap.HashMapU64U32.with_capacity(64),
             static_types: Vec.with_capacity(64),
             const_defs_hash: hashmap.HashMapU64U32.with_capacity(64),
             foreign_defs_hash: hashmap.HashMapU64U32.with_capacity(64),
@@ -910,6 +914,19 @@ impl CodegenCtx {
             Option.Some(idx) => {
                 Option.Some(clone_string(&self.static_types[idx as usize]))
             }
+            Option.None => Option.None,
+        }
+    }
+
+    /// Registers the HIR type for a static variable (for array element size resolution).
+    pub fn register_static_hir_type(self: &mut CodegenCtx, def_id: u32, ty_id: type_intern.TyId) {
+        self.static_hir_types_hash.insert(def_id as u64, ty_id.index);
+    }
+
+    /// Returns the HIR type for a static variable, if registered.
+    pub fn lookup_static_hir_type(self: &CodegenCtx, def_id: u32) -> Option<type_intern.TyId> {
+        match self.static_hir_types_hash.get(def_id as u64) {
+            Option.Some(idx) => Option.Some(type_intern.TyId.new(idx)),
             Option.None => Option.None,
         }
     }
@@ -2262,6 +2279,7 @@ impl CodegenCtx {
             string_table_hash: hashmap.HashMapU64U32.new(),
             static_defs_hash: hashmap.HashMapU64U32.new(),
             static_types_hash: hashmap.HashMapU64U32.new(),
+            static_hir_types_hash: hashmap.HashMapU64U32.new(),
             static_types: Vec.new(),
             const_defs_hash: hashmap.HashMapU64U32.new(),
             foreign_defs_hash: hashmap.HashMapU64U32.new(),

@@ -553,18 +553,22 @@ pub fn emit_place_addr(
     place: &mir_types.Place,
 ) -> codegen_ctx.CgName {
     // Check if this is a static place - use global variable address directly
+    let mut is_static_with_proj = false;
     if place.is_static() {
         match place.get_static_def_id() {
             Option.Some(def_id) => {
                 // Look up the global variable name for this static
                 match ctx.lookup_def_name(def_id.index) {
                     Option.Some(name) => {
-                        // Return the global variable name with @ prefix.
                         // Static global variables are already addresses.
-                        // Convention: names are stored without @, add it here.
                         let mut result = common.make_string("@");
                         result.push_str(name.as_str());
-                        return codegen_ctx.CgName.Str(result);
+                        if place.projection.len() == 0 {
+                            return codegen_ctx.CgName.Str(result);
+                        }
+                        // Has projections (e.g. array indexing) — fall through
+                        // to the projection loop with this as the base address.
+                        is_static_with_proj = true;
                     }
                     Option.None => {
                         // BUG: Static def_id has no name mapping — emit trap instead of null
@@ -595,7 +599,23 @@ pub fn emit_place_addr(
         }
     }
 
-    let mut current = ctx.local_cg(place.local);
+    let mut current = if is_static_with_proj {
+        match place.get_static_def_id() {
+            Option.Some(def_id) => {
+                match ctx.lookup_def_name(def_id.index) {
+                    Option.Some(name) => {
+                        let mut s = common.make_string("@");
+                        s.push_str(name.as_str());
+                        codegen_ctx.CgName.Str(s)
+                    }
+                    Option.None => ctx.local_cg(place.local),
+                }
+            }
+            Option.None => ctx.local_cg(place.local),
+        }
+    } else {
+        ctx.local_cg(place.local)
+    };
 
     // Resolve the local's ADT type for projection lookups.
     // This looks through Ref types to find the inner ADT.
@@ -610,7 +630,15 @@ pub fn emit_place_addr(
     let mut current_adt_def_id: Option<u32> = resolve_local_adt_def_id(ctx, place.local);
     // Track the current HIR type for proper indexing element size calculation.
     // Keep the full type including references - projections will unwrap as needed.
-    let mut current_hir_type: Option<type_intern.TyId> = ctx.get_local_hir_type(place.local);
+    let mut current_hir_type: Option<type_intern.TyId> = if is_static_with_proj {
+        // For static places, resolve HIR type from the static's def_id
+        match place.get_static_def_id() {
+            Option.Some(def_id) => ctx.lookup_static_hir_type(def_id.index),
+            Option.None => Option.None,
+        }
+    } else {
+        ctx.get_local_hir_type(place.local)
+    };
 
     // Region/persistent auto-deref: if the local is heap-allocated via region/persistent
     // and there are projections, load the heap pointer first. The alloca only holds a ptr
