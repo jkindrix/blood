@@ -841,6 +841,78 @@ pub fn load_str_fat_ptr(ctx: &mut codegen_ctx.CodegenCtx, operand: &mir_types.Op
     loaded
 }
 
+/// Emits gen validation for a { ptr, i64 } &str value.
+/// Gen is packed in the upper 32 bits of field 1: i64 = (gen << 32) | len.
+/// If gen != 0, validates against the gen registry. On failure, triggers
+/// StaleReference effect. gen == 0 means static/stack ref — skip validation.
+pub fn emit_str_gen_validation(ctx: &mut codegen_ctx.CodegenCtx, str_val: &codegen_ctx.CgName) {
+    // Extract packed i64 from field 1
+    let packed = ctx.fresh_temp_cg();
+    ctx.write("  ");
+    ctx.write_cgname(&packed);
+    ctx.write(" = extractvalue { ptr, i64 } ");
+    ctx.write_cgname(str_val);
+    ctx.write(", 1\n");
+    // Extract gen from upper 32 bits: lshr 32, trunc to i32
+    let gen_shifted = ctx.fresh_temp_cg();
+    ctx.write("  ");
+    ctx.write_cgname(&gen_shifted);
+    ctx.write(" = lshr i64 ");
+    ctx.write_cgname(&packed);
+    ctx.write(", 32\n");
+    let gen_val = ctx.fresh_temp_cg();
+    ctx.write("  ");
+    ctx.write_cgname(&gen_val);
+    ctx.write(" = trunc i64 ");
+    ctx.write_cgname(&gen_shifted);
+    ctx.write(" to i32\n");
+    // gen == 0 → skip validation (static/stack ref)
+    let is_zero = ctx.fresh_temp_cg();
+    ctx.emit_icmp_cg2(&is_zero, "eq", "i32", &gen_val, "0");
+    let skip_lbl = ctx.fresh_label_cg();
+    let check_lbl = ctx.fresh_label_cg();
+    ctx.emit_cond_br_cg(&is_zero, &skip_lbl, &check_lbl);
+    // check: validate generation via registry
+    ctx.emit_label_cg(&check_lbl);
+    let data_ptr = ctx.fresh_temp_cg();
+    ctx.write("  ");
+    ctx.write_cgname(&data_ptr);
+    ctx.write(" = extractvalue { ptr, i64 } ");
+    ctx.write_cgname(str_val);
+    ctx.write(", 0\n");
+    let addr_i64 = ctx.fresh_temp_cg();
+    ctx.write("  ");
+    ctx.write_cgname(&addr_i64);
+    ctx.write(" = ptrtoint ptr ");
+    ctx.write_cgname(&data_ptr);
+    ctx.write(" to i64\n");
+    let valid = ctx.fresh_temp_cg();
+    ctx.begin_call(Option.Some(&valid), "i32", "@blood_validate_generation");
+    ctx.call_arg_cg(true, "i64", &addr_i64);
+    ctx.call_arg_cg(false, "i32", &gen_val);
+    ctx.end_call();
+    let is_valid = ctx.fresh_temp_cg();
+    ctx.emit_icmp_cg2(&is_valid, "ne", "i32", &valid, "0");
+    let ok_lbl = ctx.fresh_label_cg();
+    let stale_lbl = ctx.fresh_label_cg();
+    ctx.emit_cond_br_cg(&is_valid, &ok_lbl, &stale_lbl);
+    // stale: trigger StaleReference effect
+    ctx.emit_label_cg(&stale_lbl);
+    let actual_gen = ctx.fresh_temp_cg();
+    ctx.begin_call(Option.Some(&actual_gen), "i32", "@blood_get_generation");
+    ctx.call_arg_cg(true, "i64", &addr_i64);
+    ctx.end_call();
+    ctx.begin_call(Option.None, "void", "@blood_perform_stale_ref");
+    ctx.call_arg_cg(true, "i32", &gen_val);
+    ctx.call_arg_cg(false, "i32", &actual_gen);
+    ctx.end_call();
+    ctx.write("  unreachable\n");
+    // ok → skip: merge and continue
+    ctx.emit_label_cg(&ok_lbl);
+    ctx.emit_br_cg(&skip_lbl);
+    ctx.emit_label_cg(&skip_lbl);
+}
+
 /// Emits a str_len call with correct calling convention.
 /// Runtime signature: i64 @str_len({ ptr, i64 })
 pub fn emit_str_len_call(
@@ -856,6 +928,9 @@ pub fn emit_str_len_call(
 
     // Load the &str fat pointer from the operand
     let str_val = load_str_fat_ptr(ctx, &args[0]);
+
+    // Validate gen (packed in upper 32 bits of i64 field)
+    emit_str_gen_validation(ctx, &str_val);
 
     // Emit: %result = call i64 @str_len({ ptr, i64 } %str_val)
     let result = ctx.fresh_temp_cg();
@@ -896,6 +971,10 @@ pub fn emit_str_eq_call(
     let str_a = load_str_fat_ptr(ctx, &args[0]);
     let str_b = load_str_fat_ptr(ctx, &args[1]);
 
+    // Validate gen on both args (packed in upper 32 bits of i64 field)
+    emit_str_gen_validation(ctx, &str_a);
+    emit_str_gen_validation(ctx, &str_b);
+
     // Emit: %result = call i1 @str_eq({ ptr, i64 } %a, { ptr, i64 } %b)
     let result = ctx.fresh_temp_cg();
     ctx.begin_call(Option.Some(&result), "i1", "@str_eq");
@@ -935,6 +1014,10 @@ pub fn emit_str_concat_call(
     // Load both &str fat pointers
     let str_a = load_str_fat_ptr(ctx, &args[0]);
     let str_b = load_str_fat_ptr(ctx, &args[1]);
+
+    // Validate gen on both args (packed in upper 32 bits of i64 field)
+    emit_str_gen_validation(ctx, &str_a);
+    emit_str_gen_validation(ctx, &str_b);
 
     // Emit: %result = call { ptr, i64 } @str_concat({ ptr, i64 } %a, { ptr, i64 } %b)
     let result = ctx.fresh_temp_cg();

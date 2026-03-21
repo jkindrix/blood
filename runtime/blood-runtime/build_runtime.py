@@ -111,15 +111,19 @@ def process_ir(input_path, output_path):
     impl_lines.append('\n; Missing builtin implementations\n')
 
     # str_len({ptr, i64}) -> i64 : extract length from fat pointer
+    # Field 1 is packed: (gen << 32) | len. Mask to lower 32 bits for length.
     impl_lines.append('define i64 @str_len({ ptr, i64 } %s) {\n')
-    impl_lines.append('  %len = extractvalue { ptr, i64 } %s, 1\n')
+    impl_lines.append('  %packed = extractvalue { ptr, i64 } %s, 1\n')
+    impl_lines.append('  %len = and i64 %packed, 4294967295\n')
     impl_lines.append('  ret i64 %len\n')
     impl_lines.append('}\n')
 
     # str_len_usize(ptr) -> i64 : load length from &str pointer (method call ABI)
+    # Field 1 is packed: (gen << 32) | len. Mask to lower 32 bits for length.
     impl_lines.append('define i64 @str_len_usize(ptr %s) {\n')
     impl_lines.append('  %len_ptr = getelementptr inbounds { ptr, i64 }, ptr %s, i32 0, i32 1\n')
-    impl_lines.append('  %len = load i64, ptr %len_ptr\n')
+    impl_lines.append('  %packed = load i64, ptr %len_ptr\n')
+    impl_lines.append('  %len = and i64 %packed, 4294967295\n')
     impl_lines.append('  ret i64 %len\n')
     impl_lines.append('}\n')
 
@@ -376,9 +380,11 @@ def process_ir(input_path, output_path):
     # --- Stage 2 file I/O ---
 
     # file_delete({ ptr, i64 }) -> i1 : null-terminate path, call unlink
+    # Field 1 is packed: (gen << 32) | len. Mask to lower 32 bits for length.
     impl_lines.append('define i1 @file_delete({ ptr, i64 } %path) {\n')
     impl_lines.append('  %pptr = extractvalue { ptr, i64 } %path, 0\n')
-    impl_lines.append('  %plen = extractvalue { ptr, i64 } %path, 1\n')
+    impl_lines.append('  %ppacked = extractvalue { ptr, i64 } %path, 1\n')
+    impl_lines.append('  %plen = and i64 %ppacked, 4294967295\n')
     impl_lines.append('  %bsz = add i64 %plen, 1\n')
     impl_lines.append('  %pbuf = call ptr @calloc(i64 %bsz, i64 1)\n')
     impl_lines.append('  call void @llvm.memcpy.p0.p0.i64(ptr %pbuf, ptr %pptr, i64 %plen, i1 false)\n')
@@ -555,9 +561,11 @@ def process_ir(input_path, output_path):
         if decl_name not in remaining_declares and decl_name not in defined:
             impl_lines.append(decl_text)
     # llvm.memcpy is always declared by the compiler, don't redeclare
+    # Field 1 is packed: (gen << 32) | len. Mask to lower 32 bits for length.
     impl_lines.append('define { ptr, i64 } @env_get({ ptr, i64 } %name) {\n')
     impl_lines.append('  %name_ptr = extractvalue { ptr, i64 } %name, 0\n')
-    impl_lines.append('  %name_len = extractvalue { ptr, i64 } %name, 1\n')
+    impl_lines.append('  %name_packed = extractvalue { ptr, i64 } %name, 1\n')
+    impl_lines.append('  %name_len = and i64 %name_packed, 4294967295\n')
     impl_lines.append('  ; Allocate null-terminated copy\n')
     impl_lines.append('  %buf_size = add i64 %name_len, 1\n')
     impl_lines.append('  %buf = call ptr @calloc(i64 %buf_size, i64 1)\n')
