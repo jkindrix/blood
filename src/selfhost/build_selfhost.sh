@@ -1229,24 +1229,23 @@ case "${1:-status}" in
 
         # third_gen byte-identical check is inside do_build_third_gen.
         # If we get here, the bootstrap passed. Update the seed.
-        local seed_path="$REPO_ROOT/bootstrap/seed"
-        local meta_path="$REPO_ROOT/bootstrap/seed.meta"
-        local commit_hash size_bytes
-        commit_hash=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
-        cp "$BUILD_DIR/second_gen" "$seed_path"
-        size_bytes=$(wc -c < "$seed_path")
+        _seed_path="$REPO_ROOT/bootstrap/seed"
+        _meta_path="$REPO_ROOT/bootstrap/seed.meta"
+        _commit_hash=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
+        cp "$BUILD_DIR/second_gen" "$_seed_path"
+        _size_bytes=$(wc -c < "$_seed_path")
 
         # Write seed metadata
-        cat > "$meta_path" <<SEEDMETA
-commit=$commit_hash
+        cat > "$_meta_path" <<SEEDMETA
+commit=$_commit_hash
 date=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-size=$size_bytes
-hash=$(md5sum "$seed_path" | cut -d' ' -f1)
+size=$_size_bytes
+hash=$(md5sum "$_seed_path" | cut -d' ' -f1)
 SEEDMETA
-        ok "Seed updated: $(basename "$seed_path") ($size_bytes bytes, $commit_hash)"
+        ok "Seed updated: $(basename "$_seed_path") ($_size_bytes bytes, $_commit_hash)"
 
         printf "\n\033[1;32mBootstrap gate PASSED.\033[0m Total: %s\n" "$(elapsed_since "$PIPELINE_START")"
-        printf "Seed: %s\nMeta: %s\n" "$seed_path" "$meta_path"
+        printf "Seed: %s\nMeta: %s\n" "$_seed_path" "$_meta_path"
         ;;
 
     status)
