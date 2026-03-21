@@ -324,9 +324,16 @@ pub fn emit_rvalue(
             ctx.write(" = insertvalue { ptr, i32 } zeroinitializer, ptr ");
             ctx.write(addr.as_str());
             ctx.write(", 0\n");
-            // Determine generation: only use real gen for direct &local (no projections
-            // before the ref). If the place has projections (like &(*self).field),
-            // the deref was already gen-checked — use gen=0 for the derived ref.
+            // Determine generation: use real gen for direct &local without deref
+            // projections. For places with Deref projection (like &(*self).field),
+            // use gen=0 — the deref was already gen-checked at the deref site.
+            // Non-deref projections on direct locals (Field, Index) use _gen alloca.
+            //
+            // NOTE (P1-W4): Derived ref gen propagation (extracting gen from the
+            // deref'd fat ref) requires emit_place_data_ptr to thread gen info
+            // through the place resolution pipeline. The simple approach of loading
+            // from the local's alloca fails for persistent/region locals where
+            // the alloca holds ptr (not the fat ref directly). Deferred.
             let has_deref_projection = place.projection.len() > 0;
             let tmp2 = ctx.fresh_temp_cg();
             match if has_deref_projection { Option.None } else { ctx.get_heap_gen_name(place.local) } {
@@ -347,7 +354,7 @@ pub fn emit_rvalue(
                     ctx.write(", 1\n");
                 }
                 Option.None => {
-                    // Stack-allocated: gen=0 sentinel
+                    // Stack-allocated or deref'd: gen=0 sentinel
                     ctx.write("  ");
                     ctx.write_cgname(&tmp2);
                     ctx.write(" = insertvalue { ptr, i32 } ");
