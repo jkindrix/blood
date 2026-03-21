@@ -925,6 +925,12 @@ fn emit_call(
     for i in 0usize..args.len() {
         let (arg_val, arg_ty) = codegen_expr.emit_operand_typed(ctx, &args[i]);
 
+        // Validate gen for &str/&[T] args (packed gen in upper 32 bits of i64)
+        if string_eq_str(arg_ty.as_str(), "{ ptr, i64 }") {
+            let str_cg = codegen_ctx.CgName.Str(common.make_string(arg_val.as_str()));
+            codegen_builtins.emit_str_gen_validation(ctx, &str_cg);
+        }
+
         // Check if this parameter needs widening for a generic function
         let mut final_val: String;
         let mut final_ty: String;
