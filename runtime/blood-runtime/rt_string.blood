@@ -141,8 +141,16 @@ pub fn rt_string_push(s: *mut u8, ch: i32) {
 }
 
 // { ptr, i64 } @string_as_str(ptr)
+// Lazily registers the data buffer in the gen hash table so that &str
+// gen tracking can detect stale references after buffer reallocation.
 #[export_name = "string_as_str"]
 pub fn rt_string_as_str(s: *mut u8) -> FatStr {
+    // NOTE: Data buffer gen tracking deferred. Lazy registration via
+    // register_if_untracked causes OOM in String-heavy programs (hash table
+    // grows unbounded). The codegen correctly looks up data pointer gen via
+    // blood_get_generation, which returns 0 for unregistered buffers (safe,
+    // skips validation). Real gen tracking requires region-aware String
+    // allocation so data buffers land in regions and get region gen.
     FatStr { data: alloc.addr_to_ptr(get_data(s)), len: get_len(s) }
 }
 

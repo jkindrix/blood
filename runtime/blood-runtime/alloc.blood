@@ -458,6 +458,20 @@ fn registry_lookup_size(addr: i64) -> i64 {
 // Allocation functions
 // ============================================================================
 
+// Register an address in the gen hash table if not already tracked.
+// Returns the existing gen if already registered, or assigns a fresh gen.
+// Used by string_as_str to lazily track data buffers without bumping gen
+// on repeated calls.
+pub fn rt_blood_register_if_untracked(addr: i64, size: i64) -> i32 {
+    @unsafe {
+        let idx: i64 = ht_find(addr);
+        if idx >= 0 {
+            return ht_read_gen(idx);
+        }
+        rt_blood_register_allocation(addr, size)
+    }
+}
+
 // Heap-only allocation with generation tracking.
 // The region-aware dispatch wrapper is in rt_region.blood.
 pub fn rt_blood_alloc_or_abort(size: i64, out_gen: *mut i32) -> i64 {
