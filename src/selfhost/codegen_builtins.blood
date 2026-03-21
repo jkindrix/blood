@@ -707,6 +707,101 @@ pub fn emit_string_push_call(
     }
 }
 
+/// Extracts the generation value for a MIR operand's allocation.
+/// Returns Some(gen_cgname) if the operand is a direct local with a gen alloca
+/// (region or persistent tier), None otherwise (stack, constant, or deref'd).
+fn extract_operand_gen(ctx: &mut codegen_ctx.CodegenCtx, operand: &mir_types.Operand) -> Option<codegen_ctx.CgName> {
+    let place = match operand {
+        &mir_types.Operand.Copy(ref p) => p,
+        &mir_types.Operand.Move(ref p) => p,
+        &mir_types.Operand.Constant(_) => { return Option.None; }
+    };
+    // Only direct locals (no projections) have trackable gen
+    if place.projection.len() > 0 {
+        return Option.None;
+    }
+    match ctx.get_heap_gen_name(place.local) {
+        Option.Some(gen_name) => {
+            let gen_tmp = ctx.fresh_temp_cg();
+            ctx.write("  ");
+            ctx.write_cgname(&gen_tmp);
+            ctx.write(" = load i32, ptr ");
+            ctx.write(gen_name.as_str());
+            ctx.write("\n");
+            Option.Some(gen_tmp)
+        }
+        Option.None => Option.None,
+    }
+}
+
+/// Packs a generation value into the upper 32 bits of a { ptr, i64 } &str value.
+/// Returns a new { ptr, i64 } with i64 = (gen << 32) | original_len.
+/// If gen is None (stack/unknown), returns the original value unchanged.
+fn pack_gen_into_str_result(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    str_val: &codegen_ctx.CgName,
+    generation: &Option<codegen_ctx.CgName>,
+) -> codegen_ctx.CgName {
+    match generation {
+        &Option.None => {
+            // No gen to pack — return as-is (gen bits are already 0)
+            return codegen_ctx.CgName.Str(codegen_ctx.CodegenCtx.cgname_to_string(str_val));
+        }
+        &Option.Some(ref gen_val) => {
+            // Extract ptr (field 0) and len (field 1) from original
+            let orig_ptr = ctx.fresh_temp_cg();
+            ctx.write("  ");
+            ctx.write_cgname(&orig_ptr);
+            ctx.write(" = extractvalue { ptr, i64 } ");
+            ctx.write_cgname(str_val);
+            ctx.write(", 0\n");
+            let orig_len = ctx.fresh_temp_cg();
+            ctx.write("  ");
+            ctx.write_cgname(&orig_len);
+            ctx.write(" = extractvalue { ptr, i64 } ");
+            ctx.write_cgname(str_val);
+            ctx.write(", 1\n");
+            // Pack: (zext gen to i64) << 32 | len
+            let gen_ext = ctx.fresh_temp_cg();
+            ctx.write("  ");
+            ctx.write_cgname(&gen_ext);
+            ctx.write(" = zext i32 ");
+            ctx.write_cgname(gen_val);
+            ctx.write(" to i64\n");
+            let gen_shifted = ctx.fresh_temp_cg();
+            ctx.write("  ");
+            ctx.write_cgname(&gen_shifted);
+            ctx.write(" = shl i64 ");
+            ctx.write_cgname(&gen_ext);
+            ctx.write(", 32\n");
+            let packed = ctx.fresh_temp_cg();
+            ctx.write("  ");
+            ctx.write_cgname(&packed);
+            ctx.write(" = or i64 ");
+            ctx.write_cgname(&gen_shifted);
+            ctx.write(", ");
+            ctx.write_cgname(&orig_len);
+            ctx.write("\n");
+            // Rebuild { ptr, i64 } with packed value
+            let tmp1 = ctx.fresh_temp_cg();
+            ctx.write("  ");
+            ctx.write_cgname(&tmp1);
+            ctx.write(" = insertvalue { ptr, i64 } zeroinitializer, ptr ");
+            ctx.write_cgname(&orig_ptr);
+            ctx.write(", 0\n");
+            let tmp2 = ctx.fresh_temp_cg();
+            ctx.write("  ");
+            ctx.write_cgname(&tmp2);
+            ctx.write(" = insertvalue { ptr, i64 } ");
+            ctx.write_cgname(&tmp1);
+            ctx.write(", i64 ");
+            ctx.write_cgname(&packed);
+            ctx.write(", 1\n");
+            tmp2
+        }
+    }
+}
+
 /// Emits a string_as_str call with correct calling convention.
 /// Runtime signature: { ptr, i64 } @string_as_str(ptr self)
 pub fn emit_string_as_str_call(
@@ -720,6 +815,9 @@ pub fn emit_string_as_str_call(
         return;
     }
 
+    // Extract gen from self operand's allocation (if region/persistent)
+    let self_gen = extract_operand_gen(ctx, &args[0]);
+
     // Get string pointer - strip gen ref if present (FFI expects bare ptr).
     let str_ptr = emit_operand_as_ptr(ctx, &args[0]);
 
@@ -729,9 +827,12 @@ pub fn emit_string_as_str_call(
     ctx.call_arg_str(true, "ptr", str_ptr.as_str());
     ctx.end_call();
 
+    // Pack gen into the returned &str (upper 32 bits of i64 field)
+    let packed_result = pack_gen_into_str_result(ctx, &result, &self_gen);
+
     // Store result to destination
     let dest_ptr = codegen_place.emit_place_data_ptr(ctx, destination);
-    ctx.emit_store_cg("{ ptr, i64 }", &result, dest_ptr.as_str());
+    ctx.emit_store_cg("{ ptr, i64 }", &packed_result, dest_ptr.as_str());
 
     // Jump to continuation
     match target {
@@ -758,6 +859,9 @@ pub fn emit_string_as_bytes_call(
         return;
     }
 
+    // Extract gen from self operand's allocation (if region/persistent)
+    let self_gen = extract_operand_gen(ctx, &args[0]);
+
     // Get string pointer - strip gen ref if present (FFI expects bare ptr).
     let str_ptr = emit_operand_as_ptr(ctx, &args[0]);
 
@@ -767,9 +871,12 @@ pub fn emit_string_as_bytes_call(
     ctx.call_arg_str(true, "ptr", str_ptr.as_str());
     ctx.end_call();
 
+    // Pack gen into the returned &[u8] (upper 32 bits of i64 field)
+    let packed_result = pack_gen_into_str_result(ctx, &result, &self_gen);
+
     // Store result to destination
     let dest_ptr = codegen_place.emit_place_data_ptr(ctx, destination);
-    ctx.emit_store_cg("{ ptr, i64 }", &result, dest_ptr.as_str());
+    ctx.emit_store_cg("{ ptr, i64 }", &packed_result, dest_ptr.as_str());
 
     // Jump to continuation
     match target {

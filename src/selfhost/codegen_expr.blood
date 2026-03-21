@@ -408,10 +408,13 @@ pub fn emit_rvalue(
         &mir_types.Rvalue.ArrayToSlice { ref array_ref, array_len } => {
             // Convert array ref to fat pointer (ptr + len).
             // Slices are represented as { ptr, i64 } in LLVM IR.
+            // Gen from the source array ref is packed into upper 32 bits of i64.
             let (arr_val, arr_ty) = emit_operand_typed(ctx, array_ref);
 
-            // Strip gen ref { ptr, i32 } to bare ptr if needed
+            // Strip gen ref { ptr, i32 } to bare ptr, capturing gen for packing
             let mut data_ptr: String;
+            let mut has_gen: bool = false;
+            let gen_tmp = ctx.fresh_temp_cg();
             if str_eq(arr_ty.as_str(), "{ ptr, i32 }") {
                 let stripped = ctx.fresh_temp_cg();
                 ctx.write_indent();
@@ -420,6 +423,13 @@ pub fn emit_rvalue(
                 ctx.write_string(&arr_val);
                 ctx.write(", 0\n");
                 data_ptr = cgname_to_string(&stripped);
+                // Extract gen from field 1
+                ctx.write_indent();
+                ctx.write_cgname(&gen_tmp);
+                ctx.write(" = extractvalue { ptr, i32 } ");
+                ctx.write_string(&arr_val);
+                ctx.write(", 1\n");
+                has_gen = true;
             } else {
                 data_ptr = arr_val;
             }
@@ -432,14 +442,40 @@ pub fn emit_rvalue(
             ctx.end_gep();
             ctx.emit_store_str_cg("ptr", data_ptr.as_str(), &ptr_field);
 
-            // Store length at offset 1 of the fat pointer
+            // Store length (with packed gen) at offset 1 of the fat pointer
             let len_field = ctx.fresh_temp_cg();
             ctx.begin_gep_str(&len_field, "{ ptr, i64 }", dest);
             ctx.gep_ptr_offset(0);
             ctx.gep_field(1);
             ctx.end_gep();
-            let len_val = codegen_types.format_u64(array_len);
-            ctx.emit_store_str_cg("i64", len_val.as_str(), &len_field);
+            if has_gen {
+                // Pack: (zext gen to i64) << 32 | array_len
+                let gen_ext = ctx.fresh_temp_cg();
+                ctx.write("  ");
+                ctx.write_cgname(&gen_ext);
+                ctx.write(" = zext i32 ");
+                ctx.write_cgname(&gen_tmp);
+                ctx.write(" to i64\n");
+                let gen_shifted = ctx.fresh_temp_cg();
+                ctx.write("  ");
+                ctx.write_cgname(&gen_shifted);
+                ctx.write(" = shl i64 ");
+                ctx.write_cgname(&gen_ext);
+                ctx.write(", 32\n");
+                let packed = ctx.fresh_temp_cg();
+                ctx.write("  ");
+                ctx.write_cgname(&packed);
+                ctx.write(" = or i64 ");
+                ctx.write_cgname(&gen_shifted);
+                ctx.write(", ");
+                let len_val = codegen_types.format_u64(array_len);
+                ctx.write(len_val.as_str());
+                ctx.write("\n");
+                ctx.emit_store_cg2("i64", &packed, &len_field);
+            } else {
+                let len_val = codegen_types.format_u64(array_len);
+                ctx.emit_store_str_cg("i64", len_val.as_str(), &len_field);
+            }
         }
         &mir_types.Rvalue.ZeroInit(ref ty) => {
             // Zero-initialize the destination
