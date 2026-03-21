@@ -13,6 +13,7 @@ mod libc;
 mod print;
 mod rt_panic;
 mod alloc;
+mod rt_region;
 
 // Return type for functions that yield { ptr, i64 }
 pub struct FatStr {
@@ -67,7 +68,7 @@ fn ensure_cap(s: *mut u8, needed: i64) {
     if new_cap < needed { new_cap = needed; }
 
     let old_ptr: i64 = get_data(s);
-    let new_ptr: i64 = alloc.rt_blood_alloc_simple(new_cap);
+    let new_ptr: i64 = rt_region.dispatch_alloc_simple(new_cap);
 
     let len: i64 = get_len(s);
     if len > 0 {
@@ -201,8 +202,8 @@ pub fn rt_int_to_string(val: i32) -> FatStr {
     let start: i64 = pos + 1;
     let len: i64 = 24 - start;
 
-    // Copy to compact allocation
-    let result_addr: i64 = alloc.rt_blood_alloc_simple(len);
+    // Copy to compact allocation (region-aware for gen tracking)
+    let result_addr: i64 = rt_region.dispatch_alloc_simple(len);
     alloc.rt_blood_memcpy(result_addr, buf_addr + start, len);
     alloc.rt_blood_free_simple(buf_addr);
 
@@ -220,7 +221,7 @@ pub fn rt_blood_str_concat(a: &str, b: &str) -> FatStr {
     let a_addr: i64 = alloc.ptr_to_addr(a_ptr);
     let b_addr: i64 = alloc.ptr_to_addr(b_ptr);
     let total: i64 = a_len + b_len;
-    let buf: i64 = alloc.rt_blood_alloc_simple(total);
+    let buf: i64 = rt_region.dispatch_alloc_simple(total);
     if a_len > 0 {
         alloc.rt_blood_memcpy(buf, a_addr, a_len);
     }
