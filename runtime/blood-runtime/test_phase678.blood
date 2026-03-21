@@ -35,16 +35,10 @@ fn main() -> i32 {
     print.print_str("\n");
     print.print_str("bool_to_string OK\n");
 
-    // Test 3: file I/O round-trip
+    // Test 3: file I/O round-trip (functions now take &str)
     print.print_str("test 3: file I/O...\n");
-    let path: rt_string.FatStr = rt_string.FatStr {
-        data: @unsafe { (("/tmp/blood_rt_test.txt" as *const u8) as usize) as *mut u8 },
-        len: 21,
-    };
-    let content: rt_string.FatStr = rt_string.FatStr {
-        data: @unsafe { (("hello blood runtime" as *const u8) as usize) as *mut u8 },
-        len: 19,
-    };
+    let path: &str = "/tmp/blood_rt_test.txt";
+    let content: &str = "hello blood runtime";
     let wrote: i32 = rt_io.rt_file_write_string(path, content);
     if wrote != 1 { return 5; }
     let exists: i32 = rt_io.rt_file_exists(path);
@@ -62,13 +56,9 @@ fn main() -> i32 {
     if ms == 0 { return 8; }
     print.print_str("clock OK\n");
 
-    // Test 5: parse_i64_radix
+    // Test 5: parse_i64_radix (now takes &str)
     print.print_str("test 5: parse...\n");
-    let num_str: rt_string.FatStr = rt_string.FatStr {
-        data: @unsafe { (("12345" as *const u8) as usize) as *mut u8 },
-        len: 5,
-    };
-    let parsed: i64 = rt_box.rt_parse_i64_radix(num_str, 10);
+    let parsed: i64 = rt_box.rt_parse_i64_radix("12345", 10);
     if parsed != 12345 { return 9; }
     print.print_str("parse OK, val=");
     println_i64(parsed);

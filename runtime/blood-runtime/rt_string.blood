@@ -202,18 +202,22 @@ pub fn rt_int_to_string(val: i32) -> FatStr {
 }
 
 // { ptr, i64 } @blood_str_concat({ ptr, i64 }, { ptr, i64 })
-// Takes two fat strs by value (each is { ptr, i64 } in registers)
+// Takes two &str by value (each is { ptr, i64 } in registers)
 #[export_name = "blood_str_concat"]
-pub fn rt_blood_str_concat(a: FatStr, b: FatStr) -> FatStr {
-    let a_addr: i64 = alloc.ptr_to_addr(a.data);
-    let b_addr: i64 = alloc.ptr_to_addr(b.data);
-    let total: i64 = a.len + b.len;
+pub fn rt_blood_str_concat(a: &str, b: &str) -> FatStr {
+    let a_len: i64 = str_len(a);
+    let b_len: i64 = str_len(b);
+    let a_ptr: *mut u8 = @unsafe { a as *mut u8 };
+    let b_ptr: *mut u8 = @unsafe { b as *mut u8 };
+    let a_addr: i64 = alloc.ptr_to_addr(a_ptr);
+    let b_addr: i64 = alloc.ptr_to_addr(b_ptr);
+    let total: i64 = a_len + b_len;
     let buf: i64 = alloc.rt_blood_alloc_simple(total);
-    if a.len > 0 {
-        alloc.rt_blood_memcpy(buf, a_addr, a.len);
+    if a_len > 0 {
+        alloc.rt_blood_memcpy(buf, a_addr, a_len);
     }
-    if b.len > 0 {
-        alloc.rt_blood_memcpy(buf + a.len, b_addr, b.len);
+    if b_len > 0 {
+        alloc.rt_blood_memcpy(buf + a_len, b_addr, b_len);
     }
     FatStr { data: alloc.addr_to_ptr(buf), len: total }
 }

@@ -192,12 +192,13 @@ pub fn rt_char_from_u32(cp: i32) -> i32 {
 
 // double @parse_f64({ ptr, i64 }) — null-terminate, call strtod
 #[export_name = "parse_f64"]
-pub fn rt_parse_f64(s: rt_string.FatStr) -> f64 {
+pub fn rt_parse_f64(s: &str) -> f64 {
+    let s_len: i64 = str_len(s);
+    let s_ptr: *mut u8 = @unsafe { s as *mut u8 };
     @unsafe {
         // Null-terminate the input string for strtod
-        let src: i64 = alloc.ptr_to_addr(s.data);
-        let buf: *mut u8 = libc.sys_calloc((s.len + 1) as u64, 1);
-        libc.sys_memmove(buf, s.data as *const u8, s.len as u64);
+        let buf: *mut u8 = libc.sys_calloc((s_len + 1) as u64, 1);
+        libc.sys_memmove(buf, s_ptr as *const u8, s_len as u64);
         let result: f64 = libc.sys_strtod(buf as *const u8, @unsafe { 0 as *mut u8 });
         result
     }
@@ -205,14 +206,16 @@ pub fn rt_parse_f64(s: rt_string.FatStr) -> f64 {
 
 // i64 @parse_i64_radix({ ptr, i64 }, i32) — minimal decimal parser
 #[export_name = "parse_i64_radix"]
-pub fn rt_parse_i64_radix(s: rt_string.FatStr, radix: i32) -> i64 {
-    let ptr: i64 = alloc.ptr_to_addr(s.data);
+pub fn rt_parse_i64_radix(s: &str, radix: i32) -> i64 {
+    let s_len: i64 = str_len(s);
+    let s_ptr: *mut u8 = @unsafe { s as *mut u8 };
+    let ptr: i64 = alloc.ptr_to_addr(s_ptr);
     let mut result: i64 = 0;
     let mut negative: i32 = 0;
     let mut i: i64 = 0;
 
     // Check for negative sign
-    if s.len > 0 {
+    if s_len > 0 {
         @unsafe {
             let first: u8 = ptr_read_u8((ptr + i) as u64);
             if first == 45 { // '-'
@@ -222,7 +225,7 @@ pub fn rt_parse_i64_radix(s: rt_string.FatStr, radix: i32) -> i64 {
         }
     }
 
-    while i < s.len {
+    while i < s_len {
         @unsafe {
             let ch: u8 = ptr_read_u8((ptr + i) as u64);
             let mut digit: i64 = -1;

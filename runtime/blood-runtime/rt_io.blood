@@ -7,14 +7,16 @@ mod rt_panic;
 mod rt_string;
 
 // { ptr, i64 } @file_read_to_string(&str path) -> &str contents
-// Takes &str (fat pointer by value), returns &str (fat pointer)
+// Takes &str (fat pointer by value), returns FatStr (can't construct &str in Blood source)
 #[export_name = "file_read_to_string"]
-pub fn rt_file_read_to_string(path: rt_string.FatStr) -> rt_string.FatStr {
+pub fn rt_file_read_to_string(path: &str) -> rt_string.FatStr {
     // Null-terminate the path for C
-    let path_addr: i64 = alloc.ptr_to_addr(path.data);
-    let cpath_addr: i64 = alloc.rt_blood_alloc_simple(path.len + 1);
-    alloc.rt_blood_memcpy(cpath_addr, path_addr, path.len);
-    @unsafe { ptr_write_u8((cpath_addr + path.len) as u64, 0); }
+    let path_len: i64 = str_len(path);
+    let path_ptr: *mut u8 = @unsafe { path as *mut u8 };
+    let path_addr: i64 = alloc.ptr_to_addr(path_ptr);
+    let cpath_addr: i64 = alloc.rt_blood_alloc_simple(path_len + 1);
+    alloc.rt_blood_memcpy(cpath_addr, path_addr, path_len);
+    @unsafe { ptr_write_u8((cpath_addr + path_len) as u64, 0); }
 
     let fd: i32 = libc.sys_open(alloc.addr_to_cptr(cpath_addr), libc.O_RDONLY(), 0);
     alloc.rt_blood_free_simple(cpath_addr);
@@ -46,59 +48,69 @@ pub fn rt_file_read_to_string(path: rt_string.FatStr) -> rt_string.FatStr {
 
 // bool @file_write_string(&str path, &str content) -> bool
 #[export_name = "file_write_string"]
-pub fn rt_file_write_string(path: rt_string.FatStr, content: rt_string.FatStr) -> i32 {
-    let path_addr: i64 = alloc.ptr_to_addr(path.data);
-    let cpath_addr: i64 = alloc.rt_blood_alloc_simple(path.len + 1);
-    alloc.rt_blood_memcpy(cpath_addr, path_addr, path.len);
-    @unsafe { ptr_write_u8((cpath_addr + path.len) as u64, 0); }
+pub fn rt_file_write_string(path: &str, content: &str) -> i32 {
+    let path_len: i64 = str_len(path);
+    let path_ptr: *mut u8 = @unsafe { path as *mut u8 };
+    let path_addr: i64 = alloc.ptr_to_addr(path_ptr);
+    let cpath_addr: i64 = alloc.rt_blood_alloc_simple(path_len + 1);
+    alloc.rt_blood_memcpy(cpath_addr, path_addr, path_len);
+    @unsafe { ptr_write_u8((cpath_addr + path_len) as u64, 0); }
 
     let flags: i32 = libc.O_WRONLY() + libc.O_CREAT() + libc.O_TRUNC();
     let fd: i32 = libc.sys_open(alloc.addr_to_cptr(cpath_addr), flags, 420); // 0644
     alloc.rt_blood_free_simple(cpath_addr);
     if fd < 0 { return 0; }
 
-    let content_addr: i64 = alloc.ptr_to_addr(content.data);
+    let content_len: i64 = str_len(content);
+    let content_ptr: *mut u8 = @unsafe { content as *mut u8 };
+    let content_addr: i64 = alloc.ptr_to_addr(content_ptr);
     let mut written: i64 = 0;
-    while written < content.len {
-        let n: i64 = libc.sys_write(fd, alloc.addr_to_cptr(content_addr + written), (content.len - written) as u64);
+    while written < content_len {
+        let n: i64 = libc.sys_write(fd, alloc.addr_to_cptr(content_addr + written), (content_len - written) as u64);
         if n <= 0 { break; }
         written = written + n;
     }
     libc.sys_close(fd);
-    if written == content.len { 1 } else { 0 }
+    if written == content_len { 1 } else { 0 }
 }
 
 // bool @file_append_string(&str path, &str content) -> bool
 #[export_name = "file_append_string"]
-pub fn rt_file_append_string(path: rt_string.FatStr, content: rt_string.FatStr) -> i32 {
-    let path_addr: i64 = alloc.ptr_to_addr(path.data);
-    let cpath_addr: i64 = alloc.rt_blood_alloc_simple(path.len + 1);
-    alloc.rt_blood_memcpy(cpath_addr, path_addr, path.len);
-    @unsafe { ptr_write_u8((cpath_addr + path.len) as u64, 0); }
+pub fn rt_file_append_string(path: &str, content: &str) -> i32 {
+    let path_len: i64 = str_len(path);
+    let path_ptr: *mut u8 = @unsafe { path as *mut u8 };
+    let path_addr: i64 = alloc.ptr_to_addr(path_ptr);
+    let cpath_addr: i64 = alloc.rt_blood_alloc_simple(path_len + 1);
+    alloc.rt_blood_memcpy(cpath_addr, path_addr, path_len);
+    @unsafe { ptr_write_u8((cpath_addr + path_len) as u64, 0); }
 
     let flags: i32 = libc.O_WRONLY() + libc.O_CREAT() + libc.O_APPEND();
     let fd: i32 = libc.sys_open(alloc.addr_to_cptr(cpath_addr), flags, 420);
     alloc.rt_blood_free_simple(cpath_addr);
     if fd < 0 { return 0; }
 
-    let content_addr: i64 = alloc.ptr_to_addr(content.data);
+    let content_len: i64 = str_len(content);
+    let content_ptr: *mut u8 = @unsafe { content as *mut u8 };
+    let content_addr: i64 = alloc.ptr_to_addr(content_ptr);
     let mut written: i64 = 0;
-    while written < content.len {
-        let n: i64 = libc.sys_write(fd, alloc.addr_to_cptr(content_addr + written), (content.len - written) as u64);
+    while written < content_len {
+        let n: i64 = libc.sys_write(fd, alloc.addr_to_cptr(content_addr + written), (content_len - written) as u64);
         if n <= 0 { break; }
         written = written + n;
     }
     libc.sys_close(fd);
-    if written == content.len { 1 } else { 0 }
+    if written == content_len { 1 } else { 0 }
 }
 
 // bool @file_exists(&str path) -> bool (uses stat)
 #[export_name = "file_exists"]
-pub fn rt_file_exists(path: rt_string.FatStr) -> i32 {
-    let path_addr: i64 = alloc.ptr_to_addr(path.data);
-    let cpath_addr: i64 = alloc.rt_blood_alloc_simple(path.len + 1);
-    alloc.rt_blood_memcpy(cpath_addr, path_addr, path.len);
-    @unsafe { ptr_write_u8((cpath_addr + path.len) as u64, 0); }
+pub fn rt_file_exists(path: &str) -> i32 {
+    let path_len: i64 = str_len(path);
+    let path_ptr: *mut u8 = @unsafe { path as *mut u8 };
+    let path_addr: i64 = alloc.ptr_to_addr(path_ptr);
+    let cpath_addr: i64 = alloc.rt_blood_alloc_simple(path_len + 1);
+    alloc.rt_blood_memcpy(cpath_addr, path_addr, path_len);
+    @unsafe { ptr_write_u8((cpath_addr + path_len) as u64, 0); }
 
     // stat buf needs ~144 bytes on Linux x86-64
     let statbuf_addr: i64 = alloc.rt_blood_alloc_simple(256);
@@ -110,12 +122,14 @@ pub fn rt_file_exists(path: rt_string.FatStr) -> i32 {
 
 // i32 @system(&str cmd) — run shell command
 #[export_name = "system"]
-pub fn rt_system(cmd: rt_string.FatStr) -> i32 {
+pub fn rt_system(cmd: &str) -> i32 {
     // Use fork + exec /bin/sh -c "cmd"
-    let cmd_addr: i64 = alloc.ptr_to_addr(cmd.data);
-    let ccmd_addr: i64 = alloc.rt_blood_alloc_simple(cmd.len + 1);
-    alloc.rt_blood_memcpy(ccmd_addr, cmd_addr, cmd.len);
-    @unsafe { ptr_write_u8((ccmd_addr + cmd.len) as u64, 0); }
+    let cmd_len: i64 = str_len(cmd);
+    let cmd_ptr: *mut u8 = @unsafe { cmd as *mut u8 };
+    let cmd_addr: i64 = alloc.ptr_to_addr(cmd_ptr);
+    let ccmd_addr: i64 = alloc.rt_blood_alloc_simple(cmd_len + 1);
+    alloc.rt_blood_memcpy(ccmd_addr, cmd_addr, cmd_len);
+    @unsafe { ptr_write_u8((ccmd_addr + cmd_len) as u64, 0); }
 
     let pid: i32 = libc.sys_fork();
     if pid == 0 {
