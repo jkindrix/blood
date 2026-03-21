@@ -1,0 +1,28 @@
+// Test: &str gen packing preserves correct string operations.
+// str_len masks to lower 32 bits; str_eq, str_concat, print all
+// go through gen validation (gen=0 for literals → skip path).
+// Verifies packed gen infrastructure doesn't corrupt string ops.
+// EXPECT: 5
+// EXPECT: true
+// EXPECT: false
+// EXPECT: helloworld
+
+fn main() -> i32 {
+    let a: &str = "hello";
+    let b: &str = "hello";
+    let c: &str = "world";
+
+    // str_len with gen validation
+    println_i64(str_len(a));
+
+    // str_eq with gen validation on both args
+    if str_eq(a, b) { print("true\n"); } else { print("false\n"); }
+    if str_eq(a, c) { print("true\n"); } else { print("false\n"); }
+
+    // str_concat with gen validation + print with call-site validation
+    let d: &str = str_concat(a, c);
+    print(d);
+    print_newline();
+
+    0
+}

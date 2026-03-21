@@ -1,0 +1,27 @@
+// Test: array-to-slice gen packing preserves correct length.
+// When ArrayToSlice packs gen into upper 32 bits of { ptr, i64 },
+// the slice length (lower 32 bits) must remain correct. This test
+// verifies sum and indexing still work after gen packing.
+// EXPECT: 60
+// EXPECT: 30
+
+fn sum_slice(s: &[i32]) -> i32 {
+    let mut total: i32 = 0;
+    let mut i: i64 = 0;
+    while i < 3 {
+        total = total + s[i];
+        i = i + 1;
+    }
+    total
+}
+
+fn last_elem(s: &[i32]) -> i32 {
+    s[2]
+}
+
+fn main() -> i32 {
+    let arr: [i32; 3] = [10, 20, 30];
+    println_int(sum_slice(&arr));
+    println_int(last_elem(&arr));
+    0
+}
