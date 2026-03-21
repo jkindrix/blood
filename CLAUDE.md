@@ -101,6 +101,8 @@ Audit search terms: `_ =>`, `unwrap_or_default`, `unwrap_or_else`, `Type::error(
 
 **Selfhost bugs: report, do NOT work around.** Write the correct code. If the compiler miscompiles it, that's a compiler bug. STOP, isolate, document, report. Signs: DefId errors, works in one context but not another, mutations lost through references, runtime mismatch. See `tools/FAILURE_LOG.md` for history.
 
+**Bootstrap gate protocol:** Changes that touch calling conventions, type layouts, or runtime FFI **must** pass `./build_selfhost.sh gate` before being considered complete. This runs the full build chain (first_gen → golden → second_gen → golden → third_gen byte-compare) and updates `bootstrap/seed` on success. Other codegen changes should gate at end-of-session or before pushing. The build script warns when the seed is >15 commits behind HEAD. For breaking ABI changes, use a two-stage bootstrap: Stage 1 adds new code paths without activating them (seed can compile this), gate to get a new seed, then Stage 2 activates the new behavior.
+
 **Canary-Cluster-Verify (CCV) method:** All batch changes to the self-hosted compiler follow the CCV protocol. Canary-test new patterns before mass conversion. Cluster changes by compiler phase. Verify (build + golden tests + bootstrap) after each cluster. See `DEVELOPMENT.md` for the full protocol, cluster definitions, and bootstrap gate rules.
 
 **Document discoveries:** Test in isolation, document in this file, comment in code. Distinguish bugs (report and wait) from documented limitations (work around).
@@ -150,6 +152,9 @@ cd src/selfhost
 ./build_selfhost.sh test golden second_gen    # Verify first_gen codegen
 ./build_selfhost.sh test golden-blood             # Golden tests linked against Blood runtime
 ./build_selfhost.sh test dispatch                   # Compare first_gen vs second_gen output
+
+# Bootstrap gate (full pipeline + update seed on success)
+./build_selfhost.sh gate               # build all + cp second_gen → bootstrap/seed
 
 # Diagnostics
 ./build_selfhost.sh verify              # IR verification + declaration diff + FileCheck

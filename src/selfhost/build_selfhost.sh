@@ -153,6 +153,30 @@ check_staleness() {
     fi
 }
 
+# Check how many commits have landed since the seed was last gated.
+# Warns if the seed is significantly behind HEAD.
+check_seed_staleness() {
+    local meta="$REPO_ROOT/bootstrap/seed.meta"
+    local threshold=15
+    if [ ! -f "$meta" ]; then
+        warn "No seed.meta found — seed provenance unknown. Run: ./build_selfhost.sh gate"
+        return 0
+    fi
+    local seed_commit
+    seed_commit=$(grep '^commit=' "$meta" 2>/dev/null | cut -d= -f2)
+    if [ -z "$seed_commit" ]; then
+        return 0
+    fi
+    # Count commits since seed was gated
+    if git rev-parse --verify "$seed_commit" >/dev/null 2>&1; then
+        local distance
+        distance=$(git rev-list --count "${seed_commit}..HEAD" 2>/dev/null || echo 0)
+        if [ "$distance" -gt "$threshold" ]; then
+            warn "Seed is $distance commits behind HEAD. Consider: ./build_selfhost.sh gate"
+        fi
+    fi
+}
+
 # ── Build stages ────────────────────────────────────────────────────────────
 
 do_build_cargo() {
@@ -182,6 +206,8 @@ do_build_first_gen() {
     rm -rf "${DIR}"/*.blood_objs "${DIR}"/tests/*.blood_objs
     rm -rf "${HOME}"/.blood*/cache/
     ok "Caches cleared"
+
+    check_seed_staleness
 
     step "Building first_gen with $(basename "$bootstrap_compiler")"
     local start_ts rc=0
@@ -961,9 +987,11 @@ Diagnostics:
   emit [stage]        Emit intermediate IR (ast|hir|mir|llvm-ir|llvm-ir-unopt)
 
 Workflow:
+  gate                Full bootstrap pipeline + update seed on success
   run <file> [bin]    Compile and run a file (default: first_gen)
   diff <file>         Compare blood-rust vs first_gen output
   status              Show compiler status, ages, processes (default command)
+  install             Install toolchain to ~/.blood/{bin,lib}/
   clean               Remove build artifacts (preserves .logs)
   clean-all           Remove build artifacts and logs
 
@@ -1182,6 +1210,43 @@ case "${1:-status}" in
             echo "  second_gen sizes: $(grep '"second_gen"' "$mfile" | tail -5 | sed 's/.*"size":\([0-9]*\).*/\1/' | tr '\n' ' ')"
             echo "  second_gen times: $(grep '"second_gen"' "$mfile" | tail -5 | sed 's/.*"wall_secs":\([0-9]*\).*/\1s/' | tr '\n' ' ')"
         fi
+        ;;
+
+    # ── gate (bootstrap verify + seed update) ─────────────────────────────
+
+    gate)
+        check_zombies
+        PIPELINE_START=$(date +%s)
+
+        step "Bootstrap gate: full pipeline + seed update"
+
+        do_build_blood_runtime
+        do_build_first_gen "--timings"
+        do_test_golden "$BUILD_DIR/first_gen"
+        do_build_second_gen
+        do_test_golden "$BUILD_DIR/second_gen"
+        do_build_third_gen
+
+        # third_gen byte-identical check is inside do_build_third_gen.
+        # If we get here, the bootstrap passed. Update the seed.
+        local seed_path="$REPO_ROOT/bootstrap/seed"
+        local meta_path="$REPO_ROOT/bootstrap/seed.meta"
+        local commit_hash size_bytes
+        commit_hash=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
+        cp "$BUILD_DIR/second_gen" "$seed_path"
+        size_bytes=$(wc -c < "$seed_path")
+
+        # Write seed metadata
+        cat > "$meta_path" <<SEEDMETA
+commit=$commit_hash
+date=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+size=$size_bytes
+hash=$(md5sum "$seed_path" | cut -d' ' -f1)
+SEEDMETA
+        ok "Seed updated: $(basename "$seed_path") ($size_bytes bytes, $commit_hash)"
+
+        printf "\n\033[1;32mBootstrap gate PASSED.\033[0m Total: %s\n" "$(elapsed_since "$PIPELINE_START")"
+        printf "Seed: %s\nMeta: %s\n" "$seed_path" "$meta_path"
         ;;
 
     status)
