@@ -221,6 +221,10 @@ pub struct CodegenCtx {
     def_names: Vec<DefNameEntry>,
     /// ADT type registry: maps DefIds to their layout information.
     pub adt_registry: Vec<AdtEntry>,
+    /// Hash index for struct lookups: def_id -> index in adt_registry
+    adt_struct_hash: hashmap.HashMapU64U32,
+    /// Hash index for enum lookups: def_id -> index in adt_registry
+    adt_enum_hash: hashmap.HashMapU64U32,
     // Hash indexes for O(1) lookups
     /// Hash index for def_names: def_id -> index in def_names vec
     def_names_hash: hashmap.HashMapU64U32,
@@ -517,6 +521,8 @@ impl CodegenCtx {
             string_counter: 0,
             def_names: Vec.with_capacity(2048),
             adt_registry: Vec.with_capacity(256),
+            adt_struct_hash: hashmap.HashMapU64U32.with_capacity(256),
+            adt_enum_hash: hashmap.HashMapU64U32.with_capacity(256),
             def_names_hash: hashmap.HashMapU64U32.with_capacity(2048),
             local_names_hash: hashmap.HashMapU64U32.with_capacity(64),
             local_types_hash: hashmap.HashMapU64U32.with_capacity(64),
@@ -609,6 +615,8 @@ impl CodegenCtx {
             string_counter: 0,
             def_names: def_names,
             adt_registry: Vec.with_capacity(256),
+            adt_struct_hash: hashmap.HashMapU64U32.with_capacity(256),
+            adt_enum_hash: hashmap.HashMapU64U32.with_capacity(256),
             def_names_hash: def_names_hash,
             local_names_hash: hashmap.HashMapU64U32.with_capacity(64),
             local_types_hash: hashmap.HashMapU64U32.with_capacity(64),
@@ -1888,49 +1896,46 @@ impl CodegenCtx {
 
     /// Registers a struct layout in the ADT registry.
     pub fn register_struct(self: &mut CodegenCtx, layout: StructLayout) {
+        let idx = self.adt_registry.len() as u32;
+        let did = layout.def_id;
         self.adt_registry.push(AdtEntry.Struct(layout));
+        self.adt_struct_hash.insert(did as u64, idx);
     }
 
     /// Registers an enum layout in the ADT registry.
     pub fn register_enum(self: &mut CodegenCtx, layout: EnumLayout) {
+        let idx = self.adt_registry.len() as u32;
+        let did = layout.def_id;
         self.adt_registry.push(AdtEntry.Enum(layout));
+        self.adt_enum_hash.insert(did as u64, idx);
     }
 
     /// Looks up a struct layout by DefId.
     /// Scans from the end so that later registrations (e.g., pass 2 with resolved
     /// nested ADT types) take precedence over earlier ones.
     pub fn lookup_struct(self: &CodegenCtx, def_id: u32) -> Option<&StructLayout> {
-        let mut i: usize = self.adt_registry.len();
-        while i > 0 {
-            i -= 1;
-            match &self.adt_registry[i] {
-                &AdtEntry.Struct(ref layout) => {
-                    if layout.def_id == def_id {
-                        return Option.Some(layout);
-                    }
+        match self.adt_struct_hash.get(def_id as u64) {
+            Option.Some(idx) => {
+                match &self.adt_registry[idx as usize] {
+                    &AdtEntry.Struct(ref layout) => Option.Some(layout),
+                    &AdtEntry.Enum(_) => Option.None,
                 }
-                &AdtEntry.Enum(_) => {}
             }
+            Option.None => Option.None,
         }
-        Option.None
     }
 
     /// Looks up an enum layout by DefId.
-    /// Scans from the end so that later registrations take precedence.
     pub fn lookup_enum(self: &CodegenCtx, def_id: u32) -> Option<&EnumLayout> {
-        let mut i: usize = self.adt_registry.len();
-        while i > 0 {
-            i -= 1;
-            match &self.adt_registry[i] {
-                &AdtEntry.Struct(_) => {}
-                &AdtEntry.Enum(ref layout) => {
-                    if layout.def_id == def_id {
-                        return Option.Some(layout);
-                    }
+        match self.adt_enum_hash.get(def_id as u64) {
+            Option.Some(idx) => {
+                match &self.adt_registry[idx as usize] {
+                    &AdtEntry.Enum(ref layout) => Option.Some(layout),
+                    &AdtEntry.Struct(_) => Option.None,
                 }
             }
+            Option.None => Option.None,
         }
-        Option.None
     }
 
     /// Looks up a struct field's HIR type by struct DefId and field index.
@@ -1955,21 +1960,23 @@ impl CodegenCtx {
     /// Scans from the end so that pass 2 entries (with resolved nested types)
     /// take precedence over pass 1 entries.
     pub fn adt_llvm_type(self: &CodegenCtx, def_id: u32) -> String {
-        let mut i: usize = self.adt_registry.len();
-        while i > 0 {
-            i -= 1;
-            match &self.adt_registry[i] {
-                &AdtEntry.Struct(ref layout) => {
-                    if layout.def_id == def_id {
-                        return clone_string(&layout.llvm_type);
-                    }
-                }
-                &AdtEntry.Enum(ref layout) => {
-                    if layout.def_id == def_id {
-                        return clone_string(&layout.llvm_type);
-                    }
+        match self.adt_struct_hash.get(def_id as u64) {
+            Option.Some(idx) => {
+                match &self.adt_registry[idx as usize] {
+                    &AdtEntry.Struct(ref layout) => { return clone_string(&layout.llvm_type); }
+                    _ => {}
                 }
             }
+            Option.None => {}
+        }
+        match self.adt_enum_hash.get(def_id as u64) {
+            Option.Some(idx) => {
+                match &self.adt_registry[idx as usize] {
+                    &AdtEntry.Enum(ref layout) => { return clone_string(&layout.llvm_type); }
+                    _ => {}
+                }
+            }
+            Option.None => {}
         }
         // Fallback: check if this is a known builtin ADT
         match self.lookup_def_name(def_id) {
@@ -2398,6 +2405,8 @@ impl CodegenCtx {
             string_counter: 0,
             def_names: worker_def_names,
             adt_registry: worker_adt_registry,
+            adt_struct_hash: hashmap.HashMapU64U32.new(),
+            adt_enum_hash: hashmap.HashMapU64U32.new(),
             def_names_hash: worker_def_hash,
             local_names_hash: hashmap.HashMapU64U32.new(),
             local_types_hash: hashmap.HashMapU64U32.new(),
