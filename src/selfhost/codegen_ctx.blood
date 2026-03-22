@@ -225,6 +225,10 @@ pub struct CodegenCtx {
     adt_struct_hash: hashmap.HashMapU64U32,
     /// Hash index for enum lookups: def_id -> index in adt_registry
     adt_enum_hash: hashmap.HashMapU64U32,
+    /// Cache for type_to_llvm results: TyId.index → index in type_llvm_cache
+    pub type_llvm_hash: hashmap.HashMapU64U32,
+    /// Cached LLVM type strings for resolved TyIds.
+    pub type_llvm_cache: Vec<String>,
     // Hash indexes for O(1) lookups
     /// Hash index for def_names: def_id -> index in def_names vec
     def_names_hash: hashmap.HashMapU64U32,
@@ -523,6 +527,8 @@ impl CodegenCtx {
             adt_registry: Vec.with_capacity(256),
             adt_struct_hash: hashmap.HashMapU64U32.with_capacity(256),
             adt_enum_hash: hashmap.HashMapU64U32.with_capacity(256),
+            type_llvm_hash: hashmap.HashMapU64U32.with_capacity(512),
+            type_llvm_cache: Vec.with_capacity(512),
             def_names_hash: hashmap.HashMapU64U32.with_capacity(2048),
             local_names_hash: hashmap.HashMapU64U32.with_capacity(64),
             local_types_hash: hashmap.HashMapU64U32.with_capacity(64),
@@ -617,6 +623,8 @@ impl CodegenCtx {
             adt_registry: Vec.with_capacity(256),
             adt_struct_hash: hashmap.HashMapU64U32.with_capacity(256),
             adt_enum_hash: hashmap.HashMapU64U32.with_capacity(256),
+            type_llvm_hash: hashmap.HashMapU64U32.with_capacity(512),
+            type_llvm_cache: Vec.with_capacity(512),
             def_names_hash: def_names_hash,
             local_names_hash: hashmap.HashMapU64U32.with_capacity(64),
             local_types_hash: hashmap.HashMapU64U32.with_capacity(64),
@@ -2407,6 +2415,8 @@ impl CodegenCtx {
             adt_registry: worker_adt_registry,
             adt_struct_hash: hashmap.HashMapU64U32.new(),
             adt_enum_hash: hashmap.HashMapU64U32.new(),
+            type_llvm_hash: hashmap.HashMapU64U32.new(),
+            type_llvm_cache: Vec.new(),
             def_names_hash: worker_def_hash,
             local_names_hash: hashmap.HashMapU64U32.new(),
             local_types_hash: hashmap.HashMapU64U32.new(),

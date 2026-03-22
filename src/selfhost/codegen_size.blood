@@ -227,6 +227,33 @@ pub fn type_to_llvm_with_ctx_id(
     ctx: &mut codegen_ctx.CodegenCtx,
     ty_id: type_intern.TyId,
 ) -> String {
+    // Cache check — only during per-function codegen (fn_temp_region != 0).
+    // During setup (populate_adt_registry), ADTs may not be fully registered.
+    if ctx.fn_temp_region != 0 {
+        match ctx.type_llvm_hash.get(ty_id.index as u64) {
+            Option.Some(idx) => {
+                return common.make_string(ctx.type_llvm_cache[idx as usize].as_str());
+            }
+            Option.None => {}
+        }
+    }
+    let result = type_to_llvm_uncached(ctx, ty_id);
+    // Cache store — deactivate fn_temp_region so the cached string persists
+    if ctx.fn_temp_region != 0 {
+        let ftr = ctx.fn_temp_region;
+        region_deactivate();
+        let cache_idx = ctx.type_llvm_cache.len() as u32;
+        ctx.type_llvm_cache.push(common.make_string(result.as_str()));
+        ctx.type_llvm_hash.insert(ty_id.index as u64, cache_idx);
+        region_activate(ftr);
+    }
+    result
+}
+
+fn type_to_llvm_uncached(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    ty_id: type_intern.TyId,
+) -> String {
     // Fast path: check for Adt first (needs registry lookup)
     let kind = type_intern.type_interner().get(ty_id);
     match kind {
