@@ -232,7 +232,7 @@ do_build_second_gen() {
     step "Self-compiling (first_gen → second_gen)"
     local start_ts rc=0
     start_ts=$(date +%s)
-    run_with_pty "$BUILD_DIR/first_gen" build main.blood --timings -o "$BUILD_DIR/second_gen.ll" || rc=$?
+    run_with_pty "$BUILD_DIR/first_gen" build main.blood --timings --split-modules -o "$BUILD_DIR/second_gen.ll" || rc=$?
     local wall_time
     wall_time=$(elapsed_since "$start_ts")
 
@@ -271,7 +271,7 @@ do_build_third_gen() {
     step "Bootstrap (second_gen → third_gen)"
     local start_ts rc=0
     start_ts=$(date +%s)
-    run_with_pty "$BUILD_DIR/second_gen" build main.blood --timings -o "$BUILD_DIR/third_gen.ll" || rc=$?
+    run_with_pty "$BUILD_DIR/second_gen" build main.blood --timings --split-modules -o "$BUILD_DIR/third_gen.ll" || rc=$?
     local wall_time
     wall_time=$(elapsed_since "$start_ts")
 
