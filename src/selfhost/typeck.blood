@@ -317,6 +317,17 @@ pub struct TypeChecker {
     /// Records resolved method DefIds keyed by expression span start,
     /// so MIR lowering can look up methods that were resolved during type checking.
     pub method_resolutions: Vec<common.MethodResEntry>,
+    /// Hash index for O(1) method resolution existence check.
+    /// Key = (body_def_id << 32) | (span_start & 0xFFFFFFFF), value = 1.
+    pub method_res_hash: hashmap.HashMapU64U64,
+    /// Method name → impl/method index for O(1) lookup.
+    /// Linked list: method_name_heads maps name.index → head entry index.
+    /// Parallel Vecs store impl_idx, method_idx, and next-in-chain.
+    pub mn_impl_idx: Vec<usize>,
+    pub mn_meth_idx: Vec<usize>,
+    pub mn_next: Vec<usize>,
+    pub mn_heads: hashmap.HashMapU64U64,
+    pub mn_tails: hashmap.HashMapU64U64,
     /// Field resolution side table.
     /// Records resolved field indices keyed by expression span start,
     /// so MIR lowering can look up the correct field index for named fields.
@@ -444,6 +455,12 @@ impl TypeChecker {
             effects: Vec.new(),
             builtin_def_names: Vec.new(),
             method_resolutions: Vec.new(),
+            method_res_hash: hashmap.HashMapU64U64.new(),
+            mn_impl_idx: Vec.new(),
+            mn_meth_idx: Vec.new(),
+            mn_next: Vec.new(),
+            mn_heads: hashmap.HashMapU64U64.new(),
+            mn_tails: hashmap.HashMapU64U64.new(),
             field_resolutions: Vec.new(),
             pending_method_calls: Vec.new(),
             current_body_def_id: 0,
@@ -509,6 +526,12 @@ impl TypeChecker {
             effects: Vec.new(),
             builtin_def_names: Vec.new(),
             method_resolutions: Vec.new(),
+            method_res_hash: hashmap.HashMapU64U64.new(),
+            mn_impl_idx: Vec.new(),
+            mn_meth_idx: Vec.new(),
+            mn_next: Vec.new(),
+            mn_heads: hashmap.HashMapU64U64.new(),
+            mn_tails: hashmap.HashMapU64U64.new(),
             field_resolutions: Vec.new(),
             pending_method_calls: Vec.new(),
             current_body_def_id: 0,
@@ -638,6 +661,8 @@ impl TypeChecker {
     /// The def_id_index is the DefId.index of the resolved method.
     pub fn record_method_resolution(self: &mut Self, span_start: usize, def_id_index: u32) {
         self.method_resolutions.push(common.MethodResEntry.new(self.current_body_def_id, span_start, def_id_index));
+        let key = ((self.current_body_def_id as u64) << 32) | (span_start as u64);
+        self.method_res_hash.insert(key, 1);
     }
 
     /// Records an array-to-slice coercion for an expression.
@@ -1192,32 +1217,50 @@ impl TypeChecker {
         if impl_info.is_trait_impl() {
             self.trait_impl_hash.insert(impl_info.trait_def_id_index as u64, 1);
         }
+        let impl_idx = self.impls.len();
+        // Index methods by name for O(1) lookup (append to preserve registration order)
+        for mi in 0usize..impl_info.methods.len() {
+            let name_key = impl_info.methods[mi].name.index as u64;
+            let entry_idx = self.mn_impl_idx.len();
+            self.mn_impl_idx.push(impl_idx);
+            self.mn_meth_idx.push(mi);
+            self.mn_next.push(0xFFFFFFFF);
+            let tail_opt = self.mn_tails.get(name_key);
+            match tail_opt {
+                Option.Some(old_tail) => {
+                    self.mn_next[old_tail as usize] = entry_idx;
+                }
+                Option.None => {
+                    self.mn_heads.insert(name_key, entry_idx as u64);
+                }
+            }
+            self.mn_tails.insert(name_key, entry_idx as u64);
+        }
         self.impls.push(impl_info);
     }
 
     /// Looks up a method on a type by name.
     /// Returns the method info and the impl it belongs to, or None if not found.
     pub fn lookup_method(self: &Self, ty: type_intern.TyId, method_name: common.Symbol) -> Option<MethodLookupResult> {
-        for impl_idx in 0usize..self.impls.len() {
+        let name_key = method_name.index as u64;
+        let head_opt = self.mn_heads.get(name_key);
+        let mut cursor = match head_opt {
+            Option.Some(h) => h as usize,
+            Option.None => { return Option.None; },
+        };
+        while cursor != 0xFFFFFFFF {
+            let impl_idx = self.mn_impl_idx[cursor];
+            let method_idx = self.mn_meth_idx[cursor];
             let impl_info = &self.impls[impl_idx];
-
-            // Check if this impl's self_ty matches the target type
             if types_match_for_impl_id(impl_info.self_ty, ty) {
-                // Check impl-level trait bounds are satisfied
-                if !self.impl_bounds_satisfied(impl_info, ty) {
-                    continue;
-                }
-                // Search methods in this impl
-                for method_idx in 0usize..impl_info.methods.len() {
-                    let method = &impl_info.methods[method_idx];
-                    if method.name.index == method_name.index {
-                        return Some(MethodLookupResult {
-                            impl_index: impl_idx,
-                            method_index: method_idx,
-                        });
-                    }
+                if self.impl_bounds_satisfied(impl_info, ty) {
+                    return Some(MethodLookupResult {
+                        impl_index: impl_idx,
+                        method_index: method_idx,
+                    });
                 }
             }
+            cursor = self.mn_next[cursor];
         }
         Option.None
     }
@@ -1225,19 +1268,21 @@ impl TypeChecker {
     /// Counts how many impls provide a method with the given name for the given type.
     pub fn count_method_matches(self: &Self, ty: type_intern.TyId, method_name: common.Symbol) -> u32 {
         let mut count: u32 = 0;
-        for impl_idx in 0usize..self.impls.len() {
+        let name_key = method_name.index as u64;
+        let head_opt = self.mn_heads.get(name_key);
+        let mut cursor = match head_opt {
+            Option.Some(h) => h as usize,
+            Option.None => { return 0; },
+        };
+        while cursor != 0xFFFFFFFF {
+            let impl_idx = self.mn_impl_idx[cursor];
             let impl_info = &self.impls[impl_idx];
             if types_match_for_impl_id(impl_info.self_ty, ty) {
-                if !self.impl_bounds_satisfied(impl_info, ty) {
-                    continue;
-                }
-                for method_idx in 0usize..impl_info.methods.len() {
-                    let method = &impl_info.methods[method_idx];
-                    if method.name.index == method_name.index {
-                        count += 1;
-                    }
+                if self.impl_bounds_satisfied(impl_info, ty) {
+                    count += 1;
                 }
             }
+            cursor = self.mn_next[cursor];
         }
         count
     }
@@ -1317,17 +1362,20 @@ impl TypeChecker {
         let mut applicable_impls: Vec<usize> = Vec.new();
         let mut applicable_methods: Vec<usize> = Vec.new();
 
-        for impl_idx in 0usize..self.impls.len() {
+        let name_key = method_name.index as u64;
+        let head_opt = self.mn_heads.get(name_key);
+        let mut cursor = match head_opt {
+            Option.Some(h) => h as usize,
+            Option.None => { return Option.None; },
+        };
+        while cursor != 0xFFFFFFFF {
+            let impl_idx = self.mn_impl_idx[cursor];
+            let method_idx = self.mn_meth_idx[cursor];
             let impl_info = &self.impls[impl_idx];
             if types_match_for_impl_id(impl_info.self_ty, ty) {
-                // Check impl-level trait bounds are satisfied
-                if !self.impl_bounds_satisfied(impl_info, ty) {
-                    continue;
-                }
-                for method_idx in 0usize..impl_info.methods.len() {
+                if self.impl_bounds_satisfied(impl_info, ty) {
                     let method = &impl_info.methods[method_idx];
-                    if method.name.index == method_name.index && method.param_tys.len() == arg_tys.len() {
-                        // Check per-parameter applicability via subtyping
+                    if method.param_tys.len() == arg_tys.len() {
                         let mut applicable: bool = true;
                         for pi in 0usize..arg_tys.len() {
                             if !typeck_dispatch.is_subtype_id(arg_tys[pi], method.param_tys[pi], 0) {
@@ -1342,6 +1390,7 @@ impl TypeChecker {
                     }
                 }
             }
+            cursor = self.mn_next[cursor];
         }
 
         if applicable_impls.len() == 0 {
@@ -1492,6 +1541,24 @@ impl TypeChecker {
                         0,  // no generics on dyn Trait
                         methods,
                     );
+                    let synth_impl_idx = self.impls.len();
+                    for smi in 0usize..synth_impl.methods.len() {
+                        let sname_key = synth_impl.methods[smi].name.index as u64;
+                        let sentry_idx = self.mn_impl_idx.len();
+                        self.mn_impl_idx.push(synth_impl_idx);
+                        self.mn_meth_idx.push(smi);
+                        self.mn_next.push(0xFFFFFFFF);
+                        let stail_opt = self.mn_tails.get(sname_key);
+                        match stail_opt {
+                            Option.Some(old_tail) => {
+                                self.mn_next[old_tail as usize] = sentry_idx;
+                            }
+                            Option.None => {
+                                self.mn_heads.insert(sname_key, sentry_idx as u64);
+                            }
+                        }
+                        self.mn_tails.insert(sname_key, sentry_idx as u64);
+                    }
                     self.impls.push(synth_impl);
                 }
                 &Option.None => {}

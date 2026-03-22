@@ -7,6 +7,7 @@
 // 4. Report ambiguity if tied
 
 mod common;
+mod hashmap;
 mod hir_def;
 mod hir_ty;
 mod type_intern;
@@ -910,66 +911,91 @@ pub fn check_all_dispatch_ambiguity(
     impls: &Vec<typeck_info.ImplInfo>,
 ) -> Vec<AmbiguityInfo> {
     let mut results: Vec<AmbiguityInfo> = Vec.new();
+    let sentinel: usize = 0xFFFFFFFF;
+
+    // Build name-grouped index: parallel Vecs + linked list per name.
+    let mut e_impl: Vec<usize> = Vec.new();
+    let mut e_meth: Vec<usize> = Vec.new();
+    let mut e_next: Vec<usize> = Vec.new();
+    let mut name_heads: hashmap.HashMapU64U64 = hashmap.HashMapU64U64.new();
+    let mut unique_names: Vec<u64> = Vec.new();
 
     for i in 0usize..impls.len() {
         for mi in 0usize..impls[i].methods.len() {
+            let name_key = impls[i].methods[mi].name.index as u64;
+            let idx = e_impl.len();
+            let prev = name_heads.get(name_key);
+            e_impl.push(i);
+            e_meth.push(mi);
+            match prev {
+                Option.Some(h) => e_next.push(h as usize),
+                Option.None => {
+                    e_next.push(sentinel);
+                    unique_names.push(name_key);
+                },
+            }
+            name_heads.insert(name_key, idx as u64);
+        }
+    }
+
+    // For each name group, compare all pairs
+    for ni in 0usize..unique_names.len() {
+        let head_opt = name_heads.get(unique_names[ni]);
+        let head = match head_opt {
+            Option.Some(h) => h as usize,
+            Option.None => { continue; },
+        };
+
+        // Walk outer entry
+        let mut a = head;
+        while a != sentinel {
+            let i = e_impl[a];
+            let mi = e_meth[a];
             let m1 = &impls[i].methods[mi];
 
-            // Check against methods in later impls (avoid duplicate pairs)
-            for j in i..impls.len() {
-                // Methods in same impl or later impls with matching self_ty
-                if !types_match_self(impls[i].self_ty, impls[j].self_ty) {
-                    continue;
-                }
-                let start_mj = if j == i { mi + 1 } else { 0usize };
-                for mj in start_mj..impls[j].methods.len() {
-                    let m2 = &impls[j].methods[mj];
+            // Walk inner entry (entries after a in the chain)
+            let mut b = e_next[a];
+            while b != sentinel {
+                let j = e_impl[b];
+                let mj = e_meth[b];
+                let m2 = &impls[j].methods[mj];
 
-                    // Must have same name
-                    if m1.name.index != m2.name.index {
-                        continue;
-                    }
+                // Ensure consistent ordering (lower impl/method first)
+                let i1 = if i < j || (i == j && mi < mj) { i } else { j };
+                let mi1 = if i < j || (i == j && mi < mj) { mi } else { mj };
+                let i2 = if i < j || (i == j && mi < mj) { j } else { i };
+                let mi2 = if i < j || (i == j && mi < mj) { mj } else { mi };
+                let ma = if i < j || (i == j && mi < mj) { m1 } else { m2 };
+                let mb = if i < j || (i == j && mi < mj) { m2 } else { m1 };
 
-                    // Different arities are not ambiguous
-                    if m1.param_tys.len() != m2.param_tys.len() {
-                        continue;
-                    }
-
-                    // Methods with different effect rows are distinct overloads (DISPATCH.md §7)
-                    if !effect_rows_equal(&m1.effect_def_ids, &m2.effect_def_ids) {
-                        continue;
-                    }
-
-                    // If one is strictly more specific, no ambiguity
-                    if is_more_specific(m1, m2) || is_more_specific(m2, m1) {
-                        continue;
-                    }
-
-                    // Check if signatures could overlap
+                if types_match_self(impls[i1].self_ty, impls[i2].self_ty)
+                    && ma.param_tys.len() == mb.param_tys.len()
+                    && effect_rows_equal(&ma.effect_def_ids, &mb.effect_def_ids)
+                    && !is_more_specific(ma, mb) && !is_more_specific(mb, ma) {
                     let mut overlap = true;
-                    for k in 0usize..m1.param_tys.len() {
-                        if !types_could_unify(m1.param_tys[k], m2.param_tys[k], 0) {
+                    for k in 0usize..ma.param_tys.len() {
+                        if !types_could_unify(ma.param_tys[k], mb.param_tys[k], 0) {
                             overlap = false;
                             break;
                         }
                     }
-                    if !overlap {
-                        continue;
+                    if overlap {
+                        let diamond = impls[i1].is_trait_impl()
+                            && impls[i2].is_trait_impl()
+                            && impls[i1].trait_def_id_index != impls[i2].trait_def_id_index;
+                        results.push(AmbiguityInfo {
+                            impl1_idx: i1,
+                            method1_idx: mi1,
+                            impl2_idx: i2,
+                            method2_idx: mi2,
+                            is_diamond: diamond,
+                        });
                     }
-
-                    // Ambiguity detected — check if it's a diamond conflict
-                    let diamond = impls[i].is_trait_impl()
-                        && impls[j].is_trait_impl()
-                        && impls[i].trait_def_id_index != impls[j].trait_def_id_index;
-                    results.push(AmbiguityInfo {
-                        impl1_idx: i,
-                        method1_idx: mi,
-                        impl2_idx: j,
-                        method2_idx: mj,
-                        is_diamond: diamond,
-                    });
                 }
+
+                b = e_next[b];
             }
+            a = e_next[a];
         }
     }
     results
@@ -995,60 +1021,83 @@ pub fn check_type_stability(
     impls: &Vec<typeck_info.ImplInfo>,
 ) -> Vec<TypeInstabilityInfo> {
     let mut results: Vec<TypeInstabilityInfo> = Vec.new();
+    let sentinel: usize = 0xFFFFFFFF;
+
+    // Build name-grouped index: parallel Vecs + linked list per name.
+    let mut e_impl: Vec<usize> = Vec.new();
+    let mut e_meth: Vec<usize> = Vec.new();
+    let mut e_next: Vec<usize> = Vec.new();
+    let mut name_heads: hashmap.HashMapU64U64 = hashmap.HashMapU64U64.new();
+    let mut unique_names: Vec<u64> = Vec.new();
 
     for i in 0usize..impls.len() {
         for mi in 0usize..impls[i].methods.len() {
+            let name_key = impls[i].methods[mi].name.index as u64;
+            let idx = e_impl.len();
+            let prev = name_heads.get(name_key);
+            e_impl.push(i);
+            e_meth.push(mi);
+            match prev {
+                Option.Some(h) => e_next.push(h as usize),
+                Option.None => {
+                    e_next.push(sentinel);
+                    unique_names.push(name_key);
+                },
+            }
+            name_heads.insert(name_key, idx as u64);
+        }
+    }
+
+    // For each name group, compare all pairs
+    for ni in 0usize..unique_names.len() {
+        let head_opt = name_heads.get(unique_names[ni]);
+        let head = match head_opt {
+            Option.Some(h) => h as usize,
+            Option.None => { continue; },
+        };
+
+        let mut a = head;
+        while a != sentinel {
+            let i = e_impl[a];
+            let mi = e_meth[a];
             let m1 = &impls[i].methods[mi];
 
-            for j in i..impls.len() {
-                if !types_match_self(impls[i].self_ty, impls[j].self_ty) {
-                    continue;
-                }
-                let start_mj = if j == i { mi + 1 } else { 0usize };
-                for mj in start_mj..impls[j].methods.len() {
-                    let m2 = &impls[j].methods[mj];
+            let mut b = e_next[a];
+            while b != sentinel {
+                let j = e_impl[b];
+                let mj = e_meth[b];
+                let m2 = &impls[j].methods[mj];
 
-                    // Must have same name
-                    if m1.name.index != m2.name.index {
-                        continue;
-                    }
+                let i1 = if i < j || (i == j && mi < mj) { i } else { j };
+                let mi1 = if i < j || (i == j && mi < mj) { mi } else { mj };
+                let i2 = if i < j || (i == j && mi < mj) { j } else { i };
+                let mi2 = if i < j || (i == j && mi < mj) { mj } else { mi };
+                let ma = if i < j || (i == j && mi < mj) { m1 } else { m2 };
+                let mb = if i < j || (i == j && mi < mj) { m2 } else { m1 };
 
-                    // Different arities cannot conflict
-                    if m1.param_tys.len() != m2.param_tys.len() {
-                        continue;
-                    }
-
-                    // Methods with different effect rows are distinct (DISPATCH.md §7)
-                    if !effect_rows_equal(&m1.effect_def_ids, &m2.effect_def_ids) {
-                        continue;
-                    }
-
-                    // Check if input types could overlap
+                if types_match_self(impls[i1].self_ty, impls[i2].self_ty)
+                    && ma.param_tys.len() == mb.param_tys.len()
+                    && effect_rows_equal(&ma.effect_def_ids, &mb.effect_def_ids) {
                     let mut overlap = true;
-                    for k in 0usize..m1.param_tys.len() {
-                        if !types_could_unify(m1.param_tys[k], m2.param_tys[k], 0) {
+                    for k in 0usize..ma.param_tys.len() {
+                        if !types_could_unify(ma.param_tys[k], mb.param_tys[k], 0) {
                             overlap = false;
                             break;
                         }
                     }
-                    if !overlap {
-                        continue;
+                    if overlap && !return_types_compatible(ma.return_ty, mb.return_ty) {
+                        results.push(TypeInstabilityInfo {
+                            impl1_idx: i1,
+                            method1_idx: mi1,
+                            impl2_idx: i2,
+                            method2_idx: mi2,
+                        });
                     }
-
-                    // Inputs overlap — check return type compatibility
-                    if return_types_compatible(m1.return_ty, m2.return_ty) {
-                        continue;
-                    }
-
-                    // Type instability detected
-                    results.push(TypeInstabilityInfo {
-                        impl1_idx: i,
-                        method1_idx: mi,
-                        impl2_idx: j,
-                        method2_idx: mj,
-                    });
                 }
+
+                b = e_next[b];
             }
+            a = e_next[a];
         }
     }
     results

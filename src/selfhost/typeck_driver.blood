@@ -2475,13 +2475,8 @@ fn resolve_pending_methods(checker: &mut typeck.TypeChecker) {
 
 /// Checks if a method call at the given span_start has already been resolved.
 fn is_already_resolved(checker: &mut typeck.TypeChecker, body_def_id: u32, span_start: usize) -> bool {
-    for i in 0usize..checker.method_resolutions.len() {
-        if checker.method_resolutions[i].body_def_id == body_def_id &&
-           checker.method_resolutions[i].span_start == span_start {
-            return true;
-        }
-    }
-    false
+    let key = ((body_def_id as u64) << 32) | (span_start as u64);
+    checker.method_res_hash.contains_key(key)
 }
 
 /// Resolves pending field accesses that were deferred because the base type was Infer.
