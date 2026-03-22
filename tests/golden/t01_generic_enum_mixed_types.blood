@@ -1,0 +1,51 @@
+// Test: generic enum with mixed type parameter sizes (bool + i32)
+// Verifies that variant payload extraction uses the correct type parameter,
+// not the first type parameter regardless of variant.
+// EXPECT: 99
+// EXPECT: 1
+// EXPECT: 42
+enum Either<L, R> {
+    Left(L),
+    Right(R),
+}
+
+fn check_right(e: Either<bool, i32>, expected: i32) -> i32 {
+    match e {
+        Either.Right(x) => {
+            println_int(x);
+            if x != expected { return 1; }
+            0
+        },
+        _ => 2,
+    }
+}
+
+fn check_left(e: Either<bool, i32>) -> i32 {
+    match e {
+        Either.Left(b) => {
+            if b { println_int(1); }
+            else { println_int(0); }
+            0
+        },
+        _ => 3,
+    }
+}
+
+fn main() -> i32 {
+    // Right(99): field 0 should use R=i32, not L=bool
+    let e1: Either<bool, i32> = Either.Right(99);
+    let r1: i32 = check_right(e1, 99);
+    if r1 != 0 { return r1; }
+
+    // Left(true): field 0 should use L=bool
+    let e2: Either<bool, i32> = Either.Left(true);
+    let r2: i32 = check_left(e2);
+    if r2 != 0 { return r2; }
+
+    // Right(42): another value to confirm it's not coincidental
+    let e3: Either<bool, i32> = Either.Right(42);
+    let r3: i32 = check_right(e3, 42);
+    if r3 != 0 { return r3; }
+
+    0
+}

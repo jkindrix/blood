@@ -171,12 +171,16 @@ fn resolve_field_ty_id(
                                                 if !type_intern.is_param_or_infer_id(ht_id) {
                                                     return Option.Some(ht_id);
                                                 }
+                                                // Pass field hir_type and layout for correct param mapping
+                                                return substitute_enum_field_from_args_with_hir(
+                                                    unwrapped, field_idx, Option.Some(ht_id), Option.Some(layout));
                                             }
                                             &Option.None => {}
                                         }
                                     }
                                     // Generic or missing field type — use type args
-                                    return substitute_enum_field_from_args(unwrapped, field_idx);
+                                    return substitute_enum_field_from_args_with_hir(
+                                        unwrapped, field_idx, Option.None, Option.Some(layout));
                                 }
                             }
                             // Variant not found — try type args
@@ -284,15 +288,49 @@ fn get_field_var_index_layout(layout: &codegen_ctx.StructLayout, idx: usize) -> 
 }
 
 /// Resolves a generic enum variant field type from the ADT's type args.
-/// Maps field_idx to type arg index (e.g., Option<T>.Some.0 → T = args[0]).
+/// When the field's hir_type is a Param/Infer, scans all variants in the enum layout
+/// to determine the correct positional type arg index for that Param.
+/// Falls back to field_idx when no layout or hir_type is available.
 fn substitute_enum_field_from_args(
     adt_ty: type_intern.TyId,
     field_idx: u32,
+) -> Option<type_intern.TyId> {
+    substitute_enum_field_from_args_with_hir(adt_ty, field_idx, Option.None, Option.None)
+}
+
+/// Resolves a generic enum variant field type using the field's actual hir_type
+/// and the enum layout to correctly map type parameters to positional arg indices.
+fn substitute_enum_field_from_args_with_hir(
+    adt_ty: type_intern.TyId,
+    field_idx: u32,
+    field_hir_type: Option<type_intern.TyId>,
+    enum_layout: Option<&codegen_ctx.EnumLayout>,
 ) -> Option<type_intern.TyId> {
     match type_intern.get_adt_args(adt_ty) {
         Option.Some(args) => {
             let interner = type_intern.type_interner();
             let args_len = interner.ty_list_len(args);
+            // If we have the field's hir_type and the enum layout, determine
+            // the correct arg index by finding the Param's position among all
+            // unique type params across the enum's variants.
+            match field_hir_type {
+                Option.Some(ht_id) => {
+                    let field_var = get_var_index_from_ty(ht_id);
+                    if field_var != 4294967295 {
+                        match enum_layout {
+                            Option.Some(layout) => {
+                                let arg_idx = find_param_position_in_enum(layout, field_var);
+                                if arg_idx < args_len {
+                                    return Option.Some(interner.get_ty_list_element(args, arg_idx));
+                                }
+                            }
+                            Option.None => {}
+                        }
+                    }
+                }
+                Option.None => {}
+            }
+            // Fallback: use field_idx as arg index
             if (field_idx as usize) < args_len {
                 Option.Some(interner.get_ty_list_element(args, field_idx as usize))
             } else {
@@ -301,6 +339,58 @@ fn substitute_enum_field_from_args(
         }
         Option.None => Option.None,
     }
+}
+
+/// Extracts the TyVarId.index from a Param or Infer type. Returns 4294967295 if not a Param/Infer.
+fn get_var_index_from_ty(ty_id: type_intern.TyId) -> u32 {
+    let kind = type_intern.type_interner().get(ty_id);
+    match kind {
+        &type_intern.InternedTypeKind.Param(var_id) => var_id.index,
+        &type_intern.InternedTypeKind.Infer(var_id) => var_id.index,
+        _ => 4294967295,
+    }
+}
+
+/// Finds the positional index of a type param (by TyVarId.index) among all unique
+/// Param types across an enum's variants. The order of first occurrence maps directly
+/// to the ADT's type argument positions.
+fn find_param_position_in_enum(layout: &codegen_ctx.EnumLayout, target_var: u32) -> usize {
+    let mut unique_vars: Vec<u32> = Vec.new();
+    for vi in 0usize..layout.variants.len() {
+        let variant = &layout.variants[vi];
+        for fi in 0usize..variant.fields.len() {
+            match &variant.fields[fi].hir_type {
+                &Option.Some(ht_id) => {
+                    let var_idx = get_var_index_from_ty(ht_id);
+                    if var_idx != 4294967295 {
+                        // Check if this var is already in unique_vars
+                        let mut found = false;
+                        for ui in 0usize..unique_vars.len() {
+                            if unique_vars[ui] == var_idx {
+                                found = true;
+                            }
+                        }
+                        if !found {
+                            if var_idx == target_var {
+                                return unique_vars.len();
+                            }
+                            unique_vars.push(var_idx);
+                        } else if var_idx == target_var {
+                            // Already counted — find its position
+                            for ui in 0usize..unique_vars.len() {
+                                if unique_vars[ui] == var_idx {
+                                    return ui;
+                                }
+                            }
+                        }
+                    }
+                }
+                &Option.None => {}
+            }
+        }
+    }
+    // Not found — return a value that will trigger fallback
+    4294967295
 }
 
 /// Computes the LLVM type for the value at a place after all projections.
@@ -406,17 +496,34 @@ pub fn resolve_place_elem_type(
                                 }
                             }
                             if found_field {
+                                // Try to resolve via the field's hir_type and enum layout
+                                // for correct param→arg mapping in multi-param generics
+                                let field_ht = match ctx.lookup_enum(def_id) {
+                                    Option.Some(layout) => {
+                                        let mut ht: Option<type_intern.TyId> = Option.None;
+                                        for k in 0usize..layout.variants.len() {
+                                            if layout.variants[k].variant_idx == vi {
+                                                if (field_idx as usize) < layout.variants[k].fields.len() {
+                                                    ht = match &layout.variants[k].fields[field_idx as usize].hir_type {
+                                                        &Option.Some(id) => Option.Some(id),
+                                                        &Option.None => Option.None,
+                                                    };
+                                                }
+                                            }
+                                        }
+                                        ht
+                                    }
+                                    Option.None => Option.None,
+                                };
                                 match ctx.get_local_hir_type(place.local) {
                                     Option.Some(ty_id) => {
                                         let unwrapped = unwrap_ref_type(ty_id);
-                                        match type_intern.get_adt_args(unwrapped) {
-                                            Option.Some(args) => {
-                                                let interner = type_intern.type_interner();
-                                                let args_len = interner.ty_list_len(args);
-                                                if (field_idx as usize) < args_len {
-                                                    let arg_ty_id = interner.get_ty_list_element(args, field_idx as usize);
-                                                    return codegen_size.type_to_llvm_with_ctx_id(ctx, arg_ty_id);
-                                                }
+                                        let enum_layout_ref = ctx.lookup_enum(def_id);
+                                        let resolved = substitute_enum_field_from_args_with_hir(
+                                            unwrapped, field_idx, field_ht, enum_layout_ref);
+                                        match resolved {
+                                            Option.Some(arg_ty_id) => {
+                                                return codegen_size.type_to_llvm_with_ctx_id(ctx, arg_ty_id);
                                             }
                                             Option.None => {}
                                         }
