@@ -444,6 +444,18 @@ pub fn hash_bytes(bytes: &Vec<u8>) -> u64 {
     h
 }
 
+/// Hash a range of bytes within a byte slice (from `start` to `end` exclusive).
+pub fn hash_bytes_range(bytes: &[u8], start: usize, end: usize) -> u64 {
+    let mut h: u64 = 14695981039346656037;
+    let mut i = start;
+    while i < end {
+        h = h ^ (bytes[i] as u64);
+        h *= 1099511628211;
+        i += 1;
+    }
+    h
+}
+
 /// Hash a string by its bytes.
 pub fn hash_str(s: &str) -> u64 {
     let bytes = s.as_bytes();

@@ -332,6 +332,70 @@ fn binary_fingerprint(path: &str) -> u64 {
 }
 
 // ============================================================
+// Per-Module Incremental Hashing
+// ============================================================
+
+/// Computes a source hash for a single module by hashing its own source text
+/// plus all transitively imported modules' source text, plus compiler fingerprint.
+/// Returns 0 on error (disables caching for this module).
+pub fn hash_module_source(module_path: &str, base_dir: &str, compiler_path: &str) -> u64 {
+    let files = collect_source_files(base_dir, module_path);
+    if files.len() == 0 {
+        return 0;
+    }
+    let mut combined = compute_combined_hash(&files);
+    if combined == 0 {
+        return 0;
+    }
+    let compiler_fp = binary_fingerprint(compiler_path);
+    combined = (combined ^ compiler_fp) * fnv_prime();
+    combined
+}
+
+/// Reads a cached hash from `hash_dir/<stem>.hash`. Returns 0 if not found.
+pub fn read_cached_hash(hash_dir: &str, stem: &str) -> u64 {
+    let mut path = make_string(hash_dir);
+    path.push('/');
+    path.push_str(stem);
+    path.push_str(".hash");
+    if !file_exists(path.as_str()) {
+        return 0;
+    }
+    let content: &str = file_read_to_string(path.as_str());
+    if content.len() == 0 {
+        return 0;
+    }
+    parse_u64(content)
+}
+
+/// Writes a hash to `hash_dir/<stem>.hash`.
+pub fn write_cached_hash(hash_dir: &str, stem: &str, hash: u64) {
+    let mut path = make_string(hash_dir);
+    path.push('/');
+    path.push_str(stem);
+    path.push_str(".hash");
+    let hash_str = codegen_types.format_u64(hash);
+    file_write_string(path.as_str(), hash_str.as_str());
+}
+
+/// Parses a u64 from a decimal string. Returns 0 on parse failure.
+fn parse_u64(s: &str) -> u64 {
+    let bytes = s.as_bytes();
+    let mut result: u64 = 0;
+    for i in 0usize..bytes.len() {
+        let b = bytes[i];
+        if b >= 48 && b <= 57 { // '0'..'9'
+            result = result * 10 + ((b - 48) as u64);
+        } else if b == 10 || b == 13 { // newline/CR — stop
+            return result;
+        } else {
+            return 0; // invalid character
+        }
+    }
+    result
+}
+
+// ============================================================
 // String Helpers
 // ============================================================
 

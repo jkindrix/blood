@@ -177,6 +177,14 @@ pub fn lower_program_with_ast_region(program: &ast.Program, base_dir: String, so
     result.export_name_entries = ctx.export_name_entries;
     result.thread_local_def_ids = ctx.thread_local_def_ids;
 
+    // Populate module_names: index 0 = "main", 1..N = external module file paths
+    let mut module_names: Vec<String> = Vec.with_capacity(ctx.loaded_modules.len() + 1);
+    module_names.push(common.make_string("main"));
+    for mi in 0usize..ctx.loaded_modules.len() {
+        module_names.push(common.make_string(ctx.loaded_modules[mi].path.as_str()));
+    }
+    result.module_names = module_names;
+
     // Print combined tag→module allocation report if profiling is active.
     // Tag scheme: 1-N = Phase 1 (parse), 1001-N = Phase 3a (decls), 2001-N = Phase 4b (bodies).
     if alloc_tag_count(3000 as u64) > 0 {
@@ -1060,6 +1068,7 @@ fn lower_external_module_declarations(ctx: &mut hir_lower_ctx.LoweringCtx, cache
 
     for i in 0usize..modules.len() {
         let def_id = modules[i].def_id;
+        ctx.current_module_index = (i as u32) + 1;
 
         // Find cached parse result from Phase 1
         let mut cache_idx: i64 = -1;
@@ -1095,6 +1104,7 @@ fn lower_external_module_declarations(ctx: &mut hir_lower_ctx.LoweringCtx, cache
         ctx.source = saved_source;
         alloc_tag_set(0 as u64);
     }
+    ctx.current_module_index = 0;
 }
 
 /// Phase 4b: Lower function bodies from external modules.
@@ -1102,6 +1112,7 @@ fn lower_external_module_declarations(ctx: &mut hir_lower_ctx.LoweringCtx, cache
 fn lower_external_module_fn_bodies(ctx: &mut hir_lower_ctx.LoweringCtx, cache: &Vec<CachedParsedModule>) {
     for i in 0usize..cache.len() {
         let cached = &cache[i];
+        ctx.current_module_index = (i as u32) + 1;
 
         let program = match &cached.parse.program {
             &Option.Some(ref p) => p,
@@ -1133,6 +1144,7 @@ fn lower_external_module_fn_bodies(ctx: &mut hir_lower_ctx.LoweringCtx, cache: &
         ctx.source = saved_source;
         alloc_tag_set(0 as u64);
     }
+    ctx.current_module_index = 0;
 }
 
 /// Formats bytes as right-aligned MB with 2 decimal places (e.g. "  629.02 MB").
@@ -1941,6 +1953,7 @@ fn lower_single_fn_body(ctx: &mut hir_lower_ctx.LoweringCtx, f: &ast.FnDecl) {
     let mut body_entry = hir_lower_ctx.BodyEntry.new(body_id, body);
     body_entry.const_param_def_ids = cp_def_ids;
     body_entry.type_param_var_ids = tp_var_ids;
+    body_entry.module_index = ctx.current_module_index;
     ctx.bodies.push(body_entry);
 }
 

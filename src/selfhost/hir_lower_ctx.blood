@@ -119,6 +119,9 @@ pub struct LowerResult {
     pub export_name_entries: Vec<ExportNameEntry>,
     /// DefId indices of statics marked with #[thread_local].
     pub thread_local_def_ids: Vec<u32>,
+    /// Module names: index 0 = main file path, 1..N = external module file paths.
+    /// Populated from loaded_modules during result construction.
+    pub module_names: Vec<String>,
 }
 
 impl LowerResult {
@@ -169,6 +172,7 @@ impl LowerResult {
             no_mangle_def_ids: Vec.new(),
             export_name_entries: Vec.new(),
             thread_local_def_ids: Vec.new(),
+            module_names: Vec.new(),
         }
     }
 
@@ -199,6 +203,7 @@ impl LowerResult {
             no_mangle_def_ids: Vec.new(),
             export_name_entries: Vec.new(),
             thread_local_def_ids: Vec.new(),
+            module_names: Vec.new(),
         }
     }
 
@@ -229,6 +234,7 @@ impl LowerResult {
             no_mangle_def_ids: Vec.new(),
             export_name_entries: Vec.new(),
             thread_local_def_ids: Vec.new(),
+            module_names: Vec.new(),
         }
     }
 
@@ -356,6 +362,9 @@ pub struct LoweringCtx {
     pub export_name_entries: Vec<ExportNameEntry>,
     /// DefId indices of statics marked with #[thread_local].
     pub thread_local_def_ids: Vec<u32>,
+    /// Current module index being lowered (0 = main, 1..N = external modules).
+    /// Set before lowering each module's declarations/bodies.
+    pub current_module_index: u32,
 }
 
 /// Tracks a const generic parameter during HIR lowering.
@@ -397,11 +406,13 @@ pub struct LoadedModule {
 pub struct ItemEntry {
     pub def_id: hir_def.DefId,
     pub item: hir_item.Item,
+    /// Source module index: 0 = main file, 1..N = external modules (loaded_modules order).
+    pub module_index: u32,
 }
 
 impl ItemEntry {
     pub fn new(def_id: hir_def.DefId, item: hir_item.Item) -> ItemEntry {
-        ItemEntry { def_id, item }
+        ItemEntry { def_id, item, module_index: 0 }
     }
 }
 
@@ -418,11 +429,13 @@ pub struct BodyEntry {
     /// the Phase 3 signature TyVarIds stored in FnSigInfo.type_param_ids.
     /// Used by type-generic monomorphization to inject correct substitutions.
     pub type_param_var_ids: Vec<u32>,
+    /// Source module index: 0 = main file, 1..N = external modules (loaded_modules order).
+    pub module_index: u32,
 }
 
 impl BodyEntry {
     pub fn new(body_id: hir_def.BodyId, body: hir_expr.Body) -> BodyEntry {
-        BodyEntry { body_id, body, const_param_def_ids: Vec.new(), type_param_var_ids: Vec.new() }
+        BodyEntry { body_id, body, const_param_def_ids: Vec.new(), type_param_var_ids: Vec.new(), module_index: 0 }
     }
 }
 
@@ -476,6 +489,7 @@ impl LoweringCtx {
             no_mangle_def_ids: Vec.new(),
             export_name_entries: Vec.new(),
             thread_local_def_ids: Vec.new(),
+            current_module_index: 0,
         }
     }
 
@@ -521,6 +535,7 @@ impl LoweringCtx {
             no_mangle_def_ids: Vec.new(),
             export_name_entries: Vec.new(),
             thread_local_def_ids: Vec.new(),
+            current_module_index: 0,
         }
     }
 
@@ -594,7 +609,8 @@ impl LoweringCtx {
     /// Adds an item to the lowered items.
     pub fn add_item(self: &mut Self, def_id: hir_def.DefId, item: hir_item.Item) {
         let idx = self.items.len();
-        let entry = ItemEntry.new(def_id, item);
+        let mut entry = ItemEntry.new(def_id, item);
+        entry.module_index = self.current_module_index;
         self.items.push(entry);
 
         // Ensure item_index is large enough
@@ -620,7 +636,8 @@ impl LoweringCtx {
 
     /// Adds a body to the lowered bodies.
     pub fn add_body(self: &mut Self, body_id: hir_def.BodyId, body: hir_expr.Body) {
-        let entry = BodyEntry.new(body_id, body);
+        let mut entry = BodyEntry.new(body_id, body);
+        entry.module_index = self.current_module_index;
         self.bodies.push(entry);
     }
 

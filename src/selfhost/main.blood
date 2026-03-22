@@ -137,6 +137,8 @@ pub struct Args {
     pub build_dir: Option<String>,
     /// Stdlib directory path (if provided via --stdlib-path or BLOOD_STDLIB_PATH).
     pub stdlib_path: Option<String>,
+    /// Whether to emit per-module .ll files instead of one monolithic file.
+    pub split_modules: bool,
 }
 
 impl Args {
@@ -170,6 +172,7 @@ impl Args {
             test_fail_fast: false,
             build_dir: Option.None,
             stdlib_path: Option.None,
+            split_modules: false,
         }
     }
 
@@ -203,6 +206,7 @@ impl Args {
             test_fail_fast: false,
             build_dir: Option.None,
             stdlib_path: Option.None,
+            split_modules: false,
         }
     }
 
@@ -236,6 +240,7 @@ impl Args {
             test_fail_fast: false,
             build_dir: Option.None,
             stdlib_path: Option.None,
+            split_modules: false,
         }
     }
 }
@@ -472,8 +477,80 @@ fn run_build(args: &Args) -> i32 {
                 &EmitMode.Obj => {}
             }
 
-            // Phase 2: Compile IR to object file with llc-18
-            // Derive obj and bin paths from ll_path base (strip .ll extension)
+            // Phase 2+3: Compile IR → .o → binary
+            if args.split_modules {
+                // Per-module: compile each changed .ll, link all .o files
+                let obj_dir_path = source.join_path(build_dir.as_str(), "obj");
+                let base_path = main_helpers.strip_ll_ext(&ll_path);
+                let bin_path = base_path;
+                let llc_start = blood_clock_millis();
+
+                // Run llc-18 on each .ll in obj/ that is newer than its .o
+                let mut llc_cmd = String.new();
+                llc_cmd.push_str("for f in ");
+                llc_cmd.push_str(obj_dir_path.as_str());
+                llc_cmd.push_str("/*.ll; do o=\"${f%.ll}.o\"; if [ \"$f\" -nt \"$o\" ] 2>/dev/null || [ ! -f \"$o\" ]; then llc-18 \"$f\" -O");
+                if args.opt_level == 0 {
+                    llc_cmd.push('0');
+                } else if args.opt_level == 1 {
+                    llc_cmd.push('1');
+                } else if args.opt_level == 2 {
+                    llc_cmd.push('2');
+                } else {
+                    llc_cmd.push('3');
+                }
+                llc_cmd.push_str(" -filetype=obj -relocation-model=pic -o \"$o\" || exit 1; fi; done");
+                let llc_result = system(llc_cmd.as_str());
+                let llc_elapsed = blood_clock_millis() - llc_start;
+                if llc_result != 0 {
+                    main_helpers.print_error("llc-18 failed on per-module .ll files");
+                    return 1;
+                }
+
+                // Early return for --emit obj
+                match &args.emit_mode {
+                    &EmitMode.Obj => { return 0; }
+                    &EmitMode.Full => {}
+                    &EmitMode.LlvmIr => {}
+                }
+
+                // Link all .o files
+                let mut clang_cmd = String.new();
+                clang_cmd.push_str("clang-18 ");
+                clang_cmd.push_str(obj_dir_path.as_str());
+                clang_cmd.push_str("/*.o ");
+                clang_cmd.push_str(runtime.rust_runtime.as_str());
+                clang_cmd.push_str(" -Wl,-z,muldefs");
+                if args.strip {
+                    clang_cmd.push_str(" -s");
+                }
+                clang_cmd.push_str(" -lm -ldl -lpthread");
+                if args.sanitize_address {
+                    clang_cmd.push_str(" -fsanitize=address");
+                }
+                clang_cmd.push_str(" -pie -o ");
+                clang_cmd.push_str(bin_path.as_str());
+                let clang_start = blood_clock_millis();
+                let clang_result = system(clang_cmd.as_str());
+                let clang_elapsed = blood_clock_millis() - clang_start;
+                if clang_result != 0 {
+                    main_helpers.print_error("clang-18 linking failed");
+                    return 1;
+                }
+                main_helpers.print_success("Wrote executable to: ");
+                print_str(bin_path.as_str());
+                print_newline();
+
+                if args.timings {
+                    print_str("  llc-18 (per-module)   ");
+                    print_timing_ms(llc_elapsed);
+                    print_str("  clang-18 (link)      ");
+                    print_timing_ms(clang_elapsed);
+                }
+
+                0
+            } else {
+            // Monolithic: single .ll → .o → binary
             let base_path = main_helpers.strip_ll_ext(&ll_path);
             let mut obj_path = common.make_string(base_path.as_str());
             obj_path.push_str(".o");
@@ -545,6 +622,7 @@ fn run_build(args: &Args) -> i32 {
             }
 
             0
+            } // end else (monolithic path)
         }
         &Option.None => {
             main_helpers.print_error("No source file specified");
@@ -1467,6 +1545,8 @@ pub fn parse_args(argc: i32, argv: &Vec<String>) -> Args {
                 args.mem_profile = true;
             } else if main_helpers.str_equals(arg, "--alloc-profile") {
                 args.alloc_profile = true;
+            } else if main_helpers.str_equals(arg, "--split-modules") {
+                args.split_modules = true;
             } else if main_helpers.str_equals(arg, "--list") {
                 args.test_list = true;
             } else if main_helpers.str_equals(arg, "--fail-fast") {
@@ -2740,6 +2820,8 @@ struct CodegenWorkItem {
     return_ty: type_intern.TyId,
     /// The function's source span.
     span: common.Span,
+    /// Source module index (0 = main, 1..N = external modules).
+    module_index: u32,
 }
 
 /// Result of scanning bodies to build the work list.
@@ -2829,6 +2911,7 @@ fn build_codegen_worklist(
             def_id,
             return_ty,
             span,
+            module_index: body_entry.module_index,
         });
 
     }
@@ -3016,6 +3099,7 @@ fn codegen_pass2(
     next_mono_def_id_in: u32,
     type_generic_fn_set: &Vec<u32>,
     type_generic_calls: &Vec<common.TypeGenericCallInfo>,
+    skip_modules: &Vec<bool>,
 ) -> CodegenPass2Result {
     let mut all_mono_requests: Vec<mir_lower_ctx.MonoRequest> = Vec.new();
     let mut next_mono_def_id: u32 = next_mono_def_id_in;
@@ -3043,8 +3127,20 @@ fn codegen_pass2(
     let mut fn_ir_sizes: Vec<usize> = Vec.new();
     let mut fn_ir_names: Vec<String> = Vec.new();
 
+    let mut skipped_count: usize = 0;
+
     for i in 0usize..total_items {
         let work = &worklist.items[i];
+
+        // Skip unchanged modules — their cached .ll and .o are still valid.
+        // Signatures for skipped functions are loaded from the fn_sigs cache.
+        if skip_modules.len() > 0 {
+            let mi = work.module_index as usize;
+            if mi < skip_modules.len() && skip_modules[mi] {
+                skipped_count += 1;
+                continue;
+            }
+        }
 
         if i % 500 == 0 {
             eprint_str("\n  [fn ");
@@ -3260,6 +3356,12 @@ fn codegen_pass2(
     // references into it (local maps, output buffer from last iteration).
     // The caller destroys it after all ctx access is complete.
     region_destroy(mir_region);
+
+    if skipped_count > 0 {
+        eprint_str("\n  [skipped ");
+        eprint_str(int_to_string(skipped_count as i32));
+        eprint_str(" cached fns]");
+    }
 
     // Report top functions by IR size if --alloc-profile
     if args.alloc_profile && fn_ir_sizes.len() > 0 {
@@ -3976,6 +4078,88 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     let codegen_region = region_create(33554432, 17179869184);
     region_activate(codegen_region);
 
+    // === Incremental: per-module hash comparison + cached signature loading ===
+    let mut skip_modules: Vec<bool> = Vec.new();
+    let mut incremental_active = false;
+    let module_count = lower_result.module_names.len();
+    let inc_build_dir = resolve_build_dir(args);
+    let mut hash_dir = common.make_string(inc_build_dir.as_str());
+    hash_dir.push_str("/obj/.hashes");
+    let mut sigs_path = common.make_string(inc_build_dir.as_str());
+    sigs_path.push_str("/obj/.fn_sigs");
+
+    if args.split_modules && !args.no_cache && module_count > 1 {
+        main_helpers.ensure_dir(hash_dir.as_str());
+        let mut obj_dir = common.make_string(inc_build_dir.as_str());
+        obj_dir.push_str("/obj");
+        main_helpers.ensure_dir(obj_dir.as_str());
+
+        // Compute per-module hashes and compare against cached
+        let mut module_hashes: Vec<u64> = Vec.with_capacity(module_count);
+        let mut changed_count: usize = 0;
+        for mi in 0usize..module_count {
+            let mod_path = &lower_result.module_names[mi];
+            let hash = if mi == 0 {
+                // Main module: hash entry file transitively
+                build_cache.hash_module_source(path, base_dir.as_str(), exe_path)
+            } else {
+                build_cache.hash_module_source(mod_path.as_str(), source.parent_dir(mod_path.as_str()).as_str(), exe_path)
+            };
+            module_hashes.push(hash);
+
+            let stem = if mi == 0 {
+                common.make_string("main")
+            } else {
+                main_helpers.file_stem(mod_path)
+            };
+
+            let cached = build_cache.read_cached_hash(hash_dir.as_str(), stem.as_str());
+
+            // Check if both .ll and .o exist in obj dir
+            let mut ll_exists = false;
+            let mut o_exists = false;
+            {
+                let mut ll_p = common.make_string(obj_dir.as_str());
+                ll_p.push('/');
+                ll_p.push_str(stem.as_str());
+                ll_p.push_str(".ll");
+                ll_exists = file_exists(ll_p.as_str());
+                let mut o_p = common.make_string(obj_dir.as_str());
+                o_p.push('/');
+                o_p.push_str(stem.as_str());
+                o_p.push_str(".o");
+                o_exists = file_exists(o_p.as_str());
+            }
+
+            let is_unchanged = hash != 0 && cached == hash && ll_exists && o_exists;
+            skip_modules.push(is_unchanged);
+            if !is_unchanged {
+                changed_count += 1;
+            }
+        }
+
+        // If any modules are cacheable, try to load cached fn_sigs for unchanged modules
+        if changed_count < module_count && file_exists(sigs_path.as_str()) {
+            let sigs_data: &str = file_read_to_string(sigs_path.as_str());
+            if sigs_data.len() > 0 {
+                ctx.load_fn_signatures(sigs_data);
+                incremental_active = true;
+                eprint_str("\n  [incremental: ");
+                eprint_str(int_to_string(changed_count as i32));
+                eprint_str("/");
+                eprint_str(int_to_string(module_count as i32));
+                eprint_str(" modules changed]");
+            }
+        }
+
+        if !incremental_active {
+            // Can't use incremental — clear skip_modules
+            for si in 0usize..skip_modules.len() {
+                skip_modules[si] = false;
+            }
+        }
+    }
+
     // Pass 2: MIR lowering + codegen, writing each function's IR directly to file.
     ctx.flush_write_buffer();
     eprint_str("[pass2_start]");
@@ -3984,6 +4168,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
         has_const_generics, &const_generic_fn_set, &const_generic_param_counts,
         &turbofish_const_args, 0,
         &type_generic_fn_set, &typeck_result.type_generic_calls,
+        &skip_modules,
     );
     eprint_str("[pass2_done]");
 
@@ -4199,6 +4384,52 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     let codegen_elapsed = blood_clock_millis() - codegen_start;
     eprint_str(" done\n");
 
+    // Split monolithic IR into per-module files (if requested).
+    // Must happen before region destroys — ctx.fn_signatures are in codegen_region.
+    if args.split_modules {
+        let split_build_dir = resolve_build_dir(args);
+        // Only split changed modules when incremental is active
+        if incremental_active {
+            split_monolithic_to_modules_incremental(
+                output_path, &worklist, &lower_result.module_names,
+                &ctx, split_build_dir.as_str(), &skip_modules,
+            );
+        } else {
+            split_monolithic_to_modules(output_path, &worklist, &lower_result.module_names, &ctx, split_build_dir.as_str());
+        }
+
+        // Save fn_sigs cache (all signatures — fresh + cached)
+        let sigs_text = ctx.serialize_fn_signatures();
+        file_write_string(sigs_path.as_str(), sigs_text.as_str());
+
+        // Save per-module hashes
+        if module_count > 1 {
+            for mi in 0usize..module_count {
+                let mod_path = &lower_result.module_names[mi];
+                let stem = if mi == 0 {
+                    common.make_string("main")
+                } else {
+                    main_helpers.file_stem(mod_path)
+                };
+                let hash = if mi < skip_modules.len() && skip_modules[mi] {
+                    // Unchanged — keep existing hash (it's already correct)
+                    build_cache.read_cached_hash(hash_dir.as_str(), stem.as_str())
+                } else {
+                    // Changed — write new hash
+                    // Recompute since module_hashes is out of scope
+                    if mi == 0 {
+                        build_cache.hash_module_source(path, base_dir.as_str(), exe_path)
+                    } else {
+                        build_cache.hash_module_source(mod_path.as_str(), source.parent_dir(mod_path.as_str()).as_str(), exe_path)
+                    }
+                };
+                if hash != 0 {
+                    build_cache.write_cached_hash(hash_dir.as_str(), stem.as_str(), hash);
+                }
+            }
+        }
+    }
+
     if args.mem_profile {
         print_mem_phase("After codegen complete", 0 as u64, hir_region, codegen_region);
     }
@@ -4245,6 +4476,638 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     }
 
     true
+}
+
+// ============================================================
+// Per-Module IR Splitting
+// ============================================================
+
+/// Splits a monolithic .ll file into per-module .ll files.
+/// Each module file contains the shared preamble, the module's function definitions,
+/// cross-module forward declarations, and the shared postamble (string constants, metadata).
+///
+/// The monolithic file is preserved unchanged. Per-module files are written to build/obj/.
+fn split_monolithic_to_modules(
+    monolithic_path: &str,
+    worklist: &CodegenWorkList,
+    module_names: &Vec<String>,
+    ctx: &codegen_ctx.CodegenCtx,
+    build_dir: &str,
+) {
+    let split_start = blood_clock_millis();
+
+    // Build function name → module_index map from worklist
+    let mut name_to_module: hashmap.HashMapU64U32 = hashmap.HashMapU64U32.with_capacity(worklist.items.len());
+    for wi in 0usize..worklist.items.len() {
+        let name_hash = hashmap.hash_str(worklist.items[wi].fn_name.as_str());
+        name_to_module.insert(name_hash, worklist.items[wi].module_index);
+    }
+
+    // Read the monolithic file
+    let content: &str = file_read_to_string(monolithic_path);
+    let bytes = content.as_bytes();
+    let len = bytes.len();
+    if len == 0 { return; }
+
+    // Determine module count
+    let module_count = module_names.len();
+    if module_count <= 1 { return; } // No external modules to split
+
+    // Create obj directory
+    let mut obj_dir = String.new();
+    obj_dir.push_str(build_dir);
+    obj_dir.push_str("/obj");
+    main_helpers.ensure_dir(obj_dir.as_str());
+
+    // Build per-module output paths (stem from module_names)
+    let mut module_paths: Vec<String> = Vec.with_capacity(module_count);
+    for mi in 0usize..module_count {
+        let stem = if mi == 0 {
+            common.make_string("main")
+        } else {
+            main_helpers.file_stem(&module_names[mi])
+        };
+        let mut path = common.make_string(obj_dir.as_str());
+        path.push('/');
+        path.push_str(stem.as_str());
+        path.push_str(".ll");
+        module_paths.push(path);
+    }
+
+    // Scan file to find: preamble end, function blocks, postamble start.
+    // Preamble = everything before the first non-internal `define`.
+    // Function blocks = `define ... {\n` ... `}\n`.
+    // Postamble = everything after the last function block's `}\n`.
+
+    // Phase 1: Find preamble end (first `define ` that isn't `define internal `)
+    let mut preamble_end: usize = 0;
+    let mut pos: usize = 0;
+    while pos < len {
+        // Find start of line
+        let line_start = pos;
+        // Find end of line
+        let mut line_end = pos;
+        while line_end < len && bytes[line_end] != 10 {
+            line_end += 1;
+        }
+        let line_len = line_end - line_start;
+
+        // Check if line starts with "define " and contains "!dbg" (user function).
+        // Preamble functions (@main wrapper, internal builtins) don't have !dbg.
+        if line_len > 7
+            && bytes[line_start] == 100 && bytes[line_start + 1] == 101  // "de"
+            && bytes[line_start + 2] == 102 && bytes[line_start + 3] == 105  // "fi"
+            && bytes[line_start + 4] == 110 && bytes[line_start + 5] == 101  // "ne"
+            && bytes[line_start + 6] == 32  // " "
+        {
+            // Check if this define line contains "!dbg" (user function marker)
+            let mut has_dbg = false;
+            let mut di: usize = line_start + 7;
+            while di + 3 < line_end {
+                if bytes[di] == 33 && bytes[di + 1] == 100  // "!d"
+                    && bytes[di + 2] == 98 && bytes[di + 3] == 103 // "bg"
+                {
+                    has_dbg = true;
+                    di = line_end; // break
+                }
+                di += 1;
+            }
+            if has_dbg {
+                preamble_end = line_start;
+                pos = line_start; // don't advance past this line
+                break;
+            }
+        }
+        pos = line_end + 1;
+    }
+    if preamble_end == 0 { preamble_end = len; }
+
+    // Phase 2: Collect function blocks with their names and byte ranges.
+    // Each function: (name_hash, block_start, block_end)
+    let mut fn_blocks: Vec<(u64, usize, usize)> = Vec.with_capacity(5000);
+    pos = preamble_end;
+    while pos < len {
+        let line_start = pos;
+        let mut line_end = pos;
+        while line_end < len && bytes[line_end] != 10 {
+            line_end += 1;
+        }
+        let line_len = line_end - line_start;
+
+        // Check for "define "
+        if line_len > 7
+            && bytes[line_start] == 100 && bytes[line_start + 1] == 101
+            && bytes[line_start + 2] == 102 && bytes[line_start + 3] == 105
+            && bytes[line_start + 4] == 110 && bytes[line_start + 5] == 101
+            && bytes[line_start + 6] == 32
+        {
+            let block_start = line_start;
+            // Extract function name: find '@' then read until '('
+            let mut at_pos = line_start + 7;
+            while at_pos < line_end && bytes[at_pos] != 64 { // '@'
+                at_pos += 1;
+            }
+            let name_start = at_pos + 1;
+            let mut name_end_pos = name_start;
+            while name_end_pos < line_end && bytes[name_end_pos] != 40 { // '('
+                name_end_pos += 1;
+            }
+            // Hash the function name
+            let name_hash = hashmap.hash_bytes_range(bytes, name_start, name_end_pos);
+
+            // Check for single-line define: `define ... { ... }` all on one line
+            // Look for `}` at end of this line (before newline)
+            let mut last_char_pos = line_end;
+            while last_char_pos > line_start && (bytes[last_char_pos - 1] == 32 || bytes[last_char_pos - 1] == 13) {
+                last_char_pos -= 1;
+            }
+            if last_char_pos > line_start && bytes[last_char_pos - 1] == 125 { // '}' at end of line
+                // Single-line function — the block is just this one line
+                let block_end = line_end + 1;
+                fn_blocks.push((name_hash, block_start, if block_end > len { len } else { block_end }));
+                pos = block_end;
+                continue;
+            }
+
+            // Multi-line function: find end of function block (line starting with '}')
+            pos = line_end + 1;
+            while pos < len {
+                if bytes[pos] == 125 { // '}'
+                    // Check if it's a line that's just '}'
+                    let mut eol = pos + 1;
+                    while eol < len && bytes[eol] != 10 { eol += 1; }
+                    let after_brace_len = eol - pos - 1;
+                    if after_brace_len == 0 || (after_brace_len == 1 && bytes[pos + 1] == 13) {
+                        // Found function end
+                        let block_end = eol + 1; // include the newline
+                        fn_blocks.push((name_hash, block_start, if block_end > len { len } else { block_end }));
+                        pos = block_end;
+                        break;
+                    }
+                }
+                // Advance to next line
+                while pos < len && bytes[pos] != 10 { pos += 1; }
+                pos += 1;
+            }
+            continue;
+        }
+
+        // Non-define line after preamble but before/between functions (e.g., blank lines)
+        // will be captured as part of the postamble or inter-function gap
+        pos = line_end + 1;
+    }
+
+    // Postamble starts after the last function block
+    let postamble_start = if fn_blocks.len() > 0 {
+        fn_blocks[fn_blocks.len() - 1].2
+    } else {
+        preamble_end
+    };
+
+    // Phase 3: Generate cross-module declares from ctx.fn_signatures
+    let all_declares = ctx.generate_all_declares();
+
+    // Build def_id → module_index map from worklist
+    let mut defid_to_module: hashmap.HashMapU64U32 = hashmap.HashMapU64U32.with_capacity(worklist.items.len());
+    for wi in 0usize..worklist.items.len() {
+        defid_to_module.insert(worklist.items[wi].def_id.index as u64, worklist.items[wi].module_index);
+    }
+
+    // Phase 4: Write per-module files
+    // Each file = preamble + cross-module declares + module's functions + postamble
+    for mi in 0usize..module_count {
+        let module_idx = mi as u32;
+        let path = &module_paths[mi];
+
+        // Write preamble. For non-module-0, strip the @main define (replace with declare)
+        // and convert static globals to external declarations.
+        let mut preamble = String.new();
+        let mut pi: usize = 0;
+        let mut skip_until_brace_line = false;
+        while pi < preamble_end {
+            // Find the current line
+            let line_start = pi;
+            let mut line_end = pi;
+            while line_end < preamble_end && bytes[line_end] != 10 {
+                line_end += 1;
+            }
+            let line_len = line_end - line_start;
+
+            if module_idx != 0 {
+                // Skip @main function block in non-module-0 files
+                if skip_until_brace_line {
+                    // Check if line is just '}'
+                    if line_len >= 1 && bytes[line_start] == 125 { // '}'
+                        skip_until_brace_line = false;
+                    }
+                    pi = line_end + 1;
+                    continue;
+                }
+                // Detect "define i32 @main("
+                if line_len > 18
+                    && bytes[line_start] == 100 && bytes[line_start + 1] == 101  // "de"
+                    && bytes[line_start + 2] == 102 && bytes[line_start + 3] == 105  // "fi"
+                    && bytes[line_start + 4] == 110 && bytes[line_start + 5] == 101  // "ne"
+                    && bytes[line_start + 6] == 32  // " "
+                    && bytes[line_start + 7] == 105 && bytes[line_start + 8] == 51  // "i3"
+                    && bytes[line_start + 9] == 50 && bytes[line_start + 10] == 32 // "2 "
+                    && bytes[line_start + 11] == 64 // "@"
+                    && bytes[line_start + 12] == 109 // "m"
+                    && bytes[line_start + 13] == 97  // "a"
+                    && bytes[line_start + 14] == 105 // "i"
+                    && bytes[line_start + 15] == 110 // "n"
+                {
+                    skip_until_brace_line = true;
+                    pi = line_end + 1;
+                    continue;
+                }
+                // Convert "= global " to "= external global " for statics
+                if line_len > 2 && bytes[line_start] == 64 { // '@' at start
+                    let mut has_global = false;
+                    let mut global_pos: usize = 0;
+                    let mut gi = line_start;
+                    while gi + 8 < line_end {
+                        if bytes[gi] == 61 && bytes[gi + 1] == 32  // "= "
+                            && bytes[gi + 2] == 103 && bytes[gi + 3] == 108 // "gl"
+                            && bytes[gi + 4] == 111 && bytes[gi + 5] == 98  // "ob"
+                            && bytes[gi + 6] == 97 && bytes[gi + 7] == 108  // "al"
+                            && bytes[gi + 8] == 32 // " "
+                        {
+                            has_global = true;
+                            global_pos = gi;
+                            gi = line_end; // break
+                        }
+                        gi += 1;
+                    }
+                    if has_global {
+                        // Copy up to "= " then insert "external " before "global "
+                        let mut ci = line_start;
+                        while ci < global_pos + 2 { // include "= "
+                            preamble.push(bytes[ci] as char);
+                            ci += 1;
+                        }
+                        preamble.push_str("external global ");
+                        // Skip to after "global " in the original — find the type
+                        ci = global_pos + 9; // past "= global "
+                        // Copy the type (up to space before initializer or end of line)
+                        // Find " zeroinitializer" or " {" or end
+                        let mut type_end = ci;
+                        let mut brace_depth: i32 = 0;
+                        while type_end < line_end {
+                            if bytes[type_end] == 123 { brace_depth += 1; } // '{'
+                            if bytes[type_end] == 125 { brace_depth -= 1; } // '}'
+                            if brace_depth == 0 && bytes[type_end] == 32 { // space at depth 0
+                                break;
+                            }
+                            type_end += 1;
+                        }
+                        while ci < type_end {
+                            preamble.push(bytes[ci] as char);
+                            ci += 1;
+                        }
+                        preamble.push('\n');
+                        pi = line_end + 1;
+                        continue;
+                    }
+                }
+            }
+            // Copy line as-is
+            while pi < line_end {
+                preamble.push(bytes[pi] as char);
+                pi += 1;
+            }
+            if pi < preamble_end {
+                preamble.push('\n');
+                pi += 1;
+            }
+        }
+        file_write_string(path.as_str(), preamble.as_str());
+
+        // Write cross-module declares (for worklist functions NOT in this module).
+        // Skip functions not in the worklist (stubs, handler wrappers) — they only
+        // exist as defines in module 0 and are not called cross-module.
+        for di in 0usize..all_declares.len() {
+            let decl_def_id = all_declares[di].0;
+            match defid_to_module.get(decl_def_id as u64) {
+                Option.Some(decl_module) => {
+                    if decl_module != module_idx {
+                        file_append_string(path.as_str(), all_declares[di].1.as_str());
+                    }
+                }
+                Option.None => {} // Not in worklist — skip
+            }
+        }
+
+        // Write this module's function blocks
+        for fi in 0usize..fn_blocks.len() {
+            let fn_module = match name_to_module.get(fn_blocks[fi].0) {
+                Option.Some(m) => m,
+                Option.None => 0, // unmatched functions (closures, stubs) → module 0
+            };
+            if fn_module == module_idx {
+                let block_start = fn_blocks[fi].1;
+                let block_end = fn_blocks[fi].2;
+                let mut block = String.new();
+                let mut bi: usize = block_start;
+                while bi < block_end {
+                    block.push(bytes[bi] as char);
+                    bi += 1;
+                }
+                file_append_string(path.as_str(), block.as_str());
+            }
+        }
+
+        // Write postamble (string constants, metadata, etc.)
+        if postamble_start < len {
+            let mut postamble = String.new();
+            let mut oi: usize = postamble_start;
+            while oi < len {
+                postamble.push(bytes[oi] as char);
+                oi += 1;
+            }
+            file_append_string(path.as_str(), postamble.as_str());
+        }
+    }
+
+    let split_elapsed = blood_clock_millis() - split_start;
+    eprint_str("\n  Module split: ");
+    eprint_str(int_to_string(module_count as i32));
+    eprint_str(" modules in ");
+    eprint_str(int_to_string(split_elapsed as i32));
+    eprint_str("ms\n");
+}
+
+/// Incremental variant of split_monolithic_to_modules.
+/// Only regenerates .ll files for changed modules. Unchanged modules keep their cached files.
+/// The monolithic .ll only contains functions from changed modules, so unchanged modules
+/// are simply skipped during the split.
+fn split_monolithic_to_modules_incremental(
+    monolithic_path: &str,
+    worklist: &CodegenWorkList,
+    module_names: &Vec<String>,
+    ctx: &codegen_ctx.CodegenCtx,
+    build_dir: &str,
+    skip_modules: &Vec<bool>,
+) {
+    let split_start = blood_clock_millis();
+    let module_count = module_names.len();
+    if module_count <= 1 { return; }
+
+    // Build function name → module_index map from worklist (only changed modules)
+    let mut name_to_module: hashmap.HashMapU64U32 = hashmap.HashMapU64U32.with_capacity(worklist.items.len());
+    for wi in 0usize..worklist.items.len() {
+        let mi = worklist.items[wi].module_index as usize;
+        if mi < skip_modules.len() && skip_modules[mi] {
+            continue; // Skip unchanged modules' functions
+        }
+        let name_hash = hashmap.hash_str(worklist.items[wi].fn_name.as_str());
+        name_to_module.insert(name_hash, worklist.items[wi].module_index);
+    }
+
+    // Read the monolithic file (contains only changed modules' functions)
+    let content: &str = file_read_to_string(monolithic_path);
+    let bytes = content.as_bytes();
+    let len = bytes.len();
+    if len == 0 { return; }
+
+    let mut obj_dir = String.new();
+    obj_dir.push_str(build_dir);
+    obj_dir.push_str("/obj");
+    main_helpers.ensure_dir(obj_dir.as_str());
+
+    // Build per-module output paths
+    let mut module_paths: Vec<String> = Vec.with_capacity(module_count);
+    for mi in 0usize..module_count {
+        let stem = if mi == 0 {
+            common.make_string("main")
+        } else {
+            main_helpers.file_stem(&module_names[mi])
+        };
+        let mut mpath = common.make_string(obj_dir.as_str());
+        mpath.push('/');
+        mpath.push_str(stem.as_str());
+        mpath.push_str(".ll");
+        module_paths.push(mpath);
+    }
+
+    // Find preamble end (first define with !dbg)
+    let mut preamble_end: usize = 0;
+    let mut pos: usize = 0;
+    while pos < len {
+        let line_start = pos;
+        let mut line_end = pos;
+        while line_end < len && bytes[line_end] != 10 { line_end += 1; }
+        let line_len = line_end - line_start;
+        if line_len > 7
+            && bytes[line_start] == 100 && bytes[line_start + 1] == 101
+            && bytes[line_start + 2] == 102 && bytes[line_start + 3] == 105
+            && bytes[line_start + 4] == 110 && bytes[line_start + 5] == 101
+            && bytes[line_start + 6] == 32
+        {
+            let mut has_dbg = false;
+            let mut di: usize = line_start + 7;
+            while di + 3 < line_end {
+                if bytes[di] == 33 && bytes[di + 1] == 100
+                    && bytes[di + 2] == 98 && bytes[di + 3] == 103 {
+                    has_dbg = true;
+                    di = line_end;
+                }
+                di += 1;
+            }
+            if has_dbg {
+                preamble_end = line_start;
+                pos = line_start;
+                break;
+            }
+        }
+        pos = line_end + 1;
+    }
+    if preamble_end == 0 { preamble_end = len; }
+
+    // Collect function blocks
+    let mut fn_blocks: Vec<(u64, usize, usize)> = Vec.with_capacity(3000);
+    pos = preamble_end;
+    while pos < len {
+        let line_start = pos;
+        let mut line_end = pos;
+        while line_end < len && bytes[line_end] != 10 { line_end += 1; }
+        let line_len = line_end - line_start;
+        if line_len > 7
+            && bytes[line_start] == 100 && bytes[line_start + 1] == 101
+            && bytes[line_start + 2] == 102 && bytes[line_start + 3] == 105
+            && bytes[line_start + 4] == 110 && bytes[line_start + 5] == 101
+            && bytes[line_start + 6] == 32
+        {
+            let block_start = line_start;
+            let mut at_pos = line_start + 7;
+            while at_pos < line_end && bytes[at_pos] != 64 { at_pos += 1; }
+            let name_start = at_pos + 1;
+            let mut name_end_pos = name_start;
+            while name_end_pos < line_end && bytes[name_end_pos] != 40 { name_end_pos += 1; }
+            let name_hash = hashmap.hash_bytes_range(bytes, name_start, name_end_pos);
+
+            // Single-line function check
+            let mut last_char_pos = line_end;
+            while last_char_pos > line_start && (bytes[last_char_pos - 1] == 32 || bytes[last_char_pos - 1] == 13) {
+                last_char_pos -= 1;
+            }
+            if last_char_pos > line_start && bytes[last_char_pos - 1] == 125 {
+                let block_end = line_end + 1;
+                fn_blocks.push((name_hash, block_start, if block_end > len { len } else { block_end }));
+                pos = block_end;
+                continue;
+            }
+            // Multi-line function
+            pos = line_end + 1;
+            while pos < len {
+                if bytes[pos] == 125 {
+                    let mut eol = pos + 1;
+                    while eol < len && bytes[eol] != 10 { eol += 1; }
+                    let after = eol - pos - 1;
+                    if after == 0 || (after == 1 && bytes[pos + 1] == 13) {
+                        let block_end = eol + 1;
+                        fn_blocks.push((name_hash, block_start, if block_end > len { len } else { block_end }));
+                        pos = block_end;
+                        break;
+                    }
+                }
+                while pos < len && bytes[pos] != 10 { pos += 1; }
+                pos += 1;
+            }
+            continue;
+        }
+        pos = line_end + 1;
+    }
+
+    let postamble_start = if fn_blocks.len() > 0 {
+        fn_blocks[fn_blocks.len() - 1].2
+    } else { preamble_end };
+
+    // Generate cross-module declares (includes both fresh + cached signatures)
+    let all_declares = ctx.generate_all_declares();
+    let mut defid_to_module: hashmap.HashMapU64U32 = hashmap.HashMapU64U32.with_capacity(worklist.items.len());
+    for wi in 0usize..worklist.items.len() {
+        defid_to_module.insert(worklist.items[wi].def_id.index as u64, worklist.items[wi].module_index);
+    }
+
+    // Write ONLY changed modules' .ll files
+    let mut changed_written: usize = 0;
+    for mi in 0usize..module_count {
+        let module_idx = mi as u32;
+        if mi < skip_modules.len() && skip_modules[mi] {
+            continue; // Unchanged — keep cached .ll
+        }
+        changed_written += 1;
+        let mpath = &module_paths[mi];
+
+        // Write preamble (with @main / static fixups for non-module-0)
+        let mut preamble = String.new();
+        let mut pi: usize = 0;
+        let mut skip_until_brace = false;
+        while pi < preamble_end {
+            let ls = pi;
+            let mut le = pi;
+            while le < preamble_end && bytes[le] != 10 { le += 1; }
+            let ll = le - ls;
+            if module_idx != 0 {
+                if skip_until_brace {
+                    if ll >= 1 && bytes[ls] == 125 { skip_until_brace = false; }
+                    pi = le + 1;
+                    continue;
+                }
+                if ll > 18
+                    && bytes[ls] == 100 && bytes[ls+1] == 101 && bytes[ls+2] == 102
+                    && bytes[ls+3] == 105 && bytes[ls+4] == 110 && bytes[ls+5] == 101
+                    && bytes[ls+6] == 32 && bytes[ls+7] == 105 && bytes[ls+8] == 51
+                    && bytes[ls+9] == 50 && bytes[ls+10] == 32 && bytes[ls+11] == 64
+                    && bytes[ls+12] == 109 && bytes[ls+13] == 97 && bytes[ls+14] == 105
+                    && bytes[ls+15] == 110
+                {
+                    skip_until_brace = true;
+                    pi = le + 1;
+                    continue;
+                }
+                if ll > 2 && bytes[ls] == 64 {
+                    let mut has_global = false;
+                    let mut gp: usize = 0;
+                    let mut gi = ls;
+                    while gi + 8 < le {
+                        if bytes[gi] == 61 && bytes[gi+1] == 32 && bytes[gi+2] == 103
+                            && bytes[gi+3] == 108 && bytes[gi+4] == 111 && bytes[gi+5] == 98
+                            && bytes[gi+6] == 97 && bytes[gi+7] == 108 && bytes[gi+8] == 32 {
+                            has_global = true; gp = gi; gi = le;
+                        }
+                        gi += 1;
+                    }
+                    if has_global {
+                        let mut ci = ls;
+                        while ci < gp + 2 { preamble.push(bytes[ci] as char); ci += 1; }
+                        preamble.push_str("external global ");
+                        ci = gp + 9;
+                        let mut bd: i32 = 0;
+                        let mut te = ci;
+                        while te < le {
+                            if bytes[te] == 123 { bd += 1; }
+                            if bytes[te] == 125 { bd -= 1; }
+                            if bd == 0 && bytes[te] == 32 { break; }
+                            te += 1;
+                        }
+                        while ci < te { preamble.push(bytes[ci] as char); ci += 1; }
+                        preamble.push('\n');
+                        pi = le + 1;
+                        continue;
+                    }
+                }
+            }
+            while pi < le { preamble.push(bytes[pi] as char); pi += 1; }
+            if pi < preamble_end { preamble.push('\n'); pi += 1; }
+        }
+        file_write_string(mpath.as_str(), preamble.as_str());
+
+        // Cross-module declares
+        for di in 0usize..all_declares.len() {
+            let did = all_declares[di].0;
+            match defid_to_module.get(did as u64) {
+                Option.Some(dm) => {
+                    if dm != module_idx {
+                        file_append_string(mpath.as_str(), all_declares[di].1.as_str());
+                    }
+                }
+                Option.None => {}
+            }
+        }
+
+        // This module's function blocks
+        for fi in 0usize..fn_blocks.len() {
+            let fm = match name_to_module.get(fn_blocks[fi].0) {
+                Option.Some(m) => m,
+                Option.None => 0,
+            };
+            if fm == module_idx {
+                let bs = fn_blocks[fi].1;
+                let be = fn_blocks[fi].2;
+                let mut block = String.new();
+                let mut bi = bs;
+                while bi < be { block.push(bytes[bi] as char); bi += 1; }
+                file_append_string(mpath.as_str(), block.as_str());
+            }
+        }
+
+        // Postamble
+        if postamble_start < len {
+            let mut post = String.new();
+            let mut oi = postamble_start;
+            while oi < len { post.push(bytes[oi] as char); oi += 1; }
+            file_append_string(mpath.as_str(), post.as_str());
+        }
+    }
+
+    let split_elapsed = blood_clock_millis() - split_start;
+    eprint_str("\n  Incremental split: ");
+    eprint_str(int_to_string(changed_written as i32));
+    eprint_str(" changed modules in ");
+    eprint_str(int_to_string(split_elapsed as i32));
+    eprint_str("ms\n");
 }
 
 // ============================================================

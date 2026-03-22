@@ -2188,6 +2188,135 @@ impl CodegenCtx {
 
     // ======== Worker Context for Parallel Codegen ========
 
+    /// Generates LLVM declare statements for all registered function signatures.
+    /// Returns a Vec of (def_id, declare_string) pairs.
+    /// Used by per-module split to emit cross-module forward declarations.
+    pub fn generate_all_declares(self: &CodegenCtx) -> Vec<(u32, String)> {
+        let mut result: Vec<(u32, String)> = Vec.with_capacity(self.fn_signatures.len());
+        // Deduplicate: when cached + fresh sigs both exist for the same def_id,
+        // fn_sigs_hash points to the latest entry. Only emit that one.
+        let mut seen = hashmap.HashMapU64U32.with_capacity(self.fn_signatures.len());
+        for i in 0usize..self.fn_signatures.len() {
+            let sig = &self.fn_signatures[i];
+            // Skip if we've already emitted a declare for this def_id
+            match seen.get(sig.def_id as u64) {
+                Option.Some(_) => { continue; }
+                Option.None => {}
+            }
+            seen.insert(sig.def_id as u64, 1);
+            let name_opt = self.lookup_def_name(sig.def_id);
+            let name = match &name_opt {
+                &Option.Some(ref n) => n,
+                &Option.None => { continue; }
+            };
+            let mut decl = String.new();
+            decl.push_str("declare ");
+            decl.push_str(sig.return_type.as_str());
+            decl.push_str(" @");
+            decl.push_str(name.as_str());
+            decl.push('(');
+            for pi in 0usize..sig.param_types.len() {
+                if pi > 0 {
+                    decl.push_str(", ");
+                }
+                decl.push_str(sig.param_types[pi].as_str());
+            }
+            decl.push_str(")\n");
+            result.push((sig.def_id, decl));
+        }
+        result
+    }
+
+    /// Serializes all function signatures to a tab-separated text format.
+    /// Format: one line per function: def_id\tname\tret_type\tparam1\tparam2\t...
+    pub fn serialize_fn_signatures(self: &CodegenCtx) -> String {
+        let mut out = String.new();
+        for i in 0usize..self.fn_signatures.len() {
+            let sig = &self.fn_signatures[i];
+            let name_opt = self.lookup_def_name(sig.def_id);
+            let name = match &name_opt {
+                &Option.Some(ref n) => n,
+                &Option.None => { continue; }
+            };
+            out.push_str(codegen_types.format_u64(sig.def_id as u64).as_str());
+            out.push('\t');
+            out.push_str(name.as_str());
+            out.push('\t');
+            out.push_str(sig.return_type.as_str());
+            for pi in 0usize..sig.param_types.len() {
+                out.push('\t');
+                out.push_str(sig.param_types[pi].as_str());
+            }
+            out.push('\n');
+        }
+        out
+    }
+
+    /// Loads function signatures from tab-separated text and registers them on this context.
+    /// Used to restore cached signatures for unchanged modules during incremental builds.
+    pub fn load_fn_signatures(self: &mut CodegenCtx, data: &str) {
+        let bytes = data.as_bytes();
+        let len = bytes.len();
+        let mut pos: usize = 0;
+        while pos < len {
+            // Find end of line
+            let line_start = pos;
+            let mut line_end = pos;
+            while line_end < len && bytes[line_end] != 10 { line_end += 1; }
+            if line_end == line_start { pos = line_end + 1; continue; }
+
+            // Parse tab-separated fields: def_id, name, ret_type, params...
+            let mut fields: Vec<(usize, usize)> = Vec.new(); // (start, end) pairs
+            let mut field_start = line_start;
+            let mut fi = line_start;
+            while fi <= line_end {
+                if fi == line_end || bytes[fi] == 9 { // '\t' or end
+                    fields.push((field_start, fi));
+                    field_start = fi + 1;
+                }
+                fi += 1;
+            }
+            if fields.len() < 3 { pos = line_end + 1; continue; }
+
+            // Field 0: def_id
+            let mut def_id: u32 = 0;
+            let mut di = fields[0].0;
+            while di < fields[0].1 {
+                if bytes[di] >= 48 && bytes[di] <= 57 {
+                    def_id = def_id * 10 + ((bytes[di] - 48) as u32);
+                }
+                di += 1;
+            }
+
+            // Field 1: name
+            let mut name = String.new();
+            let mut ni = fields[1].0;
+            while ni < fields[1].1 { name.push(bytes[ni] as char); ni += 1; }
+
+            // Field 2: return type
+            let mut ret_ty = String.new();
+            let mut ri = fields[2].0;
+            while ri < fields[2].1 { ret_ty.push(bytes[ri] as char); ri += 1; }
+
+            // Fields 3+: param types
+            let mut param_types: Vec<String> = Vec.new();
+            for pi in 3usize..fields.len() {
+                let mut pt = String.new();
+                let mut pti = fields[pi].0;
+                while pti < fields[pi].1 { pt.push(bytes[pti] as char); pti += 1; }
+                if pt.len() > 0 {
+                    param_types.push(pt);
+                }
+            }
+
+            // Register name and signature
+            self.register_def_name(def_id, name);
+            self.register_fn_signature(def_id, param_types, ret_ty);
+
+            pos = line_end + 1;
+        }
+    }
+
     /// Creates an isolated worker context that clones read-only state from the parent.
     /// Worker contexts have their own string table, counters, and per-function state.
     /// Used for parallel codegen: each thread gets a worker ctx, produces IR independently,
