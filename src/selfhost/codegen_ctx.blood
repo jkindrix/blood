@@ -1606,6 +1606,17 @@ impl CodegenCtx {
         common.make_string("i64")
     }
 
+    /// Gets the LLVM type for a MIR local as &str. Zero allocation.
+    /// Returns "i64" if type not found.
+    pub fn get_local_type_str(self: &CodegenCtx, local: mir_def.MirLocalId) -> &str {
+        match self.local_types_hash.get(local.index as u64) {
+            Option.Some(idx) => {
+                self.local_types[idx as usize].llvm_type.as_str()
+            }
+            Option.None => "i64",
+        }
+    }
+
     /// Gets a reference to the local's LLVM type string. Zero allocation.
     /// Returns None if the local has no registered type.
     pub fn get_local_type_ref(self: &CodegenCtx, local: mir_def.MirLocalId) -> Option<&String> {
