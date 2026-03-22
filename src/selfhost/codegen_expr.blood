@@ -575,12 +575,23 @@ pub fn emit_rvalue(
                             Option.Some(type_def_id) => {
                                 match ctx.lookup_vtable_name(trait_def_id, type_def_id) {
                                     Option.Some(vtable_name) => {
-                                        // Build data pointer
+                                        // Build data pointer and extract/look up gen
                                         let mut data_ptr: String;
+                                        let gen_cg = ctx.fresh_temp_cg();
                                         if str_eq(src_ty.as_str(), "ptr") {
                                             data_ptr = val;
+                                            // Look up gen at runtime
+                                            let addr_i64 = ctx.fresh_temp_cg();
+                                            ctx.write("  ");
+                                            ctx.write_cgname(&addr_i64);
+                                            ctx.write(" = ptrtoint ptr ");
+                                            ctx.write_string(&data_ptr);
+                                            ctx.write(" to i64\n");
+                                            ctx.begin_call(Option.Some(&gen_cg), "i32", "@blood_get_generation");
+                                            ctx.call_arg_cg(true, "i64", &addr_i64);
+                                            ctx.end_call();
                                         } else if str_eq(src_ty.as_str(), "{ ptr, i32 }") {
-                                            // Gen ref: extract inner data pointer (field 0)
+                                            // Gen ref: extract data pointer (field 0) and gen (field 1)
                                             let inner_ptr = ctx.fresh_temp_cg();
                                             ctx.write_indent();
                                             ctx.write_cgname(&inner_ptr);
@@ -588,12 +599,20 @@ pub fn emit_rvalue(
                                             ctx.write_string(&val);
                                             ctx.write(", 0\n");
                                             data_ptr = cgname_to_string(&inner_ptr);
+                                            ctx.write("  ");
+                                            ctx.write_cgname(&gen_cg);
+                                            ctx.write(" = extractvalue { ptr, i32 } ");
+                                            ctx.write_string(&val);
+                                            ctx.write(", 1\n");
                                         } else {
-                                            // Value type: alloca + store, use alloca as ptr
+                                            // Value type: alloca + store, use alloca as ptr. Gen=0 (stack).
                                             let alloca = ctx.fresh_temp_cg();
                                             ctx.emit_alloca_cg(&alloca, src_ty.as_str());
                                             ctx.emit_store_str_cg(src_ty.as_str(), val.as_str(), &alloca);
                                             data_ptr = cgname_to_string(&alloca);
+                                            ctx.write("  ");
+                                            ctx.write_cgname(&gen_cg);
+                                            ctx.write(" = add i32 0, 0\n");
                                         }
                                         // insertvalue { ptr, ptr, i32 } zeroinitializer, ptr %data, 0
                                         let fat1 = ctx.fresh_temp_cg();
@@ -612,14 +631,14 @@ pub fn emit_rvalue(
                                         ctx.write_string(vtable_name);
                                         ctx.write(", 1\n");
                                         // insertvalue { ptr, ptr, i32 } %fat2, i32 gen, 2
-                                        // Gen=0 for dyn trait coercion (gen tracking for the
-                                        // underlying data is handled by the concrete ref).
                                         let fat3 = ctx.fresh_temp_cg();
                                         ctx.write_indent();
                                         ctx.write_cgname(&fat3);
                                         ctx.write(" = insertvalue { ptr, ptr, i32 } ");
                                         ctx.write_cgname(&fat2);
-                                        ctx.write(", i32 0, 2\n");
+                                        ctx.write(", i32 ");
+                                        ctx.write_cgname(&gen_cg);
+                                        ctx.write(", 2\n");
                                         // Store fat pointer to destination
                                         ctx.emit_store_cg("{ ptr, ptr, i32 }", &fat3, dest);
                                         handled = true;
