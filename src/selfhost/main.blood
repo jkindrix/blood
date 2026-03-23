@@ -3848,6 +3848,63 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
         print_mem_phase("After parse+ast_region destroy", 0 as u64, hir_region, 0 as u64);
     }
 
+    // === Incremental: compute skip_modules before typeck ===
+    // Per-module hash comparison determines which external modules are unchanged.
+    // Unchanged modules can be skipped in both typeck Phase 2b and codegen Pass 2.
+    let mut skip_modules: Vec<bool> = Vec.new();
+    let module_count = lower_result.module_names.len();
+    let inc_build_dir = resolve_build_dir(args);
+    let mut hash_dir = common.make_string(inc_build_dir.as_str());
+    hash_dir.push_str("/obj/.hashes");
+
+    if args.split_modules && !args.no_cache && module_count > 1 {
+        main_helpers.ensure_dir(hash_dir.as_str());
+        let mut obj_dir = common.make_string(inc_build_dir.as_str());
+        obj_dir.push_str("/obj");
+        main_helpers.ensure_dir(obj_dir.as_str());
+
+        let mut changed_count: usize = 0;
+        for mi in 0usize..module_count {
+            let mod_path = &lower_result.module_names[mi];
+            let hash = if mi == 0 {
+                build_cache.hash_module_source(path, base_dir.as_str(), exe_path)
+            } else {
+                build_cache.hash_module_source(mod_path.as_str(), source.parent_dir(mod_path.as_str()).as_str(), exe_path)
+            };
+            let stem = if mi == 0 {
+                common.make_string("main")
+            } else {
+                main_helpers.file_stem(mod_path)
+            };
+            let cached = build_cache.read_cached_hash(hash_dir.as_str(), stem.as_str());
+            let mut ll_exists = false;
+            let mut o_exists = false;
+            {
+                let mut ll_p = common.make_string(obj_dir.as_str());
+                ll_p.push('/');
+                ll_p.push_str(stem.as_str());
+                ll_p.push_str(".ll");
+                ll_exists = file_exists(ll_p.as_str());
+                let mut o_p = common.make_string(obj_dir.as_str());
+                o_p.push('/');
+                o_p.push_str(stem.as_str());
+                o_p.push_str(".o");
+                o_exists = file_exists(o_p.as_str());
+            }
+            let is_unchanged = hash != 0 && cached == hash && ll_exists && o_exists;
+            skip_modules.push(is_unchanged);
+            if !is_unchanged {
+                changed_count += 1;
+            }
+        }
+        // If all modules changed, disable incremental
+        if changed_count >= module_count {
+            for si in 0usize..skip_modules.len() {
+                skip_modules[si] = false;
+            }
+        }
+    }
+
     // === Type Check Phase (typeck_region on top of hir_region) ===
     // Typeck allocations go to a separate region so they can be freed after
     // extracting results. This saves ~8 GB of type checker working data
@@ -3859,7 +3916,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     region_activate(hir_region);
     region_activate(typeck_region);
 
-    let typeck_result = typeck_driver.check_lower_result(&lower_result);
+    let typeck_result = typeck_driver.check_lower_result(&lower_result, &skip_modules);
     let typeck_elapsed = blood_clock_millis() - typeck_start;
     if !typeck_result.success {
         eprint_str(" FAILED\n");
@@ -4078,68 +4135,20 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     let codegen_region = region_create(33554432, 17179869184);
     region_activate(codegen_region);
 
-    // === Incremental: per-module hash comparison + cached signature loading ===
-    let mut skip_modules: Vec<bool> = Vec.new();
+    // === Incremental: load cached fn_sigs for codegen ===
+    // skip_modules was computed before typeck (used by both typeck and codegen).
     let mut incremental_active = false;
-    let module_count = lower_result.module_names.len();
-    let inc_build_dir = resolve_build_dir(args);
-    let mut hash_dir = common.make_string(inc_build_dir.as_str());
-    hash_dir.push_str("/obj/.hashes");
     let mut sigs_path = common.make_string(inc_build_dir.as_str());
     sigs_path.push_str("/obj/.fn_sigs");
 
-    if args.split_modules && !args.no_cache && module_count > 1 {
-        main_helpers.ensure_dir(hash_dir.as_str());
-        let mut obj_dir = common.make_string(inc_build_dir.as_str());
-        obj_dir.push_str("/obj");
-        main_helpers.ensure_dir(obj_dir.as_str());
-
-        // Compute per-module hashes and compare against cached
-        let mut module_hashes: Vec<u64> = Vec.with_capacity(module_count);
+    if skip_modules.len() > 0 {
         let mut changed_count: usize = 0;
-        for mi in 0usize..module_count {
-            let mod_path = &lower_result.module_names[mi];
-            let hash = if mi == 0 {
-                // Main module: hash entry file transitively
-                build_cache.hash_module_source(path, base_dir.as_str(), exe_path)
-            } else {
-                build_cache.hash_module_source(mod_path.as_str(), source.parent_dir(mod_path.as_str()).as_str(), exe_path)
-            };
-            module_hashes.push(hash);
-
-            let stem = if mi == 0 {
-                common.make_string("main")
-            } else {
-                main_helpers.file_stem(mod_path)
-            };
-
-            let cached = build_cache.read_cached_hash(hash_dir.as_str(), stem.as_str());
-
-            // Check if both .ll and .o exist in obj dir
-            let mut ll_exists = false;
-            let mut o_exists = false;
-            {
-                let mut ll_p = common.make_string(obj_dir.as_str());
-                ll_p.push('/');
-                ll_p.push_str(stem.as_str());
-                ll_p.push_str(".ll");
-                ll_exists = file_exists(ll_p.as_str());
-                let mut o_p = common.make_string(obj_dir.as_str());
-                o_p.push('/');
-                o_p.push_str(stem.as_str());
-                o_p.push_str(".o");
-                o_exists = file_exists(o_p.as_str());
-            }
-
-            let is_unchanged = hash != 0 && cached == hash && ll_exists && o_exists;
-            skip_modules.push(is_unchanged);
-            if !is_unchanged {
+        for si in 0usize..skip_modules.len() {
+            if !skip_modules[si] {
                 changed_count += 1;
             }
         }
-
-        // If any modules are cacheable, try to load cached fn_sigs for unchanged modules
-        if changed_count < module_count && file_exists(sigs_path.as_str()) {
+        if changed_count < skip_modules.len() && file_exists(sigs_path.as_str()) {
             let sigs_data: &str = file_read_to_string(sigs_path.as_str());
             if sigs_data.len() > 0 {
                 ctx.load_fn_signatures(sigs_data);
@@ -4151,9 +4160,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
                 eprint_str(" modules changed]");
             }
         }
-
         if !incremental_active {
-            // Can't use incremental — clear skip_modules
             for si in 0usize..skip_modules.len() {
                 skip_modules[si] = false;
             }

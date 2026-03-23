@@ -616,7 +616,7 @@ pub fn check_types(ctx: &hir_lower_ctx.LoweringCtx) -> TypeCheckResult {
 ///
 /// This is the preferred entry point when integrating with the driver,
 /// since the driver has LowerResult not LoweringCtx.
-pub fn check_lower_result(result: &hir_lower_ctx.LowerResult) -> TypeCheckResult {
+pub fn check_lower_result(result: &hir_lower_ctx.LowerResult, skip_modules: &Vec<bool>) -> TypeCheckResult {
     // Start the type checker's TyVarId counter where HIR lowering left off
     // to avoid collisions between HIR inference variables and type checker variables.
     let mut checker = typeck.TypeChecker.new_from(result.next_ty_var);
@@ -734,9 +734,19 @@ pub fn check_lower_result(result: &hir_lower_ctx.LowerResult) -> TypeCheckResult
     // These bodies are MIR-lowered and code-generated, so their method calls
     // must be resolved. Errors from external bodies are discarded since each
     // module is authoritative only when compiled as the main file.
+    // Unchanged modules (whose codegen is also skipped) can be skipped here —
+    // their cached .o files contain the correct code, and their method/field
+    // resolutions are not needed when MIR lowering also skips them.
     let mut j: usize = body_limit;
     while j < result.bodies.len() {
         let body_entry = &result.bodies[j];
+        if skip_modules.len() > 0 {
+            let mi = body_entry.module_index as usize;
+            if mi < skip_modules.len() && skip_modules[mi] {
+                j += 1;
+                continue;
+            }
+        }
         let mut return_ty = find_return_type_cached(&result.items, body_entry.body_id, &body_cache);
         let is_handler_ret_ext = is_handler_return_cached(&result.items, body_entry.body_id, &body_cache);
         if is_handler_ret_ext {
