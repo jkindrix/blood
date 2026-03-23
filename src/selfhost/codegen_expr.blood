@@ -324,17 +324,27 @@ pub fn emit_rvalue(
             ctx.write(" = insertvalue { ptr, i32 } zeroinitializer, ptr ");
             ctx.write(addr.as_str());
             ctx.write(", 0\n");
-            // Determine generation: use real gen for direct &local without deref
-            // projections. For places with Deref projection (like &(*self).field),
-            // use gen=0 — the deref was already gen-checked at the deref site.
-            // Non-deref projections on direct locals (Field, Index) use _gen alloca.
-            //
-            // NOTE (P1-W4): Derived ref gen propagation (extracting gen from the
-            // deref'd fat ref) requires emit_place_data_ptr to thread gen info
-            // through the place resolution pipeline. The simple approach of loading
-            // from the local's alloca fails for persistent/region locals where
-            // the alloca holds ptr (not the fat ref directly). Deferred.
-            let has_deref_projection = place.projection.len() > 0;
+            // Determine generation for the derived reference.
+            // - No projections: use _gen alloca (direct &local)
+            // - Field/Index on a value-typed local: inherit _gen alloca
+            // - Any Deref projection: gen=0 (already checked at deref site)
+            // - Field on a ref-typed local: gen=0 (ref's gen is in the fat ref,
+            //   not the container's _gen alloca)
+            let mut has_deref_projection = false;
+            for pi in 0usize..place.projection.len() {
+                match &place.projection[pi] {
+                    &mir_types.PlaceElem.Deref => { has_deref_projection = true; }
+                    _ => {}
+                }
+            }
+            // For ref-typed locals, field access goes through the stored reference.
+            // The _gen alloca tracks the container, not the referenced data.
+            if !has_deref_projection && place.projection.len() > 0 {
+                let local_llvm_ty = ctx.get_local_type(place.local);
+                if str_eq(local_llvm_ty.as_str(), "{ ptr, i32 }") || str_eq(local_llvm_ty.as_str(), "{ ptr, ptr, i32 }") {
+                    has_deref_projection = true;
+                }
+            }
             let tmp2 = ctx.fresh_temp_cg();
             match if has_deref_projection { Option.None } else { ctx.get_heap_gen_name(place.local) } {
                 Option.Some(gen_name) => {

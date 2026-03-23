@@ -1,0 +1,18 @@
+// Test: derived field reference inherits gen from parent (P1-W4)
+// &local.field where local is region-allocated gets the local's gen,
+// detecting stale access after region destroy.
+// EXPECT_EXIT: nonzero
+
+struct Pair { x: i32, y: i32 }
+
+fn main() -> i32 {
+    let dummy: Pair = Pair { x: 0, y: 0 };
+    let mut r: &i32 = &dummy.x;
+    region {
+        let p: Pair = Pair { x: 42, y: 99 };
+        r = &p.x;
+    }
+    // region destroyed — r is stale, should panic
+    println_int(*r);
+    0
+}
