@@ -749,6 +749,9 @@ pub fn generate_vtables(
                 let trait_def_id = entry.def_id.index;
                 let mut method_names: Vec<String> = Vec.new();
                 let mut slot_idx: u32 = 0;
+                // First, include supertrait methods (recursively)
+                slot_idx = collect_supertrait_vtable_methods(ctx, intern, &trait_def.supertraits, items, trait_def_id, &mut method_names, slot_idx);
+                // Then, own methods
                 for ti in 0usize..trait_def.items.len() {
                     match &trait_def.items[ti] {
                         &hir_item.AssocItem.Fn(ref assoc_fn) => {
@@ -800,6 +803,61 @@ pub fn generate_vtables(
             _ => {}
         }
     }
+}
+
+/// Recursively collects supertrait methods for vtable layout building.
+/// Returns the number of methods added.
+fn collect_supertrait_vtable_methods(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    intern: &interner.StringInterner,
+    supertraits: &Vec<hir_ty.TraitRef>,
+    all_items: &Vec<hir_lower_ctx.ItemEntry>,
+    child_trait_def_id: u32,
+    method_names: &mut Vec<String>,
+    base_slot: u32,
+) -> u32 {
+    let mut slot_idx: u32 = base_slot;
+    for si in 0usize..supertraits.len() {
+        let super_def_id = supertraits[si].def_id.index;
+        // Find the supertrait definition in all_items
+        for ai in 0usize..all_items.len() {
+            if all_items[ai].def_id.index == super_def_id {
+                match &all_items[ai].item.kind {
+                    &hir_item.ItemKind.Trait(ref super_trait_def) => {
+                        // Recurse into super-supertraits first
+                        slot_idx = collect_supertrait_vtable_methods(ctx, intern, &super_trait_def.supertraits, all_items, child_trait_def_id, method_names, slot_idx);
+                        // Add this supertrait's methods
+                        for ti in 0usize..super_trait_def.items.len() {
+                            match &super_trait_def.items[ti] {
+                                &hir_item.AssocItem.Fn(ref assoc_fn) => {
+                                    let method_name = match intern.resolve(assoc_fn.name.symbol) {
+                                        Option.Some(s) => clone_string(s),
+                                        Option.None => {
+                                            let mut fallback = common.make_string("method_");
+                                            fallback.push_str(codegen_types.format_u64(assoc_fn.def_id.index as u64).as_str());
+                                            fallback
+                                        }
+                                    };
+                                    ctx.trait_method_entries.push(codegen_ctx.TraitMethodEntry {
+                                        method_def_id: assoc_fn.def_id.index,
+                                        trait_def_id: child_trait_def_id,
+                                        method_name: clone_string(&method_name),
+                                        slot_index: slot_idx,
+                                    });
+                                    method_names.push(method_name);
+                                    slot_idx += 1;
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+                break;
+            }
+        }
+    }
+    slot_idx
 }
 
 /// Generate a vtable global constant for a single trait impl.
@@ -882,7 +940,116 @@ fn generate_vtable_for_impl(
             if found { break; }
         }
         if !found {
-            ir.push_str("null");
+            // Method not in impl — look for default method in the trait definition
+            for ai in 0usize..all_items.len() {
+                if all_items[ai].def_id.index == trait_def_id {
+                    match &all_items[ai].item.kind {
+                        &hir_item.ItemKind.Trait(ref tdef) => {
+                            for tmi in 0usize..tdef.items.len() {
+                                match &tdef.items[tmi] {
+                                    &hir_item.AssocItem.Fn(ref trait_fn) => {
+                                        let trait_method_name = match intern.resolve(trait_fn.name.symbol) {
+                                            Option.Some(s) => clone_string(s),
+                                            Option.None => common.make_string(""),
+                                        };
+                                        if string_eq_str(trait_method_name.as_str(), method_name.as_str()) {
+                                            match ctx.lookup_def_name(trait_fn.def_id.index) {
+                                                Option.Some(fn_name) => {
+                                                    ir.push('@');
+                                                    ir.push_str(fn_name.as_str());
+                                                    found = true;
+                                                }
+                                                Option.None => {}
+                                            }
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                                if found { break; }
+                            }
+                        }
+                        _ => {}
+                    }
+                    break;
+                }
+            }
+            if !found {
+                // Method not in this trait's defaults — search other impl blocks
+                // for the same concrete type (handles supertrait methods)
+                for oi in 0usize..all_items.len() {
+                    match &all_items[oi].item.kind {
+                        &hir_item.ItemKind.Impl(ref other_impl) => {
+                            // Check if this impl is for the same concrete type
+                            let other_type_id = match type_intern.resolve_adt_def_id_id(other_impl.self_ty) {
+                                Option.Some(did) => did,
+                                Option.None => { continue; }
+                            };
+                            if other_type_id != type_def_id { continue; }
+                            // Search this impl's methods
+                            for oii in 0usize..other_impl.items.len() {
+                                match &other_impl.items[oii] {
+                                    &hir_item.AssocItem.Fn(ref other_fn) => {
+                                        let other_name = match intern.resolve(other_fn.name.symbol) {
+                                            Option.Some(s) => clone_string(s),
+                                            Option.None => common.make_string(""),
+                                        };
+                                        if string_eq_str(other_name.as_str(), method_name.as_str()) {
+                                            match ctx.lookup_def_name(other_fn.def_id.index) {
+                                                Option.Some(fn_name) => {
+                                                    ir.push('@');
+                                                    ir.push_str(fn_name.as_str());
+                                                    found = true;
+                                                }
+                                                Option.None => {}
+                                            }
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                                if found { break; }
+                            }
+                        }
+                        _ => {}
+                    }
+                    if found { break; }
+                }
+                if !found {
+                    // Search ALL trait definitions for default method with this name
+                    for di in 0usize..all_items.len() {
+                        match &all_items[di].item.kind {
+                            &hir_item.ItemKind.Trait(ref any_tdef) => {
+                                for dti in 0usize..any_tdef.items.len() {
+                                    match &any_tdef.items[dti] {
+                                        &hir_item.AssocItem.Fn(ref dfn) => {
+                                            let dname = match intern.resolve(dfn.name.symbol) {
+                                                Option.Some(s) => clone_string(s),
+                                                Option.None => common.make_string(""),
+                                            };
+                                            if string_eq_str(dname.as_str(), method_name.as_str()) {
+                                                match ctx.lookup_def_name(dfn.def_id.index) {
+                                                    Option.Some(fn_name) => {
+                                                        ir.push('@');
+                                                        ir.push_str(fn_name.as_str());
+                                                        found = true;
+                                                    }
+                                                    Option.None => {}
+                                                }
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                    if found { break; }
+                                }
+                            }
+                            _ => {}
+                        }
+                        if found { break; }
+                    }
+                    if !found {
+                        ir.push_str("null");
+                    }
+                }
+            }
         }
     }
 

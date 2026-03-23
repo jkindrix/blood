@@ -1091,7 +1091,11 @@ fn register_trait(
         }
     }
 
-    let trait_info = typeck.TraitInfo.new(def_id, name, num_generics, methods, assoc_types);
+    let mut supertrait_ids: Vec<hir_def.DefId> = Vec.new();
+    for si in 0usize..trait_def.supertraits.len() {
+        supertrait_ids.push(trait_def.supertraits[si].def_id);
+    }
+    let trait_info = typeck.TraitInfo.new(def_id, name, num_generics, methods, assoc_types, supertrait_ids);
     checker.register_trait(def_id, trait_info);
 
     // Register a synthetic ImplInfo for the trait's Self type so that

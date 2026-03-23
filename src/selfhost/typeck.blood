@@ -1513,8 +1513,11 @@ impl TypeChecker {
                             auto_traits: empty_auto,
                         }
                     );
-                    // Convert TraitMethodInfo → MethodInfo
+                    // Convert TraitMethodInfo → MethodInfo (include supertrait methods)
                     let mut methods: Vec<typeck_info.MethodInfo> = Vec.new();
+                    // First, add supertrait methods (recursively via chain)
+                    self.collect_supertrait_methods_for_dyn(trait_info, &mut methods);
+                    // Then add own methods
                     for mi in 0usize..trait_info.methods.len() {
                         let tm = &trait_info.methods[mi];
                         // Copy param_tys
@@ -1562,6 +1565,43 @@ impl TypeChecker {
                     self.impls.push(synth_impl);
                 }
                 &Option.None => {}
+            }
+        }
+    }
+
+    /// Collects methods from all supertraits (recursively) for dyn dispatch.
+    fn collect_supertrait_methods_for_dyn(
+        self: &Self,
+        trait_info: &typeck_info.TraitInfo,
+        methods: &mut Vec<typeck_info.MethodInfo>,
+    ) {
+        for si in 0usize..trait_info.supertrait_ids.len() {
+            let super_id = trait_info.supertrait_ids[si];
+            match self.get_trait(super_id) {
+                Option.Some(super_info) => {
+                    // Recurse into super-supertraits first
+                    self.collect_supertrait_methods_for_dyn(super_info, methods);
+                    // Add this supertrait's methods
+                    for mi in 0usize..super_info.methods.len() {
+                        let tm = &super_info.methods[mi];
+                        let mut ptys: Vec<type_intern.TyId> = Vec.new();
+                        for pi in 0usize..tm.param_tys.len() {
+                            ptys.push(tm.param_tys[pi]);
+                        }
+                        methods.push(typeck_info.MethodInfo.new(
+                            tm.def_id,
+                            tm.name,
+                            ptys,
+                            tm.return_ty,
+                            tm.takes_self_ref,
+                            tm.takes_self_mut,
+                            Vec.new(),
+                            Vec.new(),
+                            common.Span { start: 0, end: 0, line: 0, column: 0 },
+                        ));
+                    }
+                }
+                Option.None => {}
             }
         }
     }

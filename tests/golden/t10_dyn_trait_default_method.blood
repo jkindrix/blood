@@ -1,0 +1,61 @@
+// Test: default method dispatch through dyn Trait vtable
+// Default methods that are NOT overridden in the impl must still be
+// callable through dyn dispatch (vtable slot filled by trait default body).
+// EXPECT: 11
+// EXPECT: 19
+// EXPECT: 25
+
+trait Animal {
+    fn sound(&self) -> i32;
+    fn volume(&self) -> i32 { 5 }
+}
+
+struct Dog { loudness: i32 }
+struct Cat { }
+
+impl Animal for Dog {
+    fn sound(&self) -> i32 { 1 }
+    fn volume(&self) -> i32 { self.loudness }
+}
+
+impl Animal for Cat {
+    fn sound(&self) -> i32 { 2 }
+}
+
+fn describe(a: &dyn Animal) -> i32 {
+    a.sound() * 10 + a.volume()
+}
+
+trait Greet {
+    fn name(&self) -> i32;
+    fn greet(&self) -> i32 { self.name() + 1 }
+}
+
+struct Alice { val: i32 }
+
+impl Greet for Alice {
+    fn name(&self) -> i32 { self.val }
+}
+
+fn call_greet(g: &dyn Greet) -> i32 {
+    g.greet()
+}
+
+fn main() -> i32 {
+    let a: Alice = Alice { val: 10 };
+    let r0: i32 = call_greet(&a as &dyn Greet);
+    println_int(r0);
+    if r0 != 11 { return 1; }
+
+    let d: Dog = Dog { loudness: 9 };
+    let r1: i32 = describe(&d as &dyn Animal);
+    println_int(r1);
+    if r1 != 19 { return 2; }
+
+    let c: Cat = Cat {};
+    let r2: i32 = describe(&c as &dyn Animal);
+    println_int(r2);
+    if r2 != 25 { return 3; }
+
+    0
+}

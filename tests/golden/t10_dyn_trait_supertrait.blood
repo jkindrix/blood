@@ -1,0 +1,112 @@
+// Test: supertrait methods callable through &dyn DerivedTrait
+// When trait Derived : Base, the vtable for dyn Derived includes
+// Base's methods. Both base and derived methods are callable.
+// Also tests deep chains (C : B : A) and supertrait + default methods.
+// EXPECT: 105
+// EXPECT: 5
+// EXPECT: 113
+// EXPECT: 62
+
+trait Base {
+    fn base_val(&self) -> i32;
+}
+
+trait Derived : Base {
+    fn derived_val(&self) -> i32;
+}
+
+struct Foo { x: i32 }
+
+impl Base for Foo {
+    fn base_val(&self) -> i32 { self.x }
+}
+
+impl Derived for Foo {
+    fn derived_val(&self) -> i32 { self.x + 100 }
+}
+
+fn call_derived(d: &dyn Derived) -> i32 {
+    d.derived_val()
+}
+
+fn call_base_on_derived(d: &dyn Derived) -> i32 {
+    d.base_val()
+}
+
+// Deep chain: C : B : A
+trait A {
+    fn a_val(&self) -> i32;
+}
+
+trait B : A {
+    fn b_val(&self) -> i32;
+}
+
+trait C : B {
+    fn c_val(&self) -> i32;
+}
+
+struct X { v: i32 }
+
+impl A for X {
+    fn a_val(&self) -> i32 { self.v }
+}
+
+impl B for X {
+    fn b_val(&self) -> i32 { self.v + 10 }
+}
+
+impl C for X {
+    fn c_val(&self) -> i32 { self.v + 100 }
+}
+
+fn use_c(obj: &dyn C) -> i32 {
+    obj.a_val() + obj.b_val() + obj.c_val()
+}
+
+// Supertrait + default method
+trait Parent {
+    fn val(&self) -> i32;
+    fn doubled(&self) -> i32 { self.val() * 2 }
+}
+
+trait Child : Parent {
+    fn extra(&self) -> i32;
+}
+
+struct W { n: i32 }
+
+impl Parent for W {
+    fn val(&self) -> i32 { self.n }
+}
+
+impl Child for W {
+    fn extra(&self) -> i32 { self.n + 50 }
+}
+
+fn use_child(c: &dyn Child) -> i32 {
+    c.val() + c.doubled() + c.extra()
+}
+
+fn main() -> i32 {
+    let f: Foo = Foo { x: 5 };
+    let r1: i32 = call_derived(&f as &dyn Derived);
+    println_int(r1);
+    if r1 != 105 { return 1; }
+
+    let r2: i32 = call_base_on_derived(&f as &dyn Derived);
+    println_int(r2);
+    if r2 != 5 { return 2; }
+
+    let x: X = X { v: 1 };
+    let r3: i32 = use_c(&x as &dyn C);
+    println_int(r3);
+    if r3 != 113 { return 3; }
+
+    let w: W = W { n: 3 };
+    let r4: i32 = use_child(&w as &dyn Child);
+    println_int(r4);
+    if r4 != 62 { return 4; }
+
+    0
+}
