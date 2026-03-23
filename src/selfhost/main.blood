@@ -1692,18 +1692,11 @@ struct HandlerReturnInfo {
     body_def_id: u32,
     /// Whether this handler has an explicit return clause body.
     has_body: bool,
-    /// Return clause kind:
-    /// 0 = identity: return(x) { x }
-    /// 1 = state field: return(x) { total }
-    /// 2 = general (falls back to identity)
-    /// 3 = add result + state field: return(x) { x + field }
-    /// 4 = add result + literal: return(x) { x + N }
-    /// 5 = sub result - state field: return(x) { x - field }
-    /// 6 = mul result * literal: return(x) { x * N }
+    /// Return clause kind (see ReturnClauseKind for values 0-9).
     return_kind: u32,
-    /// For return_kind=1,3,5: index of the state field in the handler state struct.
+    /// For return_kind=1,3,5,7,8: index of the state field in the handler state struct.
     state_field_index: u32,
-    /// For return_kind=4: the literal integer value.
+    /// For return_kind=4,6,9: the literal integer value.
     literal_value: i64,
     /// Number of state fields in the handler.
     state_field_count: u32,
@@ -1741,10 +1734,14 @@ struct HandlerInfo {
 /// kind values:
 ///   0 = identity: return(x) { x }
 ///   1 = state field: return(x) { state_field }
-///   2 = general (unsupported, falls back to identity)
+///   2 = general (calls compiled body, returns result unchanged)
 ///   3 = add result + state field: return(x) { x + state_field }
-///   4 = mul result * literal: return(x) { x * N }
+///   4 = add result + literal: return(x) { x + N }
 ///   5 = sub result - state field: return(x) { x - state_field }
+///   6 = mul result * literal: return(x) { x * N }
+///   7 = mul result * state field: return(x) { x * state_field }
+///   8 = div result / state field: return(x) { x / state_field }
+///   9 = div result / literal: return(x) { x / N }
 struct ReturnClauseKind {
     kind: u32,
     /// For kind=1,3,5: index of the referenced state field
@@ -1890,6 +1887,17 @@ fn classify_leaf_expr(expr: &hir_expr.Expr, state_count: u32) -> ReturnClauseKin
                     ReturnClauseKind { kind: 2, field_index: 0, literal_value: 0 }
                 }
                 common.BinOp.Mul => {
+                    // return(x) { x * state_field } or { state_field * x }
+                    if left_idx >= 0 && right_idx >= 0 {
+                        let left_kind = classify_local_ref(left_idx as u32, state_count);
+                        let right_kind = classify_local_ref(right_idx as u32, state_count);
+                        if left_kind.kind == 0 && right_kind.kind == 1 {
+                            return ReturnClauseKind { kind: 7, field_index: right_kind.field_index, literal_value: 0 };
+                        }
+                        if left_kind.kind == 1 && right_kind.kind == 0 {
+                            return ReturnClauseKind { kind: 7, field_index: left_kind.field_index, literal_value: 0 };
+                        }
+                    }
                     // return(x) { x * literal } or { literal * x }
                     if left_idx >= 0 {
                         let left_kind = classify_local_ref(left_idx as u32, state_count);
@@ -1903,6 +1911,25 @@ fn classify_leaf_expr(expr: &hir_expr.Expr, state_count: u32) -> ReturnClauseKin
                         let (is_lit, lit_val) = extract_int_literal(left.as_ref());
                         if right_kind.kind == 0 && is_lit {
                             return ReturnClauseKind { kind: 6, field_index: 0, literal_value: lit_val };
+                        }
+                    }
+                    ReturnClauseKind { kind: 2, field_index: 0, literal_value: 0 }
+                }
+                common.BinOp.Div => {
+                    // return(x) { x / state_field }
+                    if left_idx >= 0 && right_idx >= 0 {
+                        let left_kind = classify_local_ref(left_idx as u32, state_count);
+                        let right_kind = classify_local_ref(right_idx as u32, state_count);
+                        if left_kind.kind == 0 && right_kind.kind == 1 {
+                            return ReturnClauseKind { kind: 8, field_index: right_kind.field_index, literal_value: 0 };
+                        }
+                    }
+                    // return(x) { x / literal }
+                    if left_idx >= 0 {
+                        let left_kind = classify_local_ref(left_idx as u32, state_count);
+                        let (is_lit, lit_val) = extract_int_literal(right.as_ref());
+                        if left_kind.kind == 0 && is_lit {
+                            return ReturnClauseKind { kind: 9, field_index: 0, literal_value: lit_val };
                         }
                     }
                     ReturnClauseKind { kind: 2, field_index: 0, literal_value: 0 }
@@ -2439,6 +2466,42 @@ fn generate_handler_wrappers(
             push_usize(&mut ir, ret_info.literal_value as usize);
             ir.push_str("\n");
             ir.push_str("  %ret_ext = sext i32 %prod to i64\n");
+            ir.push_str("  ret i64 %ret_ext\n");
+        } else if ret_info.return_kind == 7 {
+            // Mul result * state field: return(x) { x * state_field }
+            ir.push_str("  %res_i32 = trunc i64 %result to i32\n");
+            if ret_info.state_field_count == 1 {
+                ir.push_str("  %state_val = load i32, ptr %state, align 4\n");
+            } else {
+                ir.push_str("  %field_ptr = getelementptr i64, ptr %state, i64 ");
+                push_usize(&mut ir, ret_info.state_field_index as usize);
+                ir.push_str("\n");
+                ir.push_str("  %state_val = load i32, ptr %field_ptr, align 4\n");
+            }
+            ir.push_str("  %prod = mul i32 %res_i32, %state_val\n");
+            ir.push_str("  %ret_ext = sext i32 %prod to i64\n");
+            ir.push_str("  ret i64 %ret_ext\n");
+        } else if ret_info.return_kind == 8 {
+            // Div result / state field: return(x) { x / state_field }
+            ir.push_str("  %res_i32 = trunc i64 %result to i32\n");
+            if ret_info.state_field_count == 1 {
+                ir.push_str("  %state_val = load i32, ptr %state, align 4\n");
+            } else {
+                ir.push_str("  %field_ptr = getelementptr i64, ptr %state, i64 ");
+                push_usize(&mut ir, ret_info.state_field_index as usize);
+                ir.push_str("\n");
+                ir.push_str("  %state_val = load i32, ptr %field_ptr, align 4\n");
+            }
+            ir.push_str("  %quot = sdiv i32 %res_i32, %state_val\n");
+            ir.push_str("  %ret_ext = sext i32 %quot to i64\n");
+            ir.push_str("  ret i64 %ret_ext\n");
+        } else if ret_info.return_kind == 9 {
+            // Div result / literal: return(x) { x / N }
+            ir.push_str("  %res_i32 = trunc i64 %result to i32\n");
+            ir.push_str("  %quot = sdiv i32 %res_i32, ");
+            push_usize(&mut ir, ret_info.literal_value as usize);
+            ir.push_str("\n");
+            ir.push_str("  %ret_ext = sext i32 %quot to i64\n");
             ir.push_str("  ret i64 %ret_ext\n");
         } else {
             // General case (return_kind == 2): call the compiled return clause body function.

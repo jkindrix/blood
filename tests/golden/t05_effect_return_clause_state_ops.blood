@@ -1,0 +1,76 @@
+// Test: return clause arithmetic with handler state variables
+// All four binary ops (add, sub, mul, div) must work with state in return clauses.
+// Previously only addition worked; mul/div silently returned the result unchanged.
+// EXPECT: 25
+// EXPECT: 0
+// EXPECT: 5
+// EXPECT: 10
+
+effect State<S> {
+    op get() -> S;
+    op put(s: S) -> ();
+}
+
+deep handler MulState<S> for State<S> {
+    let mut state: S
+    return(x) { x * state }
+    op get() { resume(state) }
+    op put(s) { state = s; resume(()) }
+}
+
+deep handler SubState<S> for State<S> {
+    let mut state: S
+    return(x) { x - state }
+    op get() { resume(state) }
+    op put(s) { state = s; resume(()) }
+}
+
+deep handler DivState<S> for State<S> {
+    let mut state: S
+    return(x) { x / state }
+    op get() { resume(state) }
+    op put(s) { state = s; resume(()) }
+}
+
+deep handler AddState<S> for State<S> {
+    let mut state: S
+    return(x) { x + state }
+    op get() { resume(state) }
+    op put(s) { state = s; resume(()) }
+}
+
+fn main() -> i32 {
+    let r1: i32 = with MulState { state: 10 } handle {
+        perform State.put(5);
+        let x: i32 = perform State.get();
+        x
+    };
+    println_int(r1);
+    if r1 != 25 { return 1; }
+
+    let r2: i32 = with SubState { state: 10 } handle {
+        perform State.put(5);
+        let x: i32 = perform State.get();
+        x
+    };
+    println_int(r2);
+    if r2 != 0 { return 2; }
+
+    let r3: i32 = with DivState { state: 10 } handle {
+        perform State.put(4);
+        let x: i32 = perform State.get();
+        x + 16
+    };
+    println_int(r3);
+    if r3 != 5 { return 3; }
+
+    let r4: i32 = with AddState { state: 10 } handle {
+        perform State.put(5);
+        let x: i32 = perform State.get();
+        x
+    };
+    println_int(r4);
+    if r4 != 10 { return 4; }
+
+    0
+}
