@@ -201,23 +201,16 @@ do_build_first_gen() {
         die "No bootstrap compiler found. Need either:\n  bootstrap/seed (run: build second_gen && cp build/second_gen ../../bootstrap/seed)\n  blood-rust at $BLOOD_RUST (run: cd src/bootstrap && cargo build --release)"
     fi
 
-    step "Clearing build caches"
-    rm -rf "$BUILD_DIR/obj" "$BUILD_DIR/debug" "$BUILD_DIR/release"
-    rm -rf "${DIR}"/*.blood_objs "${DIR}"/tests/*.blood_objs
-    rm -rf "${HOME}"/.blood*/cache/
-    ok "Caches cleared"
-
     check_seed_staleness
 
     step "Building first_gen with $(basename "$bootstrap_compiler")"
     local start_ts rc=0
     start_ts=$(date +%s)
-    $bootstrap_compiler build main.blood --no-cache --build-dir "$BUILD_DIR" $flags || rc=$?
+    $bootstrap_compiler build main.blood --split-modules -o "$BUILD_DIR/first_gen.ll" $flags || rc=$?
     if [ "$rc" -ne 0 ]; then
         fail "Build failed ($(basename "$bootstrap_compiler")): $(decode_exit $rc)"
         return 1
     fi
-    mv "$BUILD_DIR/debug/main" "$BUILD_DIR/first_gen"
     local fg_size fg_wall
     fg_size=$(wc -c < "$BUILD_DIR/first_gen")
     fg_wall=$(($(date +%s) - start_ts))
