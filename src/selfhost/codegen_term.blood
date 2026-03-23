@@ -53,10 +53,13 @@ pub fn emit_terminator(
         &mir_term.TerminatorKind.Assert { ref cond, expected, ref msg, target, unwind: _ } => {
             emit_assert(ctx, cond, expected, msg, target);
         }
-        &mir_term.TerminatorKind.Perform { effect_id, op_index, ref args, ref destination, ref target, is_tail_resumptive } => {
+        &mir_term.TerminatorKind.Perform { effect_id, op_index, ref args, ref destination, ref target, is_tail_resumptive: _ } => {
             // Effect perform via evidence API 5-arg call:
             //   blood_perform(i64 effect_id, i32 op_index, ptr args, i64 arg_count, i64 continuation)
             let effect_id_val = codegen_types.format_u64(effect_id.index as u64);
+            // Per-op tail-resumptive classification (overrides MIR flag).
+            // op_index is the op_name symbol index — same key used in the TR map.
+            let is_tail_resumptive = ctx.is_tail_resumptive_op(effect_id.index, op_index);
             // op_index in MIR is the op_name symbol index; resolve to positional index
             let resolved_op_index = ctx.resolve_op_index(effect_id.index, op_index);
             if resolved_op_index == 0 && op_index != 0 {

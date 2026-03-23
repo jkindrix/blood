@@ -1941,6 +1941,37 @@ fn classify_leaf_expr(expr: &hir_expr.Expr, state_count: u32) -> ReturnClauseKin
     }
 }
 
+/// Checks if an HIR expression is a tail-position resume call.
+/// TR = the body expression IS resume(...) directly. NTR = resume used
+/// in non-tail position or not present. Only walks through Block wrappers.
+fn expr_is_tail_resume(expr: &hir_expr.Expr) -> bool {
+    match &expr.kind {
+        &hir_expr.ExprKind.Resume(_) => true,
+        &hir_expr.ExprKind.Block(ref block) => {
+            // TR only if the block has no stmts and the tail expr is resume
+            if block.stmts.len() != 0 { return false; }
+            match &block.expr {
+                &Option.Some(ref e) => expr_is_tail_resume(e.as_ref()),
+                &Option.None => false,
+            }
+        }
+        _ => false,
+    }
+}
+
+/// Finds a body by body_id and checks if its tail expression is resume().
+fn handler_op_is_tail_resumptive(
+    bodies: &Vec<hir_lower_ctx.BodyEntry>,
+    body_id_index: u32,
+) -> bool {
+    for bi in 0usize..bodies.len() {
+        if bodies[bi].body_id.index == body_id_index {
+            return expr_is_tail_resume(&bodies[bi].body.expr);
+        }
+    }
+    false
+}
+
 /// Collects handler information from HIR items.
 /// Populates handler→effect mappings in the codegen context and returns
 /// HandlerInfo for wrapper/registration generation.
@@ -2051,7 +2082,8 @@ fn collect_handler_info(
                     }
                 }
 
-                // Collect operation infos
+                // Collect operation infos + per-op tail-resumptive classification
+                let mut has_ntr_op = false;
                 for oi in 0usize..handler_def.op_impls.len() {
                     let op_impl = &handler_def.op_impls[oi];
 
@@ -2061,6 +2093,17 @@ fn collect_handler_info(
 
                     // Find op_index by searching the effect's operations
                     let op_index = find_op_index(items, effect_def_id, op_impl.op_def_id.index);
+
+                    // Per-op TR classification: scan body for resume() calls
+                    let op_is_tr = handler_op_is_tail_resumptive(bodies, op_impl.body_id.index);
+                    if op_is_tr {
+                        // register_tail_resumptive_op only sets TR if not already classified
+                        ctx.register_tail_resumptive_op(effect_def_id, op_impl.name.symbol.index);
+                    } else {
+                        has_ntr_op = true;
+                        // NTR always wins — overrides any previous TR from another handler
+                        ctx.register_non_tail_resumptive_op(effect_def_id, op_impl.name.symbol.index);
+                    }
 
                     ops.push(HandlerOpInfo {
                         handler_name: main_helpers.clone_string(&handler_name),

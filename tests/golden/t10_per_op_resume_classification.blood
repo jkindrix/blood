@@ -1,0 +1,56 @@
+// Test: per-op tail-resumptive classification (DD-3 / P3-2)
+// TR ops (resume in tail position) skip continuation allocation.
+// NTR ops (no resume or resume in non-tail position) allocate continuation.
+// EXPECT: 42
+// EXPECT: 99
+// EXPECT: 110
+
+effect Mixed {
+    op get_value() -> i32;
+    op abort() -> i32;
+}
+
+deep handler MixedHandler for Mixed {
+    let mut state: i32
+    return(x) { x }
+    op get_value() { resume(state) }
+    op abort() { state }
+}
+
+effect Ask {
+    op ask() -> i32;
+}
+
+deep handler Answerer for Ask {
+    return(x) { x }
+    op ask() {
+        let val: i32 = resume(10);
+        val + 100
+    }
+}
+
+fn main() -> i32 {
+    // TR op: resume in tail position
+    let r1: i32 = with MixedHandler { state: 42 } handle {
+        perform Mixed.get_value()
+    };
+    println_int(r1);
+    if r1 != 42 { return 1; }
+
+    // NTR op: no resume
+    let r2: i32 = with MixedHandler { state: 99 } handle {
+        let _: i32 = perform Mixed.abort();
+        0
+    };
+    println_int(r2);
+    if r2 != 99 { return 2; }
+
+    // NTR op: resume in non-tail position (post-resume code)
+    let r3: i32 = with Answerer {} handle {
+        perform Ask.ask()
+    };
+    println_int(r3);
+    if r3 != 110 { return 3; }
+
+    0
+}

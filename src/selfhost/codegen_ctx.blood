@@ -358,6 +358,9 @@ pub struct CodegenCtx {
     /// Packed into a single Vec<u64> to minimize struct layout impact.
     /// [0..N): effect DefIds, [N]: abort label string index, etc.
     non_tail_resumptive_effects: hashmap.HashMapU64U32,
+    /// Per-op tail-resumptive classification.
+    /// Key: (effect_def_id << 32) | op_sym_index. Value: 1 = TR, absent = NTR.
+    pub tail_resumptive_ops: hashmap.HashMapU64U32,
     /// Abort label strings for non-tail-resumptive handler codegen, keyed by handler DefId.
     /// Each entry is 3 consecutive strings: [abort_store_label, merge_label, result_alloca].
     /// Index via handler_abort_hash: handler_def_id → base index in this Vec.
@@ -583,6 +586,7 @@ impl CodegenCtx {
             effect_captured_locals: Vec.new(),
             active_regions: Vec.with_capacity(4),
             non_tail_resumptive_effects: hashmap.HashMapU64U32.with_capacity(8),
+            tail_resumptive_ops: hashmap.HashMapU64U32.with_capacity(16),
             abort_label_stack: Vec.new(),
             handler_abort_hash: hashmap.HashMapU64U32.new(),
             deferred_entry_allocas: Vec.new(),
@@ -679,6 +683,7 @@ impl CodegenCtx {
             effect_captured_locals: Vec.new(),
             active_regions: Vec.with_capacity(4),
             non_tail_resumptive_effects: hashmap.HashMapU64U32.with_capacity(8),
+            tail_resumptive_ops: hashmap.HashMapU64U32.with_capacity(16),
             abort_label_stack: Vec.new(),
             handler_abort_hash: hashmap.HashMapU64U32.new(),
             deferred_entry_allocas: Vec.new(),
@@ -1051,6 +1056,32 @@ impl CodegenCtx {
     pub fn is_non_tail_resumptive_effect(self: &CodegenCtx, effect_def_id: u32) -> bool {
         match self.non_tail_resumptive_effects.get(effect_def_id as u64) {
             Option.Some(_) => true,
+            Option.None => false,
+        }
+    }
+
+    /// Registers a specific effect op as tail-resumptive (value=1).
+    /// Only registers if no prior classification exists (NTR overrides TR).
+    pub fn register_tail_resumptive_op(self: &mut CodegenCtx, effect_def_id: u32, op_sym_index: u32) {
+        let key: u64 = ((effect_def_id as u64) << 32) | (op_sym_index as u64);
+        match self.tail_resumptive_ops.get(key) {
+            Option.Some(_) => {} // already classified — don't override
+            Option.None => { self.tail_resumptive_ops.insert(key, 1); }
+        }
+    }
+
+    /// Marks a specific effect op as non-tail-resumptive (value=0).
+    /// Overrides any previous TR classification (NTR always wins).
+    pub fn register_non_tail_resumptive_op(self: &mut CodegenCtx, effect_def_id: u32, op_sym_index: u32) {
+        let key: u64 = ((effect_def_id as u64) << 32) | (op_sym_index as u64);
+        self.tail_resumptive_ops.insert(key, 0);
+    }
+
+    /// Checks if a specific effect op is tail-resumptive.
+    pub fn is_tail_resumptive_op(self: &CodegenCtx, effect_def_id: u32, op_sym_index: u32) -> bool {
+        let key: u64 = ((effect_def_id as u64) << 32) | (op_sym_index as u64);
+        match self.tail_resumptive_ops.get(key) {
+            Option.Some(v) => v == 1,
             Option.None => false,
         }
     }
@@ -2480,6 +2511,7 @@ impl CodegenCtx {
             effect_captured_locals: Vec.new(),
             active_regions: Vec.with_capacity(4),
             non_tail_resumptive_effects: hashmap.HashMapU64U32.new(),
+            tail_resumptive_ops: hashmap.HashMapU64U32.new(),
             abort_label_stack: Vec.new(),
             handler_abort_hash: hashmap.HashMapU64U32.new(),
             deferred_entry_allocas: Vec.new(),
@@ -2514,6 +2546,14 @@ impl CodegenCtx {
             let ntr_eid = self.handler_effect_entries[ntri].effect_def_id;
             if self.is_non_tail_resumptive_effect(ntr_eid) {
                 worker.register_non_tail_resumptive_effect(ntr_eid);
+            }
+        }
+
+        // Copy per-op tail-resumptive map (read-only, needed for Perform codegen)
+        for odi2 in 0usize..self.op_def_index_entries.len() {
+            let ode2 = &self.op_def_index_entries[odi2];
+            if self.is_tail_resumptive_op(ode2.effect_def_id, ode2.op_name_sym) {
+                worker.register_tail_resumptive_op(ode2.effect_def_id, ode2.op_name_sym);
             }
         }
 
