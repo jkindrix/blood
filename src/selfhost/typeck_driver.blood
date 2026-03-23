@@ -343,7 +343,17 @@ fn find_effect_row_cached(
                                 match &assoc_fn.body_id {
                                     &Option.Some(ref bid) => {
                                         if bid.index == target_body_id.index {
-                                            return collect_effect_def_ids(&assoc_fn.sig.effects);
+                                            let mut row = collect_effect_def_ids(&assoc_fn.sig.effects);
+                                            // If impl method has no effect annotation, inherit from trait method
+                                            if row.len() == 0 {
+                                                match &impl_def.trait_ref {
+                                                    &Option.Some(ref tref) => {
+                                                        row = find_trait_method_effects(items, tref.def_id.index, assoc_fn.name.symbol);
+                                                    }
+                                                    &Option.None => {}
+                                                }
+                                            }
+                                            return row;
                                         }
                                     }
                                     &Option.None => {}
@@ -1891,6 +1901,35 @@ fn collect_effect_def_ids(row: &hir_ty.EffectRow) -> Vec<u32> {
         result.push(row.effects[i].def_id.index);
     }
     result
+}
+
+/// Looks up a trait method's effect row by trait DefId and method name.
+fn find_trait_method_effects(
+    items: &Vec<hir_lower_ctx.ItemEntry>,
+    trait_def_id: u32,
+    method_name: common.Symbol,
+) -> Vec<u32> {
+    for i in 0usize..items.len() {
+        if items[i].def_id.index == trait_def_id {
+            match &items[i].item.kind {
+                &hir_item.ItemKind.Trait(ref trait_def) => {
+                    for j in 0usize..trait_def.items.len() {
+                        match &trait_def.items[j] {
+                            &hir_item.AssocItem.Fn(ref trait_fn) => {
+                                if trait_fn.name.symbol.index == method_name.index {
+                                    return collect_effect_def_ids(&trait_fn.sig.effects);
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                _ => {}
+            }
+            break;
+        }
+    }
+    Vec.new()
 }
 
 /// Finds the DefId for the function containing a given body.

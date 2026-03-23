@@ -1,0 +1,41 @@
+// Test: effect propagation through trait methods (P3-9)
+// An impl method that omits the effect annotation inherits it from the trait.
+// The impl body can perform effects declared in the trait method signature.
+// EXPECT: 42
+// EXPECT: 7
+
+effect Logger {
+    op log(msg: i32) -> ();
+}
+
+trait Loggable {
+    fn describe(self: &Self) -> () / {Logger};
+}
+
+struct Item { id: i32 }
+
+impl Loggable for Item {
+    fn describe(self: &Self) -> () {
+        perform Logger.log(self.id);
+    }
+}
+
+deep handler PrintLogger for Logger {
+    return(x) { x }
+    op log(msg) {
+        println_int(msg);
+        resume(())
+    }
+}
+
+fn main() -> i32 {
+    let item1: Item = Item { id: 42 };
+    let item2: Item = Item { id: 7 };
+
+    with PrintLogger {} handle {
+        item1.describe();
+        item2.describe();
+    };
+
+    0
+}
