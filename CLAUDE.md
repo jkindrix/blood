@@ -73,11 +73,19 @@ Shortcuts include: `_ => Ok(())`, `_ => continue`, `Type::error()`, `unwrap_or_d
 
 Audit search terms: `_ =>`, `unwrap_or_default`, `unwrap_or_else`, `Type::error()`, `continue` (in match arms), `Ok(())` (suspicious early returns), `TODO`, `FIXME`, `XXX`, `HACK`, `Phase 2`, `not yet`, `later`, `unreachable!()`, `panic!()`, empty function bodies, functions returning hardcoded values.
 
+## Development Workflow
+
+The selfhost compiler is developed using a **self-compilation loop**: edit source, recompile the compiler using itself, test the result.
+
+**Inner loop (seconds):** `first_gen check file.blood` — validates syntax and types against the current compiler. Use this while editing to catch errors fast. Write 10-50 lines, check, fix, repeat.
+
+**Build loop (incremental, ~3 min):** `./build_selfhost.sh build second_gen` — first_gen compiles the current source with `--split-modules`. Only changed modules are re-codegen'd. Test with `./build_selfhost.sh test golden second_gen`. This is the primary development cycle.
+
+**Recovery (clean, ~4 min):** `./build_selfhost.sh build first_gen` — rebuilds from the bootstrap seed. Use this only when self-compilation breaks (your edit introduced a bug that prevents the compiler from compiling itself). Fix the issue, rebuild first_gen, then return to the build loop.
+
+**Gate (full chain, ~15 min):** `./build_selfhost.sh gate` — runs the full bootstrap chain (first_gen → second_gen → third_gen byte-compare) and updates the seed. Run at end-of-session or before pushing. Required for ABI/calling-convention changes.
+
 ## Development Rules
-
-**Compile before commit:** `src/selfhost/build/first_gen check <file.blood>`. If first_gen rejects it, the code is wrong.
-
-**Incremental development:** Write 10-50 lines, compile, fix, repeat. Never write hundreds of lines without compiling.
 
 **IR before code (codegen bugs):** Before writing ANY codegen fix, dump the LLVM IR for a minimal repro through both bootstrap (`--emit=llvm-ir`) and first_gen (`--dump-ir --no-cache`). Find the relevant function, trace the actual instruction sequence, identify the exact divergence, THEN trace back to the codegen source. Do NOT hypothesize what the IR looks like — read it. This takes 5 minutes and prevents 30-60 minutes of wrong fixes.
 

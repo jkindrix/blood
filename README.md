@@ -102,16 +102,28 @@ fn main() / {IO, Error<AppError>} {
 
 ## Quick Start
 
+### Using the Self-Hosted Compiler (recommended)
+
 ```bash
-# Build the bootstrap compiler (requires Rust 1.77+, LLVM 18)
-cd src/bootstrap
-cargo build --release
+# Build the compiler from the bootstrap seed (requires LLVM 18)
+cd src/selfhost
+./build_selfhost.sh build first_gen
 
 # Compile and run a program
-cargo run -- run ../../examples/fizzbuzz.blood
+build/first_gen run ../../examples/fizzbuzz.blood
 
-# Run the test suite
-cargo test --workspace
+# Development workflow: edit source, rebuild incrementally, test
+./build_selfhost.sh build second_gen    # Incremental self-compilation
+./build_selfhost.sh test golden second_gen
+```
+
+### Using the Bootstrap Compiler (legacy)
+
+```bash
+# Requires Rust 1.77+ and LLVM 18
+cd src/bootstrap
+cargo build --release
+cargo run -- run ../../examples/fizzbuzz.blood
 ```
 
 See the [Specification](docs/spec/SPECIFICATION.md) for language details.
