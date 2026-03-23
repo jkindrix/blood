@@ -507,9 +507,17 @@ pub fn register_all_item_names(
                 for ti in 0usize..trait_def.items.len() {
                     match &trait_def.items[ti] {
                         &hir_item.AssocItem.Fn(ref assoc_fn) => {
-                            let name = resolve_symbol(intern, assoc_fn.name.symbol);
-                            let mangled = make_impl_def_name(assoc_fn.def_id.index, &trait_name, &name);
-                            ctx.register_def_name(assoc_fn.def_id.index, mangled);
+                            // Skip if a body-derived name was already registered
+                            // (default methods with bodies get their name in Pass 1a;
+                            // overwriting here would mismatch the function definition name)
+                            match ctx.lookup_def_name(assoc_fn.def_id.index) {
+                                Option.Some(_) => {}
+                                Option.None => {
+                                    let name = resolve_symbol(intern, assoc_fn.name.symbol);
+                                    let mangled = make_impl_def_name(assoc_fn.def_id.index, &trait_name, &name);
+                                    ctx.register_def_name(assoc_fn.def_id.index, mangled);
+                                }
+                            }
                         }
                         &hir_item.AssocItem.Type(ref _at) => {}
                         &hir_item.AssocItem.Const(ref _ac) => {}
