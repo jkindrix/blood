@@ -19,6 +19,7 @@ mod mir_types;
 mod mir_stmt;
 mod mir_term;
 mod mir_body;
+mod type_intern;
 
 /// Validates a MIR body and returns a list of error messages.
 /// An empty list means the MIR is valid.
@@ -121,6 +122,11 @@ pub fn validate_body(body: &mir_body.MirBody, fn_name: &str) -> Vec<String> {
         let mut msg = String.new();
         msg.push_str("no Return terminator in any block");
         errors.push(msg);
+    }
+
+    // Check 10: Assignment type consistency
+    for bb_idx in 0usize..num_blocks {
+        validate_assign_types(&mut errors, body, bb_idx);
     }
 
     errors
@@ -375,6 +381,116 @@ fn check_local_range(
         push_usize(&mut msg, num_locals);
         msg.push_str(" locals exist");
         errors.push(msg);
+    }
+}
+
+/// Gets the type of an operand from the body's local table.
+/// Returns Error for operands with projections (type changes through field/deref).
+fn operand_ty(body: &mir_body.MirBody, op: &mir_types.Operand) -> type_intern.TyId {
+    match op {
+        &mir_types.Operand.Copy(ref place) => {
+            if place.projection.len() > 0 { return type_intern.CommonTypes.error(); }
+            if (place.local.index as usize) < body.locals.len() {
+                body.locals[place.local.index as usize].ty
+            } else {
+                type_intern.CommonTypes.error()
+            }
+        }
+        &mir_types.Operand.Move(ref place) => {
+            if place.projection.len() > 0 { return type_intern.CommonTypes.error(); }
+            if (place.local.index as usize) < body.locals.len() {
+                body.locals[place.local.index as usize].ty
+            } else {
+                type_intern.CommonTypes.error()
+            }
+        }
+        &mir_types.Operand.Constant(ref c) => c.ty,
+    }
+}
+
+/// Checks if a TyId should be skipped for type consistency checking.
+fn is_skip_ty(ty: type_intern.TyId) -> bool {
+    if ty.index == type_intern.CommonTypes.unit().index { return true; }
+    if ty.index == type_intern.CommonTypes.error().index { return true; }
+    let interner = type_intern.type_interner();
+    let kind = interner.get(ty);
+    match kind {
+        &type_intern.InternedTypeKind.Infer(_) => true,
+        &type_intern.InternedTypeKind.Param(_) => true,
+        &type_intern.InternedTypeKind.Error => true,
+        &type_intern.InternedTypeKind.Never => true,
+        // Skip references — rvalue may produce T while place expects &T
+        &type_intern.InternedTypeKind.Ref { inner: _, mutable: _ } => true,
+        // Skip generic ADTs — substitution may differ
+        &type_intern.InternedTypeKind.Adt { def_id: _, ref args } => {
+            interner.ty_list_len(args) > 0
+        }
+        _ => false,
+    }
+}
+
+/// Gets the type of an rvalue, or returns Error TyId if not determinable.
+fn rvalue_ty(body: &mir_body.MirBody, rvalue: &mir_types.Rvalue) -> type_intern.TyId {
+    match rvalue {
+        &mir_types.Rvalue.Use(ref op) => operand_ty(body, op),
+        &mir_types.Rvalue.BinaryOp { operator: _, ref left, ref right: _ } => {
+            // Result type is typically same as operand type (arithmetic)
+            // or bool (comparison). Use left operand's type as approximation.
+            operand_ty(body, left)
+        }
+        &mir_types.Rvalue.UnaryOp { operator: _, ref operand } => operand_ty(body, operand),
+        &mir_types.Rvalue.Cast { operand: _, target_ty } => target_ty,
+        &mir_types.Rvalue.ZeroInit(ref ty) => *ty,
+        // Ref, Aggregate, Discriminant, Len, ArrayToSlice — hard to derive
+        // without additional context. Return Error to skip the check.
+        _ => type_intern.CommonTypes.error(),
+    }
+}
+
+/// Validates assignment type consistency for a basic block.
+fn validate_assign_types(
+    errors: &mut Vec<String>,
+    body: &mir_body.MirBody,
+    bb_idx: usize,
+) {
+    let block = &body.basic_blocks[bb_idx];
+    for si in 0usize..block.statements.len() {
+        match &block.statements[si].kind {
+            &mir_stmt.StatementKind.Assign { ref place, ref rvalue } => {
+                let local_idx = place.local.index as usize;
+                if local_idx >= body.locals.len() { continue; }
+                // Skip places with projections — type changes through field access
+                if place.projection.len() > 0 { continue; }
+                let place_ty = body.locals[local_idx].ty;
+                let rv_ty = rvalue_ty(body, rvalue);
+                // Skip if either side is unresolved, error, or involves generics
+                if is_skip_ty(place_ty) || is_skip_ty(rv_ty) { continue; }
+                // Compare types
+                if place_ty.index != rv_ty.index {
+                    // Check for compatible types: comparison ops produce bool
+                    // but rvalue_ty returns the operand type, not bool.
+                    // Also skip BinaryOp — result type may differ from operands.
+                    let is_binop = match rvalue {
+                        &mir_types.Rvalue.BinaryOp { operator: _, left: _, right: _ } => true,
+                        _ => false,
+                    };
+                    if is_binop { continue; }
+                    let mut msg = String.new();
+                    msg.push_str("bb");
+                    push_usize(&mut msg, bb_idx);
+                    msg.push_str("[");
+                    push_usize(&mut msg, si);
+                    msg.push_str("]: type mismatch in Assign: _");
+                    push_usize(&mut msg, local_idx);
+                    msg.push_str(" has type ");
+                    msg.push_str(type_intern.format_ty_id(place_ty).as_str());
+                    msg.push_str(" but rvalue has type ");
+                    msg.push_str(type_intern.format_ty_id(rv_ty).as_str());
+                    errors.push(msg);
+                }
+            }
+            _ => {}
+        }
     }
 }
 
