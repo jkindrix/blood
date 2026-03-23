@@ -23,6 +23,12 @@ mod type_intern;
 /// These types are registered as ADTs with synthetic DefIds. Full method/field
 /// support for these types requires additional work, but recognizing them in
 /// type position allows the compiler to proceed past type resolution.
+/// Registers the StaleReference built-in effect early (before user type names)
+/// so user `effect StaleReference { ... }` reuses DefId 4100.
+pub fn register_stale_ref_builtin(ctx: &mut hir_lower_ctx.LoweringCtx) {
+    register_stale_ref_effect(ctx, common.Span.dummy());
+}
+
 pub fn register_builtin_types(ctx: &mut hir_lower_ctx.LoweringCtx) {
     let dummy_span = common.Span.dummy();
 

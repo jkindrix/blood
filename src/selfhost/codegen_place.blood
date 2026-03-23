@@ -865,17 +865,51 @@ pub fn emit_place_addr(
                     let ok_lbl = ctx.fresh_label_cg();
                     let stale_lbl = ctx.fresh_label_cg();
                     ctx.emit_cond_br_cg(&is_valid, &ok_lbl, &stale_lbl);
-                    // stale: perform StaleReference effect (ID 4100 = 0x1004)
+                    // stale: perform StaleReference effect with continuation for user handlers
                     ctx.emit_label_cg(&stale_lbl);
                     let actual_gen = ctx.fresh_temp_cg();
                     ctx.begin_call(Option.Some(&actual_gen), "i32", "@blood_get_generation");
                     ctx.call_arg_cg(true, "i64", &addr_i64);
                     ctx.end_call();
-                    ctx.begin_call(Option.None, "void", "@blood_perform_stale_ref");
-                    ctx.call_arg_cg(true, "i32", &gen_val);
-                    ctx.call_arg_cg(false, "i32", &actual_gen);
-                    ctx.end_call();
-                    ctx.write("  unreachable\n");
+                    // Pack args into [2 x i64]
+                    let sr_args = ctx.fresh_temp_cg();
+                    ctx.emit_alloca_cg(&sr_args, "[2 x i64]");
+                    let gen_ext = ctx.fresh_temp_cg();
+                    ctx.write_indent();
+                    ctx.write_cgname(&gen_ext);
+                    ctx.write(" = zext i32 ");
+                    ctx.write_cgname(&gen_val);
+                    ctx.write(" to i64\n");
+                    ctx.emit_store_cg2("i64", &gen_ext, &sr_args);
+                    let sr_p1 = ctx.fresh_temp_cg();
+                    ctx.write_indent();
+                    ctx.write_cgname(&sr_p1);
+                    ctx.write(" = getelementptr i64, ptr ");
+                    ctx.write_cgname(&sr_args);
+                    ctx.write(", i64 1\n");
+                    let act_ext = ctx.fresh_temp_cg();
+                    ctx.write_indent();
+                    ctx.write_cgname(&act_ext);
+                    ctx.write(" = zext i32 ");
+                    ctx.write_cgname(&actual_gen);
+                    ctx.write(" to i64\n");
+                    ctx.emit_store_cg2("i64", &act_ext, &sr_p1);
+                    // Create continuation so handler can resume
+                    let sr_cont = ctx.fresh_temp_cg();
+                    ctx.write_indent();
+                    ctx.write_cgname(&sr_cont);
+                    ctx.write(" = call i64 @blood_continuation_create_multishot(ptr @__blood_identity_continuation, ptr null)\n");
+                    // Perform
+                    let sr_result = ctx.fresh_temp_cg();
+                    ctx.write_indent();
+                    ctx.write_cgname(&sr_result);
+                    ctx.write(" = call i64 @blood_perform(i64 4100, i32 0, ptr ");
+                    ctx.write_cgname(&sr_args);
+                    ctx.write(", i64 2, i64 ");
+                    ctx.write_cgname(&sr_cont);
+                    ctx.write(")\n");
+                    // If handler resumed, continue to ok path
+                    ctx.emit_br_cg(&ok_lbl);
                     // ok → skip: merge and continue
                     ctx.emit_label_cg(&ok_lbl);
                     ctx.emit_br_cg(&skip_lbl);

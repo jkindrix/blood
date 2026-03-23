@@ -73,6 +73,10 @@ pub fn lower_program_with_ast_region(program: &ast.Program, base_dir: String, so
     // double-parse that previously caused ~50% of HIR region memory usage.
     let mut parsed_module_cache: Vec<CachedParsedModule> = Vec.new();
 
+    // Phase 0b: Register StaleReference built-in effect (DefId 4100) before user
+    // type names so that user `effect StaleReference { ... }` reuses the built-in DefId.
+    hir_lower_builtin.register_stale_ref_builtin(&mut ctx);
+
     // Phase 1: Register type names (structs, enums, traits, effects)
     // Tag 3000 = main file Phase 1; modules tagged by load_external_module
     alloc_tag_set(3000 as u64);
@@ -474,25 +478,36 @@ fn register_type_name(ctx: &mut hir_lower_ctx.LoweringCtx, decl: &ast.Declaratio
             }
         }
         &ast.Declaration.Effect(ref eff) => {
-            let def_id = ctx.alloc_def_id();
             // Re-intern the name from span to ensure consistent symbol indices
             let name_str = ctx.span_to_string(eff.name.span);
             let name_symbol = ctx.intern(name_str.as_str());
-            let success = ctx.resolver.define_global(name_symbol, def_id);
-            if !success {
-                ctx.error(
-                    hir.DiagnosticCode.E0101,
-                    common.make_string("duplicate definition"),
-                    eff.name.span,
-                );
-            } else {
-                ctx.resolver.register_def_info(
-                    def_id,
-                    hir_def.DefKind.Effect,
-                    name_symbol,
-                    eff.name.span,
-                    Option.None,
-                );
+            // Reuse built-in DefId if this effect was pre-registered (e.g., StaleReference = 4100)
+            let existing = ctx.resolver.lookup(name_symbol);
+            let def_id = match &existing {
+                &Option.Some(ref result) => {
+                    ctx.resolver.scope_binding(result.scope_index, result.binding_index).def_id
+                }
+                &Option.None => {
+                    let new_id = ctx.alloc_def_id();
+                    let success = ctx.resolver.define_global(name_symbol, new_id);
+                    if !success {
+                        ctx.error(
+                            hir.DiagnosticCode.E0101,
+                            common.make_string("duplicate definition"),
+                            eff.name.span,
+                        );
+                    }
+                    new_id
+                }
+            };
+            ctx.resolver.register_def_info(
+                def_id,
+                hir_def.DefKind.Effect,
+                name_symbol,
+                eff.name.span,
+                Option.None,
+            );
+            {
             }
         }
         &ast.Declaration.TypeAlias(ref ta) => {
