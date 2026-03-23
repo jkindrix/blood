@@ -501,7 +501,25 @@ fn parse_struct_pattern(parser: &mut parser_base.Parser, path: ast.TypePath) -> 
         let field_name = parser.parse_spanned_symbol();
 
         let pattern = if parser.try_consume(token.TokenKind.Colon) {
-            Option.Some(parse_pattern(parser))
+            let inner = parse_pattern(parser);
+            // Apply ref/mut from field level to the inner binding pattern.
+            // `ref field: alias` means bind by-ref with name alias.
+            if by_ref || is_field_mut {
+                let fixed_kind = match inner.kind {
+                    ast.PatternKind.Ident { by_ref: _, is_mut: _, name: iname, subpattern: isub } => {
+                        ast.PatternKind.Ident {
+                            by_ref: by_ref,
+                            is_mut: is_field_mut,
+                            name: iname,
+                            subpattern: isub,
+                        }
+                    }
+                    _ => inner.kind,
+                };
+                Option.Some(ast.Pattern { kind: fixed_kind, span: inner.span })
+            } else {
+                Option.Some(inner)
+            }
         } else {
             // Shorthand: `field` or `ref field` or `mut field` or `ref mut field`
             // All create an ident binding pattern equivalent to `field: field`
