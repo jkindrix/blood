@@ -384,6 +384,16 @@ pub fn rt_evidence_push_with_state(ev: *mut u8, effect_id: i64, state: *mut u8) 
     }
 }
 
+#[export_name = "blood_evidence_push_by_index"]
+pub fn rt_evidence_push_by_index(ev: *mut u8, registry_index: i64, state: *mut u8) {
+    @unsafe {
+        let ev_addr: i64 = alloc.ptr_to_addr(ev);
+        let effect_id: i64 = reg_read_effect_id(registry_index);
+        let state_addr: i64 = alloc.ptr_to_addr(state);
+        ev_push(ev_addr, effect_id, registry_index, state_addr);
+    }
+}
+
 #[export_name = "blood_evidence_set_inline"]
 pub fn rt_evidence_set_inline(effect_id: i64) {
     @unsafe { INLINE_EVIDENCE_ID = effect_id; }

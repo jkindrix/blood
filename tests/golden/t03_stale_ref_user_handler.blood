@@ -1,0 +1,35 @@
+// Test: user handler catches stale reference (P3-4)
+// StaleReference is a built-in algebraic effect (ID 4100). User code can
+// define the effect and install a handler to recover from stale dereferences.
+// EXPECT: 1
+
+effect StaleReference {
+    op stale(expected: i32, actual: i32) -> ();
+}
+
+struct Pair { a: i32, b: i32 }
+
+deep handler CatchStale for StaleReference {
+    let mut caught: i32
+    return(x) { caught }
+    op stale(expected, actual) {
+        caught = 1;
+        resume(())
+    }
+}
+
+fn main() -> i32 {
+    let dummy: Pair = Pair { a: 0, b: 0 };
+    let mut r: &Pair = &dummy;
+    let result: i32 = with CatchStale { caught: 0 } handle {
+        region {
+            let p: Pair = Pair { a: 42, b: 99 };
+            r = &p;
+        }
+        let _val: i32 = (*r).a;
+        0
+    };
+    println_int(result);
+    if result != 1 { return 1; }
+    0
+}

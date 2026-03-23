@@ -343,11 +343,20 @@ pub fn emit_statement(
                 cgname_to_string(&state_void_ptr)
             };
 
+            // Use push_by_index to use the exact registry index from the ctor.
+            // This avoids reg_find_by_effect_id which could find the wrong registration
+            // when multiple handlers share the same effect ID (e.g., StaleReference).
+            let reg_idx_global = ctx.fresh_temp_cg();
             ctx.write_indent();
-            ctx.write("call void @blood_evidence_push_with_state(ptr ");
+            ctx.write_cgname(&reg_idx_global);
+            ctx.write(" = load i64, ptr @__handler_reg_idx_");
+            ctx.write_string(&effect_id_val);
+            ctx.write("\n");
+            ctx.write_indent();
+            ctx.write("call void @blood_evidence_push_by_index(ptr ");
             ctx.write_cgname(&evidence);
             ctx.write(", i64 ");
-            ctx.write_string(&effect_id_val);
+            ctx.write_cgname(&reg_idx_global);
             ctx.write(", ptr ");
             ctx.write_string(&push_state_ptr);
             ctx.write(")\n");
@@ -564,13 +573,11 @@ pub fn emit_statement(
             ctx.write_cgname(&ops_alloca);
             ctx.write(", i64 1, i64 1)\n");
 
-            // Push with null state for inline handlers
+            // Push using exact registry index from inline registration
             ctx.write_indent();
-            ctx.write("call void @blood_evidence_push_with_state(ptr ");
+            ctx.write("call void @blood_evidence_push_by_index(ptr ");
             ctx.write_cgname(&evidence);
-            ctx.write(", i64 ");
-            ctx.write_string(&effect_id_val);
-            ctx.write(", ptr null)\n");
+            ctx.write(", i64 %_inline_reg_idx, ptr null)\n");
 
             // EFF-OPT-003: Only set inline hint for single-handler scopes
             ctx.handler_depth = ctx.handler_depth + 1;

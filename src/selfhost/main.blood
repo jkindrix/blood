@@ -2695,6 +2695,23 @@ fn generate_handler_wrappers(
 
     // Generate __blood_register_handlers
     ir.push_str("; Handler registration\n");
+    // Emit globals for per-effect registry index (used by PushHandler push_by_index)
+    {
+        let mut globals_emitted: Vec<u32> = Vec.new();
+        for gi in 0usize..handler_info.ops.len() {
+            let geid = handler_info.ops[gi].effect_def_id;
+            let mut galready = false;
+            for gj in 0usize..globals_emitted.len() {
+                if globals_emitted[gj] == geid { galready = true; }
+            }
+            if !galready {
+                ir.push_str("@__handler_reg_idx_");
+                push_usize(&mut ir, geid as usize);
+                ir.push_str(" = common global i64 0\n");
+                globals_emitted.push(geid);
+            }
+        }
+    }
     ir.push_str("define linkonce_odr void @__blood_register_handlers() {\n");
     ir.push_str("entry:\n");
 
@@ -2787,6 +2804,12 @@ fn generate_handler_wrappers(
             ir.push_str(", i64 ");
             push_usize(&mut ir, is_deep_val);
             ir.push_str(")\n");
+            // Store registry index in global for PushHandler to use via push_by_index
+            ir.push_str("  store i64 %reg_idx_");
+            ir.push_str(eid_str.as_str());
+            ir.push_str(", ptr @__handler_reg_idx_");
+            ir.push_str(eid_str.as_str());
+            ir.push_str("\n");
         }
 
     }
