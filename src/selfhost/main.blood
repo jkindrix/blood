@@ -3385,6 +3385,95 @@ fn codegen_pass2(
             }
         }
 
+        // BC-01: Reject returning reference to stack-local variable.
+        // Only catches direct `_0 = Ref(&local)` where local was assigned from
+        // a constant or aggregate (not derived from a parameter).
+        {
+            let mir_ref = &mir_result.body;
+            let param_end: u32 = 1 + mir_ref.param_count;
+            for dbb in 0usize..mir_ref.basic_blocks.len() {
+                let dblk = &mir_ref.basic_blocks[dbb];
+                let has_ret = match &dblk.terminator {
+                    &Option.Some(ref t) => {
+                        match &t.kind { &mir_term.TerminatorKind.Return => true, _ => false, }
+                    }
+                    &Option.None => false,
+                };
+                if has_ret {
+                    for dsi in 0usize..dblk.statements.len() {
+                        match &dblk.statements[dsi].kind {
+                            &mir_stmt.StatementKind.Assign { ref place, ref rvalue } => {
+                                if place.local.index == 0 {
+                                    match rvalue {
+                                        &mir_types.Rvalue.Ref { ref place: rp, mutable: _ } => {
+                                            if rp.local.index >= param_end && rp.projection.len() == 0 {
+                                                // Trace: only reject if local was initialized from
+                                                // a constant (not from a parameter access/projection)
+                                                let ref_local_idx = rp.local.index;
+                                                let mut is_const_init = false;
+                                                for tsi in 0usize..dblk.statements.len() {
+                                                    match &dblk.statements[tsi].kind {
+                                                        &mir_stmt.StatementKind.Assign { ref place: tp, ref rvalue: trv } => {
+                                                            if tp.local.index == ref_local_idx && tp.projection.len() == 0 {
+                                                                match trv {
+                                                                    &mir_types.Rvalue.Use(ref op) => {
+                                                                        match op {
+                                                                            &mir_types.Operand.Constant(_) => { is_const_init = true; }
+                                                                            &mir_types.Operand.Copy(ref src) => {
+                                                                                // One-level trace: check if source is also const
+                                                                                if src.projection.len() == 0 && src.local.index >= param_end {
+                                                                                    for tsi2 in 0usize..dblk.statements.len() {
+                                                                                        match &dblk.statements[tsi2].kind {
+                                                                                            &mir_stmt.StatementKind.Assign { ref place: tp2, ref rvalue: trv2 } => {
+                                                                                                if tp2.local.index == src.local.index && tp2.projection.len() == 0 {
+                                                                                                    match trv2 {
+                                                                                                        &mir_types.Rvalue.Use(ref op2) => {
+                                                                                                            match op2 {
+                                                                                                                &mir_types.Operand.Constant(_) => { is_const_init = true; }
+                                                                                                                _ => {}
+                                                                                                            }
+                                                                                                        }
+                                                                                                        &mir_types.Rvalue.Aggregate { kind: _, ref operands } => { is_const_init = true; }
+                                                                                                        _ => {}
+                                                                                                    }
+                                                                                                }
+                                                                                            }
+                                                                                            _ => {}
+                                                                                        }
+                                                                                    }
+                                                                                }
+                                                                            }
+                                                                            _ => {}
+                                                                        }
+                                                                    }
+                                                                    &mir_types.Rvalue.Aggregate { kind: _, ref operands } => { is_const_init = true; }
+                                                                    _ => {}
+                                                                }
+                                                            }
+                                                        }
+                                                        _ => {}
+                                                    }
+                                                }
+                                                if is_const_init {
+                                                    eprint_str("\nerror[E0503]: cannot return reference to local variable\n");
+                                                    eprint_str("  --> in function ");
+                                                    eprint_str(work.fn_name.as_str());
+                                                    eprint_str("\n  = note: reference to stack-local escapes function scope\n");
+                                                    panic("cannot return reference to local variable");
+                                                }
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+
         // Validate MIR if requested
         if args.validate_mir {
             let fn_name_str = work.fn_name.as_str();
