@@ -2783,11 +2783,22 @@ fn infer_closure(
         }
     }
 
+    // Set closure's declared effects as the current effect row
+    let prev_effect_row = checker.current_effect_row;
+    if effects.effects.len() > 0 {
+        let mut closure_effects: Vec<u32> = Vec.new();
+        for ei in 0usize..effects.effects.len() {
+            closure_effects.push(effects.effects[ei].def_id.index);
+        }
+        checker.current_effect_row = closure_effects;
+    }
+
     // Check body
     let body_ty = infer_expr(checker, body);
     checker.unify(body_ty, ret_ty_id, body.span);
 
     // Restore context
+    checker.current_effect_row = prev_effect_row;
     checker.return_ty = prev_return;
 
     // Return closure type (captures environment unlike plain Fn)

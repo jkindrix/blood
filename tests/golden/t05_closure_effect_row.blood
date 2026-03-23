@@ -1,0 +1,37 @@
+// Test: closure effect row propagation (P3-7 / F-01)
+// Closures with effect annotations can call effectful functions.
+// Previously only perform worked; calling fn() / {Effect} failed with E0214.
+// EXPECT: 42
+// EXPECT: 7
+
+effect Log {
+    op log(msg: i32) -> ();
+}
+
+fn do_log(x: i32) -> () / {Log} {
+    perform Log.log(x);
+}
+
+deep handler PrintLog for Log {
+    return(x) { x }
+    op log(msg) {
+        println_int(msg);
+        resume(())
+    }
+}
+
+fn run_with_log() -> () / {Log} {
+    let f = || / {Log} {
+        do_log(42);
+        do_log(7);
+    };
+    f();
+}
+
+fn main() -> i32 {
+    with PrintLog {} handle {
+        run_with_log();
+    };
+
+    0
+}
