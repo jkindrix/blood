@@ -126,6 +126,10 @@ pub fn rt_continuation_resume_with_regions(cont_id: i64, value: i64) -> i64 {
         rt_evidence.rt_set_was_resumed();
 
         let entry: i64 = cont_entry_addr(cont_id);
+        // Single-shot: panic if already consumed
+        if rt_evidence.read_i64(entry + 16) != 0 {
+            rt_panic.rt_panic("continuation resumed twice (single-shot violation)");
+        }
         // Mark consumed
         rt_evidence.write_i64(entry + 16, 1);
 

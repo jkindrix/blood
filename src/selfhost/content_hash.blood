@@ -202,3 +202,18 @@ pub fn hash_to_hex(hash: &Vec<u8>) -> String {
     }
     r
 }
+
+/// Computes a content hash for a monomorphized instance.
+/// Hash = BLAKE3(generic_hash ++ type_arg_name bytes).
+pub fn hash_mono_instance(generic_hash: &Vec<u8>, type_arg_name: &str) -> Vec<u8> {
+    let mut combined: Vec<u8> = Vec.with_capacity(generic_hash.len() + 64);
+    let mut i: usize = 0;
+    while i < generic_hash.len() { combined.push(generic_hash[i]); i += 1; }
+    // Separator
+    combined.push(0xFF);
+    // Append type arg name bytes
+    i = 0;
+    let tlen: usize = str_len(type_arg_name) as usize;
+    while i < tlen { combined.push(type_arg_name.as_bytes()[i]); i += 1; }
+    blake3(&combined)
+}
