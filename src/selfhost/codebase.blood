@@ -1,0 +1,287 @@
+// Blood Self-Hosted Compiler — Codebase Storage
+//
+// Stores Blood definitions by content hash in a flat-file database.
+// Directory: <codebase>/defs/<2-char-prefix>/<hash>.def
+// Name index: <codebase>/names.idx
+//
+// File format (line-based):
+//   HASH: <64-char hex>
+//   NAME: <qualified name>
+//   KIND: <fn|struct|enum|effect|handler>
+//   DEPS: <comma-separated hashes>
+//   SOURCE:
+//   <source text to end of file>
+
+mod common;
+
+// ============================================================
+// DefinitionRecord
+// ============================================================
+
+pub struct DefinitionRecord {
+    pub hash: String,
+    pub name: String,
+    pub kind: String,
+    pub source: String,
+    pub deps: Vec<String>,
+}
+
+impl DefinitionRecord {
+    pub fn new(hash: String, name: String, kind: String, source: String, deps: Vec<String>) -> DefinitionRecord {
+        DefinitionRecord { hash: hash, name: name, kind: kind, source: source, deps: deps }
+    }
+}
+
+// ============================================================
+// Path Helpers
+// ============================================================
+
+fn def_dir(codebase: &str, hash: &str) -> String {
+    let mut path = common.make_string(codebase);
+    path.push_str("/defs/");
+    // 2-char prefix for directory sharding
+    if hash.len() >= 2 {
+        path.push(hash.as_bytes()[0] as char);
+        path.push(hash.as_bytes()[1] as char);
+    } else {
+        path.push_str("00");
+    }
+    path
+}
+
+fn def_path(codebase: &str, hash: &str) -> String {
+    let mut path = def_dir(codebase, hash);
+    path.push('/');
+    path.push_str(hash);
+    path.push_str(".def");
+    path
+}
+
+fn names_path(codebase: &str) -> String {
+    let mut path = common.make_string(codebase);
+    path.push_str("/names.idx");
+    path
+}
+
+// ============================================================
+// Ensure Directory Exists
+// ============================================================
+
+fn ensure_dir(path: &str) {
+    if !file_exists(path) {
+        let mut cmd = common.make_string("mkdir -p ");
+        cmd.push_str(path);
+        system(cmd.as_str());
+    }
+}
+
+// ============================================================
+// Serialize / Deserialize
+// ============================================================
+
+fn serialize_record(rec: &DefinitionRecord) -> String {
+    let mut s = common.make_string("HASH: ");
+    s.push_str(rec.hash.as_str());
+    s.push_str("\nNAME: ");
+    s.push_str(rec.name.as_str());
+    s.push_str("\nKIND: ");
+    s.push_str(rec.kind.as_str());
+    s.push_str("\nDEPS: ");
+    let mut di: usize = 0;
+    while di < rec.deps.len() {
+        if di > 0 { s.push(','); }
+        s.push_str(rec.deps[di].as_str());
+        di += 1;
+    }
+    s.push_str("\nSOURCE:\n");
+    s.push_str(rec.source.as_str());
+    s
+}
+
+fn parse_header_value(line: &str, prefix: &str) -> Option<String> {
+    let plen: usize = str_len(prefix) as usize;
+    let llen: usize = str_len(line) as usize;
+    if llen < plen { return Option.None; }
+    // Check prefix match
+    let mut i: usize = 0;
+    while i < plen {
+        if line.as_bytes()[i] != prefix.as_bytes()[i] { return Option.None; }
+        i += 1;
+    }
+    // Extract value after prefix
+    let mut val = String.new();
+    i = plen;
+    while i < llen {
+        val.push(line.as_bytes()[i] as char);
+        i += 1;
+    }
+    Option.Some(val)
+}
+
+pub fn deserialize_record(content: &str) -> Option<DefinitionRecord> {
+    let mut hash = String.new();
+    let mut name = String.new();
+    let mut kind = String.new();
+    let mut deps: Vec<String> = Vec.new();
+    let mut source = String.new();
+
+    let clen: usize = str_len(content) as usize;
+    let mut pos: usize = 0;
+    let mut in_source = false;
+
+    while pos < clen {
+        // Find end of line
+        let mut eol: usize = pos;
+        while eol < clen && content.as_bytes()[eol] != 10 { eol += 1; }
+
+        if in_source {
+            // Everything after SOURCE: is source text
+            if source.len() > 0 { source.push('\n'); }
+            let mut ci: usize = pos;
+            while ci < eol { source.push(content.as_bytes()[ci] as char); ci += 1; }
+        } else {
+            // Extract line
+            let mut line = String.new();
+            let mut li: usize = pos;
+            while li < eol { line.push(content.as_bytes()[li] as char); li += 1; }
+
+            match parse_header_value(line.as_str(), "HASH: ") {
+                Option.Some(v) => { hash = v; }
+                Option.None => {}
+            }
+            match parse_header_value(line.as_str(), "NAME: ") {
+                Option.Some(v) => { name = v; }
+                Option.None => {}
+            }
+            match parse_header_value(line.as_str(), "KIND: ") {
+                Option.Some(v) => { kind = v; }
+                Option.None => {}
+            }
+            match parse_header_value(line.as_str(), "DEPS: ") {
+                Option.Some(v) => {
+                    if v.len() > 0 {
+                        // Split by comma
+                        let mut dep = String.new();
+                        let mut vi: usize = 0;
+                        while vi < v.len() {
+                            if v.as_bytes()[vi] == 44 { // ','
+                                if dep.len() > 0 { deps.push(dep); dep = String.new(); }
+                            } else {
+                                dep.push(v.as_bytes()[vi] as char);
+                            }
+                            vi += 1;
+                        }
+                        if dep.len() > 0 { deps.push(dep); }
+                    }
+                }
+                Option.None => {}
+            }
+            match parse_header_value(line.as_str(), "SOURCE:") {
+                Option.Some(_) => { in_source = true; }
+                Option.None => {}
+            }
+        }
+        pos = eol + 1;
+    }
+
+    if hash.len() > 0 {
+        Option.Some(DefinitionRecord.new(hash, name, kind, source, deps))
+    } else {
+        Option.None
+    }
+}
+
+// ============================================================
+// Public API
+// ============================================================
+
+pub fn store_definition(codebase: &str, rec: &DefinitionRecord) {
+    let dir = def_dir(codebase, rec.hash.as_str());
+    ensure_dir(dir.as_str());
+    let path = def_path(codebase, rec.hash.as_str());
+    if file_exists(path.as_str()) { return; } // idempotent
+    let content = serialize_record(rec);
+    file_write_string(path.as_str(), content.as_str());
+}
+
+pub fn load_definition(codebase: &str, hash: &str) -> Option<DefinitionRecord> {
+    let path = def_path(codebase, hash);
+    if !file_exists(path.as_str()) { return Option.None; }
+    let content: &str = file_read_to_string(path.as_str());
+    deserialize_record(content)
+}
+
+pub fn add_name(codebase: &str, name: &str, hash: &str) {
+    ensure_dir(codebase);
+    let idx = names_path(codebase);
+    // Check if name already exists with this hash
+    if file_exists(idx.as_str()) {
+        let content: &str = file_read_to_string(idx.as_str());
+        let clen: usize = str_len(content) as usize;
+        let mut pos: usize = 0;
+        while pos < clen {
+            let mut eol: usize = pos;
+            while eol < clen && content.as_bytes()[eol] != 10 { eol += 1; }
+            // Check if line starts with "name "
+            let nlen: usize = str_len(name) as usize;
+            if eol - pos > nlen + 1 {
+                let mut match_name = true;
+                let mut ni: usize = 0;
+                while ni < nlen {
+                    if content.as_bytes()[pos + ni] != name.as_bytes()[ni] { match_name = false; }
+                    ni += 1;
+                }
+                if match_name && content.as_bytes()[pos + nlen] == 32 {
+                    // Name exists — check if hash matches
+                    let mut existing_hash = String.new();
+                    let mut hi: usize = pos + nlen + 1;
+                    while hi < eol { existing_hash.push(content.as_bytes()[hi] as char); hi += 1; }
+                    if str_eq(existing_hash.as_str(), hash) { return; } // already up to date
+                }
+            }
+            pos = eol + 1;
+        }
+    }
+    // Append new entry
+    let mut entry = common.make_string(name);
+    entry.push(' ');
+    entry.push_str(hash);
+    entry.push('\n');
+    file_append_string(idx.as_str(), entry.as_str());
+}
+
+pub fn find_by_name(codebase: &str, name: &str) -> Option<String> {
+    let idx = names_path(codebase);
+    if !file_exists(idx.as_str()) { return Option.None; }
+    let content: &str = file_read_to_string(idx.as_str());
+    let clen: usize = str_len(content) as usize;
+    let nlen: usize = str_len(name) as usize;
+    let mut pos: usize = 0;
+    while pos < clen {
+        let mut eol: usize = pos;
+        while eol < clen && content.as_bytes()[eol] != 10 { eol += 1; }
+        if eol - pos > nlen + 1 {
+            let mut match_name = true;
+            let mut ni: usize = 0;
+            while ni < nlen {
+                if content.as_bytes()[pos + ni] != name.as_bytes()[ni] { match_name = false; }
+                ni += 1;
+            }
+            if match_name && content.as_bytes()[pos + nlen] == 32 {
+                let mut hash = String.new();
+                let mut hi: usize = pos + nlen + 1;
+                while hi < eol { hash.push(content.as_bytes()[hi] as char); hi += 1; }
+                return Option.Some(hash);
+            }
+        }
+        pos = eol + 1;
+    }
+    Option.None
+}
+
+pub fn init_codebase(path: &str) {
+    ensure_dir(path);
+    let mut defs_dir = common.make_string(path);
+    defs_dir.push_str("/defs");
+    ensure_dir(defs_dir.as_str());
+}
