@@ -141,6 +141,26 @@ fn parse_import(parser: &mut parser_base.Parser) -> ast.Import {
     let start = parser.current.span;
     parser.advance(); // consume 'use'
 
+    // Hash import: use hash(prefix);
+    if parser.check_next(token.TokenKind.LParen) {
+        let sym_len: u32 = parser.current.span.end - parser.current.span.start;
+        if sym_len == 4 {
+            parser.advance(); // consume "hash"
+            parser.advance(); // consume "("
+            let prefix_sym = parser.parse_spanned_symbol();
+            parser.expect(token.TokenKind.RParen);
+            let alias = if parser.try_consume(token.TokenKind.As) {
+                Option.Some(parser.parse_spanned_symbol())
+            } else { Option.None };
+            parser.expect(token.TokenKind.Semi);
+            let es = parser.previous.span;
+            return ast.Import.Hash {
+                hash_prefix: prefix_sym, alias: alias,
+                span: common.Span { start: start.start, end: es.end, line: start.line, column: start.column },
+            };
+        }
+    }
+
     // Parse module path
     let path = parse_module_path(parser);
 
