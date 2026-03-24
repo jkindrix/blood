@@ -1,0 +1,214 @@
+// Marrow — Blood Content-Addressed Codebase Manager
+//
+// CLI tool for managing definitions by content hash (Pillar 2).
+//
+// Commands:
+//   marrow init [path]         — create a new codebase
+//   marrow add <file>          — hash definitions, store in codebase
+//   marrow find <name>         — look up definition by name
+//   marrow view <hash-prefix>  — display definition source
+//   marrow list [prefix]       — list all names
+//   marrow hash <file>         — print content hashes without storing
+
+mod common;
+mod codebase;
+
+fn default_codebase() -> String {
+    // ~/.blood/codebases/default
+    let home: &str = env_get("HOME");
+    let mut path = common.make_string(home);
+    path.push_str("/.blood/codebases/default");
+    path
+}
+
+fn print_usage() {
+    println_str("marrow — Blood content-addressed codebase manager");
+    println_str("");
+    println_str("Usage:");
+    println_str("  marrow init [path]         Create a new codebase");
+    println_str("  marrow add <file>          Hash and store definitions");
+    println_str("  marrow find <name>         Look up definition by name");
+    println_str("  marrow view <hash-prefix>  Display definition source");
+    println_str("  marrow list [prefix]       List all names");
+    println_str("  marrow hash <file>         Print content hashes");
+    println_str("");
+    println_str("Default codebase: ~/.blood/codebases/default");
+}
+
+fn cmd_init(path: &str) {
+    codebase.init_codebase(path);
+    print_str("Initialized codebase at ");
+    println_str(path);
+}
+
+fn cmd_find(cb: &str, name: &str) {
+    match codebase.find_by_name(cb, name) {
+        Option.Some(ref hash) => {
+            print_str(name);
+            print_str(": ");
+            println_str(hash.as_str());
+        }
+        Option.None => {
+            print_str("not found: ");
+            println_str(name);
+        }
+    }
+}
+
+fn cmd_view(cb: &str, hash_prefix: &str) {
+    // Try exact match first
+    let loaded = codebase.load_definition(cb, hash_prefix);
+    match loaded {
+        Option.Some(ref rec) => {
+            print_str("HASH: ");
+            println_str(rec.hash.as_str());
+            print_str("NAME: ");
+            println_str(rec.name.as_str());
+            print_str("KIND: ");
+            println_str(rec.kind.as_str());
+            if rec.deps.len() > 0 {
+                print_str("DEPS: ");
+                let mut i: usize = 0;
+                while i < rec.deps.len() {
+                    if i > 0 { print_str(", "); }
+                    print_str(rec.deps[i].as_str());
+                    i += 1;
+                }
+                println_str("");
+            }
+            println_str("---");
+            println_str(rec.source.as_str());
+            return;
+        }
+        Option.None => {}
+    }
+    print_str("not found: ");
+    println_str(hash_prefix);
+}
+
+fn cmd_list(cb: &str, filter: &str) {
+    let idx_path = {
+        let mut p = common.make_string(cb);
+        p.push_str("/names.idx");
+        p
+    };
+    if !file_exists(idx_path.as_str()) {
+        println_str("(no names indexed)");
+        return;
+    }
+    let content: &str = file_read_to_string(idx_path.as_str());
+    let clen: usize = str_len(content) as usize;
+    let flen: usize = str_len(filter) as usize;
+    let mut count: i32 = 0;
+    let mut pos: usize = 0;
+    while pos < clen {
+        let mut eol: usize = pos;
+        while eol < clen && content.as_bytes()[eol] != 10 { eol += 1; }
+        if eol > pos {
+            // Check filter prefix
+            let mut show = true;
+            if flen > 0 {
+                show = false;
+                if eol - pos >= flen {
+                    let mut match_ok = true;
+                    let mut fi: usize = 0;
+                    while fi < flen {
+                        if content.as_bytes()[pos + fi] != filter.as_bytes()[fi] { match_ok = false; }
+                        fi += 1;
+                    }
+                    if match_ok { show = true; }
+                }
+            }
+            if show {
+                // Print line
+                let mut line = String.new();
+                let mut li: usize = pos;
+                while li < eol { line.push(content.as_bytes()[li] as char); li += 1; }
+                println_str(line.as_str());
+                count += 1;
+            }
+        }
+        pos = eol + 1;
+    }
+    print_str("(");
+    print_int(count);
+    println_str(" definitions)");
+}
+
+fn cmd_hash(file: &str) {
+    // Invoke the compiler with --emit=hashes
+    let mut cmd = common.make_string("blood build --emit=hashes --no-cache ");
+    cmd.push_str(file);
+    cmd.push_str(" -o /dev/null 2>/dev/null");
+    let exit_code: i32 = system(cmd.as_str());
+    if exit_code != 0 {
+        // Try with first_gen in current directory
+        let mut cmd2 = common.make_string("./build/first_gen build --emit=hashes --no-cache ");
+        cmd2.push_str(file);
+        cmd2.push_str(" -o /dev/null 2>/dev/null");
+        system(cmd2.as_str());
+    }
+}
+
+fn cmd_add(cb: &str, file: &str) {
+    // Read the source file
+    let source: &str = file_read_to_string(file);
+    if str_len(source) == 0 {
+        print_str("error: cannot read ");
+        println_str(file);
+        return;
+    }
+    // Invoke compiler to get hashes
+    let mut cmd = common.make_string("blood build --emit=hashes --no-cache ");
+    cmd.push_str(file);
+    cmd.push_str(" -o /dev/null 2>/dev/null");
+    let exit_code: i32 = system(cmd.as_str());
+    if exit_code != 0 {
+        let mut cmd2 = common.make_string("./build/first_gen build --emit=hashes --no-cache ");
+        cmd2.push_str(file);
+        cmd2.push_str(" -o /dev/null 2>/dev/null");
+        system(cmd2.as_str());
+    }
+    println_str("(use `marrow hash <file>` to see hashes, then store manually)");
+    println_str("(automatic add requires parsing pipeline integration — coming soon)");
+}
+
+fn main() -> i32 {
+    let argc: i32 = args_count();
+    if argc < 2 {
+        print_usage();
+        return 0;
+    }
+
+    let command: &str = args_get(1);
+    let cb = default_codebase();
+
+    if str_eq(command, "init") {
+        let path: &str = if argc >= 3 { args_get(2) } else { cb.as_str() };
+        cmd_init(path);
+    } else if str_eq(command, "find") {
+        if argc < 3 { println_str("usage: marrow find <name>"); return 1; }
+        cmd_find(cb.as_str(), args_get(2));
+    } else if str_eq(command, "view") {
+        if argc < 3 { println_str("usage: marrow view <hash>"); return 1; }
+        cmd_view(cb.as_str(), args_get(2));
+    } else if str_eq(command, "list") {
+        let filter: &str = if argc >= 3 { args_get(2) } else { "" };
+        cmd_list(cb.as_str(), filter);
+    } else if str_eq(command, "hash") {
+        if argc < 3 { println_str("usage: marrow hash <file>"); return 1; }
+        cmd_hash(args_get(2));
+    } else if str_eq(command, "add") {
+        if argc < 3 { println_str("usage: marrow add <file>"); return 1; }
+        cmd_add(cb.as_str(), args_get(2));
+    } else if str_eq(command, "help") || str_eq(command, "--help") || str_eq(command, "-h") {
+        print_usage();
+    } else {
+        print_str("unknown command: ");
+        println_str(command);
+        print_usage();
+        return 1;
+    }
+
+    0
+}
