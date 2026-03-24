@@ -130,29 +130,41 @@ const TAG_PATH_REF: u8 = 0x06;
 const TAG_BINARY: u8 = 0x07;
 const TAG_UNARY: u8 = 0x08;
 const TAG_CALL: u8 = 0x09;
-const TAG_METHOD_CALL: u8 = 0x0A;
 const TAG_FIELD: u8 = 0x0B;
 const TAG_INDEX: u8 = 0x0C;
 const TAG_TUPLE: u8 = 0x0D;
 const TAG_ARRAY: u8 = 0x0E;
 const TAG_STRUCT: u8 = 0x0F;
 const TAG_RANGE: u8 = 0x10;
-const TAG_CAST: u8 = 0x11;
 const TAG_ASSIGN: u8 = 0x12;
 const TAG_BLOCK: u8 = 0x13;
 const TAG_IF: u8 = 0x14;
-const TAG_MATCH: u8 = 0x15;
 const TAG_LOOP: u8 = 0x16;
 const TAG_RETURN: u8 = 0x17;
 const TAG_BREAK: u8 = 0x18;
 const TAG_CONTINUE: u8 = 0x19;
-const TAG_CLOSURE: u8 = 0x1A;
-const TAG_PERFORM: u8 = 0x1B;
 const TAG_RESUME: u8 = 0x1C;
 const TAG_LET_STMT: u8 = 0x1D;
 const TAG_EXPR_STMT: u8 = 0x1E;
 const TAG_UNIT: u8 = 0x1F;
 const TAG_DEFAULT: u8 = 0x20;
+const TAG_MATCH: u8 = 0x21;
+const TAG_CAST: u8 = 0x22;
+const TAG_STRUCT_EXPR: u8 = 0x23;
+const TAG_METHOD_CALL: u8 = 0x24;
+const TAG_PERFORM: u8 = 0x25;
+const TAG_REGION: u8 = 0x26;
+const TAG_FOR_ITER: u8 = 0x27;
+const TAG_UNSAFE: u8 = 0x28;
+const TAG_ARRAY_LIST: u8 = 0x29;
+const TAG_ASSIGN_OP: u8 = 0x2A;
+const TAG_ADDR_OF: u8 = 0x2B;
+const TAG_WHILE: u8 = 0x2C;
+const TAG_UNCHECKED: u8 = 0x2D;
+const TAG_HEAP: u8 = 0x2E;
+const TAG_STACK: u8 = 0x2F;
+const TAG_CLOSURE: u8 = 0x30;
+const TAG_INT_EXPR: u8 = 0x31;
 const TAG_ERROR: u8 = 0xFF;
 
 const TAG_TYPE_PRIM: u8 = 0x40;
@@ -397,11 +409,216 @@ pub fn canonicalize_expr(b: &mut CanonicalBuilder, env: &mut DeBruijnEnv, expr: 
             b.tag(TAG_DEFAULT);
         }
 
+        &hir_expr.ExprKind.Match { ref scrutinee, ref arms } => {
+            b.tag(TAG_MATCH);
+            canonicalize_expr(b, env, scrutinee.as_ref());
+            b.usize_val(arms.len());
+            let mut i: usize = 0;
+            while i < arms.len() {
+                canonicalize_pattern(b, env, &arms[i].pattern);
+                canonicalize_expr(b, env, &arms[i].body);
+                i += 1;
+            }
+        }
+
+        &hir_expr.ExprKind.Cast { ref expr, ty } => {
+            b.tag(TAG_CAST);
+            canonicalize_expr(b, env, expr.as_ref());
+            canonicalize_type(b, ty);
+        }
+
+        &hir_expr.ExprKind.Struct { ref path, ref fields, ref base } => {
+            b.tag(TAG_STRUCT_EXPR);
+            b.u32_val(path.def_id.index);
+            b.usize_val(fields.len());
+            let mut i: usize = 0;
+            while i < fields.len() {
+                b.u32_val(fields[i].name.symbol.index);
+                canonicalize_expr(b, env, &fields[i].val);
+                i += 1;
+            }
+            match base {
+                &Option.Some(ref be) => { b.u8_val(1); canonicalize_expr(b, env, be.as_ref()); }
+                &Option.None => { b.u8_val(0); }
+            }
+        }
+
+        &hir_expr.ExprKind.MethodCall { ref receiver, ref method, method_def: _, type_args: _, ref args } => {
+            b.tag(TAG_METHOD_CALL);
+            canonicalize_expr(b, env, receiver.as_ref());
+            b.u32_val(method.symbol.index);
+            b.usize_val(args.len());
+            let mut i: usize = 0;
+            while i < args.len() { canonicalize_expr(b, env, &args[i]); i += 1; }
+        }
+
+        &hir_expr.ExprKind.Perform { ref effect_def, ref op_def, ref op_name, ref args } => {
+            b.tag(TAG_PERFORM);
+            b.u32_val(effect_def.index);
+            b.u32_val(op_name.index);
+            b.usize_val(args.len());
+            let mut i: usize = 0;
+            while i < args.len() { canonicalize_expr(b, env, &args[i]); i += 1; }
+        }
+
+        &hir_expr.ExprKind.Region { name: _, ref stmts, ref expr } => {
+            b.tag(TAG_REGION);
+            b.usize_val(stmts.len());
+            let mut i: usize = 0;
+            while i < stmts.len() { canonicalize_stmt(b, env, &stmts[i]); i += 1; }
+            match expr {
+                &Option.Some(ref e) => { b.u8_val(1); canonicalize_expr(b, env, e.as_ref()); }
+                &Option.None => { b.u8_val(0); }
+            }
+        }
+
+        &hir_expr.ExprKind.ForIter { label: _, ref pattern, ref iter, ref body } => {
+            b.tag(TAG_FOR_ITER);
+            canonicalize_pattern(b, env, pattern.as_ref());
+            canonicalize_expr(b, env, iter.as_ref());
+            canonicalize_expr(b, env, body.as_ref());
+        }
+
+        &hir_expr.ExprKind.Closure { captures: _, params: _, return_ty, effects: _, ref body, body_id: _ } => {
+            b.tag(TAG_CLOSURE);
+            canonicalize_type(b, return_ty);
+            canonicalize_expr(b, env, body.as_ref());
+        }
+
+        &hir_expr.ExprKind.Array(ref arr) => {
+            b.tag(TAG_ARRAY_LIST);
+            match arr {
+                &hir_expr.ArrayExpr.List(ref elems) => {
+                    b.u8_val(0);
+                    b.usize_val(elems.len());
+                    let mut i: usize = 0;
+                    while i < elems.len() { canonicalize_expr(b, env, &elems[i]); i += 1; }
+                }
+                &hir_expr.ArrayExpr.Repeat { ref val, count } => {
+                    b.u8_val(1);
+                    canonicalize_expr(b, env, val.as_ref());
+                    b.u64_val(count);
+                }
+            }
+        }
+
+        &hir_expr.ExprKind.AssignOp { ref operator, ref target, ref val } => {
+            b.tag(TAG_ASSIGN_OP);
+            b.u8_val(binop_tag(operator));
+            canonicalize_expr(b, env, target.as_ref());
+            canonicalize_expr(b, env, val.as_ref());
+        }
+
+        &hir_expr.ExprKind.AddrOf { mutable, ref expr } => {
+            b.tag(TAG_ADDR_OF);
+            b.u8_val(if mutable { 1 } else { 0 });
+            canonicalize_expr(b, env, expr.as_ref());
+        }
+
+        &hir_expr.ExprKind.Unsafe(ref inner) => {
+            b.tag(TAG_UNSAFE);
+            canonicalize_expr(b, env, inner.as_ref());
+        }
+
+        &hir_expr.ExprKind.Heap(ref inner) => {
+            b.tag(TAG_HEAP);
+            canonicalize_expr(b, env, inner.as_ref());
+        }
+
+        &hir_expr.ExprKind.Stack(ref inner) => {
+            b.tag(TAG_STACK);
+            canonicalize_expr(b, env, inner.as_ref());
+        }
+
+        &hir_expr.ExprKind.Unchecked { checks: _, when_condition: _, ref body } => {
+            b.tag(TAG_UNCHECKED);
+            canonicalize_expr(b, env, body.as_ref());
+        }
+
+        &hir_expr.ExprKind.Range { ref start, ref end_val, inclusive } => {
+            b.tag(TAG_RANGE);
+            b.u8_val(if inclusive { 1 } else { 0 });
+            match start { &Option.Some(ref s) => { canonicalize_expr(b, env, s.as_ref()); } &Option.None => { b.u8_val(0); } }
+            match end_val { &Option.Some(ref e) => { canonicalize_expr(b, env, e.as_ref()); } &Option.None => { b.u8_val(0); } }
+        }
+
+        &hir_expr.ExprKind.Try(ref inner) => {
+            b.tag(TAG_UNSAFE); // reuse tag — try is semantically similar
+            canonicalize_expr(b, env, inner.as_ref());
+        }
+
+
         _ => {
-            // Unhandled variants: Cast, Closure, Match, Perform, etc.
-            // These will be added incrementally as Pillar 2 expands.
             b.tag(TAG_ERROR);
         }
+    }
+}
+
+fn canonicalize_pattern(b: &mut CanonicalBuilder, env: &mut DeBruijnEnv, pat: &hir_expr.Pattern) {
+    match &pat.kind {
+        &hir_expr.PatternKind.Binding { local_id, name: _, mode: _, subpattern: _ } => {
+            b.u8_val(0x01);
+            env.push(local_id.index);
+        }
+        &hir_expr.PatternKind.Wildcard => { b.u8_val(0x02); }
+        &hir_expr.PatternKind.Literal(ref lit) => {
+            b.u8_val(0x03);
+            b.u8_val(0x10); // placeholder for literal pattern
+        }
+        &hir_expr.PatternKind.Struct { ref path, ref fields, has_rest } => {
+            b.u8_val(0x04);
+            b.u32_val(path.def_id.index);
+            b.usize_val(fields.len());
+            let mut i: usize = 0;
+            while i < fields.len() {
+                b.u32_val(fields[i].name.symbol.index);
+                canonicalize_pattern(b, env, &fields[i].pattern);
+                i += 1;
+            }
+        }
+        &hir_expr.PatternKind.TupleStruct { ref path, ref fields } => {
+            b.u8_val(0x05);
+            b.u32_val(path.def_id.index);
+            b.usize_val(fields.len());
+            let mut i: usize = 0;
+            while i < fields.len() { canonicalize_pattern(b, env, &fields[i]); i += 1; }
+        }
+        &hir_expr.PatternKind.Tuple(ref pats) => {
+            b.u8_val(0x06);
+            b.usize_val(pats.len());
+            let mut i: usize = 0;
+            while i < pats.len() { canonicalize_pattern(b, env, &pats[i]); i += 1; }
+        }
+        &hir_expr.PatternKind.Ref { mutable, ref inner } => {
+            b.u8_val(0x07);
+            b.u8_val(if mutable { 1 } else { 0 });
+            canonicalize_pattern(b, env, inner.as_ref());
+        }
+        _ => { b.u8_val(0xFF); }
+    }
+}
+
+fn canonicalize_stmt(b: &mut CanonicalBuilder, env: &mut DeBruijnEnv, stmt: &hir_expr.Stmt) {
+    match stmt {
+        &hir_expr.Stmt.Let { ref pattern, ty: _, ref init, span: _ } => {
+            b.tag(TAG_LET_STMT);
+            match &pattern.kind {
+                &hir_expr.PatternKind.Binding { local_id, name: _, mode: _, subpattern: _ } => {
+                    env.push(local_id.index);
+                }
+                _ => {}
+            }
+            match init {
+                &Option.Some(ref e) => { b.u8_val(1); canonicalize_expr(b, env, e); }
+                &Option.None => { b.u8_val(0); }
+            }
+        }
+        &hir_expr.Stmt.Expr { ref expr, has_semi } => {
+            b.tag(TAG_EXPR_STMT);
+            b.u8_val(if has_semi { 1 } else { 0 });
+            canonicalize_expr(b, env, expr);
+        }
+        _ => { b.tag(TAG_ERROR); }
     }
 }
 

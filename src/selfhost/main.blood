@@ -48,6 +48,8 @@ mod codegen_size;
 mod type_intern;
 mod macro_expand;
 mod main_helpers;
+mod content_hash;
+mod canonical;
 
 // ============================================================
 // Command Line Arguments
@@ -117,6 +119,8 @@ pub struct Args {
     pub alloc_profile: bool,
     /// Controls how far the build pipeline runs (Full, LlvmIr, or Obj).
     pub emit_mode: EmitMode,
+    /// Whether to compute and print content hashes for all definitions.
+    pub emit_hashes: bool,
     /// Optimization level for llc (0-3). Default 0; --release sets to 2.
     pub opt_level: u32,
     /// Whether to strip symbols from the linked binary.
@@ -161,7 +165,7 @@ impl Args {
             validate_mir: false,
             mem_profile: false,
             alloc_profile: false,
-            emit_mode: EmitMode.Full,
+            emit_mode: EmitMode.Full, emit_hashes: false,
             opt_level: 0,
             strip: false,
             sanitize_address: false,
@@ -195,7 +199,7 @@ impl Args {
             validate_mir: false,
             mem_profile: false,
             alloc_profile: false,
-            emit_mode: EmitMode.Full,
+            emit_mode: EmitMode.Full, emit_hashes: false,
             opt_level: 0,
             strip: false,
             sanitize_address: false,
@@ -229,7 +233,7 @@ impl Args {
             validate_mir: false,
             mem_profile: false,
             alloc_profile: false,
-            emit_mode: EmitMode.Full,
+            emit_mode: EmitMode.Full, emit_hashes: false,
             opt_level: 0,
             strip: false,
             sanitize_address: false,
@@ -1501,6 +1505,8 @@ pub fn parse_args(argc: i32, argv: &Vec<String>) -> Args {
                 args.emit_mode = EmitMode.LlvmIr;
             } else if main_helpers.str_equals(arg, "--emit=obj") {
                 args.emit_mode = EmitMode.Obj;
+            } else if main_helpers.str_equals(arg, "--emit=hashes") {
+                args.emit_hashes = true;
             } else if main_helpers.str_equals(arg, "--emit") {
                 // Space-separated: --emit llvm-ir / --emit obj
                 if i + 1 < argv.len() {
@@ -4177,6 +4183,37 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     // Its Vecs/HashMaps grow incrementally — on the system heap, old buffers
     // are freed and reused; in a bump region, they'd leak (~6 GB waste).
     region_deactivate();
+
+    // Emit content hashes if requested
+    if args.emit_hashes {
+        eprint_str("\n  Content hashes:\n");
+        for hi in 0usize..lower_result.bodies.len() {
+            let body_entry = &lower_result.bodies[hi];
+            // Find matching fn item for this body
+            for hj in 0usize..lower_result.items.len() {
+                match &lower_result.items[hj].item.kind {
+                    &hir_item.ItemKind.Fn(ref fn_def) => {
+                        match &fn_def.body_id {
+                            &Option.Some(ref bid) => {
+                                if bid.index == body_entry.body_id.index {
+                                    let hash = content_hash.hash_fn_body(&body_entry.body, &fn_def.sig);
+                                    let hex = content_hash.hash_to_hex(&hash);
+                                    match lower_result.interner.resolve(lower_result.items[hj].item.name.symbol) {
+                                        Option.Some(n) => { print_str(n.as_str()); }
+                                        Option.None => { print_str("unknown"); }
+                                    }
+                                    print_str(": ");
+                                    println_str(hex.as_str());
+                                }
+                            }
+                            &Option.None => {}
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
 
     // Phase 5: Streaming codegen (global allocator for ctx persistent state)
     eprint_str("  Codegen...");
