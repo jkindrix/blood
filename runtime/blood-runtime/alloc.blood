@@ -601,3 +601,45 @@ pub fn rt_blood_persistent_alloc(size: i64, align: i64, type_fp: i32, out_id: *m
 #[export_name = "blood_persistent_decrement"]
 pub fn rt_blood_persistent_decrement(slot_id: i64) {
 }
+
+/// Copies a value to persistent (Tier 3) memory and registers it.
+/// Generation set to PERSISTENT_MARKER (0xFFFFFFFF) — never stale.
+#[export_name = "blood_persist"]
+pub fn rt_blood_persist(src: *mut u8, size: i64) -> *mut u8 {
+    @unsafe {
+        let dst: *mut u8 = libc.sys_calloc(1, size as u64);
+        if ptr_to_addr(dst) == 0 {
+            rt_panic.rt_panic("blood_persist: out of memory");
+        }
+        libc.sys_memmove(dst, src as *const u8, size as u64);
+        let addr: i64 = ptr_to_addr(dst);
+        rt_blood_register_allocation(addr, size);
+        // Override gen to PERSISTENT_MARKER via hash table
+        let idx: i64 = ht_find(addr);
+        if idx >= 0 { ht_write_gen(idx, 0x7FFFFFFF); }
+        dst
+    }
+}
+
+/// Marks a persistent allocation as frozen (deeply immutable).
+#[export_name = "blood_freeze"]
+pub fn rt_blood_freeze(ptr: *mut u8) -> bool {
+    @unsafe {
+        let addr: i64 = ptr_to_addr(ptr);
+        let idx: i64 = ht_find(addr);
+        if idx < 0 { return false; }
+        ht_write_gen(idx, 0x7FFFFFFE);
+        true
+    }
+}
+
+/// Checks if a persistent allocation is frozen.
+#[export_name = "blood_is_frozen"]
+pub fn rt_blood_is_frozen(ptr: *mut u8) -> bool {
+    @unsafe {
+        let addr: i64 = ptr_to_addr(ptr);
+        let idx: i64 = ht_find(addr);
+        if idx < 0 { return false; }
+        ht_read_gen(idx) == 0x7FFFFFFE
+    }
+}
