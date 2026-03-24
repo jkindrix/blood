@@ -1,0 +1,27 @@
+// Test: Frozen<T> as type-level immutability wrapper
+// EXPECT: 42
+// EXPECT: 99
+
+struct Frozen<T> { value: T }
+
+impl<T> Frozen<T> {
+    fn new(value: T) -> Frozen<T> { Frozen { value: value } }
+    fn get(self: &Self) -> &T { &self.value }
+}
+
+struct Point { x: i32, y: i32 }
+
+fn use_frozen(f: &Frozen<Point>) -> i32 {
+    let r: &Point = f.get();
+    r.x + r.y
+}
+
+fn main() -> i32 {
+    let p: Point = Point { x: 42, y: 99 };
+    let f: Frozen<Point> = Frozen.new(p);
+    println_int(f.get().x);
+    println_int(f.get().y);
+    let total: i32 = use_frozen(&f);
+    if total != 141 { return 1; }
+    0
+}
