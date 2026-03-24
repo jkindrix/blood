@@ -215,6 +215,18 @@ pub fn generate_module_with_items(
         output.push_str(vtable.as_str());
     }
 
+    // Emit VFT metadata as comments (P2-9: hash-to-function mapping)
+    for vi in 0usize..ctx.vtable_name_entries.len() {
+        let vne = &ctx.vtable_name_entries[vi];
+        output.push_str("; VFT ");
+        output.push_str(vne.vtable_name.as_str());
+        output.push_str(" trait=");
+        output.push_str(codegen_types.format_u64(vne.trait_def_id as u64).as_str());
+        output.push_str(" type=");
+        output.push_str(codegen_types.format_u64(vne.type_def_id as u64).as_str());
+        output.push_str("\n");
+    }
+
     // Append string constants from the context
     ctx.emit_string_constants();
     output.push_str(ctx.output.as_str());

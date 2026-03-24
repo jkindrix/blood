@@ -4488,6 +4488,14 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     for vti in 0usize..ctx.vtable_defs.len() {
         ctx.buffer_write(ctx.vtable_defs[vti].as_str());
     }
+    // VFT metadata comments (P2-9)
+    for vni in 0usize..ctx.vtable_name_entries.len() {
+        let vne = &ctx.vtable_name_entries[vni];
+        let mut vft_comment = common.make_string("; VFT ");
+        vft_comment.push_str(vne.vtable_name.as_str());
+        vft_comment.push('\n');
+        ctx.buffer_write(vft_comment.as_str());
+    }
 
     // Build work list: scan bodies once to identify which functions to codegen.
     // Filters out static bodies, duplicates, and const-generic bodies.
