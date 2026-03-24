@@ -914,8 +914,103 @@ pub fn emit_place_addr(
                     ctx.emit_label_cg(&ok_lbl);
                     ctx.emit_br_cg(&skip_lbl);
                     ctx.emit_label_cg(&skip_lbl);
+                } else if string_eq_str(ref_llvm_ty.as_str(), "{ ptr, i64 }") {
+                    // Packed gen fat pointer (&str, &[T]): gen in upper 32 bits of i64.
+                    let fat = ctx.fresh_temp_cg();
+                    ctx.emit_load_cg2(&fat, "{ ptr, i64 }", &current);
+                    ctx.write("  ");
+                    ctx.write_cgname(&result);
+                    ctx.write(" = extractvalue { ptr, i64 } ");
+                    ctx.write_cgname(&fat);
+                    ctx.write(", 0\n");
+                    // Extract packed gen: upper 32 bits of field 1
+                    let len_field = ctx.fresh_temp_cg();
+                    ctx.write("  ");
+                    ctx.write_cgname(&len_field);
+                    ctx.write(" = extractvalue { ptr, i64 } ");
+                    ctx.write_cgname(&fat);
+                    ctx.write(", 1\n");
+                    let shifted = ctx.fresh_temp_cg();
+                    ctx.write("  ");
+                    ctx.write_cgname(&shifted);
+                    ctx.write(" = lshr i64 ");
+                    ctx.write_cgname(&len_field);
+                    ctx.write(", 32\n");
+                    let pg = ctx.fresh_temp_cg();
+                    ctx.write("  ");
+                    ctx.write_cgname(&pg);
+                    ctx.write(" = trunc i64 ");
+                    ctx.write_cgname(&shifted);
+                    ctx.write(" to i32\n");
+                    // Validate if gen != 0
+                    let pz = ctx.fresh_temp_cg();
+                    ctx.emit_icmp_cg2(&pz, "eq", "i32", &pg, "0");
+                    let pskip = ctx.fresh_label_cg();
+                    let pchk = ctx.fresh_label_cg();
+                    ctx.emit_cond_br_cg(&pz, &pskip, &pchk);
+                    ctx.emit_label_cg(&pchk);
+                    let paddr = ctx.fresh_temp_cg();
+                    ctx.write("  ");
+                    ctx.write_cgname(&paddr);
+                    ctx.write(" = ptrtoint ptr ");
+                    ctx.write_cgname(&result);
+                    ctx.write(" to i64\n");
+                    let pvalid = ctx.fresh_temp_cg();
+                    ctx.begin_call(Option.Some(&pvalid), "i32", "@blood_validate_generation");
+                    ctx.call_arg_cg(true, "i64", &paddr);
+                    ctx.call_arg_cg(false, "i32", &pg);
+                    ctx.end_call();
+                    let pok_cmp = ctx.fresh_temp_cg();
+                    ctx.emit_icmp_cg2(&pok_cmp, "ne", "i32", &pvalid, "0");
+                    let pok = ctx.fresh_label_cg();
+                    let pstale = ctx.fresh_label_cg();
+                    ctx.emit_cond_br_cg(&pok_cmp, &pok, &pstale);
+                    ctx.emit_label_cg(&pstale);
+                    // Stale path: perform StaleReference
+                    let pactual = ctx.fresh_temp_cg();
+                    ctx.begin_call(Option.Some(&pactual), "i32", "@blood_get_generation");
+                    ctx.call_arg_cg(true, "i64", &paddr);
+                    ctx.end_call();
+                    let psr_args = ctx.fresh_temp_cg();
+                    ctx.emit_alloca_cg(&psr_args, "[2 x i64]");
+                    let pge = ctx.fresh_temp_cg();
+                    ctx.write_indent();
+                    ctx.write_cgname(&pge);
+                    ctx.write(" = zext i32 ");
+                    ctx.write_cgname(&pg);
+                    ctx.write(" to i64\n");
+                    ctx.emit_store_cg2("i64", &pge, &psr_args);
+                    let psr_p1 = ctx.fresh_temp_cg();
+                    ctx.write_indent();
+                    ctx.write_cgname(&psr_p1);
+                    ctx.write(" = getelementptr i64, ptr ");
+                    ctx.write_cgname(&psr_args);
+                    ctx.write(", i64 1\n");
+                    let pae = ctx.fresh_temp_cg();
+                    ctx.write_indent();
+                    ctx.write_cgname(&pae);
+                    ctx.write(" = zext i32 ");
+                    ctx.write_cgname(&pactual);
+                    ctx.write(" to i64\n");
+                    ctx.emit_store_cg2("i64", &pae, &psr_p1);
+                    let psr_cont = ctx.fresh_temp_cg();
+                    ctx.write_indent();
+                    ctx.write_cgname(&psr_cont);
+                    ctx.write(" = call i64 @blood_continuation_create_multishot(ptr @__blood_identity_continuation, ptr null)\n");
+                    let psr_ret = ctx.fresh_temp_cg();
+                    ctx.write_indent();
+                    ctx.write_cgname(&psr_ret);
+                    ctx.write(" = call i64 @blood_perform(i64 4100, i32 0, ptr ");
+                    ctx.write_cgname(&psr_args);
+                    ctx.write(", i64 2, i64 ");
+                    ctx.write_cgname(&psr_cont);
+                    ctx.write(")\n");
+                    ctx.emit_br_cg(&pok);
+                    ctx.emit_label_cg(&pok);
+                    ctx.emit_br_cg(&pskip);
+                    ctx.emit_label_cg(&pskip);
                 } else {
-                    // Thin pointer or unsized fat pointer: load as ptr
+                    // Thin pointer: load as ptr, no gen check
                     ctx.emit_load_cg2(&result, "ptr", &current);
                 }
                 current = result;
