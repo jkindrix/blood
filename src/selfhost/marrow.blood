@@ -151,26 +151,29 @@ fn cmd_hash(file: &str) {
 }
 
 fn cmd_add(cb: &str, file: &str) {
-    // Read the source file
-    let source: &str = file_read_to_string(file);
-    if str_len(source) == 0 {
-        print_str("error: cannot read ");
+    if !file_exists(file) {
+        print_str("error: file not found: ");
         println_str(file);
         return;
     }
-    // Invoke compiler to get hashes
-    let mut cmd = common.make_string("blood build --emit=hashes --no-cache ");
+    // Invoke compiler with --store-codebase to hash and store definitions
+    let mut cmd = common.make_string("blood build --store-codebase --no-cache ");
     cmd.push_str(file);
     cmd.push_str(" -o /dev/null 2>/dev/null");
     let exit_code: i32 = system(cmd.as_str());
     if exit_code != 0 {
-        let mut cmd2 = common.make_string("./build/first_gen build --emit=hashes --no-cache ");
+        // Try local build directory
+        let mut cmd2 = common.make_string("./build/first_gen build --store-codebase --no-cache ");
         cmd2.push_str(file);
         cmd2.push_str(" -o /dev/null 2>/dev/null");
-        system(cmd2.as_str());
+        let rc2: i32 = system(cmd2.as_str());
+        if rc2 != 0 {
+            println_str("error: compilation failed");
+            return;
+        }
     }
-    println_str("(use `marrow hash <file>` to see hashes, then store manually)");
-    println_str("(automatic add requires parsing pipeline integration — coming soon)");
+    print_str("added definitions from ");
+    println_str(file);
 }
 
 fn main() -> i32 {

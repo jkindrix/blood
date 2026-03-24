@@ -50,6 +50,7 @@ mod macro_expand;
 mod main_helpers;
 mod content_hash;
 mod canonical;
+mod codebase;
 
 // ============================================================
 // Command Line Arguments
@@ -121,6 +122,8 @@ pub struct Args {
     pub emit_mode: EmitMode,
     /// Whether to compute and print content hashes for all definitions.
     pub emit_hashes: bool,
+    /// Whether to store definitions in the content-addressed codebase.
+    pub store_codebase: bool,
     /// Optimization level for llc (0-3). Default 0; --release sets to 2.
     pub opt_level: u32,
     /// Whether to strip symbols from the linked binary.
@@ -165,7 +168,7 @@ impl Args {
             validate_mir: false,
             mem_profile: false,
             alloc_profile: false,
-            emit_mode: EmitMode.Full, emit_hashes: false,
+            emit_mode: EmitMode.Full, emit_hashes: false, store_codebase: false,
             opt_level: 0,
             strip: false,
             sanitize_address: false,
@@ -199,7 +202,7 @@ impl Args {
             validate_mir: false,
             mem_profile: false,
             alloc_profile: false,
-            emit_mode: EmitMode.Full, emit_hashes: false,
+            emit_mode: EmitMode.Full, emit_hashes: false, store_codebase: false,
             opt_level: 0,
             strip: false,
             sanitize_address: false,
@@ -233,7 +236,7 @@ impl Args {
             validate_mir: false,
             mem_profile: false,
             alloc_profile: false,
-            emit_mode: EmitMode.Full, emit_hashes: false,
+            emit_mode: EmitMode.Full, emit_hashes: false, store_codebase: false,
             opt_level: 0,
             strip: false,
             sanitize_address: false,
@@ -1507,6 +1510,9 @@ pub fn parse_args(argc: i32, argv: &Vec<String>) -> Args {
                 args.emit_mode = EmitMode.Obj;
             } else if main_helpers.str_equals(arg, "--emit=hashes") {
                 args.emit_hashes = true;
+            } else if main_helpers.str_equals(arg, "--store-codebase") {
+                args.store_codebase = true;
+                args.emit_hashes = true;
             } else if main_helpers.str_equals(arg, "--emit") {
                 // Space-separated: --emit llvm-ir / --emit obj
                 if i + 1 < argv.len() {
@@ -1635,6 +1641,13 @@ fn resolve_build_dir(args: &Args) -> String {
 /// 1. CLI flag (--stdlib-path)
 /// 2. BLOOD_STDLIB_PATH environment variable
 /// 3. Installed toolchain: ~/.blood/lib/stdlib/
+fn default_codebase_path() -> String {
+    let home: &str = env_get("HOME");
+    let mut path = common.make_string(home);
+    path.push_str("/.blood/codebases/default");
+    path
+}
+
 fn resolve_stdlib_path(args: &Args) -> Option<String> {
     // 1. CLI flag
     match &args.stdlib_path {
@@ -3469,6 +3482,70 @@ fn codegen_pass2(
                                                 }
                                             }
                                         }
+                                        &mir_types.Rvalue.Use(ref ret_op) => {
+                                            // Indirect: _0 = Copy(src) — trace src
+                                            match ret_op {
+                                                &mir_types.Operand.Copy(ref src_place) => {
+                                                    if src_place.projection.len() == 0 && src_place.local.index >= param_end {
+                                                        // Find src's assignment in same block
+                                                        for bsi in 0usize..dblk.statements.len() {
+                                                            match &dblk.statements[bsi].kind {
+                                                                &mir_stmt.StatementKind.Assign { ref place: bp, ref rvalue: brv } => {
+                                                                    if bp.local.index == src_place.local.index && bp.projection.len() == 0 {
+                                                                        // Trace one more level for Copy chains
+                                                                        match brv {
+                                                                            &mir_types.Rvalue.Ref { ref place: ref_p, mutable: _ } => {
+                                                                                if ref_p.local.index >= param_end && ref_p.projection.len() == 0 {
+                                                                                    eprint_str("\nerror[E0503]: cannot return reference to local variable\n");
+                                                                                    eprint_str("  --> in function ");
+                                                                                    eprint_str(work.fn_name.as_str());
+                                                                                    eprint_str("\n  = note: reference to stack-local escapes function scope\n");
+                                                                                    panic("cannot return reference to local variable");
+                                                                                }
+                                                                            }
+                                                                            &mir_types.Rvalue.Use(ref inner_op) => {
+                                                                                // Copy chain: trace one more level
+                                                                                match inner_op {
+                                                                                    &mir_types.Operand.Copy(ref inner_src) => {
+                                                                                        if inner_src.projection.len() == 0 && inner_src.local.index >= param_end {
+                                                                                            for bsi2 in 0usize..dblk.statements.len() {
+                                                                                                match &dblk.statements[bsi2].kind {
+                                                                                                    &mir_stmt.StatementKind.Assign { ref place: bp2, ref rvalue: brv2 } => {
+                                                                                                        if bp2.local.index == inner_src.local.index && bp2.projection.len() == 0 {
+                                                                                                            match brv2 {
+                                                                                                                &mir_types.Rvalue.Ref { ref place: rp2, mutable: _ } => {
+                                                                                                                    if rp2.local.index >= param_end && rp2.projection.len() == 0 {
+                                                                                                                        eprint_str("\nerror[E0503]: cannot return reference to local variable\n");
+                                                                                                                        eprint_str("  --> in function ");
+                                                                                                                        eprint_str(work.fn_name.as_str());
+                                                                                                                        eprint_str("\n  = note: reference to stack-local escapes function scope\n");
+                                                                                                                        panic("cannot return reference to local variable");
+                                                                                                                    }
+                                                                                                                }
+                                                                                                                _ => {}
+                                                                                                            }
+                                                                                                        }
+                                                                                                    }
+                                                                                                    _ => {}
+                                                                                                }
+                                                                                            }
+                                                                                        }
+                                                                                    }
+                                                                                    _ => {}
+                                                                                }
+                                                                            }
+                                                                            _ => {}
+                                                                        }
+                                                                    }
+                                                                }
+                                                                _ => {}
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                                _ => {}
+                                            }
+                                        }
                                         _ => {}
                                     }
                                 }
@@ -4198,12 +4275,57 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
                                 if bid.index == body_entry.body_id.index {
                                     let hash = content_hash.hash_fn_body(&body_entry.body, &fn_def.sig);
                                     let hex = content_hash.hash_to_hex(&hash);
-                                    match lower_result.interner.resolve(lower_result.items[hj].item.name.symbol) {
-                                        Option.Some(n) => { print_str(n.as_str()); }
-                                        Option.None => { print_str("unknown"); }
-                                    }
+                                    let def_name = match lower_result.interner.resolve(lower_result.items[hj].item.name.symbol) {
+                                        Option.Some(n) => common.make_string(n.as_str()),
+                                        Option.None => common.make_string("unknown"),
+                                    };
+                                    print_str(def_name.as_str());
                                     print_str(": ");
                                     println_str(hex.as_str());
+                                    // Save hash to build cache for incremental comparison
+                                    {
+                                        let mut hash_dir = common.make_string(output_path);
+                                        // Strip filename to get build dir
+                                        let mut last_slash: usize = 0;
+                                        let olen: usize = hash_dir.len();
+                                        let mut oi: usize = 0;
+                                        while oi < olen { if hash_dir.as_bytes()[oi] == 47 { last_slash = oi; } oi += 1; }
+                                        if last_slash > 0 {
+                                            let mut build_dir = String.new();
+                                            oi = 0;
+                                            while oi < last_slash { build_dir.push(hash_dir.as_bytes()[oi] as char); oi += 1; }
+                                            build_dir.push_str("/.content_hashes");
+                                            if !file_exists(build_dir.as_str()) {
+                                                let mut mkdir_cmd = common.make_string("mkdir -p ");
+                                                mkdir_cmd.push_str(build_dir.as_str());
+                                                system(mkdir_cmd.as_str());
+                                            }
+                                            let mut hash_file = common.make_string(build_dir.as_str());
+                                            hash_file.push('/');
+                                            hash_file.push_str(def_name.as_str());
+                                            hash_file.push_str(".hash");
+                                            file_write_string(hash_file.as_str(), hex.as_str());
+                                        }
+                                    }
+                                    // Store in codebase if requested
+                                    if args.store_codebase {
+                                        let cb = default_codebase_path();
+                                        codebase.init_codebase(cb.as_str());
+                                        let fn_name = match lower_result.interner.resolve(lower_result.items[hj].item.name.symbol) {
+                                            Option.Some(s) => common.make_string(s.as_str()),
+                                            Option.None => common.make_string("unknown"),
+                                        };
+                                        let deps: Vec<String> = Vec.new();
+                                        let rec = codebase.DefinitionRecord.new(
+                                            common.make_string(hex.as_str()),
+                                            fn_name,
+                                            common.make_string("fn"),
+                                            common.make_string(""),
+                                            deps,
+                                        );
+                                        codebase.store_definition(cb.as_str(), &rec);
+                                        codebase.add_name(cb.as_str(), rec.name.as_str(), hex.as_str());
+                                    }
                                 }
                             }
                             &Option.None => {}
