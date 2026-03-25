@@ -75,6 +75,36 @@ pub fn str_equals(s: &String, other: &str) -> bool {
     true
 }
 
+/// Compares two &str values for equality.
+pub fn str_equals_str(a: &str, b: &str) -> bool {
+    let ab = a.as_bytes();
+    let bb = b.as_bytes();
+    if ab.len() != bb.len() { return false; }
+    for i in 0usize..ab.len() {
+        if ab[i] != bb[i] { return false; }
+    }
+    true
+}
+
+/// Strips the filename from a path, returning the directory portion.
+/// "build/obj/main.ll" -> "build/obj"
+pub fn strip_filename(path: &str) -> String {
+    let bytes = path.as_bytes();
+    let mut last_slash: usize = 0;
+    for i in 0usize..bytes.len() {
+        if bytes[i] == 47 { last_slash = i; } // '/'
+    }
+    let mut result = String.new();
+    if last_slash > 0 {
+        for i in 0usize..last_slash {
+            result.push(bytes[i] as char);
+        }
+    } else {
+        result.push('.');
+    }
+    result
+}
+
 /// Clones a String.
 pub fn clone_string(s: &String) -> String {
     common.make_string(s.as_str())

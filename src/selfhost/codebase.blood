@@ -14,6 +14,14 @@
 
 mod common;
 
+/// Returns the default codebase path (~/.blood/codebases/default).
+pub fn default_codebase_path() -> String {
+    let home: &str = env_get("HOME");
+    let mut path = common.make_string(home);
+    path.push_str("/.blood/codebases/default");
+    path
+}
+
 // ============================================================
 // DefinitionRecord
 // ============================================================
@@ -277,6 +285,56 @@ pub fn find_by_name(codebase: &str, name: &str) -> Option<String> {
         pos = eol + 1;
     }
     Option.None
+}
+
+/// Finds a definition by hash prefix in the names index.
+/// Returns the definition name if exactly one match found.
+/// Returns None if no match or ambiguous (multiple matches).
+pub fn find_by_hash_prefix(codebase: &str, prefix: &str) -> Option<String> {
+    let idx = names_path(codebase);
+    if !file_exists(idx.as_str()) { return Option.None; }
+    let content: &str = file_read_to_string(idx.as_str());
+    let clen: usize = str_len(content) as usize;
+    let plen: usize = str_len(prefix) as usize;
+    if plen == 0 { return Option.None; }
+    let mut found_name = String.new();
+    let mut match_count: u32 = 0;
+    let mut pos: usize = 0;
+    while pos < clen {
+        let mut eol: usize = pos;
+        while eol < clen && content.as_bytes()[eol] != 10 { eol += 1; }
+        // Find space separator between name and hash
+        let mut sp: usize = pos;
+        while sp < eol && content.as_bytes()[sp] != 32 { sp += 1; }
+        if sp < eol {
+            let hash_start = sp + 1;
+            let hash_len = eol - hash_start;
+            if hash_len >= plen {
+                let mut prefix_match = true;
+                let mut pi: usize = 0;
+                while pi < plen {
+                    if content.as_bytes()[hash_start + pi] != prefix.as_bytes()[pi] {
+                        prefix_match = false;
+                    }
+                    pi += 1;
+                }
+                if prefix_match {
+                    match_count += 1;
+                    if match_count == 1 {
+                        found_name = String.new();
+                        let mut ni: usize = pos;
+                        while ni < sp { found_name.push(content.as_bytes()[ni] as char); ni += 1; }
+                    }
+                }
+            }
+        }
+        pos = eol + 1;
+    }
+    if match_count == 1 {
+        Option.Some(found_name)
+    } else {
+        Option.None
+    }
 }
 
 pub fn init_codebase(path: &str) {
