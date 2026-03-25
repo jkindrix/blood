@@ -129,6 +129,16 @@ pub fn validate_body(body: &mir_body.MirBody, fn_name: &str) -> Vec<String> {
         validate_assign_types(&mut errors, body, bb_idx);
     }
 
+    // Check 11: BinaryOp operand type consistency
+    for bb_idx in 0usize..num_blocks {
+        validate_binop_types(&mut errors, body, bb_idx);
+    }
+
+    // Check 12: Call destination type vs return local type
+    for bb_idx in 0usize..num_blocks {
+        validate_call_destination(&mut errors, body, bb_idx);
+    }
+
     errors
 }
 
@@ -408,6 +418,41 @@ fn operand_ty(body: &mir_body.MirBody, op: &mir_types.Operand) -> type_intern.Ty
     }
 }
 
+/// Checks if two types are both integers (possibly different widths).
+/// MIR may have u32/u64/usize mismatches that codegen resolves via implicit widening.
+fn are_compatible_integers(a: type_intern.TyId, b: type_intern.TyId) -> bool {
+    let interner = type_intern.type_interner();
+    let a_kind = interner.get(a);
+    let b_kind = interner.get(b);
+    let a_int = match a_kind {
+        &type_intern.InternedTypeKind.Primitive(ref p) => {
+            match p {
+                &hir_ty.PrimitiveTy.I8 => true, &hir_ty.PrimitiveTy.I16 => true,
+                &hir_ty.PrimitiveTy.I32 => true, &hir_ty.PrimitiveTy.I64 => true,
+                &hir_ty.PrimitiveTy.U8 => true, &hir_ty.PrimitiveTy.U16 => true,
+                &hir_ty.PrimitiveTy.U32 => true, &hir_ty.PrimitiveTy.U64 => true,
+                &hir_ty.PrimitiveTy.Usize => true, &hir_ty.PrimitiveTy.Isize => true,
+                _ => false,
+            }
+        }
+        _ => false,
+    };
+    let b_int = match b_kind {
+        &type_intern.InternedTypeKind.Primitive(ref p) => {
+            match p {
+                &hir_ty.PrimitiveTy.I8 => true, &hir_ty.PrimitiveTy.I16 => true,
+                &hir_ty.PrimitiveTy.I32 => true, &hir_ty.PrimitiveTy.I64 => true,
+                &hir_ty.PrimitiveTy.U8 => true, &hir_ty.PrimitiveTy.U16 => true,
+                &hir_ty.PrimitiveTy.U32 => true, &hir_ty.PrimitiveTy.U64 => true,
+                &hir_ty.PrimitiveTy.Usize => true, &hir_ty.PrimitiveTy.Isize => true,
+                _ => false,
+            }
+        }
+        _ => false,
+    };
+    a_int && b_int
+}
+
 /// Checks if a TyId should be skipped for type consistency checking.
 fn is_skip_ty(ty: type_intern.TyId) -> bool {
     if ty.index == type_intern.CommonTypes.unit().index { return true; }
@@ -467,14 +512,14 @@ fn validate_assign_types(
                 if is_skip_ty(place_ty) || is_skip_ty(rv_ty) { continue; }
                 // Compare types
                 if place_ty.index != rv_ty.index {
-                    // Check for compatible types: comparison ops produce bool
-                    // but rvalue_ty returns the operand type, not bool.
-                    // Also skip BinaryOp — result type may differ from operands.
+                    // Skip BinaryOp — result type may differ from operands (comparisons → bool)
                     let is_binop = match rvalue {
                         &mir_types.Rvalue.BinaryOp { operator: _, left: _, right: _ } => true,
                         _ => false,
                     };
                     if is_binop { continue; }
+                    // Skip compatible integer width mismatches (e.g., u32 ↔ usize)
+                    if are_compatible_integers(place_ty, rv_ty) { continue; }
                     let mut msg = String.new();
                     msg.push_str("bb");
                     push_usize(&mut msg, bb_idx);
@@ -491,6 +536,75 @@ fn validate_assign_types(
             }
             _ => {}
         }
+    }
+}
+
+/// Validates BinaryOp operand types: both operands should have the same type.
+fn validate_binop_types(
+    errors: &mut Vec<String>,
+    body: &mir_body.MirBody,
+    bb_idx: usize,
+) {
+    let block = &body.basic_blocks[bb_idx];
+    for si in 0usize..block.statements.len() {
+        match &block.statements[si].kind {
+            &mir_stmt.StatementKind.Assign { ref place, ref rvalue } => {
+                match rvalue {
+                    &mir_types.Rvalue.BinaryOp { operator: _, ref left, ref right } => {
+                        let left_ty = operand_ty(body, left);
+                        let right_ty = operand_ty(body, right);
+                        if is_skip_ty(left_ty) || is_skip_ty(right_ty) { continue; }
+                        if left_ty.index != right_ty.index && !are_compatible_integers(left_ty, right_ty) {
+                            let mut msg = String.new();
+                            msg.push_str("bb");
+                            push_usize(&mut msg, bb_idx);
+                            msg.push_str("[");
+                            push_usize(&mut msg, si);
+                            msg.push_str("]: BinaryOp operand type mismatch: left=");
+                            msg.push_str(type_intern.format_ty_id(left_ty).as_str());
+                            msg.push_str(" right=");
+                            msg.push_str(type_intern.format_ty_id(right_ty).as_str());
+                            errors.push(msg);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Validates Call destination type: the destination local should not be unit
+/// when the call has arguments (likely a real return value), and the destination
+/// should have a valid local index.
+fn validate_call_destination(
+    errors: &mut Vec<String>,
+    body: &mir_body.MirBody,
+    bb_idx: usize,
+) {
+    let block = &body.basic_blocks[bb_idx];
+    match &block.terminator {
+        &Option.Some(ref term) => {
+            match &term.kind {
+                &mir_term.TerminatorKind.Call { func: _, ref args, ref destination, target: _, unwind: _ } => {
+                    let dest_idx = destination.local.index as usize;
+                    if dest_idx >= body.locals.len() {
+                        let mut msg = String.new();
+                        msg.push_str("bb");
+                        push_usize(&mut msg, bb_idx);
+                        msg.push_str("[term]: Call destination _");
+                        push_usize(&mut msg, dest_idx);
+                        msg.push_str(" out of range (");
+                        push_usize(&mut msg, body.locals.len());
+                        msg.push_str(" locals)");
+                        errors.push(msg);
+                    }
+                }
+                _ => {}
+            }
+        }
+        &Option.None => {}
     }
 }
 
