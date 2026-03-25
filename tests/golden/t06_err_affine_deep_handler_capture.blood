@@ -1,0 +1,19 @@
+// COMPILE_FAIL: E0223
+// EXPECT: affine value captured in deep handler body
+effect Ask {
+    op ask() -> i32;
+}
+
+fn main() -> i32 {
+    let x: affine i32 = 42;
+    let result: i32 = try {
+        let a: i32 = perform Ask.ask();
+        a
+    } with {
+        Ask.ask() => {
+            let v: i32 = x;
+            resume(v);
+        }
+    };
+    result
+}

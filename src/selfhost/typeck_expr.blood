@@ -103,6 +103,11 @@ pub fn infer_expr(checker: &mut typeck.TypeChecker, expr: &hir_expr.Expr) -> typ
             let prev_in_handler = checker.in_handler;
             checker.in_handler = true;
             let body_ty = infer_expr(checker, body.as_ref());
+            // Set deep handler boundary: inline handlers are always deep (can resume).
+            // Any outer linear/affine local referenced in a handler op body will be
+            // captured and potentially consumed multiple times across resumes.
+            let prev_boundary = checker.deep_handler_local_boundary;
+            checker.deep_handler_local_boundary = Option.Some(checker.locals.len() as u32);
             // Unify each handler's param types with the effect op's declared types,
             // then type-check the handler body. This resolves handler parameter
             // types for generic effects (e.g., value: T where T = i32).
@@ -136,6 +141,7 @@ pub fn infer_expr(checker: &mut typeck.TypeChecker, expr: &hir_expr.Expr) -> typ
                 }
                 let _hdlr_ty = infer_expr(checker, &hdlr.body);
             }
+            checker.deep_handler_local_boundary = prev_boundary;
             checker.in_handler = prev_in_handler;
             body_ty
         }
@@ -702,13 +708,19 @@ fn default_literal_type(expr: &hir_expr.Expr, fallback: type_intern.TyId) -> typ
 fn infer_local(checker: &mut typeck.TypeChecker, id: hir_def.LocalId, span: common.Span) -> type_intern.TyId {
     match checker.get_local_ty(id) {
         Some(ty) => {
-            // EFF-04: Check for linear/affine outer locals captured in deep handler body
+            // EFF-04: Check for linear/affine outer locals captured in deep handler body.
+            // Deep handlers can resume multiple times, so captured affine/linear values
+            // would be consumed more than once across resumptions.
             match &checker.deep_handler_local_boundary {
                 &Option.Some(boundary) => {
                     if id.index < boundary {
                         let resolved = checker.resolve(ty);
-                        if type_intern.is_linear_id(resolved) || type_intern.is_affine_id(resolved) {
-                            checker.error(typeck.TypeErrorKind.InvalidControl, span);
+                        if type_intern.is_linear_id(resolved) {
+                            checker.error_with_note(typeck.TypeErrorKind.LinearUsedMultipleTimes, span,
+                                common.make_string("linear value captured in deep handler body; may be consumed multiple times across resumptions"));
+                        } else if type_intern.is_affine_id(resolved) {
+                            checker.error_with_note(typeck.TypeErrorKind.AffineUsedMultipleTimes, span,
+                                common.make_string("affine value captured in deep handler body; may be consumed multiple times across resumptions"));
                         }
                     }
                 }
@@ -2016,6 +2028,26 @@ fn infer_cast(
         note.push_str(type_intern.format_ty_id(resolved_dst).as_str());
         note.push_str(" requires @unsafe block");
         checker.error_with_note(typeck.TypeErrorKind.InvalidCast, span, note);
+    }
+
+    // Reject casts that strip linearity/affine qualifiers
+    match &resolved_src_hir.kind {
+        &hir_ty.TypeKind.Ownership { ref qualifier, inner: _ } => {
+            match &resolved_dst_hir.kind {
+                &hir_ty.TypeKind.Ownership { qualifier: _, inner: _ } => {}
+                _ => {
+                    let qual_str = match qualifier {
+                        &hir_ty.OwnershipQualifier.Linear => "linear",
+                        &hir_ty.OwnershipQualifier.Affine => "affine",
+                    };
+                    let mut note = common.make_string("cast from ");
+                    note.push_str(qual_str);
+                    note.push_str(" type strips ownership qualifier");
+                    checker.error_with_note(typeck.TypeErrorKind.InvalidCast, span, note);
+                }
+            }
+        }
+        _ => {}
     }
 
     // Check object safety for dyn Trait coercions
