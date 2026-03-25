@@ -991,7 +991,8 @@ Diagnostics:
   emit [stage]        Emit intermediate IR (ast|hir|mir|llvm-ir|llvm-ir-unopt)
 
 Workflow:
-  gate                Full bootstrap pipeline + update seed on success
+  gate [--quick]      Full bootstrap pipeline + update seed on success
+                      --quick: skip first_gen/second_gen builds (assumes already verified)
   run <file> [bin]    Compile and run a file (default: first_gen)
   diff <file>         Compare blood-rust vs first_gen output
   status              Show compiler status, ages, processes (default command)
@@ -1222,14 +1223,32 @@ case "${1:-status}" in
         check_zombies
         PIPELINE_START=$(date +%s)
 
-        step "Bootstrap gate: full pipeline + seed update"
+        _gate_quick=false
+        if [[ "${2:-}" == "--quick" || "${2:-}" == "-q" ]]; then
+            _gate_quick=true
+        fi
 
-        do_build_blood_runtime
-        do_build_first_gen "--timings"
-        do_test_golden "$BUILD_DIR/first_gen" || warn "first_gen golden: some tests failed (non-fatal for gate)"
-        do_build_second_gen
-        do_test_golden "$BUILD_DIR/second_gen" || warn "second_gen golden: some tests failed (non-fatal for gate)"
-        do_build_third_gen
+        if $_gate_quick; then
+            # Quick gate: skip first_gen/second_gen builds + golden tests.
+            # Assumes both already exist and are verified.
+            if [[ ! -f "$BUILD_DIR/first_gen" ]]; then
+                fail "gate --quick: $BUILD_DIR/first_gen not found. Run full gate instead."
+            fi
+            if [[ ! -f "$BUILD_DIR/second_gen" ]]; then
+                fail "gate --quick: $BUILD_DIR/second_gen not found. Run full gate instead."
+            fi
+            step "Bootstrap gate (quick): third_gen byte-compare + seed update"
+            do_build_third_gen
+        else
+            step "Bootstrap gate: full pipeline + seed update"
+
+            do_build_blood_runtime
+            do_build_first_gen "--timings"
+            do_test_golden "$BUILD_DIR/first_gen" || warn "first_gen golden: some tests failed (non-fatal for gate)"
+            do_build_second_gen
+            do_test_golden "$BUILD_DIR/second_gen" || warn "second_gen golden: some tests failed (non-fatal for gate)"
+            do_build_third_gen
+        fi
 
         # third_gen byte-identical check is inside do_build_third_gen.
         # If we get here, the bootstrap passed. Update the seed.
