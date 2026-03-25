@@ -1,0 +1,29 @@
+// Test: inline handler that uses the operation parameter value
+// EXPECT: 10
+// EXPECT: 20
+// EXPECT: 30
+// EXPECT: 0
+effect Emit<T> {
+    op emit(value: T) -> ();
+}
+
+fn emit_values() -> i32 / {Emit<i32>} {
+    perform Emit.emit(10);
+    perform Emit.emit(20);
+    perform Emit.emit(30);
+    0
+}
+
+fn main() -> i32 {
+    let result: i32 = try {
+        emit_values();
+        0
+    } with {
+        Emit.emit(value) => {
+            println_int(value);
+            resume(());
+        }
+    };
+    println_int(result);
+    0
+}

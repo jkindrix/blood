@@ -226,6 +226,9 @@ pub struct MirLowerCtx {
     pub closure_names: Vec<String>,
     /// Closure MIR bodies discovered during lowering (parallel to closure_names).
     pub closure_mir: Vec<mir_body.MirBody>,
+    /// Whether each closure body is an inline handler op (parallel to closure_names).
+    /// When true, the body should be compiled with is_handler_op=true.
+    pub closure_is_handler_op: Vec<bool>,
     /// Counter for generating unique closure DefIds.
     pub closure_counter: u32,
     /// Coercion entries from type checking.
@@ -360,6 +363,7 @@ impl MirLowerCtx {
             errors: Vec.new(),
             closure_names: Vec.new(),
             closure_mir: Vec.new(),
+            closure_is_handler_op: Vec.new(),
             closure_counter: 0,
             coercion_entries: coercion_entries,
             const_bindings: Vec.new(),
@@ -380,6 +384,14 @@ impl MirLowerCtx {
     pub fn register_closure_body(self: &mut MirLowerCtx, name: String, body: mir_body.MirBody) {
         self.closure_names.push(name);
         self.closure_mir.push(body);
+        self.closure_is_handler_op.push(false);
+    }
+
+    /// Registers an inline handler op body (compiled like a closure but with handler ABI).
+    pub fn register_inline_handler_body(self: &mut MirLowerCtx, name: String, body: mir_body.MirBody) {
+        self.closure_names.push(name);
+        self.closure_mir.push(body);
+        self.closure_is_handler_op.push(true);
     }
 
     /// Returns the number of closure bodies registered.

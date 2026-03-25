@@ -490,25 +490,145 @@ pub fn emit_statement(
                 ctx.write("call void @blood_handler_pop_abort_target()\n");
             }
         }
-        &mir_stmt.StatementKind.PushInlineHandler { effect_id, operations: _ } => {
+        &mir_stmt.StatementKind.PushInlineHandler { effect_id, ref operations } => {
             // Inline effect handler push via evidence API
             let effect_id_val = codegen_types.format_u64(effect_id.index as u64);
 
-            // Generate a unique stub function name for this inline handler op
-            let stub_id = ctx.inline_stub_count;
-            ctx.inline_stub_count = ctx.inline_stub_count + 1;
-            let mut stub_name = common.make_string("__inline_stub_");
-            let stub_id_str = codegen_types.format_u64(stub_id as u64);
-            stub_name.push_str(stub_id_str.as_str());
+            // For each operation, generate a wrapper function that adapts the
+            // handler ABI (ptr state, ptr args, i64 arg_count, i64 cont) -> i64
+            // to the inner body's natural parameter signature.
+            let op_count = operations.len();
+            let op_count_val = codegen_types.format_u64(op_count as u64);
 
-            // Add the stub function definition (emitted at module level after all bodies).
-            // Deactivate temp region so the stub string persists across function resets.
+            // Deactivate temp region so wrapper strings persist across function resets.
             let had_temp_stub = ctx.fn_temp_region != 0;
             if had_temp_stub { region_deactivate(); }
-            let mut stub_def = common.make_string("define internal i64 @");
-            stub_def.push_str(stub_name.as_str());
-            stub_def.push_str("(ptr %state, ptr %args, i64 %arg_count, i64 %cont) {\nentry:\n  ret i64 0\n}\n\n");
-            ctx.inline_stubs.push(stub_def);
+
+            // Wrapper names for ops array (collected for store instructions below)
+            let mut wrapper_names: Vec<String> = Vec.new();
+
+            for oi in 0usize..op_count {
+                let op = &operations[oi];
+
+                // Generate unique wrapper function name
+                let stub_id = ctx.inline_stub_count;
+                ctx.inline_stub_count = ctx.inline_stub_count + 1;
+                let mut wrapper_name = common.make_string("__inline_wrapper_");
+                let stub_id_str = codegen_types.format_u64(stub_id as u64);
+                wrapper_name.push_str(stub_id_str.as_str());
+
+                // Build wrapper that unpacks args and calls the inner body
+                let mut wrapper_def = common.make_string("define internal i64 @");
+                wrapper_def.push_str(wrapper_name.as_str());
+                wrapper_def.push_str("(ptr %state, ptr %args, i64 %arg_count, i64 %cont) {\nentry:\n");
+
+                // Extract args from %args pointer and call inner body
+                let param_count = op.param_types.len();
+                if param_count == 0 {
+                    // No params: call inner body with just %cont
+                    wrapper_def.push_str("  %result = call i64 @");
+                    wrapper_def.push_str(op.fn_name.as_str());
+                    wrapper_def.push_str("(i64 %cont)\n");
+                    wrapper_def.push_str("  ret i64 %result\n");
+                } else {
+                    // Load each arg from args array and narrow to the expected type
+                    for pi in 0usize..param_count {
+                        let pi_str = codegen_types.format_u64(pi as u64);
+                        let param_ty = codegen_size.type_to_llvm_with_ctx_id(ctx, op.param_types[pi]);
+
+                        if pi == 0 {
+                            // First arg: load directly from args ptr
+                            wrapper_def.push_str("  %arg_i64_0 = load i64, ptr %args, align 8\n");
+                        } else {
+                            // GEP into args array for subsequent args
+                            wrapper_def.push_str("  %arg_gep_");
+                            wrapper_def.push_str(pi_str.as_str());
+                            wrapper_def.push_str(" = getelementptr i64, ptr %args, i64 ");
+                            wrapper_def.push_str(pi_str.as_str());
+                            wrapper_def.push_str("\n");
+                            wrapper_def.push_str("  %arg_i64_");
+                            wrapper_def.push_str(pi_str.as_str());
+                            wrapper_def.push_str(" = load i64, ptr %arg_gep_");
+                            wrapper_def.push_str(pi_str.as_str());
+                            wrapper_def.push_str(", align 8\n");
+                        }
+
+                        // Narrow i64 to the expected type
+                        if str_eq(param_ty.as_str(), "i64") {
+                            // No narrowing needed, use directly
+                        } else if str_eq(param_ty.as_str(), "i32") {
+                            wrapper_def.push_str("  %arg_");
+                            wrapper_def.push_str(pi_str.as_str());
+                            wrapper_def.push_str(" = trunc i64 %arg_i64_");
+                            wrapper_def.push_str(pi_str.as_str());
+                            wrapper_def.push_str(" to i32\n");
+                        } else if str_eq(param_ty.as_str(), "i16") {
+                            wrapper_def.push_str("  %arg_");
+                            wrapper_def.push_str(pi_str.as_str());
+                            wrapper_def.push_str(" = trunc i64 %arg_i64_");
+                            wrapper_def.push_str(pi_str.as_str());
+                            wrapper_def.push_str(" to i16\n");
+                        } else if str_eq(param_ty.as_str(), "i8") {
+                            wrapper_def.push_str("  %arg_");
+                            wrapper_def.push_str(pi_str.as_str());
+                            wrapper_def.push_str(" = trunc i64 %arg_i64_");
+                            wrapper_def.push_str(pi_str.as_str());
+                            wrapper_def.push_str(" to i8\n");
+                        } else if str_eq(param_ty.as_str(), "i1") {
+                            wrapper_def.push_str("  %arg_");
+                            wrapper_def.push_str(pi_str.as_str());
+                            wrapper_def.push_str(" = trunc i64 %arg_i64_");
+                            wrapper_def.push_str(pi_str.as_str());
+                            wrapper_def.push_str(" to i1\n");
+                        } else if str_eq(param_ty.as_str(), "ptr") {
+                            wrapper_def.push_str("  %arg_");
+                            wrapper_def.push_str(pi_str.as_str());
+                            wrapper_def.push_str(" = inttoptr i64 %arg_i64_");
+                            wrapper_def.push_str(pi_str.as_str());
+                            wrapper_def.push_str(" to ptr\n");
+                        } else {
+                            // Struct/aggregate: interpret i64 as pointer and load
+                            wrapper_def.push_str("  %arg_ptr_");
+                            wrapper_def.push_str(pi_str.as_str());
+                            wrapper_def.push_str(" = inttoptr i64 %arg_i64_");
+                            wrapper_def.push_str(pi_str.as_str());
+                            wrapper_def.push_str(" to ptr\n");
+                            wrapper_def.push_str("  %arg_");
+                            wrapper_def.push_str(pi_str.as_str());
+                            wrapper_def.push_str(" = load ");
+                            wrapper_def.push_str(param_ty.as_str());
+                            wrapper_def.push_str(", ptr %arg_ptr_");
+                            wrapper_def.push_str(pi_str.as_str());
+                            wrapper_def.push_str("\n");
+                        }
+                    }
+
+                    // Build call to inner body: inner_fn(arg_0, arg_1, ..., %cont)
+                    wrapper_def.push_str("  %result = call i64 @");
+                    wrapper_def.push_str(op.fn_name.as_str());
+                    wrapper_def.push_str("(");
+                    for pi in 0usize..param_count {
+                        if pi > 0 { wrapper_def.push_str(", "); }
+                        let param_ty = codegen_size.type_to_llvm_with_ctx_id(ctx, op.param_types[pi]);
+                        wrapper_def.push_str(param_ty.as_str());
+                        wrapper_def.push_str(" ");
+                        if str_eq(param_ty.as_str(), "i64") {
+                            wrapper_def.push_str("%arg_i64_");
+                        } else {
+                            wrapper_def.push_str("%arg_");
+                        }
+                        let pi_str = codegen_types.format_u64(pi as u64);
+                        wrapper_def.push_str(pi_str.as_str());
+                    }
+                    wrapper_def.push_str(", i64 %cont)\n");
+                    wrapper_def.push_str("  ret i64 %result\n");
+                }
+
+                wrapper_def.push_str("}\n\n");
+                ctx.inline_stubs.push(wrapper_def);
+                wrapper_names.push(wrapper_name);
+            }
+
             if had_temp_stub { region_activate(ctx.fn_temp_region); }
 
             // Get or create evidence vector (using alloca to avoid phi predecessor issue)
@@ -552,32 +672,67 @@ pub fn emit_statement(
             let evidence = ctx.fresh_temp_cg();
             ctx.emit_load_cg2(&evidence, "ptr", &ev_alloca);
 
-            // Register stub handler op with the evidence API
-            // Build ops array with one stub function pointer (op_index=0)
+            // Build ops array with wrapper function pointers
+            let actual_count = if op_count > 0 { op_count } else { 1usize };
+            let actual_count_str = codegen_types.format_u64(actual_count as u64);
             let ops_alloca = ctx.fresh_temp_cg();
             ctx.write_indent();
             ctx.write_cgname(&ops_alloca);
-            ctx.write(" = alloca [1 x ptr]\n");
+            ctx.write(" = alloca [");
+            ctx.write_string(&actual_count_str);
+            ctx.write(" x ptr]\n");
+
+            // Store each wrapper function pointer in the array
+            for oi in 0usize..op_count {
+                if oi == 0 {
+                    // First element: store directly to base
+                    ctx.write_indent();
+                    ctx.write("store ptr @");
+                    ctx.write_string(&wrapper_names[oi]);
+                    ctx.write(", ptr ");
+                    ctx.write_cgname(&ops_alloca);
+                    ctx.write(", align 8\n");
+                } else {
+                    // Subsequent elements: GEP into array
+                    let elem_ptr = ctx.fresh_temp_cg();
+                    let oi_str = codegen_types.format_u64(oi as u64);
+                    ctx.write_indent();
+                    ctx.write_cgname(&elem_ptr);
+                    ctx.write(" = getelementptr ptr, ptr ");
+                    ctx.write_cgname(&ops_alloca);
+                    ctx.write(", i64 ");
+                    ctx.write_string(&oi_str);
+                    ctx.write("\n");
+                    ctx.write_indent();
+                    ctx.write("store ptr @");
+                    ctx.write_string(&wrapper_names[oi]);
+                    ctx.write(", ptr ");
+                    ctx.write_cgname(&elem_ptr);
+                    ctx.write(", align 8\n");
+                }
+            }
+
+            // Register with evidence API
+            let reg_idx = ctx.fresh_temp_cg();
             ctx.write_indent();
-            ctx.write("store ptr @");
-            ctx.write_string(&stub_name);
-            ctx.write(", ptr ");
-            ctx.write_cgname(&ops_alloca);
-            ctx.write(", align 8\n");
-            ctx.write_indent();
-            ctx.write("%_inline_reg_idx = call i64 @blood_evidence_register(ptr ");
+            ctx.write_cgname(&reg_idx);
+            ctx.write(" = call i64 @blood_evidence_register(ptr ");
             ctx.write_cgname(&evidence);
             ctx.write(", i64 ");
             ctx.write_string(&effect_id_val);
             ctx.write(", ptr ");
             ctx.write_cgname(&ops_alloca);
-            ctx.write(", i64 1, i64 1)\n");
+            ctx.write(", i64 ");
+            ctx.write_string(&op_count_val);
+            ctx.write(", i64 1)\n");
 
             // Push using exact registry index from inline registration
             ctx.write_indent();
             ctx.write("call void @blood_evidence_push_by_index(ptr ");
             ctx.write_cgname(&evidence);
-            ctx.write(", i64 %_inline_reg_idx, ptr null)\n");
+            ctx.write(", i64 ");
+            ctx.write_cgname(&reg_idx);
+            ctx.write(", ptr null)\n");
 
             // EFF-OPT-003: Only set inline hint for single-handler scopes
             ctx.handler_depth = ctx.handler_depth + 1;

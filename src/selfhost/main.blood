@@ -3286,17 +3286,30 @@ fn codegen_thread_worker(arg: u64) -> u64 {
         region_deactivate();
         output.push_str(fn_ir.as_str());
 
-        // Generate closure bodies discovered during MIR lowering
+        // Generate closure and inline handler bodies discovered during MIR lowering
         let mut cli: usize = 0;
         while cli < mir_result.closure_names.len() && cli < mir_result.closure_mir.len() {
             let cname = &mir_result.closure_names[cli];
             let cbody = &mir_result.closure_mir[cli];
+
+            // Check if this closure body is an inline handler op
+            let is_inline_hop = cli < mir_result.closure_is_handler_op.len()
+                && mir_result.closure_is_handler_op[cli];
+            if is_inline_hop {
+                ctx.is_handler_op = true;
+            }
+
             region_activate(fn_temp_region);
             ctx.fn_temp_region = fn_temp_region;
             let closure_ir = codegen.generate_function_with_ctx(ctx, cbody, cname.as_str());
             ctx.fn_temp_region = 0 as u64;
             region_deactivate();
             output.push_str(closure_ir.as_str());
+
+            if is_inline_hop {
+                ctx.is_handler_op = false;
+            }
+
             cli += 1;
         }
 
@@ -3773,15 +3786,28 @@ fn codegen_pass2(
         }
         file_append_string(output_path, fn_ir.as_str());
 
-        // Generate closure bodies discovered during MIR lowering
+        // Generate closure and inline handler bodies discovered during MIR lowering
         let mut combined_ir = common.make_string(fn_ir.as_str());
         let mut cli: usize = 0;
         while cli < mir_result.closure_names.len() && cli < mir_result.closure_mir.len() {
             let cname = &mir_result.closure_names[cli];
             let cbody = &mir_result.closure_mir[cli];
+
+            // Check if this closure body is an inline handler op
+            let is_inline_hop = cli < mir_result.closure_is_handler_op.len()
+                && mir_result.closure_is_handler_op[cli];
+            if is_inline_hop {
+                ctx.is_handler_op = true;
+            }
+
             let closure_ir = codegen.generate_function_with_ctx(ctx, cbody, cname.as_str());
             file_append_string(output_path, closure_ir.as_str());
             combined_ir.push_str(closure_ir.as_str());
+
+            if is_inline_hop {
+                ctx.is_handler_op = false;
+            }
+
             cli += 1;
         }
 

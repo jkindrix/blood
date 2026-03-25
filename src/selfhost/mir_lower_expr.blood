@@ -226,29 +226,7 @@ fn lower_expr_inner(
             lower_with_handle_expr(ctx, handler_expr.as_ref(), body_expr.as_ref(), &resolved_ty, dest, expr.span);
         }
         &hir_expr.ExprKind.InlineHandle { ref body, ref handlers } => {
-            // Emit PushInlineHandler for each handler's effect
-            for hi in 0usize..handlers.len() {
-                let hdlr = &handlers[hi];
-                ctx.emit_stmt(mir_stmt.Statement.new(
-                    mir_stmt.StatementKind.PushInlineHandler {
-                        effect_id: hdlr.effect_id,
-                        operations: Vec.new(),
-                    },
-                    expr.span,
-                ));
-            }
-            // Lower the body
-            lower_expr(ctx, body.as_ref(), dest);
-            // Pop handlers in reverse order
-            for pi in 0usize..handlers.len() {
-                let rev_idx = handlers.len() - 1 - pi;
-                ctx.emit_stmt(mir_stmt.Statement.new(
-                    mir_stmt.StatementKind.PopHandler {
-                        handler_id: handlers[rev_idx].effect_id,
-                    },
-                    expr.span,
-                ));
-            }
+            lower_inline_handle_expr(ctx, body.as_ref(), handlers, dest, expr.span);
         }
         &hir_expr.ExprKind.Perform { effect_def, op_def: _, op_name, ref args } => {
             lower_perform_expr(ctx, effect_def, op_name, args, &resolved_ty, dest, expr.span);
@@ -2460,6 +2438,112 @@ fn lower_closure_expr(
             );
         }
         Option.None => {}
+    }
+}
+
+/// Lower an inline handle expression (try { body } with { Effect.op(params) => { handler_body } }).
+///
+/// For each handler operation, creates a separate MIR body (like closures) that
+/// receives the op's natural parameters plus %__cont. The MIR body is registered
+/// as an inline handler body. During codegen, a wrapper function with the handler
+/// ABI (ptr state, ptr args, i64 arg_count, i64 cont) -> i64 is generated that
+/// unpacks args and calls the inner body.
+fn lower_inline_handle_expr(
+    ctx: &mut mir_lower_ctx.MirLowerCtx,
+    body: &hir_expr.Expr,
+    handlers: &Vec<hir_expr.InlineOpHandler>,
+    dest: mir_lower_ctx.Destination,
+    span: common.Span,
+) {
+    // For each handler, create a MIR body for the handler op and build operations list
+    let mut all_ops: Vec<mir_stmt.InlineOperation> = Vec.new();
+    let mut current_effect_id = hir_def.DefId.new(0);
+
+    for hi in 0usize..handlers.len() {
+        let hdlr = &handlers[hi];
+        current_effect_id = hdlr.effect_id;
+
+        // Generate unique function name for this inline handler inner body
+        let handler_def_id = ctx.next_closure_def_id();
+        let mut inner_name = common.make_string("__inline_handler_op_");
+        let id_str = codegen_types.format_u64(handler_def_id.index as u64);
+        inner_name.push_str(id_str.as_str());
+
+        // Create a new MirLowerCtx for the handler op body.
+        // The inner function takes the op's natural params and is compiled with
+        // is_handler_op=true (which adds %__cont as the last param).
+        let subst_addr = ctx.get_subst_table_addr();
+        let mut handler_ctx = mir_lower_ctx.MirLowerCtx.new(
+            handler_def_id,
+            type_intern.CommonTypes.i64_ty(), // handler ops return i64
+            span,
+            subst_addr,
+            Vec.new(), // No method resolutions needed in handler body
+            Vec.new(), // No field resolutions
+            Vec.new(), // No coercions
+        );
+
+        // Add the op's natural parameters
+        for pi in 0usize..hdlr.params.len() {
+            let resolved_ty = ctx.resolve_type_to_id(hdlr.param_types[pi]);
+            let mir_local = handler_ctx.builder.add_param(resolved_ty, String.new(), span);
+            handler_ctx.register_local(hdlr.params[pi], mir_local);
+        }
+
+        // Lower the handler body expression
+        lower_expr_to_return(&mut handler_ctx, &hdlr.body);
+
+        // Terminate with return if not already terminated
+        if !handler_ctx.is_terminated() {
+            handler_ctx.terminate_return(span);
+        }
+
+        // Finish the handler body
+        let handler_body = handler_ctx.finish();
+
+        // Register as inline handler op body (compiled with is_handler_op=true)
+        let inner_name_copy = common.make_string(inner_name.as_str());
+        ctx.register_inline_handler_body(inner_name_copy, handler_body);
+
+        // Build resolved param types for the operation
+        let mut resolved_param_types: Vec<type_intern.TyId> = Vec.new();
+        for pi in 0usize..hdlr.param_types.len() {
+            resolved_param_types.push(ctx.resolve_type_to_id(hdlr.param_types[pi]));
+        }
+        let resolved_return_ty = ctx.resolve_type_to_id(hdlr.return_ty);
+
+        // Create the operation entry with the inner function name
+        all_ops.push(mir_stmt.InlineOperation.new(
+            hi as u32,
+            String.new(), // op_name not needed for codegen
+            resolved_param_types,
+            resolved_return_ty,
+            hir_def.BodyId.new(0), // body_id not used
+            inner_name,
+        ));
+    }
+
+    // Emit PushInlineHandler with the operations list
+    ctx.emit_stmt(mir_stmt.Statement.new(
+        mir_stmt.StatementKind.PushInlineHandler {
+            effect_id: current_effect_id,
+            operations: all_ops,
+        },
+        span,
+    ));
+
+    // Lower the try body
+    lower_expr(ctx, body, dest);
+
+    // Pop handlers in reverse order
+    for pi in 0usize..handlers.len() {
+        let rev_idx = handlers.len() - 1 - pi;
+        ctx.emit_stmt(mir_stmt.Statement.new(
+            mir_stmt.StatementKind.PopHandler {
+                handler_id: handlers[rev_idx].effect_id,
+            },
+            span,
+        ));
     }
 }
 

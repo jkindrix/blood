@@ -34,6 +34,8 @@ pub struct MirLowerResult {
     pub closure_names: Vec<String>,
     /// Closure MIR bodies (parallel to closure_names).
     pub closure_mir: Vec<mir_body.MirBody>,
+    /// Whether each closure body is an inline handler op (parallel to closure_names).
+    pub closure_is_handler_op: Vec<bool>,
     /// Monomorphization requests from const-generic call interception.
     pub mono_requests: Vec<mir_lower_ctx.MonoRequest>,
     /// Next mono DefId counter (after allocations in this lowering).
@@ -99,6 +101,7 @@ pub fn lower_body(
     // because blood-rust has a bug with pop() on Vecs allocated in regions.
     let closure_names = ctx.closure_names;
     let closure_mir = ctx.closure_mir;
+    let closure_is_handler_op = ctx.closure_is_handler_op;
 
     // Finish and return the MIR body
     let mono_requests = ctx.mono_requests;
@@ -117,6 +120,7 @@ pub fn lower_body(
         errors: errors,
         closure_names: closure_names,
         closure_mir: closure_mir,
+        closure_is_handler_op: closure_is_handler_op,
         mono_requests: mono_requests,
         next_mono_def_id: next_mono_def_id,
     }
@@ -174,6 +178,7 @@ pub fn lower_body_with_const_info(
     let errors = ctx.take_errors();
     let closure_names = ctx.closure_names;
     let closure_mir = ctx.closure_mir;
+    let closure_is_handler_op = ctx.closure_is_handler_op;
     let mono_requests = ctx.mono_requests;
     let next_mono_def_id = ctx.next_mono_def_id;
     let mut mir_body = ctx.finish();
@@ -189,6 +194,7 @@ pub fn lower_body_with_const_info(
         errors: errors,
         closure_names: closure_names,
         closure_mir: closure_mir,
+        closure_is_handler_op: closure_is_handler_op,
         mono_requests: mono_requests,
         next_mono_def_id: next_mono_def_id,
     }

@@ -253,6 +253,9 @@ pub struct InlineOperation {
     pub return_type: type_intern.TyId,
     /// The body ID for the operation's handler code.
     pub body_id: hir_def.BodyId,
+    /// The LLVM function name of the inner handler body (set during MIR lowering).
+    /// Used by codegen to generate a wrapper that calls this function.
+    pub fn_name: String,
 }
 
 impl InlineOperation {
@@ -263,6 +266,7 @@ impl InlineOperation {
         param_types: Vec<type_intern.TyId>,
         return_type: type_intern.TyId,
         body_id: hir_def.BodyId,
+        fn_name: String,
     ) -> InlineOperation {
         InlineOperation {
             op_index: op_index,
@@ -270,6 +274,7 @@ impl InlineOperation {
             param_types: param_types,
             return_type: return_type,
             body_id: body_id,
+            fn_name: fn_name,
         }
     }
 }
