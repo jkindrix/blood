@@ -28,6 +28,7 @@ mod hir;
 mod resolve;
 mod hir_lower_ctx;
 mod hir_lower_type;
+mod codebase;
 mod hir_lower_item;
 mod hir_lower_expr;
 mod hir_lower_body;
@@ -396,7 +397,60 @@ fn resolve_import(ctx: &mut hir_lower_ctx.LoweringCtx, imp: &ast.Import) {
                 ctx.error(hir.DiagnosticCode.E0103, common.make_string("unresolved import"), path.span);
             }
         }
-        &ast.Import.Hash { ref hash_prefix, alias: _, span: _ } => {}
+        &ast.Import.Hash { ref hash_prefix, ref alias, span: _ } => {
+            let prefix_str = ctx.span_to_string(hash_prefix.span);
+            let cb_path = codebase.default_codebase_path();
+            let lookup_result = codebase.find_by_hash_prefix(cb_path.as_str(), prefix_str.as_str());
+            match &lookup_result {
+                &Option.Some(ref found_name) => {
+                    let name_sym = ctx.intern(found_name.as_str());
+                    let mut resolved_def_id = hir_def.DefId.new(0);
+                    let mut found = false;
+                    // Check current scope chain
+                    let scope_result = ctx.resolver.lookup(name_sym);
+                    if scope_result.is_some() {
+                        let sr = scope_result.unwrap();
+                        let b = ctx.resolver.scope_binding(sr.scope_index, sr.binding_index);
+                        resolved_def_id = b.def_id;
+                        found = true;
+                    }
+                    // Search loaded modules if not in scope
+                    if !found {
+                        for mi in 0usize..ctx.loaded_modules.len() {
+                            let child = ctx.resolver.lookup_in_parent(ctx.loaded_modules[mi].def_id, name_sym);
+                            if child.is_some() {
+                                resolved_def_id = child.unwrap();
+                                found = true;
+                            }
+                        }
+                    }
+                    if found {
+                        let bind_sym = match alias {
+                            &Option.Some(ref alias_name) => {
+                                let alias_str = ctx.span_to_string(alias_name.span);
+                                ctx.intern(alias_str.as_str())
+                            }
+                            &Option.None => {
+                                name_sym
+                            }
+                        };
+                        let new_binding = resolve.Binding.def(resolved_def_id);
+                        ctx.resolver.define(bind_sym, new_binding);
+                    } else {
+                        let mut msg = common.make_string("hash import resolved to '");
+                        msg.push_str(found_name.as_str());
+                        msg.push_str("' but definition is not in scope");
+                        ctx.error(hir.DiagnosticCode.E0103, msg, hash_prefix.span);
+                    }
+                }
+                &Option.None => {
+                    let mut msg = common.make_string("unresolved hash import: no match for prefix '");
+                    msg.push_str(prefix_str.as_str());
+                    msg.push('\'');
+                    ctx.error(hir.DiagnosticCode.E0103, msg, hash_prefix.span);
+                }
+            }
+        }
     }
 }
 

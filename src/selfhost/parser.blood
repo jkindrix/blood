@@ -147,7 +147,20 @@ fn parse_import(parser: &mut parser_base.Parser) -> ast.Import {
         if sym_len == 4 {
             parser.advance(); // consume "hash"
             parser.advance(); // consume "("
-            let prefix_sym = parser.parse_spanned_symbol();
+            let prefix_sym = if parser.check(token.TokenKind.StringLit) {
+                // String literal prefix: strip quotes from span
+                let inner_span = common.Span {
+                    start: parser.current.span.start + 1,
+                    end: parser.current.span.end - 1,
+                    line: parser.current.span.line,
+                    column: parser.current.span.column + 1,
+                };
+                let index = parser.intern_symbol(inner_span.start as u32, inner_span.end as u32);
+                parser.advance();
+                common.SpannedSymbol { symbol: common.Symbol { index: index }, span: inner_span }
+            } else {
+                parser.parse_spanned_symbol()
+            };
             parser.expect(token.TokenKind.RParen);
             let alias = if parser.try_consume(token.TokenKind.As) {
                 Option.Some(parser.parse_spanned_symbol())
