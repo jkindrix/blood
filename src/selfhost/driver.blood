@@ -28,6 +28,10 @@ mod typeck;
 mod typeck_driver;
 mod source;
 mod type_intern;
+mod mir_init;
+mod mir_types;
+mod mir_stmt;
+mod mir_term;
 mod macro_expand;
 
 // ============================================================
@@ -556,6 +560,96 @@ impl Compiler {
             return CheckResult {
                 success: false,
                 errors: errors,
+            };
+        }
+
+        // Post-typeck MIR validation: init check + dangling ref rejection (BC-01)
+        // Only check main-file bodies (external module bodies may have incomplete scope)
+        let mut safety_errors: Vec<error.CompileError> = Vec.new();
+        for bi in 0usize..lower_result.main_body_count {
+            let body_entry = &lower_result.bodies[bi];
+            let fn_info = find_fn_for_body(&lower_result.items, body_entry.body_id);
+            let return_ty = match &fn_info {
+                &Option.Some(ref info) => type_intern.TyId.new(info.return_ty.index),
+                &Option.None => type_intern.CommonTypes.unit(),
+            };
+            let span = match &fn_info {
+                &Option.Some(ref info) => info.span,
+                &Option.None => common.Span.new(0, 0, 1, 1),
+            };
+            let def_id = match &fn_info {
+                &Option.Some(ref info) => info.def_id,
+                &Option.None => hir_def.DefId.new(bi as u32),
+            };
+
+            let mir_result = mir_lower.lower_body(
+                def_id,
+                &body_entry.body,
+                return_ty,
+                span,
+                &typeck_result.subst_table,
+                &typeck_result.method_resolutions,
+                &typeck_result.field_resolutions,
+                &typeck_result.coercion_entries,
+            );
+
+            // Definite initialization + linearity check
+            if mir_result.errors.len() == 0 {
+                let init_result = mir_init.analyze_init(&mir_result.body);
+                for ii in 0usize..init_result.errors.len() {
+                    safety_errors.push(error.CompileError.new(
+                        error.CompilePhase.TypeCheck,
+                        common.make_string(init_result.errors[ii].message.as_str()),
+                    ));
+                }
+                let lin_result = mir_init.analyze_linearity(&mir_result.body);
+                for li in 0usize..lin_result.errors.len() {
+                    safety_errors.push(error.CompileError.new(
+                        error.CompilePhase.TypeCheck,
+                        common.make_string(lin_result.errors[li].message.as_str()),
+                    ));
+                }
+            }
+
+            // BC-01: Reject returning reference to stack-local variable
+            let param_end: u32 = 1 + mir_result.body.param_count;
+            for dbb in 0usize..mir_result.body.basic_blocks.len() {
+                let dblk = &mir_result.body.basic_blocks[dbb];
+                let has_ret = match &dblk.terminator {
+                    &Option.Some(ref t) => {
+                        match &t.kind { &mir_term.TerminatorKind.Return => true, _ => false, }
+                    }
+                    &Option.None => false,
+                };
+                if has_ret {
+                    for dsi in 0usize..dblk.statements.len() {
+                        match &dblk.statements[dsi].kind {
+                            &mir_stmt.StatementKind.Assign { ref place, ref rvalue } => {
+                                if place.local.index == 0 {
+                                    match rvalue {
+                                        &mir_types.Rvalue.Ref { ref place: rp, mutable: _ } => {
+                                            if rp.local.index >= param_end && rp.projection.len() == 0 {
+                                                safety_errors.push(error.CompileError.new(
+                                                    error.CompilePhase.TypeCheck,
+                                                    common.make_string("cannot return reference to local variable"),
+                                                ));
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+
+        if safety_errors.len() > 0 {
+            return CheckResult {
+                success: false,
+                errors: safety_errors,
             };
         }
 

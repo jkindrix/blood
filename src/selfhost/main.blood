@@ -2981,6 +2981,26 @@ struct CodegenWorkList {
 }
 
 /// Scans all HIR bodies and builds a work list of functions to codegen.
+/// Finds the FnSig for a body by scanning items for a matching body_id.
+fn find_fn_sig_for_body(items: &Vec<hir_lower_ctx.ItemEntry>, body_id: hir_def.BodyId) -> Option<hir_item.FnSig> {
+    for j in 0usize..items.len() {
+        match &items[j].item.kind {
+            &hir_item.ItemKind.Fn(ref fn_def) => {
+                match &fn_def.body_id {
+                    &Option.Some(ref bid) => {
+                        if bid.index == body_id.index {
+                            return Option.Some(fn_def.sig);
+                        }
+                    }
+                    &Option.None => {}
+                }
+            }
+            _ => {}
+        }
+    }
+    Option.None
+}
+
 /// Filters out static bodies and duplicates from generic instantiations.
 /// This separates work identification from work execution, enabling batching.
 fn build_codegen_worklist(
@@ -3299,6 +3319,39 @@ fn codegen_pass2(
         let body_entry = &lower_result.bodies[work.body_idx];
         let hir_body = &body_entry.body;
 
+        // Per-function content hash skip (in split-modules mode only).
+        // If the function's canonical AST hash is unchanged from the cached value,
+        // reuse the cached IR fragment instead of re-doing MIR lowering + codegen.
+        if args.split_modules && !args.no_cache {
+            let fn_sig_opt = find_fn_sig_for_body(&lower_result.items, body_entry.body_id);
+            match &fn_sig_opt {
+                &Option.Some(ref sig) => {
+                    let hash = content_hash.hash_fn_body(hir_body, sig);
+                    let hex = content_hash.hash_to_hex(&hash);
+                    let mut cache_dir = main_helpers.strip_filename(output_path);
+                    cache_dir.push_str("/.content_hashes");
+                    let mut hash_path = common.make_string(cache_dir.as_str());
+                    hash_path.push('/');
+                    hash_path.push_str(work.fn_name.as_str());
+                    hash_path.push_str(".hash");
+                    let mut ir_path = common.make_string(cache_dir.as_str());
+                    ir_path.push('/');
+                    ir_path.push_str(work.fn_name.as_str());
+                    ir_path.push_str(".ir");
+                    if file_exists(hash_path.as_str()) && file_exists(ir_path.as_str()) {
+                        let cached_hex: &str = file_read_to_string(hash_path.as_str());
+                        if main_helpers.str_equals_str(cached_hex, hex.as_str()) {
+                            let cached_ir: &str = file_read_to_string(ir_path.as_str());
+                            file_append_string(output_path, cached_ir);
+                            skipped_count += 1;
+                            continue;
+                        }
+                    }
+                }
+                &Option.None => {}
+            }
+        }
+
         // Activate MIR region ON TOP of the codegen_region stack.
         // MIR lowering allocations go here, then we pop so codegen uses
         // the parent codegen_region (persistent across all functions).
@@ -3557,7 +3610,7 @@ fn codegen_pass2(
             }
         }
 
-        // Validate MIR if requested
+        // Validate MIR structure if requested
         if args.validate_mir {
             let fn_name_str = work.fn_name.as_str();
             let errors = validate_mir.validate_body(&mir_result.body, fn_name_str);
@@ -3572,17 +3625,33 @@ fn codegen_pass2(
                     eprint_str("\n");
                 }
             }
+        }
 
-            // Definite initialization analysis
+        // Definite initialization + linearity analysis — always runs.
+        // Skip for functions with MIR lowering errors (incomplete MIR causes
+        // false positives from unresolved field accesses).
+        if mir_result.errors.len() == 0 {
             let init_result = mir_init.analyze_init(&mir_result.body);
             if init_result.errors.len() > 0 {
                 mir_validation_errors += init_result.errors.len();
                 eprint_str("=== INIT ERRORS: ");
-                eprint_str(fn_name_str);
+                eprint_str(work.fn_name.as_str());
                 eprint_str(" ===\n");
                 for ii in 0usize..init_result.errors.len() {
                     eprint_str("  ");
                     eprint_str(init_result.errors[ii].message.as_str());
+                    eprint_str("\n");
+                }
+            }
+            let lin_result = mir_init.analyze_linearity(&mir_result.body);
+            if lin_result.errors.len() > 0 {
+                mir_validation_errors += lin_result.errors.len();
+                eprint_str("=== LINEARITY ERRORS: ");
+                eprint_str(work.fn_name.as_str());
+                eprint_str(" ===\n");
+                for li in 0usize..lin_result.errors.len() {
+                    eprint_str("  ");
+                    eprint_str(lin_result.errors[li].message.as_str());
                     eprint_str("\n");
                 }
             }
@@ -3622,13 +3691,40 @@ fn codegen_pass2(
         file_append_string(output_path, fn_ir.as_str());
 
         // Generate closure bodies discovered during MIR lowering
+        let mut combined_ir = common.make_string(fn_ir.as_str());
         let mut cli: usize = 0;
         while cli < mir_result.closure_names.len() && cli < mir_result.closure_mir.len() {
             let cname = &mir_result.closure_names[cli];
             let cbody = &mir_result.closure_mir[cli];
             let closure_ir = codegen.generate_function_with_ctx(ctx, cbody, cname.as_str());
             file_append_string(output_path, closure_ir.as_str());
+            combined_ir.push_str(closure_ir.as_str());
             cli += 1;
+        }
+
+        // Save per-function content hash + IR to cache (for future skip)
+        if args.split_modules && !args.no_cache {
+            let fn_sig_opt2 = find_fn_sig_for_body(&lower_result.items, body_entry.body_id);
+            match &fn_sig_opt2 {
+                &Option.Some(ref sig) => {
+                    let hash = content_hash.hash_fn_body(hir_body, sig);
+                    let hex = content_hash.hash_to_hex(&hash);
+                    let mut cache_dir = main_helpers.strip_filename(output_path);
+                    cache_dir.push_str("/.content_hashes");
+                    main_helpers.ensure_dir(cache_dir.as_str());
+                    let mut hash_path = common.make_string(cache_dir.as_str());
+                    hash_path.push('/');
+                    hash_path.push_str(work.fn_name.as_str());
+                    hash_path.push_str(".hash");
+                    file_write_string(hash_path.as_str(), hex.as_str());
+                    let mut ir_path = common.make_string(cache_dir.as_str());
+                    ir_path.push('/');
+                    ir_path.push_str(work.fn_name.as_str());
+                    ir_path.push_str(".ir");
+                    file_write_string(ir_path.as_str(), combined_ir.as_str());
+                }
+                &Option.None => {}
+            }
         }
 
         // Deactivate and reset temp region — reclaims all per-function temporaries.

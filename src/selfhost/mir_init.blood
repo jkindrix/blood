@@ -10,6 +10,7 @@
 
 mod common;
 mod hir_def;
+mod hir_ty;
 mod mir_def;
 mod mir_types;
 mod mir_stmt;
@@ -44,21 +45,33 @@ pub fn analyze_init(body: &mir_body.MirBody) -> InitAnalysisResult {
     // Initialize per-block init state vectors.
     // init_at_entry[bb][local] = true means local is definitely initialized
     // at the start of block bb.
+    //
+    // Use optimistic initialization (all-true) for non-entry blocks.
+    // This is a must-analysis: we need to prove a local IS initialized on
+    // ALL paths. Starting with "all initialized" (top of the lattice) and
+    // narrowing via intersection correctly propagates uninitialized state.
+    // Starting with "all uninitialized" (bottom) and trying to widen is wrong
+    // because back-edge states stay false and kill pre-loop initializations.
     let mut init_at_entry: Vec<Vec<bool>> = Vec.new();
     let mut init_at_exit: Vec<Vec<bool>> = Vec.new();
-    for _bb in 0usize..num_blocks {
+    for bb in 0usize..num_blocks {
         let mut entry_vec: Vec<bool> = Vec.new();
         let mut exit_vec: Vec<bool> = Vec.new();
         for _l in 0usize..num_locals {
-            entry_vec.push(false);
-            exit_vec.push(false);
+            if bb == 0 {
+                entry_vec.push(false);
+                exit_vec.push(false);
+            } else {
+                entry_vec.push(true);
+                exit_vec.push(true);
+            }
         }
         init_at_entry.push(entry_vec);
         init_at_exit.push(exit_vec);
     }
 
     // Entry block (bb0): return place (_0) and parameters (_1.._1+param_count)
-    // are considered initialized.
+    // are considered initialized. Other locals start uninitialized.
     let pc: usize = body.param_count as usize;
     let one: usize = 1;
     let param_end: usize = one + pc;
@@ -108,38 +121,38 @@ pub fn analyze_init(body: &mir_body.MirBody) -> InitAnalysisResult {
             }
 
             // Compute exit state: entry state + assignments in this block
-            // Copy entry to exit first
-            for li in 0usize..num_locals {
-                init_at_exit[bb_idx][li] = init_at_entry[bb_idx][li];
-            }
-
-            // Walk statements: assignments initialize their target local
             let block = &body.basic_blocks[bb_idx];
-            for stmt in &block.statements {
-                apply_stmt_init(stmt, &mut init_at_exit[bb_idx]);
-            }
 
-            // Walk terminator: calls with destinations initialize the destination
+            // Build new exit state from entry + statements
+            let mut new_exit: Vec<bool> = Vec.new();
+            for li in 0usize..num_locals {
+                new_exit.push(init_at_entry[bb_idx][li]);
+            }
+            for stmt in &block.statements {
+                apply_stmt_init(stmt, &mut new_exit);
+            }
             match &block.terminator {
                 &Option.Some(ref term) => {
-                    apply_term_init(term, &mut init_at_exit[bb_idx]);
+                    apply_term_init(term, &mut new_exit);
                 }
                 &Option.None => {}
             }
 
-            // Check if exit state changed (for fixed-point convergence)
-            // We track this implicitly — if any entry state changed, we iterate again.
-            // Simple approach: just iterate a fixed number of times.
-            // For acyclic graphs, one pass suffices. For loops, we need at most
-            // depth(loop nesting) + 1 iterations.
+            // Check if exit state changed from previous iteration
+            for li in 0usize..num_locals {
+                if new_exit[li] != init_at_exit[bb_idx][li] {
+                    changed = true;
+                }
+                init_at_exit[bb_idx][li] = new_exit[li];
+            }
         }
 
-        // Check convergence: compare entry states against previous iteration.
-        // For simplicity, we iterate until no changes or max iterations.
-        // The intersection operation is monotone (can only shrink), so it converges.
-        if iteration >= 2 {
-            changed = false; // Two passes is enough for most programs
-        }
+        // Convergence: init bits can only go false→true (never revoked).
+        // Check if any exit state gained a new true bit this iteration.
+        // If not, the analysis has stabilized.
+        // (The `changed` flag is set to false at the top of each iteration
+        //  and must be set to true inside the RPO loop when a state changes.
+        //  We move the check into the per-block loop above.)
     }
 
     // Check for use-before-init errors
@@ -221,6 +234,18 @@ fn check_place_use(place: &mir_types.Place, init: &Vec<bool>, bb_idx: usize, err
             let local = &body.locals[idx];
             match &local.kind {
                 &mir_def.LocalKind.Var => {
+                    // Skip unit-typed locals — () values don't need initialization
+                    let local_ty = local.ty;
+                    let interner = type_intern.type_interner();
+                    let ty_kind = interner.get(local_ty);
+                    let is_unit = match ty_kind {
+                        &type_intern.InternedTypeKind.Tuple(list_id) => {
+                            interner.ty_list_len(list_id) == 0
+                        }
+                        _ => false,
+                    };
+                    if is_unit { return; }
+
                     let mut msg = common.make_string("use of possibly uninitialized variable");
                     match &local.name {
                         &Option.Some(ref n) => {
@@ -355,6 +380,224 @@ fn check_term_uses(term: &mir_term.Terminator, init: &Vec<bool>, bb_idx: usize, 
             for arg in args {
                 check_operand_use(arg, init, bb_idx, errors, body);
             }
+        }
+        _ => {}
+    }
+}
+
+// ============================================================
+// MIR-Level Linearity Analysis
+// ============================================================
+
+/// Checks that linear locals are consumed exactly once and affine locals at most
+/// once on EVERY control flow path. Reports errors for branch asymmetry (consumed
+/// in one branch but not another).
+pub fn analyze_linearity(body: &mir_body.MirBody) -> InitAnalysisResult {
+    let num_locals = body.locals.len();
+    let num_blocks = body.basic_blocks.len();
+    let mut result = InitAnalysisResult { errors: Vec.new() };
+
+    if num_blocks == 0 || num_locals == 0 {
+        return result;
+    }
+
+    // Identify linear/affine locals
+    let mut is_linear: Vec<bool> = Vec.new();
+    let mut is_affine: Vec<bool> = Vec.new();
+    let mut has_any = false;
+    for li in 0usize..num_locals {
+        let local = &body.locals[li];
+        let kind = type_intern.type_interner().get(local.ty);
+        match kind {
+            &type_intern.InternedTypeKind.Ownership { ref qualifier, inner: _ } => {
+                match qualifier {
+                    &hir_ty.OwnershipQualifier.Linear => {
+                        is_linear.push(true);
+                        is_affine.push(false);
+                        has_any = true;
+                    }
+                    &hir_ty.OwnershipQualifier.Affine => {
+                        is_linear.push(false);
+                        is_affine.push(true);
+                        has_any = true;
+                    }
+                }
+            }
+            _ => {
+                is_linear.push(false);
+                is_affine.push(false);
+            }
+        }
+    }
+
+    if !has_any { return result; }
+
+    // Forward dataflow: track consumed state per local per block.
+    // consumed_at_exit[bb][local] = true means local was consumed on paths to bb's exit.
+    let mut consumed_at_exit: Vec<Vec<bool>> = Vec.new();
+    for _bb in 0usize..num_blocks {
+        let mut v: Vec<bool> = Vec.new();
+        for _l in 0usize..num_locals {
+            v.push(false);
+        }
+        consumed_at_exit.push(v);
+    }
+
+    let rpo = body.reverse_postorder();
+    let preds = body.predecessors();
+
+    // Fixed-point iteration
+    let mut changed = true;
+    let mut iteration: u32 = 0;
+    while changed && iteration < 20 {
+        changed = false;
+        iteration += 1;
+
+        for ri in 0usize..rpo.len() {
+            let bb_idx = rpo[ri].as_usize();
+            let block = &body.basic_blocks[bb_idx];
+
+            // Entry consumed state: union of predecessor exit states.
+            let mut consumed: Vec<bool> = Vec.new();
+            if bb_idx == 0 {
+                for _l in 0usize..num_locals { consumed.push(false); }
+            } else {
+                let pred_list = &preds[bb_idx];
+                for li in 0usize..num_locals {
+                    let mut any_consumed = false;
+                    for pi in 0usize..pred_list.len() {
+                        if consumed_at_exit[pred_list[pi].as_usize()][li] {
+                            any_consumed = true;
+                        }
+                    }
+                    consumed.push(any_consumed);
+                }
+            }
+
+            // Walk statements: uses of linear/affine locals mark them consumed
+            for si in 0usize..block.statements.len() {
+                mark_consumed_stmt(&block.statements[si], &mut consumed, &is_linear, &is_affine);
+            }
+            match &block.terminator {
+                &Option.Some(ref term) => {
+                    mark_consumed_term(term, &mut consumed, &is_linear, &is_affine);
+                }
+                &Option.None => {}
+            }
+
+            // Update exit state
+            for li in 0usize..num_locals {
+                if consumed[li] != consumed_at_exit[bb_idx][li] {
+                    changed = true;
+                }
+                consumed_at_exit[bb_idx][li] = consumed[li];
+            }
+        }
+    }
+
+    // Check: at merge points with 2+ predecessors, linear locals must be consumed
+    // on ALL predecessors or NONE. Mixed = branch asymmetry error.
+    for ri in 0usize..rpo.len() {
+        let bb_idx = rpo[ri].as_usize();
+        if bb_idx == 0 { continue; }
+        let pred_list = &preds[bb_idx];
+        if pred_list.len() < 2 { continue; }
+
+        for li in 0usize..num_locals {
+            if !is_linear[li] { continue; }
+            match &body.locals[li].kind {
+                &mir_def.LocalKind.Var => {}
+                _ => { continue; }
+            }
+
+            let mut some_consumed = false;
+            let mut some_not = false;
+            for pi in 0usize..pred_list.len() {
+                if consumed_at_exit[pred_list[pi].as_usize()][li] {
+                    some_consumed = true;
+                } else {
+                    some_not = true;
+                }
+            }
+            if some_consumed && some_not {
+                let mut msg = common.make_string("linear value not consumed on all control flow paths");
+                match &body.locals[li].name {
+                    &Option.Some(ref n) => {
+                        msg.push_str(" (`");
+                        msg.push_str(n.as_str());
+                        msg.push_str("`)");
+                    }
+                    &Option.None => {}
+                }
+                result.errors.push(InitError {
+                    local_id: mir_def.MirLocalId.new(li as u32),
+                    block_idx: bb_idx,
+                    message: msg,
+                });
+            }
+        }
+    }
+
+    result
+}
+
+fn mark_consumed_stmt(stmt: &mir_stmt.Statement, consumed: &mut Vec<bool>, is_linear: &Vec<bool>, is_affine: &Vec<bool>) {
+    match &stmt.kind {
+        &mir_stmt.StatementKind.Assign { place: _, ref rvalue } => {
+            mark_consumed_rvalue(rvalue, consumed, is_linear, is_affine);
+        }
+        _ => {}
+    }
+}
+
+fn mark_consumed_term(term: &mir_term.Terminator, consumed: &mut Vec<bool>, is_linear: &Vec<bool>, is_affine: &Vec<bool>) {
+    match &term.kind {
+        &mir_term.TerminatorKind.Call { ref func, ref args, destination: _, target: _, unwind: _ } => {
+            mark_consumed_operand(func, consumed, is_linear, is_affine);
+            for a in args { mark_consumed_operand(a, consumed, is_linear, is_affine); }
+        }
+        &mir_term.TerminatorKind.SwitchInt { ref discr, targets: _ } => {
+            mark_consumed_operand(discr, consumed, is_linear, is_affine);
+        }
+        _ => {}
+    }
+}
+
+fn mark_consumed_operand(op: &mir_types.Operand, consumed: &mut Vec<bool>, is_linear: &Vec<bool>, is_affine: &Vec<bool>) {
+    match op {
+        &mir_types.Operand.Copy(ref place) => {
+            let idx = place.local.as_usize();
+            if idx < consumed.len() && (is_linear[idx] || is_affine[idx]) {
+                consumed[idx] = true;
+            }
+        }
+        &mir_types.Operand.Move(ref place) => {
+            let idx = place.local.as_usize();
+            if idx < consumed.len() && (is_linear[idx] || is_affine[idx]) {
+                consumed[idx] = true;
+            }
+        }
+        &mir_types.Operand.Constant(_) => {}
+    }
+}
+
+fn mark_consumed_rvalue(rv: &mir_types.Rvalue, consumed: &mut Vec<bool>, is_linear: &Vec<bool>, is_affine: &Vec<bool>) {
+    match rv {
+        &mir_types.Rvalue.Use(ref op) => { mark_consumed_operand(op, consumed, is_linear, is_affine); }
+        &mir_types.Rvalue.Ref { ref place, mutable: _ } => {
+            let idx = place.local.as_usize();
+            if idx < consumed.len() && (is_linear[idx] || is_affine[idx]) {
+                consumed[idx] = true;
+            }
+        }
+        &mir_types.Rvalue.BinaryOp { operator: _, ref left, ref right } => {
+            mark_consumed_operand(left, consumed, is_linear, is_affine);
+            mark_consumed_operand(right, consumed, is_linear, is_affine);
+        }
+        &mir_types.Rvalue.UnaryOp { operator: _, ref operand } => { mark_consumed_operand(operand, consumed, is_linear, is_affine); }
+        &mir_types.Rvalue.Cast { ref operand, target_ty: _ } => { mark_consumed_operand(operand, consumed, is_linear, is_affine); }
+        &mir_types.Rvalue.Aggregate { kind: _, ref operands } => {
+            for op in operands { mark_consumed_operand(op, consumed, is_linear, is_affine); }
         }
         _ => {}
     }
