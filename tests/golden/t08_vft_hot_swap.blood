@@ -1,0 +1,33 @@
+// Test: VFT register + lookup + swap (P2-10 hot-swapping)
+// EXPECT: 1
+// EXPECT: 2
+// EXPECT: 3
+fn add_v1(x: i32, y: i32) -> i32 { x + y }
+fn add_v2(x: i32, y: i32) -> i32 { x + y + 100 }
+
+fn main() -> i32 {
+    let hash_lo: i64 = 12345;
+    let hash_hi: i64 = 67890;
+
+    // Register v1
+    let ptr1: i64 = @unsafe { add_v1 as i64 };
+    blood_vft_register(hash_lo, hash_hi, ptr1, 2);
+
+    // Lookup
+    let found: i64 = blood_vft_lookup(hash_lo, hash_hi);
+    if found == 0 { return 1; }
+    println_int(1);  // found
+
+    // Swap to v2
+    let ptr2: i64 = @unsafe { add_v2 as i64 };
+    let ok: bool = blood_vft_swap(hash_lo, hash_hi, ptr2);
+    if !ok { return 2; }
+    println_int(2);  // swapped
+
+    // Lookup again — should be v2 now (different pointer)
+    let found2: i64 = blood_vft_lookup(hash_lo, hash_hi);
+    if found2 == found { return 3; }
+    println_int(3);  // different pointer
+
+    0
+}

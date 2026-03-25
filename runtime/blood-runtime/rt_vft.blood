@@ -1,0 +1,111 @@
+// Blood Runtime — Virtual Function Table (VFT)
+//
+// Maps content hashes (128-bit, split into two i64) to function pointers.
+// Supports register, lookup, and atomic swap for hot-swapping (Pillar 2).
+//
+// Layout: parallel arrays (hash_lo, hash_hi, fn_ptr, arity) indexed by slot.
+// Linear scan for lookup — VFT size is bounded by trait method count.
+
+mod libc;
+mod alloc;
+
+static mut VFT_CAP: i64 = 0;
+static mut VFT_LEN: i64 = 0;
+static mut VFT_HASH_LO: i64 = 0;  // base addr of [VFT_CAP x i64]
+static mut VFT_HASH_HI: i64 = 0;
+static mut VFT_FN_PTR: i64 = 0;
+static mut VFT_ARITY: i64 = 0;
+
+fn vft_ensure() {
+    @unsafe {
+        if VFT_CAP == 0 {
+            VFT_CAP = 256;
+            VFT_HASH_LO = alloc.ptr_to_addr(libc.sys_calloc(256, 8));
+            VFT_HASH_HI = alloc.ptr_to_addr(libc.sys_calloc(256, 8));
+            VFT_FN_PTR = alloc.ptr_to_addr(libc.sys_calloc(256, 8));
+            VFT_ARITY = alloc.ptr_to_addr(libc.sys_calloc(256, 8));
+        }
+    }
+}
+
+fn read_i64(addr: i64) -> i64 {
+    @unsafe { *(alloc.addr_to_ptr(addr) as *const i64) }
+}
+
+fn write_i64(addr: i64, val: i64) {
+    @unsafe { *(alloc.addr_to_ptr(addr) as *mut i64) = val; }
+}
+
+fn vft_find(hash_lo: i64, hash_hi: i64) -> i64 {
+    @unsafe {
+        let mut i: i64 = 0;
+        while i < VFT_LEN {
+            let lo = read_i64(VFT_HASH_LO + i * 8);
+            let hi = read_i64(VFT_HASH_HI + i * 8);
+            if lo == hash_lo && hi == hash_hi {
+                return i;
+            }
+            i += 1;
+        }
+        0 - 1 // not found
+    }
+}
+
+/// Register a function in the VFT by its content hash.
+#[export_name = "blood_vft_register"]
+pub fn rt_vft_register(hash_lo: i64, hash_hi: i64, fn_ptr: i64, arity: i32) {
+    @unsafe {
+        vft_ensure();
+        // Check if already registered
+        let existing = vft_find(hash_lo, hash_hi);
+        if existing >= 0 {
+            // Update existing entry
+            write_i64(VFT_FN_PTR + existing * 8, fn_ptr);
+            write_i64(VFT_ARITY + existing * 8, arity as i64);
+            return;
+        }
+        if VFT_LEN >= VFT_CAP {
+            return; // full — silently drop (MVP)
+        }
+        let idx = VFT_LEN;
+        write_i64(VFT_HASH_LO + idx * 8, hash_lo);
+        write_i64(VFT_HASH_HI + idx * 8, hash_hi);
+        write_i64(VFT_FN_PTR + idx * 8, fn_ptr);
+        write_i64(VFT_ARITY + idx * 8, arity as i64);
+        VFT_LEN = VFT_LEN + 1;
+    }
+}
+
+/// Look up a function pointer by content hash. Returns null if not found.
+#[export_name = "blood_vft_lookup"]
+pub fn rt_vft_lookup(hash_lo: i64, hash_hi: i64) -> i64 {
+    @unsafe {
+        vft_ensure();
+        let idx = vft_find(hash_lo, hash_hi);
+        if idx < 0 {
+            return 0;
+        }
+        read_i64(VFT_FN_PTR + idx * 8)
+    }
+}
+
+/// Swap a function pointer for an existing hash entry (Immediate mode).
+/// Returns true if the swap succeeded, false if hash not found.
+#[export_name = "blood_vft_swap"]
+pub fn rt_vft_swap(hash_lo: i64, hash_hi: i64, new_fn_ptr: i64) -> bool {
+    @unsafe {
+        vft_ensure();
+        let idx = vft_find(hash_lo, hash_hi);
+        if idx < 0 {
+            return false;
+        }
+        write_i64(VFT_FN_PTR + idx * 8, new_fn_ptr);
+        true
+    }
+}
+
+/// Returns the number of registered VFT entries.
+#[export_name = "blood_vft_count"]
+pub fn rt_vft_count() -> i64 {
+    @unsafe { VFT_LEN }
+}

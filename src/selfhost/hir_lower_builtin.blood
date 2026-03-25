@@ -254,6 +254,9 @@ fn bi_params_3(a: type_intern.TyId, b: type_intern.TyId, c: type_intern.TyId) ->
     v
 }
 
+fn bi_params_4(a: type_intern.TyId, b: type_intern.TyId, c: type_intern.TyId, d: type_intern.TyId) -> Vec<type_intern.TyId> {
+    let mut v = Vec.new(); v.push(a); v.push(b); v.push(c); v.push(d); v
+}
 // ============================================================
 // Builtin Foreign Function Registration
 // ============================================================
@@ -433,6 +436,10 @@ pub fn register_builtin_functions(ctx: &mut hir_lower_ctx.LoweringCtx) {
     register_builtin_fn(ctx, &mut items, "blood_clock_millis", bi_params_0(), bi_u64());
     register_builtin_fn(ctx, &mut items, "blood_clock_nanos", bi_params_0(), bi_u64());
 
+    // === VFT (Virtual Function Table) — hot-swapping (Pillar 2) ===
+    register_builtin_fn(ctx, &mut items, "blood_vft_register", bi_params_4(bi_i64(), bi_i64(), bi_i64(), type_intern.CommonTypes.i32_ty()), type_intern.CommonTypes.unit());
+    register_builtin_fn(ctx, &mut items, "blood_vft_lookup", bi_params_2(bi_i64(), bi_i64()), bi_i64());
+    register_builtin_fn(ctx, &mut items, "blood_vft_swap", bi_params_3(bi_i64(), bi_i64(), bi_i64()), type_intern.CommonTypes.bool_ty());
     // === Bit Reinterpretation ===
     register_builtin_fn(ctx, &mut items, "blood_float64_to_bits", bi_params_1(bi_f64()), bi_u64());
 
