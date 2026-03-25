@@ -103,7 +103,15 @@ pub fn lower_body(
     // Finish and return the MIR body
     let mono_requests = ctx.mono_requests;
     let next_mono_def_id = ctx.next_mono_def_id;
-    let mir_body = ctx.finish();
+    let mut mir_body = ctx.finish();
+
+    // Resolve Infer types on locals so codegen sees concrete types.
+    // Without this, &str locals may be mistyped as { ptr, i32 } instead of { ptr, i64 }.
+    for li in 0usize..mir_body.locals.len() {
+        let resolved = unify.apply_substs_id(subst_table, mir_body.locals[li].ty);
+        mir_body.locals[li].ty = resolved;
+    }
+
     MirLowerResult {
         body: mir_body,
         errors: errors,
@@ -168,7 +176,14 @@ pub fn lower_body_with_const_info(
     let closure_mir = ctx.closure_mir;
     let mono_requests = ctx.mono_requests;
     let next_mono_def_id = ctx.next_mono_def_id;
-    let mir_body = ctx.finish();
+    let mut mir_body = ctx.finish();
+
+    // Resolve Infer types on locals
+    for li in 0usize..mir_body.locals.len() {
+        let resolved = unify.apply_substs_id(subst_table, mir_body.locals[li].ty);
+        mir_body.locals[li].ty = resolved;
+    }
+
     MirLowerResult {
         body: mir_body,
         errors: errors,
