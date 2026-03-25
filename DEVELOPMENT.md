@@ -31,14 +31,14 @@ All mechanical or semantic changes to the self-hosted compiler follow this three
 
 ### Step 1: Canary
 
-Before mass-converting any pattern, write a targeted golden test that exercises the pattern with all relevant types (`i32`, `u32`, `usize`, `u64`, `bool`, etc.). Run against both blood-rust and first_gen.
+Before mass-converting any pattern, write a targeted golden test that exercises the pattern with all relevant types (`i32`, `u32`, `usize`, `u64`, `bool`, etc.). Run against first_gen.
 
 **Purpose:** Catch type-specific bugs (e.g., a feature that works for `i32` but segfaults for `usize`) *before* making hundreds of changes, not after.
 
 **If the canary fails:**
 - Do NOT proceed with mass conversion.
 - Diagnose root cause.
-- If the root cause is in blood-rust, invoke the Bootstrap Gate (see below).
+- If the root cause is in seed compiler, invoke the Bootstrap Gate (see below).
 - If the root cause is in the self-hosted compiler, fix it, rebuild, re-run canary.
 
 ### Step 2: Cluster
@@ -68,22 +68,17 @@ After **each** cluster:
 ```bash
 cd src/selfhost
 
-# 1. Build first_gen (blood-rust compiles the modified self-hosted source)
-./build_selfhost.sh timings
+# 1. Build first_gen (seed compiles the modified self-hosted source)
+./build_selfhost.sh build first_gen --timings
 
 # 2. Run golden — all tests must pass (check the "Passed: N" total in output)
-./build_selfhost.sh golden
+./build_selfhost.sh test golden
 
-# 3. Build second_gen + third_gen, verify byte-identical
-#    (first_gen compiles itself → second_gen; second_gen compiles itself → third_gen)
-#    Manually build third_gen if rebuild script doesn't, then: cmp -s second_gen third_gen
-./build_selfhost.sh rebuild
+# 3. Self-compile: first_gen → second_gen, then second_gen → third_gen byte-compare
+./build_selfhost.sh build second_gen
+./build_selfhost.sh build third_gen
 
-# 4. Parse parity — verify no new accept/reject drift between compilers
-#    (baseline: 14 pre-existing drifts; any increase means the cluster introduced drift)
-cd ../.. && ./tools/parse-parity.sh --quiet && cd src/selfhost
-
-# 5. Commit the cluster (clean rollback point)
+# 4. Commit the cluster (clean rollback point)
 git add <cluster files> && git commit -m "refactor(selfhost): <description> (Cluster X)"
 ```
 
@@ -99,7 +94,7 @@ git add <cluster files> && git commit -m "refactor(selfhost): <description> (Clu
 1. **STOP.** Do not continue to the next cluster.
 2. Revert the cluster (`git revert` or `git checkout -- <files>`).
 3. Diagnose the root cause — do not guess, do not shotgun-fix. Use the tool escalation chain (see Supporting Documents).
-4. If root cause is in blood-rust, invoke the Bootstrap Gate.
+4. If root cause is in seed compiler, invoke the Bootstrap Gate.
 5. If root cause is in the self-hosted compiler, fix it, rebuild, re-verify from scratch.
 6. Log the bug in `tools/FAILURE_LOG.md` with root cause and resolution.
 7. Only proceed to the next cluster after a clean pass (golden + bootstrap).
@@ -108,41 +103,38 @@ git add <cluster files> && git commit -m "refactor(selfhost): <description> (Clu
 
 ## Bootstrap Gate
 
-**The bootstrap compiler (blood-rust) defines language semantics.** If blood-rust implements a feature incorrectly, the self-hosted compiler cannot be correct — it will be miscompiled.
+**The bootstrap seed compiles first_gen.** The seed is a prebuilt, frozen compiler binary (`bootstrap/seed`). If the seed has a bug that affects compilation of the selfhost source, first_gen will be miscompiled.
 
 ### The Rule
 
-> If any issue traces to blood-rust, **all work on the self-hosted compiler stops immediately.** Fix the root cause in blood-rust first.
+> If any issue traces to the seed compiler, **use a two-stage bootstrap**: Stage 1 adds new code paths without activating them (the seed can compile this), gate to get a new seed, then Stage 2 activates the new behavior.
 
 ### The Protocol
 
 ```
-1. STOP all self-hosted compiler work.
-2. Isolate the bug in blood-rust with a minimal reproduction.
-3. Fix the root cause in blood-rust (src/bootstrap/bloodc/src/).
-4. Rebuild blood-rust:
-     cd src/bootstrap && cargo build --release
-5. Rebuild first_gen from the CURRENT self-hosted source:
-     cd src/selfhost && ./build_selfhost.sh timings
-6. Re-verify golden (all tests must pass — check reported total).
-7. Log the bug in tools/FAILURE_LOG.md.
-8. Only THEN resume self-hosted compiler work.
+1. Run the full gate:
+     cd src/selfhost && ./build_selfhost.sh gate
+2. This builds: first_gen → golden → second_gen → golden → third_gen → byte-compare
+3. On success, the seed is updated automatically.
+4. Log any bugs encountered in tools/FAILURE_LOG.md.
 ```
 
-### Why This Is Non-Negotiable
+### Build Cache Warning
 
-- **Workarounds are forbidden.** Working around a blood-rust bug means the self-hosted compiler expresses incorrect semantics. The bug becomes load-bearing.
-- **Silent miscompilation is the worst outcome.** A blood-rust bug can cause first_gen to silently produce wrong code. No test catches this because the tests run on code compiled by the buggy compiler.
-- **History proves this.** The for-loop `continue` bug existed in both compilers. If we had only fixed the self-hosted compiler, blood-rust would have miscompiled the fix, and first_gen would still have had the bug.
+Build caches are **compiler-version-specific**. The gate script automatically clears caches between generations. When debugging gate failures manually:
 
-### Proactive Verification
+```bash
+rm -rf build/.content_hashes build/obj/.hashes build/.blood-cache
+```
 
-Before using any language feature in mass conversion, verify blood-rust handles it correctly:
+Symptom of stale cache: `undefined value '@.str.NNNN'` errors during llc.
 
-1. Write a canary test using the feature with multiple types.
-2. Build and run with blood-rust directly: `blood run canary_test.blood`
-3. Build first_gen, run canary test with first_gen.
-4. Both must produce identical, correct results.
+### Two-Stage Bootstrap
+
+When a change can't be compiled by the current seed (e.g., the change fixes a codegen bug that the seed also has):
+
+1. **Stage 1:** Add the new code path but don't activate it. Gate to get a new seed.
+2. **Stage 2:** Activate the new behavior. The new seed can compile it. Gate again.
 
 ---
 
@@ -220,9 +212,9 @@ When a regression is found:
 | Compile error in first_gen build | Parser or type checker change in the cluster |
 | Golden test compile failure | Self-hosted compiler bug in changed code |
 | Golden test wrong result | Codegen or runtime bug |
-| Segmentation fault during compilation | Memory corruption, type mismatch, or blood-rust bug |
-| Segmentation fault in test binary | Codegen bug or blood-rust miscompilation |
-| Non-deterministic failure (heisenbug) | Memory corruption — likely blood-rust or runtime |
+| Segmentation fault during compilation | Memory corruption, type mismatch, or seed compiler bug |
+| Segmentation fault in test binary | Codegen bug or seed compiler miscompilation |
+| Non-deterministic failure (heisenbug) | Memory corruption — likely seed compiler or runtime |
 
 ### 2. Isolate
 
@@ -233,7 +225,7 @@ When a regression is found:
 ### 3. Diagnose Root Cause
 
 - If the bug is in the changed code: fix the self-hosted compiler.
-- If the bug is in blood-rust's compilation of the changed code: invoke the Bootstrap Gate.
+- If the bug is in seed compiler's compilation of the changed code: invoke the Bootstrap Gate.
 - If the bug is pre-existing but was masked: document it, fix it, add a regression test.
 
 ### 4. Hard Stop Conditions
@@ -242,7 +234,7 @@ If debugging is not converging, stop and reassess:
 
 - **3 failed fix attempts** for the same regression → reassess the diagnosis. The root cause hypothesis is likely wrong.
 - **5 fruitless investigation steps** (tool calls that don't narrow the problem) → stop, summarize what's known, escalate or take a different approach.
-- **Any suspicion of blood-rust miscompilation** → invoke Bootstrap Gate immediately. Do not continue debugging the self-hosted compiler.
+- **Any suspicion of seed compiler miscompilation** → invoke Bootstrap Gate immediately. Do not continue debugging the self-hosted compiler.
 
 See `tools/AGENT_PROTOCOL.md` for the full investigation workflow and tool escalation chain.
 
@@ -255,7 +247,7 @@ When a bug is found and resolved during CCV:
 ### 6. Never Do These Things
 
 - **Do not shotgun-fix.** Changing multiple things hoping one works wastes time and masks the real issue.
-- **Do not work around blood-rust bugs.** The self-hosted compiler must express correct semantics.
+- **Do not work around seed compiler bugs.** The self-hosted compiler must express correct semantics.
 - **Do not skip the canary.** "It worked for i32" does not mean it works for usize.
 - **Do not batch debug.** One regression, one root cause, one fix. Then re-verify everything.
 
@@ -277,9 +269,9 @@ These are real bugs encountered during Phase 2 that motivated this methodology.
 
 **What happened:** For-loop `continue` caused infinite loops. Fixed in self-hosted compiler. Still broken in first_gen output.
 
-**Root cause:** Blood-rust had the exact same desugaring bug. first_gen was compiled by buggy blood-rust, so the fix was miscompiled.
+**Root cause:** Blood-rust had the exact same desugaring bug. first_gen was compiled by buggy seed compiler, so the fix was miscompiled.
 
-**What would have caught it:** Testing the canary with blood-rust first, then with first_gen.
+**What would have caught it:** Testing the canary with seed compiler first, then with first_gen.
 
 ### Lesson 3: Mass Conversion Cascading Failures
 

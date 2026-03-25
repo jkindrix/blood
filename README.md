@@ -7,8 +7,8 @@
 Blood synthesizes five cutting-edge programming language innovations:
 
 - **Content-Addressed Code** (Unison) — Code identity via BLAKE3-256 hashes
-- **Generational Memory Safety** (Vale) — 128-bit fat pointers, no GC
-- **Hybrid Ownership Model** (Hylo + Rust + Vale) — Move semantics with escape-analyzed allocation, no borrow checker
+- **Generational Memory Safety** (Vale) — Fat pointer refs with generation tracking, no GC
+- **Hybrid Ownership Model** (Hylo + Rust + Vale) — Mutable value semantics with escape-analyzed allocation, no borrow checker
 - **Algebraic Effects** (Koka) — All side effects typed and composable
 - **Multiple Dispatch** (Julia) — Type-stable open extensibility
 
@@ -16,18 +16,20 @@ Blood synthesizes five cutting-edge programming language innovations:
 
 > **Version: 0.2.0**
 
-Core compiler is functional and tested. Programs compile and run with full type checking, effect tracking, and generational memory safety. Bootstrap compiler passes 2,047 unit tests; self-hosted compiler passes 356/357 golden integration tests. See [IMPLEMENTATION_STATUS.md](docs/planning/IMPLEMENTATION_STATUS.md) for detailed component status.
+Self-hosted compiler passes 488/488 golden integration tests. The compiler compiles itself (third-gen byte-identical bootstrap verified). No Rust toolchain required — bootstraps from a prebuilt seed binary. Requires only LLVM 18.
 
 | Component | Status | Details |
 |-----------|--------|---------|
-| Lexer & Parser | ✅ Complete | Production-tested |
-| Type Checker | ✅ Complete | Bidirectional + unification |
-| Code Generation | ✅ Complete | LLVM backend |
-| Effects System | ✅ Complete | Evidence passing, deep/shallow handlers, snapshots, StaleReference effect |
-| Memory Model | ✅ Integrated | Generational pointers, regions, escape analysis, persist() |
-| Runtime | ✅ Integrated | Memory management, effect dispatch, FFI exports |
-| Multiple Dispatch | 🔶 Partial | Compile-time dispatch complete; `dyn Trait` runtime dispatch not yet implemented |
-| Closures | ✅ Complete | Environment capture and codegen in both compilers |
+| Lexer & Parser | ✅ Complete | Recursive descent, macro expansion |
+| Type Checker | ✅ Complete | Bidirectional inference, multiple dispatch, linearity |
+| Code Generation | ✅ Complete | LLVM IR text emission, incremental compilation |
+| Effects System | ✅ Complete | Evidence passing, deep/shallow handlers, snapshots, per-op resume |
+| Memory Model | ✅ Complete | Generational refs, regions, escape analysis, Frozen\<T\> |
+| Runtime | ✅ Complete | Written in Blood (no Rust). Memory, effects, fibers, VFT |
+| Multiple Dispatch | ✅ Complete | Static + dynamic (dyn Trait vtable, default methods, supertraits) |
+| Safety Checks | ✅ Default | Definite init, linearity, array bounds, dangling ref rejection |
+| Content Addressing | 🔶 Partial | BLAKE3 hashing, codebase storage, per-function IR cache |
+| Formal Proofs | ✅ Complete | 43 Coq theorems, 0 Admitted |
 
 **Legend**: ✅ = Implemented and integrated | 🔶 = Partially integrated
 
@@ -117,10 +119,9 @@ build/first_gen run ../../examples/fizzbuzz.blood
 ./build_selfhost.sh test golden second_gen
 ```
 
-### Using the Bootstrap Compiler (legacy)
+### Using the Bootstrap Compiler (legacy, requires Rust)
 
 ```bash
-# Requires Rust 1.77+ and LLVM 18
 cd src/bootstrap
 cargo build --release
 cargo run -- run ../../examples/fizzbuzz.blood

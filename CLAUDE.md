@@ -77,7 +77,7 @@ Audit search terms: `_ =>`, `unwrap_or_default`, `unwrap_or_else`, `Type::error(
 
 The selfhost compiler is developed using a **self-compilation loop**: edit source, recompile the compiler using itself, test the result.
 
-**Inner loop (seconds):** `first_gen check file.blood` — validates syntax and types against the current compiler. Use this while editing to catch errors fast. Write 10-50 lines, check, fix, repeat.
+**Inner loop (seconds):** `first_gen check file.blood` — validates syntax, types, definite initialization, linearity, and dangling reference detection against the current compiler. Use this while editing to catch errors fast. Write 10-50 lines, check, fix, repeat.
 
 **Build loop (incremental, ~3 min):** `./build_selfhost.sh build second_gen` — first_gen compiles the current source with `--split-modules`. Only changed modules are re-codegen'd. Test with `./build_selfhost.sh test golden second_gen`. This is the primary development cycle.
 
@@ -93,7 +93,7 @@ The selfhost compiler is developed using a **self-compilation loop**: edit sourc
 
 1. **Read the build log first.** Every build writes to `.logs/`. Don't re-run the build — read `tail -50 src/selfhost/.logs/build_*.log | tail -1` to find the latest log. Crash backtraces, error messages, and timing are all captured.
 2. **Backtraces show source locations.** All runtime panic functions print full backtraces with DWARF source mapping. Binaries compiled by the selfhost have per-instruction source line debug info. Use `addr2line -e binary -f ADDRESS` to resolve to `file.blood:line`. Different offsets within a function resolve to different source lines.
-3. **Use `--validate-mir`** to catch MIR structural errors before codegen. The definite initialization analysis also runs with this flag.
+3. **Use `--validate-mir`** to catch MIR structural errors before codegen. Definite initialization analysis and MIR-level linearity checking run by default (no flag needed).
 4. **Use `--dump-mir` or `--dump-mir=fn_name`** to inspect MIR for a specific function.
 5. **Use `--trace-codegen`** for per-function codegen tracing.
 6. **Use `./build_selfhost.sh asan`** for AddressSanitizer-instrumented builds when chasing memory corruption.
@@ -111,6 +111,8 @@ The selfhost compiler is developed using a **self-compilation loop**: edit sourc
 
 **Bootstrap gate protocol:** Changes that touch calling conventions, type layouts, or runtime FFI **must** pass `./build_selfhost.sh gate` before being considered complete. This runs the full build chain (first_gen → golden → second_gen → golden → third_gen byte-compare) and updates `bootstrap/seed` on success. Other codegen changes should gate at end-of-session or before pushing. The build script warns when the seed is >15 commits behind HEAD. For breaking ABI changes, use a two-stage bootstrap: Stage 1 adds new code paths without activating them (seed can compile this), gate to get a new seed, then Stage 2 activates the new behavior.
 
+**Build caches are compiler-version-specific.** The build script has three cache layers: (1) module-level source hashes (`build/obj/.hashes/`), (2) per-function content hashes (`build/.content_hashes/`), (3) source-level build cache (`build/.blood-cache`). All caches are automatically cleared between generations during gate/build-all. When manually testing across compiler generations, clear caches: `rm -rf build/.content_hashes build/obj/.hashes build/.blood-cache`. Symptom of stale cache: `undefined value '@.str.NNNN'` errors during llc.
+
 **Canary-Cluster-Verify (CCV) method:** All batch changes to the self-hosted compiler follow the CCV protocol. Canary-test new patterns before mass conversion. Cluster changes by compiler phase. Verify (build + golden tests + bootstrap) after each cluster. See `DEVELOPMENT.md` for the full protocol, cluster definitions, and bootstrap gate rules.
 
 **Document discoveries:** Test in isolation, document in this file, comment in code. Distinguish bugs (report and wait) from documented limitations (work around).
@@ -119,15 +121,15 @@ The selfhost compiler is developed using a **self-compilation loop**: edit sourc
 
 ## Shared Types (common.blood)
 
-Canonical shared types: `Span`, `Symbol`, `SpannedSymbol`, `SpannedString`, `OrderedFloat`. Check `src/selfhost/common.blood` for current field definitions before modifying any shared type. Import via `mod common;`, reference as `common::Span`, etc. Update ALL files that use the type when making changes.
+Canonical shared types: `Span`, `Symbol`, `SpannedSymbol`, `SpannedString`, `OrderedFloat`. Check `src/selfhost/common.blood` for current field definitions before modifying any shared type. Import via `mod common;`, reference as `common.Span`, etc. Update ALL files that use the type when making changes.
 
 ## Active Limitations
 
-- **Module resolution limit:** Avoid adding new `mod` imports to files near the resolution limit (e.g., driver.blood)
+- **Per-function type inference size:** Very large functions can hit type inference limits. Split oversized functions rather than adding more code to them.
 - **Keyword field names:** `module` cannot be used as a field name; use `mod_decl`
 - **Memory reuse:** Requires active region at startup for region-aware allocation
 
-All fixed bugs (BUG-001 through BUG-013) are documented in `tools/FAILURE_LOG.md`.
+Fixed bugs are documented in `tools/FAILURE_LOG.md`.
 
 ## Build & Test Commands
 
@@ -153,7 +155,7 @@ cd src/selfhost
 ./build_selfhost.sh build third_gen     # Bootstrap second_gen → third_gen + byte-compare
 ./build_selfhost.sh build blood_runtime # Compile Blood runtime → libblood_runtime_blood.a
 ./build_selfhost.sh build first_gen_blood  # Link first_gen against Blood runtime (no Rust)
-./build_selfhost.sh build all           # Full chain: cargo → first_gen → GT → second_gen → GT → third_gen
+./build_selfhost.sh build all           # Full chain: blood_runtime → first_gen → GT → second_gen → GT → third_gen
 
 # Test suites (compiler arg accepts names: first_gen, second_gen, third_gen, or a path)
 ./build_selfhost.sh test golden              # Default: first_gen
@@ -194,7 +196,8 @@ All build artifacts go to `build/` by default (relative to source file parent):
 build/
 ├── debug/          # Default profile: binary, .ll, .o
 ├── release/        # --release profile
-└── obj/<stem>/     # Per-definition object files (incremental compilation)
+├── obj/            # Per-module .ll and .o files (--split-modules incremental)
+└── .content_hashes/ # Per-function BLAKE3 hash + cached IR fragments
 ```
 
 Override hierarchy (highest priority first):
@@ -227,9 +230,9 @@ Run each tool with `--help` or see its header comments for detailed usage.
 ## Key Patterns (Mistake Prevention)
 
 - **Interner mismatch:** AST parser and HIR lowering use different string interners. Re-intern via `ctx.span_to_string(span)` + `ctx.intern()` when creating HIR items from AST data.
-- **Unresolved types in MIR:** Expression types during MIR lowering are `Infer(TyVarId)`. Use `ctx.resolve_type()` to get concrete types before type-based decisions.
+- **Unresolved types in MIR expressions:** MIR local types are resolved (`apply_substs_id` runs after `ctx.finish()`), but expression types during MIR lowering are still `Infer(TyVarId)`. Use `ctx.resolve_type()` to get concrete types before type-based decisions in MIR lowering code.
 - **Field resolution keys:** Use `name.span.start` (field NAME position), not `expr.span.start`. Composite key: `(body_def_id, name_span_start)`.
-- **Three `type_to_llvm_with_ctx` functions:** `codegen_ctx` (method, no generics), `codegen_stmt` (standalone, full generics), `codegen_size` (standalone, same as stmt; use from `codegen_expr`).
+- **Four `type_to_llvm_with_ctx` functions:** `codegen_ctx` (method, no generics), `codegen_stmt` (standalone, &Type, full generics), `codegen_size` (standalone, &Type, ADT registry only), `codegen_size::type_to_llvm_with_ctx_id` (TyId, full generics + fast path — preferred).
 - **TypeError API:** Use `checker.error(TypeErrorKind::Variant, span)` — NOT `checker.errors.push(TypeError::new(...))`.
 - **Trait default method remapping:** See `CallRemapEntry` in `typeck_driver.blood` + `extract_direct_fn_name` in `codegen_term.blood`.
 

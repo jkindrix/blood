@@ -1,57 +1,42 @@
 # Contributing to Blood
 
-Thank you for your interest in contributing to the Blood programming language! This guide will help you get started.
-
-## Table of Contents
-
-1. [Getting Started](#getting-started)
-2. [Project Structure](#project-structure)
-3. [Development Workflow](#development-workflow)
-4. [Compiler Architecture](#compiler-architecture)
-5. [Testing](#testing)
-6. [Code Style](#code-style)
-7. [Pull Request Process](#pull-request-process)
-8. [Finding Issues to Work On](#finding-issues-to-work-on)
-
----
-
 ## Getting Started
 
 ### Prerequisites
 
-- **Rust** 1.77+ (install via [rustup](https://rustup.rs/))
-- **LLVM 14** (for code generation via inkwell)
+- **LLVM 18** (llc-18 and clang-18 must be on PATH)
 - **Git**
+- No Rust toolchain required — the compiler bootstraps from a prebuilt seed binary.
 
 ### Building from Source
 
 ```bash
-# Clone the repository
 git clone https://github.com/jkindrix/blood.git
-cd blood/src/bootstrap
+cd blood/src/selfhost
 
-# Build everything
-cargo build --release
+# Build the compiler from the bootstrap seed
+./build_selfhost.sh build first_gen
 
-# Run tests
-cargo test --workspace
+# Run the golden test suite
+./build_selfhost.sh test golden
 
-# Run the compiler
-cargo run --release -- check ../examples/hello.blood
+# Compile and run a program
+build/first_gen run ../../tests/golden/t00_hello_world.blood
 ```
 
 ### Quick Verification
 
 ```bash
-# From src/bootstrap/
-# Type check an example
-cargo run --release -- check ../examples/binary_tree_benchmark.blood
+cd src/selfhost
 
-# Run all tests
-cargo test --workspace
+# Check a file (syntax, types, init, linearity, dangling refs)
+build/first_gen check ../../tests/golden/t05_linear_affine.blood
 
-# Run benchmarks
-cargo bench --bench runtime_bench
+# Build and run
+build/first_gen run ../../tests/golden/t01_struct_basic.blood
+
+# Full test suite
+./build_selfhost.sh test golden
 ```
 
 ---
@@ -59,516 +44,228 @@ cargo bench --bench runtime_bench
 ## Project Structure
 
 ```
-blood/                          # Repository root (monorepo)
-├── stdlib/                     # Standard library (Blood source)
-│   ├── core/                   # Core types (Option, String, Box, etc.)
-│   ├── collections/            # Vec, HashMap, LinkedList, etc.
-│   └── effects/                # Effect system primitives
+blood/
 ├── src/
-│   ├── selfhost/               # Self-hosted compiler (written in Blood)
-│   └── bootstrap/              # Rust bootstrap compiler (Rust)
-│   ├── bloodc/                 # The main compiler
-│   │   ├── src/
-│   │   │   ├── main.rs         # CLI entry point
-│   │   │   ├── lexer.rs        # Tokenization
-│   │   │   ├── parser/         # AST parsing
-│   │   │   ├── hir/            # High-level IR
-│   │   │   ├── mir/            # Mid-level IR
-│   │   │   │   └── lowering/   # HIR → MIR transformation
-│   │   │   ├── typeck/         # Type checking
-│   │   │   │   ├── context/    # Type checking context
-│   │   │   │   ├── dispatch/   # Multiple dispatch resolution
-│   │   │   │   └── exhaustiveness.rs
-│   │   │   ├── codegen/        # LLVM code generation
-│   │   │   │   ├── context/    # Codegen context
-│   │   │   │   └── mir_codegen/ # MIR → LLVM
-│   │   │   ├── effects/        # Effect system
-│   │   │   ├── diagnostics.rs  # Error reporting
-│   │   │   └── span.rs         # Source locations
-│   │   ├── tests/              # Integration tests
-│   │   └── benches/            # Performance benchmarks
-│   ├── blood-runtime/          # Runtime library
-│   │   └── src/
-│   │       ├── memory.rs       # Memory management
-│   │       ├── continuation.rs # Effect continuations
-│   │       ├── fiber.rs        # Fiber scheduling
-│   │       └── ffi_exports.rs  # C FFI exports
-│   ├── runtime/                # C runtime stubs
-│   └── Cargo.toml              # Workspace manifest
-├── docs/                       # Language specification & documentation
-│   ├── spec/                   # Core specs
-│   └── postmortem/             # Bug investigation records
-├── examples/                   # Blood language examples
-└── tools/                      # Development & debugging tools
+│   ├── selfhost/               # Self-hosted compiler (Blood) — primary
+│   │   ├── main.blood          # Entry point, CLI, build pipeline
+│   │   ├── parser.blood        # Recursive descent parser
+│   │   ├── hir_lower.blood     # AST → HIR lowering
+│   │   ├── typeck_driver.blood # Type checking orchestration
+│   │   ├── mir_lower.blood     # HIR → MIR lowering
+│   │   ├── codegen.blood       # MIR → LLVM IR generation
+│   │   ├── mir_init.blood      # Definite init + linearity analysis
+│   │   └── build_selfhost.sh   # Build script (all commands)
+│   └── bootstrap/bloodc/src/   # Rust bootstrap compiler (legacy)
+├── bootstrap/seed              # Prebuilt compiler binary (bootstrap fixed point)
+├── stdlib/                     # Standard library (Blood source)
+├── runtime/blood-runtime/      # Runtime library (Blood source)
+├── tests/golden/               # Golden integration tests (488 files)
+├── proofs/theories/            # Coq formal proofs (22 files, 10K lines)
+├── docs/spec/                  # Language specifications
+├── tools/                      # Development & debugging tools
+└── CLAUDE.md                   # Compiler dev reference
 ```
 
-> **Note:** The Cargo workspace is at `src/bootstrap/Cargo.toml`. All `cargo` commands must be run from the `src/bootstrap/` directory.
+### Key Components
 
-### Key Crates
-
-| Crate | Purpose |
-|-------|---------|
-| `bloodc` | Main compiler: lexer, parser, type checker, codegen |
-| `blood-runtime` | Runtime library: memory, effects, fibers |
+| Component | Location | Language | Purpose |
+|-----------|----------|----------|---------|
+| Selfhost compiler | `src/selfhost/` | Blood | Primary compiler |
+| Bootstrap seed | `bootstrap/seed` | — | Prebuilt binary for bootstrapping |
+| Blood runtime | `runtime/blood-runtime/` | Blood | Memory, effects, fibers |
+| Stdlib | `stdlib/` | Blood | Collections, effects, I/O |
+| Golden tests | `tests/golden/` | Blood | 488 integration tests |
+| Formal proofs | `proofs/theories/` | Coq | 43 mechanized safety theorems |
 
 ---
 
 ## Development Workflow
 
-### Making Changes
+The compiler is developed using a **self-compilation loop**:
 
-1. **Create a feature branch**
-   ```bash
-   git checkout -b feature/my-feature
-   ```
+```bash
+cd src/selfhost
 
-2. **Make your changes**
-   - Write code
-   - Add tests
-   - Update documentation
+# 1. Edit source files
 
-3. **Run tests locally** (from `src/bootstrap/`)
-   ```bash
-   cargo test --workspace
-   cargo clippy --all-targets
-   ```
+# 2. Quick check (seconds)
+build/first_gen check file.blood
 
-4. **Commit with conventional commits**
-   ```bash
-   git commit -m "feat(parser): add support for tuple patterns"
-   ```
+# 3. Incremental self-compilation (~1 min with cache, ~5 min clean)
+./build_selfhost.sh build second_gen
 
-### Commit Message Format
+# 4. Test
+./build_selfhost.sh test golden second_gen
 
-We use [Conventional Commits](https://www.conventionalcommits.org/):
-
-```
-<type>(<scope>): <description>
-
-[optional body]
-
-[optional footer]
+# 5. Before pushing: full bootstrap gate
+./build_selfhost.sh gate
 ```
 
-**Types:**
-- `feat`: New feature
-- `fix`: Bug fix
-- `refactor`: Code change that neither fixes a bug nor adds a feature
-- `docs`: Documentation only
-- `test`: Adding or updating tests
-- `perf`: Performance improvement
-- `chore`: Maintenance tasks
+### Build Commands
 
-**Examples:**
+```bash
+./build_selfhost.sh build first_gen      # Seed → first_gen
+./build_selfhost.sh build second_gen     # first_gen → second_gen (self-compile)
+./build_selfhost.sh build third_gen      # second_gen → third_gen (verify)
+./build_selfhost.sh test golden          # Run 488 golden tests
+./build_selfhost.sh test golden second_gen  # Test with second_gen
+./build_selfhost.sh gate                 # Full bootstrap + update seed
+./build_selfhost.sh status               # Show compiler state
+./build_selfhost.sh clean                # Remove build artifacts
 ```
-feat(typeck): implement exhaustiveness checking for enum patterns
-fix(parser): handle trailing commas in function arguments
+
+### Build Caching
+
+The build system has three cache layers:
+- **Module-level source hashes** (`build/obj/.hashes/`) — skip unchanged modules
+- **Per-function content hashes** (`build/.content_hashes/`) — skip unchanged functions via BLAKE3 canonical AST hashing
+- **Source-level cache** (`build/.blood-cache`)
+
+Caches are **compiler-version-specific** and automatically cleared between generations during `gate` and `build all`. When manually testing across generations, clear caches first:
+
+```bash
+rm -rf build/.content_hashes build/obj/.hashes build/.blood-cache
+```
+
+### Commit Messages
+
+[Conventional Commits](https://www.conventionalcommits.org/) format:
+
+```
+feat(parser): add support for tuple patterns
+fix(codegen): correct &str type in fat pointer emission
+refactor(typeck): extract dispatch resolution into module
+test(golden): add array bounds check tests
 docs(spec): update effect system specification
-refactor(mir): extract common lowering utilities
-test(codegen): add tests for closure capture
 ```
 
 ---
 
 ## Compiler Architecture
 
-### Compilation Phases
-
 ```
-Source Code (.blood)
-       │
-       ▼
-┌─────────────┐
-│   Lexer     │  Tokenize source into tokens
-└─────────────┘
-       │
-       ▼
-┌─────────────┐
-│   Parser    │  Build AST from tokens
-└─────────────┘
-       │
-       ▼
-┌─────────────┐
-│   HIR       │  High-level IR with resolved names
-│   Lowering  │
-└─────────────┘
-       │
-       ▼
-┌─────────────┐
-│   Type      │  Type inference and checking
-│   Checker   │
-└─────────────┘
-       │
-       ▼
-┌─────────────┐
-│   MIR       │  Mid-level IR for optimization
-│   Lowering  │
-└─────────────┘
-       │
-       ▼
-┌─────────────┐
-│   Codegen   │  Generate LLVM IR
-└─────────────┘
-       │
-       ▼
-   Object Code
+Source (.blood) → Lexer → Parser → AST → HIR → Type Check → MIR → Codegen → LLVM IR → Binary
 ```
 
-### Key Data Structures
+### Pipeline Phases
 
-**DefId** - Unique identifier for definitions:
-```rust
-pub struct DefId {
-    pub index: u32,  // Index in definition table
-}
-```
+| Phase | Files | Purpose |
+|-------|-------|---------|
+| Parse | `parser.blood`, `parser_expr.blood` | Source → AST |
+| HIR Lower | `hir_lower.blood`, `hir_lower_*.blood` | AST → HIR (name resolution) |
+| Type Check | `typeck_driver.blood`, `typeck_expr.blood`, `unify.blood` | Type inference, dispatch resolution |
+| MIR Lower | `mir_lower.blood`, `mir_lower_*.blood` | HIR → MIR (control flow) |
+| Safety | `mir_init.blood`, `validate_mir.blood` | Init checking, linearity, dangling refs |
+| Codegen | `codegen.blood`, `codegen_*.blood` | MIR → LLVM IR text |
 
-**Type** - Type representation:
-```rust
-pub enum Type {
-    Int(IntTy),      // i8, i16, i32, i64
-    Float(FloatTy),  // f32, f64
-    Bool,
-    Str,
-    Unit,
-    Tuple(Vec<Type>),
-    Array(Box<Type>, usize),
-    Function(FnType),
-    Named(DefId, Vec<Type>),  // struct/enum with generics
-    // ... more variants
-}
-```
+### Safety Checks (run by default)
 
-**HIR Expr** - Expression representation:
-```rust
-pub struct Expr {
-    pub kind: ExprKind,
-    pub ty: Type,
-    pub span: Span,
-}
-
-pub enum ExprKind {
-    Literal(Literal),
-    Local(LocalId),
-    Binary { op: BinOp, left: Box<Expr>, right: Box<Expr> },
-    Call { callee: Box<Expr>, args: Vec<Expr> },
-    // ... more variants
-}
-```
-
-### Important Modules
-
-| Module | Purpose | Key Types |
-|--------|---------|-----------|
-| `typeck/context/` | Type checking state | `TypeckContext` |
-| `typeck/dispatch/` | Multiple dispatch | `DispatchTable` |
-| `mir/lowering/` | HIR → MIR | `MirBuilder` |
-| `codegen/context/` | LLVM codegen state | `CodegenContext` |
-| `effects/` | Effect inference | `EffectSet` |
+- **Definite initialization** — rejects use of uninitialized variables
+- **Linearity checking** — linear values consumed exactly once, affine at most once
+- **Array bounds checking** — runtime panic on out-of-bounds array/Vec access
+- **Dangling reference rejection** — rejects `return &local` patterns (E0503)
+- **Cast linearity stripping** — rejects casts that remove linear/affine qualifiers
+- **Gen ref validation** — runtime stale reference detection via generational checks
 
 ---
 
 ## Testing
 
-### Test Categories
+### Golden Tests
 
-All test commands run from `src/bootstrap/`:
+Golden tests are Blood programs in `tests/golden/` with expected behavior:
 
-1. **Unit Tests** - In `src/` alongside code
-   ```bash
-   cargo test --lib
-   ```
-
-2. **Integration Tests** - In `tests/`
-   ```bash
-   cargo test --test pipeline_integration
-   ```
-
-3. **Benchmarks** - In `benches/`
-   ```bash
-   cargo bench --bench runtime_bench
-   ```
-
-### Writing Tests
-
-**Parser tests:**
-```rust
-#[test]
-fn test_parse_function() {
-    let source = "fn foo(x: i32) -> i32 { x + 1 }";
-    let ast = parse(source).unwrap();
-    assert!(matches!(ast.items[0], Item::Function { .. }));
+```blood
+// Runtime test — checks output
+// EXPECT: 42
+fn main() -> i32 {
+    println_int(42);
+    0
 }
 ```
 
-**Type checking tests:**
-```rust
-#[test]
-fn test_type_mismatch() {
-    let source = "fn main() { let x: i32 = \"hello\"; }";
-    let result = typecheck(source);
-    assert!(result.is_err());
-    assert!(result.unwrap_err()[0].message.contains("type mismatch"));
+```blood
+// Compile-fail test — checks error message
+// COMPILE_FAIL: E0221
+// EXPECT: linear value not consumed
+fn main() -> i32 {
+    let x: linear i32 = 42;
+    0
 }
 ```
 
-**End-to-end tests:**
-```rust
-#[test]
-fn test_e2e_binary_tree() {
-    let source = include_str!("../../examples/binary_tree_benchmark.blood");
-    let result = compile_and_check(source);
-    assert!(result.is_ok());
+```blood
+// Runtime panic test — checks nonzero exit
+// EXPECT_EXIT: nonzero
+fn main() -> i32 {
+    let arr: [i32; 3] = [1, 2, 3];
+    let i: i32 = 10;
+    let x: i32 = arr[i];  // panics
+    0
 }
 ```
 
-### Test Naming Convention
+### Running Tests
 
-```
-test_<phase>_<feature>_<scenario>
+```bash
+cd src/selfhost
+./build_selfhost.sh test golden              # All tests through first_gen
+./build_selfhost.sh test golden second_gen   # All tests through second_gen
+./build_selfhost.sh test golden -q           # Quiet (failures only)
 ```
 
-Examples:
-- `test_parser_function_with_generics`
-- `test_typeck_effect_inference`
-- `test_codegen_closure_capture`
-- `test_e2e_stale_reference_detection`
+### Adding Tests
+
+Place new test files in `tests/golden/` with the naming convention:
+- `t00_*` — basics (arithmetic, control flow)
+- `t01_*` — primitives (structs, enums, generics)
+- `t02_*` — regions
+- `t03_*` — effects
+- `t05_*` — features (dispatch, modules, strings)
+- `t06_err_*` — compile-fail error tests
+- `t07_*` — stdlib
+- `t10_*` — traits and dynamic dispatch
+- `t11_*` — advanced (dispatch specificity, generics)
 
 ---
 
 ## Code Style
 
-### Rust Guidelines
+### Blood Code (selfhost compiler)
 
-- Use `rustfmt` for formatting
-- Use `clippy` for linting
-- Write documentation for public APIs
+- Match existing patterns — read the surrounding code first
+- Exhaustive pattern matching — no catch-all `_ =>` unless justified
+- No shortcuts — see CLAUDE.md for the full policy
+- Use `common.make_string(s.as_str())` to copy strings (no `.clone()`)
 
-```bash
-# From src/bootstrap/
-cargo fmt
-cargo clippy --all-targets
-```
+### Pull Request Checklist
 
-### Project-Specific Guidelines
+- [ ] All golden tests pass (`./build_selfhost.sh test golden`)
+- [ ] Self-compilation succeeds (`./build_selfhost.sh build second_gen`)
+- [ ] Commit messages follow conventional commits
+- [ ] New features have golden tests
+- [ ] Bug fixes have regression tests
 
-1. **No shortcuts** (per CLAUDE.md):
-   - Every pattern match must be exhaustive
-   - No silent failures (`_ => Ok(())`)
-   - No placeholder returns (`Type::error()`)
-
-2. **Error handling**:
-   - Use `Result<T, Vec<Diagnostic>>` for recoverable errors
-   - Include helpful error messages with source spans
-   - Never panic in compiler code (except ICE)
-
-3. **Documentation**:
-   - Document public functions with `///`
-   - Add module-level docs with `//!`
-   - Reference spec sections in complex algorithms
-
-### Example Code
-
-```rust
-/// Lower a pattern from AST to HIR.
-///
-/// # Algorithm
-///
-/// Pattern lowering transforms AST patterns into HIR patterns while:
-/// 1. Type checking - validates pattern structure
-/// 2. Variable binding - creates LocalIds
-/// 3. Exhaustiveness - contributes to coverage analysis
-///
-/// # Errors
-///
-/// Returns diagnostics for:
-/// - Type mismatches between pattern and expected type
-/// - Invalid pattern structure for the type
-///
-/// See SPECIFICATION.md Section 5.3 for pattern semantics.
-pub fn lower_pattern(
-    &mut self,
-    pattern: &ast::Pattern,
-    expected_ty: &Type,
-) -> Result<hir::Pattern, Vec<Diagnostic>> {
-    match &pattern.kind {
-        ast::PatternKind::Literal(lit) => {
-            // Handle literal pattern...
-        }
-        ast::PatternKind::Binding(name) => {
-            // Handle binding pattern...
-        }
-        // Explicitly handle all variants - no catch-all
-    }
-}
-```
+For changes touching codegen, type layouts, or runtime FFI:
+- [ ] Bootstrap gate passes (`./build_selfhost.sh gate`)
 
 ---
 
-## Pull Request Process
+## Areas Needing Help
 
-### Before Submitting
+1. **Standard Library** — expanding collections, I/O, effects
+2. **Tooling** — LSP server, formatter, REPL
+3. **Documentation** — tutorials, guides, examples
+4. **Testing** — more golden tests, edge cases, fuzzing
+5. **Specs** — reviewing and improving language specifications
 
-- [ ] All tests pass (`cd src/bootstrap && cargo test --workspace`)
-- [ ] No clippy warnings (`cargo clippy --all-targets`)
-- [ ] Code is formatted (`cargo fmt --check`)
-- [ ] Documentation is updated
-- [ ] Commit messages follow convention
-
-### PR Description Template
-
-```markdown
-## Summary
-
-Brief description of the changes.
-
-## Changes
-
-- List of specific changes
-- Another change
-
-## Testing
-
-How the changes were tested.
-
-## Related Issues
-
-Closes #123
-```
-
-### Review Process
-
-1. Create PR against `main`
-2. Automated CI checks run
-3. Maintainer reviews code
-4. Address feedback
-5. PR merged when approved
-
-### Code Review Guidelines
-
-#### For Authors
-
-**Before requesting review:**
-- Self-review your changes first
-- Ensure all CI checks pass
-- Keep PRs focused - one logical change per PR
-- Large changes should be split into reviewable chunks
-
-**Responding to feedback:**
-- Address all comments before re-requesting review
-- Explain your reasoning if you disagree with feedback
-- Mark resolved conversations as resolved
-- Don't force-push after review has started (makes it hard to see changes)
-
-#### For Reviewers
-
-**Review checklist:**
-
-1. **Correctness**
-   - [ ] Does the code do what it claims?
-   - [ ] Are edge cases handled?
-   - [ ] Are there potential panics or unwraps that should be Results?
-
-2. **Safety (per CLAUDE.md)**
-   - [ ] No silent failures (`_ => Ok(())`, `_ => continue`)
-   - [ ] No catch-all patterns that should be explicit
-   - [ ] No `unwrap_or_default()` hiding real errors
-   - [ ] No placeholder returns (`Type::error()` without justification)
-
-3. **Testing**
-   - [ ] Are new features tested?
-   - [ ] Are bug fixes accompanied by regression tests?
-   - [ ] Do tests cover edge cases?
-
-4. **Design**
-   - [ ] Does the change fit the existing architecture?
-   - [ ] Is the code appropriately modular?
-   - [ ] Are abstractions at the right level?
-
-5. **Documentation**
-   - [ ] Are public APIs documented?
-   - [ ] Are complex algorithms explained?
-   - [ ] Are spec references included where appropriate?
-
-6. **Performance**
-   - [ ] Are there obvious performance issues?
-   - [ ] Are allocations minimized in hot paths?
-   - [ ] Is the algorithmic complexity appropriate?
-
-**Review etiquette:**
-- Be constructive and specific
-- Distinguish between blocking issues and suggestions
-- Use prefixes: `nit:` (minor), `suggestion:` (optional), `blocking:` (must fix)
-- Acknowledge good work and clever solutions
-- Ask questions rather than making assumptions
-
-#### Review Labels
-
-| Label | Meaning |
-|-------|---------|
-| `needs-review` | Ready for review |
-| `changes-requested` | Author needs to address feedback |
-| `approved` | Ready to merge |
-| `needs-discussion` | Requires broader input |
-| `blocked` | Waiting on external dependency |
-
-#### Merge Requirements
-
-PRs require:
-- At least 1 approving review
-- All CI checks passing
-- No unresolved blocking comments
-- Up-to-date with target branch
-
-#### Review Response Time
-
-- **Initial review**: Within 3 business days
-- **Follow-up reviews**: Within 1 business day
-- If no review after 5 days, ping in comments
-
----
-
-## Finding Issues to Work On
-
-### Good First Issues
-
-Look for issues labeled:
-- `good-first-issue` - Simple, well-defined tasks
-- `help-wanted` - Tasks that need contributors
-- `documentation` - Docs improvements
-
-### Action Items
-
-See `docs/planning/ACTION_ITEMS.md` for a prioritized list of work items:
-
-| Priority | Description |
-|----------|-------------|
-| P1 | High priority - needed for beta |
-| P2 | Medium priority - needed for 1.0 |
-| P3 | Low priority - nice to have |
-
-### Areas Needing Help
-
-1. **Standard Library** - Implementing collections, I/O
-2. **Documentation** - Tutorials, guides, examples
-3. **Tooling** - LSP, formatter, REPL
-4. **Testing** - More integration tests, fuzzing
-5. **Optimization** - Performance improvements
+See `.tmp/WORK.md` for the current prioritized work items.
 
 ---
 
 ## Getting Help
 
-- **Documentation**: Check `docs/` for specifications, guides, and planning
-- **Architecture**: See `docs/planning/DECISIONS.md` for ADRs
-- **Questions**: Open a discussion or issue
-
----
-
-## Code of Conduct
-
-We follow the [Contributor Covenant](https://www.contributor-covenant.org/). Be respectful and constructive.
-
----
-
-*Last updated: 2026-02-12*
+- **Build reference**: See `CLAUDE.md` for commands, patterns, gotchas
+- **Methodology**: See `DEVELOPMENT.md` for the CCV protocol
+- **Specs**: See `docs/spec/` for language specifications
+- **Bug history**: See `tools/FAILURE_LOG.md` for past bugs and resolutions
