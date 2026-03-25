@@ -203,6 +203,11 @@ do_build_first_gen() {
 
     check_seed_staleness
 
+    # Clear all caches — cached IR is compiler-version-specific.
+    # Module-level source hashes and per-function content hashes must both be cleared
+    # when the compiling compiler changes (seed vs first_gen vs second_gen).
+    rm -rf "$BUILD_DIR/.content_hashes" "$BUILD_DIR/obj/.hashes" "$BUILD_DIR/.blood-cache" 2>/dev/null
+
     step "Building first_gen with $(basename "$bootstrap_compiler")"
     local start_ts rc=0
     start_ts=$(date +%s)
@@ -221,6 +226,9 @@ do_build_first_gen() {
 
 do_build_second_gen() {
     [ -f "$BUILD_DIR/first_gen" ] || die "first_gen not found. Run: ./build_selfhost.sh build first_gen"
+
+    # Clear all caches — cached IR is compiler-version-specific
+    rm -rf "$BUILD_DIR/.content_hashes" "$BUILD_DIR/obj/.hashes" "$BUILD_DIR/.blood-cache" 2>/dev/null
 
     step "Self-compiling (first_gen → second_gen)"
     local start_ts rc=0
@@ -260,6 +268,9 @@ do_build_second_gen() {
 
 do_build_third_gen() {
     [ -f "$BUILD_DIR/second_gen" ] || die "second_gen not found. Run: ./build_selfhost.sh build second_gen"
+
+    # Clear all caches — cached IR is compiler-version-specific
+    rm -rf "$BUILD_DIR/.content_hashes" "$BUILD_DIR/obj/.hashes" "$BUILD_DIR/.blood-cache" 2>/dev/null
 
     step "Bootstrap (second_gen → third_gen)"
     local start_ts rc=0
