@@ -4358,6 +4358,11 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
         &lower_result.builtin_option_def,
         &lower_result.builtin_result_def,
     );
+    // Set Frozen DefId for persist/freeze codegen (when stdlib Frozen is used)
+    match &lower_result.builtin_frozen_def {
+        &Option.Some(ref fid) => { ctx.frozen_def_id = fid.index; }
+        &Option.None => {}
+    }
     eprint_str("[populate_adt]");
     codegen.populate_adt_registry(&mut ctx, &lower_result.items);
     eprint_str("[done]");

@@ -2104,8 +2104,35 @@ fn emit_aggregate(
             for ta in 0usize..type_args.len() {
                 hir_type_args.push(type_intern.ty_id_to_type(type_args[ta]));
             }
-            // Look up the ADT in the registry to determine if it's a struct or enum
             emit_aggregate_adt(ctx, dest, dest_type, def_id.index, variant_idx, operands, &hir_type_args);
+            // Frozen<T>: persist value to Tier 3 and freeze
+            let is_frozen = ctx.frozen_def_id != 0 && def_id.index == ctx.frozen_def_id;
+            if is_frozen {
+                let frozen_size = codegen_size.llvm_type_size(dest_type) as u64;
+                let persisted = ctx.fresh_temp_cg();
+                ctx.write_indent();
+                ctx.write_cgname(&persisted);
+                ctx.write(" = call ptr @blood_persist(ptr ");
+                ctx.write(dest);
+                ctx.write(", i64 ");
+                ctx.write_string(&codegen_types.format_u64(frozen_size));
+                ctx.write(")\n");
+                let freeze_ok = ctx.fresh_temp_cg();
+                ctx.write_indent();
+                ctx.write_cgname(&freeze_ok);
+                ctx.write(" = call i1 @blood_freeze(ptr ");
+                ctx.write_cgname(&persisted);
+                ctx.write(")\n");
+                // Copy persisted data back to the Frozen struct's alloca
+                ctx.write_indent();
+                ctx.write("call void @llvm.memcpy.p0.p0.i64(ptr ");
+                ctx.write(dest);
+                ctx.write(", ptr ");
+                ctx.write_cgname(&persisted);
+                ctx.write(", i64 ");
+                ctx.write_string(&codegen_types.format_u64(frozen_size));
+                ctx.write(", i1 false)\n");
+            }
         }
         &mir_types.AggregateKind.Record => {
             // Extensible records - store fields with actual types

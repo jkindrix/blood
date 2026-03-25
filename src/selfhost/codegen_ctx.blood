@@ -358,6 +358,7 @@ pub struct CodegenCtx {
     /// Packed into a single Vec<u64> to minimize struct layout impact.
     /// [0..N): effect DefIds, [N]: abort label string index, etc.
     non_tail_resumptive_effects: hashmap.HashMapU64U32,
+    pub frozen_def_id: u32,
     /// Per-op tail-resumptive classification.
     /// Key: (effect_def_id << 32) | op_sym_index. Value: 1 = TR, absent = NTR.
     pub tail_resumptive_ops: hashmap.HashMapU64U32,
@@ -586,6 +587,7 @@ impl CodegenCtx {
             effect_captured_locals: Vec.new(),
             active_regions: Vec.with_capacity(4),
             non_tail_resumptive_effects: hashmap.HashMapU64U32.with_capacity(8),
+            frozen_def_id: 0,
             tail_resumptive_ops: hashmap.HashMapU64U32.with_capacity(16),
             abort_label_stack: Vec.new(),
             handler_abort_hash: hashmap.HashMapU64U32.new(),
@@ -683,6 +685,7 @@ impl CodegenCtx {
             effect_captured_locals: Vec.new(),
             active_regions: Vec.with_capacity(4),
             non_tail_resumptive_effects: hashmap.HashMapU64U32.with_capacity(8),
+            frozen_def_id: 0,
             tail_resumptive_ops: hashmap.HashMapU64U32.with_capacity(16),
             abort_label_stack: Vec.new(),
             handler_abort_hash: hashmap.HashMapU64U32.new(),
@@ -2511,6 +2514,7 @@ impl CodegenCtx {
             effect_captured_locals: Vec.new(),
             active_regions: Vec.with_capacity(4),
             non_tail_resumptive_effects: hashmap.HashMapU64U32.new(),
+            frozen_def_id: 0,
             tail_resumptive_ops: hashmap.HashMapU64U32.new(),
             abort_label_stack: Vec.new(),
             handler_abort_hash: hashmap.HashMapU64U32.new(),
@@ -2549,6 +2553,7 @@ impl CodegenCtx {
             }
         }
 
+        worker.frozen_def_id = self.frozen_def_id;
         // Copy per-op tail-resumptive map (read-only, needed for Perform codegen)
         for odi2 in 0usize..self.op_def_index_entries.len() {
             let ode2 = &self.op_def_index_entries[odi2];
