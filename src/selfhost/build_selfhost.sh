@@ -989,19 +989,23 @@ Diagnostics:
   asan [ir]           Build ASan-instrumented binary
   bisect [ir]         Binary search for miscompiled function
   emit [stage]        Emit intermediate IR (ast|hir|mir|llvm-ir|llvm-ir-unopt)
+  debug-test <file> [compiler]  Compile with --dump-mir --validate-mir, run, preserve artifacts
+  metrics             Show build size/time trends from .logs/metrics.jsonl
 
 Workflow:
   gate [--quick]      Full bootstrap pipeline + update seed on success
                       --quick: skip first_gen/second_gen builds (assumes already verified)
-  run <file> [bin]    Compile and run a file (default: first_gen)
+  run <file> [compiler] [flags...]  Compile and run a file (extra flags passed to compiler)
   diff <file>         Compare blood-rust vs first_gen output
   status              Show compiler status, ages, processes (default command)
   install             Install toolchain to ~/.blood/{bin,lib}/
   clean               Remove build artifacts (preserves .logs)
+  clean-cache         Remove only caches (content hashes, obj hashes, blood-cache)
   clean-all           Remove build artifacts and logs
 
 Flags:
   -q, --quiet         Suppress per-test output (only failures + summary)
+  --fresh             Clear caches before building (use with build commands)
   --force             Ignore incremental cache, re-run all tests
 USAGE
 }
@@ -1014,6 +1018,14 @@ case "${1:-status}" in
 
     build)
         check_zombies
+        # Check for --fresh flag in any position
+        _build_fresh=false
+        for _ba in "$@"; do
+            if [[ "$_ba" == "--fresh" ]]; then _build_fresh=true; fi
+        done
+        if $_build_fresh; then
+            rm -rf "$BUILD_DIR/.content_hashes" "$BUILD_DIR/obj/.hashes" "$BUILD_DIR/.blood-cache" 2>/dev/null
+        fi
         case "${2:-}" in
             cargo)
                 do_build_cargo
@@ -1141,11 +1153,22 @@ case "${1:-status}" in
     # ── workflow ────────────────────────────────────────────────────────────
 
     run)
-        src="${2:?Usage: ./build_selfhost.sh run <file.blood> [compiler]}"
-        bin="$(resolve_compiler "${3:-first_gen}")"
+        src="${2:?Usage: ./build_selfhost.sh run <file.blood> [compiler] [flags...]}"
+        # Detect if arg 3 is a compiler name or a flag
+        _run_bin="$BUILD_DIR/first_gen"
+        _run_extra_start=3
+        if [[ -n "${3:-}" && "${3:0:1}" != "-" ]]; then
+            _run_bin="$(resolve_compiler "$3")"
+            _run_extra_start=4
+        fi
         [ -f "$src" ] || die "Source file not found: $src"
-        [ -f "$bin" ] || die "Compiler not found: $bin"
-        exec "$bin" run "$src" --build-dir "$BUILD_DIR" --stdlib-path "$STDLIB_PATH"
+        [ -f "$_run_bin" ] || die "Compiler not found: $_run_bin"
+        # Collect extra flags (positions $_run_extra_start onward)
+        _run_extra=()
+        for (( _ri=$_run_extra_start; _ri<=$#; _ri++ )); do
+            _run_extra+=("${!_ri}")
+        done
+        exec "$_run_bin" run "$src" --build-dir "$BUILD_DIR" --stdlib-path "$STDLIB_PATH" "${_run_extra[@]}"
         ;;
 
     debug-test)
@@ -1323,6 +1346,12 @@ SEEDMETA
         rm -f "${DIR}"/*.ll "${DIR}"/*.o
         rm -rf "${HOME}"/.blood*/cache/
         ok "Build artifacts and caches removed"
+        ;;
+
+    clean-cache)
+        step "Cleaning caches only"
+        rm -rf "$BUILD_DIR/.content_hashes" "$BUILD_DIR/obj/.hashes" "$BUILD_DIR/.blood-cache"
+        ok "Caches removed (binaries preserved)"
         ;;
 
     clean-all)
