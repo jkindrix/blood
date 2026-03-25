@@ -2203,6 +2203,86 @@ fn find_op_index(
     0 // fallback
 }
 
+/// Generates __blood_vft_init constructor that registers trait impl methods in the VFT.
+/// For each trait impl method with a body, computes its content hash and emits a
+/// blood_vft_register(hash_lo, hash_hi, fn_ptr, arity) call.
+fn generate_vft_init_ir(
+    lower_result: &hir_lower_ctx.LowerResult,
+) -> String {
+    let mut ir = common.make_string("define linkonce_odr void @__blood_vft_init() {\nentry:\n");
+    let mut count: usize = 0;
+
+    for i in 0usize..lower_result.items.len() {
+        let entry = &lower_result.items[i];
+        match &entry.item.kind {
+            &hir_item.ItemKind.Impl(ref impl_def) => {
+                // Only trait impls (not inherent impls)
+                if impl_def.trait_ref.is_some() {
+                    for j in 0usize..impl_def.items.len() {
+                        match &impl_def.items[j] {
+                            &hir_item.AssocItem.Fn(ref assoc_fn) => {
+                                match &assoc_fn.body_id {
+                                    &Option.Some(ref bid) => {
+                                        // Find the body
+                                        for bi in 0usize..lower_result.bodies.len() {
+                                            if lower_result.bodies[bi].body_id.index == bid.index {
+                                                let hash = content_hash.hash_fn_body(&lower_result.bodies[bi].body, &assoc_fn.sig);
+                                                // Convert first 16 bytes to hash_lo/hash_hi (LE)
+                                                let mut hash_lo: u64 = 0;
+                                                let mut hash_hi: u64 = 0;
+                                                let mut b: usize = 0;
+                                                while b < 8 {
+                                                    let shift: u64 = (b as u64) * 8;
+                                                    hash_lo = hash_lo | ((hash[b] as u64) << shift);
+                                                    hash_hi = hash_hi | ((hash[b + 8] as u64) << shift);
+                                                    b += 1;
+                                                }
+                                                // Get mangled fn name
+                                                let fn_info = driver.FnInfo {
+                                                    def_id: assoc_fn.def_id,
+                                                    name: assoc_fn.name.symbol,
+                                                    name_span: assoc_fn.name.span,
+                                                    return_ty: assoc_fn.sig.return_ty,
+                                                    span: assoc_fn.name.span,
+                                                };
+                                                let fn_name = main_helpers.make_mangled_fn_name(
+                                                    &lower_result.interner, &fn_info,
+                                                    &lower_result.no_mangle_def_ids,
+                                                    &lower_result.export_name_entries,
+                                                );
+                                                let arity = assoc_fn.sig.params.len();
+                                                // Emit: call void @blood_vft_register(i64 lo, i64 hi, i64 ptrtoint(ptr @fn to i64), i32 arity)
+                                                let lo_str = codegen_types.format_u64(hash_lo);
+                                                let hi_str = codegen_types.format_u64(hash_hi);
+                                                ir.push_str("  call void @blood_vft_register(i64 ");
+                                                ir.push_str(lo_str.as_str());
+                                                ir.push_str(", i64 ");
+                                                ir.push_str(hi_str.as_str());
+                                                ir.push_str(", i64 ptrtoint(ptr @");
+                                                ir.push_str(fn_name.as_str());
+                                                ir.push_str(" to i64), i32 ");
+                                                push_usize(&mut ir, arity);
+                                                ir.push_str(")\n");
+                                                count += 1;
+                                            }
+                                        }
+                                    }
+                                    &Option.None => {}
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    ir.push_str("  ret void\n}\n\n");
+    ir
+}
+
 /// Generates handler op wrapper functions and the __blood_register_handlers function.
 /// Returns the LLVM IR string to append to the module.
 fn generate_handler_wrappers(
@@ -2212,6 +2292,9 @@ fn generate_handler_wrappers(
     let mut ir = String.new();
 
     if handler_info.ops.len() == 0 && handler_info.returns.len() == 0 && handler_info.finallys.len() == 0 {
+        // Still need global_ctors for VFT init even without handlers
+        ir.push_str("define linkonce_odr void @__blood_register_handlers() {\nentry:\n  ret void\n}\n\n");
+        ir.push_str("@llvm.global_ctors = appending global [2 x { i32, ptr, ptr }] [{ i32, ptr, ptr } { i32 65535, ptr @__blood_register_handlers, ptr null }, { i32, ptr, ptr } { i32 65535, ptr @__blood_vft_init, ptr null }]\n");
         return ir;
     }
 
@@ -2835,7 +2918,7 @@ fn generate_handler_wrappers(
 
     ir.push_str("  ret void\n");
     ir.push_str("}\n\n");
-    ir.push_str("@llvm.global_ctors = appending global [1 x { i32, ptr, ptr }] [{ i32, ptr, ptr } { i32 65535, ptr @__blood_register_handlers, ptr null }]\n");
+    ir.push_str("@llvm.global_ctors = appending global [2 x { i32, ptr, ptr }] [{ i32, ptr, ptr } { i32 65535, ptr @__blood_register_handlers, ptr null }, { i32, ptr, ptr } { i32 65535, ptr @__blood_vft_init, ptr null }]\n");
 
     ir
 }
@@ -4843,6 +4926,10 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     // expected by the evidence API runtime (ptr state, ptr args, i64 arg_count, i64 cont) -> i64.
     let handler_wrapper_ir = generate_handler_wrappers(&handler_info, &mut ctx);
     ctx.buffer_write(handler_wrapper_ir.as_str());
+
+    // Pass 5: Generate VFT init constructor for trait impl methods.
+    let vft_init_ir = generate_vft_init_ir(&lower_result);
+    ctx.buffer_write(vft_init_ir.as_str());
 
     // Emit inline handler stub functions collected during PushInlineHandler codegen.
     for stub_i in 0usize..ctx.inline_stubs.len() {
