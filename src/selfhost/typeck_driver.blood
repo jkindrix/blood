@@ -1574,18 +1574,53 @@ fn find_op_param_types_for_body(
                 for j in 0usize..handler_def.op_impls.len() {
                     if handler_def.op_impls[j].body_id.index == target_body_id.index {
                         let op_def_id = handler_def.op_impls[j].op_def_id;
-                        // Find the effect op param types
+                        let effect_ref = &handler_def.handled_effect;
+                        // Find the effect op param types, substituting handler type args
                         for ei in 0usize..items.len() {
                             match &items[ei].item.kind {
                                 &hir_item.ItemKind.Effect(ref effect_def) => {
-                                    for k in 0usize..effect_def.operations.len() {
-                                        let effect_op = &effect_def.operations[k];
-                                        if effect_op.def_id.index == op_def_id.index {
-                                            let mut param_tys: Vec<type_intern.TyId> = Vec.new();
-                                            for p in 0usize..effect_op.param_tys.len() {
-                                                param_tys.push(type_intern.TyId.new(effect_op.param_tys[p].index));
+                                    if items[ei].item.def_id.index == effect_ref.def_id.index {
+                                        // Build substitution: effect type param TyVarId → handler arg TyId
+                                        let mut subst_var_ids: Vec<u32> = Vec.new();
+                                        let mut subst_ty_ids: Vec<type_intern.TyId> = Vec.new();
+                                        let mut pi: usize = 0;
+                                        for gp in 0usize..effect_def.generics.params.len() {
+                                            match &effect_def.generics.params[gp] {
+                                                &hir_ty.GenericParam.TypeParam(ref tp) => {
+                                                    if pi < effect_ref.args.len() {
+                                                        subst_var_ids.push(tp.var_id.index);
+                                                        subst_ty_ids.push(type_intern.type_to_ty_id(&effect_ref.args[pi]));
+                                                    }
+                                                    pi += 1;
+                                                }
+                                                _ => {}
                                             }
-                                            return Option.Some(param_tys);
+                                        }
+                                        // Find the matching op and return substituted param types
+                                        for k in 0usize..effect_def.operations.len() {
+                                            let effect_op = &effect_def.operations[k];
+                                            if effect_op.def_id.index == op_def_id.index {
+                                                let mut param_tys: Vec<type_intern.TyId> = Vec.new();
+                                                for p in 0usize..effect_op.param_tys.len() {
+                                                    let raw_ty = type_intern.TyId.new(effect_op.param_tys[p].index);
+                                                    // Substitute if it's an Infer matching an effect type param
+                                                    let interner = type_intern.type_interner();
+                                                    let substituted = match interner.get(raw_ty) {
+                                                        &type_intern.InternedTypeKind.Infer(ref var_id) => {
+                                                            let mut result = raw_ty;
+                                                            for si in 0usize..subst_var_ids.len() {
+                                                                if subst_var_ids[si] == var_id.index {
+                                                                    result = subst_ty_ids[si];
+                                                                }
+                                                            }
+                                                            result
+                                                        }
+                                                        _ => raw_ty,
+                                                    };
+                                                    param_tys.push(substituted);
+                                                }
+                                                return Option.Some(param_tys);
+                                            }
                                         }
                                     }
                                 }
@@ -1686,11 +1721,9 @@ fn unify_handler_op_params(
     body: &hir_expr.Body,
     body_id: hir_def.BodyId,
 ) {
-    // First, unify effect-level type params with handler type args.
-    // This must happen before param type unification so that transitive
-    // resolution works (e.g., op param T resolves to i32).
-    unify_effect_type_params_for_body(checker, items, body_id);
-
+    // Handler's effect type args are substituted into op param types by
+    // find_op_param_types_for_body, so we don't unify the shared effect
+    // type parameter (which would poison it for other handlers).
     match find_op_param_types_for_body(items, body_id) {
         Option.Some(ref param_tys) => {
             let state_count = find_handler_state_count_for_body(items, body_id);
@@ -1867,16 +1900,43 @@ fn setup_handler_op_context(
                             checker.handler_state_types.push(handler_def.state[si].ty);
                         }
 
-                        // Find the effect op return type via op_def_id
+                        // Find the effect op return type via op_def_id,
+                        // substituting handler type args for effect type params.
                         let op_def_id = handler_def.op_impls[j].op_def_id;
+                        let effect_ref = &handler_def.handled_effect;
                         for ei in 0usize..items.len() {
                             match &items[ei].item.kind {
                                 &hir_item.ItemKind.Effect(ref effect_def) => {
-                                    for k in 0usize..effect_def.operations.len() {
-                                        let effect_op = &effect_def.operations[k];
-                                        if effect_op.def_id.index == op_def_id.index {
-                                            checker.resume_ty = Option.Some(effect_op.return_ty);
-                                            return;
+                                    if items[ei].item.def_id.index == effect_ref.def_id.index {
+                                        for k in 0usize..effect_def.operations.len() {
+                                            let effect_op = &effect_def.operations[k];
+                                            if effect_op.def_id.index == op_def_id.index {
+                                                let ret_ty = effect_op.return_ty;
+                                                // Substitute effect type params in return type
+                                                if effect_ref.args.len() > 0 {
+                                                    let interner = type_intern.type_interner();
+                                                    match interner.get(ret_ty) {
+                                                        &type_intern.InternedTypeKind.Infer(ref var_id) => {
+                                                            let mut pi2: usize = 0;
+                                                            for gp2 in 0usize..effect_def.generics.params.len() {
+                                                                match &effect_def.generics.params[gp2] {
+                                                                    &hir_ty.GenericParam.TypeParam(ref tp2) => {
+                                                                        if tp2.var_id.index == var_id.index && pi2 < effect_ref.args.len() {
+                                                                            checker.resume_ty = Option.Some(type_intern.type_to_ty_id(&effect_ref.args[pi2]));
+                                                                            return;
+                                                                        }
+                                                                        pi2 += 1;
+                                                                    }
+                                                                    _ => {}
+                                                                }
+                                                            }
+                                                        }
+                                                        _ => {}
+                                                    }
+                                                }
+                                                checker.resume_ty = Option.Some(ret_ty);
+                                                return;
+                                            }
                                         }
                                     }
                                 }

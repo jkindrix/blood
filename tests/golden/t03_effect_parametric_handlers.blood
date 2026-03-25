@@ -1,0 +1,44 @@
+// Test: two handlers for same parametric effect with different type args
+// EXPECT: 30
+// EXPECT: 300
+effect Emit<T> {
+    op emit(value: T) -> ();
+}
+
+deep handler CollectI32 for Emit<i32> {
+    let mut sum: i32
+    return(x) { sum }
+    op emit(value) {
+        sum = sum + value;
+        resume(())
+    }
+}
+
+deep handler CollectI64 for Emit<i64> {
+    let mut sum: i64
+    return(x) { sum }
+    op emit(value) {
+        sum = sum + value;
+        resume(())
+    }
+}
+
+fn main() -> i32 {
+    let r1: i32 = with CollectI32 { sum: 0 } handle {
+        perform Emit.emit(10);
+        perform Emit.emit(20);
+        0
+    };
+    println_int(r1);
+
+    let r2: i64 = with CollectI64 { sum: 0 } handle {
+        perform Emit.emit(100 as i64);
+        perform Emit.emit(200 as i64);
+        0 as i64
+    };
+    println_int(r2 as i32);
+
+    if r1 != 30 { return 1; }
+    if r2 != 300 { return 2; }
+    0
+}
