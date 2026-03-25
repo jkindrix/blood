@@ -1207,6 +1207,47 @@ pub fn emit_place_addr(
                     }
 
                     current = data_ptr;
+                } else if !ctx.is_check_suppressed(&ast.UncheckedCheck.Bounds) {
+                    // Array bounds check: for fixed-size arrays [T; N], check index < N
+                    match &current_hir_type {
+                        &Option.Some(ty_id) => {
+                            match extract_array_length(ty_id) {
+                                Option.Some(arr_len) => {
+                                    let idx_for_check = ctx.fresh_temp_cg();
+                                    let idx_check_alloca = ctx.local_cg(*local);
+                                    let idx_check_ty = ctx.get_local_type(*local);
+                                    ctx.emit_load_cg2(&idx_for_check, idx_check_ty.as_str(), &idx_check_alloca);
+                                    let idx_i64 = if string_eq_str(idx_check_ty.as_str(), "i64") {
+                                        idx_for_check
+                                    } else {
+                                        let ext = ctx.fresh_temp_cg();
+                                        let raw_str = cgname_to_string(&idx_for_check);
+                                        ctx.emit_cast_cg(&ext, "sext", idx_check_ty.as_str(), raw_str.as_str(), "i64");
+                                        ext
+                                    };
+                                    let is_oob = ctx.fresh_temp_cg();
+                                    let arr_len_str = codegen_types.format_u64(arr_len);
+                                    ctx.emit_icmp_cg2(&is_oob, "uge", "i64", &idx_i64, arr_len_str.as_str());
+                                    let oob_panic_label = ctx.fresh_label_cg();
+                                    let oob_ok_label = ctx.fresh_label_cg();
+                                    ctx.emit_cond_br_cg(&is_oob, &oob_panic_label, &oob_ok_label);
+                                    ctx.emit_label_cg(&oob_panic_label);
+                                    let loc_str = build_panic_location(ctx);
+                                    let loc_global = ctx.add_string_constant(&loc_str);
+                                    let arr_len_cg = codegen_ctx.CgName.Str(common.make_string(arr_len_str.as_str()));
+                                    ctx.begin_call_str(Option.None, "void", "@blood_panic_index_out_of_bounds_loc");
+                                    ctx.call_arg_cg(true, "i64", &idx_i64);
+                                    ctx.call_arg_cg(false, "i64", &arr_len_cg);
+                                    ctx.call_arg_str(false, "ptr", loc_global.as_str());
+                                    ctx.end_call();
+                                    ctx.emit_unreachable();
+                                    ctx.emit_label_cg(&oob_ok_label);
+                                }
+                                Option.None => {}
+                            }
+                        }
+                        &Option.None => {}
+                    }
                 }
 
                 // Get the element size using tracked HIR type for proper byte-offset calculation
@@ -1296,6 +1337,34 @@ pub fn emit_place_addr(
                     ctx.emit_label_cg(&ok_label);
 
                     current = data_ptr;
+                } else if !ctx.is_check_suppressed(&ast.UncheckedCheck.Bounds) {
+                    // Array bounds check for ConstantIndex: offset is compile-time known.
+                    // For [T; N], check offset < N at compile time.
+                    match &current_hir_type {
+                        &Option.Some(ty_id) => {
+                            match extract_array_length(ty_id) {
+                                Option.Some(arr_len) => {
+                                    if offset >= arr_len {
+                                        let loc_str = build_panic_location(ctx);
+                                        let loc_global = ctx.add_string_constant(&loc_str);
+                                        let idx_cg = codegen_ctx.CgName.Str(codegen_types.format_u64(offset));
+                                        let len_cg = codegen_ctx.CgName.Str(codegen_types.format_u64(arr_len));
+                                        ctx.begin_call_str(Option.None, "void", "@blood_panic_index_out_of_bounds_loc");
+                                        ctx.call_arg_cg(true, "i64", &idx_cg);
+                                        ctx.call_arg_cg(false, "i64", &len_cg);
+                                        ctx.call_arg_str(false, "ptr", loc_global.as_str());
+                                        ctx.end_call();
+                                        ctx.emit_unreachable();
+                                        // Emit a dummy label so subsequent code can still be emitted
+                                        let dead_label = ctx.fresh_label_cg();
+                                        ctx.emit_label_cg(&dead_label);
+                                    }
+                                }
+                                Option.None => {}
+                            }
+                        }
+                        &Option.None => {}
+                    }
                 }
 
                 // Get the element size using tracked HIR type for proper byte-offset calculation
@@ -1849,6 +1918,21 @@ fn extract_element_type_id(ty_id: type_intern.TyId) -> Option<type_intern.TyId> 
         }
         &type_intern.InternedTypeKind.Ptr { inner, mutable: _ } => {
             extract_element_type_id(inner)
+        }
+        _ => Option.None,
+    }
+}
+
+/// Extracts the array length from a TyId if it's an Array type.
+/// Returns None for non-array types (Vec, Slice, etc.).
+fn extract_array_length(ty_id: type_intern.TyId) -> Option<u64> {
+    let kind = type_intern.type_interner().get(ty_id);
+    match kind {
+        &type_intern.InternedTypeKind.Array { element: _, size } => {
+            Option.Some(size)
+        }
+        &type_intern.InternedTypeKind.Ref { inner, mutable: _ } => {
+            extract_array_length(inner)
         }
         _ => Option.None,
     }
