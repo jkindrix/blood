@@ -393,6 +393,10 @@ pub fn generate_function_with_ctx(
     // Store arguments into allocas
     codegen_stmt.emit_arg_stores(ctx, body);
 
+    // Clear handler capture state from previous compilations
+    ctx.handler_capture_locals.clear();
+    ctx.handler_capture_tys.clear();
+
     // For closure bodies with captures, load captured values from env struct
     if body.capture_locals.len() > 0 {
         emit_capture_loads(ctx, body);
