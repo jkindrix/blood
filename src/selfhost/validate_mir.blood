@@ -587,7 +587,7 @@ fn validate_call_destination(
     match &block.terminator {
         &Option.Some(ref term) => {
             match &term.kind {
-                &mir_term.TerminatorKind.Call { func: _, ref args, ref destination, target: _, unwind: _ } => {
+                &mir_term.TerminatorKind.Call { ref func, ref args, ref destination, target: _, unwind: _ } => {
                     let dest_idx = destination.local.index as usize;
                     if dest_idx >= body.locals.len() {
                         let mut msg = String.new();
@@ -599,6 +599,36 @@ fn validate_call_destination(
                         push_usize(&mut msg, body.locals.len());
                         msg.push_str(" locals)");
                         errors.push(msg);
+                    }
+                    // Check call arity: extract param count from callee's Fn type
+                    match func {
+                        &mir_types.Operand.Constant(ref constant) => {
+                            match &constant.kind {
+                                &mir_types.ConstantKind.FnDef(ref _def_id) => {
+                                    let fn_ty = constant.ty;
+                                    let interner = type_intern.type_interner();
+                                    match interner.get(fn_ty) {
+                                        &type_intern.InternedTypeKind.Fn { params, ret: _, effects: _ } => {
+                                            let expected = interner.ty_list_len(params);
+                                            let actual = args.len();
+                                            if expected != actual {
+                                                let mut msg = String.new();
+                                                msg.push_str("bb");
+                                                push_usize(&mut msg, bb_idx);
+                                                msg.push_str("[term]: Call arity mismatch: expected ");
+                                                push_usize(&mut msg, expected);
+                                                msg.push_str(" args, found ");
+                                                push_usize(&mut msg, actual);
+                                                errors.push(msg);
+                                            }
+                                        }
+                                        _ => {} // Non-Fn callee type — skip (indirect call, closure, etc.)
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        _ => {} // Non-constant callee — skip (indirect call via local)
                     }
                 }
                 _ => {}
