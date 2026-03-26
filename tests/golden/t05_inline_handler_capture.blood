@@ -1,0 +1,28 @@
+// Test: inline handler with mutable captures from enclosing scope
+// EXPECT: 60
+effect Emit<T> {
+    op emit(value: T) -> ();
+}
+
+fn emit_values() -> i32 / {Emit<i32>} {
+    perform Emit.emit(10);
+    perform Emit.emit(20);
+    perform Emit.emit(30);
+    0
+}
+
+fn main() -> i32 {
+    let mut total: i32 = 0;
+    let result: i32 = try {
+        emit_values();
+        0
+    } with {
+        Emit.emit(value) => {
+            total = total + value;
+            resume(());
+        }
+    };
+    println_int(total);
+    if total != 60 { return 1; }
+    0
+}

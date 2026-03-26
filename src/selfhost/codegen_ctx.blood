@@ -291,6 +291,11 @@ pub struct CodegenCtx {
     /// Whether the current function being generated is a handler op body.
     /// When true, Resume terminators emit `ret i64` instead of blood_resume calls.
     pub is_handler_op: bool,
+    /// Capture store-back info for inline handler op bodies.
+    /// When is_handler_op and captures exist, Resume must store local values
+    /// back through parent pointers before returning.
+    pub handler_capture_locals: Vec<u32>,
+    pub handler_capture_tys: Vec<type_intern.TyId>,
     /// Deferred inline handler stub function definitions.
     /// Collected during PushInlineHandler codegen, emitted after all bodies.
     pub inline_stubs: Vec<String>,
@@ -562,6 +567,8 @@ impl CodegenCtx {
             handler_state_count_hash: hashmap.HashMapU64U32.with_capacity(16),
             handler_state_byte_size_hash: hashmap.HashMapU64U32.with_capacity(16),
             is_handler_op: false,
+            handler_capture_locals: Vec.new(),
+            handler_capture_tys: Vec.new(),
             inline_stubs: Vec.with_capacity(128),
             inline_stub_count: 0,
             handler_depth: 0,
@@ -660,6 +667,8 @@ impl CodegenCtx {
             handler_state_count_hash: hashmap.HashMapU64U32.with_capacity(16),
             handler_state_byte_size_hash: hashmap.HashMapU64U32.with_capacity(16),
             is_handler_op: false,
+            handler_capture_locals: Vec.new(),
+            handler_capture_tys: Vec.new(),
             inline_stubs: Vec.with_capacity(128),
             inline_stub_count: 0,
             handler_depth: 0,
@@ -2489,6 +2498,8 @@ impl CodegenCtx {
             handler_state_count_hash: hashmap.HashMapU64U32.new(),
             handler_state_byte_size_hash: hashmap.HashMapU64U32.new(),
             is_handler_op: false,
+            handler_capture_locals: Vec.new(),
+            handler_capture_tys: Vec.new(),
             inline_stubs: Vec.new(),
             inline_stub_count: 0,
             handler_depth: 0,

@@ -2469,9 +2469,27 @@ fn lower_inline_handle_expr(
         let id_str = codegen_types.format_u64(handler_def_id.index as u64);
         inner_name.push_str(id_str.as_str());
 
+        // Collect captures: walk handler body HIR for parent-scope local references
+        let mut captured_locals: Vec<hir_def.LocalId> = Vec.new();
+        collect_closure_captures(ctx, &hdlr.body, &mut captured_locals);
+
+        // Collect capture types from parent context
+        let mut capture_tys: Vec<type_intern.TyId> = Vec.new();
+        for ci in 0usize..captured_locals.len() {
+            let parent_mir_local = ctx.lookup_local(captured_locals[ci]);
+            match parent_mir_local {
+                Option.Some(local) => {
+                    let local_ty = ctx.builder.body_ref().get_local(local).ty;
+                    capture_tys.push(local_ty);
+                }
+                Option.None => {
+                    capture_tys.push(type_intern.CommonTypes.i32_ty());
+                }
+            }
+        }
+
         // Create a new MirLowerCtx for the handler op body.
-        // The inner function takes the op's natural params and is compiled with
-        // is_handler_op=true (which adds %__cont as the last param).
+        // The inner function takes: state_ptr (if captures), op params, then %__cont.
         let subst_addr = ctx.get_subst_table_addr();
         let mut handler_ctx = mir_lower_ctx.MirLowerCtx.new(
             handler_def_id,
@@ -2483,11 +2501,26 @@ fn lower_inline_handle_expr(
             Vec.new(), // No coercions
         );
 
+        // Add state_ptr as first param if there are captures (mirrors closure env_ptr)
+        if captured_locals.len() > 0 {
+            let env_ty = type_intern.ptr_ty();
+            let _state_local = handler_ctx.builder.add_param(env_ty, String.new(), span);
+        }
+
         // Add the op's natural parameters
         for pi in 0usize..hdlr.params.len() {
             let resolved_ty = ctx.resolve_type_to_id(hdlr.param_types[pi]);
             let mir_local = handler_ctx.builder.add_param(resolved_ty, String.new(), span);
             handler_ctx.register_local(hdlr.params[pi], mir_local);
+        }
+
+        // Register captures as locals in the handler context (same as closure pattern)
+        let mut capture_local_indices: Vec<u32> = Vec.new();
+        for cap_i in 0usize..captured_locals.len() {
+            let cap_ty = capture_tys[cap_i];
+            let cap_local = handler_ctx.builder.new_temp(cap_ty, span);
+            handler_ctx.register_local(captured_locals[cap_i], cap_local);
+            capture_local_indices.push(cap_local.index);
         }
 
         // Lower the handler body expression
@@ -2498,8 +2531,10 @@ fn lower_inline_handle_expr(
             handler_ctx.terminate_return(span);
         }
 
-        // Finish the handler body
-        let handler_body = handler_ctx.finish();
+        // Finish the handler body and set capture metadata
+        let mut handler_body = handler_ctx.finish();
+        handler_body.capture_locals = capture_local_indices;
+        handler_body.capture_tys = capture_tys;
 
         // Register as inline handler op body (compiled with is_handler_op=true)
         let inner_name_copy = common.make_string(inner_name.as_str());
@@ -2512,15 +2547,36 @@ fn lower_inline_handle_expr(
         }
         let resolved_return_ty = ctx.resolve_type_to_id(hdlr.return_ty);
 
-        // Create the operation entry with the inner function name
-        all_ops.push(mir_stmt.InlineOperation.new(
+        // Collect capture types and parent MIR local indices for codegen
+        let mut op_capture_tys: Vec<type_intern.TyId> = Vec.new();
+        let mut op_capture_parent_locals: Vec<u32> = Vec.new();
+        for ci in 0usize..captured_locals.len() {
+            let parent_mir_local = ctx.lookup_local(captured_locals[ci]);
+            match parent_mir_local {
+                Option.Some(local) => {
+                    op_capture_tys.push(ctx.builder.body_ref().get_local(local).ty);
+                    op_capture_parent_locals.push(local.index);
+                }
+                Option.None => {
+                    op_capture_tys.push(type_intern.CommonTypes.i32_ty());
+                    op_capture_parent_locals.push(0);
+                }
+            }
+        }
+
+        // Create the operation entry with the inner function name and capture info
+        let mut op_entry = mir_stmt.InlineOperation.new(
             hi as u32,
             String.new(), // op_name not needed for codegen
             resolved_param_types,
             resolved_return_ty,
             hir_def.BodyId.new(0), // body_id not used
             inner_name,
-        ));
+        );
+        op_entry.has_captures = captured_locals.len() > 0;
+        op_entry.capture_tys = op_capture_tys;
+        op_entry.capture_parent_locals = op_capture_parent_locals;
+        all_ops.push(op_entry);
     }
 
     // Emit PushInlineHandler with the operations list

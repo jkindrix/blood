@@ -457,14 +457,22 @@ fn emit_capture_loads(
     ctx: &mut codegen_ctx.CodegenCtx,
     body: &mir_body.MirBody,
 ) {
+    // For handler op bodies, the state struct stores POINTERS to parent allocas.
+    // For closures, it stores VALUES directly. Detect via is_handler_op.
+    let is_ptr_captures = ctx.is_handler_op;
+
     // Build env struct LLVM type from capture types
     let mut env_llvm = common.make_string("{ ");
     for ti in 0usize..body.capture_tys.len() {
         if ti > 0 {
             env_llvm.push_str(", ");
         }
-        let cap_ty_llvm = codegen_size.type_to_llvm_with_ctx_id(ctx, body.capture_tys[ti]);
-        env_llvm.push_str(cap_ty_llvm.as_str());
+        if is_ptr_captures {
+            env_llvm.push_str("ptr");
+        } else {
+            let cap_ty_llvm = codegen_size.type_to_llvm_with_ctx_id(ctx, body.capture_tys[ti]);
+            env_llvm.push_str(cap_ty_llvm.as_str());
+        }
     }
     env_llvm.push_str(" }");
 
@@ -495,28 +503,66 @@ fn emit_capture_loads(
         ctx.write(codegen_types.format_u64(ci as u64).as_str());
         ctx.write("\n");
 
-        // Load the captured value
-        let cap_val = ctx.fresh_temp_cg();
-        ctx.write("    ");
-        ctx.write_cgname(&cap_val);
-        ctx.write(" = load ");
-        ctx.write_string(&cap_ty_llvm);
-        ctx.write(", ptr ");
-        ctx.write_cgname(&field_ptr);
-        ctx.write(", align 8\n");
+        if is_ptr_captures {
+            // Handler op: state struct holds ptr to parent alloca.
+            // Load the pointer, then load the value through it.
+            let parent_ptr = ctx.fresh_temp_cg();
+            ctx.write("    ");
+            ctx.write_cgname(&parent_ptr);
+            ctx.write(" = load ptr, ptr ");
+            ctx.write_cgname(&field_ptr);
+            ctx.write(", align 8\n");
 
-        // Store into the capture local's alloca
-        let cap_local = ctx.local_cg(mir_def.MirLocalId.new(local_idx));
-        ctx.write("    ");
-        ctx.write("store ");
-        ctx.write_string(&cap_ty_llvm);
-        ctx.write(" ");
-        ctx.write_cgname(&cap_val);
-        ctx.write(", ptr ");
-        ctx.write_cgname(&cap_local);
-        ctx.write(", align 8\n");
+            let cap_val = ctx.fresh_temp_cg();
+            ctx.write("    ");
+            ctx.write_cgname(&cap_val);
+            ctx.write(" = load ");
+            ctx.write_string(&cap_ty_llvm);
+            ctx.write(", ptr ");
+            ctx.write_cgname(&parent_ptr);
+            ctx.write(", align 8\n");
+
+            // Store into the capture local's alloca
+            let cap_local = ctx.local_cg(mir_def.MirLocalId.new(local_idx));
+            ctx.write("    store ");
+            ctx.write_string(&cap_ty_llvm);
+            ctx.write(" ");
+            ctx.write_cgname(&cap_val);
+            ctx.write(", ptr ");
+            ctx.write_cgname(&cap_local);
+            ctx.write(", align 8\n");
+        } else {
+            // Closure: state struct holds values directly
+            let cap_val = ctx.fresh_temp_cg();
+            ctx.write("    ");
+            ctx.write_cgname(&cap_val);
+            ctx.write(" = load ");
+            ctx.write_string(&cap_ty_llvm);
+            ctx.write(", ptr ");
+            ctx.write_cgname(&field_ptr);
+            ctx.write(", align 8\n");
+
+            // Store into the capture local's alloca
+            let cap_local = ctx.local_cg(mir_def.MirLocalId.new(local_idx));
+            ctx.write("    store ");
+            ctx.write_string(&cap_ty_llvm);
+            ctx.write(" ");
+            ctx.write_cgname(&cap_val);
+            ctx.write(", ptr ");
+            ctx.write_cgname(&cap_local);
+            ctx.write(", align 8\n");
+        }
 
         ci += 1;
+    }
+
+    // For handler op bodies: record capture info on ctx so Resume codegen
+    // can emit store-back (write local values back through parent pointers).
+    if is_ptr_captures {
+        for ri in 0usize..body.capture_locals.len() {
+            ctx.handler_capture_locals.push(body.capture_locals[ri]);
+            ctx.handler_capture_tys.push(body.capture_tys[ri]);
+        }
     }
 }
 

@@ -256,6 +256,13 @@ pub struct InlineOperation {
     /// The LLVM function name of the inner handler body (set during MIR lowering).
     /// Used by codegen to generate a wrapper that calls this function.
     pub fn_name: String,
+    /// Whether the inner body has captures from the enclosing scope.
+    /// When true, the wrapper passes %state as the first arg to the inner function.
+    pub has_captures: bool,
+    /// Capture types (for building the state struct at the call site).
+    pub capture_tys: Vec<type_intern.TyId>,
+    /// Parent MIR local indices for captured variables (parallel to capture_tys).
+    pub capture_parent_locals: Vec<u32>,
 }
 
 impl InlineOperation {
@@ -275,6 +282,9 @@ impl InlineOperation {
             return_type: return_type,
             body_id: body_id,
             fn_name: fn_name,
+            has_captures: false,
+            capture_tys: Vec.new(),
+            capture_parent_locals: Vec.new(),
         }
     }
 }

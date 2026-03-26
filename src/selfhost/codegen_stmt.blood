@@ -524,11 +524,17 @@ pub fn emit_statement(
 
                 // Extract args from %args pointer and call inner body
                 let param_count = op.param_types.len();
-                if param_count == 0 {
-                    // No params: call inner body with just %cont
+                if param_count == 0 && !op.has_captures {
+                    // No params, no captures: call inner body with just %cont
                     wrapper_def.push_str("  %result = call i64 @");
                     wrapper_def.push_str(op.fn_name.as_str());
                     wrapper_def.push_str("(i64 %cont)\n");
+                    wrapper_def.push_str("  ret i64 %result\n");
+                } else if param_count == 0 && op.has_captures {
+                    // No params but has captures: pass %state then %cont
+                    wrapper_def.push_str("  %result = call i64 @");
+                    wrapper_def.push_str(op.fn_name.as_str());
+                    wrapper_def.push_str("(ptr %state, i64 %cont)\n");
                     wrapper_def.push_str("  ret i64 %result\n");
                 } else {
                     // Load each arg from args array and narrow to the expected type
@@ -603,10 +609,13 @@ pub fn emit_statement(
                         }
                     }
 
-                    // Build call to inner body: inner_fn(arg_0, arg_1, ..., %cont)
+                    // Build call to inner body: inner_fn([state,] arg_0, arg_1, ..., %cont)
                     wrapper_def.push_str("  %result = call i64 @");
                     wrapper_def.push_str(op.fn_name.as_str());
                     wrapper_def.push_str("(");
+                    if op.has_captures {
+                        wrapper_def.push_str("ptr %state, ");
+                    }
                     for pi in 0usize..param_count {
                         if pi > 0 { wrapper_def.push_str(", "); }
                         let param_ty = codegen_size.type_to_llvm_with_ctx_id(ctx, op.param_types[pi]);
@@ -726,13 +735,74 @@ pub fn emit_statement(
             ctx.write_string(&op_count_val);
             ctx.write(", i64 1)\n");
 
+            // Build captures struct if any operation has captures
+            let first_has_captures = if op_count > 0 { operations[0].has_captures } else { false };
+            let state_arg = if first_has_captures && operations[0].capture_tys.len() > 0 {
+                let cap_tys = &operations[0].capture_tys;
+                let cap_locals = &operations[0].capture_parent_locals;
+
+                // State struct stores POINTERS to parent allocas (not values).
+                // This allows handler bodies to mutate captures that persist
+                // across invocations and propagate back to the parent.
+                // Struct type: { ptr, ptr, ... } (one ptr per capture)
+                let mut struct_ty = common.make_string("{ ");
+                for ci in 0usize..cap_tys.len() {
+                    if ci > 0 { struct_ty.push_str(", "); }
+                    struct_ty.push_str("ptr");
+                }
+                struct_ty.push_str(" }");
+
+                // Alloca the struct
+                let state_alloca = ctx.fresh_temp_cg();
+                ctx.write_indent();
+                ctx.write_cgname(&state_alloca);
+                ctx.write(" = alloca ");
+                ctx.write_string(&struct_ty);
+                ctx.write("\n");
+
+                // Store pointer to each captured local's alloca into the struct
+                for ci in 0usize..cap_tys.len() {
+                    let local_id = mir_def.MirLocalId.new(cap_locals[ci]);
+                    let local_name = ctx.local_cg(local_id);
+
+                    // GEP into the struct
+                    let field_ptr = ctx.fresh_temp_cg();
+                    ctx.write_indent();
+                    ctx.write_cgname(&field_ptr);
+                    ctx.write(" = getelementptr ");
+                    ctx.write_string(&struct_ty);
+                    ctx.write(", ptr ");
+                    ctx.write_cgname(&state_alloca);
+                    ctx.write(", i32 0, i32 ");
+                    ctx.write(codegen_types.format_u64(ci as u64).as_str());
+                    ctx.write("\n");
+
+                    // Store the alloca ADDRESS (not value) into the struct field
+                    ctx.write_indent();
+                    ctx.write("store ptr ");
+                    ctx.write_cgname(&local_name);
+                    ctx.write(", ptr ");
+                    ctx.write_cgname(&field_ptr);
+                    ctx.write("\n");
+                }
+                state_alloca
+            } else {
+                let null_cg = ctx.fresh_temp_cg();
+                ctx.write_indent();
+                ctx.write_cgname(&null_cg);
+                ctx.write(" = inttoptr i64 0 to ptr\n");
+                null_cg
+            };
+
             // Push using exact registry index from inline registration
             ctx.write_indent();
             ctx.write("call void @blood_evidence_push_by_index(ptr ");
             ctx.write_cgname(&evidence);
             ctx.write(", i64 ");
             ctx.write_cgname(&reg_idx);
-            ctx.write(", ptr null)\n");
+            ctx.write(", ptr ");
+            ctx.write_cgname(&state_arg);
+            ctx.write(")\n");
 
             // EFF-OPT-003: Only set inline hint for single-handler scopes
             ctx.handler_depth = ctx.handler_depth + 1;

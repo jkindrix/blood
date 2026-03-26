@@ -385,6 +385,72 @@ pub fn emit_terminator(
             ctx.write_indent();
             ctx.write("call void @blood_set_was_resumed()\n");
 
+            // Store-back: write capture locals back through parent pointers.
+            // This ensures mutations (e.g., total = total + value) persist.
+            if ctx.handler_capture_locals.len() > 0 {
+                // Build env struct type (all ptr)
+                let mut sb_env_ty = common.make_string("{ ");
+                for sbi in 0usize..ctx.handler_capture_tys.len() {
+                    if sbi > 0 { sb_env_ty.push_str(", "); }
+                    sb_env_ty.push_str("ptr");
+                }
+                sb_env_ty.push_str(" }");
+
+                // Load state ptr from local 1
+                let sb_env = ctx.fresh_temp_cg();
+                let sb_local1 = ctx.local_cg(mir_def.MirLocalId.new(1));
+                ctx.write("    ");
+                ctx.write_cgname(&sb_env);
+                ctx.write(" = load ptr, ptr ");
+                ctx.write_cgname(&sb_local1);
+                ctx.write("\n");
+
+                for sbi in 0usize..ctx.handler_capture_locals.len() {
+                    let cap_ty_llvm = codegen_size.type_to_llvm_with_ctx_id(ctx, ctx.handler_capture_tys[sbi]);
+                    let cap_local_idx = ctx.handler_capture_locals[sbi];
+
+                    // Load current value from capture local
+                    let cap_local_name = ctx.local_cg(mir_def.MirLocalId.new(cap_local_idx));
+                    let cur_val = ctx.fresh_temp_cg();
+                    ctx.write("    ");
+                    ctx.write_cgname(&cur_val);
+                    ctx.write(" = load ");
+                    ctx.write_string(&cap_ty_llvm);
+                    ctx.write(", ptr ");
+                    ctx.write_cgname(&cap_local_name);
+                    ctx.write("\n");
+
+                    // GEP into state struct to get parent pointer
+                    let sb_field = ctx.fresh_temp_cg();
+                    ctx.write("    ");
+                    ctx.write_cgname(&sb_field);
+                    ctx.write(" = getelementptr ");
+                    ctx.write_string(&sb_env_ty);
+                    ctx.write(", ptr ");
+                    ctx.write_cgname(&sb_env);
+                    ctx.write(", i32 0, i32 ");
+                    ctx.write(codegen_types.format_u64(sbi as u64).as_str());
+                    ctx.write("\n");
+
+                    // Load parent alloca pointer
+                    let parent_ptr = ctx.fresh_temp_cg();
+                    ctx.write("    ");
+                    ctx.write_cgname(&parent_ptr);
+                    ctx.write(" = load ptr, ptr ");
+                    ctx.write_cgname(&sb_field);
+                    ctx.write("\n");
+
+                    // Store value back through parent pointer
+                    ctx.write("    store ");
+                    ctx.write_string(&cap_ty_llvm);
+                    ctx.write(" ");
+                    ctx.write_cgname(&cur_val);
+                    ctx.write(", ptr ");
+                    ctx.write_cgname(&parent_ptr);
+                    ctx.write("\n");
+                }
+            }
+
             // --- Snapshot: validate before resume ---
             ctx.write("    ; snapshot: validate before resume\n");
             let resume_snap = ctx.fresh_temp_cg();
