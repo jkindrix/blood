@@ -2463,9 +2463,13 @@ fn lower_inline_handle_expr(
         let hdlr = &handlers[hi];
         current_effect_id = hdlr.effect_id;
 
-        // Generate unique function name for this inline handler inner body
+        // Generate unique function name for this inline handler inner body.
+        // Include parent body_def_id for uniqueness across monomorphized copies.
         let handler_def_id = ctx.next_closure_def_id();
         let mut inner_name = common.make_string("__inline_handler_op_");
+        let parent_str = codegen_types.format_u64(ctx.body_def_id as u64);
+        inner_name.push_str(parent_str.as_str());
+        inner_name.push('_');
         let id_str = codegen_types.format_u64(handler_def_id.index as u64);
         inner_name.push_str(id_str.as_str());
 

@@ -4921,6 +4921,20 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
                     let mono_ir = codegen.generate_function_with_ctx(&mut ctx, &mono_mir.body, req.fn_name.as_str());
                     file_append_string(output_path, mono_ir.as_str());
 
+                    // Compile closure/inline handler bodies from the mono MIR
+                    let mut mcli: usize = 0;
+                    while mcli < mono_mir.closure_names.len() && mcli < mono_mir.closure_mir.len() {
+                        let mcname = &mono_mir.closure_names[mcli];
+                        let mcbody = &mono_mir.closure_mir[mcli];
+                        let mc_is_hop = mcli < mono_mir.closure_is_handler_op.len()
+                            && mono_mir.closure_is_handler_op[mcli];
+                        if mc_is_hop { ctx.is_handler_op = true; }
+                        let mc_ir = codegen.generate_function_with_ctx(&mut ctx, mcbody, mcname.as_str());
+                        file_append_string(output_path, mc_ir.as_str());
+                        if mc_is_hop { ctx.is_handler_op = false; }
+                        mcli += 1;
+                    }
+
                     // Reset MIR region for next mono function
                     region_reset(mono_mir_region);
                     } // end else (not already_compiled)
