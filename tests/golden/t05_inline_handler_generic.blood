@@ -1,0 +1,37 @@
+// Test: inline handler in generic function with monomorphization
+// EXPECT: 42
+effect Emit<T> {
+    op emit(value: T) -> ();
+}
+
+fn filter<T>(stream: fn() / {Emit<T>}, pred: fn(T) -> bool) / {Emit<T>} {
+    try { stream(); }
+    with {
+        Emit.emit(value) => {
+            if pred(value) {
+                perform Emit.emit(value);
+            }
+            resume(());
+        }
+    };
+}
+
+fn emit_one() / {Emit<i32>} {
+    perform Emit.emit(42);
+}
+
+fn is_positive(x: i32) -> bool { x > 0 }
+
+fn main() -> i32 {
+    let mut total: i32 = 0;
+    try { filter(emit_one, is_positive); }
+    with {
+        Emit.emit(v) => {
+            total = total + v;
+            resume(());
+        }
+    };
+    println_int(total);
+    if total != 42 { return 1; }
+    0
+}
