@@ -4637,6 +4637,12 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
         ctx.register_def_name(entry.def_id_index, main_helpers.clone_string(&entry.runtime_name));
     }
 
+    // Pass 1c2: Register bridge constants with inline values.
+    for bci in 0usize..lower_result.builtin_const_defs.len() {
+        let entry = &lower_result.builtin_const_defs[bci];
+        ctx.register_bridge_const(entry.def_id_index, entry.int_value);
+    }
+
     // Pass 1e: Register def_names for enum variant constructors.
     // Enum variants have their own DefIds used when constructing variants (e.g., TokenKind.Ident(...)).
     main_helpers.register_enum_variant_names(&mut ctx, &lower_result.interner, &lower_result.items);

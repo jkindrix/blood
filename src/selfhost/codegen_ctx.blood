@@ -256,6 +256,8 @@ pub struct CodegenCtx {
     static_hir_types_hash: hashmap.HashMapU64U32,
     /// Hash set for const def_ids: def_id -> 1 if const
     const_defs_hash: hashmap.HashMapU64U32,
+    /// Bridge const values: def_id -> i64 value (for inline emission)
+    bridge_const_values: hashmap.HashMapU64U64,
     /// Hash set for foreign/bridge def_ids: def_id -> 1 if foreign
     foreign_defs_hash: hashmap.HashMapU64U32,
     /// Function signatures for generic call fixup: def_id -> index in fn_signatures vec
@@ -553,6 +555,7 @@ impl CodegenCtx {
             static_hir_types_hash: hashmap.HashMapU64U32.with_capacity(64),
             static_types: Vec.with_capacity(64),
             const_defs_hash: hashmap.HashMapU64U32.with_capacity(64),
+            bridge_const_values: hashmap.HashMapU64U64.new(),
             foreign_defs_hash: hashmap.HashMapU64U32.with_capacity(64),
             fn_signatures: Vec.with_capacity(512),
             fn_sigs_hash: hashmap.HashMapU64U32.with_capacity(512),
@@ -653,6 +656,7 @@ impl CodegenCtx {
             static_hir_types_hash: hashmap.HashMapU64U32.with_capacity(64),
             static_types: Vec.with_capacity(64),
             const_defs_hash: hashmap.HashMapU64U32.with_capacity(64),
+            bridge_const_values: hashmap.HashMapU64U64.new(),
             foreign_defs_hash: hashmap.HashMapU64U32.with_capacity(64),
             fn_signatures: Vec.with_capacity(512),
             fn_sigs_hash: hashmap.HashMapU64U32.with_capacity(512),
@@ -982,6 +986,20 @@ impl CodegenCtx {
         match self.const_defs_hash.get(def_id as u64) {
             Option.Some(_) => true,
             Option.None => false,
+        }
+    }
+
+    /// Registers a bridge constant with its inline value.
+    pub fn register_bridge_const(self: &mut CodegenCtx, def_id: u32, value: i64) {
+        self.const_defs_hash.insert(def_id as u64, 1);
+        self.bridge_const_values.insert(def_id as u64, value as u64);
+    }
+
+    /// Returns the inline value for a bridge constant, or None if not a bridge const.
+    pub fn get_bridge_const_value(self: &CodegenCtx, def_id: u32) -> Option<i64> {
+        match self.bridge_const_values.get(def_id as u64) {
+            Option.Some(v) => Option.Some(v as i64),
+            Option.None => Option.None,
         }
     }
 
@@ -2484,6 +2502,7 @@ impl CodegenCtx {
             static_hir_types_hash: hashmap.HashMapU64U32.new(),
             static_types: Vec.new(),
             const_defs_hash: hashmap.HashMapU64U32.new(),
+            bridge_const_values: hashmap.HashMapU64U64.new(),
             foreign_defs_hash: hashmap.HashMapU64U32.new(),
             fn_signatures: Vec.new(),
             fn_sigs_hash: hashmap.HashMapU64U32.new(),

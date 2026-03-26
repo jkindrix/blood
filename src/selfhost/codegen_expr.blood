@@ -70,17 +70,29 @@ pub fn emit_operand_typed(
                 Option.None => false,
             };
             if is_const_item {
-                // Const item: call the const body function to get the value
-                let ret_ty = codegen_size.type_to_llvm_with_ctx(ctx, &const_hir_ty);
-                let call_result = ctx.fresh_temp_cg();
-                ctx.write_indent();
-                ctx.write_cgname(&call_result);
-                ctx.write(" = call ");
-                ctx.write_string(&ret_ty);
-                ctx.write(" ");
-                ctx.write_string(&val);
-                ctx.write("()\n");
-                (cgname_to_string(&call_result), ret_ty)
+                let did_val = match fn_def_id { Option.Some(d) => d, Option.None => 0 };
+                match ctx.get_bridge_const_value(did_val) {
+                    Option.Some(bridge_val) => {
+                        // Bridge constant: emit inline literal value
+                        let ret_ty = codegen_size.type_to_llvm_with_ctx(ctx, &const_hir_ty);
+                        let mut val_str = String.new();
+                        val_str.push_str(codegen_types.format_i64(bridge_val).as_str());
+                        (val_str, ret_ty)
+                    }
+                    Option.None => {
+                        // Regular const item: call the const body function to get the value
+                        let ret_ty = codegen_size.type_to_llvm_with_ctx(ctx, &const_hir_ty);
+                        let call_result = ctx.fresh_temp_cg();
+                        ctx.write_indent();
+                        ctx.write_cgname(&call_result);
+                        ctx.write(" = call ");
+                        ctx.write_string(&ret_ty);
+                        ctx.write(" ");
+                        ctx.write_string(&val);
+                        ctx.write("()\n");
+                        (cgname_to_string(&call_result), ret_ty)
+                    }
+                }
             } else if is_static_item {
                 // Static item: load from the global address
                 // val already has @ prefix from emit_constant's FnDef handler

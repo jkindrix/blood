@@ -47,6 +47,19 @@ impl BuiltinFnDef {
     }
 }
 
+/// A bridge constant: maps DefId to a compile-time literal value.
+pub struct BuiltinConstDef {
+    pub def_id_index: u32,
+    pub ty_id: type_intern.TyId,
+    pub int_value: i64,
+}
+
+impl BuiltinConstDef {
+    pub fn new(def_id_index: u32, ty_id: type_intern.TyId, int_value: i64) -> BuiltinConstDef {
+        BuiltinConstDef { def_id_index, ty_id, int_value }
+    }
+}
+
 // ============================================================
 // Associated Type Entry
 // ============================================================
@@ -111,6 +124,8 @@ pub struct LowerResult {
     /// Covers constructors (String.new, Vec.new, Box.new, HashMap.new)
     /// and variant constructors (Option.Some, Option.None, Result.Ok, Result.Err).
     pub builtin_fn_defs: Vec<BuiltinFnDef>,
+    /// Bridge constant DefId-to-value mappings.
+    pub builtin_const_defs: Vec<BuiltinConstDef>,
     /// Turbofish const arg entries from HIR lowering.
     /// Used by the driver to pass explicit const values to MIR lowering for monomorphization.
     pub turbofish_const_entries: Vec<TurbofishEntry>,
@@ -171,6 +186,7 @@ impl LowerResult {
             builtin_result_err_def: builtin_result_err_def,
             interner: interner,
             builtin_fn_defs: builtin_fn_defs,
+            builtin_const_defs: Vec.new(),
             turbofish_const_entries: Vec.new(),
             no_mangle_def_ids: Vec.new(),
             export_name_entries: Vec.new(),
@@ -202,6 +218,7 @@ impl LowerResult {
             builtin_result_err_def: Option.None,
             interner: interner.StringInterner.new(),
             builtin_fn_defs: Vec.new(),
+            builtin_const_defs: Vec.new(),
             turbofish_const_entries: Vec.new(),
             no_mangle_def_ids: Vec.new(),
             export_name_entries: Vec.new(),
@@ -233,6 +250,7 @@ impl LowerResult {
             builtin_result_err_def: Option.None,
             interner: interner.StringInterner.new(),
             builtin_fn_defs: Vec.new(),
+            builtin_const_defs: Vec.new(),
             turbofish_const_entries: Vec.new(),
             no_mangle_def_ids: Vec.new(),
             export_name_entries: Vec.new(),
@@ -343,6 +361,8 @@ pub struct LoweringCtx {
     pub loading_paths: Vec<String>,
     /// Builtin function DefId-to-runtime-name mappings.
     pub builtin_fn_defs: Vec<BuiltinFnDef>,
+    /// Bridge constant DefId-to-value mappings.
+    pub builtin_const_defs: Vec<BuiltinConstDef>,
     /// Seen (trait_def_id, type_def_id) pairs for overlapping impl detection.
     /// Each entry is (trait_idx << 32) | type_idx.
     pub seen_trait_impls: Vec<u64>,
@@ -485,6 +505,7 @@ impl LoweringCtx {
             builtin_result_err_def: Option.None,
             loading_paths: Vec.new(),
             builtin_fn_defs: Vec.new(),
+            builtin_const_defs: Vec.new(),
             seen_trait_impls: Vec.new(),
             stdlib_path: Option.None,
             const_param_defs: Vec.new(),
@@ -531,6 +552,7 @@ impl LoweringCtx {
             builtin_result_err_def: Option.None,
             loading_paths: Vec.new(),
             builtin_fn_defs: Vec.new(),
+            builtin_const_defs: Vec.new(),
             seen_trait_impls: Vec.new(),
             stdlib_path: Option.None,
             const_param_defs: Vec.new(),

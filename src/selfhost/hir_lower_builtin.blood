@@ -614,11 +614,44 @@ pub fn register_bridge_functions(
                     hir_lower_ctx.BuiltinFnDef.new(fn_def_id.index, common.make_string(fn_name_str.as_str())),
                 );
             }
-            &ast.BridgeItem.Const(ref _c) => {
-                // Bridge constants: not yet implemented
+            &ast.BridgeItem.Const(ref c) => {
+                let const_def_id = ctx.alloc_def_id();
+                let const_name_str = ctx.span_to_string(c.name.span);
+                let const_name_symbol = ctx.intern(const_name_str.as_str());
+
+                ctx.resolver.register_def_info(
+                    const_def_id,
+                    hir_def.DefKind.Const,
+                    const_name_symbol,
+                    c.name.span,
+                    Option.Some(bridge_def_id),
+                );
+
+                let ty_id = hir_lower_type.lower_type_id(ctx, &c.ty);
+
+                // Extract integer value from literal
+                let int_value: i64 = match &c.init_value.kind {
+                    &ast.LiteralKind.Int { val, suffix: _ } => val as i64,
+                    _ => 0,
+                };
+
+                ctx.builtin_const_defs.push(
+                    hir_lower_ctx.BuiltinConstDef.new(const_def_id.index, ty_id, int_value),
+                );
             }
-            &ast.BridgeItem.OpaqueType(ref _ot) => {
-                // Bridge opaque types: not yet implemented
+            &ast.BridgeItem.OpaqueType(ref ot) => {
+                let opaque_def_id = ctx.alloc_def_id();
+                let opaque_name_str = ctx.span_to_string(ot.name.span);
+                let opaque_name_symbol = ctx.intern(opaque_name_str.as_str());
+
+                // Register as an opaque type — can only be used behind a pointer (*OpaqueType)
+                ctx.resolver.register_def_info(
+                    opaque_def_id,
+                    hir_def.DefKind.TypeAlias,
+                    opaque_name_symbol,
+                    ot.name.span,
+                    Option.Some(bridge_def_id),
+                );
             }
             &ast.BridgeItem.TypeAlias(ref _ta) => {
                 // Bridge type aliases: not yet implemented

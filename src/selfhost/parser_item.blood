@@ -1767,6 +1767,9 @@ fn parse_bridge_item(parser: &mut parser_base.Parser) -> Option<ast.BridgeItem> 
         token.TokenKind.Fn => {
             Option.Some(ast.BridgeItem.Function(parse_bridge_fn(parser, attrs)))
         }
+        token.TokenKind.Const => {
+            Option.Some(ast.BridgeItem.Const(parse_bridge_const(parser)))
+        }
         token.TokenKind.Type => {
             Option.Some(ast.BridgeItem.OpaqueType(parse_bridge_opaque_type(parser)))
         }
@@ -1777,7 +1780,7 @@ fn parse_bridge_item(parser: &mut parser_base.Parser) -> Option<ast.BridgeItem> 
             Option.Some(ast.BridgeItem.Enum(parse_bridge_enum(parser, attrs)))
         }
         _ => {
-            parser.error_expected("bridge item (fn, type, struct, or enum)");
+            parser.error_expected("bridge item (fn, const, type, struct, or enum)");
             Option.None
         }
     }
@@ -1829,6 +1832,46 @@ fn parse_bridge_fn(parser: &mut parser_base.Parser, attrs: Vec<ast.Attribute>) -
         params: params,
         is_variadic: is_variadic,
         return_type: return_type,
+        span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    }
+}
+
+/// Parse a bridge constant: const NAME: Type = Literal;
+fn parse_bridge_const(parser: &mut parser_base.Parser) -> ast.BridgeConst {
+    let start = parser.current.span;
+    parser.advance(); // consume 'const'
+    let name = parser.parse_spanned_symbol();
+    parser.expect(token.TokenKind.Colon);
+    let ty = parser_type.parse_type(parser);
+    parser.expect(token.TokenKind.Eq);
+    // Parse literal value (handle optional minus sign for negative integers)
+    let is_negative = parser.check(token.TokenKind.Minus);
+    if is_negative { parser.advance(); }
+    let lit_span = parser.current.span;
+    let lit = match parser.current.kind {
+        token.TokenKind.IntLit => {
+            let mut val = parser_base.parse_int_value_from_span(parser, lit_span);
+            let suffix = parser_base.parse_int_suffix_from_span(parser, lit_span);
+            parser.advance();
+            if is_negative { val = (0u128 - val); }
+            ast.Literal { kind: ast.LiteralKind.Int { val, suffix }, span: lit_span }
+        }
+        token.TokenKind.StringLit => {
+            let s = parser_base.parse_string_from_span(parser, lit_span);
+            parser.advance();
+            ast.Literal { kind: ast.LiteralKind.Str(s), span: lit_span }
+        }
+        _ => {
+            parser.error_expected("literal value");
+            ast.Literal { kind: ast.LiteralKind.Int { val: 0, suffix: Option.None }, span: lit_span }
+        }
+    };
+    let end_span = parser.current.span;
+    parser.expect(token.TokenKind.Semi);
+    ast.BridgeConst {
+        name,
+        ty,
+        init_value: lit,
         span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     }
 }

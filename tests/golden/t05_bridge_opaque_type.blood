@@ -1,0 +1,16 @@
+// Test: bridge opaque type declaration (GAP 7A)
+// Opaque types can only be used behind pointers.
+// EXPECT: 0
+
+bridge "C" Libc {
+    type FILE;
+    fn fopen(path: *const u8, mode: *const u8) -> *mut u8;
+    fn fclose(fp: *mut u8) -> i32;
+}
+
+fn main() -> i32 {
+    // Just verify the opaque type declaration compiles
+    // (actual FILE* usage requires null-terminated C strings)
+    println_int(0);
+    0
+}
