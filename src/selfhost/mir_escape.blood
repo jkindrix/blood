@@ -312,6 +312,12 @@ pub fn analyze_escapes(body: &mir_body.MirBody) -> EscapeAnalysis {
     // Propagation pass: chains escape states through Ref assignments.
     propagate_ref_escapes(body, &mut result);
 
+    // Region-owned locals whose address is taken must be region-allocated
+    // so references get gen tracking and stale detection works after region
+    // destroy. Only elevate locals that appear as Ref/AddressOf targets —
+    // value-only locals in regions stay on stack.
+    elevate_referenced_region_locals(body, &mut result);
+
     result
 }
 
@@ -414,6 +420,53 @@ fn propagate_ref_escapes(body: &mir_body.MirBody, result: &mut EscapeAnalysis) {
                     }
                     _ => {}
                 }
+            }
+        }
+    }
+}
+
+/// Elevates region-owned locals that have their address taken to at least
+/// ArgEscape. This ensures they get region allocation with gen tracking,
+/// so references to them become stale after region destroy.
+fn elevate_referenced_region_locals(body: &mir_body.MirBody, result: &mut EscapeAnalysis) {
+    if body.region_owned_locals.len() == 0 {
+        return;
+    }
+    // Collect which locals have their address taken (Ref/AddressOf target)
+    let mut is_referenced: Vec<bool> = Vec.new();
+    for i in 0usize..body.locals.len() {
+        is_referenced.push(false);
+    }
+    for bb_idx in 0usize..body.basic_blocks.len() {
+        let block = &body.basic_blocks[bb_idx];
+        for stmt in &block.statements {
+            match &stmt.kind {
+                &mir_stmt.StatementKind.Assign { ref place, ref rvalue } => {
+                    match rvalue {
+                        &mir_types.Rvalue.Ref { ref place: ref_place, mutable: _ } => {
+                            if ref_place.local.as_usize() < is_referenced.len() {
+                                is_referenced[ref_place.local.as_usize()] = true;
+                            }
+                        }
+                        &mir_types.Rvalue.AddressOf { ref place: addr_place, mutable: _ } => {
+                            if addr_place.local.as_usize() < is_referenced.len() {
+                                is_referenced[addr_place.local.as_usize()] = true;
+                            }
+                        }
+                        _ => {}
+                    }
+                    let _ = place;
+                }
+                _ => {}
+            }
+        }
+    }
+    // Elevate referenced region-owned locals to at least ArgEscape
+    for roi in 0usize..body.region_owned_locals.len() {
+        let local_idx = body.region_owned_locals[roi].0 as usize;
+        if local_idx < result.local_states.len() && local_idx < is_referenced.len() {
+            if is_referenced[local_idx] {
+                result.mark_arg_escape(mir_def.MirLocalId { index: local_idx as u32 });
             }
         }
     }

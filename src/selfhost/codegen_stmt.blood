@@ -1780,7 +1780,11 @@ pub fn emit_allocas_with_escapes(
         // ArgEscape and EffectEscape for primitives.
         let raw_tier = escapes.recommended_tier(local_id);
         let raw_state = escapes.get_state(local_id);
-        let tier = if is_always_stack_type(&local_hir_ty) {
+        // Region-owned locals (inside region { } blocks) must be region-allocated
+        // regardless of type, so gen tracking and stale detection work after
+        // region destroy. Skip is_always_stack_type demotion for these.
+        let is_region_owned = body.get_region_owner(local_id).is_some();
+        let tier = if is_always_stack_type(&local_hir_ty) && !is_region_owned {
             match raw_state {
                 &mir_escape.EscapeState.HeapEscape => raw_tier,
                 &mir_escape.EscapeState.GlobalEscape => raw_tier,

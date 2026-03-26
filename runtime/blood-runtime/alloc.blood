@@ -418,6 +418,30 @@ pub fn rt_blood_get_generation(addr: i64) -> i32 {
     }
 }
 
+/// Lazy registration: if addr is in the gen hash table or region, return its gen.
+/// Otherwise register it with a fresh gen. Used for String data buffers that
+/// are allocated via alloc_simple (no gen tracking) but later exposed as &str.
+/// After free, unregister_allocation increments the gen. A new allocation at
+/// the same address gets the incremented gen via this function, so old &str
+/// references are correctly detected as stale.
+#[export_name = "blood_lazy_register_gen"]
+pub fn rt_blood_lazy_register_gen(addr: i64) -> i32 {
+    ensure_registry();
+    @unsafe {
+        // Check region first (no registration needed)
+        let rg: i32 = region_lookup_gen(addr);
+        if rg >= 0 { return rg; }
+        // Check hash table — return existing gen (handles address reuse:
+        // after free, gen was incremented by unregister_allocation)
+        let idx: i64 = ht_find(addr);
+        if idx >= 0 {
+            return ht_read_gen(idx);
+        }
+        // Not registered — register with source=2 (lazy String buffer)
+        rt_blood_register_allocation_tagged(addr, 0, 2)
+    }
+}
+
 // Increment generation at a pointer
 #[export_name = "blood_increment_generation"]
 pub fn rt_blood_increment_generation(ptr: *mut u8) {
@@ -553,8 +577,10 @@ pub fn rt_blood_free_simple(addr: i64) {
         let reg_idx: i64 = ht_find(addr);
         if reg_idx >= 0 {
             // Registered address — check source tag
-            if ht_read_source(reg_idx) == 0 {
-                // Heap-allocated (source=0): safe to __libc_free
+            let src: i32 = ht_read_source(reg_idx);
+            if src == 0 || src == 2 {
+                // Heap-allocated (source=0) or lazy-registered String buffer (source=2):
+                // safe to __libc_free — invalidate gen and free.
                 rt_blood_unregister_allocation(addr);
                 libc.sys_free(addr_to_ptr(addr));
             } else {

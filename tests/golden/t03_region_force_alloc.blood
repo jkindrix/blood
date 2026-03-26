@@ -1,0 +1,15 @@
+// Test: region blocks force region allocation for all locals (GAP 5B)
+// Even primitives inside region { } should get region allocation with gen tracking.
+// After region destroy, references to region locals are stale.
+// EXPECT_EXIT: nonzero
+
+fn main() -> i32 {
+    let mut r: &i32 = &0;
+    region {
+        let x: i32 = 42;
+        r = &x;
+    }
+    // region destroyed — r should be stale
+    println_int(*r);
+    0
+}
