@@ -340,6 +340,9 @@ pub struct TypeChecker {
     pub current_body_def_id: u32,
     /// Current function's effect row, for checking undeclared perform operations.
     pub current_effect_row: Vec<u32>,
+    /// Type arguments for each effect in current_effect_row (parallel array).
+    /// E.g., for `/ {Emit<i32>}`, current_effect_row=[Emit_def_id], current_effect_type_args=[[i32_ty]].
+    pub current_effect_type_args: Vec<Vec<type_intern.TyId>>,
     /// Whether we are inside a handler block (try/with or with-handle).
     /// When true, call-site effect checking is suppressed since the handler handles effects.
     pub in_handler: bool,
@@ -465,6 +468,7 @@ impl TypeChecker {
             pending_method_calls: Vec.new(),
             current_body_def_id: 0,
             current_effect_row: Vec.new(),
+            current_effect_type_args: Vec.new(),
             in_handler: false,
             variant_hash: hashmap.HashMapU64U64.new(),
             trait_impl_hash: hashmap.HashMapU64U32.new(),
@@ -536,6 +540,7 @@ impl TypeChecker {
             pending_method_calls: Vec.new(),
             current_body_def_id: 0,
             current_effect_row: Vec.new(),
+            current_effect_type_args: Vec.new(),
             in_handler: false,
             variant_hash: hashmap.HashMapU64U64.new(),
             trait_impl_hash: hashmap.HashMapU64U32.new(),

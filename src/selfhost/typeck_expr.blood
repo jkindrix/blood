@@ -1158,6 +1158,49 @@ fn infer_call(
                 resolved_arg_types.push(checker.resolve(param_id));
             }
 
+            // Inside handler body: unify effect type params from callee's RESOLVED
+            // effect row (after arg processing). E.g., calling stream: fn() / {Emit<i32>}
+            // binds T → i32 so the inline handler can resolve its param types.
+            if checker.in_handler {
+                // Re-resolve callee type to get effects with resolved type args
+                let post_callee = checker.resolve(callee_ty);
+                let post_callee_hir = type_intern.ty_id_to_type(post_callee);
+                match &post_callee_hir.kind {
+                    &hir_ty.TypeKind.Fn { params: _, ret: _, ref effects } => {
+                        for efi in 0usize..effects.effects.len() {
+                            let eff_ref = &effects.effects[efi];
+                            let eff_def_id = eff_ref.def_id;
+                            let eff_idx = eff_def_id.index as usize;
+                            if eff_ref.args.len() > 0 && checker.has_effect(eff_def_id) {
+                                match &checker.effects[eff_idx] {
+                                    &Some(ref einfo) => {
+                                        for tpi in 0usize..einfo.type_param_var_ids.len() {
+                                            if tpi < eff_ref.args.len() {
+                                                let arg_ty = type_intern.type_to_ty_id(&eff_ref.args[tpi]);
+                                                // Only unify if the arg is concrete (not still Infer)
+                                                let resolved_arg = checker.resolve(arg_ty);
+                                                let interner = type_intern.type_interner();
+                                                match interner.get(resolved_arg) {
+                                                    &type_intern.InternedTypeKind.Infer(_) => {}
+                                                    _ => {
+                                                        let param_var_ty = interner.mk_infer(
+                                                            hir_def.TyVarId.new(einfo.type_param_var_ids[tpi])
+                                                        );
+                                                        checker.unify(param_var_ty, resolved_arg, span);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    &None => {}
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
             // Check that callee's effects are handled by caller (if not in handler)
             // Also check trait bounds from where clauses
             match &callee_def_id {
@@ -2938,10 +2981,55 @@ fn infer_perform(
                             checker.error_with_note(typeck.TypeErrorKind.ArityMismatch, span, note);
                         } else {
                             // Unify argument types with effect op param types.
-                            // For generic effects (e.g., Emit<T>), this resolves the
-                            // effect's type params to concrete types via inference.
+                            // For parametric effects (e.g., Emit<T>), substitute the
+                            // current function's effect type args to avoid polluting
+                            // the shared type parameter. E.g., in `fn f() / {Emit<i32>}`,
+                            // substitute T → i32 before unifying.
+                            // Find this effect's type args from the current function's effect row.
+                            let mut effect_type_args: Vec<type_intern.TyId> = Vec.new();
+                            for eri in 0usize..checker.current_effect_row.len() {
+                                if checker.current_effect_row[eri] == effect_def.index {
+                                    if eri < checker.current_effect_type_args.len() {
+                                        for eta in 0usize..checker.current_effect_type_args[eri].len() {
+                                            effect_type_args.push(checker.current_effect_type_args[eri][eta]);
+                                        }
+                                    }
+                                }
+                            }
                             for ai in 0usize..arg_tys.len() {
-                                checker.unify(arg_tys[ai], type_intern.TyId.new(effect_op.param_tys[ai].index), span);
+                                let raw_ty = type_intern.TyId.new(effect_op.param_tys[ai].index);
+                                // When the current function has concrete effect type args
+                                // (e.g., / {Emit<i32>}), substitute into op param types
+                                // AND bind the shared type var to the concrete type.
+                                // This prevents numeric inference chain overwrites while
+                                // keeping the shared var available for inline handlers.
+                                if effect_type_args.len() > 0 {
+                                    let interner = type_intern.type_interner();
+                                    match interner.get(raw_ty) {
+                                        &type_intern.InternedTypeKind.Infer(ref var_id) => {
+                                            match &checker.effects[def_idx] {
+                                                &Some(ref einfo) => {
+                                                    for tpi in 0usize..einfo.type_param_var_ids.len() {
+                                                        if einfo.type_param_var_ids[tpi] == var_id.index && tpi < effect_type_args.len() {
+                                                            // Bind shared T_var to concrete type
+                                                            checker.unify(raw_ty, effect_type_args[tpi], span);
+                                                            // Unify arg with concrete type
+                                                            checker.unify(arg_tys[ai], effect_type_args[tpi], span);
+                                                        }
+                                                    }
+                                                }
+                                                &None => {
+                                                    checker.unify(arg_tys[ai], raw_ty, span);
+                                                }
+                                            }
+                                        }
+                                        _ => {
+                                            checker.unify(arg_tys[ai], raw_ty, span);
+                                        }
+                                    }
+                                } else {
+                                    checker.unify(arg_tys[ai], raw_ty, span);
+                                }
                             }
                         }
                         result_ty = type_intern.TyId.new(effect_op.return_ty.index);

@@ -601,6 +601,7 @@ pub fn check_types(ctx: &hir_lower_ctx.LoweringCtx) -> TypeCheckResult {
         }
         checker.current_body_def_id = find_def_id_cached(&ctx.items, body_entry.body_id, &body_cache);
         checker.current_effect_row = find_effect_row_cached(&ctx.items, body_entry.body_id, &body_cache);
+        checker.current_effect_type_args = find_effect_type_args_cached(&ctx.items, body_entry.body_id, &body_cache);
         unify_handler_op_params_cached(&mut checker, &ctx.items, &body_entry.body, body_entry.body_id, &body_cache);
         setup_handler_op_context_cached(&mut checker, &ctx.items, body_entry.body_id, &body_cache);
         // Mark handler return bodies after setup_handler_op_context (which resets resume_ty)
@@ -729,6 +730,7 @@ pub fn check_lower_result(result: &hir_lower_ctx.LowerResult, skip_modules: &Vec
         let found_def_id = find_def_id_cached(&result.items, body_entry.body_id, &body_cache);
         checker.current_body_def_id = found_def_id;
         checker.current_effect_row = find_effect_row_cached(&result.items, body_entry.body_id, &body_cache);
+        checker.current_effect_type_args = find_effect_type_args_cached(&result.items, body_entry.body_id, &body_cache);
         unify_handler_op_params_cached(&mut checker, &result.items, &body_entry.body, body_entry.body_id, &body_cache);
         setup_handler_op_context_cached(&mut checker, &result.items, body_entry.body_id, &body_cache);
         if is_handler_ret {
@@ -765,6 +767,7 @@ pub fn check_lower_result(result: &hir_lower_ctx.LowerResult, skip_modules: &Vec
         let found_def_id = find_def_id_cached(&result.items, body_entry.body_id, &body_cache);
         checker.current_body_def_id = found_def_id;
         checker.current_effect_row = find_effect_row_cached(&result.items, body_entry.body_id, &body_cache);
+        checker.current_effect_type_args = find_effect_type_args_cached(&result.items, body_entry.body_id, &body_cache);
         unify_handler_op_params_cached(&mut checker, &result.items, &body_entry.body, body_entry.body_id, &body_cache);
         setup_handler_op_context_cached(&mut checker, &result.items, body_entry.body_id, &body_cache);
         if is_handler_ret_ext {
@@ -1387,13 +1390,25 @@ fn register_effect(
         operations.push(op_info);
     }
 
-    let info = typeck.EffectInfo.new(
+    // Collect type param TyVarIds for substitution in infer_perform
+    let mut type_param_var_ids: Vec<u32> = Vec.new();
+    for gp in 0usize..effect_def.generics.params.len() {
+        match &effect_def.generics.params[gp] {
+            &hir_ty.GenericParam.TypeParam(ref tp) => {
+                type_param_var_ids.push(tp.var_id.index);
+            }
+            _ => {}
+        }
+    }
+
+    let mut info = typeck.EffectInfo.new(
         def_id,
         name,
         num_generics,
         op_names,
         operations,
     );
+    info.type_param_var_ids = type_param_var_ids;
     checker.register_effect(def_id, info);
 }
 
@@ -1959,6 +1974,57 @@ fn collect_effect_def_ids(row: &hir_ty.EffectRow) -> Vec<u32> {
     let mut result: Vec<u32> = Vec.new();
     for i in 0usize..row.effects.len() {
         result.push(row.effects[i].def_id.index);
+    }
+    result
+}
+
+/// Collects effect type arguments from an EffectRow (parallel to collect_effect_def_ids).
+/// Finds effect type args for a body (parallel to find_effect_row_cached).
+fn find_effect_type_args_cached(
+    items: &Vec<hir_lower_ctx.ItemEntry>,
+    target_body_id: hir_def.BodyId,
+    cache: &hashmap.HashMapU64U32,
+) -> Vec<Vec<type_intern.TyId>> {
+    match cache.get(target_body_id.index as u64) {
+        Option.Some(item_idx) => {
+            let entry = &items[item_idx as usize];
+            match &entry.item.kind {
+                &hir_item.ItemKind.Fn(ref fn_def) => {
+                    collect_effect_type_args(&fn_def.sig.effects)
+                }
+                &hir_item.ItemKind.Impl(ref impl_def) => {
+                    for j in 0usize..impl_def.items.len() {
+                        match &impl_def.items[j] {
+                            &hir_item.AssocItem.Fn(ref assoc_fn) => {
+                                match &assoc_fn.body_id {
+                                    &Option.Some(ref bid) => {
+                                        if bid.index == target_body_id.index {
+                                            return collect_effect_type_args(&assoc_fn.sig.effects);
+                                        }
+                                    }
+                                    &Option.None => {}
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                    Vec.new()
+                }
+                _ => Vec.new(),
+            }
+        }
+        Option.None => Vec.new(),
+    }
+}
+
+fn collect_effect_type_args(row: &hir_ty.EffectRow) -> Vec<Vec<type_intern.TyId>> {
+    let mut result: Vec<Vec<type_intern.TyId>> = Vec.new();
+    for i in 0usize..row.effects.len() {
+        let mut args: Vec<type_intern.TyId> = Vec.new();
+        for j in 0usize..row.effects[i].args.len() {
+            args.push(type_intern.type_to_ty_id(&row.effects[i].args[j]));
+        }
+        result.push(args);
     }
     result
 }
