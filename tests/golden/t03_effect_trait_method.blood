@@ -1,0 +1,35 @@
+// Test: trait method impl with effect annotation (GAP 3C)
+// Trait method declares / {Log}, impl performs Log — should compile and run.
+// EXPECT: 42
+
+effect Log {
+    op log(val: i32) -> ();
+}
+
+trait Logger {
+    fn log_value(self: &Self, val: i32) -> () / {Log};
+}
+
+struct MyLogger {}
+
+impl Logger for MyLogger {
+    fn log_value(self: &MyLogger, val: i32) -> () / {Log} {
+        perform Log.log(val);
+    }
+}
+
+deep handler StdLog for Log {
+    return(x) { x }
+    op log(val) {
+        println_int(val);
+        resume(())
+    }
+}
+
+fn main() -> i32 {
+    let logger: MyLogger = MyLogger {};
+    with StdLog {} handle {
+        logger.log_value(42);
+        0
+    }
+}

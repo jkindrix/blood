@@ -1,0 +1,41 @@
+// Test: handler forwards a different effect via / {Effect} syntax
+// LoggingEmit declares it needs Log via forwarded effects.
+// Handler op body can perform Log because it's declared.
+// EXPECT: logged:42
+// EXPECT: emitted:42
+
+effect Log {
+    op log(val: i32) -> ();
+}
+
+effect Emit {
+    op emit(val: i32) -> ();
+}
+
+deep handler SimpleLog for Log {
+    return(x) { x }
+    op log(val) {
+        print_str("logged:");
+        println_int(val);
+        resume(())
+    }
+}
+
+deep handler LoggingEmit for Emit / {Log} {
+    return(x) { x }
+    op emit(val) {
+        perform Log.log(val);
+        print_str("emitted:");
+        println_int(val);
+        resume(())
+    }
+}
+
+fn main() -> i32 {
+    with SimpleLog {} handle {
+        with LoggingEmit {} handle {
+            perform Emit.emit(42);
+        };
+    };
+    0
+}

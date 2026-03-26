@@ -1,0 +1,42 @@
+// COMPILE_FAIL: undeclared effect
+// EXPECT: undeclared effect
+// GAP 3A: perform different effect from inside handler body.
+// Handler for Emit tries to perform Log (handled by outer handler).
+// Fails with E0224 because handler op bodies don't inherit
+// effect scope from enclosing handlers.
+
+effect Log {
+    op log(val: i32) -> ();
+}
+
+effect Emit {
+    op emit(val: i32) -> ();
+}
+
+deep handler SimpleLog for Log {
+    return(x) { x }
+    op log(val) {
+        print_str("logged:");
+        println_int(val);
+        resume(())
+    }
+}
+
+deep handler LoggingEmit for Emit {
+    return(x) { x }
+    op emit(val) {
+        perform Log.log(val);
+        print_str("emitted:");
+        println_int(val);
+        resume(())
+    }
+}
+
+fn main() -> i32 {
+    with SimpleLog {} handle {
+        with LoggingEmit {} handle {
+            perform Emit.emit(42);
+        };
+    };
+    0
+}

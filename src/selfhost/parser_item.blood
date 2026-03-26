@@ -1586,6 +1586,13 @@ fn parse_handler_decl(parser: &mut parser_base.Parser, attrs: Vec<ast.Attribute>
     parser.expect(token.TokenKind.For);
     let effect_ty = parser_type.parse_type(parser);
 
+    // Optional forwarded effects: / {Effect1, Effect2}
+    let forwarded_effects: Option<ast.EffectRow> = if parser.check(token.TokenKind.Slash) {
+        Option.Some(parse_effect_row(parser))
+    } else {
+        Option.None
+    };
+
     // Optional where clause
     let where_clause = if parser.check(token.TokenKind.Where) {
         Option.Some(parse_where_clause(parser))
@@ -1634,6 +1641,7 @@ fn parse_handler_decl(parser: &mut parser_base.Parser, attrs: Vec<ast.Attribute>
         name,
         type_params,
         effect_type: effect_ty,
+        forwarded_effects,
         where_clause,
         state,
         return_clause,

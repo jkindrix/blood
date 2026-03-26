@@ -1,0 +1,21 @@
+// Test: derived field reference through deref is valid within region scope
+// &(*ref).field should work when region is still alive.
+// EXPECT: 42
+
+struct Pair { x: i32, y: i32 }
+
+fn get_field_ref(r: &Pair) -> &i32 {
+    &(*r).x
+}
+
+fn main() -> i32 {
+    let result: i32 = region {
+        let p: Pair = Pair { x: 42, y: 99 };
+        let r: &Pair = &p;
+        let field_ref: &i32 = get_field_ref(r);
+        *field_ref
+    };
+    println_int(result);
+    if result != 42 { return 1; }
+    0
+}

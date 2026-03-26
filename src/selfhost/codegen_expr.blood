@@ -327,9 +327,8 @@ pub fn emit_rvalue(
             // Determine generation for the derived reference.
             // - No projections: use _gen alloca (direct &local)
             // - Field/Index on a value-typed local: inherit _gen alloca
-            // - Any Deref projection: gen=0 (already checked at deref site)
-            // - Field on a ref-typed local: gen=0 (ref's gen is in the fat ref,
-            //   not the container's _gen alloca)
+            // - Deref projection or ref-typed local with field: propagate gen
+            //   from the source fat ref (extract embedded gen field)
             let mut has_deref_projection = false;
             for pi in 0usize..place.projection.len() {
                 match &place.projection[pi] {
@@ -346,32 +345,82 @@ pub fn emit_rvalue(
                 }
             }
             let tmp2 = ctx.fresh_temp_cg();
-            match if has_deref_projection { Option.None } else { ctx.get_heap_gen_name(place.local) } {
-                Option.Some(gen_name) => {
-                    // Load generation from the _gen alloca
-                    let gen_tmp = ctx.fresh_temp_cg();
+            if !has_deref_projection {
+                match ctx.get_heap_gen_name(place.local) {
+                    Option.Some(gen_name) => {
+                        // Load generation from the _gen alloca
+                        let gen_tmp = ctx.fresh_temp_cg();
+                        ctx.write("  ");
+                        ctx.write_cgname(&gen_tmp);
+                        ctx.write(" = load i32, ptr ");
+                        ctx.write(gen_name.as_str());
+                        ctx.write("\n");
+                        ctx.write("  ");
+                        ctx.write_cgname(&tmp2);
+                        ctx.write(" = insertvalue { ptr, i32 } ");
+                        ctx.write_cgname(&tmp1);
+                        ctx.write(", i32 ");
+                        ctx.write_cgname(&gen_tmp);
+                        ctx.write(", 1\n");
+                    }
+                    Option.None => {
+                        // Stack-allocated: gen=0 sentinel
+                        ctx.write("  ");
+                        ctx.write_cgname(&tmp2);
+                        ctx.write(" = insertvalue { ptr, i32 } ");
+                        ctx.write_cgname(&tmp1);
+                        ctx.write(", i32 0, 1\n");
+                    }
+                }
+            } else {
+                // Deref chain: propagate gen from the source fat reference.
+                // If the base local is a gen ref ({ ptr, i32 } or { ptr, ptr, i32 }),
+                // extract its embedded gen. Otherwise gen=0 (thin pointer).
+                let local_ty = ctx.get_local_type(place.local);
+                let is_gen_ref = str_eq(local_ty.as_str(), "{ ptr, i32 }");
+                let is_dyn_gen_ref = str_eq(local_ty.as_str(), "{ ptr, ptr, i32 }");
+                if is_gen_ref || is_dyn_gen_ref {
+                    let load_ty = if is_dyn_gen_ref { "{ ptr, ptr, i32 }" } else { "{ ptr, i32 }" };
+                    let gen_field_str = if is_dyn_gen_ref { "2" } else { "1" };
+                    // Get the local's alloca address, handling heap indirection
+                    let local_cg = ctx.local_cg(place.local);
+                    let load_src = if ctx.is_region_allocated(place.local) || ctx.is_persistent_allocated(place.local) {
+                        let heap_ptr = ctx.fresh_temp_cg();
+                        ctx.emit_load_cg2(&heap_ptr, "ptr", &local_cg);
+                        heap_ptr
+                    } else {
+                        local_cg
+                    };
+                    // Load fat ref and extract gen field
+                    let fat_ref = ctx.fresh_temp_cg();
+                    ctx.emit_load_cg2(&fat_ref, load_ty, &load_src);
+                    let gen_val = ctx.fresh_temp_cg();
                     ctx.write("  ");
-                    ctx.write_cgname(&gen_tmp);
-                    ctx.write(" = load i32, ptr ");
-                    ctx.write(gen_name.as_str());
+                    ctx.write_cgname(&gen_val);
+                    ctx.write(" = extractvalue ");
+                    ctx.write(load_ty);
+                    ctx.write(" ");
+                    ctx.write_cgname(&fat_ref);
+                    ctx.write(", ");
+                    ctx.write(gen_field_str);
                     ctx.write("\n");
+                    // Create fat ref with propagated gen
                     ctx.write("  ");
                     ctx.write_cgname(&tmp2);
                     ctx.write(" = insertvalue { ptr, i32 } ");
                     ctx.write_cgname(&tmp1);
                     ctx.write(", i32 ");
-                    ctx.write_cgname(&gen_tmp);
+                    ctx.write_cgname(&gen_val);
                     ctx.write(", 1\n");
-                }
-                Option.None => {
-                    // Stack-allocated or deref'd: gen=0 sentinel
+                } else {
+                    // Thin pointer or unsized ref: gen=0 sentinel
                     ctx.write("  ");
                     ctx.write_cgname(&tmp2);
                     ctx.write(" = insertvalue { ptr, i32 } ");
                     ctx.write_cgname(&tmp1);
                     ctx.write(", i32 0, 1\n");
                 }
-            };
+            }
             // store { ptr, i32 } %tmp2, ptr %dest
             ctx.emit_store_cg("{ ptr, i32 }", &tmp2, dest);
         }

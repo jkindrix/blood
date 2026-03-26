@@ -1,0 +1,23 @@
+// Test: derived field reference through deref propagates gen from parent (GAP 1B)
+// &(*ref).field should inherit gen from ref, detecting stale access after region destroy.
+// Before fix: gen defaulted to 0 for deref chains (no stale detection).
+// EXPECT_EXIT: nonzero
+
+struct Pair { x: i32, y: i32 }
+
+fn get_field_ref(r: &Pair) -> &i32 {
+    &(*r).x
+}
+
+fn main() -> i32 {
+    let dummy: Pair = Pair { x: 0, y: 0 };
+    let mut field_ref: &i32 = &dummy.x;
+    region {
+        let p: Pair = Pair { x: 42, y: 99 };
+        let r: &Pair = &p;
+        field_ref = get_field_ref(r);
+    }
+    // region destroyed — field_ref should be stale, should panic
+    println_int(*field_ref);
+    0
+}

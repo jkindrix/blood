@@ -399,7 +399,8 @@ EffectExtends ::= 'extends' TypePath (',' TypePath)*
 OperationDecl ::= 'op' Ident TypeParams? '(' Params ')' '->' Type ';'
 
 HandlerDecl ::= HandlerKind? 'handler' Ident TypeParams?
-                'for' Type WhereClause? '{' HandlerBody '}'
+                'for' Type ForwardedEffects? WhereClause? '{' HandlerBody '}'
+ForwardedEffects ::= '/' EffectRow
 HandlerKind ::= 'shallow' | 'deep'
 HandlerBody ::= HandlerState* ReturnClause? FinallyClause? OperationImpl*
 HandlerState ::= 'let' 'mut'? Ident ':' Type ('=' Expr)?

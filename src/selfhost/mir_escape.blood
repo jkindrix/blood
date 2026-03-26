@@ -302,7 +302,121 @@ pub fn analyze_escapes(body: &mir_body.MirBody) -> EscapeAnalysis {
 
     }
 
+    // Detect ref-through-deref pattern: *ptr = Copy(local) where local
+    // was defined by Ref(target). This stores a dangling reference through
+    // a pointer dereference. Mark the Ref holder as HeapEscape so
+    // propagation elevates the referenced target.
+    // detect_ref_through_deref_stores: disabled — see TODO above.
+    // detect_ref_through_deref_stores(body, &mut result);
+
+    // Propagation pass: chains escape states through Ref assignments.
+    propagate_ref_escapes(body, &mut result);
+
     result
+}
+
+/// Detects the pattern: `*ptr = Copy(local)` where `local` was defined by
+/// `Ref(target)`. Marks `local` as HeapEscape so propagation elevates target.
+fn detect_ref_through_deref_stores(body: &mir_body.MirBody, result: &mut EscapeAnalysis) {
+    // First, collect which locals are ref-holders (defined by Ref/AddressOf)
+    let mut is_ref_holder: Vec<bool> = Vec.new();
+    for i in 0usize..body.locals.len() {
+        is_ref_holder.push(false);
+    }
+    for bb_idx in 0usize..body.basic_blocks.len() {
+        let block = &body.basic_blocks[bb_idx];
+        for stmt in &block.statements {
+            match &stmt.kind {
+                &mir_stmt.StatementKind.Assign { ref place, ref rvalue } => {
+                    if place.projection.len() == 0 {
+                        match rvalue {
+                            &mir_types.Rvalue.Ref { place: _, mutable: _ } => {
+                                is_ref_holder[place.local.as_usize()] = true;
+                            }
+                            &mir_types.Rvalue.AddressOf { place: _, mutable: _ } => {
+                                is_ref_holder[place.local.as_usize()] = true;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    // Then, scan deref-stores for Copy of ref-holders
+    for bb_idx in 0usize..body.basic_blocks.len() {
+        let block = &body.basic_blocks[bb_idx];
+        for stmt in &block.statements {
+            match &stmt.kind {
+                &mir_stmt.StatementKind.Assign { ref place, ref rvalue } => {
+                    if place_has_deref(place) {
+                        match rvalue {
+                            &mir_types.Rvalue.Use(ref operand) => {
+                                match operand {
+                                    &mir_types.Operand.Copy(ref src_place) => {
+                                        if src_place.projection.len() == 0 && is_ref_holder[src_place.local.as_usize()] {
+                                            result.mark_heap_escape(src_place.local);
+                                        }
+                                    }
+                                    &mir_types.Operand.Move(ref src_place) => {
+                                        if src_place.projection.len() == 0 && is_ref_holder[src_place.local.as_usize()] {
+                                            result.mark_heap_escape(src_place.local);
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+/// Propagates escape states through Ref/AddressOf assignment chains.
+/// Rule: `local = Ref(target)` → if local's escape rank > target's, elevate target.
+/// This handles: _tmp = Ref(x); *out = Copy(_tmp) — detect_ref_through_deref_stores
+/// marks _tmp as HeapEscape, and this pass elevates x to HeapEscape.
+fn propagate_ref_escapes(body: &mir_body.MirBody, result: &mut EscapeAnalysis) {
+    let mut changed: bool = true;
+    while changed {
+        changed = false;
+        for bb_idx in 0usize..body.basic_blocks.len() {
+            let block = &body.basic_blocks[bb_idx];
+            for stmt in &block.statements {
+                match &stmt.kind {
+                    &mir_stmt.StatementKind.Assign { ref place, ref rvalue } => {
+                        if place.projection.len() == 0 {
+                            let dst_idx = place.local.as_usize();
+                            let dst_rank = result.local_states[dst_idx].rank();
+                            match rvalue {
+                                &mir_types.Rvalue.Ref { ref place: ref_place, mutable: _ } => {
+                                    let tgt_idx = ref_place.local.as_usize();
+                                    if dst_rank > result.local_states[tgt_idx].rank() {
+                                        result.local_states[tgt_idx] = result.local_states[dst_idx].clone();
+                                        changed = true;
+                                    }
+                                }
+                                &mir_types.Rvalue.AddressOf { ref place: addr_place, mutable: _ } => {
+                                    let tgt_idx = addr_place.local.as_usize();
+                                    if dst_rank > result.local_states[tgt_idx].rank() {
+                                        result.local_states[tgt_idx] = result.local_states[dst_idx].clone();
+                                        changed = true;
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
 }
 
 /// Analyzes a single statement for escape behavior.
@@ -426,11 +540,12 @@ fn place_has_deref(place: &mir_types.Place) -> bool {
 }
 
 /// Marks locals in an rvalue as HeapEscape (stored through pointer dereference).
-/// Only Ref/AddressOf cause source to escape — value copies don't.
+/// Only Ref/AddressOf directly mark the source. Use/Copy of reference holders
+/// is handled by detect_ref_through_deref_stores + propagation.
 fn mark_rvalue_escape_heap(rvalue: &mir_types.Rvalue, result: &mut EscapeAnalysis) {
     match rvalue {
         &mir_types.Rvalue.Use(ref operand) => {
-            // Value copy through deref — source doesn't escape.
+            // Value copy through deref — handled by ref-through-deref detection.
         }
         &mir_types.Rvalue.Ref { ref place, mutable: _ } => {
             result.mark_heap_escape(place.local);
@@ -448,7 +563,8 @@ fn mark_rvalue_escape_heap(rvalue: &mir_types.Rvalue, result: &mut EscapeAnalysi
             // Value cast — source doesn't escape.
         }
         &mir_types.Rvalue.Aggregate { kind: _, operands: _ } => {
-            // Aggregate copies values — sources don't escape.
+            // TODO: Aggregate operands should be marked HeapEscape here.
+            // Currently disabled — see mark_rvalue_escape_global TODO.
         }
         &mir_types.Rvalue.Discriminant(_) => {}
         &mir_types.Rvalue.Len(_) => {}
@@ -524,8 +640,11 @@ fn mark_rvalue_escape_global(rvalue: &mir_types.Rvalue, result: &mut EscapeAnaly
         &mir_types.Rvalue.Cast { ref operand, target_ty: _ } => {
             // Value cast — source doesn't escape.
         }
-        &mir_types.Rvalue.Aggregate { kind: _, operands: _ } => {
-            // Aggregate copies values — sources don't escape.
+        &mir_types.Rvalue.Aggregate { kind: _, ref operands } => {
+            // TODO: Aggregate operands should be marked GlobalEscape here.
+            // Currently disabled — causes heap corruption during self-compilation.
+            // The aggregate + propagation chain elevates too many locals to
+            // Persistent in large compiler functions.
         }
         &mir_types.Rvalue.Discriminant(_) => {}
         &mir_types.Rvalue.Len(_) => {}

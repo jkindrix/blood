@@ -382,6 +382,16 @@ fn find_effect_row_cached(
                     }
                     Vec.new()
                 }
+                &hir_item.ItemKind.Handler(ref handler_def) => {
+                    // Handler op bodies can perform the handled effect (re-perform)
+                    // plus any explicitly forwarded effects.
+                    let mut row: Vec<u32> = Vec.new();
+                    row.push(handler_def.handled_effect.def_id.index);
+                    for fi in 0usize..handler_def.forwarded_effects.len() {
+                        row.push(handler_def.forwarded_effects[fi].def_id.index);
+                    }
+                    row
+                }
                 _ => Vec.new(),
             }
         }
@@ -2009,6 +2019,23 @@ fn find_effect_type_args_cached(
                         }
                     }
                     Vec.new()
+                }
+                &hir_item.ItemKind.Handler(ref handler_def) => {
+                    // Handled effect type args + forwarded effect type args
+                    let mut result: Vec<Vec<type_intern.TyId>> = Vec.new();
+                    let mut handled_args: Vec<type_intern.TyId> = Vec.new();
+                    for ai in 0usize..handler_def.handled_effect.args.len() {
+                        handled_args.push(type_intern.type_to_ty_id(&handler_def.handled_effect.args[ai]));
+                    }
+                    result.push(handled_args);
+                    for fi in 0usize..handler_def.forwarded_effects.len() {
+                        let mut fwd_args: Vec<type_intern.TyId> = Vec.new();
+                        for ai in 0usize..handler_def.forwarded_effects[fi].args.len() {
+                            fwd_args.push(type_intern.type_to_ty_id(&handler_def.forwarded_effects[fi].args[ai]));
+                        }
+                        result.push(fwd_args);
+                    }
+                    result
                 }
                 _ => Vec.new(),
             }

@@ -534,6 +534,8 @@ pub struct HandlerDef {
     pub generics: hir_ty.Generics,
     /// The effect being handled.
     pub handled_effect: hir_ty.EffectRef,
+    /// Effects forwarded by handler op bodies (declared via `/ {Effect1, ...}`).
+    pub forwarded_effects: Vec<hir_ty.EffectRef>,
     /// Handler kind (deep or shallow).
     pub kind: common.HandlerKind,
     /// State fields.
@@ -551,13 +553,14 @@ impl HandlerDef {
     pub fn new(
         generics: hir_ty.Generics,
         handled_effect: hir_ty.EffectRef,
+        forwarded_effects: Vec<hir_ty.EffectRef>,
         kind: common.HandlerKind,
         state: Vec<HandlerState>,
         return_clause: Option<HandlerReturn>,
         finally_clause: Option<HandlerFinally>,
         op_impls: Vec<OpImpl>,
     ) -> HandlerDef {
-        HandlerDef { generics, handled_effect, kind, state, return_clause, finally_clause, op_impls }
+        HandlerDef { generics, handled_effect, forwarded_effects, kind, state, return_clause, finally_clause, op_impls }
     }
 }
 

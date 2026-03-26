@@ -1,0 +1,39 @@
+// Test: effect row subtyping — pure function passed where effectful expected
+// pure <: {IO} holds: empty effect set is subset of any effect set.
+// Unification in unify_effect_rows (unify.blood:2207) handles this.
+// EXPECT: 99
+
+effect IO {
+    op print_val(x: i32) -> ();
+}
+
+deep handler StdIO for IO {
+    return(x) { x }
+    op print_val(x) {
+        println_int(x);
+        resume(())
+    }
+}
+
+fn pure_producer() -> i32 {
+    42
+}
+
+fn effectful_producer() -> i32 / {IO} {
+    perform IO.print_val(99);
+    42
+}
+
+fn apply_io(f: fn() -> i32 / {IO}) -> i32 {
+    f()
+}
+
+fn main() -> i32 {
+    with StdIO {} handle {
+        let a: i32 = apply_io(effectful_producer);
+        let b: i32 = apply_io(pure_producer);
+        if a != 42 { return 1; }
+        if b != 42 { return 2; }
+        0
+    }
+}

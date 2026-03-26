@@ -1,0 +1,36 @@
+// Test: handler re-performs its own effect to outer handler
+// Handler op bodies now have the handled effect in scope (F-18 fix).
+// InnerEmit re-performs Emit to OuterEmit.
+// EXPECT: outer:10
+// EXPECT: outer:10
+
+effect Emit {
+    op emit(val: i32) -> ();
+}
+
+deep handler OuterEmit for Emit {
+    return(x) { x }
+    op emit(val) {
+        print_str("outer:");
+        println_int(val);
+        resume(())
+    }
+}
+
+deep handler InnerEmit for Emit {
+    return(x) { x }
+    op emit(val) {
+        perform Emit.emit(val * 2);
+        resume(())
+    }
+}
+
+fn main() -> i32 {
+    with OuterEmit {} handle {
+        perform Emit.emit(10);
+        with InnerEmit {} handle {
+            perform Emit.emit(10);
+        };
+    };
+    0
+}

@@ -1169,6 +1169,33 @@ fn lower_handler_decl(ctx: &mut hir_lower_ctx.LoweringCtx, h: &ast.HandlerDecl) 
         return;
     }
 
+    // Lower forwarded effects
+    let mut forwarded_effects: Vec<hir_ty.EffectRef> = Vec.new();
+    match &h.forwarded_effects {
+        &Option.Some(ref eff_row) => {
+            match &eff_row.kind {
+                &ast.EffectRowKind.Effects { ref effects, rest: _ } => {
+                    for ei in 0usize..effects.len() {
+                        let ety = hir_lower_type.lower_type(ctx, &effects[ei]);
+                        match type_to_effect_ref(&ety) {
+                            Option.Some(eref) => { forwarded_effects.push(eref); }
+                            Option.None => {
+                                ctx.error(
+                                    hir.DiagnosticCode.E0104,
+                                    common.make_string("invalid effect type in forwarded effects"),
+                                    h.span,
+                                );
+                            }
+                        }
+                    }
+                }
+                &ast.EffectRowKind.Pure => {}
+                &ast.EffectRowKind.Var(_) => {}
+            }
+        }
+        &Option.None => {}
+    }
+
     // Lower state fields
     let mut state: Vec<hir_item.HandlerState> = Vec.with_capacity(h.state.len());
     let mut i: usize = 0;
@@ -1246,6 +1273,7 @@ fn lower_handler_decl(ctx: &mut hir_lower_ctx.LoweringCtx, h: &ast.HandlerDecl) 
     let handler_def = hir_item.HandlerDef.new(
         generics,
         handled_effect.unwrap(),
+        forwarded_effects,
         h.kind,
         state,
         return_clause,

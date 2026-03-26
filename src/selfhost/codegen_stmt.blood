@@ -1770,14 +1770,21 @@ pub fn emit_allocas_with_escapes(
         let local_hir_ty = type_intern.ty_id_to_type(local.ty);
 
         // Get recommended tier from escape analysis.
-        // Small types use stack unless escape analysis says GlobalEscape
-        // (reference flows to return place). ArgEscape from &x in method
-        // calls is too common and doesn't require heap — keep on stack.
+        // Primitives that don't escape or only escape through arguments/effects
+        // use stack with gen=0 — stack allocas live for the function and the
+        // handler dispatch path packs args as i64 (not region-aware).
+        // If escape analysis says a primitive escapes to HEAP (stored through
+        // pointer deref) or GLOBALLY (returned/static), respect it — gen=0
+        // skips runtime validation, so those refs would be use-after-free.
+        // TODO: Once handler dispatch supports gen-tracked data, also respect
+        // ArgEscape and EffectEscape for primitives.
         let raw_tier = escapes.recommended_tier(local_id);
+        let raw_state = escapes.get_state(local_id);
         let tier = if is_always_stack_type(&local_hir_ty) {
-            match &raw_tier {
-                &mir_escape.MemoryTier.Persistent => raw_tier, // GlobalEscape: &x returned
-                _ => mir_escape.MemoryTier.Stack, // ArgEscape/Region: temporary borrow
+            match raw_state {
+                &mir_escape.EscapeState.HeapEscape => raw_tier,
+                &mir_escape.EscapeState.GlobalEscape => raw_tier,
+                _ => mir_escape.MemoryTier.Stack,
             }
         } else {
             let t = escapes.recommended_tier(local_id);

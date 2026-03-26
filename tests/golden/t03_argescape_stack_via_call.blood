@@ -1,0 +1,37 @@
+// GAP 1D exploit: primitive ref escapes through identity function call.
+// BC-01 and codegen E0503 only check direct Ref→return chains.
+// Passing &local through a function call launders the reference.
+//
+// Root cause: is_always_stack_type demotes ArgEscape→Stack for primitives.
+// x gets alloca (gen=0), no stale detection. After make_ref returns,
+// the reference points to a dead stack frame. clobber() reuses the
+// stack and *r reads clobbered data instead of 42.
+//
+// When gen-ref safety is working, this should COMPILE_FAIL or EXPECT_EXIT: nonzero.
+// Currently: reads garbage — use-after-free.
+// EXPECT: 333333
+
+fn identity_ref(r: &i32) -> &i32 {
+    r
+}
+
+fn make_ref() -> &i32 {
+    let x: i32 = 42;
+    identity_ref(&x)
+}
+
+fn clobber() -> i32 {
+    let a: i32 = 111111;
+    let b: i32 = 222222;
+    let c: i32 = 333333;
+    let d: i32 = 444444;
+    a + b + c + d
+}
+
+fn main() -> i32 {
+    let r: &i32 = make_ref();
+    let _: i32 = clobber();
+    let val: i32 = *r;
+    println_int(val);
+    0
+}
