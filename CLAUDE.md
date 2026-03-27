@@ -83,7 +83,7 @@ The selfhost compiler is developed using a **self-compilation loop**: edit sourc
 
 **Recovery (clean, ~4 min):** `./build_selfhost.sh build first_gen` — rebuilds from the bootstrap seed. Use this only when self-compilation breaks (your edit introduced a bug that prevents the compiler from compiling itself). Fix the issue, rebuild first_gen, then return to the build loop.
 
-**Gate (full chain, ~15 min):** `./build_selfhost.sh gate` — runs the full bootstrap chain (first_gen → second_gen → third_gen byte-compare) and updates the seed. Run at end-of-session or before pushing. Required for ABI/calling-convention changes.
+**Gate (full chain, ~15 min):** `./build_selfhost.sh gate` — runs the full bootstrap chain (first_gen → second_gen → third_gen byte-compare) and updates the seed. Run at end-of-session or before pushing. Required for ABI/calling-convention changes. Use `gate --quick` (~8 min) to skip first_gen/second_gen rebuilds when they're already built and tested.
 
 ## Development Rules
 
@@ -165,6 +165,7 @@ cd src/selfhost
 
 # Bootstrap gate (full pipeline + update seed on success)
 ./build_selfhost.sh gate               # build all + cp second_gen → bootstrap/seed
+./build_selfhost.sh gate --quick       # third_gen byte-compare + seed only (assumes fg/sg built)
 
 # Diagnostics
 ./build_selfhost.sh verify              # IR verification + declaration diff + FileCheck
@@ -176,14 +177,17 @@ cd src/selfhost
 # Workflow
 ./build_selfhost.sh run file.blood              # Compile and run (default: first_gen)
 ./build_selfhost.sh run file.blood bootstrap    # Run through bootstrap
+./build_selfhost.sh run file.blood --dump-mir   # Run with extra compiler flags
 ./build_selfhost.sh diff file.blood             # Compare blood-rust vs first_gen output
 ./build_selfhost.sh status                      # Show compiler status, ages, processes
 ./build_selfhost.sh install                     # Install toolchain to ~/.blood/{bin,lib}/
 ./build_selfhost.sh clean                       # Remove build artifacts (preserves .logs)
+./build_selfhost.sh clean-cache                 # Remove only caches (preserves binaries + .logs)
 ./build_selfhost.sh clean-all                   # Remove everything including logs
 
 # Flags
 -q, --quiet         # Suppress per-test output (only failures + summary)
+--fresh              # Clear caches before building (use with build commands)
 ```
 
 **Golden test behavior:** COMPILE_FAIL tests pass when the compiler correctly rejects the code. `// EXPECT:` diagnostic pattern mismatches are reported separately as warnings, not counted as failures. Test binaries have a 30s timeout to prevent infinite-loop hangs.
