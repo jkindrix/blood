@@ -653,14 +653,127 @@ pub fn register_bridge_functions(
                     Option.Some(bridge_def_id),
                 );
             }
-            &ast.BridgeItem.TypeAlias(ref _ta) => {
-                // Bridge type aliases: not yet implemented
+            &ast.BridgeItem.TypeAlias(ref ta) => {
+                let alias_def_id = ctx.alloc_def_id();
+                let alias_name_str = ctx.span_to_string(ta.name.span);
+                let alias_name_symbol = ctx.intern(alias_name_str.as_str());
+
+                ctx.resolver.register_def_info(
+                    alias_def_id,
+                    hir_def.DefKind.TypeAlias,
+                    alias_name_symbol,
+                    ta.name.span,
+                    Option.Some(bridge_def_id),
+                );
+
+                let ty_id = hir_lower_type.lower_type_id(ctx, &ta.ty);
+                let alias_def = hir_item.TypeAliasDef.new(hir_ty.Generics.empty(), ty_id);
+                let item = hir_item.Item.new(
+                    alias_def_id,
+                    ta.name,
+                    hir_item.ItemKind.TypeAlias(alias_def),
+                    common.Visibility.Public,
+                    ta.span,
+                );
+                ctx.add_item(alias_def_id, item);
             }
-            &ast.BridgeItem.Struct(ref _s) => {
-                // Bridge structs: not yet implemented
+            &ast.BridgeItem.Struct(ref s) => {
+                let struct_def_id = ctx.alloc_def_id();
+                let struct_name_str = ctx.span_to_string(s.name.span);
+                let struct_name_symbol = ctx.intern(struct_name_str.as_str());
+
+                ctx.resolver.register_def_info(
+                    struct_def_id,
+                    hir_def.DefKind.Struct,
+                    struct_name_symbol,
+                    s.name.span,
+                    Option.Some(bridge_def_id),
+                );
+
+                // Lower fields
+                let mut fields: Vec<hir_item.StructField> = Vec.with_capacity(s.fields.len());
+                for fi in 0usize..s.fields.len() {
+                    let field_def_id = ctx.alloc_def_id();
+                    let field_ty = hir_lower_type.lower_type_id(ctx, &s.fields[fi].ty);
+                    let field_name_str = ctx.span_to_string(s.fields[fi].name.span);
+                    let field_name_sym = ctx.intern(field_name_str.as_str());
+                    let field_name = common.SpannedSymbol { symbol: field_name_sym, span: s.fields[fi].name.span };
+                    fields.push(hir_item.StructField.new(
+                        field_def_id, field_name, field_ty, common.Visibility.Public, s.fields[fi].span,
+                    ));
+                }
+
+                let struct_def = hir_item.StructDef.new(hir_ty.Generics.empty(), hir_item.StructBody.Record(fields));
+                let item = hir_item.Item.new(
+                    struct_def_id,
+                    s.name,
+                    hir_item.ItemKind.Struct(struct_def),
+                    common.Visibility.Public,
+                    s.span,
+                );
+                ctx.add_item(struct_def_id, item);
             }
-            &ast.BridgeItem.Enum(ref _e) => {
-                // Bridge enums: not yet implemented
+            &ast.BridgeItem.Enum(ref e) => {
+                let enum_def_id = ctx.alloc_def_id();
+                let enum_name_str = ctx.span_to_string(e.name.span);
+                let enum_name_symbol = ctx.intern(enum_name_str.as_str());
+
+                ctx.resolver.register_def_info(
+                    enum_def_id,
+                    hir_def.DefKind.Enum,
+                    enum_name_symbol,
+                    e.name.span,
+                    Option.Some(bridge_def_id),
+                );
+
+                // Lower variants as unit variants with auto-incrementing discriminants
+                let mut variants: Vec<hir_item.Variant> = Vec.with_capacity(e.variants.len());
+                let mut next_disc: u32 = 0;
+                for vi in 0usize..e.variants.len() {
+                    let v = &e.variants[vi];
+                    // Use explicit discriminant if provided, else auto-increment
+                    let disc: u32 = match &v.discriminant {
+                        &Option.Some(ref lit) => {
+                            match &lit.kind {
+                                &ast.LiteralKind.Int { val, suffix: _ } => {
+                                    next_disc = val as u32 + 1;
+                                    val as u32
+                                }
+                                _ => {
+                                    let d = next_disc;
+                                    next_disc += 1;
+                                    d
+                                }
+                            }
+                        }
+                        &Option.None => {
+                            let d = next_disc;
+                            next_disc += 1;
+                            d
+                        }
+                    };
+
+                    let var_def_id = ctx.alloc_def_id();
+                    let var_name_str = ctx.span_to_string(v.name.span);
+                    let var_name_sym = ctx.intern(var_name_str.as_str());
+                    ctx.resolver.register_variant_def_info(
+                        var_def_id, var_name_sym, v.name.span, enum_def_id, disc,
+                    );
+                    let var_name = common.SpannedSymbol { symbol: var_name_sym, span: v.name.span };
+                    variants.push(hir_item.Variant.new(
+                        var_def_id, var_name, disc, hir_item.VariantKind.Unit, v.span,
+                    ));
+                }
+
+                let enum_def = hir_item.EnumDef.new(hir_ty.Generics.empty(), variants);
+                let item = hir_item.Item.new(
+                    enum_def_id,
+                    e.name,
+                    hir_item.ItemKind.Enum(enum_def),
+                    common.Visibility.Public,
+                    e.span,
+                );
+                ctx.add_item(enum_def_id, item);
             }
             &ast.BridgeItem.Union(ref _u) => {
                 // Bridge unions: not yet implemented

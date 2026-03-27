@@ -1771,7 +1771,8 @@ fn parse_bridge_item(parser: &mut parser_base.Parser) -> Option<ast.BridgeItem> 
             Option.Some(ast.BridgeItem.Const(parse_bridge_const(parser)))
         }
         token.TokenKind.Type => {
-            Option.Some(ast.BridgeItem.OpaqueType(parse_bridge_opaque_type(parser)))
+            // Distinguish opaque type (type Name;) from type alias (type Name = Type;)
+            Option.Some(parse_bridge_type_or_alias(parser))
         }
         token.TokenKind.Struct => {
             Option.Some(ast.BridgeItem.Struct(parse_bridge_struct(parser, attrs)))
@@ -1873,6 +1874,32 @@ fn parse_bridge_const(parser: &mut parser_base.Parser) -> ast.BridgeConst {
         ty,
         init_value: lit,
         span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    }
+}
+
+/// Parse bridge type item: either opaque (type Name;) or alias (type Name = Type;)
+fn parse_bridge_type_or_alias(parser: &mut parser_base.Parser) -> ast.BridgeItem {
+    let start = parser.current.span;
+    parser.advance(); // consume 'type'
+    let name = parser.parse_spanned_symbol();
+    if parser.try_consume(token.TokenKind.Eq) {
+        // Type alias: type Name = Type;
+        let ty = parser_type.parse_type(parser);
+        let end_span = parser.current.span;
+        parser.expect(token.TokenKind.Semi);
+        ast.BridgeItem.TypeAlias(ast.BridgeTypeAlias {
+            name: name,
+            ty: ty,
+            span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        })
+    } else {
+        // Opaque type: type Name;
+        let end_span = parser.current.span;
+        parser.expect(token.TokenKind.Semi);
+        ast.BridgeItem.OpaqueType(ast.BridgeOpaqueType {
+            name: name,
+            span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+        })
     }
 }
 
