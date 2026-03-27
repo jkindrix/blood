@@ -1,0 +1,160 @@
+// Proving Ground Program 1: effectful — handler swapping
+// Tests: handler swap, effect composition, non-resumptive, handler state, return values
+// EXPECT: === Real Mode ===
+// EXPECT: [info] alpha
+// EXPECT: alpha: 10
+// EXPECT: [info] beta
+// EXPECT: beta: 20
+// EXPECT: [info] gamma
+// EXPECT: [ABORT] gamma
+// EXPECT: real processed: -1
+// EXPECT:
+// EXPECT: === Test Mode ===
+// EXPECT: test processed: 4
+// EXPECT: done
+
+struct Record {
+    name: String,
+    value: i32,
+    valid: bool,
+}
+
+fn make_record(name: &str, value: i32, valid: bool) -> Record {
+    let mut s: String = String.new();
+    let bytes = name.as_bytes();
+    let mut i: usize = 0;
+    while i < bytes.len() { s.push(bytes[i] as char); i += 1; }
+    Record { name: s, value: value, valid: valid }
+}
+
+fn int_to_string(v: i32) -> String {
+    let mut s: String = String.new();
+    if v == 0 { s.push(48 as char); return s; }
+    let mut tmp: Vec<u8> = Vec.new();
+    let mut n: i32 = v;
+    if n < 0 { n = 0 - n; }
+    while n > 0 { tmp.push((48 + (n % 10)) as u8); n = n / 10; }
+    if v < 0 { s.push(45 as char); }
+    let mut k: usize = tmp.len();
+    while k > 0 { k -= 1; s.push(tmp[k] as char); }
+    s
+}
+
+effect Output { op write_line(msg: &str) -> (); }
+effect Log { op info(msg: &str) -> (); op warn(msg: &str) -> (); }
+effect Validate { op check(value: i32, valid: bool) -> bool; op reject(name: &str) -> i32; }
+effect Counter { op increment() -> (); op get_count() -> i32; }
+
+fn process_records(records: &Vec<Record>) -> i32 / {Output, Log, Validate, Counter} {
+    let mut i: usize = 0;
+    while i < records.len() {
+        let r: &Record = &records[i];
+        perform Log.info(r.name.as_str());
+        let ok: bool = perform Validate.check(r.value, r.valid);
+        if !ok {
+            perform Validate.reject(r.name.as_str());
+        } else {
+            let mut line: String = String.new();
+            let bytes = r.name.as_bytes();
+            let mut j: usize = 0;
+            while j < bytes.len() { line.push(bytes[j] as char); j += 1; }
+            line.push(58 as char);
+            line.push(32 as char);
+            let val_str: String = int_to_string(r.value);
+            let vb2 = val_str.as_bytes();
+            let mut vb: usize = 0;
+            while vb < vb2.len() { line.push(vb2[vb] as char); vb += 1; }
+            perform Output.write_line(line.as_str());
+            perform Counter.increment();
+        }
+        i += 1;
+    }
+    perform Counter.get_count()
+}
+
+deep handler RealOutput for Output {
+    return(x) { x }
+    op write_line(msg) { println_str(msg); resume(()) }
+}
+deep handler StderrLog for Log {
+    return(x) { x }
+    op info(msg) { print_str("[info] "); println_str(msg); resume(()) }
+    op warn(msg) { print_str("[warn] "); println_str(msg); resume(()) }
+}
+deep handler StrictValidate for Validate {
+    return(x) { x }
+    op check(value, valid) { resume(valid) }
+    op reject(name) { print_str("[ABORT] "); println_str(name); 0 - 1 }
+}
+deep handler RealCounter for Counter {
+    let mut count: i32
+    return(x) { x }
+    op increment() { count += 1; resume(()) }
+    op get_count() { resume(count) }
+}
+
+deep handler TestOutput for Output {
+    let mut count: i32
+    return(x) { x }
+    op write_line(msg) { count += 1; resume(()) }
+}
+deep handler SilentLog for Log {
+    return(x) { x }
+    op info(msg) { resume(()) }
+    op warn(msg) { resume(()) }
+}
+deep handler LenientValidate for Validate {
+    return(x) { x }
+    op check(value, valid) { resume(true) }
+    op reject(name) { resume(0) }
+}
+deep handler TestCounter for Counter {
+    let mut count: i32
+    return(x) { x }
+    op increment() { count += 1; resume(()) }
+    op get_count() { resume(count) }
+}
+
+fn make_test_data() -> Vec<Record> {
+    let mut records: Vec<Record> = Vec.new();
+    records.push(make_record("alpha", 10, true));
+    records.push(make_record("beta", 20, true));
+    records.push(make_record("gamma", 30, false));
+    records.push(make_record("delta", 40, true));
+    records
+}
+
+fn main() -> i32 {
+    let data: Vec<Record> = make_test_data();
+
+    println_str("=== Real Mode ===");
+    let real_count: i32 = with RealOutput {} handle {
+        with StderrLog {} handle {
+            with StrictValidate {} handle {
+                with RealCounter { count: 0 } handle {
+                    process_records(&data)
+                }
+            }
+        }
+    };
+    print_str("real processed: ");
+    println_int(real_count);
+
+    println_str("");
+
+    println_str("=== Test Mode ===");
+    let test_count: i32 = with TestOutput { count: 0 } handle {
+        with SilentLog {} handle {
+            with LenientValidate {} handle {
+                with TestCounter { count: 0 } handle {
+                    process_records(&data)
+                }
+            }
+        }
+    };
+    print_str("test processed: ");
+    println_int(test_count);
+
+    println_str("done");
+    0
+}
