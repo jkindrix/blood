@@ -343,14 +343,15 @@ pub fn emit_statement(
                 cgname_to_string(&state_void_ptr)
             };
 
-            // Use push_by_index to use the exact registry index from the ctor.
-            // This avoids reg_find_by_effect_id which could find the wrong registration
-            // when multiple handlers share the same effect ID (e.g., StaleReference).
+            // Use push_by_index with per-handler registry index.
+            // Each handler has its own registry entry so that different handlers
+            // for the same effect dispatch to different operation implementations.
+            let handler_def_id_val = codegen_types.format_u64(handler_id.index as u64);
             let reg_idx_global = ctx.fresh_temp_cg();
             ctx.write_indent();
             ctx.write_cgname(&reg_idx_global);
             ctx.write(" = load i64, ptr @__handler_reg_idx_");
-            ctx.write_string(&effect_id_val);
+            ctx.write_string(&handler_def_id_val);
             ctx.write("\n");
             ctx.write_indent();
             ctx.write("call void @blood_evidence_push_by_index(ptr ");
@@ -839,6 +840,17 @@ pub fn emit_statement(
             // Widen body result to i64
             let widened_result = if strs_equal(result_ty.as_str(), "i64") {
                 clone_string(&result_val)
+            } else if strs_equal(result_ty.as_str(), "{}") {
+                // Unit type is zero-sized — pass i64 0 to the return clause
+                common.make_string("0")
+            } else if strs_equal(result_ty.as_str(), "ptr") {
+                let tmp = ctx.fresh_temp_cg();
+                ctx.write_indent();
+                ctx.write_cgname(&tmp);
+                ctx.write(" = ptrtoint ptr ");
+                ctx.write_string(&result_val);
+                ctx.write(" to i64\n");
+                cgname_to_string(&tmp)
             } else {
                 let tmp = ctx.fresh_temp_cg();
                 ctx.write_indent();
@@ -872,6 +884,16 @@ pub fn emit_statement(
             // Narrow result to destination type (use body result type as proxy)
             if strs_equal(result_ty.as_str(), "i64") {
                 ctx.emit_store_cg("i64", &ret_val, dest_ptr.as_str());
+            } else if strs_equal(result_ty.as_str(), "{}") {
+                // Unit type — nothing to store (zero-sized)
+            } else if strs_equal(result_ty.as_str(), "ptr") {
+                let narrowed = ctx.fresh_temp_cg();
+                ctx.write_indent();
+                ctx.write_cgname(&narrowed);
+                ctx.write(" = inttoptr i64 ");
+                ctx.write_cgname(&ret_val);
+                ctx.write(" to ptr\n");
+                ctx.emit_store_cg("ptr", &narrowed, dest_ptr.as_str());
             } else {
                 let narrowed = ctx.fresh_temp_cg();
                 ctx.write_indent();
@@ -913,6 +935,16 @@ pub fn emit_statement(
 
                 if strs_equal(result_ty.as_str(), "i64") {
                     ctx.emit_store_cg("i64", &abort_loaded, dest_ptr.as_str());
+                } else if strs_equal(result_ty.as_str(), "{}") {
+                    // Unit type — nothing to store
+                } else if strs_equal(result_ty.as_str(), "ptr") {
+                    let abort_narrowed = ctx.fresh_temp_cg();
+                    ctx.write_indent();
+                    ctx.write_cgname(&abort_narrowed);
+                    ctx.write(" = inttoptr i64 ");
+                    ctx.write_cgname(&abort_loaded);
+                    ctx.write(" to ptr\n");
+                    ctx.emit_store_cg("ptr", &abort_narrowed, dest_ptr.as_str());
                 } else {
                     let abort_narrowed = ctx.fresh_temp_cg();
                     ctx.write_indent();
