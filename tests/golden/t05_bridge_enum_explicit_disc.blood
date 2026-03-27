@@ -1,0 +1,26 @@
+// Test: bridge enum with explicit discriminants (GAP 7A edge case)
+// Contiguous discriminants starting from non-zero.
+// EXPECT: not found
+// EXPECT: denied
+
+bridge "C" Errno {
+    enum Code {
+        Success = 0,
+        NotFound = 1,
+        PermDenied = 2,
+    }
+}
+
+fn describe(c: Errno.Code) -> &str {
+    match c {
+        Errno.Code.Success => "ok",
+        Errno.Code.NotFound => "not found",
+        Errno.Code.PermDenied => "denied",
+    }
+}
+
+fn main() -> i32 {
+    println(describe(Errno.Code.NotFound));
+    println(describe(Errno.Code.PermDenied));
+    0
+}

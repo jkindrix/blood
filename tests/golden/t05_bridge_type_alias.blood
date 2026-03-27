@@ -1,12 +1,19 @@
-// COMPILE_FAIL: cannot cast
-// Test: bridge type alias — lowered but typeck doesn't follow aliases yet.
+// Test: bridge type alias declaration and usage (GAP 7A)
+// Type aliases in bridge blocks resolve to the underlying type.
+// EXPECT: 42
+// EXPECT: 100
 
 bridge "C" Types {
     type SizeT = u64;
+    type SignedInt = i32;
 }
 
 fn main() -> i32 {
-    let s: Types.SizeT = 42;
-    println_int(s as i64);
+    let s: Types.SizeT = 42u64;
+    println_int(s as i32);
+    let x: Types.SignedInt = 100;
+    println_int(x);
+    if s != 42u64 { return 1; }
+    if x != 100 { return 2; }
     0
 }

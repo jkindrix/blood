@@ -1,0 +1,21 @@
+// Test: bridge struct field access through references (GAP 7A edge case)
+// EXPECT: 10
+
+bridge "C" Geom {
+    struct Vec2 {
+        x: i32,
+        y: i32,
+    }
+}
+
+fn sum_ref(p: &Geom.Vec2) -> i32 {
+    p.x + p.y
+}
+
+fn main() -> i32 {
+    let v: Geom.Vec2 = Geom.Vec2 { x: 3, y: 7 };
+    let result: i32 = sum_ref(&v);
+    println_int(result);
+    if result != 10 { return 1; }
+    0
+}

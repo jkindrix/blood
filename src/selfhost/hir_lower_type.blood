@@ -532,6 +532,32 @@ fn lower_type_path_id(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.TypePath) 
     let resolved = ctx.resolver.resolve_qualified_path(&names);
     if resolved.is_some() {
         let result = resolved.unwrap();
+
+        // Check for type alias — resolve to underlying type (same as single-segment path)
+        let def_info_opt = ctx.resolver.get_def_info(result.def_id);
+        match &def_info_opt {
+            &Option.Some(ref info) => {
+                match info.kind {
+                    hir_def.DefKind.TypeAlias => {
+                        let item_entry = ctx.get_item(result.def_id);
+                        match &item_entry {
+                            &Option.Some(ref entry) => {
+                                match &entry.item.kind {
+                                    &hir_item.ItemKind.TypeAlias(ref alias_def) => {
+                                        return alias_def.ty;
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            &Option.None => {}
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            &Option.None => {}
+        }
+
         // Get type args from last segment
         let last_seg = &path.segments[path.segments.len() - 1];
         let type_arg_ids = match &last_seg.args {
@@ -707,6 +733,32 @@ fn lower_type_path(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.TypePath) -> 
     let resolved = ctx.resolver.resolve_qualified_path(&names);
     if resolved.is_some() {
         let result = resolved.unwrap();
+
+        // Check for type alias — resolve to underlying type (same as single-segment path)
+        let def_info_opt = ctx.resolver.get_def_info(result.def_id);
+        match &def_info_opt {
+            &Option.Some(ref info) => {
+                match info.kind {
+                    hir_def.DefKind.TypeAlias => {
+                        let item_entry = ctx.get_item(result.def_id);
+                        match &item_entry {
+                            &Option.Some(ref entry) => {
+                                match &entry.item.kind {
+                                    &hir_item.ItemKind.TypeAlias(ref alias_def) => {
+                                        return type_intern.ty_id_to_type(alias_def.ty);
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            &Option.None => {}
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            &Option.None => {}
+        }
+
         // Get type args from last segment
         let last_seg = &path.segments[path.segments.len() - 1];
         let type_args = match &last_seg.args {
