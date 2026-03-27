@@ -346,6 +346,9 @@ pub struct TypeChecker {
     /// Whether we are inside a handler block (try/with or with-handle).
     /// When true, call-site effect checking is suppressed since the handler handles effects.
     pub in_handler: bool,
+    /// Effects available from enclosing with...handle blocks (stack, push/pop on enter/exit).
+    /// Used by effect-row dispatch to select methods compatible with the handler context.
+    pub available_effects: Vec<u32>,
     /// Hash index for O(1) variant lookup: variant_def_id.index → (enum_idx << 32) | variant_idx
     pub variant_hash: hashmap.HashMapU64U64,
     /// Hash index for O(1) trait impl existence check: trait_def_id.index → 1
@@ -363,6 +366,8 @@ pub struct TypeChecker {
     /// Map from handler DefId index to handler kind (true = deep).
     /// Populated during item registration. Used by with/handle linearity checking.
     pub handler_kind_hash: hashmap.HashMapU64U32,
+    /// Maps handler DefId → handled effect DefId for effect-row dispatch.
+    pub handler_effect_hash: hashmap.HashMapU64U32,
     /// When inside a deep handler body, the local index boundary.
     /// Locals with index < boundary are outer locals that must not be linear/affine.
     /// None when not inside a deep handler body.
@@ -470,6 +475,7 @@ impl TypeChecker {
             current_effect_row: Vec.new(),
             current_effect_type_args: Vec.new(),
             in_handler: false,
+            available_effects: Vec.new(),
             variant_hash: hashmap.HashMapU64U64.new(),
             trait_impl_hash: hashmap.HashMapU64U32.new(),
             resume_ty: Option.None,
@@ -477,6 +483,7 @@ impl TypeChecker {
             resume_count: 0,
             handler_state_types: Vec.new(),
             handler_kind_hash: hashmap.HashMapU64U32.new(),
+            handler_effect_hash: hashmap.HashMapU64U32.new(),
             deep_handler_local_boundary: Option.None,
             default_method_remaps: Vec.new(),
             coercion_entries: Vec.new(),
@@ -542,6 +549,7 @@ impl TypeChecker {
             current_effect_row: Vec.new(),
             current_effect_type_args: Vec.new(),
             in_handler: false,
+            available_effects: Vec.new(),
             variant_hash: hashmap.HashMapU64U64.new(),
             trait_impl_hash: hashmap.HashMapU64U32.new(),
             resume_ty: Option.None,
@@ -549,6 +557,7 @@ impl TypeChecker {
             resume_count: 0,
             handler_state_types: Vec.new(),
             handler_kind_hash: hashmap.HashMapU64U32.new(),
+            handler_effect_hash: hashmap.HashMapU64U32.new(),
             deep_handler_local_boundary: Option.None,
             default_method_remaps: Vec.new(),
             coercion_entries: Vec.new(),
@@ -1401,6 +1410,71 @@ impl TypeChecker {
         if applicable_impls.len() == 0 {
             return Option.None;
         }
+
+        // Phase 1.5: Filter by effect compatibility with caller's current_effect_row.
+        // A method is compatible if all its declared effects are in the caller's row.
+        // Pure methods (empty effect_def_ids) are always compatible.
+        if applicable_impls.len() > 1 {
+            let mut compat_impls: Vec<usize> = Vec.new();
+            let mut compat_methods: Vec<usize> = Vec.new();
+            for ci in 0usize..applicable_impls.len() {
+                let method = &self.impls[applicable_impls[ci]].methods[applicable_methods[ci]];
+                let mut all_in_scope: bool = true;
+                for ei in 0usize..method.effect_def_ids.len() {
+                    let mut found: bool = false;
+                    // Check function's declared effect row
+                    for ri in 0usize..self.current_effect_row.len() {
+                        if method.effect_def_ids[ei] == self.current_effect_row[ri] {
+                            found = true;
+                        }
+                    }
+                    // Check effects available from enclosing with...handle blocks
+                    for ai in 0usize..self.available_effects.len() {
+                        if method.effect_def_ids[ei] == self.available_effects[ai] {
+                            found = true;
+                        }
+                    }
+                    if !found {
+                        all_in_scope = false;
+                    }
+                }
+                if all_in_scope {
+                    compat_impls.push(applicable_impls[ci]);
+                    compat_methods.push(applicable_methods[ci]);
+                }
+            }
+            if compat_impls.len() > 0 {
+                // Among compatible methods, prefer the one with the most effects
+                // that match the available context (most specialized for this context).
+                let mut best_idx: usize = 0;
+                let mut best_effect_count: usize = 0;
+                for bi in 0usize..compat_impls.len() {
+                    let m = &self.impls[compat_impls[bi]].methods[compat_methods[bi]];
+                    if m.effect_def_ids.len() > best_effect_count {
+                        best_effect_count = m.effect_def_ids.len();
+                        best_idx = bi;
+                    }
+                }
+                // If one method has strictly more effects, prefer it directly
+                let mut all_same_count: bool = true;
+                for bi in 0usize..compat_impls.len() {
+                    let m = &self.impls[compat_impls[bi]].methods[compat_methods[bi]];
+                    if m.effect_def_ids.len() != best_effect_count {
+                        all_same_count = false;
+                    }
+                }
+                if !all_same_count && compat_impls.len() > 1 {
+                    // Direct selection: most effects wins
+                    return Some(MethodLookupResult {
+                        impl_index: compat_impls[best_idx],
+                        method_index: compat_methods[best_idx],
+                    });
+                }
+                applicable_impls = compat_impls;
+                applicable_methods = compat_methods;
+            }
+        }
+
         if applicable_impls.len() == 1 {
             return Some(MethodLookupResult {
                 impl_index: applicable_impls[0],

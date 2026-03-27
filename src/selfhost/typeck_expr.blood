@@ -2903,6 +2903,7 @@ fn infer_with_handle(
     // Check if the handler is deep — if so, set boundary for linearity checking
     let resolved_handler = checker.resolve(handler_ty);
     let mut is_deep = false;
+    let mut pushed_effect: bool = false;
     match type_intern.get_adt_def_id(resolved_handler) {
         Option.Some(def_id) => {
             match checker.handler_kind_hash.get(def_id.index as u64) {
@@ -2910,6 +2911,14 @@ fn infer_with_handle(
                     if kind_val == 1 {
                         is_deep = true;
                     }
+                }
+                Option.None => {}
+            }
+            // Push handled effect onto available_effects for effect-row dispatch
+            match checker.handler_effect_hash.get(def_id.index as u64) {
+                Option.Some(effect_def_id) => {
+                    checker.available_effects.push(effect_def_id);
+                    pushed_effect = true;
                 }
                 Option.None => {}
             }
@@ -2925,8 +2934,11 @@ fn infer_with_handle(
 
     let body_ty = infer_expr(checker, body);
 
-    // Restore previous boundary
+    // Restore previous boundary and available effects
     checker.deep_handler_local_boundary = prev_boundary;
+    if pushed_effect {
+        checker.available_effects.pop();
+    }
 
     body_ty
 }

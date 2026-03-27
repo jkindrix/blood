@@ -1012,6 +1012,8 @@ fn collect_item_signatures(
                     &common.HandlerKind.Shallow => 0,
                 };
                 checker.handler_kind_hash.insert(entry.def_id.index as u64, is_deep);
+                // Register handler → effect mapping for effect-row dispatch
+                checker.handler_effect_hash.insert(entry.def_id.index as u64, handler_def.handled_effect.def_id.index);
             }
             &hir_item.ItemKind.Module(_) => {}
             &hir_item.ItemKind.Macro(_) => {}

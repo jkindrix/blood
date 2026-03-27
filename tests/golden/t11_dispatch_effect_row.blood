@@ -1,27 +1,48 @@
-// RUN: exit 0
-// Test: effect-row dispatch — pure method vs effectful method
+// Test: effect-row dispatch — same-name methods differing only in effects (GAP 4B)
 // SPEC: DISPATCH.md §7 — methods differing only in effect row are distinct overloads
-// Pure method is more specific than effectful method (pure <: {IO}).
-// Dispatch should prefer the pure overload when no effects are in scope.
+// Outside handler: pure version called. Inside handler: effectful version called.
+// EXPECT: 11
+// EXPECT: 10
+// EXPECT: 12
 
 effect IO {
-    op print(msg: i32) -> ();
+    op print_val(x: i32) -> ();
 }
 
 struct Service {}
 
 impl Service {
-    fn process(self: &Self, x: i32) -> i32 {
+    fn process(self: &Service, x: i32) -> i32 {
         x + 1
     }
-    fn process(self: &Self, x: i32) -> i32 / {IO} {
-        perform IO.print(x);
+    fn process(self: &Service, x: i32) -> i32 / {IO} {
+        perform IO.print_val(x);
         x + 2
+    }
+}
+
+deep handler StdIO for IO {
+    return(x) { x }
+    op print_val(x) {
+        println_int(x);
+        resume(())
     }
 }
 
 fn main() -> i32 {
     let s: Service = Service {};
-    let result: i32 = s.process(42);
-    result - 43
+
+    // Outside handler: pure version (x+1 = 11)
+    let a: i32 = s.process(10);
+    println_int(a);
+
+    // Inside handler: effectful version (prints 10, returns x+2 = 12)
+    let b: i32 = with StdIO {} handle {
+        s.process(10)
+    };
+    println_int(b);
+
+    if a != 11 { return 1; }
+    if b != 12 { return 2; }
+    0
 }
