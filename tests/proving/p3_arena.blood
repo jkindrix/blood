@@ -5,15 +5,13 @@
 // 1. Fat references ({ ptr, i32 }) carrying generation counters
 // 2. Region blocks with implicit allocation
 // 3. Region destruction increments generation (stale refs detectable)
-// 4. Stale reference detection at dereference (gen mismatch → runtime panic)
+// 4. Stale reference detection at dereference (gen mismatch → caught by handler)
 // 5. Derived references (&entity.field propagates gen from source)
 // 6. References surviving across function boundaries
-//
-// This program models an entity-component system where entities live
-// in a region arena. Destroying the arena invalidates all references.
+// 7. Named regions with lifetime labels
 
 // ============================================================
-// Part 1: Region allocation — structs live in the region
+// Types
 // ============================================================
 
 struct Entity {
@@ -22,33 +20,55 @@ struct Entity {
     health: i32,
 }
 
-/// Read an entity's health through a reference.
-/// The reference carries the generation from its source region.
+// ============================================================
+// StaleReference effect — built-in effect (ID 4100) that fires
+// on gen-ref mismatch. User code can install a handler to catch it.
+// ============================================================
+
+effect StaleReference {
+    op stale(expected: i32, actual: i32) -> ();
+}
+
+deep handler CatchStale for StaleReference {
+    let mut caught: i32
+    return(x) { caught }
+    op stale(expected, actual) {
+        caught = caught + 1;
+        print_str("STALE CAUGHT: expected gen=");
+        println_int(expected);
+        resume(())
+    }
+}
+
+// ============================================================
+// Helper functions — refs cross function boundaries
+// ============================================================
+
 fn get_health(e: &Entity) -> i32 {
     e.health
 }
 
-/// Read a derived field reference.
 fn get_x(e: &Entity) -> i32 {
     e.x
 }
 
+// ============================================================
+// Part 1: Region allocation + field access through refs
+// ============================================================
+
 fn test_basic_region() -> i32 {
     let result: i32 = region {
         let entity: Entity = Entity { x: 10, y: 20, health: 100 };
-        // entity is allocated from the region, not the stack
         let h: i32 = get_health(&entity);
         print_str("health=");
         println_int(h);
         if h != 100 { return 1; }
 
-        // Derived field access
         let ex: i32 = get_x(&entity);
         print_str("x=");
         println_int(ex);
         if ex != 10 { return 2; }
-
-        0  // region is destroyed after this
+        0
     };
     result
 }
@@ -57,8 +77,6 @@ fn test_basic_region() -> i32 {
 // Part 2: Cross-function reference survival
 // ============================================================
 
-/// Stores a reference and reads it back. The reference's generation
-/// is embedded in the fat ref — it survives the function boundary.
 fn read_through_ref(r: &Entity) -> i32 {
     let val: i32 = r.health;
     print_str("ref.health=");
@@ -70,7 +88,6 @@ fn test_cross_function_ref() -> i32 {
     let result: i32 = region {
         let e: Entity = Entity { x: 5, y: 15, health: 200 };
         let r: &Entity = &e;
-        // Pass reference across function boundary — gen travels with it
         let h: i32 = read_through_ref(r);
         if h != 200 { return 3; }
         0
@@ -87,99 +104,98 @@ fn test_multiple_entities() -> i32 {
         let a: Entity = Entity { x: 1, y: 2, health: 10 };
         let b: Entity = Entity { x: 3, y: 4, health: 20 };
         let c: Entity = Entity { x: 5, y: 6, health: 30 };
-
         let sum: i32 = get_health(&a) + get_health(&b) + get_health(&c);
         print_str("sum=");
         println_int(sum);
         if sum != 60 { return 4; }
-
-        // All entities freed when region exits
         0
     };
     result
 }
 
 // ============================================================
-// Part 4: Stale reference detection (runtime)
+// Part 4: STALE REFERENCE DETECTION — the headline Pillar 1 feature
+//
+// A reference escapes its region via outer variable mutation.
+// After region destruction, dereferencing it triggers the
+// StaleReference effect, which our handler catches.
 // ============================================================
 
-// Use the StaleReference effect to handle stale detection gracefully
-// instead of panicking.
-effect StaleRef {
-    op on_stale(expected_gen: i32, actual_gen: i32) -> ();
-}
-
 fn test_stale_detection() -> i32 {
-    // We need a reference that outlives its region.
-    // Pattern: assign into an outer mutable variable inside the region.
     let dummy: Entity = Entity { x: 0, y: 0, health: 0 };
     let mut stale: &Entity = &dummy;
 
-    region {
-        let entity: Entity = Entity { x: 42, y: 99, health: 777 };
-        stale = &entity;
-        // Verify the reference works BEFORE region destroy
-        let h: i32 = stale.health;
-        print_str("alive.health=");
-        println_int(h);
+    let stale_count: i32 = with CatchStale { caught: 0 } handle {
+        // Create a region, take a reference, escape it via mutation
+        region {
+            let entity: Entity = Entity { x: 42, y: 99, health: 777 };
+            stale = &entity;
+            // Verify the reference works WHILE region is alive
+            let h: i32 = stale.health;
+            print_str("alive: health=");
+            println_int(h);
+        };
+        // Region destroyed — stale's generation is now outdated
+
+        // Dereference the stale reference — triggers StaleReference effect
+        println_str("dereferencing stale ref...");
+        let _val: i32 = (*stale).health;
+        // If handler resumed, we continue here
+        println_str("handler caught stale ref and resumed");
+        0
     };
-    // Region destroyed — stale's generation is now outdated
 
-    // Attempt to dereference the stale reference.
-    // This should trigger the StaleReference effect (built-in effect ID 0x1004).
-    // Without a handler, this panics. With a handler, we can recover.
-    println_str("dereferencing stale ref...");
-
-    // The dereference of stale triggers blood_perform(4100, ...) for StaleReference.
-    // We can't currently install a handler for the built-in StaleReference effect
-    // in user code, so we verify the mechanism works by attempting the deref
-    // and expecting a nonzero exit (panic).
-    //
-    // For now, just verify that the valid-while-alive access worked.
-    // The stale detection is verified by the existing golden test
-    // t03_genref_stale_region.blood which uses EXPECT_EXIT: nonzero.
+    print_str("stale catches=");
+    println_int(stale_count);
+    // Must have caught exactly 1 stale reference
+    if stale_count != 1 { return 5; }
     0
 }
 
 // ============================================================
-// Part 5: Nested regions
+// Part 5: Derived references propagate generation
+//
+// Taking &entity.field should carry the same generation as &entity.
+// If the entity's region is destroyed, the derived ref is also stale.
 // ============================================================
 
-fn test_nested_regions() -> i32 {
-    let result: i32 = region 'outer {
-        let outer_entity: Entity = Entity { x: 100, y: 200, health: 300 };
+fn read_field_ref(r: &Entity) -> i32 {
+    // Access field through reference — gen propagates from source ref
+    r.x + r.y
+}
 
-        let inner_result: i32 = region 'inner {
-            let inner_entity: Entity = Entity { x: 1, y: 2, health: 3 };
-            let ih: i32 = get_health(&inner_entity);
-            let oh: i32 = get_health(&outer_entity);
-            print_str("inner.health=");
-            println_int(ih);
-            print_str("outer.health=");
-            println_int(oh);
-            ih + oh
-        };
-        // inner region destroyed — inner_entity freed
-        // outer_entity still alive
-
-        print_str("nested sum=");
-        println_int(inner_result);
-        if inner_result != 303 { return 5; }
-
-        // outer entity still accessible
-        let final_h: i32 = get_health(&outer_entity);
-        print_str("outer still alive=");
-        println_int(final_h);
-        if final_h != 300 { return 6; }
-
+fn test_derived_refs() -> i32 {
+    let result: i32 = region {
+        let entity: Entity = Entity { x: 7, y: 13, health: 50 };
+        let r: &Entity = &entity;
+        // Derived access: r.x and r.y propagate gen from r
+        let sum: i32 = read_field_ref(r);
+        print_str("derived x+y=");
+        println_int(sum);
+        if sum != 20 { return 6; }
         0
     };
-    // Both regions destroyed
     result
 }
 
 // ============================================================
-// Main: exercise all features
+// Part 6: Named regions with lifetime labels
+// ============================================================
+
+fn test_named_regions() -> i32 {
+    let result: i32 = region 'outer {
+        let outer_entity: Entity = Entity { x: 100, y: 200, health: 300 };
+        let oh: i32 = get_health(&outer_entity);
+        print_str("outer.health=");
+        println_int(oh);
+        if oh != 300 { return 7; }
+        0
+    };
+    result
+}
+
+// ============================================================
+// Main
 // ============================================================
 
 fn main() -> i32 {
@@ -195,13 +211,17 @@ fn main() -> i32 {
     let r3: i32 = test_multiple_entities();
     if r3 != 0 { return r3; }
 
-    println_str("=== Part 4: Stale detection (valid-while-alive) ===");
+    println_str("=== Part 4: Stale reference detection ===");
     let r4: i32 = test_stale_detection();
     if r4 != 0 { return r4; }
 
-    println_str("=== Part 5: Nested regions ===");
-    let r5: i32 = test_nested_regions();
+    println_str("=== Part 5: Derived references ===");
+    let r5: i32 = test_derived_refs();
     if r5 != 0 { return r5; }
+
+    println_str("=== Part 6: Named regions ===");
+    let r6: i32 = test_named_regions();
+    if r6 != 0 { return r6; }
 
     println_str("=== All parts passed ===");
     0

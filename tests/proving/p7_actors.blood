@@ -3,19 +3,19 @@
 //
 // Demonstrates:
 // 1. Actors as region-allocated entities
-// 2. Generational actor handles (fat refs with gen counters)
+// 2. Generational actor handles (stale actor detection via CatchStale handler)
 // 3. Effect-based message dispatch
 // 4. Handler state for actor mailboxes
-// 5. Region scoping for actor lifetime
+// 5. Region destruction = actor teardown (handles become stale)
 // 6. Copy semantics for messages (Blood MVS)
 // 7. Cross-pillar interaction: effects + gen refs + regions
 //
 // Known gap: sequential region destruction inside an effect handler scope
-// causes stale ref panic on subsequent performs (runtime region/effect
-// interaction bug). Worked around by using a single region per handler scope.
+// causes stale ref panic on subsequent performs (runtime bug). Worked around
+// by using a single region per handler scope for performs.
 
 // ============================================================
-// Actor and message types
+// Types
 // ============================================================
 
 struct Actor {
@@ -24,7 +24,7 @@ struct Actor {
 }
 
 // ============================================================
-// Effects for message passing
+// Effects
 // ============================================================
 
 effect Send {
@@ -32,8 +32,13 @@ effect Send {
     op get_inbox(actor_id: i32) -> i32;
 }
 
+// Built-in effect (ID 4100) — fires on gen-ref mismatch at dereference
+effect StaleReference {
+    op stale(expected: i32, actual: i32) -> ();
+}
+
 // ============================================================
-// In-memory message handler
+// Handlers
 // ============================================================
 
 deep handler MessageRouter for Send {
@@ -65,17 +70,25 @@ deep handler MessageRouter for Send {
     }
 }
 
+deep handler CatchStale for StaleReference {
+    let mut caught: i32
+    return(x) { caught }
+    op stale(expected, actual) {
+        caught = caught + 1;
+        print_str("STALE ACTOR: gen expected=");
+        println_int(expected);
+        resume(())
+    }
+}
+
 // ============================================================
-// Actor operations: effects + references to region-allocated data
+// Actor operations
 // ============================================================
 
-/// Send a message to an actor via its reference.
-/// The reference carries generation from the source region.
 fn send_to(actor: &Actor, value: i32) / {Send} {
     perform Send.send_msg(actor.id, value);
 }
 
-/// Check an actor's accumulated inbox.
 fn check_inbox(actor: &Actor) -> i32 / {Send} {
     perform Send.get_inbox(actor.id)
 }
@@ -92,33 +105,28 @@ fn main() -> i32 {
             let actor_a: Actor = Actor { id: 1, inbox_count: 0 };
             let actor_b: Actor = Actor { id: 2, inbox_count: 0 };
 
-            // Send messages via effect handler, using refs to region-allocated actors
             send_to(&actor_a, 10);
             send_to(&actor_b, 20);
             send_to(&actor_a, 5);
             send_to(&actor_b, 30);
 
-            // Check inboxes via effect handler
             let a_total: i32 = check_inbox(&actor_a);
             let b_total: i32 = check_inbox(&actor_b);
             print_str("actor_a inbox=");
             println_int(a_total);
             print_str("actor_b inbox=");
             println_int(b_total);
-
             if a_total != 15 { 0 - 1 } else if b_total != 50 { 0 - 2 } else { 0 }
         }
     };
     if r1 != 0 { return 1; }
 
-    // Part 2: Cross-function ref survival + handler state
+    // Part 2: Cross-function ref survival inside handler
     println_str("=== Part 2: Cross-function refs in handler ===");
     let r2: i32 = with MessageRouter { inbox_a: 0, inbox_b: 0, inbox_c: 0 } handle {
         region {
             let actor: Actor = Actor { id: 1, inbox_count: 0 };
             let r: &Actor = &actor;
-
-            // Pass fat ref across function boundary while inside handler scope
             send_to(r, 100);
             send_to(r, 200);
             send_to(r, 50);
@@ -129,37 +137,66 @@ fn main() -> i32 {
     println_int(r2);
     if r2 != 350 { return 2; }
 
-    // Part 3: Multiple actors in single region + handler state
+    // Part 3: Three actors, one pool
     println_str("=== Part 3: Three actors, one pool ===");
     let r3: i32 = with MessageRouter { inbox_a: 0, inbox_b: 0, inbox_c: 0 } handle {
         region 'pool {
             let a: Actor = Actor { id: 1, inbox_count: 0 };
             let b: Actor = Actor { id: 2, inbox_count: 0 };
             let c: Actor = Actor { id: 3, inbox_count: 0 };
-
-            // Complex message routing through effect handler
             send_to(&a, 1);
             send_to(&b, 2);
             send_to(&c, 3);
             send_to(&a, 10);
             send_to(&b, 20);
             send_to(&c, 30);
-
             let total: i32 = check_inbox(&a) + check_inbox(&b) + check_inbox(&c);
-            print_str("total across all actors=");
+            print_str("total=");
             println_int(total);
             if total != 66 { 0 - 1 } else { 0 }
         }
     };
     if r3 != 0 { return 3; }
 
-    // Part 4: Handler swap — same actor logic, different handler
-    println_str("=== Part 4: Handler swap ===");
-    let r4: i32 = with MessageRouter { inbox_a: 100, inbox_b: 200, inbox_c: 0 } handle {
+    // Part 4: STALE ACTOR HANDLE DETECTION
+    // Region destruction = actor teardown. After the region is destroyed,
+    // the actor handle's generation is outdated. Dereferencing it triggers
+    // the StaleReference effect, caught by our handler.
+    println_str("=== Part 4: Stale actor handle detection ===");
+    let dummy: Actor = Actor { id: 0, inbox_count: 0 };
+    let mut stale_handle: &Actor = &dummy;
+
+    let stale_count: i32 = with CatchStale { caught: 0 } handle {
+        with MessageRouter { inbox_a: 0, inbox_b: 0, inbox_c: 0 } handle {
+            region 'pool {
+                let actor: Actor = Actor { id: 1, inbox_count: 0 };
+                stale_handle = &actor;
+                // Actor is alive — send works
+                send_to(stale_handle, 42);
+                let inbox: i32 = check_inbox(stale_handle);
+                print_str("alive: inbox=");
+                println_int(inbox);
+            };
+            // Region 'pool destroyed — actor freed, handle is stale
+
+            // Attempt to read from stale actor handle
+            println_str("reading stale actor handle...");
+            let _id: i32 = (*stale_handle).id;
+            // StaleReference effect caught by CatchStale handler
+            println_str("stale handle caught, resumed");
+            0
+        }
+    };
+    print_str("stale catches=");
+    println_int(stale_count);
+    if stale_count != 1 { return 4; }
+
+    // Part 5: Handler state persists across operations
+    println_str("=== Part 5: Handler state persistence ===");
+    let r5: i32 = with MessageRouter { inbox_a: 100, inbox_b: 200, inbox_c: 0 } handle {
         region {
             let a: Actor = Actor { id: 1, inbox_count: 0 };
             let b: Actor = Actor { id: 2, inbox_count: 0 };
-            // Start with pre-loaded handler state
             send_to(&a, 5);
             send_to(&b, 10);
             let at: i32 = check_inbox(&a);
@@ -171,7 +208,7 @@ fn main() -> i32 {
             if at != 105 { 0 - 1 } else if bt != 210 { 0 - 2 } else { 0 }
         }
     };
-    if r4 != 0 { return 4; }
+    if r5 != 0 { return 5; }
 
     println_str("=== All parts passed ===");
     0
