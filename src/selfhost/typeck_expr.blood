@@ -536,6 +536,21 @@ pub fn strip_refs_id(ty: type_intern.TyId) -> type_intern.TyId {
     }
 }
 
+/// Strips ownership qualifiers from a TyId (linear T -> T, affine T -> T).
+/// Used for field access, method call, and other operations that need the
+/// underlying structural type. The ownership constraint remains on the variable,
+/// not on the type structure being accessed.
+fn strip_ownership_id(ty: type_intern.TyId) -> type_intern.TyId {
+    let interner = type_intern.type_interner();
+    let kind = interner.get(ty);
+    match kind {
+        &type_intern.InternedTypeKind.Ownership { qualifier: _, inner } => {
+            strip_ownership_id(inner)
+        }
+        _ => ty,
+    }
+}
+
 // ============================================================
 // Lvalue Checking
 // ============================================================
@@ -1106,7 +1121,9 @@ fn infer_call(
     }
     checker.last_type_param_bindings.clear();
 
-    let resolved_callee = checker.resolve(callee_ty);
+    let resolved_callee_raw = checker.resolve(callee_ty);
+    // Strip ownership qualifiers — calling `linear fn()` is the consumption of that value
+    let resolved_callee = strip_ownership_id(resolved_callee_raw);
     // Use ty_id_to_type for matching on the resolved callee type structure
     let resolved_callee_hir = type_intern.ty_id_to_type(resolved_callee);
 
@@ -1497,8 +1514,10 @@ fn infer_field(
     let base_ty = infer_expr(checker, base);
     let resolved_base_raw = checker.resolve(base_ty);
     let resolved_base = strip_refs_id(resolved_base_raw);
+    // Strip ownership qualifiers — field access on `linear T` should access T's fields
+    let resolved_base_unwrapped = strip_ownership_id(resolved_base);
     // Use ty_id_to_type for matching on the resolved base type structure
-    let resolved_base_hir = type_intern.ty_id_to_type(resolved_base);
+    let resolved_base_hir = type_intern.ty_id_to_type(resolved_base_unwrapped);
 
     match &resolved_base_hir.kind {
         &hir_ty.TypeKind.Tuple(ref types) => {
@@ -2876,14 +2895,130 @@ fn infer_closure(
     checker.current_effect_row = prev_effect_row;
     checker.return_ty = prev_return;
 
+    // Check if the closure body references any outer-scope linear variable.
+    // Per [Linear-Closure] rule: a closure capturing a linear value by-value
+    // is itself linear (must be called exactly once).
+    // Note: HIR captures list is always empty (not populated during lowering),
+    // so we scan the body for Local references to outer-scope linear variables.
+    let mut param_local_ids: Vec<u32> = Vec.new();
+    for pi in 0usize..params.len() {
+        match &params[pi].pattern.kind {
+            &hir_expr.PatternKind.Binding { local_id, name: _, mode: _, subpattern: _ } => {
+                param_local_ids.push(local_id.index);
+            }
+            _ => {}
+        }
+    }
+    let mut has_linear_capture: bool = false;
+    check_linear_captures_in_expr(checker, body, &param_local_ids, &mut has_linear_capture);
+
     // Return closure type (captures environment unlike plain Fn)
     let interner = type_intern.type_interner();
     let params_list = interner.intern_ty_list(&param_ty_ids);
-    interner.intern(type_intern.InternedTypeKind.Closure {
+    let closure_ty = interner.intern(type_intern.InternedTypeKind.Closure {
         def_id: hir_def.DefId.dummy(),
         params: params_list,
         ret: ret_ty_id,
-    })
+    });
+
+    // Wrap in Ownership(Linear, ...) if any capture is linear
+    if has_linear_capture {
+        type_intern.type_interner().mk_ownership(hir_ty.OwnershipQualifier.Linear, closure_ty)
+    } else {
+        closure_ty
+    }
+}
+
+/// Scans an expression tree for Local references to outer-scope linear variables.
+/// Sets `found` to true if any outer local (not in param_local_ids) has a linear type.
+fn check_linear_captures_in_expr(
+    checker: &typeck.TypeChecker,
+    expr: &hir_expr.Expr,
+    param_local_ids: &Vec<u32>,
+    found: &mut bool,
+) {
+    if *found { return; }
+    match &expr.kind {
+        &hir_expr.ExprKind.Local(ref local_id) => {
+            // Check if this local is NOT a closure param (i.e., outer scope)
+            let mut is_param: bool = false;
+            for i in 0usize..param_local_ids.len() {
+                if param_local_ids[i] == local_id.index {
+                    is_param = true;
+                }
+            }
+            if !is_param {
+                match checker.get_local_ty(*local_id) {
+                    Some(local_ty) => {
+                        let resolved = checker.resolve(local_ty);
+                        if type_intern.is_linear_id(resolved) || type_intern.is_affine_id(resolved) {
+                            *found = true;
+                        }
+                    }
+                    Option.None => {}
+                }
+            }
+        }
+        &hir_expr.ExprKind.Binary { ref left, ref right, operator: _ } => {
+            check_linear_captures_in_expr(checker, left.as_ref(), param_local_ids, found);
+            check_linear_captures_in_expr(checker, right.as_ref(), param_local_ids, found);
+        }
+        &hir_expr.ExprKind.Unary { ref operand, operator: _ } => {
+            check_linear_captures_in_expr(checker, operand.as_ref(), param_local_ids, found);
+        }
+        &hir_expr.ExprKind.Call { ref callee, ref args } => {
+            check_linear_captures_in_expr(checker, callee.as_ref(), param_local_ids, found);
+            for i in 0usize..args.len() {
+                check_linear_captures_in_expr(checker, &args[i], param_local_ids, found);
+            }
+        }
+        &hir_expr.ExprKind.Block(ref block) => {
+            for i in 0usize..block.stmts.len() {
+                match &block.stmts[i] {
+                    &hir_expr.Stmt.Expr { ref expr, has_semi: _ } => {
+                        check_linear_captures_in_expr(checker, expr, param_local_ids, found);
+                    }
+                    &hir_expr.Stmt.Let { pattern: _, ty: _, ref init, span: _ } => {
+                        match init {
+                            &Option.Some(ref e) => {
+                                check_linear_captures_in_expr(checker, e, param_local_ids, found);
+                            }
+                            &Option.None => {}
+                        }
+                    }
+                    &hir_expr.Stmt.Item(_) => {}
+                }
+            }
+            match &block.expr {
+                &Option.Some(ref e) => {
+                    check_linear_captures_in_expr(checker, e.as_ref(), param_local_ids, found);
+                }
+                &Option.None => {}
+            }
+        }
+        &hir_expr.ExprKind.If { ref condition, ref then_branch, ref else_branch } => {
+            check_linear_captures_in_expr(checker, condition.as_ref(), param_local_ids, found);
+            check_linear_captures_in_expr(checker, then_branch.as_ref(), param_local_ids, found);
+            match else_branch {
+                &Option.Some(ref eb) => {
+                    check_linear_captures_in_expr(checker, eb.as_ref(), param_local_ids, found);
+                }
+                &Option.None => {}
+            }
+        }
+        &hir_expr.ExprKind.Return(ref opt_val) => {
+            match opt_val {
+                &Option.Some(ref v) => {
+                    check_linear_captures_in_expr(checker, v.as_ref(), param_local_ids, found);
+                }
+                &Option.None => {}
+            }
+        }
+        &hir_expr.ExprKind.Field { ref base, field: _ } => {
+            check_linear_captures_in_expr(checker, base.as_ref(), param_local_ids, found);
+        }
+        _ => {}
+    }
 }
 
 // ============================================================
