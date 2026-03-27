@@ -1872,7 +1872,29 @@ fn unify_resolved_id(
         }
     }
 
-    // Phase 4: Structural unification (neither is Infer/Error/Never/Forall)
+    // Phase 4: Ownership coercion — T -> linear T / affine T (widening)
+    // The reverse direction (linear T -> T, narrowing) is handled in unify_structural_id.
+    // Here we handle: b is Ownership-wrapped but a is not → unwrap b, unify a with inner.
+    let b_interner = type_intern.type_interner();
+    let b_kind_pre = b_interner.get(b);
+    match b_kind_pre {
+        &type_intern.InternedTypeKind.Ownership { qualifier: _, inner } => {
+            let a_interner = type_intern.type_interner();
+            let a_kind_pre = a_interner.get(a);
+            match a_kind_pre {
+                &type_intern.InternedTypeKind.Ownership { qualifier: _, inner: _ } => {
+                    // Both Ownership: fall through to structural unification
+                }
+                _ => {
+                    // a is non-Ownership, b is Ownership: unwrap b and unify
+                    return unify_id(table, unifier, a, inner, span);
+                }
+            }
+        }
+        _ => {}
+    }
+
+    // Phase 5: Structural unification (neither is Infer/Error/Never/Forall)
     unify_structural_id(table, unifier, a, b, span)
 }
 
@@ -2067,19 +2089,27 @@ fn unify_structural_id(
             }
         }
 
-        // Ownership types: same qualifier, unify inner types
+        // Ownership types: coerce through qualifier boundaries
         &type_intern.InternedTypeKind.Ownership { qualifier, inner } => {
             let qualifier_a = qualifier;
             let inner_a = inner;
             let kind_b = type_intern.type_interner().get(b);
             match kind_b {
                 &type_intern.InternedTypeKind.Ownership { qualifier, inner } => {
-                    if !ownership_qualifiers_equal(qualifier_a, qualifier) {
-                        return UnifyResult.Err(UnifyError.mismatch(span));
+                    // Same qualifier: unify inner types
+                    if ownership_qualifiers_equal(qualifier_a, qualifier) {
+                        return unify_id(table, unifier, inner_a, inner, span);
                     }
-                    unify_id(table, unifier, inner_a, inner, span)
+                    // Linear -> Affine relaxation (stricter satisfies weaker)
+                    if is_linear_qualifier(qualifier_a) {
+                        return unify_id(table, unifier, inner_a, inner, span);
+                    }
+                    // Affine -> Linear: not allowed (can't promote at-most-once to must-use)
+                    UnifyResult.Err(UnifyError.mismatch(span))
                 }
-                _ => UnifyResult.Err(UnifyError.mismatch(span))
+                // Ownership -> non-Ownership: unwrap qualifier, unify inner with target.
+                // This is the `linear T -> T` narrowing (consuming the linear value).
+                _ => unify_id(table, unifier, inner_a, b, span)
             }
         }
 
@@ -2180,6 +2210,14 @@ fn ownership_qualifiers_equal(a: hir_ty.OwnershipQualifier, b: hir_ty.OwnershipQ
         (hir_ty.OwnershipQualifier.Linear, hir_ty.OwnershipQualifier.Linear) => true,
         (hir_ty.OwnershipQualifier.Affine, hir_ty.OwnershipQualifier.Affine) => true,
         _ => false,
+    }
+}
+
+/// Checks if a qualifier is Linear.
+fn is_linear_qualifier(q: hir_ty.OwnershipQualifier) -> bool {
+    match q {
+        hir_ty.OwnershipQualifier.Linear => true,
+        hir_ty.OwnershipQualifier.Affine => false,
     }
 }
 
