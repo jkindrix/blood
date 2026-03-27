@@ -1406,7 +1406,7 @@ pub fn deref_id(id: TyId) -> Option<TyId> {
     }
 }
 
-/// Resolves the ADT def_id from a TyId, walking through Ref/Ptr wrappers.
+/// Resolves the ADT def_id from a TyId, walking through Ref/Ptr/Ownership wrappers.
 /// Returns None if the type (after unwrapping) is not an Adt.
 pub fn resolve_adt_def_id_id(id: TyId) -> Option<u32> {
     let kind = type_interner().get(id);
@@ -1414,6 +1414,7 @@ pub fn resolve_adt_def_id_id(id: TyId) -> Option<u32> {
         &InternedTypeKind.Adt { def_id, args: _ } => Option.Some(def_id.index),
         &InternedTypeKind.Ref { inner, mutable: _ } => resolve_adt_def_id_id(inner),
         &InternedTypeKind.Ptr { inner, mutable: _ } => resolve_adt_def_id_id(inner),
+        &InternedTypeKind.Ownership { qualifier: _, inner } => resolve_adt_def_id_id(inner),
         _ => Option.None,
     }
 }

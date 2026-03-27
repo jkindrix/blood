@@ -1633,6 +1633,10 @@ fn resolve_base_type_from_hir(
         &hir_ty.TypeKind.Ptr { ref inner, mutable: _ } => {
             resolve_base_type_from_hir(ctx, inner.as_ref())
         }
+        &hir_ty.TypeKind.Ownership { qualifier: _, ref inner } => {
+            // Ownership qualifiers don't affect runtime layout — unwrap to inner type
+            resolve_base_type_from_hir(ctx, inner.as_ref())
+        }
         _ => {
             ctx.type_to_llvm_with_ctx(hir_type)
         }
