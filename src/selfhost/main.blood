@@ -2130,9 +2130,10 @@ fn collect_handler_info(
                         op_index,
                         handler_def_id,
                         effect_def_id,
-                        // Use op_def_id (not body_id) — this matches what find_fn_for_body
-                        // returns as the DefId for handler op bodies.
-                        body_def_id: op_impl.op_def_id.index,
+                        // Use body_id offset by 0x80000000 to create unique DefId per
+                        // handler op body. This matches find_fn_for_body in driver.blood
+                        // which uses the same offset for handler op bodies.
+                        body_def_id: 0x80000000 + op_impl.body_id.index,
                         param_count: op_impl.param_names.len() as u32,
                         state_field_count: state_count,
                     });
@@ -2797,120 +2798,126 @@ fn generate_handler_wrappers(
 
     // Generate __blood_register_handlers
     ir.push_str("; Handler registration\n");
-    // Emit globals for per-effect registry index (used by PushHandler push_by_index)
+    // Emit globals for per-HANDLER registry index (used by PushHandler push_by_index).
+    // Each handler gets its own registry entry so that different handlers for the
+    // same effect can be swapped at runtime.
     {
         let mut globals_emitted: Vec<u32> = Vec.new();
         for gi in 0usize..handler_info.ops.len() {
-            let geid = handler_info.ops[gi].effect_def_id;
+            let ghid = handler_info.ops[gi].handler_def_id;
             let mut galready = false;
             for gj in 0usize..globals_emitted.len() {
-                if globals_emitted[gj] == geid { galready = true; }
+                if globals_emitted[gj] == ghid { galready = true; }
             }
             if !galready {
                 ir.push_str("@__handler_reg_idx_");
-                push_usize(&mut ir, geid as usize);
+                push_usize(&mut ir, ghid as usize);
                 ir.push_str(" = common global i64 0\n");
-                globals_emitted.push(geid);
+                globals_emitted.push(ghid);
             }
         }
     }
     ir.push_str("define linkonce_odr void @__blood_register_handlers() {\n");
     ir.push_str("entry:\n");
 
-    // Group ops by handler (effect_def_id)
-    // For each unique effect, build an ops array and call blood_evidence_register
-    let mut registered_effects: Vec<u32> = Vec.new();
+    // Register each handler independently (per-handler, NOT per-effect).
+    // This allows multiple handlers for the same effect to coexist —
+    // PushHandler loads the specific handler's registry index.
+    let mut registered_handlers: Vec<u32> = Vec.new();
     for ei in 0usize..handler_info.ops.len() {
         let opentry = &handler_info.ops[ei];
-        let eid = opentry.effect_def_id;
+        let hid = opentry.handler_def_id;
 
-        // Check if we already registered this effect
+        // Check if we already registered this handler
         let mut already = false;
         let mut ri2: usize = 0;
-        while ri2 < registered_effects.len() {
-            if registered_effects[ri2] == eid {
+        while ri2 < registered_handlers.len() {
+            if registered_handlers[ri2] == hid {
                 already = true;
-                ri2 = registered_effects.len(); // break
+                ri2 = registered_handlers.len(); // break
             }
             ri2 += 1;
         }
 
         if !already {
-            registered_effects.push(eid);
+            registered_handlers.push(hid);
 
-            // Count ops for this effect
+            let eid = opentry.effect_def_id;
+            let eid_str = codegen_types.format_u64(eid as u64);
+            let hid_str = codegen_types.format_u64(hid as u64);
+
+            // Count ops for this handler (not all ops for the effect)
             let mut op_count: usize = 0;
             for ci in 0usize..handler_info.ops.len() {
-                if handler_info.ops[ci].effect_def_id == eid {
+                if handler_info.ops[ci].handler_def_id == hid {
                     op_count += 1;
                 }
             }
 
-            // Alloca for ops array
-            let eid_str = codegen_types.format_u64(eid as u64);
+            // Alloca for this handler's ops array
             ir.push_str("  %handler_ops_");
-            ir.push_str(eid_str.as_str());
+            ir.push_str(hid_str.as_str());
             ir.push_str(" = alloca [");
             push_usize(&mut ir, op_count);
             ir.push_str(" x ptr]\n");
 
-            // Store each op's wrapper function pointer
-            let mut store_idx: usize = 0;
+            // Store each op's wrapper function pointer at its op_index position
             for si in 0usize..handler_info.ops.len() {
-                if handler_info.ops[si].effect_def_id == eid {
+                if handler_info.ops[si].handler_def_id == hid {
                     let sop = &handler_info.ops[si];
                     let mut wrapper_name = main_helpers.clone_string(&sop.handler_name);
                     wrapper_name.push(95 as char); // '_'
                     wrapper_name.push_str(sop.op_name.as_str());
+                    let store_idx = sop.op_index as usize;
 
                     if store_idx == 0 {
                         ir.push_str("  store ptr @");
                         ir.push_str(wrapper_name.as_str());
                         ir.push_str(", ptr %handler_ops_");
-                        ir.push_str(eid_str.as_str());
+                        ir.push_str(hid_str.as_str());
                         ir.push_str("\n");
                     } else {
                         ir.push_str("  %op_ptr_");
-                        ir.push_str(eid_str.as_str());
+                        ir.push_str(hid_str.as_str());
                         ir.push_str("_");
                         push_usize(&mut ir, store_idx);
                         ir.push_str(" = getelementptr [");
                         push_usize(&mut ir, op_count);
                         ir.push_str(" x ptr], ptr %handler_ops_");
-                        ir.push_str(eid_str.as_str());
+                        ir.push_str(hid_str.as_str());
                         ir.push_str(", i64 0, i64 ");
                         push_usize(&mut ir, store_idx);
                         ir.push_str("\n");
                         ir.push_str("  store ptr @");
                         ir.push_str(wrapper_name.as_str());
                         ir.push_str(", ptr %op_ptr_");
-                        ir.push_str(eid_str.as_str());
+                        ir.push_str(hid_str.as_str());
                         ir.push_str("_");
                         push_usize(&mut ir, store_idx);
                         ir.push_str("\n");
                     }
-                    store_idx += 1;
                 }
             }
 
-            // Call blood_evidence_register with handler kind from HIR
+            // Call blood_evidence_register — effect_id identifies the effect,
+            // but the registry entry is unique to this handler
             let is_deep_val = if ctx.handler_is_deep(opentry.handler_def_id) { 1usize } else { 0usize };
             ir.push_str("  %reg_idx_");
-            ir.push_str(eid_str.as_str());
+            ir.push_str(hid_str.as_str());
             ir.push_str(" = call i64 @blood_evidence_register(ptr null, i64 ");
             ir.push_str(eid_str.as_str());
             ir.push_str(", ptr %handler_ops_");
-            ir.push_str(eid_str.as_str());
+            ir.push_str(hid_str.as_str());
             ir.push_str(", i64 ");
             push_usize(&mut ir, op_count);
             ir.push_str(", i64 ");
             push_usize(&mut ir, is_deep_val);
             ir.push_str(")\n");
-            // Store registry index in global for PushHandler to use via push_by_index
+            // Store registry index in per-handler global for PushHandler
             ir.push_str("  store i64 %reg_idx_");
-            ir.push_str(eid_str.as_str());
+            ir.push_str(hid_str.as_str());
             ir.push_str(", ptr @__handler_reg_idx_");
-            ir.push_str(eid_str.as_str());
+            ir.push_str(hid_str.as_str());
             ir.push_str("\n");
         }
 
@@ -3043,8 +3050,12 @@ struct CodegenWorkItem {
     body_idx: usize,
     /// The mangled function name for LLVM IR.
     fn_name: String,
-    /// The DefId of this function.
+    /// The DefId of this function (used for naming and dedup).
     def_id: hir_def.DefId,
+    /// The DefId used for typeck resolution lookups (method/field/coercion).
+    /// For handler op bodies, this is the shared effect op DefId (matches typeck),
+    /// while def_id is a unique synthetic ID for naming.
+    typeck_def_id: hir_def.DefId,
     /// The function's return type.
     return_ty: type_intern.TyId,
     /// The function's source span.
@@ -3076,6 +3087,28 @@ fn find_fn_sig_for_body(items: &Vec<hir_lower_ctx.ItemEntry>, body_id: hir_def.B
                         }
                     }
                     &Option.None => {}
+                }
+            }
+            _ => {}
+        }
+    }
+    Option.None
+}
+
+/// For handler op bodies, finds the original effect operation DefId from the HIR.
+/// Handler op bodies have synthetic def_ids (0x80000000 + body_id) for unique naming,
+/// but typeck resolutions are keyed by the original op_def_id.
+fn find_handler_op_typeck_def_id(
+    items: &Vec<hir_lower_ctx.ItemEntry>,
+    body_id: hir_def.BodyId,
+) -> Option<hir_def.DefId> {
+    for i in 0usize..items.len() {
+        match &items[i].item.kind {
+            &hir_item.ItemKind.Handler(ref handler_def) => {
+                for j in 0usize..handler_def.op_impls.len() {
+                    if handler_def.op_impls[j].body_id.index == body_id.index {
+                        return Option.Some(handler_def.op_impls[j].op_def_id);
+                    }
                 }
             }
             _ => {}
@@ -3118,6 +3151,17 @@ fn build_codegen_worklist(
             &Option.None => hir_def.DefId.new(body_idx as u32),
         };
 
+        // For handler op bodies (synthetic def_id with 0x80000000 bit),
+        // find the original op_def_id for typeck resolution lookups.
+        let typeck_def_id = if def_id.index >= 0x80000000 {
+            match find_handler_op_typeck_def_id(&lower_result.items, body_id) {
+                Option.Some(orig) => orig,
+                Option.None => def_id,
+            }
+        } else {
+            def_id
+        };
+
         // Check if this body belongs to a static variable - skip if so.
         let mut is_static_body = false;
         let mut sbi: usize = 0;
@@ -3158,6 +3202,7 @@ fn build_codegen_worklist(
             body_idx,
             fn_name,
             def_id,
+            typeck_def_id,
             return_ty,
             span,
             module_index: body_entry.module_index,
@@ -3230,8 +3275,11 @@ fn codegen_thread_worker(arg: u64) -> u64 {
         // Activate per-function MIR region on top of thread_codegen_region.
         region_activate(mir_region);
 
-        let mir_result = mir_lower.lower_body(
-            work.def_id,
+        // Use typeck_def_id for MIR lowering — this matches the key typeck
+        // used for method/field resolutions (important for handler op bodies
+        // where def_id is a synthetic unique ID but typeck used op_def_id).
+        let mut mir_result = mir_lower.lower_body(
+            work.typeck_def_id,
             hir_body,
             type_intern.TyId.new(work.return_ty.index),
             work.span,
@@ -3240,6 +3288,11 @@ fn codegen_thread_worker(arg: u64) -> u64 {
             &typeck.field_resolutions,
             &typeck.coercion_entries,
         );
+
+        // Override MIR body def_id for handler op bodies (see single-thread path).
+        if work.def_id.index != work.typeck_def_id.index {
+            mir_result.body.def_id = work.def_id;
+        }
 
         // Pop mir_region — thread_codegen_region becomes active.
         region_deactivate();
@@ -3456,7 +3509,7 @@ fn codegen_pass2(
         let has_generics = has_const_generics || type_generic_fn_set.len() > 0;
         let mir_result = if has_generics {
             mir_lower.lower_body_with_const_info(
-                work.def_id,
+                work.typeck_def_id,  // typeck_def_id for correct resolution lookups
                 hir_body,
                 type_intern.TyId.new(work.return_ty.index),
                 work.span,
@@ -3474,7 +3527,7 @@ fn codegen_pass2(
             )
         } else {
             mir_lower.lower_body(
-                work.def_id,
+                work.typeck_def_id,
                 hir_body,
                 type_intern.TyId.new(work.return_ty.index),
                 work.span,
@@ -3484,6 +3537,14 @@ fn codegen_pass2(
                 &typeck_result.coercion_entries,
             )
         };
+
+        // For handler op bodies, override the MIR body's def_id with the unique
+        // synthetic def_id. The MIR lowering used typeck_def_id for correct
+        // method/field resolution, but codegen needs the unique def_id for naming
+        // and fn_signature registration.
+        if work.def_id.index != work.typeck_def_id.index {
+            mir_result.body.def_id = work.def_id;
+        }
 
         // Pop mir_region — codegen_region becomes active again.
         // MIR data remains valid until region_reset below.

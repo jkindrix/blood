@@ -1300,14 +1300,19 @@ pub fn find_fn_for_body(
                     }
                     &Option.None => {}
                 }
-                // Check operation implementation bodies
+                // Check operation implementation bodies.
+                // Use body_id offset by 0x80000000 as a unique def_id so each
+                // handler op body compiles to a unique LLVM function.
+                // The ORIGINAL op_def_id is needed for typeck lookups (method/field
+                // resolutions are keyed by (body_def_id, span)), so callers must
+                // detect the 0x80000000 bit and use the original op_def_id for typeck.
                 for j in 0usize..handler_def.op_impls.len() {
                     let impl_entry = &handler_def.op_impls[j];
                     if impl_entry.body_id.index == target_body_id.index {
-                        // Find the effect operation return type by searching Effect items
                         let ret_ty = find_effect_op_return_ty(items, impl_entry.op_def_id);
+                        let unique_def_id = hir_def.DefId.new(0x80000000 + impl_entry.body_id.index);
                         return Option.Some(FnInfo {
-                            def_id: impl_entry.op_def_id,
+                            def_id: unique_def_id,
                             name: impl_entry.name.symbol,
                             name_span: impl_entry.name.span,
                             return_ty: ret_ty,
