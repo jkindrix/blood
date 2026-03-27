@@ -2316,12 +2316,35 @@ fn count_usages_expr(entries: &mut Vec<LinearEntry>, expr: &hir_expr.Expr) {
         }
         &hir_expr.ExprKind.If { ref condition, ref then_branch, ref else_branch } => {
             count_usages_expr(entries, condition.as_ref());
-            count_usages_expr(entries, then_branch.as_ref());
             match else_branch {
                 &Option.Some(ref eb) => {
+                    // Branch-aware counting: walk each branch independently.
+                    // Save pre-branch counts, walk then, record deltas,
+                    // restore, walk else, take max of deltas.
+                    // This correctly handles: if cond { commit(tx) } else { rollback(tx) }
+                    // as exactly ONE use (mutually exclusive branches).
+                    let mut saved: Vec<u32> = Vec.with_capacity(entries.len());
+                    for si in 0usize..entries.len() {
+                        saved.push(entries[si].use_count);
+                    }
+                    count_usages_expr(entries, then_branch.as_ref());
+                    let mut then_deltas: Vec<u32> = Vec.with_capacity(entries.len());
+                    for si in 0usize..entries.len() {
+                        then_deltas.push(entries[si].use_count - saved[si]);
+                        entries[si].use_count = saved[si]; // restore
+                    }
                     count_usages_expr(entries, eb.as_ref());
+                    // Final count = pre + max(then_delta, else_delta)
+                    for si in 0usize..entries.len() {
+                        let else_delta = entries[si].use_count - saved[si];
+                        let max_delta = if then_deltas[si] > else_delta { then_deltas[si] } else { else_delta };
+                        entries[si].use_count = saved[si] + max_delta;
+                    }
                 }
-                &Option.None => {}
+                &Option.None => {
+                    // No else: walk then branch directly (conservative count)
+                    count_usages_expr(entries, then_branch.as_ref());
+                }
             }
         }
         &hir_expr.ExprKind.Block(ref block) => {
@@ -2329,8 +2352,33 @@ fn count_usages_expr(entries: &mut Vec<LinearEntry>, expr: &hir_expr.Expr) {
         }
         &hir_expr.ExprKind.Match { ref scrutinee, ref arms } => {
             count_usages_expr(entries, scrutinee.as_ref());
-            for i in 0usize..arms.len() {
-                count_usages_expr(entries, &arms[i].body);
+            // Branch-aware: walk each arm independently, take max deltas.
+            if arms.len() > 0 {
+                let mut saved: Vec<u32> = Vec.with_capacity(entries.len());
+                for si in 0usize..entries.len() {
+                    saved.push(entries[si].use_count);
+                }
+                let mut max_deltas: Vec<u32> = Vec.with_capacity(entries.len());
+                for si in 0usize..entries.len() {
+                    max_deltas.push(0);
+                }
+                for ai in 0usize..arms.len() {
+                    // Restore to pre-match state for each arm
+                    for si in 0usize..entries.len() {
+                        entries[si].use_count = saved[si];
+                    }
+                    count_usages_expr(entries, &arms[ai].body);
+                    for si in 0usize..entries.len() {
+                        let delta = entries[si].use_count - saved[si];
+                        if delta > max_deltas[si] {
+                            max_deltas[si] = delta;
+                        }
+                    }
+                }
+                // Apply max deltas
+                for si in 0usize..entries.len() {
+                    entries[si].use_count = saved[si] + max_deltas[si];
+                }
             }
         }
         &hir_expr.ExprKind.Assign { ref target, ref val } => {
