@@ -64,10 +64,23 @@ fn lower_fn_param(ctx: &mut hir_lower_ctx.LoweringCtx, param: &ast.Param, param_
         _ => false,
     };
 
+    // Wrap param type with Ownership qualifier if linear/affine
+    // This makes `fn f(linear x: T)` equivalent to `fn f(x: linear T)`:
+    // the linearity checker detects Ownership-wrapped types on locals.
+    let final_ty = match &param.qualifier {
+        &Some(ast.ParamQualifier.Linear) => {
+            type_intern.type_interner().mk_ownership(hir_ty.OwnershipQualifier.Linear, ty)
+        }
+        &Some(ast.ParamQualifier.Affine) => {
+            type_intern.type_interner().mk_ownership(hir_ty.OwnershipQualifier.Affine, ty)
+        }
+        _ => ty,
+    };
+
     // Check if this is a self parameter by checking the name
     let is_self = is_self_param_name(name.symbol);
 
-    hir_item.FnParam.new(def_id, name, ty, mutable, is_self, param.span)
+    hir_item.FnParam.new(def_id, name, final_ty, mutable, is_self, param.span)
 }
 
 /// Checks if a parameter name symbol represents "self".

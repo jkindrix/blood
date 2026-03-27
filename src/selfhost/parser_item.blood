@@ -671,10 +671,16 @@ fn parse_fn_param(parser: &mut parser_base.Parser) -> ast.Param {
         };
     }
 
-    // Regular parameter: [mut] pattern: Type
+    // Regular parameter: [mut | linear | affine] pattern: Type
     let qualifier: Option<ast.ParamQualifier> = if parser.check(token.TokenKind.Mut) {
         parser.advance();
         Option.Some(ast.ParamQualifier.Mut)
+    } else if parser.check(token.TokenKind.Linear) {
+        parser.advance();
+        Option.Some(ast.ParamQualifier.Linear)
+    } else if parser.check(token.TokenKind.Affine) {
+        parser.advance();
+        Option.Some(ast.ParamQualifier.Affine)
     } else {
         Option.None
     };

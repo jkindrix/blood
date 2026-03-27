@@ -1419,9 +1419,19 @@ fn lower_local_fn(
     for i in 0usize..f.params.len() {
         let param = &f.params[i];
         let param_ty = hir_lower_type.lower_type_id(ctx, &param.ty);
+        // Wrap type with Ownership qualifier if linear/affine param qualifier
+        let final_ty = match &param.qualifier {
+            &Some(ast.ParamQualifier.Linear) => {
+                type_intern.type_interner().mk_ownership(hir_ty.OwnershipQualifier.Linear, param_ty)
+            }
+            &Some(ast.ParamQualifier.Affine) => {
+                type_intern.type_interner().mk_ownership(hir_ty.OwnershipQualifier.Affine, param_ty)
+            }
+            _ => param_ty,
+        };
         let param_name = extract_param_name(ctx, &param.pattern);
         let param_def_id = ctx.alloc_def_id();
-        let hir_param = hir_item.FnParam.new(param_def_id, param_name, param_ty, false, false, param.span);
+        let hir_param = hir_item.FnParam.new(param_def_id, param_name, final_ty, false, false, param.span);
         hir_params.push(hir_param);
     }
 
