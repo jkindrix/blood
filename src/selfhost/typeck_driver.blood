@@ -2291,8 +2291,16 @@ fn count_usages_expr(entries: &mut Vec<LinearEntry>, expr: &hir_expr.Expr) {
             count_usages_expr(entries, left.as_ref());
             count_usages_expr(entries, right.as_ref());
         }
-        &hir_expr.ExprKind.Unary { ref operand, operator: _ } => {
-            count_usages_expr(entries, operand.as_ref());
+        &hir_expr.ExprKind.Unary { ref operand, ref operator } => {
+            // Borrowing (&x, &mut x) does NOT consume a linear value — only by-value use does.
+            // Skip counting the operand when taking a reference.
+            match operator {
+                &common.UnaryOp.Ref => {}
+                &common.UnaryOp.RefMut => {}
+                _ => {
+                    count_usages_expr(entries, operand.as_ref());
+                }
+            }
         }
         &hir_expr.ExprKind.Call { ref callee, ref args } => {
             count_usages_expr(entries, callee.as_ref());
@@ -2345,7 +2353,8 @@ fn count_usages_expr(entries: &mut Vec<LinearEntry>, expr: &hir_expr.Expr) {
             count_usages_expr(entries, idx.as_ref());
         }
         &hir_expr.ExprKind.AddrOf { mutable: _, ref expr } => {
-            count_usages_expr(entries, expr.as_ref());
+            // AddrOf is a borrow — does NOT consume linear values
+            // (same semantics as Unary { operator: Ref })
         }
         &hir_expr.ExprKind.Cast { ref expr, ty: _ } => {
             count_usages_expr(entries, expr.as_ref());
@@ -2353,8 +2362,59 @@ fn count_usages_expr(entries: &mut Vec<LinearEntry>, expr: &hir_expr.Expr) {
         &hir_expr.ExprKind.Loop { label: _, ref body } => {
             count_usages_expr(entries, body.as_ref());
         }
+        &hir_expr.ExprKind.WithHandle { ref handler, ref body } => {
+            count_usages_expr(entries, handler.as_ref());
+            count_usages_expr(entries, body.as_ref());
+        }
+        &hir_expr.ExprKind.Perform { effect_def: _, op_def: _, ref args } => {
+            for i in 0usize..args.len() {
+                count_usages_expr(entries, &args[i]);
+            }
+        }
+        &hir_expr.ExprKind.Closure { captures: _, params: _, return_ty: _, effects: _, ref body } => {
+            count_usages_expr(entries, body.as_ref());
+        }
+        &hir_expr.ExprKind.Region { name: _, ref stmts, ref expr } => {
+            for i in 0usize..stmts.len() {
+                match &stmts[i] {
+                    &hir_expr.Stmt.Expr { ref expr, has_semi: _ } => {
+                        count_usages_expr(entries, expr);
+                    }
+                    &hir_expr.Stmt.Let { pattern: _, ty: _, ref init, span: _ } => {
+                        match init {
+                            &Option.Some(ref init_expr) => {
+                                count_usages_expr(entries, init_expr);
+                            }
+                            &Option.None => {}
+                        }
+                    }
+                    &hir_expr.Stmt.Item(_) => {}
+                }
+            }
+            match expr {
+                &Option.Some(ref e) => {
+                    count_usages_expr(entries, e.as_ref());
+                }
+                &Option.None => {}
+            }
+        }
+        &hir_expr.ExprKind.ForIter { label: _, pattern: _, ref iter, ref body } => {
+            count_usages_expr(entries, iter.as_ref());
+            count_usages_expr(entries, body.as_ref());
+        }
+        &hir_expr.ExprKind.Struct { path: _, ref fields, ref base } => {
+            for i in 0usize..fields.len() {
+                count_usages_expr(entries, &fields[i].val);
+            }
+            match base {
+                &Option.Some(ref b) => {
+                    count_usages_expr(entries, b.as_ref());
+                }
+                &Option.None => {}
+            }
+        }
         _ => {
-            // Literal, Path, Error, etc. — no local usage to track
+            // Literal, Path, Error, Break, Continue, Resume, etc. — no local usage to track
         }
     }
 }
