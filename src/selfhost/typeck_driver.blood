@@ -2264,13 +2264,26 @@ fn check_linearity(checker: &mut typeck.TypeChecker, body: &hir_expr.Body) {
     // Report violations
     for ei in 0usize..entries.len() {
         let entry = &entries[ei];
+        // Function parameters: the call site handles consumption — the function
+        // binding IS the final consumption point. Parameters may read (field access)
+        // or further consume, but are not REQUIRED to consume within the body.
+        let is_param: bool = entry.local_idx < body.param_count;
         if entry.is_linear {
-            if entry.use_count == 0 {
-                checker.error_with_note(typeck.TypeErrorKind.LinearNotUsed, entry.def_span,
-                    common.make_string("linear values must be used exactly once"));
-            } else if entry.use_count > 1 {
-                checker.error_with_note(typeck.TypeErrorKind.LinearUsedMultipleTimes, entry.def_span,
-                    common.make_string("linear values must be used exactly once; this value was used multiple times"));
+            if is_param {
+                // Parameters: only reject double consumption (use_count > 1)
+                if entry.use_count > 1 {
+                    checker.error_with_note(typeck.TypeErrorKind.LinearUsedMultipleTimes, entry.def_span,
+                        common.make_string("linear values must be used exactly once; this value was used multiple times"));
+                }
+            } else {
+                // Local bindings: must be consumed exactly once
+                if entry.use_count == 0 {
+                    checker.error_with_note(typeck.TypeErrorKind.LinearNotUsed, entry.def_span,
+                        common.make_string("linear values must be used exactly once"));
+                } else if entry.use_count > 1 {
+                    checker.error_with_note(typeck.TypeErrorKind.LinearUsedMultipleTimes, entry.def_span,
+                        common.make_string("linear values must be used exactly once; this value was used multiple times"));
+                }
             }
         } else if entry.is_affine {
             if entry.use_count > 1 {
@@ -2288,6 +2301,14 @@ fn record_linear_use(entries: &mut Vec<LinearEntry>, local_idx: u32) {
             entries[i].use_count = entries[i].use_count + 1;
             return;
         }
+    }
+}
+
+/// Returns true if the expression is a direct Local reference.
+fn is_local_expr(expr: &hir_expr.Expr) -> bool {
+    match &expr.kind {
+        &hir_expr.ExprKind.Local(_) => true,
+        _ => false,
     }
 }
 
@@ -2404,7 +2425,12 @@ fn count_usages_expr(entries: &mut Vec<LinearEntry>, expr: &hir_expr.Expr) {
             }
         }
         &hir_expr.ExprKind.Field { ref base, field: _ } => {
-            count_usages_expr(entries, base.as_ref());
+            // Field access is a read — does NOT consume linear values.
+            // Skip counting direct local references (h.fd is a read, not a consumption).
+            // Recurse into complex bases to count linear values in subexpressions.
+            if !is_local_expr(base.as_ref()) {
+                count_usages_expr(entries, base.as_ref());
+            }
         }
         &hir_expr.ExprKind.Index { ref base, ref idx } => {
             count_usages_expr(entries, base.as_ref());
