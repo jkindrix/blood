@@ -1099,6 +1099,24 @@ pub fn emit_statement(
             ctx.emit_br_cg(&continue_label);
 
             ctx.emit_label_cg(&continue_label);
+
+            // Zero out _gen allocas for all locals owned by this region.
+            // After region destruction, these locals' gen values are stale.
+            // Setting gen=0 prevents false positives in subsequent perform snapshots
+            // (gen==0 means "stack tier, skip validation").
+            for di in 0usize..ctx.deferred_region_allocs.len() {
+                let entry = ctx.deferred_region_allocs[di];
+                if entry.0 == region_local.index {
+                    match ctx.get_heap_gen_name(mir_def.MirLocalId.new(entry.1)) {
+                        Option.Some(gen_name) => {
+                            ctx.write("    store i32 0, ptr ");
+                            ctx.write(gen_name.as_str());
+                            ctx.write(", align 4\n");
+                        }
+                        Option.None => {}
+                    }
+                }
+            }
         }
     }
 }
