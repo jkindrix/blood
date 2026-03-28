@@ -1463,7 +1463,14 @@ pub fn apply_substs_id(table: &SubstTable, ty_id: type_intern.TyId) -> type_inte
         &type_intern.InternedTypeKind.Primitive(_) => current,
         &type_intern.InternedTypeKind.Never => current,
         &type_intern.InternedTypeKind.Error => current,
-        &type_intern.InternedTypeKind.Param(_) => current,
+        &type_intern.InternedTypeKind.Param(param_id) => {
+            // During monomorphization, Param types may have bindings in the subst table
+            // (added for type parameter → concrete type mappings). Resolve them.
+            match table.lookup_ty_id(param_id) {
+                Option.Some(resolved) => apply_substs_id(table, resolved),
+                Option.None => current,
+            }
+        }
         &type_intern.InternedTypeKind.Tuple(list_id) => {
             let new_list = apply_substs_ty_list_id(table, list_id);
             type_intern.type_interner().intern(type_intern.InternedTypeKind.Tuple(new_list))

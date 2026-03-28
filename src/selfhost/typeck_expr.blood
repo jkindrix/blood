@@ -17,6 +17,7 @@ mod hir;
 mod unify;
 mod typeck;
 mod type_intern;
+mod interner;
 
 // ============================================================
 // Main Entry Points
@@ -1356,7 +1357,7 @@ fn infer_method_call(
                 &type_intern.InternedTypeKind.Infer(ret_var) => ret_var.index,
                 _ => 0,
             };
-            checker.record_pending_method_call(method.span.start, var_id.index, method.symbol, return_var);
+            checker.record_pending_method_call(method.span.start, var_id.index, method.symbol, common.make_string(""), return_var);
             return return_ty;
         }
         _ => {}

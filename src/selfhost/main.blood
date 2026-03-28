@@ -3978,9 +3978,6 @@ struct CodegenPass2Result {
     fn_temp_region: u64,
 }
 
-/// Finds the call remapping entries for a given default method DefId.
-/// Returns a Vec of CallRemapEntry if the def_id matches a default method,
-/// or an empty Vec if not.
 /// Resolves pending method calls for a type-generic function body being monomorphized.
 /// Takes the original method_resolutions, finds pending (unresolved) method calls
 /// for the given body, resolves them using the mono_subst and impl_method_table,
@@ -3992,15 +3989,25 @@ fn resolve_methods_for_type_mono(
     mono_subst: &unify.SubstTable,
     body_def_id: u32,
     specialized_def_id: u32,
+    type_bindings: &Vec<common.TypeMonoBinding>,
 ) -> Vec<common.MethodResEntry> {
-    // Start with a clone of the existing method resolutions
+    // Clone method resolutions, remapping entries for this body from
+    // original_def_id to specialized_def_id (same pattern as field_resolutions).
     let mut result: Vec<common.MethodResEntry> = Vec.new();
     for i in 0usize..method_resolutions.len() {
-        result.push(common.MethodResEntry.new(
-            method_resolutions[i].body_def_id,
-            method_resolutions[i].span_start,
-            method_resolutions[i].def_id_index,
-        ));
+        if method_resolutions[i].body_def_id == body_def_id {
+            result.push(common.MethodResEntry.new(
+                specialized_def_id,
+                method_resolutions[i].span_start,
+                method_resolutions[i].def_id_index,
+            ));
+        } else {
+            result.push(common.MethodResEntry.new(
+                method_resolutions[i].body_def_id,
+                method_resolutions[i].span_start,
+                method_resolutions[i].def_id_index,
+            ));
+        }
     }
 
     // Find pending method calls for this body and resolve them.
@@ -4012,28 +4019,61 @@ fn resolve_methods_for_type_mono(
             continue;
         }
 
-        // Resolve the receiver type through the mono subst table
+        // Resolve the receiver type through the mono subst table.
+        // If the receiver_var's Infer isn't in the subst, the receiver was
+        // unresolved during typeck (common for type params). Try all concrete
+        // type bindings from the mono request as candidate receiver types.
         let receiver_infer = type_intern.type_interner().mk_infer(hir_def.TyVarId.new(pending.receiver_var));
         let resolved_ty = unify.apply_substs_id(mono_subst, receiver_infer);
-
-        // Strip references to get the base type
         let base_ty = strip_refs(resolved_ty);
 
-        // Look up the method in the impl_method_table by self type and method name
+        // Check if resolution succeeded (not still an Infer type)
+        let mut resolved_ok: bool = false;
+        let interner_check = type_intern.type_interner();
+        match interner_check.get(base_ty) {
+            &type_intern.InternedTypeKind.Infer(_) => {}
+            &type_intern.InternedTypeKind.Param(_) => {}
+            _ => { resolved_ok = true; }
+        }
+
+        // Look up the method in the impl_method_table by self type and method name.
+        // If the receiver didn't resolve, try each concrete type binding as a candidate.
         let mut found = false;
-        let mut mi: usize = 0;
-        while mi < impl_method_table.len() && !found {
-            let entry = &impl_method_table[mi];
-            if entry.self_ty_id == base_ty.index && entry.method_name.index == pending.method_symbol.index {
-                // Found the method — add resolution with SPECIALIZED def_id
-                result.push(common.MethodResEntry.new(
-                    specialized_def_id,
-                    pending.span_start,
-                    entry.method_def_id,
-                ));
-                found = true;
+        if resolved_ok {
+            let mut mi: usize = 0;
+            while mi < impl_method_table.len() && !found {
+                let entry = &impl_method_table[mi];
+                if entry.self_ty_id == base_ty.index && main_helpers.str_equals(&entry.method_name_str, pending.method_name_str.as_str()) {
+                    result.push(common.MethodResEntry.new(
+                        specialized_def_id,
+                        pending.span_start,
+                        entry.method_def_id,
+                    ));
+                    found = true;
+                }
+                mi += 1;
             }
-            mi += 1;
+        }
+        // Fallback: receiver didn't resolve — try each type binding's concrete type
+        if !found {
+            for tbi in 0usize..type_bindings.len() {
+                if found { break; }
+                let concrete_ty = type_intern.TyId.new(type_bindings[tbi].concrete_ty_id);
+                let concrete_base = strip_refs(concrete_ty);
+                let mut mi: usize = 0;
+                while mi < impl_method_table.len() && !found {
+                    let entry = &impl_method_table[mi];
+                    if entry.self_ty_id == concrete_base.index && main_helpers.str_equals(&entry.method_name_str, pending.method_name_str.as_str()) {
+                        result.push(common.MethodResEntry.new(
+                            specialized_def_id,
+                            pending.span_start,
+                            entry.method_def_id,
+                        ));
+                        found = true;
+                    }
+                    mi += 1;
+                }
+            }
         }
     }
 
@@ -4917,6 +4957,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
                             &mono_subst,
                             req.original_def_id,
                             req.specialized_def_id,
+                            &req.type_bindings,
                         );
 
                         // Remap field_resolutions: the originals are keyed by original_def_id

@@ -394,13 +394,15 @@ pub struct ImplMethodEntry {
     pub self_ty_id: u32,
     /// Method name symbol.
     pub method_name: Symbol,
+    /// Method name as string (for cross-interner comparison during mono).
+    pub method_name_str: String,
     /// DefId.index of the method.
     pub method_def_id: u32,
 }
 
 impl ImplMethodEntry {
-    pub fn new(self_ty_id: u32, method_name: Symbol, method_def_id: u32) -> ImplMethodEntry {
-        ImplMethodEntry { self_ty_id, method_name, method_def_id }
+    pub fn new(self_ty_id: u32, method_name: Symbol, method_name_str: String, method_def_id: u32) -> ImplMethodEntry {
+        ImplMethodEntry { self_ty_id, method_name, method_name_str, method_def_id }
     }
 }
 
@@ -416,14 +418,16 @@ pub struct PendingMethodCall {
     pub receiver_var: u32,
     /// The interned symbol of the method name.
     pub method_symbol: Symbol,
+    /// Method name as string (for cross-interner comparison during mono).
+    pub method_name_str: String,
     /// The TyVarId.index of the return type's Infer variable.
     pub return_ty_var: u32,
 }
 
 impl PendingMethodCall {
     /// Creates a new pending method call entry.
-    pub fn new(body_def_id: u32, span_start: usize, receiver_var: u32, method_symbol: Symbol, return_ty_var: u32) -> PendingMethodCall {
-        PendingMethodCall { body_def_id, span_start, receiver_var, method_symbol, return_ty_var }
+    pub fn new(body_def_id: u32, span_start: usize, receiver_var: u32, method_symbol: Symbol, method_name_str: String, return_ty_var: u32) -> PendingMethodCall {
+        PendingMethodCall { body_def_id, span_start, receiver_var, method_symbol, method_name_str, return_ty_var }
     }
 }
 

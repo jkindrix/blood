@@ -552,14 +552,14 @@ pub fn clone_typeck_result_to_heap(src: &TypeCheckResult) -> TypeCheckResult {
     let mut pending: Vec<common.PendingMethodCall> = Vec.with_capacity(src.pending_method_calls.len());
     for i in 0usize..src.pending_method_calls.len() {
         let e = &src.pending_method_calls[i];
-        pending.push(common.PendingMethodCall { body_def_id: e.body_def_id, span_start: e.span_start, receiver_var_id: e.receiver_var_id, method_name: e.method_name, resolved_def_id: e.resolved_def_id });
+        pending.push(common.PendingMethodCall { body_def_id: e.body_def_id, span_start: e.span_start, receiver_var: e.receiver_var, method_symbol: e.method_symbol, method_name_str: common.make_string(e.method_name_str.as_str()), return_ty_var: e.return_ty_var });
     }
 
     // Clone ImplMethodEntry
     let mut impl_methods: Vec<common.ImplMethodEntry> = Vec.with_capacity(src.impl_method_table.len());
     for i in 0usize..src.impl_method_table.len() {
         let e = &src.impl_method_table[i];
-        impl_methods.push(common.ImplMethodEntry { self_ty_id: e.self_ty_id, method_name: e.method_name, method_def_id: e.method_def_id });
+        impl_methods.push(common.ImplMethodEntry { self_ty_id: e.self_ty_id, method_name: e.method_name, method_name_str: common.make_string(e.method_name_str.as_str()), method_def_id: e.method_def_id });
     }
 
     // Clone BuiltinDefName (has String — deep clone)
@@ -798,8 +798,8 @@ pub fn check_lower_result(result: &hir_lower_ctx.LowerResult, skip_modules: &Vec
 
     // Phase 4: Build impl method table and collect unresolved pending method calls
     // for type-generic monomorphization.
-    let impl_method_table = build_impl_method_table(&mut checker);
-    let unresolved_pending = collect_unresolved_pending_methods(&mut checker);
+    let impl_method_table = build_impl_method_table(&mut checker, &result.interner);
+    let unresolved_pending = collect_unresolved_pending_methods(&mut checker, &result.interner);
 
     // Return result with substitution table for type resolution in MIR lowering
     if checker.has_errors() {
@@ -811,15 +811,21 @@ pub fn check_lower_result(result: &hir_lower_ctx.LowerResult, skip_modules: &Vec
 
 /// Builds a flat table of impl methods for type-generic monomorphization.
 /// Scans all registered impls and extracts (self_ty, method_name, method_def_id) tuples.
-fn build_impl_method_table(checker: &mut typeck.TypeChecker) -> Vec<common.ImplMethodEntry> {
+fn build_impl_method_table(checker: &mut typeck.TypeChecker, hir_interner: &interner.StringInterner) -> Vec<common.ImplMethodEntry> {
     let mut table: Vec<common.ImplMethodEntry> = Vec.new();
     for i in 0usize..checker.impls.len() {
         let impl_info = &checker.impls[i];
         let self_ty_id = impl_info.self_ty.index;
         for mi in 0usize..impl_info.methods.len() {
+            // Resolve method name to string for cross-interner comparison during mono
+            let name_str = match hir_interner.resolve(impl_info.methods[mi].name) {
+                Option.Some(s) => common.make_string(s.as_str()),
+                Option.None => common.make_string(""),
+            };
             table.push(common.ImplMethodEntry.new(
                 self_ty_id,
                 impl_info.methods[mi].name,
+                name_str,
                 impl_info.methods[mi].def_id.index,
             ));
         }
@@ -828,13 +834,17 @@ fn build_impl_method_table(checker: &mut typeck.TypeChecker) -> Vec<common.ImplM
 }
 
 /// Collects pending method calls that remained unresolved after resolve_pending_methods.
-fn collect_unresolved_pending_methods(checker: &mut typeck.TypeChecker) -> Vec<common.PendingMethodCall> {
+fn collect_unresolved_pending_methods(checker: &mut typeck.TypeChecker, hir_interner: &interner.StringInterner) -> Vec<common.PendingMethodCall> {
     let mut unresolved: Vec<common.PendingMethodCall> = Vec.new();
     for i in 0usize..checker.pending_method_calls.len() {
         let pmc = &checker.pending_method_calls[i];
         if !is_already_resolved(checker, pmc.body_def_id, pmc.span_start) {
+            let name_str = match hir_interner.resolve(pmc.method_symbol) {
+                Option.Some(s) => common.make_string(s.as_str()),
+                Option.None => common.make_string(""),
+            };
             unresolved.push(common.PendingMethodCall.new(
-                pmc.body_def_id, pmc.span_start, pmc.receiver_var, pmc.method_symbol, pmc.return_ty_var,
+                pmc.body_def_id, pmc.span_start, pmc.receiver_var, pmc.method_symbol, name_str, pmc.return_ty_var,
             ));
         }
     }
