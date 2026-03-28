@@ -1,5 +1,7 @@
 // Proving Ground Program 1: effectful — handler swapping
-// Tests: handler swap, effect composition, non-resumptive, handler state, return values
+// Tests: handler swap, effect composition, non-resumptive, handler state, return values,
+//        parametric effects, effects+generics, effects+traits, cross-module effects
+//
 // EXPECT: === Real Mode ===
 // EXPECT: [info] alpha
 // EXPECT: alpha: 10
@@ -11,6 +13,12 @@
 // EXPECT:
 // EXPECT: === Test Mode ===
 // EXPECT: test processed: 4
+// EXPECT: === Parametric + Cross-Module Effects ===
+// EXPECT: emit sum: 60
+// EXPECT: === Effects + Generics ===
+// EXPECT: [info] generic-test
+// EXPECT: === Effects + Traits ===
+// EXPECT: [info] alpha
 // EXPECT: done
 
 struct Record {
@@ -44,6 +52,10 @@ effect Output { op write_line(msg: &str) -> (); }
 effect Log { op info(msg: &str) -> (); op warn(msg: &str) -> (); }
 effect Validate { op check(value: i32, valid: bool) -> bool; op reject(name: &str) -> i32; }
 effect Counter { op increment() -> (); op get_count() -> i32; }
+effect Emit<T> { op emit(value: T) -> (); }
+
+mod p1_effects_mod;
+use p1_effects_mod.emit_from_module;
 
 fn process_records(records: &Vec<Record>) -> i32 / {Output, Log, Validate, Counter} {
     let mut i: usize = 0;
@@ -115,6 +127,32 @@ deep handler TestCounter for Counter {
     op get_count() { resume(count) }
 }
 
+deep handler CollectInts for Emit<i32> {
+    let mut total: i32
+    return(x) { total }
+    op emit(value) { total = total + value; resume(()) }
+}
+
+trait Describable {
+    fn describe(self: &Self) -> &str;
+}
+
+impl Describable for Record {
+    fn describe(self: &Self) -> &str {
+        self.name.as_str()
+    }
+}
+
+// Effects + generics: generic type param + effect annotation on same function
+fn log_generic<T>(name: &str) / {Log} {
+    perform Log.info(name);
+}
+
+// Effects + traits: trait method called from effectful context
+fn log_description(item: &Record) / {Log} {
+    perform Log.info(item.describe());
+}
+
 fn make_test_data() -> Vec<Record> {
     let mut records: Vec<Record> = Vec.new();
     records.push(make_record("alpha", 10, true));
@@ -154,6 +192,30 @@ fn main() -> i32 {
     };
     print_str("test processed: ");
     println_int(test_count);
+
+    // Parametric effects + cross-module effects in single handler scope
+    // (handler state leaks between instances of same type — use only one)
+    println_str("=== Parametric + Cross-Module Effects ===");
+    let emit_sum: i32 = with CollectInts { total: 0 } handle {
+        perform Emit.emit(10);
+        perform Emit.emit(20);
+        emit_from_module(30);
+        0
+    };
+    print_str("emit sum: ");
+    println_int(emit_sum);
+
+    // Effects + generics: generic function with effect annotation
+    println_str("=== Effects + Generics ===");
+    with StderrLog {} handle {
+        log_generic::<i32>("generic-test");
+    };
+
+    // Effects + traits: trait method call in effectful context
+    println_str("=== Effects + Traits ===");
+    with StderrLog {} handle {
+        log_description(&data[0]);
+    };
 
     println_str("done");
     0
