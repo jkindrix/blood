@@ -224,12 +224,9 @@ fn main() -> i32 {
     let f1: i32 = fmt.format(&circle);
     if f1 != 20 { print_str("FAIL f1="); println_int(f1); return 6; }
 
-    // NOTE: fmt.format(&rect) currently selects the wrong overload.
-    // Rectangle implements Printable but NOT Measurable, so
-    // format<T: Printable + Measurable> should NOT be applicable.
-    // This is a dispatch bug: trait bound applicability filtering is
-    // incomplete — specificity ranking runs before filtering.
-    // Bug documented, test skipped for this case.
+    // Rectangle: only Printable (NOT Measurable) → one-constraint wins (10)
+    let f2: i32 = fmt.format(&rect);
+    if f2 != 10 { print_str("FAIL f2="); println_int(f2); return 7; }
 
     // Part 7: Concrete vs constrained dispatch
     println_str("=== Part 7: Concrete vs constrained ===");
