@@ -153,6 +153,53 @@ impl Shape for Hexagon {
 // Part 6: Single-argument concrete vs constrained dispatch
 // ============================================================
 
+// ============================================================
+// Part 8: Where clauses on dispatched methods
+// ============================================================
+
+fn describe<T>(x: &T) -> i32 where T: Shape + Printable {
+    x.area() + x.tag()
+}
+
+fn describe_shape<T>(x: &T) -> i32 where T: Shape {
+    x.area()
+}
+
+// ============================================================
+// Part 9: Effect-row dispatch (methods selected by effect context)
+// ============================================================
+
+effect Audit {
+    op log_op(tag: &str) -> ();
+}
+
+struct Worker {}
+
+impl Worker {
+    fn execute(self) -> i32 {
+        println_str("execute: pure");
+        1
+    }
+
+    fn execute(self) -> i32 / {Audit} {
+        perform Audit.log_op("execute: audited");
+        2
+    }
+}
+
+deep handler AuditLog for Audit {
+    return(x) { x }
+    op log_op(tag) { println_str(tag); resume(()) }
+}
+
+// ============================================================
+// Part 10: Cross-module dispatch
+// ============================================================
+
+mod p4_shapes_mod;
+use p4_shapes_mod.Pentagon;
+// Pentagon implements Shape in the module — dispatches through Processor.process<T: Shape>
+
 struct Processor {}
 
 impl Processor {
@@ -245,6 +292,35 @@ fn main() -> i32 {
     // Hexagon → generic process(Shape) = 100
     let p4: i32 = proc.process(&hex);
     if p4 != 100 { print_str("FAIL p4="); println_int(p4); return 11; }
+
+    // Part 8: Where clauses
+    println_str("=== Part 8: Where clauses ===");
+    // Circle: Shape + Printable → describe works (area + tag = 75 + 100 = 175)
+    let d1: i32 = describe(&circle);
+    if d1 != 175 { print_str("FAIL d1="); println_int(d1); return 12; }
+    // describe_shape (only Shape bound) works for any Shape
+    let d2: i32 = describe_shape(&tri);
+    if d2 != 12 { print_str("FAIL d2="); println_int(d2); return 13; }
+
+    // Part 9: Effect-row dispatch
+    println_str("=== Part 9: Effect-row dispatch ===");
+    let w: Worker = Worker {};
+    // Outside handler: selects pure overload
+    let e1: i32 = w.execute();
+    if e1 != 1 { print_str("FAIL e1="); println_int(e1); return 14; }
+    // Inside handler: selects audited overload
+    let e2: i32 = with AuditLog {} handle {
+        w.execute()
+    };
+    if e2 != 2 { print_str("FAIL e2="); println_int(e2); return 15; }
+
+    // Part 10: Cross-module dispatch
+    println_str("=== Part 10: Cross-module dispatch ===");
+    let pent: Pentagon = Pentagon { side: 3 };
+    let p5: i32 = proc.process(&pent);
+    if p5 != 100 { print_str("FAIL p5="); println_int(p5); return 16; }
+    print_str("pentagon area=");
+    println_int(pent.area());
 
     println_str("=== All parts passed ===");
     0
