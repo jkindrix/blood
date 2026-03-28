@@ -124,6 +124,29 @@ deep handler CatchAbort for Abort {
 }
 
 // ============================================================
+// Part 5: Region-scoped connection (freed when region ends)
+// ============================================================
+
+struct Connection {
+    id: i32,
+}
+
+fn open_connection(id: i32) -> Connection {
+    print_str("OPEN conn=");
+    println_int(id);
+    Connection { id: id }
+}
+
+fn query_via(conn: &Connection, account: i32) -> i32 / {DB} {
+    perform DB.query_balance(account)
+}
+
+fn close_connection(conn: Connection) {
+    print_str("CLOSE conn=");
+    println_int(conn.id);
+}
+
+// ============================================================
 // Main
 // ============================================================
 
@@ -171,6 +194,21 @@ fn main() -> i32 {
     print_str("swap result=");
     println_int(r4);
     if r4 != 350 { return 4; }
+
+    // Part 5: Region-scoped connection
+    println_str("=== Part 5: Region-scoped connection ===");
+    let r5: i32 = with TestDB { balance_a: 750, balance_b: 0 } handle {
+        region {
+            let conn: Connection = open_connection(1);
+            let bal: i32 = query_via(&conn, 1);
+            print_str("balance via conn=");
+            println_int(bal);
+            close_connection(conn);
+            bal
+        }
+        // conn and region freed
+    };
+    if r5 != 750 { return 5; }
 
     println_str("=== All parts passed ===");
     0
