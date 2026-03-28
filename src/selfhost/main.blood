@@ -1953,6 +1953,67 @@ fn classify_leaf_expr(expr: &hir_expr.Expr, state_count: u32) -> ReturnClauseKin
                     }
                     ReturnClauseKind { kind: 2, field_index: 0, literal_value: 0 }
                 }
+                common.BinOp.Rem => {
+                    // return(x) { x % state_field }
+                    if left_idx >= 0 && right_idx >= 0 {
+                        let left_kind = classify_local_ref(left_idx as u32, state_count);
+                        let right_kind = classify_local_ref(right_idx as u32, state_count);
+                        if left_kind.kind == 0 && right_kind.kind == 1 {
+                            return ReturnClauseKind { kind: 10, field_index: right_kind.field_index, literal_value: 0 };
+                        }
+                    }
+                    ReturnClauseKind { kind: 2, field_index: 0, literal_value: 0 }
+                }
+                common.BinOp.BitAnd => {
+                    if left_idx >= 0 && right_idx >= 0 {
+                        let left_kind = classify_local_ref(left_idx as u32, state_count);
+                        let right_kind = classify_local_ref(right_idx as u32, state_count);
+                        if left_kind.kind == 0 && right_kind.kind == 1 {
+                            return ReturnClauseKind { kind: 11, field_index: right_kind.field_index, literal_value: 0 };
+                        }
+                    }
+                    ReturnClauseKind { kind: 2, field_index: 0, literal_value: 0 }
+                }
+                common.BinOp.BitOr => {
+                    if left_idx >= 0 && right_idx >= 0 {
+                        let left_kind = classify_local_ref(left_idx as u32, state_count);
+                        let right_kind = classify_local_ref(right_idx as u32, state_count);
+                        if left_kind.kind == 0 && right_kind.kind == 1 {
+                            return ReturnClauseKind { kind: 12, field_index: right_kind.field_index, literal_value: 0 };
+                        }
+                    }
+                    ReturnClauseKind { kind: 2, field_index: 0, literal_value: 0 }
+                }
+                common.BinOp.Shl => {
+                    if left_idx >= 0 && right_idx >= 0 {
+                        let left_kind = classify_local_ref(left_idx as u32, state_count);
+                        let right_kind = classify_local_ref(right_idx as u32, state_count);
+                        if left_kind.kind == 0 && right_kind.kind == 1 {
+                            return ReturnClauseKind { kind: 13, field_index: right_kind.field_index, literal_value: 0 };
+                        }
+                    }
+                    ReturnClauseKind { kind: 2, field_index: 0, literal_value: 0 }
+                }
+                common.BinOp.Shr => {
+                    if left_idx >= 0 && right_idx >= 0 {
+                        let left_kind = classify_local_ref(left_idx as u32, state_count);
+                        let right_kind = classify_local_ref(right_idx as u32, state_count);
+                        if left_kind.kind == 0 && right_kind.kind == 1 {
+                            return ReturnClauseKind { kind: 14, field_index: right_kind.field_index, literal_value: 0 };
+                        }
+                    }
+                    ReturnClauseKind { kind: 2, field_index: 0, literal_value: 0 }
+                }
+                common.BinOp.BitXor => {
+                    if left_idx >= 0 && right_idx >= 0 {
+                        let left_kind = classify_local_ref(left_idx as u32, state_count);
+                        let right_kind = classify_local_ref(right_idx as u32, state_count);
+                        if left_kind.kind == 0 && right_kind.kind == 1 {
+                            return ReturnClauseKind { kind: 15, field_index: right_kind.field_index, literal_value: 0 };
+                        }
+                    }
+                    ReturnClauseKind { kind: 2, field_index: 0, literal_value: 0 }
+                }
                 _ => ReturnClauseKind { kind: 2, field_index: 0, literal_value: 0 },
             }
         }
@@ -2649,6 +2710,96 @@ fn generate_handler_wrappers(
             ir.push_str("\n");
             ir.push_str("  %ret_ext = sext i32 %quot to i64\n");
             ir.push_str("  ret i64 %ret_ext\n");
+        } else if ret_info.return_kind == 10 {
+            // Rem result % state field: return(x) { x % state_field }
+            ir.push_str("  %res_i32 = trunc i64 %result to i32\n");
+            if ret_info.state_field_count == 1 {
+                ir.push_str("  %state_val = load i32, ptr %state, align 4\n");
+            } else {
+                ir.push_str("  %field_ptr = getelementptr i64, ptr %state, i64 ");
+                push_usize(&mut ir, ret_info.state_field_index as usize);
+                ir.push_str("\n");
+                ir.push_str("  %state_val = load i32, ptr %field_ptr, align 4\n");
+            }
+            ir.push_str("  %divchk = icmp eq i32 %state_val, 0\n");
+            ir.push_str("  br i1 %divchk, label %rem_zero, label %rem_ok\n");
+            ir.push_str("rem_zero:\n");
+            ir.push_str("  call void @blood_panic_div_zero()\n");
+            ir.push_str("  unreachable\n");
+            ir.push_str("rem_ok:\n");
+            ir.push_str("  %rem_val = srem i32 %res_i32, %state_val\n");
+            ir.push_str("  %ret_ext = sext i32 %rem_val to i64\n");
+            ir.push_str("  ret i64 %ret_ext\n");
+        } else if ret_info.return_kind == 11 {
+            // BitAnd result & state field
+            ir.push_str("  %res_i32 = trunc i64 %result to i32\n");
+            if ret_info.state_field_count == 1 {
+                ir.push_str("  %state_val = load i32, ptr %state, align 4\n");
+            } else {
+                ir.push_str("  %field_ptr = getelementptr i64, ptr %state, i64 ");
+                push_usize(&mut ir, ret_info.state_field_index as usize);
+                ir.push_str("\n");
+                ir.push_str("  %state_val = load i32, ptr %field_ptr, align 4\n");
+            }
+            ir.push_str("  %and_val = and i32 %res_i32, %state_val\n");
+            ir.push_str("  %ret_ext = sext i32 %and_val to i64\n");
+            ir.push_str("  ret i64 %ret_ext\n");
+        } else if ret_info.return_kind == 12 {
+            // BitOr result | state field
+            ir.push_str("  %res_i32 = trunc i64 %result to i32\n");
+            if ret_info.state_field_count == 1 {
+                ir.push_str("  %state_val = load i32, ptr %state, align 4\n");
+            } else {
+                ir.push_str("  %field_ptr = getelementptr i64, ptr %state, i64 ");
+                push_usize(&mut ir, ret_info.state_field_index as usize);
+                ir.push_str("\n");
+                ir.push_str("  %state_val = load i32, ptr %field_ptr, align 4\n");
+            }
+            ir.push_str("  %or_val = or i32 %res_i32, %state_val\n");
+            ir.push_str("  %ret_ext = sext i32 %or_val to i64\n");
+            ir.push_str("  ret i64 %ret_ext\n");
+        } else if ret_info.return_kind == 13 {
+            // Shl result << state field
+            ir.push_str("  %res_i32 = trunc i64 %result to i32\n");
+            if ret_info.state_field_count == 1 {
+                ir.push_str("  %state_val = load i32, ptr %state, align 4\n");
+            } else {
+                ir.push_str("  %field_ptr = getelementptr i64, ptr %state, i64 ");
+                push_usize(&mut ir, ret_info.state_field_index as usize);
+                ir.push_str("\n");
+                ir.push_str("  %state_val = load i32, ptr %field_ptr, align 4\n");
+            }
+            ir.push_str("  %shl_val = shl i32 %res_i32, %state_val\n");
+            ir.push_str("  %ret_ext = sext i32 %shl_val to i64\n");
+            ir.push_str("  ret i64 %ret_ext\n");
+        } else if ret_info.return_kind == 14 {
+            // Shr result >> state field (arithmetic)
+            ir.push_str("  %res_i32 = trunc i64 %result to i32\n");
+            if ret_info.state_field_count == 1 {
+                ir.push_str("  %state_val = load i32, ptr %state, align 4\n");
+            } else {
+                ir.push_str("  %field_ptr = getelementptr i64, ptr %state, i64 ");
+                push_usize(&mut ir, ret_info.state_field_index as usize);
+                ir.push_str("\n");
+                ir.push_str("  %state_val = load i32, ptr %field_ptr, align 4\n");
+            }
+            ir.push_str("  %shr_val = ashr i32 %res_i32, %state_val\n");
+            ir.push_str("  %ret_ext = sext i32 %shr_val to i64\n");
+            ir.push_str("  ret i64 %ret_ext\n");
+        } else if ret_info.return_kind == 15 {
+            // BitXor result ^ state field
+            ir.push_str("  %res_i32 = trunc i64 %result to i32\n");
+            if ret_info.state_field_count == 1 {
+                ir.push_str("  %state_val = load i32, ptr %state, align 4\n");
+            } else {
+                ir.push_str("  %field_ptr = getelementptr i64, ptr %state, i64 ");
+                push_usize(&mut ir, ret_info.state_field_index as usize);
+                ir.push_str("\n");
+                ir.push_str("  %state_val = load i32, ptr %field_ptr, align 4\n");
+            }
+            ir.push_str("  %xor_val = xor i32 %res_i32, %state_val\n");
+            ir.push_str("  %ret_ext = sext i32 %xor_val to i64\n");
+            ir.push_str("  ret i64 %ret_ext\n");
         } else {
             // General case (return_kind == 2): call the compiled return clause body function.
             // The body function takes state fields by value + result as i64.
@@ -2689,8 +2840,8 @@ fn generate_handler_wrappers(
                         // Advance offset, aligned to 8 bytes
                         offset = offset + ((ty_size + 7) / 8) * 8;
                     }
-                    // Build the call: void @body_fn(field0, field1, ..., i64 %result)
-                    ir.push_str("  call void @");
+                    // Build the call: i64 @body_fn(field0, field1, ..., i64 %result)
+                    ir.push_str("  %ret_val = call i64 @");
                     ir.push_str(fn_name.as_str());
                     ir.push_str("(");
                     for ai in 0usize..field_count {
@@ -2707,7 +2858,7 @@ fn generate_handler_wrappers(
                         ir.push_str(", ");
                     }
                     ir.push_str("i64 %result)\n");
-                    ir.push_str("  ret i64 %result\n");
+                    ir.push_str("  ret i64 %ret_val\n");
                 }
                 &Option.None => {
                     // Body function not found — fall back to identity
@@ -3376,7 +3527,6 @@ fn codegen_thread_worker(arg: u64) -> u64 {
             ctx.handler_op_state_field_count = 0;
             ctx.is_handler_op = false;
         }
-
         // Clear call remaps
         ctx.call_remaps = Vec.new();
 
