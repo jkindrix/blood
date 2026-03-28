@@ -1,0 +1,20 @@
+// COMPILE_FAIL: E0221
+// EXPECT: linear value not consumed
+// Tests: linear value not consumed (leak detection)
+
+struct FileHandle {
+    fd: i32,
+}
+
+fn open_file() -> FileHandle {
+    FileHandle { fd: 42 }
+}
+
+fn leak_handle() {
+    let h: linear FileHandle = open_file();
+    // h is never consumed — should be rejected
+}
+
+fn main() -> i32 {
+    0
+}
