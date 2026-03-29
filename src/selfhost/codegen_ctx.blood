@@ -1797,13 +1797,14 @@ impl CodegenCtx {
 
     /// Returns true if a local is a handler state field (not the state pointer itself,
     /// but a secondary field accessed via GEP into the state struct).
-    /// For state_field_count=2, locals 2 through 2 are state fields (local 2 is field index 1).
+    /// For state_field_count=2, local 2 is a state field (maps to field 1).
+    /// Field 0 is accessed via *_1 (state pointer dereference).
     pub fn is_handler_state_field(self: &CodegenCtx, local: mir_def.MirLocalId) -> bool {
         if self.handler_op_state_field_count <= 1 {
             return false;
         }
-        // State fields are locals 2 through (1 + state_field_count - 1)
-        // i.e., local index 2 to handler_op_state_field_count (inclusive)
+        // State field locals: 2 through state_field_count (inclusive)
+        // MIR _2 = field 1, MIR _3 = field 2, etc.
         local.index >= 2 && local.index <= self.handler_op_state_field_count
     }
 

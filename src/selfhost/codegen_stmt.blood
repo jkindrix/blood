@@ -2178,31 +2178,32 @@ pub fn emit_arg_stores(
 
         // For each state field (local 2 through 1+count):
         // GEP into the state struct and load the field value
+        // Field 0 is accessed via *_1 (state pointer dereference).
+        // Load fields 1..N-1 from state into locals _2.._N.
+        // State layout uses 8-byte alignment per field.
+        // Compute starting offset by skipping field 0.
+        let field0_ty = codegen_size.type_to_llvm_with_ctx_id(ctx, body.locals[1].ty);
+        let field0_size = codegen_size.llvm_type_size(field0_ty.as_str()) as u64;
+        let mut field_offset: u64 = ((field0_size + 7) / 8) * 8;
         for fi in 2u32..= ctx.handler_op_state_field_count {
             let field_local = mir_def.MirLocalId.new(fi);
             let field_alloca = ctx.local_alloca_name(field_local);
             let field_ty = codegen_size.type_to_llvm_with_ctx_id(ctx, body.locals[fi as usize].ty);
-            let field_idx = fi - 1; // GEP index: field 0 is at offset 0 (accessed through state ptr local 1)
-            // field 1 is at byte offset = sizeof(field_0), etc.
-            // Use byte-offset GEP for i32 fields: field_idx * 4
+            let offset_str = codegen_types.format_u64(field_offset);
             let field_gep = ctx.fresh_temp_cg();
-            let gep_idx_str = codegen_types.format_u64(field_idx as u64);
-            // Use i32-based GEP since handler state fields are typically i32
-            // The state struct layout is { field0, field1, ... } all same type
             ctx.write("    ");
             ctx.write_cgname(&field_gep);
-            ctx.write(" = getelementptr ");
-            ctx.write(field_ty.as_str());
-            ctx.write(", ptr ");
+            ctx.write(" = getelementptr i8, ptr ");
             ctx.write_cgname(&state_ptr);
             ctx.write(", i64 ");
-            ctx.write(gep_idx_str.as_str());
+            ctx.write(offset_str.as_str());
             ctx.write("\n");
-            // Load field value and store to local alloca
             let field_val = ctx.fresh_temp_cg();
             ctx.emit_load_cg2(&field_val, field_ty.as_str(), &field_gep);
             let field_val_str = cgname_to_string(&field_val);
             ctx.emit_store(field_ty.as_str(), field_val_str.as_str(), field_alloca.as_str());
+            let ty_size = codegen_size.llvm_type_size(field_ty.as_str()) as u64;
+            field_offset = field_offset + ((ty_size + 7) / 8) * 8;
         }
     }
 

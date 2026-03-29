@@ -805,27 +805,32 @@ fn emit_handler_state_writeback(ctx: &mut codegen_ctx.CodegenCtx) {
         let state_ptr = ctx.fresh_temp_cg();
         ctx.emit_load_cg(&state_ptr, "ptr", state_alloca.as_str());
 
+        // Field 0 is written back via *_1 by body code.
+        // Store fields 1..N-1 from locals _2.._N back to state.
+        // Compute starting offset by skipping field 0.
+        let field0_ty = ctx.get_local_type(mir_def.MirLocalId.new(1));
+        let field0_size = codegen_size.llvm_type_size(field0_ty.as_str()) as u64;
+        let mut field_offset: u64 = ((field0_size + 7) / 8) * 8;
         for fi in 2u32..= ctx.handler_op_state_field_count {
             let field_local = mir_def.MirLocalId.new(fi);
             let field_alloca = ctx.local_alloca_name(field_local);
             let field_ty = ctx.get_local_type(field_local);
-            let field_idx = fi - 1;
+            let offset_str = codegen_types.format_u64(field_offset);
             let field_gep = ctx.fresh_temp_cg();
-            let gep_idx_str = codegen_types.format_u64(field_idx as u64);
             ctx.write("    ");
             ctx.write_cgname(&field_gep);
-            ctx.write(" = getelementptr ");
-            ctx.write(field_ty.as_str());
-            ctx.write(", ptr ");
+            ctx.write(" = getelementptr i8, ptr ");
             ctx.write_cgname(&state_ptr);
             ctx.write(", i64 ");
-            ctx.write(gep_idx_str.as_str());
+            ctx.write(offset_str.as_str());
             ctx.write("\n");
             let field_val = ctx.fresh_temp_cg();
             ctx.emit_load_cg(&field_val, field_ty.as_str(), field_alloca.as_str());
             let field_val_str = cgname_to_string(&field_val);
             let field_gep_str = cgname_to_string(&field_gep);
             ctx.emit_store(field_ty.as_str(), field_val_str.as_str(), field_gep_str.as_str());
+            let ty_size = codegen_size.llvm_type_size(field_ty.as_str()) as u64;
+            field_offset = field_offset + ((ty_size + 7) / 8) * 8;
         }
     }
 }
