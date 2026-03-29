@@ -400,9 +400,10 @@ impl MirLowerCtx {
     }
 
     /// Generates a unique closure DefId.
+    /// Incorporates parent function's DefId to avoid collisions across functions.
     pub fn next_closure_def_id(self: &mut MirLowerCtx) -> hir_def.DefId {
         let base: u32 = 16777216; // 0x1000000 range for closures
-        let id = base + self.closure_counter;
+        let id = base + self.body_def_id * 64 + self.closure_counter;
         self.closure_counter = self.closure_counter + 1;
         hir_def.DefId { index: id }
     }

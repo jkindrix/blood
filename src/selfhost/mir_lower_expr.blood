@@ -2401,13 +2401,19 @@ fn lower_closure_expr(
     let env_ty = type_intern.ptr_ty();
     let _env_local = closure_ctx.builder.add_param(env_ty, String.new(), span);
 
-    // Lower closure parameters
+    // Add ALL closure parameters first (so they occupy consecutive locals),
+    // then lower patterns. This prevents pattern binding locals from
+    // interleaving with parameter locals.
+    let mut param_locals: Vec<mir_def.MirLocalId> = Vec.new();
     for pi in 0usize..params.len() {
         let param = &params[pi];
         let resolved_id = closure_ctx.resolve_type_to_id(param.ty);
         let mir_local = closure_ctx.builder.add_param(resolved_id, String.new(), span);
-        let source = mir_types.Place.local(mir_local);
-        mir_lower_pattern.lower_irrefutable_pattern(&mut closure_ctx, &param.pattern, source, span);
+        param_locals.push(mir_local);
+    }
+    for pi in 0usize..params.len() {
+        let source = mir_types.Place.local(param_locals[pi]);
+        mir_lower_pattern.lower_irrefutable_pattern(&mut closure_ctx, &params[pi].pattern, source, span);
     }
 
     // Register captured variables as locals in the closure context.
