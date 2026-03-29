@@ -2700,7 +2700,20 @@ fn lower_with_handle_expr(
                     span,
                 ));
             }
-            Option.None => {}
+            Option.None => {
+                // Return clause must still execute for side effects
+                let discard_temp = ctx.new_temp(type_intern.CommonTypes.i64_ty(), span);
+                ctx.emit_stmt(mir_stmt.Statement.new(
+                    mir_stmt.StatementKind.CallReturnClause {
+                        handler_id: handler_id,
+                        handler_name: String.new(),
+                        body_result: body_operand,
+                        state_place: copy_place(&state_place),
+                        destination: mir_types.Place.local(discard_temp),
+                    },
+                    span,
+                ));
+            }
         }
 
         // Step 9: Emit CallFinallyClause for handler cleanup

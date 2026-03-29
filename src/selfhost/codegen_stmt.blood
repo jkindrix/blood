@@ -840,7 +840,7 @@ pub fn emit_statement(
             // Widen body result to i64
             let widened_result = if strs_equal(result_ty.as_str(), "i64") {
                 clone_string(&result_val)
-            } else if strs_equal(result_ty.as_str(), "{}") {
+            } else if strs_equal(result_ty.as_str(), "{}") || strs_equal(result_ty.as_str(), "void") {
                 // Unit type is zero-sized — pass i64 0 to the return clause
                 common.make_string("0")
             } else if strs_equal(result_ty.as_str(), "ptr") {
@@ -884,7 +884,7 @@ pub fn emit_statement(
             // Narrow result to destination type (use body result type as proxy)
             if strs_equal(result_ty.as_str(), "i64") {
                 ctx.emit_store_cg("i64", &ret_val, dest_ptr.as_str());
-            } else if strs_equal(result_ty.as_str(), "{}") {
+            } else if strs_equal(result_ty.as_str(), "{}") || strs_equal(result_ty.as_str(), "void") {
                 // Unit type — nothing to store (zero-sized)
             } else if strs_equal(result_ty.as_str(), "ptr") {
                 let narrowed = ctx.fresh_temp_cg();
@@ -1787,15 +1787,17 @@ pub fn emit_allocas(
         // Use context-aware type resolution for correct ADT alloca sizes
         let ty = codegen_size.type_to_llvm_with_ctx_id(ctx, local.ty);
         // Normalize void to {} for allocas (LLVM allows alloca {} but not alloca void)
-        if is_void_or_empty_type(ty.as_str()) {
+        let alloca_ty = if is_void_or_empty_type(ty.as_str()) {
             ctx.emit_alloca_cg(&name_cg, "{}");
+            common.make_string("{}")
         } else {
             ctx.emit_alloca_cg(&name_cg, ty.as_str());
-        }
+            clone_string(&ty)
+        };
         let name = ctx.local_alloca_name(local_id);
         ctx.register_local(local_id, clone_string(&name));
-        // Also register the type and signedness for this local
-        ctx.register_local_type(local_id, clone_string(&ty));
+        // Register the normalized type (must match alloca type for valid load/store)
+        ctx.register_local_type(local_id, alloca_ty);
         let local_hir_ty = type_intern.ty_id_to_type(local.ty);
         ctx.register_local_signedness(local_id, codegen_types.is_signed(&local_hir_ty));
         // Register HIR type for ADT layout lookups during projection codegen
@@ -1898,9 +1900,15 @@ pub fn emit_allocas_with_escapes(
 
         // Register local metadata (same for all tiers)
         // For handler state locals, register the VALUE type (not ptr) so loads use correct type.
+        // Normalize void → {} so load/store use a valid LLVM type (void is only valid for fn returns).
         let name = ctx.local_alloca_name(local_id);
         ctx.register_local(local_id, common.make_string(name.as_str()));
-        ctx.register_local_type(local_id, common.make_string(ty_str.as_str()));
+        let reg_ty = if is_void_or_empty_type(ty_str.as_str()) {
+            common.make_string("{}")
+        } else {
+            common.make_string(ty_str.as_str())
+        };
+        ctx.register_local_type(local_id, reg_ty);
         ctx.register_local_signedness(local_id, codegen_types.is_signed(&local_hir_ty));
         ctx.register_local_hir_type(local_id, local.ty);
 
