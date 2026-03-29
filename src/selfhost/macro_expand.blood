@@ -181,8 +181,32 @@ fn expand_all_invocations(source: &String, macros: &Vec<MacroDef>) -> String {
         }
 
         if !matched {
-            result.push(bytes[pos] as char);
-            pos += 1;
+            let b = bytes[pos];
+            if b < 128 {
+                // ASCII: safe to cast directly
+                result.push(b as char);
+                pos += 1;
+            } else if b >= 240 && pos + 3 < len {
+                // 4-byte UTF-8: decode codepoint and push as single char
+                let cp = (((b as u32) & 7) << 18) | (((bytes[pos+1] as u32) & 63) << 12)
+                       | (((bytes[pos+2] as u32) & 63) << 6) | ((bytes[pos+3] as u32) & 63);
+                result.push(cp as char);
+                pos += 4;
+            } else if b >= 224 && pos + 2 < len {
+                // 3-byte UTF-8
+                let cp = (((b as u32) & 15) << 12) | (((bytes[pos+1] as u32) & 63) << 6)
+                       | ((bytes[pos+2] as u32) & 63);
+                result.push(cp as char);
+                pos += 3;
+            } else if b >= 192 && pos + 1 < len {
+                // 2-byte UTF-8
+                let cp = (((b as u32) & 31) << 6) | ((bytes[pos+1] as u32) & 63);
+                result.push(cp as char);
+                pos += 2;
+            } else {
+                // Continuation byte or truncated sequence: skip
+                pos += 1;
+            }
         }
     }
 
