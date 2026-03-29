@@ -79,6 +79,10 @@ pub fn lower_program_with_ast_region(program: &ast.Program, base_dir: String, so
     // type names so that user `effect StaleReference { ... }` reuses the built-in DefId.
     hir_lower_builtin.register_stale_ref_builtin(&mut ctx);
 
+    // Phase 0c: Pre-load codebase sources for hash imports.
+    // `use hash("prefix")` needs the definition compiled as a module before Phase 1.
+    preload_hash_imports(&mut ctx, &program.imports, &mut parsed_module_cache);
+
     // Phase 1: Register type names (structs, enums, traits, effects)
     // Tag 3000 = main file Phase 1; modules tagged by load_external_module
     alloc_tag_set(3000 as u64);
@@ -794,6 +798,119 @@ fn resolve_use_decl_module_reexport(
             // Phase 1 is a no-op for hash imports.
         }
     }
+}
+
+// ============================================================
+// Hash Import Pre-Loading (Phase 0c)
+// ============================================================
+
+/// Pre-loads codebase sources for `use hash("prefix")` imports.
+/// Resolves each hash prefix to a definition name, loads the source from the
+/// codebase, and registers it as a synthetic module. This must run before
+/// Phase 1 so the loaded definitions go through the normal compilation pipeline.
+fn preload_hash_imports(
+    ctx: &mut hir_lower_ctx.LoweringCtx,
+    imports: &Vec<ast.Import>,
+    cache: &mut Vec<CachedParsedModule>,
+) {
+    for i in 0usize..imports.len() {
+        match &imports[i] {
+            &ast.Import.Hash { ref hash_prefix, ref alias, span: _ } => {
+                let prefix_str = ctx.span_to_string(hash_prefix.span);
+                let cb_path = codebase.default_codebase_path();
+                let lookup_result = codebase.find_by_hash_prefix(cb_path.as_str(), prefix_str.as_str());
+                match &lookup_result {
+                    &Option.Some(ref found_name) => {
+                        // Check if already in scope (from mod or previous hash import)
+                        let name_sym = ctx.intern(found_name.as_str());
+                        let scope_result = ctx.resolver.lookup(name_sym);
+                        if !scope_result.is_some() {
+                            // Not in scope — check loaded modules too
+                            let mut in_module = false;
+                            for mi in 0usize..ctx.loaded_modules.len() {
+                                let child = ctx.resolver.lookup_in_parent(ctx.loaded_modules[mi].def_id, name_sym);
+                                if child.is_some() { in_module = true; }
+                            }
+                            if !in_module {
+                                // Load source from codebase and register as module
+                                let hash_result = codebase.find_by_name(cb_path.as_str(), found_name.as_str());
+                                match &hash_result {
+                                    &Option.Some(ref full_hash) => {
+                                        let record = codebase.load_definition(cb_path.as_str(), full_hash.as_str());
+                                        match &record {
+                                            &Option.Some(ref rec) => {
+                                                load_codebase_module(ctx, rec, hash_prefix.span, cache);
+                                            }
+                                            &Option.None => {} // will error in resolve_imports
+                                        }
+                                    }
+                                    &Option.None => {} // will error in resolve_imports
+                                }
+                            }
+                        }
+                    }
+                    &Option.None => {} // will error in resolve_imports
+                }
+            }
+            _ => {} // other imports handled in resolve_imports
+        }
+    }
+}
+
+/// Loads a codebase definition record as a synthetic module.
+/// Parses the stored source, registers type names and declarations,
+/// and caches the parse result for body lowering.
+fn load_codebase_module(
+    ctx: &mut hir_lower_ctx.LoweringCtx,
+    rec: &codebase.DefinitionRecord,
+    span: common.Span,
+    cache: &mut Vec<CachedParsedModule>,
+) {
+    let module_tag = (cache.len() + 1) as u64;
+    alloc_tag_set(module_tag);
+
+    if ctx.ast_region != 0 { region_activate(ctx.ast_region); }
+    let parse_result = parser.parse_file(rec.source.as_str());
+    if ctx.ast_region != 0 { region_deactivate(); }
+
+    if parse_result.errors.len() > 0 {
+        alloc_tag_set(0 as u64);
+        return;
+    }
+
+    let program = match &parse_result.program {
+        &Option.Some(ref p) => p,
+        &Option.None => { alloc_tag_set(0 as u64); return; }
+    };
+
+    // Synthetic module name: __cb_<defname> to avoid collisions
+    let mut mod_name_str = common.make_string("__cb_");
+    mod_name_str.push_str(rec.name.as_str());
+    let module_name = ctx.intern(mod_name_str.as_str());
+    let def_id = ctx.alloc_def_id();
+    ctx.resolver.define_global(module_name, def_id);
+    ctx.resolver.register_def_info(
+        def_id, hir_def.DefKind.Module, module_name, span, Option.None,
+    );
+
+    // Save/restore source context for span resolution
+    let saved_source = ctx.source;
+    ctx.source = common.make_string(rec.source.as_str());
+
+    register_module_type_names(ctx, def_id, &program.declarations, cache);
+    register_module_declarations(ctx, def_id, &program.declarations);
+
+    ctx.source = saved_source;
+
+    cache.push(CachedParsedModule {
+        module_index: cache.len(),
+        content: common.make_string(rec.source.as_str()),
+        parse: parse_result,
+        def_id: def_id,
+    });
+
+    ctx.add_loaded_module(module_name, def_id, common.make_string(mod_name_str.as_str()));
+    alloc_tag_set(0 as u64);
 }
 
 // ============================================================

@@ -4772,11 +4772,18 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
                                             Option.None => common.make_string("unknown"),
                                         };
                                         let deps: Vec<String> = Vec.new();
+                                        // Extract function source text from the expanded source using span
+                                        let item_span = lower_result.items[hj].item.span;
+                                        let src_bytes = expanded_source.as_bytes();
+                                        let mut fn_source = String.new();
+                                        let end = if item_span.end <= src_bytes.len() { item_span.end } else { src_bytes.len() };
+                                        let mut si: usize = item_span.start;
+                                        while si < end { fn_source.push(src_bytes[si] as char); si += 1; }
                                         let rec = codebase.DefinitionRecord.new(
                                             common.make_string(hex.as_str()),
                                             fn_name,
                                             common.make_string("fn"),
-                                            common.make_string(""),
+                                            fn_source,
                                             deps,
                                         );
                                         codebase.store_definition(cb.as_str(), &rec);
