@@ -2624,6 +2624,18 @@ fn infer_match(
         propagate_match_pattern_types(checker, &arms[pat_i].pattern, &scrut_ty_raw_type);
     }
 
+    // Type-check guard expressions (must be bool)
+    let bool_ty = type_intern.CommonTypes.bool_ty();
+    for gi in 0usize..arms.len() {
+        match &arms[gi].guard {
+            &Option.Some(ref guard_expr) => {
+                let guard_ty = infer_expr(checker, guard_expr);
+                checker.unify(guard_ty, bool_ty, guard_expr.span);
+            }
+            &Option.None => {}
+        }
+    }
+
     // Infer type from first arm, unify all others.
     // When an arm diverges (Never type from return/break/panic),
     // adopt the next non-diverging arm's type as the result.

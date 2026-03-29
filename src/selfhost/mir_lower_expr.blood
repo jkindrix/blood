@@ -1965,9 +1965,23 @@ fn lower_match_expr(
             }
         }
 
-        // Lower arm body
+        // Lower arm body (with optional guard evaluation)
         ctx.set_current_block(arm_block);
         mir_lower_pattern.bind_arm_pattern(ctx, &arm.pattern, scrut_place.clone(), span);
+
+        // If there's a guard, evaluate it and branch
+        match &arm.guard {
+            &Option.Some(ref guard_expr) => {
+                let guard_temp = ctx.new_temp(guard_expr.ty, span);
+                lower_expr(ctx, guard_expr, mir_lower_ctx.destination_local(guard_temp));
+                let guard_operand = mir_types.Operand.Copy(mir_types.Place.local(guard_temp));
+                let body_block = ctx.new_block();
+                ctx.terminate_if(guard_operand, body_block, next_arm_block, span);
+                ctx.set_current_block(body_block);
+            }
+            &Option.None => {}
+        }
+
         lower_expr(ctx, &arm.body, dest.clone());
         if !ctx.is_terminated() {
             ctx.terminate_goto(join_block, span);
