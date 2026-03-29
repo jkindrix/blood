@@ -1,0 +1,192 @@
+// Proving Ground Program 9: streams - Data pipeline with closures
+// New features: closures as function args, capture from scope, multi-param closures,
+//               higher-order composition, closures + effects
+//
+// EXPECT: === Map ===
+// EXPECT: 2
+// EXPECT: 4
+// EXPECT: 6
+// EXPECT: 8
+// EXPECT: 10
+// EXPECT: === Filter ===
+// EXPECT: 8
+// EXPECT: 10
+// EXPECT: === Reduce ===
+// EXPECT: 18
+// EXPECT: === Pipeline ===
+// EXPECT: 80
+// EXPECT: === Capture ===
+// EXPECT: 15
+// EXPECT: === Effectful ===
+// EXPECT: [log] processing 5 items
+// EXPECT: 30
+// EXPECT: === Compose ===
+// EXPECT: 9
+
+// Part 1: Higher-order functions operating on Vec<i32>
+
+fn map(data: &Vec<i32>, f: fn(i32) -> i32) -> Vec<i32> {
+    let mut result: Vec<i32> = Vec.new();
+    let mut i: usize = 0;
+    while i < data.len() {
+        result.push(f(data[i]));
+        i += 1;
+    }
+    result
+}
+
+fn filter(data: &Vec<i32>, pred: fn(i32) -> bool) -> Vec<i32> {
+    let mut result: Vec<i32> = Vec.new();
+    let mut i: usize = 0;
+    while i < data.len() {
+        if pred(data[i]) {
+            result.push(data[i]);
+        }
+        i += 1;
+    }
+    result
+}
+
+fn reduce(data: &Vec<i32>, init: i32, f: fn(i32, i32) -> i32) -> i32 {
+    let mut acc: i32 = init;
+    let mut i: usize = 0;
+    while i < data.len() {
+        acc = f(acc, data[i]);
+        i += 1;
+    }
+    acc
+}
+
+fn for_each(data: &Vec<i32>, f: fn(i32) -> ()) {
+    let mut i: usize = 0;
+    while i < data.len() {
+        f(data[i]);
+        i += 1;
+    }
+}
+
+// Part 2: Effect for logging pipeline operations
+
+effect Log {
+    op log(msg: &str) -> ();
+}
+
+deep handler PrintLog for Log {
+    return(x) { x }
+    op log(msg) {
+        print_str("[log] ");
+        println_str(msg);
+        resume(())
+    }
+}
+
+// Effectful map: logs before processing
+fn map_logged(data: &Vec<i32>, f: fn(i32) -> i32) -> Vec<i32> / {Log} {
+    let mut msg: String = String.new();
+    let count: i32 = data.len() as i32;
+    let msg_str: &str = format!("processing {} items", count);
+    perform Log.log(msg_str);
+    map(data, f)
+}
+
+// Part 3: Function composition
+
+fn compose(f: fn(i32) -> i32, g: fn(i32) -> i32) -> fn(i32) -> i32 {
+    |x| f(g(x))
+}
+
+// Part 4: Build test data
+
+fn make_data() -> Vec<i32> {
+    let mut v: Vec<i32> = Vec.new();
+    v.push(1);
+    v.push(2);
+    v.push(3);
+    v.push(4);
+    v.push(5);
+    v
+}
+
+fn print_vec(data: &Vec<i32>) {
+    let mut i: usize = 0;
+    while i < data.len() {
+        println_int(data[i]);
+        i += 1;
+    }
+}
+
+// Part 5: Tests
+
+fn main() -> i32 {
+    let data: Vec<i32> = make_data();
+
+    // Test 1: map with basic closure
+    println_str("=== Map ===");
+    let doubled: Vec<i32> = map(&data, |x| x * 2);
+    print_vec(&doubled);
+
+    // Test 2: filter with closure
+    println_str("=== Filter ===");
+    let big: Vec<i32> = filter(&doubled, |x| x > 6);
+    print_vec(&big);
+
+    // Test 3: reduce with multi-param closure
+    println_str("=== Reduce ===");
+    let sum: i32 = reduce(&big, 0, |acc, x| acc + x);
+    println_int(sum);
+
+    // Test 4: full pipeline composition (map -> filter -> reduce)
+    println_str("=== Pipeline ===");
+    let data2: Vec<i32> = make_data();
+    let mut extended: Vec<i32> = Vec.new();
+    let mut ei: usize = 0;
+    while ei < data2.len() {
+        extended.push(data2[ei]);
+        ei += 1;
+    }
+    extended.push(6);
+    extended.push(7);
+    extended.push(8);
+    extended.push(9);
+    extended.push(10);
+    // Pipeline: double -> filter > 10 -> sum
+    let step1: Vec<i32> = map(&extended, |x| x * 2);
+    let step2: Vec<i32> = filter(&step1, |x| x > 10);
+    let total: i32 = reduce(&step2, 0, |acc, x| acc + x);
+    println_int(total);
+
+    // Test 5: closure capturing from enclosing scope
+    println_str("=== Capture ===");
+    let offset: i32 = 10;
+    let add_offset: Vec<i32> = map(&data, |x| x + offset);
+    // add_offset = [11, 12, 13, 14, 15]
+    println_int(add_offset[4]);
+
+    // Test 6: effectful higher-order function with closure
+    println_str("=== Effectful ===");
+    with PrintLog {} handle {
+        let logged_result: Vec<i32> = map_logged(&data, |x| x * 6);
+        // logged_result = [6, 12, 18, 24, 30]
+        println_int(logged_result[4]);
+    };
+
+    // Test 7: function composition via closure-returning function
+    println_str("=== Compose ===");
+    let add1: fn(i32) -> i32 = |x| x + 1;
+    let double: fn(i32) -> i32 = |x| x * 2;
+    let double_then_add1: fn(i32) -> i32 = compose(double, add1);
+    // compose(f, g)(x) = f(g(x)) = double(add1(x))
+    // double_then_add1(4) = double(add1(4)) = double(5) = 10
+    // Wait: compose(double, add1)(4) = double(add1(4)) = double(5) = 10
+    // But EXPECT says 9. Let me recalculate.
+    // compose(f, g)(x) = f(g(x))
+    // f = double = |x| x * 2
+    // g = add1 = |x| x + 1
+    // compose(double, add1)(4) = double(add1(4)) = double(5) = 10
+    // Hmm, let me adjust. For 9: add1(double(4)) = add1(8) = 9
+    // So I need compose(add1, double)(4)
+    let add1_after_double: fn(i32) -> i32 = compose(add1, double);
+    println_int(add1_after_double(4));
+
+    0
+}
