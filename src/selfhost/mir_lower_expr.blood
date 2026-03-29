@@ -1148,14 +1148,23 @@ fn lower_method_call_expr(
                     ))
                 }
                 Option.None => {
-                    // Truly unresolved - create a dummy DefId to produce a linker error
-                    // instead of a cryptic runtime crash from calling undef
-                    ctx.mir_error_with_note(
-                        mir_lower_ctx.MirLowerErrorKind.MethodNotResolved,
-                        common.make_string("method call target could not be resolved"),
-                        span,
-                        common.make_string("check that the method is defined and the type implements it"),
-                    );
+                    // Check if receiver is a type parameter (or &T where T is a param).
+                    // Generic bodies can't resolve trait method calls — the monomorphized
+                    // copy will resolve them with concrete types. Only error for truly
+                    // unresolvable calls on concrete types.
+                    let resolved_recv = ctx.resolve_type_to_id(receiver.ty);
+                    let recv_is_param = type_intern.is_param_or_infer_id(resolved_recv) || match type_intern.get_ref_inner(resolved_recv) {
+                        Option.Some(inner) => type_intern.is_param_or_infer_id(inner),
+                        Option.None => false,
+                    };
+                    if !recv_is_param {
+                        ctx.mir_error_with_note(
+                            mir_lower_ctx.MirLowerErrorKind.MethodNotResolved,
+                            common.make_string("method call target could not be resolved"),
+                            span,
+                            common.make_string("check that the method is defined and the type implements it"),
+                        );
+                    }
                     mir_types.Operand.Constant(mir_types.Constant.new(
                         type_intern.CommonTypes.error(),
                         mir_types.ConstantKind.FnDef(hir_def.DefId.new(0xFFFFFFFE)),
