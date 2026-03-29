@@ -1,8 +1,8 @@
 // Proving Ground Program 8: testkit - Test framework with user-defined macros
-// EXPECT: Results: 11 passed
-
-// Part 1: User-defined assertion macros
-// These expand to code that performs effects - the key new combination.
+// New features: user macros + effects, multi-rule macros, recursive macros,
+//               matches!(), match guards, multi-field handler state
+//
+// EXPECT: Results: 12 passed, 0 failed
 
 macro assert_eq {
     ($a:expr, $b:expr) => {
@@ -47,18 +47,17 @@ macro double_check {
     };
 }
 
-// Part 2: Effect + Handler infrastructure
-
 effect TestReport {
     op pass() -> ();
     op fail(msg: &str) -> ();
 }
 
-// Single-field state (multi-field handler state has a known bug)
+// Two-field handler state: both fields correctly mutated across ops
 deep handler TestRunner for TestReport {
     let mut passed: i32
+    let mut failed: i32
     return(x) {
-        let msg: &str = format!("Results: {} passed", passed);
+        let msg: &str = format!("Results: {} passed, {} failed", passed, failed);
         println_str(msg);
         x
     }
@@ -67,13 +66,12 @@ deep handler TestRunner for TestReport {
         resume(())
     }
     op fail(msg) {
+        failed = failed + 1;
         print_str("FAIL: ");
         println_str(msg);
         resume(())
     }
 }
-
-// Part 3: Test functions
 
 // User macros expanding to effect performs
 fn test_arithmetic() / {TestReport} {
@@ -102,7 +100,7 @@ fn test_recursive() / {TestReport} {
     double_check!(3, 6);
 }
 
-// Built-in matches! macro (implemented but previously untested)
+// Built-in matches! macro (first test coverage)
 fn test_matches() / {TestReport} {
     let x: i32 = 42;
     if matches!(x, 42) {
@@ -112,15 +110,27 @@ fn test_matches() / {TestReport} {
     }
 }
 
-// Part 4: Main
+// Match guards: _ if condition => expr
+fn test_match_guards() / {TestReport} {
+    let x: i32 = 42;
+    let result: i32 = match x {
+        0 => 0,
+        _ if x > 100 => 3,
+        _ if x > 10 => 2,
+        _ if x > 0 => 1,
+        _ => 0 - 1,
+    };
+    assert_eq!(result, 2);
+}
 
 fn main() -> i32 {
-    with TestRunner { passed: 0 } handle {
+    with TestRunner { passed: 0, failed: 0 } handle {
         test_arithmetic();
         test_vec();
         test_multi_rule();
         test_recursive();
         test_matches();
+        test_match_guards();
     };
     0
 }
