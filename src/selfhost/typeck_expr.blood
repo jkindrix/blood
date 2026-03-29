@@ -3159,8 +3159,20 @@ fn infer_perform(
                                                 &Some(ref einfo) => {
                                                     for tpi in 0usize..einfo.type_param_var_ids.len() {
                                                         if einfo.type_param_var_ids[tpi] == var_id.index && tpi < effect_type_args.len() {
-                                                            // Bind shared T_var to concrete type
-                                                            checker.unify(raw_ty, effect_type_args[tpi], span);
+                                                            // Only bind shared T_var if it's not already bound to
+                                                            // a different concrete type. This prevents cross-function
+                                                            // leakage when Emit<i32> + Emit<bool> coexist — the first
+                                                            // binding persists for inline handlers to read, but doesn't
+                                                            // conflict with subsequent instantiations.
+                                                            let resolved_raw = unify.apply_substs_id(&checker.subst_table, raw_ty);
+                                                            let raw_interner = type_intern.type_interner();
+                                                            let is_raw_unbound = match raw_interner.get(resolved_raw) {
+                                                                &type_intern.InternedTypeKind.Infer(_) => true,
+                                                                _ => false,
+                                                            };
+                                                            if is_raw_unbound {
+                                                                checker.unify(raw_ty, effect_type_args[tpi], span);
+                                                            }
                                                             // Unify arg with concrete type
                                                             checker.unify(arg_tys[ai], effect_type_args[tpi], span);
                                                         }
