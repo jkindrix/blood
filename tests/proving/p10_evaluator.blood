@@ -1,0 +1,153 @@
+// Proving Ground Program 10: evaluator - Expression interpreter with deep pattern matching
+// New features: enum variant destructuring, match guards on destructured variants,
+//               if-let expressions, nested patterns, recursive Box enum, patterns + effects
+//
+// EXPECT: 14
+// EXPECT: 7
+// EXPECT: 0
+// EXPECT: caught div-by-zero
+// EXPECT: 1
+// EXPECT: 99
+// EXPECT: 10
+
+// Part 1: AST - recursive enum with Box indirection
+
+enum Op {
+    Add,
+    Sub,
+    Mul,
+    Div,
+}
+
+enum Expr {
+    Num(i32),
+    BinOp(Box<Expr>, Op, Box<Expr>),
+    Neg(Box<Expr>),
+    If(Box<Expr>, Box<Expr>, Box<Expr>),
+}
+
+// Part 2: Effect for evaluation errors
+
+effect EvalError {
+    op div_by_zero() -> i32;
+}
+
+// Part 3: Evaluator using deep pattern matching
+
+fn eval(e: &Expr) -> i32 / {EvalError} {
+    match e {
+        &Expr.Num(n) => n,
+        &Expr.BinOp(ref left, ref op, ref right) => {
+            let l: i32 = eval(left.as_ref());
+            let r: i32 = eval(right.as_ref());
+            match op {
+                &Op.Add => l + r,
+                &Op.Sub => l - r,
+                &Op.Mul => l * r,
+                &Op.Div if r == 0 => perform EvalError.div_by_zero(),
+                &Op.Div => l / r,
+            }
+        },
+        &Expr.Neg(ref inner) => 0 - eval(inner.as_ref()),
+        &Expr.If(ref cond, ref then_val, ref else_val) => {
+            let c: i32 = eval(cond.as_ref());
+            if c != 0 {
+                eval(then_val.as_ref())
+            } else {
+                eval(else_val.as_ref())
+            }
+        },
+    }
+}
+
+// Part 4: Helper constructors
+
+fn num(n: i32) -> Expr { Expr.Num(n) }
+fn add(l: Expr, r: Expr) -> Expr { Expr.BinOp(Box.new(l), Op.Add, Box.new(r)) }
+fn sub(l: Expr, r: Expr) -> Expr { Expr.BinOp(Box.new(l), Op.Sub, Box.new(r)) }
+fn mul(l: Expr, r: Expr) -> Expr { Expr.BinOp(Box.new(l), Op.Mul, Box.new(r)) }
+fn div(l: Expr, r: Expr) -> Expr { Expr.BinOp(Box.new(l), Op.Div, Box.new(r)) }
+fn neg(e: Expr) -> Expr { Expr.Neg(Box.new(e)) }
+fn if_expr(c: Expr, t: Expr, e: Expr) -> Expr { Expr.If(Box.new(c), Box.new(t), Box.new(e)) }
+
+// Part 5: Expression depth checker using if-let
+
+fn depth(e: &Expr) -> i32 {
+    if let &Expr.BinOp(ref left, _, ref right) = e {
+        let ld: i32 = depth(left.as_ref());
+        let rd: i32 = depth(right.as_ref());
+        if ld > rd { 1 + ld } else { 1 + rd }
+    } else if let &Expr.Neg(ref inner) = e {
+        1 + depth(inner.as_ref())
+    } else if let &Expr.If(ref c, ref t, ref el) = e {
+        let cd: i32 = depth(c.as_ref());
+        let td: i32 = depth(t.as_ref());
+        let ed: i32 = depth(el.as_ref());
+        let max_te: i32 = if td > ed { td } else { ed };
+        if cd > max_te { 1 + cd } else { 1 + max_te }
+    } else {
+        0
+    }
+}
+
+// Part 6: Handler for catching division errors
+
+deep handler CatchDivZero for EvalError {
+    return(x) { x }
+    op div_by_zero() {
+        println_str("caught div-by-zero");
+        resume(0)
+    }
+}
+
+// Part 7: Tests
+
+fn main() -> i32 {
+    // Test 1: (3 + 4) * 2 = 14
+    let e1: Expr = mul(add(num(3), num(4)), num(2));
+    let r1: i32 = with CatchDivZero {} handle { eval(&e1) };
+    println_int(r1);
+
+    // Test 2: 10 - (6 / 2) = 7
+    let e2: Expr = sub(num(10), div(num(6), num(2)));
+    let r2: i32 = with CatchDivZero {} handle { eval(&e2) };
+    println_int(r2);
+
+    // Test 3: -(5) + 5 = 0
+    let e3: Expr = add(neg(num(5)), num(5));
+    let r3: i32 = with CatchDivZero {} handle { eval(&e3) };
+    println_int(r3);
+
+    // Test 4: division by zero caught via match guard + effect
+    let e4: Expr = div(num(10), num(0));
+    let r4: i32 = with CatchDivZero {} handle { eval(&e4) };
+
+    // Test 5: if-expr: if(1, 42, 99) = 42 (nonzero = true)
+    let e5_cond: Expr = if_expr(num(1), num(42), num(99));
+    let r5_cond: i32 = with CatchDivZero {} handle { eval(&e5_cond) };
+
+    // Test 6: if-expr: if(0, 42, 99) = 99 (zero = false)
+    let e5_false: Expr = if_expr(num(0), num(42), num(99));
+    let r5_false: i32 = with CatchDivZero {} handle { eval(&e5_false) };
+
+    // Test 7: depth of (3 + 4) * 2 = 2
+    // But we also test if-let by using the depth function
+    // if-let checks if expression is BinOp and recurses
+
+    // Test 5: if-expr true branch
+    if r5_cond == 42 { println_int(1); } else { println_int(0); }
+
+    // Test 6: if-expr false branch
+    println_int(r5_false);
+
+    // Test 7: depth via if-let chain
+    let deep: Expr = add(mul(add(num(1), num(2)), num(3)), sub(num(10), num(4)));
+    // depth(add(mul(add(1,2),3), sub(10,4)))
+    //   = 1 + max(depth(mul(add(1,2),3)), depth(sub(10,4)))
+    //   = 1 + max(1 + max(depth(add(1,2)), depth(3)), 1 + max(depth(10), depth(4)))
+    //   = 1 + max(1 + max(1, 0), 1 + max(0, 0))
+    //   = 1 + max(2, 1) = 3
+    println_int(depth(&deep) + 7);
+
+    0
+}
