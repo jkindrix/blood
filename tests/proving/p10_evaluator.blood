@@ -9,6 +9,10 @@
 // EXPECT: 1
 // EXPECT: 99
 // EXPECT: 10
+// EXPECT: 1
+// EXPECT: 0
+// EXPECT: 0
+// EXPECT: 2
 
 // Part 1: AST - recursive enum with Box indirection
 
@@ -100,7 +104,87 @@ deep handler CatchDivZero for EvalError {
     }
 }
 
-// Part 7: Tests
+// Part 7: Or-patterns — classify expression nodes
+
+fn is_compound(e: &Expr) -> bool {
+    match e {
+        &Expr.BinOp(_, _, _) | &Expr.If(_, _, _) => true,
+        &Expr.Num(_) | &Expr.Neg(_) => false,
+    }
+}
+
+// Part 8: Struct destructuring in let binding
+
+struct EvalResult {
+    value: i32,
+    ops: i32,
+}
+
+fn eval_counted(e: &Expr) -> EvalResult / {EvalError} {
+    match e {
+        &Expr.Num(n) => EvalResult { value: n, ops: 0 },
+        &Expr.BinOp(ref left, ref op, ref right) => {
+            let lr: EvalResult = eval_counted(left.as_ref());
+            let rr: EvalResult = eval_counted(right.as_ref());
+            let v: i32 = match op {
+                &Op.Add => lr.value + rr.value,
+                &Op.Sub => lr.value - rr.value,
+                &Op.Mul => lr.value * rr.value,
+                &Op.Div if rr.value == 0 => perform EvalError.div_by_zero(),
+                &Op.Div => lr.value / rr.value,
+            };
+            EvalResult { value: v, ops: 1 + lr.ops + rr.ops }
+        },
+        &Expr.Neg(ref inner) => {
+            let ir: EvalResult = eval_counted(inner.as_ref());
+            EvalResult { value: 0 - ir.value, ops: 1 + ir.ops }
+        },
+        &Expr.If(ref cond, ref then_val, ref else_val) => {
+            let cr: EvalResult = eval_counted(cond.as_ref());
+            if cr.value != 0 {
+                let tr: EvalResult = eval_counted(then_val.as_ref());
+                EvalResult { value: tr.value, ops: 1 + cr.ops + tr.ops }
+            } else {
+                let er: EvalResult = eval_counted(else_val.as_ref());
+                EvalResult { value: er.value, ops: 1 + cr.ops + er.ops }
+            }
+        },
+    }
+}
+
+// Pure version for expressions known not to have division-by-zero
+fn eval_counted_pure(e: &Expr) -> EvalResult {
+    match e {
+        &Expr.Num(n) => EvalResult { value: n, ops: 0 },
+        &Expr.BinOp(ref left, ref op, ref right) => {
+            let lr: EvalResult = eval_counted_pure(left.as_ref());
+            let rr: EvalResult = eval_counted_pure(right.as_ref());
+            let v: i32 = match op {
+                &Op.Add => lr.value + rr.value,
+                &Op.Sub => lr.value - rr.value,
+                &Op.Mul => lr.value * rr.value,
+                &Op.Div => lr.value / rr.value,
+            };
+            EvalResult { value: v, ops: 1 + lr.ops + rr.ops }
+        },
+        &Expr.Neg(ref inner) => {
+            let ir: EvalResult = eval_counted_pure(inner.as_ref());
+            EvalResult { value: 0 - ir.value, ops: 1 + ir.ops }
+        },
+        &Expr.If(ref cond, ref then_val, ref else_val) => {
+            let cr: EvalResult = eval_counted_pure(cond.as_ref());
+            if cr.value != 0 {
+                let tr: EvalResult = eval_counted_pure(then_val.as_ref());
+                EvalResult { value: tr.value, ops: 1 + cr.ops + tr.ops }
+            } else {
+                let er: EvalResult = eval_counted_pure(else_val.as_ref());
+                EvalResult { value: er.value, ops: 1 + cr.ops + er.ops }
+            }
+        },
+    }
+}
+
+// Part 9: Tests
 
 fn main() -> i32 {
     // Test 1: (3 + 4) * 2 = 14
@@ -148,6 +232,21 @@ fn main() -> i32 {
     //   = 1 + max(1 + max(1, 0), 1 + max(0, 0))
     //   = 1 + max(2, 1) = 3
     println_int(depth(&deep) + 7);
+
+    // Test 8: or-pattern classification
+    // e1 = mul(add(3,4),2) is BinOp → compound
+    if is_compound(&e1) { println_int(1); } else { println_int(0); }
+    // num(5) is Num → not compound
+    let leaf: Expr = num(5);
+    if is_compound(&leaf) { println_int(1); } else { println_int(0); }
+
+    // Test 9: struct destructuring in let binding
+    // e3 = add(neg(5), 5) → value=0, ops=2 (1 for neg + 1 for add)
+    // Use e3 (no division) so eval_counted doesn't need an effect handler.
+    let res: EvalResult = eval_counted_pure(&e3);
+    let EvalResult { value: rv, ops: ro } = res;
+    println_int(rv);
+    println_int(ro);
 
     0
 }

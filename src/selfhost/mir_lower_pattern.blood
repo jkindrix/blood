@@ -487,9 +487,61 @@ pub fn pattern_test(
             Option.None
         }
 
-        &hir_expr.PatternKind.Or(_) => {
-            // Or patterns need multiple tests
-            Option.None
+        &hir_expr.PatternKind.Or(ref alternatives) => {
+            // Or patterns: any alternative matching means the whole pattern matches.
+            // Test each alternative and combine with BitOr.
+            // Each alternative gets a FRESH source Place to prevent projection aliasing.
+            let mut has_refutable = false;
+            let mut combined_local: mir_def.MirLocalId = mir_def.MirLocalId.return_place();
+            for alt_i in 0usize..alternatives.len() {
+                // Construct a fresh Place from the source local to prevent
+                // projection accumulation across alternatives.
+                let fresh_source = mir_types.Place.local(source.local);
+                let sub_test = pattern_test(ctx, &alternatives[alt_i], &fresh_source, span);
+                match sub_test {
+                    Option.Some(t) => {
+                        let expected_const = mir_types.Constant.new(
+                            type_intern.CommonTypes.usize_ty(),
+                            mir_types.ConstantKind.Uint(t.expected),
+                        );
+                        let expected_op = mir_types.Operand.Constant(expected_const);
+                        let eq_result = ctx.new_temp(type_intern.CommonTypes.bool_ty(), span);
+                        ctx.emit_assign(
+                            mir_types.Place.local(eq_result),
+                            mir_types.Rvalue.BinaryOp(mir_types.MirBinOp.Eq, t.discriminant, expected_op),
+                            span,
+                        );
+                        if has_refutable {
+                            let or_result = ctx.new_temp(type_intern.CommonTypes.bool_ty(), span);
+                            ctx.emit_assign(
+                                mir_types.Place.local(or_result),
+                                mir_types.Rvalue.BinaryOp(
+                                    mir_types.MirBinOp.BitOr,
+                                    mir_types.Operand.Copy(mir_types.Place.local(combined_local)),
+                                    mir_types.Operand.Copy(mir_types.Place.local(eq_result)),
+                                ),
+                                span,
+                            );
+                            combined_local = or_result;
+                        } else {
+                            combined_local = eq_result;
+                            has_refutable = true;
+                        }
+                    }
+                    Option.None => {
+                        // Irrefutable alternative — whole Or is irrefutable
+                        return Option.None;
+                    }
+                }
+            }
+            if has_refutable {
+                Option.Some(PatternTest {
+                    discriminant: mir_types.Operand.Copy(mir_types.Place.local(combined_local)),
+                    expected: 1,
+                })
+            } else {
+                Option.None
+            }
         }
 
         &hir_expr.PatternKind.Range { ref start, ref end_val, inclusive } => {
