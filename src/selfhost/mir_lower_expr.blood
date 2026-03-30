@@ -2385,16 +2385,46 @@ fn lower_closure_expr(
         }
     }
 
-    // Create a new MirLowerCtx for the closure body
+    // Create a new MirLowerCtx for the closure body.
+    // Re-key parent's method/field/coercion resolutions for the closure's body_def_id
+    // so that method calls, field accesses, and coercions inside the closure body
+    // resolve correctly (typeck stored them with the parent's body_def_id).
+    let mut closure_methods: Vec<common.MethodResEntry> = Vec.new();
+    let mut cmi: usize = 0;
+    while cmi < ctx.method_resolutions.len() {
+        let me = &ctx.method_resolutions[cmi];
+        closure_methods.push(common.MethodResEntry.new(
+            closure_def_id.index, me.span_start, me.def_id_index,
+        ));
+        cmi += 1;
+    }
+    let mut closure_fields: Vec<common.FieldResEntry> = Vec.new();
+    let mut cfi: usize = 0;
+    while cfi < ctx.field_resolutions.len() {
+        let fe = &ctx.field_resolutions[cfi];
+        closure_fields.push(common.FieldResEntry.new(
+            closure_def_id.index, fe.span_start, fe.field_idx,
+        ));
+        cfi += 1;
+    }
+    let mut closure_coercions: Vec<common.CoercionEntry> = Vec.new();
+    let mut cci: usize = 0;
+    while cci < ctx.coercion_entries.len() {
+        let ce = &ctx.coercion_entries[cci];
+        closure_coercions.push(common.CoercionEntry.new(
+            closure_def_id.index, ce.span_start, ce.array_len,
+        ));
+        cci += 1;
+    }
     let subst_addr = ctx.get_subst_table_addr();
     let mut closure_ctx = mir_lower_ctx.MirLowerCtx.new(
         closure_def_id,
         resolved_return_id,
         span,
         subst_addr,
-        Vec.new(),
-        Vec.new(),
-        Vec.new(),
+        closure_methods,
+        closure_fields,
+        closure_coercions,
     );
 
     // Add env_ptr as first parameter (ptr type, required by calling convention)
