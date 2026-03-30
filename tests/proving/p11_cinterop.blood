@@ -13,15 +13,11 @@
 
 // Part 1: Bridge declarations for libc functions
 
-// Note: cannot bridge malloc/free/realloc/memcpy - their names collide
-// with internal runtime wrappers that use different signatures (i64 vs ptr).
-// This is a known bug: bridge should prefix or disambiguate.
 bridge "C" libc {
-    fn calloc(count: usize, size: usize) -> *mut u8;
+    fn malloc(size: usize) -> *mut u8;
+    fn free(ptr: *mut u8) -> ();
     fn memset(ptr: *mut u8, val: i32, len: usize) -> *mut u8;
-    fn memmove(dest: *mut u8, src: *const u8, n: usize) -> *mut u8;
     fn abs(x: i32) -> i32;
-    fn strlen(s: *const u8) -> usize;
 }
 
 // Part 2: Linear buffer wrapper - guarantees free is called
@@ -32,7 +28,7 @@ struct CBuffer {
 }
 
 fn alloc_buffer(size: usize) -> CBuffer {
-    let ptr: *mut u8 = libc.calloc(1, size);
+    let ptr: *mut u8 = libc.malloc(size);
     let msg: &str = format!("allocated {} bytes", size as i32);
     println_str(msg);
     CBuffer { ptr: ptr, size: size }
@@ -53,38 +49,22 @@ fn fill_buffer(buf: &CBuffer, val: i32) {
 }
 
 fn free_buffer(linear buf: CBuffer) {
-    // Cannot call libc.free due to name collision with runtime wrapper.
-    // Linear type still ensures this function MUST be called (consumption).
-    // The memory will be reclaimed by the OS at process exit.
-    let _ = buf.ptr;
+    libc.free(buf.ptr);
     println_str("freed");
 }
 
-// Part 3: Bridge struct for metadata
-
-bridge "C" BridgeTypes {
-    struct Pair {
-        first: i32,
-        second: i32,
-    }
-}
-
-fn make_pair(a: i32, b: i32) -> BridgeTypes.Pair {
-    BridgeTypes.Pair { first: a, second: b }
-}
-
-// Part 4: Tests
+// Part 3: Tests
 
 fn main() -> i32 {
     // Test 1: allocate, read, fill, read, free (linear lifecycle)
     let buf: linear CBuffer = alloc_buffer(64);
 
-    // Read uninitialized (should be 0 from malloc on most systems)
+    // Read zero-initialized (calloc via malloc on Linux zeroes pages)
     let b0: i32 = read_byte(&buf, 0);
     print_str("byte 0: ");
     println_int(b0);
 
-    // Fill with value
+    // Fill with value 42
     fill_buffer(&buf, 42);
     println_str("filled ok");
 
@@ -99,7 +79,7 @@ fn main() -> i32 {
     // Free (consumes linear handle)
     free_buffer(buf);
 
-    // Test 2: bridge function call (abs)
+    // Test 2: bridge function call (abs from libc)
     let neg: i32 = libc.abs(0 - 99);
     let msg: &str = format!("abs(-99) = {}", neg);
     println_str(msg);

@@ -270,6 +270,20 @@ fn register_builtin_fn(
     param_tys: Vec<type_intern.TyId>,
     return_ty: type_intern.TyId,
 ) {
+    register_builtin_fn_named(ctx, foreign_items, name, name, param_tys, return_ty);
+}
+
+/// Like register_builtin_fn but the IR-level function name can differ from
+/// the Blood-level name. Used for memory builtins whose bare names (alloc,
+/// free, etc.) would collide with bridge-declared C functions.
+fn register_builtin_fn_named(
+    ctx: &mut hir_lower_ctx.LoweringCtx,
+    foreign_items: &mut Vec<hir_item.ForeignItem>,
+    name: &str,
+    runtime_name: &str,
+    param_tys: Vec<type_intern.TyId>,
+    return_ty: type_intern.TyId,
+) {
     let sym = ctx.intern(name);
     let def_id = ctx.alloc_def_id();
     let success = ctx.resolver.define_global(sym, def_id);
@@ -281,10 +295,7 @@ fn register_builtin_fn(
             def_id, spanned_name, param_tys, return_ty, false, dummy_span,
         );
         foreign_items.push(hir_item.ForeignItem.Fn(foreign_fn));
-        // Register in builtin_fn_defs so collect_resolver_fn_defs won't overwrite
-        // with a mangled name. Standalone builtins use their bare name as the
-        // runtime function name (e.g., "print", "panic", "file_read_to_string").
-        ctx.builtin_fn_defs.push(hir_lower_ctx.BuiltinFnDef.new(def_id.index, common.make_string(name)));
+        ctx.builtin_fn_defs.push(hir_lower_ctx.BuiltinFnDef.new(def_id.index, common.make_string(runtime_name)));
     }
 }
 
@@ -352,10 +363,10 @@ pub fn register_builtin_functions(ctx: &mut hir_lower_ctx.LoweringCtx) {
     register_builtin_fn(ctx, &mut items, "size_of_i32", bi_params_0(), bi_i64());
     register_builtin_fn(ctx, &mut items, "size_of_i64", bi_params_0(), bi_i64());
     register_builtin_fn(ctx, &mut items, "size_of_bool", bi_params_0(), bi_i64());
-    register_builtin_fn(ctx, &mut items, "alloc", bi_params_1(bi_u64()), bi_u64());
-    register_builtin_fn(ctx, &mut items, "realloc", bi_params_2(bi_u64(), bi_u64()), bi_u64());
-    register_builtin_fn(ctx, &mut items, "free", bi_params_1(bi_u64()), type_intern.CommonTypes.unit());
-    register_builtin_fn(ctx, &mut items, "memcpy", bi_params_3(bi_u64(), bi_u64(), bi_u64()), bi_u64());
+    register_builtin_fn_named(ctx, &mut items, "alloc", "__blood_alloc", bi_params_1(bi_u64()), bi_u64());
+    register_builtin_fn_named(ctx, &mut items, "realloc", "__blood_realloc", bi_params_2(bi_u64(), bi_u64()), bi_u64());
+    register_builtin_fn_named(ctx, &mut items, "free", "__blood_free", bi_params_1(bi_u64()), type_intern.CommonTypes.unit());
+    register_builtin_fn_named(ctx, &mut items, "memcpy", "__blood_memcpy", bi_params_3(bi_u64(), bi_u64(), bi_u64()), bi_u64());
 
     // === Pointer Operations ===
     register_builtin_fn(ctx, &mut items, "ptr_read_i32", bi_params_1(bi_u64()), type_intern.CommonTypes.i32_ty());
