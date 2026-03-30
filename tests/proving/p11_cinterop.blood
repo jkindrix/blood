@@ -10,6 +10,8 @@
 // EXPECT: freed
 // EXPECT: abs(-99) = 99
 // EXPECT: round-trip ok
+// EXPECT: 10
+// EXPECT: 256
 
 // Part 1: Bridge declarations for libc functions
 
@@ -53,7 +55,26 @@ fn free_buffer(linear buf: CBuffer) {
     println_str("freed");
 }
 
-// Part 3: Tests
+// Part 3: Bridge struct with C-compatible layout
+
+bridge "C" Geom {
+    struct Vec2 {
+        x: i32,
+        y: i32,
+    }
+}
+
+fn vec2_sum(p: &Geom.Vec2) -> i32 {
+    p.x + p.y
+}
+
+// Part 4: Bridge type alias
+
+bridge "C" CTypes {
+    type SizeT = u64;
+}
+
+// Part 5: Tests
 
 fn main() -> i32 {
     // Test 1: allocate, read, fill, read, free (linear lifecycle)
@@ -95,6 +116,14 @@ fn main() -> i32 {
     } else {
         println_str("round-trip FAIL");
     }
+
+    // Test 4: bridge struct (C-compatible layout)
+    let pt: Geom.Vec2 = Geom.Vec2 { x: 3, y: 7 };
+    println_int(vec2_sum(&pt));
+
+    // Test 5: bridge type alias
+    let sz: CTypes.SizeT = 256u64;
+    println_int(sz as i32);
 
     0
 }
