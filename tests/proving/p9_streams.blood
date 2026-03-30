@@ -22,6 +22,8 @@
 // EXPECT: 30
 // EXPECT: === Compose ===
 // EXPECT: 9
+// EXPECT: === Linear ===
+// EXPECT: 100
 
 // Part 1: Higher-order functions operating on Vec<i32>
 
@@ -187,6 +189,13 @@ fn main() -> i32 {
     // So I need compose(add1, double)(4)
     let add1_after_double: fn(i32) -> i32 = compose(add1, double);
     println_int(add1_after_double(4));
+
+    // Test 8: move closure consuming a linear value (closures + linear types)
+    println_str("=== Linear ===");
+    let val: linear i32 = 100;
+    let consume: linear fn() -> i32 = move || -> i32 { val };
+    let consumed: i32 = consume();
+    println_int(consumed);
 
     0
 }
