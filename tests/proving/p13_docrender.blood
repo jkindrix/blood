@@ -18,6 +18,8 @@
 // EXPECT: <Welcome>
 // EXPECT: === Stats ===
 // EXPECT: nodes: 6, depth: 1
+// EXPECT: === Region ===
+// EXPECT: 2
 // EXPECT: === Closed ===
 // EXPECT: document closed
 
@@ -266,7 +268,17 @@ fn main() -> i32 {
     assert_eq!(n, 6);
     assert_eq!(d, 1);
 
-    // Test 5: Linear document lifecycle (P5)
+    // Test 5: Region-scoped rendering (P1 - data freed when region exits)
+    println_str("=== Region ===");
+    let region_count: i32 = region {
+        let mut rnodes: Vec<Node> = Vec.new();
+        rnodes.push(Node.Heading(1, make_string("Temp")));
+        rnodes.push(Node.Paragraph(make_string("Region data.")));
+        count_nodes(&rnodes)
+    };
+    println_int(region_count);
+
+    // Test 6: Linear document lifecycle (P5)
     println_str("=== Closed ===");
     close_document(doc);
 

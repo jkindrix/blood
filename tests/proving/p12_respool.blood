@@ -21,6 +21,11 @@
 // EXPECT: abort: pool exhausted
 // EXPECT: pool cleanup: 0 out
 // EXPECT: abort caught: -1
+// EXPECT: checkout: slot 0
+// EXPECT: using slot 0
+// EXPECT: checkin: slot 0
+// EXPECT: pool cleanup: 0 out
+// EXPECT: region result: 1
 
 struct PoolEntry {
     slot: i32,
@@ -113,6 +118,16 @@ fn main() -> i32 {
     };
     let msg2: &str = format!("abort caught: {}", r2);
     println_str(msg2);
+
+    // Test 3: region-scoped pool usage (data freed when region exits)
+    let r3: i32 = region {
+        let result: i32 = with PoolManager { checked_out: 0, capacity: 2, next_slot: 0 } handle {
+            checkout_use_return()
+        };
+        result
+    };
+    let msg3: &str = format!("region result: {}", r3);
+    println_str(msg3);
 
     0
 }
