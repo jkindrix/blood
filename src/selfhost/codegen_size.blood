@@ -368,6 +368,11 @@ fn type_to_llvm_uncached(
                 result
             }
         }
+        &type_intern.InternedTypeKind.Ownership { qualifier: _, inner } => {
+            // Ownership qualifiers don't affect runtime representation.
+            // Unwrap and resolve the inner type WITH ADT registry context.
+            type_to_llvm_with_ctx_id(ctx, inner)
+        }
         _ => {
             // Fast path for non-ADT types
             match type_to_llvm_fast_id(ty_id) {
@@ -453,6 +458,9 @@ pub fn type_size_with_ctx_id(ctx: &mut codegen_ctx.CodegenCtx, ty_id: type_inter
                 total = total + type_size_with_ctx_id(ctx, elem_id);
             }
             total
+        }
+        &type_intern.InternedTypeKind.Ownership { qualifier: _, inner } => {
+            type_size_with_ctx_id(ctx, inner)
         }
         _ => {
             // Fast path: use fast_id to get LLVM type string, then compute size
