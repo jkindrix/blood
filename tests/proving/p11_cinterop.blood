@@ -1,0 +1,120 @@
+// Proving Ground Program 11: cinterop - C library wrapper with linear safety
+// New features: bridge function calls, bridge structs, @unsafe blocks,
+//               pointer casts, raw pointer ops, linear wrappers for C resources
+//
+// EXPECT: allocated 64 bytes
+// EXPECT: byte 0: 0
+// EXPECT: filled ok
+// EXPECT: byte 0: 42
+// EXPECT: byte 63: 42
+// EXPECT: freed
+// EXPECT: abs(-99) = 99
+// EXPECT: round-trip ok
+
+// Part 1: Bridge declarations for libc functions
+
+// Note: cannot bridge malloc/free/realloc/memcpy - their names collide
+// with internal runtime wrappers that use different signatures (i64 vs ptr).
+// This is a known bug: bridge should prefix or disambiguate.
+bridge "C" libc {
+    fn calloc(count: usize, size: usize) -> *mut u8;
+    fn memset(ptr: *mut u8, val: i32, len: usize) -> *mut u8;
+    fn memmove(dest: *mut u8, src: *const u8, n: usize) -> *mut u8;
+    fn abs(x: i32) -> i32;
+    fn strlen(s: *const u8) -> usize;
+}
+
+// Part 2: Linear buffer wrapper - guarantees free is called
+
+struct CBuffer {
+    ptr: *mut u8,
+    size: usize,
+}
+
+fn alloc_buffer(size: usize) -> CBuffer {
+    let ptr: *mut u8 = libc.calloc(1, size);
+    let msg: &str = format!("allocated {} bytes", size as i32);
+    println_str(msg);
+    CBuffer { ptr: ptr, size: size }
+}
+
+fn read_byte(buf: &CBuffer, offset: usize) -> i32 {
+    let byte_ptr: *const u8 = @unsafe {
+        let base: usize = buf.ptr as usize;
+        let addr: usize = base + offset;
+        addr as *const u8
+    };
+    let val: u8 = @unsafe { *byte_ptr };
+    val as i32
+}
+
+fn fill_buffer(buf: &CBuffer, val: i32) {
+    libc.memset(buf.ptr, val, buf.size);
+}
+
+fn free_buffer(linear buf: CBuffer) {
+    // Cannot call libc.free due to name collision with runtime wrapper.
+    // Linear type still ensures this function MUST be called (consumption).
+    // The memory will be reclaimed by the OS at process exit.
+    let _ = buf.ptr;
+    println_str("freed");
+}
+
+// Part 3: Bridge struct for metadata
+
+bridge "C" BridgeTypes {
+    struct Pair {
+        first: i32,
+        second: i32,
+    }
+}
+
+fn make_pair(a: i32, b: i32) -> BridgeTypes.Pair {
+    BridgeTypes.Pair { first: a, second: b }
+}
+
+// Part 4: Tests
+
+fn main() -> i32 {
+    // Test 1: allocate, read, fill, read, free (linear lifecycle)
+    let buf: linear CBuffer = alloc_buffer(64);
+
+    // Read uninitialized (should be 0 from malloc on most systems)
+    let b0: i32 = read_byte(&buf, 0);
+    print_str("byte 0: ");
+    println_int(b0);
+
+    // Fill with value
+    fill_buffer(&buf, 42);
+    println_str("filled ok");
+
+    // Verify fill
+    let b1: i32 = read_byte(&buf, 0);
+    print_str("byte 0: ");
+    println_int(b1);
+    let b2: i32 = read_byte(&buf, 63);
+    print_str("byte 63: ");
+    println_int(b2);
+
+    // Free (consumes linear handle)
+    free_buffer(buf);
+
+    // Test 2: bridge function call (abs)
+    let neg: i32 = libc.abs(0 - 99);
+    let msg: &str = format!("abs(-99) = {}", neg);
+    println_str(msg);
+
+    // Test 3: pointer round-trip via @unsafe casts
+    let x: i32 = 777;
+    let p: *const i32 = &x as *const i32;
+    let addr: usize = @unsafe { p as usize };
+    let p2: *const i32 = @unsafe { addr as *const i32 };
+    let val: i32 = @unsafe { *p2 };
+    if val == 777 {
+        println_str("round-trip ok");
+    } else {
+        println_str("round-trip FAIL");
+    }
+
+    0
+}
