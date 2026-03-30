@@ -1,18 +1,23 @@
-// Program 7: actors — Message-passing with memory safety
+// Program 7: actors -- Message-passing with memory safety
 // Pillars: 3 (Effects) + 1 (Generational Refs) + 5 (Regions)
 //
-// Demonstrates:
-// 1. Actors as region-allocated entities
-// 2. Generational actor handles (stale actor detection via CatchStale handler)
-// 3. Effect-based message dispatch
-// 4. Handler state for actor mailboxes
-// 5. Region destruction = actor teardown (handles become stale)
-// 6. Copy semantics for messages (Blood MVS)
-// 7. Cross-pillar interaction: effects + gen refs + regions
-//
-// Known gap: sequential region destruction inside an effect handler scope
-// causes stale ref panic on subsequent performs (runtime bug). Worked around
-// by using a single region per handler scope for performs.
+// EXPECT: === Part 1: Region actors + effects ===
+// EXPECT: actor_a inbox=15
+// EXPECT: actor_b inbox=50
+// EXPECT: === Part 2: Cross-function refs in handler ===
+// EXPECT: cross-fn inbox=350
+// EXPECT: === Part 3: Three actors, one pool ===
+// EXPECT: total=66
+// EXPECT: === Part 4: Stale actor handle detection ===
+// EXPECT: alive: inbox=42
+// EXPECT: reading stale actor handle...
+// EXPECT: STALE ACTOR: gen expected=42
+// EXPECT: stale handle caught, resumed
+// EXPECT: stale catches=1
+// EXPECT: === Part 5: Handler state persistence ===
+// EXPECT: pre-loaded a=105
+// EXPECT: pre-loaded b=210
+// EXPECT: === All parts passed ===
 
 // ============================================================
 // Types

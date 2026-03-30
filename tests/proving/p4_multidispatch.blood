@@ -1,18 +1,32 @@
-// Program 4: multidispatch — Methods that specialize without inheritance
+// Program 4: multidispatch -- Methods that specialize without inheritance
 // Pillar 4: Extensibility (Multiple Dispatch)
 //
-// Demonstrates:
-// 1. Multiple dispatch (method selected by multiple argument types)
-// 2. Specificity ordering (concrete > constrained generic > unconstrained)
-// 3. Retroactive conformance (adding impl for types without modifying them)
-// 4. Constraint specificity (more bounds = more specific)
-// 5. Multi-parameter dispatch (method selected by BOTH argument types)
-//
-// Known gap: trait method calls inside generic function bodies produce
-// invalid code (pre-existing monomorphization pipeline bug). The dispatch
-// SELECTION is correct — the issue is in executing the selected body.
-// This program demonstrates dispatch selection by returning distinguishing
-// values from each overload.
+// EXPECT: === Part 1: Circle+Screen specialized ===
+// EXPECT: SPECIALIZED circle+screen r=5
+// EXPECT: === Part 2: Rect+Printer specialized ===
+// EXPECT: SPECIALIZED rect+printer w=4
+// EXPECT: === Part 3: Tri+Screen specialized ===
+// EXPECT: SPECIALIZED tri+screen b=3
+// EXPECT: === Part 4: Generic fallback ===
+// EXPECT: generic draw
+// EXPECT: === Part 5: Retroactive extension ===
+// EXPECT: generic draw
+// EXPECT: === Part 6: Constraint specificity ===
+// EXPECT: format(Printable+Measurable)
+// EXPECT: format(Printable)
+// EXPECT: === Part 7: Concrete vs constrained ===
+// EXPECT: process(Circle) r=5
+// EXPECT: process(Rect) w=4
+// EXPECT: process(Shape)
+// EXPECT: process(Shape)
+// EXPECT: === Part 8: Where clauses ===
+// EXPECT: === Part 9: Effect-row dispatch ===
+// EXPECT: execute: pure
+// EXPECT: execute: audited
+// EXPECT: === Part 10: Cross-module dispatch ===
+// EXPECT: process(Shape)
+// EXPECT: pentagon area=18
+// EXPECT: === All parts passed ===
 
 // ============================================================
 // Part 1: Traits — the dispatch interfaces

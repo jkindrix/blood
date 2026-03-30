@@ -1,15 +1,30 @@
-// Program 6: transaction — Database transactions that can't be misused
+// Program 6: transaction -- Database transactions that can't be misused
 // Pillars: 3 (Effects) + 5 (Linear Types)
 //
-// Demonstrates:
-// 1. Linear transaction handle (must consume via commit or rollback)
-// 2. Effect for DB operations (query, insert)
-// 3. Handler swap: production handler vs in-memory test handler
-// 4. Non-resumptive abort handler for error cases
-// 5. Combining linearity checking with effect checking
-//
-// A transaction handle is linear: the compiler guarantees every
-// begin() is paired with exactly one commit() or rollback().
+// EXPECT: === Part 1: Successful transfer ===
+// EXPECT: BEGIN tx=1
+// EXPECT: COMMIT tx=1
+// EXPECT: transfer result=200
+// EXPECT: === Part 2: Insufficient funds ===
+// EXPECT: BEGIN tx=1
+// EXPECT: ROLLBACK tx=1
+// EXPECT: ABORT: insufficient funds
+// EXPECT: abort result=-1
+// EXPECT: === Part 3: Deposit ===
+// EXPECT: BEGIN tx=2
+// EXPECT: COMMIT tx=2
+// EXPECT: deposit done
+// EXPECT: === Part 4: Handler swap ===
+// EXPECT: BEGIN tx=1
+// EXPECT: COMMIT tx=1
+// EXPECT: BEGIN tx=1
+// EXPECT: COMMIT tx=1
+// EXPECT: swap result=350
+// EXPECT: === Part 5: Region-scoped connection ===
+// EXPECT: OPEN conn=1
+// EXPECT: balance via conn=750
+// EXPECT: CLOSE conn=1
+// EXPECT: === All parts passed ===
 
 // ============================================================
 // Part 1: Effects — the DB operation interface

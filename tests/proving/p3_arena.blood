@@ -1,14 +1,24 @@
-// Program 3: arena — Use-after-free caught at dereference
+// Program 3: arena -- Use-after-free caught at dereference
 // Pillar 1: Veracity (Generational References)
 //
-// Demonstrates:
-// 1. Fat references ({ ptr, i32 }) carrying generation counters
-// 2. Region blocks with implicit allocation
-// 3. Region destruction increments generation (stale refs detectable)
-// 4. Stale reference detection at dereference (gen mismatch → caught by handler)
-// 5. Derived references (&entity.field propagates gen from source)
-// 6. References surviving across function boundaries
-// 7. Named regions with lifetime labels
+// EXPECT: === Part 1: Basic region allocation ===
+// EXPECT: health=100
+// EXPECT: x=10
+// EXPECT: === Part 2: Cross-function reference ===
+// EXPECT: ref.health=200
+// EXPECT: === Part 3: Multiple entities ===
+// EXPECT: sum=60
+// EXPECT: === Part 4: Stale reference detection ===
+// EXPECT: alive: health=777
+// EXPECT: dereferencing stale ref...
+// EXPECT: STALE CAUGHT: expected gen=6
+// EXPECT: handler caught stale ref and resumed
+// EXPECT: stale catches=1
+// EXPECT: === Part 5: Derived references ===
+// EXPECT: derived x+y=20
+// EXPECT: === Part 6: Named regions ===
+// EXPECT: outer.health=300
+// EXPECT: === All parts passed ===
 
 // ============================================================
 // Types

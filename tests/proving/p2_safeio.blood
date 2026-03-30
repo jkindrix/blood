@@ -1,13 +1,23 @@
-// Program 2: safeio — Resources that can't leak
+// Program 2: safeio -- Resources that can't leak
 // Pillar 5: Isolation (Linear Types + Regions)
 //
-// Demonstrates:
-// 1. linear parameter qualifiers (fn close(linear h: Handle))
-// 2. Must-consume semantics (compiler rejects unused linear values)
-// 3. linear type annotations (let h: linear Handle = ...)
-// 4. linear fn callbacks (must be called exactly once)
-// 5. Linearity + effects interaction (effectful function taking linear handle)
-// 6. Region-scoped temporary buffers (region { } scratch space)
+// EXPECT: === Part 1: Linear handle lifecycle ===
+// EXPECT: OPEN fd=8
+// EXPECT: READ fd=8
+// EXPECT: CLOSE fd=8
+// EXPECT: result1=80
+// EXPECT: === Part 2: linear fn callback ===
+// EXPECT: CLEANUP executed
+// EXPECT: === Part 3: Region scratch ===
+// EXPECT: result3=43
+// EXPECT: === Part 4: Linearity + effects ===
+// EXPECT: OPEN fd=8
+// EXPECT: READ fd=8
+// EXPECT: LOG: read complete
+// EXPECT: CONTENT=80
+// EXPECT: CLOSE fd=8
+// EXPECT: LOG: handle closed
+// EXPECT: === All parts passed ===
 
 // ============================================================
 // Part 1: Linear file handles — must close, can't leak
