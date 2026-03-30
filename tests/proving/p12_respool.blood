@@ -1,0 +1,118 @@
+// Proving Ground Program 12: respool - Resource pool with cleanup guarantees
+// New features: handler finally clause with state access, mixed NTR/TR ops,
+//               3-field handler state, nested perform + separate functions
+//
+// Known bug: ownership-qualified (linear/affine) types crash when passed via
+// perform to handler ops. Persistent allocation adds indirection that the
+// perform arg packing doesn't account for (double dereference on struct value).
+//
+// EXPECT: checkout: slot 0
+// EXPECT: using slot 0
+// EXPECT: checkin: slot 0
+// EXPECT: checkout: slot 1
+// EXPECT: using slot 1
+// EXPECT: checkout: slot 2
+// EXPECT: using slot 2
+// EXPECT: checkin: slot 1
+// EXPECT: checkin: slot 2
+// EXPECT: pool cleanup: 0 out
+// EXPECT: pool result: 3
+// EXPECT: checkout: slot 0
+// EXPECT: abort: pool exhausted
+// EXPECT: pool cleanup: 0 out
+// EXPECT: abort caught: -1
+
+struct PoolEntry {
+    slot: i32,
+}
+
+effect Pool {
+    op checkout() -> PoolEntry;
+    op checkin(entry: PoolEntry) -> ();
+    op abort(reason: &str) -> i32;
+}
+
+deep handler PoolManager for Pool {
+    let mut checked_out: i32
+    let mut capacity: i32
+    let mut next_slot: i32
+
+    return(x) { x }
+
+    finally {
+        let cleanup_msg: &str = format!("pool cleanup: {} out", checked_out);
+        println_str(cleanup_msg);
+    }
+
+    op checkout() {
+        if next_slot >= capacity {
+            next_slot = 0;
+        }
+        let slot: i32 = next_slot;
+        next_slot = next_slot + 1;
+        checked_out = checked_out + 1;
+        print_str("checkout: slot ");
+        println_int(slot);
+        resume(PoolEntry { slot: slot })
+    }
+
+    op checkin(entry) {
+        checked_out = checked_out - 1;
+        print_str("checkin: slot ");
+        println_int(entry.slot);
+        resume(())
+    }
+
+    op abort(reason) {
+        print_str("abort: ");
+        println_str(reason);
+        0 - 1
+    }
+}
+
+fn use_entry(entry: &PoolEntry) {
+    print_str("using slot ");
+    println_int(entry.slot);
+}
+
+fn checkout_use_return() -> i32 / {Pool} {
+    let entry: PoolEntry = perform Pool.checkout();
+    use_entry(&entry);
+    perform Pool.checkin(entry);
+    1
+}
+
+fn checkout_two() -> i32 / {Pool} {
+    let e1: PoolEntry = perform Pool.checkout();
+    use_entry(&e1);
+    let e2: PoolEntry = perform Pool.checkout();
+    use_entry(&e2);
+    perform Pool.checkin(e1);
+    perform Pool.checkin(e2);
+    2
+}
+
+fn checkout_and_abort() -> i32 / {Pool} {
+    let _entry: PoolEntry = perform Pool.checkout();
+    perform Pool.abort("pool exhausted")
+}
+
+fn main() -> i32 {
+    // Test 1: normal checkout/checkin cycle + finally cleanup
+    let r1: i32 = with PoolManager { checked_out: 0, capacity: 4, next_slot: 0 } handle {
+        let a: i32 = checkout_use_return();
+        let b: i32 = checkout_two();
+        a + b
+    };
+    let msg1: &str = format!("pool result: {}", r1);
+    println_str(msg1);
+
+    // Test 2: abort path - finally still runs
+    let r2: i32 = with PoolManager { checked_out: 0, capacity: 4, next_slot: 0 } handle {
+        checkout_and_abort()
+    };
+    let msg2: &str = format!("abort caught: {}", r2);
+    println_str(msg2);
+
+    0
+}
