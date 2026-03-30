@@ -3368,11 +3368,13 @@ fn propagate_match_sub_patterns(
             let deref_ty = strip_one_ref_id(resolved);
             match deref_ty {
                 Option.Some(dt) => {
-                    // Inner pattern gets the dereferenced type with full unification.
                     propagate_pattern_types(checker, inner.as_ref(), dt);
                 }
                 Option.None => {
-                    // Raw scrutinee is not a reference — can't strip
+                    // Scrutinee type unresolved (e.g., closure param inference variable).
+                    // Still propagate to inner pattern — the pattern's own path
+                    // contains enough info to determine field types for non-generic ADTs.
+                    propagate_pattern_types(checker, inner.as_ref(), resolved);
                 }
             }
         }
@@ -3537,17 +3539,15 @@ fn propagate_pattern_types_inner(
 
         &hir_expr.PatternKind.Ref { mutable: _, ref inner } => {
             // &pat or &mut pat: strip one reference layer from the expected type
-            // (not the resolved type which was auto-stripped).
-            // The effective_ty for Ref patterns kept references, so strip one layer.
             let deref_ty = strip_one_ref_id(resolved);
             match deref_ty {
                 Option.Some(dt) => {
-                    // Pass the deref'd type to the inner pattern.
-                    // The inner pattern will handle further auto-deref if needed.
                     propagate_pattern_types(checker, inner.as_ref(), dt);
                 }
                 Option.None => {
-                    // Type doesn't have reference structure — don't propagate
+                    // Type unresolved (e.g., closure inference var) — still propagate
+                    // so inner patterns can resolve field types from their paths.
+                    propagate_pattern_types(checker, inner.as_ref(), resolved);
                 }
             }
         }
