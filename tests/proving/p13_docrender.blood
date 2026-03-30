@@ -244,10 +244,17 @@ fn main() -> i32 {
         render_all(&nodes, false);
     };
 
-    // Test 3: Custom formatter via closure (P9-style)
+    // Test 3: Custom formatter via closure with ref binding in match (P9-style)
     println_str("=== Custom ===");
     render_with_formatter(&nodes, |node| {
-        format_heading_only(node);
+        match node {
+            &Node.Heading(_, ref text) => {
+                print_str("<");
+                print_str(text.as_str());
+                println_str(">");
+            },
+            _ => {},
+        }
     });
 
     // Test 4: Tree stats via pattern matching + if-let
