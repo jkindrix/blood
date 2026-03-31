@@ -9,11 +9,14 @@ mod common;
 
 // ---- Data Structures ----
 
-/// A single pattern part — either a literal string to match or a capture binding.
+/// A single pattern part — literal, capture, or repetition group.
 struct PatternPart {
     is_capture: bool,
-    literal: String,       // used when is_capture == false
-    capture_name: String,  // used when is_capture == true
+    is_repetition: bool,
+    literal: String,            // used when is_capture == false && is_repetition == false
+    capture_name: String,       // used when is_capture == true
+    rep_parts: Vec<PatternPart>,  // used when is_repetition == true
+    rep_separator: String,      // used when is_repetition == true (e.g., ",")
 }
 
 /// A single macro rule: pattern parts + expansion template.
@@ -31,9 +34,12 @@ struct MacroDef {
 }
 
 /// A captured argument: name-value pair from pattern matching.
+/// For repeated captures, `values` holds multiple captured strings.
 struct CapturedArg {
     name: String,
     value: String,
+    is_repeated: bool,
+    values: Vec<String>,
 }
 
 /// Result of parsing one rule — the rule and where parsing ended.
@@ -245,7 +251,71 @@ fn try_match_rule(args: &String, rule: &MacroRule) -> Option<Vec<CapturedArg>> {
     }
 
     for pi in 0usize..rule.parts.len() {
-        if rule.parts[pi].is_capture {
+        if rule.parts[pi].is_repetition {
+            // Repetition group: match zero or more separator-delimited items.
+            // Each repetition must have exactly one capture in its nested parts.
+            let rep = &rule.parts[pi];
+            let sep_bytes = rep.rep_separator.as_bytes();
+            let sep_len = sep_bytes.len();
+
+            // Collect the capture name from the nested parts
+            let mut rep_name = String.new();
+            let mut rj: usize = 0;
+            while rj < rep.rep_parts.len() {
+                if rep.rep_parts[rj].is_capture {
+                    rep_name = clone_string(&rep.rep_parts[rj].capture_name);
+                }
+                rj += 1;
+            }
+
+            let mut rep_values: Vec<String> = Vec.new();
+
+            // Skip whitespace before first item
+            while pos < len && (bytes[pos] == 32 || bytes[pos] == 10 || bytes[pos] == 9) {
+                pos += 1;
+            }
+
+            // Match items separated by the separator
+            if pos < len {
+                // Parse first item (balanced expression up to separator or end)
+                let first_end = find_expr_end_balanced(bytes, pos, len, sep_bytes, sep_len);
+                let mut val = String.new();
+                let mut vi: usize = pos;
+                while vi < first_end { val.push(bytes[vi] as char); vi += 1; }
+                rep_values.push(trim_string(&val));
+                pos = first_end;
+
+                // Parse remaining items after separators
+                while pos < len && sep_len > 0 {
+                    // Skip whitespace
+                    while pos < len && (bytes[pos] == 32 || bytes[pos] == 10 || bytes[pos] == 9) {
+                        pos += 1;
+                    }
+                    if pos + sep_len <= len && matches_bytes_at(bytes, pos, sep_bytes, sep_len) {
+                        pos += sep_len;
+                        // Skip whitespace after separator
+                        while pos < len && (bytes[pos] == 32 || bytes[pos] == 10 || bytes[pos] == 9) {
+                            pos += 1;
+                        }
+                        let item_end = find_expr_end_balanced(bytes, pos, len, sep_bytes, sep_len);
+                        let mut item_val = String.new();
+                        let mut ii: usize = pos;
+                        while ii < item_end { item_val.push(bytes[ii] as char); ii += 1; }
+                        rep_values.push(trim_string(&item_val));
+                        pos = item_end;
+                    } else {
+                        break;
+                    }
+                }
+            }
+
+            captures.push(CapturedArg {
+                name: rep_name,
+                value: String.new(),
+                is_repeated: true,
+                values: rep_values,
+            });
+        } else if rule.parts[pi].is_capture {
             // Find the terminator: next Literal part after this capture
             let terminator = find_next_literal(rule, pi + 1);
             match terminator {
@@ -264,6 +334,8 @@ fn try_match_rule(args: &String, rule: &MacroRule) -> Option<Vec<CapturedArg>> {
                             captures.push(CapturedArg {
                                 name: clone_string(&rule.parts[pi].capture_name),
                                 value: value,
+                                is_repeated: false,
+                                values: Vec.new(),
                             });
                             pos = found_pos;
                         }
@@ -283,6 +355,8 @@ fn try_match_rule(args: &String, rule: &MacroRule) -> Option<Vec<CapturedArg>> {
                     captures.push(CapturedArg {
                         name: clone_string(&rule.parts[pi].capture_name),
                         value: value,
+                        is_repeated: false,
+                        values: Vec.new(),
                     });
                     pos = len;
                 }
@@ -385,6 +459,66 @@ fn find_literal_balanced(bytes: &[u8], start: usize, len: usize,
     Option.None
 }
 
+/// Find the end of a balanced expression, stopping at a top-level separator.
+/// Returns the position of the separator or end of input.
+fn find_expr_end_balanced(bytes: &[u8], start: usize, len: usize, sep_bytes: &[u8], sep_len: usize) -> usize {
+    let mut pos: usize = start;
+    let mut paren: u32 = 0;
+    let mut bracket: u32 = 0;
+    let mut brace: u32 = 0;
+
+    while pos < len {
+        let b = bytes[pos];
+
+        // Skip string literals
+        if b == 34 { // '"'
+            pos += 1;
+            while pos < len {
+                if bytes[pos] == 92 { pos += 2; continue; } // '\\'
+                if bytes[pos] == 34 { pos += 1; break; }     // closing '"'
+                pos += 1;
+            }
+            continue;
+        }
+
+        // At depth 0, check for separator
+        if paren == 0 && bracket == 0 && brace == 0 {
+            if sep_len > 0 && pos + sep_len <= len && matches_bytes_at(bytes, pos, sep_bytes, sep_len) {
+                return pos;
+            }
+        }
+
+        if b == 40 { paren += 1; }
+        if b == 41 && paren > 0 { paren -= 1; }
+        if b == 91 { bracket += 1; }
+        if b == 93 && bracket > 0 { bracket -= 1; }
+        if b == 123 { brace += 1; }
+        if b == 125 && brace > 0 { brace -= 1; }
+
+        pos += 1;
+    }
+
+    len
+}
+
+/// Trim leading and trailing whitespace from a String.
+fn trim_string(s: &String) -> String {
+    let bytes = s.as_bytes();
+    let slen = bytes.len();
+    let mut start: usize = 0;
+    while start < slen && (bytes[start] == 32 || bytes[start] == 10 || bytes[start] == 9 || bytes[start] == 13) {
+        start += 1;
+    }
+    let mut end_pos: usize = slen;
+    while end_pos > start && (bytes[end_pos - 1] == 32 || bytes[end_pos - 1] == 10 || bytes[end_pos - 1] == 9 || bytes[end_pos - 1] == 13) {
+        end_pos -= 1;
+    }
+    let mut result = String.new();
+    let mut i: usize = start;
+    while i < end_pos { result.push(bytes[i] as char); i += 1; }
+    result
+}
+
 // ---- Substitution ----
 
 /// Substitute all $name references in template with captured values.
@@ -396,6 +530,83 @@ fn substitute_multi(template: &String, captures: &Vec<CapturedArg>) -> String {
 
     while pos < len {
         if bytes[pos] == 36 { // '$'
+            // Check for repetition expansion: $( ... ) sep *
+            if pos + 1 < len && bytes[pos + 1] == 40 { // '$('
+                // Find matching ')' in template
+                let group_start = pos + 2;
+                let mut depth: u32 = 1;
+                let mut gpos: usize = group_start;
+                while gpos < len && depth > 0 {
+                    if bytes[gpos] == 40 { depth += 1; }
+                    if bytes[gpos] == 41 { depth -= 1; }
+                    if depth > 0 { gpos += 1; }
+                }
+                let group_end = gpos;
+                gpos += 1; // skip ')'
+
+                // Parse separator (character before * or +)
+                let mut exp_sep = String.new();
+                if gpos < len && bytes[gpos] != 42 && bytes[gpos] != 43 {
+                    exp_sep.push(bytes[gpos] as char);
+                    gpos += 1;
+                }
+                // Skip * or +
+                if gpos < len && (bytes[gpos] == 42 || bytes[gpos] == 43) {
+                    gpos += 1;
+                }
+
+                // Extract the template fragment between $( and )
+                let mut frag = String.new();
+                let mut fi: usize = group_start;
+                while fi < group_end { frag.push(bytes[fi] as char); fi += 1; }
+
+                // Find the repeated capture referenced in this fragment
+                let mut rep_count: usize = 0;
+                let mut rci: usize = 0;
+                while rci < captures.len() {
+                    if captures[rci].is_repeated {
+                        rep_count = captures[rci].values.len();
+                    }
+                    rci += 1;
+                }
+
+                // Expand: for each repetition, substitute $name with values[i]
+                let mut iter: usize = 0;
+                while iter < rep_count {
+                    if iter > 0 && exp_sep.len() > 0 {
+                        result.push_str(exp_sep.as_str());
+                        result.push(' ');
+                    }
+                    // Build single-item captures for this iteration
+                    let mut iter_caps: Vec<CapturedArg> = Vec.new();
+                    let mut ici: usize = 0;
+                    while ici < captures.len() {
+                        if captures[ici].is_repeated && iter < captures[ici].values.len() {
+                            iter_caps.push(CapturedArg {
+                                name: clone_string(&captures[ici].name),
+                                value: clone_string(&captures[ici].values[iter]),
+                                is_repeated: false,
+                                values: Vec.new(),
+                            });
+                        } else if !captures[ici].is_repeated {
+                            iter_caps.push(CapturedArg {
+                                name: clone_string(&captures[ici].name),
+                                value: clone_string(&captures[ici].value),
+                                is_repeated: false,
+                                values: Vec.new(),
+                            });
+                        }
+                        ici += 1;
+                    }
+                    let expanded_frag = substitute_multi(&frag, &iter_caps);
+                    result.push_str(expanded_frag.as_str());
+                    iter += 1;
+                }
+
+                pos = gpos;
+                continue;
+            }
+
             // Try to match each capture name
             let mut found = false;
             let mut ci: usize = 0;
@@ -407,7 +618,12 @@ fn substitute_multi(template: &String, captures: &Vec<CapturedArg>) -> String {
                         let after = pos + 1 + name_len;
                         let boundary = after >= len || !is_ident_char(bytes[after]);
                         if boundary {
-                            result.push_str(captures[ci].value.as_str());
+                            if captures[ci].is_repeated {
+                                // Shouldn't happen outside $(...)* but handle gracefully
+                                result.push_str("<repeated>");
+                            } else {
+                                result.push_str(captures[ci].value.as_str());
+                            }
                             pos = after;
                             found = true;
                         }
@@ -610,6 +826,61 @@ fn parse_pattern_parts(bytes: &[u8], start: usize, end: usize) -> Vec<PatternPar
 
     while pos < end {
         if bytes[pos] == 36 { // '$'
+            // Check for repetition group: $( ... ) sep *
+            if pos + 1 < end && bytes[pos + 1] == 40 { // '$('
+                // Flush accumulated literal
+                if literal.len() > 0 {
+                    parts.push(PatternPart {
+                        is_capture: false,
+                        is_repetition: false,
+                        literal: literal,
+                        capture_name: String.new(),
+                        rep_parts: Vec.new(),
+                        rep_separator: String.new(),
+                    });
+                    literal = String.new();
+                }
+
+                // Find matching ')' for the group
+                let group_start = pos + 2;
+                let mut depth: u32 = 1;
+                let mut gpos: usize = group_start;
+                while gpos < end && depth > 0 {
+                    if bytes[gpos] == 40 { depth += 1; }  // '('
+                    if bytes[gpos] == 41 { depth -= 1; }  // ')'
+                    if depth > 0 { gpos += 1; }
+                }
+                let group_end = gpos;
+                gpos += 1; // skip ')'
+
+                // Parse separator (single character before * or +)
+                let mut sep = String.new();
+                if gpos < end && bytes[gpos] != 42 && bytes[gpos] != 43 { // not '*' or '+'
+                    sep.push(bytes[gpos] as char);
+                    gpos += 1;
+                }
+
+                // Skip '*' or '+'
+                if gpos < end && (bytes[gpos] == 42 || bytes[gpos] == 43) {
+                    gpos += 1;
+                }
+
+                // Recursively parse the group contents as pattern parts
+                let nested = parse_pattern_parts(bytes, group_start, group_end);
+
+                parts.push(PatternPart {
+                    is_capture: false,
+                    is_repetition: true,
+                    literal: String.new(),
+                    capture_name: String.new(),
+                    rep_parts: nested,
+                    rep_separator: sep,
+                });
+
+                pos = gpos;
+                continue;
+            }
+
             // Try to parse $name:kind
             let cap_start = pos + 1;
             let mut cap_pos = cap_start;
@@ -634,8 +905,11 @@ fn parse_pattern_parts(bytes: &[u8], start: usize, end: usize) -> Vec<PatternPar
                 if literal.len() > 0 {
                     parts.push(PatternPart {
                         is_capture: false,
+                        is_repetition: false,
                         literal: literal,
                         capture_name: String.new(),
+                        rep_parts: Vec.new(),
+                        rep_separator: String.new(),
                     });
                     literal = String.new();
                 }
@@ -643,8 +917,11 @@ fn parse_pattern_parts(bytes: &[u8], start: usize, end: usize) -> Vec<PatternPar
                 // Add capture part
                 parts.push(PatternPart {
                     is_capture: true,
+                    is_repetition: false,
                     literal: String.new(),
                     capture_name: capture_name,
+                    rep_parts: Vec.new(),
+                    rep_separator: String.new(),
                 });
 
                 pos = kind_pos;
@@ -661,8 +938,11 @@ fn parse_pattern_parts(bytes: &[u8], start: usize, end: usize) -> Vec<PatternPar
     if literal.len() > 0 {
         parts.push(PatternPart {
             is_capture: false,
+            is_repetition: false,
             literal: literal,
             capture_name: String.new(),
+            rep_parts: Vec.new(),
+            rep_separator: String.new(),
         });
     }
 

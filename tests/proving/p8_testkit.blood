@@ -2,7 +2,7 @@
 // New features: user macros + effects, multi-rule macros, recursive macros,
 //               matches!(), match guards, multi-field handler state
 //
-// EXPECT: Results: 12 passed, 0 failed
+// EXPECT: Results: 16 passed, 0 failed
 
 macro assert_eq {
     ($a:expr, $b:expr) => {
@@ -110,6 +110,28 @@ fn test_matches() / {TestReport} {
     }
 }
 
+// Repetition patterns: $($x:expr),*
+macro sum_all {
+    ($($x:expr),*) => {
+        0 $(+ $x)*
+    };
+}
+
+macro assert_all_positive {
+    ($($x:expr),*) => {
+        $(assert_eq!(($x > 0) as i32, 1);)*
+    };
+}
+
+fn test_repetition() / {TestReport} {
+    // sum_all: accumulates values with + separator
+    let total: i32 = sum_all!(1, 2, 3, 4);
+    assert_eq!(total, 10);
+
+    // assert_all_positive: generates one assert per item
+    assert_all_positive!(1, 5, 42);
+}
+
 // Match guards: _ if condition => expr
 fn test_match_guards() / {TestReport} {
     let x: i32 = 42;
@@ -130,6 +152,7 @@ fn main() -> i32 {
         test_multi_rule();
         test_recursive();
         test_matches();
+        test_repetition();
         test_match_guards();
     };
     0
