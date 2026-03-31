@@ -2,14 +2,10 @@
 // BC-01 and codegen E0503 only check direct Ref→return chains.
 // Passing &local through a function call launders the reference.
 //
-// Root cause: is_always_stack_type demotes ArgEscape→Stack for primitives.
-// x gets alloca (gen=0), no stale detection. After make_ref returns,
-// the reference points to a dead stack frame. clobber() reuses the
-// stack and *r reads clobbered data instead of 42.
-//
-// When gen-ref safety is working, this should COMPILE_FAIL or EXPECT_EXIT: nonzero.
-// Currently: reads garbage — use-after-free.
-// EXPECT: 333333
+// FIXED: ArgEscape primitives are no longer demoted to Stack. The local
+// x gets region allocation (gen-tracked), so the value 42 is preserved
+// safely even after the function returns. The use-after-free is prevented.
+// EXPECT: 42
 
 fn identity_ref(r: &i32) -> &i32 {
     r

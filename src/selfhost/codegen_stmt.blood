@@ -1838,6 +1838,7 @@ pub fn emit_allocas_with_escapes(
         let is_region_owned = body.get_region_owner(local_id).is_some();
         let tier = if is_always_stack_type(&local_hir_ty) && !is_region_owned {
             match raw_state {
+                &mir_escape.EscapeState.ArgEscape => raw_tier,
                 &mir_escape.EscapeState.HeapEscape => raw_tier,
                 &mir_escape.EscapeState.GlobalEscape => raw_tier,
                 _ => mir_escape.MemoryTier.Stack,
