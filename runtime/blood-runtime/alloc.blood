@@ -37,13 +37,27 @@ static mut RV_END: [i64; 64] = [0i64; 64];
 static mut RV_GEN: [i32; 64] = [0i32; 64];
 
 /// Register a region for generation validation. Called by rt_region on create.
+/// Deduplicates: if an entry for this base address already exists (from a
+/// previous region that was destroyed but not unregistered, or address reuse),
+/// update it instead of adding a duplicate.
 pub fn register_region_validation(base: i64, end: i64, generation: i32) {
     @unsafe {
+        // Check for existing entry with same base (address reuse)
+        let mut i: i64 = 0;
+        while i < RV_COUNT {
+            if RV_BASE[i as usize] == base {
+                RV_END[i as usize] = end;
+                RV_GEN[i as usize] = generation;
+                return;
+            }
+            i = i + 1;
+        }
+        // No existing entry — add new
         if RV_COUNT < 64 {
-            let i: usize = RV_COUNT as usize;
-            RV_BASE[i] = base;
-            RV_END[i] = end;
-            RV_GEN[i] = generation;
+            let idx: usize = RV_COUNT as usize;
+            RV_BASE[idx] = base;
+            RV_END[idx] = end;
+            RV_GEN[idx] = generation;
             RV_COUNT = RV_COUNT + 1;
         }
     }
@@ -83,16 +97,17 @@ pub fn unregister_region_validation(base: i64) {
 }
 
 /// Check if addr falls in any registered region. Returns gen if found, -1 if not.
+/// Searches from end (most recent) to handle address reuse correctly.
 fn region_lookup_gen(addr: i64) -> i32 {
     @unsafe {
-        let mut i: i64 = 0;
-        while i < RV_COUNT {
+        let mut i: i64 = RV_COUNT - 1;
+        while i >= 0 {
             if addr >= RV_BASE[i as usize] {
                 if addr < RV_END[i as usize] {
                     return RV_GEN[i as usize];
                 }
             }
-            i = i + 1;
+            i = i - 1;
         }
         -1
     }

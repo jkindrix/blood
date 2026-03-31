@@ -190,9 +190,27 @@ pub fn emit_terminator(
             // Add snapshot entries for unsized ref locals (&str, &[T]) with packed gen.
             // Gen is in upper 32 bits of the i64 field (field 1 of { ptr, i64 }).
             // Data pointer (field 0) is the address to validate.
+            // SKIP locals already snapshotted as region/persistent locals (they have
+            // their own _gen alloca and were handled above — double-snapshotting
+            // with extracted upper-32 gen causes false stale ref panics).
             for ti in 0usize..ctx.local_types.len() {
                 let lt = &ctx.local_types[ti];
                 if string_eq_str(lt.llvm_type.as_str(), "{ ptr, i64 }") {
+                    // Skip if already tracked as region or persistent local
+                    let mut already_tracked = false;
+                    for ri2 in 0usize..ctx.region_locals.len() {
+                        if ctx.region_locals[ri2].local_id == lt.local_id {
+                            already_tracked = true;
+                        }
+                    }
+                    for pi2 in 0usize..ctx.persistent_locals.len() {
+                        if ctx.persistent_locals[pi2].local_id == lt.local_id {
+                            already_tracked = true;
+                        }
+                    }
+                    if already_tracked {
+                        continue;
+                    }
                     let local_id = mir_def.MirLocalId.new(lt.local_id);
                     let alloca_name = ctx.local_alloca_name(local_id);
                     // Load the { ptr, i64 } value
