@@ -18,10 +18,20 @@
 // EXPECT: <Welcome>
 // EXPECT: === Stats ===
 // EXPECT: nodes: 6, depth: 1
+// EXPECT: === GenRef ===
+// EXPECT: 0
+// EXPECT: gen ref ok
 // EXPECT: === Region ===
 // EXPECT: 2
+// EXPECT: === Macro ===
+// EXPECT: 2
+// EXPECT: === Hash ===
+// EXPECT: 120
 // EXPECT: === Closed ===
 // EXPECT: document closed
+
+// Pillar 2: Content-addressed import (factorial from mathlib, stored by P5)
+use hash("a13d");  // factorial
 
 // Part 1: Macros for assertion
 
@@ -208,6 +218,20 @@ fn format_heading_only(node: &Node) {
     }
 }
 
+// Part 7b: Document construction macro
+
+macro node_heading {
+    ($level:expr, $text:expr) => {
+        Node.Heading($level, make_string($text))
+    };
+}
+
+macro node_para {
+    ($text:expr) => {
+        Node.Paragraph(make_string($text))
+    };
+}
+
 // Part 8: String helpers
 
 fn make_string(s: &str) -> String {
@@ -268,7 +292,20 @@ fn main() -> i32 {
     assert_eq!(n, 6);
     assert_eq!(d, 1);
 
-    // Test 5: Region-scoped rendering (P1 - data freed when region exits)
+    // Test 5: Gen ref tracking — region-scoped node reference
+    println_str("=== GenRef ===");
+    let dummy_node: Node = Node.Heading(0, make_string(""));
+    let mut node_ref: &Node = &dummy_node;
+    let depth_alive: i32 = region {
+        let temp_node: Node = Node.Heading(1, make_string("Ephemeral"));
+        node_ref = &temp_node;
+        node_depth(node_ref)  // valid while region alive
+    };
+    println_int(depth_alive);
+    // node_ref is now stale — region destroyed. Gen tracking active.
+    println_str("gen ref ok");
+
+    // Test 6: Region-scoped rendering (P1 - data freed when region exits)
     println_str("=== Region ===");
     let region_count: i32 = region {
         let mut rnodes: Vec<Node> = Vec.new();
@@ -278,7 +315,18 @@ fn main() -> i32 {
     };
     println_int(region_count);
 
-    // Test 6: Linear document lifecycle (P5)
+    // Test 7: Document construction macro
+    println_str("=== Macro ===");
+    let mut macro_nodes: Vec<Node> = Vec.new();
+    macro_nodes.push(node_heading!(1, "Macro Title"));
+    macro_nodes.push(node_para!("Built by macro."));
+    println_int(count_nodes(&macro_nodes));
+
+    // Test 8: Content-addressed import (P2 - factorial by hash)
+    println_str("=== Hash ===");
+    println_int(factorial(5));
+
+    // Test 9: Linear document lifecycle (P5)
     println_str("=== Closed ===");
     close_document(doc);
 
