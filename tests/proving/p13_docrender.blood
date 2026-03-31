@@ -27,13 +27,13 @@
 // EXPECT: 3
 // EXPECT: === Hash ===
 // EXPECT: 120
+// EXPECT: 3
 // EXPECT: === Closed ===
 // EXPECT: document closed
 
-// Pillar 2: Content-addressed import (stored via --store-codebase)
+// Pillar 2: Content-addressed imports (stored via --store-codebase)
 use hash("a13d");  // factorial (from mathlib)
-// BUG: Second hash import in same file generates stubs instead of real codegen.
-// Renderer hash import deferred until multi-import bug is fixed.
+use hash("2377");  // render_prefix_len (from p13_renderlib — content-addressed renderer)
 
 // Part 1: Macros for assertion
 
@@ -357,7 +357,8 @@ fn main() -> i32 {
     // Test 8: Content-addressed imports (P2 - factorial + renderer by hash)
     println_str("=== Hash ===");
     println_int(factorial(5));
-    // P2 demonstrated: factorial imported by content hash works
+    // Content-addressed renderer: render_prefix_len imported by hash
+    println_int(render_prefix_len(2));
 
     // Test 9: Linear document lifecycle (P5)
     println_str("=== Closed ===");

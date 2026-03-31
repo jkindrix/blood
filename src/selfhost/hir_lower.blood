@@ -907,6 +907,7 @@ fn load_codebase_module(
         content: common.make_string(rec.source.as_str()),
         parse: parse_result,
         def_id: def_id,
+        is_hash_import: true,
     });
 
     ctx.add_loaded_module(module_name, def_id, common.make_string(mod_name_str.as_str()));
@@ -1161,6 +1162,7 @@ fn load_external_module(
         content: common.make_string(content.as_str()),
         parse: parse_result,
         def_id: def_id,
+        is_hash_import: false,
     });
 
     // Add to loaded_modules AFTER sub-modules have been loaded (post-order).
@@ -1242,6 +1244,7 @@ struct CachedParsedModule {
     content: String,
     parse: parser.ParseResult,
     def_id: hir_def.DefId,
+    is_hash_import: bool,
 }
 
 /// Collects info about all external modules.
@@ -1293,6 +1296,17 @@ fn lower_external_module_declarations(ctx: &mut hir_lower_ctx.LoweringCtx, cache
 
         // Lower the module's declarations as if they're inside the module
         hir_lower_item.lower_module_contents(ctx, def_id, &program.declarations);
+
+        // For hash-import modules: lower function bodies immediately.
+        // Hash-imported functions are self-contained (no cross-module deps).
+        // Deferring to Phase 4b causes body_id mismatches when handlers allocate
+        // body_ids in Phase 3b between Phase 3a declaration and Phase 4b body lowering.
+        if cached.is_hash_import {
+            ctx.resolver.push_scope(resolve.ScopeKind.Module);
+            hir_lower_item.add_module_items_to_scope(ctx, def_id, &program.declarations);
+            lower_fn_bodies(ctx, &program.declarations);
+            ctx.resolver.pop_scope();
+        }
 
         // Restore source
         ctx.source = saved_source;
