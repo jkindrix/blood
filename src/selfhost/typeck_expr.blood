@@ -3125,6 +3125,18 @@ fn infer_with_handle(
             match checker.handler_effect_hash.get(def_id.index as u64) {
                 Option.Some(effect_def_id) => {
                     checker.available_effects.push(effect_def_id);
+                    // Also push handler's effect type args for infer_perform (F-02 fix)
+                    let mut handler_type_args: Vec<type_intern.TyId> = Vec.new();
+                    match checker.handler_effect_type_args_hash.get(def_id.index as u64) {
+                        Option.Some(args_idx) => {
+                            let args = &checker.handler_effect_type_args_store[args_idx as usize];
+                            for hta in 0usize..args.len() {
+                                handler_type_args.push(args[hta]);
+                            }
+                        }
+                        Option.None => {}
+                    }
+                    checker.available_effect_type_args.push(handler_type_args);
                     pushed_effect = true;
                 }
                 Option.None => {}
@@ -3145,6 +3157,7 @@ fn infer_with_handle(
     checker.deep_handler_local_boundary = prev_boundary;
     if pushed_effect {
         checker.available_effects.pop();
+        checker.available_effect_type_args.pop();
     }
 
     body_ty
@@ -3259,7 +3272,23 @@ fn infer_perform(
                                         }
                                     }
                                 } else {
-                                    checker.unify(arg_tys[ai], raw_ty, span);
+                                    // No function-level effect type args. Check handler scope
+                                    // for type args from `with Handler {} handle {}` (F-02 fix).
+                                    let mut handler_args_found = false;
+                                    for hsi in 0usize..checker.available_effects.len() {
+                                        if checker.available_effects[hsi] == effect_def.index {
+                                            if hsi < checker.available_effect_type_args.len() {
+                                                let scope_args = &checker.available_effect_type_args[hsi];
+                                                if ai < scope_args.len() {
+                                                    checker.unify(arg_tys[ai], scope_args[ai], span);
+                                                    handler_args_found = true;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if !handler_args_found {
+                                        checker.unify(arg_tys[ai], raw_ty, span);
+                                    }
                                 }
                             }
                         }

@@ -1024,6 +1024,14 @@ fn collect_item_signatures(
                 checker.handler_kind_hash.insert(entry.def_id.index as u64, is_deep);
                 // Register handler → effect mapping for effect-row dispatch
                 checker.handler_effect_hash.insert(entry.def_id.index as u64, handler_def.handled_effect.def_id.index);
+                // Register handler's effect type args (F-02 fix)
+                let mut handler_eff_args: Vec<type_intern.TyId> = Vec.new();
+                for hea in 0usize..handler_def.handled_effect.args.len() {
+                    handler_eff_args.push(type_intern.type_to_ty_id(&handler_def.handled_effect.args[hea]));
+                }
+                let hea_idx = checker.handler_effect_type_args_store.len() as u32;
+                checker.handler_effect_type_args_store.push(handler_eff_args);
+                checker.handler_effect_type_args_hash.insert(entry.def_id.index as u64, hea_idx);
             }
             &hir_item.ItemKind.Module(_) => {}
             &hir_item.ItemKind.Macro(_) => {}

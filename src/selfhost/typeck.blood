@@ -349,6 +349,10 @@ pub struct TypeChecker {
     /// Effects available from enclosing with...handle blocks (stack, push/pop on enter/exit).
     /// Used by effect-row dispatch to select methods compatible with the handler context.
     pub available_effects: Vec<u32>,
+    /// Parallel to available_effects: type args for each handler's effect instantiation.
+    /// E.g., for `with CollectInt for Emit<i32>`, stores [i32_TyId].
+    /// Used by infer_perform to resolve parametric effect type params (F-02 fix).
+    pub available_effect_type_args: Vec<Vec<type_intern.TyId>>,
     /// Hash index for O(1) variant lookup: variant_def_id.index → (enum_idx << 32) | variant_idx
     pub variant_hash: hashmap.HashMapU64U64,
     /// Hash index for O(1) trait impl existence check: trait_def_id.index → 1
@@ -368,6 +372,10 @@ pub struct TypeChecker {
     pub handler_kind_hash: hashmap.HashMapU64U32,
     /// Maps handler DefId → handled effect DefId for effect-row dispatch.
     pub handler_effect_hash: hashmap.HashMapU64U32,
+    /// Maps handler DefId → index in handler_effect_type_args_store.
+    pub handler_effect_type_args_hash: hashmap.HashMapU64U32,
+    /// Stores handler effect type arg lists (indexed by handler_effect_type_args_hash).
+    pub handler_effect_type_args_store: Vec<Vec<type_intern.TyId>>,
     /// When inside a deep handler body, the local index boundary.
     /// Locals with index < boundary are outer locals that must not be linear/affine.
     /// None when not inside a deep handler body.
@@ -476,6 +484,7 @@ impl TypeChecker {
             current_effect_type_args: Vec.new(),
             in_handler: false,
             available_effects: Vec.new(),
+            available_effect_type_args: Vec.new(),
             variant_hash: hashmap.HashMapU64U64.new(),
             trait_impl_hash: hashmap.HashMapU64U32.new(),
             resume_ty: Option.None,
@@ -484,6 +493,8 @@ impl TypeChecker {
             handler_state_types: Vec.new(),
             handler_kind_hash: hashmap.HashMapU64U32.new(),
             handler_effect_hash: hashmap.HashMapU64U32.new(),
+            handler_effect_type_args_hash: hashmap.HashMapU64U32.new(),
+            handler_effect_type_args_store: Vec.new(),
             deep_handler_local_boundary: Option.None,
             default_method_remaps: Vec.new(),
             coercion_entries: Vec.new(),
@@ -550,6 +561,7 @@ impl TypeChecker {
             current_effect_type_args: Vec.new(),
             in_handler: false,
             available_effects: Vec.new(),
+            available_effect_type_args: Vec.new(),
             variant_hash: hashmap.HashMapU64U64.new(),
             trait_impl_hash: hashmap.HashMapU64U32.new(),
             resume_ty: Option.None,
@@ -558,6 +570,8 @@ impl TypeChecker {
             handler_state_types: Vec.new(),
             handler_kind_hash: hashmap.HashMapU64U32.new(),
             handler_effect_hash: hashmap.HashMapU64U32.new(),
+            handler_effect_type_args_hash: hashmap.HashMapU64U32.new(),
+            handler_effect_type_args_store: Vec.new(),
             deep_handler_local_boundary: Option.None,
             default_method_remaps: Vec.new(),
             coercion_entries: Vec.new(),
