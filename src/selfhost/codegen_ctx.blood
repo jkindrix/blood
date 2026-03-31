@@ -1399,13 +1399,17 @@ impl CodegenCtx {
     }
 
     /// Looks up the state shadow alloca name for a handler.
+    /// Returns the most recent (last pushed) shadow for the handler_def_id.
+    /// Sequential same-type handler instances push new shadows; the most
+    /// recent one corresponds to the currently active instance.
     pub fn get_handler_state_shadow(self: &CodegenCtx, handler_def_id: u32) -> Option<&String> {
+        let mut result: Option<&String> = Option.None;
         for i in 0usize..self.handler_state_shadows.len() {
             if self.handler_state_shadows[i].handler_def_id == handler_def_id {
-                return Option.Some(&self.handler_state_shadows[i].shadow_name);
+                result = Option.Some(&self.handler_state_shadows[i].shadow_name);
             }
         }
-        Option.None
+        result
     }
 
     /// Resets per-function state while keeping global state (def_names).
@@ -1873,6 +1877,7 @@ impl CodegenCtx {
         self.persistent_locals_hash = hashmap.HashMapU64U32.new();
         self.effect_captured_locals = Vec.new();
         self.deferred_entry_allocas = Vec.new();
+        self.handler_state_shadows = Vec.new();
     }
 
     // ======== Error Reporting ========
