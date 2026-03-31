@@ -2,9 +2,8 @@
 // New features: handler finally clause with state access, mixed NTR/TR ops,
 //               3-field handler state, nested perform + separate functions
 //
-// Known bug: ownership-qualified (linear/affine) types crash when passed via
-// perform to handler ops. Persistent allocation adds indirection that the
-// perform arg packing doesn't account for (double dereference on struct value).
+// Previously blocked: linear/affine types via perform. Now works (affine E0201
+// fixed, linear struct perform verified).
 //
 // EXPECT: checkout: slot 0
 // EXPECT: using slot 0
@@ -23,6 +22,11 @@
 // EXPECT: abort caught: -1
 // EXPECT: 100
 // EXPECT: affine ok
+// EXPECT: checkout: slot 0
+// EXPECT: using slot 0
+// EXPECT: checkin: slot 0
+// EXPECT: pool cleanup: 0 out
+// EXPECT: linear pool: 1
 // EXPECT: checkout: slot 0
 // EXPECT: using slot 0
 // EXPECT: checkin: slot 0
@@ -99,6 +103,13 @@ fn checkout_two() -> i32 / {Pool} {
     2
 }
 
+fn checkout_use_return_linear() -> i32 / {Pool} {
+    let entry: linear PoolEntry = perform Pool.checkout();
+    use_entry(&entry);
+    perform Pool.checkin(entry);
+    1
+}
+
 fn checkout_and_abort() -> i32 / {Pool} {
     let _entry: PoolEntry = perform Pool.checkout();
     perform Pool.abort("pool exhausted")
@@ -133,7 +144,14 @@ fn main() -> i32 {
     let _unused: affine i32 = 200;
     println_str("affine ok");
 
-    // Test 4: region-scoped pool usage (data freed when region exits)
+    // Test 4: linear pool entry lifecycle through perform
+    let r3: i32 = with PoolManager { checked_out: 0, capacity: 2, next_slot: 0 } handle {
+        checkout_use_return_linear()
+    };
+    let msg3: &str = format!("linear pool: {}", r3);
+    println_str(msg3);
+
+    // Test 5: region-scoped pool usage (data freed when region exits)
     let r3: i32 = region {
         let result: i32 = with PoolManager { checked_out: 0, capacity: 2, next_slot: 0 } handle {
             checkout_use_return()
