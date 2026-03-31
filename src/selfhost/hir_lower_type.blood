@@ -24,8 +24,38 @@ mod type_intern;
 // Type Lowering — TyId-returning versions
 // ============================================================
 
+/// Try to lower an Ownership type. Returns Some(TyId) if the type is Ownership,
+/// None otherwise. Uses by-value match to avoid the variant-9 reference-matching bug.
+fn try_lower_ownership_type_id(ctx: &mut hir_lower_ctx.LoweringCtx, ty: &ast.Type) -> Option<type_intern.TyId> {
+    match ty.kind {
+        ast.TypeKind.Ownership { ref qualifier, ref inner } => {
+            let is_linear: bool = match qualifier {
+                &ast.OwnershipQualifier.Linear => true,
+                &ast.OwnershipQualifier.Affine => false,
+            };
+            let hir_qualifier: hir_ty.OwnershipQualifier = if is_linear {
+                hir_ty.OwnershipQualifier.Linear
+            } else {
+                hir_ty.OwnershipQualifier.Affine
+            };
+            let inner_id = lower_type_id(ctx, inner.as_ref());
+            Option.Some(type_intern.type_interner().mk_ownership(hir_qualifier, inner_id))
+        }
+        _ => Option.None,
+    }
+}
+
 /// Lower an AST type directly to an interned TyId.
 pub fn lower_type_id(ctx: &mut hir_lower_ctx.LoweringCtx, ty: &ast.Type) -> type_intern.TyId {
+    // Handle Ownership types BEFORE the main match.
+    // TypeKind.Ownership is variant 9 and has a known issue where matching
+    // through a reference fails in the selfhost compiler.
+    let ownership_result = try_lower_ownership_type_id(ctx, ty);
+    match ownership_result {
+        Option.Some(ty_id) => { return ty_id; }
+        Option.None => {}
+    }
+
     match &ty.kind {
         &ast.TypeKind.Path(ref path) => {
             lower_type_path_id(ctx, path)

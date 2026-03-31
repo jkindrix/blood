@@ -21,6 +21,8 @@
 // EXPECT: abort: pool exhausted
 // EXPECT: pool cleanup: 0 out
 // EXPECT: abort caught: -1
+// EXPECT: 100
+// EXPECT: affine ok
 // EXPECT: checkout: slot 0
 // EXPECT: using slot 0
 // EXPECT: checkin: slot 0
@@ -102,6 +104,10 @@ fn checkout_and_abort() -> i32 / {Pool} {
     perform Pool.abort("pool exhausted")
 }
 
+fn use_ticket(affine t: i32) -> i32 {
+    t
+}
+
 fn main() -> i32 {
     // Test 1: normal checkout/checkin cycle + finally cleanup
     let r1: i32 = with PoolManager { checked_out: 0, capacity: 4, next_slot: 0 } handle {
@@ -119,7 +125,15 @@ fn main() -> i32 {
     let msg2: &str = format!("abort caught: {}", r2);
     println_str(msg2);
 
-    // Test 3: region-scoped pool usage (data freed when region exits)
+    // Test 3: affine type qualifier (may consume at most once, but not required)
+    let ticket: affine i32 = 100;
+    let used: i32 = use_ticket(ticket);
+    println_int(used);
+    // Second ticket: NOT consumed — affine allows this
+    let _unused: affine i32 = 200;
+    println_str("affine ok");
+
+    // Test 4: region-scoped pool usage (data freed when region exits)
     let r3: i32 = region {
         let result: i32 = with PoolManager { checked_out: 0, capacity: 2, next_slot: 0 } handle {
             checkout_use_return()

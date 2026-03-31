@@ -934,6 +934,21 @@ impl TypeInterner {
     }
 }
 
+/// Checks whether a TyId is an Ownership type with Linear qualifier.
+/// Returns false for non-Ownership types.
+pub fn ownership_is_linear(id: TyId) -> bool {
+    let kind = type_interner().get(id);
+    match kind {
+        &InternedTypeKind.Ownership { qualifier, inner: _ } => {
+            match qualifier {
+                hir_ty.OwnershipQualifier.Linear => true,
+                hir_ty.OwnershipQualifier.Affine => false,
+            }
+        }
+        _ => false,
+    }
+}
+
 /// Helper: compare Record variant fields with b.
 fn record_eq(a_fields: RecordFieldListId, a_row_var: &Option<hir_def.RecordRowVarId>, b: &InternedTypeKind) -> bool {
     match b {
@@ -1374,6 +1389,16 @@ fn record_field_list_to_vec(id: RecordFieldListId) -> Vec<hir_ty.RecordField> {
 // ============================================================
 // TyId Query Helpers (zero-allocation type inspection)
 // ============================================================
+
+/// If this TyId is Ownership, returns Some(inner). Otherwise None.
+/// Avoids match-through-reference which has known issues with some enum variants.
+pub fn unwrap_ownership_id(id: TyId) -> Option<TyId> {
+    let kind = type_interner().get(id);
+    match kind {
+        &InternedTypeKind.Ownership { qualifier: _, inner } => Option.Some(inner),
+        _ => Option.None,
+    }
+}
 
 /// Unwraps a Ref or Ptr type to get the inner TyId. Returns the input unchanged
 /// if it is not a Ref or Ptr. No Type tree reconstruction.

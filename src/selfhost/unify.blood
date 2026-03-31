@@ -1879,26 +1879,47 @@ fn unify_resolved_id(
         }
     }
 
-    // Phase 4: Ownership coercion — T -> linear T / affine T (widening)
-    // The reverse direction (linear T -> T, narrowing) is handled in unify_structural_id.
-    // Here we handle: b is Ownership-wrapped but a is not → unwrap b, unify a with inner.
-    let b_interner = type_intern.type_interner();
-    let b_kind_pre = b_interner.get(b);
-    match b_kind_pre {
-        &type_intern.InternedTypeKind.Ownership { qualifier: _, inner } => {
-            let a_interner = type_intern.type_interner();
-            let a_kind_pre = a_interner.get(a);
-            match a_kind_pre {
-                &type_intern.InternedTypeKind.Ownership { qualifier: _, inner: _ } => {
-                    // Both Ownership: fall through to structural unification
+    // Phase 4: Ownership coercion and unification.
+    // Uses helper functions to detect Ownership without match-through-reference
+    // (the compiler has a known issue where some enum variant matches through
+    // references fail for high-indexed variants in large enums).
+    let a_ownership = type_intern.unwrap_ownership_id(a);
+    let b_ownership = type_intern.unwrap_ownership_id(b);
+    match a_ownership {
+        Option.Some(a_inner) => {
+            match b_ownership {
+                Option.Some(b_inner) => {
+                    // Both Ownership: check qualifier compatibility, unify inners.
+                    let a_is_linear: bool = type_intern.ownership_is_linear(a);
+                    let b_is_linear: bool = type_intern.ownership_is_linear(b);
+                    // Same qualifier → unify inners
+                    if a_is_linear == b_is_linear {
+                        return unify_id(table, unifier, a_inner, b_inner, span);
+                    }
+                    // Linear a → Affine b (stricter satisfies weaker) → ok
+                    if a_is_linear {
+                        return unify_id(table, unifier, a_inner, b_inner, span);
+                    }
+                    // Affine a → Linear b: not allowed
+                    return UnifyResult.Err(UnifyError.mismatch(span));
                 }
-                _ => {
-                    // a is non-Ownership, b is Ownership: unwrap b and unify
-                    return unify_id(table, unifier, a, inner, span);
+                Option.None => {
+                    // a is Ownership, b is not: unwrap a and unify
+                    return unify_id(table, unifier, a_inner, b, span);
                 }
             }
         }
-        _ => {}
+        Option.None => {
+            match b_ownership {
+                Option.Some(b_inner) => {
+                    // b is Ownership, a is not: unwrap b and unify
+                    return unify_id(table, unifier, a, b_inner, span);
+                }
+                Option.None => {
+                    // Neither is Ownership: fall through to structural unification
+                }
+            }
+        }
     }
 
     // Phase 5: Structural unification (neither is Infer/Error/Never/Forall)
@@ -2213,11 +2234,19 @@ fn record_fields_id_to_vec(fields_id: type_intern.RecordFieldListId) -> Vec<hir_
 
 /// Checks if two ownership qualifiers are equal.
 fn ownership_qualifiers_equal(a: hir_ty.OwnershipQualifier, b: hir_ty.OwnershipQualifier) -> bool {
-    match (a, b) {
-        (hir_ty.OwnershipQualifier.Linear, hir_ty.OwnershipQualifier.Linear) => true,
-        (hir_ty.OwnershipQualifier.Affine, hir_ty.OwnershipQualifier.Affine) => true,
-        _ => false,
+    // Avoid tuple matching — compiler has a known issue matching
+    // second variant (index 1) in tuple patterns.
+    let a_is_linear: bool = is_linear_qualifier(a);
+    let b_is_linear: bool = is_linear_qualifier(b);
+    if a_is_linear && b_is_linear {
+        return true;
     }
+    let a_is_affine: bool = is_affine_qualifier(a);
+    let b_is_affine: bool = is_affine_qualifier(b);
+    if a_is_affine && b_is_affine {
+        return true;
+    }
+    false
 }
 
 /// Checks if a qualifier is Linear.
@@ -2225,6 +2254,14 @@ fn is_linear_qualifier(q: hir_ty.OwnershipQualifier) -> bool {
     match q {
         hir_ty.OwnershipQualifier.Linear => true,
         hir_ty.OwnershipQualifier.Affine => false,
+    }
+}
+
+/// Checks if a qualifier is Affine.
+fn is_affine_qualifier(q: hir_ty.OwnershipQualifier) -> bool {
+    match q {
+        hir_ty.OwnershipQualifier.Affine => true,
+        hir_ty.OwnershipQualifier.Linear => false,
     }
 }
 

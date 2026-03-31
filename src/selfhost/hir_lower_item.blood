@@ -32,6 +32,34 @@ fn str_equals(s: &String, other: &str) -> bool {
     true
 }
 
+/// Checks if a param qualifier is Linear, avoiding nested match-through-reference.
+fn is_qualifier_linear(q: &Option<ast.ParamQualifier>) -> bool {
+    match q {
+        &Option.Some(qual) => {
+            match qual {
+                ast.ParamQualifier.Linear => true,
+                ast.ParamQualifier.Affine => false,
+                ast.ParamQualifier.Mut => false,
+            }
+        }
+        &Option.None => false,
+    }
+}
+
+/// Checks if a param qualifier is Affine, avoiding nested match-through-reference.
+fn is_qualifier_affine(q: &Option<ast.ParamQualifier>) -> bool {
+    match q {
+        &Option.Some(qual) => {
+            match qual {
+                ast.ParamQualifier.Affine => true,
+                ast.ParamQualifier.Linear => false,
+                ast.ParamQualifier.Mut => false,
+            }
+        }
+        &Option.None => false,
+    }
+}
+
 // ============================================================
 // Function Parameter Lowering
 // ============================================================
@@ -64,17 +92,17 @@ fn lower_fn_param(ctx: &mut hir_lower_ctx.LoweringCtx, param: &ast.Param, param_
         _ => false,
     };
 
-    // Wrap param type with Ownership qualifier if linear/affine
+    // Wrap param type with Ownership qualifier if linear/affine.
     // This makes `fn f(linear x: T)` equivalent to `fn f(x: linear T)`:
     // the linearity checker detects Ownership-wrapped types on locals.
-    let final_ty = match &param.qualifier {
-        &Some(ast.ParamQualifier.Linear) => {
-            type_intern.type_interner().mk_ownership(hir_ty.OwnershipQualifier.Linear, ty)
-        }
-        &Some(ast.ParamQualifier.Affine) => {
-            type_intern.type_interner().mk_ownership(hir_ty.OwnershipQualifier.Affine, ty)
-        }
-        _ => ty,
+    // Uses is_qualifier_linear/is_qualifier_affine helpers to avoid
+    // match-through-reference issues with nested enum patterns.
+    let final_ty: type_intern.TyId = if is_qualifier_linear(&param.qualifier) {
+        type_intern.type_interner().mk_ownership(hir_ty.OwnershipQualifier.Linear, ty)
+    } else if is_qualifier_affine(&param.qualifier) {
+        type_intern.type_interner().mk_ownership(hir_ty.OwnershipQualifier.Affine, ty)
+    } else {
+        ty
     };
 
     // Check if this is a self parameter by checking the name
