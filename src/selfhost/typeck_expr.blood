@@ -202,6 +202,43 @@ pub fn infer_expr(checker: &mut typeck.TypeChecker, expr: &hir_expr.Expr) -> typ
     result
 }
 
+/// Directional effect subtyping check for function types.
+/// Returns true if `actual`'s effects are a subset of `expected`'s effects.
+/// For non-function types or unresolved types, always returns true.
+fn check_effect_subtyping(checker: &mut typeck.TypeChecker, actual: type_intern.TyId, expected: type_intern.TyId) -> bool {
+    let interner = type_intern.type_interner();
+    let actual_resolved = checker.resolve(actual);
+    let expected_resolved = checker.resolve(expected);
+    match interner.get(actual_resolved) {
+        &type_intern.InternedTypeKind.Fn { params: _, ret: _, effects: eff_actual } => {
+            match interner.get(expected_resolved) {
+                &type_intern.InternedTypeKind.Fn { params: _, ret: _, effects: eff_expected } => {
+                    let row_actual = interner.get_effect_row(eff_actual);
+                    let row_expected = interner.get_effect_row(eff_expected);
+                    // Both closed: actual effects must be subset of expected
+                    if row_actual.row_var.is_none() && row_expected.row_var.is_none() {
+                        // Check every effect in actual is in expected
+                        for ai in 0usize..row_actual.effects.len() {
+                            let mut found = false;
+                            for ei in 0usize..row_expected.effects.len() {
+                                if row_actual.effects[ai].def_id.index == row_expected.effects[ei].def_id.index {
+                                    found = true;
+                                }
+                            }
+                            if !found {
+                                return false; // actual has effect not in expected
+                            }
+                        }
+                    }
+                    true
+                }
+                _ => true,
+            }
+        }
+        _ => true,
+    }
+}
+
 /// Checks an expression against an expected type.
 /// Returns true if the expression has the expected type.
 /// Attempts coercion if direct unification fails.
@@ -214,6 +251,13 @@ pub fn check_expr(
 
     // First try direct unification (without reporting errors, since coercion may succeed)
     if checker.try_unify(inferred, expected, expr.span) {
+        // Directional effect check: inferred effects must be subset of expected effects.
+        // unify_effect_rows accepts bidirectionally (F-20), so we add a directional
+        // post-check here where we know which side is actual (inferred) vs expected.
+        if !check_effect_subtyping(checker, inferred, expected) {
+            checker.error(typeck.TypeErrorKind.TypeMismatch, expr.span);
+            return false;
+        }
         return true;
     }
 
@@ -772,7 +816,22 @@ fn infer_path(checker: &mut typeck.TypeChecker, path: &hir_def.ResolvedPath, spa
             let interner = type_intern.type_interner();
             let params_list = interner.intern_ty_list(&param_tys);
             let ret_id = type_intern.TyId.new(fn_info.return_ty.index);
-            return interner.mk_fn(params_list, ret_id, type_intern.EffectRowId.new(0));
+            // Include declared effects in function value type so that
+            // effect subtyping is checked when passing function values.
+            let eff_row_id = if fn_info.effect_def_ids.len() > 0 {
+                let mut effs: Vec<type_intern.InternedEffectRef> = Vec.new();
+                for ei in 0usize..fn_info.effect_def_ids.len() {
+                    effs.push(type_intern.InternedEffectRef {
+                        def_id: hir_def.DefId.new(fn_info.effect_def_ids[ei]),
+                        type_args: type_intern.TyListId.new(0),
+                    });
+                }
+                let row = type_intern.InternedEffectRow.new(effs, Option.None);
+                interner.intern_effect_row(row)
+            } else {
+                type_intern.EffectRowId.new(0)
+            };
+            return interner.mk_fn(params_list, ret_id, eff_row_id);
         }
         Option.None => {}
     }
