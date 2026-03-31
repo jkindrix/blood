@@ -150,6 +150,8 @@ pub struct StructLayout {
     pub is_packed: bool,
     /// Explicit minimum alignment (from #[repr(align(N))]), 0 = none.
     pub align: u32,
+    /// Whether this is a C union (all fields overlap at offset 0).
+    pub is_union: bool,
 }
 
 /// Layout of a single enum variant.
@@ -2438,6 +2440,7 @@ impl CodegenCtx {
                         llvm_type: clone_string(&sl.llvm_type),
                         is_packed: sl.is_packed,
                         align: sl.align,
+                        is_union: sl.is_union,
                     }));
                 }
                 &AdtEntry.Enum(ref el) => {

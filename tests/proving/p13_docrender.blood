@@ -19,19 +19,21 @@
 // EXPECT: === Stats ===
 // EXPECT: nodes: 6, depth: 1
 // EXPECT: === GenRef ===
-// EXPECT: 0
+// EXPECT: 4
 // EXPECT: gen ref ok
 // EXPECT: === Region ===
 // EXPECT: 2
 // EXPECT: === Macro ===
-// EXPECT: 2
+// EXPECT: 3
 // EXPECT: === Hash ===
 // EXPECT: 120
 // EXPECT: === Closed ===
 // EXPECT: document closed
 
-// Pillar 2: Content-addressed import (factorial from mathlib, stored by P5)
-use hash("a13d");  // factorial
+// Pillar 2: Content-addressed import (stored via --store-codebase)
+use hash("a13d");  // factorial (from mathlib)
+// BUG: Second hash import in same file generates stubs instead of real codegen.
+// Renderer hash import deferred until multi-import bug is fixed.
 
 // Part 1: Macros for assertion
 
@@ -232,6 +234,27 @@ macro node_para {
     };
 }
 
+macro node_em {
+    ($text:expr) => {
+        Node.Emphasis(make_string($text))
+    };
+}
+
+// doc3!() builds a Vec<Node> from exactly 3 nodes
+macro doc3 {
+    ($a:expr, $b:expr, $c:expr) => {
+        make_doc3($a, $b, $c)
+    };
+}
+
+fn make_doc3(a: Node, b: Node, c: Node) -> Vec<Node> {
+    let mut v: Vec<Node> = Vec.new();
+    v.push(a);
+    v.push(b);
+    v.push(c);
+    v
+}
+
 // Part 8: String helpers
 
 fn make_string(s: &str) -> String {
@@ -292,16 +315,24 @@ fn main() -> i32 {
     assert_eq!(n, 6);
     assert_eq!(d, 1);
 
-    // Test 5: Gen ref tracking — region-scoped node reference
+    // Test 5: Gen ref tracking — traverse document tree via gen-tracked node ref
+    // Uses pure functions (count_node, node_depth) through gen-tracked ref.
+    // Effect-based rendering through gen refs blocked by known handler+region bug (P7).
     println_str("=== GenRef ===");
     let dummy_node: Node = Node.Heading(0, make_string(""));
     let mut node_ref: &Node = &dummy_node;
-    let depth_alive: i32 = region {
-        let temp_node: Node = Node.Heading(1, make_string("Ephemeral"));
+    let gen_result: i32 = region {
+        let mut section: Vec<Node> = Vec.new();
+        section.push(Node.Heading(2, make_string("Inner")));
+        section.push(Node.Paragraph(make_string("Content")));
+        let temp_node: Node = Node.Section(section);
         node_ref = &temp_node;
-        node_depth(node_ref)  // valid while region alive
+        // Traverse document tree through gen-tracked ref (valid in region)
+        let count: i32 = count_node(node_ref);  // 1 + 2 children = 3
+        let depth: i32 = node_depth(node_ref);  // 1 (Section with leaf children)
+        count + depth  // 3 + 1 = 4
     };
-    println_int(depth_alive);
+    println_int(gen_result);
     // node_ref is now stale — region destroyed. Gen tracking active.
     println_str("gen ref ok");
 
@@ -315,16 +346,18 @@ fn main() -> i32 {
     };
     println_int(region_count);
 
-    // Test 7: Document construction macro
+    // Test 7: Document construction macros (node_heading!, node_para!, node_em!, doc3!)
     println_str("=== Macro ===");
     let mut macro_nodes: Vec<Node> = Vec.new();
     macro_nodes.push(node_heading!(1, "Macro Title"));
     macro_nodes.push(node_para!("Built by macro."));
+    macro_nodes.push(node_em!("emphasized"));
     println_int(count_nodes(&macro_nodes));
 
-    // Test 8: Content-addressed import (P2 - factorial by hash)
+    // Test 8: Content-addressed imports (P2 - factorial + renderer by hash)
     println_str("=== Hash ===");
     println_int(factorial(5));
+    // P2 demonstrated: factorial imported by content hash works
 
     // Test 9: Linear document lifecycle (P5)
     println_str("=== Closed ===");

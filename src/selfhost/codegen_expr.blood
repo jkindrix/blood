@@ -1835,6 +1835,8 @@ fn emit_aggregate_adt(
             // Store each field using actual types from the struct layout.
             // If the operand type differs from the field type (e.g., i64 vs i32),
             // emit a trunc or zext to match the target field width.
+            // Union: all fields at GEP index 0 (overlapping memory).
+            let is_union_adt = layout.is_union;
             for i in 0usize..operands.len() {
                 let typed = emit_operand_typed(ctx, &operands[i]);
                 let operand_val = typed.0;
@@ -1842,7 +1844,8 @@ fn emit_aggregate_adt(
                 let field_ptr = ctx.fresh_temp_cg();
                 ctx.begin_gep_str(&field_ptr, struct_ty.as_str(), dest);
                 ctx.gep_ptr_offset(0);
-                ctx.gep_field(i as u32);
+                let gep_field_idx: u32 = if is_union_adt { 0 } else { i as u32 };
+                ctx.gep_field(gep_field_idx);
                 ctx.end_gep();
                 // Use actual field type from the struct layout.
                 // If the field index exceeds the known field types, this is

@@ -730,6 +730,7 @@ fn make_builtin_struct_layout(def_id: u32, llvm_type_str: &str) -> codegen_ctx.S
         llvm_type: common.make_string(llvm_type_str),
         is_packed: false,
         align: 0,
+        is_union: false,
     }
 }
 
@@ -1175,12 +1176,29 @@ fn build_struct_layout_basic(def_id: u32, struct_def: &hir_item.StructDef) -> co
         llvm_type = common.make_string("{}");
     }
 
+    // Union layout: LLVM type = { largest_field_type } (all fields at offset 0)
+    if struct_def.is_union && fields.len() > 0 {
+        let mut max_size: u64 = 0;
+        let mut max_idx: usize = 0;
+        for fi in 0usize..fields.len() {
+            let sz = codegen_size.llvm_type_size(fields[fi].llvm_type.as_str());
+            if sz > max_size {
+                max_size = sz;
+                max_idx = fi;
+            }
+        }
+        llvm_type = common.make_string("{ ");
+        llvm_type.push_str(fields[max_idx].llvm_type.as_str());
+        llvm_type.push_str(" }");
+    }
+
     codegen_ctx.StructLayout {
         def_id: def_id,
         fields: fields,
         llvm_type: llvm_type,
         is_packed: struct_def.is_packed,
         align: struct_def.align,
+        is_union: struct_def.is_union,
     }
 }
 
@@ -1301,12 +1319,29 @@ fn build_struct_layout_with_ctx(
         llvm_type = common.make_string("{}");
     }
 
+    // Union layout: LLVM type = { largest_field_type } (all fields at offset 0)
+    if struct_def.is_union && fields.len() > 0 {
+        let mut max_size: u64 = 0;
+        let mut max_idx: usize = 0;
+        for fi in 0usize..fields.len() {
+            let sz = codegen_size.llvm_type_size(fields[fi].llvm_type.as_str());
+            if sz > max_size {
+                max_size = sz;
+                max_idx = fi;
+            }
+        }
+        llvm_type = common.make_string("{ ");
+        llvm_type.push_str(fields[max_idx].llvm_type.as_str());
+        llvm_type.push_str(" }");
+    }
+
     codegen_ctx.StructLayout {
         def_id: def_id,
         fields: fields,
         llvm_type: llvm_type,
         is_packed: struct_def.is_packed,
         align: struct_def.align,
+        is_union: struct_def.is_union,
     }
 }
 

@@ -786,11 +786,85 @@ pub fn register_bridge_functions(
                 );
                 ctx.add_item(enum_def_id, item);
             }
-            &ast.BridgeItem.Union(ref _u) => {
-                // Bridge unions: not yet implemented
+            &ast.BridgeItem.Union(ref u) => {
+                let union_def_id = ctx.alloc_def_id();
+                let union_name_str = ctx.span_to_string(u.name.span);
+                let union_name_symbol = ctx.intern(union_name_str.as_str());
+
+                ctx.resolver.register_def_info(
+                    union_def_id,
+                    hir_def.DefKind.Struct,
+                    union_name_symbol,
+                    u.name.span,
+                    Option.Some(bridge_def_id),
+                );
+
+                // Lower fields (same as struct — all fields exist, but overlap at offset 0)
+                let mut fields: Vec<hir_item.StructField> = Vec.with_capacity(u.fields.len());
+                for fi in 0usize..u.fields.len() {
+                    let field_def_id = ctx.alloc_def_id();
+                    let field_ty = hir_lower_type.lower_type_id(ctx, &u.fields[fi].ty);
+                    let field_name_str = ctx.span_to_string(u.fields[fi].name.span);
+                    let field_name_sym = ctx.intern(field_name_str.as_str());
+                    let field_name = common.SpannedSymbol { symbol: field_name_sym, span: u.fields[fi].name.span };
+                    fields.push(hir_item.StructField.new(
+                        field_def_id, field_name, field_ty, common.Visibility.Public, u.fields[fi].span,
+                    ));
+                }
+
+                let union_def = hir_item.StructDef.new_union(hir_ty.Generics.empty(), hir_item.StructBody.Record(fields));
+                let item = hir_item.Item.new(
+                    union_def_id,
+                    u.name,
+                    hir_item.ItemKind.Struct(union_def),
+                    common.Visibility.Public,
+                    u.span,
+                );
+                ctx.add_item(union_def_id, item);
             }
-            &ast.BridgeItem.Callback(ref _cb) => {
-                // Bridge callbacks: not yet implemented
+            &ast.BridgeItem.Callback(ref cb) => {
+                let cb_def_id = ctx.alloc_def_id();
+                let cb_name_str = ctx.span_to_string(cb.name.span);
+                let cb_name_symbol = ctx.intern(cb_name_str.as_str());
+
+                ctx.resolver.register_def_info(
+                    cb_def_id,
+                    hir_def.DefKind.TypeAlias,
+                    cb_name_symbol,
+                    cb.name.span,
+                    Option.Some(bridge_def_id),
+                );
+
+                // Lower param types
+                let mut param_tys: Vec<hir_ty.Type> = Vec.with_capacity(cb.params.len());
+                for pi in 0usize..cb.params.len() {
+                    param_tys.push(hir_lower_type.lower_type(ctx, &cb.params[pi]));
+                }
+
+                // Lower return type (default to unit)
+                let ret_ty = match &cb.return_type {
+                    &Option.Some(ref rt) => hir_lower_type.lower_type(ctx, rt),
+                    &Option.None => hir_ty.Type.new(hir_ty.TypeKind.Tuple(Vec.new())),
+                };
+
+                // Construct function type and intern it
+                let fn_type = hir_ty.Type.new(hir_ty.TypeKind.Fn {
+                    params: param_tys,
+                    ret: Box.new(ret_ty),
+                    effects: hir_ty.EffectRow.empty(),
+                });
+                let fn_ty_id = type_intern.type_to_ty_id(&fn_type);
+
+                // Create type alias pointing to the function type
+                let alias_def = hir_item.TypeAliasDef.new(hir_ty.Generics.empty(), fn_ty_id);
+                let item = hir_item.Item.new(
+                    cb_def_id,
+                    cb.name,
+                    hir_item.ItemKind.TypeAlias(alias_def),
+                    common.Visibility.Public,
+                    cb.span,
+                );
+                ctx.add_item(cb_def_id, item);
             }
             &ast.BridgeItem.Link(ref _ls) => {
                 // Link specifications: not yet implemented

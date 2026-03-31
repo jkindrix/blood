@@ -1786,9 +1786,33 @@ fn parse_bridge_item(parser: &mut parser_base.Parser) -> Option<ast.BridgeItem> 
         token.TokenKind.Enum => {
             Option.Some(ast.BridgeItem.Enum(parse_bridge_enum(parser, attrs)))
         }
+        token.TokenKind.Union => {
+            Option.Some(ast.BridgeItem.Union(parse_bridge_union(parser, attrs)))
+        }
         _ => {
-            parser.error_expected("bridge item (fn, const, type, struct, or enum)");
-            Option.None
+            // Check for contextual keyword "callback" (not a reserved keyword)
+            if parser.current.kind == token.TokenKind.Ident {
+                let cb_span = parser.current.span;
+                let cb_len = (cb_span.end - cb_span.start) as usize;
+                if cb_len == 8
+                    && parser.source_byte_at(cb_span.start as usize) == 99       // 'c'
+                    && parser.source_byte_at(cb_span.start as usize + 1) == 97   // 'a'
+                    && parser.source_byte_at(cb_span.start as usize + 2) == 108  // 'l'
+                    && parser.source_byte_at(cb_span.start as usize + 3) == 108  // 'l'
+                    && parser.source_byte_at(cb_span.start as usize + 4) == 98   // 'b'
+                    && parser.source_byte_at(cb_span.start as usize + 5) == 97   // 'a'
+                    && parser.source_byte_at(cb_span.start as usize + 6) == 99   // 'c'
+                    && parser.source_byte_at(cb_span.start as usize + 7) == 107  // 'k'
+                {
+                    Option.Some(ast.BridgeItem.Callback(parse_bridge_callback(parser, attrs)))
+                } else {
+                    parser.error_expected("bridge item (fn, const, type, struct, union, enum, or callback)");
+                    Option.None
+                }
+            } else {
+                parser.error_expected("bridge item (fn, const, type, struct, union, enum, or callback)");
+                Option.None
+            }
         }
     }
 }
@@ -1950,6 +1974,68 @@ fn parse_bridge_struct(parser: &mut parser_base.Parser, attrs: Vec<ast.Attribute
         attrs: attrs,
         name: name,
         fields: fields,
+        span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    }
+}
+
+/// Parse a bridge union: union Name { field: Type, ... }
+fn parse_bridge_union(parser: &mut parser_base.Parser, attrs: Vec<ast.Attribute>) -> ast.BridgeUnion {
+    let start = parser.current.span;
+    parser.advance(); // consume 'union'
+    let name = parser.parse_spanned_symbol();
+    parser.expect(token.TokenKind.LBrace);
+    let mut fields: Vec<ast.BridgeField> = Vec.new();
+    while !parser.check(token.TokenKind.RBrace) && parser.current.kind != token.TokenKind.Eof {
+        let f_start = parser.current.span;
+        let f_name = parser.parse_spanned_symbol();
+        parser.expect(token.TokenKind.Colon);
+        let f_ty = parser_type.parse_type(parser);
+        let f_end = parser.previous.span;
+        fields.push(ast.BridgeField {
+            name: f_name,
+            ty: f_ty,
+            span: common.Span { start: f_start.start, end: f_end.end, line: f_start.line, column: f_start.column },
+        });
+        if !parser.try_consume(token.TokenKind.Comma) {
+            break;
+        }
+    }
+    parser.expect(token.TokenKind.RBrace);
+    let end_span = parser.previous.span;
+    ast.BridgeUnion {
+        attrs: attrs,
+        name: name,
+        fields: fields,
+        span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
+    }
+}
+
+/// Parse a bridge callback: callback Name(Type, Type, ...) -> RetType;
+fn parse_bridge_callback(parser: &mut parser_base.Parser, attrs: Vec<ast.Attribute>) -> ast.BridgeCallback {
+    let start = parser.current.span;
+    parser.advance(); // consume 'callback' identifier
+    let name = parser.parse_spanned_symbol();
+    parser.expect(token.TokenKind.LParen);
+    let mut params: Vec<ast.Type> = Vec.new();
+    while !parser.check(token.TokenKind.RParen) && parser.current.kind != token.TokenKind.Eof {
+        let param_ty = parser_type.parse_type(parser);
+        params.push(param_ty);
+        if !parser.try_consume(token.TokenKind.Comma) {
+            break;
+        }
+    }
+    parser.expect(token.TokenKind.RParen);
+    let return_type = if parser.try_consume(token.TokenKind.Arrow) {
+        Option.Some(parser_type.parse_type(parser))
+    } else {
+        Option.None
+    };
+    parser.expect(token.TokenKind.Semi);
+    let end_span = parser.previous.span;
+    ast.BridgeCallback {
+        name: name,
+        params: params,
+        return_type: return_type,
         span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     }
 }

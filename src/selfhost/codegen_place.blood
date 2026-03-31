@@ -1061,16 +1061,28 @@ pub fn emit_place_addr(
                     }
                 };
 
+                // Union field access: all fields at offset 0, so GEP always uses index 0
+                let is_union_field = match &current_adt_def_id {
+                    &Option.Some(def_id) => {
+                        match ctx.lookup_struct(def_id) {
+                            Option.Some(layout) => layout.is_union,
+                            Option.None => false,
+                        }
+                    }
+                    &Option.None => false,
+                };
+                let gep_idx: u32 = if is_union_field { 0 } else { idx };
+
                 // If GEP base type is a scalar (not struct/array), use byte offset
                 // instead of struct field indexing. Scalars like i64, ptr can't be
                 // indexed with struct field indices.
                 // Also bounds-check: if the field index exceeds the struct's field
                 // count, fall back to byte-offset GEP.
                 let field_count = count_struct_fields(&gep_type);
-                if is_struct_or_array_type(&gep_type) && (idx as u64) < (field_count as u64) {
+                if is_struct_or_array_type(&gep_type) && (gep_idx as u64) < (field_count as u64) {
                     let mut indices: Vec<String> = Vec.new();
                     indices.push(common.make_string("0"));
-                    indices.push(codegen_types.format_u64(idx as u64));
+                    indices.push(codegen_types.format_u64(gep_idx as u64));
                     ctx.emit_gep_cg(&result, gep_type.as_str(), &current, &indices);
                 } else {
                     // ICE: GEP base type is not a struct/array, or field index

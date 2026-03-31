@@ -194,17 +194,24 @@ pub struct StructDef {
     pub is_packed: bool,
     /// Explicit minimum alignment (from `#[repr(align(N))]`), 0 = none.
     pub align: u32,
+    /// Whether this is a C union (all fields at offset 0).
+    pub is_union: bool,
 }
 
 impl StructDef {
     /// Creates a new struct definition.
     pub fn new(generics: hir_ty.Generics, body: StructBody) -> StructDef {
-        StructDef { generics, body, is_packed: false, align: 0 }
+        StructDef { generics, body, is_packed: false, align: 0, is_union: false }
     }
 
     /// Creates a new struct definition with layout attributes.
     pub fn new_with_layout(generics: hir_ty.Generics, body: StructBody, is_packed: bool, align: u32) -> StructDef {
-        StructDef { generics, body, is_packed, align }
+        StructDef { generics, body, is_packed, align, is_union: false }
+    }
+
+    /// Creates a new union definition (bridge "C" union).
+    pub fn new_union(generics: hir_ty.Generics, body: StructBody) -> StructDef {
+        StructDef { generics, body, is_packed: false, align: 0, is_union: true }
     }
 }
 

@@ -1,6 +1,6 @@
 // Proving Ground Program 12: respool - Resource pool with cleanup guarantees
 // New features: handler finally clause with state access, mixed NTR/TR ops,
-//               3-field handler state, nested perform + separate functions
+//               3-field handler state, nested handler scopes, nested perform
 //
 // Previously blocked: linear/affine types via perform. Now works (affine E0201
 // fixed, linear struct perform verified).
@@ -20,6 +20,15 @@
 // EXPECT: abort: pool exhausted
 // EXPECT: pool cleanup: 0 out
 // EXPECT: abort caught: -1
+// EXPECT: checkout: slot 0
+// EXPECT: using slot 0
+// EXPECT: checkin: slot 0
+// EXPECT: checkout: slot 1
+// EXPECT: using slot 1
+// EXPECT: checkin: slot 1
+// EXPECT: inner caught: simulated error
+// EXPECT: pool cleanup: 0 out
+// EXPECT: nested result: 0
 // EXPECT: 100
 // EXPECT: affine ok
 // EXPECT: checkout: slot 0
@@ -27,7 +36,10 @@
 // EXPECT: checkin: slot 0
 // EXPECT: pool cleanup: 0 out
 // EXPECT: linear pool: 1
-// EXPECT: 77
+// EXPECT: checkout: slot 0
+// EXPECT: checkin: slot 0
+// EXPECT: pool cleanup: 0 out
+// EXPECT: 0
 // EXPECT: gen ref ok
 // EXPECT: checkout: slot 0
 // EXPECT: using slot 0
@@ -117,6 +129,28 @@ fn checkout_and_abort() -> i32 / {Pool} {
     perform Pool.abort("pool exhausted")
 }
 
+// Nested handler support: inner error handler + outer pool manager
+
+effect AppError {
+    op report(msg: &str) -> i32;
+}
+
+deep handler CatchAppError for AppError {
+    return(x) { x }
+    op report(msg) {
+        print_str("inner caught: ");
+        println_str(msg);
+        resume(0 - 1)
+    }
+}
+
+fn checkout_then_error() -> i32 / {Pool, AppError} {
+    let entry: PoolEntry = perform Pool.checkout();
+    use_entry(&entry);
+    perform Pool.checkin(entry);
+    perform AppError.report("simulated error")
+}
+
 fn use_ticket(affine t: i32) -> i32 {
     t
 }
@@ -138,7 +172,19 @@ fn main() -> i32 {
     let msg2: &str = format!("abort caught: {}", r2);
     println_str(msg2);
 
-    // Test 3: affine type qualifier (may consume at most once, but not required)
+    // Test 3: nested handler scopes — outer PoolManager + inner CatchAppError
+    // Deterministic cleanup: inner handler exits first, outer finally runs after
+    let r_nested: i32 = with PoolManager { checked_out: 0, capacity: 4, next_slot: 0 } handle {
+        with CatchAppError {} handle {
+            let a: i32 = checkout_use_return();
+            let b: i32 = checkout_then_error();
+            a + b
+        }
+    };
+    let msg_nested: &str = format!("nested result: {}", r_nested);
+    println_str(msg_nested);
+
+    // Test 4: affine type qualifier
     let ticket: affine i32 = 100;
     let used: i32 = use_ticket(ticket);
     println_int(used);
@@ -146,28 +192,31 @@ fn main() -> i32 {
     let _unused: affine i32 = 200;
     println_str("affine ok");
 
-    // Test 4: linear pool entry lifecycle through perform
+    // Test 5: linear pool entry lifecycle through perform
     let r3: i32 = with PoolManager { checked_out: 0, capacity: 2, next_slot: 0 } handle {
         checkout_use_return_linear()
     };
     let msg3: &str = format!("linear pool: {}", r3);
     println_str(msg3);
 
-    // Test 5: gen ref tracking — region-scoped entry, stale after region exit
+    // Test 6: gen ref tracking — pool entry accessed via gen-tracked ref in region
+    // Integrates: Pool effects + region block + gen ref tracking
     let dummy: PoolEntry = PoolEntry { slot: 0 };
     let mut entry_ref: &PoolEntry = &dummy;
-    let alive_slot: i32 = region {
-        let entry: PoolEntry = PoolEntry { slot: 77 };
-        entry_ref = &entry;
-        entry_ref.slot  // valid while region alive
+    let gen_slot: i32 = with PoolManager { checked_out: 0, capacity: 2, next_slot: 0 } handle {
+        region {
+            let entry: PoolEntry = perform Pool.checkout();
+            entry_ref = &entry;  // gen-tracked fat ref
+            let slot: i32 = entry_ref.slot;  // access via gen ref (valid)
+            perform Pool.checkin(entry);
+            slot
+        }
     };
-    println_int(alive_slot);
-    // entry_ref is now stale — region destroyed.
-    // Accessing (*entry_ref).slot would trigger StaleReference panic.
-    // We don't dereference here (would crash), but the gen tracking IS active.
+    // entry_ref is now stale — region destroyed. Gen tracking prevents use.
+    println_int(gen_slot);
     println_str("gen ref ok");
 
-    // Test 6: region-scoped pool usage (data freed when region exits)
+    // Test 7: region-scoped pool usage (data freed when region exits)
     let r3: i32 = region {
         let result: i32 = with PoolManager { checked_out: 0, capacity: 2, next_slot: 0 } handle {
             checkout_use_return()

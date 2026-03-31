@@ -12,6 +12,9 @@
 // EXPECT: round-trip ok
 // EXPECT: 10
 // EXPECT: 256
+// EXPECT: 67305985
+// EXPECT: 1
+// EXPECT: 21
 
 // Part 1: Bridge declarations for libc functions
 
@@ -74,7 +77,28 @@ bridge "C" CTypes {
     type SizeT = u64;
 }
 
-// Part 5: Tests
+// Part 5: Bridge union (C union — all fields at offset 0)
+
+bridge "C" Conv {
+    union IntBytes {
+        as_int: i32,
+        as_bytes: [u8; 4],
+    }
+}
+
+// Part 6: Bridge callback (function pointer type alias)
+
+bridge "C" Callbacks {
+    callback IntTransform(i32) -> i32;
+}
+
+fn apply_transform(f: Callbacks.IntTransform, x: i32) -> i32 {
+    f(x)
+}
+
+fn triple(x: i32) -> i32 { x * 3 }
+
+// Part 7: Tests
 
 fn main() -> i32 {
     // Test 1: allocate, read, fill, read, free (linear lifecycle)
@@ -124,6 +148,20 @@ fn main() -> i32 {
     // Test 5: bridge type alias
     let sz: CTypes.SizeT = 256u64;
     println_int(sz as i32);
+
+    // Test 6: bridge union — field access at offset 0
+    let mut conv: Conv.IntBytes = Conv.IntBytes { as_int: 0, as_bytes: [0u8; 4] };
+    conv.as_int = 0x04030201;
+    // Read back through same field
+    println_int(conv.as_int);
+    // Read first byte through as_bytes (reinterpretation)
+    let first_byte: i32 = conv.as_bytes[0] as i32;
+    println_int(first_byte);
+
+    // Test 7: bridge callback — function pointer type alias
+    let f: Callbacks.IntTransform = triple;
+    let result: i32 = apply_transform(f, 7);
+    println_int(result);
 
     0
 }
