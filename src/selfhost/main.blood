@@ -2350,6 +2350,7 @@ fn generate_vft_init_ir(
 fn generate_handler_wrappers(
     handler_info: &HandlerInfo,
     ctx: &mut codegen_ctx.CodegenCtx,
+    body_id_names: &Vec<BodyIdNameEntry>,
 ) -> String {
     let mut ir = String.new();
 
@@ -2805,7 +2806,15 @@ fn generate_handler_wrappers(
             // The body function takes state fields by value + result as i64.
             // We load state fields from %state, call the body for side effects,
             // and return %result.
-            let body_name = ctx.lookup_def_name(ret_info.body_def_id);
+            // Look up body function name from the worklist's body_id→name mapping.
+            // This avoids the def_name collision where register_all_item_names
+            // overwrites the handler body's name with a real item name.
+            let mut body_name: Option<String> = Option.None;
+            for bni in 0usize..body_id_names.len() {
+                if body_id_names[bni].body_id == ret_info.body_def_id {
+                    body_name = Option.Some(main_helpers.clone_string(&body_id_names[bni].fn_name));
+                }
+            }
             match &body_name {
                 &Option.Some(ref fn_name) => {
                     // Load state fields from the state shadow pointer.
@@ -3223,6 +3232,16 @@ struct CodegenWorkList {
     defined_names: Vec<String>,
     /// DefIds that were defined (for duplicate detection — already embedded in items).
     defined_def_ids: Vec<u32>,
+    /// Mapping from body_id to fn_name for handler clause bodies.
+    /// Used by generate_handler_wrappers to find the correct function name
+    /// for kind=2 return clause body calls (avoids def_name collision with
+    /// register_all_item_names).
+    body_id_to_name: Vec<BodyIdNameEntry>,
+}
+
+struct BodyIdNameEntry {
+    body_id: u32,
+    fn_name: String,
 }
 
 /// Scans all HIR bodies and builds a work list of functions to codegen.
@@ -3278,6 +3297,7 @@ fn build_codegen_worklist(
     let mut items: Vec<CodegenWorkItem> = Vec.new();
     let mut defined_names: Vec<String> = Vec.new();
     let mut defined_def_ids: Vec<u32> = Vec.new();
+    let mut body_id_to_name: Vec<BodyIdNameEntry> = Vec.new();
 
     for body_idx in 0usize..lower_result.bodies.len() {
         let body_entry = &lower_result.bodies[body_idx];
@@ -3349,6 +3369,14 @@ fn build_codegen_worklist(
         defined_def_ids.push(def_id.index);
         defined_names.push(main_helpers.clone_string(&fn_name));
 
+        // Record body_id → fn_name mapping for handler clause bodies.
+        // This is used by generate_handler_wrappers for kind=2 return clause
+        // body calls, avoiding the def_name collision with register_all_item_names.
+        body_id_to_name.push(BodyIdNameEntry {
+            body_id: body_id.index,
+            fn_name: main_helpers.clone_string(&fn_name),
+        });
+
         items.push(CodegenWorkItem {
             body_idx,
             fn_name,
@@ -3365,6 +3393,7 @@ fn build_codegen_worklist(
         items,
         defined_names,
         defined_def_ids,
+        body_id_to_name,
     }
 }
 
@@ -5229,7 +5258,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     // Pass 4: Generate handler op wrapper functions and __blood_register_handlers.
     // These wrappers adapt the inner handler op bodies to the standard ABI
     // expected by the evidence API runtime (ptr state, ptr args, i64 arg_count, i64 cont) -> i64.
-    let handler_wrapper_ir = generate_handler_wrappers(&handler_info, &mut ctx);
+    let handler_wrapper_ir = generate_handler_wrappers(&handler_info, &mut ctx, &worklist.body_id_to_name);
     ctx.buffer_write(handler_wrapper_ir.as_str());
 
     // Pass 5: Generate VFT init constructor for trait impl methods.
