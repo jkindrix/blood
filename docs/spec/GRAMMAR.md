@@ -388,7 +388,7 @@ TupleFields ::= (Type (',' Type)* ','?)?
 
 EnumDecl ::= Visibility? 'enum' Ident TypeParams? '{' EnumVariants '}'
 EnumVariants ::= (EnumVariant (',' EnumVariant)* ','?)?
-EnumVariant ::= Ident StructBody?
+EnumVariant ::= Ident StructBody? ('=' IntLiteral)?
 ```
 
 ### 3.4 Effect and Handler Declarations

@@ -1003,11 +1003,26 @@ fn parse_enum_variant(parser: &mut parser_base.Parser) -> ast.EnumVariant {
         ast.StructBody.Unit
     };
 
+    // Parse optional explicit discriminant: `Variant = 42`
+    let discriminant = if parser.try_consume(token.TokenKind.Eq) {
+        let lit_span = parser.current.span;
+        let val = parser_base.parse_int_value_from_span(parser, lit_span);
+        let suffix = parser_base.parse_int_suffix_from_span(parser, lit_span);
+        parser.advance();
+        Option.Some(ast.Literal {
+            kind: ast.LiteralKind.Int { val: val, suffix: suffix },
+            span: lit_span,
+        })
+    } else {
+        Option.None
+    };
+
     let end_span = parser.previous.span;
     ast.EnumVariant {
         attrs: attrs,
         name: name,
         body: body,
+        discriminant: discriminant,
         span: common.Span { start: start.start, end: end_span.end, line: start.line, column: start.column },
     }
 }

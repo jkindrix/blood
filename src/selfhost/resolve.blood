@@ -578,8 +578,20 @@ impl Resolver {
         parent: hir_def.DefId,
         variant_index: u32,
     ) {
+        self.register_variant_def_info_with_disc(def_id, name, span, parent, variant_index, variant_index)
+    }
+
+    pub fn register_variant_def_info_with_disc(
+        self: &mut Self,
+        def_id: hir_def.DefId,
+        name: common.Symbol,
+        span: common.Span,
+        parent: hir_def.DefId,
+        variant_index: u32,
+        discriminant: u32,
+    ) {
         let vec_idx = self.def_info.len() as u32;
-        let info = hir_def.DefInfo.variant(name, span, parent, variant_index);
+        let info = hir_def.DefInfo.variant_with_disc(name, span, parent, variant_index, discriminant);
         let entry = DefInfoEntry.new(def_id, info);
         self.def_info.push(entry);
         // Populate hash indexes
@@ -599,12 +611,14 @@ impl Resolver {
                     let entry = &self.def_info[idx].info;
                     let cloned_parent = clone_optional_def_id(&entry.parent);
                     let cloned_vi = clone_optional_u32(&entry.variant_index);
+                    let cloned_vd = clone_optional_u32(&entry.variant_discriminant);
                     return Option.Some(hir_def.DefInfo {
                         kind: entry.kind,
                         name: entry.name,
                         span: entry.span,
                         parent: cloned_parent,
                         variant_index: cloned_vi,
+                        variant_discriminant: cloned_vd,
                         visibility: entry.visibility,
                     });
                 }
@@ -618,12 +632,14 @@ impl Resolver {
                 let entry = &self.def_info[i].info;
                 let cloned_parent = clone_optional_def_id(&entry.parent);
                 let cloned_vi = clone_optional_u32(&entry.variant_index);
+                let cloned_vd = clone_optional_u32(&entry.variant_discriminant);
                 return Option.Some(hir_def.DefInfo {
                     kind: entry.kind,
                     name: entry.name,
                     span: entry.span,
                     parent: cloned_parent,
                     variant_index: cloned_vi,
+                    variant_discriminant: cloned_vd,
                     visibility: entry.visibility,
                 });
             }

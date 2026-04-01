@@ -539,7 +539,11 @@ fn lower_path_expr(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.ExprPath, spa
                 Option.Some(info) => {
                     match info.variant_index {
                         Option.Some(vi) => {
-                            hir_def.ResolvedPath.variant(binding.def_id, span, vi)
+                            let disc = match info.variant_discriminant {
+                                Option.Some(d) => d,
+                                Option.None => vi,
+                            };
+                            hir_def.ResolvedPath.variant_with_disc(binding.def_id, span, vi, disc)
                         }
                         Option.None => {
                             hir_def.ResolvedPath.new(binding.def_id, type_arg_count, span)
@@ -597,7 +601,11 @@ fn lower_path_expr(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.ExprPath, spa
             Option.Some(info) => {
                 match info.variant_index {
                     Option.Some(vi) => {
-                        hir_def.ResolvedPath.variant(result.def_id, span, vi)
+                        let disc = match info.variant_discriminant {
+                            Option.Some(d) => d,
+                            Option.None => vi,
+                        };
+                        hir_def.ResolvedPath.variant_with_disc(result.def_id, span, vi, disc)
                     }
                     Option.None => {
                         hir_def.ResolvedPath.new(result.def_id, type_arg_count, span)
@@ -742,7 +750,13 @@ fn lower_method_call_expr(
                 let resolved_path = match def_info {
                     Option.Some(info) => {
                         match info.variant_index {
-                            Option.Some(vi) => hir_def.ResolvedPath.variant(qp_result.def_id, span, vi),
+                            Option.Some(vi) => {
+                                let disc = match info.variant_discriminant {
+                                    Option.Some(d) => d,
+                                    Option.None => vi,
+                                };
+                                hir_def.ResolvedPath.variant_with_disc(qp_result.def_id, span, vi, disc)
+                            }
                             Option.None => hir_def.ResolvedPath.new(qp_result.def_id, type_arg_count, span),
                         }
                     }
@@ -841,7 +855,11 @@ fn lower_field_expr(ctx: &mut hir_lower_ctx.LoweringCtx, base: &ast.Expr, field:
                             Option.Some(info) => {
                                 match info.variant_index {
                                     Option.Some(vi) => {
-                                        hir_def.ResolvedPath.variant(result.def_id, span, vi)
+                                        let disc = match info.variant_discriminant {
+                                            Option.Some(d) => d,
+                                            Option.None => vi,
+                                        };
+                                        hir_def.ResolvedPath.variant_with_disc(result.def_id, span, vi, disc)
                                     }
                                     Option.None => {
                                         hir_def.ResolvedPath.new(result.def_id, 0, span)
@@ -1029,7 +1047,11 @@ fn lower_record_expr(
         Option.Some(info) => {
             match info.variant_index {
                 Option.Some(vi) => {
-                    let mut rp = hir_def.ResolvedPath.variant(def_id, p.span, vi);
+                    let disc = match info.variant_discriminant {
+                        Option.Some(d) => d,
+                        Option.None => vi,
+                    };
+                    let mut rp = hir_def.ResolvedPath.variant_with_disc(def_id, p.span, vi, disc);
                     rp.type_arg_count = type_arg_count;
                     rp
                 }
@@ -2031,7 +2053,11 @@ fn resolve_type_path_for_pattern(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast
             Option.Some(info) => {
                 match info.variant_index {
                     Option.Some(vi) => {
-                        return hir_def.ResolvedPath.variant(result.def_id, span, vi);
+                        let disc = match info.variant_discriminant {
+                            Option.Some(d) => d,
+                            Option.None => vi,
+                        };
+                        return hir_def.ResolvedPath.variant_with_disc(result.def_id, span, vi, disc);
                     }
                     Option.None => {
                         return hir_def.ResolvedPath.new(result.def_id, type_arg_count, span);

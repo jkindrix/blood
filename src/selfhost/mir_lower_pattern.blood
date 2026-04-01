@@ -53,8 +53,12 @@ pub fn lower_irrefutable_pattern(
         &hir_expr.PatternKind.Struct { ref path, ref fields, has_rest: _ } => {
             // For enum record variants, downcast first to skip discriminant
             match path.variant_index {
-                Option.Some(idx) => {
-                    let downcast_source = source.project(mir_types.PlaceElem.Downcast(idx));
+                Option.Some(_) => {
+                    let disc = match path.variant_discriminant {
+                        Option.Some(d) => d,
+                        Option.None => path.variant_index.unwrap(),
+                    };
+                    let downcast_source = source.project(mir_types.PlaceElem.Downcast(disc));
                     lower_struct_pattern(ctx, fields, downcast_source, span);
                 }
                 Option.None => {
@@ -65,8 +69,12 @@ pub fn lower_irrefutable_pattern(
         &hir_expr.PatternKind.TupleStruct { ref path, ref fields } => {
             // For enum tuple variants, downcast first to skip discriminant
             match path.variant_index {
-                Option.Some(idx) => {
-                    let downcast_source = source.project(mir_types.PlaceElem.Downcast(idx));
+                Option.Some(_) => {
+                    let disc = match path.variant_discriminant {
+                        Option.Some(d) => d,
+                        Option.None => path.variant_index.unwrap(),
+                    };
+                    let downcast_source = source.project(mir_types.PlaceElem.Downcast(disc));
                     lower_tuple_struct_pattern(ctx, fields, downcast_source, span);
                 }
                 Option.None => {
@@ -656,23 +664,28 @@ fn extract_constant_value(kind: &mir_types.ConstantKind) -> u128 {
 }
 
 /// Gets the variant index from a resolved path (for enum variants).
+/// Returns the runtime discriminant value for an enum variant path.
+/// Uses variant_discriminant (explicit value) if set, otherwise variant_index (sequential).
 fn get_variant_index_from_path(
     ctx: &mut mir_lower_ctx.MirLowerCtx,
     path: &hir_def.ResolvedPath,
     span: common.Span,
 ) -> u32 {
-    // Use the variant_index stored in the ResolvedPath if available
-    match path.variant_index {
-        Option.Some(idx) => idx,
+    // Prefer explicit discriminant for runtime switch/compare
+    match path.variant_discriminant {
+        Option.Some(disc) => disc,
         Option.None => {
-            // Variant index not set — this shouldn't happen for properly resolved
-            // variant paths. Report and use def_id.index as fallback.
-            ctx.mir_error(
-                mir_lower_ctx.MirLowerErrorKind.VariantIndexUnknown,
-                common.make_string("variant index not resolved; using def_id index as fallback"),
-                span,
-            );
-            path.def_id.index
+            match path.variant_index {
+                Option.Some(idx) => idx,
+                Option.None => {
+                    ctx.mir_error(
+                        mir_lower_ctx.MirLowerErrorKind.VariantIndexUnknown,
+                        common.make_string("variant index not resolved; using def_id index as fallback"),
+                        span,
+                    );
+                    path.def_id.index
+                }
+            }
         }
     }
 }

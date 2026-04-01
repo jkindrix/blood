@@ -266,7 +266,18 @@ pub fn lower_enum_variants(ctx: &mut hir_lower_ctx.LoweringCtx, parent_def_id: h
                 break;
             }
         }
-        let variant = lower_enum_variant(ctx, parent_def_id, &variants[i], i as u32);
+        // Sequential index for resolver (exhaustiveness checking)
+        // Explicit discriminant value for HIR Variant (codegen)
+        let disc = match &variants[i].discriminant {
+            &Option.Some(ref lit) => {
+                match &lit.kind {
+                    &ast.LiteralKind.Int { val, suffix: _ } => val as u32,
+                    _ => i as u32,
+                }
+            }
+            &Option.None => i as u32,
+        };
+        let variant = lower_enum_variant_with_disc(ctx, parent_def_id, &variants[i], i as u32, disc);
         result.push(variant);
     }
     result
@@ -274,18 +285,24 @@ pub fn lower_enum_variants(ctx: &mut hir_lower_ctx.LoweringCtx, parent_def_id: h
 
 /// Lower a single enum variant to HIR.
 fn lower_enum_variant(ctx: &mut hir_lower_ctx.LoweringCtx, parent_def_id: hir_def.DefId, variant: &ast.EnumVariant, discriminant: u32) -> hir_item.Variant {
+    lower_enum_variant_with_disc(ctx, parent_def_id, variant, discriminant, discriminant)
+}
+
+/// Lower a single enum variant to HIR with separate sequential index and discriminant value.
+fn lower_enum_variant_with_disc(ctx: &mut hir_lower_ctx.LoweringCtx, parent_def_id: hir_def.DefId, variant: &ast.EnumVariant, variant_index: u32, discriminant: u32) -> hir_item.Variant {
     let def_id = ctx.alloc_def_id();
 
     // Re-intern the variant name from span for consistent symbol indices
     let name_str = ctx.span_to_string(variant.name.span);
     let name_symbol = ctx.intern(name_str.as_str());
 
-    // Register the variant def_info with the enum as its parent and variant index
-    ctx.resolver.register_variant_def_info(
+    // Register with sequential index (for exhaustiveness) and discriminant (for codegen)
+    ctx.resolver.register_variant_def_info_with_disc(
         def_id,
         name_symbol,
         variant.name.span,
         parent_def_id,
+        variant_index,
         discriminant,
     );
 
@@ -295,6 +312,7 @@ fn lower_enum_variant(ctx: &mut hir_lower_ctx.LoweringCtx, parent_def_id: hir_de
         span: variant.name.span,
     };
 
+    // HIR Variant uses the DISCRIMINANT value (for codegen tag values)
     let kind = lower_variant_kind(ctx, &variant.body);
     hir_item.Variant.new(def_id, hir_name, discriminant, kind, variant.span)
 }
