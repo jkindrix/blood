@@ -1,0 +1,21 @@
+// COMPILE_FAIL: effectful function not assignable to pure function type
+// EXPECT: type mismatch
+
+effect IO {
+    op print_val(x: i32) -> ();
+}
+
+fn apply_pure(f: fn() -> i32) -> i32 {
+    f()
+}
+
+fn effectful_producer() -> i32 / {IO} {
+    perform IO.print_val(1);
+    42
+}
+
+fn main() -> i32 {
+    // effectful_producer has effects {IO}, but apply_pure expects pure fn() -> i32.
+    // This must be rejected.
+    apply_pure(effectful_producer)
+}

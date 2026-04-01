@@ -1,0 +1,15 @@
+// COMPILE_FAIL: effectful function not coercible to pure function type
+// EXPECT: type mismatch
+
+effect IO {
+    op do_io(x: i32) -> ();
+}
+
+fn effectful() / {IO} {
+    perform IO.do_io(1);
+}
+
+fn main() -> i32 {
+    let f: fn() -> () = effectful;
+    0
+}

@@ -1,0 +1,32 @@
+// Test: generic function accepts pure fn where effectful fn is expected.
+// pure <: {IO} — pure is always a subset of any effect set.
+// EXPECT: 42
+
+effect IO {
+    op print_val(x: i32) -> ();
+}
+
+deep handler StdIO for IO {
+    return(x) { x }
+    op print_val(x) {
+        println_int(x);
+        resume(())
+    }
+}
+
+fn apply_io<T>(f: fn() -> T / {IO}) -> T {
+    f()
+}
+
+fn pure_producer() -> i32 {
+    42
+}
+
+fn main() -> i32 {
+    with StdIO {} handle {
+        let result: i32 = apply_io(pure_producer);
+        println_int(result);
+        if result != 42 { return 1; }
+        0
+    }
+}

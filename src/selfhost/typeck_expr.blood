@@ -202,10 +202,32 @@ pub fn infer_expr(checker: &mut typeck.TypeChecker, expr: &hir_expr.Expr) -> typ
     result
 }
 
+/// Returns the function type with more effects, for branch unification.
+/// For non-function types, returns `a`.
+fn wider_fn_type(a: type_intern.TyId, b: type_intern.TyId) -> type_intern.TyId {
+    let interner = type_intern.type_interner();
+    match interner.get(a) {
+        &type_intern.InternedTypeKind.Fn { params: _, ret: _, effects: eff_a } => {
+            match interner.get(b) {
+                &type_intern.InternedTypeKind.Fn { params: _, ret: _, effects: eff_b } => {
+                    let row_a = interner.get_effect_row(eff_a);
+                    let row_b = interner.get_effect_row(eff_b);
+                    if row_b.effects.len() > row_a.effects.len() {
+                        return b;
+                    }
+                    a
+                }
+                _ => a,
+            }
+        }
+        _ => a,
+    }
+}
+
 /// Directional effect subtyping check for function types.
 /// Returns true if `actual`'s effects are a subset of `expected`'s effects.
 /// For non-function types or unresolved types, always returns true.
-fn check_effect_subtyping(checker: &mut typeck.TypeChecker, actual: type_intern.TyId, expected: type_intern.TyId) -> bool {
+pub fn check_effect_subtyping(checker: &mut typeck.TypeChecker, actual: type_intern.TyId, expected: type_intern.TyId) -> bool {
     let interner = type_intern.type_interner();
     let actual_resolved = checker.resolve(actual);
     let expected_resolved = checker.resolve(expected);
@@ -497,7 +519,10 @@ fn try_fn_pointer_coerce_id(
                                         match type_intern.get_fn_ret(to_resolved) {
                                             Option.Some(to_ret) => {
                                                 if checker.unify(from_ret, to_ret, span) {
-                                                    return typeck.CoercionResult.Ok(typeck.Coercion.FnPointer);
+                                                    // Effect subtyping: from's effects ⊆ to's effects
+                                                    if check_effect_subtyping(checker, from_resolved, to_resolved) {
+                                                        return typeck.CoercionResult.Ok(typeck.Coercion.FnPointer);
+                                                    }
                                                 }
                                             }
                                             Option.None => {}
@@ -943,7 +968,22 @@ fn instantiate_fn_sig(checker: &mut typeck.TypeChecker, fn_info: &typeck.FnSigIn
 
     let interner = type_intern.type_interner();
     let params_list = interner.intern_ty_list(&param_tys);
-    interner.mk_fn(params_list, ret_ty, type_intern.EffectRowId.new(0))
+    // Include declared effects (same as non-generic path) so that
+    // effect subtyping is checked when passing generic function values.
+    let eff_row_id = if fn_info.effect_def_ids.len() > 0 {
+        let mut effs: Vec<type_intern.InternedEffectRef> = Vec.new();
+        for ei in 0usize..fn_info.effect_def_ids.len() {
+            effs.push(type_intern.InternedEffectRef {
+                def_id: hir_def.DefId.new(fn_info.effect_def_ids[ei]),
+                type_args: type_intern.TyListId.new(0),
+            });
+        }
+        let row = type_intern.InternedEffectRow.new(effs, Option.None);
+        interner.intern_effect_row(row)
+    } else {
+        type_intern.EffectRowId.new(0)
+    };
+    interner.mk_fn(params_list, ret_ty, eff_row_id)
 }
 
 // ============================================================
@@ -2648,7 +2688,11 @@ fn infer_if(
             } else {
                 // Both branches must have same type
                 checker.unify(then_ty, else_ty, span);
-                checker.resolve(then_ty)
+                // Return the wider type (more effects) so assignments/returns
+                // correctly see all effects from either branch.
+                let resolved_then = checker.resolve(then_ty);
+                let resolved_else = checker.resolve(else_ty);
+                wider_fn_type(resolved_then, resolved_else)
             }
         }
         &None => {
@@ -2707,6 +2751,8 @@ fn infer_match(
             result_ty = arm_ty;
         } else {
             checker.unify(arm_ty, result_ty, arms[i].body.span);
+            // Keep the wider fn type (more effects) so assignments see all effects.
+            result_ty = wider_fn_type(checker.resolve(result_ty), checker.resolve(arm_ty));
         }
     }
 
@@ -2850,7 +2896,14 @@ fn infer_return(
     // Unify with function return type
     match &checker.return_ty {
         &Some(ret_ty) => {
-            checker.unify(val_ty, type_intern.TyId.new(ret_ty.index), span);
+            let ret_ty_id = type_intern.TyId.new(ret_ty.index);
+            checker.unify(val_ty, ret_ty_id, span);
+            // Directional effect check: val_ty's effects must be subset of return type's effects.
+            // unify accepts bidirectionally (pure ⊆ {IO}), but returning effectful where pure
+            // is declared is unsound — the caller won't handle the effects.
+            if !check_effect_subtyping(checker, val_ty, ret_ty_id) {
+                checker.error(typeck.TypeErrorKind.TypeMismatch, span);
+            }
         }
         &None => {
             checker.error(typeck.TypeErrorKind.InvalidControl, span);

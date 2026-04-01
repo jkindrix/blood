@@ -2602,7 +2602,14 @@ fn check_body(checker: &mut typeck.TypeChecker, body: &hir_expr.Body, return_ty:
     // Unify body type with return type
     match &checker.return_ty {
         &Some(ret_ty) => {
-            checker.unify(body_ty, type_intern.TyId.new(ret_ty.index), body.expr.span);
+            let ret_ty_id = type_intern.TyId.new(ret_ty.index);
+            checker.unify(body_ty, ret_ty_id, body.expr.span);
+            // Directional effect check: body's fn-typed value must not have more
+            // effects than the declared return type. unify accepts bidirectionally
+            // (pure ⊆ {IO}), but returning effectful where pure is declared is unsound.
+            if !typeck_expr.check_effect_subtyping(checker, body_ty, ret_ty_id) {
+                checker.error(typeck.TypeErrorKind.TypeMismatch, body.expr.span);
+            }
         }
         &None => {}
     }

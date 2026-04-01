@@ -1,0 +1,20 @@
+// COMPILE_FAIL: return effectful function where pure declared
+// EXPECT: type mismatch
+// Test: function declared returning fn()->i32 must not return fn()->i32/{IO}
+
+effect IO {
+    op do_io(x: i32) -> ();
+}
+
+fn effectful_producer() -> i32 / {IO} {
+    perform IO.do_io(1);
+    42
+}
+
+fn get_fn() -> fn() -> i32 {
+    effectful_producer
+}
+
+fn main() -> i32 {
+    0
+}

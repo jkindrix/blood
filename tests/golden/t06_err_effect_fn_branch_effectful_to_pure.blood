@@ -1,0 +1,21 @@
+// COMPILE_FAIL: if-else branches with mixed effects assigned to pure
+// EXPECT: type mismatch
+// Test: if-else producing effectful fn must not assign to pure fn type
+
+effect IO {
+    op do_io(x: i32) -> ();
+}
+
+fn effectful() -> i32 / {IO} {
+    perform IO.do_io(1);
+    42
+}
+
+fn pure_fn() -> i32 {
+    42
+}
+
+fn main() -> i32 {
+    let f: fn() -> i32 = if true { pure_fn } else { effectful };
+    0
+}
