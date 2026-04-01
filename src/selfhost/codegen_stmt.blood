@@ -1865,6 +1865,9 @@ pub fn emit_allocas_with_escapes(
         if ctx.is_handler_state_ptr(local_id) {
             let ptr_ty = common.make_string("ptr");
             emit_stack_local(ctx, &name_cg, &ptr_ty);
+        } else if codegen_size.type_size_with_ctx_id(ctx, local.ty) == 0 {
+            // Zero-sized types need no allocation — use stack alloca (no-op at runtime)
+            emit_stack_local(ctx, &name_cg, &ty_str);
         } else {
             match &tier {
                 &mir_escape.MemoryTier.Stack => {
