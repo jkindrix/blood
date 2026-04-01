@@ -1,0 +1,114 @@
+// Test: generic struct with mixed generic + concrete fields.
+// Verifies GEP offsets are correct when T and fixed types coexist.
+// Previously, monomorphized methods could use unsubstituted struct layout,
+// causing wrong offsets for fields after the generic field.
+
+struct Container<T> {
+    item: T,
+    count: i32,
+}
+
+impl<T> Container<T> {
+    fn new(item: T, count: i32) -> Container<T> {
+        Container { item: item, count: count }
+    }
+
+    fn get_item(self: &Self) -> &T {
+        &self.item
+    }
+
+    fn get_count(self: &Self) -> i32 {
+        self.count
+    }
+}
+
+// Two-param generic with mixed concrete field at end
+struct Tagged<K, V> {
+    key: K,
+    value: V,
+    tag: i32,
+}
+
+impl<K, V> Tagged<K, V> {
+    fn new(key: K, value: V, tag: i32) -> Tagged<K, V> {
+        Tagged { key: key, value: value, tag: tag }
+    }
+
+    fn get_tag(self: &Self) -> i32 {
+        self.tag
+    }
+
+    fn get_key(self: &Self) -> &K {
+        &self.key
+    }
+
+    fn get_value(self: &Self) -> &V {
+        &self.value
+    }
+}
+
+// Concrete field BEFORE generic field
+struct Labeled<T> {
+    label: i32,
+    data: T,
+}
+
+impl<T> Labeled<T> {
+    fn new(label: i32, data: T) -> Labeled<T> {
+        Labeled { label: label, data: data }
+    }
+
+    fn get_label(self: &Self) -> i32 {
+        self.label
+    }
+
+    fn get_data(self: &Self) -> &T {
+        &self.data
+    }
+}
+
+fn main() -> i32 {
+    // Container<i32>: layout { i32, i32 }
+    // count field at offset 1 after generic item field
+    let c: Container<i32> = Container.new(100, 42);
+    let item: &i32 = c.get_item();
+    let count: i32 = c.get_count();
+    println_int(*item);
+    println_int(count);
+    if *item != 100 {
+        return 1;
+    }
+    if count != 42 {
+        return 2;
+    }
+
+    // Tagged<i32, i32>: layout { i32, i32, i32 }
+    // tag field at offset 2 after two generic fields
+    let t: Tagged<i32, i32> = Tagged.new(10, 20, 30);
+    println_int(*t.get_key());
+    println_int(*t.get_value());
+    println_int(t.get_tag());
+    if *t.get_key() != 10 {
+        return 3;
+    }
+    if *t.get_value() != 20 {
+        return 4;
+    }
+    if t.get_tag() != 30 {
+        return 5;
+    }
+
+    // Labeled<i32>: layout { i32, i32 }
+    // Concrete field BEFORE generic — different ordering
+    let l: Labeled<i32> = Labeled.new(77, 88);
+    println_int(l.get_label());
+    println_int(*l.get_data());
+    if l.get_label() != 77 {
+        return 6;
+    }
+    if *l.get_data() != 88 {
+        return 7;
+    }
+
+    0
+}
