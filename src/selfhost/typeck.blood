@@ -422,10 +422,7 @@ pub struct TypeChecker {
     /// TyVarId indices that are from float literals (subset of numeric_infer_ids).
     /// Used to default unresolved float vars to f64 instead of i32.
     pub float_infer_ids: Vec<u32>,
-    /// Cached resolved numeric var IDs. Built incrementally across bodies to avoid O(n²).
-    /// Contains var IDs of Infer types that trace back to numeric literals.
-    pub resolved_numeric_cache: Vec<u32>,
-    /// Index into numeric_infer_ids marking how far the cache has been built.
+    /// Index into numeric_infer_ids marking how far defaulting has been applied.
     pub resolved_numeric_cursor: usize,
     /// Temporary: fresh Infer mappings from the most recent instantiate_fn_sig call.
     /// Each entry is (body_ty_var_index, fresh_ty_var_index).
@@ -512,7 +509,6 @@ impl TypeChecker {
             in_unsafe_context: false,
             numeric_infer_ids: Vec.new(),
             float_infer_ids: Vec.new(),
-            resolved_numeric_cache: Vec.new(),
             resolved_numeric_cursor: 0,
             last_type_param_bindings: Vec.new(),
             type_generic_calls: Vec.new(),
@@ -590,7 +586,6 @@ impl TypeChecker {
             in_unsafe_context: false,
             numeric_infer_ids: Vec.new(),
             float_infer_ids: Vec.new(),
-            resolved_numeric_cache: Vec.new(),
             resolved_numeric_cursor: 0,
             last_type_param_bindings: Vec.new(),
             type_generic_calls: Vec.new(),
