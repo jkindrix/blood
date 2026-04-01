@@ -245,6 +245,8 @@ pub fn lower_struct_field(ctx: &mut hir_lower_ctx.LoweringCtx, field: &ast.Struc
 /// Lower enum variants to HIR.
 pub fn lower_enum_variants(ctx: &mut hir_lower_ctx.LoweringCtx, parent_def_id: hir_def.DefId, variants: &Vec<ast.EnumVariant>) -> Vec<hir_item.Variant> {
     let mut result: Vec<hir_item.Variant> = Vec.with_capacity(variants.len());
+    let mut next_disc: u32 = 0;
+    let mut seen_discs: Vec<u32> = Vec.new();
     for i in 0usize..variants.len() {
         // Check for duplicate variant name using interned symbol index
         // NOTE: Avoid chained method calls to work around first_gen codegen bug
@@ -266,17 +268,52 @@ pub fn lower_enum_variants(ctx: &mut hir_lower_ctx.LoweringCtx, parent_def_id: h
                 break;
             }
         }
-        // Sequential index for resolver (exhaustiveness checking)
-        // Explicit discriminant value for HIR Variant (codegen)
+        // Compute discriminant: explicit value or running counter (prev + 1)
         let disc = match &variants[i].discriminant {
             &Option.Some(ref lit) => {
                 match &lit.kind {
-                    &ast.LiteralKind.Int { val, suffix: _ } => val as u32,
-                    _ => i as u32,
+                    &ast.LiteralKind.Int { val, suffix: _ } => {
+                        if val > 4294967295u128 {
+                            let mut msg = String.new();
+                            msg.push_str("discriminant value overflows u32");
+                            ctx.error(hir.DiagnosticCode.E0101, msg, lit.span);
+                            next_disc = 0;
+                            0u32
+                        } else {
+                            let d = val as u32;
+                            next_disc = d + 1;
+                            d
+                        }
+                    }
+                    _ => {
+                        let d = next_disc;
+                        next_disc = d + 1;
+                        d
+                    }
                 }
             }
-            &Option.None => i as u32,
+            &Option.None => {
+                let d = next_disc;
+                next_disc = d + 1;
+                d
+            }
         };
+        // Check for duplicate discriminant values
+        for di in 0usize..seen_discs.len() {
+            if seen_discs[di] == disc {
+                let variant_name = ctx.span_to_string(variants[i].name.span);
+                let vn_ref = variant_name.as_str();
+                let mut msg = String.new();
+                msg.push_str("duplicate discriminant value ");
+                hir_lower_ctx.append_u32_to_string(&mut msg, disc);
+                msg.push_str(" on variant `");
+                msg.push_str(vn_ref);
+                msg.push_str("`");
+                ctx.error(hir.DiagnosticCode.E0101, msg, variants[i].name.span);
+                break;
+            }
+        }
+        seen_discs.push(disc);
         let variant = lower_enum_variant_with_disc(ctx, parent_def_id, &variants[i], i as u32, disc);
         result.push(variant);
     }
