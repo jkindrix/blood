@@ -3327,14 +3327,46 @@ fn infer_perform(
                                 } else {
                                     // No function-level effect type args. Check handler scope
                                     // for type args from `with Handler {} handle {}` (F-02 fix).
+                                    // Must resolve raw_ty to find which type param it references,
+                                    // then use that index into scope_args (not the op param index).
+                                    // Search from back for innermost handler.
                                     let mut handler_args_found = false;
-                                    for hsi in 0usize..checker.available_effects.len() {
+                                    let interner2 = type_intern.type_interner();
+                                    let mut hsi = checker.available_effects.len();
+                                    while hsi > 0 && !handler_args_found {
+                                        hsi = hsi - 1;
                                         if checker.available_effects[hsi] == effect_def.index {
                                             if hsi < checker.available_effect_type_args.len() {
                                                 let scope_args = &checker.available_effect_type_args[hsi];
-                                                if ai < scope_args.len() {
-                                                    checker.unify(arg_tys[ai], scope_args[ai], span);
-                                                    handler_args_found = true;
+                                                // Look up which type param raw_ty references
+                                                match interner2.get(raw_ty) {
+                                                    &type_intern.InternedTypeKind.Infer(ref var_id) => {
+                                                        match &checker.effects[def_idx] {
+                                                            &Some(ref einfo) => {
+                                                                for tpi in 0usize..einfo.type_param_var_ids.len() {
+                                                                    if einfo.type_param_var_ids[tpi] == var_id.index && tpi < scope_args.len() {
+                                                                        // Bind shared type var so return type also resolves
+                                                                        let resolved_raw = unify.apply_substs_id(&checker.subst_table, raw_ty);
+                                                                        let is_raw_unbound = match interner2.get(resolved_raw) {
+                                                                            &type_intern.InternedTypeKind.Infer(_) => true,
+                                                                            _ => false,
+                                                                        };
+                                                                        if is_raw_unbound {
+                                                                            checker.unify(raw_ty, scope_args[tpi], span);
+                                                                        }
+                                                                        checker.unify(arg_tys[ai], scope_args[tpi], span);
+                                                                        handler_args_found = true;
+                                                                    }
+                                                                }
+                                                            }
+                                                            &None => {}
+                                                        }
+                                                    }
+                                                    _ => {
+                                                        // raw_ty is not an Infer — it's a concrete type, unify directly
+                                                        checker.unify(arg_tys[ai], raw_ty, span);
+                                                        handler_args_found = true;
+                                                    }
                                                 }
                                             }
                                         }

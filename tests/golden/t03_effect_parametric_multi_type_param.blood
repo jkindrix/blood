@@ -1,0 +1,36 @@
+// Test: parametric effect with multiple type parameters.
+// Handler scope must map each op param to the correct type param, not by position.
+// EXPECT: 10
+// EXPECT: 20
+// EXPECT: 99
+
+effect KVStore<K, V> {
+    op get(key: K) -> V;
+    op put(key: K, value: V) -> ();
+}
+
+deep handler IntIntStore for KVStore<i32, i64> {
+    let mut stored_key: i32
+    let mut stored_val: i64
+    return(x) { x }
+    op get(key) {
+        resume(stored_val)
+    }
+    op put(key, value) {
+        stored_key = key;
+        stored_val = value;
+        resume(())
+    }
+}
+
+fn main() -> i32 {
+    with IntIntStore { stored_key: 0, stored_val: 0 } handle {
+        perform KVStore.put(10, 20 as i64);
+        let k: i32 = 10;
+        println_int(k);
+        let v: i64 = perform KVStore.get(10);
+        println_int(v as i32);
+    };
+    println_int(99);
+    0
+}

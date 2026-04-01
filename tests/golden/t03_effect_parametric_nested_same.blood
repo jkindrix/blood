@@ -1,0 +1,48 @@
+// Test: nested handlers for the same parametric effect with different type args.
+// Inner handler's type args must take precedence.
+// EXPECT: 300
+// EXPECT: 30
+
+effect Emit<T> {
+    op emit(value: T) -> ();
+}
+
+deep handler CollectI32 for Emit<i32> {
+    let mut sum: i32
+    return(x) { sum }
+    op emit(value) {
+        sum = sum + value;
+        resume(())
+    }
+}
+
+deep handler CollectI64 for Emit<i64> {
+    let mut sum: i64
+    return(x) { sum }
+    op emit(value) {
+        sum = sum + value;
+        resume(())
+    }
+}
+
+fn main() -> i32 {
+    // Outer: Emit<i64>, Inner: Emit<i32>
+    // perform Emit.emit(10) inside inner should resolve to Emit<i32> (inner handler wins)
+    let outer: i64 = with CollectI64 { sum: 0 } handle {
+        let inner: i32 = with CollectI32 { sum: 0 } handle {
+            perform Emit.emit(10);
+            perform Emit.emit(20);
+            0
+        };
+        // inner should be 30
+        perform Emit.emit(inner as i64);
+        perform Emit.emit(inner as i64 * 3);
+        perform Emit.emit(inner as i64 * 6);
+        0 as i64
+    };
+    // outer should be 30 + 90 + 180 = 300
+    println_int(outer as i32);
+    println_int(30);
+    if outer != 300 { return 1; }
+    0
+}
