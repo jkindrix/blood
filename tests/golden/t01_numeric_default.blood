@@ -1,0 +1,39 @@
+// Test: unsuffixed numeric literals default to i32 (int) and f64 (float).
+
+fn main() -> i32 {
+    // Unconstrained integers — should default to i32
+    let a = 100;
+    let b = 200;
+    let c = a + b;
+    if c != 300 {
+        return 1;
+    }
+
+    // Constrained integer (via typed binding)
+    let x = 42;
+    let y: i32 = x;
+    if y != 42 {
+        return 2;
+    }
+
+    // Unconstrained float — should default to f64
+    let p = 1.5;
+    let q = 2.5;
+    let r = p + q;
+    // r should be 4.0 (f64)
+    if r < 3.9 {
+        return 3;
+    }
+    if r > 4.1 {
+        return 4;
+    }
+
+    // Constrained float (via typed binding)
+    let f = 3.14;
+    let g: f64 = f;
+    if g < 3.0 {
+        return 5;
+    }
+
+    0
+}

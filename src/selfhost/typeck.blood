@@ -417,9 +417,11 @@ pub struct TypeChecker {
     /// Used to gate safety-sensitive casts (Ptr↔usize, Ptr→Ref, fn→integer).
     pub in_unsafe_context: bool,
     /// TyVarId indices for inference variables created from unsuffixed numeric literals.
-    /// These will be defaulted to i32/f64 during MIR lowering, so they should not be
-    /// flagged as "undetermined type variables" during the post-typeck check.
+    /// Unresolved vars are defaulted to i32 (ints) or f64 (floats) after body checking.
     pub numeric_infer_ids: Vec<u32>,
+    /// TyVarId indices that are from float literals (subset of numeric_infer_ids).
+    /// Used to default unresolved float vars to f64 instead of i32.
+    pub float_infer_ids: Vec<u32>,
     /// Cached resolved numeric var IDs. Built incrementally across bodies to avoid O(n²).
     /// Contains var IDs of Infer types that trace back to numeric literals.
     pub resolved_numeric_cache: Vec<u32>,
@@ -509,6 +511,7 @@ impl TypeChecker {
             deref_method_ids: hashmap.HashMapU64U64.new(),
             in_unsafe_context: false,
             numeric_infer_ids: Vec.new(),
+            float_infer_ids: Vec.new(),
             resolved_numeric_cache: Vec.new(),
             resolved_numeric_cursor: 0,
             last_type_param_bindings: Vec.new(),
@@ -586,6 +589,7 @@ impl TypeChecker {
             deref_method_ids: hashmap.HashMapU64U64.new(),
             in_unsafe_context: false,
             numeric_infer_ids: Vec.new(),
+            float_infer_ids: Vec.new(),
             resolved_numeric_cache: Vec.new(),
             resolved_numeric_cursor: 0,
             last_type_param_bindings: Vec.new(),

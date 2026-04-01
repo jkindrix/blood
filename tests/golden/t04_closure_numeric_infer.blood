@@ -1,0 +1,43 @@
+// Test: closure parameter numeric inference without explicit type annotations.
+// Verifies that unsuffixed numeric literals in closure bodies properly
+// constrain the closure parameter type through unification.
+
+fn apply_i32(f: fn(i32) -> bool, x: i32) -> bool {
+    f(x)
+}
+
+fn apply_i32_ret(f: fn(i32) -> i32, x: i32) -> i32 {
+    f(x)
+}
+
+fn main() -> i32 {
+    // Closure param type inferred from call-site constraint (fn(i32) -> bool)
+    let gt_10: fn(i32) -> bool = |x| x > 10;
+    if !gt_10(42) {
+        return 1;
+    }
+    if gt_10(5) {
+        return 2;
+    }
+
+    // Through higher-order function
+    if !apply_i32(|x| x > 10, 42) {
+        return 3;
+    }
+    if apply_i32(|x| x > 10, 5) {
+        return 4;
+    }
+
+    // Arithmetic in closure body
+    let dbl: fn(i32) -> i32 = |x| x * 2;
+    if dbl(21) != 42 {
+        return 5;
+    }
+
+    // Through higher-order function with arithmetic
+    if apply_i32_ret(|x| x + 1, 41) != 42 {
+        return 6;
+    }
+
+    0
+}

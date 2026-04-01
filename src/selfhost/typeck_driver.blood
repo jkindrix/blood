@@ -2624,16 +2624,23 @@ fn check_body(checker: &mut typeck.TypeChecker, body: &hir_expr.Body, return_ty:
     // Handler bodies and other non-function contexts (status 0) are also skipped.
     let fn_generic_status = get_fn_generic_status(checker);
     // fn_generic_status: 0 = not a function (handler/unknown), 1 = non-generic fn, 2 = generic fn
-    // Incrementally update the resolved numeric cache with new entries only.
-    // This avoids O(n²) full re-scanning of all numeric_infer_ids each body.
+    // Incrementally update the resolved numeric cache and default unresolved
+    // numeric vars: unsuffixed int literals → i32, unsuffixed float literals → f64.
     while checker.resolved_numeric_cursor < checker.numeric_infer_ids.len() {
-        let var_id = hir_def.TyVarId.new(checker.numeric_infer_ids[checker.resolved_numeric_cursor]);
+        let raw_id = checker.numeric_infer_ids[checker.resolved_numeric_cursor];
+        let var_id = hir_def.TyVarId.new(raw_id);
         let ty_id = type_intern.type_interner().mk_infer(var_id);
         let resolved_id = checker.resolve(ty_id);
         let resolved_kind = type_intern.type_interner().get(resolved_id);
         match resolved_kind {
             &type_intern.InternedTypeKind.Infer(resolved_var) => {
-                checker.resolved_numeric_cache.push(resolved_var.index);
+                // Still unresolved — default based on literal kind
+                let default_ty = if is_float_infer_id(checker, raw_id) {
+                    type_intern.CommonTypes.f64_ty()
+                } else {
+                    type_intern.CommonTypes.i32_ty()
+                };
+                checker.subst_table.add_ty_subst_id(resolved_var, default_ty);
             }
             _ => {}
         }
@@ -2705,9 +2712,19 @@ fn get_fn_generic_status(checker: &mut typeck.TypeChecker) -> i32 {
     0
 }
 
+/// Checks if a numeric inference variable originated from a float literal.
+fn is_float_infer_id(checker: &typeck.TypeChecker, raw_id: u32) -> bool {
+    for i in 0usize..checker.float_infer_ids.len() {
+        if checker.float_infer_ids[i] == raw_id {
+            return true;
+        }
+    }
+    false
+}
+
 /// Checks if a resolved type contains Infer variables that are NOT from numeric literals.
-/// Numeric Infer variables (from unsuffixed int/float literals) will be defaulted during
-/// MIR lowering and should not be flagged as undetermined.
+/// Numeric Infer variables (from unsuffixed int/float literals) are defaulted after body
+/// checking and should not be flagged as undetermined.
 fn type_contains_non_numeric_infer(ty: &hir_ty.Type, numeric_ids: &Vec<u32>) -> bool {
     match &ty.kind {
         &hir_ty.TypeKind.Infer(var_id) => {
