@@ -54,6 +54,7 @@ pub fn emit_place_data_ptr(
 ) -> String {
     let ptr = emit_place_addr(ctx, place);
     if place.projection.len() == 0
+        && !place.is_static()
         && (ctx.is_region_allocated(place.local) || ctx.is_persistent_allocated(place.local)
             || ctx.is_handler_state_ptr(place.local))
     {
@@ -751,6 +752,7 @@ pub fn emit_place_addr(
     // and there are projections, load the heap pointer first. The alloca only holds a ptr
     // to the heap; projections must start from the heap data.
     if place.projection.len() > 0
+        && !place.is_static()
         && (ctx.is_region_allocated(place.local) || ctx.is_persistent_allocated(place.local))
     {
         let loaded = ctx.fresh_temp_cg();
