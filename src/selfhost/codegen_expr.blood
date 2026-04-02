@@ -1217,6 +1217,12 @@ pub fn emit_binop_typed(
     // If the type is an aggregate (struct), extract the first field for comparison.
     // LLVM icmp/binops don't work on aggregate types.
     let ty_bytes = llvm_ty.as_bytes();
+    // Special case: {} (unit/empty struct) has no fields — arithmetic on unit is a no-op.
+    // This happens when a non-resumptive handler op body has integer literals that get
+    // unified to unit type (BLK-04). Return undef so the caller emits `store {} undef`.
+    if ty_bytes.len() == 2 && ty_bytes[0] == 123 && ty_bytes[1] == 125 {
+        return codegen_ctx.CgName.Str(common.make_string("undef"));
+    }
     if ty_bytes.len() > 0 && ty_bytes[0] == 123 {
         // Aggregate type - extract first element and compare as that type
         let inner_ty = extract_first_field_type(llvm_ty);

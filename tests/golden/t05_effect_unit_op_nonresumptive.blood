@@ -1,0 +1,38 @@
+// Test: Non-resumptive handler op with declared unit return type + integer arithmetic
+// BLK-04: Handler op body has trailing integer expression (0 - 1) but op declares -> ()
+// When typeck unifies the body return with unit, integer literals become unit-typed.
+// Before fix: produced `extractvalue {} undef, 0` (invalid LLVM IR)
+// After fix: arithmetic on unit produces `store {} undef` (valid), returns i64 0
+// EXPECT: aborted: -1
+// EXPECT: 0
+
+effect Fail {
+    op fail(code: i32) -> ();
+}
+
+deep handler FailH for Fail {
+    return(x) { x }
+
+    op fail(code) {
+        println_int(code);
+        // Non-resumptive: trailing integer arithmetic, op declares -> ()
+        // Before fix: typeck unified 0 and 1 to unit, producing invalid LLVM IR
+        0 - 1
+    }
+}
+
+fn might_fail(x: i32) -> i32 / {Fail} {
+    if x < 0 {
+        print_str("aborted: ");
+        perform Fail.fail(x);
+    }
+    42
+}
+
+fn main() -> i32 {
+    let result: i32 = with FailH {} handle {
+        might_fail(-1)
+    };
+    println_int(result);
+    0
+}
