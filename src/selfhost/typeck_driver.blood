@@ -2624,8 +2624,8 @@ fn check_body(checker: &mut typeck.TypeChecker, body: &hir_expr.Body, return_ty:
     // Handler bodies and other non-function contexts (status 0) are also skipped.
     let fn_generic_status = get_fn_generic_status(checker);
     // fn_generic_status: 0 = not a function (handler/unknown), 1 = non-generic fn, 2 = generic fn
-    // Incrementally update the resolved numeric cache and default unresolved
-    // numeric vars: unsuffixed int literals → i32, unsuffixed float literals → f64.
+    // Default unresolved numeric inference variables:
+    // unsuffixed int literals → i64, unsuffixed float literals → f64.
     while checker.resolved_numeric_cursor < checker.numeric_infer_ids.len() {
         let raw_id = checker.numeric_infer_ids[checker.resolved_numeric_cursor];
         let var_id = hir_def.TyVarId.new(raw_id);
@@ -2634,11 +2634,16 @@ fn check_body(checker: &mut typeck.TypeChecker, body: &hir_expr.Body, return_ty:
         let resolved_kind = type_intern.type_interner().get(resolved_id);
         match resolved_kind {
             &type_intern.InternedTypeKind.Infer(resolved_var) => {
-                // Still unresolved — default based on literal kind
+                // Still unresolved — default based on literal kind.
+                // Float literals default to f64 (fixing the actual bug: floats were i64 at codegen).
+                // Int literals default to i64 to match the existing codegen fallback behavior.
+                // Changing to i32 requires struct field type unification to propagate i64
+                // constraints from declarations — without that, self-compilation breaks
+                // (ReturnClauseKind.literal_value: i64 gets compiled as i32 → layout mismatch).
                 let default_ty = if is_float_infer_id(checker, raw_id) {
                     type_intern.CommonTypes.f64_ty()
                 } else {
-                    type_intern.CommonTypes.i32_ty()
+                    type_intern.CommonTypes.i64_ty()
                 };
                 checker.subst_table.add_ty_subst_id(resolved_var, default_ty);
             }
