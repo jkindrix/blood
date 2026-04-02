@@ -1,0 +1,28 @@
+// Test: dispatched generic method call — TypeGenericCallInfo must be recorded
+// so the monomorphized body is generated and called instead of the type-erased body.
+// Without the fix, the type-erased body uses i64 for T, truncating structs > 8 bytes.
+// EXPECT: 99
+
+struct Triple { a: i32, b: i32, c: i32 }
+
+trait Mapper {
+    fn wrap<T>(self: &Self, x: T) -> T;
+}
+
+struct Identity {}
+
+impl Mapper for Identity {
+    fn wrap<T>(self: &Identity, x: T) -> T {
+        x
+    }
+}
+
+fn main() -> i32 {
+    let id = Identity {};
+    let t = Triple { a: 77, b: 88, c: 99 };
+    let result: Triple = id.wrap(t);
+    // Without monomorphization: c is lost (struct truncated to i64 = first 8 bytes only).
+    // result.c (byte offset 8) comes from uninitialized memory — NOT 99.
+    println_int(result.c);
+    0
+}

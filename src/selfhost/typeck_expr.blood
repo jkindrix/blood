@@ -1531,13 +1531,22 @@ fn infer_method_call(
             // Create fresh inference variables for method-level generic type parameters.
             // Without this, calling a generic method like `id<T>` multiple times with
             // different types reuses the same Infer variables (locked from the first call).
+            // Also save [body_tv, fresh_index, ...] pairs for TypeGenericCallInfo recording.
+            let mut saved_method_type_param_bindings: Vec<u32> = Vec.new();
             match checker.get_fn_sig(method_info.def_id) {
                 Option.Some(ref fn_sig) => {
                     if fn_sig.num_generics > 0 {
                         for i in 0u32..fn_sig.num_generics {
                             let fresh_var = checker.fresh_infer();
                             if (i as usize) < fn_sig.type_param_ids.len() {
-                                subst.add_id(fn_sig.type_param_ids[i as usize], fresh_var);
+                                let body_tv = fn_sig.type_param_ids[i as usize];
+                                subst.add_id(body_tv, fresh_var);
+                                let fresh_index = match type_intern.type_interner().get(fresh_var) {
+                                    &type_intern.InternedTypeKind.Infer(tv) => tv.index,
+                                    _ => 0u32,
+                                };
+                                saved_method_type_param_bindings.push(body_tv);
+                                saved_method_type_param_bindings.push(fresh_index);
                             }
                         }
                     }
@@ -1567,6 +1576,36 @@ fn infer_method_call(
                 for i in 0usize..args.len() {
                     let param_ty = unify.substitute_type_params_id(method_info.param_tys[i], &subst);
                     check_expr(checker, &args[i], param_ty);
+                }
+            }
+
+            // Record TypeGenericCallInfo for type-generic method monomorphization.
+            // After argument checking, fresh inference variables are resolved to concrete types.
+            // This mirrors infer_call's handling for type-generic function calls.
+            if saved_method_type_param_bindings.len() >= 2 {
+                let interner = type_intern.type_interner();
+                let mut bindings: Vec<common.TypeMonoBinding> = Vec.new();
+                let mut all_concrete = true;
+                let mut bpi: usize = 0;
+                while bpi + 1 < saved_method_type_param_bindings.len() {
+                    let body_tv = saved_method_type_param_bindings[bpi];
+                    let fresh_tv = saved_method_type_param_bindings[bpi + 1];
+                    let fresh_infer = interner.mk_infer(hir_def.TyVarId.new(fresh_tv));
+                    let concrete = checker.resolve(fresh_infer);
+                    match interner.get(concrete) {
+                        &type_intern.InternedTypeKind.Infer(_) => {
+                            all_concrete = false;
+                        }
+                        _ => {
+                            bindings.push(common.TypeMonoBinding.new(body_tv, concrete.index));
+                        }
+                    }
+                    bpi += 2;
+                }
+                if all_concrete && bindings.len() > 0 {
+                    checker.type_generic_calls.push(common.TypeGenericCallInfo.new(
+                        method.span.start, method_info.def_id.index, bindings,
+                    ));
                 }
             }
 

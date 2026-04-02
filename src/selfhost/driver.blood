@@ -1667,6 +1667,22 @@ pub fn collect_type_generic_fns(
                     }
                 }
             }
+            &hir_item.ItemKind.Impl(ref impl_def) => {
+                for ai in 0usize..impl_def.items.len() {
+                    match &impl_def.items[ai] {
+                        &hir_item.AssocItem.Fn(ref assoc_fn) => {
+                            let type_param_count = count_type_params(&assoc_fn.sig.generics);
+                            if type_param_count > 0 {
+                                let const_count = count_const_params(&assoc_fn.sig.generics);
+                                if const_count == 0 {
+                                    fn_set.push(assoc_fn.def_id.index);
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -1730,6 +1746,31 @@ pub fn find_body_for_def_id(
                             }
                         }
                         &Option.None => {}
+                    }
+                }
+            }
+            &hir_item.ItemKind.Impl(ref impl_def) => {
+                for ai in 0usize..impl_def.items.len() {
+                    match &impl_def.items[ai] {
+                        &hir_item.AssocItem.Fn(ref assoc_fn) => {
+                            if assoc_fn.def_id.index == def_id_index {
+                                match &assoc_fn.body_id {
+                                    &Option.Some(ref bid) => {
+                                        for bi in 0usize..bodies.len() {
+                                            if bodies[bi].body_id.index == bid.index {
+                                                return Option.Some(BodyInfo {
+                                                    body_index: bi,
+                                                    return_ty: assoc_fn.sig.return_ty,
+                                                    span: entry.item.span,
+                                                });
+                                            }
+                                        }
+                                    }
+                                    &Option.None => {}
+                                }
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }

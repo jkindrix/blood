@@ -1149,10 +1149,45 @@ fn lower_method_call_expr(
             // Look up from type checker's resolution side table
             match ctx.lookup_method_def(method.span.start) {
                 Option.Some(resolved_def) => {
-                    mir_types.Operand.Constant(mir_types.Constant.new(
-                        type_intern.CommonTypes.error(),
-                        mir_types.ConstantKind.FnDef(resolved_def),
-                    ))
+                    if ctx.is_type_generic_fn(resolved_def.index) {
+                        // Type-generic method — check if we have call info from type checker
+                        match ctx.lookup_type_generic_call(method.span.start) {
+                            Option.Some(call_idx) => {
+                                let call_info = &ctx.type_generic_calls[call_idx];
+                                let mut bindings: Vec<common.TypeMonoBinding> = Vec.new();
+                                for bi in 0usize..call_info.type_bindings.len() {
+                                    bindings.push(common.TypeMonoBinding.new(
+                                        call_info.type_bindings[bi].ty_var_index,
+                                        call_info.type_bindings[bi].concrete_ty_id,
+                                    ));
+                                }
+                                let mono_name = build_type_mono_fn_name(resolved_def.index, &bindings);
+                                let specialized_def_id = ctx.alloc_mono_def_id();
+                                ctx.mono_requests.push(mir_lower_ctx.MonoRequest.new_type_mono(
+                                    resolved_def.index,
+                                    bindings,
+                                    specialized_def_id,
+                                    clone_string(&mono_name),
+                                ));
+                                mir_types.Operand.Constant(mir_types.Constant.new(
+                                    type_intern.CommonTypes.error(),
+                                    mir_types.ConstantKind.FnDef(hir_def.DefId.new(specialized_def_id)),
+                                ))
+                            }
+                            Option.None => {
+                                // No call info — emit as direct call to type-erased body
+                                mir_types.Operand.Constant(mir_types.Constant.new(
+                                    type_intern.CommonTypes.error(),
+                                    mir_types.ConstantKind.FnDef(resolved_def),
+                                ))
+                            }
+                        }
+                    } else {
+                        mir_types.Operand.Constant(mir_types.Constant.new(
+                            type_intern.CommonTypes.error(),
+                            mir_types.ConstantKind.FnDef(resolved_def),
+                        ))
+                    }
                 }
                 Option.None => {
                     // Check if receiver is a type parameter (or &T where T is a param).
