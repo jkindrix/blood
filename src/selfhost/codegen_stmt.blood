@@ -1814,6 +1814,38 @@ pub fn emit_allocas_with_escapes(
     escapes: &mir_escape.EscapeAnalysis,
 ) {
     ctx.indent();
+    // Pre-compute which locals have their address taken (Ref/AddressOf target).
+    // Primitives whose address is taken must stay region-allocated even when
+    // is_always_stack_type would otherwise demote them — the reference can
+    // outlive the stack frame. Primitives that only have their VALUE passed
+    // (Call operand, no Ref) are safe on the stack.
+    let mut addr_taken: Vec<bool> = Vec.new();
+    for ai in 0usize..body.locals.len() {
+        addr_taken.push(false);
+    }
+    for bb_idx in 0usize..body.basic_blocks.len() {
+        let block = &body.basic_blocks[bb_idx];
+        for stmt in &block.statements {
+            match &stmt.kind {
+                &mir_stmt.StatementKind.Assign { place: _, ref rvalue } => {
+                    match rvalue {
+                        &mir_types.Rvalue.Ref { ref place: rp, mutable: _ } => {
+                            if rp.local.as_usize() < addr_taken.len() {
+                                addr_taken[rp.local.as_usize()] = true;
+                            }
+                        }
+                        &mir_types.Rvalue.AddressOf { ref place: ap, mutable: _ } => {
+                            if ap.local.as_usize() < addr_taken.len() {
+                                addr_taken[ap.local.as_usize()] = true;
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
     for i in 0usize..body.locals.len() {
         let local = &body.locals[i];
         let local_id = mir_def.MirLocalId.new(i as u32);
@@ -1838,8 +1870,12 @@ pub fn emit_allocas_with_escapes(
         let is_region_owned = body.get_region_owner(local_id).is_some();
         let tier = if is_always_stack_type(&local_hir_ty) && !is_region_owned {
             match raw_state {
-                &mir_escape.EscapeState.ArgEscape => raw_tier,
-                &mir_escape.EscapeState.HeapEscape => raw_tier,
+                &mir_escape.EscapeState.ArgEscape => {
+                    if addr_taken[i] { raw_tier } else { mir_escape.MemoryTier.Stack }
+                }
+                &mir_escape.EscapeState.HeapEscape => {
+                    if addr_taken[i] { raw_tier } else { mir_escape.MemoryTier.Stack }
+                }
                 &mir_escape.EscapeState.GlobalEscape => raw_tier,
                 _ => mir_escape.MemoryTier.Stack,
             }
