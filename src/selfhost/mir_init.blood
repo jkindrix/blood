@@ -559,7 +559,24 @@ fn mark_consumed_term(term: &mir_term.Terminator, consumed: &mut Vec<bool>, is_l
         &mir_term.TerminatorKind.SwitchInt { ref discr, targets: _ } => {
             mark_consumed_operand(discr, consumed, is_linear, is_affine);
         }
-        _ => {}
+        &mir_term.TerminatorKind.Perform { effect_id: _, op_index: _, ref args, destination: _, target: _, is_tail_resumptive: _ } => {
+            for a in args { mark_consumed_operand(a, consumed, is_linear, is_affine); }
+            // Conservative: a multi-shot handler can resume the continuation multiple
+            // times, duplicating any linear value live at the perform site. Mark all
+            // live linear locals consumed so downstream branch-asymmetry checks fire.
+            for li in 0usize..consumed.len() {
+                if is_linear[li] && !consumed[li] {
+                    consumed[li] = true;
+                }
+            }
+        }
+        &mir_term.TerminatorKind.Goto { target: _ } => {}
+        &mir_term.TerminatorKind.Return => {}
+        &mir_term.TerminatorKind.Unreachable => {}
+        &mir_term.TerminatorKind.Assert { cond: _, expected: _, msg: _, target: _, unwind: _ } => {}
+        &mir_term.TerminatorKind.Resume { value: _, destination: _, target: _ } => {}
+        &mir_term.TerminatorKind.Drop { place: _, target: _, unwind: _ } => {}
+        &mir_term.TerminatorKind.StaleReference { ptr: _, expected_gen: _, actual_gen: _ } => {}
     }
 }
 

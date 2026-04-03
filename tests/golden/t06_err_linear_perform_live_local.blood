@@ -1,0 +1,28 @@
+// COMPILE_FAIL: E0805
+// EXPECT: linear value not consumed
+// Test: a linear local live at a conditional perform site creates branch asymmetry.
+// The perform conservatively consumes all live linear locals (multi-shot safety).
+// In the else branch, x is not consumed. At the merge, the asymmetry is an error.
+effect Signal {
+    op ping() -> ();
+}
+
+fn consume_i32(x: linear i32) -> () {
+    let _: linear i32 = x;
+}
+
+fn test(flag: bool) -> () / {Signal} {
+    let x: linear i32 = 42;
+    if flag {
+        // x is live here but not passed to perform.
+        // A multi-shot handler could resume the continuation multiple times,
+        // duplicating x. The fix marks x consumed at this perform site.
+        perform Signal.ping();
+    }
+    // merge: then-branch has x consumed (by perform), else-branch does not.
+    consume_i32(x);
+}
+
+fn main() -> i32 {
+    0
+}
