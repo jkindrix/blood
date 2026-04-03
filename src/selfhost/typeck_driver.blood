@@ -2229,14 +2229,6 @@ struct LinearEntry {
     def_span: common.Span,
 }
 
-/// Context threaded through the linearity usage-counting walk.
-/// Tracks whether we are inside a handled body and accumulates
-/// perform-site spans where linear locals were found still live.
-struct LinearCheckCtx {
-    in_handled_body: bool,
-    perform_error_spans: Vec<common.Span>,
-}
-
 /// Checks linearity constraints on a function body after type checking.
 fn check_linearity(checker: &mut typeck.TypeChecker, body: &hir_expr.Body) {
     // Collect locals with ownership qualifiers
@@ -2276,15 +2268,12 @@ fn check_linearity(checker: &mut typeck.TypeChecker, body: &hir_expr.Body) {
 
     // Count usages by scanning the body expression, and check for
     // linear locals live at perform sites inside handled blocks.
-    let mut ctx = LinearCheckCtx {
-        in_handled_body: false,
-        perform_error_spans: Vec.new(),
-    };
-    count_usages_expr(&mut ctx, &mut entries, &body.expr);
+    let mut perform_error_spans: Vec<common.Span> = Vec.new();
+    count_usages_expr(false, &mut perform_error_spans, &mut entries, &body.expr);
 
     // Report perform-site liveness violations (E0801).
-    for pi in 0usize..ctx.perform_error_spans.len() {
-        checker.error_with_note(typeck.TypeErrorKind.LinearAtPerformSite, ctx.perform_error_spans[pi],
+    for pi in 0usize..perform_error_spans.len() {
+        checker.error_with_note(typeck.TypeErrorKind.LinearAtPerformSite, perform_error_spans[pi],
             common.make_string("linear value is live at perform site; a multi-shot handler could resume the continuation multiple times, duplicating the linear value"));
     }
 
@@ -2340,16 +2329,16 @@ fn is_local_expr(expr: &hir_expr.Expr) -> bool {
 }
 
 /// Counts usages of tracked locals in an expression.
-/// When ctx.in_handled_body is true, records perform sites where any linear
-/// local is still live (use_count == 0) into ctx.perform_error_spans.
-fn count_usages_expr(ctx: &mut LinearCheckCtx, entries: &mut Vec<LinearEntry>, expr: &hir_expr.Expr) {
+/// When in_handled_body is true, records perform sites where any linear
+/// local is still live (use_count == 0) into perform_error_spans.
+fn count_usages_expr(in_handled_body: bool, perform_error_spans: &mut Vec<common.Span>, entries: &mut Vec<LinearEntry>, expr: &hir_expr.Expr) {
     match &expr.kind {
         &hir_expr.ExprKind.Local(ref local_id) => {
             record_linear_use(entries, local_id.index);
         }
         &hir_expr.ExprKind.Binary { ref left, ref right, operator: _ } => {
-            count_usages_expr(ctx, entries, left.as_ref());
-            count_usages_expr(ctx, entries, right.as_ref());
+            count_usages_expr(in_handled_body, perform_error_spans, entries, left.as_ref());
+            count_usages_expr(in_handled_body, perform_error_spans, entries, right.as_ref());
         }
         &hir_expr.ExprKind.Unary { ref operand, ref operator } => {
             // Borrowing (&x, &mut x) does NOT consume a linear value — only by-value use does.
@@ -2358,24 +2347,24 @@ fn count_usages_expr(ctx: &mut LinearCheckCtx, entries: &mut Vec<LinearEntry>, e
                 &common.UnaryOp.Ref => {}
                 &common.UnaryOp.RefMut => {}
                 _ => {
-                    count_usages_expr(ctx, entries, operand.as_ref());
+                    count_usages_expr(in_handled_body, perform_error_spans, entries, operand.as_ref());
                 }
             }
         }
         &hir_expr.ExprKind.Call { ref callee, ref args } => {
-            count_usages_expr(ctx, entries, callee.as_ref());
+            count_usages_expr(in_handled_body, perform_error_spans, entries, callee.as_ref());
             for i in 0usize..args.len() {
-                count_usages_expr(ctx, entries, &args[i]);
+                count_usages_expr(in_handled_body, perform_error_spans, entries, &args[i]);
             }
         }
         &hir_expr.ExprKind.MethodCall { ref receiver, method: _, method_def: _, type_args: _, ref args } => {
-            count_usages_expr(ctx, entries, receiver.as_ref());
+            count_usages_expr(in_handled_body, perform_error_spans, entries, receiver.as_ref());
             for i in 0usize..args.len() {
-                count_usages_expr(ctx, entries, &args[i]);
+                count_usages_expr(in_handled_body, perform_error_spans, entries, &args[i]);
             }
         }
         &hir_expr.ExprKind.If { ref condition, ref then_branch, ref else_branch } => {
-            count_usages_expr(ctx, entries, condition.as_ref());
+            count_usages_expr(in_handled_body, perform_error_spans, entries, condition.as_ref());
             match else_branch {
                 &Option.Some(ref eb) => {
                     // Branch-aware counting: walk each branch independently.
@@ -2387,13 +2376,13 @@ fn count_usages_expr(ctx: &mut LinearCheckCtx, entries: &mut Vec<LinearEntry>, e
                     for si in 0usize..entries.len() {
                         saved.push(entries[si].use_count);
                     }
-                    count_usages_expr(ctx, entries, then_branch.as_ref());
+                    count_usages_expr(in_handled_body, perform_error_spans, entries, then_branch.as_ref());
                     let mut then_deltas: Vec<u32> = Vec.with_capacity(entries.len());
                     for si in 0usize..entries.len() {
                         then_deltas.push(entries[si].use_count - saved[si]);
                         entries[si].use_count = saved[si]; // restore
                     }
-                    count_usages_expr(ctx, entries, eb.as_ref());
+                    count_usages_expr(in_handled_body, perform_error_spans, entries, eb.as_ref());
                     // Final count = pre + max(then_delta, else_delta)
                     for si in 0usize..entries.len() {
                         let else_delta = entries[si].use_count - saved[si];
@@ -2403,15 +2392,15 @@ fn count_usages_expr(ctx: &mut LinearCheckCtx, entries: &mut Vec<LinearEntry>, e
                 }
                 &Option.None => {
                     // No else: walk then branch directly (conservative count)
-                    count_usages_expr(ctx, entries, then_branch.as_ref());
+                    count_usages_expr(in_handled_body, perform_error_spans, entries, then_branch.as_ref());
                 }
             }
         }
         &hir_expr.ExprKind.Block(ref block) => {
-            count_usages_block(ctx, entries, block);
+            count_usages_block(in_handled_body, perform_error_spans, entries, block);
         }
         &hir_expr.ExprKind.Match { ref scrutinee, ref arms } => {
-            count_usages_expr(ctx, entries, scrutinee.as_ref());
+            count_usages_expr(in_handled_body, perform_error_spans, entries, scrutinee.as_ref());
             // Branch-aware: walk each arm independently, take max deltas.
             if arms.len() > 0 {
                 let mut saved: Vec<u32> = Vec.with_capacity(entries.len());
@@ -2427,7 +2416,7 @@ fn count_usages_expr(ctx: &mut LinearCheckCtx, entries: &mut Vec<LinearEntry>, e
                     for si in 0usize..entries.len() {
                         entries[si].use_count = saved[si];
                     }
-                    count_usages_expr(ctx, entries, &arms[ai].body);
+                    count_usages_expr(in_handled_body, perform_error_spans, entries, &arms[ai].body);
                     for si in 0usize..entries.len() {
                         let delta = entries[si].use_count - saved[si];
                         if delta > max_deltas[si] {
@@ -2442,13 +2431,13 @@ fn count_usages_expr(ctx: &mut LinearCheckCtx, entries: &mut Vec<LinearEntry>, e
             }
         }
         &hir_expr.ExprKind.Assign { ref target, ref val } => {
-            count_usages_expr(ctx, entries, target.as_ref());
-            count_usages_expr(ctx, entries, val.as_ref());
+            count_usages_expr(in_handled_body, perform_error_spans, entries, target.as_ref());
+            count_usages_expr(in_handled_body, perform_error_spans, entries, val.as_ref());
         }
         &hir_expr.ExprKind.Return(ref opt_val) => {
             match opt_val {
                 &Option.Some(ref v) => {
-                    count_usages_expr(ctx, entries, v.as_ref());
+                    count_usages_expr(in_handled_body, perform_error_spans, entries, v.as_ref());
                 }
                 &Option.None => {}
             }
@@ -2458,71 +2447,65 @@ fn count_usages_expr(ctx: &mut LinearCheckCtx, entries: &mut Vec<LinearEntry>, e
             // Skip counting direct local references (h.fd is a read, not a consumption).
             // Recurse into complex bases to count linear values in subexpressions.
             if !is_local_expr(base.as_ref()) {
-                count_usages_expr(ctx, entries, base.as_ref());
+                count_usages_expr(in_handled_body, perform_error_spans, entries, base.as_ref());
             }
         }
         &hir_expr.ExprKind.Index { ref base, ref idx } => {
-            count_usages_expr(ctx, entries, base.as_ref());
-            count_usages_expr(ctx, entries, idx.as_ref());
+            count_usages_expr(in_handled_body, perform_error_spans, entries, base.as_ref());
+            count_usages_expr(in_handled_body, perform_error_spans, entries, idx.as_ref());
         }
         &hir_expr.ExprKind.AddrOf { mutable: _, ref expr } => {
             // AddrOf is a borrow — does NOT consume linear values
             // (same semantics as Unary { operator: Ref })
         }
         &hir_expr.ExprKind.Cast { ref expr, ty: _ } => {
-            count_usages_expr(ctx, entries, expr.as_ref());
+            count_usages_expr(in_handled_body, perform_error_spans, entries, expr.as_ref());
         }
         &hir_expr.ExprKind.Loop { label: _, ref body } => {
-            count_usages_expr(ctx, entries, body.as_ref());
+            count_usages_expr(in_handled_body, perform_error_spans, entries, body.as_ref());
         }
         &hir_expr.ExprKind.WithHandle { ref handler, ref body } => {
-            count_usages_expr(ctx, entries, handler.as_ref());
-            // The handled body is a multi-shot resumption site: set in_handled_body
+            count_usages_expr(in_handled_body, perform_error_spans, entries, handler.as_ref());
+            // The handled body is a multi-shot resumption site: pass in_handled_body=true
             // so that any Perform encountered inside will trigger the liveness check.
-            let prev_handled = ctx.in_handled_body;
-            ctx.in_handled_body = true;
-            count_usages_expr(ctx, entries, body.as_ref());
-            ctx.in_handled_body = prev_handled;
+            count_usages_expr(true, perform_error_spans, entries, body.as_ref());
         }
         &hir_expr.ExprKind.InlineHandle { ref body, ref handlers } => {
             // The try-body is a handled scope; handler op bodies are not.
-            let prev_handled = ctx.in_handled_body;
-            ctx.in_handled_body = true;
-            count_usages_expr(ctx, entries, body.as_ref());
-            ctx.in_handled_body = prev_handled;
+            count_usages_expr(true, perform_error_spans, entries, body.as_ref());
             for i in 0usize..handlers.len() {
-                count_usages_expr(ctx, entries, &handlers[i].body);
+                count_usages_expr(in_handled_body, perform_error_spans, entries, &handlers[i].body);
             }
         }
         &hir_expr.ExprKind.Perform { effect_def: _, op_def: _, op_name: _, ref args } => {
             // Count args first (evaluated before the perform dispatch).
             for i in 0usize..args.len() {
-                count_usages_expr(ctx, entries, &args[i]);
+                count_usages_expr(in_handled_body, perform_error_spans, entries, &args[i]);
             }
             // Per-perform-site liveness check: inside a handled body, any linear
             // local still live here could be duplicated by a multi-shot handler.
-            if ctx.in_handled_body {
+            if in_handled_body {
                 for i in 0usize..entries.len() {
                     if entries[i].is_linear && entries[i].use_count == 0 {
-                        ctx.perform_error_spans.push(expr.span);
+                        perform_error_spans.push(expr.span);
                         break;
                     }
                 }
             }
         }
         &hir_expr.ExprKind.Closure { captures: _, params: _, return_ty: _, effects: _, ref body } => {
-            count_usages_expr(ctx, entries, body.as_ref());
+            count_usages_expr(in_handled_body, perform_error_spans, entries, body.as_ref());
         }
         &hir_expr.ExprKind.Region { name: _, ref stmts, ref expr } => {
             for i in 0usize..stmts.len() {
                 match &stmts[i] {
                     &hir_expr.Stmt.Expr { ref expr, has_semi: _ } => {
-                        count_usages_expr(ctx, entries, expr);
+                        count_usages_expr(in_handled_body, perform_error_spans, entries, expr);
                     }
                     &hir_expr.Stmt.Let { pattern: _, ty: _, ref init, span: _ } => {
                         match init {
                             &Option.Some(ref init_expr) => {
-                                count_usages_expr(ctx, entries, init_expr);
+                                count_usages_expr(in_handled_body, perform_error_spans, entries, init_expr);
                             }
                             &Option.None => {}
                         }
@@ -2532,22 +2515,22 @@ fn count_usages_expr(ctx: &mut LinearCheckCtx, entries: &mut Vec<LinearEntry>, e
             }
             match expr {
                 &Option.Some(ref e) => {
-                    count_usages_expr(ctx, entries, e.as_ref());
+                    count_usages_expr(in_handled_body, perform_error_spans, entries, e.as_ref());
                 }
                 &Option.None => {}
             }
         }
         &hir_expr.ExprKind.ForIter { label: _, pattern: _, ref iter, ref body } => {
-            count_usages_expr(ctx, entries, iter.as_ref());
-            count_usages_expr(ctx, entries, body.as_ref());
+            count_usages_expr(in_handled_body, perform_error_spans, entries, iter.as_ref());
+            count_usages_expr(in_handled_body, perform_error_spans, entries, body.as_ref());
         }
         &hir_expr.ExprKind.Struct { path: _, ref fields, ref base } => {
             for i in 0usize..fields.len() {
-                count_usages_expr(ctx, entries, &fields[i].val);
+                count_usages_expr(in_handled_body, perform_error_spans, entries, &fields[i].val);
             }
             match base {
                 &Option.Some(ref b) => {
-                    count_usages_expr(ctx, entries, b.as_ref());
+                    count_usages_expr(in_handled_body, perform_error_spans, entries, b.as_ref());
                 }
                 &Option.None => {}
             }
@@ -2559,16 +2542,16 @@ fn count_usages_expr(ctx: &mut LinearCheckCtx, entries: &mut Vec<LinearEntry>, e
 }
 
 /// Counts usages of tracked locals in a block.
-fn count_usages_block(ctx: &mut LinearCheckCtx, entries: &mut Vec<LinearEntry>, block: &hir_expr.Block) {
+fn count_usages_block(in_handled_body: bool, perform_error_spans: &mut Vec<common.Span>, entries: &mut Vec<LinearEntry>, block: &hir_expr.Block) {
     for i in 0usize..block.stmts.len() {
         match &block.stmts[i] {
             &hir_expr.Stmt.Expr { ref expr, has_semi: _ } => {
-                count_usages_expr(ctx, entries, expr);
+                count_usages_expr(in_handled_body, perform_error_spans, entries, expr);
             }
             &hir_expr.Stmt.Let { pattern: _, ty: _, ref init, span: _ } => {
                 match init {
                     &Option.Some(ref init_expr) => {
-                        count_usages_expr(ctx, entries, init_expr);
+                        count_usages_expr(in_handled_body, perform_error_spans, entries, init_expr);
                     }
                     &Option.None => {}
                 }
@@ -2578,7 +2561,7 @@ fn count_usages_block(ctx: &mut LinearCheckCtx, entries: &mut Vec<LinearEntry>, 
     }
     match &block.expr {
         &Option.Some(ref e) => {
-            count_usages_expr(ctx, entries, e.as_ref());
+            count_usages_expr(in_handled_body, perform_error_spans, entries, e.as_ref());
         }
         &Option.None => {}
     }
