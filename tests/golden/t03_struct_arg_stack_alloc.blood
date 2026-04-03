@@ -1,0 +1,55 @@
+// F-14 canary: struct passed by value to a function should not require
+// heap allocation. The struct doesn't contain any references, so the
+// callee gets a value copy — no pointer aliasing, no need for region alloc.
+//
+// This test verifies correctness (not allocation tier directly). If the
+// fix incorrectly stack-allocates a struct that was captured by reference,
+// that would produce wrong output.
+// EXPECT: 7
+// EXPECT: 30
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+struct Rect {
+    origin: Point,
+    width: i32,
+    height: i32,
+}
+
+fn sum_point(p: Point) -> i32 {
+    p.x + p.y
+}
+
+fn area(r: Rect) -> i32 {
+    r.width * r.height
+}
+
+fn double_point(p: Point) -> Point {
+    Point { x: p.x * 2, y: p.y * 2 }
+}
+
+fn main() -> i32 {
+    let p: Point = Point { x: 3, y: 4 };
+    let s: i32 = sum_point(p);
+    println_int(s);
+
+    let r: Rect = Rect {
+        origin: Point { x: 0, y: 0 },
+        width: 5,
+        height: 6,
+    };
+    let a: i32 = area(r);
+    println_int(a);
+
+    // Pass a struct through a chain of calls
+    let p2: Point = double_point(Point { x: 1, y: 2 });
+    let p3: Point = double_point(p2);
+    // p3 = { x: 4, y: 8 }
+    if p3.x != 4 { return 1; }
+    if p3.y != 8 { return 2; }
+
+    0
+}
