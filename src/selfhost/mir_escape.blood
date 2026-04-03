@@ -14,7 +14,6 @@ mod mir_types;
 mod mir_stmt;
 mod mir_term;
 mod mir_body;
-mod type_intern;
 
 // ============================================================
 // Escape State
@@ -296,7 +295,7 @@ pub fn analyze_escapes(body: &mir_body.MirBody) -> EscapeAnalysis {
         // Analyze terminator
         match &block.terminator {
             &Option.Some(ref term) => {
-                analyze_terminator(term, body, &mut result);
+                analyze_terminator(term, &mut result);
             }
             &Option.None => {}
         }
@@ -531,44 +530,15 @@ fn analyze_statement(stmt: &mir_stmt.Statement, result: &mut EscapeAnalysis) {
 }
 
 /// Analyzes a terminator for escape behavior.
-fn analyze_terminator(term: &mir_term.Terminator, body: &mir_body.MirBody, result: &mut EscapeAnalysis) {
+fn analyze_terminator(term: &mir_term.Terminator, result: &mut EscapeAnalysis) {
     match &term.kind {
         &mir_term.TerminatorKind.Goto { target: _ } => {}
         &mir_term.TerminatorKind.SwitchInt { discr: _, targets: _ } => {}
         &mir_term.TerminatorKind.Return => {}
         &mir_term.TerminatorKind.Call { func: _, ref args, ref destination, target: _, unwind: _ } => {
-            // Mark call arguments as ArgEscape. EXCEPTION: ADT-typed (struct/enum) operands
-            // passed by Copy/Move do NOT need ArgEscape because Blood's codegen passes them
-            // by value at the LLVM level (`load { fields }, ptr %alloca` then pass the loaded
-            // value). The callee receives a value copy — it never holds a pointer to the
-            // caller's copy of the struct. Marking ADTs as ArgEscape causes unnecessary
-            // heap allocation for every by-value struct argument (F-14).
-            //
-            // Refs, ptrs, and primitives continue to be marked: their ArgEscape may be
-            // needed to preserve region allocation for values whose address has been taken
-            // (e.g., `identity_ref(&x)` where x's ArgEscape from Rvalue.Ref must be kept).
+            // All arguments passed to a call may escape through that call
             for arg in args {
-                match arg {
-                    &mir_types.Operand.Copy(ref place) => {
-                        let local_idx = place.local.as_usize();
-                        if local_idx < body.locals.len() {
-                            let ty_id = body.locals[local_idx].ty;
-                            if !type_intern.is_adt_id(ty_id) {
-                                result.mark_arg_escape(place.local);
-                            }
-                        }
-                    }
-                    &mir_types.Operand.Move(ref place) => {
-                        let local_idx = place.local.as_usize();
-                        if local_idx < body.locals.len() {
-                            let ty_id = body.locals[local_idx].ty;
-                            if !type_intern.is_adt_id(ty_id) {
-                                result.mark_arg_escape(place.local);
-                            }
-                        }
-                    }
-                    &mir_types.Operand.Constant(_) => {}
-                }
+                mark_operand_escape_arg(arg, result);
             }
             // If destination is return place, the call result escapes globally
             // (but the call result isn't a local we track — it's produced by callee)
