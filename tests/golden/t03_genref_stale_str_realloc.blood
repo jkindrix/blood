@@ -1,0 +1,27 @@
+// Canary: &str stale detection after String buffer reallocation.
+//
+// When string_as_str is called inside a region scope, the data buffer is
+// registered in the gen hash table. If the String grows (ensure_cap frees
+// the old buffer and allocates a new one), the old &str's gen no longer
+// matches the freed buffer's gen → stale reference → panic.
+//
+// Before fix: buffer gen=0, validation skipped, no detection.
+// After fix:  buffer registered (gen=N), freed buffer gen=N+1 → stale.
+//
+// EXPECT_EXIT: nonzero
+
+fn main() -> i32 {
+    let mut stale: &str = "";
+    region {
+        let mut s: String = String.new();
+        s.push_str("hi");           // initial alloc, cap=16
+        stale = s.as_str();         // registers buf addr → gen=N; stale packs gen=N
+        // Push enough to exceed cap=16 → ensure_cap allocates new buf,
+        // frees old buf (unregister → gen=N+1), sets s.data = new_buf.
+        s.push_str("abcdefghijklmnopqrstuvwxyz");
+    }
+    // stale = { old_buf_ptr, (N << 32) | 2 }
+    // blood_validate_generation(old_buf_ptr, N): actual gen=N+1 → stale → panic
+    print(stale);
+    0
+}

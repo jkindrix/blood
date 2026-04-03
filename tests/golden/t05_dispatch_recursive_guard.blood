@@ -1,0 +1,38 @@
+// RUN: exit 0
+// Test: recursive dispatch guard — SS3.9.2
+// Dispatch resolution for a recursive call with the same (method_name, arg_types) key
+// must not cause infinite compilation. The recursion guard detects the cycle, returns
+// the cached partial result, and allows the recursive overload to compile and run.
+// SPEC: DISPATCH.md §3.9.2
+
+struct Calc {}
+
+impl Calc {
+    // Two overloads with different parameter types.
+    // The i32 overload calls itself recursively — dispatch resolution for the inner call
+    // encounters the same (sum_to, Calc, i32) key already in the visited set and must not loop.
+    fn sum_to(self, n: i32) -> i32 {
+        if n <= 0 {
+            0
+        } else {
+            n + self.sum_to(n - 1)
+        }
+    }
+
+    fn sum_to(self, flag: bool) -> i32 {
+        if flag { 100 } else { 0 }
+    }
+}
+
+fn main() -> i32 {
+    let c: Calc = Calc {};
+    let a: i32 = c.sum_to(5);      // i32 overload: 5+4+3+2+1 = 15
+    let b: i32 = c.sum_to(false);  // bool overload: 0
+    let d: i32 = c.sum_to(true);   // bool overload: 100
+
+    if a == 15 && b == 0 && d == 100 {
+        0
+    } else {
+        1
+    }
+}
