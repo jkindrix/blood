@@ -840,6 +840,19 @@ pub fn emit_string_as_str_call(
     ctx.write(" = ptrtoint ptr ");
     ctx.write_cgname(&data_ptr);
     ctx.write(" to i64\n");
+    // Lazily register the data buffer so blood_get_generation returns a
+    // non-zero gen. When the String reallocates, free_simple increments the
+    // old gen → stale &str references are detected by validation.
+    let reg_gen = ctx.fresh_temp_cg();
+    ctx.begin_call(Option.Some(&reg_gen), "i32", "@blood_lazy_register_gen");
+    ctx.call_arg_cg(true, "i64", &data_addr);
+    ctx.end_call();
+
+    let reg_gen = ctx.fresh_temp_cg();
+    ctx.begin_call(Option.Some(&reg_gen), "i32", "@blood_lazy_register_gen");
+    ctx.call_arg_cg(true, "i64", &data_addr);
+    ctx.end_call();
+
     let data_gen = ctx.fresh_temp_cg();
     ctx.begin_call(Option.Some(&data_gen), "i32", "@blood_get_generation");
     ctx.call_arg_cg(true, "i64", &data_addr);

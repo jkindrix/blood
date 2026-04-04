@@ -320,9 +320,11 @@ fn ht_grow() {
             i = i + 1;
         }
 
-        // Free old arrays (manual free via memmove to avoid using blood_free which calls us)
-        // Actually just leak them — the old arrays are small relative to total memory,
-        // and the runtime has no reentrant-safe free path here. The OS reclaims on exit.
+        // Free old arrays via direct libc free (safe — no re-entrancy).
+        libc.sys_free(old_addrs);
+        libc.sys_free(old_gens);
+        libc.sys_free(old_sizes);
+        libc.sys_free(old_sources);
     }
 }
 

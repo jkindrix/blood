@@ -87,7 +87,7 @@ fn ensure_cap(s: *mut u8, needed: i64) {
 pub fn rt_string_push_str(s: *mut u8, fat_str: *mut u8) {
     @unsafe {
         let src_ptr: i64 = ptr_read_i64(alloc.ptr_to_addr(fat_str) as u64);
-        let src_len: i64 = ptr_read_i64((alloc.ptr_to_addr(fat_str) + 8) as u64);
+        let src_len: i64 = ptr_read_i64((alloc.ptr_to_addr(fat_str) + 8) as u64) % 4294967296;
         if src_len == 0 { return; }
 
         let cur_len: i64 = get_len(s);
@@ -166,7 +166,7 @@ pub fn rt_string_as_bytes(s: *mut u8) -> FatStr {
 pub fn rt_str_as_bytes(fat_str: *mut u8) -> FatStr {
     @unsafe {
         let p: i64 = ptr_read_i64(alloc.ptr_to_addr(fat_str) as u64);
-        let l: i64 = ptr_read_i64((alloc.ptr_to_addr(fat_str) + 8) as u64);
+        let l: i64 = ptr_read_i64((alloc.ptr_to_addr(fat_str) + 8) as u64) % 4294967296;
         FatStr { data: alloc.addr_to_ptr(p), len: l }
     }
 }
