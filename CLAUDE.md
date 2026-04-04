@@ -89,6 +89,8 @@ The selfhost compiler is developed using a **self-compilation loop**: edit sourc
 
 **IR before code (codegen bugs):** Before writing ANY codegen fix, dump the LLVM IR for a minimal repro through both bootstrap (`--emit=llvm-ir`) and first_gen (`--dump-ir --no-cache`). Find the relevant function, trace the actual instruction sequence, identify the exact divergence, THEN trace back to the codegen source. Do NOT hypothesize what the IR looks like — read it. This takes 5 minutes and prevents 30-60 minutes of wrong fixes.
 
+**Backtrace first (crashes):** When a binary segfaults or aborts, run `gdb -batch -ex run -ex bt --args ./binary args` BEFORE reading analysis docs, theorizing, or tracing code. This takes 5 seconds and shows the actual crash site. A recursive `blood_alloc_or_abort` backtrace looks nothing like a field-resolution miscompilation — don't guess which one it is.
+
 **When something crashes or produces wrong results — use the debugging toolkit:**
 
 1. **Read the build log first.** Every build writes to `.logs/`. Don't re-run the build — read `tail -50 src/selfhost/.logs/build_*.log | tail -1` to find the latest log. Crash backtraces, error messages, and timing are all captured.
