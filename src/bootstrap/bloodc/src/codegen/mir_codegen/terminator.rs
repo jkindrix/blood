@@ -401,6 +401,27 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                                 } else {
                                     alloca.into()
                                 }
+                            } else if param_type.is_struct_type() && val.is_struct_value() {
+                                // Struct type mismatch: e.g., fat ref { ptr, i32 } where value { i32 } expected.
+                                // Blood's copy semantics mean pattern bindings copy values, but the
+                                // bootstrap creates references. Auto-deref: load through the pointer.
+                                let sv = val.into_struct_value();
+                                let expected_struct = param_type.into_struct_type();
+                                if sv.get_type() != expected_struct && sv.get_type().count_fields() == 2 {
+                                    if let Ok(ptr_val) = self.builder.build_extract_value(sv, 0, "genref_deref") {
+                                        if ptr_val.is_pointer_value() {
+                                            self.builder.build_load(expected_struct, ptr_val.into_pointer_value(), "deref_load")
+                                                .map(|v| v.into())
+                                                .unwrap_or((*val).into())
+                                        } else {
+                                            (*val).into()
+                                        }
+                                    } else {
+                                        (*val).into()
+                                    }
+                                } else {
+                                    (*val).into()
+                                }
                             } else {
                                 (*val).into()
                             }
@@ -706,6 +727,31 @@ impl<'ctx, 'a> CodegenContext<'ctx, 'a> {
                                             .unwrap_or((*val).into())
                                     } else {
                                         (*val).into()
+                                    }
+                                } else if param_type.is_pointer_type() && val.is_array_value() {
+                                    // Parameter expects pointer but we have array value - allocate on stack
+                                    let array_val = val.into_array_value();
+                                    let alloca = self.builder
+                                        .build_alloca(array_val.get_type(), "array_arg_tmp")
+                                        .map_err(|e| vec![Diagnostic::error(
+                                            format!("LLVM alloca error: {}", e), span
+                                        )])?;
+                                    let natural_alignment = self.get_type_alignment_for_value(array_val.into());
+                                    if let Some(inst) = alloca.as_instruction() {
+                                        let _ = inst.set_alignment(natural_alignment);
+                                    }
+                                    let store_inst = self.builder.build_store(alloca, array_val)
+                                        .map_err(|e| vec![Diagnostic::error(
+                                            format!("LLVM store error: {}", e), span
+                                        )])?;
+                                    let _ = store_inst.set_alignment(natural_alignment);
+                                    let expected_ptr_type = param_type.into_pointer_type();
+                                    if alloca.get_type() != expected_ptr_type {
+                                        self.builder.build_pointer_cast(alloca, expected_ptr_type, "ptr_cast")
+                                            .map(|p| p.into())
+                                            .unwrap_or(alloca.into())
+                                    } else {
+                                        alloca.into()
                                     }
                                 } else if param_type.is_pointer_type() && val.is_int_value() {
                                     // Parameter expects pointer but we have int - allocate on stack and pass pointer
