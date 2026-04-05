@@ -1,0 +1,23 @@
+// COMPILE_FAIL: E0801
+// EXPECT: linear value is live at perform site
+// Test #34: Move closure capturing linear value in deep handler scope.
+// The closure captures a linear value, making it linear fn.
+// Inside a deep handler that could resume, the closure (as a linear
+// value) cannot be live at a perform site.
+effect Logger {
+    op log(msg: i32) -> ();
+}
+
+deep handler LogHandler for Logger {
+    return(x) { x }
+    op log(msg) { resume(()) }
+}
+
+fn main() -> i32 {
+    let x: linear i32 = 42;
+    let f = move || -> i32 { x };
+    with LogHandler handle {
+        perform Logger.log(1);
+        f()
+    }
+}

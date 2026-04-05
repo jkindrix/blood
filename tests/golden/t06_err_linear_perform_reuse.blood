@@ -1,0 +1,22 @@
+// COMPILE_FAIL: E0801
+// EXPECT: linear value is live at perform site
+// Test #33: Linear value passed to perform in deep handler, then reused.
+// The deep handler could resume multiple times, so linear values cannot
+// be live across perform boundaries in handled blocks.
+effect Sink {
+    op consume(val: i32) -> ();
+}
+
+deep handler SinkHandler for Sink {
+    return(x) { x }
+    op consume(val) { resume(()) }
+}
+
+fn main() -> i32 {
+    let x: linear i32 = 42;
+    with SinkHandler handle {
+        perform Sink.consume(x);
+        let y: linear i32 = x;
+        0
+    }
+}
