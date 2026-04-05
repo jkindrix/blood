@@ -185,7 +185,7 @@ pub fn generate_module_with_items(
         if !already_generated {
             // Set up call remapping for trait default methods
             ctx.call_remaps = find_call_remaps(default_method_remaps, body.def_id.index);
-            let fn_ir = generate_function_with_ctx(&mut ctx, body, name.as_str());
+            let fn_ir = generate_function_with_ctx(&mut ctx, body, name.as_str(), 0, 1);
             output.push_str(fn_ir.as_str());
             ctx.call_remaps = Vec.new();
             generated_set.insert(name_hash, 1);
@@ -255,7 +255,7 @@ pub fn generate_function_with_defs(
         ctx.register_def_name(def_names[i].def_id, clone_string(&def_names[i].name));
     }
 
-    generate_function_with_ctx(&mut ctx, body, fn_name)
+    generate_function_with_ctx(&mut ctx, body, fn_name, 0, 1)
 }
 
 /// Generates LLVM IR for a single function using a shared codegen context.
@@ -263,12 +263,14 @@ pub fn generate_function_with_ctx(
     ctx: &mut codegen_ctx.CodegenCtx,
     body: &mir_body.MirBody,
     fn_name: &str,
+    module_index: u32,
+    module_count: u32,
 ) -> String {
     // Reset per-function state but keep global state (def_names, adt_registry, string_table)
     ctx.clear_locals();
     ctx.output = String.new();
-    // Set up DWARF debug info for this function (source line from MIR span)
-    ctx.setup_debug_function(fn_name, body.span.line);
+    // Set up DWARF debug info for this function (source file + line)
+    ctx.setup_debug_function(fn_name, body.span.line, module_index, module_count);
     ctx.begin_function(common.make_string(fn_name));
 
     // Build parameter list (skip first local which is return place)

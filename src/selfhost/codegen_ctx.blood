@@ -1178,7 +1178,7 @@ impl CodegenCtx {
     /// Set up debug info for a function. Call before emit_fn_header.
     /// Records the DISubprogram and sets debug_subprogram_id so emit_fn_header
     /// attaches !dbg to the define line.
-    pub fn setup_debug_function(self: &mut CodegenCtx, fn_name: &str, source_line: u32) {
+    pub fn setup_debug_function(self: &mut CodegenCtx, fn_name: &str, source_line: u32, module_index: u32, module_count: u32) {
         if self.debug_source_file.len() == 0 {
             self.debug_subprogram_id = 0;
             self.debug_location_id = 0;
@@ -1189,21 +1189,30 @@ impl CodegenCtx {
         self.debug_metadata_counter = id + 1;
         self.debug_subprogram_id = id;
         self.debug_last_line = 0;
-        // Emit: !N = distinct !DISubprogram(name: "fn_name", scope: !1, file: !1,
-        //        line: L, type: !2, scopeLine: L, spFlags: DISPFlagDefinition,
-        //        unit: !0, retainedNodes: !3)
-        // Allocate metadata string outside fn_temp_region so it survives reset.
+        // Compute IDs: file_id = module_index + 1, subroutine = N+1, empty = N+2
+        let n: u32 = if module_count > 0 { module_count } else { 1 };
+        let file_id: u32 = if module_index < n { module_index + 1 } else { 1 };
+        let subroutine_id: u32 = n + 1;
+        let empty_id: u32 = n + 2;
         let had_temp = self.fn_temp_region != 0;
         if had_temp { region_deactivate(); }
         let mut md = common.make_string("!");
         md.push_str(codegen_types.format_u64(id as u64).as_str());
         md.push_str(" = distinct !DISubprogram(name: \"");
         md.push_str(fn_name);
-        md.push_str("\", scope: !1, file: !1, line: ");
+        md.push_str("\", scope: !");
+        md.push_str(codegen_types.format_u64(file_id as u64).as_str());
+        md.push_str(", file: !");
+        md.push_str(codegen_types.format_u64(file_id as u64).as_str());
+        md.push_str(", line: ");
         md.push_str(codegen_types.format_u64(source_line as u64).as_str());
-        md.push_str(", type: !2, scopeLine: ");
+        md.push_str(", type: !");
+        md.push_str(codegen_types.format_u64(subroutine_id as u64).as_str());
+        md.push_str(", scopeLine: ");
         md.push_str(codegen_types.format_u64(source_line as u64).as_str());
-        md.push_str(", spFlags: DISPFlagDefinition, unit: !0, retainedNodes: !3)\n");
+        md.push_str(", spFlags: DISPFlagDefinition, unit: !0, retainedNodes: !");
+        md.push_str(codegen_types.format_u64(empty_id as u64).as_str());
+        md.push_str(")\n");
         self.debug_metadata.push(md);
         // Emit a DILocation for this function's instructions
         let loc_id = self.debug_metadata_counter;
@@ -1223,42 +1232,67 @@ impl CodegenCtx {
     /// Initialize debug info for the module. Must be called once before any
     /// setup_debug_function calls. Reserves metadata IDs 0-3 for the fixed
     /// compile unit, file, subroutine type, and empty tuple.
-    pub fn init_debug_info(self: &mut CodegenCtx, source_file: &str) {
+    pub fn init_debug_info(self: &mut CodegenCtx, source_file: &str, module_count: u32) {
         self.debug_source_file = common.make_string(source_file);
-        // Reserve IDs 0-6 for fixed metadata nodes
-        // !0 = DICompileUnit, !1 = DIFile, !2 = DISubroutineType, !3 = !{}
-        // !4 = module flag (Dwarf Version), !5 = module flag (Debug Info Version)
-        // !6 = DIBasicType for variables (generic i64)
-        self.debug_metadata_counter = 7;
+        // Reserve IDs: !0=CompileUnit, !1..!N=DIFile per module,
+        // !(N+1)=SubroutineType, !(N+2)=empty, !(N+3-4)=flags, !(N+5)=BasicType
+        let n: u32 = if module_count > 0 { module_count } else { 1 };
+        self.debug_metadata_counter = n + 6;
     }
 
     /// Emit all accumulated debug metadata as a string (for appending to module IR).
-    pub fn emit_debug_metadata(self: &CodegenCtx) -> String {
+    pub fn emit_debug_metadata(self: &CodegenCtx, module_names: &Vec<String>) -> String {
         if self.debug_source_file.len() == 0 {
             return String.new();
         }
+        let n: u32 = if module_names.len() > 0 { module_names.len() as u32 } else { 1 };
+        let sub_id: u32 = n + 1;
+        let empty_id: u32 = n + 2;
+        let flag1_id: u32 = n + 3;
+        let flag2_id: u32 = n + 4;
+        let basic_id: u32 = n + 5;
         let mut out = String.new();
         out.push_str("\n; Debug metadata\n");
         out.push_str("!llvm.dbg.cu = !{!0}\n");
-        out.push_str("!llvm.module.flags = !{!4, !5}\n");
-        out.push_str("\n");
-        // !0 = DICompileUnit
-        out.push_str("!0 = distinct !DICompileUnit(language: DW_LANG_C99, file: !1, producer: \"bloodc\", isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug, enums: !3)\n");
-        // !1 = DIFile
-        out.push_str("!1 = !DIFile(filename: \"");
-        out.push_str(self.debug_source_file.as_str());
-        out.push_str("\", directory: \".\")\n");
-        // !2 = DISubroutineType
-        out.push_str("!2 = !DISubroutineType(types: !3)\n");
-        // !3 = empty tuple
-        out.push_str("!3 = !{}\n");
-        // !4, !5 = module flags
-        out.push_str("!4 = !{i32 7, !\"Dwarf Version\", i32 4}\n");
-        out.push_str("!5 = !{i32 2, !\"Debug Info Version\", i32 3}\n");
-        // !6 = generic type for variable debug info
-        out.push_str("!6 = !DIBasicType(name: \"i64\", size: 64, encoding: DW_ATE_signed)\n");
-        out.push_str("\n");
-        // Emit all DISubprogram nodes
+        out.push_str("!llvm.module.flags = !{!");
+        out.push_str(codegen_types.format_u64(flag1_id as u64).as_str());
+        out.push_str(", !");
+        out.push_str(codegen_types.format_u64(flag2_id as u64).as_str());
+        out.push_str("}\n\n");
+        out.push_str("!0 = distinct !DICompileUnit(language: DW_LANG_C99, file: !1, producer: \"bloodc\", isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug, enums: !");
+        out.push_str(codegen_types.format_u64(empty_id as u64).as_str());
+        out.push_str(")\n");
+        // Emit DIFile nodes: !1..!N
+        for mi in 0u32..n {
+            let mi_plus_1: u64 = (mi + 1) as u64;
+            out.push_str("!");
+            out.push_str(codegen_types.format_u64(mi_plus_1).as_str());
+            out.push_str(" = !DIFile(filename: \"");
+            let mi_idx: usize = mi as usize;
+            if mi == 0 {
+                out.push_str(self.debug_source_file.as_str());
+            } else if mi_idx < module_names.len() {
+                let path = module_names[mi_idx].as_str();
+                let basename = extract_filename_string(path);
+                out.push_str(basename.as_str());
+            } else {
+                out.push_str("unknown.blood");
+            }
+            out.push_str("\", directory: \".\")\n");
+        }
+        out.push_str("!");
+        out.push_str(codegen_types.format_u64(sub_id as u64).as_str());
+        out.push_str(" = !DISubroutineType(types: !");
+        out.push_str(codegen_types.format_u64(empty_id as u64).as_str());
+        out.push_str(")\n!");
+        out.push_str(codegen_types.format_u64(empty_id as u64).as_str());
+        out.push_str(" = !{}\n!");
+        out.push_str(codegen_types.format_u64(flag1_id as u64).as_str());
+        out.push_str(" = !{i32 7, !\"Dwarf Version\", i32 4}\n!");
+        out.push_str(codegen_types.format_u64(flag2_id as u64).as_str());
+        out.push_str(" = !{i32 2, !\"Debug Info Version\", i32 3}\n!");
+        out.push_str(codegen_types.format_u64(basic_id as u64).as_str());
+        out.push_str(" = !DIBasicType(name: \"i64\", size: 64, encoding: DW_ATE_signed)\n\n");
         for md in &self.debug_metadata {
             out.push_str(md.as_str());
         }
@@ -2716,6 +2750,24 @@ pub fn remap_string_labels(ir: &String, remaps: &Vec<StringRemap>) -> String {
         result = string_replace(&result, &remap.from, &remap.to);
     }
 
+    result
+}
+
+/// Extract the filename portion from a path (after last '/') into a String.
+fn extract_filename_string(path: &str) -> String {
+    let pb = path.as_bytes();
+    let mut last_slash: i64 = -1;
+    for i in 0usize..pb.len() {
+        if pb[i] == 47 {
+            last_slash = i as i64;
+        }
+    }
+    let mut result = String.new();
+    let start: usize = if last_slash >= 0 { (last_slash + 1) as usize } else { 0 };
+    for i in start..pb.len() {
+        let ch: i32 = pb[i] as i32;
+        result.push(ch);
+    }
     result
 }
 

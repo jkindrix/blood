@@ -36,12 +36,12 @@ pub fn begin_streaming_module(
     module_name: &str,
     output_path: &str,
     items: &Vec<hir_lower_ctx.ItemEntry>,
+    module_count: u32,
 ) -> codegen_ctx.CodegenCtx {
     let mut ctx = codegen_ctx.CodegenCtx.new();
 
-    // Initialize DWARF debug info for source-level backtraces.
-    // module_name is the source filename (e.g., "t05_simple_iterator.blood").
-    ctx.init_debug_info(module_name);
+    // Initialize DWARF debug info with per-module file tracking.
+    ctx.init_debug_info(module_name, module_count);
 
     // NOTE: ADT registry population is done by the caller after registering
     // builtin ADTs (Vec, String, HashMap, Box). This ensures builtins are
@@ -79,9 +79,10 @@ pub fn generate_function_to_file(
     ctx: &mut codegen_ctx.CodegenCtx,
     body: &mir_body.MirBody,
     fn_name: &str,
+    module_index: u32,
+    module_count: u32,
 ) -> bool {
-    // Generate the function IR using the shared codegen logic
-    let fn_ir = codegen.generate_function_with_ctx(ctx, body, fn_name);
+    let fn_ir = codegen.generate_function_with_ctx(ctx, body, fn_name, module_index, module_count);
 
     // Buffer the function IR (auto-flushes at 64KB)
     ctx.buffer_write(fn_ir.as_str());

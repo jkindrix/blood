@@ -3511,7 +3511,8 @@ fn codegen_thread_worker(arg: u64) -> u64 {
         ctx.fn_temp_region = fn_temp_region;
 
         // Codegen (fn_temp_region active — temporaries scoped to this function)
-        let fn_ir = codegen.generate_function_with_ctx(ctx, &mir_result.body, work.fn_name.as_str());
+        let mc: u32 = lower.module_names.len() as u32;
+        let fn_ir = codegen.generate_function_with_ctx(ctx, &mir_result.body, work.fn_name.as_str(), work.module_index, mc);
 
         // Deactivate temp region BEFORE appending to output String
         // (output lives in thread_codegen_region, must not be freed on reset)
@@ -3534,7 +3535,7 @@ fn codegen_thread_worker(arg: u64) -> u64 {
 
             region_activate(fn_temp_region);
             ctx.fn_temp_region = fn_temp_region;
-            let closure_ir = codegen.generate_function_with_ctx(ctx, cbody, cname.as_str());
+            let closure_ir = codegen.generate_function_with_ctx(ctx, cbody, cname.as_str(), work.module_index, mc);
             ctx.fn_temp_region = 0 as u64;
             region_deactivate();
             output.push_str(closure_ir.as_str());
@@ -4017,7 +4018,8 @@ fn codegen_pass2(
         ctx.fn_temp_region = fn_temp_region;
 
         // Codegen (fn_temp_region active, mir_region read-only)
-        let fn_ir = codegen.generate_function_with_ctx(ctx, &mir_result.body, work.fn_name.as_str());
+        let mc2: u32 = lower_result.module_names.len() as u32;
+        let fn_ir = codegen.generate_function_with_ctx(ctx, &mir_result.body, work.fn_name.as_str(), work.module_index, mc2);
         if args.alloc_profile {
             fn_ir_sizes.push(fn_ir.len());
             region_deactivate();
@@ -4040,7 +4042,7 @@ fn codegen_pass2(
                 ctx.is_handler_op = true;
             }
 
-            let closure_ir = codegen.generate_function_with_ctx(ctx, cbody, cname.as_str());
+            let closure_ir = codegen.generate_function_with_ctx(ctx, cbody, cname.as_str(), work.module_index, mc2);
             file_append_string(output_path, closure_ir.as_str());
             combined_ir.push_str(closure_ir.as_str());
 
@@ -4835,7 +4837,8 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
 
     eprint_str("[begin_streaming]");
     let source_filename = source.file_name(path);
-    let mut ctx = codegen_streaming.begin_streaming_module(source_filename.as_str(), output_path, &lower_result.items);
+    let mod_count: u32 = lower_result.module_names.len() as u32;
+    let mut ctx = codegen_streaming.begin_streaming_module(source_filename.as_str(), output_path, &lower_result.items, mod_count);
     ctx.trace_codegen = args.trace_codegen;
     eprint_str("[done]");
 
@@ -5212,7 +5215,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
                     region_deactivate();
 
                     // Codegen the specialized body
-                    let mono_ir = codegen.generate_function_with_ctx(&mut ctx, &mono_mir.body, req.fn_name.as_str());
+                    let mono_ir = codegen.generate_function_with_ctx(&mut ctx, &mono_mir.body, req.fn_name.as_str(), 0, mod_count);
                     file_append_string(output_path, mono_ir.as_str());
 
                     // Compile closure/inline handler bodies from the mono MIR
@@ -5223,7 +5226,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
                         let mc_is_hop = mcli < mono_mir.closure_is_handler_op.len()
                             && mono_mir.closure_is_handler_op[mcli];
                         if mc_is_hop { ctx.is_handler_op = true; }
-                        let mc_ir = codegen.generate_function_with_ctx(&mut ctx, mcbody, mcname.as_str());
+                        let mc_ir = codegen.generate_function_with_ctx(&mut ctx, mcbody, mcname.as_str(), 0, mod_count);
                         file_append_string(output_path, mc_ir.as_str());
                         if mc_is_hop { ctx.is_handler_op = false; }
                         mcli += 1;
@@ -5286,7 +5289,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     ctx.buffer_write(foreign_decls.as_str());
 
     // Emit DWARF debug metadata at end of module
-    let debug_md = ctx.emit_debug_metadata();
+    let debug_md = ctx.emit_debug_metadata(&lower_result.module_names);
     if debug_md.len() > 0 {
         ctx.buffer_write(debug_md.as_str());
     }
