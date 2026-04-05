@@ -216,6 +216,8 @@ impl<'src> Parser<'src> {
                 | TokenKind::Affine
                 | TokenKind::Union
                 | TokenKind::Unchecked
+                // `op` is used in effect declarations but also as a variable name
+                | TokenKind::Op
         )
     }
 

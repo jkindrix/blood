@@ -228,6 +228,11 @@ impl<'src> Parser<'src> {
             // Slice pattern
             TokenKind::LBracket => self.parse_slice_pattern(),
 
+            _ if Self::is_contextual_keyword(self.current.kind) => {
+                // Any contextual keyword can be used as an identifier in a pattern
+                self.parse_ident_or_path_pattern()
+            }
+
             _ => {
                 self.error_expected_one_of(&["identifier", "literal", "`_`", "`(`", "`[`", "`..`"]);
                 // Advance to prevent infinite loop during error recovery
@@ -349,7 +354,10 @@ impl<'src> Parser<'src> {
 
             let field_start = self.current.span;
 
-            // Handle `ref [mut] field` shorthand - expands to `field: ref [mut] field`
+            // Handle `ref [mut] field` shorthand OR `ref [mut] field: binding` syntax.
+            // Shorthand `ref [mut] field` expands to `field: ref [mut] field`.
+            // Long form `ref [mut] field: binding` uses `field` as the field name and
+            // `ref [mut] binding` as the by-reference binding pattern.
             if self.check(TokenKind::Ref) {
                 self.advance();
                 let mutable = self.try_consume(TokenKind::Mut);
@@ -362,15 +370,36 @@ impl<'src> Parser<'src> {
                     break;
                 };
 
-                // Create pattern: `ref [mut] name`
-                let pattern = Pattern {
-                    kind: PatternKind::Ident {
-                        by_ref: true,
-                        mutable,
-                        name: name.clone(),
-                        subpattern: None,
-                    },
-                    span: field_start.merge(self.previous.span),
+                // Check for `ref [mut] field: binding` — field name is `name`, binding follows `:`
+                let pattern = if self.try_consume(TokenKind::Colon) {
+                    let binding_start = self.current.span;
+                    let binding_name = if self.check_ident() {
+                        self.advance();
+                        self.spanned_symbol()
+                    } else {
+                        self.error_expected("binding name after `:`");
+                        name.clone()
+                    };
+                    Pattern {
+                        kind: PatternKind::Ident {
+                            by_ref: true,
+                            mutable,
+                            name: binding_name,
+                            subpattern: None,
+                        },
+                        span: binding_start.merge(self.previous.span),
+                    }
+                } else {
+                    // Shorthand: `ref [mut] name` — bind field `name` by reference as `name`
+                    Pattern {
+                        kind: PatternKind::Ident {
+                            by_ref: true,
+                            mutable,
+                            name: name.clone(),
+                            subpattern: None,
+                        },
+                        span: field_start.merge(self.previous.span),
+                    }
                 };
 
                 fields.push(StructPatternField {

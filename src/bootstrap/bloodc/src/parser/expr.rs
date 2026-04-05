@@ -1676,11 +1676,12 @@ impl<'src> Parser<'src> {
         let start = self.current.span;
 
         // For identifiers/paths (including contextual keywords), don't allow struct literals but DO allow macros
-        if matches!(
+        let is_path_start = matches!(
             self.current.kind,
             TokenKind::Ident | TokenKind::TypeIdent | TokenKind::SelfLower | TokenKind::SelfUpper
             | TokenKind::Handle | TokenKind::Default
-        ) {
+        ) || Self::is_contextual_keyword(self.current.kind);
+        if is_path_start {
             let path = self.parse_expr_path();
 
             // Check for macro call syntax (e.g., matches!, vec!)

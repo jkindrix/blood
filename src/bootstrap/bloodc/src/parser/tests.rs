@@ -2552,8 +2552,9 @@ mod proptest_tests {
 
 #[test]
 fn test_op_keyword_in_struct_pattern() {
-    // `op` is a hard keyword (effect operations) — it should NOT parse as a field name.
-    // Use raw identifier `r#op` if needed.
+    // `op` is a contextual keyword — it CAN be used as a field name and identifier.
+    // TokenKind::Op was added to is_contextual_keyword, so struct patterns with `op` fields
+    // and `let op = ...` bindings must be accepted.
     let source = r#"
         struct Test { op: i32 }
         fn main() -> i32 {
@@ -2564,7 +2565,7 @@ fn test_op_keyword_in_struct_pattern() {
         }
     "#;
     let result = parse_program(source);
-    assert!(result.is_err(), "`op` is a keyword and should not be accepted as a field name");
+    assert!(result.is_ok(), "`op` is a contextual keyword and should be accepted as a field name");
 }
 
 #[test]
