@@ -72,8 +72,24 @@ impl<'a> TypeContext<'a> {
 
         let inferred = self.infer_expr(expr)?;
 
-        // Unify expected type with inferred - order matters for error messages
-        self.unifier.unify(expected, &inferred.ty, expr.span)?;
+        // Unify expected type with inferred - order matters for error messages.
+        // Blood has copy-by-default semantics: when the inferred type is &T
+        // and the expected type is T (non-reference), auto-deref to allow the
+        // implicit copy.  This matches the selfhost compiler's behavior.
+        if let Err(e) = self.unifier.unify(expected, &inferred.ty, expr.span) {
+            let inferred_resolved = self.unifier.resolve(&inferred.ty);
+            let expected_resolved = self.unifier.resolve(expected);
+            if let TypeKind::Ref { inner, .. } = inferred_resolved.kind() {
+                if !matches!(expected_resolved.kind(), TypeKind::Ref { .. } | TypeKind::Infer(_)) {
+                    // Try unifying expected with the dereferenced type
+                    self.unifier.unify(&expected_resolved, inner, expr.span)?;
+                } else {
+                    return Err(e);
+                }
+            } else {
+                return Err(e);
+            }
+        }
 
         // Check if we need to insert an array-to-slice coercion.
         // This happens when expected is &[T] and inferred is &[T; N].
@@ -3545,17 +3561,30 @@ impl<'a> TypeContext<'a> {
             for (i, arg) in hir_args.iter().enumerate() {
                 // subst_inputs[0] is receiver, subst_inputs[1..] are the rest
                 if let Some(param_ty) = subst_inputs.get(i + 1) {
-                    // Unify arg type with param type to infer type vars
-                    // If unification fails, report a type mismatch error
-                    self.unifier.unify(param_ty, &arg.ty, arg.span).map_err(|_| {
-                        TypeError::new(
-                            TypeErrorKind::Mismatch {
-                                expected: self.unifier.resolve(param_ty),
-                                found: arg.ty.clone(),
-                            },
-                            arg.span,
-                        )
-                    })?;
+                    // Unify arg type with param type to infer type vars.
+                    // Blood copy-by-default: if arg is &T and param expects T, auto-deref.
+                    if let Err(_) = self.unifier.unify(param_ty, &arg.ty, arg.span) {
+                        let resolved_arg = self.unifier.resolve(&arg.ty);
+                        if let TypeKind::Ref { inner, .. } = resolved_arg.kind() {
+                            self.unifier.unify(param_ty, inner, arg.span).map_err(|_| {
+                                TypeError::new(
+                                    TypeErrorKind::Mismatch {
+                                        expected: self.unifier.resolve(param_ty),
+                                        found: arg.ty.clone(),
+                                    },
+                                    arg.span,
+                                )
+                            })?;
+                        } else {
+                            return Err(Box::new(TypeError::new(
+                                TypeErrorKind::Mismatch {
+                                    expected: self.unifier.resolve(param_ty),
+                                    found: arg.ty.clone(),
+                                },
+                                arg.span,
+                            )));
+                        }
+                    }
                 }
             }
 
@@ -9227,11 +9256,25 @@ impl<'a> TypeContext<'a> {
         // Walk the module chain
         let first_name = &segments[0];
 
-        // Look up first segment - must be a module
+        // Look up first segment - must be a module.
+        // First try the current scope; if not found, search all loaded modules
+        // by name (the selfhost allows cross-module access without explicit import).
         let module_def_id = match self.resolver.lookup(first_name) {
             Some(Binding::Def(def_id)) => def_id,
-            Some(_) => return None,
-            None => return None,
+            _ => {
+                // Fallback: search all module_defs by name
+                let mut found = None;
+                for (def_id, info) in &self.module_defs {
+                    if info.name == *first_name {
+                        found = Some(*def_id);
+                        break;
+                    }
+                }
+                match found {
+                    Some(def_id) => def_id,
+                    None => return None,
+                }
+            }
         };
 
         let module_info = match self.module_defs.get(&module_def_id).cloned() {

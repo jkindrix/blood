@@ -250,20 +250,9 @@ impl<'a> TypeContext<'a> {
                     }
                 }
 
-                // If not using rest (..), verify all fields are bound
-                if !*rest {
-                    for field_info in &struct_info.fields {
-                        if !bound_fields.contains(&field_info.name) {
-                            return Err(Box::new(TypeError::new(
-                                TypeErrorKind::MissingField {
-                                    ty: ty.clone(),
-                                    field: field_info.name.clone(),
-                                },
-                                pattern.span,
-                            )));
-                        }
-                    }
-                }
+                // Blood allows partial struct patterns without `..`.
+                // Unbound fields are implicitly wildcarded.
+                // (The selfhost compiler does not require `..` to skip fields.)
 
                 Ok(hidden_local)
             }
@@ -860,20 +849,8 @@ impl<'a> TypeContext<'a> {
                         indexed_fields.push((field_info.index as usize, inner_pattern));
                     }
 
-                    // Check all fields are provided unless `..` is used
-                    if !*rest {
-                        for field_info in &variant_info.fields {
-                            if !bound_fields.contains(&field_info.name) {
-                                return Err(Box::new(TypeError::new(
-                                    TypeErrorKind::MissingField {
-                                        ty: expected_ty.clone(),
-                                        field: field_info.name.clone(),
-                                    },
-                                    pattern.span,
-                                )));
-                            }
-                        }
-                    }
+                    // Blood allows partial enum variant patterns without `..`.
+                    // Unbound fields are implicitly wildcarded.
 
                     // Build full field vector with wildcards for unbound positions.
                     // MIR lowering uses positional index as Field(i), so every
@@ -986,19 +963,7 @@ impl<'a> TypeContext<'a> {
                     });
                 }
 
-                if !*rest {
-                    for field_info in &struct_info.fields {
-                        if !bound_fields.contains(&field_info.name) {
-                            return Err(Box::new(TypeError::new(
-                                TypeErrorKind::MissingField {
-                                    ty: expected_ty.clone(),
-                                    field: field_info.name.clone(),
-                                },
-                                pattern.span,
-                            )));
-                        }
-                    }
-                }
+                // Blood allows partial struct patterns without `..`.
 
                 hir::PatternKind::Struct {
                     def_id: struct_def_id,
