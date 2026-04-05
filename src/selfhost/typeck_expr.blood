@@ -161,11 +161,11 @@ pub fn infer_expr(checker: &mut typeck.TypeChecker, expr: &hir_expr.Expr) -> typ
         &hir_expr.ExprKind.Unchecked { ref body, .. } => infer_expr(checker, body.as_ref()),
         &hir_expr.ExprKind.Heap(ref inner) => infer_expr(checker, inner.as_ref()),
         &hir_expr.ExprKind.Stack(ref inner) => infer_expr(checker, inner.as_ref()),
-        &hir_expr.ExprKind.Region { name: _, ref stmts, ref expr } => {
+        &hir_expr.ExprKind.Region { name: _, ref stmts, expr: ref region_expr } => {
             for i in 0usize..stmts.len() {
                 infer_stmt(checker, &stmts[i]);
             }
-            let region_ty = match expr {
+            let region_ty = match region_expr {
                 &Some(ref e) => infer_expr(checker, e.as_ref()),
                 &None => type_intern.CommonTypes.unit(),
             };
@@ -849,7 +849,7 @@ fn infer_path(checker: &mut typeck.TypeChecker, path: &hir_def.ResolvedPath, spa
                 for ei in 0usize..fn_info.effect_def_ids.len() {
                     effs.push(type_intern.InternedEffectRef {
                         def_id: hir_def.DefId.new(fn_info.effect_def_ids[ei]),
-                        type_args: type_intern.TyListId.new(0),
+                        args: type_intern.TyListId.new(0),
                     });
                 }
                 let row = type_intern.InternedEffectRow.new(effs, Option.None);
@@ -976,7 +976,7 @@ fn instantiate_fn_sig(checker: &mut typeck.TypeChecker, fn_info: &typeck.FnSigIn
         for ei in 0usize..fn_info.effect_def_ids.len() {
             effs.push(type_intern.InternedEffectRef {
                 def_id: hir_def.DefId.new(fn_info.effect_def_ids[ei]),
-                type_args: type_intern.TyListId.new(0),
+                args: type_intern.TyListId.new(0),
             });
         }
         let row = type_intern.InternedEffectRow.new(effs, Option.None);
