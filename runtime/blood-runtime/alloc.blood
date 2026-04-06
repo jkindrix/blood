@@ -528,7 +528,9 @@ pub fn rt_blood_alloc_or_abort(size: i64, out_gen: *mut i32) -> i64 {
     }
 }
 
-// Heap-only simple allocation (no generation tracking).
+// Heap-only simple allocation with generation tracking.
+// Registers in the gen hash table so stale references to freed
+// String/Vec data buffers are detectable at runtime.
 // The region-aware dispatch wrapper is in rt_region.blood.
 pub fn rt_blood_alloc_simple(size: i64) -> i64 {
     @unsafe {
@@ -537,10 +539,9 @@ pub fn rt_blood_alloc_simple(size: i64) -> i64 {
         if addr == 0 {
             rt_panic.rt_panic("alloc: out of memory");
         }
-        // NOT registered in gen hash table — Vec/String buffers don't need
-        // generation tracking. Registering 12M+ alloc_simple calls inflated
-        // the hash table to 25+ GB. blood_free_simple calls __libc_free
-        // directly for unregistered addresses (always calloc'd, safe to free).
+        // Register with source=2 (heap alloc_simple) so blood_free_simple
+        // knows to increment gen and __libc_free on deallocation.
+        rt_blood_register_allocation(addr, size, 2);
         addr
     }
 }
