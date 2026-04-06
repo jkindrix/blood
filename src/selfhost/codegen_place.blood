@@ -1264,6 +1264,61 @@ pub fn emit_place_addr(
                     }
                 }
 
+                // Slice bounds check: for &[T] (LLVM { ptr, i64 } with packed gen|len),
+                // extract length from lower 32 bits of field 1 and compare against index.
+                // Skipped inside unchecked(bounds) { } blocks.
+                if !ctx.is_check_suppressed(&ast.UncheckedCheck.Bounds) {
+                    match &current_hir_type {
+                        &Option.Some(ty_id) => {
+                            if type_intern.is_slice_id(ty_id) {
+                                let slice_alloca = ctx.local_cg(place.local);
+                                let slice_local_ty = ctx.get_local_type(place.local);
+                                if string_eq_str(slice_local_ty.as_str(), "{ ptr, i64 }") {
+                                    let packed_ptr = ctx.fresh_temp_cg();
+                                    let mut len_gep_idx: Vec<String> = Vec.new();
+                                    len_gep_idx.push(common.make_string("0"));
+                                    len_gep_idx.push(common.make_string("1"));
+                                    ctx.emit_gep_cg(&packed_ptr, "{ ptr, i64 }", &slice_alloca, &len_gep_idx);
+                                    let packed_val = ctx.fresh_temp_cg();
+                                    ctx.emit_load_cg2(&packed_val, "i64", &packed_ptr);
+                                    let slice_len = ctx.fresh_temp_cg();
+                                    let packed_str = cgname_to_string(&packed_val);
+                                    ctx.emit_binop_cg(&slice_len, "and", "i64", packed_str.as_str(), "4294967295");
+                                    let idx_for_check = ctx.fresh_temp_cg();
+                                    let idx_check_alloca = ctx.local_cg(*local);
+                                    let idx_check_ty = ctx.get_local_type(*local);
+                                    ctx.emit_load_cg2(&idx_for_check, idx_check_ty.as_str(), &idx_check_alloca);
+                                    let idx_i64 = if string_eq_str(idx_check_ty.as_str(), "i64") {
+                                        idx_for_check
+                                    } else {
+                                        let ext = ctx.fresh_temp_cg();
+                                        let raw_str = cgname_to_string(&idx_for_check);
+                                        ctx.emit_cast_cg(&ext, "sext", idx_check_ty.as_str(), raw_str.as_str(), "i64");
+                                        ext
+                                    };
+                                    let is_oob = ctx.fresh_temp_cg();
+                                    let slice_len_str = cgname_to_string(&slice_len);
+                                    ctx.emit_icmp_cg2(&is_oob, "uge", "i64", &idx_i64, slice_len_str.as_str());
+                                    let oob_panic_label = ctx.fresh_label_cg();
+                                    let oob_ok_label = ctx.fresh_label_cg();
+                                    ctx.emit_cond_br_cg(&is_oob, &oob_panic_label, &oob_ok_label);
+                                    ctx.emit_label_cg(&oob_panic_label);
+                                    let loc_str = build_panic_location(ctx);
+                                    let loc_global = ctx.add_string_constant(&loc_str);
+                                    ctx.begin_call_str(Option.None, "void", "@blood_panic_index_out_of_bounds_loc");
+                                    ctx.call_arg_cg(true, "i64", &idx_i64);
+                                    ctx.call_arg_cg(false, "i64", &slice_len);
+                                    ctx.call_arg_str(false, "ptr", loc_global.as_str());
+                                    ctx.end_call();
+                                    ctx.emit_unreachable();
+                                    ctx.emit_label_cg(&oob_ok_label);
+                                }
+                            }
+                        }
+                        &Option.None => {}
+                    }
+                }
+
                 // Get the element size using tracked HIR type for proper byte-offset calculation
                 let elem_size = match &current_hir_type {
                     &Option.Some(ty_id) => {
