@@ -1,0 +1,44 @@
+// Test: generic impl method calls on instances with concrete type args.
+// Verifies that method calls on generic instances correctly propagate
+// type information from the receiver's type args.
+
+struct Pair<A, B> {
+    first: A,
+    second: B,
+}
+
+impl<A, B> Pair<A, B> {
+    fn new(a: A, b: B) -> Pair<A, B> {
+        Pair { first: a, second: b }
+    }
+
+    fn get_first(&self) -> &A {
+        &self.first
+    }
+
+    fn get_second(&self) -> &B {
+        &self.second
+    }
+}
+
+fn main() -> i32 {
+    // Create Pair with i32, i32
+    let p1 = Pair.new(1, 2);
+    let a1: i32 = *p1.get_first();
+    let b1: i32 = *p1.get_second();
+    println_int(a1);
+    println_int(b1);
+    if a1 != 1 { return 1; }
+    if b1 != 2 { return 2; }
+
+    // Create Pair with bool, i32
+    let p2 = Pair.new(true, 42);
+    let b2: i32 = *p2.get_second();
+    println_int(b2);
+    if b2 != 42 { return 3; }
+
+    0
+}
+// EXPECT: 1
+// EXPECT: 2
+// EXPECT: 42

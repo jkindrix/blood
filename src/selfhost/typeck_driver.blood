@@ -1181,10 +1181,12 @@ fn register_trait(
             &hir_item.AssocItem.Const(_) => {}
         }
     }
+    let trait_type_param_ids = extract_impl_type_param_ids(&trait_def.generics.params);
     let trait_impl = typeck.ImplInfo.new(
         def_id,
         trait_self_ty,
         num_generics,
+        trait_type_param_ids,
         impl_methods,
     );
     checker.register_impl(trait_impl);
@@ -1243,16 +1245,18 @@ fn register_impl(
                 );
                 methods.push(method_info);
 
-                // Also register the full function signature in fn_sigs so that
-                // infer_path can find associated functions by DefId. Without this,
-                // calls like Counter.new(10) would fail to resolve the return type,
-                // leaving downstream method call receivers as Infer variables.
-                checker.register_fn_sig(assoc_fn.def_id, &assoc_fn.sig);
-
-                // If the impl has generics, mark this method as being in a generic
-                // impl so get_fn_generic_status treats it as generic.
+                // Register the function signature in fn_sigs so that infer_path
+                // can find associated functions by DefId. For generic impls,
+                // merge impl-level type params into the fn_sig so that
+                // instantiate_fn_sig creates fresh vars per call site.
+                // Without this, Type.method() calls share the body's type vars.
                 if impl_num_generics > 0 {
+                    checker.register_fn_sig_with_impl_generics(
+                        assoc_fn.def_id, &assoc_fn.sig, &impl_def.generics.params,
+                    );
                     checker.generic_impl_method_defs.push(assoc_fn.def_id.index);
+                } else {
+                    checker.register_fn_sig(assoc_fn.def_id, &assoc_fn.sig);
                 }
             }
             &hir_item.AssocItem.Type(_) => {
@@ -1274,6 +1278,7 @@ fn register_impl(
 
     // Create and register impl info
     let num_generics = count_type_params(&impl_def.generics.params);
+    let type_param_ids = extract_impl_type_param_ids(&impl_def.generics.params);
     let impl_bounds = extract_type_param_bounds(&impl_def.generics);
     let mut impl_info = match &impl_def.trait_ref {
         &Option.Some(ref trait_ref) => {
@@ -1281,6 +1286,7 @@ fn register_impl(
                 def_id,
                 impl_def.self_ty,
                 num_generics,
+                type_param_ids,
                 trait_ref.def_id,
                 methods,
             )
@@ -1290,6 +1296,7 @@ fn register_impl(
                 def_id,
                 impl_def.self_ty,
                 num_generics,
+                type_param_ids,
                 methods,
             )
         }
@@ -1460,6 +1467,31 @@ fn count_type_params(params: &Vec<hir_ty.GenericParam>) -> u32 {
         }
     }
     count
+}
+
+/// Extracts the actual TyVarId indices from generic type parameters.
+fn extract_impl_type_param_ids(params: &Vec<hir_ty.GenericParam>) -> Vec<u32> {
+    let mut ids: Vec<u32> = Vec.new();
+    for i in 0usize..params.len() {
+        match &params[i] {
+            &hir_ty.GenericParam.TypeParam(ref def) => {
+                ids.push(def.var_id.index);
+            }
+            &hir_ty.GenericParam.LifetimeParam(_) => {}
+            &hir_ty.GenericParam.ConstParam(_) => {}
+        }
+    }
+    ids
+}
+
+/// Creates sequential type param IDs [0, 1, ..., n-1] for builtin type registrations.
+/// Builtins use Param(0), Param(1), etc. so their TyVarId indices are positional.
+fn make_sequential_param_ids(n: u32) -> Vec<u32> {
+    let mut ids: Vec<u32> = Vec.new();
+    for i in 0u32..n {
+        ids.push(i);
+    }
+    ids
 }
 
 // ============================================================
@@ -2839,12 +2871,33 @@ fn resolve_pending_methods(checker: &mut typeck.TypeChecker) {
                         // Unify return type with actual method return type
                         let mut subst = unify.TypeParamSubst.new();
                         if impl_num_generics > 0 {
-                            // Bridge: extract_type_params_from_self_ty still takes &hir_ty.Type
-                            let impl_self_type = type_intern.ty_id_to_type(impl_self_ty_id);
-                            let stripped_type = type_intern.ty_id_to_type(stripped_id);
-                            unify.extract_type_params_from_self_ty(
-                                &impl_self_type, &stripped_type, &mut subst
-                            );
+                            // Create fresh vars keyed by the impl's actual TyVarIds
+                            let impl_tp_ids = &checker.get_impl_from_lookup(lookup_result).type_param_ids;
+                            for tpi in 0usize..impl_tp_ids.len() {
+                                let old_tv = impl_tp_ids[tpi];
+                                let fresh = checker.fresh_infer();
+                                subst.add_id(old_tv, fresh);
+                            }
+                            // Unify fresh vars with receiver's concrete type args
+                            let recv_args_opt = type_intern.get_adt_args(stripped_id);
+                            match recv_args_opt {
+                                Option.Some(args_list) => {
+                                    let num_args = interner.ty_list_len(args_list);
+                                    for rai in 0usize..num_args {
+                                        if rai < impl_tp_ids.len() {
+                                            let arg_ty = interner.get_ty_list_element(args_list, rai);
+                                            let old_tv = impl_tp_ids[rai];
+                                            match subst.lookup_id(old_tv) {
+                                                Option.Some(fresh_ty) => {
+                                                    checker.unify(fresh_ty, arg_ty, common.Span.dummy());
+                                                }
+                                                Option.None => {}
+                                            }
+                                        }
+                                    }
+                                }
+                                Option.None => {}
+                            }
                         }
                         let actual_ret_id = unify.substitute_type_params_id(
                             method_return_ty_id, &subst
@@ -3245,7 +3298,7 @@ fn register_string_methods(checker: &mut typeck.TypeChecker, string_def: hir_def
 
     // Register the impl
     let impl_def = checker.alloc_def_id();
-    let impl_info = typeck.ImplInfo.new(impl_def, self_ty, 0, methods);
+    let impl_info = typeck.ImplInfo.new(impl_def, self_ty, 0, Vec.new(), methods);
     checker.register_impl(impl_info);
 }
 
@@ -3335,7 +3388,7 @@ fn register_vec_methods(checker: &mut typeck.TypeChecker, vec_def: hir_def.DefId
 
     // Register the impl
     let impl_def = checker.alloc_def_id();
-    let impl_info = typeck.ImplInfo.new(impl_def, self_ty, 1, methods);
+    let impl_info = typeck.ImplInfo.new(impl_def, self_ty, 1, make_sequential_param_ids(1), methods);
     checker.register_impl(impl_info);
 }
 
@@ -3377,7 +3430,7 @@ fn register_option_methods(checker: &mut typeck.TypeChecker, option_def: hir_def
 
     // Register the impl
     let impl_def = checker.alloc_def_id();
-    let impl_info = typeck.ImplInfo.new(impl_def, self_ty, 1, methods);
+    let impl_info = typeck.ImplInfo.new(impl_def, self_ty, 1, make_sequential_param_ids(1), methods);
     checker.register_impl(impl_info);
 }
 
@@ -3393,7 +3446,7 @@ fn register_box_methods(checker: &mut typeck.TypeChecker, box_def: hir_def.DefId
 
     // Register the impl
     let impl_def = checker.alloc_def_id();
-    let impl_info = typeck.ImplInfo.new(impl_def, self_ty, 1, methods);
+    let impl_info = typeck.ImplInfo.new(impl_def, self_ty, 1, make_sequential_param_ids(1), methods);
     checker.register_impl(impl_info);
 }
 
@@ -3468,7 +3521,7 @@ fn register_hashmap_methods(checker: &mut typeck.TypeChecker, hashmap_def: hir_d
 
     // Register the impl
     let impl_def = checker.alloc_def_id();
-    let impl_info = typeck.ImplInfo.new(impl_def, self_ty, 2, methods);
+    let impl_info = typeck.ImplInfo.new(impl_def, self_ty, 2, make_sequential_param_ids(2), methods);
     checker.register_impl(impl_info);
 }
 
@@ -3501,7 +3554,7 @@ fn register_result_methods(checker: &mut typeck.TypeChecker, result_def: hir_def
 
     // Register the impl
     let impl_def = checker.alloc_def_id();
-    let impl_info = typeck.ImplInfo.new(impl_def, self_ty, 2, methods);
+    let impl_info = typeck.ImplInfo.new(impl_def, self_ty, 2, make_sequential_param_ids(2), methods);
     checker.register_impl(impl_info);
 }
 
@@ -3687,7 +3740,7 @@ fn register_str_methods(checker: &mut typeck.TypeChecker, interner: &interner.St
 
     // Register the impl
     let impl_def = checker.alloc_def_id();
-    let impl_info = typeck.ImplInfo.new(impl_def, self_ty, 0, methods);
+    let impl_info = typeck.ImplInfo.new(impl_def, self_ty, 0, Vec.new(), methods);
     checker.register_impl(impl_info);
 }
 
@@ -3705,7 +3758,7 @@ fn register_slice_methods(checker: &mut typeck.TypeChecker, interner: &interner.
 
     // Register the impl
     let impl_def = checker.alloc_def_id();
-    let impl_info = typeck.ImplInfo.new(impl_def, self_ty, 1, methods);
+    let impl_info = typeck.ImplInfo.new(impl_def, self_ty, 1, make_sequential_param_ids(1), methods);
     checker.register_impl(impl_info);
 }
 

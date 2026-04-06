@@ -1499,7 +1499,7 @@ fn infer_method_call(
             let impl_info = checker.get_impl_from_lookup(&lookup_result);
 
             // Build type argument substitution
-            // If explicit type args provided, use them; otherwise extract from receiver
+            // If explicit type args provided, use them; otherwise infer from call site
             let mut subst = unify.TypeParamSubst.new();
             if type_args.len() > 0 {
                 let mut i: usize = 0;
@@ -1507,13 +1507,32 @@ fn infer_method_call(
                     subst.add_id(i as u32, type_args[i]);
                     i += 1;
                 }
-            } else if impl_info.num_generics > 0 {
-                // Extract type params by matching impl's self_ty against actual receiver
-                // Bridge: convert TyId to hir_ty.Type for extract_type_params_from_self_ty
+            }
+
+            // Create fresh inference variables for type parameters.
+            //
+            // Builtin impls (no fn_sig): use positional fresh vars to substitute
+            // Param(0)/Param(1) in method param/return types.
+            //
+            // User impls (have fn_sig): impl-level params use Infer(body_tv) that
+            // gets bound through check_expr — do NOT create fresh vars for them
+            // (codegen resolves types through body_tv bindings).
+            //
+            // Method-level params (both): create fresh vars keyed by body TyVarId
+            // and save for TypeGenericCallInfo (triggers monomorphization).
+            //
+            // The Call path (Type.method()) handles everything via instantiate_fn_sig.
+            let has_fn_sig = match checker.get_fn_sig(method_info.def_id) {
+                Option.Some(_) => true,
+                Option.None => false,
+            };
+            if impl_info.num_generics > 0 && !has_fn_sig {
+                // Builtin: extract type params from receiver, then fill remaining
+                // with fresh vars. Extraction handles Param(0) in impl self_ty
+                // matching against concrete receiver args (e.g., Vec<i64> → T=i64).
                 let impl_self_hir = type_intern.ty_id_to_type(impl_info.self_ty);
                 let recv_hir = type_intern.ty_id_to_type(resolved_receiver);
                 unify.extract_type_params_from_self_ty(&impl_self_hir, &recv_hir, &mut subst);
-                // Fill in any remaining params with fresh inference variables
                 for i in 0u32..impl_info.num_generics {
                     match subst.lookup_id(i) {
                         Option.Some(_) => {}
@@ -1523,16 +1542,14 @@ fn infer_method_call(
                     }
                 }
             }
-
-            // Create fresh inference variables for method-level generic type parameters.
-            // Without this, calling a generic method like `id<T>` multiple times with
-            // different types reuses the same Infer variables (locked from the first call).
-            // Also save [body_tv, fresh_index, ...] pairs for TypeGenericCallInfo recording.
             let mut saved_method_type_param_bindings: Vec<u32> = Vec.new();
             match checker.get_fn_sig(method_info.def_id) {
                 Option.Some(ref fn_sig) => {
-                    if fn_sig.num_generics > 0 {
-                        for i in 0u32..fn_sig.num_generics {
+                    // Only freshen method-level type params (skip impl-level)
+                    let impl_gc = impl_info.num_generics;
+                    if fn_sig.num_generics > impl_gc {
+                        let method_start = impl_gc;
+                        for i in method_start..fn_sig.num_generics {
                             let fresh_var = checker.fresh_infer();
                             if (i as usize) < fn_sig.type_param_ids.len() {
                                 let body_tv = fn_sig.type_param_ids[i as usize];

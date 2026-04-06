@@ -865,6 +865,63 @@ impl TypeChecker {
         self.fn_sigs[def_idx] = Some(info);
     }
 
+    /// Registers a function signature with impl-level generics merged in.
+    /// For methods in `impl<T> Foo<T>`, the impl's type params are prepended
+    /// to the method's own type params so that instantiate_fn_sig creates
+    /// fresh inference variables for each call site.
+    pub fn register_fn_sig_with_impl_generics(
+        self: &mut Self,
+        def_id: hir_def.DefId,
+        sig: &hir_item.FnSig,
+        impl_params: &Vec<hir_ty.GenericParam>,
+    ) {
+        let mut param_tys: Vec<type_intern.TyId> = Vec.new();
+        for i in 0usize..sig.params.len() {
+            param_tys.push(sig.params[i].ty);
+        }
+
+        // Merge: impl type params first, then method's own type params
+        let mut type_param_ids: Vec<u32> = Vec.new();
+        let mut num_generics: u32 = 0;
+        for i in 0usize..impl_params.len() {
+            match &impl_params[i] {
+                &hir_ty.GenericParam.TypeParam(ref def) => {
+                    type_param_ids.push(def.var_id.index);
+                    num_generics += 1;
+                }
+                &hir_ty.GenericParam.LifetimeParam(_) => {}
+                &hir_ty.GenericParam.ConstParam(_) => {}
+            }
+        }
+        num_generics += count_type_params(&sig.generics.params);
+        let method_param_ids = extract_type_param_ids(&sig.generics.params);
+        for i in 0usize..method_param_ids.len() {
+            type_param_ids.push(method_param_ids[i]);
+        }
+
+        let mut effect_def_ids: Vec<u32> = Vec.new();
+        for ei in 0usize..sig.effects.effects.len() {
+            effect_def_ids.push(sig.effects.effects[ei].def_id.index);
+        }
+
+        let where_predicates = hir_ty.copy_where_predicates(&sig.generics.where_predicates);
+
+        let info = typeck_info.FnSigInfo.with_where_clauses(
+            param_tys,
+            sig.return_ty,
+            num_generics,
+            type_param_ids,
+            effect_def_ids,
+            where_predicates,
+        );
+
+        let def_idx = def_id.index as usize;
+        while self.fn_sigs.len() <= def_idx {
+            self.fn_sigs.push(Option.None);
+        }
+        self.fn_sigs[def_idx] = Some(info);
+    }
+
     /// Registers a struct definition for later lookup.
     pub fn register_struct(self: &mut Self, def_id: hir_def.DefId, name: common.Symbol, struct_def: &hir_item.StructDef) {
         // Extract field names and field info based on struct body
@@ -1675,6 +1732,7 @@ impl TypeChecker {
                         trait_info.def_id,  // use trait's DefId as impl DefId
                         dyn_ty,
                         0,  // no generics on dyn Trait
+                        Vec.new(),  // no type_param_ids
                         methods,
                     );
                     let synth_impl_idx = self.impls.len();

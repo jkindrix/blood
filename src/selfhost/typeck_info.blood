@@ -409,6 +409,11 @@ pub struct ImplInfo {
     ///   impl_bounds[0] = [Freeze_def_id]
     ///   impl_bounds[1] = [Clone_def_id]
     pub impl_bounds: Vec<Vec<u32>>,
+    /// Actual TyVarId indices for the impl's type parameters.
+    /// E.g., for `impl<T, U> Foo<T, U>` where T has TyVarId 42 and U has 43:
+    ///   type_param_ids = [42, 43]
+    /// Used to create fresh inference variables per call site in infer_method_call.
+    pub type_param_ids: Vec<u32>,
 }
 
 impl ImplInfo {
@@ -417,9 +422,10 @@ impl ImplInfo {
         def_id: hir_def.DefId,
         self_ty: type_intern.TyId,
         num_generics: u32,
+        type_param_ids: Vec<u32>,
         methods: Vec<MethodInfo>,
     ) -> ImplInfo {
-        ImplInfo { def_id, self_ty, num_generics, trait_def_id_index: no_trait_def_id(), methods, impl_bounds: Vec.new() }
+        ImplInfo { def_id, self_ty, num_generics, trait_def_id_index: no_trait_def_id(), methods, impl_bounds: Vec.new(), type_param_ids }
     }
 
     /// Creates a new impl info for a trait impl.
@@ -427,10 +433,11 @@ impl ImplInfo {
         def_id: hir_def.DefId,
         self_ty: type_intern.TyId,
         num_generics: u32,
+        type_param_ids: Vec<u32>,
         trait_def_id: hir_def.DefId,
         methods: Vec<MethodInfo>,
     ) -> ImplInfo {
-        ImplInfo { def_id, self_ty, num_generics, trait_def_id_index: trait_def_id.index, methods, impl_bounds: Vec.new() }
+        ImplInfo { def_id, self_ty, num_generics, trait_def_id_index: trait_def_id.index, methods, impl_bounds: Vec.new(), type_param_ids }
     }
 
     /// Returns true if this is a trait impl (not inherent).

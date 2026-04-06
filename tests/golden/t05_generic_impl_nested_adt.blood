@@ -1,0 +1,42 @@
+// Test: generic impl with ADT type arguments (struct-in-struct).
+// Verifies that non-primitive types work as generic type parameters
+// through the Call path (Type.method()).
+
+struct Wrapper<T> {
+    inner: T,
+}
+
+impl<T> Wrapper<T> {
+    fn wrap(val: T) -> Wrapper<T> {
+        Wrapper { inner: val }
+    }
+}
+
+struct Point {
+    x: i32,
+    y: i32,
+}
+
+fn main() -> i32 {
+    // User-defined struct as T
+    let p = Point { x: 10, y: 20 };
+    let wp = Wrapper.wrap(p);
+    if wp.inner.x != 10 { return 1; }
+    if wp.inner.y != 20 { return 2; }
+
+    // Cross-struct nesting: Wrapper<Point> into another Wrapper
+    let p2 = Point { x: 30, y: 40 };
+    let w1 = Wrapper.wrap(p2);
+    let w2 = Wrapper.wrap(w1);
+    if w2.inner.inner.x != 30 { return 3; }
+    if w2.inner.inner.y != 40 { return 4; }
+
+    // String literal as T
+    let ws: Wrapper<&str> = Wrapper.wrap("hello");
+
+    println_int(wp.inner.x);
+    println_int(w2.inner.inner.x);
+    0
+}
+// EXPECT: 10
+// EXPECT: 30

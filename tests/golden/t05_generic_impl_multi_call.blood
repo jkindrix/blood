@@ -1,0 +1,48 @@
+// Test: generic impl associated functions called multiple times with different types.
+// Previously, all calls to Type.method() shared the same type variable for T,
+// causing E0201 errors. Fixed by merging impl generics into fn_sig so
+// instantiate_fn_sig creates fresh inference vars per call site.
+//
+// NOTE: method calls on instances (w.get()) still share T across call sites.
+// This is a known limitation — codegen resolves body types through the shared var.
+
+struct Wrapper<T> {
+    value: T,
+}
+
+impl<T> Wrapper<T> {
+    fn new(val: T) -> Wrapper<T> {
+        Wrapper { value: val }
+    }
+
+    fn get(&self) -> &T {
+        &self.value
+    }
+}
+
+struct Inner {
+    x: i32,
+}
+
+fn main() -> i32 {
+    // Multiple calls to Wrapper.new with different types (Call path, fresh vars)
+    let w1 = Wrapper.new(42);
+    let w2 = Wrapper.new(true);
+    let w3 = Wrapper.new(Inner { x: 99 });
+
+    // Nested generic: Wrapper<Wrapper<i32>>
+    let inner = Wrapper.new(77);
+    let outer = Wrapper.new(inner);
+
+    // Access fields directly (avoids MethodCall sharing issue)
+    println_int(w1.value);
+    if w1.value != 42 { return 1; }
+    if w2.value != true { return 2; }
+    if w3.value.x != 99 { return 3; }
+    println_int(outer.value.value);
+    if outer.value.value != 77 { return 4; }
+
+    0
+}
+// EXPECT: 42
+// EXPECT: 77
