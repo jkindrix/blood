@@ -2454,10 +2454,6 @@ fn count_usages_expr(in_handled_body: bool, perform_error_spans: &mut Vec<common
             count_usages_expr(in_handled_body, perform_error_spans, entries, base.as_ref());
             count_usages_expr(in_handled_body, perform_error_spans, entries, idx.as_ref());
         }
-        &hir_expr.ExprKind.AddrOf { mutable: _, ref expr } => {
-            // AddrOf is a borrow — does NOT consume linear values
-            // (same semantics as Unary { operator: Ref })
-        }
         &hir_expr.ExprKind.Cast { ref expr, ty: _ } => {
             count_usages_expr(in_handled_body, perform_error_spans, entries, expr.as_ref());
         }

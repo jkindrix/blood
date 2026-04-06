@@ -158,7 +158,7 @@ const TAG_FOR_ITER: u8 = 0x27;
 const TAG_UNSAFE: u8 = 0x28;
 const TAG_ARRAY_LIST: u8 = 0x29;
 const TAG_ASSIGN_OP: u8 = 0x2A;
-const TAG_ADDR_OF: u8 = 0x2B;
+// TAG_ADDR_OF (0x2B) removed — AddrOf variant deleted
 const TAG_WHILE: u8 = 0x2C;
 const TAG_UNCHECKED: u8 = 0x2D;
 const TAG_HEAP: u8 = 0x2E;
@@ -507,12 +507,6 @@ pub fn canonicalize_expr(b: &mut CanonicalBuilder, env: &mut DeBruijnEnv, expr: 
             b.u8_val(binop_tag(operator));
             canonicalize_expr(b, env, target.as_ref());
             canonicalize_expr(b, env, val.as_ref());
-        }
-
-        &hir_expr.ExprKind.AddrOf { mutable, ref expr } => {
-            b.tag(TAG_ADDR_OF);
-            b.u8_val(if mutable { 1 } else { 0 });
-            canonicalize_expr(b, env, expr.as_ref());
         }
 
         &hir_expr.ExprKind.Unsafe(ref inner) => {

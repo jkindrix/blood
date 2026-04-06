@@ -68,9 +68,6 @@ pub fn infer_expr(checker: &mut typeck.TypeChecker, expr: &hir_expr.Expr) -> typ
         &hir_expr.ExprKind.AssignOp { operator: assign_op, ref target, ref val } => {
             infer_assign_op(checker, assign_op, target.as_ref(), val.as_ref(), expr.span)
         }
-        &hir_expr.ExprKind.AddrOf { mutable, expr: ref inner } => {
-            infer_addr_of(checker, mutable, inner.as_ref(), expr.span)
-        }
         &hir_expr.ExprKind.Block(ref block) => infer_block(checker, block, expr.span),
         &hir_expr.ExprKind.If { ref condition, ref then_branch, ref else_branch } => {
             infer_if(checker, condition.as_ref(), then_branch.as_ref(), else_branch, expr.span)
@@ -693,7 +690,6 @@ fn is_lvalue(expr: &hir_expr.Expr) -> bool {
         &hir_expr.ExprKind.Continue { label: _ } => false,
         &hir_expr.ExprKind.Assign { target: _, val: _ } => false,
         &hir_expr.ExprKind.AssignOp { operator: _, target: _, val: _ } => false,
-        &hir_expr.ExprKind.AddrOf { mutable: _, expr: _ } => false,
         &hir_expr.ExprKind.Closure { captures: _, params: _, return_ty: _, effects: _, body: _, body_id: _ } => false,
         &hir_expr.ExprKind.WithHandle { handler: _, body: _ } => false,
         &hir_expr.ExprKind.InlineHandle { body: _, handlers: _ } => false,
@@ -2587,17 +2583,6 @@ fn infer_assign_op(
 }
 
 /// Infers the type of an address-of expression.
-fn infer_addr_of(
-    checker: &mut typeck.TypeChecker,
-    mutable: bool,
-    expr: &hir_expr.Expr,
-    span: common.Span,
-) -> type_intern.TyId {
-    let inner_ty = infer_expr(checker, expr);
-    let resolved = checker.resolve(inner_ty);
-    type_intern.type_interner().mk_ref(resolved, mutable)
-}
-
 // ============================================================
 // Block and Control Flow Type Inference
 // ============================================================

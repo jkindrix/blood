@@ -195,9 +195,6 @@ fn lower_expr_inner(
         &hir_expr.ExprKind.AssignOp { operator: the_op, ref target, ref val } => {
             lower_assign_op_expr(ctx, the_op, target.as_ref(), val.as_ref(), &resolved_ty, dest, expr.span);
         }
-        &hir_expr.ExprKind.AddrOf { mutable, expr: ref inner } => {
-            lower_addr_of_expr(ctx, mutable, inner.as_ref(), &resolved_ty, dest, expr.span);
-        }
         &hir_expr.ExprKind.Block(ref block) => {
             lower_block_expr(ctx, block, dest, expr.span);
         }
@@ -1760,36 +1757,6 @@ fn lower_assign_op_expr(
             // Store result
             let result_op = mir_types.Operand.Move(mir_types.Place.local(result_temp));
             ctx.emit_assign(target_place, mir_types.Rvalue.Use(result_op), span);
-        }
-        Option.None => {}
-    }
-}
-
-// NOTE: This function handles ExprKind.AddrOf, which is DEAD CODE — no HIR
-// lowering path creates AddrOf expressions. The parser produces Unary { Ref/RefMut }
-// instead, which is handled by lower_unary_expr (UnaryOp.Ref / UnaryOp.RefMut).
-// If you need to fix `&expr` behavior, modify lower_unary_expr, NOT this function.
-fn lower_addr_of_expr(
-    ctx: &mut mir_lower_ctx.MirLowerCtx,
-    mutable: bool,
-    inner: &hir_expr.Expr,
-    _ty: &hir_ty.Type,
-    dest: mir_lower_ctx.Destination,
-    span: common.Span,
-) {
-    let temp = ctx.new_temp(inner.ty, span);
-    lower_expr(ctx, inner, mir_lower_ctx.destination_local(temp));
-
-    match dest.as_place() {
-        Option.Some(place) => {
-            ctx.emit_assign(
-                place,
-                mir_types.Rvalue.AddressOf {
-                    place: mir_types.Place.local(temp),
-                    mutable: mutable,
-                },
-                span,
-            );
         }
         Option.None => {}
     }
@@ -3476,9 +3443,6 @@ fn collect_closure_captures(
         &hir_expr.ExprKind.AssignOp { operator: _, ref target, ref val } => {
             collect_closure_captures(ctx, target.as_ref(), captures);
             collect_closure_captures(ctx, val.as_ref(), captures);
-        }
-        &hir_expr.ExprKind.AddrOf { mutable: _, ref expr } => {
-            collect_closure_captures(ctx, expr.as_ref(), captures);
         }
         &hir_expr.ExprKind.Block(ref block) => {
             collect_captures_in_block(ctx, block, captures);
