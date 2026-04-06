@@ -1271,14 +1271,22 @@ pub fn emit_place_addr(
                     match &current_hir_type {
                         &Option.Some(ty_id) => {
                             if type_intern.is_slice_id(ty_id) {
+                                // Get the slice struct address — either from alloca (stack)
+                                // or by dereferencing the alloca (heap-allocated)
                                 let slice_alloca = ctx.local_cg(place.local);
-                                let slice_local_ty = ctx.get_local_type(place.local);
-                                if string_eq_str(slice_local_ty.as_str(), "{ ptr, i64 }") {
+                                let slice_base = if ctx.is_region_allocated(place.local) || ctx.is_persistent_allocated(place.local) {
+                                    let heap_ptr = ctx.fresh_temp_cg();
+                                    ctx.emit_load_cg2(&heap_ptr, "ptr", &slice_alloca);
+                                    heap_ptr
+                                } else {
+                                    slice_alloca
+                                };
+                                {
                                     let packed_ptr = ctx.fresh_temp_cg();
                                     let mut len_gep_idx: Vec<String> = Vec.new();
                                     len_gep_idx.push(common.make_string("0"));
                                     len_gep_idx.push(common.make_string("1"));
-                                    ctx.emit_gep_cg(&packed_ptr, "{ ptr, i64 }", &slice_alloca, &len_gep_idx);
+                                    ctx.emit_gep_cg(&packed_ptr, "{ ptr, i64 }", &slice_base, &len_gep_idx);
                                     let packed_val = ctx.fresh_temp_cg();
                                     ctx.emit_load_cg2(&packed_val, "i64", &packed_ptr);
                                     let slice_len = ctx.fresh_temp_cg();

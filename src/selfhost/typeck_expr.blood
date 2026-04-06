@@ -2886,10 +2886,18 @@ fn infer_for_iter(
                         checker.error(typeck.TypeErrorKind.TypeMismatch, span);
                     }
                 }
+                &type_intern.InternedTypeKind.Slice { element } => {
+                    let ref_elem = interner.mk_ref(element, false);
+                    checker.unify(pattern.ty, ref_elem, span);
+                }
                 _ => {
                     checker.error(typeck.TypeErrorKind.TypeMismatch, span);
                 }
             }
+        }
+        &type_intern.InternedTypeKind.Slice { element } => {
+            let ref_elem = interner.mk_ref(element, false);
+            checker.unify(pattern.ty, ref_elem, span);
         }
         &type_intern.InternedTypeKind.Adt { def_id: _, args } => {
             // Direct Vec<T> iteration — extract T from type args

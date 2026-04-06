@@ -2131,7 +2131,7 @@ fn lower_for_iter_expr(
         _ => {}
     }
 
-    // Check for Vec-like types: Adt with one type arg (Vec<T>)
+    // Check for Vec-like types (Adt with one type arg) or slices
     let mut found_vec = false;
     if !found_array {
         match iter_kind {
@@ -2141,6 +2141,10 @@ fn lower_for_iter_expr(
                     element_ty_id = interner.get_ty_list_element(args, 0);
                     found_vec = true;
                 }
+            }
+            &type_intern.InternedTypeKind.Slice { element } => {
+                element_ty_id = element;
+                found_vec = true;
             }
             &type_intern.InternedTypeKind.Ref { inner, mutable: _ } => {
                 let inner_resolved = ctx.resolve_type_to_id(inner);
@@ -2153,6 +2157,10 @@ fn lower_for_iter_expr(
                             found_vec = true;
                         }
                     }
+                    &type_intern.InternedTypeKind.Slice { element } => {
+                        element_ty_id = element;
+                        found_vec = true;
+                    }
                     _ => {}
                 }
             }
@@ -2163,7 +2171,7 @@ fn lower_for_iter_expr(
     if !found_array && !found_vec {
         ctx.mir_error(
             mir_lower_ctx.MirLowerErrorKind.InternalError,
-            common.make_string("for-in loop: iterator type is not an array or Vec"),
+            common.make_string("for-in loop: iterator type is not an array, Vec, or slice"),
             span,
         );
         return;
@@ -2922,16 +2930,28 @@ fn lower_for_vec_iter(
     let vec_temp = ctx.new_temp(resolved_iter_id, span);
     lower_expr(ctx, iter, mir_lower_ctx.destination_local(vec_temp));
 
-    // Step 2: Load the length from vec.len (field 1)
+    // Step 2: Load the length
     let len_local = ctx.new_temp(idx_ty_id, span);
     let mut vec_place = mir_types.Place.local(vec_temp);
-    // If iter is a reference (&Vec<T>), deref first
+    let mut use_len_rvalue = false;
     match iter_kind {
-        &type_intern.InternedTypeKind.Ref { inner: _, mutable: _ } => {
+        &type_intern.InternedTypeKind.Ref { inner, mutable: _ } => {
             vec_place = vec_place.project(mir_types.PlaceElem.Deref);
+            let inner_resolved = ctx.resolve_type_to_id(inner);
+            use_len_rvalue = type_intern.is_slice_id(inner_resolved);
+        }
+        &type_intern.InternedTypeKind.Slice { element: _ } => {
+            use_len_rvalue = true;
         }
         _ => {}
     }
+    if use_len_rvalue {
+        ctx.emit_assign(
+            mir_types.Place.local(len_local),
+            mir_types.Rvalue.Len(mir_types.Place.local(vec_temp)),
+            span,
+        );
+    } else {
     let len_place = vec_place.project(mir_types.PlaceElem.Field(1));
     let len_hir = type_intern.ty_id_to_type(idx_ty_id);
     let len_operand = mir_lower_util.operand_from_place(len_place, &len_hir);
@@ -2940,6 +2960,7 @@ fn lower_for_vec_iter(
         mir_types.Rvalue.Use(len_operand),
         span,
     );
+    }
 
     // Step 3: Create a mutable index variable, initialized to 0
     let idx_local = ctx.new_var(idx_ty_id, common.make_string("_loop_idx"), true, span);

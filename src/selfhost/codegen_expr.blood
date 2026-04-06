@@ -776,12 +776,13 @@ pub fn emit_rvalue(
         &mir_types.Rvalue.Len(ref place) => {
             // For slices - load the length field
             let mut ptr = codegen_place.emit_place_data_ptr(ctx, place);
-            // Auto-deref for Ref-typed locals: the alloca (or heap slot) holds a pointer
-            // to the actual data, not the data itself. Load through the pointer first.
+            // emit_place_data_ptr already dereferences heap-allocated locals
+            // (region/persistent). Only need explicit deref for Ref-typed locals
+            // on the stack (where alloca holds a reference value, not a data pointer).
             if place.projection.len() == 0 {
                 match ctx.get_local_hir_type(place.local) {
                     Option.Some(ty_id) => {
-                        if type_intern.is_ref_id(ty_id) {
+                        if type_intern.is_ref_id(ty_id) && !ctx.is_region_allocated(place.local) && !ctx.is_persistent_allocated(place.local) {
                             let deref = ctx.fresh_temp_cg();
                             ctx.emit_load_cg(&deref, "ptr", ptr.as_str());
                             ptr = cgname_to_string(&deref);
@@ -795,8 +796,12 @@ pub fn emit_rvalue(
             ctx.gep_ptr_offset(0);
             ctx.gep_field(1);
             ctx.end_gep();
+            let raw_val = ctx.fresh_temp_cg();
+            ctx.emit_load_cg2(&raw_val, "i64", &len_ptr);
+            // Mask to lower 32 bits — upper 32 bits contain the packed generation
             let len_val = ctx.fresh_temp_cg();
-            ctx.emit_load_cg2(&len_val, "i64", &len_ptr);
+            let raw_str = cgname_to_string(&raw_val);
+            ctx.emit_binop_cg(&len_val, "and", "i64", raw_str.as_str(), "4294967295");
             ctx.emit_store_cg("i64", &len_val, dest);
         }
         &mir_types.Rvalue.Discriminant(ref place) => {
