@@ -224,6 +224,63 @@ do_build_first_gen() {
     copy_runtime
 }
 
+# do_relink_first_gen: fast path that re-runs only the clang-18 link step
+# using existing build/obj/*.o files and the current runtime archive.
+#
+# Use when only the runtime (not selfhost source) changed. Saves ~11 minutes
+# per iteration (skips seed → selfhost IR → per-module llc).
+#
+# Does NOT detect source staleness. If you modify src/selfhost/*.blood or
+# the seed compiler, use `build first_gen` (without --relink) instead.
+# Safer-than-silent: this function refuses to run if build/obj is missing
+# or suspiciously empty.
+do_relink_first_gen() {
+    local obj_dir="$BUILD_DIR/obj"
+    [ -d "$obj_dir" ] || die "--relink: $obj_dir does not exist. Run full 'build first_gen' first."
+    local obj_count
+    obj_count=$(find "$obj_dir" -maxdepth 1 -name '*.o' | wc -l)
+    [ "$obj_count" -ge 60 ] || die "--relink: only $obj_count object files in $obj_dir (expected 60+). Run full 'build first_gen' first."
+
+    [ -f "$RUNTIME_A" ] || die "--relink: runtime archive not found at $RUNTIME_A. Run 'build blood_runtime' first."
+
+    # Warn if any selfhost source file is newer than the newest .o file.
+    # This is advisory — the user asked for --relink and we honor it, but we
+    # surface the staleness so they can abort if they forgot to rebuild.
+    local newest_o newest_src
+    newest_o=$(find "$obj_dir" -maxdepth 1 -name '*.o' -printf '%T@\n' | sort -rn | head -1)
+    newest_src=$(find "$DIR" -maxdepth 1 -name '*.blood' -printf '%T@\n' | sort -rn | head -1)
+    if [ -n "$newest_o" ] && [ -n "$newest_src" ]; then
+        # bash can compare float-as-string lexicographically for these timestamps
+        if [ "$(echo "$newest_src > $newest_o" | bc 2>/dev/null || echo 0)" = "1" ]; then
+            warn "--relink: selfhost source files are newer than object files."
+            warn "           The relinked first_gen will NOT reflect those source changes."
+            warn "           Run './build_selfhost.sh build first_gen' (without --relink) for a full rebuild."
+        fi
+    fi
+
+    step "Relinking first_gen (fast path, runtime-only changes)"
+    local start_ts rc=0
+    start_ts=$(date +%s)
+
+    # Match the exact link command from src/selfhost/main.blood:524-539
+    local bin_path="$BUILD_DIR/first_gen"
+    local clang_cmd="clang-18 $obj_dir/*.o $RUNTIME_A -Wl,-z,muldefs -lm -ldl -lpthread -pie -o $bin_path"
+
+    # shellcheck disable=SC2086  # intentional word splitting for *.o expansion
+    eval "$clang_cmd" || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        fail "clang-18 linking failed (exit $rc)"
+        return 1
+    fi
+
+    local fg_size fg_wall
+    fg_size=$(wc -c < "$bin_path")
+    fg_wall=$(($(date +%s) - start_ts))
+    ok "first_gen relinked ($fg_size bytes) in $(elapsed_since "$start_ts")"
+    log_metric "first_gen_relink" "$fg_size" "$fg_wall"
+    copy_runtime
+}
+
 do_build_second_gen() {
     [ -f "$BUILD_DIR/first_gen" ] || die "first_gen not found. Run: ./build_selfhost.sh build first_gen"
 
@@ -984,6 +1041,12 @@ Usage: ./build_selfhost.sh [command] [args] [-q|--quiet]
 
 Build:
   build first_gen     Build first_gen from seed compiler (bootstrap/seed)
+  build first_gen --relink
+                      Fast path: skip selfhost compilation, just re-run
+                      clang-18 link against existing build/obj/*.o and
+                      the current runtime archive. Use when only the
+                      runtime changed. Drops cycle from ~11 min to <1s.
+                      Warns if selfhost source is newer than .o files.
   build second_gen    Self-compile first_gen → second_gen
   build third_gen     Bootstrap second_gen → third_gen + byte-compare
   build blood_runtime Compile Blood-native runtime → libblood_runtime_blood.a
@@ -1045,7 +1108,18 @@ case "${1:-status}" in
                 do_build_cargo
                 ;;
             first_gen)
-                do_build_first_gen "--timings"
+                # Check for --relink flag anywhere in remaining args
+                _relink=false
+                for _arg in "${@:3}"; do
+                    if [ "$_arg" = "--relink" ]; then
+                        _relink=true
+                    fi
+                done
+                if $_relink; then
+                    do_relink_first_gen
+                else
+                    do_build_first_gen "--timings"
+                fi
                 ;;
             second_gen)
                 do_build_second_gen
