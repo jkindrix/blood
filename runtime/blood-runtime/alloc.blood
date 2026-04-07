@@ -566,7 +566,19 @@ pub fn rt_blood_realloc(old_addr: i64, new_size: i64) -> i64 {
         if new_addr == 0 {
             rt_panic.rt_panic("realloc: out of memory");
         }
+        // Treat old_addr <= 1 as "no old buffer" (matches glibc's
+        // realloc(NULL, size) = malloc convention).
         let old_size: i64 = registry_lookup_size(old_addr);
+        if old_addr > 1 && old_size == 0 {
+            // The address isn't tracked in the gen registry, so we can't
+            // know how much data to copy. Previously this path silently
+            // memcpy'd 0 bytes and freed the old buffer — silent data
+            // loss. Fail loudly instead. Callers must only pass addresses
+            // obtained from blood_alloc/blood_alloc_or_abort (which
+            // register in the gen table). alloc_simple buffers are not
+            // tracked and cannot be realloc'd via this function.
+            rt_panic.rt_panic("realloc: old allocation not registered in gen table; cannot determine size for memcpy");
+        }
         let mut copy_size: i64 = old_size;
         if new_size < copy_size {
             copy_size = new_size;
