@@ -14,26 +14,30 @@ Blood synthesizes five cutting-edge programming language innovations:
 
 ## Status
 
-> **Version: 0.2.0**
+> **Pre-release — research compiler.** No version tag yet. See [KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) for the honest status of each component.
 
-Self-hosted compiler passes 488/488 golden integration tests. The compiler compiles itself (third-gen byte-identical bootstrap verified). No Rust toolchain required — bootstraps from a prebuilt seed binary. Requires only LLVM 18.
+The self-hosted compiler passes **533/534 golden tests** (1 XFAIL tracking a known closure-codegen bug). It compiles itself through a three-generation byte-identical bootstrap, and the resulting binary has no Rust runtime dependency — the seed is self-sufficient and requires only LLVM 18 on the host.
 
 | Component | Status | Details |
 |-----------|--------|---------|
-| Lexer & Parser | ✅ Complete | Recursive descent, macro expansion |
-| Type Checker | ✅ Complete | Bidirectional inference, multiple dispatch, linearity |
-| Code Generation | ✅ Complete | LLVM IR text emission, incremental compilation |
-| Effects System | ✅ Complete | Evidence passing, deep/shallow handlers, snapshots, per-op resume |
-| Memory Model | ✅ Complete | Generational refs, regions, escape analysis, Frozen\<T\> |
-| Runtime | ✅ Complete | Written in Blood (no Rust). Memory, effects, fibers, VFT |
-| Multiple Dispatch | ✅ Complete | Static + dynamic (dyn Trait vtable, default methods, supertraits) |
-| Safety Checks | ✅ Default | Definite init, linearity, array bounds, dangling ref rejection |
-| Content Addressing | 🔶 Partial | BLAKE3 hashing, codebase storage, per-function IR cache |
-| Formal Proofs | ✅ Complete | 43 Coq theorems, 0 Admitted |
+| Lexer & Parser | ✅ Working | 90% of normative grammar claims verified in code |
+| Type Inference | ✅ Working | Algorithm W, bidirectional, 100% of normative claims verified |
+| Type Checking | ✅ Working | Linearity, effects, exhaustiveness, generic impls |
+| Code Generation | ⚠️ Mostly working | LLVM IR emission. Known gaps: nested-closure codegen, aggregate escape analysis disabled |
+| Effects System | ✅ Working | Deep/shallow handlers, perform/resume, snapshots, per-op resume |
+| Memory Model | ⚠️ Mostly working | Generational refs for heap/region. Stale &str detection for String buffers currently disabled pending a latent bug fix |
+| Runtime | ✅ Working | 181KB Blood-native runtime (no Rust). Memory, effects, VFT |
+| Multiple Dispatch | ⚠️ Partial | Compile-time dispatch works. Runtime dispatch (fingerprint-based) is deferred |
+| Fibers / Concurrency | ❌ Not integrated | pthread-based spawn; no M:N scheduler, no mutex/channel primitives wired |
+| Safety Checks | ✅ Default | Definite init, linearity, bounds, dangling ref rejection all enabled |
+| Content Addressing | 🔶 Partial | BLAKE3 hashing, codebase storage. VFT dispatch wiring not hooked up |
+| Formal Proofs | ✅ Complete | 60 Coq theorems, 0 Admitted, 0 Axioms (covers a simplified model of the language, not the compiler artifact) |
 
-**Legend**: ✅ = Implemented and integrated | 🔶 = Partially integrated
+**Legend**: ✅ Working | ⚠️ Mostly working with known gaps | 🔶 Partial | ❌ Not integrated
 
-[Specification](docs/spec/SPECIFICATION.md) | [Implementation Status](docs/planning/IMPLEMENTATION_STATUS.md) | [Contributing](CONTRIBUTING.md)
+**Spec coverage (approx):** 39 of 78 surveyed normative claims across `docs/spec/*.md` have verifiable code evidence today (~50%). See [KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) for the full breakdown by spec file and the known soundness gaps that remain open.
+
+[Specification](docs/spec/SPECIFICATION.md) | [Known Limitations](docs/KNOWN_LIMITATIONS.md) | [Contributing](CONTRIBUTING.md)
 
 ## The Name
 
