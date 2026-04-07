@@ -169,21 +169,27 @@ pub fn generate_module_with_items(
     let decls = intrinsic_declarations();
     output.push_str(decls.as_str());
 
-    // Generate each function using the shared context
-    // Skip duplicate function definitions (keep only the first one with each name)
-    // This is a workaround for missing proper monomorphization
+    // Generate each function using the shared context.
+    //
+    // DEDUP GUARD: skip duplicate function definitions (keep the first one
+    // with each mangled name). This is a LOUD safety net, not a silent
+    // workaround. When mangling is correct, monomorphizations have unique
+    // names and this branch never fires. When it DOES fire, the compiler
+    // has a real bug — either duplicate DefIds producing the same mangled
+    // name (a mangling bug) or the same DefId being queued for codegen
+    // twice (a driver bug). Emitting both would produce invalid LLVM IR
+    // (multiple definitions of the same symbol). Emitting one silently
+    // could mask the bug. So: skip + warn to stderr.
     let mut generated_set = hashmap.HashMapU64U32.with_capacity(functions.len());
     let mut skip_count: usize = 0;
     for i in 0usize..functions.len() {
         let (ref name, ref body) = functions[i];
-        // Check if this function name has already been generated (O(1) hash lookup)
         let name_hash = hashmap.hash_str(name.as_str());
         let already_generated = match generated_set.get(name_hash) {
             Option.Some(_) => true,
             Option.None => false,
         };
         if !already_generated {
-            // Set up call remapping for trait default methods
             ctx.call_remaps = find_call_remaps(default_method_remaps, body.def_id.index);
             let fn_ir = generate_function_with_ctx(&mut ctx, body, name.as_str(), 0, 1);
             output.push_str(fn_ir.as_str());
@@ -191,16 +197,22 @@ pub fn generate_module_with_items(
             generated_set.insert(name_hash, 1);
         } else {
             skip_count += 1;
-            // Emit a comment noting the skipped duplicate
-            output.push_str("; DUPLICATE SKIPPED: @");
+            // Emit LOUDLY to stderr — this is a compiler bug, not a
+            // no-op. The IR comment remains for debuggability.
+            eprint_str("warning: codegen dropped duplicate definition of @");
+            eprint_str(name.as_str());
+            eprintln_str(" — this is a mangling or driver bug; please report");
+            output.push_str("; DUPLICATE SKIPPED (bug): @");
             output.push_str(name.as_str());
             output.push_str("\n");
         }
     }
-    // Debug: emit total skip count as comment
     if skip_count > 0 {
-        output.push_str("; TOTAL DUPLICATES SKIPPED: ");
+        eprint_str("warning: codegen skipped ");
         let skip_str = codegen_types.format_u64(skip_count as u64);
+        eprint_str(skip_str.as_str());
+        eprintln_str(" duplicate function definitions; the compiler should not produce duplicates");
+        output.push_str("; TOTAL DUPLICATES SKIPPED: ");
         output.push_str(skip_str.as_str());
         output.push_str("\n");
     }
