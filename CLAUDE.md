@@ -79,9 +79,11 @@ The selfhost compiler is developed using a **self-compilation loop**: edit sourc
 
 **Inner loop (seconds):** `first_gen check file.blood` — validates syntax, types, definite initialization, linearity, and dangling reference detection against the current compiler. Use this while editing to catch errors fast. Write 10-50 lines, check, fix, repeat.
 
+**Runtime-only loop (~5 sec):** For changes to files in `runtime/blood-runtime/*.blood` ONLY, use `./build_selfhost.sh build blood_runtime && ./build_selfhost.sh build first_gen --relink`. This skips the 11-minute selfhost recompile and just re-links first_gen against the fresh runtime archive. 150× faster than a full rebuild for runtime work. Refuses to run if `build/obj/` is missing; warns if selfhost source files are newer than .o files.
+
 **Build loop (incremental, ~3 min):** `./build_selfhost.sh build second_gen` — first_gen compiles the current source with `--split-modules`. Only changed modules are re-codegen'd. Test with `./build_selfhost.sh test golden second_gen`. This is the primary development cycle.
 
-**Recovery (clean, ~4 min):** `./build_selfhost.sh build first_gen` — rebuilds from the bootstrap seed. Use this only when self-compilation breaks (your edit introduced a bug that prevents the compiler from compiling itself). Fix the issue, rebuild first_gen, then return to the build loop.
+**Recovery (clean, ~11 min):** `./build_selfhost.sh build first_gen` — rebuilds from the bootstrap seed. Use this only when self-compilation breaks (your edit introduced a bug that prevents the compiler from compiling itself), or after compiler-source changes. Fix the issue, rebuild first_gen, then return to the build loop.
 
 **Gate (full chain, ~15 min):** `./build_selfhost.sh gate` — runs the full bootstrap chain (first_gen → second_gen → third_gen byte-compare) and updates the seed. Run at end-of-session or before pushing. Required for ABI/calling-convention changes. Use `gate --quick` (~8 min) to skip first_gen/second_gen rebuilds when they're already built and tested.
 
@@ -130,8 +132,12 @@ Canonical shared types: `Span`, `Symbol`, `SpannedSymbol`, `SpannedString`, `Ord
 - **Per-function type inference size:** Very large functions can hit type inference limits. Split oversized functions rather than adding more code to them.
 - **Keyword field names:** `module` cannot be used as a field name; use `mod_decl`
 - **Memory reuse:** Requires active region at startup for region-aware allocation
+- **Nested closures inside other closures (S-7):** the inner closure's function definition is not emitted. Reproducer: `tests/golden/t04_nested_closure_xfail.blood`. Simple closures and captured closures work; only closure-inside-closure fails. Affects aether stream library patterns.
+- **Stale `&str` detection for `String`/`Vec` data buffers (GAP-1):** disabled. A previous attempt (fd43ec7) had an arity bug hidden by error swallowing. When corrected, exposed a latent `&str`-lifetime bug in first_gen itself. Re-enabling requires first fixing the latent bug.
+- **Function call arity (NEW-4):** the compiler silently accepts wrong-arity calls and emits invalid IR. Workaround: don't rely on the compiler to catch arity errors.
+- **`docs/planning/IMPLEMENTATION_STATUS.md` is stale (January 2026):** use `docs/KNOWN_LIMITATIONS.md` as the current source of truth for spec-vs-implementation gaps.
 
-Fixed bugs are documented in `tools/FAILURE_LOG.md`.
+Fixed bugs are documented in `tools/FAILURE_LOG.md`. The current working audit is at `.tmp/AUDIT_2026-04-07.md` (gitignored but locally persistent — a 95-item decomposed backlog with honest status).
 
 ## Build & Test Commands
 
@@ -152,7 +158,11 @@ All building and testing goes through the build script. No arguments shows statu
 cd src/selfhost
 
 # Build stages
-./build_selfhost.sh build first_gen     # Build first_gen from seed compiler
+./build_selfhost.sh build first_gen            # Build first_gen from seed compiler (~11 min)
+./build_selfhost.sh build first_gen --relink   # FAST PATH: relink existing .o files against
+                                               # current runtime archive (~5 sec). Use when
+                                               # only the runtime changed. Refuses if build/obj
+                                               # missing; warns if selfhost source newer than .o
 ./build_selfhost.sh build second_gen    # Self-compile first_gen → second_gen
 ./build_selfhost.sh build third_gen     # Bootstrap second_gen → third_gen + byte-compare
 ./build_selfhost.sh build blood_runtime # Compile Blood runtime → libblood_runtime_blood.a
