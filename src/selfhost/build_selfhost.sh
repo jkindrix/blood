@@ -331,8 +331,22 @@ do_build_blood_runtime() {
     ok "IR post-processed"
 
     step "Compiling to archive"
+    # Use PIPESTATUS to capture llc's exit code specifically. grep's exit code
+    # (1 when no noise lines matched) must not mask llc failures, and llc
+    # failures must not be hidden by a blanket `|| true`.
+    # Disable pipefail locally so grep returning 1 (no matches) doesn't kill
+    # the script; we check llc's exit code explicitly afterward.
+    set +o pipefail
     llc-18 -filetype=obj -relocation-model=pic "$rt_build/lib_clean.ll" -o "$rt_build/lib.o" 2>&1 \
-        | grep -v 'inlinable function\|ignoring invalid debug' || true
+        | grep -v 'inlinable function\|ignoring invalid debug'
+    local llc_status="${PIPESTATUS[0]}"
+    set -o pipefail
+    if [ "$llc_status" -ne 0 ]; then
+        die "llc-18 failed (exit $llc_status) compiling runtime IR at $rt_build/lib_clean.ll"
+    fi
+    # Remove the old object file if llc didn't produce a fresh one to prevent
+    # packaging a stale archive on future failures.
+    [ -f "$rt_build/lib.o" ] || die "llc-18 did not produce $rt_build/lib.o"
     ar rcs "$rt_build/libblood_runtime_blood.a" "$rt_build/lib.o"
     ok "libblood_runtime_blood.a ($(stat -c%s "$rt_build/libblood_runtime_blood.a") bytes)"
 }
