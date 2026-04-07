@@ -147,10 +147,6 @@ impl Unifier {
             // Same primitive types
             (TypeKind::Primitive(p1), TypeKind::Primitive(p2)) if p1 == p2 => Ok(()),
 
-            // Integer coercion: the selfhost freely coerces between i32, u32, usize, etc.
-            (TypeKind::Primitive(p1), TypeKind::Primitive(p2))
-                if p1.is_integer() && p2.is_integer() => Ok(()),
-
             // Same ADT with unifiable arguments
             (TypeKind::Adt { def_id: d1, args: a1 }, TypeKind::Adt { def_id: d2, args: a2 })
                 if d1 == d2 =>
@@ -206,12 +202,6 @@ impl Unifier {
                     _ => self.unify(i1, i2, span)
                 }
             }
-
-            // &mut T → &T coercion: the selfhost accepts &mut where & is expected
-            (
-                TypeKind::Ref { inner: i1, mutable: false },
-                TypeKind::Ref { inner: i2, mutable: true },
-            ) => self.unify(i1, i2, span),
 
             // Pointers with same mutability
             (
