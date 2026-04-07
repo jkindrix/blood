@@ -539,9 +539,20 @@ pub fn rt_blood_alloc_simple(size: i64) -> i64 {
         if addr == 0 {
             rt_panic.rt_panic("alloc: out of memory");
         }
-        // Register with source=2 (heap alloc_simple) so blood_free_simple
-        // knows to increment gen and __libc_free on deallocation.
-        rt_blood_register_allocation(addr, size, 2);
+        // NOT registered in gen hash table. Previously fd43ec7 tried to
+        // register with source=2 for stale &str detection (GAP-1), but
+        // (a) the call had wrong arity (silently ignored by the compiler
+        // — see NEW-4 in AUDIT_2026-04-07.md) causing the runtime build
+        // to fail, which was itself hidden by || true in build_selfhost.sh
+        // (see NEW-2), and (b) when the call is corrected, enabling the
+        // gen tracking exposes a latent bug in first_gen where &str
+        // references are held past String reallocation, causing stale
+        // reference panics throughout self-compilation.
+        //
+        // GAP-1 therefore remains OPEN: stale &str detection for
+        // alloc_simple buffers is not enforced. Re-enabling it requires
+        // first finding and fixing the latent &str-lifetime bug in
+        // first_gen. Tracked as a follow-up to NEW-1 in the audit.
         addr
     }
 }
