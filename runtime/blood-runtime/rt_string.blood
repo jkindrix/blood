@@ -62,6 +62,14 @@ fn ensure_cap(s: *mut u8, needed: i64) {
     let cap: i64 = get_cap(s);
     if needed <= cap { return; }
 
+    // Overflow guard: cap * 2 wraps to a negative value when cap > i64::MAX/2.
+    // Abort cleanly instead of silently wrapping into a small capacity.
+    if cap > 0x3FFFFFFFFFFFFFFF {
+        rt_panic.rt_panic("string capacity overflow");
+    }
+    if needed < 0 || needed > 0x3FFFFFFFFFFFFFFF {
+        rt_panic.rt_panic("string capacity overflow");
+    }
     let mut new_cap: i64 = cap * 2;
     if new_cap < 16 { new_cap = 16; }
     if new_cap < needed { new_cap = needed; }

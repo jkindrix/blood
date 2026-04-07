@@ -62,10 +62,21 @@ fn vec_ensure_cap(v: *mut u8, needed: i64, elem_size: i64) {
     let cap: i64 = get_cap(v);
     if needed <= cap { return; }
 
+    // Overflow guard: cap * 2 wraps to a negative value when cap > i64::MAX/2.
+    if cap > 0x3FFFFFFFFFFFFFFF {
+        rt_panic.rt_panic("vec capacity overflow");
+    }
+    if needed < 0 || needed > 0x3FFFFFFFFFFFFFFF {
+        rt_panic.rt_panic("vec capacity overflow");
+    }
     let mut new_cap: i64 = cap * 2;
     if new_cap < 4 { new_cap = 4; }
     if new_cap < needed { new_cap = needed; }
 
+    // Check new_cap * elem_size doesn't overflow
+    if elem_size > 0 && new_cap > 0x3FFFFFFFFFFFFFFF / elem_size {
+        rt_panic.rt_panic("vec byte size overflow");
+    }
     let new_bytes: i64 = new_cap * elem_size;
     let old_data: i64 = get_data(v);
     let new_data: i64 = alloc.rt_blood_alloc_simple(new_bytes);
