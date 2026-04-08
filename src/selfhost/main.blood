@@ -30,6 +30,7 @@ mod mir_body;
 mod mir_lower;
 mod mir_lower_ctx;
 mod codegen;
+mod codegen_stmt;
 mod codegen_ctx;
 mod codegen_streaming;
 mod codegen_types;
@@ -4182,6 +4183,26 @@ fn codegen_pass2(
     eprint_str(int_to_string(mir_init.init_iter_max() as i32));
     eprint_str(" hit_cap=");
     eprint_str(int_to_string(mir_init.init_hit_cap() as i32));
+    eprint_str("\n");
+
+    // Per-arm breakdown of emit_statement (codegen blocks_ms hot path).
+    // 100% of selfhost statements are Assign; the place/type/rvalue split
+    // identifies which sub-call dominates.
+    eprint_str("  [stmt] total_ms=");
+    eprint_str(int_to_string(codegen_stmt.stmt_t_total_ms() as i32));
+    eprint_str(" assign_ms=");
+    eprint_str(int_to_string(codegen_stmt.stmt_t_assign_ms() as i32));
+    eprint_str(" calls=");
+    eprint_str(int_to_string(codegen_stmt.stmt_t_count_total() as i32));
+    eprint_str(" assign_calls=");
+    eprint_str(int_to_string(codegen_stmt.stmt_t_count_assign() as i32));
+    eprint_str("\n");
+    eprint_str("  [stmt assign] place_ms=");
+    eprint_str(int_to_string(codegen_stmt.stmt_t_assign_place_ms() as i32));
+    eprint_str(" type_ms=");
+    eprint_str(int_to_string(codegen_stmt.stmt_t_assign_type_ms() as i32));
+    eprint_str(" rvalue_ms=");
+    eprint_str(int_to_string(codegen_stmt.stmt_t_assign_rvalue_ms() as i32));
     eprint_str("\n");
 
     if skipped_count > 0 {

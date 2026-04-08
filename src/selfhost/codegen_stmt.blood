@@ -20,6 +20,28 @@ mod mir_escape;
 mod dump_mir;
 mod type_intern;
 
+// Sub-phase timers for emit_statement. blocks_ms (~34s in codegen) is
+// dominated by emit_statement calls; in selfhost, 100% of statements are
+// the Assign arm. This decomposes the Assign body so we can target the
+// slowest sub-call: emit_place_data_ptr (LHS), get_local_type (clone),
+// or emit_rvalue (RHS). Counters accumulate across all
+// generate_function_with_ctx calls and are printed by codegen_pass2.
+static mut STMT_T_TOTAL_MS: u64 = 0;             // Whole emit_statement body
+static mut STMT_T_ASSIGN_MS: u64 = 0;            // Assign arm only (sum of sub-times)
+static mut STMT_T_ASSIGN_PLACE_MS: u64 = 0;      // emit_place_data_ptr inside Assign
+static mut STMT_T_ASSIGN_TYPE_MS: u64 = 0;       // get_local_type inside Assign
+static mut STMT_T_ASSIGN_RVALUE_MS: u64 = 0;     // emit_rvalue inside Assign
+static mut STMT_T_COUNT_TOTAL: u64 = 0;          // Total emit_statement calls
+static mut STMT_T_COUNT_ASSIGN: u64 = 0;         // Calls hitting the Assign arm
+
+pub fn stmt_t_total_ms() -> u64 { @unsafe { STMT_T_TOTAL_MS } }
+pub fn stmt_t_assign_ms() -> u64 { @unsafe { STMT_T_ASSIGN_MS } }
+pub fn stmt_t_assign_place_ms() -> u64 { @unsafe { STMT_T_ASSIGN_PLACE_MS } }
+pub fn stmt_t_assign_type_ms() -> u64 { @unsafe { STMT_T_ASSIGN_TYPE_MS } }
+pub fn stmt_t_assign_rvalue_ms() -> u64 { @unsafe { STMT_T_ASSIGN_RVALUE_MS } }
+pub fn stmt_t_count_total() -> u64 { @unsafe { STMT_T_COUNT_TOTAL } }
+pub fn stmt_t_count_assign() -> u64 { @unsafe { STMT_T_COUNT_ASSIGN } }
+
 // ============================================================
 // Statement Codegen
 // ============================================================
@@ -29,6 +51,7 @@ pub fn emit_statement(
     ctx: &mut codegen_ctx.CodegenCtx,
     stmt: &mir_stmt.Statement,
 ) {
+    let t_total = blood_clock_millis();
     ctx.current_span = Option.Some(stmt.span);
     if ctx.trace_codegen {
         let trace = dump_mir.format_statement(stmt);
@@ -36,13 +59,23 @@ pub fn emit_statement(
         ctx.write_string(&trace);
         ctx.newline();
     }
+    @unsafe { STMT_T_COUNT_TOTAL += 1; }
     match &stmt.kind {
         &mir_stmt.StatementKind.Assign { ref place, ref rvalue } => {
+            let t_arm = blood_clock_millis();
+            @unsafe { STMT_T_COUNT_ASSIGN += 1; }
+            let t_place = blood_clock_millis();
             let dest = codegen_place.emit_place_data_ptr(ctx, place);
+            @unsafe { STMT_T_ASSIGN_PLACE_MS += blood_clock_millis() - t_place; }
+            let t_type = blood_clock_millis();
             let dest_ty = ctx.get_local_type(place.local);
+            @unsafe { STMT_T_ASSIGN_TYPE_MS += blood_clock_millis() - t_type; }
+            let t_rval = blood_clock_millis();
             codegen_expr.emit_rvalue(ctx, dest.as_str(), dest_ty.as_str(), rvalue);
+            @unsafe { STMT_T_ASSIGN_RVALUE_MS += blood_clock_millis() - t_rval; }
             // V1 gen ref propagation removed — fat refs (V2) carry generation
             // in the { ptr, i32 } struct itself, making _gen allocas unnecessary.
+            @unsafe { STMT_T_ASSIGN_MS += blood_clock_millis() - t_arm; }
         }
         &mir_stmt.StatementKind.StorageLive(ref local) => {
             // In LLVM IR, storage is typically handled by alloca placement
@@ -1119,6 +1152,7 @@ pub fn emit_statement(
             }
         }
     }
+    @unsafe { STMT_T_TOTAL_MS += blood_clock_millis() - t_total; }
 }
 
 /// Emits a sequence of statements.
