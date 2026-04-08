@@ -208,10 +208,15 @@ do_build_first_gen() {
     # when the compiling compiler changes (seed vs first_gen vs second_gen).
     rm -rf "$BUILD_DIR/.content_hashes" "$BUILD_DIR/obj/.hashes" "$BUILD_DIR/.blood-cache" 2>/dev/null
 
+    # Pass --no-cache: populating the per-function content hash cache on a
+    # clean build is ~232s of pure I/O waste (2551 functions × ~91ms each
+    # for hash computation + file writes). The cache gets wiped above before
+    # every first_gen rebuild because it's compiler-version-specific, so it
+    # can never be reused across builds anyway.
     step "Building first_gen with $(basename "$bootstrap_compiler")"
     local start_ts rc=0
     start_ts=$(date +%s)
-    $bootstrap_compiler build main.blood --split-modules -o "$BUILD_DIR/first_gen.ll" $flags || rc=$?
+    $bootstrap_compiler build main.blood --no-cache --split-modules -o "$BUILD_DIR/first_gen.ll" $flags || rc=$?
     if [ "$rc" -ne 0 ]; then
         fail "Build failed ($(basename "$bootstrap_compiler")): $(decode_exit $rc)"
         return 1
@@ -287,10 +292,15 @@ do_build_second_gen() {
     # Clear all caches — cached IR is compiler-version-specific
     rm -rf "$BUILD_DIR/.content_hashes" "$BUILD_DIR/obj/.hashes" "$BUILD_DIR/.blood-cache" 2>/dev/null
 
+    # Pass --no-cache: the cache gets wiped before each generation build anyway
+    # (lines above), so populating it is ~232s of pure I/O waste per generation
+    # (2551 functions × ~91ms for content_hash + file write). Clean gates
+    # don't benefit from caching between generations because the compiler
+    # version changes between each. This flag drops ~12 min off a full gate.
     step "Self-compiling (first_gen → second_gen)"
     local start_ts rc=0
     start_ts=$(date +%s)
-    run_with_pty "$BUILD_DIR/first_gen" build main.blood --timings --split-modules -o "$BUILD_DIR/second_gen.ll" || rc=$?
+    run_with_pty "$BUILD_DIR/first_gen" build main.blood --timings --no-cache --split-modules -o "$BUILD_DIR/second_gen.ll" || rc=$?
     local wall_time
     wall_time=$(elapsed_since "$start_ts")
 
@@ -329,10 +339,11 @@ do_build_third_gen() {
     # Clear all caches — cached IR is compiler-version-specific
     rm -rf "$BUILD_DIR/.content_hashes" "$BUILD_DIR/obj/.hashes" "$BUILD_DIR/.blood-cache" 2>/dev/null
 
+    # Pass --no-cache: see comment in do_build_second_gen above. Same rationale.
     step "Bootstrap (second_gen → third_gen)"
     local start_ts rc=0
     start_ts=$(date +%s)
-    run_with_pty "$BUILD_DIR/second_gen" build main.blood --timings --split-modules -o "$BUILD_DIR/third_gen.ll" || rc=$?
+    run_with_pty "$BUILD_DIR/second_gen" build main.blood --timings --no-cache --split-modules -o "$BUILD_DIR/third_gen.ll" || rc=$?
     local wall_time
     wall_time=$(elapsed_since "$start_ts")
 

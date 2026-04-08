@@ -3624,6 +3624,17 @@ fn codegen_pass2(
 
     let mut skipped_count: usize = 0;
 
+    // Perf diagnostics (Rev 4 instrumentation — permanent):
+    // Sub-phase totals across all functions in codegen pass 2. Printed at
+    // end. Lets future regressions in any sub-phase be immediately visible
+    // in build output without additional tooling. Overhead: one
+    // blood_clock_millis call per sub-phase per function (trivial).
+    let mut t_mir_lower_total: u64 = 0;
+    let mut t_bc01_scan_total: u64 = 0;
+    let mut t_init_lin_total: u64 = 0;
+    let mut t_codegen_total: u64 = 0;
+    let mut t_cache_check_total: u64 = 0;
+
     for i in 0usize..total_items {
         let work = &worklist.items[i];
 
@@ -3651,6 +3662,7 @@ fn codegen_pass2(
         // Per-function content hash skip (in split-modules mode only).
         // If the function's canonical AST hash is unchanged from the cached value,
         // reuse the cached IR fragment instead of re-doing MIR lowering + codegen.
+        let t_cache_start = blood_clock_millis();
         if args.split_modules && !args.no_cache {
             let fn_sig_opt = find_fn_sig_for_body(&lower_result.items, body_entry.body_id);
             match &fn_sig_opt {
@@ -3681,11 +3693,14 @@ fn codegen_pass2(
             }
         }
 
+        t_cache_check_total += blood_clock_millis() - t_cache_start;
+
         // Activate MIR region ON TOP of the codegen_region stack.
         // MIR lowering allocations go here, then we pop so codegen uses
         // the parent codegen_region (persistent across all functions).
         region_activate(mir_region);
 
+        let t_mir_start = blood_clock_millis();
         let has_generics = has_const_generics || type_generic_fn_set.len() > 0;
         let mir_result = if has_generics {
             mir_lower.lower_body_with_const_info(
@@ -3717,6 +3732,8 @@ fn codegen_pass2(
                 &typeck_result.coercion_entries,
             )
         };
+
+        t_mir_lower_total += blood_clock_millis() - t_mir_start;
 
         // For handler op bodies, override the MIR body's def_id with the unique
         // synthetic def_id. The MIR lowering used typeck_def_id for correct
@@ -3797,6 +3814,7 @@ fn codegen_pass2(
         // BC-01: Reject returning reference to stack-local variable.
         // Only catches direct `_0 = Ref(&local)` where local was assigned from
         // a constant or aggregate (not derived from a parameter).
+        let t_bc01_start = blood_clock_millis();
         {
             let mir_ref = &mir_result.body;
             let param_end: u32 = 1 + mir_ref.param_count;
@@ -3946,6 +3964,7 @@ fn codegen_pass2(
                 }
             }
         }
+        t_bc01_scan_total += blood_clock_millis() - t_bc01_start;
 
         // Validate MIR structure if requested
         if args.validate_mir {
@@ -3967,6 +3986,7 @@ fn codegen_pass2(
         // Definite initialization + linearity analysis — always runs.
         // Skip for functions with MIR lowering errors (incomplete MIR causes
         // false positives from unresolved field accesses).
+        let t_init_lin_start = blood_clock_millis();
         if mir_result.errors.len() == 0 {
             let init_result = mir_init.analyze_init(&mir_result.body);
             if init_result.errors.len() > 0 {
@@ -3993,6 +4013,7 @@ fn codegen_pass2(
                 }
             }
         }
+        t_init_lin_total += blood_clock_millis() - t_init_lin_start;
 
         // Set up call remapping for trait default methods.
         ctx.call_remaps = find_call_remaps_for_def(
@@ -4018,6 +4039,7 @@ fn codegen_pass2(
         ctx.fn_temp_region = fn_temp_region;
 
         // Codegen (fn_temp_region active, mir_region read-only)
+        let t_codegen_start = blood_clock_millis();
         let mc2: u32 = lower_result.module_names.len() as u32;
         let fn_ir = codegen.generate_function_with_ctx(ctx, &mir_result.body, work.fn_name.as_str(), work.module_index, mc2);
         if args.alloc_profile {
@@ -4052,8 +4074,10 @@ fn codegen_pass2(
 
             cli += 1;
         }
+        t_codegen_total += blood_clock_millis() - t_codegen_start;
 
         // Save per-function content hash + IR to cache (for future skip)
+        let t_cache_save_start = blood_clock_millis();
         if args.split_modules && !args.no_cache {
             let fn_sig_opt2 = find_fn_sig_for_body(&lower_result.items, body_entry.body_id);
             match &fn_sig_opt2 {
@@ -4077,6 +4101,7 @@ fn codegen_pass2(
                 &Option.None => {}
             }
         }
+        t_cache_check_total += blood_clock_millis() - t_cache_save_start;
 
         // Deactivate and reset temp region — reclaims all per-function temporaries.
         ctx.fn_temp_region = 0 as u64;
@@ -4102,6 +4127,22 @@ fn codegen_pass2(
     // references into it (local maps, output buffer from last iteration).
     // The caller destroys it after all ctx access is complete.
     region_destroy(mir_region);
+
+    // Perf diagnostics (Rev 4): print sub-phase totals so regressions in
+    // any individual phase are immediately visible in build output.
+    eprint_str("\n  [codegen pass2] functions=");
+    eprint_str(int_to_string(total_items as i32));
+    eprint_str(" cache_ms=");
+    eprint_str(int_to_string(t_cache_check_total as i32));
+    eprint_str(" mir_lower_ms=");
+    eprint_str(int_to_string(t_mir_lower_total as i32));
+    eprint_str(" bc01_ms=");
+    eprint_str(int_to_string(t_bc01_scan_total as i32));
+    eprint_str(" init_lin_ms=");
+    eprint_str(int_to_string(t_init_lin_total as i32));
+    eprint_str(" codegen_ms=");
+    eprint_str(int_to_string(t_codegen_total as i32));
+    eprint_str("\n");
 
     if skipped_count > 0 {
         eprint_str("\n  [skipped ");

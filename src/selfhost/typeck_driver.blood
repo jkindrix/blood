@@ -729,7 +729,16 @@ pub fn check_lower_result(result: &hir_lower_ctx.LowerResult, skip_modules: &Vec
     let body_cache = build_body_item_cache(&result.items);
 
     // Phase 2: Type check main file bodies (determines success/failure).
+    //
+    // Perf diagnostics (Rev 4 instrumentation — permanent):
+    // track per-body time to expose outliers during future typeck regressions.
+    // Printed after the loop. Overhead: one clock_millis call per body (trivial).
     let body_limit = result.main_body_count;
+    let mut max_body_ms: u64 = 0;
+    let mut max_body_id: u32 = 0;
+    let mut slow_body_count: usize = 0;
+    let mut over_1s_body_count: usize = 0;
+    let mut total_check_ms: u64 = 0;
     for i in 0usize..body_limit {
         let body_entry = &result.bodies[i];
         let mut return_ty = find_return_type_cached(&result.items, body_entry.body_id, &body_cache);
@@ -746,8 +755,31 @@ pub fn check_lower_result(result: &hir_lower_ctx.LowerResult, skip_modules: &Vec
         if is_handler_ret {
             checker.resume_ty = Option.Some(return_ty);
         }
+        let body_t0 = blood_clock_millis();
         check_body(&mut checker, &body_entry.body, return_ty);
+        let body_elapsed = blood_clock_millis() - body_t0;
+        total_check_ms += body_elapsed;
+        if body_elapsed > max_body_ms {
+            max_body_ms = body_elapsed;
+            max_body_id = body_entry.body_id.index;
+        }
+        if body_elapsed > 100 { slow_body_count += 1; }
+        if body_elapsed > 1000 { over_1s_body_count += 1; }
     }
+    // Print per-body diagnostic summary.
+    eprint_str("  [typeck phase 2] bodies=");
+    eprint_str(int_to_string(body_limit as i32));
+    eprint_str(" check_body_total_ms=");
+    eprint_str(int_to_string(total_check_ms as i32));
+    eprint_str(" max_ms=");
+    eprint_str(int_to_string(max_body_ms as i32));
+    eprint_str(" max_body_id=");
+    eprint_str(int_to_string(max_body_id as i32));
+    eprint_str(" slow>100ms=");
+    eprint_str(int_to_string(slow_body_count as i32));
+    eprint_str(" very_slow>1000ms=");
+    eprint_str(int_to_string(over_1s_body_count as i32));
+    eprint_str("\n");
 
     // Capture main-file error count before checking external bodies.
     let main_error_count = checker.errors.len();
