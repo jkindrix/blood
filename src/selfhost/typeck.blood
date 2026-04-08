@@ -1103,35 +1103,27 @@ impl TypeChecker {
     /// Finds a variant's index by its DefId across all registered enums.
     /// Returns (enum_def_id, variant_index) if found.
     pub fn find_variant_index_by_def_id(self: &Self, variant_def_id: hir_def.DefId) -> Option<u32> {
-        // O(1) hash lookup
+        // O(1) hash lookup. variant_hash is authoritative — both register_enum
+        // and the builtin Option/Result registrations populate it. A miss means
+        // the def_id is not a variant.
         match self.variant_hash.get(variant_def_id.index as u64) {
             Option.Some(combined) => {
                 // Extract variant_idx from combined value (lower 32 bits)
                 let variant_idx = (combined & 0xFFFFFFFF) as u32;
-                return Option.Some(variant_idx);
+                Option.Some(variant_idx)
             }
-            Option.None => {}
+            Option.None => Option.None,
         }
-        // Fallback to linear scan
-        for i in 0usize..self.enums.len() {
-            match &self.enums[i] {
-                &Some(ref enum_info) => {
-                    for j in 0usize..enum_info.variants.len() {
-                        if enum_info.variants[j].def_id.index == variant_def_id.index {
-                            return Option.Some(enum_info.variants[j].variant_index);
-                        }
-                    }
-                }
-                &None => {}
-            }
-        }
-        Option.None
     }
 
     /// Finds the parent enum info for a variant DefId.
     /// Returns the enum's DefId, number of generics, and the variant's field types.
     pub fn find_enum_for_variant(self: &Self, variant_def_id: hir_def.DefId) -> Option<EnumVariantLookup> {
-        // O(1) hash lookup
+        // O(1) hash lookup. variant_hash is authoritative — both register_enum
+        // and the builtin Option/Result registrations populate it. A miss means
+        // the def_id is not a variant; do not fall back to a linear scan over
+        // every enum × every variant (that scan ran on every failed infer_path
+        // resolution and was a meaningful fraction of Phase 2b cost).
         match self.variant_hash.get(variant_def_id.index as u64) {
             Option.Some(combined) => {
                 // Extract enum_idx and variant_idx from combined value
@@ -1165,34 +1157,6 @@ impl TypeChecker {
             }
             Option.None => {}
         }
-        // Fallback to linear scan
-        for i in 0usize..self.enums.len() {
-            match &self.enums[i] {
-                &Some(ref enum_info) => {
-                    for j in 0usize..enum_info.variants.len() {
-                        if enum_info.variants[j].def_id.index == variant_def_id.index {
-                            let mut fn_vec: Vec<common.Symbol> = Vec.new();
-                            for k in 0usize..enum_info.variants[j].field_names.len() {
-                                fn_vec.push(enum_info.variants[j].field_names[k]);
-                            }
-                            let mut tpvi2: Vec<u32> = Vec.new();
-                            for tpi2 in 0usize..enum_info.type_param_var_ids.len() {
-                                tpvi2.push(enum_info.type_param_var_ids[tpi2]);
-                            }
-                            return Option.Some(EnumVariantLookup {
-                                enum_def_id: enum_info.def_id,
-                                num_generics: enum_info.num_generics,
-                                variant_index: enum_info.variants[j].variant_index,
-                                field_tys: copy_ty_id_vec(&enum_info.variants[j].field_tys),
-                                field_names: fn_vec,
-                                type_param_var_ids: tpvi2,
-                            });
-                        }
-                    }
-                }
-                &None => {}
-            }
-        }
         Option.None
     }
 
@@ -1215,7 +1179,8 @@ impl TypeChecker {
     /// Gets a variant's field type by name using the variant's DefId.
     /// Returns the field type if found, None otherwise.
     pub fn get_variant_field_ty_by_name(self: &Self, variant_def_id: hir_def.DefId, field_name: common.Symbol) -> Option<type_intern.TyId> {
-        // O(1) hash lookup for variant location
+        // O(1) hash lookup. variant_hash is authoritative; a miss means the
+        // def_id is not a variant.
         match self.variant_hash.get(variant_def_id.index as u64) {
             Option.Some(combined) => {
                 let enum_idx = (combined >> 32) as usize;
@@ -1240,28 +1205,6 @@ impl TypeChecker {
                 }
             }
             Option.None => {}
-        }
-        // Fallback to linear scan
-        for i in 0usize..self.enums.len() {
-            match &self.enums[i] {
-                &Some(ref enum_info) => {
-                    for j in 0usize..enum_info.variants.len() {
-                        if enum_info.variants[j].def_id.index == variant_def_id.index {
-                            // Found the variant - look up field by name
-                            for k in 0usize..enum_info.variants[j].field_names.len() {
-                                if enum_info.variants[j].field_names[k].index == field_name.index {
-                                    // Return the corresponding field type
-                                    if k < enum_info.variants[j].field_tys.len() {
-                                        return Some(type_intern.TyId.new(enum_info.variants[j].field_tys[k].index));
-                                    }
-                                }
-                            }
-                            return Option.None;
-                        }
-                    }
-                }
-                &None => {}
-            }
         }
         Option.None
     }

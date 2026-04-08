@@ -3772,6 +3772,24 @@ fn register_builtin_enums(
                             checker.enums.push(Option.None);
                         }
                         checker.enums[def_idx] = Some(info);
+                        // Populate variant_hash so find_enum_for_variant /
+                        // find_variant_index_by_def_id / get_variant_field_ty_by_name
+                        // can resolve Option's variants via the O(1) hash path
+                        // instead of falling through to the enum-table linear scan.
+                        match option_some_def {
+                            &Option.Some(some_def) => {
+                                let combined = hashmap.combine_u32_usize(option_def.index, 0);
+                                checker.variant_hash.insert(some_def.index as u64, combined);
+                            }
+                            &Option.None => {}
+                        }
+                        match option_none_def {
+                            &Option.Some(none_def) => {
+                                let combined = hashmap.combine_u32_usize(option_def.index, 1);
+                                checker.variant_hash.insert(none_def.index as u64, combined);
+                            }
+                            &Option.None => {}
+                        }
                     }
                     &Option.None => {
                         // "Option" not interned — skip builtin enum registration
@@ -3843,6 +3861,22 @@ fn register_builtin_enums(
                     checker.enums.push(Option.None);
                 }
                 checker.enums[def_idx] = Some(info);
+                // Populate variant_hash for Result's variants — see comment
+                // on the Option block above for the rationale.
+                match result_ok_def {
+                    &Option.Some(ok_def) => {
+                        let combined = hashmap.combine_u32_usize(result_def.index, 0);
+                        checker.variant_hash.insert(ok_def.index as u64, combined);
+                    }
+                    &Option.None => {}
+                }
+                match result_err_def {
+                    &Option.Some(err_def) => {
+                        let combined = hashmap.combine_u32_usize(result_def.index, 1);
+                        checker.variant_hash.insert(err_def.index as u64, combined);
+                    }
+                    &Option.None => {}
+                }
             }
         }
         Option.None => {}
