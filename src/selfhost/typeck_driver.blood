@@ -30,6 +30,19 @@ mod typeck_types;
 mod typeck_dispatch;
 mod hashmap;
 
+// Sub-phase timers for check_body. Phase 2b is 157 s, the biggest bucket
+// in the entire build. These decompose per-body cost into setup, infer,
+// resolve (numeric defaulting + unresolved-infer check), and linearity.
+static mut CB_T_SETUP_MS: u64 = 0;      // local registration + return_ty setup
+static mut CB_T_INFER_MS: u64 = 0;      // infer_expr + unify + effect check
+static mut CB_T_RESOLVE_MS: u64 = 0;    // flush_pending + numeric + unresolved
+static mut CB_T_LINEARITY_MS: u64 = 0;  // check_linearity
+
+pub fn cb_t_setup_ms() -> u64 { @unsafe { CB_T_SETUP_MS } }
+pub fn cb_t_infer_ms() -> u64 { @unsafe { CB_T_INFER_MS } }
+pub fn cb_t_resolve_ms() -> u64 { @unsafe { CB_T_RESOLVE_MS } }
+pub fn cb_t_linearity_ms() -> u64 { @unsafe { CB_T_LINEARITY_MS } }
+
 // ============================================================
 // Body Info Cache — O(1) lookup for body → item metadata
 // ============================================================
@@ -943,6 +956,21 @@ pub fn check_lower_result(result: &hir_lower_ctx.LowerResult, skip_modules: &Vec
     eprint_str(" p4(impl_table)=");
     eprint_str(int_to_string(t_p4_ms as i32));
     eprint_str("\n");
+
+    // check_body sub-phase breakdown — aggregated across ALL bodies in
+    // phase 2 + phase 2b. Use this to decide which check_body phase is the
+    // hot spot: infer_expr, numeric/unresolved resolution, or linearity.
+    @unsafe {
+        eprint_str("  [check_body] setup_ms=");
+        eprint_str(int_to_string(CB_T_SETUP_MS as i32));
+        eprint_str(" infer_ms=");
+        eprint_str(int_to_string(CB_T_INFER_MS as i32));
+        eprint_str(" resolve_ms=");
+        eprint_str(int_to_string(CB_T_RESOLVE_MS as i32));
+        eprint_str(" linearity_ms=");
+        eprint_str(int_to_string(CB_T_LINEARITY_MS as i32));
+        eprint_str("\n");
+    }
 
     // Return result with substitution table for type resolution in MIR lowering
     if checker.has_errors() {
@@ -2746,6 +2774,7 @@ fn count_usages_block(in_handled_body: bool, perform_error_spans: &mut Vec<commo
 ///
 /// The return_ty comes from the function signature (not from body locals).
 fn check_body(checker: &mut typeck.TypeChecker, body: &hir_expr.Body, return_ty: type_intern.TyId) {
+    let t_cb_setup = blood_clock_millis();
     // Clear locals for this body
     checker.clear_locals();
 
@@ -2797,6 +2826,9 @@ fn check_body(checker: &mut typeck.TypeChecker, body: &hir_expr.Body, return_ty:
     // Set return type from the function signature
     checker.set_return_ty(return_ty);
 
+    @unsafe { CB_T_SETUP_MS += blood_clock_millis() - t_cb_setup; }
+    let t_cb_infer = blood_clock_millis();
+
     // Type check the body expression
     let body_ty = typeck_expr.infer_expr(checker, &body.expr);
 
@@ -2814,6 +2846,9 @@ fn check_body(checker: &mut typeck.TypeChecker, body: &hir_expr.Body, return_ty:
         }
         &None => {}
     }
+
+    @unsafe { CB_T_INFER_MS += blood_clock_millis() - t_cb_infer; }
+    let t_cb_resolve = blood_clock_millis();
 
     // Resolve deferred trait bound checks now that inference is complete
     checker.flush_pending_bound_checks();
@@ -2869,10 +2904,15 @@ fn check_body(checker: &mut typeck.TypeChecker, body: &hir_expr.Body, return_ty:
         }
     }
 
+    @unsafe { CB_T_RESOLVE_MS += blood_clock_millis() - t_cb_resolve; }
+    let t_cb_lin = blood_clock_millis();
+
     // Run linearity checking: scan locals for ownership qualifiers,
     // count usages in body expression, report violations.
     // Inline implementation to avoid potential codegen issues with the module.
     check_linearity(checker, body);
+
+    @unsafe { CB_T_LINEARITY_MS += blood_clock_millis() - t_cb_lin; }
 
     // Clear return type
     checker.clear_return_ty();
