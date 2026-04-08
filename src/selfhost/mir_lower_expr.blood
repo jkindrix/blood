@@ -2484,8 +2484,12 @@ fn lower_closure_expr(
         closure_ctx.terminate_return(span);
     }
 
-    // Finish the closure body and set capture metadata
-    let mut closure_body = closure_ctx.finish();
+    // Finish the closure body and set capture metadata.
+    // Use finish_nested so any closures lowered inside this closure's body
+    // (nested closures, inline handler ops) are propagated back to the
+    // parent ctx. Plain finish() here would drop them and trigger S-7
+    // (undefined @blood_closure_N references in the emitted IR).
+    let mut closure_body = closure_ctx.finish_nested(ctx);
     closure_body.capture_locals = capture_local_indices;
     closure_body.capture_tys = capture_tys;
     ctx.register_closure_body(closure_name, closure_body);
@@ -2614,8 +2618,11 @@ fn lower_inline_handle_expr(
             handler_ctx.terminate_return(span);
         }
 
-        // Finish the handler body and set capture metadata
-        let mut handler_body = handler_ctx.finish();
+        // Finish the handler body and set capture metadata.
+        // Use finish_nested so any closures lowered inside this handler op's
+        // body (nested closures, further inline handler ops) are propagated
+        // back to the parent ctx. Same S-7 fix as lower_closure_expr.
+        let mut handler_body = handler_ctx.finish_nested(ctx);
         handler_body.capture_locals = capture_local_indices;
         handler_body.capture_tys = capture_tys;
 

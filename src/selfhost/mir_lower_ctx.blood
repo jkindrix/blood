@@ -897,6 +897,61 @@ impl MirLowerCtx {
     pub fn finish(self: MirLowerCtx) -> mir_body.MirBody {
         self.builder.finish()
     }
+
+    /// Finishes building a nested context and propagates any nested closures
+    /// (closures or inline handler ops) that were discovered while lowering
+    /// this body into the given parent context.
+    ///
+    /// Use this for nested MIR lowering contexts (closures inside closures,
+    /// handler op bodies inside closures, etc.) so the parent ctx — and
+    /// ultimately the codegen worklist — sees every closure that exists in
+    /// the program. Using plain `finish()` on a nested ctx drops the nested
+    /// closure vecs, which manifests as S-7 (inner closure function
+    /// definitions never emitted, dangling `@blood_closure_N` references,
+    /// llc `use of undefined value`).
+    ///
+    /// The top-level lowering path in mir_lower.blood manually extracts
+    /// the closure vecs before `finish()` and returns them in the
+    /// MirLowerResult struct — it does not use this method because there
+    /// is no parent ctx to propagate into; the closures flow into the
+    /// result and the driver picks them up from there.
+    pub fn finish_nested(
+        self: MirLowerCtx,
+        parent: &mut MirLowerCtx,
+    ) -> mir_body.MirBody {
+        // Bitwise copy the three closure vecs before finish() consumes self.
+        // Blood has no destructors, so both self and these locals share the
+        // same underlying buffers and the copies remain valid after the
+        // builder is finished. (Same pattern as mir_lower.blood:98-104.)
+        let nested_names = self.closure_names;
+        let nested_mir = self.closure_mir;
+        let nested_is_handler_op = self.closure_is_handler_op;
+
+        // Hand off the MIR body first (consumes self.builder).
+        let body = self.builder.finish();
+
+        // Re-register every nested closure/handler-op on the parent ctx so
+        // codegen will see them.
+        let mut ni: usize = 0;
+        while ni < nested_names.len() && ni < nested_mir.len() {
+            let is_hop = ni < nested_is_handler_op.len()
+                && nested_is_handler_op[ni];
+            if is_hop {
+                parent.register_inline_handler_body(
+                    nested_names[ni],
+                    nested_mir[ni],
+                );
+            } else {
+                parent.register_closure_body(
+                    nested_names[ni],
+                    nested_mir[ni],
+                );
+            }
+            ni += 1;
+        }
+
+        body
+    }
 }
 
 // ============================================================

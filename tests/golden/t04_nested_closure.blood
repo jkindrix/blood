@@ -1,0 +1,29 @@
+// Nested closure inside another closure. Regression test for S-7: the
+// inner closure was not being propagated from the outer closure_ctx to
+// the parent ctx during MIR lowering. Plain `closure_ctx.finish()` in
+// `lower_closure_expr` discarded the nested closure vecs; `finish_nested`
+// now propagates them so codegen sees every closure that exists in the
+// program. Without the fix, llc rejected the emitted IR with
+// `use of undefined value '@blood_closure_XXX'`.
+//
+// Covered: simple closure in fn body, closure captured by reference,
+// closure inside another closure's body. See the companion test
+// t04_doubly_nested_closure.blood for transitive nesting depth > 2.
+
+// EXPECT: 30
+
+fn apply_twice(f: fn() -> i32) -> i32 {
+    f() + f()
+}
+
+fn main() -> i32 {
+    let base: i32 = 5;
+    // Outer closure contains a nested closure definition
+    let outer = || -> i32 {
+        let inner = || -> i32 { base * 3 };
+        inner()
+    };
+    let result: i32 = apply_twice(outer);
+    println!("{}", result);
+    0
+}

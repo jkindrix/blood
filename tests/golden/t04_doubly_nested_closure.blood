@@ -1,0 +1,34 @@
+// Doubly-nested closure (closure inside closure inside closure).
+// Regression test for S-7: verifies that the `finish_nested`
+// propagation is transitive — closures discovered at depth N must
+// flow all the way back to the root MIR lowering context, not just
+// to the immediate parent.
+//
+// Under the fix, each `finish_nested` call propagates its own nested
+// closure vecs (which include closures that were themselves propagated
+// from deeper levels) into its parent's ctx. So:
+//   depth_3_closure   → depth_2's ctx (via finish_nested)
+//   depth_3 + depth_2 → depth_1's ctx (via finish_nested)
+//   depth_3 + 2 + 1   → root ctx (via finish_nested)
+// By the time the root ctx is finalized, all three closures are in
+// its worklist and codegen emits their bodies.
+
+// EXPECT: 42
+
+fn apply(f: fn() -> i32) -> i32 {
+    f()
+}
+
+fn main() -> i32 {
+    let base: i32 = 2;
+    let outer = || -> i32 {
+        let middle = || -> i32 {
+            let inner = || -> i32 { base * 21 };
+            inner()
+        };
+        middle()
+    };
+    let result: i32 = apply(outer);
+    println!("{}", result);
+    0
+}
