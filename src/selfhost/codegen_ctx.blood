@@ -1795,6 +1795,15 @@ impl CodegenCtx {
         self.region_locals_hash.contains_key(local.index as u64)
     }
 
+    /// Returns true if the current function has ANY region/persistent/handler-state
+    /// locals. Lets hot-path callers skip the three-hash-lookup escape check when
+    /// the function has no escaped locals at all — the common case in selfhost.
+    pub fn has_any_escaped_locals(self: &CodegenCtx) -> bool {
+        self.region_locals.len() > 0
+            || self.persistent_locals.len() > 0
+            || self.handler_op_state_local >= 0
+    }
+
     /// Returns the gen alloca name for a heap-allocated local (region or persistent),
     /// or None if the local is stack-allocated.
     pub fn get_heap_gen_name(self: &CodegenCtx, local: mir_def.MirLocalId) -> Option<&String> {

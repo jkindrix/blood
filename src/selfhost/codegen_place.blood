@@ -53,6 +53,13 @@ pub fn emit_place_data_ptr(
     place: &mir_types.Place,
 ) -> String {
     let ptr = emit_place_addr(ctx, place);
+    // Fast path: if the function has no region/persistent/handler-state
+    // locals at all, the heap-indirection branch is statically dead. Skip
+    // the three hash lookups per call — most selfhost functions have no
+    // heap-escaped locals, and we call this 2× per Assign (>250k calls/build).
+    if !ctx.has_any_escaped_locals() {
+        return cgname_to_string(&ptr);
+    }
     if place.projection.len() == 0
         && !place.is_static()
         && (ctx.is_region_allocated(place.local) || ctx.is_persistent_allocated(place.local)
