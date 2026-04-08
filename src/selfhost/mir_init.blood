@@ -25,11 +25,17 @@ static mut INIT_ITER_TOTAL: u64 = 0;
 static mut INIT_ITER_MAX: u32 = 0;
 static mut INIT_CALL_COUNT: u64 = 0;
 static mut INIT_HIT_CAP: u32 = 0;
+static mut INIT_T_SETUP_MS: u64 = 0;      // allocations + predecessors + rpo
+static mut INIT_T_FIXPOINT_MS: u64 = 0;   // the while loop
+static mut INIT_T_ERROR_PASS_MS: u64 = 0; // use-before-init check pass
 
 pub fn init_iter_total() -> u64 { @unsafe { INIT_ITER_TOTAL } }
 pub fn init_iter_max() -> u32 { @unsafe { INIT_ITER_MAX } }
 pub fn init_call_count() -> u64 { @unsafe { INIT_CALL_COUNT } }
 pub fn init_hit_cap() -> u32 { @unsafe { INIT_HIT_CAP } }
+pub fn init_t_setup_ms() -> u64 { @unsafe { INIT_T_SETUP_MS } }
+pub fn init_t_fixpoint_ms() -> u64 { @unsafe { INIT_T_FIXPOINT_MS } }
+pub fn init_t_error_pass_ms() -> u64 { @unsafe { INIT_T_ERROR_PASS_MS } }
 
 /// Result of definite initialization analysis.
 pub struct InitAnalysisResult {
@@ -55,6 +61,7 @@ pub fn analyze_init(body: &mir_body.MirBody) -> InitAnalysisResult {
         return result;
     }
 
+    let t_setup = blood_clock_millis();
     // Flat row-major bool grid: index = bb * num_locals + li.
     // Single allocation per array instead of `1 + num_blocks` Vecs.
     //
@@ -96,6 +103,9 @@ pub fn analyze_init(body: &mir_body.MirBody) -> InitAnalysisResult {
     let mut new_exit: Vec<bool> = Vec.with_capacity(num_locals);
     for _l in 0usize..num_locals { new_exit.push(false); }
 
+    @unsafe { INIT_T_SETUP_MS += blood_clock_millis() - t_setup; }
+    let t_fixpoint = blood_clock_millis();
+
     // Fixed-point iteration
     let mut changed = true;
     let mut iteration: u32 = 0;
@@ -111,19 +121,30 @@ pub fn analyze_init(body: &mir_body.MirBody) -> InitAnalysisResult {
             // For the entry block, keep the initial state (params initialized).
             if bb_idx != 0 {
                 let pred_list = &preds[bb_idx];
-                if pred_list.len() == 0 {
+                let num_preds = pred_list.len();
+                if num_preds == 0 {
                     // Unreachable block — all uninitialized
                     for li in 0usize..num_locals {
                         init_at_entry[row_off + li] = false;
                     }
+                } else if num_preds == 1 {
+                    // Single-predecessor fast path: entry = pred's exit, no intersection.
+                    // This is the common case for straight-line code and loop back-edges.
+                    let pred_off: usize = pred_list[0].as_usize() * num_locals;
+                    for li in 0usize..num_locals {
+                        init_at_entry[row_off + li] = init_at_exit[pred_off + li];
+                    }
                 } else {
-                    // Start with all true, intersect with each predecessor
+                    // Multi-predecessor: intersect (all-init = AND over preds).
+                    // Break out of the inner pred loop as soon as one pred lacks
+                    // the bit — no point checking the rest.
                     for li in 0usize..num_locals {
                         let mut all_init = true;
-                        for pi in 0usize..pred_list.len() {
+                        for pi in 0usize..num_preds {
                             let pred_off: usize = pred_list[pi].as_usize() * num_locals;
                             if !init_at_exit[pred_off + li] {
                                 all_init = false;
+                                break;
                             }
                         }
                         init_at_entry[row_off + li] = all_init;
@@ -162,7 +183,9 @@ pub fn analyze_init(body: &mir_body.MirBody) -> InitAnalysisResult {
         INIT_CALL_COUNT += 1;
         if iteration > INIT_ITER_MAX { INIT_ITER_MAX = iteration; }
         if iteration >= 100 { INIT_HIT_CAP += 1; }
+        INIT_T_FIXPOINT_MS += blood_clock_millis() - t_fixpoint;
     }
+    let t_error_pass = blood_clock_millis();
 
     // Check for use-before-init errors. Reuse live_init across blocks.
     let mut live_init: Vec<bool> = Vec.with_capacity(num_locals);
@@ -193,6 +216,7 @@ pub fn analyze_init(body: &mir_body.MirBody) -> InitAnalysisResult {
         }
     }
 
+    @unsafe { INIT_T_ERROR_PASS_MS += blood_clock_millis() - t_error_pass; }
     result
 }
 
