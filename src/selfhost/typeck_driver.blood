@@ -787,9 +787,51 @@ pub fn check_lower_result(result: &hir_lower_ctx.LowerResult, skip_modules: &Vec
         j += 1;
     }
 
-    // Discard errors from external bodies by truncating back to main error count.
+    // NEW-4: Keep ONLY ArityMismatch errors from Phase 2b; discard the rest.
+    //
+    // Phase 2b's original rationale (see comment above) was that external
+    // module bodies "may have unresolved cross-module paths that produce
+    // false errors." That's true for most error classes — unresolved names,
+    // type mismatches, missing methods, etc. can all be spurious when the
+    // scope for an external module isn't fully established as it would be
+    // if the module were compiled as the main file.
+    //
+    // Arity mismatches are the exception. The arity check in infer_call
+    // (typeck_expr.blood:1252) only fires when the callee has already
+    // resolved to a concrete Fn type — and that resolution requires the
+    // callee's signature to be registered correctly. If it resolved, the
+    // param count is authoritative, and an arg-count mismatch is a genuine
+    // bug regardless of whether the surrounding scope is fully populated.
+    //
+    // So we keep arity errors and drop everything else. This catches the
+    // bug class NEW-4 was tracking (silent wrong-arity calls that slipped
+    // through to codegen and emitted invalid LLVM IR, e.g. fd43ec7's
+    // rt_blood_register_allocation(addr, size, 2) call to a 2-arg function)
+    // without the scope expansion that would require fixing the error
+    // reporter to handle multi-module spans and fixing Phase 2b's scope
+    // handling for all other error classes.
+    let mut stashed_arity: Vec<typeck_types.TypeError> = Vec.new();
     while checker.errors.len() > main_error_count {
-        checker.errors.pop();
+        match checker.errors.pop() {
+            Option.Some(err) => {
+                let is_arity = match &err.kind {
+                    &typeck_types.TypeErrorKind.ArityMismatch => true,
+                    _ => false,
+                };
+                if is_arity {
+                    stashed_arity.push(err);
+                }
+            }
+            Option.None => {}
+        }
+    }
+    while stashed_arity.len() > 0 {
+        match stashed_arity.pop() {
+            Option.Some(err) => {
+                checker.errors.push(err);
+            }
+            Option.None => {}
+        }
     }
 
     // Phase 3: Deferred resolution for Infer-receiver calls and field accesses

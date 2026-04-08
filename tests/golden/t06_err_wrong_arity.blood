@@ -1,0 +1,15 @@
+// COMPILE_FAIL: call with wrong number of arguments
+// EXPECT: expected 2 argument(s), found 3
+// Regression test for NEW-4: the selfhost compiler silently accepted
+// wrong-arity function calls in external module bodies, producing
+// invalid LLVM IR (e.g. `trunc i32 to i64`). The same check already
+// works for main-file bodies — this test guards against the check
+// regressing at the primary call site in typeck_expr.blood:1252.
+// The cross-module variant is exercised implicitly by the runtime build.
+
+fn two_args(a: i32, b: i32) -> i32 { a + b }
+
+fn main() -> i32 {
+    let _ = two_args(1, 2, 3);
+    0
+}
