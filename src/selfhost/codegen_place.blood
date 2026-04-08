@@ -660,6 +660,20 @@ pub fn emit_place_addr(
     ctx: &mut codegen_ctx.CodegenCtx,
     place: &mir_types.Place,
 ) -> codegen_ctx.CgName {
+    // Fast path: trivial non-static local with no projections.
+    //
+    // Profile (2026-04-08): emit_place_addr is called ~2× per MIR Assign (LHS
+    // + each operand that copies from a local), i.e. >250k times per build.
+    // The full slow path below does THREE separate HIR type lookups plus an
+    // ADT-to-LLVM-type computation (resolve_local_base_type +
+    // resolve_local_adt_def_id + get_local_hir_type) — but the results are
+    // only used inside the projection loop and the ref/heap auto-deref checks,
+    // which ALL gate on `place.projection.len() > 0`. For trivial locals the
+    // work is pure waste. Short-circuit here before any of it runs.
+    if place.projection.len() == 0 && !place.is_static() {
+        return ctx.local_cg(place.local);
+    }
+
     // Check if this is a static place - use global variable address directly
     let mut is_static_with_proj = false;
     if place.is_static() {
