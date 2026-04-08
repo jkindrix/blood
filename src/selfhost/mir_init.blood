@@ -18,6 +18,19 @@ mod mir_term;
 mod mir_body;
 mod type_intern;
 
+// Perf instrumentation: track fixed-point convergence behavior so we can
+// distinguish "slow because algorithm iterates many times" from "slow
+// because each iteration does too much work."
+static mut INIT_ITER_TOTAL: u64 = 0;
+static mut INIT_ITER_MAX: u32 = 0;
+static mut INIT_CALL_COUNT: u64 = 0;
+static mut INIT_HIT_CAP: u32 = 0;
+
+pub fn init_iter_total() -> u64 { @unsafe { INIT_ITER_TOTAL } }
+pub fn init_iter_max() -> u32 { @unsafe { INIT_ITER_MAX } }
+pub fn init_call_count() -> u64 { @unsafe { INIT_CALL_COUNT } }
+pub fn init_hit_cap() -> u32 { @unsafe { INIT_HIT_CAP } }
+
 /// Result of definite initialization analysis.
 pub struct InitAnalysisResult {
     /// Errors found: (local_id, block_idx, description).
@@ -155,6 +168,13 @@ pub fn analyze_init(body: &mir_body.MirBody) -> InitAnalysisResult {
         // (The `changed` flag is set to false at the top of each iteration
         //  and must be set to true inside the RPO loop when a state changes.
         //  We move the check into the per-block loop above.)
+    }
+
+    @unsafe {
+        INIT_ITER_TOTAL += iteration as u64;
+        INIT_CALL_COUNT += 1;
+        if iteration > INIT_ITER_MAX { INIT_ITER_MAX = iteration; }
+        if iteration >= 100 { INIT_HIT_CAP += 1; }
     }
 
     // Check for use-before-init errors
