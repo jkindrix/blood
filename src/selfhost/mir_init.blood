@@ -52,19 +52,20 @@ pub fn analyze_init(body: &mir_body.MirBody) -> InitAnalysisResult {
     // narrowing via intersection correctly propagates uninitialized state.
     // Starting with "all uninitialized" (bottom) and trying to widen is wrong
     // because back-edge states stay false and kill pre-loop initializations.
-    let mut init_at_entry: Vec<Vec<bool>> = Vec.new();
-    let mut init_at_exit: Vec<Vec<bool>> = Vec.new();
+    //
+    // Perf: pre-allocate with capacity to avoid Vec reallocation doubling.
+    // Previously used Vec.new() + per-element push, which caused ~7 memcpy
+    // reallocations per inner Vec × 20 inner Vecs per function × 2555
+    // functions ≈ 358k memcpy calls — a meaningful chunk of init_lin time.
+    let mut init_at_entry: Vec<Vec<bool>> = Vec.with_capacity(num_blocks);
+    let mut init_at_exit: Vec<Vec<bool>> = Vec.with_capacity(num_blocks);
     for bb in 0usize..num_blocks {
-        let mut entry_vec: Vec<bool> = Vec.new();
-        let mut exit_vec: Vec<bool> = Vec.new();
+        let default_val: bool = if bb == 0 { false } else { true };
+        let mut entry_vec: Vec<bool> = Vec.with_capacity(num_locals);
+        let mut exit_vec: Vec<bool> = Vec.with_capacity(num_locals);
         for _l in 0usize..num_locals {
-            if bb == 0 {
-                entry_vec.push(false);
-                exit_vec.push(false);
-            } else {
-                entry_vec.push(true);
-                exit_vec.push(true);
-            }
+            entry_vec.push(default_val);
+            exit_vec.push(default_val);
         }
         init_at_entry.push(entry_vec);
         init_at_exit.push(exit_vec);
@@ -123,8 +124,9 @@ pub fn analyze_init(body: &mir_body.MirBody) -> InitAnalysisResult {
             // Compute exit state: entry state + assignments in this block
             let block = &body.basic_blocks[bb_idx];
 
-            // Build new exit state from entry + statements
-            let mut new_exit: Vec<bool> = Vec.new();
+            // Build new exit state from entry + statements.
+            // Pre-allocate to avoid doubling reallocations on the push loop.
+            let mut new_exit: Vec<bool> = Vec.with_capacity(num_locals);
             for li in 0usize..num_locals {
                 new_exit.push(init_at_entry[bb_idx][li]);
             }
@@ -160,8 +162,9 @@ pub fn analyze_init(body: &mir_body.MirBody) -> InitAnalysisResult {
         let bb_idx = rpo[ri].as_usize();
         let block = &body.basic_blocks[bb_idx];
 
-        // Track init state within the block
-        let mut live_init: Vec<bool> = Vec.new();
+        // Track init state within the block.
+        // Pre-allocate to avoid doubling reallocations.
+        let mut live_init: Vec<bool> = Vec.with_capacity(num_locals);
         for li in 0usize..num_locals {
             live_init.push(init_at_entry[bb_idx][li]);
         }
@@ -401,9 +404,10 @@ pub fn analyze_linearity(body: &mir_body.MirBody) -> InitAnalysisResult {
         return result;
     }
 
-    // Identify linear/affine locals
-    let mut is_linear: Vec<bool> = Vec.new();
-    let mut is_affine: Vec<bool> = Vec.new();
+    // Identify linear/affine locals.
+    // Pre-allocate to avoid Vec doubling.
+    let mut is_linear: Vec<bool> = Vec.with_capacity(num_locals);
+    let mut is_affine: Vec<bool> = Vec.with_capacity(num_locals);
     let mut has_any = false;
     for li in 0usize..num_locals {
         let local = &body.locals[li];
@@ -434,9 +438,10 @@ pub fn analyze_linearity(body: &mir_body.MirBody) -> InitAnalysisResult {
 
     // Forward dataflow: track consumed state per local per block.
     // consumed_at_exit[bb][local] = true means local was consumed on paths to bb's exit.
-    let mut consumed_at_exit: Vec<Vec<bool>> = Vec.new();
+    // Pre-allocate to avoid Vec doubling.
+    let mut consumed_at_exit: Vec<Vec<bool>> = Vec.with_capacity(num_blocks);
     for _bb in 0usize..num_blocks {
-        let mut v: Vec<bool> = Vec.new();
+        let mut v: Vec<bool> = Vec.with_capacity(num_locals);
         for _l in 0usize..num_locals {
             v.push(false);
         }
@@ -458,7 +463,8 @@ pub fn analyze_linearity(body: &mir_body.MirBody) -> InitAnalysisResult {
             let block = &body.basic_blocks[bb_idx];
 
             // Entry consumed state: union of predecessor exit states.
-            let mut consumed: Vec<bool> = Vec.new();
+            // Pre-allocate to avoid Vec doubling.
+            let mut consumed: Vec<bool> = Vec.with_capacity(num_locals);
             if bb_idx == 0 {
                 for _l in 0usize..num_locals { consumed.push(false); }
             } else {
