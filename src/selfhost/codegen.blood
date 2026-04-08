@@ -27,6 +27,23 @@ mod codegen_size;
 mod interner;
 
 // ============================================================
+// Perf diagnostics (Rev 4 instrumentation — permanent)
+// ============================================================
+// Sub-phase timers accumulated across all generate_function_with_ctx
+// calls. Read via pub getters below and printed by main.codegen_pass2.
+static mut CODEGEN_T_SETUP_MS: u64 = 0;       // clear, debug, begin, params, ret, register, header
+static mut CODEGEN_T_ESCAPE_MS: u64 = 0;      // mir_escape.analyze_escapes + persist scan + overrides
+static mut CODEGEN_T_ALLOCAS_MS: u64 = 0;     // emit_allocas_with_escapes + emit_arg_stores
+static mut CODEGEN_T_BLOCKS_MS: u64 = 0;      // basic block emission loop
+static mut CODEGEN_T_FOOTER_MS: u64 = 0;      // fn footer, clone result, end
+
+pub fn codegen_t_setup_ms() -> u64 { @unsafe { CODEGEN_T_SETUP_MS } }
+pub fn codegen_t_escape_ms() -> u64 { @unsafe { CODEGEN_T_ESCAPE_MS } }
+pub fn codegen_t_allocas_ms() -> u64 { @unsafe { CODEGEN_T_ALLOCAS_MS } }
+pub fn codegen_t_blocks_ms() -> u64 { @unsafe { CODEGEN_T_BLOCKS_MS } }
+pub fn codegen_t_footer_ms() -> u64 { @unsafe { CODEGEN_T_FOOTER_MS } }
+
+// ============================================================
 // Module Generation
 // ============================================================
 
@@ -278,6 +295,7 @@ pub fn generate_function_with_ctx(
     module_index: u32,
     module_count: u32,
 ) -> String {
+    let t_setup_start = blood_clock_millis();
     // Reset per-function state but keep global state (def_names, adt_registry, string_table)
     ctx.clear_locals();
     ctx.output = String.new();
@@ -352,6 +370,9 @@ pub fn generate_function_with_ctx(
     // Emit entry label
     ctx.write("entry:\n");
 
+    @unsafe { CODEGEN_T_SETUP_MS += blood_clock_millis() - t_setup_start; }
+    let t_escape_start = blood_clock_millis();
+
     // Run escape analysis to determine allocation tiers
     let mut escape_result = mir_escape.analyze_escapes(body);
 
@@ -392,6 +413,9 @@ pub fn generate_function_with_ctx(
     // Apply @heap/@stack allocation directive overrides
     escape_result.apply_alloc_overrides(body);
 
+    @unsafe { CODEGEN_T_ESCAPE_MS += blood_clock_millis() - t_escape_start; }
+    let t_allocas_start = blood_clock_millis();
+
     // Emit allocas with escape-aware allocation decisions
     codegen_stmt.emit_allocas_with_escapes(ctx, body, &escape_result);
 
@@ -415,6 +439,9 @@ pub fn generate_function_with_ctx(
     if body.capture_locals.len() > 0 {
         emit_capture_loads(ctx, body);
     }
+
+    @unsafe { CODEGEN_T_ALLOCAS_MS += blood_clock_millis() - t_allocas_start; }
+    let t_blocks_start = blood_clock_millis();
 
     // Emit basic blocks into a separate buffer so we can collect deferred
     // entry-block allocas (e.g., handler state shadows) before the branch.
@@ -452,12 +479,18 @@ pub fn generate_function_with_ctx(
         ctx.dedent();
     }
 
+    @unsafe { CODEGEN_T_BLOCKS_MS += blood_clock_millis() - t_blocks_start; }
+    let t_footer_start = blood_clock_millis();
+
     ctx.emit_fn_footer();
     ctx.end_function();
 
     // Extract and return the function IR
     let result = clone_string(&ctx.output);
     ctx.output = String.new();
+
+    @unsafe { CODEGEN_T_FOOTER_MS += blood_clock_millis() - t_footer_start; }
+
     result
 }
 
