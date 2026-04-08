@@ -18,6 +18,25 @@ mod hashmap;
 mod type_intern;
 
 // ============================================================
+// Module-level hash caches for MirLowerCtx.new_cached_top_level
+// ============================================================
+//
+// The typeck result's method_resolutions / field_resolutions Vecs are
+// shared across every top-level MIR lowering call in a build. Building
+// the (body_def_id, span_start) → index hash map from scratch for every
+// one of ~2551 functions cost ~50 seconds per clean build before this
+// cache existed. Now we build the hash once on the first top-level call
+// and reuse it (via bitwise copy of the HashMap header — Blood has no
+// destructors, so both the cache and each ctx share the same buffer).
+//
+// These are only set by MirLowerCtx.new_cached_top_level. The regular
+// MirLowerCtx.new constructor used by nested closure/handler contexts
+// in mir_lower_expr.blood does not touch them, since nested contexts
+// legitimately need per-closure re-keyed hashes.
+static mut MIR_LOWER_CTX_CACHED_METHOD_HASH: Option<hashmap.HashMapU64U32> = Option.None;
+static mut MIR_LOWER_CTX_CACHED_FIELD_HASH: Option<hashmap.HashMapU64U32> = Option.None;
+
+// ============================================================
 // MIR Lowering Error Types
 // ============================================================
 
@@ -326,7 +345,17 @@ impl MirLowerCtx {
         field_resolutions: Vec<common.FieldResEntry>,
         coercion_entries: Vec<common.CoercionEntry>,
     ) -> MirLowerCtx {
-        // Build hash indexes for O(1) lookup
+        // Build hash indexes for O(1) lookup.
+        //
+        // Perf note: this used to run unconditionally on every call, rebuilding
+        // ~10k-entry hashes from scratch × 2551 function lowerings per build
+        // (~50s of wasted work — instrumented as mir_lower.setup_ms). Top-level
+        // callers (mir_lower.lower_body / lower_body_with_const_info) always
+        // pass the same typeck-result Vecs, so the hash content is identical
+        // across all their calls. We now use `new_cached_top_level` from
+        // those hot paths; this `new` constructor is kept for nested closure
+        // / handler op contexts in mir_lower_expr.blood, which legitimately
+        // build fresh per-closure Vecs and need a fresh hash each time.
         let mut method_hash = hashmap.HashMapU64U32.with_capacity(method_resolutions.len());
         let mut i: usize = 0;
         while i < method_resolutions.len() {
@@ -348,6 +377,106 @@ impl MirLowerCtx {
             field_hash.insert(key, field_resolutions[i].field_idx);
             i += 1;
         }
+
+        MirLowerCtx {
+            builder: mir_body.MirBodyBuilder.new(def_id, return_ty, span),
+            local_map: Vec.new(),
+            loop_stack: Vec.new(),
+            temp_counter: 0,
+            subst_table_addr: subst_table_addr,
+            method_resolutions: method_resolutions,
+            field_resolutions: field_resolutions,
+            body_def_id: def_id.index,
+            method_hash: method_hash,
+            field_hash: field_hash,
+            errors: Vec.new(),
+            closure_names: Vec.new(),
+            closure_mir: Vec.new(),
+            closure_is_handler_op: Vec.new(),
+            closure_counter: 0,
+            coercion_entries: coercion_entries,
+            const_bindings: Vec.new(),
+            const_generic_fn_set: Vec.new(),
+            turbofish_const_args: Vec.new(),
+            mono_requests: Vec.new(),
+            const_generic_param_counts: Vec.new(),
+            next_mono_def_id: 0,
+            type_generic_fn_set: Vec.new(),
+            type_generic_calls: Vec.new(),
+            active_region_local: Option.None,
+        }
+    }
+
+    /// Constructs a MirLowerCtx for a TOP-LEVEL lowering call, reusing the
+    /// method/field hash maps from a module-level cache. The caller promises
+    /// that `method_resolutions` and `field_resolutions` are the same
+    /// typeck-result Vecs used on every top-level call (the typical pattern
+    /// in codegen_pass2 / driver.rebuild_body). Blood Vec bitwise copies
+    /// share the underlying buffer so all callers see identical content.
+    ///
+    /// DO NOT call this from nested-closure or handler-op contexts — those
+    /// legitimately build fresh per-closure re-keyed Vecs and must use the
+    /// regular `new` constructor.
+    ///
+    /// On the first call, the hash maps are built and cached via the
+    /// file-level MIR_LOWER_CTX_CACHED_* statics. Subsequent calls bitwise
+    /// copy the cached hash header (shared buffer, no double-free because
+    /// Blood has no destructors).
+    pub fn new_cached_top_level(
+        def_id: hir_def.DefId,
+        return_ty: type_intern.TyId,
+        span: common.Span,
+        subst_table_addr: u64,
+        method_resolutions: Vec<common.MethodResEntry>,
+        field_resolutions: Vec<common.FieldResEntry>,
+        coercion_entries: Vec<common.CoercionEntry>,
+    ) -> MirLowerCtx {
+        @unsafe {
+            match &MIR_LOWER_CTX_CACHED_METHOD_HASH {
+                &Option.Some(_) => {}
+                &Option.None => {
+                    let mut mh = hashmap.HashMapU64U32.with_capacity(method_resolutions.len());
+                    let mut i: usize = 0;
+                    while i < method_resolutions.len() {
+                        let key = hashmap.combine_u32_usize(
+                            method_resolutions[i].body_def_id,
+                            method_resolutions[i].span_start
+                        );
+                        mh.insert(key, method_resolutions[i].def_id_index);
+                        i += 1;
+                    }
+                    MIR_LOWER_CTX_CACHED_METHOD_HASH = Option.Some(mh);
+                }
+            }
+            match &MIR_LOWER_CTX_CACHED_FIELD_HASH {
+                &Option.Some(_) => {}
+                &Option.None => {
+                    let mut fh = hashmap.HashMapU64U32.with_capacity(field_resolutions.len());
+                    let mut j: usize = 0;
+                    while j < field_resolutions.len() {
+                        let key = hashmap.combine_u32_usize(
+                            field_resolutions[j].body_def_id,
+                            field_resolutions[j].span_start
+                        );
+                        fh.insert(key, field_resolutions[j].field_idx);
+                        j += 1;
+                    }
+                    MIR_LOWER_CTX_CACHED_FIELD_HASH = Option.Some(fh);
+                }
+            }
+        }
+        let method_hash: hashmap.HashMapU64U32 = @unsafe {
+            match &MIR_LOWER_CTX_CACHED_METHOD_HASH {
+                &Option.Some(ref h) => *h,
+                &Option.None => hashmap.HashMapU64U32.new(),
+            }
+        };
+        let field_hash: hashmap.HashMapU64U32 = @unsafe {
+            match &MIR_LOWER_CTX_CACHED_FIELD_HASH {
+                &Option.Some(ref h) => *h,
+                &Option.None => hashmap.HashMapU64U32.new(),
+            }
+        };
 
         MirLowerCtx {
             builder: mir_body.MirBodyBuilder.new(def_id, return_ty, span),

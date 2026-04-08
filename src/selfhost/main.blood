@@ -4144,6 +4144,19 @@ fn codegen_pass2(
     eprint_str(int_to_string(t_codegen_total as i32));
     eprint_str("\n");
 
+    // Sub-phase breakdown inside mir_lower itself (populated by
+    // mir_lower.lower_body and lower_body_with_const_info). These timers
+    // decompose the mir_lower_ms bucket above.
+    eprint_str("  [mir_lower] setup_ms=");
+    eprint_str(int_to_string(mir_lower.mir_lower_t_setup_ms() as i32));
+    eprint_str(" expr_ms=");
+    eprint_str(int_to_string(mir_lower.mir_lower_t_expr_ms() as i32));
+    eprint_str(" finish_ms=");
+    eprint_str(int_to_string(mir_lower.mir_lower_t_finish_ms() as i32));
+    eprint_str(" resolve_locals_ms=");
+    eprint_str(int_to_string(mir_lower.mir_lower_t_resolve_ms() as i32));
+    eprint_str("\n");
+
     if skipped_count > 0 {
         eprint_str("\n  [skipped ");
         eprint_str(int_to_string(skipped_count as i32));

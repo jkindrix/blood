@@ -659,6 +659,11 @@ pub fn check_lower_result(result: &hir_lower_ctx.LowerResult, skip_modules: &Vec
         }
     }
 
+    // Perf diagnostics (Rev 4 instrumentation — permanent):
+    // Time each phase of typeck separately so regressions are visible.
+    // Printed at end of check_lower_result.
+    let t_p1_start = blood_clock_millis();
+
     // Phase 1: Collect type information from items
     collect_item_signatures(&mut checker, &result.items);
 
@@ -687,8 +692,10 @@ pub fn check_lower_result(result: &hir_lower_ctx.LowerResult, skip_modules: &Vec
         &result.builtin_result_ok_def,
         &result.builtin_result_err_def,
     );
+    let t_p1_ms = blood_clock_millis() - t_p1_start;
 
     // Phase 1d: Definition-time dispatch ambiguity check (DIS-04).
+    let t_p1de_start = blood_clock_millis();
     let ambiguities = typeck_dispatch.check_all_dispatch_ambiguity(&checker.impls);
     for ai in 0usize..ambiguities.len() {
         let amb = &ambiguities[ai];
@@ -724,15 +731,19 @@ pub fn check_lower_result(result: &hir_lower_ctx.LowerResult, skip_modules: &Vec
             m1.span,
         );
     }
+    let t_p1de_ms = blood_clock_millis() - t_p1de_start;
 
     // Build body → item cache for O(1) lookups (eliminates O(n²) item scans)
+    let t_body_cache_start = blood_clock_millis();
     let body_cache = build_body_item_cache(&result.items);
+    let t_body_cache_ms = blood_clock_millis() - t_body_cache_start;
 
     // Phase 2: Type check main file bodies (determines success/failure).
     //
     // Perf diagnostics (Rev 4 instrumentation — permanent):
     // track per-body time to expose outliers during future typeck regressions.
     // Printed after the loop. Overhead: one clock_millis call per body (trivial).
+    let t_p2_start = blood_clock_millis();
     let body_limit = result.main_body_count;
     let mut max_body_ms: u64 = 0;
     let mut max_body_id: u32 = 0;
@@ -780,9 +791,18 @@ pub fn check_lower_result(result: &hir_lower_ctx.LowerResult, skip_modules: &Vec
     eprint_str(" very_slow>1000ms=");
     eprint_str(int_to_string(over_1s_body_count as i32));
     eprint_str("\n");
+    let t_p2_ms = blood_clock_millis() - t_p2_start;
 
     // Capture main-file error count before checking external bodies.
     let main_error_count = checker.errors.len();
+    let t_p2b_start = blood_clock_millis();
+    // Per-body Phase 2b diagnostics (matches Phase 2 pattern).
+    let mut p2b_max_body_ms: u64 = 0;
+    let mut p2b_max_body_id: u32 = 0;
+    let mut p2b_slow_body_count: usize = 0;
+    let mut p2b_very_slow_body_count: usize = 0;
+    let mut p2b_total_check_ms: u64 = 0;
+    let mut p2b_body_count: usize = 0;
 
     // Phase 2b: Type check external module bodies to record method resolutions.
     // These bodies are MIR-lowered and code-generated, so their method calls
@@ -815,9 +835,33 @@ pub fn check_lower_result(result: &hir_lower_ctx.LowerResult, skip_modules: &Vec
         if is_handler_ret_ext {
             checker.resume_ty = Option.Some(return_ty);
         }
+        let p2b_body_t0 = blood_clock_millis();
         check_body(&mut checker, &body_entry.body, return_ty);
+        let p2b_body_elapsed = blood_clock_millis() - p2b_body_t0;
+        p2b_total_check_ms += p2b_body_elapsed;
+        if p2b_body_elapsed > p2b_max_body_ms {
+            p2b_max_body_ms = p2b_body_elapsed;
+            p2b_max_body_id = body_entry.body_id.index;
+        }
+        if p2b_body_elapsed > 100 { p2b_slow_body_count += 1; }
+        if p2b_body_elapsed > 1000 { p2b_very_slow_body_count += 1; }
+        p2b_body_count += 1;
         j += 1;
     }
+    // Print Phase 2b per-body diagnostic summary.
+    eprint_str("  [typeck phase 2b] bodies=");
+    eprint_str(int_to_string(p2b_body_count as i32));
+    eprint_str(" check_body_total_ms=");
+    eprint_str(int_to_string(p2b_total_check_ms as i32));
+    eprint_str(" max_ms=");
+    eprint_str(int_to_string(p2b_max_body_ms as i32));
+    eprint_str(" max_body_id=");
+    eprint_str(int_to_string(p2b_max_body_id as i32));
+    eprint_str(" slow>100ms=");
+    eprint_str(int_to_string(p2b_slow_body_count as i32));
+    eprint_str(" very_slow>1000ms=");
+    eprint_str(int_to_string(p2b_very_slow_body_count as i32));
+    eprint_str("\n");
 
     // NEW-4: Keep ONLY ArityMismatch errors from Phase 2b; discard the rest.
     //
@@ -865,15 +909,40 @@ pub fn check_lower_result(result: &hir_lower_ctx.LowerResult, skip_modules: &Vec
             Option.None => {}
         }
     }
+    let t_p2b_ms = blood_clock_millis() - t_p2b_start;
 
     // Phase 3: Deferred resolution for Infer-receiver calls and field accesses
+    let t_p3_start = blood_clock_millis();
     resolve_pending_methods(&mut checker);
     resolve_pending_field_accesses(&mut checker);
+    let t_p3_ms = blood_clock_millis() - t_p3_start;
 
     // Phase 4: Build impl method table and collect unresolved pending method calls
     // for type-generic monomorphization.
+    let t_p4_start = blood_clock_millis();
     let impl_method_table = build_impl_method_table(&mut checker, &result.interner);
     let unresolved_pending = collect_unresolved_pending_methods(&mut checker, &result.interner);
+    let t_p4_ms = blood_clock_millis() - t_p4_start;
+
+    // Print typeck phase breakdown (Rev 4 instrumentation — permanent).
+    // These numbers decompose the top-level "Type checking" time so
+    // regressions in any individual phase are immediately visible.
+    eprint_str("  [typeck phases]");
+    eprint_str(" p1(setup+builtins)=");
+    eprint_str(int_to_string(t_p1_ms as i32));
+    eprint_str(" p1de(dispatch+stability)=");
+    eprint_str(int_to_string(t_p1de_ms as i32));
+    eprint_str(" body_cache=");
+    eprint_str(int_to_string(t_body_cache_ms as i32));
+    eprint_str(" p2(main_bodies)=");
+    eprint_str(int_to_string(t_p2_ms as i32));
+    eprint_str(" p2b(ext_bodies)=");
+    eprint_str(int_to_string(t_p2b_ms as i32));
+    eprint_str(" p3(pending)=");
+    eprint_str(int_to_string(t_p3_ms as i32));
+    eprint_str(" p4(impl_table)=");
+    eprint_str(int_to_string(t_p4_ms as i32));
+    eprint_str("\n");
 
     // Return result with substitution table for type resolution in MIR lowering
     if checker.has_errors() {

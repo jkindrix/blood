@@ -21,6 +21,23 @@ mod unify;
 mod type_intern;
 
 // ============================================================
+// Perf diagnostics (Rev 4 instrumentation — permanent)
+// ============================================================
+// Sub-phase timers accumulated across all lower_body calls.
+// Read via the pub getters below and printed by codegen_pass2.
+// Single-threaded access — no synchronization needed for current
+// codegen_pass2 path.
+static mut MIR_T_SETUP_MS: u64 = 0;        // arg resolution + clone + ctx construction
+static mut MIR_T_EXPR_MS: u64 = 0;         // lower_expr_to_return + terminator
+static mut MIR_T_FINISH_MS: u64 = 0;       // take_errors + closure extract + finish
+static mut MIR_T_RESOLVE_MS: u64 = 0;      // post-finish apply_substs_id on locals
+
+pub fn mir_lower_t_setup_ms() -> u64 { @unsafe { MIR_T_SETUP_MS } }
+pub fn mir_lower_t_expr_ms() -> u64 { @unsafe { MIR_T_EXPR_MS } }
+pub fn mir_lower_t_finish_ms() -> u64 { @unsafe { MIR_T_FINISH_MS } }
+pub fn mir_lower_t_resolve_ms() -> u64 { @unsafe { MIR_T_RESOLVE_MS } }
+
+// ============================================================
 // MIR Lowering Result
 // ============================================================
 
@@ -63,6 +80,9 @@ pub fn lower_body(
     field_resolutions: &Vec<common.FieldResEntry>,
     coercion_entries: &Vec<common.CoercionEntry>,
 ) -> MirLowerResult {
+    // Perf diagnostics: accumulate per-sub-phase time into file-level statics.
+    let t_setup_start = blood_clock_millis();
+
     // Resolve the return type through the substitution table (TyId-native)
     let resolved_return_id = unify.apply_substs_id(subst_table, return_ty);
 
@@ -78,11 +98,16 @@ pub fn lower_body(
     // Clone coercion entries for this lowering context
     let cloned_coercions = clone_coercion_entries(coercion_entries);
 
-    // Create lowering context with the substitution table address, method and field resolutions
-    let mut ctx = mir_lower_ctx.MirLowerCtx.new(def_id, resolved_return_id, span, subst_table_addr, cloned_resolutions, cloned_field_res, cloned_coercions);
+    // Create lowering context using the cached top-level constructor.
+    // This reuses the method/field hash maps across all calls in a build
+    // — building them once in the constructor instead of ~2551 times.
+    let mut ctx = mir_lower_ctx.MirLowerCtx.new_cached_top_level(def_id, resolved_return_id, span, subst_table_addr, cloned_resolutions, cloned_field_res, cloned_coercions);
 
     // Lower parameters (first param_count locals are parameters)
     lower_params_from_body(&mut ctx, body, span);
+
+    @unsafe { MIR_T_SETUP_MS += blood_clock_millis() - t_setup_start; }
+    let t_expr_start = blood_clock_millis();
 
     // Lower body expression, storing result in return place
     mir_lower_expr.lower_expr_to_return(&mut ctx, &body.expr);
@@ -91,6 +116,9 @@ pub fn lower_body(
     if !ctx.is_terminated() {
         ctx.terminate_return(span);
     }
+
+    @unsafe { MIR_T_EXPR_MS += blood_clock_millis() - t_expr_start; }
+    let t_finish_start = blood_clock_millis();
 
     // Extract errors before finishing
     let errors = ctx.take_errors();
@@ -108,12 +136,17 @@ pub fn lower_body(
     let next_mono_def_id = ctx.next_mono_def_id;
     let mut mir_body = ctx.finish();
 
+    @unsafe { MIR_T_FINISH_MS += blood_clock_millis() - t_finish_start; }
+    let t_resolve_start = blood_clock_millis();
+
     // Resolve Infer types on locals so codegen sees concrete types.
     // Without this, &str locals may be mistyped as { ptr, i32 } instead of { ptr, i64 }.
     for li in 0usize..mir_body.locals.len() {
         let resolved = unify.apply_substs_id(subst_table, mir_body.locals[li].ty);
         mir_body.locals[li].ty = resolved;
     }
+
+    @unsafe { MIR_T_RESOLVE_MS += blood_clock_millis() - t_resolve_start; }
 
     MirLowerResult {
         body: mir_body,
@@ -149,13 +182,17 @@ pub fn lower_body_with_const_info(
     type_generic_fn_set: Vec<u32>,
     type_generic_calls: Vec<common.TypeGenericCallInfo>,
 ) -> MirLowerResult {
+    // Perf diagnostics: share the static-mut counters with lower_body.
+    let t_setup_start = blood_clock_millis();
+
     let resolved_return_id = unify.apply_substs_id(subst_table, return_ty);
     let subst_table_addr = @unsafe { subst_table as *const unify.SubstTable as usize } as u64;
     let cloned_resolutions = clone_method_resolutions(method_resolutions);
     let cloned_field_res = clone_field_resolutions(field_resolutions);
     let cloned_coercions = clone_coercion_entries(coercion_entries);
 
-    let mut ctx = mir_lower_ctx.MirLowerCtx.new(def_id, resolved_return_id, span, subst_table_addr, cloned_resolutions, cloned_field_res, cloned_coercions);
+    // Same cached-hash path as lower_body; see MirLowerCtx.new_cached_top_level.
+    let mut ctx = mir_lower_ctx.MirLowerCtx.new_cached_top_level(def_id, resolved_return_id, span, subst_table_addr, cloned_resolutions, cloned_field_res, cloned_coercions);
 
     // Set const-generic fields
     ctx.const_bindings = const_bindings;
@@ -169,11 +206,18 @@ pub fn lower_body_with_const_info(
     ctx.type_generic_calls = type_generic_calls;
 
     lower_params_from_body(&mut ctx, body, span);
+
+    @unsafe { MIR_T_SETUP_MS += blood_clock_millis() - t_setup_start; }
+    let t_expr_start = blood_clock_millis();
+
     mir_lower_expr.lower_expr_to_return(&mut ctx, &body.expr);
 
     if !ctx.is_terminated() {
         ctx.terminate_return(span);
     }
+
+    @unsafe { MIR_T_EXPR_MS += blood_clock_millis() - t_expr_start; }
+    let t_finish_start = blood_clock_millis();
 
     let errors = ctx.take_errors();
     let closure_names = ctx.closure_names;
@@ -183,11 +227,16 @@ pub fn lower_body_with_const_info(
     let next_mono_def_id = ctx.next_mono_def_id;
     let mut mir_body = ctx.finish();
 
+    @unsafe { MIR_T_FINISH_MS += blood_clock_millis() - t_finish_start; }
+    let t_resolve_start = blood_clock_millis();
+
     // Resolve Infer types on locals
     for li in 0usize..mir_body.locals.len() {
         let resolved = unify.apply_substs_id(subst_table, mir_body.locals[li].ty);
         mir_body.locals[li].ty = resolved;
     }
+
+    @unsafe { MIR_T_RESOLVE_MS += blood_clock_millis() - t_resolve_start; }
 
     MirLowerResult {
         body: mir_body,
@@ -409,29 +458,28 @@ pub fn get_return_type(body: &mir_body.MirBody) -> hir_ty.Type {
     }
 }
 
-/// Clones a method resolution table for passing to a new MirLowerCtx.
+/// Bitwise copy of the method resolution table header.
+///
+/// Originally this deep-cloned every entry, which was 60+ ms per function
+/// × 2551 functions = ~156 seconds per clean build (measured by
+/// mir_lower.setup_ms instrumentation). The ctx only reads these tables
+/// (the primary lookup path is a HashMap built from the Vec at ctx
+/// construction; the Vec itself is only walked as a rare debug fallback
+/// in lookup_method_def_id). Nothing inside mir_lower ever mutates them,
+/// so sharing the underlying buffer via a bitwise Vec-header copy is
+/// safe — Blood has no destructors, so there is no double-free risk.
 fn clone_method_resolutions(src: &Vec<common.MethodResEntry>) -> Vec<common.MethodResEntry> {
-    let mut result: Vec<common.MethodResEntry> = Vec.new();
-    for i in 0usize..src.len() {
-        result.push(common.MethodResEntry.new(src[i].body_def_id, src[i].span_start, src[i].def_id_index));
-    }
-    result
+    *src
 }
 
-/// Clones a field resolution table for passing to a new MirLowerCtx.
+/// Bitwise copy of the field resolution table header. See
+/// clone_method_resolutions for rationale.
 fn clone_field_resolutions(src: &Vec<common.FieldResEntry>) -> Vec<common.FieldResEntry> {
-    let mut result: Vec<common.FieldResEntry> = Vec.new();
-    for i in 0usize..src.len() {
-        result.push(common.FieldResEntry.new(src[i].body_def_id, src[i].span_start, src[i].field_idx));
-    }
-    result
+    *src
 }
 
-/// Clones a coercion entry table for passing to a new MirLowerCtx.
+/// Bitwise copy of the coercion entry table header. See
+/// clone_method_resolutions for rationale.
 fn clone_coercion_entries(src: &Vec<common.CoercionEntry>) -> Vec<common.CoercionEntry> {
-    let mut result: Vec<common.CoercionEntry> = Vec.new();
-    for i in 0usize..src.len() {
-        result.push(common.CoercionEntry.new(src[i].body_def_id, src[i].span_start, src[i].array_len));
-    }
-    result
+    *src
 }
