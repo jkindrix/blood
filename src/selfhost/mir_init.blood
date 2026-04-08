@@ -55,9 +55,8 @@ pub fn analyze_init(body: &mir_body.MirBody) -> InitAnalysisResult {
         return result;
     }
 
-    // Initialize per-block init state vectors.
-    // init_at_entry[bb][local] = true means local is definitely initialized
-    // at the start of block bb.
+    // Flat row-major bool grid: index = bb * num_locals + li.
+    // Single allocation per array instead of `1 + num_blocks` Vecs.
     //
     // Use optimistic initialization (all-true) for non-entry blocks.
     // This is a must-analysis: we need to prove a local IS initialized on
@@ -65,40 +64,37 @@ pub fn analyze_init(body: &mir_body.MirBody) -> InitAnalysisResult {
     // narrowing via intersection correctly propagates uninitialized state.
     // Starting with "all uninitialized" (bottom) and trying to widen is wrong
     // because back-edge states stay false and kill pre-loop initializations.
-    //
-    // Perf: pre-allocate with capacity to avoid Vec reallocation doubling.
-    // Previously used Vec.new() + per-element push, which caused ~7 memcpy
-    // reallocations per inner Vec × 20 inner Vecs per function × 2555
-    // functions ≈ 358k memcpy calls — a meaningful chunk of init_lin time.
-    let mut init_at_entry: Vec<Vec<bool>> = Vec.with_capacity(num_blocks);
-    let mut init_at_exit: Vec<Vec<bool>> = Vec.with_capacity(num_blocks);
-    for bb in 0usize..num_blocks {
-        let default_val: bool = if bb == 0 { false } else { true };
-        let mut entry_vec: Vec<bool> = Vec.with_capacity(num_locals);
-        let mut exit_vec: Vec<bool> = Vec.with_capacity(num_locals);
-        for _l in 0usize..num_locals {
-            entry_vec.push(default_val);
-            exit_vec.push(default_val);
-        }
-        init_at_entry.push(entry_vec);
-        init_at_exit.push(exit_vec);
+    let total_cells: usize = num_blocks * num_locals;
+    let mut init_at_entry: Vec<bool> = Vec.with_capacity(total_cells);
+    let mut init_at_exit: Vec<bool> = Vec.with_capacity(total_cells);
+    // bb=0 row gets `false` (then params override below); bb!=0 rows get
+    // optimistic `true`. Single linear sweep — no nested allocations.
+    for cell in 0usize..total_cells {
+        let default_val: bool = if cell < num_locals { false } else { true };
+        init_at_entry.push(default_val);
+        init_at_exit.push(default_val);
     }
 
     // Entry block (bb0): return place (_0) and parameters (_1.._1+param_count)
     // are considered initialized. Other locals start uninitialized.
     let pc: usize = body.param_count as usize;
-    let one: usize = 1;
-    let param_end: usize = one + pc;
+    let param_end: usize = 1 + pc;
     for li in 0usize..param_end {
         if li < num_locals {
-            init_at_entry[0][li] = true;
-            init_at_exit[0][li] = true;
+            init_at_entry[li] = true;
+            init_at_exit[li] = true;
         }
     }
 
     // Compute predecessors and RPO
     let preds = body.predecessors();
     let rpo = body.reverse_postorder();
+
+    // Reusable scratch buffer for new exit state. Allocated once and reused
+    // across all (block, iteration) tuples instead of being freshly allocated
+    // num_blocks × num_iterations times per call.
+    let mut new_exit: Vec<bool> = Vec.with_capacity(num_locals);
+    for _l in 0usize..num_locals { new_exit.push(false); }
 
     // Fixed-point iteration
     let mut changed = true;
@@ -109,6 +105,7 @@ pub fn analyze_init(body: &mir_body.MirBody) -> InitAnalysisResult {
 
         for ri in 0usize..rpo.len() {
             let bb_idx = rpo[ri].as_usize();
+            let row_off: usize = bb_idx * num_locals;
 
             // Compute entry state: intersection of all predecessor exit states.
             // For the entry block, keep the initial state (params initialized).
@@ -117,31 +114,28 @@ pub fn analyze_init(body: &mir_body.MirBody) -> InitAnalysisResult {
                 if pred_list.len() == 0 {
                     // Unreachable block — all uninitialized
                     for li in 0usize..num_locals {
-                        init_at_entry[bb_idx][li] = false;
+                        init_at_entry[row_off + li] = false;
                     }
                 } else {
                     // Start with all true, intersect with each predecessor
                     for li in 0usize..num_locals {
                         let mut all_init = true;
                         for pi in 0usize..pred_list.len() {
-                            let pred_idx = pred_list[pi].as_usize();
-                            if !init_at_exit[pred_idx][li] {
+                            let pred_off: usize = pred_list[pi].as_usize() * num_locals;
+                            if !init_at_exit[pred_off + li] {
                                 all_init = false;
                             }
                         }
-                        init_at_entry[bb_idx][li] = all_init;
+                        init_at_entry[row_off + li] = all_init;
                     }
                 }
             }
 
-            // Compute exit state: entry state + assignments in this block
+            // Compute exit state: entry state + assignments in this block.
+            // new_exit is reused across iterations — overwrite, don't allocate.
             let block = &body.basic_blocks[bb_idx];
-
-            // Build new exit state from entry + statements.
-            // Pre-allocate to avoid doubling reallocations on the push loop.
-            let mut new_exit: Vec<bool> = Vec.with_capacity(num_locals);
             for li in 0usize..num_locals {
-                new_exit.push(init_at_entry[bb_idx][li]);
+                new_exit[li] = init_at_entry[row_off + li];
             }
             for stmt in &block.statements {
                 apply_stmt_init(stmt, &mut new_exit);
@@ -155,19 +149,12 @@ pub fn analyze_init(body: &mir_body.MirBody) -> InitAnalysisResult {
 
             // Check if exit state changed from previous iteration
             for li in 0usize..num_locals {
-                if new_exit[li] != init_at_exit[bb_idx][li] {
+                if new_exit[li] != init_at_exit[row_off + li] {
                     changed = true;
+                    init_at_exit[row_off + li] = new_exit[li];
                 }
-                init_at_exit[bb_idx][li] = new_exit[li];
             }
         }
-
-        // Convergence: init bits can only go false→true (never revoked).
-        // Check if any exit state gained a new true bit this iteration.
-        // If not, the analysis has stabilized.
-        // (The `changed` flag is set to false at the top of each iteration
-        //  and must be set to true inside the RPO loop when a state changes.
-        //  We move the check into the per-block loop above.)
     }
 
     @unsafe {
@@ -177,16 +164,17 @@ pub fn analyze_init(body: &mir_body.MirBody) -> InitAnalysisResult {
         if iteration >= 100 { INIT_HIT_CAP += 1; }
     }
 
-    // Check for use-before-init errors
+    // Check for use-before-init errors. Reuse live_init across blocks.
+    let mut live_init: Vec<bool> = Vec.with_capacity(num_locals);
+    for _l in 0usize..num_locals { live_init.push(false); }
     for ri in 0usize..rpo.len() {
         let bb_idx = rpo[ri].as_usize();
         let block = &body.basic_blocks[bb_idx];
+        let row_off: usize = bb_idx * num_locals;
 
-        // Track init state within the block.
-        // Pre-allocate to avoid doubling reallocations.
-        let mut live_init: Vec<bool> = Vec.with_capacity(num_locals);
+        // Track init state within the block. Overwrite from entry state.
         for li in 0usize..num_locals {
-            live_init.push(init_at_entry[bb_idx][li]);
+            live_init[li] = init_at_entry[row_off + li];
         }
 
         for stmt in &block.statements {
@@ -424,52 +412,61 @@ pub fn analyze_linearity(body: &mir_body.MirBody) -> InitAnalysisResult {
         return result;
     }
 
-    // Identify linear/affine locals.
-    // Pre-allocate to avoid Vec doubling.
-    let mut is_linear: Vec<bool> = Vec.with_capacity(num_locals);
-    let mut is_affine: Vec<bool> = Vec.with_capacity(num_locals);
+    // Quick scan: bail out before allocating any per-local Vecs if no
+    // linear/affine locals exist. This is the common case for the selfhost
+    // compiler — bodies with zero linear/affine locals account for nearly
+    // every analyze_linearity call.
     let mut has_any = false;
     for li in 0usize..num_locals {
-        let local = &body.locals[li];
-        let kind = type_intern.type_interner().get(local.ty);
+        let kind = type_intern.type_interner().get(body.locals[li].ty);
+        match kind {
+            &type_intern.InternedTypeKind.Ownership { qualifier: _, inner: _ } => {
+                has_any = true;
+                break;
+            }
+            _ => {}
+        }
+    }
+    if !has_any { return result; }
+
+    // Identify linear/affine locals (only when at least one exists).
+    let mut is_linear: Vec<bool> = Vec.with_capacity(num_locals);
+    let mut is_affine: Vec<bool> = Vec.with_capacity(num_locals);
+    for _l in 0usize..num_locals {
+        is_linear.push(false);
+        is_affine.push(false);
+    }
+    for li in 0usize..num_locals {
+        let kind = type_intern.type_interner().get(body.locals[li].ty);
         match kind {
             &type_intern.InternedTypeKind.Ownership { ref qualifier, inner: _ } => {
                 match qualifier {
                     &hir_ty.OwnershipQualifier.Linear => {
-                        is_linear.push(true);
-                        is_affine.push(false);
-                        has_any = true;
+                        is_linear[li] = true;
                     }
                     &hir_ty.OwnershipQualifier.Affine => {
-                        is_linear.push(false);
-                        is_affine.push(true);
-                        has_any = true;
+                        is_affine[li] = true;
                     }
                 }
             }
-            _ => {
-                is_linear.push(false);
-                is_affine.push(false);
-            }
+            _ => {}
         }
     }
 
-    if !has_any { return result; }
-
-    // Forward dataflow: track consumed state per local per block.
-    // consumed_at_exit[bb][local] = true means local was consumed on paths to bb's exit.
-    // Pre-allocate to avoid Vec doubling.
-    let mut consumed_at_exit: Vec<Vec<bool>> = Vec.with_capacity(num_blocks);
-    for _bb in 0usize..num_blocks {
-        let mut v: Vec<bool> = Vec.with_capacity(num_locals);
-        for _l in 0usize..num_locals {
-            v.push(false);
-        }
-        consumed_at_exit.push(v);
-    }
+    // Flat row-major bool grid: index = bb * num_locals + li.
+    // consumed_at_exit[bb * num_locals + local] = true means local was
+    // consumed on paths to bb's exit.
+    let total_cells: usize = num_blocks * num_locals;
+    let mut consumed_at_exit: Vec<bool> = Vec.with_capacity(total_cells);
+    for _c in 0usize..total_cells { consumed_at_exit.push(false); }
 
     let rpo = body.reverse_postorder();
     let preds = body.predecessors();
+
+    // Reusable scratch buffer for new exit state. Allocated once and reused
+    // across all (block, iteration) tuples.
+    let mut consumed: Vec<bool> = Vec.with_capacity(num_locals);
+    for _l in 0usize..num_locals { consumed.push(false); }
 
     // Fixed-point iteration
     let mut changed = true;
@@ -481,22 +478,22 @@ pub fn analyze_linearity(body: &mir_body.MirBody) -> InitAnalysisResult {
         for ri in 0usize..rpo.len() {
             let bb_idx = rpo[ri].as_usize();
             let block = &body.basic_blocks[bb_idx];
+            let row_off: usize = bb_idx * num_locals;
 
             // Entry consumed state: union of predecessor exit states.
-            // Pre-allocate to avoid Vec doubling.
-            let mut consumed: Vec<bool> = Vec.with_capacity(num_locals);
             if bb_idx == 0 {
-                for _l in 0usize..num_locals { consumed.push(false); }
+                for li in 0usize..num_locals { consumed[li] = false; }
             } else {
                 let pred_list = &preds[bb_idx];
                 for li in 0usize..num_locals {
                     let mut any_consumed = false;
                     for pi in 0usize..pred_list.len() {
-                        if consumed_at_exit[pred_list[pi].as_usize()][li] {
+                        let pred_off: usize = pred_list[pi].as_usize() * num_locals;
+                        if consumed_at_exit[pred_off + li] {
                             any_consumed = true;
                         }
                     }
-                    consumed.push(any_consumed);
+                    consumed[li] = any_consumed;
                 }
             }
 
@@ -513,10 +510,10 @@ pub fn analyze_linearity(body: &mir_body.MirBody) -> InitAnalysisResult {
 
             // Update exit state
             for li in 0usize..num_locals {
-                if consumed[li] != consumed_at_exit[bb_idx][li] {
+                if consumed[li] != consumed_at_exit[row_off + li] {
                     changed = true;
+                    consumed_at_exit[row_off + li] = consumed[li];
                 }
-                consumed_at_exit[bb_idx][li] = consumed[li];
             }
         }
     }
@@ -539,7 +536,8 @@ pub fn analyze_linearity(body: &mir_body.MirBody) -> InitAnalysisResult {
             let mut some_consumed = false;
             let mut some_not = false;
             for pi in 0usize..pred_list.len() {
-                if consumed_at_exit[pred_list[pi].as_usize()][li] {
+                let pred_off: usize = pred_list[pi].as_usize() * num_locals;
+                if consumed_at_exit[pred_off + li] {
                     some_consumed = true;
                 } else {
                     some_not = true;
