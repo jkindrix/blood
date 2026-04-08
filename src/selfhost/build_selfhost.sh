@@ -50,6 +50,55 @@ log_metric() {
     printf '{"ts":"%s","stage":"%s","size":%s,"wall_secs":%s,"ir_lines":%s}\n' \
         "$ts" "$stage" "$size" "$wall_secs" "$ir_lines" \
         >> "$DIR/.logs/metrics.jsonl"
+    check_build_time_regression "$stage" "$wall_secs"
+}
+
+# Build-time regression alarm.
+#
+# Baseline: 2026-04-08 post-perf-fixes. A clean first_gen/second_gen
+# build should complete in ~360s on this hardware (20-core machine).
+# Previous regressions went unnoticed for weeks because nothing
+# alerted on gradual creep — the build climbed from ~192s (2026-03-20,
+# per MEMORY.md) to ~660s (2026-04-06) to ~755s (2026-04-08) over 19
+# days, unnoticed until the user's patience broke.
+#
+# Thresholds are deliberately loose (WARN at +40%, FAIL at +100%) so
+# day-to-day noise doesn't cause false alarms, but any real regression
+# is caught within 1-2 commits. Adjust BUILD_TIME_BASELINE as the
+# build legitimately gets faster from future optimizations.
+#
+# Set BLOOD_NO_PERF_ALARM=1 to silence (e.g., on slower hardware).
+check_build_time_regression() {
+    local stage="$1" wall_secs="$2"
+    [ -n "${BLOOD_NO_PERF_ALARM:-}" ] && return 0
+    local baseline warn_threshold fail_threshold
+    case "$stage" in
+        first_gen|second_gen|third_gen)
+            baseline=360
+            warn_threshold=504   # baseline × 1.4
+            fail_threshold=720   # baseline × 2.0
+            ;;
+        *) return 0 ;;
+    esac
+    if [ "$wall_secs" -gt "$fail_threshold" ]; then
+        printf "\n\033[1;31m╭─ BUILD TIME REGRESSION (FAIL) ────────────────────────────────╮\033[0m\n"
+        printf "\033[1;31m│\033[0m %-8s took \033[1;31m%ds\033[0m — more than 2× the %ds baseline.            \033[1;31m│\033[0m\n" \
+            "$stage" "$wall_secs" "$baseline"
+        printf "\033[1;31m│\033[0m This is a serious regression. Do not ship without fixing.     \033[1;31m│\033[0m\n"
+        printf "\033[1;31m│\033[0m Check the [typeck phases], [codegen pass2], [mir_lower],      \033[1;31m│\033[0m\n"
+        printf "\033[1;31m│\033[0m and [codegen fn] lines in this build log to identify which   \033[1;31m│\033[0m\n"
+        printf "\033[1;31m│\033[0m sub-phase regressed. Compare against recent metrics.jsonl.    \033[1;31m│\033[0m\n"
+        printf "\033[1;31m│\033[0m Set BLOOD_NO_PERF_ALARM=1 to silence (temporarily).           \033[1;31m│\033[0m\n"
+        printf "\033[1;31m╰───────────────────────────────────────────────────────────────╯\033[0m\n\n"
+    elif [ "$wall_secs" -gt "$warn_threshold" ]; then
+        printf "\n\033[1;33m╭─ BUILD TIME REGRESSION WARNING ───────────────────────────────╮\033[0m\n"
+        printf "\033[1;33m│\033[0m %-8s took \033[1;33m%ds\033[0m — 1.4× the %ds baseline (threshold: %ds). \033[1;33m│\033[0m\n" \
+            "$stage" "$wall_secs" "$baseline" "$warn_threshold"
+        printf "\033[1;33m│\033[0m Check the sub-phase instrumentation in this log to see what  \033[1;33m│\033[0m\n"
+        printf "\033[1;33m│\033[0m regressed. Previous regressions went unnoticed for weeks of   \033[1;33m│\033[0m\n"
+        printf "\033[1;33m│\033[0m silent creep. Investigate before it gets worse.               \033[1;33m│\033[0m\n"
+        printf "\033[1;33m╰───────────────────────────────────────────────────────────────╯\033[0m\n\n"
+    fi
 }
 
 decode_exit() {
