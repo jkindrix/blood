@@ -1456,7 +1456,14 @@ pub fn apply_substs_id(table: &SubstTable, ty_id: type_intern.TyId) -> type_inte
         }
     }
 
-    // Phase 2: Structural substitution on the resolved type
+    // Phase 2: Structural substitution on the resolved type.
+    //
+    // Perf: for every branch that recurses into sub-types, check whether
+    // the recursive call returned the SAME TyId. If all sub-results are
+    // identical to the originals, the whole type is unchanged and we can
+    // return `current` without allocating a new interned type. This is
+    // the dominant case for concrete types (no Infer/Param anywhere in
+    // the tree), which are most of what infer_expr walks.
     let kind = interner.get(current);
     match kind {
         &type_intern.InternedTypeKind.Infer(_) => current,
@@ -1473,89 +1480,144 @@ pub fn apply_substs_id(table: &SubstTable, ty_id: type_intern.TyId) -> type_inte
         }
         &type_intern.InternedTypeKind.Tuple(list_id) => {
             let new_list = apply_substs_ty_list_id(table, list_id);
-            type_intern.type_interner().intern(type_intern.InternedTypeKind.Tuple(new_list))
+            if new_list.index == list_id.index {
+                current
+            } else {
+                type_intern.type_interner().intern(type_intern.InternedTypeKind.Tuple(new_list))
+            }
         }
         &type_intern.InternedTypeKind.Array { element, size } => {
             let new_elem = apply_substs_id(table, element);
-            type_intern.type_interner().mk_array(new_elem, size)
+            if new_elem.index == element.index {
+                current
+            } else {
+                type_intern.type_interner().mk_array(new_elem, size)
+            }
         }
         &type_intern.InternedTypeKind.Slice { element } => {
             let new_elem = apply_substs_id(table, element);
-            type_intern.type_interner().mk_slice(new_elem)
+            if new_elem.index == element.index {
+                current
+            } else {
+                type_intern.type_interner().mk_slice(new_elem)
+            }
         }
         &type_intern.InternedTypeKind.Ref { inner, mutable } => {
             let new_inner = apply_substs_id(table, inner);
-            type_intern.type_interner().mk_ref(new_inner, mutable)
+            if new_inner.index == inner.index {
+                current
+            } else {
+                type_intern.type_interner().mk_ref(new_inner, mutable)
+            }
         }
         &type_intern.InternedTypeKind.Ptr { inner, mutable } => {
             let new_inner = apply_substs_id(table, inner);
-            type_intern.type_interner().mk_ptr(new_inner, mutable)
+            if new_inner.index == inner.index {
+                current
+            } else {
+                type_intern.type_interner().mk_ptr(new_inner, mutable)
+            }
         }
         &type_intern.InternedTypeKind.Adt { def_id, args } => {
             let new_args = apply_substs_ty_list_id(table, args);
-            type_intern.type_interner().mk_adt(def_id, new_args)
+            if new_args.index == args.index {
+                current
+            } else {
+                type_intern.type_interner().mk_adt(def_id, new_args)
+            }
         }
         &type_intern.InternedTypeKind.Fn { params, ret, effects } => {
             let new_params = apply_substs_ty_list_id(table, params);
             let new_ret = apply_substs_id(table, ret);
             let new_effects = apply_substs_to_effect_row_id(table, effects);
-            type_intern.type_interner().mk_fn(new_params, new_ret, new_effects)
+            if new_params.index == params.index
+                && new_ret.index == ret.index
+                && new_effects.index == effects.index
+            {
+                current
+            } else {
+                type_intern.type_interner().mk_fn(new_params, new_ret, new_effects)
+            }
         }
         &type_intern.InternedTypeKind.Closure { def_id, params, ret } => {
             let new_params = apply_substs_ty_list_id(table, params);
             let new_ret = apply_substs_id(table, ret);
-            type_intern.type_interner().mk_closure(def_id, new_params, new_ret)
+            if new_params.index == params.index && new_ret.index == ret.index {
+                current
+            } else {
+                type_intern.type_interner().mk_closure(def_id, new_params, new_ret)
+            }
         }
         &type_intern.InternedTypeKind.Record { fields, ref row_var } => {
             let rv = *row_var;
             let new_fields = apply_substs_record_fields_id(table, fields);
-            type_intern.type_interner().intern(type_intern.InternedTypeKind.Record {
-                fields: new_fields,
-                row_var: rv,
-            })
+            if new_fields.index == fields.index {
+                current
+            } else {
+                type_intern.type_interner().intern(type_intern.InternedTypeKind.Record {
+                    fields: new_fields,
+                    row_var: rv,
+                })
+            }
         }
         &type_intern.InternedTypeKind.Forall { ref params, body } => {
-            let param_count = params.len();
-            let mut copied_params: Vec<hir_def.TyVarId> = Vec.new();
-            for i in 0usize..param_count {
-                copied_params.push(params[i]);
-            }
             let new_body = apply_substs_id(table, body);
-            type_intern.type_interner().intern(type_intern.InternedTypeKind.Forall {
-                params: copied_params,
-                body: new_body,
-            })
+            if new_body.index == body.index {
+                current
+            } else {
+                let param_count = params.len();
+                let mut copied_params: Vec<hir_def.TyVarId> = Vec.new();
+                for i in 0usize..param_count {
+                    copied_params.push(params[i]);
+                }
+                type_intern.type_interner().intern(type_intern.InternedTypeKind.Forall {
+                    params: copied_params,
+                    body: new_body,
+                })
+            }
         }
         &type_intern.InternedTypeKind.Ownership { qualifier, inner } => {
             let new_inner = apply_substs_id(table, inner);
-            type_intern.type_interner().mk_ownership(qualifier, new_inner)
+            if new_inner.index == inner.index {
+                current
+            } else {
+                type_intern.type_interner().mk_ownership(qualifier, new_inner)
+            }
         }
         &type_intern.InternedTypeKind.Range { element, inclusive } => {
             let new_elem = apply_substs_id(table, element);
-            type_intern.type_interner().mk_range(new_elem, inclusive)
+            if new_elem.index == element.index {
+                current
+            } else {
+                type_intern.type_interner().mk_range(new_elem, inclusive)
+            }
         }
         &type_intern.InternedTypeKind.DynTrait { trait_id, ref auto_traits } => {
-            let auto_count = auto_traits.len();
-            let mut copied_auto: Vec<hir_def.DefId> = Vec.new();
-            for i in 0usize..auto_count {
-                copied_auto.push(auto_traits[i]);
-            }
-            type_intern.type_interner().intern(type_intern.InternedTypeKind.DynTrait {
-                trait_id: trait_id,
-                auto_traits: copied_auto,
-            })
+            // DynTrait has no sub-types that can be substituted; always return
+            // `current` (no need to rebuild — the previous code was pure waste).
+            current
         }
     }
 }
 
 /// Applies substitutions to a type list (TyId-native).
+/// Fast path: if no element changes (all concrete or all already-resolved),
+/// return the original list_id without re-interning the Vec.
 fn apply_substs_ty_list_id(table: &SubstTable, list_id: type_intern.TyListId) -> type_intern.TyListId {
     let interner = type_intern.type_interner();
     let len = interner.ty_list_len(list_id);
-    let mut result: Vec<type_intern.TyId> = Vec.new();
+    let mut result: Vec<type_intern.TyId> = Vec.with_capacity(len);
+    let mut any_change = false;
     for i in 0usize..len {
-        let elem = type_intern.type_interner().get_ty_list_element(list_id, i);
-        result.push(apply_substs_id(table, elem));
+        let elem = interner.get_ty_list_element(list_id, i);
+        let new_elem = apply_substs_id(table, elem);
+        if new_elem.index != elem.index {
+            any_change = true;
+        }
+        result.push(new_elem);
+    }
+    if !any_change {
+        return list_id;
     }
     type_intern.type_interner().intern_ty_list(&result)
 }
@@ -1566,13 +1628,20 @@ fn apply_substs_to_effect_row_id(table: &SubstTable, eff_id: type_intern.EffectR
     let row = interner.get_effect_row(eff_id);
     let eff_count = row.effects.len();
     let row_var = row.row_var;
-    let mut new_effects: Vec<type_intern.InternedEffectRef> = Vec.new();
+    let mut new_effects: Vec<type_intern.InternedEffectRef> = Vec.with_capacity(eff_count);
+    let mut any_change = false;
     for i in 0usize..eff_count {
         let eff = &type_intern.type_interner().get_effect_row(eff_id).effects[i];
         let def_id = eff.def_id;
         let args = eff.args;
         let new_args = apply_substs_ty_list_id(table, args);
+        if new_args.index != args.index {
+            any_change = true;
+        }
         new_effects.push(type_intern.InternedEffectRef.new(def_id, new_args));
+    }
+    if !any_change {
+        return eff_id;
     }
     type_intern.type_interner().intern_effect_row(
         type_intern.InternedEffectRow.new(new_effects, row_var)
@@ -1580,17 +1649,25 @@ fn apply_substs_to_effect_row_id(table: &SubstTable, eff_id: type_intern.EffectR
 }
 
 /// Applies substitutions to record fields (TyId-native).
+/// Fast path: return fields_id unchanged when no field type is substituted.
 fn apply_substs_record_fields_id(table: &SubstTable, fields_id: type_intern.RecordFieldListId) -> type_intern.RecordFieldListId {
     let interner = type_intern.type_interner();
     let list = interner.get_record_field_list(fields_id);
     let field_count = list.fields.len();
-    let mut new_fields: Vec<type_intern.InternedRecordField> = Vec.new();
+    let mut new_fields: Vec<type_intern.InternedRecordField> = Vec.with_capacity(field_count);
+    let mut any_change = false;
     for i in 0usize..field_count {
         let f = &type_intern.type_interner().get_record_field_list(fields_id).fields[i];
         let name = f.name;
         let ty = f.ty;
         let new_ty = apply_substs_id(table, ty);
+        if new_ty.index != ty.index {
+            any_change = true;
+        }
         new_fields.push(type_intern.InternedRecordField.new(name, new_ty));
+    }
+    if !any_change {
+        return fields_id;
     }
     type_intern.type_interner().intern_record_field_list(
         type_intern.InternedRecordFieldList.new(new_fields)
