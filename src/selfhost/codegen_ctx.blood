@@ -728,39 +728,23 @@ impl CodegenCtx {
     }
 
     /// Looks up the global name for a DefId.
+    /// def_names_hash is authoritative: register_def_name updates it on every
+    /// push. Duplicate registrations overwrite the hash to the LATEST index,
+    /// which is acceptable — the latest registration is the one that should win.
     pub fn lookup_def_name(self: &CodegenCtx, def_id: u32) -> Option<String> {
-        // Fast path: hash lookup
         match self.def_names_hash.get(def_id as u64) {
-            Option.Some(idx) => {
-                return Option.Some(clone_string(&self.def_names[idx as usize].name));
-            }
-            Option.None => {}
+            Option.Some(idx) => Option.Some(clone_string(&self.def_names[idx as usize].name)),
+            Option.None => Option.None,
         }
-        // Fallback: linear scan (should not happen)
-        for i in 0usize..self.def_names.len() {
-            if self.def_names[i].def_id == def_id {
-                return Option.Some(clone_string(&self.def_names[i].name));
-            }
-        }
-        Option.None
     }
 
     /// Gets a reference to a def name. Zero allocation.
-    /// Returns None if not found.
+    /// Returns None if not found. Same authoritative-hash contract as lookup_def_name.
     pub fn lookup_def_name_ref(self: &CodegenCtx, def_id: u32) -> Option<&String> {
         match self.def_names_hash.get(def_id as u64) {
-            Option.Some(idx) => {
-                return Option.Some(&self.def_names[idx as usize].name);
-            }
-            Option.None => {}
+            Option.Some(idx) => Option.Some(&self.def_names[idx as usize].name),
+            Option.None => Option.None,
         }
-        // Fallback: linear scan
-        for i in 0usize..self.def_names.len() {
-            if self.def_names[i].def_id == def_id {
-                return Option.Some(&self.def_names[i].name);
-            }
-        }
-        Option.None
     }
 
     /// Registers LLVM function signature for a compiled function (keyed by def_id).
