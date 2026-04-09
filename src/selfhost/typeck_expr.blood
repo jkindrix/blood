@@ -1221,11 +1221,14 @@ fn infer_call(
     let resolved_callee_raw = checker.resolve(callee_ty);
     // Strip ownership qualifiers — calling `linear fn()` is the consumption of that value
     let resolved_callee = strip_ownership_id(resolved_callee_raw);
-    // Use ty_id_to_type for matching on the resolved callee type structure
-    let resolved_callee_hir = type_intern.ty_id_to_type(resolved_callee);
+    // Match on the InternedTypeKind directly instead of round-tripping through
+    // ty_id_to_type (which allocates a full hir_ty.Type tree with Boxes per
+    // sub-type — an enormous cost when multiplied by every call site).
+    let interner = type_intern.type_interner();
+    let resolved_kind = interner.get(resolved_callee);
 
-    match &resolved_callee_hir.kind {
-        &hir_ty.TypeKind.Fn { ref params, ref ret, ref effects } => {
+    match resolved_kind {
+        &type_intern.InternedTypeKind.Fn { params: params_list, ret, effects } => {
             // Special case: persist<T>(value: T) -> T
             // The builtin is registered with dummy i64 types. Override:
             // infer the argument type and use it as the return type.
@@ -1248,10 +1251,12 @@ fn infer_call(
                 &Option.None => {}
             }
 
+            let params_len = interner.ty_list_len(params_list);
+
             // Check arity
-            if params.len() != args.len() {
+            if params_len != args.len() {
                 let mut note = common.make_string("expected ");
-                note.push_str(type_intern.format_usize(params.len()).as_str());
+                note.push_str(type_intern.format_usize(params_len).as_str());
                 note.push_str(" argument(s), found ");
                 note.push_str(type_intern.format_usize(args.len()).as_str());
                 checker.error_with_note(
@@ -1267,7 +1272,7 @@ fn infer_call(
             // get the concrete type (the param's Infer has been unified with the arg).
             let mut resolved_arg_types: Vec<type_intern.TyId> = Vec.new();
             for i in 0usize..args.len() {
-                let param_id = type_intern.type_to_ty_id(&params[i]);
+                let param_id = type_intern.type_interner().get_ty_list_element(params_list, i);
                 check_expr(checker, &args[i], param_id);
                 resolved_arg_types.push(checker.resolve(param_id));
             }
@@ -1278,26 +1283,31 @@ fn infer_call(
             if checker.in_handler {
                 // Re-resolve callee type to get effects with resolved type args
                 let post_callee = checker.resolve(callee_ty);
-                let post_callee_hir = type_intern.ty_id_to_type(post_callee);
-                match &post_callee_hir.kind {
-                    &hir_ty.TypeKind.Fn { params: _, ret: _, ref effects } => {
-                        for efi in 0usize..effects.effects.len() {
-                            let eff_ref = &effects.effects[efi];
+                let post_interner = type_intern.type_interner();
+                let post_kind = post_interner.get(post_callee);
+                match post_kind {
+                    &type_intern.InternedTypeKind.Fn { params: _, ret: _, effects: post_effects } => {
+                        let row = post_interner.get_effect_row(post_effects);
+                        for efi in 0usize..row.effects.len() {
+                            let eff_row_ref = post_interner.get_effect_row(post_effects);
+                            let eff_ref = &eff_row_ref.effects[efi];
                             let eff_def_id = eff_ref.def_id;
                             let eff_idx = eff_def_id.index as usize;
-                            if eff_ref.args.len() > 0 && checker.has_effect(eff_def_id) {
+                            let eff_args_list = eff_ref.args;
+                            let eff_args_len = post_interner.ty_list_len(eff_args_list);
+                            if eff_args_len > 0 && checker.has_effect(eff_def_id) {
                                 match &checker.effects[eff_idx] {
                                     &Some(ref einfo) => {
                                         for tpi in 0usize..einfo.type_param_var_ids.len() {
-                                            if tpi < eff_ref.args.len() {
-                                                let arg_ty = type_intern.type_to_ty_id(&eff_ref.args[tpi]);
+                                            if tpi < eff_args_len {
+                                                let arg_ty = type_intern.type_interner().get_ty_list_element(eff_args_list, tpi);
                                                 // Only unify if the arg is concrete (not still Infer)
                                                 let resolved_arg = checker.resolve(arg_ty);
-                                                let interner = type_intern.type_interner();
-                                                match interner.get(resolved_arg) {
+                                                let inner_interner = type_intern.type_interner();
+                                                match inner_interner.get(resolved_arg) {
                                                     &type_intern.InternedTypeKind.Infer(_) => {}
                                                     _ => {
-                                                        let param_var_ty = interner.mk_infer(
+                                                        let param_var_ty = inner_interner.mk_infer(
                                                             hir_def.TyVarId.new(einfo.type_param_var_ids[tpi])
                                                         );
                                                         checker.unify(param_var_ty, resolved_arg, span);
@@ -1354,17 +1364,17 @@ fn infer_call(
             if saved_type_param_bindings.len() >= 2 {
                 match &callee_def_id {
                     &Option.Some(def_idx) => {
-                        let interner = type_intern.type_interner();
+                        let binding_interner = type_intern.type_interner();
                         let mut bindings: Vec<common.TypeMonoBinding> = Vec.new();
                         let mut all_concrete = true;
                         let mut bpi: usize = 0;
                         while bpi + 1 < saved_type_param_bindings.len() {
                             let body_tv = saved_type_param_bindings[bpi];
                             let fresh_tv = saved_type_param_bindings[bpi + 1];
-                            let fresh_infer = interner.mk_infer(hir_def.TyVarId.new(fresh_tv));
+                            let fresh_infer = binding_interner.mk_infer(hir_def.TyVarId.new(fresh_tv));
                             let concrete = checker.resolve(fresh_infer);
                             // Check if actually concrete (not still Infer)
-                            match interner.get(concrete) {
+                            match binding_interner.get(concrete) {
                                 &type_intern.InternedTypeKind.Infer(_) => {
                                     all_concrete = false;
                                 }
@@ -1384,14 +1394,15 @@ fn infer_call(
                 }
             }
 
-            // Return the return type
-            type_intern.type_to_ty_id(ret.as_ref())
+            // Return the return type (already a TyId — no conversion needed)
+            ret
         }
-        &hir_ty.TypeKind.Closure { def_id: _, ref params, ref ret } => {
+        &type_intern.InternedTypeKind.Closure { def_id: _, params: cl_params_list, ret: cl_ret } => {
             // Closures are callable like functions
-            if params.len() != args.len() {
+            let cl_params_len = type_intern.type_interner().ty_list_len(cl_params_list);
+            if cl_params_len != args.len() {
                 let mut note = common.make_string("expected ");
-                note.push_str(type_intern.format_usize(params.len()).as_str());
+                note.push_str(type_intern.format_usize(cl_params_len).as_str());
                 note.push_str(" argument(s), found ");
                 note.push_str(type_intern.format_usize(args.len()).as_str());
                 checker.error_with_note(
@@ -1402,16 +1413,16 @@ fn infer_call(
                 return type_intern.CommonTypes.error();
             }
             for ci in 0usize..args.len() {
-                let param_id = type_intern.type_to_ty_id(&params[ci]);
+                let param_id = type_intern.type_interner().get_ty_list_element(cl_params_list, ci);
                 check_expr(checker, &args[ci], param_id);
             }
-            type_intern.type_to_ty_id(ret.as_ref())
+            cl_ret
         }
-        &hir_ty.TypeKind.Infer(_) => {
+        &type_intern.InternedTypeKind.Infer(_) => {
             // Callee type not yet known - create fresh return type
             checker.fresh_infer()
         }
-        &hir_ty.TypeKind.Error => {
+        &type_intern.InternedTypeKind.Error => {
             type_intern.CommonTypes.error()
         }
         _ => {
