@@ -7,6 +7,7 @@
 mod common;
 mod hir_def;
 mod hir_ty;
+mod type_intern;
 
 // ============================================================
 // Type Layout Information
@@ -581,6 +582,27 @@ pub fn is_integer(ty: &hir_ty.Type) -> bool {
 pub fn is_signed(ty: &hir_ty.Type) -> bool {
     match &ty.kind {
         &hir_ty.TypeKind.Primitive(ref prim) => {
+            match prim {
+                &hir_ty.PrimitiveTy.I8 => true,
+                &hir_ty.PrimitiveTy.I16 => true,
+                &hir_ty.PrimitiveTy.I32 => true,
+                &hir_ty.PrimitiveTy.I64 => true,
+                &hir_ty.PrimitiveTy.I128 => true,
+                &hir_ty.PrimitiveTy.Isize => true,
+                _ => false,
+            }
+        }
+        _ => false,
+    }
+}
+
+/// TyId-native signed check. Lets alloca emission skip the ty_id_to_type
+/// conversion that is only needed to feed is_signed(&Type).
+pub fn is_signed_id(ty_id: type_intern.TyId) -> bool {
+    let interner = type_intern.type_interner();
+    let kind = interner.get(ty_id);
+    match kind {
+        &type_intern.InternedTypeKind.Primitive(ref prim) => {
             match prim {
                 &hir_ty.PrimitiveTy.I8 => true,
                 &hir_ty.PrimitiveTy.I16 => true,

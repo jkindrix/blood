@@ -1885,7 +1885,6 @@ pub fn emit_allocas_with_escapes(
         let local_id = mir_def.MirLocalId.new(i as u32);
         let name_cg = ctx.local_cg(local_id);
         let ty_str = codegen_size.type_to_llvm_with_ctx_id(ctx, local.ty);
-        let local_hir_ty = type_intern.ty_id_to_type(local.ty);
 
         // Get recommended tier from escape analysis.
         // Primitives that don't escape or only escape through arguments/effects
@@ -1983,7 +1982,7 @@ pub fn emit_allocas_with_escapes(
             common.make_string(ty_str.as_str())
         };
         ctx.register_local_type(local_id, reg_ty);
-        ctx.register_local_signedness(local_id, codegen_types.is_signed(&local_hir_ty));
+        ctx.register_local_signedness(local_id, codegen_types.is_signed_id(local.ty));
         ctx.register_local_hir_type(local_id, local.ty);
 
         // Emit DWARF variable declaration for named user variables
