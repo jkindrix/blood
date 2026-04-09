@@ -74,9 +74,13 @@ check_build_time_regression() {
     local baseline warn_threshold fail_threshold
     case "$stage" in
         first_gen|second_gen|third_gen)
-            baseline=360
-            warn_threshold=504   # baseline × 1.4
-            fail_threshold=720   # baseline × 2.0
+            # 2026-04-09 perf session dropped clean first_gen from 354 s
+            # to ~167 s via the typeck linear-scan removal and related
+            # fixes. Baseline set tight to catch any regression that
+            # reintroduces dead-code paths in hot lookup functions.
+            baseline=180
+            warn_threshold=252   # baseline × 1.4
+            fail_threshold=360   # baseline × 2.0
             ;;
         *) return 0 ;;
     esac
