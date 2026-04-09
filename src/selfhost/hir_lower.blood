@@ -172,6 +172,17 @@ pub fn lower_program_with_ast_region(program: &ast.Program, base_dir: String, so
     eprint_str(" p4b(ext_bodies)=");
     eprint_str(int_to_string(t_p4b_ms as i32));
     eprint_str("\n");
+    @unsafe {
+        eprint_str("  [lem] calls=");
+        eprint_str(int_to_string(LEM_CALL_COUNT as i32));
+        eprint_str(" read_ms=");
+        eprint_str(int_to_string(LEM_T_READ_MS as i32));
+        eprint_str(" parse_ms=");
+        eprint_str(int_to_string(LEM_T_PARSE_MS as i32));
+        eprint_str(" register_ms=");
+        eprint_str(int_to_string(LEM_T_REGISTER_MS as i32));
+        eprint_str("\n");
+    }
 
     // Check for errors from body lowering
     if ctx.has_errors() {
@@ -996,6 +1007,19 @@ fn inject_stdlib_prelude(ctx: &mut hir_lower_ctx.LoweringCtx) {
 
 /// Loads an external module from a file.
 /// Builds the file path, reads, parses, and registers the module's contents.
+// Instrumentation: track sub-phase costs inside load_external_module so
+// the dominant cost (file I/O vs parse vs recursive registration) is
+// visible. Aggregated across all external module loads per build.
+static mut LEM_T_READ_MS: u64 = 0;
+static mut LEM_T_PARSE_MS: u64 = 0;
+static mut LEM_T_REGISTER_MS: u64 = 0;
+static mut LEM_CALL_COUNT: u64 = 0;
+
+pub fn lem_t_read_ms() -> u64 { @unsafe { LEM_T_READ_MS } }
+pub fn lem_t_parse_ms() -> u64 { @unsafe { LEM_T_PARSE_MS } }
+pub fn lem_t_register_ms() -> u64 { @unsafe { LEM_T_REGISTER_MS } }
+pub fn lem_call_count() -> u64 { @unsafe { LEM_CALL_COUNT } }
+
 fn load_external_module(
     ctx: &mut hir_lower_ctx.LoweringCtx,
     name: common.Symbol,
@@ -1065,7 +1089,9 @@ fn load_external_module(
         return;
     }
 
+    @unsafe { LEM_CALL_COUNT += 1; }
     // Read the file; if not found, try directory module: base_dir/name/mod.blood
+    let t_read = blood_clock_millis();
     let read_result = source.read_file_string(&file_path);
     let read_result = if !read_result.success {
         // Fallback: try base_dir/name/mod.blood (directory module)
@@ -1108,6 +1134,7 @@ fn load_external_module(
             return;
         }
     };
+    @unsafe { LEM_T_READ_MS += blood_clock_millis() - t_read; }
 
     // Tag this module for allocation profiling (Phase 1: parse + type registration).
     // Tags 1-N for Phase 1, 1001-N for Phase 3a, 2001-N for Phase 4b.
@@ -1117,6 +1144,7 @@ fn load_external_module(
     // Parse the file. If ast_region is set, activate it so parser allocations
     // go there instead of hir_region. This allows AST data to be freed after
     // HIR lowering completes.
+    let t_parse = blood_clock_millis();
     if ctx.ast_region != 0 {
         region_activate(ctx.ast_region);
     }
@@ -1124,6 +1152,7 @@ fn load_external_module(
     if ctx.ast_region != 0 {
         region_deactivate();
     }
+    @unsafe { LEM_T_PARSE_MS += blood_clock_millis() - t_parse; }
     if parse_result.errors.len() > 0 {
         let mut msg = common.make_string("parse error in module '");
         append_string(&mut msg, &module_name);
@@ -1181,10 +1210,12 @@ fn load_external_module(
     // Phase 1: Register nested type names from the loaded module
     // This recursively loads sub-modules, which will be added to loaded_modules
     // BEFORE this module (post-order), ensuring dependencies are processed first in Phase 3a.
+    let t_reg = blood_clock_millis();
     register_module_type_names(ctx, def_id, &program.declarations, cache);
 
     // Phase 2: Register declarations (functions, consts, statics) from the loaded module
     register_module_declarations(ctx, def_id, &program.declarations);
+    @unsafe { LEM_T_REGISTER_MS += blood_clock_millis() - t_reg; }
 
     // Restore the original source text and base_dir
     ctx.source = saved_source;
