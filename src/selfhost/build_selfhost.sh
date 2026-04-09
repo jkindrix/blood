@@ -1376,19 +1376,70 @@ case "${1:-status}" in
         ;;
 
     metrics)
-        local mfile="$DIR/.logs/metrics.jsonl"
-        if [ ! -f "$mfile" ]; then
+        _mfile="$DIR/.logs/metrics.jsonl"
+        if [ ! -f "$_mfile" ]; then
             echo "No metrics yet. Run a build first."
         else
-            echo "=== Build Metrics (last 10) ==="
-            tail -10 "$mfile" | while IFS= read -r line; do
+            # Parse 2nd arg as "N" (number of recent entries to show) or
+            # "all" to show the full summary. Defaults to 10.
+            _n_recent="${2:-10}"
+            if [[ "$_n_recent" == "all" ]]; then _n_recent=9999; fi
+
+            echo "=== Build Metrics (last $_n_recent) ==="
+            tail -n "$_n_recent" "$_mfile" | while IFS= read -r line; do
                 printf "  %s\n" "$line"
             done
+
+            _stage_stats() {
+                local stage="$1"
+                local mfile="$2"
+                local times sizes
+                times=$(grep "\"$stage\"" "$mfile" | tail -20 | sed 's/.*"wall_secs":\([0-9]*\).*/\1/')
+                sizes=$(grep "\"$stage\"" "$mfile" | tail -20 | sed 's/.*"size":\([0-9]*\).*/\1/')
+                if [ -z "$times" ]; then
+                    echo "  $stage: (no data)"
+                    return
+                fi
+                local n t_min t_max t_last t_avg
+                n=$(echo "$times" | wc -l)
+                t_min=$(echo "$times" | sort -n | head -1)
+                t_max=$(echo "$times" | sort -n | tail -1)
+                t_last=$(echo "$times" | tail -1)
+                t_avg=$(echo "$times" | awk '{sum+=$1; n++} END {if(n>0) printf "%d", sum/n; else print "0"}')
+                local s_min s_max s_last
+                s_min=$(echo "$sizes" | sort -n | head -1)
+                s_max=$(echo "$sizes" | sort -n | tail -1)
+                s_last=$(echo "$sizes" | tail -1)
+                printf "  %-10s  last=%ss  min=%ss  max=%ss  avg=%ss  (n=%s)\n" \
+                    "$stage" "$t_last" "$t_min" "$t_max" "$t_avg" "$n"
+                printf "  %-10s  size last=%s  min=%s  max=%s\n" \
+                    "" "$s_last" "$s_min" "$s_max"
+
+                # Delta vs first recorded in this window
+                local t_first
+                t_first=$(echo "$times" | head -1)
+                if [ "$t_first" -gt 0 ] && [ "$t_last" != "$t_first" ]; then
+                    local delta pct
+                    delta=$((t_last - t_first))
+                    pct=$(( (delta * 100) / t_first ))
+                    printf "  %-10s  delta vs oldest in window: %+ds (%+d%%)\n" \
+                        "" "$delta" "$pct"
+                fi
+            }
+
             echo ""
-            echo "=== Trends ==="
-            echo "  first_gen sizes:  $(grep '"first_gen"' "$mfile" | tail -5 | sed 's/.*"size":\([0-9]*\).*/\1/' | tr '\n' ' ')"
-            echo "  second_gen sizes: $(grep '"second_gen"' "$mfile" | tail -5 | sed 's/.*"size":\([0-9]*\).*/\1/' | tr '\n' ' ')"
-            echo "  second_gen times: $(grep '"second_gen"' "$mfile" | tail -5 | sed 's/.*"wall_secs":\([0-9]*\).*/\1s/' | tr '\n' ' ')"
+            echo "=== Trends (last 20 per stage) ==="
+            _stage_stats "first_gen" "$_mfile"
+            _stage_stats "second_gen" "$_mfile"
+            _stage_stats "third_gen" "$_mfile"
+            _stage_stats "first_gen_blood" "$_mfile"
+
+            # Show the regression alarm thresholds so a user can see them
+            # at a glance without digging through the script.
+            echo ""
+            echo "=== Regression alarm ==="
+            echo "  baseline=180s  warn>252s  fail>360s"
+            echo "  Set BLOOD_NO_PERF_ALARM=1 to silence."
         fi
         ;;
 

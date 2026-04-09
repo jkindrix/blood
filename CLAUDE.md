@@ -258,6 +258,7 @@ Run each tool with `--help` or see its header comments for detailed usage.
 - **Macro spec**: `docs/spec/MACROS.md` — macro system design, fragment kinds, hygiene roadmap
 - **Design evaluations**: `docs/design/IMPL_TRAIT.md`, `docs/design/COMPARISON_CHAINING.md`
 - **Compiler notes**: `src/selfhost/COMPILER_NOTES.md`
+- **Compiler perf notes**: `docs/internal/COMPILER_PERF.md` — dead-code linear-scan trap, closure rekeying trap, instrumentation timer reference, remaining hot spots
 - **Aether examples**: `~/blood-test/aether/`
 - **Bug history**: `tools/FAILURE_LOG.md`
 - **Session protocol**: `tools/AGENT_PROTOCOL.md`
