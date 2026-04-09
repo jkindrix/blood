@@ -549,6 +549,8 @@ impl Resolver {
     }
 
     /// Sets the visibility of a previously registered definition.
+    /// def_info_hash is authoritative: register_def_info and
+    /// register_variant_def_info_with_disc both update it on every push.
     pub fn set_def_visibility(self: &mut Self, def_id: hir_def.DefId, vis: common.Visibility) {
         match self.def_info_hash.get(def_id.index as u64) {
             Option.Some(vec_idx) => {
@@ -557,15 +559,7 @@ impl Resolver {
                     self.def_info[idx].info.visibility = vis;
                 }
             }
-            Option.None => {
-                // Fallback to linear scan
-                for i in 0usize..self.def_info.len() {
-                    if self.def_info[i].def_id.index == def_id.index {
-                        self.def_info[i].info.visibility = vis;
-                        return;
-                    }
-                }
-            }
+            Option.None => {}
         }
     }
 
@@ -602,8 +596,8 @@ impl Resolver {
 
     /// Gets definition info by DefId.
     /// Returns None if the DefId is not registered.
+    /// def_info_hash is authoritative — no linear scan fallback.
     pub fn get_def_info(self: &Self, def_id: hir_def.DefId) -> Option<hir_def.DefInfo> {
-        // O(1) hash lookup
         match self.def_info_hash.get(def_id.index as u64) {
             Option.Some(vec_idx) => {
                 let idx = vec_idx as usize;
@@ -612,7 +606,7 @@ impl Resolver {
                     let cloned_parent = clone_optional_def_id(&entry.parent);
                     let cloned_vi = clone_optional_u32(&entry.variant_index);
                     let cloned_vd = clone_optional_u32(&entry.variant_discriminant);
-                    return Option.Some(hir_def.DefInfo {
+                    Option.Some(hir_def.DefInfo {
                         kind: entry.kind,
                         name: entry.name,
                         span: entry.span,
@@ -620,31 +614,13 @@ impl Resolver {
                         variant_index: cloned_vi,
                         variant_discriminant: cloned_vd,
                         visibility: entry.visibility,
-                    });
+                    })
+                } else {
+                    Option.None
                 }
             }
-            Option.None => {}
+            Option.None => Option.None,
         }
-        // Fallback to linear scan
-        for i in 0usize..self.def_info.len() {
-            if self.def_info[i].def_id.index == def_id.index {
-                // Clone the DefInfo to return it, preserving variant_index
-                let entry = &self.def_info[i].info;
-                let cloned_parent = clone_optional_def_id(&entry.parent);
-                let cloned_vi = clone_optional_u32(&entry.variant_index);
-                let cloned_vd = clone_optional_u32(&entry.variant_discriminant);
-                return Option.Some(hir_def.DefInfo {
-                    kind: entry.kind,
-                    name: entry.name,
-                    span: entry.span,
-                    parent: cloned_parent,
-                    variant_index: cloned_vi,
-                    variant_discriminant: cloned_vd,
-                    visibility: entry.visibility,
-                });
-            }
-        }
-        Option.None
     }
 
     /// Looks up a name in the current scope chain.
@@ -820,28 +796,14 @@ impl Resolver {
 
     /// Looks up a child definition within a parent's namespace.
     /// Used for resolving qualified paths like module.Item.
+    /// child_def_hash is authoritative — register_def_info and
+    /// register_variant_def_info_with_disc insert on every push when the def has a parent.
     pub fn lookup_in_parent(self: &Self, parent_def: hir_def.DefId, name: common.Symbol) -> Option<hir_def.DefId> {
-        // O(1) hash lookup using combined (parent, name) key
         let combined = hashmap.combine_u32_usize(parent_def.index, name.index as usize);
         match self.child_def_hash.get(combined) {
-            Option.Some(def_id_index) => {
-                return Some(hir_def.DefId.new(def_id_index as u32));
-            }
-            Option.None => {}
+            Option.Some(def_id_index) => Some(hir_def.DefId.new(def_id_index as u32)),
+            Option.None => Option.None,
         }
-        // Fallback to linear scan
-        for i in 0usize..self.def_info.len() {
-            let entry = &self.def_info[i];
-            match &entry.info.parent {
-                &Some(p) => {
-                    if p.index == parent_def.index && entry.info.name.index == name.index {
-                        return Some(hir_def.DefId.new(entry.def_id.index));
-                    }
-                }
-                &None => {}
-            }
-        }
-        Option.None
     }
 
     /// Looks up a child definition by parent DefId and source span position.
