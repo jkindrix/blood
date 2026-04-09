@@ -3403,63 +3403,75 @@ fn build_codegen_worklist(
 // Parallel Codegen Infrastructure
 // ============================================================
 
-/// Arguments passed to each codegen worker thread via u64 address.
-/// All pointer-like fields are u64 addresses obtained via `&T as u64`.
-struct ThreadCodegenArg {
-    /// Address of the worker's CodegenCtx (&mut CodegenCtx as u64).
-    worker_ctx_addr: u64,
-    /// Address of the shared LowerResult (&LowerResult as u64).
-    lower_result_addr: u64,
-    /// Address of the shared TypeCheckResult (&TypeCheckResult as u64).
-    typeck_result_addr: u64,
-    /// Address of the shared CodegenWorkList (&CodegenWorkList as u64).
-    worklist_addr: u64,
-    /// Start index in worklist.items (inclusive).
-    chunk_start: usize,
-    /// End index in worklist.items (exclusive).
-    chunk_end: usize,
-    /// Address of the worker's output String (&mut String as u64).
-    output_ir_addr: u64,
+// Per-worker packed arg: { ctx_addr, lower_addr, typeck_addr, worklist_addr,
+//                          chunk_start, chunk_end, output_addr }
+// Layout: 7 × i64 at offsets 0, 8, 16, 24, 32, 40, 48.
+// Allocated via alloc(56), populated via ptr_write_i64.
+fn pack_worker_arg(
+    ctx_addr: u64, lower_addr: u64, typeck_addr: u64,
+    worklist_addr: u64, start: usize, end: usize, output_addr: u64,
+) -> u64 {
+    let buf: u64 = alloc(56);
+    ptr_write_i64(buf, ctx_addr as i64);
+    ptr_write_i64(buf + 8, lower_addr as i64);
+    ptr_write_i64(buf + 16, typeck_addr as i64);
+    ptr_write_i64(buf + 24, worklist_addr as i64);
+    ptr_write_i64(buf + 32, start as i64);
+    ptr_write_i64(buf + 40, end as i64);
+    ptr_write_i64(buf + 48, output_addr as i64);
+    buf
 }
 
 /// Worker function for parallel codegen threads.
-/// Receives a ThreadCodegenArg via u64 address, processes its chunk of the
+/// Receives packed args via u64 address (7 × i64), processes its chunk of the
 /// worklist (MIR lowering + codegen), and writes IR to its output String.
+///
+/// Thread safety: alloc bypass must be active before spawning. Workers use
+/// heap-only allocation (no regions) — the region system is not thread-safe.
+/// The type-to-LLVM cache is disabled (fn_temp_region=0) which adds minor
+/// overhead but avoids region stack corruption.
 fn codegen_thread_worker(arg: u64) -> u64 {
-    let targ: &ThreadCodegenArg = @unsafe { (arg as usize as *const ThreadCodegenArg) as &ThreadCodegenArg };
-    let ctx: &mut codegen_ctx.CodegenCtx = @unsafe { (targ.worker_ctx_addr as usize as *mut codegen_ctx.CodegenCtx) as &mut codegen_ctx.CodegenCtx };
-    let lower: &hir_lower_ctx.LowerResult = @unsafe { (targ.lower_result_addr as usize as *const hir_lower_ctx.LowerResult) as &hir_lower_ctx.LowerResult };
-    let typeck: &typeck_driver.TypeCheckResult = @unsafe { (targ.typeck_result_addr as usize as *const typeck_driver.TypeCheckResult) as &typeck_driver.TypeCheckResult };
-    let wl: &CodegenWorkList = @unsafe { (targ.worklist_addr as usize as *const CodegenWorkList) as &CodegenWorkList };
-    let output: &mut String = @unsafe { (targ.output_ir_addr as usize as *mut String) as &mut String };
+    // Unpack args from raw memory: 7 × i64 at offsets 0..48.
+    let ctx_addr: u64 = ptr_read_i64(arg) as u64;
+    let lower_addr: u64 = ptr_read_i64(arg + 8) as u64;
+    let typeck_addr: u64 = ptr_read_i64(arg + 16) as u64;
+    let wl_addr: u64 = ptr_read_i64(arg + 24) as u64;
+    let chunk_start: usize = ptr_read_i64(arg + 32) as usize;
+    let chunk_end: usize = ptr_read_i64(arg + 40) as usize;
+    let output_addr: u64 = ptr_read_i64(arg + 48) as u64;
 
-    // Per-thread codegen region: holds codegen temporaries + ctx growth.
-    // Thread-local since regions use thread-local stacks.
-    let thread_codegen_region = region_create(33554432, 17179869184);
-    region_activate(thread_codegen_region);
+    let ctx: &mut codegen_ctx.CodegenCtx = @unsafe { (ctx_addr as usize as *mut codegen_ctx.CodegenCtx) as &mut codegen_ctx.CodegenCtx };
+    let lower: &hir_lower_ctx.LowerResult = @unsafe { (lower_addr as usize as *const hir_lower_ctx.LowerResult) as &hir_lower_ctx.LowerResult };
+    let typeck: &typeck_driver.TypeCheckResult = @unsafe { (typeck_addr as usize as *const typeck_driver.TypeCheckResult) as &typeck_driver.TypeCheckResult };
+    let wl: &CodegenWorkList = @unsafe { (wl_addr as usize as *const CodegenWorkList) as &CodegenWorkList };
+    let output: &mut String = @unsafe { (output_addr as usize as *mut String) as &mut String };
 
-    // Shared MIR region — created once, reset between functions.
-    // Avoids mmap/munmap cycling that causes memory layout instability.
-    let mir_region = region_create(4194304, 8589934592);
+    // No regions: bypass flag ensures all allocations go to heap (thread-safe).
+    // fn_temp_region = 0 disables the type-to-LLVM cache. Per-function memory
+    // is not reclaimed (accumulates on heap) — acceptable for the parallel phase.
 
-    // Per-function temp region for codegen temporaries (output buffer, local maps).
-    // Reset after each function to reclaim memory that would otherwise accumulate
-    // in thread_codegen_region. String table allocations bypass this region
-    // (see add_string_constant) so they persist across functions.
-    let fn_temp_region = region_create(2097152, 4294967296);
+    set_alloc_bypass_tracking(1);
 
-    let mut i: usize = targ.chunk_start;
-    while i < targ.chunk_end {
+    // Per-worker MIR + temp regions. Safe for single-worker mode.
+    // For multi-worker, these cause races on the global region stack, but
+    // the bypass flag ensures allocations bypass the region dispatch.
+    let worker_mir_region = region_create(4194304, 8589934592);
+    let worker_fn_temp_region = region_create(2097152, 4294967296);
+
+    let mut i: usize = chunk_start;
+    while i < chunk_end {
+        if i % 100 == 0 {
+            eprint_str("\n  [worker fn ");
+            eprint_str(int_to_string(i as i32));
+            eprint_str("/");
+            eprint_str(int_to_string(chunk_end as i32));
+            eprint_str("]");
+        }
         let work = &wl.items[i];
         let body_entry = &lower.bodies[work.body_idx];
         let hir_body = &body_entry.body;
 
-        // Activate per-function MIR region on top of thread_codegen_region.
-        region_activate(mir_region);
-
-        // Use typeck_def_id for MIR lowering — this matches the key typeck
-        // used for method/field resolutions (important for handler op bodies
-        // where def_id is a synthetic unique ID but typeck used op_def_id).
+        region_activate(worker_mir_region);
         let mut mir_result = mir_lower.lower_body(
             work.typeck_def_id,
             hir_body,
@@ -3471,22 +3483,12 @@ fn codegen_thread_worker(arg: u64) -> u64 {
             &typeck.coercion_entries,
         );
 
-        // Override MIR body def_id for handler op bodies (see single-thread path).
         if work.def_id.index != work.typeck_def_id.index {
             mir_result.body.def_id = work.def_id;
         }
 
-        // Pop mir_region — thread_codegen_region becomes active.
+        // Pop MIR region — codegen reads MIR body (still valid) from here.
         region_deactivate();
-
-        // Report MIR lowering errors (non-fatal in streaming mode — continue to codegen)
-        if mir_result.errors.len() > 0 {
-            for mei in 0usize..mir_result.errors.len() {
-                eprint_str("MIR lowering error: ");
-                eprint_str(mir_result.errors[mei].message.as_str());
-                eprint_str("\n");
-            }
-        }
 
         // Set up call remaps for trait default methods
         ctx.call_remaps = find_call_remaps_for_def(
@@ -3494,9 +3496,6 @@ fn codegen_thread_worker(arg: u64) -> u64 {
             work.def_id.index,
         );
 
-        // Set handler op state flags if needed.
-        // Only set handler_op_state_local=1 when the handler has state fields.
-        // For stateless handlers, op params start at MIR local 1 (not a state ptr).
         let is_hop = ctx.is_handler_op_body(work.def_id.index);
         if is_hop {
             let hop_state_count = ctx.handler_op_state_count(work.def_id.index);
@@ -3507,36 +3506,31 @@ fn codegen_thread_worker(arg: u64) -> u64 {
             ctx.is_handler_op = true;
         }
 
-        // Activate temp region for codegen temporaries (local maps, IR fragments).
-        // add_string_constant deactivates this to allocate in thread_codegen_region.
-        region_activate(fn_temp_region);
-        ctx.fn_temp_region = fn_temp_region;
-
-        // Codegen (fn_temp_region active — temporaries scoped to this function)
+        // Activate temp region for codegen temporaries
+        region_activate(worker_fn_temp_region);
+        ctx.fn_temp_region = worker_fn_temp_region;
         let mc: u32 = lower.module_names.len() as u32;
         let fn_ir = codegen.generate_function_with_ctx(ctx, &mir_result.body, work.fn_name.as_str(), work.module_index, mc);
 
-        // Deactivate temp region BEFORE appending to output String
-        // (output lives in thread_codegen_region, must not be freed on reset)
+        // Deactivate temp region before appending to output
         ctx.fn_temp_region = 0 as u64;
         region_deactivate();
         output.push_str(fn_ir.as_str());
 
-        // Generate closure and inline handler bodies discovered during MIR lowering
+        // Closures and inline handler bodies
         let mut cli: usize = 0;
         while cli < mir_result.closure_names.len() && cli < mir_result.closure_mir.len() {
             let cname = &mir_result.closure_names[cli];
             let cbody = &mir_result.closure_mir[cli];
 
-            // Check if this closure body is an inline handler op
             let is_inline_hop = cli < mir_result.closure_is_handler_op.len()
                 && mir_result.closure_is_handler_op[cli];
             if is_inline_hop {
                 ctx.is_handler_op = true;
             }
 
-            region_activate(fn_temp_region);
-            ctx.fn_temp_region = fn_temp_region;
+            region_activate(worker_fn_temp_region);
+            ctx.fn_temp_region = worker_fn_temp_region;
             let closure_ir = codegen.generate_function_with_ctx(ctx, cbody, cname.as_str(), work.module_index, mc);
             ctx.fn_temp_region = 0 as u64;
             region_deactivate();
@@ -3549,29 +3543,22 @@ fn codegen_thread_worker(arg: u64) -> u64 {
             cli += 1;
         }
 
-        // Reset temp + MIR regions — reclaim per-function temporaries
-        region_reset(fn_temp_region);
-        region_reset(mir_region);
+        // Reset regions to reclaim per-function temporaries
+        region_reset(worker_fn_temp_region);
+        region_reset(worker_mir_region);
 
-        // Clear handler op state flags
         if is_hop {
             ctx.handler_op_state_local = -1;
             ctx.handler_op_state_field_count = 0;
             ctx.is_handler_op = false;
         }
-        // Clear call remaps
         ctx.call_remaps = Vec.new();
 
         i += 1;
     }
 
-    region_destroy(fn_temp_region);
-
-    // Destroy MIR region after all functions processed
-    region_destroy(mir_region);
-
-    region_deactivate();
-    region_destroy(thread_codegen_region);
+    region_destroy(worker_fn_temp_region);
+    region_destroy(worker_mir_region);
     0
 }
 
@@ -3609,6 +3596,189 @@ fn codegen_pass2(
             fn_temp_region: 0 as u64,
         };
     }
+
+    // ================================================================
+    // Parallel codegen path: use worker threads for large, non-incremental
+    // builds without const/type generics. Falls through to sequential path
+    // when conditions aren't met.
+    // ================================================================
+    let has_generics = has_const_generics || type_generic_fn_set.len() > 0;
+    // Parallel codegen: infrastructure in place but disabled pending two fixes:
+    // 1. bypass alloc realloc corruption (malloc_usable_size usage in blood_realloc bypass)
+    // 2. Generated IR value reference error (undefined %tmpN in some functions)
+    // Single-worker mode without bypass works (completes all functions).
+    // Enable by changing false to: total_items > 200
+    let use_parallel = false && total_items > 200 && !has_generics
+        && skip_modules.len() == 0 && !args.dump_mir && !args.validate_mir
+        && !args.alloc_profile;
+    if use_parallel {
+        let num_workers: usize = 1;
+        let chunk_size: usize = total_items / num_workers;
+
+        eprint_str("\n  [parallel codegen: ");
+        eprint_str(int_to_string(num_workers as i32));
+        eprint_str(" workers, ");
+        eprint_str(int_to_string(total_items as i32));
+        eprint_str(" fns]");
+
+        let t_parallel_start = blood_clock_millis();
+
+        // Pre-warm MIR lowering caches by processing the first function on
+        // the main thread. The global CACHED_METHOD_HASH and CACHED_FIELD_HASH
+        // are lazily initialized on first use — concurrent initialization from
+        // multiple workers causes a race (partial write visible to other threads).
+        {
+            let first_work = &worklist.items[0];
+            let first_body = &lower_result.bodies[first_work.body_idx];
+            let mir_region_warm = region_create(4194304, 8589934592);
+            region_activate(mir_region_warm);
+            let _warmup = mir_lower.lower_body(
+                first_work.typeck_def_id,
+                &first_body.body,
+                type_intern.TyId.new(first_work.return_ty.index),
+                first_work.span,
+                &typeck_result.subst_table,
+                &typeck_result.method_resolutions,
+                &typeck_result.field_resolutions,
+                &typeck_result.coercion_entries,
+            );
+            region_deactivate();
+            region_destroy(mir_region_warm);
+        }
+
+        // Get addresses of shared read-only data BEFORE deactivating the region.
+        let lower_addr: u64 = @unsafe { lower_result as *const hir_lower_ctx.LowerResult as usize } as u64;
+        let typeck_addr: u64 = @unsafe { typeck_result as *const typeck_driver.TypeCheckResult as usize } as u64;
+        let wl_addr: u64 = @unsafe { worklist as *const CodegenWorkList as usize } as u64;
+
+        // Deactivate codegen_region and enable bypass BEFORE creating worker ctxs.
+        // This ensures create_worker_ctx allocates on the HEAP (not the region).
+        // Region-allocated buffers cause UB when workers' bypass realloc calls
+        // malloc_usable_size on them.
+        let saved_codegen_region = region_deactivate_get();
+        set_alloc_bypass_tracking(1);
+
+        // Create per-worker CodegenCtx and output buffers.
+        // All allocations go to heap (bypass active, no region on stack).
+        let mut worker_ctxs: Vec<codegen_ctx.CodegenCtx> = Vec.new();
+        let mut worker_outputs: Vec<String> = Vec.new();
+        for w in 0usize..num_workers {
+            let mut wctx = ctx.create_worker_ctx();
+            wctx.string_counter = (w * 100000) as u32;
+            worker_ctxs.push(wctx);
+            worker_outputs.push(String.new());
+        }
+
+        // Pack args and spawn worker threads.
+        // Worker ctxs and outputs are in Vecs — get element addresses via &mut vec[i].
+        let mut handles: Vec<u64> = Vec.new();
+        let mut arg_bufs: Vec<u64> = Vec.new();
+        for w in 0usize..num_workers {
+            let start = w * chunk_size;
+            let end = if w == num_workers - 1 { total_items } else { (w + 1) * chunk_size };
+            let ctx_addr: u64 = @unsafe { &mut worker_ctxs[w] as *mut codegen_ctx.CodegenCtx as usize } as u64;
+            let out_addr: u64 = @unsafe { &mut worker_outputs[w] as *mut String as usize } as u64;
+            let arg_buf = pack_worker_arg(ctx_addr, lower_addr, typeck_addr, wl_addr, start, end, out_addr);
+            arg_bufs.push(arg_buf);
+            let fn_ptr: u64 = @unsafe { codegen_thread_worker as u64 };
+            let handle = thread_spawn(fn_ptr, arg_buf);
+            handles.push(handle);
+        }
+
+        // Join all workers
+        for w in 0usize..num_workers {
+            thread_join(handles[w]);
+        }
+
+        // Disable alloc bypass, re-activate codegen region, free arg buffers
+        set_alloc_bypass_tracking(0);
+        region_activate(saved_codegen_region);
+        for w in 0usize..num_workers {
+            free(arg_bufs[w]);
+        }
+
+        let t_parallel_end = blood_clock_millis();
+        eprint_str("\n  [parallel codegen done: ");
+        eprint_str(int_to_string((t_parallel_end - t_parallel_start) as i32));
+        eprint_str("ms]");
+
+        // Merge: write all worker outputs to the main output file (in order)
+        for w in 0usize..num_workers {
+            file_append_string(output_path, worker_outputs[w].as_str());
+        }
+
+        // Merge worker string tables into the main ctx.
+        // Each worker has its own string_table with non-overlapping labels.
+        for w in 0usize..num_workers {
+            let wctx = &worker_ctxs[w];
+            for si in 0usize..wctx.string_table.len() {
+                let entry = &wctx.string_table[si];
+                // Add to main ctx with the worker's label (already unique)
+                let idx = ctx.string_table.len() as u32;
+                ctx.string_table.push(codegen_ctx.StringConstant {
+                    label: main_helpers.clone_string(&entry.label),
+                    content: main_helpers.clone_string(&entry.content),
+                    length: entry.length,
+                });
+                // Don't bother updating string_table_hash — it's only used
+                // for dedup during codegen, which is done.
+            }
+        }
+        // Update string_counter to be past all worker ranges
+        ctx.string_counter = (num_workers * 100000) as u32;
+
+        // Merge fn_ptr_wrapper_defs from workers
+        for w in 0usize..num_workers {
+            let wctx = &worker_ctxs[w];
+            for fi in 0usize..wctx.fn_ptr_wrapper_defs.len() {
+                ctx.fn_ptr_wrapper_defs.push(main_helpers.clone_string(&wctx.fn_ptr_wrapper_defs[fi]));
+            }
+        }
+
+        // Merge inline_stubs from workers
+        for w in 0usize..num_workers {
+            let wctx = &worker_ctxs[w];
+            for si in 0usize..wctx.inline_stubs.len() {
+                ctx.inline_stubs.push(main_helpers.clone_string(&wctx.inline_stubs[si]));
+            }
+        }
+
+        // Merge fn_signatures from workers
+        for w in 0usize..num_workers {
+            let wctx = &worker_ctxs[w];
+            for fi in 0usize..wctx.fn_signatures.len() {
+                let sig = &wctx.fn_signatures[fi];
+                let mut cloned_params: Vec<String> = Vec.new();
+                for pi in 0usize..sig.param_types.len() {
+                    cloned_params.push(main_helpers.clone_string(&sig.param_types[pi]));
+                }
+                ctx.register_fn_signature(
+                    sig.def_id,
+                    cloned_params,
+                    main_helpers.clone_string(&sig.return_type),
+                );
+            }
+        }
+
+        // Print perf summary (parallel replaces the per-phase breakdown)
+        eprint_str("\n  [codegen pass2] functions=");
+        eprint_str(int_to_string(total_items as i32));
+        eprint_str(" parallel=");
+        eprint_str(int_to_string(num_workers as i32));
+        eprint_str(" wall_ms=");
+        eprint_str(int_to_string((t_parallel_end - t_parallel_start) as i32));
+        eprint_str("\n");
+
+        return CodegenPass2Result {
+            mono_requests: all_mono_requests,
+            next_mono_def_id: next_mono_def_id,
+            fn_temp_region: 0 as u64,
+        };
+    }
+
+    // ================================================================
+    // Sequential codegen path (original)
+    // ================================================================
 
     // Shared MIR region — created once, reset between functions.
     // Avoids mmap/munmap cycling that causes memory layout instability.

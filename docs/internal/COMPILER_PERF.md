@@ -297,15 +297,33 @@ extracted. Remaining targets (with the measurements that found them):
 | `codegen fn allocas_ms` | ~9 s | `is_always_stack_type_id` + `is_signed_id` are TyId-native. |
 | llc-18 | ~18 s | External tool; only reducible via smaller IR. |
 
-The single biggest architectural opportunity is **parallel codegen pass2**:
+**Parallel codegen pass2** — partially implemented (2026-04-09 session):
 
-- `CodegenCtx.create_worker_ctx` already exists at `codegen_ctx.blood:2446`
-  but is never called
-- `blood_thread_spawn` is declared in generated IR but **not implemented
-  in the runtime** — must be added before parallel codegen can ship
-- The type interner is mutable during codegen, so parallelism requires
-  either per-worker clones or a mutex (or refactoring codegen to use
-  `type_to_ty_id_readonly` throughout)
-- Estimated payoff: 30-50% of the 90 s codegen bucket, 25-45 s wall time
+Infrastructure in place but disabled (main.blood `use_parallel = false`):
 
-Reserve its own dedicated session.
+- `blood_thread_spawn`/`blood_thread_join` — already working, golden test passes
+- Type interner — already read-only during codegen (no `intern()` calls)
+- `alloc bypass tracking` — runtime flag that makes alloc/free/realloc skip the
+  gen tracking hash table (not thread-safe). Bypass checks added to all entry
+  points: `dispatch_alloc_or_abort`, `blood_free`, `blood_free_simple`,
+  `blood_realloc`, `blood_lazy_register_gen`, `blood_register_allocation`,
+  `blood_unregister_allocation`, `blood_validate_generation`, etc.
+- `codegen_thread_worker` — worker function that processes a chunk of functions
+  (MIR lower + codegen), using packed args via alloc/ptr_write raw memory.
+- `codegen_pass2` parallel dispatch — creates N worker ctxs, packs args,
+  spawns threads, joins, merges (string tables, fn_ptr_wrappers, inline_stubs,
+  fn_signatures).
+
+**Remaining blockers:**
+
+1. **Bypass realloc corruption** — `malloc_usable_size` in the bypass realloc
+   path causes heap metadata corruption ("corrupted size vs. prev_size").
+   Crashes around function 2400 out of 2598 with 1 or 4 workers. Without
+   bypass (normal alloc + regions), all 2598 functions complete. Fix: either
+   debug `malloc_usable_size` usage or replace with a size-tracking approach.
+
+2. **Generated IR value error** — the parallel path produces `undefined value
+   '%tmpN'` in some functions. Likely related to worker ctx state (value_counter
+   or string constant numbering). Needs investigation.
+
+Estimated payoff once enabled: codegen 38s → ~10s (4 workers), wall 164s → ~135s.

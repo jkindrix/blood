@@ -48,6 +48,14 @@ pub fn sys_free(ptr: *mut u8) {
     LibcFree.__libc_free(ptr);
 }
 
+bridge "C" LibcAllocInfo {
+    fn malloc_usable_size(ptr: *const u8) -> u64;
+}
+
+pub fn sys_malloc_usable_size(ptr: *const u8) -> u64 {
+    LibcAllocInfo.malloc_usable_size(ptr)
+}
+
 bridge "C" LibcStr {
     fn strlen(s: *const u8) -> u64;
     fn strtod(nptr: *const u8, endptr: *mut u8) -> f64;

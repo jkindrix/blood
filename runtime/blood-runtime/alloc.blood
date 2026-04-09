@@ -10,6 +10,22 @@ mod libc;
 mod print;
 mod rt_panic;
 
+// Thread-safety bypass flag. When set, alloc/free/realloc skip the gen
+// tracking hash table (which is not thread-safe). Used during parallel
+// codegen where worker threads allocate from the heap but don't need
+// gen tracking. The main thread sets this before spawning workers and
+// clears it after joining.
+static mut ALLOC_BYPASS_TRACKING: i32 = 0;
+
+#[export_name = "blood_set_alloc_bypass_tracking"]
+pub fn rt_set_alloc_bypass_tracking(val: i32) {
+    @unsafe { ALLOC_BYPASS_TRACKING = val; }
+}
+
+pub fn is_bypass_tracking() -> bool {
+    @unsafe { ALLOC_BYPASS_TRACKING != 0 }
+}
+
 // Helper: i64 address to *mut u8
 pub fn addr_to_ptr(addr: i64) -> *mut u8 {
     @unsafe { (addr as usize) as *mut u8 }
@@ -332,11 +348,13 @@ fn ht_grow() {
 // source: 0 = calloc (safe to __libc_free), 1 = region (freed by region destroy/reset)
 #[export_name = "blood_register_allocation"]
 pub fn rt_blood_register_allocation(addr: i64, size: i64) -> i32 {
+    @unsafe { if ALLOC_BYPASS_TRACKING != 0 { return 0; } }
     rt_blood_register_allocation_tagged(addr, size, 0)
 }
 
 // Register with explicit source tag
 pub fn rt_blood_register_allocation_tagged(addr: i64, size: i64, source: i32) -> i32 {
+    @unsafe { if ALLOC_BYPASS_TRACKING != 0 { return 0; } }
     ensure_registry();
     @unsafe {
         // Grow at 75% load
@@ -381,6 +399,7 @@ pub fn is_heap_allocated(addr: i64) -> bool {
 #[export_name = "blood_unregister_allocation"]
 pub fn rt_blood_unregister_allocation(addr: i64) {
     @unsafe {
+        if ALLOC_BYPASS_TRACKING != 0 { return; }
         let idx: i64 = ht_find(addr);
         if idx >= 0 {
             let g: i32 = ht_read_gen(idx);
@@ -403,6 +422,7 @@ pub fn rt_blood_unregister_allocation(addr: i64) {
 #[export_name = "blood_validate_generation"]
 pub fn rt_blood_validate_generation(addr: i64, expected: i32) -> i32 {
     @unsafe {
+        if ALLOC_BYPASS_TRACKING != 0 { return 1; } // always valid in bypass mode
         // Check per-allocation hash table first (for heap allocations)
         let idx: i64 = ht_find(addr);
         if idx >= 0 {
@@ -425,6 +445,7 @@ pub fn rt_blood_validate_generation(addr: i64, expected: i32) -> i32 {
 #[export_name = "blood_get_generation"]
 pub fn rt_blood_get_generation(addr: i64) -> i32 {
     @unsafe {
+        if ALLOC_BYPASS_TRACKING != 0 { return 0; }
         let idx: i64 = ht_find(addr);
         if idx >= 0 {
             return ht_read_gen(idx);
@@ -443,6 +464,7 @@ pub fn rt_blood_get_generation(addr: i64) -> i32 {
 /// references are correctly detected as stale.
 #[export_name = "blood_lazy_register_gen"]
 pub fn rt_blood_lazy_register_gen(addr: i64) -> i32 {
+    @unsafe { if ALLOC_BYPASS_TRACKING != 0 { return 0; } }
     ensure_registry();
     @unsafe {
         // Check region first (no registration needed)
@@ -463,6 +485,7 @@ pub fn rt_blood_lazy_register_gen(addr: i64) -> i32 {
 #[export_name = "blood_increment_generation"]
 pub fn rt_blood_increment_generation(ptr: *mut u8) {
     @unsafe {
+        if ALLOC_BYPASS_TRACKING != 0 { return; }
         let addr: i64 = ptr_to_addr(ptr);
         let idx: i64 = ht_find(addr);
         if idx >= 0 {
@@ -561,6 +584,26 @@ pub fn rt_blood_alloc_simple(size: i64) -> i64 {
 #[export_name = "blood_realloc"]
 pub fn rt_blood_realloc(old_addr: i64, new_size: i64) -> i64 {
     @unsafe {
+        // Bypass mode: skip gen table lookups (not thread-safe).
+        // Use malloc_usable_size to get old buffer size from glibc.
+        if ALLOC_BYPASS_TRACKING != 0 {
+            let new_ptr: *mut u8 = libc.sys_calloc(1, new_size as u64);
+            let new_addr: i64 = ptr_to_addr(new_ptr);
+            if new_addr == 0 {
+                rt_panic.rt_panic("realloc: out of memory");
+            }
+            if old_addr > 1 {
+                let usable: u64 = libc.sys_malloc_usable_size(addr_to_cptr(old_addr));
+                let mut copy_size: i64 = usable as i64;
+                if new_size < copy_size { copy_size = new_size; }
+                if copy_size > 0 {
+                    libc.sys_memmove(new_ptr, addr_to_cptr(old_addr), copy_size as u64);
+                }
+                libc.sys_free(addr_to_ptr(old_addr));
+            }
+            return new_addr;
+        }
+
         let new_ptr: *mut u8 = libc.sys_calloc(1, new_size as u64);
         let new_addr: i64 = ptr_to_addr(new_ptr);
         if new_addr == 0 {
@@ -601,6 +644,10 @@ pub fn rt_blood_realloc(old_addr: i64, new_size: i64) -> i64 {
 #[export_name = "blood_free"]
 pub fn rt_blood_free(addr: i64, size: i64) {
     @unsafe {
+        if ALLOC_BYPASS_TRACKING != 0 {
+            if addr > 1 { libc.sys_free(addr_to_ptr(addr)); }
+            return;
+        }
         let heap: bool = is_heap_allocated(addr);
         rt_blood_unregister_allocation(addr);
         if heap {
@@ -615,6 +662,10 @@ pub fn rt_blood_free(addr: i64, size: i64) {
 pub fn rt_blood_free_simple(addr: i64) {
     @unsafe {
         if addr <= 1 { return; }
+        if ALLOC_BYPASS_TRACKING != 0 {
+            libc.sys_free(addr_to_ptr(addr));
+            return;
+        }
         let reg_idx: i64 = ht_find(addr);
         if reg_idx >= 0 {
             // Registered address — check source tag

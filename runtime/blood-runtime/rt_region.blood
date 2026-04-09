@@ -434,6 +434,14 @@ pub fn rt_blood_system_alloc_live_bytes() -> i64 {
 #[export_name = "blood_alloc_or_abort"]
 pub fn dispatch_alloc_or_abort(size: i64, out_gen: *mut i32) -> i64 {
     @unsafe {
+        // Bypass mode: thread-safe heap allocation, no gen tracking.
+        if alloc.is_bypass_tracking() {
+            let ptr: *mut u8 = libc.sys_calloc(1, size as u64);
+            let addr: i64 = alloc.ptr_to_addr(ptr);
+            if addr == 0 { rt_panic.rt_panic("alloc: out of memory"); }
+            *out_gen = 0;
+            return addr;
+        }
         let active_rid: i64 = rt_blood_region_active_id();
         if active_rid > 0 {
             let addr: i64 = rt_blood_region_alloc(active_rid, size, 16);
