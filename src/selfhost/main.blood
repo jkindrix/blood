@@ -31,6 +31,7 @@ mod mir_lower;
 mod mir_lower_ctx;
 mod codegen;
 mod codegen_stmt;
+mod codegen_expr;
 mod codegen_ctx;
 mod codegen_streaming;
 mod codegen_types;
@@ -4209,6 +4210,31 @@ fn codegen_pass2(
     eprint_str(int_to_string(codegen_stmt.stmt_t_assign_type_ms() as i32));
     eprint_str(" rvalue_ms=");
     eprint_str(int_to_string(codegen_stmt.stmt_t_assign_rvalue_ms() as i32));
+    eprint_str("\n");
+
+    // Per-Rvalue-kind breakdown. The Assign rvalue_ms bucket is the single
+    // biggest line in codegen pass2; this decomposes it by kind so future
+    // sessions can target the slowest arm directly.
+    eprint_str("  [rvalue] use=");
+    eprint_str(int_to_string(codegen_expr.rv_t_use_ms() as i32));
+    eprint_str("ms/");
+    eprint_str(int_to_string(codegen_expr.rv_c_use() as i32));
+    eprint_str(" ref=");
+    eprint_str(int_to_string(codegen_expr.rv_t_ref_ms() as i32));
+    eprint_str("ms/");
+    eprint_str(int_to_string(codegen_expr.rv_c_ref() as i32));
+    eprint_str(" binop=");
+    eprint_str(int_to_string(codegen_expr.rv_t_binop_ms() as i32));
+    eprint_str("ms/");
+    eprint_str(int_to_string(codegen_expr.rv_c_binop() as i32));
+    eprint_str(" agg=");
+    eprint_str(int_to_string(codegen_expr.rv_t_agg_ms() as i32));
+    eprint_str("ms/");
+    eprint_str(int_to_string(codegen_expr.rv_c_agg() as i32));
+    eprint_str(" cast=");
+    eprint_str(int_to_string(codegen_expr.rv_t_cast_ms() as i32));
+    eprint_str("ms/");
+    eprint_str(int_to_string(codegen_expr.rv_c_cast() as i32));
     eprint_str("\n");
 
     if skipped_count > 0 {

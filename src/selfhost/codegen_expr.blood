@@ -18,6 +18,35 @@ mod codegen_place;
 mod codegen_size;
 mod type_intern;
 
+// Per-Rvalue-kind timers for emit_rvalue. emit_rvalue dominates the Assign
+// arm (~13s of blocks_ms). Knowing which Rvalue kinds are hottest lets
+// future sessions target the worst offender directly.
+static mut RV_T_USE_MS: u64 = 0;
+static mut RV_T_REF_MS: u64 = 0;
+static mut RV_T_BINOP_MS: u64 = 0;
+static mut RV_T_AGG_MS: u64 = 0;
+static mut RV_T_CAST_MS: u64 = 0;
+static mut RV_T_OTHER_MS: u64 = 0;
+static mut RV_C_USE: u64 = 0;
+static mut RV_C_REF: u64 = 0;
+static mut RV_C_BINOP: u64 = 0;
+static mut RV_C_AGG: u64 = 0;
+static mut RV_C_CAST: u64 = 0;
+static mut RV_C_OTHER: u64 = 0;
+
+pub fn rv_t_use_ms() -> u64 { @unsafe { RV_T_USE_MS } }
+pub fn rv_t_ref_ms() -> u64 { @unsafe { RV_T_REF_MS } }
+pub fn rv_t_binop_ms() -> u64 { @unsafe { RV_T_BINOP_MS } }
+pub fn rv_t_agg_ms() -> u64 { @unsafe { RV_T_AGG_MS } }
+pub fn rv_t_cast_ms() -> u64 { @unsafe { RV_T_CAST_MS } }
+pub fn rv_t_other_ms() -> u64 { @unsafe { RV_T_OTHER_MS } }
+pub fn rv_c_use() -> u64 { @unsafe { RV_C_USE } }
+pub fn rv_c_ref() -> u64 { @unsafe { RV_C_REF } }
+pub fn rv_c_binop() -> u64 { @unsafe { RV_C_BINOP } }
+pub fn rv_c_agg() -> u64 { @unsafe { RV_C_AGG } }
+pub fn rv_c_cast() -> u64 { @unsafe { RV_C_CAST } }
+pub fn rv_c_other() -> u64 { @unsafe { RV_C_OTHER } }
+
 // ============================================================
 // Operand Codegen
 // ============================================================
@@ -320,13 +349,18 @@ pub fn emit_rvalue(
 ) {
     match rvalue {
         &mir_types.Rvalue.Use(ref operand) => {
+            let t_arm = blood_clock_millis();
+            @unsafe { RV_C_USE += 1; }
             let (val, ty) = emit_operand_typed(ctx, operand);
             // Skip store for unit type {} — it has zero size in LLVM
             if !str_eq(ty.as_str(), "{}") {
                 ctx.emit_store(ty.as_str(), val.as_str(), dest);
             }
+            @unsafe { RV_T_USE_MS += blood_clock_millis() - t_arm; }
         }
         &mir_types.Rvalue.Ref { ref place, mutable: _ } => {
+            let t_arm = blood_clock_millis();
+            @unsafe { RV_C_REF += 1; }
             let addr = codegen_place.emit_place_data_ptr(ctx, place);
             // Create generational fat reference: { ptr, gen:i32 }
             // %tmp1 = insertvalue { ptr, i32 } zeroinitializer, ptr %addr, 0
@@ -435,8 +469,11 @@ pub fn emit_rvalue(
             }
             // store { ptr, i32 } %tmp2, ptr %dest
             ctx.emit_store_cg("{ ptr, i32 }", &tmp2, dest);
+            @unsafe { RV_T_REF_MS += blood_clock_millis() - t_arm; }
         }
         &mir_types.Rvalue.BinaryOp { operator: ref bin_op, ref left, ref right } => {
+            let t_arm = blood_clock_millis();
+            @unsafe { RV_C_BINOP += 1; }
             // Get typed operands
             let (left_val, left_ty) = emit_operand_typed(ctx, left);
             let (right_val, right_ty) = emit_operand_typed(ctx, right);
@@ -473,6 +510,7 @@ pub fn emit_rvalue(
             } else {
                 ctx.emit_store_cg(left_ty.as_str(), &result, dest);
             }
+            @unsafe { RV_T_BINOP_MS += blood_clock_millis() - t_arm; }
         }
         &mir_types.Rvalue.UnaryOp { operator: ref un_op, ref operand } => {
             let (val, ty) = emit_operand_typed(ctx, operand);
@@ -565,6 +603,8 @@ pub fn emit_rvalue(
             }
         }
         &mir_types.Rvalue.Cast { ref operand, ref target_ty } => {
+            let t_arm = blood_clock_millis();
+            @unsafe { RV_C_CAST += 1; }
             // Special case: FnDef constant cast to integer. Use the raw function
             // pointer (not the fat-pointer wrapper) so that `fn as u64` gives
             // the direct function address expected by low-level APIs like thread_spawn.
@@ -769,9 +809,13 @@ pub fn emit_rvalue(
                 };
                 ctx.emit_store_cg(tgt_llvm.as_str(), &result, dest);
             }
+            @unsafe { RV_T_CAST_MS += blood_clock_millis() - t_arm; }
         }
         &mir_types.Rvalue.Aggregate { ref kind, ref operands } => {
+            let t_arm = blood_clock_millis();
+            @unsafe { RV_C_AGG += 1; }
             emit_aggregate(ctx, dest, dest_type, kind, operands);
+            @unsafe { RV_T_AGG_MS += blood_clock_millis() - t_arm; }
         }
         &mir_types.Rvalue.Len(ref place) => {
             // For slices - load the length field
