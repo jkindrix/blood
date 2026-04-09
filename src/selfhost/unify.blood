@@ -1253,23 +1253,22 @@ impl SubstTable {
 
     /// Looks up a type variable (returns TyId, zero copy).
     pub fn lookup_ty_id(self: &Self, var_id: hir_def.TyVarId) -> Option<type_intern.TyId> {
-        // O(1) hash lookup
+        // ty_hash is authoritative — both add_ty_subst_id and clone_subst_table
+        // update the hash on every push. HashMapU64U32 uses open addressing,
+        // so true hash collisions are handled inside .get(). A miss means the
+        // var is not bound. This is called from every apply_substs Infer chase
+        // so any per-call overhead matters.
         match self.ty_hash.get(var_id.index as u64) {
             Option.Some(vec_idx) => {
                 let idx = vec_idx as usize;
                 if idx < self.ty_substs.len() {
-                    return Option.Some(type_intern.TyId.new(self.ty_substs[idx].ty.index));
+                    Option.Some(type_intern.TyId.new(self.ty_substs[idx].ty.index))
+                } else {
+                    Option.None
                 }
             }
-            Option.None => {}
+            Option.None => Option.None,
         }
-        // Fallback to linear scan for collision handling
-        for i in 0usize..self.ty_substs.len() {
-            if self.ty_substs[i].var_id.index == var_id.index {
-                return Some(type_intern.TyId.new(self.ty_substs[i].ty.index));
-            }
-        }
-        Option.None
     }
 
     /// Adds an effect row variable substitution (EffectRow-based, converts internally).
