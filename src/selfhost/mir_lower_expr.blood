@@ -381,7 +381,7 @@ fn lower_local_expr(
             match mir_local {
                 Option.Some(local) => {
                     let source_place = mir_types.Place.local(local);
-                    let operand = mir_lower_util.operand_from_place(source_place, ty);
+                    let operand = mir_lower_util.operand_from_place(source_place);
                     ctx.emit_assign(place, mir_types.Rvalue.Use(operand), span);
                 }
                 Option.None => {
@@ -539,15 +539,11 @@ fn lower_binary_expr(
 
             match dest.as_place() {
                 Option.Some(place) => {
-                    let left_ty_hir = type_intern.ty_id_to_type(left.ty);
-                    let right_ty_hir = type_intern.ty_id_to_type(right.ty);
                     let left_operand = mir_lower_util.operand_from_place(
                         mir_types.Place.local(left_temp),
-                        &left_ty_hir,
                     );
                     let right_operand = mir_lower_util.operand_from_place(
                         mir_types.Place.local(right_temp),
-                        &right_ty_hir,
                     );
                     ctx.emit_assign(
                         place,
@@ -730,7 +726,7 @@ fn lower_unary_expr(
                         Option.Some(place) => {
                             let deref_place = mir_types.Place.local(deref_result)
                                 .project(mir_types.PlaceElem.Deref);
-                            let result_operand = mir_lower_util.operand_from_place(deref_place, ty);
+                            let result_operand = mir_lower_util.operand_from_place(deref_place);
                             ctx.emit_assign(place, mir_types.Rvalue.Use(result_operand), span);
                         }
                         Option.None => {}
@@ -745,7 +741,7 @@ fn lower_unary_expr(
                         Option.Some(place) => {
                             let deref_place = mir_types.Place.local(ptr_temp)
                                 .project(mir_types.PlaceElem.Deref);
-                            let result_operand = mir_lower_util.operand_from_place(deref_place, ty);
+                            let result_operand = mir_lower_util.operand_from_place(deref_place);
                             ctx.emit_assign(place, mir_types.Rvalue.Use(result_operand), span);
                         }
                         Option.None => {}
@@ -854,8 +850,7 @@ fn lower_simple_unary(
 
     match dest.as_place() {
         Option.Some(place) => {
-            let operand_ty_hir = type_intern.ty_id_to_type(operand.ty);
-            let result_operand = mir_lower_util.operand_from_place(mir_types.Place.local(temp), &operand_ty_hir);
+            let result_operand = mir_lower_util.operand_from_place(mir_types.Place.local(temp));
             ctx.emit_assign(
                 place,
                 mir_types.Rvalue.UnaryOp { operator: mir_op, operand: result_operand },
@@ -1273,7 +1268,7 @@ fn lower_field_expr(
         Option.Some(place) => {
             let field_place = mir_types.Place.local(base_temp)
                 .project(mir_types.PlaceElem.Field(field_idx));
-            let operand = mir_lower_util.operand_from_place(field_place, ty);
+            let operand = mir_lower_util.operand_from_place(field_place);
             ctx.emit_assign(place, mir_types.Rvalue.Use(operand), span);
         }
         Option.None => {}
@@ -1309,7 +1304,7 @@ fn lower_index_expr(
             }
             let indexed_place = base_place
                 .project(mir_types.PlaceElem.Index(idx_temp));
-            let operand = mir_lower_util.operand_from_place(indexed_place, ty);
+            let operand = mir_lower_util.operand_from_place(indexed_place);
             ctx.emit_assign(place, mir_types.Rvalue.Use(operand), span);
         }
         Option.None => {}
@@ -1666,10 +1661,8 @@ fn lower_cast_expr(
 
     match dest.as_place() {
         Option.Some(place) => {
-            let inner_ty_hir = type_intern.ty_id_to_type(inner.ty);
             let operand = mir_lower_util.operand_from_place(
                 mir_types.Place.local(temp),
-                &inner_ty_hir,
             );
             ctx.emit_assign(
                 place,
@@ -1722,8 +1715,7 @@ fn lower_assign_op_expr(
 
     // Read current value
     let current_temp = ctx.new_temp(target.ty, span);
-    let target_ty_hir = type_intern.ty_id_to_type(target.ty);
-    let current_operand = mir_lower_util.operand_from_place(target_place.clone(), &target_ty_hir);
+    let current_operand = mir_lower_util.operand_from_place(target_place.clone());
     ctx.emit_assign(
         mir_types.Place.local(current_temp),
         mir_types.Rvalue.Use(current_operand),
@@ -2227,8 +2219,7 @@ fn lower_for_iter_expr(
     let indexed_place = arr_place.project(mir_types.PlaceElem.Index(idx_local));
 
     // Emit: elem_temp = arr[idx]
-    let elem_ty_hir = type_intern.ty_id_to_type(resolved_elem_id);
-    let elem_operand = mir_lower_util.operand_from_place(indexed_place, &elem_ty_hir);
+    let elem_operand = mir_lower_util.operand_from_place(indexed_place);
     ctx.emit_assign(
         mir_types.Place.local(elem_temp),
         mir_types.Rvalue.Use(elem_operand),
@@ -2927,8 +2918,7 @@ fn lower_for_vec_iter(
         );
     } else {
     let len_place = vec_place.project(mir_types.PlaceElem.Field(1));
-    let len_hir = type_intern.ty_id_to_type(idx_ty_id);
-    let len_operand = mir_lower_util.operand_from_place(len_place, &len_hir);
+    let len_operand = mir_lower_util.operand_from_place(len_place);
     ctx.emit_assign(
         mir_types.Place.local(len_local),
         mir_types.Rvalue.Use(len_operand),
@@ -3015,8 +3005,7 @@ fn lower_for_vec_iter(
         );
     } else {
         let elem_temp = ctx.new_temp(resolved_elem_id, span);
-        let elem_ty_hir = type_intern.ty_id_to_type(resolved_elem_id);
-        let elem_operand = mir_lower_util.operand_from_place(indexed_place, &elem_ty_hir);
+        let elem_operand = mir_lower_util.operand_from_place(indexed_place);
         ctx.emit_assign(
             mir_types.Place.local(elem_temp),
             mir_types.Rvalue.Use(elem_operand),

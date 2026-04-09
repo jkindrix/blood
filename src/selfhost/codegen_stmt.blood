@@ -1808,38 +1808,6 @@ fn trim_whitespace(s: &str) -> String {
     substring(s, start, end)
 }
 
-/// Emits alloca instructions for all locals in a function.
-pub fn emit_allocas(
-    ctx: &mut codegen_ctx.CodegenCtx,
-    body: &mir_body.MirBody,
-) {
-    ctx.indent();
-    for i in 0usize..body.locals.len() {
-        let local = &body.locals[i];
-        let local_id = mir_def.MirLocalId.new(i as u32);
-        let name_cg = ctx.local_cg(local_id);
-        // Use context-aware type resolution for correct ADT alloca sizes
-        let ty = codegen_size.type_to_llvm_with_ctx_id(ctx, local.ty);
-        // Normalize void to {} for allocas (LLVM allows alloca {} but not alloca void)
-        let alloca_ty = if is_void_or_empty_type(ty.as_str()) {
-            ctx.emit_alloca_cg(&name_cg, "{}");
-            common.make_string("{}")
-        } else {
-            ctx.emit_alloca_cg(&name_cg, ty.as_str());
-            clone_string(&ty)
-        };
-        let name = ctx.local_alloca_name(local_id);
-        ctx.register_local(local_id, clone_string(&name));
-        // Register the normalized type (must match alloca type for valid load/store)
-        ctx.register_local_type(local_id, alloca_ty);
-        let local_hir_ty = type_intern.ty_id_to_type(local.ty);
-        ctx.register_local_signedness(local_id, codegen_types.is_signed(&local_hir_ty));
-        // Register HIR type for ADT layout lookups during projection codegen
-        ctx.register_local_hir_type(local_id, local.ty);
-    }
-    ctx.dedent();
-}
-
 /// Emits allocas with escape-aware allocation decisions.
 /// NoEscape locals use stack (alloca), ArgEscape use region, GlobalEscape use persistent.
 pub fn emit_allocas_with_escapes(

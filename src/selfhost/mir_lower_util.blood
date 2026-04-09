@@ -252,11 +252,17 @@ pub fn lower_literal(lit: &hir_expr.Literal, ty: &hir_ty.Type) -> mir_types.Cons
 /// Blood uses Mutable Value Semantics (copy-by-default). All place
 /// accesses produce Copy operands. Linear/affine enforcement is a
 /// separate typeck phase (typeck_linearity.blood), not a MIR concern.
-pub fn operand_from_place(place: mir_types.Place, ty: &hir_ty.Type) -> mir_types.Operand {
+///
+/// The type is not needed here — the operand carries only the place.
+/// Callers that previously computed a hir_ty.Type just to pass to
+/// this function can now skip that work entirely.
+pub fn operand_from_place(place: mir_types.Place) -> mir_types.Operand {
     mir_types.Operand.Copy(place)
 }
 
-/// Creates an operand from a place using a TyId.
+/// Creates an operand from a place. TyId-native version for callers that
+/// already have a TyId and don't want to thread a Type through.
+/// Kept for call-site symmetry; the ty_id is not used.
 pub fn operand_from_place_id(place: mir_types.Place, ty_id: type_intern.TyId) -> mir_types.Operand {
     mir_types.Operand.Copy(place)
 }

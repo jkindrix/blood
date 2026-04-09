@@ -772,7 +772,16 @@ impl MirLowerCtx {
 
     /// Looks up an array-to-slice coercion by the expression's span start.
     /// Returns the array length if a coercion was recorded for this expression.
+    ///
+    /// Perf: lookup_coercion is called once per MIR expression during
+    /// lowering (~100k calls per build). The common case is "no coercion
+    /// for this body at all" — array-to-slice coercions only appear on
+    /// function calls that pass &[T; N] to &[T]. The empty-check early
+    /// exit keeps the hot path O(1).
     pub fn lookup_coercion(self: &MirLowerCtx, span_start: usize) -> Option<u64> {
+        if self.coercion_entries.len() == 0 {
+            return Option.None;
+        }
         for i in 0usize..self.coercion_entries.len() {
             if self.coercion_entries[i].body_def_id == self.body_def_id &&
                self.coercion_entries[i].span_start == span_start {

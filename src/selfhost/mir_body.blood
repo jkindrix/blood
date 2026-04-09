@@ -188,20 +188,72 @@ impl MirBody {
     }
 
     /// Computes the predecessor map for all blocks.
+    ///
+    /// Perf: inlines the successor walk instead of calling term.successors()
+    /// (which allocates a throwaway Vec per block). For N blocks this saves
+    /// N transient Vec allocations — cheap wins compound in the mir_init
+    /// dataflow path that calls predecessors() per function.
     pub fn predecessors(self: &MirBody) -> Vec<Vec<mir_def.BasicBlockId>> {
+        let num_blocks = self.basic_blocks.len();
         let mut preds: Vec<Vec<mir_def.BasicBlockId>> = Vec.new();
-        for i in 0usize..self.basic_blocks.len() {
+        for i in 0usize..num_blocks {
             preds.push(Vec.new());
         }
 
-        for bb_idx in 0usize..self.basic_blocks.len() {
+        for bb_idx in 0usize..num_blocks {
             let block = &self.basic_blocks[bb_idx];
+            let src = mir_def.BasicBlockId.new(bb_idx as u32);
             match &block.terminator {
                 &Option.Some(ref term) => {
-                    let succs = term.successors();
-                    for j in 0usize..succs.len() {
-                        let succ_idx = succs[j].as_usize();
-                        preds[succ_idx].push(mir_def.BasicBlockId.new(bb_idx as u32));
+                    match &term.kind {
+                        &mir_term.TerminatorKind.Goto { target } => {
+                            preds[target.as_usize()].push(src);
+                        }
+                        &mir_term.TerminatorKind.SwitchInt { ref targets, discr: _ } => {
+                            let ts = targets.all_targets();
+                            for j in 0usize..ts.len() {
+                                preds[ts[j].as_usize()].push(src);
+                            }
+                        }
+                        &mir_term.TerminatorKind.Call { ref target, ref unwind, func: _, args: _, destination: _ } => {
+                            match target {
+                                &Option.Some(t) => preds[t.as_usize()].push(src),
+                                &Option.None => {}
+                            }
+                            match unwind {
+                                &Option.Some(u) => preds[u.as_usize()].push(src),
+                                &Option.None => {}
+                            }
+                        }
+                        &mir_term.TerminatorKind.Assert { target, ref unwind, cond: _, expected: _, msg: _ } => {
+                            preds[target.as_usize()].push(src);
+                            match unwind {
+                                &Option.Some(u) => preds[u.as_usize()].push(src),
+                                &Option.None => {}
+                            }
+                        }
+                        &mir_term.TerminatorKind.Perform { ref target, effect_id: _, op_index: _, args: _, destination: _, is_tail_resumptive: _ } => {
+                            match target {
+                                &Option.Some(t) => preds[t.as_usize()].push(src),
+                                &Option.None => {}
+                            }
+                        }
+                        &mir_term.TerminatorKind.Resume { value: _, destination: _, ref target } => {
+                            match target {
+                                &Option.Some(t) => preds[t.as_usize()].push(src),
+                                &Option.None => {}
+                            }
+                        }
+                        &mir_term.TerminatorKind.Drop { target, ref unwind, place: _ } => {
+                            preds[target.as_usize()].push(src);
+                            match unwind {
+                                &Option.Some(u) => preds[u.as_usize()].push(src),
+                                &Option.None => {}
+                            }
+                        }
+                        &mir_term.TerminatorKind.Return => {}
+                        &mir_term.TerminatorKind.Unreachable => {}
+                        &mir_term.TerminatorKind.StaleReference { ptr: _, expected_gen: _, actual_gen: _ } => {}
                     }
                 }
                 &Option.None => {}
@@ -213,8 +265,9 @@ impl MirBody {
 
     /// Returns blocks in reverse postorder (useful for dataflow analysis).
     pub fn reverse_postorder(self: &MirBody) -> Vec<mir_def.BasicBlockId> {
+        let num_blocks = self.basic_blocks.len();
         let mut visited: Vec<bool> = Vec.new();
-        for i in 0usize..self.basic_blocks.len() {
+        for i in 0usize..num_blocks {
             visited.push(false);
         }
 
@@ -247,9 +300,56 @@ impl MirBody {
         let block_data = &self.basic_blocks[idx];
         match &block_data.terminator {
             &Option.Some(ref term) => {
-                let succs = term.successors();
-                for i in 0usize..succs.len() {
-                    self.postorder_visit(succs[i], visited, result);
+                // Inline successor walk — avoids term.successors() Vec alloc.
+                match &term.kind {
+                    &mir_term.TerminatorKind.Goto { target } => {
+                        self.postorder_visit(target, visited, result);
+                    }
+                    &mir_term.TerminatorKind.SwitchInt { ref targets, discr: _ } => {
+                        let ts = targets.all_targets();
+                        for i in 0usize..ts.len() {
+                            self.postorder_visit(ts[i], visited, result);
+                        }
+                    }
+                    &mir_term.TerminatorKind.Call { ref target, ref unwind, func: _, args: _, destination: _ } => {
+                        match target {
+                            &Option.Some(t) => self.postorder_visit(t, visited, result),
+                            &Option.None => {}
+                        }
+                        match unwind {
+                            &Option.Some(u) => self.postorder_visit(u, visited, result),
+                            &Option.None => {}
+                        }
+                    }
+                    &mir_term.TerminatorKind.Assert { target, ref unwind, cond: _, expected: _, msg: _ } => {
+                        self.postorder_visit(target, visited, result);
+                        match unwind {
+                            &Option.Some(u) => self.postorder_visit(u, visited, result),
+                            &Option.None => {}
+                        }
+                    }
+                    &mir_term.TerminatorKind.Perform { ref target, effect_id: _, op_index: _, args: _, destination: _, is_tail_resumptive: _ } => {
+                        match target {
+                            &Option.Some(t) => self.postorder_visit(t, visited, result),
+                            &Option.None => {}
+                        }
+                    }
+                    &mir_term.TerminatorKind.Resume { value: _, destination: _, ref target } => {
+                        match target {
+                            &Option.Some(t) => self.postorder_visit(t, visited, result),
+                            &Option.None => {}
+                        }
+                    }
+                    &mir_term.TerminatorKind.Drop { target, ref unwind, place: _ } => {
+                        self.postorder_visit(target, visited, result);
+                        match unwind {
+                            &Option.Some(u) => self.postorder_visit(u, visited, result),
+                            &Option.None => {}
+                        }
+                    }
+                    &mir_term.TerminatorKind.Return => {}
+                    &mir_term.TerminatorKind.Unreachable => {}
+                    &mir_term.TerminatorKind.StaleReference { ptr: _, expected_gen: _, actual_gen: _ } => {}
                 }
             }
             &Option.None => {}

@@ -1412,27 +1412,31 @@ fn record_fields_to_id(fields: &Vec<hir_ty.RecordField>) -> type_intern.RecordFi
 pub fn apply_substs_id(table: &SubstTable, ty_id: type_intern.TyId) -> type_intern.TyId {
     let interner = type_intern.type_interner();
 
-    // Phase 1: Iteratively chase Infer chains (prevents stack overflow on cycles)
+    // Phase 1 + Phase 2 share a single kind reference so the common
+    // concrete-type case does ONE interner.get() instead of two. The
+    // previous code looked up `current` at both the top of the chase
+    // loop AND again before the structural match below.
     let mut current = ty_id;
-    let mut chase: bool = true;
+    let mut kind = interner.get(current);
     let mut depth: i32 = 0;
-    while chase {
-        let k = interner.get(current);
-        match k {
+    // Iteratively chase Infer chains (loop, not recursion, to prevent
+    // stack overflow on circular bindings).
+    while true {
+        match kind {
             &type_intern.InternedTypeKind.Infer(var_id) => {
                 match table.lookup_ty_id(var_id) {
                     Option.Some(resolved_id) => {
                         depth += 1;
                         if depth > 1000 {
-                            chase = false;
-                        } else {
-                            current = resolved_id;
+                            break;
                         }
+                        current = resolved_id;
+                        kind = interner.get(current);
                     }
-                    Option.None => { chase = false; }
+                    Option.None => { break; }
                 }
             }
-            _ => { chase = false; }
+            _ => { break; }
         }
     }
 
@@ -1444,7 +1448,6 @@ pub fn apply_substs_id(table: &SubstTable, ty_id: type_intern.TyId) -> type_inte
     // return `current` without allocating a new interned type. This is
     // the dominant case for concrete types (no Infer/Param anywhere in
     // the tree), which are most of what infer_expr walks.
-    let kind = interner.get(current);
     match kind {
         &type_intern.InternedTypeKind.Infer(_) => current,
         &type_intern.InternedTypeKind.Primitive(_) => current,
