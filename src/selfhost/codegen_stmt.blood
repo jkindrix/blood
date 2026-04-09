@@ -1902,7 +1902,7 @@ pub fn emit_allocas_with_escapes(
         // regardless of type, so gen tracking and stale detection work after
         // region destroy. Skip is_always_stack_type demotion for these.
         let is_region_owned = body.get_region_owner(local_id).is_some();
-        let tier = if is_always_stack_type(&local_hir_ty) && !is_region_owned {
+        let tier = if is_always_stack_type_id(local.ty) && !is_region_owned {
             match raw_state {
                 &mir_escape.EscapeState.ArgEscape => {
                     if addr_taken[i] { raw_tier } else { mir_escape.MemoryTier.Stack }
@@ -2184,6 +2184,40 @@ fn is_always_stack_type(ty: &hir_ty.Type) -> bool {
         }
         &hir_ty.TypeKind.Array { ref element, size: _ } => {
             is_always_stack_type(element.as_ref())
+        }
+        _ => false,
+    }
+}
+
+/// Same check as is_always_stack_type but operating directly on a TyId,
+/// avoiding the expensive ty_id_to_type conversion (recursive Box allocation).
+/// Called once per local during alloca emission — ~130k calls per build.
+fn is_always_stack_type_id(ty_id: type_intern.TyId) -> bool {
+    let interner = type_intern.type_interner();
+    let kind = interner.get(ty_id);
+    match kind {
+        &type_intern.InternedTypeKind.Primitive(_) => true,
+        &type_intern.InternedTypeKind.Ref { inner: _, mutable: _ } => true,
+        &type_intern.InternedTypeKind.Ptr { inner: _, mutable: _ } => true,
+        &type_intern.InternedTypeKind.Fn { params: _, ret: _, effects: _ } => true,
+        &type_intern.InternedTypeKind.Never => true,
+        &type_intern.InternedTypeKind.Param(_) => true,
+        &type_intern.InternedTypeKind.Infer(_) => true,
+        &type_intern.InternedTypeKind.Tuple(list_id) => {
+            let len = interner.ty_list_len(list_id);
+            if len == 0 {
+                return true;
+            }
+            for i in 0usize..len {
+                let elem = type_intern.type_interner().get_ty_list_element(list_id, i);
+                if !is_always_stack_type_id(elem) {
+                    return false;
+                }
+            }
+            true
+        }
+        &type_intern.InternedTypeKind.Array { element, size: _ } => {
+            is_always_stack_type_id(element)
         }
         _ => false,
     }
