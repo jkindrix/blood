@@ -1308,6 +1308,11 @@ impl TypeChecker {
     }
 
     /// Counts how many impls provide a method with the given name for the given type.
+    /// Early-exits as soon as 2 matches are found — the only caller
+    /// (infer_method_call) uses this purely to decide between the single-match
+    /// and overloaded-resolution paths, so it doesn't care whether the true count
+    /// is 2 or 20. Walking the full chain for every method call wasted cycles
+    /// proportional to the average method-name length in the impl table.
     pub fn count_method_matches(self: &Self, ty: type_intern.TyId, method_name: common.Symbol) -> u32 {
         let mut count: u32 = 0;
         let name_key = method_name.index as u64;
@@ -1322,6 +1327,9 @@ impl TypeChecker {
             if types_match_for_impl_id(impl_info.self_ty, ty) {
                 if self.impl_bounds_satisfied(impl_info, ty) {
                     count += 1;
+                    if count >= 2 {
+                        return count;
+                    }
                 }
             }
             cursor = self.mn_next[cursor];
