@@ -7,6 +7,7 @@ mod common;
 mod token;
 mod lexer;
 mod ast;
+mod hashmap;
 
 // ============================================================
 // Parser Error
@@ -76,6 +77,9 @@ pub struct Parser<'src> {
     pub panic_mode: bool,
     /// Interned symbols (stores span info for deduplication).
     pub interned: Vec<InternEntry>,
+    /// Hash index for O(1) intern lookup: hash(bytes) → first-match index.
+    /// Populated on insert, used by intern_symbol to avoid O(N) linear scan.
+    pub intern_hash: hashmap.HashMapU64U32,
     /// Whether struct literals are allowed in the current context.
     /// Set to false in condition contexts (if, while, for) to avoid ambiguity.
     pub allow_struct_literal: bool,
@@ -114,6 +118,7 @@ impl<'src> Parser<'src> {
             warnings: Vec.new(),
             panic_mode: false,
             interned: Vec.new(),
+            intern_hash: hashmap.HashMapU64U32.with_capacity(1024),
             allow_struct_literal: true,
             pending_gt: false,
             pending_doc_comments: pending_doc_comments,
@@ -521,16 +526,56 @@ impl<'src> Parser<'src> {
     }
 
     /// Intern a symbol given its span, returning a unique index.
+    ///
+    /// Perf: hash-backed lookup. The old implementation did a full linear
+    /// scan over self.interned on every call — O(N²) in the number of
+    /// identifiers parsed, which dominated parser time on the selfhost.
+    ///
+    /// The hash key is an FNV-1a of the raw source bytes. A hit verifies
+    /// the stored entry's bytes actually match (to handle hash collisions);
+    /// a miss or collision falls back to a linear scan + insert.
     pub fn intern_symbol(self: &mut Self, start: u32, end: u32) -> u32 {
         let len = end - start;
 
-        // Search for existing entry with same content
+        // Compute a hash of the byte range
+        let mut h: u64 = 14695981039346656037;
+        for j in 0u32..len {
+            let b = self.source_byte_at((start + j) as usize);
+            h = h ^ (b as u64);
+            h = h * 1099511628211;
+        }
+
+        // Fast path: hash lookup, verify the candidate matches
+        match self.intern_hash.get(h) {
+            Option.Some(idx) => {
+                let entry = self.interned[idx as usize];
+                let entry_len = entry.end - entry.start;
+                if entry_len == len {
+                    let mut matches = true;
+                    for j in 0u32..len {
+                        let a = self.source_byte_at((start + j) as usize);
+                        let b = self.source_byte_at((entry.start + j) as usize);
+                        if a != b {
+                            matches = false;
+                            break;
+                        }
+                    }
+                    if matches {
+                        return idx;
+                    }
+                }
+                // Hash collision with a different symbol — fall through to
+                // the slow path so we don't overwrite the hash entry.
+            }
+            Option.None => {}
+        }
+
+        // Slow path: either first time seeing this hash, or a collision.
+        // Linear-scan to find an existing match, else append.
         for i in 0usize..self.interned.len() {
             let entry = self.interned[i];
             let entry_len = entry.end - entry.start;
-
             if entry_len == len {
-                // Same length, compare bytes
                 let mut matches = true;
                 for j in 0u32..len {
                     let a = self.source_byte_at((start + j) as usize);
@@ -540,18 +585,22 @@ impl<'src> Parser<'src> {
                         break;
                     }
                 }
-
                 if matches {
                     return i as u32;
                 }
             }
-
         }
 
-        // Not found, add new entry
+        // Not found — add new entry and populate the hash (first-come-first-served:
+        // if the slot is already taken by a colliding key, we leave it alone so
+        // that its owner still hits the fast path).
         let new_index = self.interned.len() as u32;
         let entry = InternEntry { start: start, end: end };
         self.interned.push(entry);
+        match self.intern_hash.get(h) {
+            Option.Some(_) => {} // Collision — keep the existing owner
+            Option.None => { self.intern_hash.insert(h, new_index); }
+        }
         new_index
     }
 

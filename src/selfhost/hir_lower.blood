@@ -76,14 +76,17 @@ pub fn lower_program_with_ast_region(program: &ast.Program, base_dir: String, so
 
     // Phase 0b: Register StaleReference built-in effect (DefId 4100) before user
     // type names so that user `effect StaleReference { ... }` reuses the built-in DefId.
+    let t_p0 = blood_clock_millis();
     hir_lower_builtin.register_stale_ref_builtin(&mut ctx);
 
     // Phase 0c: Pre-load codebase sources for hash imports.
     // `use hash("prefix")` needs the definition compiled as a module before Phase 1.
     preload_hash_imports(&mut ctx, &program.imports, &mut parsed_module_cache);
+    let t_p0_ms = blood_clock_millis() - t_p0;
 
     // Phase 1: Register type names (structs, enums, traits, effects)
     // Tag 3000 = main file Phase 1; modules tagged by load_external_module
+    let t_p1 = blood_clock_millis();
     alloc_tag_set(3000 as u64);
     register_type_names(&mut ctx, &program.declarations, &mut parsed_module_cache);
     alloc_tag_set(0 as u64);
@@ -91,14 +94,17 @@ pub fn lower_program_with_ast_region(program: &ast.Program, base_dir: String, so
     // Phase 1b: Register builtin stdlib types (String, Vec, Option, Box, HashMap)
     // Only registers names not already defined by user code
     hir_lower_builtin.register_builtin_types(&mut ctx);
+    let t_p1_ms = blood_clock_millis() - t_p1;
 
     // Phase 2: Register other declarations (functions, consts, statics)
+    let t_p2 = blood_clock_millis();
     register_declarations(&mut ctx, &program.declarations);
 
     // Phase 2b: Register builtin runtime functions (file I/O, args, print, etc.)
     // This runs AFTER Phase 2 so user-defined functions (e.g., a custom `panic`)
     // take priority — register_one_builtin silently skips names already defined.
     hir_lower_builtin.register_builtin_functions(&mut ctx);
+    let t_p2_ms = blood_clock_millis() - t_p2;
 
     // Check for errors from registration
     if ctx.has_errors() {
@@ -106,20 +112,26 @@ pub fn lower_program_with_ast_region(program: &ast.Program, base_dir: String, so
     }
 
     // Phase 3a: Lower external module declarations using cached parses from Phase 1.
+    let t_p3a = blood_clock_millis();
     lower_external_module_declarations(&mut ctx, &mut parsed_module_cache);
+    let t_p3a_ms = blood_clock_millis() - t_p3a;
 
     // Phase 3a.25: Auto-import stdlib prelude when --stdlib-path is set.
     // Injects prelude's public items into root scope so programs don't need
     // explicit `use std.prelude::*;` or individual imports for common items.
+    let t_p3pre = blood_clock_millis();
     inject_stdlib_prelude(&mut ctx);
 
     // Phase 3a.5: Resolve use imports (e.g., `use module.item;`)
     // This must run after external modules are loaded (Phase 3a) so that
     // lookup_in_parent can find re-exported items.
     resolve_imports(&mut ctx, &program.imports);
+    let t_p3pre_ms = blood_clock_millis() - t_p3pre;
 
     // Phase 3b: Lower current file's declarations to HIR items
+    let t_p3b = blood_clock_millis();
     hir_lower_item.lower_declarations(&mut ctx, &program.declarations);
+    let t_p3b_ms = blood_clock_millis() - t_p3b;
 
     // Check for errors from item lowering
     if ctx.has_errors() {
@@ -127,7 +139,9 @@ pub fn lower_program_with_ast_region(program: &ast.Program, base_dir: String, so
     }
 
     // Phase 4: Lower function bodies to HIR bodies
+    let t_p4 = blood_clock_millis();
     lower_fn_bodies(&mut ctx, &program.declarations);
+    let t_p4_ms = blood_clock_millis() - t_p4;
 
     // Record how many bodies are from the main file before adding external module bodies.
     // The type checker should only check these bodies; external module bodies may have
@@ -135,7 +149,29 @@ pub fn lower_program_with_ast_region(program: &ast.Program, base_dir: String, so
     let main_body_count = ctx.bodies.len();
 
     // Phase 4b: Lower external module function bodies (reuses cached parses)
+    let t_p4b = blood_clock_millis();
     lower_external_module_fn_bodies(&mut ctx, &parsed_module_cache);
+    let t_p4b_ms = blood_clock_millis() - t_p4b;
+
+    // Permanent instrumentation: print HIR lowering phase breakdown so
+    // regressions in any single phase are immediately visible in build logs.
+    eprint_str("  [hir phases] p0=");
+    eprint_str(int_to_string(t_p0_ms as i32));
+    eprint_str(" p1=");
+    eprint_str(int_to_string(t_p1_ms as i32));
+    eprint_str(" p2(decls)=");
+    eprint_str(int_to_string(t_p2_ms as i32));
+    eprint_str(" p3a(ext_decls)=");
+    eprint_str(int_to_string(t_p3a_ms as i32));
+    eprint_str(" p3pre(prelude+imports)=");
+    eprint_str(int_to_string(t_p3pre_ms as i32));
+    eprint_str(" p3b(main_decls)=");
+    eprint_str(int_to_string(t_p3b_ms as i32));
+    eprint_str(" p4(main_bodies)=");
+    eprint_str(int_to_string(t_p4_ms as i32));
+    eprint_str(" p4b(ext_bodies)=");
+    eprint_str(int_to_string(t_p4b_ms as i32));
+    eprint_str("\n");
 
     // Check for errors from body lowering
     if ctx.has_errors() {
