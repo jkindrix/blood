@@ -1788,9 +1788,18 @@ pub fn unify_id(
     b: type_intern.TyId,
     span: common.Span,
 ) -> UnifyResult {
+    // Pre-check: identical TyIds trivially unify. Avoid two full
+    // apply_substs walks in the common case where the same type is
+    // unified with itself (e.g., arg type vs already-resolved param type).
+    if a.index == b.index {
+        return UnifyResult.Ok;
+    }
     let table_ref: &SubstTable = &*table;
     let a_resolved = apply_substs_id(table_ref, a);
     let b_resolved = apply_substs_id(table_ref, b);
+    if a_resolved.index == b_resolved.index {
+        return UnifyResult.Ok;
+    }
     unify_resolved_id(table, unifier, a_resolved, b_resolved, span)
 }
 
