@@ -28,23 +28,42 @@ mod alloc;
 // Region registry — fixed-capacity parallel arrays
 // ============================================================================
 
+// Thread-local region registry and stack. Each thread gets its own private
+// region system — no cross-thread interference. Workers in parallel codegen
+// create and use their own regions independently.
+#[thread_local]
 static mut REG_IDS: *mut u8 = @unsafe { 0 as *mut u8 };       // i64 per slot
+#[thread_local]
 static mut REG_BASE: *mut u8 = @unsafe { 0 as *mut u8 };      // i64 per slot (ptr as i64)
+#[thread_local]
 static mut REG_RESERVED: *mut u8 = @unsafe { 0 as *mut u8 };  // i64 per slot
+#[thread_local]
 static mut REG_COMMITTED: *mut u8 = @unsafe { 0 as *mut u8 }; // i64 per slot
+#[thread_local]
 static mut REG_OFFSET: *mut u8 = @unsafe { 0 as *mut u8 };    // i64 per slot
+#[thread_local]
 static mut REG_MAXSIZE: *mut u8 = @unsafe { 0 as *mut u8 };   // i64 per slot
+#[thread_local]
 static mut REG_ALLOCCOUNT: *mut u8 = @unsafe { 0 as *mut u8 };// i64 per slot
+#[thread_local]
 static mut REG_CLOSED: *mut u8 = @unsafe { 0 as *mut u8 };    // i32 per slot
+#[thread_local]
 static mut REG_GEN: *mut u8 = @unsafe { 0 as *mut u8 };      // i32 per slot (generation)
+#[thread_local]
 static mut REG_COUNT: i64 = 0;
+#[thread_local]
 static mut REG_MAX: i64 = 64;
+#[thread_local]
 static mut REG_INIT: i32 = 0;
+#[thread_local]
 static mut NEXT_REGION_ID: i64 = 1;
 
-// Active region stack
+// Active region stack (thread-local)
+#[thread_local]
 static mut STACK_DATA: *mut u8 = @unsafe { 0 as *mut u8 };    // i64 per slot
+#[thread_local]
 static mut STACK_LEN: i64 = 0;
+#[thread_local]
 static mut STACK_CAP: i64 = 64;
 
 fn ensure_region_registry() {
@@ -434,24 +453,24 @@ pub fn rt_blood_system_alloc_live_bytes() -> i64 {
 #[export_name = "blood_alloc_or_abort"]
 pub fn dispatch_alloc_or_abort(size: i64, out_gen: *mut i32) -> i64 {
     @unsafe {
-        // Bypass mode: thread-safe heap allocation, no gen tracking.
+        // Always check thread-local region stack first (TLS, thread-safe).
+        let active_rid: i64 = rt_blood_region_active_id();
+        if active_rid > 0 {
+            let addr: i64 = rt_blood_region_alloc(active_rid, size, 16);
+            if addr != 0 {
+                let ridx: i64 = find_region(active_rid);
+                let g: i32 = if ridx >= 0 { read_i32(REG_GEN, ridx) } else { 0 };
+                *out_gen = g;
+                return addr;
+            }
+        }
+        // Bypass mode: heap allocation without gen tracking (hash table not thread-safe).
         if alloc.is_bypass_tracking() {
             let ptr: *mut u8 = libc.sys_calloc(1, size as u64);
             let addr: i64 = alloc.ptr_to_addr(ptr);
             if addr == 0 { rt_panic.rt_panic("alloc: out of memory"); }
             *out_gen = 0;
             return addr;
-        }
-        let active_rid: i64 = rt_blood_region_active_id();
-        if active_rid > 0 {
-            let addr: i64 = rt_blood_region_alloc(active_rid, size, 16);
-            if addr != 0 {
-                // Return the REGION's generation (not per-allocation)
-                let ridx: i64 = find_region(active_rid);
-                let g: i32 = if ridx >= 0 { read_i32(REG_GEN, ridx) } else { 0 };
-                *out_gen = g;
-                return addr;
-            }
         }
         alloc.rt_blood_alloc_or_abort(size, out_gen)
     }

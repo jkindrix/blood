@@ -3603,16 +3603,14 @@ fn codegen_pass2(
     // when conditions aren't met.
     // ================================================================
     let has_generics = has_const_generics || type_generic_fn_set.len() > 0;
-    // Parallel codegen: infrastructure in place but disabled pending two fixes:
-    // 1. bypass alloc realloc corruption (malloc_usable_size usage in blood_realloc bypass)
-    // 2. Generated IR value reference error (undefined %tmpN in some functions)
-    // Single-worker mode without bypass works (completes all functions).
-    // Enable by changing false to: total_items > 200
-    let use_parallel = false && total_items > 200 && !has_generics
+    // Parallel codegen: enabled for non-incremental clean builds without split-modules.
+    // The module splitter has a bug with merged worker string tables (mismatched
+    // string content in per-module files). Until fixed, parallel requires monolithic output.
+    let use_parallel = total_items > 200 && !has_generics && !args.split_modules
         && skip_modules.len() == 0 && !args.dump_mir && !args.validate_mir
         && !args.alloc_profile;
     if use_parallel {
-        let num_workers: usize = 1;
+        let num_workers: usize = 4;
         let chunk_size: usize = total_items / num_workers;
 
         eprint_str("\n  [parallel codegen: ");
@@ -3664,7 +3662,7 @@ fn codegen_pass2(
         let mut worker_outputs: Vec<String> = Vec.new();
         for w in 0usize..num_workers {
             let mut wctx = ctx.create_worker_ctx();
-            wctx.string_counter = (w * 100000) as u32;
+            wctx.string_counter = ctx.string_counter + (w as u32 * 100000);
             worker_ctxs.push(wctx);
             worker_outputs.push(String.new());
         }
@@ -3725,7 +3723,7 @@ fn codegen_pass2(
             }
         }
         // Update string_counter to be past all worker ranges
-        ctx.string_counter = (num_workers * 100000) as u32;
+        ctx.string_counter = ctx.string_counter + (num_workers as u32 * 100000);
 
         // Merge fn_ptr_wrapper_defs from workers
         for w in 0usize..num_workers {

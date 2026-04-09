@@ -42,10 +42,15 @@ bridge "C" LibcMem {
 // which redirects to blood_free_simple (gen unregister only, no actual deallocation).
 bridge "C" LibcFree {
     fn __libc_free(ptr: *mut u8);
+    fn __libc_realloc(ptr: *mut u8, size: u64) -> *mut u8;
 }
 
 pub fn sys_free(ptr: *mut u8) {
     LibcFree.__libc_free(ptr);
+}
+
+pub fn sys_realloc(ptr: *mut u8, size: u64) -> *mut u8 {
+    LibcFree.__libc_realloc(ptr, size)
 }
 
 bridge "C" LibcAllocInfo {

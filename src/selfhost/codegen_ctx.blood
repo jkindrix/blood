@@ -2504,6 +2504,20 @@ impl CodegenCtx {
             }
         }
 
+        // Populate ADT hash maps from the cloned registry.
+        let mut worker_adt_struct_hash = hashmap.HashMapU64U32.with_capacity(worker_adt_registry.len());
+        let mut worker_adt_enum_hash = hashmap.HashMapU64U32.with_capacity(worker_adt_registry.len());
+        for ari in 0usize..worker_adt_registry.len() {
+            match &worker_adt_registry[ari] {
+                &AdtEntry.Struct(ref sl) => {
+                    worker_adt_struct_hash.insert(sl.def_id as u64, ari as u32);
+                }
+                &AdtEntry.Enum(ref el) => {
+                    worker_adt_enum_hash.insert(el.def_id as u64, ari as u32);
+                }
+            }
+        }
+
         let mut worker = CodegenCtx {
             output: String.new(),
             indent_level: 0,
@@ -2521,8 +2535,8 @@ impl CodegenCtx {
             string_counter: 0,
             def_names: worker_def_names,
             adt_registry: worker_adt_registry,
-            adt_struct_hash: hashmap.HashMapU64U32.new(),
-            adt_enum_hash: hashmap.HashMapU64U32.new(),
+            adt_struct_hash: worker_adt_struct_hash,
+            adt_enum_hash: worker_adt_enum_hash,
             type_llvm_hash: hashmap.HashMapU64U32.new(),
             type_llvm_cache: Vec.new(),
             def_names_hash: worker_def_hash,
