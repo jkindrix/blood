@@ -139,51 +139,66 @@ fn lower_expr_inner(
     expr: &hir_expr.Expr,
     dest: mir_lower_ctx.Destination,
 ) {
-    // Resolve the expression's type through the substitution table
-    // so all sub-functions receive concrete types instead of TypeKind.Infer
-    let resolved_ty = ctx.resolve_type_id(expr.ty);
-
+    // Perf: resolve_type_id allocates a full hir_ty.Type tree via
+    // ty_id_to_type. Many match arms below don't need the Type form at all
+    // (Assign, Block, Return, Break, Continue, Unsafe, Unchecked, Heap,
+    // Stack, Region, InlineHandle, Cast). For those arms, skip the
+    // resolve entirely by computing it locally in only the arms that need it.
     match &expr.kind {
         &hir_expr.ExprKind.Literal(ref lit) => {
+            let resolved_ty = ctx.resolve_type_id(expr.ty);
             lower_literal_expr(ctx, lit, &resolved_ty, dest, expr.span);
         }
         &hir_expr.ExprKind.Local(local_id) => {
+            let resolved_ty = ctx.resolve_type_id(expr.ty);
             lower_local_expr(ctx, local_id, &resolved_ty, dest, expr.span);
         }
         &hir_expr.ExprKind.Path(ref path) => {
+            let resolved_ty = ctx.resolve_type_id(expr.ty);
             lower_path_expr(ctx, path, &resolved_ty, dest, expr.span);
         }
         &hir_expr.ExprKind.Binary { operator: the_op, ref left, ref right } => {
+            let resolved_ty = ctx.resolve_type_id(expr.ty);
             lower_binary_expr(ctx, the_op, left.as_ref(), right.as_ref(), &resolved_ty, dest, expr.span);
         }
         &hir_expr.ExprKind.Unary { operator: the_op, ref operand } => {
+            let resolved_ty = ctx.resolve_type_id(expr.ty);
             lower_unary_expr(ctx, the_op, operand.as_ref(), &resolved_ty, dest, expr.span);
         }
         &hir_expr.ExprKind.Call { ref callee, ref args } => {
+            let resolved_ty = ctx.resolve_type_id(expr.ty);
             lower_call_expr(ctx, callee.as_ref(), args, &resolved_ty, dest, expr.span);
         }
         &hir_expr.ExprKind.MethodCall { ref receiver, ref method, method_def, ref type_args, ref args } => {
+            let resolved_ty = ctx.resolve_type_id(expr.ty);
             lower_method_call_expr(ctx, receiver.as_ref(), method, method_def, type_args, args, &resolved_ty, dest, expr.span);
         }
         &hir_expr.ExprKind.Field { ref base, ref field } => {
+            let resolved_ty = ctx.resolve_type_id(expr.ty);
             lower_field_expr(ctx, base.as_ref(), field, &resolved_ty, dest, expr.span);
         }
         &hir_expr.ExprKind.Index { ref base, ref idx } => {
+            let resolved_ty = ctx.resolve_type_id(expr.ty);
             lower_index_expr(ctx, base.as_ref(), idx.as_ref(), &resolved_ty, dest, expr.span);
         }
         &hir_expr.ExprKind.Tuple(ref elems) => {
+            let resolved_ty = ctx.resolve_type_id(expr.ty);
             lower_tuple_expr(ctx, elems, &resolved_ty, dest, expr.span);
         }
         &hir_expr.ExprKind.Array(ref arr) => {
+            let resolved_ty = ctx.resolve_type_id(expr.ty);
             lower_array_expr(ctx, arr, &resolved_ty, dest, expr.span);
         }
         &hir_expr.ExprKind.Struct { ref path, ref fields, ref base } => {
+            let resolved_ty = ctx.resolve_type_id(expr.ty);
             lower_struct_expr(ctx, path, fields, base, &resolved_ty, dest, expr.span);
         }
         &hir_expr.ExprKind.AnonRecord { ref fields } => {
+            let resolved_ty = ctx.resolve_type_id(expr.ty);
             lower_anon_record_expr(ctx, fields, &resolved_ty, dest, expr.span);
         }
         &hir_expr.ExprKind.Range { ref start, ref end_val, inclusive } => {
+            let resolved_ty = ctx.resolve_type_id(expr.ty);
             lower_range_expr(ctx, start, end_val, inclusive, &resolved_ty, dest, expr.span);
         }
         &hir_expr.ExprKind.Cast { expr: ref inner, ty: ref cast_ty } => {
@@ -193,18 +208,22 @@ fn lower_expr_inner(
             lower_assign_expr(ctx, target.as_ref(), val.as_ref(), dest, expr.span);
         }
         &hir_expr.ExprKind.AssignOp { operator: the_op, ref target, ref val } => {
+            let resolved_ty = ctx.resolve_type_id(expr.ty);
             lower_assign_op_expr(ctx, the_op, target.as_ref(), val.as_ref(), &resolved_ty, dest, expr.span);
         }
         &hir_expr.ExprKind.Block(ref block) => {
             lower_block_expr(ctx, block, dest, expr.span);
         }
         &hir_expr.ExprKind.If { ref condition, ref then_branch, ref else_branch } => {
+            let resolved_ty = ctx.resolve_type_id(expr.ty);
             lower_if_expr(ctx, condition.as_ref(), then_branch.as_ref(), else_branch, &resolved_ty, dest, expr.span);
         }
         &hir_expr.ExprKind.Match { ref scrutinee, ref arms } => {
+            let resolved_ty = ctx.resolve_type_id(expr.ty);
             lower_match_expr(ctx, scrutinee.as_ref(), arms, &resolved_ty, dest, expr.span);
         }
         &hir_expr.ExprKind.Loop { ref label, ref body } => {
+            let resolved_ty = ctx.resolve_type_id(expr.ty);
             lower_loop_expr(ctx, label, body.as_ref(), &resolved_ty, dest, expr.span);
         }
         &hir_expr.ExprKind.Return(ref val) => {
@@ -217,21 +236,26 @@ fn lower_expr_inner(
             lower_continue_expr(ctx, label, expr.span);
         }
         &hir_expr.ExprKind.Closure { ref captures, ref params, ref return_ty, effects: _, ref body, body_id } => {
+            let resolved_ty = ctx.resolve_type_id(expr.ty);
             lower_closure_expr(ctx, captures, params, return_ty, body.as_ref(), body_id, &resolved_ty, dest, expr.span);
         }
         &hir_expr.ExprKind.WithHandle { handler: ref handler_expr, body: ref body_expr } => {
+            let resolved_ty = ctx.resolve_type_id(expr.ty);
             lower_with_handle_expr(ctx, handler_expr.as_ref(), body_expr.as_ref(), &resolved_ty, dest, expr.span);
         }
         &hir_expr.ExprKind.InlineHandle { ref body, ref handlers } => {
             lower_inline_handle_expr(ctx, body.as_ref(), handlers, dest, expr.span);
         }
         &hir_expr.ExprKind.Perform { effect_def, op_def: _, op_name, ref args } => {
+            let resolved_ty = ctx.resolve_type_id(expr.ty);
             lower_perform_expr(ctx, effect_def, op_name, args, &resolved_ty, dest, expr.span);
         }
         &hir_expr.ExprKind.Resume(ref val) => {
+            let resolved_ty = ctx.resolve_type_id(expr.ty);
             lower_resume_expr(ctx, val.as_ref(), &resolved_ty, dest, expr.span);
         }
         &hir_expr.ExprKind.Try(ref inner) => {
+            let resolved_ty = ctx.resolve_type_id(expr.ty);
             lower_try_expr(ctx, inner.as_ref(), &resolved_ty, dest, expr.span);
         }
         &hir_expr.ExprKind.Unsafe(ref inner) => {
@@ -318,6 +342,7 @@ fn lower_expr_inner(
             // types that implement it, and only use ZeroInit for primitives.
             match dest.as_place() {
                 Option.Some(place) => {
+                    let resolved_ty = ctx.resolve_type_id(expr.ty);
                     ctx.emit_assign(
                         place,
                         mir_types.Rvalue.ZeroInit(type_intern.type_to_ty_id(&resolved_ty)),
