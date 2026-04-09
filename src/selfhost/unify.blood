@@ -211,24 +211,19 @@ impl TypeParamSubst {
     }
 
     /// Looks up a type parameter by index (returns TyId, zero copy).
+    /// hash_index is authoritative: both add() and add_id() update it.
     pub fn lookup_id(self: &Self, param_index: u32) -> Option<type_intern.TyId> {
-        // O(1) hash lookup
         match self.hash_index.get(param_index as u64) {
             Option.Some(vec_idx) => {
                 let idx = vec_idx as usize;
                 if idx < self.entries.len() {
-                    return Option.Some(type_intern.TyId.new(self.entries[idx].ty.index));
+                    Option.Some(type_intern.TyId.new(self.entries[idx].ty.index))
+                } else {
+                    Option.None
                 }
             }
-            Option.None => {}
+            Option.None => Option.None,
         }
-        // Fallback to linear scan for collision handling
-        for i in 0usize..self.entries.len() {
-            if self.entries[i].param_index == param_index {
-                return Some(type_intern.TyId.new(self.entries[i].ty.index));
-            }
-        }
-        Option.None
     }
 
     /// Returns true if this substitution is empty.
@@ -1294,24 +1289,19 @@ impl SubstTable {
     }
 
     /// Looks up an effect row variable (returns EffectRowId, zero copy).
+    /// effect_hash is authoritative: add_effect_subst_id updates it on every push.
     pub fn lookup_effect_id(self: &Self, var_id: hir_def.EffectRowVarId) -> Option<type_intern.EffectRowId> {
-        // O(1) hash lookup
         match self.effect_hash.get(var_id.index as u64) {
             Option.Some(vec_idx) => {
                 let idx = vec_idx as usize;
                 if idx < self.effect_substs.len() {
-                    return Option.Some(type_intern.EffectRowId.new(self.effect_substs[idx].row.index));
+                    Option.Some(type_intern.EffectRowId.new(self.effect_substs[idx].row.index))
+                } else {
+                    Option.None
                 }
             }
-            Option.None => {}
+            Option.None => Option.None,
         }
-        // Fallback to linear scan for collision handling
-        for i in 0usize..self.effect_substs.len() {
-            if self.effect_substs[i].var_id.index == var_id.index {
-                return Some(type_intern.EffectRowId.new(self.effect_substs[i].row.index));
-            }
-        }
-        Option.None
     }
 
     /// Adds a record row variable substitution (Vec<RecordField>-based, converts internally).
@@ -1339,32 +1329,23 @@ impl SubstTable {
     }
 
     /// Looks up a record row variable (returns RecordRowSubst with RecordFieldListId).
+    /// record_hash is authoritative: add_record_subst_id updates it on every push.
     pub fn lookup_record(self: &Self, var_id: hir_def.RecordRowVarId) -> Option<RecordRowSubst> {
-        // O(1) hash lookup
         match self.record_hash.get(var_id.index as u64) {
             Option.Some(vec_idx) => {
                 let idx = vec_idx as usize;
                 if idx < self.record_substs.len() {
-                    return Option.Some(RecordRowSubst {
+                    Option.Some(RecordRowSubst {
                         var_id: self.record_substs[idx].var_id,
                         fields: type_intern.RecordFieldListId.new(self.record_substs[idx].fields.index),
                         rest: self.record_substs[idx].rest,
-                    });
+                    })
+                } else {
+                    Option.None
                 }
             }
-            Option.None => {}
+            Option.None => Option.None,
         }
-        // Fallback to linear scan for collision handling
-        for i in 0usize..self.record_substs.len() {
-            if self.record_substs[i].var_id.index == var_id.index {
-                return Option.Some(RecordRowSubst {
-                    var_id: self.record_substs[i].var_id,
-                    fields: type_intern.RecordFieldListId.new(self.record_substs[i].fields.index),
-                    rest: self.record_substs[i].rest,
-                });
-            }
-        }
-        Option.None
     }
 }
 
