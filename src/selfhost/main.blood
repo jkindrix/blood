@@ -494,11 +494,11 @@ fn run_build(args: &Args) -> i32 {
                 let bin_path = base_path;
                 let llc_start = blood_clock_millis();
 
-                // Run llc-18 on each .ll in obj/ that is newer than its .o
+                // Run llc-18 on each .ll in obj/ that is newer than its .o (parallel)
                 let mut llc_cmd = String.new();
-                llc_cmd.push_str("for f in ");
+                llc_cmd.push_str("pids=\"\"; for f in ");
                 llc_cmd.push_str(obj_dir_path.as_str());
-                llc_cmd.push_str("/*.ll; do o=\"${f%.ll}.o\"; if [ \"$f\" -nt \"$o\" ] 2>/dev/null || [ ! -f \"$o\" ]; then llc-18 \"$f\" -O");
+                llc_cmd.push_str("/*.ll; do o=\"${f%.ll}.o\"; if [ \"$f\" -nt \"$o\" ] 2>/dev/null || [ ! -f \"$o\" ]; then (llc-18 \"$f\" -O");
                 if args.opt_level == 0 {
                     llc_cmd.push('0');
                 } else if args.opt_level == 1 {
@@ -508,7 +508,7 @@ fn run_build(args: &Args) -> i32 {
                 } else {
                     llc_cmd.push('3');
                 }
-                llc_cmd.push_str(" -filetype=obj -relocation-model=pic -o \"$o\" || exit 1; fi; done");
+                llc_cmd.push_str(" -filetype=obj -relocation-model=pic -o \"$o\" || exit 1) & pids=\"$pids $!\"; fi; done; rc=0; for p in $pids; do wait $p || rc=1; done; exit $rc");
                 let llc_result = system(llc_cmd.as_str());
                 let llc_elapsed = blood_clock_millis() - llc_start;
                 if llc_result != 0 {
@@ -3604,9 +3604,12 @@ fn codegen_pass2(
     // ================================================================
     let has_generics = has_const_generics || type_generic_fn_set.len() > 0;
     // Parallel codegen: enabled for non-incremental clean builds without split-modules.
-    // The module splitter has a bug with merged worker string tables (mismatched
-    // string content in per-module files). Until fixed, parallel requires monolithic output.
-    let use_parallel = total_items > 200 && !has_generics && !args.split_modules
+    // Parallel codegen disabled pending type resolution bug: workers produce
+    // wrong LLVM types for some function calls (e.g., passing fat ref {ptr,i32}
+    // where full struct by-value is expected). Root cause: worker type-to-LLVM
+    // resolution differs from sequential path. See diff of def1797_lower_body
+    // at the def1639_finish call site.
+    let use_parallel = false && total_items > 200 && !has_generics
         && skip_modules.len() == 0 && !args.dump_mir && !args.validate_mir
         && !args.alloc_profile;
     if use_parallel {
@@ -5769,27 +5772,29 @@ fn split_monolithic_to_modules(
         }
         let line_len = line_end - line_start;
 
-        // Check if line starts with "define " and contains "!dbg" (user function).
-        // Preamble functions (@main wrapper, internal builtins) don't have !dbg.
+        // Check if line starts with "define " and contains "@def" (user function).
+        // Preamble functions (@main wrapper, internal builtins) use names like
+        // @thread_spawn, @set_alloc_bypass_tracking. User functions are @defN_name.
+        // Workers may not emit !dbg markers, so use @def as the reliable indicator.
         if line_len > 7
             && bytes[line_start] == 100 && bytes[line_start + 1] == 101  // "de"
             && bytes[line_start + 2] == 102 && bytes[line_start + 3] == 105  // "fi"
             && bytes[line_start + 4] == 110 && bytes[line_start + 5] == 101  // "ne"
             && bytes[line_start + 6] == 32  // " "
         {
-            // Check if this define line contains "!dbg" (user function marker)
-            let mut has_dbg = false;
+            // Check if this define line contains "@def" (Blood user function marker)
+            let mut has_def_fn = false;
             let mut di: usize = line_start + 7;
             while di + 3 < line_end {
-                if bytes[di] == 33 && bytes[di + 1] == 100  // "!d"
-                    && bytes[di + 2] == 98 && bytes[di + 3] == 103 // "bg"
+                if bytes[di] == 64 && bytes[di + 1] == 100  // "@d"
+                    && bytes[di + 2] == 101 && bytes[di + 3] == 102 // "ef"
                 {
-                    has_dbg = true;
+                    has_def_fn = true;
                     di = line_end; // break
                 }
                 di += 1;
             }
-            if has_dbg {
+            if has_def_fn {
                 preamble_end = line_start;
                 pos = line_start; // don't advance past this line
                 break;
@@ -5955,6 +5960,27 @@ fn split_monolithic_to_modules(
                             gi = line_end; // break
                         }
                         gi += 1;
+                    }
+                    // Skip string constant definitions: they use "constant" not "global"
+                    // and their content may contain "= global " which would be
+                    // incorrectly transformed (the root cause of the splitter bug).
+                    if has_global {
+                        let mut has_constant = false;
+                        let mut ci2 = line_start;
+                        while ci2 + 8 < line_end {
+                            if bytes[ci2] == 99 && bytes[ci2 + 1] == 111  // "co"
+                                && bytes[ci2 + 2] == 110 && bytes[ci2 + 3] == 115  // "ns"
+                                && bytes[ci2 + 4] == 116 && bytes[ci2 + 5] == 97  // "ta"
+                                && bytes[ci2 + 6] == 110 && bytes[ci2 + 7] == 116  // "nt"
+                            {
+                                has_constant = true;
+                                ci2 = line_end;
+                            }
+                            ci2 += 1;
+                        }
+                        if has_constant {
+                            has_global = false;
+                        }
                     }
                     if has_global {
                         // Copy up to "= " then insert "external " before "global "
