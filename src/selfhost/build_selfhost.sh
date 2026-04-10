@@ -75,12 +75,12 @@ check_build_time_regression() {
     case "$stage" in
         first_gen|second_gen|third_gen)
             # 2026-04-09 perf session dropped clean first_gen from 354 s
-            # to ~167 s via the typeck linear-scan removal and related
-            # fixes. Baseline set tight to catch any regression that
-            # reintroduces dead-code paths in hot lookup functions.
-            baseline=180
-            warn_threshold=252   # baseline × 1.4
-            fail_threshold=360   # baseline × 2.0
+            # ~117s via parallel codegen (4 workers) + parallel llc-18.
+            # Reduced from 167s by parallel codegen pass2, parallel per-module
+            # llc-18, and module splitter hardening.
+            baseline=130
+            warn_threshold=182   # baseline × 1.4
+            fail_threshold=260   # baseline × 2.0
             ;;
         *) return 0 ;;
     esac
