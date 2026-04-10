@@ -1,0 +1,27 @@
+// Test: linear T -> T coercion works.
+// A linear value can be passed where an unrestricted value is expected.
+// The linear constraint is satisfied by the exactly-once consumption at the call site.
+// EXPECT: 42
+// EXPECT: 10
+
+fn take_unrestricted(x: i32) -> i32 {
+    x
+}
+
+struct Pair { x: i32, y: i32 }
+
+fn sum_pair(p: Pair) -> i32 {
+    p.x + p.y
+}
+
+fn main() -> i32 {
+    let val: linear i32 = 42;
+    let result: i32 = take_unrestricted(val);
+    println_int(result);
+
+    let p: linear Pair = Pair { x: 3, y: 7 };
+    let sum: i32 = sum_pair(p);
+    println_int(sum);
+
+    0
+}
