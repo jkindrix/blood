@@ -892,8 +892,8 @@ pub fn emit_rvalue(
                         Option.Some(def_idx) => {
                             match ctx.lookup_enum(def_idx) {
                                 Option.Some(layout) => {
-                                    discr_ty = common.clone_string(&layout.discriminant_type);
-                                    enum_llvm_ty = common.clone_string(&layout.llvm_type);
+                                    discr_ty = layout.discriminant_type.clone();
+                                    enum_llvm_ty = layout.llvm_type.clone();
                                     found_enum = true;
                                 }
                                 Option.None => {}
@@ -965,7 +965,7 @@ fn emit_cast_from_llvm_types(
 ) -> codegen_ctx.CgName {
     // Quick check: if same type, just return value
     if string_eq_str(src_ty, tgt_ty) {
-        return codegen_ctx.CgName.Str(common.clone_string(val));
+        return codegen_ctx.CgName.Str(val.clone());
     }
 
     let result = ctx.fresh_temp_cg();
@@ -986,7 +986,7 @@ fn emit_cast_from_llvm_types(
         } else if tgt_size > src_size {
             ctx.emit_cast_cg(&result, "fpext", src_ty, val.as_str(), tgt_ty);
         } else {
-            return codegen_ctx.CgName.Str(common.clone_string(val));
+            return codegen_ctx.CgName.Str(val.clone());
         }
     } else if !src_is_float && tgt_is_float {
         // Int to float (default signed)
@@ -1042,7 +1042,7 @@ fn emit_cast_from_llvm_types(
             // Default to sign extend
             ctx.emit_cast_cg(&result, "sext", src_ty, val.as_str(), tgt_ty);
         } else {
-            return codegen_ctx.CgName.Str(common.clone_string(val));
+            return codegen_ctx.CgName.Str(val.clone());
         }
     }
 
@@ -1669,7 +1669,7 @@ fn emit_cast_with_types(
             }
         } else {
             // Same size - bitcast or just copy
-            return codegen_ctx.CgName.Str(common.clone_string(val));
+            return codegen_ctx.CgName.Str(val.clone());
         }
     } else if src_is_float && tgt_is_float {
         // Float to float cast
@@ -1678,7 +1678,7 @@ fn emit_cast_with_types(
         } else if tgt_size > src_size {
             ctx.emit_cast_cg(&result, "fpext", src_llvm.as_str(), val.as_str(), tgt_llvm.as_str());
         } else {
-            return codegen_ctx.CgName.Str(common.clone_string(val));
+            return codegen_ctx.CgName.Str(val.clone());
         }
     } else if src_is_int && tgt_is_float {
         // Integer to float
@@ -1735,11 +1735,11 @@ fn emit_cast_with_types(
             ctx.write(", 0\n");
         } else if src_is_fat {
             // Fat pointer to fat pointer: just copy
-            return codegen_ctx.CgName.Str(common.clone_string(val));
+            return codegen_ctx.CgName.Str(val.clone());
         } else {
             // Thin pointer to pointer: bitcast or just copy if same
             if string_eq_str(src_llvm.as_str(), tgt_llvm.as_str()) {
-                return codegen_ctx.CgName.Str(common.clone_string(val));
+                return codegen_ctx.CgName.Str(val.clone());
             } else if str_eq(tgt_llvm.as_str(), "{ ptr, i32 }") {
                 // Thin ptr to gen ref: wrap with gen=0
                 let ins1 = ctx.fresh_temp_cg();
@@ -1838,9 +1838,9 @@ fn emit_aggregate_adt(
             // Collect base field types from registry
             let mut field_types: Vec<String> = Vec.new();
             for fi in 0usize..layout.fields.len() {
-                field_types.push(common.clone_string(&layout.fields[fi].llvm_type));
+                field_types.push(layout.fields[fi].llvm_type.clone());
             }
-            let struct_ty = common.clone_string(&layout.llvm_type);
+            let struct_ty = layout.llvm_type.clone();
             // If the struct has param/infer fields and concrete type args are available,
             // compute concrete field types by substituting type args for param fields.
             if has_params && type_args.len() > 0 {
@@ -1967,17 +1967,17 @@ fn emit_aggregate_adt(
             let enum_ty = if dest_type.len() > 2 {
                 common.make_string(dest_type)
             } else {
-                common.clone_string(&layout.llvm_type)
+                layout.llvm_type.clone()
             };
-            let discr_ty = common.clone_string(&layout.discriminant_type);
+            let discr_ty = layout.discriminant_type.clone();
             // Find the variant's payload type and field types
             let mut payload_ty = common.make_string("{}");
             let mut variant_field_types: Vec<String> = Vec.new();
             for vi in 0usize..layout.variants.len() {
                 if layout.variants[vi].variant_idx == variant_idx {
-                    payload_ty = common.clone_string(&layout.variants[vi].payload_llvm_type);
+                    payload_ty = layout.variants[vi].payload_llvm_type.clone();
                     for vfi in 0usize..layout.variants[vi].fields.len() {
-                        variant_field_types.push(common.clone_string(&layout.variants[vi].fields[vfi].llvm_type));
+                        variant_field_types.push(layout.variants[vi].fields[vfi].llvm_type.clone());
                     }
                 }
             }
@@ -2202,7 +2202,7 @@ fn emit_aggregate(
             if operands.len() > 0 {
                 let (first_val, first_ty) = emit_operand_typed(ctx, &operands[0]);
                 if !str_eq(first_ty.as_str(), elem_llvm.as_str()) {
-                    elem_llvm = common.clone_string(&first_ty);
+                    elem_llvm = first_ty.clone();
                 }
                 let elem_ptr = ctx.fresh_temp_cg();
                 ctx.begin_gep_str(&elem_ptr, elem_llvm.as_str(), dest);
@@ -2417,7 +2417,7 @@ fn cgname_to_string(name: &codegen_ctx.CgName) -> String {
             s
         }
         &codegen_ctx.CgName.Str(ref s) => {
-            common.clone_string(s)
+            s.clone()
         }
     }
 }

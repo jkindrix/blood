@@ -491,7 +491,7 @@ pub fn resolve_place_elem_type(
                                                     &Option.None => false,
                                                 };
                                                 if !field_is_param {
-                                                    return common.clone_string(fty);
+                                                    return fty.clone();
                                                 }
                                                 found_field = true;
                                             } else {
@@ -560,7 +560,7 @@ pub fn resolve_place_elem_type(
                                                 Option.None => {}
                                             }
                                         }
-                                        return common.clone_string(&layout.fields[field_idx as usize].llvm_type);
+                                        return layout.fields[field_idx as usize].llvm_type.clone();
                                     }
                                 }
                                 Option.None => {}
@@ -1082,7 +1082,7 @@ pub fn emit_place_addr(
                     }
                     &Option.None => {
                         // Direct field access: use the struct/tuple LLVM type
-                        common.clone_string(&current_base)
+                        current_base.clone()
                     }
                 };
 
@@ -1921,7 +1921,7 @@ fn resolve_variant_payload_type(
                     // Find the variant layout
                     for i in 0usize..enum_layout.variants.len() {
                         if enum_layout.variants[i].variant_idx == variant_idx {
-                            return common.clone_string(&enum_layout.variants[i].payload_llvm_type);
+                            return enum_layout.variants[i].payload_llvm_type.clone();
                         }
                     }
                     // Variant not found in registry, fallback
@@ -2285,7 +2285,7 @@ fn cgname_to_string(name: &codegen_ctx.CgName) -> String {
             s
         }
         &codegen_ctx.CgName.Str(ref s) => {
-            common.clone_string(s)
+            s.clone()
         }
     }
 }

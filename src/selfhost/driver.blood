@@ -505,7 +505,7 @@ impl Compiler {
         for wi in 0usize..codegen_result.warnings.len() {
             result.warnings.push(error.CompileWarning.new(
                 error.CompilePhase.Codegen,
-                common.clone_string(&codegen_result.warnings[wi]),
+                codegen_result.warnings[wi].clone(),
             ));
         }
         result
@@ -808,12 +808,12 @@ pub fn convert_parse_errors(diagnostics: &Vec<parser_base.Diagnostic>) -> Vec<er
         let diag = &diagnostics[i];
         let mut ce = error.CompileError.with_code(
             error.CompilePhase.Parse,
-            common.clone_string(&diag.message),
+            diag.message.clone(),
             diag.span,
             common.make_string(parser_error_code(&diag.code)),
         );
         for ni in 0usize..diag.notes.len() {
-            ce.notes.push(common.clone_string(&diag.notes[ni]));
+            ce.notes.push(diag.notes[ni].clone());
         }
         errors.push(ce);
     }
@@ -827,7 +827,7 @@ pub fn convert_parse_warnings(diagnostics: &Vec<parser_base.Diagnostic>) -> Vec<
         let diag = &diagnostics[i];
         let cw = error.CompileWarning.with_code(
             error.CompilePhase.Parse,
-            common.clone_string(&diag.message),
+            diag.message.clone(),
             diag.span,
             common.make_string(parser_error_code(&diag.code)),
         );
@@ -843,7 +843,7 @@ pub fn convert_hir_diagnostics(diagnostics: &Vec<hir.Diagnostic>) -> Vec<error.C
         let diag = &diagnostics[i];
         errors.push(error.CompileError.with_code(
             error.CompilePhase.Lower,
-            common.clone_string(&diag.message),
+            diag.message.clone(),
             diag.span,
             common.make_string(hir_diagnostic_code(&diag.code)),
         ));
@@ -877,7 +877,7 @@ pub fn convert_type_errors(type_errors: &Vec<typeck.TypeError>) -> Vec<error.Com
             common.make_string(type_error_code(&te.kind)),
         );
         for ni in 0usize..te.notes.len() {
-            ce.notes.push(common.clone_string(&te.notes[ni].message));
+            ce.notes.push(te.notes[ni].message.clone());
         }
         errors.push(ce);
     }
@@ -896,7 +896,7 @@ fn convert_mir_error(err: &mir_lower_ctx.MirLowerError) -> error.CompileError {
         common.make_string(mir_lower_ctx.mir_error_code(&err.kind)),
     );
     for ni in 0usize..err.notes.len() {
-        ce.notes.push(common.clone_string(&err.notes[ni].message));
+        ce.notes.push(err.notes[ni].message.clone());
     }
     ce
 }
@@ -928,7 +928,7 @@ fn convert_codegen_errors(codegen_errors: &Vec<codegen.codegen_ctx.CodegenError>
                     common.make_string(code_str),
                 );
                 for ni in 0usize..cge.notes.len() {
-                    ce.notes.push(common.clone_string(&cge.notes[ni].message));
+                    ce.notes.push(cge.notes[ni].message.clone());
                 }
                 errors.push(ce);
             }
@@ -942,7 +942,7 @@ fn convert_codegen_errors(codegen_errors: &Vec<codegen.codegen_ctx.CodegenError>
                     coded_msg,
                 );
                 for ni in 0usize..cge.notes.len() {
-                    ce.notes.push(common.clone_string(&cge.notes[ni].message));
+                    ce.notes.push(cge.notes[ni].message.clone());
                 }
                 errors.push(ce);
             }
@@ -1366,7 +1366,7 @@ fn find_effect_op_return_ty(
 /// Resolves a Symbol to a String using the interner.
 pub fn resolve_symbol(interner: &interner.StringInterner, symbol: common.Symbol) -> String {
     match interner.resolve(symbol) {
-        Option.Some(s) => common.clone_string(s),
+        Option.Some(s) => s.clone(),
         Option.None => make_fn_name(symbol.index as usize),
     }
 }
@@ -1492,7 +1492,7 @@ pub fn compile_file(path: &str) -> CompileResult {
     if !read_result.success {
         let mut errors: Vec<error.CompileError> = Vec.new();
         let msg = match &read_result.error {
-            &Option.Some(ref e) => common.clone_string(e),
+            &Option.Some(ref e) => e.clone(),
             &Option.None => common.make_string("Unknown file read error"),
         };
         errors.push(error.CompileError.new(error.CompilePhase.Parse, msg));
@@ -1526,7 +1526,7 @@ pub fn check_file(path: &str, stdlib_path: Option<String>) -> CheckResult {
     if !read_result.success {
         let mut errors: Vec<error.CompileError> = Vec.new();
         let msg = match &read_result.error {
-            &Option.Some(ref e) => common.clone_string(e),
+            &Option.Some(ref e) => e.clone(),
             &Option.None => common.make_string("Unknown file read error"),
         };
         errors.push(error.CompileError.new(error.CompilePhase.Parse, msg));
@@ -1570,7 +1570,7 @@ pub fn check_file_traced(path: &str, stdlib_path: Option<String>, region_id: u64
     if !read_result.success {
         let mut errors: Vec<error.CompileError> = Vec.new();
         let msg = match &read_result.error {
-            &Option.Some(ref e) => common.clone_string(e),
+            &Option.Some(ref e) => e.clone(),
             &Option.None => common.make_string("Unknown file read error"),
         };
         errors.push(error.CompileError.new(error.CompilePhase.Parse, msg));

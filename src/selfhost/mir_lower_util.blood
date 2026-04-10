@@ -207,7 +207,7 @@ pub fn lower_literal(lit: &hir_expr.Literal, ty: &hir_ty.Type) -> mir_types.Cons
             mir_types.Constant.new(ty_id, mir_types.ConstantKind.Float(bits))
         }
         &hir_expr.LiteralKind.Str(ref s) => {
-            mir_types.Constant.new(ty_id, mir_types.ConstantKind.String(common.clone_string(s)))
+            mir_types.Constant.new(ty_id, mir_types.ConstantKind.String(s.clone()))
         }
         &hir_expr.LiteralKind.ByteStr(ref bytes) => {
             mir_types.Constant.new(ty_id, mir_types.ConstantKind.ByteString(clone_bytes(bytes)))
@@ -317,7 +317,7 @@ fn copy_constant_kind(k: &mir_types.ConstantKind) -> mir_types.ConstantKind {
         &mir_types.ConstantKind.Float(f) => mir_types.ConstantKind.Float(f),
         &mir_types.ConstantKind.Bool(b) => mir_types.ConstantKind.Bool(b),
         &mir_types.ConstantKind.Char(c) => mir_types.ConstantKind.Char(c),
-        &mir_types.ConstantKind.String(ref s) => mir_types.ConstantKind.String(common.clone_string(s)),
+        &mir_types.ConstantKind.String(ref s) => mir_types.ConstantKind.String(s.clone()),
         &mir_types.ConstantKind.ByteString(ref bytes) => {
             mir_types.ConstantKind.ByteString(clone_bytes(bytes))
         }
