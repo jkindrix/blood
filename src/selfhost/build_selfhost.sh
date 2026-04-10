@@ -256,7 +256,46 @@ run_with_pty() {
 }
 
 copy_runtime() {
-    cp -f "$RUNTIME_A" "$BUILD_DIR/libblood_runtime.a" 2>/dev/null || true
+    local bootstrap_rt="$REPO_ROOT/bootstrap/libblood_runtime_blood.a"
+
+    if [ -f "$RUNTIME_A" ]; then
+        cp -f "$RUNTIME_A" "$BUILD_DIR/libblood_runtime.a"
+    elif [ -f "$bootstrap_rt" ]; then
+        warn "RUNTIME_A not found at $RUNTIME_A — using bootstrap copy"
+        cp -f "$bootstrap_rt" "$BUILD_DIR/libblood_runtime.a"
+    else
+        die "No runtime archive found. Need either:\n  $RUNTIME_A (run: build blood_runtime)\n  $bootstrap_rt (committed with bootstrap/seed)"
+    fi
+}
+
+# Verify the runtime archive matches the bootstrap version.
+# Different compiler generations produce different archives; using the wrong
+# one causes stale-reference crashes during self-compilation.
+check_runtime_consistency() {
+    local bootstrap_rt="$REPO_ROOT/bootstrap/libblood_runtime_blood.a"
+    [ -f "$bootstrap_rt" ] || return 0  # No bootstrap runtime to compare against
+
+    local build_rt="$BUILD_DIR/libblood_runtime.a"
+    [ -f "$build_rt" ] || return 0  # Will be copied by copy_runtime
+
+    local bh bld_h
+    bh=$(md5sum "$bootstrap_rt" | cut -d' ' -f1)
+    bld_h=$(md5sum "$build_rt" | cut -d' ' -f1)
+    if [ "$bh" != "$bld_h" ]; then
+        warn "Runtime archive mismatch: build/ differs from bootstrap/"
+        warn "  bootstrap: $bh"
+        warn "  build:     $bld_h"
+        warn "Fixing: copying bootstrap runtime to build/"
+        cp -f "$bootstrap_rt" "$build_rt"
+        # Also update the default RUNTIME_A location if it exists and differs
+        if [ -f "$RUNTIME_A" ]; then
+            local ra_h
+            ra_h=$(md5sum "$RUNTIME_A" | cut -d' ' -f1)
+            if [ "$ra_h" != "$bh" ]; then
+                cp -f "$bootstrap_rt" "$RUNTIME_A"
+            fi
+        fi
+    fi
 }
 
 check_zombies() {
@@ -314,6 +353,8 @@ do_build_cargo() {
 
 do_build_first_gen() {
     local flags="${1:-}"
+
+    check_runtime_consistency
 
     # Find a compiler to bootstrap with: seed binary (preferred) or blood-rust (legacy fallback)
     local bootstrap_compiler=""
@@ -415,6 +456,8 @@ do_relink_first_gen() {
 do_build_second_gen() {
     [ -f "$BUILD_DIR/first_gen" ] || die "first_gen not found. Run: ./build_selfhost.sh build first_gen"
 
+    check_runtime_consistency
+
     # Clear all caches — cached IR is compiler-version-specific
     rm -rf "$BUILD_DIR/.content_hashes" "$BUILD_DIR/obj/.hashes" "$BUILD_DIR/.blood-cache" 2>/dev/null
 
@@ -462,6 +505,8 @@ do_build_second_gen() {
 
 do_build_third_gen() {
     [ -f "$BUILD_DIR/second_gen" ] || die "second_gen not found. Run: ./build_selfhost.sh build second_gen"
+
+    check_runtime_consistency
 
     # Clear all caches — cached IR is compiler-version-specific
     rm -rf "$BUILD_DIR/.content_hashes" "$BUILD_DIR/obj/.hashes" "$BUILD_DIR/.blood-cache" 2>/dev/null
