@@ -45,17 +45,13 @@ Aggregate operands should be marked as escaping so their allocations are promote
 
 Investigation found the snapshot mechanism is fully implemented. Codegen adds entries for all gen-tracked locals (region, persistent, unsized refs) at every Perform site (`codegen_term.blood:136-258`). The runtime validates each entry against the generation hash table after perform returns (`rt_effect.blood:197-218`). Golden tests: `t03_genref_snapshot_effect.blood`, `t10_nested_effect_snapshot.blood`. The stale comment in `rt_effect.blood:33` claiming "selfhost creates snapshots but never adds entries" has been corrected.
 
-### GAP-7: Generation counter overflow panics instead of Tier 3 promotion
+### ~~GAP-7: Generation counter overflow panics instead of Tier 3 promotion~~ FIXED
 
-When a region slot is freed ~2 billion times, the generation counter wraps at `0x7FFFFFFE`. The runtime panics (`alloc.blood:391-395`) instead of promoting the allocation to reference-counted Tier 3 as the spec envisions.
+**Fixed in commit 4dfe8d0 (2026-04-10).** Generation overflow (g >= 0x7FFFFFFE) now sets gen to -1 (permanently valid sentinel) instead of panicking. `blood_validate_generation` treats gen=-1 as always valid, equivalent to Tier 3 promotion. Applies to both heap allocations (alloc.blood) and region allocations (rt_region.blood).
 
-**Impact:** long-lived processes will eventually crash. Not a concern for short-lived compilations, but relevant for the project's target domain (avionics, medical devices).
+### ~~GAP-8: Region virtual address space leak~~ FIXED
 
-### GAP-8: Region virtual address space leak
-
-Region destroy calls `madvise(MADV_DONTNEED)` but never `munmap` (`rt_region.blood:205-211`). The comment says "Keep virtual mapping for stale ref safety." Virtual address space is exhausted after enough region create/destroy cycles.
-
-**Impact:** long-lived processes with many region lifecycles will exhaust virtual address space.
+**Fixed in commit ebdac42 (2026-04-10).** Region destroy now calls `munmap` instead of `madvise(MADV_DONTNEED)`, releasing virtual address space back to the kernel. The validation array retains the region's (base, end, gen) entry so stale references are still detected. Region gen overflow also uses the -1 sentinel instead of panicking.
 
 ## Features that are specified but not implemented
 
