@@ -1720,8 +1720,10 @@ fn infer_method_call(
                 );
             } else {
                 // Method not found - report error with type context
-                let mut note = common.make_string("no method found on type ");
-                note.push_str(type_intern.format_ty_id(resolved_receiver).as_str());
+                let mut note = common.make_string("no method found on type `");
+                let recv_name = format_ty_for_error(checker, resolved_receiver);
+                note.push_str(recv_name.as_str());
+                note.push('`');
                 checker.error_with_note(typeck.TypeErrorKind.NoSuchMethod, span, note);
 
                 // Still infer types for all arguments
@@ -1859,8 +1861,10 @@ fn infer_field(
                             }
                         }
                         Option.None => {
-                            let mut note = common.make_string("no field with this name on type ");
-                            note.push_str(type_intern.format_ty_id(resolved_base).as_str());
+                            let mut note = common.make_string("no field with this name on type `");
+                            let type_name = format_ty_for_error(checker, resolved_base);
+                            note.push_str(type_name.as_str());
+                            note.push('`');
                             checker.error_with_note(typeck.TypeErrorKind.NoSuchField, span, note);
                             type_intern.CommonTypes.error()
                         }
