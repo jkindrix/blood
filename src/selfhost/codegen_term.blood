@@ -1256,10 +1256,10 @@ fn emit_call(
         Option.Some(ref env_val) => {
             // Insert env_ptr at position 0 by building a new vec
             let mut new_args: Vec<(String, String)> = Vec.new();
-            new_args.push((common.make_string("ptr"), clone_string(env_val)));
+            new_args.push((common.make_string("ptr"), common.clone_string(env_val)));
             for j in 0usize..llvm_args.len() {
                 let arg_pair = &llvm_args[j];
-                new_args.push((clone_string(&arg_pair.0), clone_string(&arg_pair.1)));
+                new_args.push((common.clone_string(&arg_pair.0), common.clone_string(&arg_pair.1)));
             }
             llvm_args = new_args;
         }
@@ -1276,10 +1276,10 @@ fn emit_call(
         Option.Some(did) => {
             match ctx.lookup_fn_ret_type(did) {
                 Option.Some(drt) => drt,
-                Option.None => clone_string(&call_site_ret_ty),
+                Option.None => common.clone_string(&call_site_ret_ty),
             }
         }
-        Option.None => clone_string(&call_site_ret_ty),
+        Option.None => common.clone_string(&call_site_ret_ty),
     };
 
     // Check if return type is void (unit type)
@@ -1388,7 +1388,7 @@ fn extract_direct_fn_name(
                             let mut fallback_name = common.make_string("fn_");
                             fallback_name.push_str(codegen_types.format_u64(remapped_id as u64).as_str());
                             // Register the fallback name so stub generation can create a declaration
-                            ctx.register_def_name(remapped_id, clone_string(&fallback_name));
+                            ctx.register_def_name(remapped_id, common.clone_string(&fallback_name));
                             let mut err_msg = common.make_string("function def_id ");
                             err_msg.push_str(codegen_types.format_u64(remapped_id as u64).as_str());
                             err_msg.push_str(" not found in def_names, using fallback name ");
@@ -1616,12 +1616,6 @@ fn parse_int_bits(ty: &str) -> u32 {
     result
 }
 
-/// Clone a string.
-fn clone_string(s: &String) -> String {
-    let mut result = String.new();
-    result.push_str(s.as_str());
-    result
-}
 
 /// Converts a CgName to String for use at boundaries where String is required.
 fn cgname_to_string(name: &codegen_ctx.CgName) -> String {
@@ -1651,7 +1645,7 @@ fn cgname_to_string(name: &codegen_ctx.CgName) -> String {
             s
         }
         &codegen_ctx.CgName.Str(ref s) => {
-            clone_string(s)
+            common.clone_string(s)
         }
     }
 }

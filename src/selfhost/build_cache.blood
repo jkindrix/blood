@@ -164,7 +164,7 @@ pub fn collect_source_files(base_dir: &str, entry_path: &str) -> Vec<String> {
         }
 
         // Mark as visited
-        visited.push(clone_string(&current));
+        visited.push(common.clone_string(&current));
 
         // Read file and scan for mod declarations
         if !file_exists(current.as_str()) {
@@ -408,15 +408,11 @@ fn make_string(s: &str) -> String {
     result
 }
 
-/// Clones a String.
-fn clone_string(s: &String) -> String {
-    make_string(s.as_str())
-}
 
 /// Pops and returns the last element from a Vec<String>.
 fn pop_string(v: &mut Vec<String>) -> String {
     let last_idx = v.len() - 1;
-    let result = clone_string(&v[last_idx]);
+    let result = common.clone_string(&v[last_idx]);
     v.pop();
     result
 }
@@ -445,12 +441,12 @@ fn sort_strings(v: &mut Vec<String>) {
 
     for i in 1usize..len {
         // Extract the element to insert
-        let key = clone_string(&v[i]);
+        let key = common.clone_string(&v[i]);
         let mut j: i64 = (i as i64) - 1;
 
         // Shift elements greater than key to the right
         while j >= 0 && str_greater_than(&v[j as usize], &key) {
-            let src = clone_string(&v[j as usize]);
+            let src = common.clone_string(&v[j as usize]);
             // v[j+1] = v[j]
             overwrite_string(&mut v[(j + 1) as usize], &src);
             j -= 1;
@@ -485,5 +481,5 @@ fn overwrite_string(dest: &mut String, src: &String) {
     // Clear dest and push src content
     // Blood String doesn't have clear(), so we create a new one
     // and reassign. Since dest is &mut String, we can reassign.
-    *dest = clone_string(src);
+    *dest = common.clone_string(src);
 }

@@ -155,14 +155,14 @@ pub fn generate_module_with_items(
         let (ref name, ref body) = functions[idx];
         def_names.push(codegen_ctx.DefNameEntry.new(
             body.def_id.index,
-            clone_string(name),
+            common.clone_string(name),
         ));
     }
 
     // Create the shared codegen context with def names
     let mut ctx = codegen_ctx.CodegenCtx.new();
     for entry in &def_names {
-        ctx.register_def_name(entry.def_id, clone_string(&entry.name));
+        ctx.register_def_name(entry.def_id, common.clone_string(&entry.name));
     }
 
     // Populate ADT registry from HIR items
@@ -283,7 +283,7 @@ pub fn generate_function_with_defs(
 
     // Register all def names in the context
     for i in 0usize..def_names.len() {
-        ctx.register_def_name(def_names[i].def_id, clone_string(&def_names[i].name));
+        ctx.register_def_name(def_names[i].def_id, common.clone_string(&def_names[i].name));
     }
 
     generate_function_with_ctx(&mut ctx, body, fn_name, 0, 1)
@@ -362,9 +362,9 @@ pub fn generate_function_with_ctx(
     // Store function signature for generic call fixup at call sites
     let mut sig_param_types: Vec<String> = Vec.new();
     for sp in 0usize..params.len() {
-        sig_param_types.push(clone_string(&params[sp].0));
+        sig_param_types.push(common.clone_string(&params[sp].0));
     }
-    ctx.register_fn_signature(body.def_id.index, sig_param_types, clone_string(&ret_ty));
+    ctx.register_fn_signature(body.def_id.index, sig_param_types, common.clone_string(&ret_ty));
 
     // Emit function header
     ctx.emit_fn_header(fn_name, &params, ret_ty.as_str());
@@ -488,7 +488,7 @@ pub fn generate_function_with_ctx(
     ctx.end_function();
 
     // Extract and return the function IR
-    let result = clone_string(&ctx.output);
+    let result = common.clone_string(&ctx.output);
     ctx.output = String.new();
 
     @unsafe { CODEGEN_T_FOOTER_MS += blood_clock_millis() - t_footer_start; }
@@ -868,7 +868,7 @@ pub fn generate_vtables(
                     match &trait_def.items[ti] {
                         &hir_item.AssocItem.Fn(ref assoc_fn) => {
                             let method_name = match intern.resolve(assoc_fn.name.symbol) {
-                                Option.Some(s) => clone_string(s),
+                                Option.Some(s) => common.clone_string(s),
                                 Option.None => {
                                     let mut fallback = common.make_string("method_");
                                     fallback.push_str(codegen_types.format_u64(assoc_fn.def_id.index as u64).as_str());
@@ -879,7 +879,7 @@ pub fn generate_vtables(
                             ctx.trait_method_entries.push(codegen_ctx.TraitMethodEntry {
                                 method_def_id: assoc_fn.def_id.index,
                                 trait_def_id: trait_def_id,
-                                method_name: clone_string(&method_name),
+                                method_name: common.clone_string(&method_name),
                                 slot_index: slot_idx,
                             });
                             method_names.push(method_name);
@@ -943,7 +943,7 @@ fn collect_supertrait_vtable_methods(
                             match &super_trait_def.items[ti] {
                                 &hir_item.AssocItem.Fn(ref assoc_fn) => {
                                     let method_name = match intern.resolve(assoc_fn.name.symbol) {
-                                        Option.Some(s) => clone_string(s),
+                                        Option.Some(s) => common.clone_string(s),
                                         Option.None => {
                                             let mut fallback = common.make_string("method_");
                                             fallback.push_str(codegen_types.format_u64(assoc_fn.def_id.index as u64).as_str());
@@ -953,7 +953,7 @@ fn collect_supertrait_vtable_methods(
                                     ctx.trait_method_entries.push(codegen_ctx.TraitMethodEntry {
                                         method_def_id: assoc_fn.def_id.index,
                                         trait_def_id: child_trait_def_id,
-                                        method_name: clone_string(&method_name),
+                                        method_name: common.clone_string(&method_name),
                                         slot_index: slot_idx,
                                     });
                                     method_names.push(method_name);
@@ -1032,7 +1032,7 @@ fn generate_vtable_for_impl(
             match &impl_items[ii] {
                 &hir_item.AssocItem.Fn(ref assoc_fn) => {
                     let impl_method_name = match intern.resolve(assoc_fn.name.symbol) {
-                        Option.Some(s) => clone_string(s),
+                        Option.Some(s) => common.clone_string(s),
                         Option.None => common.make_string(""),
                     };
                     if string_eq_str(impl_method_name.as_str(), method_name.as_str()) {
@@ -1061,7 +1061,7 @@ fn generate_vtable_for_impl(
                                 match &tdef.items[tmi] {
                                     &hir_item.AssocItem.Fn(ref trait_fn) => {
                                         let trait_method_name = match intern.resolve(trait_fn.name.symbol) {
-                                            Option.Some(s) => clone_string(s),
+                                            Option.Some(s) => common.clone_string(s),
                                             Option.None => common.make_string(""),
                                         };
                                         if string_eq_str(trait_method_name.as_str(), method_name.as_str()) {
@@ -1102,7 +1102,7 @@ fn generate_vtable_for_impl(
                                 match &other_impl.items[oii] {
                                     &hir_item.AssocItem.Fn(ref other_fn) => {
                                         let other_name = match intern.resolve(other_fn.name.symbol) {
-                                            Option.Some(s) => clone_string(s),
+                                            Option.Some(s) => common.clone_string(s),
                                             Option.None => common.make_string(""),
                                         };
                                         if string_eq_str(other_name.as_str(), method_name.as_str()) {
@@ -1134,7 +1134,7 @@ fn generate_vtable_for_impl(
                                     match &any_tdef.items[dti] {
                                         &hir_item.AssocItem.Fn(ref dfn) => {
                                             let dname = match intern.resolve(dfn.name.symbol) {
-                                                Option.Some(s) => clone_string(s),
+                                                Option.Some(s) => common.clone_string(s),
                                                 Option.None => common.make_string(""),
                                             };
                                             if string_eq_str(dname.as_str(), method_name.as_str()) {
@@ -1171,7 +1171,7 @@ fn generate_vtable_for_impl(
     ctx.vtable_name_entries.push(codegen_ctx.VtableNameEntry {
         trait_def_id: trait_def_id,
         type_def_id: type_def_id,
-        vtable_name: clone_string(&vtable_name),
+        vtable_name: common.clone_string(&vtable_name),
     });
     ctx.vtable_defs.push(ir);
 }
@@ -1935,12 +1935,6 @@ fn is_empty_struct_type(ty: &str) -> bool {
     }
 }
 
-/// Clones a String.
-fn clone_string(s: &String) -> String {
-    let mut result = String.new();
-    result.push_str(s.as_str());
-    result
-}
 
 /// Compares two &str for equality.
 fn string_eq_str(a: &str, b: &str) -> bool {

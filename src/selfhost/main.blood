@@ -473,9 +473,9 @@ fn run_build(args: &Args) -> i32 {
 
             // Determine output path for LLVM IR
             let ll_path = match &args.output_file {
-                &Option.Some(ref out) => main_helpers.clone_string(out),
+                &Option.Some(ref out) => common.clone_string(out),
                 &Option.None => {
-                    let mut p = main_helpers.clone_string(&profile_dir);
+                    let mut p = common.clone_string(&profile_dir);
                     p.push('/');
                     p.push_str(stem.as_str());
                     p.push_str(".ll");
@@ -673,7 +673,7 @@ fn run_run(args: &Args) -> i32 {
 
             // Phase 1: Generate LLVM IR
             let ll_path = {
-                let mut p = main_helpers.clone_string(&profile_dir);
+                let mut p = common.clone_string(&profile_dir);
                 p.push('/');
                 p.push_str(stem.as_str());
                 p.push_str(".ll");
@@ -1088,7 +1088,7 @@ fn run_single_test(
     bin_path.push_str(test.name.as_str());
 
     // Build Args for compilation (no cache, quiet)
-    let mut build_args = Args.build(main_helpers.clone_string(&harness_path));
+    let mut build_args = Args.build(common.clone_string(&harness_path));
     build_args.no_cache = true;
 
     // Phase 1: Compile to LLVM IR via streaming codegen
@@ -1334,7 +1334,7 @@ fn run_test(args: &Args) -> i32 {
 
                 if include {
                     tests.push(TestInfo {
-                        name: main_helpers.clone_string(&t.name),
+                        name: common.clone_string(&t.name),
                         config: TestConfig {
                             is_test: t.config.is_test,
                             ignore: t.config.ignore,
@@ -1399,8 +1399,8 @@ fn run_test(args: &Args) -> i32 {
                         print_str("FAILED\n");
                         results.failed = results.failed + 1;
                         results.failures.push(TestFailure {
-                            name: main_helpers.clone_string(&t.name),
-                            message: main_helpers.clone_string(msg),
+                            name: common.clone_string(&t.name),
+                            message: common.clone_string(msg),
                         });
                         if args.test_fail_fast {
                             ri = tests.len(); // break
@@ -1490,7 +1490,7 @@ pub fn parse_args(argc: i32, argv: &Vec<String>) -> Args {
             if main_helpers.str_equals(arg, "-o") {
                 if i + 1 < argv.len() {
                     i += 1;
-                    args.output_file = Option.Some(main_helpers.clone_string(&argv[i]));
+                    args.output_file = Option.Some(common.clone_string(&argv[i]));
                 } else {
                     main_helpers.print_error("missing value for -o");
                 }
@@ -1505,14 +1505,14 @@ pub fn parse_args(argc: i32, argv: &Vec<String>) -> Args {
             } else if main_helpers.str_equals(arg, "--build-dir") {
                 if i + 1 < argv.len() {
                     i += 1;
-                    args.build_dir = Option.Some(main_helpers.clone_string(&argv[i]));
+                    args.build_dir = Option.Some(common.clone_string(&argv[i]));
                 } else {
                     main_helpers.print_error("missing value for --build-dir");
                 }
             } else if main_helpers.str_equals(arg, "--stdlib-path") {
                 if i + 1 < argv.len() {
                     i += 1;
-                    args.stdlib_path = Option.Some(main_helpers.clone_string(&argv[i]));
+                    args.stdlib_path = Option.Some(common.clone_string(&argv[i]));
                 } else {
                     main_helpers.print_error("missing value for --stdlib-path");
                 }
@@ -1590,14 +1590,14 @@ pub fn parse_args(argc: i32, argv: &Vec<String>) -> Args {
             } else if main_helpers.str_equals(arg, "--filter") {
                 if i + 1 < argv.len() {
                     i += 1;
-                    args.test_filter = Option.Some(main_helpers.clone_string(&argv[i]));
+                    args.test_filter = Option.Some(common.clone_string(&argv[i]));
                 } else {
                     main_helpers.print_error("missing value for --filter");
                 }
             } else if main_helpers.str_equals(arg, "-F") {
                 if i + 1 < argv.len() {
                     i += 1;
-                    args.test_filter = Option.Some(main_helpers.clone_string(&argv[i]));
+                    args.test_filter = Option.Some(common.clone_string(&argv[i]));
                 } else {
                     main_helpers.print_error("missing value for -F");
                 }
@@ -1607,7 +1607,7 @@ pub fn parse_args(argc: i32, argv: &Vec<String>) -> Args {
         } else {
             // Positional argument (source file)
             if args.source_file.is_none() {
-                args.source_file = Option.Some(main_helpers.clone_string(arg));
+                args.source_file = Option.Some(common.clone_string(arg));
             }
         }
         i += 1;
@@ -1641,7 +1641,7 @@ fn parse_command(cmd: &String) -> Command {
 fn resolve_build_dir(args: &Args) -> String {
     // 1. CLI flag
     match &args.build_dir {
-        &Option.Some(ref dir) => { return main_helpers.clone_string(dir); }
+        &Option.Some(ref dir) => { return common.clone_string(dir); }
         &Option.None => {}
     }
     // 2. BLOOD_BUILD_DIR env var
@@ -1671,7 +1671,7 @@ fn default_codebase_path() -> String {
 fn resolve_stdlib_path(args: &Args) -> Option<String> {
     // 1. CLI flag
     match &args.stdlib_path {
-        &Option.Some(ref dir) => { return Option.Some(main_helpers.clone_string(dir)); }
+        &Option.Some(ref dir) => { return Option.Some(common.clone_string(dir)); }
         &Option.None => {}
     }
     // 2. BLOOD_STDLIB_PATH env var
@@ -2123,7 +2123,7 @@ fn collect_handler_info(
                         let ret_kind = classify_return_clause(bodies, ret_clause.body_id.index, state_count);
 
                         returns.push(HandlerReturnInfo {
-                            handler_name: main_helpers.clone_string(&handler_name),
+                            handler_name: common.clone_string(&handler_name),
                             handler_def_id,
                             effect_def_id,
                             body_def_id: ret_clause.body_id.index,
@@ -2162,7 +2162,7 @@ fn collect_handler_info(
                 match &handler_def.finally_clause {
                     &Option.Some(ref fin_clause) => {
                         finallys.push(HandlerFinallyInfo {
-                            handler_name: main_helpers.clone_string(&handler_name),
+                            handler_name: common.clone_string(&handler_name),
                             handler_def_id,
                             has_body: true,
                             body_def_id: fin_clause.def_id.index,
@@ -2172,7 +2172,7 @@ fn collect_handler_info(
                     }
                     &Option.None => {
                         finallys.push(HandlerFinallyInfo {
-                            handler_name: main_helpers.clone_string(&handler_name),
+                            handler_name: common.clone_string(&handler_name),
                             handler_def_id,
                             has_body: false,
                             body_def_id: 0,
@@ -2206,7 +2206,7 @@ fn collect_handler_info(
                     }
 
                     ops.push(HandlerOpInfo {
-                        handler_name: main_helpers.clone_string(&handler_name),
+                        handler_name: common.clone_string(&handler_name),
                         op_name,
                         op_index,
                         handler_def_id,
@@ -2390,7 +2390,7 @@ fn generate_handler_wrappers(
         let opinfo = &handler_info.ops[oi];
 
         // Wrapper function name: {HandlerName}_{OpName}
-        let mut wrapper_name = main_helpers.clone_string(&opinfo.handler_name);
+        let mut wrapper_name = common.clone_string(&opinfo.handler_name);
         wrapper_name.push(95 as char); // '_'
         wrapper_name.push_str(opinfo.op_name.as_str());
 
@@ -2620,7 +2620,7 @@ fn generate_handler_wrappers(
     for ri in 0usize..handler_info.returns.len() {
         let ret_info = &handler_info.returns[ri];
 
-        let mut wrapper_name = main_helpers.clone_string(&ret_info.handler_name);
+        let mut wrapper_name = common.clone_string(&ret_info.handler_name);
         wrapper_name.push_str("_return");
 
         ir.push_str("define weak_odr i64 @");
@@ -2832,7 +2832,7 @@ fn generate_handler_wrappers(
             let mut body_name: Option<String> = Option.None;
             for bni in 0usize..body_id_names.len() {
                 if body_id_names[bni].body_id == ret_info.body_def_id {
-                    body_name = Option.Some(main_helpers.clone_string(&body_id_names[bni].fn_name));
+                    body_name = Option.Some(common.clone_string(&body_id_names[bni].fn_name));
                 }
             }
             match &body_name {
@@ -2905,7 +2905,7 @@ fn generate_handler_wrappers(
     for fi in 0usize..handler_info.finallys.len() {
         let fin_info = &handler_info.finallys[fi];
 
-        let mut wrapper_name = main_helpers.clone_string(&fin_info.handler_name);
+        let mut wrapper_name = common.clone_string(&fin_info.handler_name);
         wrapper_name.push_str("_finally");
 
         ir.push_str("define weak_odr void @");
@@ -3045,7 +3045,7 @@ fn generate_handler_wrappers(
             for si in 0usize..handler_info.ops.len() {
                 if handler_info.ops[si].handler_def_id == hid {
                     let sop = &handler_info.ops[si];
-                    let mut wrapper_name = main_helpers.clone_string(&sop.handler_name);
+                    let mut wrapper_name = common.clone_string(&sop.handler_name);
                     wrapper_name.push(95 as char); // '_'
                     wrapper_name.push_str(sop.op_name.as_str());
                     let store_idx = sop.op_index as usize;
@@ -3387,14 +3387,14 @@ fn build_codegen_worklist(
         }
 
         defined_def_ids.push(def_id.index);
-        defined_names.push(main_helpers.clone_string(&fn_name));
+        defined_names.push(common.clone_string(&fn_name));
 
         // Record body_id → fn_name mapping for handler clause bodies.
         // This is used by generate_handler_wrappers for kind=2 return clause
         // body calls, avoiding the def_name collision with register_all_item_names.
         body_id_to_name.push(BodyIdNameEntry {
             body_id: body_id.index,
-            fn_name: main_helpers.clone_string(&fn_name),
+            fn_name: common.clone_string(&fn_name),
         });
 
         items.push(CodegenWorkItem {
@@ -3753,8 +3753,8 @@ fn codegen_pass2(
                 // Add to main ctx with the worker's label (already unique)
                 let idx = ctx.string_table.len() as u32;
                 ctx.string_table.push(codegen_ctx.StringConstant {
-                    label: main_helpers.clone_string(&entry.label),
-                    content: main_helpers.clone_string(&entry.content),
+                    label: common.clone_string(&entry.label),
+                    content: common.clone_string(&entry.content),
                     length: entry.length,
                 });
                 // Don't bother updating string_table_hash — it's only used
@@ -3768,7 +3768,7 @@ fn codegen_pass2(
         for w in 0usize..num_workers {
             let wctx = &worker_ctxs[w];
             for fi in 0usize..wctx.fn_ptr_wrapper_defs.len() {
-                ctx.fn_ptr_wrapper_defs.push(main_helpers.clone_string(&wctx.fn_ptr_wrapper_defs[fi]));
+                ctx.fn_ptr_wrapper_defs.push(common.clone_string(&wctx.fn_ptr_wrapper_defs[fi]));
             }
         }
 
@@ -3776,7 +3776,7 @@ fn codegen_pass2(
         for w in 0usize..num_workers {
             let wctx = &worker_ctxs[w];
             for si in 0usize..wctx.inline_stubs.len() {
-                ctx.inline_stubs.push(main_helpers.clone_string(&wctx.inline_stubs[si]));
+                ctx.inline_stubs.push(common.clone_string(&wctx.inline_stubs[si]));
             }
         }
 
@@ -3787,12 +3787,12 @@ fn codegen_pass2(
                 let sig = &wctx.fn_signatures[fi];
                 let mut cloned_params: Vec<String> = Vec.new();
                 for pi in 0usize..sig.param_types.len() {
-                    cloned_params.push(main_helpers.clone_string(&sig.param_types[pi]));
+                    cloned_params.push(common.clone_string(&sig.param_types[pi]));
                 }
                 ctx.register_fn_signature(
                     sig.def_id,
                     cloned_params,
-                    main_helpers.clone_string(&sig.return_type),
+                    common.clone_string(&sig.return_type),
                 );
             }
         }
@@ -5278,7 +5278,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     // These DefIds are allocated by the HIR lowering and map to runtime function names.
     for bfi in 0usize..lower_result.builtin_fn_defs.len() {
         let entry = &lower_result.builtin_fn_defs[bfi];
-        ctx.register_def_name(entry.def_id_index, main_helpers.clone_string(&entry.runtime_name));
+        ctx.register_def_name(entry.def_id_index, common.clone_string(&entry.runtime_name));
     }
 
     // Pass 1c2: Register bridge constants with inline values.
@@ -5295,7 +5295,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     // These DefIds are allocated by the type checker and map to runtime function names.
     for bi in 0usize..typeck_result.builtin_def_names.len() {
         let entry = &typeck_result.builtin_def_names[bi];
-        ctx.register_def_name(entry.def_id_index, main_helpers.clone_string(&entry.runtime_name));
+        ctx.register_def_name(entry.def_id_index, common.clone_string(&entry.runtime_name));
     }
 
     // Collect handler→effect mappings and handler op info for wrapper generation.
@@ -5657,14 +5657,14 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
 
     // Emit inline handler stub functions collected during PushInlineHandler codegen.
     for stub_i in 0usize..ctx.inline_stubs.len() {
-        let stub_ir = main_helpers.clone_string(&ctx.inline_stubs[stub_i]);
+        let stub_ir = common.clone_string(&ctx.inline_stubs[stub_i]);
         ctx.buffer_write(stub_ir.as_str());
     }
 
     // Emit fn pointer wrapper functions (fn_name$fnptr) for named functions
     // used as fn() values.  These are deferred to emit at module scope.
     for wpi in 0usize..ctx.fn_ptr_wrapper_defs.len() {
-        let wrapper_ir = main_helpers.clone_string(&ctx.fn_ptr_wrapper_defs[wpi]);
+        let wrapper_ir = common.clone_string(&ctx.fn_ptr_wrapper_defs[wpi]);
         ctx.buffer_write(wrapper_ir.as_str());
     }
 

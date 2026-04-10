@@ -722,7 +722,7 @@ impl CodegenCtx {
     pub fn register_def_name(self: &mut CodegenCtx, def_id: u32, name: String) {
         let had_temp = self.fn_temp_region != 0;
         if had_temp { region_deactivate(); }
-        let cloned = clone_string(&name);
+        let cloned = common.clone_string(&name);
         let idx = self.def_names.len() as u32;
         self.def_names.push(DefNameEntry { def_id, name: cloned });
         self.def_names_hash.insert(def_id as u64, idx);
@@ -735,7 +735,7 @@ impl CodegenCtx {
     /// which is acceptable — the latest registration is the one that should win.
     pub fn lookup_def_name(self: &CodegenCtx, def_id: u32) -> Option<String> {
         match self.def_names_hash.get(def_id as u64) {
-            Option.Some(idx) => Option.Some(clone_string(&self.def_names[idx as usize].name)),
+            Option.Some(idx) => Option.Some(common.clone_string(&self.def_names[idx as usize].name)),
             Option.None => Option.None,
         }
     }
@@ -757,9 +757,9 @@ impl CodegenCtx {
         if had_temp_sig { region_deactivate(); }
         let mut cloned_params: Vec<String> = Vec.with_capacity(param_types.len());
         for pi in 0usize..param_types.len() {
-            cloned_params.push(clone_string(&param_types[pi]));
+            cloned_params.push(common.clone_string(&param_types[pi]));
         }
-        let cloned_ret = clone_string(&return_type);
+        let cloned_ret = common.clone_string(&return_type);
         let idx = self.fn_signatures.len() as u32;
         self.fn_signatures.push(FnSigEntry { def_id, param_types: cloned_params, return_type: cloned_ret });
         self.fn_sigs_hash.insert(def_id as u64, idx);
@@ -773,7 +773,7 @@ impl CodegenCtx {
             Option.Some(idx) => {
                 let entry = &self.fn_signatures[idx as usize];
                 if param_idx < entry.param_types.len() {
-                    return Option.Some(clone_string(&entry.param_types[param_idx]));
+                    return Option.Some(common.clone_string(&entry.param_types[param_idx]));
                 }
                 Option.None
             }
@@ -786,7 +786,7 @@ impl CodegenCtx {
         match self.fn_sigs_hash.get(def_id as u64) {
             Option.Some(idx) => {
                 let entry = &self.fn_signatures[idx as usize];
-                Option.Some(clone_string(&entry.return_type))
+                Option.Some(common.clone_string(&entry.return_type))
             }
             Option.None => Option.None,
         }
@@ -800,7 +800,7 @@ impl CodegenCtx {
     /// Returns the def_id and name for a def_name entry at the given index.
     pub fn def_name_at(self: &CodegenCtx, index: usize) -> (u32, String) {
         let entry = &self.def_names[index];
-        (entry.def_id, clone_string(&entry.name))
+        (entry.def_id, common.clone_string(&entry.name))
     }
 
     /// Gets or creates a fn pointer wrapper for the given def_id.
@@ -811,7 +811,7 @@ impl CodegenCtx {
         // Check cache first
         match self.fn_ptr_wrapper_hash.get(def_id as u64) {
             Option.Some(idx) => {
-                return Option.Some(clone_string(&self.fn_ptr_wrapper_names[idx as usize]));
+                return Option.Some(common.clone_string(&self.fn_ptr_wrapper_names[idx as usize]));
             }
             Option.None => {}
         }
@@ -830,7 +830,7 @@ impl CodegenCtx {
         };
 
         // Build wrapper name
-        let mut wrapper_name = clone_string(&fn_name);
+        let mut wrapper_name = common.clone_string(&fn_name);
         wrapper_name.push_str("$fnptr");
 
         // Get parameter types and return type from fn_signatures
@@ -848,7 +848,7 @@ impl CodegenCtx {
                 Option.Some(idx) => idx as usize,
                 Option.None => 0,
             };
-            let ret_ty_str = clone_string(&self.fn_signatures[sig_idx].return_type);
+            let ret_ty_str = common.clone_string(&self.fn_signatures[sig_idx].return_type);
             let param_count = self.fn_signatures[sig_idx].param_types.len();
 
             // Return type
@@ -860,7 +860,7 @@ impl CodegenCtx {
             // Add original parameters
             for pi in 0usize..param_count {
                 def.push_str(", ");
-                let pty = clone_string(&self.fn_signatures[sig_idx].param_types[pi]);
+                let pty = common.clone_string(&self.fn_signatures[sig_idx].param_types[pi]);
                 def.push_str(pty.as_str());
                 def.push_str(" %p");
                 def.push_str(codegen_types.format_u64(pi as u64).as_str());
@@ -883,7 +883,7 @@ impl CodegenCtx {
                 if ai > 0 {
                     def.push_str(", ");
                 }
-                let pty = clone_string(&self.fn_signatures[sig_idx].param_types[ai]);
+                let pty = common.clone_string(&self.fn_signatures[sig_idx].param_types[ai]);
                 def.push_str(pty.as_str());
                 def.push_str(" %p");
                 def.push_str(codegen_types.format_u64(ai as u64).as_str());
@@ -913,7 +913,7 @@ impl CodegenCtx {
 
         // Cache the wrapper name and store the definition for later emission
         let idx = self.fn_ptr_wrapper_names.len() as u32;
-        self.fn_ptr_wrapper_names.push(clone_string(&wrapper_name));
+        self.fn_ptr_wrapper_names.push(common.clone_string(&wrapper_name));
         self.fn_ptr_wrapper_defs.push(def);
         self.fn_ptr_wrapper_hash.insert(def_id as u64, idx);
 
@@ -937,7 +937,7 @@ impl CodegenCtx {
     pub fn get_static_type(self: &CodegenCtx, def_id: u32) -> Option<String> {
         match self.static_types_hash.get(def_id as u64) {
             Option.Some(idx) => {
-                Option.Some(clone_string(&self.static_types[idx as usize]))
+                Option.Some(common.clone_string(&self.static_types[idx as usize]))
             }
             Option.None => Option.None,
         }
@@ -1567,7 +1567,7 @@ impl CodegenCtx {
                 s
             }
             &CgName.Str(ref s) => {
-                clone_string(s)
+                common.clone_string(s)
             }
         }
     }
@@ -1685,7 +1685,7 @@ impl CodegenCtx {
         // Fast path: hash lookup
         match self.local_types_hash.get(local.index as u64) {
             Option.Some(idx) => {
-                return clone_string(&self.local_types[idx as usize].llvm_type);
+                return common.clone_string(&self.local_types[idx as usize].llvm_type);
             }
             Option.None => {}
         }
@@ -1917,7 +1917,7 @@ impl CodegenCtx {
         let had_temp_err = self.fn_temp_region != 0;
         if had_temp_err { region_deactivate(); }
         let fn_name = match &self.current_fn {
-            &Option.Some(ref name) => Option.Some(clone_string(name)),
+            &Option.Some(ref name) => Option.Some(common.clone_string(name)),
             &Option.None => Option.None,
         };
         let span = match &self.current_span {
@@ -1940,7 +1940,7 @@ impl CodegenCtx {
         let had_temp_err2 = self.fn_temp_region != 0;
         if had_temp_err2 { region_deactivate(); }
         let fn_name = match &self.current_fn {
-            &Option.Some(ref name) => Option.Some(clone_string(name)),
+            &Option.Some(ref name) => Option.Some(common.clone_string(name)),
             &Option.None => Option.None,
         };
         let span = match &self.current_span {
@@ -1969,7 +1969,7 @@ impl CodegenCtx {
         let mut errors: Vec<CodegenError> = Vec.new();
         for err in &self.codegen_errors {
             let fn_name = match &err.fn_name {
-                &Option.Some(ref name) => Option.Some(clone_string(name)),
+                &Option.Some(ref name) => Option.Some(common.clone_string(name)),
                 &Option.None => Option.None,
             };
             let span = match &err.span {
@@ -1983,13 +1983,13 @@ impl CodegenCtx {
                     &Option.None => Option.None,
                 };
                 notes.push(CodegenNote {
-                    message: clone_string(&note.message),
+                    message: common.clone_string(&note.message),
                     span: note_span,
                 });
             }
             errors.push(CodegenError {
                 kind: clone_error_kind(&err.kind),
-                message: clone_string(&err.message),
+                message: common.clone_string(&err.message),
                 fn_name: fn_name,
                 span: span,
                 notes: notes,
@@ -2003,7 +2003,7 @@ impl CodegenCtx {
     pub fn take_warnings(self: &mut CodegenCtx) -> Vec<String> {
         let mut warnings: Vec<String> = Vec.new();
         for i in 0usize..self.codegen_warnings.len() {
-            warnings.push(clone_string(&self.codegen_warnings[i]));
+            warnings.push(common.clone_string(&self.codegen_warnings[i]));
         }
         self.codegen_warnings.clear();
         warnings
@@ -2080,7 +2080,7 @@ impl CodegenCtx {
         match self.adt_struct_hash.get(def_id as u64) {
             Option.Some(idx) => {
                 match &self.adt_registry[idx as usize] {
-                    &AdtEntry.Struct(ref layout) => { return clone_string(&layout.llvm_type); }
+                    &AdtEntry.Struct(ref layout) => { return common.clone_string(&layout.llvm_type); }
                     _ => {}
                 }
             }
@@ -2089,7 +2089,7 @@ impl CodegenCtx {
         match self.adt_enum_hash.get(def_id as u64) {
             Option.Some(idx) => {
                 match &self.adt_registry[idx as usize] {
-                    &AdtEntry.Enum(ref layout) => { return clone_string(&layout.llvm_type); }
+                    &AdtEntry.Enum(ref layout) => { return common.clone_string(&layout.llvm_type); }
                     _ => {}
                 }
             }
@@ -2163,7 +2163,7 @@ impl CodegenCtx {
 
     /// Begins generating a new function.
     pub fn begin_function(self: &mut CodegenCtx, name: String) {
-        self.current_fn = Option.Some(clone_string(&name));
+        self.current_fn = Option.Some(common.clone_string(&name));
         self.current_span = Option.None;
         self.value_counter = 0;
         self.local_names.clear();
@@ -2178,7 +2178,7 @@ impl CodegenCtx {
     /// Returns the current function name, or empty string if none.
     pub fn current_function(self: &CodegenCtx) -> String {
         match &self.current_fn {
-            &Option.Some(ref name) => clone_string(name),
+            &Option.Some(ref name) => common.clone_string(name),
             &Option.None => common.make_string(""),
         }
     }
@@ -2201,7 +2201,7 @@ impl CodegenCtx {
             Option.Some(idx) => {
                 // Verify it's the same string (handle hash collisions)
                 if string_equal(&self.string_table[idx as usize].content, content) {
-                    let result = clone_string(&self.string_table[idx as usize].label);
+                    let result = common.clone_string(&self.string_table[idx as usize].label);
                     if had_temp { region_activate(self.fn_temp_region); }
                     return result;
                 }
@@ -2219,8 +2219,8 @@ impl CodegenCtx {
                 let idx = self.string_table.len() as u32;
 
                 self.string_table.push(StringConstant {
-                    label: clone_string(&label),
-                    content: clone_string(content),
+                    label: common.clone_string(&label),
+                    content: common.clone_string(content),
                     length: length,
                 });
                 self.string_table_hash.insert(hash, idx);
@@ -2233,7 +2233,7 @@ impl CodegenCtx {
         // Hash collision case: linear scan
         for i in 0usize..self.string_table.len() {
             if string_equal(&self.string_table[i].content, content) {
-                let result = clone_string(&self.string_table[i].label);
+                let result = common.clone_string(&self.string_table[i].label);
                 if had_temp { region_activate(self.fn_temp_region); }
                 return result;
             }
@@ -2249,8 +2249,8 @@ impl CodegenCtx {
         let length = content.len() + 1;
 
         self.string_table.push(StringConstant {
-            label: clone_string(&label),
-            content: clone_string(content),
+            label: common.clone_string(&label),
+            content: common.clone_string(content),
             length: length,
         });
 
@@ -2451,7 +2451,7 @@ impl CodegenCtx {
         let mut worker_def_hash = hashmap.HashMapU64U32.with_capacity(self.def_names.len());
         for i in 0usize..self.def_names.len() {
             let entry = &self.def_names[i];
-            worker_def_names.push(DefNameEntry.new(entry.def_id, clone_string(&entry.name)));
+            worker_def_names.push(DefNameEntry.new(entry.def_id, common.clone_string(&entry.name)));
             worker_def_hash.insert(entry.def_id as u64, i as u32);
         }
 
@@ -2464,14 +2464,14 @@ impl CodegenCtx {
                     for fi in 0usize..sl.fields.len() {
                         let field = &sl.fields[fi];
                         cloned_fields.push(AdtFieldInfo {
-                            llvm_type: clone_string(&field.llvm_type),
+                            llvm_type: common.clone_string(&field.llvm_type),
                             hir_type: field.hir_type,
                         });
                     }
                     worker_adt_registry.push(AdtEntry.Struct(StructLayout {
                         def_id: sl.def_id,
                         fields: cloned_fields,
-                        llvm_type: clone_string(&sl.llvm_type),
+                        llvm_type: common.clone_string(&sl.llvm_type),
                         is_packed: sl.is_packed,
                         align: sl.align,
                         is_union: sl.is_union,
@@ -2485,21 +2485,21 @@ impl CodegenCtx {
                         for vfi in 0usize..variant.fields.len() {
                             let vf = &variant.fields[vfi];
                             cloned_vfields.push(AdtFieldInfo {
-                                llvm_type: clone_string(&vf.llvm_type),
+                                llvm_type: common.clone_string(&vf.llvm_type),
                                 hir_type: vf.hir_type,
                             });
                         }
                         cloned_variants.push(VariantLayout {
                             variant_idx: variant.variant_idx,
                             fields: cloned_vfields,
-                            payload_llvm_type: clone_string(&variant.payload_llvm_type),
+                            payload_llvm_type: common.clone_string(&variant.payload_llvm_type),
                         });
                     }
                     worker_adt_registry.push(AdtEntry.Enum(EnumLayout {
                         def_id: el.def_id,
-                        discriminant_type: clone_string(&el.discriminant_type),
+                        discriminant_type: common.clone_string(&el.discriminant_type),
                         variants: cloned_variants,
-                        llvm_type: clone_string(&el.llvm_type),
+                        llvm_type: common.clone_string(&el.llvm_type),
                         max_payload_size: el.max_payload_size,
                     }));
                 }
@@ -2730,7 +2730,7 @@ pub fn merge_string_tables(
         // If the label changed, record the remapping
         if !string_equal(worker_label, &final_label) {
             remaps.push(StringRemap {
-                from: clone_string(worker_label),
+                from: common.clone_string(worker_label),
                 to: final_label,
             });
         }
@@ -2745,10 +2745,10 @@ pub fn merge_string_tables(
 /// Only needed when parallel codegen produces worker-local string labels.
 pub fn remap_string_labels(ir: &String, remaps: &Vec<StringRemap>) -> String {
     if remaps.len() == 0 {
-        return clone_string(ir);
+        return common.clone_string(ir);
     }
 
-    let mut result = clone_string(ir);
+    let mut result = common.clone_string(ir);
 
     // Apply remappings. Since labels are unique (@.str.N), simple replacement is safe.
     // Process in reverse order of label number to avoid @.str.1 replacing part of @.str.10.
@@ -2789,7 +2789,7 @@ fn string_replace(s: &String, from: &String, to: &String) -> String {
     let from_len = from_bytes.len();
 
     if from_len == 0 || from_len > s_len {
-        return clone_string(s);
+        return common.clone_string(s);
     }
 
     let mut result = String.new();
@@ -2893,11 +2893,6 @@ fn unchecked_check_index(check: &ast.UncheckedCheck) -> usize {
     }
 }
 
-fn clone_string(s: &String) -> String {
-    let mut result = String.new();
-    result.push_str(s.as_str());
-    result
-}
 
 /// Compares two strings for equality.
 fn string_equal(a: &String, b: &String) -> bool {

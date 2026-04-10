@@ -18,12 +18,6 @@ mod type_intern;
 // Helper Functions
 // ============================================================
 
-/// Clones a String.
-fn clone_string(s: &String) -> String {
-    let mut result = String.new();
-    result.push_str(s.as_str());
-    result
-}
 
 /// Clones a Vec<u8>.
 fn clone_bytes(bytes: &Vec<u8>) -> Vec<u8> {
@@ -213,7 +207,7 @@ pub fn lower_literal(lit: &hir_expr.Literal, ty: &hir_ty.Type) -> mir_types.Cons
             mir_types.Constant.new(ty_id, mir_types.ConstantKind.Float(bits))
         }
         &hir_expr.LiteralKind.Str(ref s) => {
-            mir_types.Constant.new(ty_id, mir_types.ConstantKind.String(clone_string(s)))
+            mir_types.Constant.new(ty_id, mir_types.ConstantKind.String(common.clone_string(s)))
         }
         &hir_expr.LiteralKind.ByteStr(ref bytes) => {
             mir_types.Constant.new(ty_id, mir_types.ConstantKind.ByteString(clone_bytes(bytes)))
@@ -323,7 +317,7 @@ fn copy_constant_kind(k: &mir_types.ConstantKind) -> mir_types.ConstantKind {
         &mir_types.ConstantKind.Float(f) => mir_types.ConstantKind.Float(f),
         &mir_types.ConstantKind.Bool(b) => mir_types.ConstantKind.Bool(b),
         &mir_types.ConstantKind.Char(c) => mir_types.ConstantKind.Char(c),
-        &mir_types.ConstantKind.String(ref s) => mir_types.ConstantKind.String(clone_string(s)),
+        &mir_types.ConstantKind.String(ref s) => mir_types.ConstantKind.String(common.clone_string(s)),
         &mir_types.ConstantKind.ByteString(ref bytes) => {
             mir_types.ConstantKind.ByteString(clone_bytes(bytes))
         }

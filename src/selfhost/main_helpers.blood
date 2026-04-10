@@ -107,10 +107,6 @@ pub fn strip_filename(path: &str) -> String {
     result
 }
 
-/// Clones a String.
-pub fn clone_string(s: &String) -> String {
-    common.make_string(s.as_str())
-}
 
 /// Checks if a String starts with a given &str prefix.
 pub fn str_starts_with(s: &String, prefix: &str) -> bool {
@@ -183,7 +179,7 @@ fn is_no_mangle(def_id_index: u32, no_mangle_def_ids: &Vec<u32>) -> bool {
 fn lookup_export_name(def_id_index: u32, export_name_entries: &Vec<hir_lower_ctx.ExportNameEntry>) -> String {
     for i in 0usize..export_name_entries.len() {
         if export_name_entries[i].def_id_index == def_id_index {
-            return clone_string(&export_name_entries[i].export_name);
+            return common.clone_string(&export_name_entries[i].export_name);
         }
     }
     common.make_string("")
@@ -460,7 +456,7 @@ pub fn generate_missing_stubs(
                 stubs.push_str("define void @");
                 stubs.push_str(name.as_str());
                 stubs.push_str("() { ret void }\n");
-                generated_stubs.push(clone_string(&name));
+                generated_stubs.push(common.clone_string(&name));
             }
         }
     }

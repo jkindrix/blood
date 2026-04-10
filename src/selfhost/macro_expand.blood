@@ -265,7 +265,7 @@ fn try_match_rule(args: &String, rule: &MacroRule) -> Option<Vec<CapturedArg>> {
             let mut rj: usize = 0;
             while rj < rep.rep_parts.len() {
                 if rep.rep_parts[rj].is_capture {
-                    rep_name = clone_string(&rep.rep_parts[rj].capture_name);
+                    rep_name = common.clone_string(&rep.rep_parts[rj].capture_name);
                 }
                 rj += 1;
             }
@@ -334,7 +334,7 @@ fn try_match_rule(args: &String, rule: &MacroRule) -> Option<Vec<CapturedArg>> {
                                 vi += 1;
                             }
                             captures.push(CapturedArg {
-                                name: clone_string(&rule.parts[pi].capture_name),
+                                name: common.clone_string(&rule.parts[pi].capture_name),
                                 value: value,
                                 is_repeated: false,
                                 values: Vec.new(),
@@ -355,7 +355,7 @@ fn try_match_rule(args: &String, rule: &MacroRule) -> Option<Vec<CapturedArg>> {
                         vi += 1;
                     }
                     captures.push(CapturedArg {
-                        name: clone_string(&rule.parts[pi].capture_name),
+                        name: common.clone_string(&rule.parts[pi].capture_name),
                         value: value,
                         is_repeated: false,
                         values: Vec.new(),
@@ -585,15 +585,15 @@ fn substitute_multi(template: &String, captures: &Vec<CapturedArg>) -> String {
                     while ici < captures.len() {
                         if captures[ici].is_repeated && iter < captures[ici].values.len() {
                             iter_caps.push(CapturedArg {
-                                name: clone_string(&captures[ici].name),
-                                value: clone_string(&captures[ici].values[iter]),
+                                name: common.clone_string(&captures[ici].name),
+                                value: common.clone_string(&captures[ici].values[iter]),
                                 is_repeated: false,
                                 values: Vec.new(),
                             });
                         } else if !captures[ici].is_repeated {
                             iter_caps.push(CapturedArg {
-                                name: clone_string(&captures[ici].name),
-                                value: clone_string(&captures[ici].value),
+                                name: common.clone_string(&captures[ici].name),
+                                value: common.clone_string(&captures[ici].value),
                                 is_repeated: false,
                                 values: Vec.new(),
                             });
@@ -982,12 +982,6 @@ fn strings_equal(a: &String, b: &String) -> bool {
     true
 }
 
-/// Clone a string.
-fn clone_string(s: &String) -> String {
-    let mut result = String.new();
-    result.push_str(s.as_str());
-    result
-}
 
 fn is_whitespace(b: u8) -> bool {
     b == 32 || b == 9 || b == 10 || b == 13
