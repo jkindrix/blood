@@ -1,17 +1,17 @@
 # Blood — Known Limitations
 
-**Last updated:** 2026-04-07
+**Last updated:** 2026-04-10
 **Scope:** honest enumeration of gaps between the spec and the current compiler artifact. This document exists because the older `docs/planning/IMPLEMENTATION_STATUS.md` has drifted from reality since January; a comprehensive working audit lives at `.tmp/AUDIT_2026-04-07.md` (not committed — it's a live session document).
 
 The goal of this file is to answer honestly: *if you write a Blood program today, what won't work?*
 
 ## At a glance
 
-- **Self-hosting:** verified. 93K lines of Blood compile themselves through a three-generation byte-identical bootstrap.
-- **Golden tests:** 533 pass, 1 XFAIL (a known closure bug). Golden tests cover program-level correctness, not systematic spec conformance.
+- **Self-hosting:** verified. 95K lines of Blood compile themselves through a three-generation byte-identical bootstrap.
+- **Golden tests:** 543 pass, 0 XFAIL. Golden tests cover program-level correctness, not systematic spec conformance.
 - **Spec coverage:** of 78 surveyed normative claims across `docs/spec/*.md`, 39 have verifiable code evidence (~50%). The other 39 are partial, missing, or too vague to verify.
 - **Rust bootstrap:** builds and runs simple programs. Used as an escape hatch; not the primary development target. Diverged from selfhost on type unification in April before being corrected.
-- **Formal proofs:** 60 Coq theorems proven, 0 admitted, 0 axioms. The proofs cover a simplified formal model of the language, not the compiler artifact. The gap between model and implementation is real and significant.
+- **Formal proofs:** 264 Coq theorems/lemmas across 22 theory files, 0 admitted, 0 axioms. The proofs cover a simplified formal model of the language, not the compiler artifact. The gap between model and implementation is real and significant.
 
 ## Known soundness gaps (compile-time or runtime correctness)
 
@@ -35,17 +35,31 @@ When a struct or tuple is constructed from operands, the operands should be mark
 
 **Impact:** memory allocations feeding into struct/tuple aggregates may be misclassified, landing in the wrong tier. The memory safety theorems in `proofs/` assume correct tier classification — this is a gap between proof assumption and implementation.
 
-### GAP-4: Closure codegen regression — nested closures inside other closures
+### ~~GAP-4: Closure codegen regression — nested closures inside other closures~~ FIXED
 
-When a closure literal appears inside another closure's body, the inner closure's function definition is not emitted. Reference to `@blood_closure_<def_id>` is present in the output IR; the definition is absent. llc fails with "use of undefined value."
+**Fixed in commit 2b6d72e (2026-04-08).** `mir_lower_expr.blood` now uses `finish_nested(parent)` instead of `finish()` for nested `MirLowerCtx`, which propagates discovered closures to the parent context instead of silently dropping them. Transitive propagation verified through 3 nesting levels. Tests: `t04_nested_closure.blood`, `t04_doubly_nested_closure.blood`.
 
-**Reproducer:** `tests/golden/t04_nested_closure_xfail.blood`. Simple closures and closures passed to functions work. Only closures *nested inside another closure's body* fail.
+### ~~GAP-5: Function-call arity not checked~~ FIXED
 
-**Suspected cause:** codegen closure worklist collection does not walk into closure bodies to enqueue nested closures. Tracked as S-7 in the audit.
+**Fixed in commit f6285a5 (2026-04-08).** The arity check at `typeck_expr.blood:1252` always worked for main-file bodies. The actual bug was in `typeck_driver.blood:790-793`: Phase 2b discarded *all* errors from external module bodies, including arity mismatches. Fix: selectively keep `ArityMismatch` errors from Phase 2b while discarding other cross-module false positives. Test: `t06_err_wrong_arity.blood`.
 
-### GAP-5: Function-call arity not checked
+### GAP-6: Effect snapshot validation is a stub
 
-The selfhost compiler silently accepts function calls with the wrong number of arguments. It then emits invalid LLVM IR downstream (observed with `rt_blood_register_allocation(addr, size, 2)` which was passing 3 args to a 2-arg function). The compiler should reject arity mismatches at type-check. Tracked as NEW-4 in the audit.
+Generation snapshots for multi-shot effect handlers are created but remain empty at runtime (`rt_effect.blood:34`). The Coq theorem `multishot_snapshot_safety` assumes snapshots track captured generations — at runtime, they don't. Stale references through resumed continuations may not be caught.
+
+**Impact:** false negatives — a resumed continuation could dereference a reference whose generation has changed since the continuation was captured.
+
+### GAP-7: Generation counter overflow panics instead of Tier 3 promotion
+
+When a region slot is freed ~2 billion times, the generation counter wraps at `0x7FFFFFFE`. The runtime panics (`alloc.blood:391-395`) instead of promoting the allocation to reference-counted Tier 3 as the spec envisions.
+
+**Impact:** long-lived processes will eventually crash. Not a concern for short-lived compilations, but relevant for the project's target domain (avionics, medical devices).
+
+### GAP-8: Region virtual address space leak
+
+Region destroy calls `madvise(MADV_DONTNEED)` but never `munmap` (`rt_region.blood:205-211`). The comment says "Keep virtual mapping for stale ref safety." Virtual address space is exhausted after enough region create/destroy cycles.
+
+**Impact:** long-lived processes with many region lifecycles will exhaust virtual address space.
 
 ## Features that are specified but not implemented
 
@@ -106,7 +120,7 @@ Nothing is started. `docs/spec/WCET_REALTIME.md` is aspirational. Certification 
 
 ## Build-system limitations
 
-- **`build_selfhost.sh` caches are wiped on every `build first_gen`** from seed. Use `build first_gen --relink` when only the runtime changed to skip the ~11-minute rebuild (drops cycle to ~5 seconds).
+- **`build_selfhost.sh` caches are wiped on every `build first_gen`** from seed. Use `build first_gen --relink` when only the runtime changed to skip the ~2-minute rebuild (drops cycle to ~5 seconds).
 - **Self-hosting is not in CI.** CI only runs the Rust bootstrap tests (`cargo test -p bloodc`). Golden tests, self-hosting, and byte-identical verification are local-only. Regressions surface only when someone manually runs `./build_selfhost.sh gate`.
 - **LLVM version is hardcoded to 18** (llc-18, clang-18, opt-18, etc.) in build scripts. Breaks on systems with LLVM 17 or 19.
 - **Error messages are minimal.** E0201 ("type mismatch") shows no expected-vs-found. E0102 ("undefined name") has no did-you-mean suggestions.
@@ -115,11 +129,11 @@ Nothing is started. `docs/spec/WCET_REALTIME.md` is aspirational. Certification 
 
 This is the honest complement: things that are genuinely working end-to-end and can be relied on.
 
-- Parsing, type inference, type checking for the intersection of features exercised by the 93K-line selfhost compiler
+- Parsing, type inference, type checking for the intersection of features exercised by the 95K-line selfhost compiler
 - Generics, monomorphization, method calls, generic impls (per-call-site fresh inference variables; see recent commit ca1f2aa)
 - Deep and shallow effect handlers with perform/resume/abort semantics
 - Pattern matching (exhaustive, or-patterns, nested destructuring)
-- Closures (move semantics, capture by value) — **except** the nested-closure bug in GAP-4
+- Closures (move semantics, capture by value, nested closures)
 - For-in loops over Vec, `&Vec`, arrays, `&arrays`, slices
 - Module system with dot-separated paths, grouped imports, glob imports
 - Regions with generational reference invalidation on destroy

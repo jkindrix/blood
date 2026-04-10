@@ -132,9 +132,9 @@ Canonical shared types: `Span`, `Symbol`, `SpannedSymbol`, `SpannedString`, `Ord
 - **Per-function type inference size:** Very large functions can hit type inference limits. Split oversized functions rather than adding more code to them.
 - **Keyword field names:** `module` cannot be used as a field name; use `mod_decl`
 - **Memory reuse:** Requires active region at startup for region-aware allocation
-- **Nested closures inside other closures (S-7):** the inner closure's function definition is not emitted. Reproducer: `tests/golden/t04_nested_closure_xfail.blood`. Simple closures and captured closures work; only closure-inside-closure fails. Affects aether stream library patterns.
+- **~~Nested closures inside other closures (S-7):~~ FIXED (2b6d72e).** `finish_nested()` propagates nested closure definitions to parent context. Tests: `t04_nested_closure.blood`, `t04_doubly_nested_closure.blood`.
 - **Stale `&str` detection for `String`/`Vec` data buffers (GAP-1):** disabled. A previous attempt (fd43ec7) had an arity bug hidden by error swallowing. When corrected, exposed a latent `&str`-lifetime bug in first_gen itself. Re-enabling requires first fixing the latent bug.
-- **Function call arity (NEW-4):** the compiler silently accepts wrong-arity calls and emits invalid IR. Workaround: don't rely on the compiler to catch arity errors.
+- **~~Function call arity (NEW-4):~~ FIXED (f6285a5).** Arity mismatches in external module bodies are now correctly reported as E0205.
 - **`docs/planning/IMPLEMENTATION_STATUS.md` is stale (January 2026):** use `docs/KNOWN_LIMITATIONS.md` as the current source of truth for spec-vs-implementation gaps.
 
 Fixed bugs are documented in `tools/FAILURE_LOG.md`. The current working audit is at `.tmp/AUDIT_2026-04-07.md` (gitignored but locally persistent — a 95-item decomposed backlog with honest status).

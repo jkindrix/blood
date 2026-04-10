@@ -16,14 +16,14 @@ Blood synthesizes five cutting-edge programming language innovations:
 
 > **Pre-release — research compiler.** No version tag yet. See [KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) for the honest status of each component.
 
-The self-hosted compiler passes **533/534 golden tests** (1 XFAIL tracking a known closure-codegen bug). It compiles itself through a three-generation byte-identical bootstrap, and the resulting binary has no Rust runtime dependency — the seed is self-sufficient and requires only LLVM 18 on the host.
+The self-hosted compiler passes **543/543 golden tests**. It compiles itself through a three-generation byte-identical bootstrap, and the resulting binary has no Rust runtime dependency — the seed is self-sufficient and requires only LLVM 18 on the host.
 
 | Component | Status | Details |
 |-----------|--------|---------|
 | Lexer & Parser | ✅ Working | 90% of normative grammar claims verified in code |
 | Type Inference | ✅ Working | Algorithm W, bidirectional, 100% of normative claims verified |
 | Type Checking | ✅ Working | Linearity, effects, exhaustiveness, generic impls |
-| Code Generation | ⚠️ Mostly working | LLVM IR emission. Known gaps: nested-closure codegen, aggregate escape analysis disabled |
+| Code Generation | ⚠️ Mostly working | LLVM IR emission. Known gap: aggregate escape analysis disabled |
 | Effects System | ✅ Working | Deep/shallow handlers, perform/resume, snapshots, per-op resume |
 | Memory Model | ⚠️ Mostly working | Generational refs for heap/region. Stale &str detection for String buffers currently disabled pending a latent bug fix |
 | Runtime | ✅ Working | 181KB Blood-native runtime (no Rust). Memory, effects, VFT |
@@ -31,7 +31,7 @@ The self-hosted compiler passes **533/534 golden tests** (1 XFAIL tracking a kno
 | Fibers / Concurrency | ❌ Not integrated | pthread-based spawn; no M:N scheduler, no mutex/channel primitives wired |
 | Safety Checks | ✅ Default | Definite init, linearity, bounds, dangling ref rejection all enabled |
 | Content Addressing | 🔶 Partial | BLAKE3 hashing, codebase storage. VFT dispatch wiring not hooked up |
-| Formal Proofs | ✅ Complete | 60 Coq theorems, 0 Admitted, 0 Axioms (covers a simplified model of the language, not the compiler artifact) |
+| Formal Proofs | ✅ Complete | 264 Coq theorems/lemmas, 0 Admitted, 0 Axioms (covers a simplified model of the language, not the compiler artifact) |
 
 **Legend**: ✅ Working | ⚠️ Mostly working with known gaps | 🔶 Partial | ❌ Not integrated
 
