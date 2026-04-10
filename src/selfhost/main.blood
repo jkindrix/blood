@@ -3476,6 +3476,7 @@ fn codegen_thread_worker(arg: u64) -> u64 {
     let worker_mir_region = region_create(4194304, 8589934592);
     let worker_fn_temp_region = region_create(2097152, 4294967296);
 
+    let mut mir_error_count: usize = 0;
     let mut i: usize = chunk_start;
     while i < chunk_end {
         if i % 100 == 0 {
@@ -3500,6 +3501,10 @@ fn codegen_thread_worker(arg: u64) -> u64 {
             &typeck.field_resolutions,
             &typeck.coercion_entries,
         );
+
+        if mir_result.errors.len() > 0 {
+            mir_error_count += mir_result.errors.len();
+        }
 
         if work.def_id.index != work.typeck_def_id.index {
             mir_result.body.def_id = work.def_id;
@@ -3577,7 +3582,7 @@ fn codegen_thread_worker(arg: u64) -> u64 {
 
     region_destroy(worker_fn_temp_region);
     region_destroy(worker_mir_region);
-    0
+    mir_error_count as u64
 }
 
 // ============================================================
@@ -3722,9 +3727,11 @@ fn codegen_pass2(
             handles.push(handle);
         }
 
-        // Join all workers
+        // Join all workers, collect MIR error counts from return values
+        let mut parallel_mir_errors: usize = 0;
         for w in 0usize..num_workers {
-            thread_join(handles[w]);
+            let worker_errors: u64 = thread_join(handles[w]);
+            parallel_mir_errors += worker_errors as usize;
         }
 
         // Disable alloc bypass, re-activate codegen region, free arg buffers
@@ -3810,7 +3817,7 @@ fn codegen_pass2(
             mono_requests: all_mono_requests,
             next_mono_def_id: next_mono_def_id,
             fn_temp_region: 0 as u64,
-            mir_lowering_errors: 0,
+            mir_lowering_errors: parallel_mir_errors,
         };
     }
 
