@@ -263,12 +263,20 @@ impl Compiler {
             }
         }
 
+        // Phase 4a2: Pre-analysis — identify type-generic functions
+        let mut type_generic_fn_set: Vec<u32> = Vec.new();
+        collect_type_generic_fns(
+            &lower_result.items,
+            &mut type_generic_fn_set,
+        );
+
         // Phase 4b: Lower HIR bodies to MIR
         let mut mir_functions: Vec<(String, mir_body.MirBody)> = Vec.new();
         let mut mir_errors: Vec<error.CompileError> = Vec.new();
         let mut all_mono_requests: Vec<mir_lower_ctx.MonoRequest> = Vec.new();
         let mut next_mono_def_id: u32 = 0;
         let has_const_generics: bool = const_generic_fn_set.len() > 0;
+        let has_type_generics: bool = type_generic_fn_set.len() > 0;
 
         for body_idx in 0usize..lower_result.bodies.len() {
             let body_entry = &lower_result.bodies[body_idx];
@@ -308,7 +316,7 @@ impl Compiler {
             }
 
             // Lower the body to MIR
-            let mut mir_result = if has_const_generics {
+            let mut mir_result = if has_const_generics || has_type_generics {
                 mir_lower.lower_body_with_const_info(
                     def_id,
                     hir_body,
@@ -323,8 +331,8 @@ impl Compiler {
                     clone_turbofish_args(&turbofish_const_args),
                     clone_u32_vec(&const_generic_param_counts),
                     next_mono_def_id,
-                    Vec.new(), // No type_generic_fn_set in driver mode
-                    Vec.new(), // No type_generic_calls in driver mode
+                    clone_u32_vec(&type_generic_fn_set),
+                    clone_type_generic_calls(&typeck_result.type_generic_calls),
                 )
             } else {
                 mir_lower.lower_body(

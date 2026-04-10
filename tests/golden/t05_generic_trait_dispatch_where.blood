@@ -1,0 +1,27 @@
+// Test: generic function with where-clause trait bound calling trait method.
+// This exercises type-generic monomorphization with trait method resolution.
+// The monomorphized sum_pair<i32> must call the concrete i32::add_val, not
+// the abstract trait method stub.
+// EXPECT: 42
+
+trait Addable {
+    fn add_val(&self, other: &Self) -> Self;
+}
+
+impl Addable for i32 {
+    fn add_val(&self, other: &i32) -> i32 {
+        *self + *other
+    }
+}
+
+fn sum_pair<T>(a: &T, b: &T) -> T where T: Addable {
+    a.add_val(b)
+}
+
+fn main() -> i32 {
+    let a: i32 = 40;
+    let b: i32 = 2;
+    let result: i32 = sum_pair(&a, &b);
+    println_int(result);
+    0
+}
