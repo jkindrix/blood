@@ -4998,51 +4998,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     hash_dir.push_str("/obj/.hashes");
 
     if args.split_modules && !args.no_cache && module_count > 1 {
-        main_helpers.ensure_dir(hash_dir.as_str());
-        let mut obj_dir = common.make_string(inc_build_dir.as_str());
-        obj_dir.push_str("/obj");
-        main_helpers.ensure_dir(obj_dir.as_str());
-
-        let mut changed_count: usize = 0;
-        for mi in 0usize..module_count {
-            let mod_path = &lower_result.module_names[mi];
-            let hash = if mi == 0 {
-                build_cache.hash_module_source(path, base_dir.as_str(), exe_path)
-            } else {
-                build_cache.hash_module_source(mod_path.as_str(), source.parent_dir(mod_path.as_str()).as_str(), exe_path)
-            };
-            let stem = if mi == 0 {
-                common.make_string("main")
-            } else {
-                main_helpers.file_stem(mod_path)
-            };
-            let cached = build_cache.read_cached_hash(hash_dir.as_str(), stem.as_str());
-            let mut ll_exists = false;
-            let mut o_exists = false;
-            {
-                let mut ll_p = common.make_string(obj_dir.as_str());
-                ll_p.push('/');
-                ll_p.push_str(stem.as_str());
-                ll_p.push_str(".ll");
-                ll_exists = file_exists(ll_p.as_str());
-                let mut o_p = common.make_string(obj_dir.as_str());
-                o_p.push('/');
-                o_p.push_str(stem.as_str());
-                o_p.push_str(".o");
-                o_exists = file_exists(o_p.as_str());
-            }
-            let is_unchanged = hash != 0 && cached == hash && ll_exists && o_exists;
-            skip_modules.push(is_unchanged);
-            if !is_unchanged {
-                changed_count += 1;
-            }
-        }
-        // If all modules changed, disable incremental
-        if changed_count >= module_count {
-            for si in 0usize..skip_modules.len() {
-                skip_modules[si] = false;
-            }
-        }
+        skip_modules = compute_skip_modules(&lower_result.module_names, path, base_dir.as_str(), exe_path, hash_dir.as_str(), inc_build_dir.as_str());
     }
 
     // === Type Check Phase (typeck_region on top of hir_region) ===
@@ -5104,85 +5060,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
 
     // Emit content hashes if requested
     if args.emit_hashes {
-        eprint_str("\n  Content hashes:\n");
-        for hi in 0usize..lower_result.bodies.len() {
-            let body_entry = &lower_result.bodies[hi];
-            // Find matching fn item for this body
-            for hj in 0usize..lower_result.items.len() {
-                match &lower_result.items[hj].item.kind {
-                    &hir_item.ItemKind.Fn(ref fn_def) => {
-                        match &fn_def.body_id {
-                            &Option.Some(ref bid) => {
-                                if bid.index == body_entry.body_id.index {
-                                    let hash = content_hash.hash_fn_body(&body_entry.body, &fn_def.sig);
-                                    let hex = content_hash.hash_to_hex(&hash);
-                                    let def_name = match lower_result.interner.resolve(lower_result.items[hj].item.name.symbol) {
-                                        Option.Some(n) => common.make_string(n.as_str()),
-                                        Option.None => common.make_string("unknown"),
-                                    };
-                                    print_str(def_name.as_str());
-                                    print_str(": ");
-                                    println_str(hex.as_str());
-                                    // Save hash to build cache for incremental comparison
-                                    {
-                                        let mut hash_dir = common.make_string(output_path);
-                                        // Strip filename to get build dir
-                                        let mut last_slash: usize = 0;
-                                        let olen: usize = hash_dir.len();
-                                        let mut oi: usize = 0;
-                                        while oi < olen { if hash_dir.as_bytes()[oi] == 47 { last_slash = oi; } oi += 1; }
-                                        if last_slash > 0 {
-                                            let mut build_dir = String.new();
-                                            oi = 0;
-                                            while oi < last_slash { build_dir.push(hash_dir.as_bytes()[oi] as char); oi += 1; }
-                                            build_dir.push_str("/.content_hashes");
-                                            if !file_exists(build_dir.as_str()) {
-                                                let mut mkdir_cmd = common.make_string("mkdir -p ");
-                                                mkdir_cmd.push_str(build_dir.as_str());
-                                                system(mkdir_cmd.as_str());
-                                            }
-                                            let mut hash_file = common.make_string(build_dir.as_str());
-                                            hash_file.push('/');
-                                            hash_file.push_str(def_name.as_str());
-                                            hash_file.push_str(".hash");
-                                            file_write_string(hash_file.as_str(), hex.as_str());
-                                        }
-                                    }
-                                    // Store in codebase if requested
-                                    if args.store_codebase {
-                                        let cb = default_codebase_path();
-                                        codebase.init_codebase(cb.as_str());
-                                        let fn_name = match lower_result.interner.resolve(lower_result.items[hj].item.name.symbol) {
-                                            Option.Some(s) => common.make_string(s.as_str()),
-                                            Option.None => common.make_string("unknown"),
-                                        };
-                                        let deps: Vec<String> = Vec.new();
-                                        // Extract function source text from the expanded source using span
-                                        let item_span = lower_result.items[hj].item.span;
-                                        let src_bytes = expanded_source.as_bytes();
-                                        let mut fn_source = String.new();
-                                        let end = if item_span.end <= src_bytes.len() { item_span.end } else { src_bytes.len() };
-                                        let mut si: usize = item_span.start;
-                                        while si < end { fn_source.push(src_bytes[si] as char); si += 1; }
-                                        let rec = codebase.DefinitionRecord.new(
-                                            common.make_string(hex.as_str()),
-                                            fn_name,
-                                            common.make_string("fn"),
-                                            fn_source,
-                                            deps,
-                                        );
-                                        codebase.store_definition(cb.as_str(), &rec);
-                                        codebase.add_name(cb.as_str(), rec.name.as_str(), hex.as_str());
-                                    }
-                                }
-                            }
-                            &Option.None => {}
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
+        emit_content_hashes(&lower_result, expanded_source.as_str(), output_path, args.store_codebase);
     }
 
     // Phase 5: Streaming codegen (global allocator for ctx persistent state)
@@ -5240,63 +5118,9 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     codegen_streaming.emit_static_globals_with_names(&mut ctx, &lower_result.interner, &lower_result.items, &lower_result.bodies, &lower_result.thread_local_def_ids);
     eprint_str("[pass0_done]");
 
-    // Pass 1a: Register def_names for all function bodies (global allocator)
-    // SKIP static bodies - their names are already registered by emit_static_globals_with_names
-    for body_idx in 0usize..lower_result.bodies.len() {
-        let body_entry = &lower_result.bodies[body_idx];
-        let body_id = body_entry.body_id;
-        let fn_info = driver.find_fn_for_body(&lower_result.items, body_id);
-        let def_id = match &fn_info {
-            &Option.Some(ref info) => info.def_id.index,
-            &Option.None => body_idx as u32,
-        };
-        // Skip static bodies
-        let mut is_static = false;
-        let mut sbi: usize = 0;
-        while sbi < static_def_ids.len() {
-            if static_def_ids[sbi] == def_id {
-                is_static = true;
-                sbi = static_def_ids.len();
-            }
-            sbi += 1;
-        }
-        if !is_static {
-            let fn_name = match &fn_info {
-                &Option.Some(ref info) => main_helpers.make_mangled_fn_name(&lower_result.interner, info, &lower_result.no_mangle_def_ids, &lower_result.export_name_entries),
-                &Option.None => driver.make_fn_name(body_idx),
-            };
-            ctx.register_def_name(def_id, fn_name);
-        }
-    }
-
-    // Pass 1b: Register def_names for ALL function-like items (including those without bodies).
-    // This ensures that calls to foreign/builtin functions resolve to the correct name.
-    main_helpers.register_all_item_names(&mut ctx, &lower_result.interner, &lower_result.items, &lower_result.no_mangle_def_ids, &lower_result.export_name_entries);
+    // Passes 1a-1d: Register all def_names in codegen context
+    register_codegen_names(&mut ctx, &lower_result, &typeck_result, &static_def_ids);
     eprint_str("[pass1_done]");
-
-    // Pass 1c: Register def_names for builtin constructors (String.new, Vec.new, etc.).
-    // These DefIds are allocated by the HIR lowering and map to runtime function names.
-    for bfi in 0usize..lower_result.builtin_fn_defs.len() {
-        let entry = &lower_result.builtin_fn_defs[bfi];
-        ctx.register_def_name(entry.def_id_index, entry.runtime_name.clone());
-    }
-
-    // Pass 1c2: Register bridge constants with inline values.
-    for bci in 0usize..lower_result.builtin_const_defs.len() {
-        let entry = &lower_result.builtin_const_defs[bci];
-        ctx.register_bridge_const(entry.def_id_index, entry.int_value);
-    }
-
-    // Pass 1e: Register def_names for enum variant constructors.
-    // Enum variants have their own DefIds used when constructing variants (e.g., TokenKind.Ident(...)).
-    main_helpers.register_enum_variant_names(&mut ctx, &lower_result.interner, &lower_result.items);
-
-    // Pass 1d: Register def_names for synthetic builtin methods (String.push_str, Vec.push, etc.).
-    // These DefIds are allocated by the type checker and map to runtime function names.
-    for bi in 0usize..typeck_result.builtin_def_names.len() {
-        let entry = &typeck_result.builtin_def_names[bi];
-        ctx.register_def_name(entry.def_id_index, entry.runtime_name.clone());
-    }
 
     // Collect handler→effect mappings and handler op info for wrapper generation.
     let handler_info = collect_handler_info(&mut ctx, &lower_result.interner, &lower_result.items, &lower_result.bodies);
@@ -5440,249 +5264,15 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
 
     // Pass 2b: Monomorphization — generate specialized copies of const-generic and type-generic functions.
     if pass2_result.mono_requests.len() > 0 {
-        eprint_str("[mono:");
-        eprint_str(int_to_string(pass2_result.mono_requests.len() as i32));
-        eprint_str("]");
-
-        // Shared MIR region for monomorphization — created once, reset between functions.
-        let mono_mir_region = region_create(4194304, 8589934592);
-
-        // Track compiled mono function names to skip duplicates.
-        // Multiple call sites can generate MonoRequests for the same function+types;
-        // we compile the first and register aliases for the rest.
-        let mut compiled_mono_names: Vec<String> = Vec.new();
-
-        for mono_i in 0usize..pass2_result.mono_requests.len() {
-            let req = &pass2_result.mono_requests[mono_i];
-
-            // Find the original function's body
-            let body_info = driver.find_body_for_def_id(
-                &lower_result.bodies,
-                &lower_result.items,
-                req.original_def_id,
-            );
-            match &body_info {
-                &Option.Some(ref info) => {
-                    // Check if this mono function was already compiled (dedup).
-                    // Register the def name regardless so call sites resolve correctly.
-                    ctx.register_def_name(req.specialized_def_id, common.make_string(req.fn_name.as_str()));
-                    let mut already_compiled: bool = false;
-                    for ci in 0usize..compiled_mono_names.len() {
-                        if main_helpers.str_equals(&compiled_mono_names[ci], req.fn_name.as_str()) {
-                            already_compiled = true;
-                        }
-                    }
-                    if already_compiled {
-                        // Skip — function already emitted by a previous request
-                        region_reset(mono_mir_region);
-                    } else {
-                    compiled_mono_names.push(common.make_string(req.fn_name.as_str()));
-
-                    let body_entry = &lower_result.bodies[info.body_index];
-                    let hir_body = &body_entry.body;
-
-                    // Activate MIR region for lowering
-                    region_activate(mono_mir_region);
-
-                    let mono_mir = if req.is_type_mono {
-                        // Type-generic monomorphization:
-                        // Clone the subst table and inject type bindings so that
-                        // body type params resolve to concrete types.
-                        let mut mono_subst = unify.clone_subst_table(&typeck_result.subst_table);
-                        // Use Phase 4 body TyVarIds (from body_entry.type_param_var_ids)
-                        // instead of Phase 3 signature TyVarIds (from req.type_bindings.ty_var_index).
-                        // Phase 3 and Phase 4 allocate separate TyVarIds for the same type params;
-                        // the body uses Phase 4 IDs, so we must inject those into the subst table.
-                        for tbi in 0usize..req.type_bindings.len() {
-                            let concrete = type_intern.TyId.new(req.type_bindings[tbi].concrete_ty_id);
-                            // Add Phase 3 signature TyVarId binding so that the function
-                            // return type (which uses Phase 3 IDs) resolves correctly.
-                            let sig_var_id = hir_def.TyVarId.new(req.type_bindings[tbi].ty_var_index);
-                            mono_subst.add_ty_subst_id(sig_var_id, concrete);
-                            // Also add Phase 4 body TyVarId binding so that body-internal
-                            // type references resolve correctly.
-                            if tbi < body_entry.type_param_var_ids.len() {
-                                let body_var_id = hir_def.TyVarId.new(body_entry.type_param_var_ids[tbi]);
-                                mono_subst.add_ty_subst_id(body_var_id, concrete);
-                            }
-                        }
-
-                        // Resolve method calls for concrete types using impl_method_table.
-                        // Clone method_resolutions and inject resolved methods for this body.
-                        let mono_method_res = resolve_methods_for_type_mono(
-                            &typeck_result.method_resolutions,
-                            &typeck_result.pending_method_calls,
-                            &typeck_result.impl_method_table,
-                            &mono_subst,
-                            req.original_def_id,
-                            req.specialized_def_id,
-                            &req.type_bindings,
-                        );
-
-                        // Remap field_resolutions: the originals are keyed by original_def_id
-                        // but the mono body uses specialized_def_id for lookups.
-                        let mut mono_field_res: Vec<common.FieldResEntry> = Vec.new();
-                        for fri in 0usize..typeck_result.field_resolutions.len() {
-                            let entry = &typeck_result.field_resolutions[fri];
-                            if entry.body_def_id == req.original_def_id {
-                                mono_field_res.push(common.FieldResEntry.new(
-                                    req.specialized_def_id,
-                                    entry.span_start,
-                                    entry.field_idx,
-                                ));
-                            } else {
-                                mono_field_res.push(common.FieldResEntry.new(
-                                    entry.body_def_id,
-                                    entry.span_start,
-                                    entry.field_idx,
-                                ));
-                            }
-                        }
-
-                        mir_lower.lower_body_with_const_info(
-                            hir_def.DefId.new(req.specialized_def_id),
-                            hir_body,
-                            info.return_ty,
-                            info.span,
-                            &mono_subst,
-                            &mono_method_res,
-                            &mono_field_res,
-                            &typeck_result.coercion_entries,
-                            Vec.new(), // No const_bindings
-                            Vec.new(), // No const_generic_fn_set
-                            Vec.new(), // No turbofish
-                            Vec.new(), // No param counts
-                            pass2_result.next_mono_def_id,
-                            Vec.new(), // No type_generic_fn_set
-                            Vec.new(), // No type_generic_calls
-                        )
-                    } else {
-                        // Const-generic monomorphization
-                        let const_bindings = driver.build_const_bindings_from_body(
-                            &body_entry.const_param_def_ids,
-                            &req.const_values,
-                        );
-
-                        mir_lower.lower_body_with_const_info(
-                            hir_def.DefId.new(req.specialized_def_id),
-                            hir_body,
-                            info.return_ty,
-                            info.span,
-                            &typeck_result.subst_table,
-                            &typeck_result.method_resolutions,
-                            &typeck_result.field_resolutions,
-                            &typeck_result.coercion_entries,
-                            const_bindings,
-                            Vec.new(), // No further const-generic interception
-                            Vec.new(), // No turbofish
-                            Vec.new(), // No param counts
-                            pass2_result.next_mono_def_id,
-                            Vec.new(), // No type_generic_fn_set
-                            Vec.new(), // No type_generic_calls
-                        )
-                    };
-
-                    region_deactivate();
-
-                    // Dump mono MIR if requested
-                    if args.dump_mir {
-                        let mono_fn_name = req.fn_name.as_str();
-                        let should_dump_mono = match &args.dump_mir_filter {
-                            &Option.Some(ref filter) => main_helpers.str_contains_ref(mono_fn_name, filter.as_str()),
-                            &Option.None => true,
-                        };
-                        if should_dump_mono {
-                            let mir_text = dump_mir.format_mir_body(&mono_mir.body, mono_fn_name);
-                            eprint_str("=== MONO MIR: ");
-                            eprint_str(mono_fn_name);
-                            eprint_str(" ===\n");
-                            eprint_str(mir_text.as_str());
-                            eprint_str("\n");
-                        }
-                    }
-
-                    // Codegen the specialized body
-                    let mono_ir = codegen.generate_function_with_ctx(&mut ctx, &mono_mir.body, req.fn_name.as_str(), 0, mod_count);
-                    file_append_string(output_path, mono_ir.as_str());
-
-                    // Compile closure/inline handler bodies from the mono MIR
-                    let mut mcli: usize = 0;
-                    while mcli < mono_mir.closure_names.len() && mcli < mono_mir.closure_mir.len() {
-                        let mcname = &mono_mir.closure_names[mcli];
-                        let mcbody = &mono_mir.closure_mir[mcli];
-                        let mc_is_hop = mcli < mono_mir.closure_is_handler_op.len()
-                            && mono_mir.closure_is_handler_op[mcli];
-                        if mc_is_hop { ctx.is_handler_op = true; }
-                        let mc_ir = codegen.generate_function_with_ctx(&mut ctx, mcbody, mcname.as_str(), 0, mod_count);
-                        file_append_string(output_path, mc_ir.as_str());
-                        if mc_is_hop { ctx.is_handler_op = false; }
-                        mcli += 1;
-                    }
-
-                    // Reset MIR region for next mono function
-                    region_reset(mono_mir_region);
-                    } // end else (not already_compiled)
-                }
-                &Option.None => {
-                    eprint_str("[mono_err: body not found for def ");
-                    eprint_str(int_to_string(req.original_def_id as i32));
-                    eprint_str("]\n");
-                }
-            }
-
-        }
-
-        // Destroy mono MIR region after all mono functions processed
-        region_destroy(mono_mir_region);
+        compile_monomorphized_bodies(&mut ctx, &pass2_result, &lower_result, &typeck_result, args, output_path, mod_count);
     }
 
     if args.mem_profile {
         print_mem_phase("After codegen pass2", 0 as u64, hir_region, codegen_region);
     }
 
-    // Pass 3: Generate stub functions for registered names without bodies.
-    // These are enum variant constructors and other synthetic functions that are
-    // referenced as function pointers but don't have HIR bodies.
-    main_helpers.generate_missing_stubs(&mut ctx, &worklist.defined_names);
-
-    // Pass 4: Generate handler op wrapper functions and __blood_register_handlers.
-    // These wrappers adapt the inner handler op bodies to the standard ABI
-    // expected by the evidence API runtime (ptr state, ptr args, i64 arg_count, i64 cont) -> i64.
-    let handler_wrapper_ir = generate_handler_wrappers(&handler_info, &mut ctx, &worklist.body_id_to_name);
-    ctx.buffer_write(handler_wrapper_ir.as_str());
-
-    // Pass 5: Generate VFT init constructor for trait impl methods.
-    let vft_init_ir = generate_vft_init_ir(&lower_result);
-    ctx.buffer_write(vft_init_ir.as_str());
-
-    // Emit inline handler stub functions collected during PushInlineHandler codegen.
-    for stub_i in 0usize..ctx.inline_stubs.len() {
-        let stub_ir = ctx.inline_stubs[stub_i].clone();
-        ctx.buffer_write(stub_ir.as_str());
-    }
-
-    // Emit fn pointer wrapper functions (fn_name$fnptr) for named functions
-    // used as fn() values.  These are deferred to emit at module scope.
-    for wpi in 0usize..ctx.fn_ptr_wrapper_defs.len() {
-        let wrapper_ir = ctx.fn_ptr_wrapper_defs[wpi].clone();
-        ctx.buffer_write(wrapper_ir.as_str());
-    }
-
-    // Finish: write string constants and intrinsic declarations
-    codegen_streaming.finish_streaming_module(&mut ctx);
-
-    // Write foreign function declarations (runtime builtins)
-    let foreign_decls = main_helpers.generate_foreign_declarations(&lower_result.interner, &lower_result.items);
-    ctx.buffer_write(foreign_decls.as_str());
-
-    // Emit DWARF debug metadata at end of module
-    let debug_md = ctx.emit_debug_metadata(&lower_result.module_names);
-    if debug_md.len() > 0 {
-        ctx.buffer_write(debug_md.as_str());
-    }
-
-    // Final flush: write any remaining buffered IR to disk
-    ctx.flush_write_buffer();
+    // Passes 3-5: stubs, handler wrappers, VFT init, deferred IR, finish, flush
+    finalize_codegen_passes(&mut ctx, &worklist, &handler_info, &lower_result);
     let codegen_elapsed = blood_clock_millis() - codegen_start;
     eprint_str(" done\n");
 
@@ -6636,6 +6226,481 @@ fn dump_adt_layouts(ctx: &codegen_ctx.CodegenCtx) {
                         eprint_str(fline.as_str());
                     }
                 }
+            }
+        }
+    }
+}
+
+/// Runs codegen passes 3-5 (stubs, handler wrappers, VFT init), emits deferred IR
+/// (inline handler stubs, fn pointer wrappers), finishes the streaming module
+/// (string constants, intrinsic declarations, foreign declarations, debug metadata),
+/// and flushes remaining buffered IR to disk.
+fn finalize_codegen_passes(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    worklist: &CodegenWorkList,
+    handler_info: &HandlerInfo,
+    lower_result: &hir_lower_ctx.LowerResult,
+) {
+    // Pass 3: Generate stub functions for registered names without bodies.
+    main_helpers.generate_missing_stubs(ctx, &worklist.defined_names);
+
+    // Pass 4: Generate handler op wrapper functions and __blood_register_handlers.
+    let handler_wrapper_ir = generate_handler_wrappers(handler_info, ctx, &worklist.body_id_to_name);
+    ctx.buffer_write(handler_wrapper_ir.as_str());
+
+    // Pass 5: Generate VFT init constructor for trait impl methods.
+    let vft_init_ir = generate_vft_init_ir(lower_result);
+    ctx.buffer_write(vft_init_ir.as_str());
+
+    // Emit inline handler stub functions collected during PushInlineHandler codegen.
+    for stub_i in 0usize..ctx.inline_stubs.len() {
+        let stub_ir = ctx.inline_stubs[stub_i].clone();
+        ctx.buffer_write(stub_ir.as_str());
+    }
+
+    // Emit fn pointer wrapper functions (fn_name$fnptr) for named functions
+    // used as fn() values.  These are deferred to emit at module scope.
+    for wpi in 0usize..ctx.fn_ptr_wrapper_defs.len() {
+        let wrapper_ir = ctx.fn_ptr_wrapper_defs[wpi].clone();
+        ctx.buffer_write(wrapper_ir.as_str());
+    }
+
+    // Finish: write string constants and intrinsic declarations
+    codegen_streaming.finish_streaming_module(ctx);
+
+    // Write foreign function declarations (runtime builtins)
+    let foreign_decls = main_helpers.generate_foreign_declarations(&lower_result.interner, &lower_result.items);
+    ctx.buffer_write(foreign_decls.as_str());
+
+    // Emit DWARF debug metadata at end of module
+    let debug_md = ctx.emit_debug_metadata(&lower_result.module_names);
+    if debug_md.len() > 0 {
+        ctx.buffer_write(debug_md.as_str());
+    }
+
+    // Final flush: write any remaining buffered IR to disk
+    ctx.flush_write_buffer();
+}
+
+/// Computes which modules are unchanged (for incremental compilation).
+/// Compares per-module source hashes against cached hashes and checks for existing .ll/.o files.
+/// Returns a Vec<bool> where true = module unchanged (can be skipped).
+fn compute_skip_modules(
+    module_names: &Vec<String>,
+    path: &str,
+    base_dir: &str,
+    exe_path: &str,
+    hash_dir: &str,
+    build_dir: &str,
+) -> Vec<bool> {
+    let module_count = module_names.len();
+    let mut skip_modules: Vec<bool> = Vec.new();
+
+    main_helpers.ensure_dir(hash_dir);
+    let mut obj_dir = common.make_string(build_dir);
+    obj_dir.push_str("/obj");
+    main_helpers.ensure_dir(obj_dir.as_str());
+
+    let mut changed_count: usize = 0;
+    for mi in 0usize..module_count {
+        let mod_path = &module_names[mi];
+        let hash = if mi == 0 {
+            build_cache.hash_module_source(path, base_dir, exe_path)
+        } else {
+            build_cache.hash_module_source(mod_path.as_str(), source.parent_dir(mod_path.as_str()).as_str(), exe_path)
+        };
+        let stem = if mi == 0 {
+            common.make_string("main")
+        } else {
+            main_helpers.file_stem(mod_path)
+        };
+        let cached = build_cache.read_cached_hash(hash_dir, stem.as_str());
+        let mut ll_exists = false;
+        let mut o_exists = false;
+        {
+            let mut ll_p = common.make_string(obj_dir.as_str());
+            ll_p.push('/');
+            ll_p.push_str(stem.as_str());
+            ll_p.push_str(".ll");
+            ll_exists = file_exists(ll_p.as_str());
+            let mut o_p = common.make_string(obj_dir.as_str());
+            o_p.push('/');
+            o_p.push_str(stem.as_str());
+            o_p.push_str(".o");
+            o_exists = file_exists(o_p.as_str());
+        }
+        let is_unchanged = hash != 0 && cached == hash && ll_exists && o_exists;
+        skip_modules.push(is_unchanged);
+        if !is_unchanged {
+            changed_count += 1;
+        }
+    }
+    // If all modules changed, disable incremental
+    if changed_count >= module_count {
+        for si in 0usize..skip_modules.len() {
+            skip_modules[si] = false;
+        }
+    }
+    skip_modules
+}
+
+/// Registers all def_names in the codegen context: function bodies (1a), all items (1b),
+/// builtin constructors (1c), bridge constants (1c2), enum variants (1e), and builtin methods (1d).
+fn register_codegen_names(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    lower_result: &hir_lower_ctx.LowerResult,
+    typeck_result: &typeck_driver.TypeCheckResult,
+    static_def_ids: &Vec<u32>,
+) {
+    // Pass 1a: Register def_names for all function bodies (global allocator)
+    // SKIP static bodies - their names are already registered by emit_static_globals_with_names
+    for body_idx in 0usize..lower_result.bodies.len() {
+        let body_entry = &lower_result.bodies[body_idx];
+        let body_id = body_entry.body_id;
+        let fn_info = driver.find_fn_for_body(&lower_result.items, body_id);
+        let def_id = match &fn_info {
+            &Option.Some(ref info) => info.def_id.index,
+            &Option.None => body_idx as u32,
+        };
+        // Skip static bodies
+        let mut is_static = false;
+        let mut sbi: usize = 0;
+        while sbi < static_def_ids.len() {
+            if static_def_ids[sbi] == def_id {
+                is_static = true;
+                sbi = static_def_ids.len();
+            }
+            sbi += 1;
+        }
+        if !is_static {
+            let fn_name = match &fn_info {
+                &Option.Some(ref info) => main_helpers.make_mangled_fn_name(&lower_result.interner, info, &lower_result.no_mangle_def_ids, &lower_result.export_name_entries),
+                &Option.None => driver.make_fn_name(body_idx),
+            };
+            ctx.register_def_name(def_id, fn_name);
+        }
+    }
+
+    // Pass 1b: Register def_names for ALL function-like items (including those without bodies).
+    // This ensures that calls to foreign/builtin functions resolve to the correct name.
+    main_helpers.register_all_item_names(ctx, &lower_result.interner, &lower_result.items, &lower_result.no_mangle_def_ids, &lower_result.export_name_entries);
+
+    // Pass 1c: Register def_names for builtin constructors (String.new, Vec.new, etc.).
+    // These DefIds are allocated by the HIR lowering and map to runtime function names.
+    for bfi in 0usize..lower_result.builtin_fn_defs.len() {
+        let entry = &lower_result.builtin_fn_defs[bfi];
+        ctx.register_def_name(entry.def_id_index, entry.runtime_name.clone());
+    }
+
+    // Pass 1c2: Register bridge constants with inline values.
+    for bci in 0usize..lower_result.builtin_const_defs.len() {
+        let entry = &lower_result.builtin_const_defs[bci];
+        ctx.register_bridge_const(entry.def_id_index, entry.int_value);
+    }
+
+    // Pass 1e: Register def_names for enum variant constructors.
+    // Enum variants have their own DefIds used when constructing variants (e.g., TokenKind.Ident(...)).
+    main_helpers.register_enum_variant_names(ctx, &lower_result.interner, &lower_result.items);
+
+    // Pass 1d: Register def_names for synthetic builtin methods (String.push_str, Vec.push, etc.).
+    // These DefIds are allocated by the type checker and map to runtime function names.
+    for bi in 0usize..typeck_result.builtin_def_names.len() {
+        let entry = &typeck_result.builtin_def_names[bi];
+        ctx.register_def_name(entry.def_id_index, entry.runtime_name.clone());
+    }
+}
+
+/// Compiles monomorphized (specialized) copies of const-generic and type-generic functions.
+/// Creates its own MIR region, processes all MonoRequests, and emits specialized IR.
+fn compile_monomorphized_bodies(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    pass2_result: &CodegenPass2Result,
+    lower_result: &hir_lower_ctx.LowerResult,
+    typeck_result: &typeck_driver.TypeCheckResult,
+    args: &Args,
+    output_path: &str,
+    mod_count: u32,
+) {
+    eprint_str("[mono:");
+    eprint_str(int_to_string(pass2_result.mono_requests.len() as i32));
+    eprint_str("]");
+
+    // Shared MIR region for monomorphization — created once, reset between functions.
+    let mono_mir_region = region_create(4194304, 8589934592);
+
+    // Track compiled mono function names to skip duplicates.
+    // Multiple call sites can generate MonoRequests for the same function+types;
+    // we compile the first and register aliases for the rest.
+    let mut compiled_mono_names: Vec<String> = Vec.new();
+
+    for mono_i in 0usize..pass2_result.mono_requests.len() {
+        let req = &pass2_result.mono_requests[mono_i];
+
+        // Find the original function's body
+        let body_info = driver.find_body_for_def_id(
+            &lower_result.bodies,
+            &lower_result.items,
+            req.original_def_id,
+        );
+        match &body_info {
+            &Option.Some(ref info) => {
+                // Check if this mono function was already compiled (dedup).
+                // Register the def name regardless so call sites resolve correctly.
+                ctx.register_def_name(req.specialized_def_id, common.make_string(req.fn_name.as_str()));
+                let mut already_compiled: bool = false;
+                for ci in 0usize..compiled_mono_names.len() {
+                    if main_helpers.str_equals(&compiled_mono_names[ci], req.fn_name.as_str()) {
+                        already_compiled = true;
+                    }
+                }
+                if already_compiled {
+                    // Skip — function already emitted by a previous request
+                    region_reset(mono_mir_region);
+                } else {
+                compiled_mono_names.push(common.make_string(req.fn_name.as_str()));
+
+                let body_entry = &lower_result.bodies[info.body_index];
+                let hir_body = &body_entry.body;
+
+                // Activate MIR region for lowering
+                region_activate(mono_mir_region);
+
+                let mono_mir = if req.is_type_mono {
+                    // Type-generic monomorphization:
+                    // Clone the subst table and inject type bindings so that
+                    // body type params resolve to concrete types.
+                    let mut mono_subst = unify.clone_subst_table(&typeck_result.subst_table);
+                    // Use Phase 4 body TyVarIds (from body_entry.type_param_var_ids)
+                    // instead of Phase 3 signature TyVarIds (from req.type_bindings.ty_var_index).
+                    // Phase 3 and Phase 4 allocate separate TyVarIds for the same type params;
+                    // the body uses Phase 4 IDs, so we must inject those into the subst table.
+                    for tbi in 0usize..req.type_bindings.len() {
+                        let concrete = type_intern.TyId.new(req.type_bindings[tbi].concrete_ty_id);
+                        // Add Phase 3 signature TyVarId binding so that the function
+                        // return type (which uses Phase 3 IDs) resolves correctly.
+                        let sig_var_id = hir_def.TyVarId.new(req.type_bindings[tbi].ty_var_index);
+                        mono_subst.add_ty_subst_id(sig_var_id, concrete);
+                        // Also add Phase 4 body TyVarId binding so that body-internal
+                        // type references resolve correctly.
+                        if tbi < body_entry.type_param_var_ids.len() {
+                            let body_var_id = hir_def.TyVarId.new(body_entry.type_param_var_ids[tbi]);
+                            mono_subst.add_ty_subst_id(body_var_id, concrete);
+                        }
+                    }
+
+                    // Resolve method calls for concrete types using impl_method_table.
+                    // Clone method_resolutions and inject resolved methods for this body.
+                    let mono_method_res = resolve_methods_for_type_mono(
+                        &typeck_result.method_resolutions,
+                        &typeck_result.pending_method_calls,
+                        &typeck_result.impl_method_table,
+                        &mono_subst,
+                        req.original_def_id,
+                        req.specialized_def_id,
+                        &req.type_bindings,
+                    );
+
+                    // Remap field_resolutions: the originals are keyed by original_def_id
+                    // but the mono body uses specialized_def_id for lookups.
+                    let mut mono_field_res: Vec<common.FieldResEntry> = Vec.new();
+                    for fri in 0usize..typeck_result.field_resolutions.len() {
+                        let entry = &typeck_result.field_resolutions[fri];
+                        if entry.body_def_id == req.original_def_id {
+                            mono_field_res.push(common.FieldResEntry.new(
+                                req.specialized_def_id,
+                                entry.span_start,
+                                entry.field_idx,
+                            ));
+                        } else {
+                            mono_field_res.push(common.FieldResEntry.new(
+                                entry.body_def_id,
+                                entry.span_start,
+                                entry.field_idx,
+                            ));
+                        }
+                    }
+
+                    mir_lower.lower_body_with_const_info(
+                        hir_def.DefId.new(req.specialized_def_id),
+                        hir_body,
+                        info.return_ty,
+                        info.span,
+                        &mono_subst,
+                        &mono_method_res,
+                        &mono_field_res,
+                        &typeck_result.coercion_entries,
+                        Vec.new(), // No const_bindings
+                        Vec.new(), // No const_generic_fn_set
+                        Vec.new(), // No turbofish
+                        Vec.new(), // No param counts
+                        pass2_result.next_mono_def_id,
+                        Vec.new(), // No type_generic_fn_set
+                        Vec.new(), // No type_generic_calls
+                    )
+                } else {
+                    // Const-generic monomorphization
+                    let const_bindings = driver.build_const_bindings_from_body(
+                        &body_entry.const_param_def_ids,
+                        &req.const_values,
+                    );
+
+                    mir_lower.lower_body_with_const_info(
+                        hir_def.DefId.new(req.specialized_def_id),
+                        hir_body,
+                        info.return_ty,
+                        info.span,
+                        &typeck_result.subst_table,
+                        &typeck_result.method_resolutions,
+                        &typeck_result.field_resolutions,
+                        &typeck_result.coercion_entries,
+                        const_bindings,
+                        Vec.new(), // No further const-generic interception
+                        Vec.new(), // No turbofish
+                        Vec.new(), // No param counts
+                        pass2_result.next_mono_def_id,
+                        Vec.new(), // No type_generic_fn_set
+                        Vec.new(), // No type_generic_calls
+                    )
+                };
+
+                region_deactivate();
+
+                // Dump mono MIR if requested
+                if args.dump_mir {
+                    let mono_fn_name = req.fn_name.as_str();
+                    let should_dump_mono = match &args.dump_mir_filter {
+                        &Option.Some(ref filter) => main_helpers.str_contains_ref(mono_fn_name, filter.as_str()),
+                        &Option.None => true,
+                    };
+                    if should_dump_mono {
+                        let mir_text = dump_mir.format_mir_body(&mono_mir.body, mono_fn_name);
+                        eprint_str("=== MONO MIR: ");
+                        eprint_str(mono_fn_name);
+                        eprint_str(" ===\n");
+                        eprint_str(mir_text.as_str());
+                        eprint_str("\n");
+                    }
+                }
+
+                // Codegen the specialized body
+                let mono_ir = codegen.generate_function_with_ctx(ctx, &mono_mir.body, req.fn_name.as_str(), 0, mod_count);
+                file_append_string(output_path, mono_ir.as_str());
+
+                // Compile closure/inline handler bodies from the mono MIR
+                let mut mcli: usize = 0;
+                while mcli < mono_mir.closure_names.len() && mcli < mono_mir.closure_mir.len() {
+                    let mcname = &mono_mir.closure_names[mcli];
+                    let mcbody = &mono_mir.closure_mir[mcli];
+                    let mc_is_hop = mcli < mono_mir.closure_is_handler_op.len()
+                        && mono_mir.closure_is_handler_op[mcli];
+                    if mc_is_hop { ctx.is_handler_op = true; }
+                    let mc_ir = codegen.generate_function_with_ctx(ctx, mcbody, mcname.as_str(), 0, mod_count);
+                    file_append_string(output_path, mc_ir.as_str());
+                    if mc_is_hop { ctx.is_handler_op = false; }
+                    mcli += 1;
+                }
+
+                // Reset MIR region for next mono function
+                region_reset(mono_mir_region);
+                } // end else (not already_compiled)
+            }
+            &Option.None => {
+                eprint_str("[mono_err: body not found for def ");
+                eprint_str(int_to_string(req.original_def_id as i32));
+                eprint_str("]\n");
+            }
+        }
+
+    }
+
+    // Destroy mono MIR region after all mono functions processed
+    region_destroy(mono_mir_region);
+}
+
+/// Emits content hashes for all function bodies. Prints hash-to-name mappings,
+/// saves per-function .hash files, and optionally stores definitions in the codebase.
+fn emit_content_hashes(
+    lower_result: &hir_lower_ctx.LowerResult,
+    expanded_source: &str,
+    output_path: &str,
+    store_codebase: bool,
+) {
+    eprint_str("\n  Content hashes:\n");
+    for hi in 0usize..lower_result.bodies.len() {
+        let body_entry = &lower_result.bodies[hi];
+        // Find matching fn item for this body
+        for hj in 0usize..lower_result.items.len() {
+            match &lower_result.items[hj].item.kind {
+                &hir_item.ItemKind.Fn(ref fn_def) => {
+                    match &fn_def.body_id {
+                        &Option.Some(ref bid) => {
+                            if bid.index == body_entry.body_id.index {
+                                let hash = content_hash.hash_fn_body(&body_entry.body, &fn_def.sig);
+                                let hex = content_hash.hash_to_hex(&hash);
+                                let def_name = match lower_result.interner.resolve(lower_result.items[hj].item.name.symbol) {
+                                    Option.Some(n) => common.make_string(n.as_str()),
+                                    Option.None => common.make_string("unknown"),
+                                };
+                                print_str(def_name.as_str());
+                                print_str(": ");
+                                println_str(hex.as_str());
+                                // Save hash to build cache for incremental comparison
+                                {
+                                    let mut hash_dir = common.make_string(output_path);
+                                    // Strip filename to get build dir
+                                    let mut last_slash: usize = 0;
+                                    let olen: usize = hash_dir.len();
+                                    let mut oi: usize = 0;
+                                    while oi < olen { if hash_dir.as_bytes()[oi] == 47 { last_slash = oi; } oi += 1; }
+                                    if last_slash > 0 {
+                                        let mut build_dir = String.new();
+                                        oi = 0;
+                                        while oi < last_slash { build_dir.push(hash_dir.as_bytes()[oi] as char); oi += 1; }
+                                        build_dir.push_str("/.content_hashes");
+                                        if !file_exists(build_dir.as_str()) {
+                                            let mut mkdir_cmd = common.make_string("mkdir -p ");
+                                            mkdir_cmd.push_str(build_dir.as_str());
+                                            system(mkdir_cmd.as_str());
+                                        }
+                                        let mut hash_file = common.make_string(build_dir.as_str());
+                                        hash_file.push('/');
+                                        hash_file.push_str(def_name.as_str());
+                                        hash_file.push_str(".hash");
+                                        file_write_string(hash_file.as_str(), hex.as_str());
+                                    }
+                                }
+                                // Store in codebase if requested
+                                if store_codebase {
+                                    let cb = default_codebase_path();
+                                    codebase.init_codebase(cb.as_str());
+                                    let fn_name = match lower_result.interner.resolve(lower_result.items[hj].item.name.symbol) {
+                                        Option.Some(s) => common.make_string(s.as_str()),
+                                        Option.None => common.make_string("unknown"),
+                                    };
+                                    let deps: Vec<String> = Vec.new();
+                                    // Extract function source text from the expanded source using span
+                                    let item_span = lower_result.items[hj].item.span;
+                                    let src_bytes = expanded_source.as_bytes();
+                                    let mut fn_source = String.new();
+                                    let end = if item_span.end <= src_bytes.len() { item_span.end } else { src_bytes.len() };
+                                    let mut si: usize = item_span.start;
+                                    while si < end { fn_source.push(src_bytes[si] as char); si += 1; }
+                                    let rec = codebase.DefinitionRecord.new(
+                                        common.make_string(hex.as_str()),
+                                        fn_name,
+                                        common.make_string("fn"),
+                                        fn_source,
+                                        deps,
+                                    );
+                                    codebase.store_definition(cb.as_str(), &rec);
+                                    codebase.add_name(cb.as_str(), rec.name.as_str(), hex.as_str());
+                                }
+                            }
+                        }
+                        &Option.None => {}
+                    }
+                }
+                _ => {}
             }
         }
     }
