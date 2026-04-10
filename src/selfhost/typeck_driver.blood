@@ -3617,6 +3617,9 @@ fn register_vec_methods(checker: &mut typeck.TypeChecker, vec_def: hir_def.DefId
     add_method(checker, &mut methods, "contains", "vec_contains", contains_params, type_intern.CommonTypes.bool_ty(), false, interner);
 
     // clone(&self) -> Vec<T>
+    // NOTE: remains a built-in because `impl<T> Clone for Vec<T>` triggers
+    // E0603 "type instability" — Blood's trait system doesn't yet support
+    // generic trait impls on generic types cleanly. Tracked as a feature gap.
     let mut clone_args: Vec<type_intern.TyId> = Vec.new();
     clone_args.push(make_param(0));
     add_method(checker, &mut methods, "clone", "vec_clone", Vec.new(), make_adt(vec_def, clone_args), false, interner);
@@ -3659,6 +3662,7 @@ fn register_option_methods(checker: &mut typeck.TypeChecker, option_def: hir_def
     add_method(checker, &mut methods, "as_ref", "option_as_ref", Vec.new(), make_adt(option_def, as_ref_args), false, interner);
 
     // clone(&self) -> Option<T>
+    // NOTE: remains a built-in — see Vec<T> clone note above.
     let mut clone_args: Vec<type_intern.TyId> = Vec.new();
     clone_args.push(make_param(0));
     add_method(checker, &mut methods, "clone", "option_clone", Vec.new(), make_adt(option_def, clone_args), false, interner);
@@ -3749,6 +3753,7 @@ fn register_hashmap_methods(checker: &mut typeck.TypeChecker, hashmap_def: hir_d
     }
 
     // clone(&self) -> HashMap<K, V>
+    // NOTE: remains a built-in — see Vec<T> clone note in register_vec_methods.
     let mut clone_args: Vec<type_intern.TyId> = Vec.new();
     clone_args.push(make_param(0));
     clone_args.push(make_param(1));
