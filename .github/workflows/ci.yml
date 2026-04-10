@@ -104,9 +104,9 @@ jobs:
       - name: Run tests (bloodc)
         run: cargo test -p bloodc
 
-  # Self-hosted compiler: build from seed + golden tests
+  # Self-hosted compiler: three-generation byte-identical bootstrap
   selfhost:
-    name: Selfhost Golden Tests
+    name: Selfhost Bootstrap + Golden Tests
     runs-on: ubuntu-latest
     env:
       # Use the committed runtime archive for linking
@@ -141,9 +141,24 @@ jobs:
         run: ./build_selfhost.sh build first_gen
         timeout-minutes: 15
 
-      - name: Run golden tests
+      - name: Run golden tests (first_gen)
         working-directory: src/selfhost
         run: ./build_selfhost.sh test golden -q
+        timeout-minutes: 10
+
+      - name: Build second_gen (first_gen → second_gen)
+        working-directory: src/selfhost
+        run: ./build_selfhost.sh build second_gen
+        timeout-minutes: 15
+
+      - name: Run golden tests (second_gen)
+        working-directory: src/selfhost
+        run: ./build_selfhost.sh test golden second_gen -q
+        timeout-minutes: 10
+
+      - name: Verify byte-identical bootstrap (gate --quick)
+        working-directory: src/selfhost
+        run: ./build_selfhost.sh gate --quick
         timeout-minutes: 10
 
       - name: Upload build logs on failure
