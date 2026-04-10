@@ -244,19 +244,36 @@ eprint_str("\n");
 
 ## 4. The build-time regression alarm
 
-`src/selfhost/build_selfhost.sh:check_build_time_regression()` gates on the
-wall time of `first_gen`, `second_gen`, and `third_gen`. Current thresholds
-(2026-04-09, matching a ~165 s steady state):
+### Wall time alarm
+
+`check_build_time_regression()` gates on total wall time. Current thresholds
+(2026-04-10, matching ~117 s steady state with parallel codegen + parallel llc):
 
 ```
-baseline         = 180 s
-warn_threshold   = 252 s  (baseline × 1.4)
-fail_threshold   = 360 s  (baseline × 2.0)
+baseline         = 130 s
+warn_threshold   = 182 s  (baseline × 1.4)
+fail_threshold   = 260 s  (baseline × 2.0)
 ```
 
-Set `BLOOD_NO_PERF_ALARM=1` to silence on slow hardware. **Update the
-baseline in lockstep with perf wins** — an alarm set above the current
-steady state can't catch regressions at the current level.
+### Per-phase sub-alarms
+
+`check_sub_phase_regression()` parses the compiler's sub-phase timers from
+the build log and warns if any individual phase exceeds its baseline × 1.5.
+This catches regressions masked in the total (e.g., codegen regresses 10 s
+but typeck improves 10 s → net zero, but codegen alarm fires).
+
+```
+Phase            Baseline    Threshold (1.5×)
+Parse               1 s          1.5 s
+HIR lowering       22 s         33 s
+Type checking      22 s         33 s
+Codegen            70 s        105 s
+llc-18              3 s          4.5 s
+```
+
+Set `BLOOD_NO_PERF_ALARM=1` to silence both alarms. **Update baselines in
+lockstep with perf wins** — an alarm set above the current steady state
+can't catch regressions at the current level.
 
 ### Metrics history
 

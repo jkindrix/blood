@@ -105,6 +105,53 @@ check_build_time_regression() {
     fi
 }
 
+# Per-phase regression alarm. Parses sub-phase timers from the build log
+# and warns if any individual phase exceeds its baseline × 1.5.
+# This catches regressions that are masked in the total wall time
+# (e.g., codegen regresses 10s but HIR improves 10s → net zero).
+check_sub_phase_regression() {
+    local log_file="$1"
+    [ -n "${BLOOD_NO_PERF_ALARM:-}" ] && return 0
+    [ ! -f "$log_file" ] && return 0
+
+    # Parse sub-phase millisecond values from the compiler's output.
+    # Format: "  Phase Name         N,NNNms" or "  Phase Name         Nms"
+    local parse_ms hir_ms typeck_ms codegen_ms llc_ms
+    parse_ms=$(grep '^ *Parse ' "$log_file" | tail -1 | sed 's/.*Parse *//; s/,//g; s/ms.*//')
+    hir_ms=$(grep '^ *HIR lowering' "$log_file" | tail -1 | sed 's/.*HIR lowering *//; s/,//g; s/ms.*//')
+    typeck_ms=$(grep '^ *Type checking' "$log_file" | tail -1 | sed 's/.*Type checking *//; s/,//g; s/ms.*//')
+    codegen_ms=$(grep '^ *Codegen ' "$log_file" | tail -1 | sed 's/.*Codegen *//; s/,//g; s/ms.*//')
+    llc_ms=$(grep 'llc-18 (per-module)' "$log_file" | tail -1 | sed 's/.*llc-18 (per-module) *//; s/,//g; s/ms.*//')
+
+    # Per-phase baselines (milliseconds) and thresholds (baseline × 1.5).
+    # These match the 2026-04-10 steady state with parallel codegen + parallel llc.
+    local warned=0
+    _check_phase() {
+        local name="$1" actual="$2" baseline="$3"
+        [ -z "$actual" ] && return 0
+        local threshold=$(( baseline * 3 / 2 ))
+        if [ "$actual" -gt "$threshold" ]; then
+            if [ "$warned" -eq 0 ]; then
+                printf "\n\033[1;33m╭─ SUB-PHASE REGRESSION ────────────────────────────────────────╮\033[0m\n"
+                warned=1
+            fi
+            printf "\033[1;33m│\033[0m  %-16s %6dms  (baseline: %dms, threshold: %dms) \033[1;33m│\033[0m\n" \
+                "$name" "$actual" "$baseline" "$threshold"
+        fi
+    }
+
+    _check_phase "Parse"         "$parse_ms"   1000
+    _check_phase "HIR lowering"  "$hir_ms"     22000
+    _check_phase "Type checking" "$typeck_ms"  22000
+    _check_phase "Codegen"       "$codegen_ms" 70000
+    _check_phase "llc-18"        "$llc_ms"     3000
+
+    if [ "$warned" -ne 0 ]; then
+        printf "\033[1;33m│\033[0m  Check [hir phases], [codegen pass2], [check_body] in log.   \033[1;33m│\033[0m\n"
+        printf "\033[1;33m╰───────────────────────────────────────────────────────────────╯\033[0m\n\n"
+    fi
+}
+
 decode_exit() {
     local code="$1"
     if [ "$code" -eq 0 ]; then echo "success"
@@ -279,6 +326,7 @@ do_build_first_gen() {
     fg_wall=$(($(date +%s) - start_ts))
     ok "first_gen built ($fg_size bytes) in $(elapsed_since "$start_ts")"
     log_metric "first_gen" "$fg_size" "$fg_wall"
+    check_sub_phase_regression "$LOG_FILE"
     copy_runtime
 }
 
@@ -384,6 +432,7 @@ do_build_second_gen() {
     sg_wall=$(($(date +%s) - start_ts))
     ok "second_gen built ($sg_size bytes) in $wall_time"
     log_metric "second_gen" "$sg_size" "$sg_wall"
+    check_sub_phase_regression "$LOG_FILE"
 }
 
 do_build_third_gen() {
@@ -410,6 +459,7 @@ do_build_third_gen() {
     tg_wall=$(($(date +%s) - start_ts))
     ok "third_gen built ($tg_size bytes) in $wall_time"
     log_metric "third_gen" "$tg_size" "$tg_wall"
+    check_sub_phase_regression "$LOG_FILE"
 
     step "Comparing second_gen vs third_gen"
     local hash2 hash3
