@@ -1,0 +1,70 @@
+// Test: match through reference on enum with nested enum payloads.
+// Reproduces the ty_id_to_type bug where extracting a nested enum value
+// through a reference returns the wrong discriminant.
+// EXPECT: 3
+// EXPECT: 16
+// EXPECT: 0
+
+enum Inner {
+    A,
+    B,
+    C,
+    D,
+    E,
+    F,
+    G,
+    H,
+    I,
+    J,
+    K,
+    L,
+    M,
+    N,
+    O,
+    P,
+    Q,
+}
+
+enum Outer {
+    First(Inner),
+    Second(i32),
+    Third(bool),
+}
+
+fn get_inner_disc(o: &Outer) -> i32 {
+    match o {
+        &Outer.First(inner) => {
+            match inner {
+                Inner.A => 0,
+                Inner.B => 1,
+                Inner.C => 2,
+                Inner.D => 3,
+                Inner.E => 4,
+                Inner.F => 5,
+                Inner.G => 6,
+                Inner.H => 7,
+                Inner.I => 8,
+                Inner.J => 9,
+                Inner.K => 10,
+                Inner.L => 11,
+                Inner.M => 12,
+                Inner.N => 13,
+                Inner.O => 14,
+                Inner.P => 15,
+                Inner.Q => 16,
+            }
+        }
+        &Outer.Second(v) => v,
+        &Outer.Third(b) => if b { 1 } else { 0 },
+    }
+}
+
+fn main() -> i32 {
+    let a = Outer.First(Inner.D);
+    let b = Outer.First(Inner.Q);
+    let c = Outer.First(Inner.A);
+    println_int(get_inner_disc(&a));
+    println_int(get_inner_disc(&b));
+    println_int(get_inner_disc(&c));
+    0
+}

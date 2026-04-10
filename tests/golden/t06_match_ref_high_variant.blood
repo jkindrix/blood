@@ -1,0 +1,64 @@
+// Test: match through reference on enum with many variants.
+// Exercises codegen for discriminant extraction and payload access
+// through a reference for high-index variants.
+// EXPECT: 100
+// EXPECT: 200
+// EXPECT: 300
+
+enum BigEnum {
+    V0(i32),
+    V1(i32),
+    V2(i32),
+    V3(i32),
+    V4(i32),
+    V5(i32),
+    V6(i32),
+    V7(i32),
+    V8(i32),
+    V9(i32),
+    V10(i32),
+    V11(i32),
+    V12(i32),
+    V13(i32),
+    V14(i32),
+    V15(i32),
+    V16(i32),
+    V17(i32),
+    V18(i32),
+    V19(i32),
+}
+
+fn extract_value(e: &BigEnum) -> i32 {
+    match e {
+        &BigEnum.V0(v) => v,
+        &BigEnum.V1(v) => v,
+        &BigEnum.V2(v) => v,
+        &BigEnum.V3(v) => v,
+        &BigEnum.V4(v) => v,
+        &BigEnum.V5(v) => v,
+        &BigEnum.V6(v) => v,
+        &BigEnum.V7(v) => v,
+        &BigEnum.V8(v) => v,
+        &BigEnum.V9(v) => v,
+        &BigEnum.V10(v) => v,
+        &BigEnum.V11(v) => v,
+        &BigEnum.V12(v) => v,
+        &BigEnum.V13(v) => v,
+        &BigEnum.V14(v) => v,
+        &BigEnum.V15(v) => v,
+        &BigEnum.V16(v) => v,
+        &BigEnum.V17(v) => v,
+        &BigEnum.V18(v) => v,
+        &BigEnum.V19(v) => v,
+    }
+}
+
+fn main() -> i32 {
+    let a = BigEnum.V5(100);
+    let b = BigEnum.V15(200);
+    let c = BigEnum.V19(300);
+    println_int(extract_value(&a));
+    println_int(extract_value(&b));
+    println_int(extract_value(&c));
+    0
+}
