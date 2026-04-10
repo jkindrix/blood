@@ -64,7 +64,83 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         );
     }
 
+    // Set up check on save (inline diagnostics without LSP)
+    const diagnostics = vscode.languages.createDiagnosticCollection('blood');
+    context.subscriptions.push(diagnostics);
+
+    if (config.get<boolean>('checkOnSave', true)) {
+        context.subscriptions.push(
+            vscode.workspace.onDidSaveTextDocument(async (document) => {
+                if (document.languageId === 'blood') {
+                    await checkAndReport(document, config, diagnostics);
+                }
+            })
+        );
+        // Also check on open
+        context.subscriptions.push(
+            vscode.workspace.onDidOpenTextDocument(async (document) => {
+                if (document.languageId === 'blood') {
+                    await checkAndReport(document, config, diagnostics);
+                }
+            })
+        );
+    }
+
     outputChannel.appendLine('Blood extension activated');
+}
+
+/// Runs blood check on a document and reports diagnostics inline.
+async function checkAndReport(
+    document: vscode.TextDocument,
+    config: vscode.WorkspaceConfiguration,
+    diagnostics: vscode.DiagnosticCollection
+): Promise<void> {
+    const bloodPath = config.get<string>('path', 'blood');
+    const filePath = document.fileName;
+    const { spawn } = require('child_process');
+
+    return new Promise<void>((resolve) => {
+        const proc = spawn(bloodPath, ['check', filePath]);
+        let stderr = '';
+
+        proc.stderr.on('data', (data: Buffer) => {
+            stderr += data.toString();
+        });
+
+        proc.on('close', (code: number) => {
+            const diags: vscode.Diagnostic[] = [];
+
+            if (code !== 0) {
+                // Parse error output: "error[E0201]: message\n  --> file:line:col"
+                const errorPattern = /error\[([^\]]+)\]: (.+)\n\s+-->\s+.+:(\d+):(\d+)/g;
+                let match;
+                while ((match = errorPattern.exec(stderr)) !== null) {
+                    const message = match[2];
+                    const line = parseInt(match[3], 10) - 1;
+                    const col = parseInt(match[4], 10) - 1;
+
+                    // Collect notes
+                    const notePattern = /\s+=\s+note:\s+(.+)/g;
+                    const remaining = stderr.substring(match.index + match[0].length);
+                    let noteMatch;
+                    let fullMessage = message;
+                    while ((noteMatch = notePattern.exec(remaining)) !== null) {
+                        fullMessage += '\n' + noteMatch[1];
+                        if (noteMatch.index > 200) break; // don't scan too far
+                    }
+
+                    const range = new vscode.Range(line, col, line, col + 1);
+                    const diag = new vscode.Diagnostic(range, fullMessage, vscode.DiagnosticSeverity.Error);
+                    diag.code = match[1];
+                    diag.source = 'blood';
+                    diags.push(diag);
+                }
+            }
+
+            diagnostics.set(document.uri, diags);
+            resolve();
+        });
+    });
 }
 
 export async function deactivate(): Promise<void> {
