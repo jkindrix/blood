@@ -25,13 +25,13 @@ The goal of this file is to answer honestly: *if you write a Blood program today
 
 **Needed:** runtime type-layout metadata so that freeze can walk fields and follow inner pointers. Not currently emitted by codegen.
 
-### GAP-3: Aggregate operand escape analysis disabled (`mir_escape.blood:696-700`)
+### GAP-3: Aggregate operand escape analysis — partially fixed (`--no-parallel`)
 
-When a struct or tuple is constructed from operands, the operands should be marked as escaping (HeapEscape/GlobalEscape) so that their allocations are promoted to the correct tier. This analysis is explicitly disabled.
+Aggregate operands should be marked as escaping so their allocations are promoted to the correct tier (proof assumption in Coq). This is now **enabled when `--no-parallel` is set**, which forces sequential codegen.
 
-**Root cause (investigated 2026-04-10):** Enabling aggregate escape analysis increases the number of persistent-tier allocations. This works for single-generation compilation (first_gen, second_gen), but causes `corrupted size vs. prev_size` glibc heap corruption during parallel codegen when compiling third_gen. The root cause is a latent memory corruption bug in the codegen or allocator that only manifests under increased heap allocation pressure from parallel worker threads. The gen hash table and tier classification are NOT the issue — the glibc heap itself is corrupted.
+**Still broken in parallel mode:** Enabling aggregate escape with 4-worker parallel codegen causes `corrupted size vs. prev_size` glibc heap corruption during self-compilation. Root cause: latent memory corruption in parallel codegen exposed by increased heap allocation pressure. The gen hash table and tier classification are correct — the glibc heap itself is corrupted by a threading bug.
 
-**Impact:** memory allocations feeding into struct/tuple aggregates may be misclassified, landing in the wrong tier. The memory safety theorems in `proofs/` assume correct tier classification — this is a gap between proof assumption and implementation. Fixing this requires first diagnosing the latent heap corruption in parallel codegen.
+**Impact:** In default (parallel) mode, aggregate operands may be misclassified to a lower tier. Use `--no-parallel` for correct tier classification at the cost of ~30% slower codegen.
 
 ### ~~GAP-4: Closure codegen regression — nested closures inside other closures~~ FIXED
 
