@@ -13,6 +13,19 @@ mod mir_def;
 mod mir_types;
 mod mir_stmt;
 mod mir_term;
+
+/// When true, aggregate operands are marked as escaping.
+/// Disabled by default because it triggers a latent heap corruption bug
+/// in parallel codegen. Enabled when --no-parallel is set.
+static mut AGGREGATE_ESCAPE_ENABLED: bool = false;
+
+pub fn set_aggregate_escape_enabled(enabled: bool) {
+    @unsafe { AGGREGATE_ESCAPE_ENABLED = enabled; }
+}
+
+fn aggregate_escape_enabled() -> bool {
+    @unsafe { AGGREGATE_ESCAPE_ENABLED }
+}
 mod mir_body;
 
 // ============================================================
@@ -615,8 +628,21 @@ fn mark_rvalue_escape_heap(rvalue: &mir_types.Rvalue, result: &mut EscapeAnalysi
         &mir_types.Rvalue.Cast { ref operand, target_ty: _ } => {
             // Value cast — source doesn't escape.
         }
-        &mir_types.Rvalue.Aggregate { kind: _, operands: _ } => {
-            // See mark_rvalue_escape_global TODO above — same root cause.
+        &mir_types.Rvalue.Aggregate { kind: _, ref operands } => {
+            if aggregate_escape_enabled() {
+                for oi in 0usize..operands.len() {
+                    let operand = &operands[oi];
+                    match operand {
+                        &mir_types.Operand.Copy(ref place) => {
+                            result.mark_heap_escape(place.local);
+                        }
+                        &mir_types.Operand.Move(ref place) => {
+                            result.mark_heap_escape(place.local);
+                        }
+                        &mir_types.Operand.Constant(_) => {}
+                    }
+                }
+            }
         }
         &mir_types.Rvalue.Discriminant(_) => {}
         &mir_types.Rvalue.Len(_) => {}
@@ -693,15 +719,23 @@ fn mark_rvalue_escape_global(rvalue: &mir_types.Rvalue, result: &mut EscapeAnaly
             // Value cast — source doesn't escape.
         }
         &mir_types.Rvalue.Aggregate { kind: _, ref operands } => {
-            // Aggregate operands should be marked GlobalEscape here to ensure
-            // correct tier classification (proof assumption in Coq).
-            // Currently disabled — enabling causes "corrupted size vs. prev_size"
-            // glibc heap corruption during parallel codegen in self-compilation.
-            // Root cause: increased persistent-tier allocations create more heap
-            // pressure, exposing a latent memory corruption bug in codegen or
-            // the allocator under parallel workload. NOT a tier-classification
-            // soundness issue — the allocator itself is corrupted.
-            // Tracked as GAP-3.
+            // Mark aggregate operands as GlobalEscape when enabled.
+            // Only safe in sequential codegen (--no-parallel) — parallel codegen
+            // has a latent heap corruption bug under increased allocation pressure.
+            if aggregate_escape_enabled() {
+                for oi in 0usize..operands.len() {
+                    let operand = &operands[oi];
+                    match operand {
+                        &mir_types.Operand.Copy(ref place) => {
+                            result.mark_global_escape(place.local);
+                        }
+                        &mir_types.Operand.Move(ref place) => {
+                            result.mark_global_escape(place.local);
+                        }
+                        &mir_types.Operand.Constant(_) => {}
+                    }
+                }
+            }
         }
         &mir_types.Rvalue.Discriminant(_) => {}
         &mir_types.Rvalue.Len(_) => {}

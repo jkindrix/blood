@@ -31,6 +31,7 @@ mod mir_lower;
 mod mir_lower_ctx;
 mod codegen;
 mod codegen_stmt;
+mod mir_escape;
 mod codegen_expr;
 mod codegen_ctx;
 mod codegen_streaming;
@@ -150,6 +151,8 @@ pub struct Args {
     pub stdlib_path: Option<String>,
     /// Whether to emit per-module .ll files instead of one monolithic file.
     pub split_modules: bool,
+    /// Whether to disable parallel codegen (forces sequential path).
+    pub no_parallel: bool,
 }
 
 impl Args {
@@ -185,6 +188,7 @@ impl Args {
             build_dir: Option.None,
             stdlib_path: Option.None,
             split_modules: false,
+            no_parallel: false,
         }
     }
 
@@ -220,6 +224,7 @@ impl Args {
             build_dir: Option.None,
             stdlib_path: Option.None,
             split_modules: false,
+            no_parallel: false,
         }
     }
 
@@ -255,6 +260,7 @@ impl Args {
             build_dir: Option.None,
             stdlib_path: Option.None,
             split_modules: false,
+            no_parallel: false,
         }
     }
 }
@@ -1569,6 +1575,8 @@ pub fn parse_args(argc: i32, argv: &Vec<String>) -> Args {
                 args.hash_stats = true;
             } else if main_helpers.str_equals(arg, "--split-modules") {
                 args.split_modules = true;
+            } else if main_helpers.str_equals(arg, "--no-parallel") {
+                args.no_parallel = true;
             } else if main_helpers.str_equals(arg, "--list") {
                 args.test_list = true;
             } else if main_helpers.str_equals(arg, "--fail-fast") {
@@ -3614,7 +3622,7 @@ fn codegen_pass2(
     // Parallel codegen: enabled for non-incremental clean builds without split-modules.
     let use_parallel = total_items > 200 && !has_generics
         && skip_modules.len() == 0 && !args.dump_mir && !args.validate_mir
-        && !args.alloc_profile;
+        && !args.alloc_profile && !args.no_parallel;
     if use_parallel {
         let num_workers: usize = 4;
         let chunk_size: usize = total_items / num_workers;
@@ -4809,6 +4817,10 @@ fn print_mem_phase(label: &str, parse_region: u64, hir_region: u64, codegen_regi
 /// - Per-function MIR regions: hold MIR bodies (destroyed after each function's IR is written)
 fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     let compile_start = blood_clock_millis();
+
+    // Enable aggregate escape analysis when parallel codegen is disabled.
+    // This is safe because the heap corruption only occurs under parallel workload.
+    mir_escape.set_aggregate_escape_enabled(args.no_parallel);
 
     // === Build cache check ===
     let base_dir = source.parent_dir(path);
