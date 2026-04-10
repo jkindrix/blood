@@ -74,11 +74,44 @@ Shortcuts include: `_ => Ok(())`, `_ => continue`, `Type::error()`, `unwrap_or_d
 
 Audit search terms: `_ =>`, `unwrap_or_default`, `unwrap_or_else`, `Type::error()`, `continue` (in match arms), `Ok(())` (suspicious early returns), `TODO`, `FIXME`, `XXX`, `HACK`, `Phase 2`, `not yet`, `later`, `unreachable!()`, `panic!()`, empty function bodies, functions returning hardcoded values.
 
-**Dog-fooding gap**: The compiler currently uses 0 traits, 0 effects, 0 linear types, and 0 explicit region blocks in its own source. When adding new compiler code, prefer using Blood features (traits for polymorphism, effects for error reporting, regions for phase-scoped memory) over the existing patterns (inherent impls, `Vec<Error>` push, manual region FFI calls).
+**Dog-fooding gap**: The compiler uses traits (Clone for String — 176 call sites, Display for Span and CompilePhase) but 0 effects, 0 linear types, and 0 explicit region blocks. When adding new compiler code, prefer using Blood features (traits for polymorphism, effects for error reporting, regions for phase-scoped memory) over the existing patterns (inherent impls, `Vec<Error>` push, manual region FFI calls).
 
 ## Development Workflow
 
 The selfhost compiler is developed using a **self-compilation loop**: edit source, recompile the compiler using itself, test the result.
+
+### STOP — Before Any Build
+
+**Always work from `cd /home/jkindrix/blood/src/selfhost`.** Use absolute paths for files outside this directory. Never use relative paths that assume a different working directory.
+
+**Before running any `build` or `gate` command**, verify runtime consistency:
+```bash
+md5sum ../../bootstrap/libblood_runtime_blood.a build/libblood_runtime.a
+```
+If they differ and you haven't changed runtime source, fix it:
+```bash
+cp ../../bootstrap/libblood_runtime_blood.a build/libblood_runtime.a
+```
+
+**Choose the right build command** — using the wrong one is the #1 source of wasted time:
+
+| What changed | Command | Time |
+|---|---|---|
+| Only runtime `.blood` files | `build blood_runtime && build first_gen --relink` | ~5 sec |
+| Selfhost compiler source | `build first_gen` (from seed, then `test golden -q`) | ~2 min |
+| Nothing (just need second_gen) | `build second_gen` | ~2 min |
+| Need full verification | `gate --quick` (if first_gen + second_gen already built and tested) | ~2 min |
+| Seed is stale / ABI change | `gate` (full pipeline) | ~6 min |
+
+**After compiler source changes, the safe sequence is:**
+1. `./build_selfhost.sh build first_gen` — seed compiles your changes
+2. `./build_selfhost.sh test golden -q` — verify first_gen works
+3. `./build_selfhost.sh build second_gen` — first_gen compiles itself
+4. `./build_selfhost.sh gate --quick` — byte-identical check + seed update
+
+Do NOT skip steps. Do NOT run `gate --quick` without first building and testing both generations. The 10-second verification prevents the 10-minute crash-diagnose-rebuild cycle.
+
+### Build Loops
 
 **Inner loop (seconds):** `first_gen check file.blood` — validates syntax, types, definite initialization, linearity, and dangling reference detection against the current compiler. Use this while editing to catch errors fast. Write 10-50 lines, check, fix, repeat.
 

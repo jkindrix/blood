@@ -462,7 +462,30 @@ do_build_second_gen() {
     [ -f "$BUILD_DIR/first_gen" ] || die "first_gen not found. Run: ./build_selfhost.sh build first_gen"
 
     check_runtime_consistency
+
+    # Guard: verify first_gen is linked against the same runtime we'll use for
+    # second_gen. If first_gen was built by a different seed or manually copied,
+    # the runtime linkage may be wrong, causing stale-reference crashes.
+    # The build-dir runtime was set by copy_runtime at the end of build first_gen.
+    local build_rt="$BUILD_DIR/libblood_runtime.a"
+    local bootstrap_rt="$REPO_ROOT/bootstrap/libblood_runtime_blood.a"
+    if [ -f "$build_rt" ] && [ -f "$bootstrap_rt" ]; then
+        local bh bld_h
+        bh=$(md5sum "$bootstrap_rt" | cut -d' ' -f1)
+        bld_h=$(md5sum "$build_rt" | cut -d' ' -f1)
+        if [ "$bh" != "$bld_h" ]; then
+            warn "Runtime still mismatched after check_runtime_consistency."
+            warn "This usually means first_gen was built with a different runtime."
+            warn "Forcing bootstrap runtime for consistency."
+            cp -f "$bootstrap_rt" "$build_rt"
+        fi
+    fi
+
     clear_all_caches
+
+    # Warn if source files are newer than first_gen — second_gen won't include
+    # those changes since first_gen is the compiler doing the work.
+    check_staleness "$BUILD_DIR/first_gen"
 
     step "Self-compiling (first_gen → second_gen)"
     local start_ts rc=0
