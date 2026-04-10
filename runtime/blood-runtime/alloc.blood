@@ -409,11 +409,12 @@ pub fn rt_blood_unregister_allocation(addr: i64) {
             // Prevent generation from reaching PERSISTENT_MARKER via increment.
             if g >= 0x7FFFFFFE {
                 // Generation overflow: slot has been freed ~2 billion times at this address.
-                // Spec requires Tier 3 promotion (PROMOTE_TO_PERSISTENT). Until Tier 3 FFI
-                // is implemented (B1 in WORK.md), panic to prevent silent gen wrap.
-                rt_panic.rt_panic("generation overflow: slot freed 2^31 times (Tier 3 promotion not yet implemented)");
+                // Promote to "permanently valid" (Tier 3): set gen to -1 sentinel.
+                // blood_validate_generation treats gen=-1 as always valid.
+                ht_write_gen(idx, -1);
+            } else {
+                ht_write_gen(idx, g + 1);
             }
-            ht_write_gen(idx, g + 1);
         }
     }
 }
@@ -427,6 +428,8 @@ pub fn rt_blood_validate_generation(addr: i64, expected: i32) -> i32 {
         let idx: i64 = ht_find(addr);
         if idx >= 0 {
             let actual: i32 = ht_read_gen(idx);
+            // Tier 3 sentinel: gen=-1 means permanently valid (promoted after overflow)
+            if actual == -1 { return 1; }
             if actual == expected { return 1; }
             return 0;
         }
