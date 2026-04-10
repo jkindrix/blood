@@ -3604,12 +3604,7 @@ fn codegen_pass2(
     // ================================================================
     let has_generics = has_const_generics || type_generic_fn_set.len() > 0;
     // Parallel codegen: enabled for non-incremental clean builds without split-modules.
-    // Parallel codegen disabled pending type resolution bug: workers produce
-    // wrong LLVM types for some function calls (e.g., passing fat ref {ptr,i32}
-    // where full struct by-value is expected). Root cause: worker type-to-LLVM
-    // resolution differs from sequential path. See diff of def1797_lower_body
-    // at the def1639_finish call site.
-    let use_parallel = false && total_items > 200 && !has_generics
+    let use_parallel = total_items > 200 && !has_generics
         && skip_modules.len() == 0 && !args.dump_mir && !args.validate_mir
         && !args.alloc_profile;
     if use_parallel {
@@ -3624,27 +3619,49 @@ fn codegen_pass2(
 
         let t_parallel_start = blood_clock_millis();
 
-        // Pre-warm MIR lowering caches by processing the first function on
-        // the main thread. The global CACHED_METHOD_HASH and CACHED_FIELD_HASH
-        // are lazily initialized on first use — concurrent initialization from
-        // multiple workers causes a race (partial write visible to other threads).
+        // Pre-register fn_signatures for ALL worklist functions via sequential
+        // MIR lowering. Workers need cross-worker signatures for call-site fixup
+        // (extractvalue+load for ref→value demotion at lines 1201-1213 of
+        // codegen_term.blood). Without signatures, the fixup is skipped and
+        // fat refs {ptr,i32} are passed where by-value structs are expected.
+        // This also warms the global MIR caches (CACHED_METHOD/FIELD_HASH).
         {
-            let first_work = &worklist.items[0];
-            let first_body = &lower_result.bodies[first_work.body_idx];
-            let mir_region_warm = region_create(4194304, 8589934592);
-            region_activate(mir_region_warm);
-            let _warmup = mir_lower.lower_body(
-                first_work.typeck_def_id,
-                &first_body.body,
-                type_intern.TyId.new(first_work.return_ty.index),
-                first_work.span,
-                &typeck_result.subst_table,
-                &typeck_result.method_resolutions,
-                &typeck_result.field_resolutions,
-                &typeck_result.coercion_entries,
-            );
-            region_deactivate();
-            region_destroy(mir_region_warm);
+            let mir_region_sigs = region_create(4194304, 8589934592);
+            for si in 0usize..total_items {
+                let work = &worklist.items[si];
+                let body_entry = &lower_result.bodies[work.body_idx];
+                region_activate(mir_region_sigs);
+                let mir_result = mir_lower.lower_body(
+                    work.typeck_def_id,
+                    &body_entry.body,
+                    type_intern.TyId.new(work.return_ty.index),
+                    work.span,
+                    &typeck_result.subst_table,
+                    &typeck_result.method_resolutions,
+                    &typeck_result.field_resolutions,
+                    &typeck_result.coercion_entries,
+                );
+                region_deactivate();
+                // Extract signature from MIR body locals
+                let mir_body = &mir_result.body;
+                let param_end: usize = 1 + (mir_body.param_count as usize);
+                let mut sig_params: Vec<String> = Vec.new();
+                let mut pi: usize = 1;
+                while pi < param_end && pi < mir_body.locals.len() {
+                    sig_params.push(codegen_size.type_to_llvm_with_ctx_id(ctx, mir_body.locals[pi].ty));
+                    pi += 1;
+                }
+                let mut sig_ret = common.make_string("void");
+                if mir_body.locals.len() > 0 {
+                    sig_ret = codegen_size.type_to_llvm_with_ctx_id(ctx, mir_body.locals[0].ty);
+                    if main_helpers.str_equals(&sig_ret, "{}") {
+                        sig_ret = common.make_string("void");
+                    }
+                }
+                ctx.register_fn_signature(work.def_id.index, sig_params, sig_ret);
+                region_reset(mir_region_sigs);
+            }
+            // Don't destroy — MIR cache hash maps allocated inside this region
         }
 
         // Get addresses of shared read-only data BEFORE deactivating the region.
