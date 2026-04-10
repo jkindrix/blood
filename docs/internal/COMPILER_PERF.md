@@ -4,7 +4,7 @@ This document captures perf patterns, instrumentation references, and traps
 discovered while optimizing the Blood self-hosted compiler's build time. If
 you're about to work on compiler perf, read this first.
 
-Last updated: 2026-04-09 (wall time 354 s → 165 s over two sessions).
+Last updated: 2026-04-10 (wall time 354 s → 117 s over four sessions).
 
 ---
 
