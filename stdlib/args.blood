@@ -1,0 +1,51 @@
+// Blood Standard Library - Command-Line Arguments
+//
+// Ergonomic wrappers around the args_count/args_get builtins.
+//
+// Usage:
+//   let program = args.program_name();
+//   let n = args.count();
+//   for i in 1..n {
+//       let arg = args.get(i);
+//       println_str(arg);
+//   }
+
+/// Returns the number of command-line arguments (including program name).
+pub fn count() -> i32 {
+    args_count()
+}
+
+/// Returns the argument at the given index (0 = program name).
+pub fn get(index: i32) -> &str {
+    args_get(index)
+}
+
+/// Returns the program name (argument 0).
+pub fn program_name() -> &str {
+    args_get(0)
+}
+
+/// Returns true if any argument equals the given string.
+pub fn has_flag(flag: &str) -> bool {
+    let n = args_count();
+    for i in 1..n {
+        if str_eq(args_get(i), flag) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Returns the value after a named argument (e.g., "--output" "file.txt").
+/// Returns empty string if not found.
+pub fn get_option(name: &str) -> &str {
+    let n = args_count();
+    for i in 1..n {
+        if str_eq(args_get(i), name) {
+            if i + 1 < n {
+                return args_get(i + 1);
+            }
+        }
+    }
+    ""
+}

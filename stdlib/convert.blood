@@ -1,0 +1,83 @@
+// Blood Standard Library - Type Conversion Utilities
+//
+// Wrappers around built-in conversion functions with a consistent API.
+//
+// Usage:
+//   let n: i32 = convert.parse_int("42");
+//   let s: &str = convert.to_str(123);
+//   let f: f64 = convert.parse_float("3.14");
+
+/// Parses a decimal integer string to i32. Returns 0 on invalid input.
+pub fn parse_int(s: &str) -> i32 {
+    let bytes = s.as_bytes();
+    let len = bytes.len();
+    if len == 0 { return 0; }
+
+    let mut result: i32 = 0;
+    let mut negative = false;
+    let mut start: usize = 0;
+
+    if bytes[0] == 45 { // '-'
+        negative = true;
+        start = 1;
+    } else if bytes[0] == 43 { // '+'
+        start = 1;
+    }
+
+    for i in start..len {
+        let c = bytes[i];
+        if c >= 48 && c <= 57 { // '0'-'9'
+            result = result * 10 + (c - 48) as i32;
+        } else {
+            return 0; // invalid character
+        }
+    }
+
+    if negative { 0 - result } else { result }
+}
+
+/// Parses a decimal integer string to i64. Returns 0 on invalid input.
+pub fn parse_i64(s: &str) -> i64 {
+    let result = parse_i64_radix(s, 10);
+    result
+}
+
+/// Parses a floating-point string to f64. Returns 0.0 on invalid input.
+pub fn parse_float(s: &str) -> f64 {
+    parse_f64(s)
+}
+
+/// Converts an i32 to a string.
+pub fn i32_to_str(n: i32) -> &str {
+    int_to_string(n)
+}
+
+/// Converts an i64 to a string.
+pub fn i64_to_str(n: i64) -> &str {
+    i64_to_string(n)
+}
+
+/// Converts a u64 to a string.
+pub fn u64_to_str(n: u64) -> &str {
+    u64_to_string(n)
+}
+
+/// Converts a bool to "true" or "false".
+pub fn bool_to_str(b: bool) -> &str {
+    bool_to_string(b)
+}
+
+/// Converts an f64 to a string.
+pub fn f64_to_str(n: f64) -> &str {
+    f64_to_string(n)
+}
+
+/// Parses a hexadecimal string (without "0x" prefix) to i64.
+pub fn parse_hex(s: &str) -> i64 {
+    parse_i64_radix(s, 16)
+}
+
+/// Parses a binary string (without "0b" prefix) to i64.
+pub fn parse_binary(s: &str) -> i64 {
+    parse_i64_radix(s, 2)
+}
