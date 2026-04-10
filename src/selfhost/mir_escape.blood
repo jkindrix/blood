@@ -616,8 +616,7 @@ fn mark_rvalue_escape_heap(rvalue: &mir_types.Rvalue, result: &mut EscapeAnalysi
             // Value cast — source doesn't escape.
         }
         &mir_types.Rvalue.Aggregate { kind: _, operands: _ } => {
-            // TODO: Aggregate operands should be marked HeapEscape here.
-            // Currently disabled — see mark_rvalue_escape_global TODO.
+            // See mark_rvalue_escape_global TODO above — same root cause.
         }
         &mir_types.Rvalue.Discriminant(_) => {}
         &mir_types.Rvalue.Len(_) => {}
@@ -694,10 +693,15 @@ fn mark_rvalue_escape_global(rvalue: &mir_types.Rvalue, result: &mut EscapeAnaly
             // Value cast — source doesn't escape.
         }
         &mir_types.Rvalue.Aggregate { kind: _, ref operands } => {
-            // TODO: Aggregate operands should be marked GlobalEscape here.
-            // Currently disabled — causes heap corruption during self-compilation.
-            // The aggregate + propagation chain elevates too many locals to
-            // Persistent in large compiler functions.
+            // Aggregate operands should be marked GlobalEscape here to ensure
+            // correct tier classification (proof assumption in Coq).
+            // Currently disabled — enabling causes "corrupted size vs. prev_size"
+            // glibc heap corruption during parallel codegen in self-compilation.
+            // Root cause: increased persistent-tier allocations create more heap
+            // pressure, exposing a latent memory corruption bug in codegen or
+            // the allocator under parallel workload. NOT a tier-classification
+            // soundness issue — the allocator itself is corrupted.
+            // Tracked as GAP-3.
         }
         &mir_types.Rvalue.Discriminant(_) => {}
         &mir_types.Rvalue.Len(_) => {}

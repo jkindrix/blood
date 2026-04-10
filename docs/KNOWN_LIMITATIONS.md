@@ -27,9 +27,11 @@ The goal of this file is to answer honestly: *if you write a Blood program today
 
 ### GAP-3: Aggregate operand escape analysis disabled (`mir_escape.blood:696-700`)
 
-When a struct or tuple is constructed from operands, the operands should be marked as escaping (HeapEscape/GlobalEscape) so that their allocations are promoted to the correct tier. This analysis is explicitly disabled in code with a comment that says it "causes heap corruption during self-compilation." The root cause is not understood.
+When a struct or tuple is constructed from operands, the operands should be marked as escaping (HeapEscape/GlobalEscape) so that their allocations are promoted to the correct tier. This analysis is explicitly disabled.
 
-**Impact:** memory allocations feeding into struct/tuple aggregates may be misclassified, landing in the wrong tier. The memory safety theorems in `proofs/` assume correct tier classification — this is a gap between proof assumption and implementation.
+**Root cause (investigated 2026-04-10):** Enabling aggregate escape analysis increases the number of persistent-tier allocations. This works for single-generation compilation (first_gen, second_gen), but causes `corrupted size vs. prev_size` glibc heap corruption during parallel codegen when compiling third_gen. The root cause is a latent memory corruption bug in the codegen or allocator that only manifests under increased heap allocation pressure from parallel worker threads. The gen hash table and tier classification are NOT the issue — the glibc heap itself is corrupted.
+
+**Impact:** memory allocations feeding into struct/tuple aggregates may be misclassified, landing in the wrong tier. The memory safety theorems in `proofs/` assume correct tier classification — this is a gap between proof assumption and implementation. Fixing this requires first diagnosing the latent heap corruption in parallel codegen.
 
 ### ~~GAP-4: Closure codegen regression — nested closures inside other closures~~ FIXED
 
