@@ -7,8 +7,8 @@ The goal of this file is to answer honestly: *if you write a Blood program today
 
 ## At a glance
 
-- **Self-hosting:** verified. 95K lines of Blood compile themselves through a three-generation byte-identical bootstrap.
-- **Golden tests:** 543 pass, 0 XFAIL. Golden tests cover program-level correctness, not systematic spec conformance.
+- **Self-hosting:** verified. 103K lines of Blood compile themselves through a three-generation byte-identical bootstrap. See "Self-hosting feature coverage" below for which features are exercised.
+- **Golden tests:** 541 pass, 0 fail. Golden tests cover program-level correctness, not systematic spec conformance.
 - **Spec coverage:** of 78 surveyed normative claims across `docs/spec/*.md`, 39 have verifiable code evidence (~50%). The other 39 are partial, missing, or too vague to verify.
 - **Rust bootstrap:** builds and runs simple programs. Used as an escape hatch; not the primary development target. Diverged from selfhost on type unification in April before being corrected.
 - **Formal proofs:** 264 Coq theorems/lemmas across 22 theory files, 0 admitted, 0 axioms. The proofs cover a simplified formal model of the language, not the compiler artifact. The gap between model and implementation is real and significant.
@@ -97,9 +97,11 @@ The following declaration kinds are explicitly rejected inside function bodies (
 
 Compile-time dispatch works (specificity ranking, constraint-based, retroactive conformance). Runtime fingerprint-based dispatch (the "dynamic dispatch" story from `docs/spec/DISPATCH.md`) is not implemented. `.tmp/GAPS.md` describes this as "deferred indefinitely."
 
-### Content-addressing — partial
+### Content-addressing — plumbing without payoff
 
-BLAKE3 hashing, codebase storage, `use hash("prefix")` imports, and VFT registration all work at the mechanism level. What's NOT wired: the actual VFT dispatch lookup during method calls. Registrations are emitted but never consulted. No cross-compilation-unit hash-based linking. No distributed codebase registry.
+BLAKE3 hashing, codebase storage, `use hash("prefix")` imports, and VFT registration all work at the mechanism level. VFT registrations are emitted at program startup (`blood_vft_register` called from `__blood_vft_init` global constructor for each trait impl method) — but `blood_vft_lookup` is never called from generated code. All dispatch goes through direct calls, vtable GEP, or closure pointers. The registrations go into a table that nothing reads at runtime in normal operation.
+
+Not wired: VFT dispatch during method calls, cross-compilation-unit hash-based linking, hot-swapping via `blood_vft_swap`, distributed codebase registry.
 
 ### WCET / real-time / certification path
 
@@ -116,7 +118,7 @@ Nothing is started. `docs/spec/WCET_REALTIME.md` is aspirational. Certification 
 
 This is the honest complement: things that are genuinely working end-to-end and can be relied on.
 
-- Parsing, type inference, type checking for the intersection of features exercised by the 95K-line selfhost compiler
+- Parsing, type inference, type checking for the intersection of features exercised by the 103K-line selfhost compiler (see feature coverage below)
 - Generics, monomorphization, method calls, generic impls (per-call-site fresh inference variables; see recent commit ca1f2aa)
 - Deep and shallow effect handlers with perform/resume/abort semantics
 - Pattern matching (exhaustive, or-patterns, nested destructuring)
@@ -129,6 +131,22 @@ This is the honest complement: things that are genuinely working end-to-end and 
 - Definite initialization analysis (default on)
 - Compile-time dangling reference rejection via E0503
 - Runtime stale reference detection on deref for all reference types including String/Vec data buffers
+
+## Self-hosting feature coverage
+
+The compiler compiles itself using: structs (379), enums (129), functions (1,523), generics (`Vec<T>`, `Option<T>`, `HashMap`, 2,619 uses), closures (237), match expressions (2,304), impl blocks (258), and `@unsafe` blocks (159).
+
+The compiler does **not** use in its own source: traits (0 trait definitions, 0 trait impls), effects (0 effect/handler/perform/resume), linear/affine types (0 uses as a consumer), explicit `region { }` blocks (0 — uses FFI calls instead), content-addressing (`use hash(...)`), dyn Trait, or fibers.
+
+These unused features are validated through golden tests (541 total), proving ground programs (13 integration tests across all 5 pillars), and the Coq formalization — but not through self-compilation at 103K-line scale.
+
+## Effect handler control flow
+
+Effect handlers use `setjmp`/`longjmp` for non-resumptive control flow, not real delimited continuations. The continuation table infrastructure exists but callbacks are identity functions (`rt_continuation.blood:4-6`). `resume(value)` in a handler op body sets a flag and returns the value through the call stack — there is no stack capture, no suspended computation, no ability to resume later or elsewhere.
+
+Multi-shot continuations are not supported. The continuation table marks entries as consumed and panics on second resume ("single-shot violation").
+
+What works: tail-resumptive handlers (State, Reader, Writer — zero overhead), non-resumptive handlers (Cancel, Error, StaleReference — `longjmp` abort), single resume in non-tail position (immediate return). What doesn't: multi-shot, deferred resume, storing continuations, suspend/resume scheduling.
 
 ## How to read this document
 

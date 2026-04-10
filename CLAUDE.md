@@ -74,6 +74,8 @@ Shortcuts include: `_ => Ok(())`, `_ => continue`, `Type::error()`, `unwrap_or_d
 
 Audit search terms: `_ =>`, `unwrap_or_default`, `unwrap_or_else`, `Type::error()`, `continue` (in match arms), `Ok(())` (suspicious early returns), `TODO`, `FIXME`, `XXX`, `HACK`, `Phase 2`, `not yet`, `later`, `unreachable!()`, `panic!()`, empty function bodies, functions returning hardcoded values.
 
+**Dog-fooding gap**: The compiler currently uses 0 traits, 0 effects, 0 linear types, and 0 explicit region blocks in its own source. When adding new compiler code, prefer using Blood features (traits for polymorphism, effects for error reporting, regions for phase-scoped memory) over the existing patterns (inherent impls, `Vec<Error>` push, manual region FFI calls).
+
 ## Development Workflow
 
 The selfhost compiler is developed using a **self-compilation loop**: edit source, recompile the compiler using itself, test the result.
