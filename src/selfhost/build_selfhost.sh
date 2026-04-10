@@ -43,12 +43,37 @@ elapsed_since() {
 
 log_metric() {
     local stage="$1" size="$2" wall_secs="$3"
-    local ts ir_lines
+    local ts ir_lines obj_bytes
     ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
     ir_lines=0
+    obj_bytes=0
     [ -f "$BUILD_DIR/${stage}.ll" ] && ir_lines=$(wc -l < "$BUILD_DIR/${stage}.ll")
-    printf '{"ts":"%s","stage":"%s","size":%s,"wall_secs":%s,"ir_lines":%s}\n' \
-        "$ts" "$stage" "$size" "$wall_secs" "$ir_lines" \
+    [ -d "$BUILD_DIR/obj" ] && obj_bytes=$(du -sb "$BUILD_DIR/obj" 2>/dev/null | cut -f1 || echo 0)
+
+    # Parse sub-phase timings from the build log (if available).
+    # These are printed by the compiler's --timings flag.
+    local parse_ms=0 hir_ms=0 typeck_ms=0 codegen_ms=0 llc_ms=0 split_ms=0
+    local par_workers=0 par_wall_ms=0 fn_count=0 peak_rss_kb=0
+    if [ -n "${LOG_FILE:-}" ] && [ -f "$LOG_FILE" ]; then
+        parse_ms=$(grep '^ *Parse ' "$LOG_FILE" | tail -1 | sed 's/.*Parse *//; s/,//g; s/ms.*//' || true)
+        hir_ms=$(grep '^ *HIR lowering' "$LOG_FILE" | tail -1 | sed 's/.*HIR lowering *//; s/,//g; s/ms.*//' || true)
+        typeck_ms=$(grep '^ *Type checking' "$LOG_FILE" | tail -1 | sed 's/.*Type checking *//; s/,//g; s/ms.*//' || true)
+        codegen_ms=$(grep '^ *Codegen ' "$LOG_FILE" | tail -1 | sed 's/.*Codegen *//; s/,//g; s/ms.*//' || true)
+        llc_ms=$(grep 'llc-18 (per-module)' "$LOG_FILE" | tail -1 | sed 's/.*llc-18 (per-module) *//; s/,//g; s/ms.*//' || true)
+        split_ms=$(grep 'Module split:' "$LOG_FILE" | tail -1 | sed 's/.*in //; s/ms.*//' || true)
+        par_workers=$(grep 'parallel codegen:' "$LOG_FILE" | tail -1 | sed 's/.*parallel codegen: //; s/ workers.*//' || true)
+        par_wall_ms=$(grep 'parallel codegen done:' "$LOG_FILE" | tail -1 | sed 's/.*done: //; s/ms.*//' || true)
+        fn_count=$(grep 'worklist:' "$LOG_FILE" | tail -1 | sed 's/.*worklist://; s/].*//' || true)
+        peak_rss_kb=$(grep 'peak_rss_kb=' "$LOG_FILE" | tail -1 | sed 's/.*peak_rss_kb=//' || true)
+    fi
+    : "${parse_ms:=0}" "${hir_ms:=0}" "${typeck_ms:=0}" "${codegen_ms:=0}"
+    : "${llc_ms:=0}" "${split_ms:=0}" "${par_workers:=0}" "${par_wall_ms:=0}"
+    : "${fn_count:=0}" "${peak_rss_kb:=0}"
+
+    printf '{"ts":"%s","stage":"%s","size":%s,"wall_secs":%s,"ir_lines":%s,"obj_bytes":%s,"parse_ms":%s,"hir_ms":%s,"typeck_ms":%s,"codegen_ms":%s,"llc_ms":%s,"split_ms":%s,"par_workers":%s,"par_wall_ms":%s,"fn_count":%s,"peak_rss_kb":%s}\n' \
+        "$ts" "$stage" "$size" "$wall_secs" "$ir_lines" "$obj_bytes" \
+        "$parse_ms" "$hir_ms" "$typeck_ms" "$codegen_ms" "$llc_ms" "$split_ms" \
+        "$par_workers" "$par_wall_ms" "$fn_count" "$peak_rss_kb" \
         >> "$DIR/.logs/metrics.jsonl"
     check_build_time_regression "$stage" "$wall_secs"
 }
@@ -316,7 +341,7 @@ do_build_first_gen() {
     step "Building first_gen with $(basename "$bootstrap_compiler")"
     local start_ts rc=0
     start_ts=$(date +%s)
-    $bootstrap_compiler build main.blood --no-cache --split-modules -o "$BUILD_DIR/first_gen.ll" $flags || rc=$?
+    $bootstrap_compiler build main.blood --timings --no-cache --split-modules -o "$BUILD_DIR/first_gen.ll" $flags || rc=$?
     if [ "$rc" -ne 0 ]; then
         fail "Build failed ($(basename "$bootstrap_compiler")): $(decode_exit $rc)"
         return 1
