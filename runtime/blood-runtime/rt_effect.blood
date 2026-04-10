@@ -30,9 +30,9 @@ static mut EFFECT_CONTEXT_SNAPSHOT: i64 = 0;  // address of current snapshot (or
 // Snapshot: { data_addr: i64, len: i64, cap: i64 }  (24 bytes header)
 // SnapshotEntry: { address: i64, generation: i32, pad: i32 }  (16 bytes)
 //
-// Selfhost creates snapshots but never adds entries — they're always empty.
-// blood_snapshot_validate returns 0 (all valid) for empty snapshots.
-// Implemented as real growable array for correctness.
+// Codegen adds entries for all gen-tracked locals (region, persistent,
+// unsized refs) at every Perform site. blood_snapshot_validate checks each
+// entry against the generation hash table after perform returns.
 // ============================================================================
 
 fn SNAP_HDR_SIZE() -> i64 { 24 }

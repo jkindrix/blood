@@ -39,11 +39,9 @@ When a struct or tuple is constructed from operands, the operands should be mark
 
 **Fixed in commit f6285a5 (2026-04-08).** The arity check at `typeck_expr.blood:1252` always worked for main-file bodies. The actual bug was in `typeck_driver.blood:790-793`: Phase 2b discarded *all* errors from external module bodies, including arity mismatches. Fix: selectively keep `ArityMismatch` errors from Phase 2b while discarding other cross-module false positives. Test: `t06_err_wrong_arity.blood`.
 
-### GAP-6: Effect snapshot validation is a stub
+### ~~GAP-6: Effect snapshot validation is a stub~~ FALSE POSITIVE
 
-Generation snapshots for multi-shot effect handlers are created but remain empty at runtime (`rt_effect.blood:34`). The Coq theorem `multishot_snapshot_safety` assumes snapshots track captured generations — at runtime, they don't. Stale references through resumed continuations may not be caught.
-
-**Impact:** false negatives — a resumed continuation could dereference a reference whose generation has changed since the continuation was captured.
+Investigation found the snapshot mechanism is fully implemented. Codegen adds entries for all gen-tracked locals (region, persistent, unsized refs) at every Perform site (`codegen_term.blood:136-258`). The runtime validates each entry against the generation hash table after perform returns (`rt_effect.blood:197-218`). Golden tests: `t03_genref_snapshot_effect.blood`, `t10_nested_effect_snapshot.blood`. The stale comment in `rt_effect.blood:33` claiming "selfhost creates snapshots but never adds entries" has been corrected.
 
 ### GAP-7: Generation counter overflow panics instead of Tier 3 promotion
 
