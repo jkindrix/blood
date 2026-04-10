@@ -81,11 +81,11 @@ The selfhost compiler is developed using a **self-compilation loop**: edit sourc
 
 **Runtime-only loop (~5 sec):** For changes to files in `runtime/blood-runtime/*.blood` ONLY, use `./build_selfhost.sh build blood_runtime && ./build_selfhost.sh build first_gen --relink`. This skips the 11-minute selfhost recompile and just re-links first_gen against the fresh runtime archive. 150× faster than a full rebuild for runtime work. Refuses to run if `build/obj/` is missing; warns if selfhost source files are newer than .o files.
 
-**Build loop (incremental, ~3 min):** `./build_selfhost.sh build second_gen` — first_gen compiles the current source with `--split-modules`. Only changed modules are re-codegen'd. Test with `./build_selfhost.sh test golden second_gen`. This is the primary development cycle.
+**Build loop (incremental, ~2 min):** `./build_selfhost.sh build second_gen` — first_gen compiles the current source with `--split-modules` and parallel codegen (4 workers). Only changed modules are re-codegen'd. Test with `./build_selfhost.sh test golden second_gen`. This is the primary development cycle.
 
-**Recovery (clean, ~11 min):** `./build_selfhost.sh build first_gen` — rebuilds from the bootstrap seed. Use this only when self-compilation breaks (your edit introduced a bug that prevents the compiler from compiling itself), or after compiler-source changes. Fix the issue, rebuild first_gen, then return to the build loop.
+**Recovery (clean, ~2 min):** `./build_selfhost.sh build first_gen` — rebuilds from the bootstrap seed. Use this only when self-compilation breaks (your edit introduced a bug that prevents the compiler from compiling itself), or after compiler-source changes. Fix the issue, rebuild first_gen, then return to the build loop.
 
-**Gate (full chain, ~15 min):** `./build_selfhost.sh gate` — runs the full bootstrap chain (first_gen → second_gen → third_gen byte-compare) and updates the seed. Run at end-of-session or before pushing. Required for ABI/calling-convention changes. Use `gate --quick` (~8 min) to skip first_gen/second_gen rebuilds when they're already built and tested.
+**Gate (full chain, ~6 min):** `./build_selfhost.sh gate` — runs the full bootstrap chain (first_gen → second_gen → third_gen byte-compare) and updates the seed. Run at end-of-session or before pushing. Required for ABI/calling-convention changes. Use `gate --quick` (~2 min) to skip first_gen/second_gen rebuilds when they're already built and tested.
 
 ## Development Rules
 
@@ -158,7 +158,7 @@ All building and testing goes through the build script. No arguments shows statu
 cd src/selfhost
 
 # Build stages
-./build_selfhost.sh build first_gen            # Build first_gen from seed compiler (~11 min)
+./build_selfhost.sh build first_gen            # Build first_gen from seed compiler (~2 min)
 ./build_selfhost.sh build first_gen --relink   # FAST PATH: relink existing .o files against
                                                # current runtime archive (~5 sec). Use when
                                                # only the runtime changed. Refuses if build/obj
