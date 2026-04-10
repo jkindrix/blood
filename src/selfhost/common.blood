@@ -497,15 +497,13 @@ impl DefaultMethodRemap {
 // ============================================================
 
 /// Trait for creating a copy of a value.
-/// NOTE: Cannot impl for String yet — String has a built-in `clone` method
-/// registered in typeck_driver.blood:3501 that creates E0602 ambiguity.
-/// The built-in registration must be removed before a trait impl can replace it.
 pub trait Clone {
     fn clone(self: &Self) -> Self;
 }
 
 /// Creates a copy of a String. Canonical implementation — replaces the 15
 /// per-file `clone_string` duplicates scattered across the compiler source.
+/// Stage 2 will add `impl Clone for String` and convert call sites to .clone().
 pub fn clone_string(s: &String) -> String {
     let mut r = String.new();
     r.push_str(s.as_str());

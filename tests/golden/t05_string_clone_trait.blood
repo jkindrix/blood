@@ -1,0 +1,40 @@
+// Test: Clone trait impl for String via trait dispatch
+// EXPECT: hello
+// EXPECT: hello world
+// EXPECT: hello
+// EXPECT: 0
+
+trait Clone {
+    fn clone(self: &Self) -> Self;
+}
+
+impl Clone for String {
+    fn clone(self: &Self) -> String {
+        let mut r = String.new();
+        r.push_str(self.as_str());
+        r
+    }
+}
+
+fn make_string(s: &str) -> String {
+    let mut r = String.new();
+    r.push_str(s);
+    r
+}
+
+fn main() -> i32 {
+    let s = make_string("hello");
+    let s2 = s.clone();
+    println(s2.as_str());
+
+    // Clone and modify — original unchanged
+    let mut s3 = s.clone();
+    s3.push_str(" world");
+    println(s3.as_str());
+
+    // Original still unchanged
+    println(s.as_str());
+
+    println_int(0);
+    0
+}
