@@ -108,6 +108,11 @@ jobs:
   selfhost:
     name: Selfhost Golden Tests
     runs-on: ubuntu-latest
+    env:
+      # Use the committed runtime archive for linking
+      RUNTIME_A: ${{ github.workspace }}/bootstrap/libblood_runtime_blood.a
+      # Suppress build-time regression alarm (CI hardware differs from dev machine)
+      BLOOD_NO_PERF_ALARM: 1
     steps:
       - uses: actions/checkout@v4
 
@@ -117,10 +122,19 @@ jobs:
 
       - name: Add swap space
         run: |
+          # GitHub runners already have a swapfile — resize it
+          sudo swapoff -a
+          sudo rm -f /swapfile /mnt/swapfile
           sudo fallocate -l 10G /swapfile
           sudo chmod 600 /swapfile
           sudo mkswap /swapfile
           sudo swapon /swapfile
+
+      - name: Verify bootstrap artifacts
+        run: |
+          echo "Seed: $(stat -c'%s bytes' bootstrap/seed)"
+          echo "Runtime: $(stat -c'%s bytes' bootstrap/libblood_runtime_blood.a)"
+          file bootstrap/seed
 
       - name: Build first_gen from seed
         working-directory: src/selfhost

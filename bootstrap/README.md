@@ -11,6 +11,13 @@ RUNTIME_A=runtime/blood-runtime/build/debug/libblood_runtime_blood.a build third
 # Shipped: second_gen (compiled by the selfhost, 0 Rust symbols)
 ```
 
+**Contents:**
+- `seed` — the compiler binary (self-hosting fixed point, byte-identical when compiling itself)
+- `libblood_runtime_blood.a` — the Blood runtime archive (needed for linking compiled programs)
+- `seed.meta` — provenance metadata (commit, date, size, hash)
+
+Both `seed` and `libblood_runtime_blood.a` are updated together by `./build_selfhost.sh gate`.
+
 **Properties:**
 - Self-hosting fixed point (compiling itself produces a byte-identical binary)
 - Linked against Blood runtime (zero Rust dependencies)
@@ -19,10 +26,7 @@ RUNTIME_A=runtime/blood-runtime/build/debug/libblood_runtime_blood.a build third
 **To update the seed:**
 ```bash
 cd src/selfhost
-./build_selfhost.sh build blood_runtime
-./build_selfhost.sh build second_gen
-./build_selfhost.sh build third_gen  # must be byte-identical to second_gen
-cp build/second_gen ../../bootstrap/seed
+./build_selfhost.sh gate  # builds all, verifies, updates bootstrap/seed + runtime
 ```
 
 Note: `RUNTIME_A` defaults to the Blood runtime (`libblood_runtime_blood.a`), so the above commands produce a Rust-free binary automatically. If `RUNTIME_A` is overridden to point at the Rust runtime, the seed would contain Rust symbols — don't do that.

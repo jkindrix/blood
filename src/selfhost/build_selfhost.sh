@@ -1555,9 +1555,18 @@ case "${1:-status}" in
         # If we get here, the bootstrap passed. Update the seed.
         _seed_path="$REPO_ROOT/bootstrap/seed"
         _meta_path="$REPO_ROOT/bootstrap/seed.meta"
+        _rt_path="$REPO_ROOT/bootstrap/libblood_runtime_blood.a"
         _commit_hash=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
         cp "$BUILD_DIR/second_gen" "$_seed_path"
         _size_bytes=$(wc -c < "$_seed_path")
+
+        # Copy runtime archive alongside seed (needed for CI bootstrap)
+        if [ -f "$RUNTIME_A" ]; then
+            cp "$RUNTIME_A" "$_rt_path"
+            ok "Runtime updated: $(basename "$_rt_path") ($(wc -c < "$_rt_path") bytes)"
+        else
+            warn "Runtime archive not found at $RUNTIME_A — bootstrap/libblood_runtime_blood.a not updated"
+        fi
 
         # Write seed metadata
         cat > "$_meta_path" <<SEEDMETA
