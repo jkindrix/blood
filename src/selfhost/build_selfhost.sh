@@ -298,6 +298,13 @@ check_runtime_consistency() {
     fi
 }
 
+# Clear all compiler IR caches across the repo and the centralized ~/.blood/cache.
+clear_all_caches() {
+    rm -rf "$BUILD_DIR/.content_hashes" "$BUILD_DIR/obj/.hashes" "$BUILD_DIR/.blood-cache" 2>/dev/null
+    rm -rf "${HOME}/.blood/cache" 2>/dev/null
+    find "$REPO_ROOT" -name ".blood-cache" -type d -not -path '*/.claude/*' -exec rm -rf {} + 2>/dev/null || true
+}
+
 check_zombies() {
     local procs
     procs=$(pgrep -af "(first_gen|second_gen|third_gen) build" 2>/dev/null | grep -v "$$" || true)
@@ -370,12 +377,7 @@ do_build_first_gen() {
     check_seed_staleness
 
     # Clear all caches — cached IR is compiler-version-specific.
-    # Module-level source hashes and per-function content hashes must both be cleared
-    # when the compiling compiler changes (seed vs first_gen vs second_gen).
-    # Also clear ALL .blood-cache dirs in the repo — they contain IR compiled by
-    # the previous first_gen, which is stale for the new one.
-    rm -rf "$BUILD_DIR/.content_hashes" "$BUILD_DIR/obj/.hashes" "$BUILD_DIR/.blood-cache" 2>/dev/null
-    find "$REPO_ROOT" -name ".blood-cache" -type d -not -path '*/.claude/*' -exec rm -rf {} + 2>/dev/null || true
+    clear_all_caches
 
     # Pass --no-cache: populating the per-function content hash cache on a
     # clean build is ~232s of pure I/O waste (2551 functions × ~91ms each
@@ -460,16 +462,8 @@ do_build_second_gen() {
     [ -f "$BUILD_DIR/first_gen" ] || die "first_gen not found. Run: ./build_selfhost.sh build first_gen"
 
     check_runtime_consistency
+    clear_all_caches
 
-    # Clear all caches — cached IR is compiler-version-specific
-    rm -rf "$BUILD_DIR/.content_hashes" "$BUILD_DIR/obj/.hashes" "$BUILD_DIR/.blood-cache" 2>/dev/null
-    find "$REPO_ROOT" -name ".blood-cache" -type d -not -path '*/.claude/*' -exec rm -rf {} + 2>/dev/null || true
-
-    # Pass --no-cache: the cache gets wiped before each generation build anyway
-    # (lines above), so populating it is ~232s of pure I/O waste per generation
-    # (2551 functions × ~91ms for content_hash + file write). Clean gates
-    # don't benefit from caching between generations because the compiler
-    # version changes between each. This flag drops ~12 min off a full gate.
     step "Self-compiling (first_gen → second_gen)"
     local start_ts rc=0
     start_ts=$(date +%s)
@@ -511,10 +505,7 @@ do_build_third_gen() {
     [ -f "$BUILD_DIR/second_gen" ] || die "second_gen not found. Run: ./build_selfhost.sh build second_gen"
 
     check_runtime_consistency
-
-    # Clear all caches — cached IR is compiler-version-specific
-    rm -rf "$BUILD_DIR/.content_hashes" "$BUILD_DIR/obj/.hashes" "$BUILD_DIR/.blood-cache" 2>/dev/null
-    find "$REPO_ROOT" -name ".blood-cache" -type d -not -path '*/.claude/*' -exec rm -rf {} + 2>/dev/null || true
+    clear_all_caches
 
     # Pass --no-cache: see comment in do_build_second_gen above. Same rationale.
     step "Bootstrap (second_gen → third_gen)"
@@ -1290,7 +1281,7 @@ case "${1:-status}" in
             if [[ "$_ba" == "--fresh" ]]; then _build_fresh=true; fi
         done
         if $_build_fresh; then
-            rm -rf "$BUILD_DIR/.content_hashes" "$BUILD_DIR/obj/.hashes" "$BUILD_DIR/.blood-cache" 2>/dev/null
+            clear_all_caches
         fi
         case "${2:-}" in
             cargo)
@@ -1643,7 +1634,7 @@ SEEDMETA
         mkdir -p "$bin_dir" "$lib_dir"
 
         # Install compiler binary (prefer second_gen, fall back to first_gen)
-        local install_bin=""
+        install_bin=""
         if [ -f "$BUILD_DIR/second_gen" ]; then
             install_bin="$BUILD_DIR/second_gen"
         elif [ -f "$BUILD_DIR/first_gen" ]; then
@@ -1667,7 +1658,7 @@ SEEDMETA
         ok "Stdlib → $lib_dir/stdlib/"
 
         # Install LSP binary (if built)
-        local lsp_bin="${DIR}/../../src/bootstrap/target/release/blood-lsp"
+        lsp_bin="${DIR}/../../src/bootstrap/target/release/blood-lsp"
         if [ -f "$lsp_bin" ]; then
             cp "$lsp_bin" "$bin_dir/blood-lsp"
             chmod +x "$bin_dir/blood-lsp"
@@ -1695,8 +1686,7 @@ SEEDMETA
 
     clean-cache)
         step "Cleaning caches only"
-        rm -rf "$BUILD_DIR/.content_hashes" "$BUILD_DIR/obj/.hashes" "$BUILD_DIR/.blood-cache"
-        find "$REPO_ROOT" -name ".blood-cache" -type d -not -path '*/.claude/*' -exec rm -rf {} + 2>/dev/null || true
+        clear_all_caches
         ok "Caches removed (binaries preserved)"
         ;;
 
