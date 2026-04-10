@@ -79,16 +79,11 @@ Async/await syntax is not implemented at any level.
 
 Struct, enum, type-alias, union, callback, opaque-type, and C-function bridge items work. Link specifications (linker directives for choosing libraries) are not implemented (`hir_lower_builtin.blood:870`).
 
-### Standard library — mostly Rust-syntax placeholder code
+### Standard library — small but honest
 
-The `stdlib/` directory has 25,842 lines across 70 files, but most of it is Rust-syntax code that was copy-pasted and never ported to Blood:
+The `stdlib/` directory contains 14 Blood-syntax files after cleanup. 56 Rust-syntax prototype files have been moved to `stdlib/_rust_prototype/` (they use `::` path separators, `Vec::new()`, `if let`, and other Rust patterns that don't compile in Blood).
 
-- 1,362 instances of `::` (Rust path separator — Blood uses `.`)
-- 82 instances of `Vec::new(`
-- 59 instances of `String::from(`
-- 56 instances of `if let`, 11 of `while let`
-
-Of the 70 files, **8 are actually working** (`algorithms/sort`, `core/drop`, `core/fmt`, `effects/cancel`, `math`, `mem/arena`, `prelude`, `string`). 38 fail type-check due to Rust syntax. 31 type-check but are mostly empty. 9 modules are dead code (imported nowhere in the repo).
+Working modules: `core/drop`, `effects/cancel`, `math`, `prelude`, `string`. Additional modules (`crypto/blake3`, `traits/clone`, `traits/marker`, `result`) have minor issues (not Rust syntax but use features like `let` at module level or `?` operator that aren't implemented yet). The compiler does not depend on the stdlib — it has its own built-in implementations of HashMap, Vec, String, etc.
 
 ### Generic associated types projections (`T::Item` for type parameters)
 
