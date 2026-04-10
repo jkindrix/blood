@@ -5770,10 +5770,12 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
         eprint_str(" (vec/hash)\n");
     }
 
-    // Report peak RSS via shell command (Linux only).
-    // Emitted as "peak_rss_kb=N" so the build script can parse it.
+    // Report peak physical RSS (VmHWM = high water mark) from /proc/self/status.
+    // Uses $PPID because system() spawns a child shell — /proc/self/ would
+    // report awk's memory, not the compiler's. VmHWM is physical memory only
+    // (unlike VmPeak which includes mmap'd virtual address space from regions).
     if args.timings {
-        system("awk '/VmPeak/ {printf \"  peak_rss_kb=%d\\n\", $2}' /proc/self/status >&2");
+        system("awk '/VmHWM/ {printf \"  peak_rss_kb=%d\\n\", $2}' /proc/$PPID/status >&2");
     }
 
     true
