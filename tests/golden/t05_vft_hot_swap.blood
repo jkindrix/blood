@@ -1,0 +1,48 @@
+// Test: VFT (Virtual Function Table) hot-swap mechanism.
+// Registers a function pointer by content hash, looks it up,
+// swaps it for a different implementation, and verifies the swap.
+// This validates Pillar 2 (Identity) content-addressed registration + swap.
+// EXPECT: registered
+// EXPECT: lookup ok
+// EXPECT: swap ok
+// EXPECT: new lookup ok
+
+fn original() -> i32 {
+    42
+}
+
+fn replacement() -> i32 {
+    100
+}
+
+fn main() -> i32 {
+    // Use arbitrary hash values for testing (not real content hashes)
+    let hash_lo: i64 = 12345;
+    let hash_hi: i64 = 67890;
+
+    // Register original function with our test hash
+    let fn_ptr: u64 = @unsafe { original as u64 };
+    blood_vft_register(hash_lo, hash_hi, fn_ptr as i64, 0);
+    println_str("registered");
+
+    // Look up the registered function — should return our function pointer
+    let looked_up: i64 = blood_vft_lookup(hash_lo, hash_hi);
+    if looked_up != 0 {
+        println_str("lookup ok");
+    }
+
+    // Swap to the replacement function
+    let new_ptr: u64 = @unsafe { replacement as u64 };
+    let swapped: bool = blood_vft_swap(hash_lo, hash_hi, new_ptr as i64);
+    if swapped {
+        println_str("swap ok");
+    }
+
+    // Verify the swap took effect — lookup should return new pointer
+    let looked_up2: i64 = blood_vft_lookup(hash_lo, hash_hi);
+    if looked_up2 != looked_up {
+        println_str("new lookup ok");
+    }
+
+    0
+}

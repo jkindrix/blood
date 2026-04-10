@@ -277,6 +277,8 @@ pub struct CodegenCtx {
     output_path: String,
     /// Whether to emit MIR annotations as comments in LLVM IR.
     pub trace_codegen: bool,
+    /// Whether to route dyn Trait dispatch through VFT content-hash lookup.
+    pub vft_dispatch: bool,
     /// Per-function call remapping for trait default methods.
     /// When generating a default method body, calls to trait abstract method
     /// DefIds are redirected to concrete impl method DefIds.
@@ -567,6 +569,7 @@ impl CodegenCtx {
             write_buffer: String.new(),
             output_path: String.new(),
             trace_codegen: false,
+            vft_dispatch: false,
             call_remaps: Vec.new(),
             handler_effect_entries: Vec.with_capacity(32),
             handler_effect_hash: hashmap.HashMapU64U32.with_capacity(32),
@@ -668,6 +671,7 @@ impl CodegenCtx {
             write_buffer: String.new(),
             output_path: String.new(),
             trace_codegen: false,
+            vft_dispatch: false,
             call_remaps: Vec.new(),
             handler_effect_entries: Vec.with_capacity(32),
             handler_effect_hash: hashmap.HashMapU64U32.with_capacity(32),
