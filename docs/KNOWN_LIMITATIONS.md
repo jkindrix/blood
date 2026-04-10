@@ -15,13 +15,9 @@ The goal of this file is to answer honestly: *if you write a Blood program today
 
 ## Known soundness gaps (compile-time or runtime correctness)
 
-### GAP-1: `&str` stale detection disabled for `String`/`Vec` data buffers
+### ~~GAP-1: `&str` stale detection disabled for `String`/`Vec` data buffers~~ FIXED
 
-`alloc.blood:rt_blood_alloc_simple` intentionally does NOT register its allocations in the generation hash table. The spec calls for stale `&str` / `&[T]` references to be caught at runtime when the underlying buffer is reallocated (e.g., after a `String.push_str` that triggers buffer growth). This detection is currently off.
-
-**Why it's off:** a previous attempt to enable it (commit fd43ec7) had an arity bug that silently produced invalid LLVM IR; the build script's error swallowing hid the failure for days. When the bug was corrected, gen tracking was enabled for the first time — and it immediately found a latent `&str`-lifetime bug in the selfhost compiler itself (first_gen holds an `&str` past a String reallocation somewhere during HIR lowering). Fixing the latent bug is a prerequisite to re-enabling GAP-1.
-
-**Impact:** stale `&str` dereferences in user code are not detected. They may read garbage or (if lucky) fault. Not caught at compile time either.
+**Fixed in commit 6080f21 (2026-04-10).** `rt_blood_alloc_simple` now registers allocations in the generation hash table via `rt_blood_register_allocation_tagged(addr, size, 2)`. When a `String` or `Vec` grows and reallocates, the old buffer's generation increments, invalidating any `&str` or `&[T]` pointing at it. The latent `&str`-lifetime bug that previously blocked re-enablement (reported in AUDIT_2026-04-07.md) was fixed by intervening work — self-compilation completes without stale reference panics. Three-generation byte-identical bootstrap verified. Test: `t03_genref_stale_str_realloc.blood`.
 
 ### GAP-2: `Frozen<T>` deep traversal is shallow
 
@@ -141,7 +137,7 @@ This is the honest complement: things that are genuinely working end-to-end and 
 - Array / Vec / slice bounds checking (default on)
 - Definite initialization analysis (default on)
 - Compile-time dangling reference rejection via E0503
-- Runtime stale reference detection on deref for region-allocated and heap-registered buffers (but NOT for String/Vec data buffers — see GAP-1)
+- Runtime stale reference detection on deref for all reference types including String/Vec data buffers
 
 ## How to read this document
 
