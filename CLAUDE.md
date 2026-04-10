@@ -6,8 +6,9 @@
 blood/                          # Repository root
 ├── src/selfhost/     # Self-hosted Blood compiler (written in Blood)
 ├── src/bootstrap/bloodc/src/   # Rust bootstrap compiler
+├── editors/vscode/   # VS Code extension + LSP client
 ├── docs/spec/GRAMMAR.md        # Language grammar specification
-└── tools/                      # Development & debugging tools
+└── tools/                      # Development, debugging & fuzzing tools
 ```
 
 | Compiler | Location | Language | Purpose |
@@ -133,7 +134,7 @@ Canonical shared types: `Span`, `Symbol`, `SpannedSymbol`, `SpannedString`, `Ord
 - **Keyword field names:** `module` cannot be used as a field name; use `mod_decl`
 - **Memory reuse:** Requires active region at startup for region-aware allocation
 - **~~Nested closures inside other closures (S-7):~~ FIXED (2b6d72e).** `finish_nested()` propagates nested closure definitions to parent context. Tests: `t04_nested_closure.blood`, `t04_doubly_nested_closure.blood`.
-- **Stale `&str` detection for `String`/`Vec` data buffers (GAP-1):** disabled. A previous attempt (fd43ec7) had an arity bug hidden by error swallowing. When corrected, exposed a latent `&str`-lifetime bug in first_gen itself. Re-enabling requires first fixing the latent bug.
+- **~~Stale `&str` detection for `String`/`Vec` data buffers (GAP-1):~~ FIXED (6080f21).** `rt_blood_alloc_simple` registers allocations in the gen hash table. String/Vec reallocation now invalidates old `&str` references. Three-generation bootstrap verified.
 - **~~Function call arity (NEW-4):~~ FIXED (f6285a5).** Arity mismatches in external module bodies are now correctly reported as E0205.
 - **`docs/planning/IMPLEMENTATION_STATUS.md` is stale (January 2026):** use `docs/KNOWN_LIMITATIONS.md` as the current source of truth for spec-vs-implementation gaps.
 
@@ -234,12 +235,20 @@ Override hierarchy (highest priority first):
 | `tools/filecheck-audit.sh` | Audit FileCheck test coverage and recommend gaps |
 | `tools/validate-all-mir.sh` | Pre-codegen MIR validation gate |
 | `tools/track-regression.sh` | Detect golden test regressions vs baseline |
+| `tools/fuzz.sh` | Compiler fuzzing: crash mutation, differential, AFL++ modes |
+| `tools/codegen_fuzz.py` | Codegen stress fuzzer: generates type-correct programs, checks for miscompilation |
+| `tools/gen_tests.py` | Template-based Blood program generator (effects, generics, closures, patterns) |
+| `tools/verify_ir.sh` | LLVM IR structural verification via `opt-18 --passes=verify` |
+| `tools/emi_test.sh` | Equivalence Modulo Inputs testing (dead-code mutation) |
+| `tools/BloodFuzz.g4` | ANTLR v4 grammar for grammarinator-based generation |
 | `tools/FAILURE_LOG.md` | Structured log of past bugs, root causes, resolutions |
 | `tools/AGENT_PROTOCOL.md` | Session protocol: investigation workflow, stop conditions |
 
 **Environment variables:** `SEED_COMPILER` (bootstrap seed binary path), `BLOOD_RUST` (legacy bootstrap compiler path), `RUNTIME_A` (libblood_runtime_blood.a), `BLOOD_RUST_RUNTIME` (runtime linked into programs, exported), `BLOOD_STDLIB_PATH` (stdlib directory), `BLOOD_BUILD_DIR` (build output directory), `BLOOD_CACHE` (compilation cache directory).
 
-**Installed toolchain:** `./build_selfhost.sh install` copies compiler, runtime, and stdlib to `~/.blood/{bin,lib}/`. The compiler falls back to `~/.blood/lib/` for runtime and stdlib when env vars and CLI flags aren't set. Resolution: CLI flag > env var > `~/.blood/lib/` > exe-relative.
+**Installed toolchain:** `./build_selfhost.sh install` copies compiler, runtime, stdlib, and LSP binary to `~/.blood/{bin,lib}/`. The compiler falls back to `~/.blood/lib/` for runtime and stdlib when env vars and CLI flags aren't set. Resolution: CLI flag > env var > `~/.blood/lib/` > exe-relative.
+
+**VS Code extension:** `editors/vscode/` — syntax highlighting, check-on-save diagnostics, LSP client (hover, go-to-def, completions, references, inlay hints). Install: `cd editors/vscode && npm install && npm run compile && code --install-extension .`. LSP binary: `~/.blood/bin/blood-lsp`. See `editors/vscode/README.md`.
 
 Run each tool with `--help` or see its header comments for detailed usage.
 
