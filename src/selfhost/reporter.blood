@@ -125,9 +125,9 @@ impl ErrorReporter {
                 output.push_str(self.filename.as_str());
                 output.push(':');
                 let (line, col) = self.offset_to_line_col(span.start);
-                append_u32(&mut output, line);
+                common.append_u32(&mut output, line);
                 output.push(':');
-                append_u32(&mut output, col);
+                common.append_u32(&mut output, col);
                 output.push('\n');
 
                 // Source context
@@ -280,9 +280,9 @@ pub fn format_error_simple(error: &error.CompileError) -> String {
     match &error.span {
         &Option.Some(ref span) => {
             output.push_str(" at ");
-            append_u32(&mut output, span.line);
+            common.append_u32(&mut output, span.line);
             output.push(':');
-            append_u32(&mut output, span.column);
+            common.append_u32(&mut output, span.column);
         }
         &Option.None => {}
     }
@@ -344,31 +344,9 @@ fn substring(s: &String, start: usize, end: usize) -> String {
     result
 }
 
-/// Appends a u32 as a decimal string.
-fn append_u32(s: &mut String, n: u32) {
-    if n == 0 {
-        s.push('0');
-        return;
-    }
-
-    let mut digits: Vec<char> = Vec.new();
-    let mut val = n;
-    while val > 0 {
-        let digit = (val % 10) as u8;
-        digits.push((48u8 + digit) as char);
-        val /= 10;
-    }
-
-    // Reverse digits
-    let len = digits.len();
-    for i in 0usize..len {
-        s.push(digits[len - 1 - i]);
-    }
-}
-
 /// Appends a usize as a decimal string.
 fn append_usize(s: &mut String, n: usize) {
-    append_u32(s, n as u32);
+    common.append_u32(s, n as u32);
 }
 
 /// Appends a line number with padding.
@@ -377,5 +355,5 @@ fn append_line_number(s: &mut String, line: u32) {
     if line < 10 {
         s.push(' ');
     }
-    append_u32(s, line);
+    common.append_u32(s, line);
 }

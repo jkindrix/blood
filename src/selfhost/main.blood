@@ -3458,6 +3458,9 @@ fn codegen_thread_worker(arg: u64) -> u64 {
     let chunk_end: usize = ptr_read_i64(arg + 40) as usize;
     let output_addr: u64 = ptr_read_i64(arg + 48) as u64;
 
+    // Safety: these pointers are packed by codegen_pass2 and remain valid until
+    // thread_join returns. ctx is per-worker (no aliasing). lower/typeck/wl are
+    // shared read-only across workers. output is per-worker (no aliasing).
     let ctx: &mut codegen_ctx.CodegenCtx = @unsafe { (ctx_addr as usize as *mut codegen_ctx.CodegenCtx) as &mut codegen_ctx.CodegenCtx };
     let lower: &hir_lower_ctx.LowerResult = @unsafe { (lower_addr as usize as *const hir_lower_ctx.LowerResult) as &hir_lower_ctx.LowerResult };
     let typeck: &typeck_driver.TypeCheckResult = @unsafe { (typeck_addr as usize as *const typeck_driver.TypeCheckResult) as &typeck_driver.TypeCheckResult };
@@ -3688,7 +3691,9 @@ fn codegen_pass2(
             // Don't destroy — MIR cache hash maps allocated inside this region
         }
 
-        // Get addresses of shared read-only data BEFORE deactivating the region.
+        // Safety: pack shared read-only data as raw addresses for thread workers.
+        // These pointers remain valid until thread_join — the parent stack frame
+        // stays alive, and the data is not mutated during parallel codegen.
         let lower_addr: u64 = @unsafe { lower_result as *const hir_lower_ctx.LowerResult as usize } as u64;
         let typeck_addr: u64 = @unsafe { typeck_result as *const typeck_driver.TypeCheckResult as usize } as u64;
         let wl_addr: u64 = @unsafe { worklist as *const CodegenWorkList as usize } as u64;
@@ -3718,6 +3723,8 @@ fn codegen_pass2(
         for w in 0usize..num_workers {
             let start = w * chunk_size;
             let end = if w == num_workers - 1 { total_items } else { (w + 1) * chunk_size };
+            // Safety: per-worker mutable data. Each worker gets exclusive access to
+            // its own ctx[w] and output[w]. No aliasing between workers.
             let ctx_addr: u64 = @unsafe { &mut worker_ctxs[w] as *mut codegen_ctx.CodegenCtx as usize } as u64;
             let out_addr: u64 = @unsafe { &mut worker_outputs[w] as *mut String as usize } as u64;
             let arg_buf = pack_worker_arg(ctx_addr, lower_addr, typeck_addr, wl_addr, start, end, out_addr);

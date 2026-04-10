@@ -444,10 +444,10 @@ pub fn format_evidence(ev: &Evidence) -> String {
     let id_str = format_u32(ev.effect_id.index);
     result.push_str(id_str.as_str());
     result.push_str(", marker: ");
-    let marker_str = format_u64(ev.marker.id);
+    let marker_str = common.format_u64(ev.marker.id);
     result.push_str(marker_str.as_str());
     result.push_str(", ops: ");
-    let ops_str = format_usize(ev.operations.len());
+    let ops_str = common.format_usize(ev.operations.len());
     result.push_str(ops_str.as_str());
     result.push_str(" }");
     result
@@ -455,30 +455,6 @@ pub fn format_evidence(ev: &Evidence) -> String {
 
 /// Formats a u32 as a string.
 fn format_u32(val: u32) -> String {
-    let mut result = String.new();
-    if val == 0 {
-        result.push('0');
-        return result;
-    }
-    let mut digits = Vec.new();
-    let mut n = val;
-    while n > 0 {
-        let digit = (n % 10) as u8;
-        digits.push(digit);
-        n /= 10;
-    }
-    // Reverse
-    let mut i = digits.len();
-    while i > 0 {
-        i -= 1;
-        let c = ('0' as u8 + digits[i]) as char;
-        result.push(c);
-    }
-    result
-}
-
-/// Formats a u64 as a string.
-fn format_u64(val: u64) -> String {
     let mut result = String.new();
     if val == 0 {
         result.push('0');
@@ -593,26 +569,3 @@ impl EvidenceOptHints {
     }
 }
 
-/// Formats a usize as a string.
-fn format_usize(val: usize) -> String {
-    let mut result = String.new();
-    if val == 0 {
-        result.push('0');
-        return result;
-    }
-    let mut digits = Vec.new();
-    let mut n = val;
-    while n > 0 {
-        let digit = (n % 10) as u8;
-        digits.push(digit);
-        n /= 10;
-    }
-    // Reverse
-    let mut i = digits.len();
-    while i > 0 {
-        i -= 1;
-        let c = ('0' as u8 + digits[i]) as char;
-        result.push(c);
-    }
-    result
-}

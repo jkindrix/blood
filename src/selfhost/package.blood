@@ -58,11 +58,11 @@ impl Version {
     /// Formats the version as a string.
     pub fn to_string(self: &Version) -> String {
         let mut result = String.new();
-        append_u32(&mut result, self.major);
+        common.append_u32(&mut result, self.major);
         result.push('.');
-        append_u32(&mut result, self.minor);
+        common.append_u32(&mut result, self.minor);
         result.push('.');
-        append_u32(&mut result, self.patch);
+        common.append_u32(&mut result, self.patch);
         result
     }
 }
@@ -418,26 +418,4 @@ fn parse_u32_at(bytes: &[u8], len: usize, start: usize) -> Option<(u32, usize)> 
     }
 
     Option.Some((val, pos))
-}
-
-/// Appends a u32 to a string.
-fn append_u32(s: &mut String, val: u32) {
-    if val == 0 {
-        s.push('0');
-        return;
-    }
-
-    let mut digits: Vec<u8> = Vec.new();
-    let mut n = val;
-    while n > 0 {
-        let digit = (n % 10) as u8 + 48;
-        digits.push(digit);
-        n /= 10;
-    }
-
-    let mut i: usize = digits.len();
-    while i > 0 {
-        i -= 1;
-        s.push(digits[i] as char);
-    }
 }

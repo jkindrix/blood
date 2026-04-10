@@ -286,9 +286,50 @@ pub fn make_string(s: &str) -> String {
     result
 }
 
-// ============================================================
-// Copy Utilities
-// ============================================================
+/// Appends a u32 as decimal digits to a string.
+pub fn append_u32(s: &mut String, n: u32) {
+    if n == 0 {
+        s.push('0');
+        return;
+    }
+    let mut digits: Vec<char> = Vec.new();
+    let mut val = n;
+    while val > 0 {
+        let digit = (val % 10) as u8;
+        digits.push((48u8 + digit) as char);
+        val /= 10;
+    }
+    let len = digits.len();
+    for i in 0usize..len {
+        s.push(digits[len - 1 - i]);
+    }
+}
+
+/// Formats a u64 as a decimal string.
+pub fn format_u64(n: u64) -> String {
+    if n == 0 {
+        return make_string("0");
+    }
+    let mut digits: Vec<char> = Vec.new();
+    let mut value = n;
+    while value > 0 {
+        let digit = (value % 10) as u32;
+        digits.push((48u32 + digit) as char);
+        value /= 10;
+    }
+    let mut result = String.new();
+    let mut i = digits.len();
+    while i > 0 {
+        i -= 1;
+        result.push(digits[i]);
+    }
+    result
+}
+
+/// Formats a usize as a decimal string.
+pub fn format_usize(val: usize) -> String {
+    format_u64(val as u64)
+}
 
 // ============================================================
 // Method Resolution Entry

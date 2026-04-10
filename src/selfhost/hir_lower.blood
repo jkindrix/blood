@@ -1443,12 +1443,12 @@ fn append_alloc_mb(s: &mut String, bytes: u64) {
     } else if whole < 100000 {
         s.push(' ');
     }
-    append_u32(s, whole as u32);
+    common.append_u32(s, whole as u32);
     s.push('.');
     if frac < 10 {
         s.push('0');
     }
-    append_u32(s, frac as u32);
+    common.append_u32(s, frac as u32);
     s.push_str(" MB");
 }
 
@@ -1457,9 +1457,9 @@ fn append_alloc_mb_short(s: &mut String, bytes: u64) {
     let mb_x10 = bytes / 104857;  // bytes / (1048576 / 10)
     let whole = mb_x10 / 10;
     let frac = mb_x10 % 10;
-    append_u32(s, whole as u32);
+    common.append_u32(s, whole as u32);
     s.push('.');
-    append_u32(s, frac as u32);
+    common.append_u32(s, frac as u32);
 }
 
 /// Formats a count with K/M suffix (e.g. "3.80M", "118.3K", "114").
@@ -1468,42 +1468,23 @@ fn append_alloc_count(s: &mut String, count: u64) {
         let m_x100 = count / 10000;
         let whole = m_x100 / 100;
         let frac = m_x100 % 100;
-        append_u32(s, whole as u32);
+        common.append_u32(s, whole as u32);
         s.push('.');
         if frac < 10 {
             s.push('0');
         }
-        append_u32(s, frac as u32);
+        common.append_u32(s, frac as u32);
         s.push('M');
     } else if count >= 1000 {
         let k_x10 = count / 100;
         let whole = k_x10 / 10;
         let frac = k_x10 % 10;
-        append_u32(s, whole as u32);
+        common.append_u32(s, whole as u32);
         s.push('.');
-        append_u32(s, frac as u32);
+        common.append_u32(s, frac as u32);
         s.push('K');
     } else {
-        append_u32(s, count as u32);
-    }
-}
-
-/// Appends a u32 as decimal to a string.
-fn append_u32(s: &mut String, n: u32) {
-    if n == 0 {
-        s.push('0');
-        return;
-    }
-    let mut digits: Vec<char> = Vec.new();
-    let mut val = n;
-    while val > 0 {
-        let digit = (val % 10) as u8;
-        digits.push((48u8 + digit) as char);
-        val /= 10;
-    }
-    let len = digits.len();
-    for i in 0usize..len {
-        s.push(digits[len - 1 - i]);
+        common.append_u32(s, count as u32);
     }
 }
 
