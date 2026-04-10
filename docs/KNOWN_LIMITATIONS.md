@@ -8,7 +8,7 @@ The goal of this file is to answer honestly: *if you write a Blood program today
 ## At a glance
 
 - **Self-hosting:** verified. 103K lines of Blood compile themselves through a three-generation byte-identical bootstrap. See "Self-hosting feature coverage" below for which features are exercised.
-- **Golden tests:** 541 pass, 0 fail. Golden tests cover program-level correctness, not systematic spec conformance.
+- **Golden tests:** 544 pass, 0 fail. Golden tests cover program-level correctness, not systematic spec conformance.
 - **Spec coverage:** of 78 surveyed normative claims across `docs/spec/*.md`, 39 have verifiable code evidence (~50%). The other 39 are partial, missing, or too vague to verify.
 - **Rust bootstrap:** builds and runs simple programs. Used as an escape hatch; not the primary development target. Diverged from selfhost on type unification in April before being corrected.
 - **Formal proofs:** 264 Coq theorems/lemmas across 22 theory files, 0 admitted, 0 axioms. The proofs cover a simplified formal model of the language, not the compiler artifact. The gap between model and implementation is real and significant.
@@ -53,17 +53,27 @@ Investigation found the snapshot mechanism is fully implemented. Codegen adds en
 
 **Fixed in commit ebdac42 (2026-04-10).** Region destroy now calls `munmap` instead of `madvise(MADV_DONTNEED)`, releasing virtual address space back to the kernel. The validation array retains the region's (base, end, gen) entry so stale references are still detected. Region gen overflow also uses the -1 sentinel instead of panicking.
 
+## Design decisions (intentional behavior, not gaps)
+
+### gen=0 for stack-tier references
+
+Stack-allocated locals (`alloca` in LLVM entry block) receive generation 0. The deref validation in `codegen_place.blood:870-874` skips generation checking when gen=0. This is intentional: stack allocas live for the entire function duration, so intra-function references to them are never dangling. Region blocks don't affect stack locals, and Blood's copy-by-default semantics means closures capture values, not references. `GlobalEscape` → Persistent correctly heap-allocates locals whose references escape the function.
+
+### Untracked addresses return "valid"
+
+`blood_validate_generation` at `alloc.blood:443` returns 1 (valid) for addresses not in any registry. This is intentional for C FFI compatibility: memory allocated by C functions (malloc, mmap, etc.) is not registered in Blood's generation hash table. Treating unregistered addresses as invalid would break all FFI calls that return pointers. The trade-off: dangling pointers to unregistered (C-allocated) memory silently pass validation. Blood's safety guarantees apply only to Blood-allocated memory.
+
 ## Features that are specified but not implemented
 
-### Concurrency primitives (0% implemented)
+### Concurrency primitives — partially implemented
 
-The spec at `docs/spec/CONCURRENCY.md` describes fibers, channels, mutexes, atomic operations, and an M:N scheduler. None are wired:
+The spec at `docs/spec/CONCURRENCY.md` describes fibers, channels, mutexes, atomic operations, and an M:N scheduler. Basic thread primitives work; higher-level abstractions are missing:
 
-- `__builtin_fiber_*` symbols are declared in `build_runtime.py` but never generated
-- Fiber spawn currently uses `pthread_create` directly (not cooperative M:N)
+- `__builtin_fiber_spawn/join/yield/sleep/cancel` work via raw `pthread_create`/`pthread_join`
+- 4 golden tests verify basic fiber operations (`t10_fiber_builtins`, `t10_fiber_spawn_join`, `t10_fiber_effect`, `t10_fiber_handle_wrap`)
+- No cooperative M:N scheduler (fibers are OS threads, not green threads)
 - No mutex, no channels, no atomics
 - No safepoint mechanism for stop-the-world coordination
-- 0 concurrency tests in the golden suite
 
 Async/await syntax is not implemented at any level.
 
