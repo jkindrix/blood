@@ -372,7 +372,10 @@ do_build_first_gen() {
     # Clear all caches — cached IR is compiler-version-specific.
     # Module-level source hashes and per-function content hashes must both be cleared
     # when the compiling compiler changes (seed vs first_gen vs second_gen).
+    # Also clear ALL .blood-cache dirs in the repo — they contain IR compiled by
+    # the previous first_gen, which is stale for the new one.
     rm -rf "$BUILD_DIR/.content_hashes" "$BUILD_DIR/obj/.hashes" "$BUILD_DIR/.blood-cache" 2>/dev/null
+    find "$REPO_ROOT" -name ".blood-cache" -type d -not -path '*/.claude/*' -exec rm -rf {} + 2>/dev/null || true
 
     # Pass --no-cache: populating the per-function content hash cache on a
     # clean build is ~232s of pure I/O waste (2551 functions × ~91ms each
@@ -460,6 +463,7 @@ do_build_second_gen() {
 
     # Clear all caches — cached IR is compiler-version-specific
     rm -rf "$BUILD_DIR/.content_hashes" "$BUILD_DIR/obj/.hashes" "$BUILD_DIR/.blood-cache" 2>/dev/null
+    find "$REPO_ROOT" -name ".blood-cache" -type d -not -path '*/.claude/*' -exec rm -rf {} + 2>/dev/null || true
 
     # Pass --no-cache: the cache gets wiped before each generation build anyway
     # (lines above), so populating it is ~232s of pure I/O waste per generation
@@ -510,6 +514,7 @@ do_build_third_gen() {
 
     # Clear all caches — cached IR is compiler-version-specific
     rm -rf "$BUILD_DIR/.content_hashes" "$BUILD_DIR/obj/.hashes" "$BUILD_DIR/.blood-cache" 2>/dev/null
+    find "$REPO_ROOT" -name ".blood-cache" -type d -not -path '*/.claude/*' -exec rm -rf {} + 2>/dev/null || true
 
     # Pass --no-cache: see comment in do_build_second_gen above. Same rationale.
     step "Bootstrap (second_gen → third_gen)"
@@ -1691,6 +1696,7 @@ SEEDMETA
     clean-cache)
         step "Cleaning caches only"
         rm -rf "$BUILD_DIR/.content_hashes" "$BUILD_DIR/obj/.hashes" "$BUILD_DIR/.blood-cache"
+        find "$REPO_ROOT" -name ".blood-cache" -type d -not -path '*/.claude/*' -exec rm -rf {} + 2>/dev/null || true
         ok "Caches removed (binaries preserved)"
         ;;
 
