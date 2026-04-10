@@ -37,7 +37,7 @@ The self-hosted compiler passes **543/543 golden tests**. It compiles itself thr
 
 **Spec coverage (approx):** 39 of 78 surveyed normative claims across `docs/spec/*.md` have verifiable code evidence today (~50%). See [KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) for the full breakdown by spec file and the known soundness gaps that remain open.
 
-[Specification](docs/spec/SPECIFICATION.md) | [Known Limitations](docs/KNOWN_LIMITATIONS.md) | [Contributing](CONTRIBUTING.md)
+[Tutorial](docs/TUTORIAL.md) | [Specification](docs/spec/SPECIFICATION.md) | [Known Limitations](docs/KNOWN_LIMITATIONS.md) | [Contributing](CONTRIBUTING.md)
 
 ## The Name
 
