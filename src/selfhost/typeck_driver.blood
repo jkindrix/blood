@@ -650,7 +650,7 @@ pub fn check_types(ctx: &hir_lower_ctx.LoweringCtx) -> TypeCheckResult {
 ///
 /// This is the preferred entry point when integrating with the driver,
 /// since the driver has LowerResult not LoweringCtx.
-pub fn check_lower_result(result: &hir_lower_ctx.LowerResult, skip_modules: &Vec<bool>) -> TypeCheckResult {
+pub fn check_lower_result(result: &hir_lower_ctx.LowerResult, skip_modules: &Vec<bool>, source: &str) -> TypeCheckResult {
     // Start the type checker's TyVarId counter where HIR lowering left off
     // to avoid collisions between HIR inference variables and type checker variables.
     let mut checker = typeck.TypeChecker.new_from(result.next_ty_var);
@@ -678,7 +678,7 @@ pub fn check_lower_result(result: &hir_lower_ctx.LowerResult, skip_modules: &Vec
     let t_p1_start = blood_clock_millis();
 
     // Phase 1: Collect type information from items
-    collect_item_signatures(&mut checker, &result.items);
+    collect_item_signatures(&mut checker, &result.items, &result.interner, source);
 
     // Phase 1a1: Detect builtin traits by name
     detect_deref_trait(&mut checker, &result.items, &result.interner);
@@ -1150,9 +1150,27 @@ fn detect_freeze_trait(
 fn collect_item_signatures(
     checker: &mut typeck.TypeChecker,
     items: &Vec<hir_lower_ctx.ItemEntry>,
+    hir_interner: &interner.StringInterner,
+    source: &str,
 ) {
+    let source_bytes = source.as_bytes();
+    let source_len = source_bytes.len();
     for i in 0usize..items.len() {
         let entry = &items[i];
+        // Populate def_names for error messages.
+        // Extract name directly from source span (avoids AST/HIR interner mismatch).
+        let def_idx = entry.def_id.index as usize;
+        while checker.def_names.len() <= def_idx {
+            checker.def_names.push(Option.None);
+        }
+        let name_start = entry.item.name.span.start;
+        let name_end = entry.item.name.span.end;
+        if name_start < source_len && name_end <= source_len && name_end > name_start {
+            let name_str = substring(source, name_start, name_end);
+            if name_str.len() > 0 {
+                checker.def_names[def_idx] = Option.Some(name_str);
+            }
+        }
         match &entry.item.kind {
             &hir_item.ItemKind.Fn(ref fn_def) => {
                 // Register function signature
@@ -2836,12 +2854,14 @@ fn check_body(checker: &mut typeck.TypeChecker, body: &hir_expr.Body, return_ty:
     match &checker.return_ty {
         &Some(ret_ty) => {
             let ret_ty_id = type_intern.TyId.new(ret_ty.index);
-            checker.unify(body_ty, ret_ty_id, body.expr.span);
+            if !checker.try_unify(body_ty, ret_ty_id, body.expr.span) {
+                typeck_expr.report_type_mismatch(checker, ret_ty_id, body_ty, body.expr.span);
+            }
             // Directional effect check: body's fn-typed value must not have more
             // effects than the declared return type. unify accepts bidirectionally
             // (pure ⊆ {IO}), but returning effectful where pure is declared is unsound.
             if !typeck_expr.check_effect_subtyping(checker, body_ty, ret_ty_id) {
-                checker.error(typeck.TypeErrorKind.TypeMismatch, body.expr.span);
+                typeck_expr.report_type_mismatch(checker, ret_ty_id, body_ty, body.expr.span);
             }
         }
         &None => {}
@@ -4076,6 +4096,18 @@ fn register_builtin_constructor_signatures(
         // are handled as enum variants, not function signatures
 
     }
+}
+
+/// Extracts a substring from a &str by byte offset range.
+fn substring(s: &str, start: usize, end: usize) -> String {
+    let bytes = s.as_bytes();
+    let mut result = String.new();
+    for i in start..end {
+        if i < bytes.len() {
+            result.push(bytes[i] as char);
+        }
+    }
+    result
 }
 
 /// Compares two strings for equality.

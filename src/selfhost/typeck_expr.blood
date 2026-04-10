@@ -16,6 +16,7 @@ mod hir_item;
 mod hir;
 mod unify;
 mod typeck;
+mod typeck_types;
 mod type_intern;
 mod interner;
 
@@ -258,6 +259,76 @@ pub fn check_effect_subtyping(checker: &mut typeck.TypeChecker, actual: type_int
     }
 }
 
+/// Formats a type ID as a human-readable string for error messages.
+/// Resolves inference variables and looks up ADT names from the checker's registries.
+fn format_ty_for_error(checker: &typeck.TypeChecker, ty_id: type_intern.TyId) -> String {
+    let resolved = checker.resolve(ty_id);
+    let ti = type_intern.type_interner();
+    let kind = ti.get(resolved);
+    match kind {
+        &type_intern.InternedTypeKind.Adt { def_id, args } => {
+            let idx = def_id.index as usize;
+            let mut name_found = false;
+            let mut s = String.new();
+            if idx < checker.def_names.len() {
+                match &checker.def_names[idx] {
+                    &Option.Some(ref name_str) => {
+                        s.push_str(name_str.as_str());
+                        name_found = true;
+                    }
+                    &Option.None => {}
+                }
+            }
+            if !name_found {
+                return type_intern.format_ty_id(resolved);
+            }
+            // Append generic args
+            let nargs = ti.ty_list_len(args);
+            if nargs > 0 {
+                s.push('<');
+                for i in 0usize..nargs {
+                    if i > 0 {
+                        s.push_str(", ");
+                    }
+                    let arg = ti.get_ty_list_element(args, i);
+                    let arg_str = format_ty_for_error(checker, arg);
+                    s.push_str(arg_str.as_str());
+                }
+                s.push('>');
+            }
+            s
+        }
+        &type_intern.InternedTypeKind.Infer(var) => {
+            common.make_string("{unknown}")
+        }
+        _ => type_intern.format_ty_id(resolved),
+    }
+}
+
+/// Reports a type mismatch error with expected and found type information.
+pub fn report_type_mismatch(
+    checker: &mut typeck.TypeChecker,
+    expected: type_intern.TyId,
+    found: type_intern.TyId,
+    span: common.Span,
+) {
+    let expected_str = format_ty_for_error(checker, expected);
+    let found_str = format_ty_for_error(checker, found);
+
+    let mut expected_note = common.make_string("expected `");
+    expected_note.push_str(expected_str.as_str());
+    expected_note.push('`');
+
+    let mut found_note = common.make_string("found `");
+    found_note.push_str(found_str.as_str());
+    found_note.push('`');
+
+    let mut err = typeck_types.TypeError.new(typeck_types.TypeErrorKind.TypeMismatch, span);
+    err.notes.push(typeck_types.TypeNote.new(expected_note));
+    err.notes.push(typeck_types.TypeNote.new(found_note));
+    checker.errors.push(err);
+}
+
 /// Checks an expression against an expected type.
 /// Returns true if the expression has the expected type.
 /// Attempts coercion if direct unification fails.
@@ -274,7 +345,7 @@ pub fn check_expr(
         // unify_effect_rows accepts bidirectionally (F-20), so we add a directional
         // post-check here where we know which side is actual (inferred) vs expected.
         if !check_effect_subtyping(checker, inferred, expected) {
-            checker.error(typeck.TypeErrorKind.TypeMismatch, expr.span);
+            report_type_mismatch(checker, expected, inferred, expr.span);
             return false;
         }
         return true;
@@ -310,7 +381,7 @@ pub fn check_expr(
         }
         typeck.CoercionResult.Err => {
             // Both unification and coercion failed — report the type mismatch
-            checker.error(typeck.TypeErrorKind.TypeMismatch, expr.span);
+            report_type_mismatch(checker, expected, inferred, expr.span);
             false
         }
     }
