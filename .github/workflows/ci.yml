@@ -104,6 +104,42 @@ jobs:
       - name: Run tests (bloodc)
         run: cargo test -p bloodc
 
+  # Self-hosted compiler: build from seed + golden tests
+  selfhost:
+    name: Selfhost Golden Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install LLVM 18
+        run: |
+          wget -qO- https://apt.llvm.org/llvm.sh | sudo bash -s -- ${{ env.LLVM_VERSION }}
+
+      - name: Add swap space
+        run: |
+          sudo fallocate -l 10G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+
+      - name: Build first_gen from seed
+        working-directory: src/selfhost
+        run: ./build_selfhost.sh build first_gen
+        timeout-minutes: 15
+
+      - name: Run golden tests
+        working-directory: src/selfhost
+        run: ./build_selfhost.sh test golden -q
+        timeout-minutes: 10
+
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: selfhost-build-logs
+          path: src/selfhost/.logs/
+          retention-days: 7
+
   # Property-based tests (longer running)
   property-tests:
     name: Property Tests
