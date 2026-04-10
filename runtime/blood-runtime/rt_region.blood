@@ -214,20 +214,18 @@ pub fn rt_blood_region_destroy(region_id: i64) {
         // Increment region's generation to invalidate all references.
         // Update the validation array so blood_validate_generation detects stale refs.
         let old_gen: i32 = read_i32(REG_GEN, idx);
-        if old_gen >= 0x7FFFFFFE {
-            rt_panic.rt_panic("region generation overflow (Tier 3 promotion not yet implemented)");
-        }
-        let new_gen: i32 = old_gen + 1;
+        let new_gen: i32 = if old_gen >= 0x7FFFFFFE {
+            // Generation overflow: promote to permanently valid (Tier 3).
+            -1
+        } else {
+            old_gen + 1
+        };
         write_i32(REG_GEN, idx, new_gen);
         alloc.update_region_gen(base_addr, new_gen);
 
-        // madvise: release physical pages (keep virtual mapping for stale ref safety)
-        libc.sys_madvise(base, reserved as u64, libc.MADV_DONTNEED());
-
-        // Remove region validation entry (keeps stale gen for validation)
-        // NOTE: we DON'T unregister from validation here — stale refs need to
-        // find the entry with the incremented gen. The entry stays until the
-        // region's virtual mapping is munmap'd (which we don't do, for stale safety).
+        // munmap: release virtual address space. The validation array retains
+        // the (base, end, new_gen) entry so stale references are still detected.
+        libc.sys_munmap(base, reserved as u64);
 
         // Remove from registry by swapping with last entry
         let last: i64 = REG_COUNT - 1;
