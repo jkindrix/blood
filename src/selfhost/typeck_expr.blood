@@ -1,3 +1,5 @@
+module blood.typeck_expr;
+
 // Blood Self-Hosted Compiler - Expression Type Checking
 //
 // This module implements type checking for HIR expressions.
@@ -341,13 +343,6 @@ pub fn check_expr(
 
     // First try direct unification (without reporting errors, since coercion may succeed)
     if checker.try_unify(inferred, expected, expr.span) {
-        // Directional effect check: inferred effects must be subset of expected effects.
-        // unify_effect_rows accepts bidirectionally (F-20), so we add a directional
-        // post-check here where we know which side is actual (inferred) vs expected.
-        if !check_effect_subtyping(checker, inferred, expected) {
-            report_type_mismatch(checker, expected, inferred, expr.span);
-            return false;
-        }
         return true;
     }
 
@@ -3034,9 +3029,8 @@ fn infer_return(
         &Some(ret_ty) => {
             let ret_ty_id = type_intern.TyId.new(ret_ty.index);
             checker.unify(val_ty, ret_ty_id, span);
-            // Directional effect check: val_ty's effects must be subset of return type's effects.
-            // unify accepts bidirectionally (pure ⊆ {IO}), but returning effectful where pure
-            // is declared is unsound — the caller won't handle the effects.
+            // Defense-in-depth effect check. unify_effect_rows now enforces
+            // a ⊆ b directionality (F-20 fix), but keep this as a safety net.
             if !check_effect_subtyping(checker, val_ty, ret_ty_id) {
                 checker.error(typeck.TypeErrorKind.TypeMismatch, span);
             }

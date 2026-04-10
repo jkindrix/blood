@@ -1,3 +1,5 @@
+module blood.typeck_driver;
+
 // Blood Self-Hosted Compiler - Type Checking Driver
 //
 // This module provides the entry point for type checking a lowered HIR.
@@ -2857,9 +2859,8 @@ fn check_body(checker: &mut typeck.TypeChecker, body: &hir_expr.Body, return_ty:
             if !checker.try_unify(body_ty, ret_ty_id, body.expr.span) {
                 typeck_expr.report_type_mismatch(checker, ret_ty_id, body_ty, body.expr.span);
             }
-            // Directional effect check: body's fn-typed value must not have more
-            // effects than the declared return type. unify accepts bidirectionally
-            // (pure ⊆ {IO}), but returning effectful where pure is declared is unsound.
+            // Defense-in-depth effect check. unify_effect_rows now enforces
+            // a ⊆ b directionality (F-20 fix), but keep this as a safety net.
             if !typeck_expr.check_effect_subtyping(checker, body_ty, ret_ty_id) {
                 typeck_expr.report_type_mismatch(checker, ret_ty_id, body_ty, body.expr.span);
             }

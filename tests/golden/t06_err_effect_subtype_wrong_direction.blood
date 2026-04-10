@@ -1,0 +1,23 @@
+// COMPILE_FAIL: effectful function where pure expected
+// EXPECT: type mismatch
+// Test: {IO} <: pure does NOT hold. F-20 fix enforces directional checking.
+
+effect IO {
+    op print_val(x: i32) -> ();
+}
+
+fn effectful_producer() -> i32 / {IO} {
+    perform IO.print_val(99);
+    42
+}
+
+fn apply_pure(f: fn() -> i32) -> i32 {
+    f()
+}
+
+fn main() -> i32 {
+    // This should fail: effectful_producer has {IO} effects,
+    // but apply_pure expects a pure function (no effects).
+    let result: i32 = apply_pure(effectful_producer);
+    result
+}
