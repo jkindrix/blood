@@ -71,9 +71,9 @@ The spec at `docs/spec/CONCURRENCY.md` describes fibers, channels, mutexes, atom
 
 Async/await syntax is not implemented at any level.
 
-### Macros — only built-in macros
+### Macros — single-file user macros work, cross-module macros don't
 
-`format!`, `vec!`, `println!` and similar built-in macros work. User-defined declarative macros and procedural macros are not implemented. `hir_lower_expr.blood:3363` emits "custom macros not yet supported; use built-in macros".
+Built-in macros (`format!`, `vec!`, `println!`, `assert!`, `dbg!`, `matches!`) work. User-defined declarative macros work within a single file — multi-rule, recursive expansion, and capture patterns (`$val:expr`) are all functional via `macro_expand.blood`. Cross-module macros (defined in one file, invoked in another) are not supported. Procedural macros are not implemented.
 
 ### FFI bridge blocks — mostly working, link specs not implemented
 
