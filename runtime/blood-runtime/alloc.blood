@@ -572,10 +572,8 @@ pub fn rt_blood_alloc_simple(size: i64) -> i64 {
         // references are held past String reallocation, causing stale
         // reference panics throughout self-compilation.
         //
-        // GAP-1 therefore remains OPEN: stale &str detection for
-        // alloc_simple buffers is not enforced. Re-enabling it requires
-        // first finding and fixing the latent &str-lifetime bug in
-        // first_gen. Tracked as a follow-up to NEW-1 in the audit.
+        // GAP-1: Enable gen tracking for stale &str detection.
+        rt_blood_register_allocation_tagged(addr, size, 2);
         addr
     }
 }
