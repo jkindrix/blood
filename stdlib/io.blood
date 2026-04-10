@@ -1,0 +1,90 @@
+// Blood Standard Library - File I/O
+//
+// Ergonomic wrappers around the built-in file operations.
+//
+// Usage:
+//   let content = read_file("config.txt");
+//   write_file("output.txt", "hello world");
+//   if path_exists("data.json") {
+//       let data = read_file("data.json");
+//       println_int(data.len() as i32);
+//   }
+
+// ============================================================
+// File Reading
+// ============================================================
+
+/// Reads an entire file as a string. Returns empty string on failure.
+pub fn read_file(path: &str) -> String {
+    let content: &str = file_read_to_string(path);
+    let mut result = String.new();
+    result.push_str(content);
+    result
+}
+
+/// Returns true if a file exists at the given path.
+pub fn path_exists(path: &str) -> bool {
+    file_exists(path)
+}
+
+// Note: file_size() is declared as a builtin but not yet in the runtime.
+// Use file_read_to_string and check length as a workaround.
+
+// ============================================================
+// File Writing
+// ============================================================
+
+/// Writes a string to a file, replacing any existing content.
+/// Returns true on success.
+pub fn write_file(path: &str, content: &str) -> bool {
+    file_write_string(path, content)
+}
+
+/// Appends a string to a file, creating it if it doesn't exist.
+/// Returns true on success.
+pub fn append_file(path: &str, content: &str) -> bool {
+    file_append_string(path, content)
+}
+
+// ============================================================
+// Path Utilities
+// ============================================================
+
+/// Extracts the file extension from a path (after the last '.').
+/// Returns empty string if no extension.
+pub fn extension(path: &str) -> String {
+    let bytes = path.as_bytes();
+    let len = bytes.len();
+    let mut dot_pos: i64 = -1;
+    for i in 0usize..len {
+        if bytes[i] == 46 { // '.'
+            dot_pos = i as i64;
+        }
+    }
+    let mut result = String.new();
+    if dot_pos >= 0 {
+        let start = (dot_pos + 1) as usize;
+        for j in start..len {
+            result.push(bytes[j] as char);
+        }
+    }
+    result
+}
+
+/// Extracts the filename from a path (after the last '/').
+pub fn basename(path: &str) -> String {
+    let bytes = path.as_bytes();
+    let len = bytes.len();
+    let mut slash_pos: i64 = -1;
+    for i in 0usize..len {
+        if bytes[i] == 47 { // '/'
+            slash_pos = i as i64;
+        }
+    }
+    let mut result = String.new();
+    let start = (slash_pos + 1) as usize;
+    for j in start..len {
+        result.push(bytes[j] as char);
+    }
+    result
+}

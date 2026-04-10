@@ -4,14 +4,24 @@ This tutorial walks you through writing your first Blood programs. You'll learn 
 
 **Prerequisites:** LLVM 18 installed on your system (`llc-18`, `clang-18`).
 
-## Building the Compiler
+## Building and Installing
 
 ```bash
 cd src/selfhost
 ./build_selfhost.sh build first_gen    # ~2 minutes
+./build_selfhost.sh install            # install to ~/.blood/bin/blood
 ```
 
-This builds the compiler from the bootstrap seed. The resulting binary is at `build/first_gen`.
+After install, add `~/.blood/bin` to your PATH and use `blood` directly:
+
+```bash
+export PATH="$HOME/.blood/bin:$PATH"
+blood run hello.blood
+blood check hello.blood
+blood build hello.blood -o hello
+```
+
+Or use the build directory directly: `build/first_gen run hello.blood`.
 
 ## Hello, World
 

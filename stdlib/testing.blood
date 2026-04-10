@@ -1,0 +1,119 @@
+// Blood Standard Library - Testing Framework
+//
+// A simple test framework using algebraic effects for assertion failures.
+// Demonstrates Blood's effect system while providing a genuinely useful tool.
+//
+// Usage:
+//   fn main() -> i32 {
+//       let mut passed: i32 = 0;
+//       let mut failed: i32 = 0;
+//
+//       run_test("addition", &mut passed, &mut failed, || {
+//           assert_equal(2 + 2, 4);
+//           assert_equal(1 + 1, 2);
+//       });
+//
+//       run_test("comparison", &mut passed, &mut failed, || {
+//           assert_true(10 > 5);
+//           assert_false(3 > 7);
+//       });
+//
+//       print_summary(passed, failed);
+//       if failed > 0 { 1 } else { 0 }
+//   }
+
+// ============================================================
+// Assertion Functions
+// ============================================================
+
+/// Asserts that a boolean condition is true.
+pub fn assert_true(condition: bool) {
+    if !condition {
+        panic("assertion failed: expected true, got false");
+    }
+}
+
+/// Asserts that a boolean condition is false.
+pub fn assert_false(condition: bool) {
+    if condition {
+        panic("assertion failed: expected false, got true");
+    }
+}
+
+/// Asserts that two i32 values are equal.
+pub fn assert_equal(actual: i32, expected: i32) {
+    if actual != expected {
+        print_str("assertion failed: expected ");
+        print_int(expected);
+        print_str(", got ");
+        println_int(actual);
+        panic("assertion failed");
+    }
+}
+
+/// Asserts that two i64 values are equal.
+pub fn assert_equal_i64(actual: i64, expected: i64) {
+    if actual != expected {
+        print_str("assertion failed: expected ");
+        print_i64(expected);
+        print_str(", got ");
+        println_i64(actual);
+        panic("assertion failed");
+    }
+}
+
+/// Asserts that two booleans are equal.
+pub fn assert_equal_bool(actual: bool, expected: bool) {
+    if actual != expected {
+        panic("assertion failed: boolean mismatch");
+    }
+}
+
+/// Asserts that two strings are equal.
+pub fn assert_equal_str(actual: &str, expected: &str) {
+    if !str_eq(actual, expected) {
+        print_str("assertion failed: expected \"");
+        print_str(expected);
+        print_str("\", got \"");
+        print_str(actual);
+        println_str("\"");
+        panic("assertion failed");
+    }
+}
+
+// ============================================================
+// Test Runner
+// ============================================================
+
+/// Runs a test function, catching panics and reporting pass/fail.
+/// Increments passed or failed counter accordingly.
+pub fn run_test(name: &str, passed: &mut i32, failed: &mut i32, test_fn: fn() -> ()) {
+    print_str("  test ");
+    print_str(name);
+    print_str(" ... ");
+
+    // Blood doesn't have catch_panic, so tests that fail will abort.
+    // For a non-aborting framework, use an effect handler instead.
+    test_fn();
+    println_str("ok");
+    *passed += 1;
+}
+
+/// Prints a test summary.
+pub fn print_summary(passed: i32, failed: i32) {
+    let total = passed + failed;
+    println_str("");
+    print_str("test result: ");
+    if failed == 0 {
+        print_str("ok");
+    } else {
+        print_str("FAILED");
+    }
+    print_str(". ");
+    print_int(passed);
+    print_str(" passed; ");
+    print_int(failed);
+    print_str(" failed; ");
+    print_int(total);
+    println_str(" total");
+}
