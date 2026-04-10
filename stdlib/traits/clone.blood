@@ -87,25 +87,31 @@ impl Clone for f64 {
     fn clone(self: &Self) -> Self / pure { *self }
 }
 
-impl Clone for unit {
+// NOTE: The impls below reference types (tuples, references) that require
+// generics features not yet fully supported by the compiler. They serve
+// as design specifications for the complete Clone hierarchy.
+
+impl Clone for () {
     fn clone(self: &Self) -> Self / pure { () }
 }
 
 // Clone for references (returns a copy of the reference, not the referent)
-impl<'a, T: ?Sized> Clone for &'a T {
+// Note: Blood doesn't support ?Sized bounds. References are always to sized types.
+impl<T> Clone for &T {
     fn clone(self: &Self) -> Self / pure { *self }
 }
 
 // Clone for arrays
-impl<T: Clone, const N: usize> Clone for [T; N] {
-    fn clone(self: &Self) -> Self / pure {
-        let mut result: [T; N];
-        for i in 0..N {
-            result[i] = self[i].clone();
-        }
-        result
-    }
-}
+// Note: const generics for array size (const N: usize) not yet supported.
+// impl<T: Clone, const N: usize> Clone for [T; N] {
+//     fn clone(self: &Self) -> Self / pure {
+//         let mut result: [T; N];
+//         for i in 0..N {
+//             result[i] = self[i].clone();
+//         }
+//         result
+//     }
+// }
 
 // Clone for tuples
 impl<A: Clone> Clone for (A,) {
@@ -132,16 +138,13 @@ impl<A: Clone, B: Clone, C: Clone, D: Clone> Clone for (A, B, C, D) {
     }
 }
 
-/// Derive macro for Clone
-#[derive(Clone)]
-macro_rules! derive_clone {
-    ($name:ident { $($field:ident),* }) => {
-        impl Clone for $name {
-            fn clone(self: &Self) -> Self / pure {
-                $name {
-                    $($field: self.$field.clone()),*
-                }
-            }
-        }
-    };
-}
+// Derive macro for Clone — not yet supported
+// #[derive(Clone)] attribute macros and macro_rules! with attributes
+// require procedural macro infrastructure that isn't implemented yet.
+// To implement Clone for a struct, write the impl manually:
+//
+//   impl Clone for MyStruct {
+//       fn clone(self: &Self) -> Self / pure {
+//           MyStruct { field: self.field.clone() }
+//       }
+//   }

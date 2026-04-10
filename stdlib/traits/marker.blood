@@ -1,6 +1,11 @@
 // Blood Standard Library - Marker Traits
 //
 // Marker traits provide compile-time guarantees about types.
+//
+// NOTE: This file does not compile standalone — it references Clone
+// (defined in traits/clone.blood) and uses features like supertrait
+// bounds (Copy: Clone) that require cross-module imports not yet
+// supported. This is a design specification, not working code.
 
 /// Trait for types that can be copied bit-by-bit
 ///
@@ -41,7 +46,8 @@ pub trait Freeze {}
 ///
 /// # Safety
 /// Only implement for types where all bit patterns are valid.
-pub unsafe trait Zeroable {
+// Note: Blood doesn't support `unsafe trait`. Safety invariant enforced by convention.
+pub trait Zeroable {
     /// Creates a zeroed value
     fn zeroed() -> Self / pure;
 }
@@ -172,46 +178,46 @@ impl<T: Sync> Sync for Vec<T> {}
 
 // Zeroable implementations
 
-unsafe impl Zeroable for bool {
+impl Zeroable for bool {
     fn zeroed() -> Self / pure { false }
 }
 
-unsafe impl Zeroable for u8 {
+impl Zeroable for u8 {
     fn zeroed() -> Self / pure { 0 }
 }
 
-unsafe impl Zeroable for u16 {
+impl Zeroable for u16 {
     fn zeroed() -> Self / pure { 0 }
 }
 
-unsafe impl Zeroable for u32 {
+impl Zeroable for u32 {
     fn zeroed() -> Self / pure { 0 }
 }
 
-unsafe impl Zeroable for u64 {
+impl Zeroable for u64 {
     fn zeroed() -> Self / pure { 0 }
 }
 
-unsafe impl Zeroable for usize {
+impl Zeroable for usize {
     fn zeroed() -> Self / pure { 0 }
 }
 
-unsafe impl Zeroable for i8 {
+impl Zeroable for i8 {
     fn zeroed() -> Self / pure { 0 }
 }
 
-unsafe impl Zeroable for i16 {
+impl Zeroable for i16 {
     fn zeroed() -> Self / pure { 0 }
 }
 
-unsafe impl Zeroable for i32 {
+impl Zeroable for i32 {
     fn zeroed() -> Self / pure { 0 }
 }
 
-unsafe impl Zeroable for i64 {
+impl Zeroable for i64 {
     fn zeroed() -> Self / pure { 0 }
 }
 
-unsafe impl Zeroable for isize {
+impl Zeroable for isize {
     fn zeroed() -> Self / pure { 0 }
 }
