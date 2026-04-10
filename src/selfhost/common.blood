@@ -493,6 +493,27 @@ impl DefaultMethodRemap {
 }
 
 // ============================================================
+// Display Trait
+// ============================================================
+
+/// Trait for converting a value to a human-readable string representation.
+/// This is the first trait used in the compiler's own source — every
+/// successful gate proves trait dispatch works at 103K-line scale.
+pub trait Display {
+    fn to_string(self: &Self) -> String;
+}
+
+impl Display for Span {
+    fn to_string(self: &Self) -> String {
+        let mut s = String.new();
+        s.push_str(int_to_string(self.start as i32));
+        s.push_str("..");
+        s.push_str(int_to_string(self.end as i32));
+        s
+    }
+}
+
+// ============================================================
 // Copy Utilities
 // ============================================================
 
