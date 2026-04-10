@@ -3187,7 +3187,15 @@ fn resolve_pending_field_accesses(checker: &mut typeck.TypeChecker) {
                                     Option.Some(idx) => {
                                         checker.record_field_resolution(field_name_span_start, idx);
                                     }
-                                    Option.None => {}
+                                    Option.None => {
+                                        eprint_str("warning: field type resolved but index lookup failed (struct def_id=");
+                                        eprint_str(int_to_string(def_id.index as i32));
+                                        eprint_str(", field_symbol=");
+                                        eprint_str(int_to_string(field_symbol.index as i32));
+                                        eprint_str(", body_def_id=");
+                                        eprint_str(int_to_string(body_def_id as i32));
+                                        eprint_str(")\n");
+                                    }
                                 }
                                 // Substitute type params if generic
                                 let args_len = interner.ty_list_len(*args);
@@ -3219,7 +3227,14 @@ fn resolve_pending_field_accesses(checker: &mut typeck.TypeChecker) {
                                 resolved_count += 1;
                             }
                             Option.None => {
-                                // Field not found on concrete type — error
+                                // Field not found on concrete ADT type
+                                eprint_str("warning: field not found on ADT (def_id=");
+                                eprint_str(int_to_string(def_id.index as i32));
+                                eprint_str(", field_symbol=");
+                                eprint_str(int_to_string(field_symbol.index as i32));
+                                eprint_str(", body_def_id=");
+                                eprint_str(int_to_string(body_def_id as i32));
+                                eprint_str(")\n");
                             }
                         }
                     }
@@ -3248,10 +3263,16 @@ fn resolve_pending_field_accesses(checker: &mut typeck.TypeChecker) {
                         }
                     }
                     &type_intern.InternedTypeKind.Tuple(ref types) => {
-                        // Tuple field by name doesn't make sense — skip
+                        // Tuple field by name doesn't make sense — skip silently
                     }
                     _ => {
-                        // Other type — can't resolve field, skip
+                        // Non-ADT, non-Record, non-Tuple type — named field access is unexpected.
+                        // Log to surface any hidden resolution failures.
+                        eprint_str("warning: field access on non-struct type (field_symbol=");
+                        eprint_str(int_to_string(field_symbol.index as i32));
+                        eprint_str(", body_def_id=");
+                        eprint_str(int_to_string(body_def_id as i32));
+                        eprint_str(")\n");
                     }
                 }
             }

@@ -1111,16 +1111,24 @@ fn lower_method_call_expr(
             local_info.ty,
         ));
     } else {
-        let local_is_thin_ref = match &local_ty_resolved.kind {
-            &hir_ty.TypeKind.Ref { ref inner, mutable: _ } => {
-                let inner_type = inner.as_ref();
-                match &inner_type.kind {
-                    &hir_ty.TypeKind.Primitive(hir_ty.PrimitiveTy.Str) => false,
-                    &hir_ty.TypeKind.Slice { element: _ } => false,
-                    _ => true,
+        // Check if the receiver local holds a thin reference (e.g. &i32, &String).
+        // Thin refs store { ptr, i32 } — we must Deref to avoid &&T.
+        // Fat refs (&str, &[T]) store { ptr, i64 } — no Deref needed.
+        //
+        // Uses TyId-level checks instead of ty_id_to_type conversion to avoid
+        // a known miscompilation where ty_id_to_type produces Primitive(Str)
+        // for Primitive(I32) in monomorphized bodies.
+        let local_is_thin_ref = if type_intern.is_ref_id(local_info.ty) {
+            match type_intern.get_ref_inner(local_info.ty) {
+                Option.Some(inner_id) => {
+                    // &str (Str is always TyId 19 in the interner) and &[T] are
+                    // fat refs, not thin refs. Everything else is thin.
+                    inner_id.index != 19 && !type_intern.is_slice_id(inner_id)
                 }
+                Option.None => false,
             }
-            _ => false,
+        } else {
+            false
         };
 
         let borrow_place = if local_is_thin_ref && recv_place.projection.len() == 0 {

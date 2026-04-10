@@ -3612,6 +3612,7 @@ fn codegen_pass2(
             mono_requests: all_mono_requests,
             next_mono_def_id: next_mono_def_id,
             fn_temp_region: 0 as u64,
+            mir_lowering_errors: 0,
         };
     }
 
@@ -3809,6 +3810,7 @@ fn codegen_pass2(
             mono_requests: all_mono_requests,
             next_mono_def_id: next_mono_def_id,
             fn_temp_region: 0 as u64,
+            mir_lowering_errors: 0,
         };
     }
 
@@ -3826,6 +3828,7 @@ fn codegen_pass2(
     // (see add_string_constant) so they persist across functions.
     let fn_temp_region = region_create(2097152, 4294967296);
     let mut mir_validation_errors: usize = 0;
+    let mut mir_lowering_error_count: usize = 0;
     // Per-function IR size tracking for --alloc-profile
     let mut fn_ir_sizes: Vec<usize> = Vec.new();
     let mut fn_ir_names: Vec<String> = Vec.new();
@@ -3993,13 +3996,16 @@ fn codegen_pass2(
             }
         }
 
-        // Report MIR lowering errors (non-fatal in streaming mode — continue to codegen)
+        // Report MIR lowering errors — tracked for fatal abort after all functions processed.
         if mir_result.errors.len() > 0 {
             for mei in 0usize..mir_result.errors.len() {
-                eprint_str("MIR lowering error: ");
+                eprint_str("MIR lowering error in ");
+                eprint_str(work.fn_name.as_str());
+                eprint_str(": ");
                 eprint_str(mir_result.errors[mei].message.as_str());
                 eprint_str("\n");
             }
+            mir_lowering_error_count += mir_result.errors.len();
         }
 
         // Dump MIR if requested
@@ -4487,6 +4493,7 @@ fn codegen_pass2(
         mono_requests: all_mono_requests,
         next_mono_def_id: next_mono_def_id,
         fn_temp_region: fn_temp_region,
+        mir_lowering_errors: mir_lowering_error_count,
     }
 }
 
@@ -4497,6 +4504,9 @@ struct CodegenPass2Result {
     /// Per-function temp region handle. Must be destroyed by the caller after
     /// all CodegenCtx access is complete (ctx holds dangling refs into it).
     fn_temp_region: u64,
+    /// Count of MIR lowering errors (field resolution failures, etc.).
+    /// Non-zero means the build should not produce a binary.
+    mir_lowering_errors: usize,
 }
 
 /// Resolves pending method calls for a type-generic function body being monomorphized.
@@ -5412,6 +5422,22 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     );
     eprint_str("[pass2_done]");
 
+    // Abort build if MIR lowering had errors (field resolution failures, etc.).
+    // All functions were still processed to collect all errors, but the emitted IR
+    // contains wrong code (e.g. field index defaulted to 0). Do not link.
+    if pass2_result.mir_lowering_errors > 0 {
+        eprint_str("\nerror: MIR lowering had ");
+        eprint_str(int_to_string(pass2_result.mir_lowering_errors as i32));
+        eprint_str(" error(s). Build aborted — no binary produced.\n");
+        if pass2_result.fn_temp_region != 0 {
+            region_destroy(pass2_result.fn_temp_region);
+        }
+        region_deactivate();
+        region_destroy(codegen_region);
+        region_destroy(hir_region);
+        return false;
+    }
+
     // Pass 2b: Monomorphization — generate specialized copies of const-generic and type-generic functions.
     if pass2_result.mono_requests.len() > 0 {
         eprint_str("[mono:");
@@ -5557,6 +5583,23 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
                     };
 
                     region_deactivate();
+
+                    // Dump mono MIR if requested
+                    if args.dump_mir {
+                        let mono_fn_name = req.fn_name.as_str();
+                        let should_dump_mono = match &args.dump_mir_filter {
+                            &Option.Some(ref filter) => main_helpers.str_contains_ref(mono_fn_name, filter.as_str()),
+                            &Option.None => true,
+                        };
+                        if should_dump_mono {
+                            let mir_text = dump_mir.format_mir_body(&mono_mir.body, mono_fn_name);
+                            eprint_str("=== MONO MIR: ");
+                            eprint_str(mono_fn_name);
+                            eprint_str(" ===\n");
+                            eprint_str(mir_text.as_str());
+                            eprint_str("\n");
+                        }
+                    }
 
                     // Codegen the specialized body
                     let mono_ir = codegen.generate_function_with_ctx(&mut ctx, &mono_mir.body, req.fn_name.as_str(), 0, mod_count);
