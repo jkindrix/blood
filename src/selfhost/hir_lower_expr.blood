@@ -19,6 +19,88 @@ mod hir_lower_ctx;
 mod hir_lower_type;
 mod const_eval;
 mod type_intern;
+mod resolve;
+mod interner;
+
+// ============================================================
+// Name Suggestion (did-you-mean)
+// ============================================================
+
+/// Computes Levenshtein edit distance between two byte slices.
+fn edit_distance(a: &[u8], b: &[u8]) -> u32 {
+    let m = a.len();
+    let n = b.len();
+    if m == 0 { return n as u32; }
+    if n == 0 { return m as u32; }
+    // Single-row DP (O(n) space).
+    let mut prev: Vec<u32> = Vec.with_capacity(n + 1);
+    for j in 0usize..(n + 1) {
+        prev.push(j as u32);
+    }
+    for i in 1usize..(m + 1) {
+        let mut diag = prev[0];
+        prev[0] = i as u32;
+        for j in 1usize..(n + 1) {
+            let old_diag = diag;
+            diag = prev[j];
+            let cost: u32 = if a[i - 1] == b[j - 1] { 0 } else { 1 };
+            let insert = prev[j] + 1;
+            let delete = prev[j - 1] + 1;
+            let replace = old_diag + cost;
+            let mut min = insert;
+            if delete < min { min = delete; }
+            if replace < min { min = replace; }
+            prev[j] = min;
+        }
+    }
+    prev[n]
+}
+
+/// Finds the closest name in scope to the given name, if within edit distance 2.
+/// Returns the suggestion string or empty string if no close match found.
+fn find_name_suggestion(ctx: &hir_lower_ctx.LoweringCtx, attempted: &str) -> String {
+    let attempted_bytes = attempted.as_bytes();
+    let attempted_len = attempted_bytes.len();
+    // Skip very short names (single char) — too many false positives
+    if attempted_len < 2 {
+        return String.new();
+    }
+    let mut best_name = String.new();
+    let mut best_dist: u32 = 3; // threshold: only suggest if distance <= 2
+
+    // Walk all scopes from innermost to outermost
+    let stack_len = ctx.resolver.scope_stack.len();
+    let mut stack_idx = stack_len;
+    while stack_idx > 0 {
+        stack_idx -= 1;
+        let scope_idx = ctx.resolver.scope_stack[stack_idx];
+        let scope = &ctx.resolver.scopes[scope_idx];
+        for bi in 0usize..scope.bindings.len() {
+            let binding_sym = scope.bindings[bi].name;
+            match ctx.interner.resolve(binding_sym) {
+                Option.Some(binding_name) => {
+                    let binding_bytes = binding_name.as_bytes();
+                    // Skip if length difference > 2 (can't be within edit distance 2)
+                    let binding_len = binding_bytes.len();
+                    let len_diff = if binding_len > attempted_len {
+                        binding_len - attempted_len
+                    } else {
+                        attempted_len - binding_len
+                    };
+                    if len_diff <= 2 {
+                        let dist = edit_distance(attempted_bytes, binding_bytes);
+                        if dist < best_dist && dist > 0 {
+                            best_dist = dist;
+                            best_name = common.make_string(binding_name.as_str());
+                        }
+                    }
+                }
+                Option.None => {}
+            }
+        }
+    }
+    best_name
+}
 
 // ============================================================
 // Expression Lowering
@@ -562,12 +644,23 @@ fn lower_path_expr(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.ExprPath, spa
             );
         }
 
-        // Not found
-        ctx.error(
-            hir.DiagnosticCode.E0102,
-            common.make_string("undefined name"),
-            seg.name.span,
-        );
+        // Not found — try to suggest a similar name
+        let attempted_str = ctx.span_to_string(seg.name.span);
+        let suggestion = find_name_suggestion(ctx, attempted_str.as_str());
+        if suggestion.len() > 0 {
+            let mut msg = common.make_string("undefined name `");
+            msg.push_str(attempted_str.as_str());
+            msg.push_str("` — did you mean `");
+            msg.push_str(suggestion.as_str());
+            msg.push_str("`?");
+            ctx.error(hir.DiagnosticCode.E0102, msg, seg.name.span);
+        } else {
+            ctx.error(
+                hir.DiagnosticCode.E0102,
+                common.make_string("undefined name"),
+                seg.name.span,
+            );
+        }
         return hir_expr.Expr.error(span);
     }
 
