@@ -1,0 +1,43 @@
+// Test: dispatch between pure and effectful method overloads.
+// Same-name methods differing only in effect annotations should
+// dispatch based on the calling context's effect requirements.
+// EXPECT: 50
+// EXPECT: 500
+
+effect Log {
+    op log(msg: i32) -> ();
+}
+
+struct Processor {}
+
+impl Processor {
+    fn process(self: &Self, x: i32) -> i32 {
+        x * 10
+    }
+
+    fn process(self: &Self, x: i32) -> i32 / {Log} {
+        perform Log.log(x);
+        x * 100
+    }
+}
+
+deep handler SilentLog for Log {
+    return(x) { x }
+    op log(msg) { resume(()) }
+}
+
+fn main() -> i32 {
+    let p: Processor = Processor {};
+
+    // Pure context: dispatches to pure overload (x * 10)
+    let pure_result: i32 = p.process(5);
+    println_int(pure_result);
+
+    // Effectful context: dispatches to effectful overload (x * 100)
+    let eff_result: i32 = with SilentLog {} handle {
+        p.process(5)
+    };
+    println_int(eff_result);
+
+    0
+}
