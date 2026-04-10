@@ -1,6 +1,7 @@
 // Test: concrete overload should be selected over constrained generic
 // fn f(x: i32) vs fn f<T: Copy>(x: T) — call with i32 selects concrete
 // Similar to t05_dispatch_generic_vs_concrete but with constrained generic
+// EXPECT: 0
 
 trait Copyable {
     fn copy_val(self: &Self) -> i32;
@@ -25,5 +26,6 @@ fn main() -> i32 {
     let s: Selector = Selector {};
     let result: i32 = s.pick(42);
     // Should select concrete fn pick(x: i32) -> 100
+    println_int(result - 100);
     result - 100
 }
