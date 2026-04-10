@@ -5761,79 +5761,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
 
     let compile_elapsed = blood_clock_millis() - compile_start;
 
-    // Print timing summary if requested
-    if args.timings {
-        print_str("\nTimings:\n");
-        print_str("  Parse                ");
-        print_timing_ms(parse_elapsed);
-        print_str("  HIR lowering         ");
-        print_timing_ms(hir_elapsed);
-        print_str("  Type checking        ");
-        print_timing_ms(typeck_elapsed);
-        print_str("  Codegen              ");
-        print_timing_ms(codegen_elapsed);
-        print_str("  ─────────────────────────\n");
-        print_str("  Compiler total       ");
-        print_timing_ms(compile_elapsed);
-    }
-
-    // Hash table load factor diagnostics.
-    if args.hash_stats {
-        eprint_str("\n  [hash-stats]\n");
-        eprint_str("    type_interner:             ");
-        eprint_str(int_to_string(type_intern.type_interner().type_count() as i32));
-        eprint_str(" types, ");
-        eprint_str(int_to_string(type_intern.type_interner().ty_list_count() as i32));
-        eprint_str(" type lists\n");
-        eprint_str("    ctx.def_names:             ");
-        eprint_str(int_to_string(ctx.def_names.len() as i32));
-        eprint_str("/");
-        eprint_str(int_to_string(ctx.def_names_hash.entry_count() as i32));
-        eprint_str(" (vec/hash)\n");
-        eprint_str("    ctx.adt_registry:          ");
-        eprint_str(int_to_string(ctx.adt_registry.len() as i32));
-        eprint_str(" entries\n");
-        eprint_str("    ctx.adt_struct_hash:        ");
-        eprint_str(int_to_string(ctx.adt_struct_hash.entry_count() as i32));
-        eprint_str("/");
-        eprint_str(int_to_string(ctx.adt_struct_hash.bucket_capacity() as i32));
-        eprint_str(" (load ");
-        if ctx.adt_struct_hash.bucket_capacity() > 0 {
-            eprint_str(int_to_string((ctx.adt_struct_hash.entry_count() * 100 / ctx.adt_struct_hash.bucket_capacity()) as i32));
-        } else {
-            eprint_str("0");
-        }
-        eprint_str("%)\n");
-        eprint_str("    ctx.adt_enum_hash:          ");
-        eprint_str(int_to_string(ctx.adt_enum_hash.entry_count() as i32));
-        eprint_str("/");
-        eprint_str(int_to_string(ctx.adt_enum_hash.bucket_capacity() as i32));
-        eprint_str(" (load ");
-        if ctx.adt_enum_hash.bucket_capacity() > 0 {
-            eprint_str(int_to_string((ctx.adt_enum_hash.entry_count() * 100 / ctx.adt_enum_hash.bucket_capacity()) as i32));
-        } else {
-            eprint_str("0");
-        }
-        eprint_str("%)\n");
-        eprint_str("    ctx.fn_signatures:         ");
-        eprint_str(int_to_string(ctx.fn_signatures.len() as i32));
-        eprint_str("/");
-        eprint_str(int_to_string(ctx.fn_sigs_hash.entry_count() as i32));
-        eprint_str(" (vec/hash)\n");
-        eprint_str("    ctx.string_table:          ");
-        eprint_str(int_to_string(ctx.string_table.len() as i32));
-        eprint_str("/");
-        eprint_str(int_to_string(ctx.string_table_hash.entry_count() as i32));
-        eprint_str(" (vec/hash)\n");
-    }
-
-    // Report peak physical RSS (VmHWM = high water mark) from /proc/self/status.
-    // Uses $PPID because system() spawns a child shell — /proc/self/ would
-    // report awk's memory, not the compiler's. VmHWM is physical memory only
-    // (unlike VmPeak which includes mmap'd virtual address space from regions).
-    if args.timings {
-        system("awk '/VmHWM/ {printf \"  peak_rss_kb=%d\\n\", $2}' /proc/$PPID/status >&2");
-    }
+    report_diagnostics(args, parse_elapsed, hir_elapsed, typeck_elapsed, codegen_elapsed, compile_elapsed, &ctx);
 
     true
 }
@@ -6710,6 +6638,87 @@ fn dump_adt_layouts(ctx: &codegen_ctx.CodegenCtx) {
                 }
             }
         }
+    }
+}
+
+/// Reports compile diagnostics: timing summary, hash table stats, and peak RSS.
+/// Extracted from compile_file_streaming to reduce function size.
+fn report_diagnostics(
+    args: &Args,
+    parse_ms: u64,
+    hir_ms: u64,
+    typeck_ms: u64,
+    codegen_ms: u64,
+    total_ms: u64,
+    ctx: &codegen_ctx.CodegenCtx,
+) {
+    if args.timings {
+        print_str("\nTimings:\n");
+        print_str("  Parse                ");
+        print_timing_ms(parse_ms);
+        print_str("  HIR lowering         ");
+        print_timing_ms(hir_ms);
+        print_str("  Type checking        ");
+        print_timing_ms(typeck_ms);
+        print_str("  Codegen              ");
+        print_timing_ms(codegen_ms);
+        print_str("  ─────────────────────────\n");
+        print_str("  Compiler total       ");
+        print_timing_ms(total_ms);
+    }
+
+    if args.hash_stats {
+        eprint_str("\n  [hash-stats]\n");
+        eprint_str("    type_interner:             ");
+        eprint_str(int_to_string(type_intern.type_interner().type_count() as i32));
+        eprint_str(" types, ");
+        eprint_str(int_to_string(type_intern.type_interner().ty_list_count() as i32));
+        eprint_str(" type lists\n");
+        eprint_str("    ctx.def_names:             ");
+        eprint_str(int_to_string(ctx.def_names.len() as i32));
+        eprint_str("/");
+        eprint_str(int_to_string(ctx.def_names_hash.entry_count() as i32));
+        eprint_str(" (vec/hash)\n");
+        eprint_str("    ctx.adt_registry:          ");
+        eprint_str(int_to_string(ctx.adt_registry.len() as i32));
+        eprint_str(" entries\n");
+        eprint_str("    ctx.adt_struct_hash:        ");
+        eprint_str(int_to_string(ctx.adt_struct_hash.entry_count() as i32));
+        eprint_str("/");
+        eprint_str(int_to_string(ctx.adt_struct_hash.bucket_capacity() as i32));
+        eprint_str(" (load ");
+        if ctx.adt_struct_hash.bucket_capacity() > 0 {
+            eprint_str(int_to_string((ctx.adt_struct_hash.entry_count() * 100 / ctx.adt_struct_hash.bucket_capacity()) as i32));
+        } else {
+            eprint_str("0");
+        }
+        eprint_str("%)\n");
+        eprint_str("    ctx.adt_enum_hash:          ");
+        eprint_str(int_to_string(ctx.adt_enum_hash.entry_count() as i32));
+        eprint_str("/");
+        eprint_str(int_to_string(ctx.adt_enum_hash.bucket_capacity() as i32));
+        eprint_str(" (load ");
+        if ctx.adt_enum_hash.bucket_capacity() > 0 {
+            eprint_str(int_to_string((ctx.adt_enum_hash.entry_count() * 100 / ctx.adt_enum_hash.bucket_capacity()) as i32));
+        } else {
+            eprint_str("0");
+        }
+        eprint_str("%)\n");
+        eprint_str("    ctx.fn_signatures:         ");
+        eprint_str(int_to_string(ctx.fn_signatures.len() as i32));
+        eprint_str("/");
+        eprint_str(int_to_string(ctx.fn_sigs_hash.entry_count() as i32));
+        eprint_str(" (vec/hash)\n");
+        eprint_str("    ctx.string_table:          ");
+        eprint_str(int_to_string(ctx.string_table.len() as i32));
+        eprint_str("/");
+        eprint_str(int_to_string(ctx.string_table_hash.entry_count() as i32));
+        eprint_str(" (vec/hash)\n");
+    }
+
+    // Report peak physical RSS (VmHWM = high water mark) from /proc/self/status.
+    if args.timings {
+        system("awk '/VmHWM/ {printf \"  peak_rss_kb=%d\\n\", $2}' /proc/$PPID/status >&2");
     }
 }
 
