@@ -1607,6 +1607,14 @@ SEEDMETA
         cp -r "$STDLIB_PATH" "$lib_dir/stdlib"
         ok "Stdlib → $lib_dir/stdlib/"
 
+        # Install LSP binary (if built)
+        local lsp_bin="${DIR}/../../src/bootstrap/target/release/blood-lsp"
+        if [ -f "$lsp_bin" ]; then
+            cp "$lsp_bin" "$bin_dir/blood-lsp"
+            chmod +x "$bin_dir/blood-lsp"
+            ok "LSP    → $bin_dir/blood-lsp"
+        fi
+
         echo ""
         if echo "$PATH" | tr ':' '\n' | grep -qx "$bin_dir"; then
             ok "$bin_dir is already in PATH"
