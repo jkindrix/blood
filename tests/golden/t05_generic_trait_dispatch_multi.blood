@@ -1,0 +1,65 @@
+// Test: generic function dispatching through multiple trait bounds with
+// different concrete instantiations. Exercises monomorphization of
+// trait method calls where the same generic function is called with
+// different types, each implementing the required trait differently.
+// EXPECT: 30
+// EXPECT: 100
+// EXPECT: 7
+
+trait Summable {
+    fn sum_with(&self, other: &Self) -> Self;
+}
+
+trait Describable {
+    fn describe(&self) -> i32;
+}
+
+impl Summable for i32 {
+    fn sum_with(&self, other: &i32) -> i32 {
+        *self + *other
+    }
+}
+
+impl Describable for i32 {
+    fn describe(&self) -> i32 {
+        *self
+    }
+}
+
+struct Pair {
+    x: i32,
+    y: i32,
+}
+
+impl Summable for Pair {
+    fn sum_with(&self, other: &Pair) -> Pair {
+        Pair { x: self.x + other.x, y: self.y + other.y }
+    }
+}
+
+impl Describable for Pair {
+    fn describe(&self) -> i32 {
+        self.x + self.y
+    }
+}
+
+fn combine_and_describe<T>(a: &T, b: &T) -> i32 where T: Summable + Describable {
+    let combined: T = a.sum_with(b);
+    combined.describe()
+}
+
+fn main() -> i32 {
+    let a: i32 = 10;
+    let b: i32 = 20;
+    println_int(combine_and_describe(&a, &b));
+
+    let p1: Pair = Pair { x: 30, y: 20 };
+    let p2: Pair = Pair { x: 40, y: 10 };
+    println_int(combine_and_describe(&p1, &p2));
+
+    let c: i32 = 3;
+    let d: i32 = 4;
+    println_int(combine_and_describe(&c, &d));
+
+    0
+}

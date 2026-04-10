@@ -335,6 +335,11 @@ fn find_def_id_cached(
                     }
                     entry.item.def_id.index
                 }
+                // Safety: remaining ItemKinds (Struct, Enum, TypeAlias, Effect, Bridge,
+                // Module, Use, Macro) don't contain function/method bodies. The body_id
+                // cache should never map to these kinds. If this fires for a new ItemKind
+                // with bodies, the returned def_id.index will be the container item, not
+                // the specific method — which produces wrong codegen names.
                 _ => entry.item.def_id.index,
             }
         }
@@ -411,6 +416,8 @@ fn find_effect_row_cached(
                     }
                     row
                 }
+                // Safety: remaining ItemKinds (Struct, Enum, TypeAlias, Module, Use,
+                // Bridge, Macro) have no effect annotations. Empty row is correct.
                 _ => Vec.new(),
             }
         }

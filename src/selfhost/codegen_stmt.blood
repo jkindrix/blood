@@ -1378,6 +1378,9 @@ fn rebuild_struct_from_info(
         let field_ty = match &fields[fi].hir_type {
             &Option.Some(ty_id) => {
                 let kind = type_intern.type_interner().get(ty_id);
+                // Sentinel 4294967295 (u32::MAX) = "not a type param/infer var".
+                // Only Param and Infer carry TyVarIds; all other kinds (Primitive,
+                // Adt, Ref, etc.) are concrete and don't need arg substitution.
                 let var_idx = match kind {
                     &type_intern.InternedTypeKind.Param(var_id) => var_id.index,
                     &type_intern.InternedTypeKind.Infer(var_id) => var_id.index,
