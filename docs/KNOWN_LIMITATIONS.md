@@ -114,7 +114,7 @@ Nothing is started. `docs/spec/WCET_REALTIME.md` is aspirational. Certification 
 - **`build_selfhost.sh` caches are wiped on every `build first_gen`** from seed. Use `build first_gen --relink` when only the runtime changed to skip the ~2-minute rebuild (drops cycle to ~5 seconds).
 - **Self-hosting is not in CI.** CI only runs the Rust bootstrap tests (`cargo test -p bloodc`). Golden tests, self-hosting, and byte-identical verification are local-only. Regressions surface only when someone manually runs `./build_selfhost.sh gate`.
 - **LLVM version is hardcoded to 18** (llc-18, clang-18, opt-18, etc.) in build scripts. Breaks on systems with LLVM 17 or 19.
-- **Error messages are minimal.** E0201 ("type mismatch") shows no expected-vs-found. E0102 ("undefined name") has no did-you-mean suggestions.
+- **Error messages are basic.** E0201 now shows expected/found types. E0102 now suggests similar names. Other error codes still lack detailed context (e.g., trait bounds, exhaustiveness).
 
 ## What works that you can actually use
 
