@@ -2332,6 +2332,60 @@ fn infer_cast(
     let resolved_dst = checker.resolve(dst_ty_id);
     let resolved_dst_hir = type_intern.ty_id_to_type(resolved_dst);
 
+    // BUG-6 chain propagation fix:
+    //
+    // When the source of a cast is a bare numeric literal (unsuffixed int/float),
+    // the literal gets a fresh Infer var, and the cast simply returns the target
+    // type without binding the Infer var. Patterns like `0 as u64` or `10 as char`
+    // leave the literal's var unresolved indefinitely. `check_body`'s defaulting
+    // loop then fires the workaround, defaulting the var to i32 — even though
+    // the user already indicated the target via the cast.
+    //
+    // Fix: when the SOURCE EXPRESSION IS A LITERAL whose type is still Infer
+    // after resolve, and dst is a primitive we know how to bind to, unify.
+    //
+    // Restricted to literal-source only (not any Infer source) because other
+    // sources (const generic params, closure params, intermediate arithmetic
+    // results) may have Infer types that depend on later unification for
+    // correct resolution. Binding them to the cast's dst would be premature
+    // and can silently miscompile (regression seen on t05_const_generics_multi
+    // where `(R * C) as i32` was corrupted by an overeager bind).
+    //
+    // - dst numeric: bind src directly to dst (e.g., `0 as u64` → src becomes u64).
+    // - dst char:    bind src to u32 (char casts come from integer code points).
+    // Literal sources are always safe to bind. Local sources are safe when
+    // their type is still an Infer var (the local got its type from a
+    // numeric-literal chain that nothing constrained); binding through the
+    // cast completes the chain. Non-literal, non-local sources (binary ops,
+    // method calls, etc.) are skipped to avoid over-constraining intermediate
+    // types — the t05_const_generics_multi regression proved that binding
+    // BinaryOp results too eagerly silently miscompiles const-generic bodies.
+    let expr_is_bindable_source = match &expr.kind {
+        &hir_expr.ExprKind.Literal(_) => true,
+        &hir_expr.ExprKind.Local(_) => true,
+        _ => false,
+    };
+    if expr_is_bindable_source {
+        match &resolved_src_hir.kind {
+            &hir_ty.TypeKind.Infer(_) => {
+                match &resolved_dst_hir.kind {
+                    &hir_ty.TypeKind.Primitive(dst_prim) => {
+                        if is_numeric_primitive(dst_prim) {
+                            // Direct binding: `0 as u64` → src becomes u64.
+                            let _ = checker.try_unify(resolved_src, resolved_dst, span);
+                        } else if is_char_primitive(dst_prim) {
+                            // `N as char` is an integer code-point cast.
+                            let u32_ty = type_intern.CommonTypes.u32_ty();
+                            let _ = checker.try_unify(resolved_src, u32_ty, span);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+
     // Validate that the cast is valid
     if !is_valid_cast(&resolved_src_hir, &resolved_dst_hir) {
         let mut note = common.make_string("cannot cast ");
