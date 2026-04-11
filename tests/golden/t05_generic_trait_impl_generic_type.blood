@@ -1,0 +1,59 @@
+// Test: generic trait impl on a generic ADT.
+// Regression guard for the E0603 "type instability" bug that previously
+// rejected `impl<T> Clone for Wrapper<T>` because the stability check
+// compared the trait-impl's return type (`Self = Wrapper<T₂>`) against
+// potentially-overlapping methods using strict Param-index equality.
+//
+// Fix: return_types_compatible now uses types_could_unify, which correctly
+// treats `Vec<T₁>` and `Vec<T₂>` as compatible up to alpha-renaming.
+// See .tmp/BUGS_OPEN.md §E0603.
+// EXPECT: 42
+// EXPECT: 7
+// EXPECT: true
+
+trait Clone {
+    fn clone(self: &Self) -> Self;
+}
+
+struct Wrapper<T> {
+    value: T,
+}
+
+// The key case: generic trait impl on a generic ADT.
+impl<T> Clone for Wrapper<T> {
+    fn clone(self: &Self) -> Self {
+        Wrapper { value: self.value }
+    }
+}
+
+// Concrete impls on other types must coexist without triggering E0603.
+impl Clone for i32 {
+    fn clone(self: &Self) -> Self { *self }
+}
+
+impl Clone for bool {
+    fn clone(self: &Self) -> Self { *self }
+}
+
+fn main() -> i32 {
+    let w: Wrapper<i32> = Wrapper { value: 42 };
+    let w2: Wrapper<i32> = w.clone();
+    println_int(w2.value);
+    if w2.value != 42 { return 1; }
+
+    let x: i32 = 7;
+    let y: i32 = x.clone();
+    println_int(y);
+    if y != 7 { return 2; }
+
+    let a: bool = true;
+    let b: bool = a.clone();
+    if b {
+        println("true");
+    } else {
+        println("false");
+        return 3;
+    }
+
+    0
+}

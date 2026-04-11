@@ -1133,8 +1133,21 @@ fn return_types_compatible(a: type_intern.TyId, b: type_intern.TyId) -> bool {
     if a_is_param || b_is_param {
         return true;
     }
-    // Otherwise fall through to structural check
-    types_equal_id(a, b, 0)
+    // Structural check: use the unification-oriented predicate `types_could_unify`
+    // rather than strict `types_equal_id`. The two methods we're comparing come
+    // from different impls, which instantiate their own type parameters with
+    // DIFFERENT TyVarIds (even though they are structurally the same). Strict
+    // equality on Param indices produces false positives — e.g., `Vec<T₁>` from
+    // an inherent impl is compared against `Vec<T₂>` from a trait impl, both
+    // structurally identical but with different Param indices. `types_could_unify`
+    // correctly treats Adt/Adt same-def_id, same-arity as compatible regardless
+    // of inner param identities.
+    //
+    // This fix closes E0603 ("type instability") for `impl<T> Clone for Vec<T>`
+    // patterns where an inherent method and a trait impl method have the same
+    // name and overlapping input types — the return types ARE compatible up to
+    // alpha-renaming. See .tmp/BUGS_OPEN.md §E0603 for the investigation log.
+    types_could_unify(a, b, 0)
 }
 
 /// Checks if two self types match for dispatch purposes.
