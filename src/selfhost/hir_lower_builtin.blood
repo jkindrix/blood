@@ -871,8 +871,16 @@ pub fn register_bridge_functions(
                 );
                 ctx.add_item(cb_def_id, item);
             }
-            &ast.BridgeItem.Link(ref _ls) => {
-                // Link specifications: not yet implemented
+            &ast.BridgeItem.Link(ref ls) => {
+                // Link specifications (linker directives for choosing libraries)
+                // are specified in docs/spec/FFI.md but not yet wired through
+                // to codegen. Emit a clear diagnostic instead of silently
+                // dropping the spec. See docs/KNOWN_LIMITATIONS.md §FFI.
+                ctx.error(
+                    hir.DiagnosticCode.E0901,
+                    common.make_string("link specifications are not yet implemented; the directive will be ignored. See docs/KNOWN_LIMITATIONS.md for status."),
+                    ls.span,
+                );
             }
         }
     }
