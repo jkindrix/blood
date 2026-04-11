@@ -550,6 +550,27 @@ impl Clone for String {
     }
 }
 
+// Session 6 attempted `impl<T: Clone> Clone for Vec<T>` and
+// `impl<T: Clone> Clone for Option<T>` here. Both compiled past typecheck
+// (E0603 fix from session 5 unblocked the dispatch-stability check) but
+// llc rejected the generated IR: `use of undefined value '@fn_4294967294'`
+// at the `self[i].clone()` / `x.clone()` call sites. The sentinel 4294967294
+// (u32::MAX - 1) is the "unresolved function" marker — monomorphization
+// didn't bind the generic `T::clone()` call to a concrete impl.
+//
+// This is the same class of bug as BUG-3 (the generic trait dispatch
+// miscompilation fixed in session 1 e3d8b09). Session 1's fix covered one
+// class of callsite (ty_id_to_type misconvert in lower_method_call_expr)
+// but not THIS class: trait method calls inside a generic trait impl body
+// where the receiver is a projection (Vec.index or Option.variant-payload)
+// rather than a plain local. Requires deeper mono-pass work.
+//
+// Stage 1 (removal of built-ins) gated cleanly because the compiler does
+// not actually call Vec.clone() / Option.clone() anywhere — all existing
+// .clone() call sites are on String (covered by the String impl above) or
+// on Copy primitives (no trait dispatch). Re-attempt Stage 2 after the
+// mono-pass gap is closed. Tracked as a follow-up to BUG-3.
+
 // ============================================================
 // Display Trait
 // ============================================================

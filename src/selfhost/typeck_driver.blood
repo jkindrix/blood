@@ -3638,13 +3638,10 @@ fn register_vec_methods(checker: &mut typeck.TypeChecker, vec_def: hir_def.DefId
     contains_params.push(make_ref_ty(make_param(0)));
     add_method(checker, &mut methods, "contains", "vec_contains", contains_params, type_intern.CommonTypes.bool_ty(), false, interner);
 
-    // clone(&self) -> Vec<T>
-    // NOTE: remains a built-in because `impl<T> Clone for Vec<T>` triggers
-    // E0603 "type instability" — Blood's trait system doesn't yet support
-    // generic trait impls on generic types cleanly. Tracked as a feature gap.
-    let mut clone_args: Vec<type_intern.TyId> = Vec.new();
-    clone_args.push(make_param(0));
-    add_method(checker, &mut methods, "clone", "vec_clone", Vec.new(), make_adt(vec_def, clone_args), false, interner);
+    // clone: removed built-in registration (Stage 1 of Vec/Option/HashMap
+    // clone-trait conversion). Will be provided by `impl<T: Clone> Clone for
+    // Vec<T>` in Stage 2 once the seed has been rolled past Stage 1. Session 5
+    // (7e3a04d) fixed the E0603 false positive that originally blocked this.
 
     // Register the impl
     let impl_def = checker.alloc_def_id();
@@ -3683,11 +3680,8 @@ fn register_option_methods(checker: &mut typeck.TypeChecker, option_def: hir_def
     as_ref_args.push(make_ref_ty(make_param(0)));
     add_method(checker, &mut methods, "as_ref", "option_as_ref", Vec.new(), make_adt(option_def, as_ref_args), false, interner);
 
-    // clone(&self) -> Option<T>
-    // NOTE: remains a built-in — see Vec<T> clone note above.
-    let mut clone_args: Vec<type_intern.TyId> = Vec.new();
-    clone_args.push(make_param(0));
-    add_method(checker, &mut methods, "clone", "option_clone", Vec.new(), make_adt(option_def, clone_args), false, interner);
+    // clone: removed built-in registration (Stage 1). Stage 2 will provide
+    // `impl<T: Clone> Clone for Option<T>` once the seed rolls past Stage 1.
 
     // Register the impl
     let impl_def = checker.alloc_def_id();
@@ -3775,7 +3769,12 @@ fn register_hashmap_methods(checker: &mut typeck.TypeChecker, hashmap_def: hir_d
     }
 
     // clone(&self) -> HashMap<K, V>
-    // NOTE: remains a built-in — see Vec<T> clone note in register_vec_methods.
+    // HashMap retains its built-in clone because the selfhost HashMap<K,V>
+    // has no iterator method set — a Blood-level `impl<K: Clone, V: Clone>
+    // Clone for HashMap<K, V>` body has no way to walk keys/values. Writing
+    // such an impl requires first exposing a HashMap iteration API (keys,
+    // values, or iter). Tracked as a follow-up — Vec and Option have been
+    // converted in Stage 2.
     let mut clone_args: Vec<type_intern.TyId> = Vec.new();
     clone_args.push(make_param(0));
     clone_args.push(make_param(1));
