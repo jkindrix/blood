@@ -1480,36 +1480,36 @@ fn lower_local_item(ctx: &mut hir_lower_ctx.LoweringCtx, decl: &ast.Declaration)
             lower_local_fn(ctx, fn_decl, def_id);
         }
         &ast.Declaration.Struct(_) => {
-            ctx.error(hir.DiagnosticCode.E0104,
-                common.make_string("local struct declarations not yet supported"), span);
+            ctx.error(hir.DiagnosticCode.E0901,
+                common.make_string("local struct declarations not yet implemented; define the struct at module scope"), span);
         }
         &ast.Declaration.Enum(_) => {
-            ctx.error(hir.DiagnosticCode.E0104,
-                common.make_string("local enum declarations not yet supported"), span);
+            ctx.error(hir.DiagnosticCode.E0901,
+                common.make_string("local enum declarations not yet implemented; define the enum at module scope"), span);
         }
         &ast.Declaration.TypeAlias(_) => {
-            ctx.error(hir.DiagnosticCode.E0104,
-                common.make_string("local type alias declarations not yet supported"), span);
+            ctx.error(hir.DiagnosticCode.E0901,
+                common.make_string("local type alias declarations not yet implemented; define the alias at module scope"), span);
         }
         &ast.Declaration.Const(_) => {
-            ctx.error(hir.DiagnosticCode.E0104,
-                common.make_string("local const declarations not yet supported"), span);
+            ctx.error(hir.DiagnosticCode.E0901,
+                common.make_string("local const declarations not yet implemented; define the const at module scope"), span);
         }
         &ast.Declaration.Static(_) => {
-            ctx.error(hir.DiagnosticCode.E0104,
-                common.make_string("local static declarations not yet supported"), span);
+            ctx.error(hir.DiagnosticCode.E0901,
+                common.make_string("local static declarations not yet implemented; define the static at module scope"), span);
         }
         &ast.Declaration.Trait(_) => {
-            ctx.error(hir.DiagnosticCode.E0104,
-                common.make_string("local trait declarations not yet supported"), span);
+            ctx.error(hir.DiagnosticCode.E0901,
+                common.make_string("local trait declarations not yet implemented; define the trait at module scope"), span);
         }
         &ast.Declaration.Effect(_) => {
-            ctx.error(hir.DiagnosticCode.E0104,
-                common.make_string("local effect declarations not yet supported"), span);
+            ctx.error(hir.DiagnosticCode.E0901,
+                common.make_string("local effect declarations not yet implemented; define the effect at module scope"), span);
         }
         &ast.Declaration.Handler(_) => {
-            ctx.error(hir.DiagnosticCode.E0104,
-                common.make_string("local handler declarations not yet supported"), span);
+            ctx.error(hir.DiagnosticCode.E0901,
+                common.make_string("local handler declarations not yet implemented; define the handler at module scope"), span);
         }
         // Impl/Bridge/Module/Macro/Use return early above and never reach here
         &ast.Declaration.Impl(_) => {}
@@ -3455,14 +3455,18 @@ fn lower_macro_call_expr(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.ExprPat
         &ast.MacroCallKind.Custom { ref delim, ref content } => {
             let _ = delim;
             let _ = content;
-            // Custom macros are not yet supported.
+            // Custom macros (user-defined `macro name { rule => expansion }`
+            // declarations, procedural macros, cross-module macro
+            // invocations) are not yet implemented in the HIR path.
             // Built-in macros (format!, vec!, assert!, dbg!, matches!) are
             // routed to specific MacroCallKind variants by the parser.
             // todo!, unreachable!, unimplemented!, panic! are routed
-            // through the Format path by the parser.
+            // through the Format path by the parser. Declarative user
+            // macros within a single file are handled by the source-level
+            // preprocessor in macro_expand.blood, not this path.
             ctx.error(
-                hir.DiagnosticCode.E0104,
-                common.make_string("custom macros not yet supported; use built-in macros (format!, vec!, assert!, dbg!, matches!)"),
+                hir.DiagnosticCode.E0901,
+                common.make_string("custom macros not yet implemented in HIR; use built-in macros (format!, vec!, assert!, dbg!, matches!) or a single-file declarative `macro` definition"),
                 span,
             );
             hir_expr.Expr.error(span)
