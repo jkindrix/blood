@@ -21,6 +21,11 @@ GOLDEN_TESTS="${GOLDEN_TESTS:-$REPO_ROOT/tests/golden}"
 BLOOD_TESTS="${BLOOD_TESTS:-$REPO_ROOT/tests/blood-test}"
 STDLIB_PATH="${STDLIB_PATH:-$REPO_ROOT/stdlib}"
 
+# LLVM toolchain detection (shared helper exports LLC/CLANG/OPT/FILECHECK/LLVM_AS/
+# LLVM_EXTRACT/LLVM_LINK). Probes versioned binaries and respects env overrides.
+# shellcheck source=./_llvm_tools.sh
+. "$DIR/_llvm_tools.sh"
+
 export BLOOD_RUST_RUNTIME="${RUNTIME_A}"
 export BLOOD_BUILD_DIR="${BUILD_DIR}"
 export BLOOD_CACHE="${BUILD_DIR}/.blood-cache"
@@ -59,7 +64,8 @@ log_metric() {
         hir_ms=$(grep '^ *HIR lowering' "$LOG_FILE" | tail -1 | sed 's/.*HIR lowering *//; s/,//g; s/ms.*//' || true)
         typeck_ms=$(grep '^ *Type checking' "$LOG_FILE" | tail -1 | sed 's/.*Type checking *//; s/,//g; s/ms.*//' || true)
         codegen_ms=$(grep '^ *Codegen ' "$LOG_FILE" | tail -1 | sed 's/.*Codegen *//; s/,//g; s/ms.*//' || true)
-        llc_ms=$(grep 'llc-18 (per-module)' "$LOG_FILE" | tail -1 | sed 's/.*llc-18 (per-module) *//; s/,//g; s/ms.*//' || true)
+        # Match both old ("llc-18 (per-module)") and new ("llc (per-module)") compiler output formats.
+        llc_ms=$(grep -E 'llc(-[0-9]+)? \(per-module\)' "$LOG_FILE" | tail -1 | sed -E 's/.*llc(-[0-9]+)? \(per-module\) *//; s/,//g; s/ms.*//' || true)
         split_ms=$(grep 'Module split:' "$LOG_FILE" | tail -1 | sed 's/.*in //; s/ms.*//' || true)
         par_workers=$(grep 'parallel codegen:' "$LOG_FILE" | tail -1 | sed 's/.*parallel codegen: //; s/ workers.*//' || true)
         par_wall_ms=$(grep 'parallel codegen done:' "$LOG_FILE" | tail -1 | sed 's/.*done: //; s/ms.*//' || true)
@@ -146,7 +152,8 @@ check_sub_phase_regression() {
     hir_ms=$(grep '^ *HIR lowering' "$log_file" | tail -1 | sed 's/.*HIR lowering *//; s/,//g; s/ms.*//')
     typeck_ms=$(grep '^ *Type checking' "$log_file" | tail -1 | sed 's/.*Type checking *//; s/,//g; s/ms.*//')
     codegen_ms=$(grep '^ *Codegen ' "$log_file" | tail -1 | sed 's/.*Codegen *//; s/,//g; s/ms.*//')
-    llc_ms=$(grep 'llc-18 (per-module)' "$log_file" | tail -1 | sed 's/.*llc-18 (per-module) *//; s/,//g; s/ms.*//')
+    # Match both old ("llc-18 (per-module)") and new ("llc (per-module)") compiler output formats.
+    llc_ms=$(grep -E 'llc(-[0-9]+)? \(per-module\)' "$log_file" | tail -1 | sed -E 's/.*llc(-[0-9]+)? \(per-module\) *//; s/,//g; s/ms.*//')
 
     # Per-phase baselines (milliseconds) and thresholds (baseline × 1.5).
     # These match the 2026-04-10 steady state with parallel codegen + parallel llc.
@@ -169,7 +176,7 @@ check_sub_phase_regression() {
     _check_phase "HIR lowering"  "$hir_ms"     22000
     _check_phase "Type checking" "$typeck_ms"  22000
     _check_phase "Codegen"       "$codegen_ms" 70000
-    _check_phase "llc-18"        "$llc_ms"     3000
+    _check_phase "llc"           "$llc_ms"     3000
 
     if [ "$warned" -ne 0 ]; then
         printf "\033[1;33m│\033[0m  Check [hir phases], [codegen pass2], [check_body] in log.   \033[1;33m│\033[0m\n"
@@ -441,12 +448,12 @@ do_relink_first_gen() {
 
     # Match the exact link command from src/selfhost/main.blood:524-539
     local bin_path="$BUILD_DIR/first_gen"
-    local clang_cmd="clang-18 $obj_dir/*.o $RUNTIME_A -Wl,-z,muldefs -lm -ldl -lpthread -pie -o $bin_path"
+    local clang_cmd="$CLANG $obj_dir/*.o $RUNTIME_A -Wl,-z,muldefs -lm -ldl -lpthread -pie -o $bin_path"
 
     # shellcheck disable=SC2086  # intentional word splitting for *.o expansion
     eval "$clang_cmd" || rc=$?
     if [ "$rc" -ne 0 ]; then
-        fail "clang-18 linking failed (exit $rc)"
+        fail "$CLANG linking failed (exit $rc)"
         return 1
     fi
 
@@ -578,7 +585,7 @@ do_build_blood_runtime() {
     [ -f "$fg" ] || die "first_gen not found. Run: ./build_selfhost.sh build first_gen"
     [ -f "$rt_dir/lib.blood" ] || die "Blood runtime source not found at $rt_dir/lib.blood"
     command -v python3 >/dev/null || die "python3 required for IR post-processing"
-    command -v llc-18 >/dev/null || die "llc-18 required for object compilation"
+    command -v "$LLC" >/dev/null || die "$LLC required for object compilation"
 
     mkdir -p "$rt_build"
 
@@ -597,16 +604,16 @@ do_build_blood_runtime() {
     # Disable pipefail locally so grep returning 1 (no matches) doesn't kill
     # the script; we check llc's exit code explicitly afterward.
     set +o pipefail
-    llc-18 -filetype=obj -relocation-model=pic "$rt_build/lib_clean.ll" -o "$rt_build/lib.o" 2>&1 \
+    "$LLC" -filetype=obj -relocation-model=pic "$rt_build/lib_clean.ll" -o "$rt_build/lib.o" 2>&1 \
         | grep -v 'inlinable function\|ignoring invalid debug'
     local llc_status="${PIPESTATUS[0]}"
     set -o pipefail
     if [ "$llc_status" -ne 0 ]; then
-        die "llc-18 failed (exit $llc_status) compiling runtime IR at $rt_build/lib_clean.ll"
+        die "$LLC failed (exit $llc_status) compiling runtime IR at $rt_build/lib_clean.ll"
     fi
     # Remove the old object file if llc didn't produce a fresh one to prevent
     # packaging a stale archive on future failures.
-    [ -f "$rt_build/lib.o" ] || die "llc-18 did not produce $rt_build/lib.o"
+    [ -f "$rt_build/lib.o" ] || die "$LLC did not produce $rt_build/lib.o"
     ar rcs "$rt_build/libblood_runtime_blood.a" "$rt_build/lib.o"
     ok "libblood_runtime_blood.a ($(stat -c%s "$rt_build/libblood_runtime_blood.a") bytes)"
 }
@@ -955,7 +962,7 @@ verify_ir() {
     # A: Structural IR verification
     step "Verifying IR structure ($ir_file)"
     local verify_output
-    if verify_output=$(opt-18 -passes=verify "$ir_file" -disable-output 2>&1); then
+    if verify_output=$("$OPT" -passes=verify "$ir_file" -disable-output 2>&1); then
         ok "IR structure valid (SSA, types, dominance)"
     else
         fail "IR structure verification failed"
@@ -996,7 +1003,7 @@ verify_ir() {
             continue
         fi
 
-        if FileCheck-18 --input-file="$check_tmpdir/check_out.ll" "$check_src" 2>/dev/null; then
+        if "$FILECHECK" --input-file="$check_tmpdir/check_out.ll" "$check_src" 2>/dev/null; then
             ok "$check_name"
             fc_pass=$((fc_pass + 1))
         else
@@ -1048,19 +1055,22 @@ build_asan() {
 
     step "Building ASan-instrumented binary from $ir_file"
 
-    llvm-as-18 "$ir_file" -o "$BUILD_DIR/second_gen_asan.bc"
+    "$LLVM_AS" "$ir_file" -o "$BUILD_DIR/second_gen_asan.bc"
     ok "Assembled to bitcode"
 
-    opt-18 -passes='module(asan-module),function(asan)' \
+    # opt-18+ accepts just `asan` — the older `module(asan-module),function(asan)`
+    # pass-manager syntax is invalid in the new pass manager.
+    "$OPT" -passes='asan' \
         "$BUILD_DIR/second_gen_asan.bc" -o "$BUILD_DIR/second_gen_asan_inst.bc"
     ok "ASan instrumentation applied"
 
-    llc-18 "$BUILD_DIR/second_gen_asan_inst.bc" \
+    "$LLC" "$BUILD_DIR/second_gen_asan_inst.bc" \
         -o "$BUILD_DIR/second_gen_asan.o" -filetype=obj -relocation-model=pic
     ok "Compiled to object"
 
-    clang-18 "$BUILD_DIR/second_gen_asan.o" "$RUNTIME_A" \
-        -fsanitize=address -lstdc++ -lm -lpthread -ldl -no-pie \
+    "$CLANG" "$BUILD_DIR/second_gen_asan.o" "$RUNTIME_A" \
+        -fsanitize=address -Wl,-z,muldefs \
+        -lstdc++ -lm -lpthread -ldl -no-pie \
         -o "$BUILD_DIR/second_gen_asan"
     ok "Linked second_gen_asan ($(wc -c < "$BUILD_DIR/second_gen_asan") bytes)"
 
@@ -1082,8 +1092,8 @@ bisect_functions() {
     bisect_dir=$(mktemp -d "$DIR/.bisect_XXXXXX")
     trap "rm -rf '$bisect_dir'" EXIT
 
-    llvm-as-18 "$BUILD_DIR/reference_ir.ll" -o "$bisect_dir/ref.bc"
-    llvm-as-18 "$self_ir" -o "$bisect_dir/self.bc"
+    "$LLVM_AS" "$BUILD_DIR/reference_ir.ll" -o "$bisect_dir/ref.bc"
+    "$LLVM_AS" "$self_ir" -o "$bisect_dir/self.bc"
     ok "Assembled both IR files to bitcode"
 
     grep '^define ' "$self_ir" | sed 's/^define [^@]*@\([^ (]*\).*/\1/' | sort -u > "$bisect_dir/all_funcs.txt"
@@ -1110,7 +1120,7 @@ bisect_functions() {
 
         if [ -z "$extract_args" ]; then return 1; fi
 
-        if ! llvm-extract-18 $extract_args \
+        if ! "$LLVM_EXTRACT" $extract_args \
                 "$bisect_dir/self.bc" -o "$bisect_dir/extracted.bc" 2>/dev/null; then
             warn "Could not extract functions (some may be missing)"
             return 1
@@ -1122,25 +1132,25 @@ bisect_functions() {
             delete_args="$delete_args --delete=$fname"
         done < "$func_list"
 
-        if ! llvm-extract-18 $delete_args \
+        if ! "$LLVM_EXTRACT" $delete_args \
                 "$bisect_dir/ref.bc" -o "$bisect_dir/ref_trimmed.bc" 2>/dev/null; then
             cp "$bisect_dir/ref.bc" "$bisect_dir/ref_trimmed.bc"
         fi
 
-        if ! llvm-link-18 \
+        if ! "$LLVM_LINK" \
                 "$bisect_dir/ref_trimmed.bc" "$bisect_dir/extracted.bc" \
                 -o "$hybrid_bc" 2>/dev/null; then
             warn "Link failed for this subset"
             return 1
         fi
 
-        if ! llc-18 "$hybrid_bc" \
+        if ! "$LLC" "$hybrid_bc" \
                 -o "$bisect_dir/hybrid.o" -filetype=obj -relocation-model=pic 2>/dev/null; then
             warn "LLC failed for hybrid"
             return 1
         fi
 
-        if ! clang-18 "$bisect_dir/hybrid.o" "$RUNTIME_A" \
+        if ! "$CLANG" "$bisect_dir/hybrid.o" "$RUNTIME_A" \
                 -lm -ldl -lpthread -no-pie -o "$bisect_dir/hybrid" 2>/dev/null; then
             warn "Link failed for hybrid binary"
             return 1
@@ -1406,12 +1416,12 @@ case "${1:-status}" in
                 continue
             fi
 
-            if FileCheck-18 --input-file="$tmpdir/check_out.ll" "$check_src" 2>/dev/null; then
+            if "$FILECHECK" --input-file="$tmpdir/check_out.ll" "$check_src" 2>/dev/null; then
                 ok "$check_name"
                 fc_pass=$((fc_pass + 1))
             else
                 fail "$check_name"
-                FileCheck-18 --input-file="$tmpdir/check_out.ll" "$check_src" 2>&1 | head -10 || true
+                "$FILECHECK" --input-file="$tmpdir/check_out.ll" "$check_src" 2>&1 | head -10 || true
                 fc_fail=$((fc_fail + 1))
             fi
 

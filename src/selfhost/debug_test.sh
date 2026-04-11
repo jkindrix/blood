@@ -22,6 +22,10 @@ RUNTIME_A="${RUNTIME_A:-$REPO_ROOT/src/bootstrap/target/release/libblood_runtime
 GOLDEN_TESTS="${GOLDEN_TESTS:-$REPO_ROOT/tests/golden}"
 FIRST_GEN="${FIRST_GEN:-$DIR/first_gen}"
 
+# LLVM toolchain detection (shared with build_selfhost.sh)
+# shellcheck source=./_llvm_tools.sh
+. "$DIR/_llvm_tools.sh"
+
 export BLOOD_RUNTIME="${RUNTIME_O}"
 export BLOOD_RUST_RUNTIME="${RUNTIME_A}"
 
@@ -207,11 +211,11 @@ bare_fn_name() {
     echo "$name" | sed -E 's/^def[0-9]+_//'
 }
 
-# Validate LLVM IR with llvm-as-18
+# Validate LLVM IR via llvm-as (version resolved by _llvm_tools.sh)
 validate_ir() {
     local ll_file="$1"
     local errors
-    if ! errors=$(llvm-as-18 "$ll_file" -o /dev/null 2>&1); then
+    if ! errors=$("$LLVM_AS" "$ll_file" -o /dev/null 2>&1); then
         fail "Invalid LLVM IR"
         printf "%s\n" "$errors" | head -10 | while IFS= read -r line; do
             dim "  $line"
@@ -657,8 +661,8 @@ mode_ir_diff() {
 
     # Validate both
     local ref_valid=0 self_valid=0
-    if llvm-as-18 "$tmpdir/ref.ll" -o /dev/null 2>/dev/null; then ref_valid=1; fi
-    if llvm-as-18 "$tmpdir/self.ll" -o /dev/null 2>/dev/null; then self_valid=1; fi
+    if "$LLVM_AS" "$tmpdir/ref.ll" -o /dev/null 2>/dev/null; then ref_valid=1; fi
+    if "$LLVM_AS" "$tmpdir/self.ll" -o /dev/null 2>/dev/null; then self_valid=1; fi
     if [ "$ref_valid" -eq 1 ] && [ "$self_valid" -eq 1 ]; then
         ok "Both IR files validate"
     else
