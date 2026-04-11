@@ -422,7 +422,24 @@ pub fn emit_rvalue(
                         ctx.write(", 1\n");
                     }
                     Option.None => {
-                        // Stack-allocated: gen=0 sentinel
+                        // Stack-allocated reference: gen=0 sentinel.
+                        //
+                        // DESIGN INTENT: stack-allocated locals have a lifetime bound
+                        // to the enclosing function's stack frame. A `&local` taken
+                        // inside the function cannot outlive that frame because Blood
+                        // MVS captures values, not references — a linear `&local`
+                        // cannot escape into a longer-lived context.
+                        //
+                        // Runtime behavior: codegen_place.blood's deref path branches
+                        // on gen=0 and skips `blood_validate_generation` entirely
+                        // (see codegen_place.blood:869-874). This is a zero-overhead
+                        // optimization, not a soundness compromise — the stack frame
+                        // itself is the lifetime witness.
+                        //
+                        // Soundness invariant: if a stack `&local` ever escapes into
+                        // a longer-lived context, BC-01 (E0503) rejects it at
+                        // compile time. The gen=0 here is predicated on that check
+                        // having fired for any escape path.
                         ctx.write("  ");
                         ctx.write_cgname(&tmp2);
                         ctx.write(" = insertvalue { ptr, i32 } ");
@@ -471,7 +488,22 @@ pub fn emit_rvalue(
                     ctx.write_cgname(&gen_val);
                     ctx.write(", 1\n");
                 } else {
-                    // Thin pointer or unsized ref: gen=0 sentinel
+                    // Thin pointer or unsized ref at the source of a deref chain:
+                    // gen=0 sentinel.
+                    //
+                    // DESIGN INTENT: thin pointers (`*const T`, `*mut T`) and
+                    // unsized references carry no generation field, so any derived
+                    // reference through a deref chain cannot inherit a real gen.
+                    //
+                    // Runtime behavior: deref validation becomes a no-op for this
+                    // derived ref. The soundness story is: thin pointers are
+                    // @unsafe territory — code touching them has already opted out
+                    // of generation tracking by choosing raw pointers. The gen=0
+                    // is consistent with that opt-out.
+                    //
+                    // See also: docs/KNOWN_LIMITATIONS.md "Pillar 1" — thin-ptr
+                    // gen=0 is documented as an intentional boundary between the
+                    // safe fat-ref path and the @unsafe raw-pointer path.
                     ctx.write("  ");
                     ctx.write_cgname(&tmp2);
                     ctx.write(" = insertvalue { ptr, i32 } ");
@@ -1751,7 +1783,21 @@ fn emit_cast_with_types(
             if string_eq_str(src_llvm.as_str(), tgt_llvm.as_str()) {
                 return codegen_ctx.CgName.Str(val.clone());
             } else if str_eq(tgt_llvm.as_str(), "{ ptr, i32 }") {
-                // Thin ptr to gen ref: wrap with gen=0
+                // Cast from thin pointer to fat reference: wrap with gen=0.
+                //
+                // DESIGN INTENT: the cast itself is an @unsafe operation (Ptr→Ref
+                // requires an @unsafe context per cast_requires_unsafe_context in
+                // typeck_expr.blood). The user has explicitly opted into raw-ptr
+                // semantics by writing the cast; wrapping with gen=0 preserves the
+                // runtime's convention that "no tracked gen" ⇒ validation skipped.
+                //
+                // If the target of the cast is a real tracked heap region, the
+                // user should capture the reference directly via `&value` rather
+                // than cast a raw pointer — only then will the gen field reflect
+                // the actual allocation's generation.
+                //
+                // Soundness: this site is reachable only through an @unsafe block,
+                // so the gen=0 is consistent with the user's explicit opt-out.
                 let ins1 = ctx.fresh_temp_cg();
                 ctx.write_indent();
                 ctx.write_cgname(&ins1);

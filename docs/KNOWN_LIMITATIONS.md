@@ -61,7 +61,17 @@ Stack-allocated locals (`alloca` in LLVM entry block) receive generation 0. The 
 
 ### Untracked addresses return "valid"
 
-`blood_validate_generation` at `alloc.blood:443` returns 1 (valid) for addresses not in any registry. This is intentional for C FFI compatibility: memory allocated by C functions (malloc, mmap, etc.) is not registered in Blood's generation hash table. Treating unregistered addresses as invalid would break all FFI calls that return pointers. The trade-off: dangling pointers to unregistered (C-allocated) memory silently pass validation. Blood's safety guarantees apply only to Blood-allocated memory.
+`blood_validate_generation` at `runtime/blood-runtime/alloc.blood:424` returns 1 (valid) for addresses not in any registry (neither the per-allocation hash table nor the per-region gen array). This is intentional and covers three distinct categories of untracked pointers, each with its own soundness rationale:
+
+1. **Stack allocations**: locals live on the current stack frame and cannot dangle within their owning function. Blood's MVS model captures values, not references; BC-01 (`E0503`) rejects any path where a `&local` escapes the stack-frame lifetime at compile time. Stack pointers never appear in the heap registry because we never `malloc()` for them. Returning 1 is correct by construction.
+
+2. **Field refs within an allocation**: `&struct.field` produces a pointer offset from the base allocation. The gen table keys on base addresses, not field addresses. The containing allocation's liveness is verified separately when the base pointer is derived; returning 1 for the field ref is correct.
+
+3. **FFI-owned pointers** (C's `malloc`, `mmap`, `open` → fd, `dlopen` → handle, etc.): memory the runtime doesn't own has no tracked generation. Treating unregistered addresses as invalid would break every FFI bridge that returns a pointer. This is the intentional boundary between Blood's tracked heap safety and `@unsafe`/bridge code.
+
+**Trade-off**: dangling pointers to unregistered memory silently pass validation. Blood's generational-reference safety guarantees apply only to Blood-allocated memory. The spec (`docs/spec`, Pillar 1) frames this as "gen tracking covers Blood-managed allocations, not arbitrary address arithmetic."
+
+**Not documented in-code**: the `rt_blood_validate_generation` function currently has only a short single-line comment in `alloc.blood` because the runtime build is sensitive to minor source changes in ways we don't fully understand — an attempt in session 7 to add a longer documentation block to this function produced a non-equivalent runtime archive that broke first_gen relink. Root cause unclear; interacts with the same runtime-archive-sensitivity class that blocked SOUND-04 mutex landing in session 6. See `.tmp/BUGS_OPEN.md` SOUND-04.
 
 ## Features that are specified but not implemented
 
@@ -87,9 +97,39 @@ Struct, enum, type-alias, union, callback, opaque-type, and C-function bridge it
 
 ### Standard library — small but honest
 
-The `stdlib/` directory contains 14 Blood-syntax files after cleanup. 56 Rust-syntax prototype files have been moved to `stdlib/_rust_prototype/` (they use `::` path separators, `Vec::new()`, `if let`, and other Rust patterns that don't compile in Blood).
+The `stdlib/` directory contains 23 Blood-syntax files outside `_rust_prototype/`
+(counted via `find stdlib -name '*.blood' -not -path '*/_rust_prototype/*'
+-not -path '*/tests/*'` on 2026-04-11). 56 Rust-syntax prototype files remain
+in `stdlib/_rust_prototype/` (they use `::` path separators, `Vec::new()`,
+`if let`, and other Rust patterns that don't compile in Blood); the prototypes
+are retained as design notes, not as compilation targets.
 
-Working modules: `core/drop`, `effects/cancel`, `math`, `prelude`, `string`. Additional modules (`crypto/blake3`, `traits/clone`, `traits/marker`, `result`) have minor issues (not Rust syntax but use features like `let` at module level or `?` operator that aren't implemented yet). The compiler does not depend on the stdlib — it has its own built-in implementations of HashMap, Vec, String, etc.
+Working modules: `prelude`, `string`, `math`, `convert`, `args`, `io`,
+`testing`, `result` (documentation stub — `Result<T,E>` is a compiler built-in),
+`collections/hashmap`, `collections/hashset`, `effects/cancel`, `mem/arena`,
+`crypto/blake3`, `algorithms/sort`, `core/drop`, `core/fmt`, `traits/marker`,
+`traits/clone`, plus `mod.blood` aggregators. The non-prototype files do not
+use `use` statements — each module is self-contained. The compiler does not
+depend on the stdlib: it has its own built-in implementations of `HashMap`,
+`Vec`, `String`, etc. distributed across `src/selfhost/common.blood`,
+`type_intern.blood`, and the runtime.
+
+Known structural gaps (not bugs, but feature omissions):
+
+- **No generic `HashMap<K, V>`**: the stdlib `hashmap.blood` is monomorphic
+  (`HashMapU64U64` etc.); a generic HashMap requires `T::Item` projection on
+  type parameters, which is not implemented.
+- **No usable Iterator trait for user code**: the same `T::Item` projection
+  gap blocks a general `Iterator<Item = T>` trait from being useful in
+  user-written code. The compiler uses concrete iterators and `for i in 0..n`
+  ranges instead.
+- **No file I/O abstraction**: the stdlib exposes only raw FFI (`LibcIO.open`,
+  `LibcIO.read`, `LibcIO.write`, `LibcIO.close` in `runtime/blood-runtime/libc.blood`).
+  There is no `File` struct, no `BufReader`/`BufWriter`, no `Path` type.
+- **No concurrency primitives in Blood source**: mutexes, channels, atomics,
+  condvars — none of these exist above the raw `pthread_create`/`pthread_join`
+  bridge in `runtime/blood-runtime/libc.blood`. See the "Concurrency primitives"
+  entry above for the fiber layer's status.
 
 ### Generic associated types projections (`T::Item` for type parameters)
 
@@ -121,7 +161,7 @@ Nothing is started. `docs/spec/WCET_REALTIME.md` is aspirational. Certification 
 
 - **`build_selfhost.sh` caches are wiped on every `build first_gen`** from seed. Use `build first_gen --relink` when only the runtime changed to skip the ~2-minute rebuild (drops cycle to ~5 seconds).
 - **Self-hosting is not in CI.** CI only runs the Rust bootstrap tests (`cargo test -p bloodc`). Golden tests, self-hosting, and byte-identical verification are local-only. Regressions surface only when someone manually runs `./build_selfhost.sh gate`.
-- **LLVM version is hardcoded to 18** (llc-18, clang-18, opt-18, etc.) in build scripts. Breaks on systems with LLVM 17 or 19.
+- **LLVM version defaults to 18 but is overridable.** Build scripts and the compiler resolve the `LLC`, `CLANG`, `OPT`, `FILECHECK`, `LLVM_AS`, `LLVM_EXTRACT`, and `LLVM_LINK` environment variables at invocation time, falling back to the `*-18` names when unset. Verified working on LLVM 17 and 18 as of 2026-04-11 (see `src/selfhost/_llvm_tools.sh` + `resolve_llc_tool`/`resolve_clang_tool` in `main.blood`). LLVM 19 support is implemented but not yet verified on a machine with LLVM 19 installed.
 - **Error messages are basic.** E0201 now shows expected/found types. E0102 now suggests similar names. Other error codes still lack detailed context (e.g., trait bounds, exhaustiveness).
 
 ## What works that you can actually use

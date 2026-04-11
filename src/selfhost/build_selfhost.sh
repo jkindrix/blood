@@ -598,16 +598,27 @@ do_build_blood_runtime() {
     ok "IR post-processed"
 
     step "Compiling to archive"
-    # Use PIPESTATUS to capture llc's exit code specifically. grep's exit code
-    # (1 when no noise lines matched) must not mask llc failures, and llc
-    # failures must not be hidden by a blanket `|| true`.
-    # Disable pipefail locally so grep returning 1 (no matches) doesn't kill
-    # the script; we check llc's exit code explicitly afterward.
-    set +o pipefail
-    "$LLC" -filetype=obj -relocation-model=pic "$rt_build/lib_clean.ll" -o "$rt_build/lib.o" 2>&1 \
-        | grep -v 'inlinable function\|ignoring invalid debug'
-    local llc_status="${PIPESTATUS[0]}"
-    set -o pipefail
+    # Capture llc output to a temp file, then filter with grep separately.
+    # Going through a temp file (instead of a pipe) lets us check llc's exit
+    # code with set -e enabled, and makes grep's "no matches" exit code (1)
+    # completely irrelevant to script termination.
+    #
+    # History: we previously tried `llc ... 2>&1 | grep -v noise` with a
+    # `set +o pipefail` hack and a PIPESTATUS check. That failed when llc
+    # produced clean output (nothing to filter) because the pipe's exit
+    # code was grep's (1 = no matches), and set -e killed the script BEFORE
+    # the PIPESTATUS check could override the decision. Triggered when the
+    # selfhost IR for the runtime became clean enough that llc emitted no
+    # noise lines. See commit history around 2026-04-11 session 7 for detail.
+    local llc_out="$rt_build/lib_clean.llc.log"
+    local llc_status=0
+    "$LLC" -filetype=obj -relocation-model=pic "$rt_build/lib_clean.ll" \
+        -o "$rt_build/lib.o" >"$llc_out" 2>&1 || llc_status=$?
+    # Surface any noise lines llc emitted (filtered to hide known-benign warnings).
+    # Ignore grep's exit code; `grep || true` is safe here because we only want
+    # its OUTPUT, not its exit status.
+    grep -v 'inlinable function\|ignoring invalid debug' "$llc_out" || true
+    rm -f "$llc_out"
     if [ "$llc_status" -ne 0 ]; then
         die "$LLC failed (exit $llc_status) compiling runtime IR at $rt_build/lib_clean.ll"
     fi
