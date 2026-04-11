@@ -631,3 +631,40 @@ pub fn copy_spanned_symbol(ss: &SpannedSymbol) -> SpannedSymbol {
         span: ss.span,
     }
 }
+
+// ============================================================
+// Diagnostic Print Helpers
+// ============================================================
+//
+// These consolidate the common `eprint_str(prefix); eprint_str(int_to_string(v));
+// eprint_str(suffix);` three-call pattern that appears ~140+ times across
+// main.blood, typeck_driver.blood, and hir_lower.blood for progress/diagnostic
+// tracing. They live here (not in main_helpers.blood) because main_helpers
+// depends on driver, which depends on typeck_driver — a typeck_driver call site
+// would create a circular import if the helpers were in main_helpers. common.blood
+// has no compiler-module dependencies, so every module can use these helpers.
+
+/// Prints `prefix + int_value + suffix` to stderr.
+pub fn eprint_wrap_i32(prefix: &str, value: i32, suffix: &str) {
+    eprint_str(prefix);
+    eprint_str(int_to_string(value));
+    eprint_str(suffix);
+}
+
+pub fn eprint_wrap_u32(prefix: &str, value: u32, suffix: &str) {
+    eprint_str(prefix);
+    eprint_str(int_to_string(value as i32));
+    eprint_str(suffix);
+}
+
+pub fn eprint_wrap_usize(prefix: &str, value: usize, suffix: &str) {
+    eprint_str(prefix);
+    eprint_str(int_to_string(value as i32));
+    eprint_str(suffix);
+}
+
+pub fn eprint_wrap_u64(prefix: &str, value: u64, suffix: &str) {
+    eprint_str(prefix);
+    eprint_str(int_to_string(value as i32));
+    eprint_str(suffix);
+}

@@ -1909,11 +1909,8 @@ fn try_load_incremental_sigs(
         let sigs_data: &str = file_read_to_string(sigs_path);
         if sigs_data.len() > 0 {
             ctx.load_fn_signatures(sigs_data);
-            eprint_str("\n  [incremental: ");
-            eprint_str(int_to_string(changed_count as i32));
-            eprint_str("/");
-            eprint_str(int_to_string(module_count as i32));
-            eprint_str(" modules changed]");
+            common.eprint_wrap_usize("\n  [incremental: ", changed_count, "/");
+            common.eprint_wrap_usize("", module_count, " modules changed]");
             return true;
         }
     }
@@ -4645,22 +4642,16 @@ fn codegen_pass2(
                 }
             }
             if max_val == 0 { break; }
-            eprint_str("    ");
-            eprint_str(int_to_string((rank + 1) as i32));
-            eprint_str(". ");
+            common.eprint_wrap_i32("    ", (rank + 1) as i32, ". ");
             eprint_str(fn_ir_names[max_idx].as_str());
-            eprint_str(" (");
-            eprint_str(int_to_string((max_val / 1024) as i32));
-            eprint_str(" KB)\n");
+            common.eprint_wrap_usize(" (", max_val / 1024, " KB)\n");
             fn_ir_sizes[max_idx] = 0;
         }
     }
 
     // Abort if MIR validation found errors (--validate-mir makes validation blocking)
     if mir_validation_errors > 0 {
-        eprint_str("\n  MIR validation found ");
-        eprint_str(int_to_string(mir_validation_errors as i32));
-        eprint_str(" error(s). Aborting.\n");
+        common.eprint_wrap_usize("\n  MIR validation found ", mir_validation_errors, " error(s). Aborting.\n");
         panic("MIR validation failed — aborting compilation");
     }
 
@@ -5316,9 +5307,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     // Type-generic bodies are NOT skipped — they're compiled with type erasure as fallback.
     // Monomorphized copies are generated in pass 2b for calls needing concrete types.
     let worklist = build_codegen_worklist(&lower_result, &static_def_ids, &generics.const_generic_body_ids);
-    eprint_str("[worklist:");
-    eprint_str(int_to_string(worklist.items.len() as i32));
-    eprint_str("]");
+    common.eprint_wrap_usize("[worklist:", worklist.items.len(), "]");
 
     if args.mem_profile {
         print_mem_phase("Before codegen pass2", 0 as u64, hir_region, 0 as u64);
@@ -5353,9 +5342,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     // All functions were still processed to collect all errors, but the emitted IR
     // contains wrong code (e.g. field index defaulted to 0). Do not link.
     if pass2_result.mir_lowering_errors > 0 {
-        eprint_str("\nerror: MIR lowering had ");
-        eprint_str(int_to_string(pass2_result.mir_lowering_errors as i32));
-        eprint_str(" error(s). Build aborted — no binary produced.\n");
+        common.eprint_wrap_usize("\nerror: MIR lowering had ", pass2_result.mir_lowering_errors, " error(s). Build aborted — no binary produced.\n");
         if pass2_result.fn_temp_region != 0 {
             region_destroy(pass2_result.fn_temp_region);
         }
@@ -5808,11 +5795,8 @@ fn split_monolithic_to_modules(
     }
 
     let split_elapsed = blood_clock_millis() - split_start;
-    eprint_str("\n  Module split: ");
-    eprint_str(int_to_string(module_count as i32));
-    eprint_str(" modules in ");
-    eprint_str(int_to_string(split_elapsed as i32));
-    eprint_str("ms\n");
+    common.eprint_wrap_usize("\n  Module split: ", module_count, " modules in ");
+    common.eprint_wrap_u64("", split_elapsed, "ms\n");
 }
 
 /// Incremental variant of split_monolithic_to_modules.
@@ -6081,11 +6065,8 @@ fn split_monolithic_to_modules_incremental(
     }
 
     let split_elapsed = blood_clock_millis() - split_start;
-    eprint_str("\n  Incremental split: ");
-    eprint_str(int_to_string(changed_written as i32));
-    eprint_str(" changed modules in ");
-    eprint_str(int_to_string(split_elapsed as i32));
-    eprint_str("ms\n");
+    common.eprint_wrap_usize("\n  Incremental split: ", changed_written, " changed modules in ");
+    common.eprint_wrap_u64("", split_elapsed, "ms\n");
 }
 
 // ============================================================
@@ -6565,9 +6546,7 @@ fn compile_monomorphized_bodies(
     output_path: &str,
     mod_count: u32,
 ) {
-    eprint_str("[mono:");
-    eprint_str(int_to_string(pass2_result.mono_requests.len() as i32));
-    eprint_str("]");
+    common.eprint_wrap_usize("[mono:", pass2_result.mono_requests.len(), "]");
 
     // Shared MIR region for monomorphization — created once, reset between functions.
     let mono_mir_region = region_create(4194304, 8589934592);
@@ -6749,9 +6728,7 @@ fn compile_monomorphized_bodies(
                 } // end else (not already_compiled)
             }
             &Option.None => {
-                eprint_str("[mono_err: body not found for def ");
-                eprint_str(int_to_string(req.original_def_id as i32));
-                eprint_str("]\n");
+                common.eprint_wrap_u32("[mono_err: body not found for def ", req.original_def_id, "]\n");
             }
         }
 
@@ -6878,51 +6855,31 @@ fn report_diagnostics(
 
     if args.hash_stats {
         eprint_str("\n  [hash-stats]\n");
-        eprint_str("    type_interner:             ");
-        eprint_str(int_to_string(type_intern.type_interner().type_count() as i32));
-        eprint_str(" types, ");
-        eprint_str(int_to_string(type_intern.type_interner().ty_list_count() as i32));
-        eprint_str(" type lists\n");
-        eprint_str("    ctx.def_names:             ");
-        eprint_str(int_to_string(ctx.def_names.len() as i32));
-        eprint_str("/");
-        eprint_str(int_to_string(ctx.def_names_hash.entry_count() as i32));
-        eprint_str(" (vec/hash)\n");
-        eprint_str("    ctx.adt_registry:          ");
-        eprint_str(int_to_string(ctx.adt_registry.len() as i32));
-        eprint_str(" entries\n");
-        eprint_str("    ctx.adt_struct_hash:        ");
-        eprint_str(int_to_string(ctx.adt_struct_hash.entry_count() as i32));
-        eprint_str("/");
-        eprint_str(int_to_string(ctx.adt_struct_hash.bucket_capacity() as i32));
-        eprint_str(" (load ");
+        common.eprint_wrap_usize("    type_interner:             ", type_intern.type_interner().type_count(), " types, ");
+        common.eprint_wrap_usize("", type_intern.type_interner().ty_list_count(), " type lists\n");
+        common.eprint_wrap_usize("    ctx.def_names:             ", ctx.def_names.len(), "/");
+        common.eprint_wrap_usize("", ctx.def_names_hash.entry_count(), " (vec/hash)\n");
+        common.eprint_wrap_usize("    ctx.adt_registry:          ", ctx.adt_registry.len(), " entries\n");
+        common.eprint_wrap_usize("    ctx.adt_struct_hash:        ", ctx.adt_struct_hash.entry_count(), "/");
+        common.eprint_wrap_usize("", ctx.adt_struct_hash.bucket_capacity(), " (load ");
         if ctx.adt_struct_hash.bucket_capacity() > 0 {
             eprint_str(int_to_string((ctx.adt_struct_hash.entry_count() * 100 / ctx.adt_struct_hash.bucket_capacity()) as i32));
         } else {
             eprint_str("0");
         }
         eprint_str("%)\n");
-        eprint_str("    ctx.adt_enum_hash:          ");
-        eprint_str(int_to_string(ctx.adt_enum_hash.entry_count() as i32));
-        eprint_str("/");
-        eprint_str(int_to_string(ctx.adt_enum_hash.bucket_capacity() as i32));
-        eprint_str(" (load ");
+        common.eprint_wrap_usize("    ctx.adt_enum_hash:          ", ctx.adt_enum_hash.entry_count(), "/");
+        common.eprint_wrap_usize("", ctx.adt_enum_hash.bucket_capacity(), " (load ");
         if ctx.adt_enum_hash.bucket_capacity() > 0 {
             eprint_str(int_to_string((ctx.adt_enum_hash.entry_count() * 100 / ctx.adt_enum_hash.bucket_capacity()) as i32));
         } else {
             eprint_str("0");
         }
         eprint_str("%)\n");
-        eprint_str("    ctx.fn_signatures:         ");
-        eprint_str(int_to_string(ctx.fn_signatures.len() as i32));
-        eprint_str("/");
-        eprint_str(int_to_string(ctx.fn_sigs_hash.entry_count() as i32));
-        eprint_str(" (vec/hash)\n");
-        eprint_str("    ctx.string_table:          ");
-        eprint_str(int_to_string(ctx.string_table.len() as i32));
-        eprint_str("/");
-        eprint_str(int_to_string(ctx.string_table_hash.entry_count() as i32));
-        eprint_str(" (vec/hash)\n");
+        common.eprint_wrap_usize("    ctx.fn_signatures:         ", ctx.fn_signatures.len(), "/");
+        common.eprint_wrap_usize("", ctx.fn_sigs_hash.entry_count(), " (vec/hash)\n");
+        common.eprint_wrap_usize("    ctx.string_table:          ", ctx.string_table.len(), "/");
+        common.eprint_wrap_usize("", ctx.string_table_hash.entry_count(), " (vec/hash)\n");
     }
 
     // Report peak physical RSS (VmHWM = high water mark) from /proc/self/status.

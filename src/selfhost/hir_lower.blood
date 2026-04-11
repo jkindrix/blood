@@ -157,33 +157,19 @@ pub fn lower_program_with_ast_region(program: &ast.Program, base_dir: String, so
 
     // Permanent instrumentation: print HIR lowering phase breakdown so
     // regressions in any single phase are immediately visible in build logs.
-    eprint_str("  [hir phases] p0=");
-    eprint_str(int_to_string(t_p0_ms as i32));
-    eprint_str(" p1=");
-    eprint_str(int_to_string(t_p1_ms as i32));
-    eprint_str(" p2(decls)=");
-    eprint_str(int_to_string(t_p2_ms as i32));
-    eprint_str(" p3a(ext_decls)=");
-    eprint_str(int_to_string(t_p3a_ms as i32));
-    eprint_str(" p3pre(prelude+imports)=");
-    eprint_str(int_to_string(t_p3pre_ms as i32));
-    eprint_str(" p3b(main_decls)=");
-    eprint_str(int_to_string(t_p3b_ms as i32));
-    eprint_str(" p4(main_bodies)=");
-    eprint_str(int_to_string(t_p4_ms as i32));
-    eprint_str(" p4b(ext_bodies)=");
-    eprint_str(int_to_string(t_p4b_ms as i32));
-    eprint_str("\n");
+    common.eprint_wrap_u64("  [hir phases] p0=", t_p0_ms, " p1=");
+    common.eprint_wrap_u64("", t_p1_ms, " p2(decls)=");
+    common.eprint_wrap_u64("", t_p2_ms, " p3a(ext_decls)=");
+    common.eprint_wrap_u64("", t_p3a_ms, " p3pre(prelude+imports)=");
+    common.eprint_wrap_u64("", t_p3pre_ms, " p3b(main_decls)=");
+    common.eprint_wrap_u64("", t_p3b_ms, " p4(main_bodies)=");
+    common.eprint_wrap_u64("", t_p4_ms, " p4b(ext_bodies)=");
+    common.eprint_wrap_u64("", t_p4b_ms, "\n");
     @unsafe {
-        eprint_str("  [lem] calls=");
-        eprint_str(int_to_string(LEM_CALL_COUNT as i32));
-        eprint_str(" read_ms=");
-        eprint_str(int_to_string(LEM_T_READ_MS as i32));
-        eprint_str(" parse_ms=");
-        eprint_str(int_to_string(LEM_T_PARSE_MS as i32));
-        eprint_str(" register_ms=");
-        eprint_str(int_to_string(LEM_T_REGISTER_MS as i32));
-        eprint_str("\n");
+        common.eprint_wrap_u64("  [lem] calls=", LEM_CALL_COUNT, " read_ms=");
+        common.eprint_wrap_u64("", LEM_T_READ_MS, " parse_ms=");
+        common.eprint_wrap_u64("", LEM_T_PARSE_MS, " register_ms=");
+        common.eprint_wrap_u64("", LEM_T_REGISTER_MS, "\n");
     }
 
     // Check for errors from body lowering
