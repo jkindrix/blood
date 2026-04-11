@@ -1515,9 +1515,21 @@ fn infer_method_call(
     let resolved_receiver_raw = checker.resolve(receiver_ty);
     let resolved_receiver = strip_refs_id(resolved_receiver_raw);
 
-    // If receiver type is still an unresolved inference variable, we cannot
-    // reliably look up methods because types_match_for_impl would match ANY
-    // impl. Infer all arg types and record a pending call for deferred resolution.
+    // If receiver type is still an unresolved inference variable OR a type
+    // parameter (inside a generic impl body), we cannot reliably look up
+    // methods because types_match_for_impl_id would match ANY impl. Infer
+    // all arg types and record a pending call for deferred resolution.
+    //
+    // For Param receivers: this is the `impl<T: Clone> Clone for Vec<T>`
+    // case where the body contains `self[i].clone()`. At typecheck time,
+    // T is abstract and the method call cannot be bound to a specific impl
+    // (String's, or whatever T turns out to be). Record it as a pending
+    // call, using the Param's TyVarId as the receiver_var. The mono pass
+    // (resolve_methods_for_type_mono) will inject `T → concrete` into the
+    // substitution table before re-resolving; `apply_substs_id` walks
+    // Param(var_id) the same as Infer(var_id), so the pending call's
+    // receiver_var resolves to the concrete type and the correct impl
+    // method is selected.
     let interner = type_intern.type_interner();
     match interner.get(resolved_receiver) {
         &type_intern.InternedTypeKind.Infer(var_id) => {
@@ -1531,6 +1543,19 @@ fn infer_method_call(
                 _ => 0,
             };
             checker.record_pending_method_call(method.span.start, var_id.index, method.symbol, common.make_string(""), return_var);
+            return return_ty;
+        }
+        &type_intern.InternedTypeKind.Param(param_var_id) => {
+            // Generic-impl-body case: defer resolution to the mono pass.
+            for i in 0usize..args.len() {
+                infer_expr(checker, &args[i]);
+            }
+            let return_ty = checker.fresh_infer();
+            let return_var = match type_intern.type_interner().get(return_ty) {
+                &type_intern.InternedTypeKind.Infer(ret_var) => ret_var.index,
+                _ => 0,
+            };
+            checker.record_pending_method_call(method.span.start, param_var_id.index, method.symbol, common.make_string(""), return_var);
             return return_ty;
         }
         _ => {}

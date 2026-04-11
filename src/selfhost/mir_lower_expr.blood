@@ -1234,10 +1234,17 @@ fn lower_method_call_expr(
                             common.make_string("check that the method is defined and the type implements it"),
                         );
                     }
-                    mir_types.Operand.Constant(mir_types.Constant.new(
-                        type_intern.CommonTypes.error(),
-                        mir_types.ConstantKind.FnDef(hir_def.DefId.new(0xFFFFFFFE)),
-                    ))
+                    // Param receivers in type-erased bodies: emit unreachable
+                    // terminator instead of a sentinel FnDef. The type-erased
+                    // body should never be called directly — monomorphized
+                    // copies (which have `checker.current_body_def_id` bound
+                    // to a concrete type) get proper method resolution via
+                    // the pending_method_calls side table. Emitting an
+                    // unreachable lets llc accept the IR and guarantees a
+                    // runtime abort if the type-erased body is ever reached.
+                    ctx.terminate_unreachable(span);
+                    ctx.set_current_block(ctx.new_block());
+                    return;
                 }
             }
         }
