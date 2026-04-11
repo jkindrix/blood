@@ -1,0 +1,31 @@
+// COMPILE_FAIL: linear transfer through inferred-type binding then leak
+// EXPECT: linear value not consumed
+// Test: `let y = x` where y's type is inferred should transfer linearity
+// from x to y. If x is linear and y is later dropped/forgotten, the linear
+// consumption obligation must move to y and fire E0221 on y.
+//
+// This is the spec-strict transfer semantics case. The baseline test
+// t06_err_linear_leak.blood already covers the case where the linear var
+// has an explicit type annotation. This covers the case where the type
+// is inferred — the inference should preserve the `linear` qualifier.
+
+struct FileHandle {
+    fd: i32,
+}
+
+fn open_file() -> FileHandle {
+    FileHandle { fd: 42 }
+}
+
+fn linear_transfer_leak() {
+    let h: linear FileHandle = open_file();
+    let g = h;  // transfer: g should inherit linearity from h
+    // Neither h nor g consumed — leak.
+    // Current behavior: checker counts h as used once (on RHS of let),
+    // so h passes. g has no explicit qualifier; whether linearity is
+    // inferred determines whether this case is caught.
+}
+
+fn main() -> i32 {
+    0
+}

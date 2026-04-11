@@ -1,0 +1,24 @@
+// Test: linear transfer through inferred type should succeed when g is consumed.
+// This is the positive twin of t06_err_linear_transfer_leak.blood — the same
+// pattern but with proper consumption of the transferred value.
+// EXPECT: 42
+
+struct FileHandle {
+    fd: i32,
+}
+
+fn open_file() -> FileHandle {
+    FileHandle { fd: 42 }
+}
+
+fn consume_handle(h: linear FileHandle) -> i32 {
+    h.fd
+}
+
+fn main() -> i32 {
+    let h: linear FileHandle = open_file();
+    let g = h;  // transfer: g inherits linearity
+    let n: i32 = consume_handle(g);  // g consumed → OK
+    println_int(n);
+    0
+}

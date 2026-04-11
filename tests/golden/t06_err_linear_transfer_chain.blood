@@ -1,0 +1,24 @@
+// COMPILE_FAIL: linear value used more than once through transfer chain
+// EXPECT: linear value used more than once
+// Test: `let y = x; let z = y; use x` — transferring linearity multiple
+// times and then accessing the original should still be rejected.
+// Each intermediate assignment transfers linearity along the chain, but
+// the original x is still considered "used" by the chain's initial binding,
+// so using x again must fail.
+
+struct FileHandle {
+    fd: i32,
+}
+
+fn consume(h: linear FileHandle) -> i32 {
+    h.fd
+}
+
+fn main() -> i32 {
+    let x: linear FileHandle = FileHandle { fd: 42 };
+    let y: linear FileHandle = x;   // transfer x → y
+    let z: linear FileHandle = y;   // transfer y → z
+    let n: i32 = consume(z);        // z consumed
+    let m: i32 = consume(x);        // ERROR: x was already moved
+    n + m
+}
