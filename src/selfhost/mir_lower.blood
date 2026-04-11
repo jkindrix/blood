@@ -27,8 +27,19 @@ mod type_intern;
 // ============================================================
 // Sub-phase timers accumulated across all lower_body calls.
 // Read via the pub getters below and printed by codegen_pass2.
-// Single-threaded access — no synchronization needed for current
-// codegen_pass2 path.
+//
+// @unsafe safety note: all `@unsafe { MIR_T_* }` blocks in this file access
+// these module-level `static mut` counters. lower_body() is called from
+// BOTH the sequential codegen_pass2 path AND the parallel codegen workers
+// (main.blood:3550 in `codegen_thread_worker`). Under parallel codegen,
+// racing ++ on these u64 counters may lose updates, producing under-counted
+// timing values. Safety invariants:
+//   1. u64 reads/writes are single-instruction on x86-64 — no torn values.
+//   2. Lost updates produce imprecise diagnostics, never wrong codegen.
+//   3. No pointers are dereferenced in these blocks; data races cannot
+//      cause memory unsafety.
+// If per-phase accuracy under parallelism becomes important, switch to
+// atomic increments or per-worker counters summed on thread_join.
 static mut MIR_T_SETUP_MS: u64 = 0;        // arg resolution + clone + ctx construction
 static mut MIR_T_EXPR_MS: u64 = 0;         // lower_expr_to_return + terminator
 static mut MIR_T_FINISH_MS: u64 = 0;       // take_errors + closure extract + finish
@@ -88,7 +99,22 @@ pub fn lower_body(
     // Resolve the return type through the substitution table (TyId-native)
     let resolved_return_id = unify.apply_substs_id(subst_table, return_ty);
 
-    // Borrow the substitution table by address (read-only during MIR lowering)
+    // Borrow the substitution table by address, stored as u64 to avoid
+    // tracking the reference lifetime through MirLowerCtx fields.
+    //
+    // @unsafe safety invariants (shared by the 4 identical casts in this file):
+    //   1. `subst_table` is a valid `&mut SubstTable` borrowed from the
+    //      type checker (owned by typeck_driver's TypeCheckResult).
+    //   2. The TypeCheckResult outlives all lower_body() calls in a single
+    //      compilation unit — it is destroyed only after codegen finishes
+    //      (see main.blood's run_build, which keeps typeck_result alive
+    //      through both the sequential and parallel codegen paths).
+    //   3. MirLowerCtx stores the address but never outlives lower_body(),
+    //      so the cast-back sites always see a still-valid SubstTable.
+    //   4. Reads through this address are read-only during MIR lowering.
+    //      Writes happen only in the pre-lowering setup on the owning thread.
+    //   5. Under parallel codegen, multiple workers share the same read-only
+    //      SubstTable; no data race because there are no concurrent writers.
     let subst_table_addr = @unsafe { subst_table as *const unify.SubstTable as usize } as u64;
 
     // Clone method resolutions for this lowering context

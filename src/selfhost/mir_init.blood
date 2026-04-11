@@ -23,6 +23,16 @@ mod type_intern;
 // Perf instrumentation: track fixed-point convergence behavior so we can
 // distinguish "slow because algorithm iterates many times" from "slow
 // because each iteration does too much work."
+//
+// @unsafe safety note: all `@unsafe { INIT_* }` blocks in this file access
+// these module-level `static mut` counters. Definite-init analysis runs
+// inside MIR lowering, which is itself called from both the sequential
+// and parallel codegen paths. Under parallel codegen, racing ++ on u64/u32
+// counters may lose updates; the resulting counts under-report iterations
+// but never produce wrong init-analysis results. Safety:
+//   1. u32/u64 reads/writes are single-instruction on x86-64.
+//   2. Lost updates affect diagnostics only, not correctness.
+//   3. No pointers dereferenced; races cannot cause memory unsafety.
 static mut INIT_ITER_TOTAL: u64 = 0;
 static mut INIT_ITER_MAX: u32 = 0;
 static mut INIT_CALL_COUNT: u64 = 0;

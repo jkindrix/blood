@@ -23,6 +23,16 @@ mod type_intern;
 // Per-Rvalue-kind timers for emit_rvalue. emit_rvalue dominates the Assign
 // arm (~13s of blocks_ms). Knowing which Rvalue kinds are hottest lets
 // future sessions target the worst offender directly.
+//
+// @unsafe safety note: all `@unsafe { RV_T_* / RV_C_* }` blocks in this file
+// access these module-level `static mut` counters. Safety invariants:
+//   1. Counters are u64 — atomic reads/writes on x86-64 (no torn values).
+//   2. Under parallel codegen (4 workers), racing increments may lose updates.
+//      The inaccuracy is acceptable: counters exist for --mem-profile output
+//      and are never used for correctness decisions. A lost ++ makes the
+//      timing report slightly under-count but never produces wrong code.
+//   3. No pointers are dereferenced, so data races cannot cause memory unsafety.
+// Do NOT use these counters for anything other than diagnostic reporting.
 static mut RV_T_USE_MS: u64 = 0;
 static mut RV_T_REF_MS: u64 = 0;
 static mut RV_T_BINOP_MS: u64 = 0;

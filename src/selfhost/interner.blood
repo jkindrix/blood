@@ -410,7 +410,20 @@ impl BuiltinMethods {
 // ============================================================
 
 /// Global interner instance.
-/// In a multi-threaded context, this would need synchronization.
+///
+/// @unsafe safety note: all three `@unsafe` blocks in this file touch this
+/// `static mut` singleton. The interner is accessed during parse, HIR lowering,
+/// and type checking — all single-threaded compiler phases — and is NEVER
+/// mutated during the parallel codegen phase. Codegen workers only READ
+/// symbols that were interned before their thread was spawned, and no new
+/// `intern()` calls happen while workers are running.
+///
+/// Safety invariants:
+///   1. Initialization is single-threaded (run before any worker spawn).
+///   2. Parallel codegen phase is read-only on the interner.
+///   3. Interning resumes single-threaded after thread_join.
+/// If cross-thread interning ever becomes necessary, this will need either
+/// a mutex or a concurrent hash table (see rt_vft's register/lookup split).
 static mut GLOBAL_INTERNER: Option<StringInterner> = Option.None;
 
 /// Initializes the global interner.

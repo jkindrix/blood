@@ -517,6 +517,14 @@ impl<'src> Parser<'src> {
     // ============================================================
 
     /// Get byte at position in source (returns 0 if out of bounds).
+    ///
+    /// @unsafe safety: hand-rolled byte indexing into `self.source: &str`.
+    /// Mirrors `Lexer.byte_at` — see that function for the full rationale.
+    /// Safety invariants:
+    ///   1. `pos >= self.source.len()` guard ensures in-bounds access.
+    ///   2. `self.source` is borrowed from the parse-region arena and is
+    ///      valid for the parser's lifetime.
+    ///   3. Exactly one dereference per call, no aliasing window.
     pub fn source_byte_at(self: &Self, pos: usize) -> u8 {
         if pos >= self.source.len() {
             0

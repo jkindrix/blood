@@ -35,6 +35,23 @@ mod type_intern;
 // MirLowerCtx.new constructor used by nested closure/handler contexts
 // in mir_lower_expr.blood does not touch them, since nested contexts
 // legitimately need per-closure re-keyed hashes.
+//
+// @unsafe safety note: the `@unsafe` blocks in `new_cached_top_level`
+// initialize and read these two global caches. Parallel codegen workers
+// each call `mir_lower.lower_body` which calls this constructor, but the
+// `method_resolutions`/`field_resolutions` inputs are identical across
+// workers (they come from the shared TypeCheckResult), so all workers
+// write the same data — the "first writer wins, others no-op" lazy-init
+// pattern tolerates the race harmlessly.
+//
+// Safety invariants:
+//   1. Racing lazy-inits write equal hash contents — no corruption is
+//      possible because the input data is the same in every call.
+//   2. After all workers finish and the cache is populated, subsequent
+//      reads are pure reads on a stable structure.
+//   3. The bitwise `*h` copy shares the underlying buffer — the cache
+//      must outlive every MirLowerCtx that references it, which it does
+//      because the cache is file-level static.
 static mut MIR_LOWER_CTX_CACHED_METHOD_HASH: Option<hashmap.HashMapU64U32> = Option.None;
 static mut MIR_LOWER_CTX_CACHED_FIELD_HASH: Option<hashmap.HashMapU64U32> = Option.None;
 

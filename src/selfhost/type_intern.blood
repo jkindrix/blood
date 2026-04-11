@@ -1891,17 +1891,37 @@ pub fn format_ty_id(id: TyId) -> String {
 // Global Type Interner (Singleton)
 // ============================================================
 //
-// SAFETY INVARIANT: The Blood compiler is single-threaded.
-// No concurrent access to the type interner occurs. This mutable
-// static is safe because:
-// 1. Blood compilation happens in a single thread
-// 2. No work-stealing, thread pools, or parallel phases exist
-// 3. init_type_interner() is called once at startup
-// 4. All subsequent type_interner() calls are sequential
+// SAFETY STATUS (updated 2026-04-11): the original comment claimed "the
+// Blood compiler is single-threaded" but this is NO LONGER TRUE — parallel
+// codegen (4 workers, added during session 4) calls unify.apply_substs_id
+// from worker threads, which transitively calls `type_interner().intern(...)`
+// via the MIR lowering path in codegen_thread_worker (main.blood:3550).
 //
-// If parallelism is added in the future (e.g., parallel codegen),
-// this must be wrapped in a synchronization primitive.
-
+// This is a KNOWN RISK, not a known bug:
+//   - Init is single-threaded (init_type_interner() runs before workers spawn).
+//   - During the pre-codegen phases (parse, HIR lowering, typeck), accesses
+//     are single-threaded and safe.
+//   - During parallel codegen, multiple workers may concurrently read and
+//     MUTATE the interner. This is a data race on the underlying HashMap.
+//
+// Empirically, 10K+ fuzz runs and 547 golden tests pass with parallel
+// codegen enabled — the hash table accesses happen to not corrupt in
+// practice. But this is tempting fate.
+//
+// Mitigations to consider (deferred pending BUG-4 investigation):
+//   A. Pre-intern all types needed by parallel workers before spawning,
+//      then treat the interner as read-only during parallel codegen.
+//   B. Wrap type_interner() in a mutex for the parallel phase.
+//   C. Per-worker scratch interners that merge back on thread_join.
+//   D. Make the interner lock-free (hash-trie or similar).
+//
+// See BUG-4 (GAP-3 parallel codegen heap corruption) in `.tmp/BUGS_OPEN.md`
+// — the "corrupted size vs. prev_size" glibc errors may be caused by this
+// race, not by aggregate escape analysis as previously hypothesized.
+//
+// @unsafe safety note: the two `@unsafe` blocks below access this singleton.
+// They are currently load-bearing on the empirical observation above rather
+// than on a formal argument.
 static mut GLOBAL_TYPE_INTERNER: Option<TypeInterner> = Option.None;
 
 /// Initializes the global type interner.

@@ -1012,6 +1012,13 @@ fn inject_stdlib_prelude(ctx: &mut hir_lower_ctx.LoweringCtx) {
 // Instrumentation: track sub-phase costs inside load_external_module so
 // the dominant cost (file I/O vs parse vs recursive registration) is
 // visible. Aggregated across all external module loads per build.
+//
+// @unsafe safety note: all `@unsafe { LEM_* }` blocks in this file access
+// these module-level `static mut` counters. load_external_module runs
+// sequentially during HIR lowering (single-threaded phase before codegen),
+// so counter accesses see no contention. The `@unsafe` annotation is
+// purely a Blood language requirement for touching `static mut`; no
+// data-race or memory-safety concerns apply.
 static mut LEM_T_READ_MS: u64 = 0;
 static mut LEM_T_PARSE_MS: u64 = 0;
 static mut LEM_T_REGISTER_MS: u64 = 0;

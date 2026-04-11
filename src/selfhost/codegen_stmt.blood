@@ -28,6 +28,13 @@ mod type_intern;
 // slowest sub-call: emit_place_data_ptr (LHS), get_local_type (clone),
 // or emit_rvalue (RHS). Counters accumulate across all
 // generate_function_with_ctx calls and are printed by codegen_pass2.
+//
+// @unsafe safety note: all `@unsafe { STMT_T_* }` blocks in this file access
+// these module-level `static mut` counters. Safety invariants:
+//   1. Counters are u64 — single-instruction reads/writes on x86-64.
+//   2. Under parallel codegen, racing ++ may lose updates. Imprecise but
+//      never produces wrong code — used only by --mem-profile diagnostics.
+//   3. No pointers dereferenced; races cannot cause memory unsafety.
 static mut STMT_T_TOTAL_MS: u64 = 0;             // Whole emit_statement body
 static mut STMT_T_ASSIGN_MS: u64 = 0;            // Assign arm only (sum of sub-times)
 static mut STMT_T_ASSIGN_PLACE_MS: u64 = 0;      // emit_place_data_ptr inside Assign

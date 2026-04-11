@@ -19,6 +19,12 @@ mod mir_term;
 /// When true, aggregate operands are marked as escaping.
 /// Disabled by default because it triggers a latent heap corruption bug
 /// in parallel codegen. Enabled when --no-parallel is set.
+///
+/// @unsafe safety note: set by main() during argument parsing (single-threaded
+/// phase before any worker spawns) and read from the escape analysis pass
+/// (which runs as part of codegen — parallel or sequential, but always
+/// reading a fixed value set once at startup). No concurrent writes, no
+/// torn reads possible for a bool. Memory safety is trivially preserved.
 static mut AGGREGATE_ESCAPE_ENABLED: bool = false;
 
 pub fn set_aggregate_escape_enabled(enabled: bool) {

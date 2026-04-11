@@ -51,7 +51,19 @@ impl<'src> Lexer<'src> {
         self.pos >= self.source.len()
     }
 
-    /// Get byte at position (returns 0 if out of bounds)
+    /// Get byte at position (returns 0 if out of bounds).
+    ///
+    /// @unsafe safety: hand-rolled byte indexing into `self.source: &str`.
+    /// Safety invariants:
+    ///   1. The `pos >= self.source.len()` guard above ensures `pos` is
+    ///      strictly less than the buffer length before any cast.
+    ///   2. `self.source` is a `&str` borrowed from the parse-region arena;
+    ///      it remains valid for the lifetime of the Lexer, which is tied
+    ///      to the caller's scope.
+    ///   3. The resulting byte pointer is dereferenced exactly once, then
+    ///      discarded — no aliasing window.
+    /// This is a hot path (called once per source byte) — the `@unsafe`
+    /// escape is a deliberate performance choice over bounds-checked indexing.
     fn byte_at(self: &Self, pos: usize) -> u8 {
         if pos >= self.source.len() {
             0

@@ -33,6 +33,13 @@ mod interner;
 // ============================================================
 // Sub-phase timers accumulated across all generate_function_with_ctx
 // calls. Read via pub getters below and printed by main.codegen_pass2.
+//
+// @unsafe safety note: all `@unsafe { CODEGEN_T_* }` blocks in this file
+// access these module-level `static mut` counters. Under parallel codegen
+// (4 workers), racing ++ may lose updates. Safety:
+//   1. u64 reads/writes are single-instruction on x86-64 — no torn values.
+//   2. Lost updates produce imprecise --mem-profile reports, never wrong code.
+//   3. No pointers dereferenced; races cannot cause memory unsafety.
 static mut CODEGEN_T_SETUP_MS: u64 = 0;       // clear, debug, begin, params, ret, register, header
 static mut CODEGEN_T_ESCAPE_MS: u64 = 0;      // mir_escape.analyze_escapes + persist scan + overrides
 static mut CODEGEN_T_ALLOCAS_MS: u64 = 0;     // emit_allocas_with_escapes + emit_arg_stores
