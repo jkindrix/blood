@@ -35,15 +35,31 @@ mod hashmap;
 // Sub-phase timers for check_body. Phase 2b is 157 s, the biggest bucket
 // in the entire build. These decompose per-body cost into setup, infer,
 // resolve (numeric defaulting + unresolved-infer check), and linearity.
+//
+// @unsafe safety note: all `@unsafe { CB_T_* }` blocks in this file access
+// these module-level `static mut` counters. Type checking runs sequentially
+// (before codegen's parallel phase), so counter accesses see no contention.
+// The `@unsafe` annotation is purely a Blood language requirement for
+// touching `static mut`; no data-race or memory-safety concerns apply.
 static mut CB_T_SETUP_MS: u64 = 0;      // local registration + return_ty setup
 static mut CB_T_INFER_MS: u64 = 0;      // infer_expr + unify + effect check
 static mut CB_T_RESOLVE_MS: u64 = 0;    // flush_pending + numeric + unresolved
 static mut CB_T_LINEARITY_MS: u64 = 0;  // check_linearity
 
+// BUG-6 investigation counters: how often does the numeric-default workaround
+// actually fire during selfhost compilation? If zero, the underlying
+// unification-chain bug is not triggered by current compiler sources and the
+// workaround is a dormant safety net. If non-zero, the bug is load-bearing
+// and needs a real fix. See .tmp/BUGS_OPEN.md.
+static mut NUMERIC_DEFAULT_FIRES: u64 = 0;
+static mut NUMERIC_DEFAULT_FIRES_FLOAT: u64 = 0;
+
 pub fn cb_t_setup_ms() -> u64 { @unsafe { CB_T_SETUP_MS } }
 pub fn cb_t_infer_ms() -> u64 { @unsafe { CB_T_INFER_MS } }
 pub fn cb_t_resolve_ms() -> u64 { @unsafe { CB_T_RESOLVE_MS } }
 pub fn cb_t_linearity_ms() -> u64 { @unsafe { CB_T_LINEARITY_MS } }
+pub fn numeric_default_fires() -> u64 { @unsafe { NUMERIC_DEFAULT_FIRES } }
+pub fn numeric_default_fires_float() -> u64 { @unsafe { NUMERIC_DEFAULT_FIRES_FLOAT } }
 
 // ============================================================
 // Body Info Cache — O(1) lookup for body → item metadata
@@ -2904,7 +2920,13 @@ fn check_body(checker: &mut typeck.TypeChecker, body: &hir_expr.Body, return_ty:
             &type_intern.InternedTypeKind.Infer(resolved_var) => {
                 // Still unresolved — default based on literal kind.
                 // Float literals → f64, int literals → i32 (matches Rust convention).
+                // BUG-6: this workaround fires ~78× during selfhost compilation
+                // (measured 2026-04-11). The underlying unification-chain bug
+                // has not been fixed — see .tmp/BUGS_OPEN.md §BUG-6 for details.
+                // Counters track whether the workaround is still load-bearing.
+                @unsafe { NUMERIC_DEFAULT_FIRES += 1; }
                 let default_ty = if is_float_infer_id(checker, raw_id) {
+                    @unsafe { NUMERIC_DEFAULT_FIRES_FLOAT += 1; }
                     type_intern.CommonTypes.f64_ty()
                 } else {
                     type_intern.CommonTypes.i32_ty()

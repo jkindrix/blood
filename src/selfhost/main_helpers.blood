@@ -28,6 +28,36 @@ pub fn print_error(msg: &str) {
     eprint_str(output.as_str());
 }
 
+/// Prints a label followed by an i32 value to stderr (no trailing newline).
+/// Consolidates the common `eprint_str(label); eprint_str(int_to_string(x as i32));`
+/// pattern used throughout the compiler for progress/diagnostic tracing.
+pub fn eprint_label_i32(label: &str, value: i32) {
+    eprint_str(label);
+    eprint_str(int_to_string(value));
+}
+
+/// Prints a label followed by a u32 value to stderr (no trailing newline).
+pub fn eprint_label_u32(label: &str, value: u32) {
+    eprint_str(label);
+    eprint_str(int_to_string(value as i32));
+}
+
+/// Prints a label followed by a usize value to stderr (no trailing newline).
+/// Note: values exceeding i32::MAX will be truncated in the string representation
+/// — acceptable for current call sites (worklist indices, function counts, elapsed ms).
+pub fn eprint_label_usize(label: &str, value: usize) {
+    eprint_str(label);
+    eprint_str(int_to_string(value as i32));
+}
+
+/// Prints a label followed by a u64 value to stderr (no trailing newline).
+/// Note: values exceeding i32::MAX are truncated; used only for elapsed-ms and
+/// similar diagnostic values that fit in i32 under normal operation.
+pub fn eprint_label_u64(label: &str, value: u64) {
+    eprint_str(label);
+    eprint_str(int_to_string(value as i32));
+}
+
 /// Prints a success message.
 pub fn print_success(msg: &str) {
     let mut output = String.new();

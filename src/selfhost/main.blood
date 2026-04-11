@@ -457,12 +457,42 @@ fn find_runtime_paths() -> Option<RuntimePaths> {
 // Build & Run Commands
 // ============================================================
 
+/// Resolves the `llc` binary to invoke for LLVM IR -> object compilation.
+/// Reads the `LLC` environment variable first (the build script and the user
+/// can override it), falling back to "llc-18" for backward compatibility.
+/// This is the single source of truth for the llc binary name across all
+/// command-building paths in main.blood.
+fn resolve_llc_tool() -> String {
+    let env_val: &str = env_get("LLC");
+    if env_val.len() > 0 {
+        return common.make_string(env_val);
+    }
+    common.make_string("llc-18")
+}
+
+/// Resolves the `clang` binary to invoke for object -> executable linking.
+/// Reads the `CLANG` environment variable first, falling back to "clang-18"
+/// for backward compatibility.
+fn resolve_clang_tool() -> String {
+    let env_val: &str = env_get("CLANG");
+    if env_val.len() > 0 {
+        return common.make_string(env_val);
+    }
+    common.make_string("clang-18")
+}
+
 /// Runs the build command.
 /// Uses streaming codegen to write IR directly to file, avoiding OOM.
-/// Then invokes llc-18 to produce an object file and clang-18 to link an executable.
+/// Then invokes the resolved llc and clang binaries (LLC/CLANG env vars,
+/// defaulting to llc-18/clang-18) to produce an executable.
 fn run_build(args: &Args) -> i32 {
     match &args.source_file {
         &Option.Some(ref path) => {
+            // Resolve LLVM toolchain binaries from LLC/CLANG env vars, defaulting
+            // to llc-18/clang-18. Callers can override via LLC=llc-19 etc.
+            let llc_tool = resolve_llc_tool();
+            let clang_tool = resolve_clang_tool();
+
             // Discover runtime libraries early (fail before expensive IR generation)
             let runtime = match find_runtime_paths() {
                 Option.Some(rt) => rt,
@@ -512,11 +542,13 @@ fn run_build(args: &Args) -> i32 {
                 let bin_path = base_path;
                 let llc_start = blood_clock_millis();
 
-                // Run llc-18 on each .ll in obj/ that is newer than its .o (parallel)
+                // Run llc on each .ll in obj/ that is newer than its .o (parallel)
                 let mut llc_cmd = String.new();
                 llc_cmd.push_str("pids=\"\"; for f in ");
                 llc_cmd.push_str(obj_dir_path.as_str());
-                llc_cmd.push_str("/*.ll; do o=\"${f%.ll}.o\"; if [ \"$f\" -nt \"$o\" ] 2>/dev/null || [ ! -f \"$o\" ]; then (llc-18 \"$f\" -O");
+                llc_cmd.push_str("/*.ll; do o=\"${f%.ll}.o\"; if [ \"$f\" -nt \"$o\" ] 2>/dev/null || [ ! -f \"$o\" ]; then (");
+                llc_cmd.push_str(llc_tool.as_str());
+                llc_cmd.push_str(" \"$f\" -O");
                 if args.opt_level == 0 {
                     llc_cmd.push('0');
                 } else if args.opt_level == 1 {
@@ -530,7 +562,7 @@ fn run_build(args: &Args) -> i32 {
                 let llc_result = system(llc_cmd.as_str());
                 let llc_elapsed = blood_clock_millis() - llc_start;
                 if llc_result != 0 {
-                    main_helpers.print_error("llc-18 failed on per-module .ll files");
+                    main_helpers.print_error("llc failed on per-module .ll files");
                     return 1;
                 }
 
@@ -543,7 +575,8 @@ fn run_build(args: &Args) -> i32 {
 
                 // Link all .o files
                 let mut clang_cmd = String.new();
-                clang_cmd.push_str("clang-18 ");
+                clang_cmd.push_str(clang_tool.as_str());
+                clang_cmd.push(' ');
                 clang_cmd.push_str(obj_dir_path.as_str());
                 clang_cmd.push_str("/*.o ");
                 clang_cmd.push_str(runtime.rust_runtime.as_str());
@@ -561,7 +594,7 @@ fn run_build(args: &Args) -> i32 {
                 let clang_result = system(clang_cmd.as_str());
                 let clang_elapsed = blood_clock_millis() - clang_start;
                 if clang_result != 0 {
-                    main_helpers.print_error("clang-18 linking failed");
+                    main_helpers.print_error("clang linking failed");
                     return 1;
                 }
                 main_helpers.print_success("Wrote executable to: ");
@@ -569,9 +602,9 @@ fn run_build(args: &Args) -> i32 {
                 print_newline();
 
                 if args.timings {
-                    print_str("  llc-18 (per-module)   ");
+                    print_str("  llc (per-module)      ");
                     print_timing_ms(llc_elapsed);
-                    print_str("  clang-18 (link)      ");
+                    print_str("  clang (link)          ");
                     print_timing_ms(clang_elapsed);
                 }
 
@@ -582,7 +615,8 @@ fn run_build(args: &Args) -> i32 {
             let mut obj_path = common.make_string(base_path.as_str());
             obj_path.push_str(".o");
             let mut llc_cmd = String.new();
-            llc_cmd.push_str("llc-18 ");
+            llc_cmd.push_str(llc_tool.as_str());
+            llc_cmd.push(' ');
             llc_cmd.push_str(ll_path.as_str());
             if args.opt_level == 0 {
                 llc_cmd.push_str(" -O0");
@@ -599,7 +633,7 @@ fn run_build(args: &Args) -> i32 {
             let llc_result = system(llc_cmd.as_str());
             let llc_elapsed = blood_clock_millis() - llc_start;
             if llc_result != 0 {
-                main_helpers.print_error("llc-18 failed to compile IR to object file");
+                main_helpers.print_error("llc failed to compile IR to object file");
                 return 1;
             }
             main_helpers.print_success("Wrote object file to: ");
@@ -613,10 +647,11 @@ fn run_build(args: &Args) -> i32 {
                 &EmitMode.LlvmIr => {}
             }
 
-            // Phase 3: Link with clang-18, blood runtime, and C runtime stub
+            // Phase 3: Link with clang, blood runtime, and C runtime stub
             let bin_path = base_path;
             let mut clang_cmd = String.new();
-            clang_cmd.push_str("clang-18 ");
+            clang_cmd.push_str(clang_tool.as_str());
+            clang_cmd.push(' ');
             clang_cmd.push_str(obj_path.as_str());
             clang_cmd.push_str(" ");
             clang_cmd.push_str(runtime.rust_runtime.as_str());
@@ -634,7 +669,7 @@ fn run_build(args: &Args) -> i32 {
             let clang_result = system(clang_cmd.as_str());
             let clang_elapsed = blood_clock_millis() - clang_start;
             if clang_result != 0 {
-                main_helpers.print_error("clang-18 linking failed");
+                main_helpers.print_error("clang linking failed");
                 return 1;
             }
             main_helpers.print_success("Wrote executable to: ");
@@ -642,9 +677,9 @@ fn run_build(args: &Args) -> i32 {
             print_newline();
 
             if args.timings {
-                print_str("  llc-18               ");
+                print_str("  llc                  ");
                 print_timing_ms(llc_elapsed);
-                print_str("  clang-18             ");
+                print_str("  clang                ");
                 print_timing_ms(clang_elapsed);
             }
 
@@ -659,10 +694,15 @@ fn run_build(args: &Args) -> i32 {
 }
 
 /// Runs the run command.
-/// Compiles source to LLVM IR, invokes llc-18 and clang-18, then executes the result.
+/// Compiles source to LLVM IR, invokes the resolved llc/clang binaries
+/// (LLC/CLANG env vars, defaulting to llc-18/clang-18), then executes.
 fn run_run(args: &Args) -> i32 {
     match &args.source_file {
         &Option.Some(ref path) => {
+            // Resolve LLVM toolchain binaries from LLC/CLANG env vars.
+            let llc_tool = resolve_llc_tool();
+            let clang_tool = resolve_clang_tool();
+
             // Discover runtime libraries early (fail before expensive IR generation)
             let runtime = match find_runtime_paths() {
                 Option.Some(rt) => rt,
@@ -701,12 +741,13 @@ fn run_run(args: &Args) -> i32 {
                 &EmitMode.Obj => {}
             }
 
-            // Phase 2: Compile IR to object file with llc-18
+            // Phase 2: Compile IR to object file with llc
             let base_path = main_helpers.strip_ll_ext(&ll_path);
             let mut obj_path = common.make_string(base_path.as_str());
             obj_path.push_str(".o");
             let mut llc_cmd = String.new();
-            llc_cmd.push_str("llc-18 ");
+            llc_cmd.push_str(llc_tool.as_str());
+            llc_cmd.push(' ');
             llc_cmd.push_str(ll_path.as_str());
             if args.opt_level == 0 {
                 llc_cmd.push_str(" -O0");
@@ -721,7 +762,7 @@ fn run_run(args: &Args) -> i32 {
             llc_cmd.push_str(obj_path.as_str());
             let llc_result = system(llc_cmd.as_str());
             if llc_result != 0 {
-                main_helpers.print_error("llc-18 failed to compile IR to object file");
+                main_helpers.print_error("llc failed to compile IR to object file");
                 return 1;
             }
 
@@ -737,10 +778,11 @@ fn run_run(args: &Args) -> i32 {
                 &EmitMode.LlvmIr => {}
             }
 
-            // Phase 3: Link with clang-18, blood runtime, and C runtime stub
+            // Phase 3: Link with clang, blood runtime, and C runtime stub
             let bin_path = base_path;
             let mut clang_cmd = String.new();
-            clang_cmd.push_str("clang-18 ");
+            clang_cmd.push_str(clang_tool.as_str());
+            clang_cmd.push(' ');
             clang_cmd.push_str(obj_path.as_str());
             clang_cmd.push_str(" ");
             clang_cmd.push_str(runtime.rust_runtime.as_str());
@@ -756,7 +798,7 @@ fn run_run(args: &Args) -> i32 {
             clang_cmd.push_str(bin_path.as_str());
             let clang_result = system(clang_cmd.as_str());
             if clang_result != 0 {
-                main_helpers.print_error("clang-18 linking failed");
+                main_helpers.print_error("clang linking failed");
                 return 1;
             }
 
@@ -1130,9 +1172,12 @@ fn run_single_test(
         }
     };
 
-    // llc-18: IR -> object
+    // llc: IR -> object (resolved via LLC env var, default llc-18)
+    let llc_tool = resolve_llc_tool();
+    let clang_tool = resolve_clang_tool();
     let mut llc_cmd = String.new();
-    llc_cmd.push_str("llc-18 ");
+    llc_cmd.push_str(llc_tool.as_str());
+    llc_cmd.push(' ');
     llc_cmd.push_str(ll_path.as_str());
     llc_cmd.push_str(" -O0 -filetype=obj -relocation-model=pic -o ");
     llc_cmd.push_str(obj_path.as_str());
@@ -1154,12 +1199,13 @@ fn run_single_test(
         if test.config.should_panic {
             return TestOutcome.Passed;
         }
-        return TestOutcome.Failed(common.make_string("llc-18 failed"));
+        return TestOutcome.Failed(common.make_string("llc failed"));
     }
 
-    // Phase 3: clang-18 link
+    // Phase 3: clang link (resolved via CLANG env var, default clang-18)
     let mut clang_cmd = String.new();
-    clang_cmd.push_str("clang-18 ");
+    clang_cmd.push_str(clang_tool.as_str());
+    clang_cmd.push(' ');
     clang_cmd.push_str(obj_path.as_str());
     clang_cmd.push_str(" ");
     clang_cmd.push_str(runtime.rust_runtime.as_str());
@@ -3490,10 +3536,8 @@ fn codegen_thread_worker(arg: u64) -> u64 {
     let mut i: usize = chunk_start;
     while i < chunk_end {
         if i % 100 == 0 {
-            eprint_str("\n  [worker fn ");
-            eprint_str(int_to_string(i as i32));
-            eprint_str("/");
-            eprint_str(int_to_string(chunk_end as i32));
+            main_helpers.eprint_label_usize("\n  [worker fn ", i);
+            main_helpers.eprint_label_usize("/", chunk_end);
             eprint_str("]");
         }
         let work = &wl.items[i];
@@ -3645,10 +3689,8 @@ fn codegen_pass2(
         let num_workers: usize = 4;
         let chunk_size: usize = total_items / num_workers;
 
-        eprint_str("\n  [parallel codegen: ");
-        eprint_str(int_to_string(num_workers as i32));
-        eprint_str(" workers, ");
-        eprint_str(int_to_string(total_items as i32));
+        main_helpers.eprint_label_usize("\n  [parallel codegen: ", num_workers);
+        main_helpers.eprint_label_usize(" workers, ", total_items);
         eprint_str(" fns]");
 
         let t_parallel_start = blood_clock_millis();
@@ -3756,8 +3798,7 @@ fn codegen_pass2(
         }
 
         let t_parallel_end = blood_clock_millis();
-        eprint_str("\n  [parallel codegen done: ");
-        eprint_str(int_to_string((t_parallel_end - t_parallel_start) as i32));
+        main_helpers.eprint_label_u64("\n  [parallel codegen done: ", t_parallel_end - t_parallel_start);
         eprint_str("ms]");
 
         // Merge: write all worker outputs to the main output file (in order)
@@ -3819,12 +3860,13 @@ fn codegen_pass2(
         }
 
         // Print perf summary (parallel replaces the per-phase breakdown)
-        eprint_str("\n  [codegen pass2] functions=");
-        eprint_str(int_to_string(total_items as i32));
-        eprint_str(" parallel=");
-        eprint_str(int_to_string(num_workers as i32));
-        eprint_str(" wall_ms=");
-        eprint_str(int_to_string((t_parallel_end - t_parallel_start) as i32));
+        main_helpers.eprint_label_usize("\n  [codegen pass2] functions=", total_items);
+        main_helpers.eprint_label_usize(" parallel=", num_workers);
+        main_helpers.eprint_label_u64(" wall_ms=", t_parallel_end - t_parallel_start);
+        eprint_str("\n");
+        // BUG-6 investigation: did the numeric-default workaround fire?
+        main_helpers.eprint_label_u64("  [numeric_default] fires=", typeck_driver.numeric_default_fires());
+        main_helpers.eprint_label_u64(" float_fires=", typeck_driver.numeric_default_fires_float());
         eprint_str("\n");
 
         return CodegenPass2Result {
@@ -3881,10 +3923,8 @@ fn codegen_pass2(
         }
 
         if i % 500 == 0 {
-            eprint_str("\n  [fn ");
-            eprint_str(int_to_string(i as i32));
-            eprint_str("/");
-            eprint_str(int_to_string(total_items as i32));
+            main_helpers.eprint_label_usize("\n  [fn ", i);
+            main_helpers.eprint_label_usize("/", total_items);
             eprint_str("]");
         }
 
@@ -4365,114 +4405,79 @@ fn codegen_pass2(
 
     // Perf diagnostics (Rev 4): print sub-phase totals so regressions in
     // any individual phase are immediately visible in build output.
-    eprint_str("\n  [codegen pass2] functions=");
-    eprint_str(int_to_string(total_items as i32));
-    eprint_str(" cache_ms=");
-    eprint_str(int_to_string(t_cache_check_total as i32));
-    eprint_str(" mir_lower_ms=");
-    eprint_str(int_to_string(t_mir_lower_total as i32));
-    eprint_str(" bc01_ms=");
-    eprint_str(int_to_string(t_bc01_scan_total as i32));
-    eprint_str(" init_lin_ms=");
-    eprint_str(int_to_string(t_init_lin_total as i32));
-    eprint_str(" codegen_ms=");
-    eprint_str(int_to_string(t_codegen_total as i32));
+    main_helpers.eprint_label_usize("\n  [codegen pass2] functions=", total_items);
+    main_helpers.eprint_label_u64(" cache_ms=", t_cache_check_total);
+    main_helpers.eprint_label_u64(" mir_lower_ms=", t_mir_lower_total);
+    main_helpers.eprint_label_u64(" bc01_ms=", t_bc01_scan_total);
+    main_helpers.eprint_label_u64(" init_lin_ms=", t_init_lin_total);
+    main_helpers.eprint_label_u64(" codegen_ms=", t_codegen_total);
     eprint_str("\n");
 
     // Sub-phase breakdown inside mir_lower itself (populated by
     // mir_lower.lower_body and lower_body_with_const_info). These timers
     // decompose the mir_lower_ms bucket above.
-    eprint_str("  [mir_lower] setup_ms=");
-    eprint_str(int_to_string(mir_lower.mir_lower_t_setup_ms() as i32));
-    eprint_str(" expr_ms=");
-    eprint_str(int_to_string(mir_lower.mir_lower_t_expr_ms() as i32));
-    eprint_str(" finish_ms=");
-    eprint_str(int_to_string(mir_lower.mir_lower_t_finish_ms() as i32));
-    eprint_str(" resolve_locals_ms=");
-    eprint_str(int_to_string(mir_lower.mir_lower_t_resolve_ms() as i32));
+    main_helpers.eprint_label_u64("  [mir_lower] setup_ms=", mir_lower.mir_lower_t_setup_ms());
+    main_helpers.eprint_label_u64(" expr_ms=", mir_lower.mir_lower_t_expr_ms());
+    main_helpers.eprint_label_u64(" finish_ms=", mir_lower.mir_lower_t_finish_ms());
+    main_helpers.eprint_label_u64(" resolve_locals_ms=", mir_lower.mir_lower_t_resolve_ms());
     eprint_str("\n");
 
     // Sub-phase breakdown inside codegen.generate_function_with_ctx itself.
     // These timers decompose the codegen_ms bucket above.
-    eprint_str("  [codegen fn] setup_ms=");
-    eprint_str(int_to_string(codegen.codegen_t_setup_ms() as i32));
-    eprint_str(" escape_ms=");
-    eprint_str(int_to_string(codegen.codegen_t_escape_ms() as i32));
-    eprint_str(" allocas_ms=");
-    eprint_str(int_to_string(codegen.codegen_t_allocas_ms() as i32));
-    eprint_str(" blocks_ms=");
-    eprint_str(int_to_string(codegen.codegen_t_blocks_ms() as i32));
-    eprint_str(" footer_ms=");
-    eprint_str(int_to_string(codegen.codegen_t_footer_ms() as i32));
+    main_helpers.eprint_label_u64("  [codegen fn] setup_ms=", codegen.codegen_t_setup_ms());
+    main_helpers.eprint_label_u64(" escape_ms=", codegen.codegen_t_escape_ms());
+    main_helpers.eprint_label_u64(" allocas_ms=", codegen.codegen_t_allocas_ms());
+    main_helpers.eprint_label_u64(" blocks_ms=", codegen.codegen_t_blocks_ms());
+    main_helpers.eprint_label_u64(" footer_ms=", codegen.codegen_t_footer_ms());
     eprint_str("\n");
 
     // Convergence stats for analyze_init's fixed-point dataflow.
     // total/calls = average iterations per fn; max = worst case;
     // hit_cap > 0 means some fn did not converge in 100 iterations.
-    eprint_str("  [mir_init] calls=");
-    eprint_str(int_to_string(mir_init.init_call_count() as i32));
-    eprint_str(" iter_total=");
-    eprint_str(int_to_string(mir_init.init_iter_total() as i32));
-    eprint_str(" iter_max=");
-    eprint_str(int_to_string(mir_init.init_iter_max() as i32));
-    eprint_str(" hit_cap=");
-    eprint_str(int_to_string(mir_init.init_hit_cap() as i32));
-    eprint_str(" setup_ms=");
-    eprint_str(int_to_string(mir_init.init_t_setup_ms() as i32));
-    eprint_str(" fixpoint_ms=");
-    eprint_str(int_to_string(mir_init.init_t_fixpoint_ms() as i32));
-    eprint_str(" error_pass_ms=");
-    eprint_str(int_to_string(mir_init.init_t_error_pass_ms() as i32));
+    main_helpers.eprint_label_u64("  [mir_init] calls=", mir_init.init_call_count());
+    main_helpers.eprint_label_u64(" iter_total=", mir_init.init_iter_total());
+    main_helpers.eprint_label_u32(" iter_max=", mir_init.init_iter_max());
+    main_helpers.eprint_label_u32(" hit_cap=", mir_init.init_hit_cap());
+    main_helpers.eprint_label_u64(" setup_ms=", mir_init.init_t_setup_ms());
+    main_helpers.eprint_label_u64(" fixpoint_ms=", mir_init.init_t_fixpoint_ms());
+    main_helpers.eprint_label_u64(" error_pass_ms=", mir_init.init_t_error_pass_ms());
     eprint_str("\n");
 
     // Per-arm breakdown of emit_statement (codegen blocks_ms hot path).
     // 100% of selfhost statements are Assign; the place/type/rvalue split
     // identifies which sub-call dominates.
-    eprint_str("  [stmt] total_ms=");
-    eprint_str(int_to_string(codegen_stmt.stmt_t_total_ms() as i32));
-    eprint_str(" assign_ms=");
-    eprint_str(int_to_string(codegen_stmt.stmt_t_assign_ms() as i32));
-    eprint_str(" calls=");
-    eprint_str(int_to_string(codegen_stmt.stmt_t_count_total() as i32));
-    eprint_str(" assign_calls=");
-    eprint_str(int_to_string(codegen_stmt.stmt_t_count_assign() as i32));
+    main_helpers.eprint_label_u64("  [stmt] total_ms=", codegen_stmt.stmt_t_total_ms());
+    main_helpers.eprint_label_u64(" assign_ms=", codegen_stmt.stmt_t_assign_ms());
+    main_helpers.eprint_label_u64(" calls=", codegen_stmt.stmt_t_count_total());
+    main_helpers.eprint_label_u64(" assign_calls=", codegen_stmt.stmt_t_count_assign());
     eprint_str("\n");
-    eprint_str("  [stmt assign] place_ms=");
-    eprint_str(int_to_string(codegen_stmt.stmt_t_assign_place_ms() as i32));
-    eprint_str(" type_ms=");
-    eprint_str(int_to_string(codegen_stmt.stmt_t_assign_type_ms() as i32));
-    eprint_str(" rvalue_ms=");
-    eprint_str(int_to_string(codegen_stmt.stmt_t_assign_rvalue_ms() as i32));
+    main_helpers.eprint_label_u64("  [stmt assign] place_ms=", codegen_stmt.stmt_t_assign_place_ms());
+    main_helpers.eprint_label_u64(" type_ms=", codegen_stmt.stmt_t_assign_type_ms());
+    main_helpers.eprint_label_u64(" rvalue_ms=", codegen_stmt.stmt_t_assign_rvalue_ms());
     eprint_str("\n");
 
     // Per-Rvalue-kind breakdown. The Assign rvalue_ms bucket is the single
     // biggest line in codegen pass2; this decomposes it by kind so future
     // sessions can target the slowest arm directly.
-    eprint_str("  [rvalue] use=");
-    eprint_str(int_to_string(codegen_expr.rv_t_use_ms() as i32));
-    eprint_str("ms/");
-    eprint_str(int_to_string(codegen_expr.rv_c_use() as i32));
-    eprint_str(" ref=");
-    eprint_str(int_to_string(codegen_expr.rv_t_ref_ms() as i32));
-    eprint_str("ms/");
-    eprint_str(int_to_string(codegen_expr.rv_c_ref() as i32));
-    eprint_str(" binop=");
-    eprint_str(int_to_string(codegen_expr.rv_t_binop_ms() as i32));
-    eprint_str("ms/");
-    eprint_str(int_to_string(codegen_expr.rv_c_binop() as i32));
-    eprint_str(" agg=");
-    eprint_str(int_to_string(codegen_expr.rv_t_agg_ms() as i32));
-    eprint_str("ms/");
-    eprint_str(int_to_string(codegen_expr.rv_c_agg() as i32));
-    eprint_str(" cast=");
-    eprint_str(int_to_string(codegen_expr.rv_t_cast_ms() as i32));
-    eprint_str("ms/");
-    eprint_str(int_to_string(codegen_expr.rv_c_cast() as i32));
+    main_helpers.eprint_label_u64("  [rvalue] use=", codegen_expr.rv_t_use_ms());
+    main_helpers.eprint_label_u64("ms/", codegen_expr.rv_c_use());
+    main_helpers.eprint_label_u64(" ref=", codegen_expr.rv_t_ref_ms());
+    main_helpers.eprint_label_u64("ms/", codegen_expr.rv_c_ref());
+    main_helpers.eprint_label_u64(" binop=", codegen_expr.rv_t_binop_ms());
+    main_helpers.eprint_label_u64("ms/", codegen_expr.rv_c_binop());
+    main_helpers.eprint_label_u64(" agg=", codegen_expr.rv_t_agg_ms());
+    main_helpers.eprint_label_u64("ms/", codegen_expr.rv_c_agg());
+    main_helpers.eprint_label_u64(" cast=", codegen_expr.rv_t_cast_ms());
+    main_helpers.eprint_label_u64("ms/", codegen_expr.rv_c_cast());
+    eprint_str("\n");
+
+    // BUG-6 investigation: did the numeric-default workaround actually fire?
+    main_helpers.eprint_label_u64("  [numeric_default] fires=", typeck_driver.numeric_default_fires());
+    main_helpers.eprint_label_u64(" float_fires=", typeck_driver.numeric_default_fires_float());
     eprint_str("\n");
 
     if skipped_count > 0 {
-        eprint_str("\n  [skipped ");
-        eprint_str(int_to_string(skipped_count as i32));
+        main_helpers.eprint_label_usize("\n  [skipped ", skipped_count);
         eprint_str(" cached fns]");
     }
 
@@ -5302,46 +5307,20 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     // Must happen before region destroys — ctx.fn_signatures are in codegen_region.
     if args.split_modules {
         let split_build_dir = resolve_build_dir(args);
-        // Only split changed modules when incremental is active
-        if incremental_active {
-            split_monolithic_to_modules_incremental(
-                output_path, &worklist, &lower_result.module_names,
-                &ctx, split_build_dir.as_str(), &skip_modules,
-            );
-        } else {
-            split_monolithic_to_modules(output_path, &worklist, &lower_result.module_names, &ctx, split_build_dir.as_str());
-        }
-
-        // Save fn_sigs cache (all signatures — fresh + cached)
-        let sigs_text = ctx.serialize_fn_signatures();
-        file_write_string(sigs_path.as_str(), sigs_text.as_str());
-
-        // Save per-module hashes
-        if module_count > 1 {
-            for mi in 0usize..module_count {
-                let mod_path = &lower_result.module_names[mi];
-                let stem = if mi == 0 {
-                    common.make_string("main")
-                } else {
-                    main_helpers.file_stem(mod_path)
-                };
-                let hash = if mi < skip_modules.len() && skip_modules[mi] {
-                    // Unchanged — keep existing hash (it's already correct)
-                    build_cache.read_cached_hash(hash_dir.as_str(), stem.as_str())
-                } else {
-                    // Changed — write new hash
-                    // Recompute since module_hashes is out of scope
-                    if mi == 0 {
-                        build_cache.hash_module_source(path, base_dir.as_str(), exe_path)
-                    } else {
-                        build_cache.hash_module_source(mod_path.as_str(), source.parent_dir(mod_path.as_str()).as_str(), exe_path)
-                    }
-                };
-                if hash != 0 {
-                    build_cache.write_cached_hash(hash_dir.as_str(), stem.as_str(), hash);
-                }
-            }
-        }
+        split_and_save_module_artifacts(
+            output_path,
+            &worklist,
+            &lower_result.module_names,
+            &ctx,
+            split_build_dir.as_str(),
+            incremental_active,
+            &skip_modules,
+            sigs_path.as_str(),
+            hash_dir.as_str(),
+            path,
+            base_dir.as_str(),
+            exe_path,
+        );
     }
 
     if args.mem_profile {
@@ -6364,6 +6343,73 @@ fn compute_skip_modules(
         }
     }
     skip_modules
+}
+
+/// Splits the monolithic IR into per-module `.ll` files under `build_dir/obj/`,
+/// saves the `fn_signatures` cache, and writes per-module content hashes to
+/// `hash_dir` for the next incremental run.
+///
+/// This is the tail of the split-modules path in `compile_file_streaming`.
+/// It must run before the codegen region is destroyed because `ctx.fn_signatures`
+/// is allocated in that region (see the comment at the call site).
+fn split_and_save_module_artifacts(
+    output_path: &str,
+    worklist: &CodegenWorkList,
+    module_names: &Vec<String>,
+    ctx: &codegen_ctx.CodegenCtx,
+    build_dir: &str,
+    incremental_active: bool,
+    skip_modules: &Vec<bool>,
+    sigs_path: &str,
+    hash_dir: &str,
+    path: &str,
+    base_dir: &str,
+    exe_path: &str,
+) {
+    // Split: honors incremental skip flags if active, otherwise full split.
+    if incremental_active {
+        split_monolithic_to_modules_incremental(
+            output_path, worklist, module_names, ctx, build_dir, skip_modules,
+        );
+    } else {
+        split_monolithic_to_modules(output_path, worklist, module_names, ctx, build_dir);
+    }
+
+    // Save fn_sigs cache (all signatures — fresh + cached).
+    let sigs_text = ctx.serialize_fn_signatures();
+    file_write_string(sigs_path, sigs_text.as_str());
+
+    // Save per-module hashes (only meaningful when there is more than one module).
+    let module_count = module_names.len();
+    if module_count > 1 {
+        for mi in 0usize..module_count {
+            let mod_path = &module_names[mi];
+            let stem = if mi == 0 {
+                common.make_string("main")
+            } else {
+                main_helpers.file_stem(mod_path)
+            };
+            let hash = if mi < skip_modules.len() && skip_modules[mi] {
+                // Unchanged — keep existing hash (it's already correct).
+                build_cache.read_cached_hash(hash_dir, stem.as_str())
+            } else {
+                // Changed — recompute the hash. `module_hashes` from the caller
+                // is already out of scope, so we regenerate here.
+                if mi == 0 {
+                    build_cache.hash_module_source(path, base_dir, exe_path)
+                } else {
+                    build_cache.hash_module_source(
+                        mod_path.as_str(),
+                        source.parent_dir(mod_path.as_str()).as_str(),
+                        exe_path,
+                    )
+                }
+            };
+            if hash != 0 {
+                build_cache.write_cached_hash(hash_dir, stem.as_str(), hash);
+            }
+        }
+    }
 }
 
 /// Registers all def_names in the codegen context: function bodies (1a), all items (1b),
