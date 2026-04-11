@@ -914,6 +914,84 @@ do_test_dispatch() {
     [ "$mismatch" -eq 0 ] && return 0 || return 1
 }
 
+do_test_pillar2() {
+    # Verifies Pillar 2 (Identity / Content-Addressing) end-to-end through the
+    # proving-ground P5 test. This is the canonical demo that cross-module
+    # hash-based linking works: mathlib.blood defines factorial/fibonacci/gcd,
+    # those definitions get stored in the codebase by content hash, and
+    # p5_identity.blood imports them by hash prefix (`use hash("a13d")` etc.).
+    #
+    # The golden test framework doesn't support the two-step setup that this
+    # flow requires, so we provide it as a separate `test pillar2` target.
+    local compiler="${1:-$BUILD_DIR/first_gen}"
+    [ -f "$compiler" ] || die "$compiler not found"
+    local mathlib="$REPO_ROOT/tests/proving/mathlib.blood"
+    local p5="$REPO_ROOT/tests/proving/p5_identity.blood"
+    [ -f "$mathlib" ] || die "mathlib not found at $mathlib"
+    [ -f "$p5" ] || die "p5_identity not found at $p5"
+
+    step "Pillar 2 demo: cross-module hash-based linking"
+
+    # Step 1: Store mathlib definitions in the codebase by content hash.
+    # The build command fails at llc because mathlib has no main() — that's
+    # expected and harmless: the store is a side effect of emit_content_hashes
+    # which runs before codegen finishes. We capture the exit code but don't
+    # treat it as fatal; we verify success by checking the codebase names
+    # index instead.
+    local codebase_dir="${HOME}/.blood/codebases/default"
+    local names_idx="$codebase_dir/names.idx"
+    # Run the store step (stderr suppressed; llc error is expected).
+    "$compiler" build --store-codebase "$mathlib" >/dev/null 2>&1 || true
+
+    if [ ! -f "$names_idx" ]; then
+        fail "codebase names index not produced at $names_idx"
+        return 1
+    fi
+
+    # Verify the three expected functions are in the codebase.
+    local missing=0
+    for fn in factorial fibonacci gcd; do
+        if ! grep -q "^$fn " "$names_idx"; then
+            fail "codebase missing: $fn"
+            missing=$((missing + 1))
+        fi
+    done
+    if [ "$missing" -ne 0 ]; then
+        return 1
+    fi
+    ok "codebase populated: factorial, fibonacci, gcd"
+
+    # Step 2: Run p5_identity.blood, which imports those functions by
+    # content-hash prefix (`use hash("a13d")` etc.). Capture stdout and
+    # compare against expected lines.
+    local expected=$(cat <<'EOF'
+=== Part 1: factorial by hash ===
+factorial(5)=120
+factorial(10)=3628800
+=== Part 2: fibonacci by hash ===
+fibonacci(10)=55
+=== Part 3: gcd by hash ===
+gcd(48,18)=6
+gcd(100,75)=25
+=== All parts passed ===
+EOF
+)
+    local actual
+    actual=$(BLOOD_RUST_RUNTIME="$BUILD_DIR/libblood_runtime.a" \
+        "$compiler" run "$p5" 2>/dev/null || true)
+
+    if [ "$actual" = "$expected" ]; then
+        ok "p5_identity ran through cross-module hash linking"
+        printf "\n  [1;32m✓[0m Pillar 2 end-to-end demo PASSED\n"
+        return 0
+    else
+        fail "p5_identity output mismatch"
+        printf "  expected:\n%s\n" "$expected" | sed 's/^/    /'
+        printf "  actual:\n%s\n" "$actual" | sed 's/^/    /'
+        return 1
+    fi
+}
+
 do_test_blood() {
     local compiler="${1:-$BLOOD_RUST}"
     [ -f "$compiler" ] || die "$compiler not found"
@@ -1279,6 +1357,8 @@ Build:
 
 Test:
   test golden [compiler]    Run golden suite (default: first_gen)
+  test golden-blood [compiler]    Run golden suite linked against Blood runtime
+  test pillar2 [compiler]         Run Pillar 2 (content-addressing) end-to-end demo via proving/p5_identity
   test dispatch [bin1] [bin2]     Compare dispatch behavior (default: bootstrap vs first_gen)
   test blood [compiler]           Run tests/blood-test/ (default: bootstrap)
 
@@ -1395,8 +1475,11 @@ case "${1:-status}" in
             golden-blood)
                 do_test_golden_blood "$(resolve_compiler "${3:-first_gen}")"
                 ;;
+            pillar2)
+                do_test_pillar2 "$(resolve_compiler "${3:-first_gen}")"
+                ;;
             *)
-                die "Unknown test suite: $2. Expected: golden, dispatch, blood, golden-blood"
+                die "Unknown test suite: $2. Expected: golden, dispatch, blood, golden-blood, pillar2"
                 ;;
         esac
         ;;

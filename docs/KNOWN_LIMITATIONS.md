@@ -147,15 +147,65 @@ The following declaration kinds are explicitly rejected inside function bodies (
 
 Compile-time dispatch works (specificity ranking, constraint-based, retroactive conformance). Runtime fingerprint-based dispatch (the "dynamic dispatch" story from `docs/spec/DISPATCH.md`) is not implemented. `.tmp/GAPS.md` describes this as "deferred indefinitely."
 
-### Content-addressing — plumbing without payoff
+### Content-addressing — partial delivery, one end-to-end demo
 
-BLAKE3 hashing, codebase storage, `use hash("prefix")` imports, and VFT registration all work at the mechanism level. VFT registrations are emitted at program startup (`blood_vft_register` called from `__blood_vft_init` global constructor for each trait impl method) — but `blood_vft_lookup` is never called from generated code. All dispatch goes through direct calls, vtable GEP, or closure pointers. The registrations go into a table that nothing reads at runtime in normal operation.
+BLAKE3 hashing, codebase storage, and `use hash("prefix")` imports work **end-to-end**: the proving-ground test at `tests/proving/p5_identity.blood` imports `factorial`, `fibonacci`, and `gcd` from `tests/proving/mathlib.blood` by content hash and runs them successfully. This flow is now available as a one-line verification via `./build_selfhost.sh test pillar2`, which:
 
-Not wired: VFT dispatch during method calls, cross-compilation-unit hash-based linking, hot-swapping via `blood_vft_swap`, distributed codebase registry.
+1. Compiles `mathlib.blood` with `--store-codebase`, populating `~/.blood/codebases/default/` by content hash.
+2. Runs `p5_identity.blood` (which has `use hash("a13d")`, `use hash("40f0")`, `use hash("2ceb")`), verifying that cross-module hash-based linking resolves the imports and that the imported functions execute correctly.
+3. Compares stdout against the expected fixture.
+
+Hot-swap via `blood_vft_swap` is also functional (golden test `t05_vft_hot_swap.blood` exercises register→lookup→swap→verify).
+
+**What's NOT wired**:
+
+- **VFT lookup during method dispatch**: `blood_vft_lookup` is registered as a builtin (`hir_lower_builtin.blood:454`) but codegen never emits it. All method dispatch resolves at compile time to direct `FnDef(def_id)` calls, vtable GEPs, or closure pointers. VFT registrations go into a table that nothing reads at runtime in normal operation. This is documented as "deferred indefinitely" in `DISPATCH.md §10.10` because content-hash keys aren't known at the dispatch site (the caller doesn't know the hash — that's what the dispatcher is for), so VFT-as-dispatch is architecturally the wrong shape. VFT-as-hot-swap is the right shape and is already working.
+- **Distributed codebase registry**: the codebase is a local flat-file at `~/.blood/codebases/default/`. There is no network layer, no remote fetch, no mirror registry. Single-machine only.
+- **Codebase garbage collection / deduplication across projects**: each `--store-codebase` adds to the default codebase; there's no eviction, no reference counting, no per-project isolation.
+
+The `--store-codebase` flag currently has a rough edge: it runs as a side effect of content-hash emission during codegen pass 2, which happens before llc runs. For a library-only input (no `main` function), the compilation's downstream llc step fails with `use of undefined value '@blood_main'` — but by that point the codebase has already been populated, so the side effect has fired. The `test pillar2` target above works around this by not treating the non-zero exit as fatal and verifying population via the codebase names index. A cleaner fix would be to detect library mode (no main) and skip the main trampoline emission in codegen, or to refactor `--store-codebase` into a separate store-only subcommand that skips codegen entirely.
 
 ### WCET / real-time / certification path
 
 Nothing is started. `docs/spec/WCET_REALTIME.md` is aspirational. Certification annotations (`requires`, `ensures`, `invariant`, `decreases`), SMT-backed verification, and proof-carrying code are all future work.
+
+## Rust bootstrap compiler (legacy fallback)
+
+The original Blood compiler lives at `src/bootstrap/bloodc/`, written in Rust
+(~97K lines of actual compiler logic, excluding parser snapshot test data).
+It is **not the primary development target.** The selfhost Blood compiler
+at `src/selfhost/` is the canonical implementation and is what receives all
+new features, bug fixes, and soundness work.
+
+The Rust bootstrap is maintained as a **functional fallback only**: it
+still builds, and `cargo test -p bloodc` runs `93/93` unify tests +
+`27/27` codegen-regression tests. If the selfhost compiler ever breaks so
+thoroughly that it can't rebuild itself from its own seed, the Rust
+bootstrap can be used to get back to a known-good state.
+
+**Known bugs in the bootstrap compiler that are fixed in the selfhost:**
+
+| ID | Bug | Selfhost status | Bootstrap status |
+|---|---|---|---|
+| `BC-01` | Dangling references (no borrow checker) | FIXED — `E0503` + runtime gen validation | OPEN |
+| `BC-02` | Uninitialized variables | FIXED — definite-init analysis enforced | OPEN |
+| `BC-03` | Out-of-bounds indexing | FIXED — bounds checks for `Vec`/arrays/slices | OPEN |
+| `BC-04` | Generational references | DONE — fat refs + gen capture/validation | Codegen disabled |
+| `BC-05` | Region stale references | FIXED — `E0502` + runtime gen checks | OPEN |
+
+Additional bootstrap-only issues are tracked in `.tmp/BUGS_OPEN.md` (they
+are not enumerated here because fixing them would not be useful — the
+bootstrap exists as an escape hatch, not as a product). The
+selfhost-fixed items above are listed because they are illustrative of
+what would be lost if a user tried to use the bootstrap for real work.
+
+**Policy**: if the bootstrap breaks in a way that blocks using it as a
+recovery path (e.g., it no longer compiles, or it can't compile a
+minimal hello-world), that is the trigger to fix it. Anything less
+serious is documented and left alone. The bootstrap's role is minimal
+by design — every session adds confidence to the selfhost, and the
+bootstrap's historical bug count is frozen at the point where selfhost
+took over.
 
 ## Build-system limitations
 
