@@ -1,0 +1,58 @@
+// Test: closure parameter numeric inference with float literals.
+// Regression canary for BUG-6 (b415772 workaround). The i32 version of this
+// test is t04_closure_numeric_infer.blood. This variant guards against the
+// numeric-inference workaround ever defaulting unresolved float literals
+// to i32 by exercising the same closure patterns with f64 types and float
+// literals.
+//
+// If the workaround grows too aggressive, one of these assertions will fail
+// or the file will fail to compile.
+// EXPECT: 0
+
+fn apply_f64(f: fn(f64) -> bool, x: f64) -> bool {
+    f(x)
+}
+
+fn apply_f64_ret(f: fn(f64) -> f64, x: f64) -> f64 {
+    f(x)
+}
+
+fn main() -> i32 {
+    // Closure param type inferred from call-site constraint (fn(f64) -> bool).
+    // The literal 2.5 must resolve to f64, not default to i32.
+    let gt_25: fn(f64) -> bool = |x| x > 2.5;
+    if !gt_25(4.0) {
+        return 1;
+    }
+    if gt_25(1.0) {
+        return 2;
+    }
+
+    // Through higher-order function — float literal inside closure body.
+    if !apply_f64(|x| x > 2.5, 4.0) {
+        return 3;
+    }
+    if apply_f64(|x| x > 2.5, 1.0) {
+        return 4;
+    }
+
+    // Arithmetic in closure body: the literal 2.0 must resolve to f64.
+    let dbl: fn(f64) -> f64 = |x| x * 2.0;
+    let r1: f64 = dbl(3.5);
+    // 3.5 * 2.0 = 7.0; if 2.0 was defaulted to i32 the result would be wrong
+    // or compilation would fail.
+    if r1 < 6.99 || r1 > 7.01 {
+        return 5;
+    }
+
+    // Through higher-order function with arithmetic and a fractional literal.
+    let r2: f64 = apply_f64_ret(|x| x + 0.25, 1.75);
+    // 1.75 + 0.25 = 2.0; if 0.25 was defaulted to i32 it would become 0,
+    // giving 1.75 which fails the range check.
+    if r2 < 1.99 || r2 > 2.01 {
+        return 6;
+    }
+
+    println_int(0);
+    0
+}

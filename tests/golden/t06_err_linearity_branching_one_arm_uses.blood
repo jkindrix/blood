@@ -1,0 +1,20 @@
+// COMPILE_FAIL: linear value not used on all paths
+// EXPECT: linear
+// Linearity checker baseline: control-flow branching.
+//
+// Documents the current checker's behavior on a linear value where one
+// arm of a conditional uses it and another doesn't. The correct behavior
+// per the spec is to reject this — the "exactly once" guarantee must
+// hold on ALL paths, and the `else` branch leaves x unused.
+//
+// Currently the checker DOES catch this via MIR-level linearity checking
+// (commit history 2026-03-25 "Safety enforcement enabled by default").
+fn main() -> i32 {
+    let flag: bool = true;
+    let x: linear i32 = 42;
+    if flag {
+        let _consumed: i32 = x;  // x used on this path
+    }
+    // On the else path, x was never used — violates "exactly once"
+    0
+}

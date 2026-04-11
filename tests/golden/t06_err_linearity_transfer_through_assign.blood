@@ -1,0 +1,14 @@
+// COMPILE_FAIL: linear value reused after transfer
+// EXPECT: linear value used more than once
+// Linearity checker baseline: transfer through `let y = x` then use of x.
+//
+// Documents that the current checker catches the simple transfer-and-reuse
+// pattern (let y = x; use y; use x). The fail mode is E0222 "used more
+// than once" because the syntactic counter sees x referenced twice.
+fn main() -> i32 {
+    let x: linear i32 = 42;
+    let y: linear i32 = x;  // transfer x -> y
+    let a: i32 = y;
+    let b: i32 = x;  // ERROR: x was already moved to y
+    a + b
+}
