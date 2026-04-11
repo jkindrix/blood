@@ -54,6 +54,14 @@ static mut CB_T_LINEARITY_MS: u64 = 0;  // check_linearity
 static mut NUMERIC_DEFAULT_FIRES: u64 = 0;
 static mut NUMERIC_DEFAULT_FIRES_FLOAT: u64 = 0;
 
+// Opt-in BUG-6 trace: when true, prints a line per numeric-default fire with
+// the current body's def_id. Used during session 7 investigation to identify
+// the ~20 culprit bodies out of ~2600 total. Session 7 measurements:
+// 78 fires across 20 def_ids, heaviest at def=3219 (18 fires), def=1077 (8),
+// def=1270/1080 (7 each), def=2856 (4), def=3212/1288/1278 (3 each).
+// Set to true when doing follow-up BUG-6 root-cause investigation.
+fn bug6_trace_enabled() -> bool { false }
+
 pub fn cb_t_setup_ms() -> u64 { @unsafe { CB_T_SETUP_MS } }
 pub fn cb_t_infer_ms() -> u64 { @unsafe { CB_T_INFER_MS } }
 pub fn cb_t_resolve_ms() -> u64 { @unsafe { CB_T_RESOLVE_MS } }
@@ -2903,6 +2911,17 @@ fn check_body(checker: &mut typeck.TypeChecker, body: &hir_expr.Body, return_ty:
                 } else {
                     type_intern.CommonTypes.i32_ty()
                 };
+                // BUG-6 instrumentation (session 7): attribute each fire to the
+                // body being checked. Enables per-body analysis of which code
+                // patterns trigger the unification chain propagation bug.
+                // Output format: `[bug6] def=<def_id> leaf_var=<raw_id> resolved_var=<resolved_var.index>`
+                // This prints to stderr once per fire; expect ~78 lines on a
+                // full self-compile. Silence by setting BUG6_TRACE=0 env var.
+                if bug6_trace_enabled() {
+                    common.eprint_wrap_u32("[bug6] def=", checker.current_body_def_id, " leaf_var=");
+                    common.eprint_wrap_u32("", raw_id, " resolved_var=");
+                    common.eprint_wrap_u32("", resolved_var.index, "\n");
+                }
                 checker.subst_table.add_ty_subst_id(resolved_var, default_ty);
             }
             _ => {}
