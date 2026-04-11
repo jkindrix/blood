@@ -3839,6 +3839,14 @@ fn codegen_pass2(
         // codegen_term.blood). Without signatures, the fixup is skipped and
         // fat refs {ptr,i32} are passed where by-value structs are expected.
         // This also warms the global MIR caches (CACHED_METHOD/FIELD_HASH).
+        //
+        // SOUND-04 pre-intern side effect: because this pass calls
+        // mir_lower.lower_body() sequentially, any type that `lower_body`
+        // would intern via `unify.apply_substs_id` gets interned here on
+        // the main thread. When the parallel workers later call the same
+        // `lower_body()` on the same items, the types already exist in the
+        // interner and workers only read (no writes). See the split
+        // measurement below.
         {
             let mir_region_sigs = region_create(4194304, 8589934592);
             for si in 0usize..total_items {
@@ -3877,6 +3885,12 @@ fn codegen_pass2(
             }
             // Don't destroy — MIR cache hash maps allocated inside this region
         }
+
+        // SOUND-04 split measurement: snapshot after the sequential pre-pass.
+        // Any interner writes between here and `interner_types_after` are
+        // attributable to the parallel workers (a race on the global interner).
+        // Goal: drive `parallel_writes` to 0.
+        let interner_types_after_prepass: usize = type_intern.type_interner().type_count();
 
         // Safety: pack shared read-only data as raw addresses for thread workers.
         // These pointers remain valid until thread_join — the parent stack frame
@@ -3939,13 +3953,60 @@ fn codegen_pass2(
         main_helpers.eprint_label_u64("\n  [parallel codegen done: ", t_parallel_end - t_parallel_start);
         eprint_str("ms]");
 
-        // SOUND-04 observation: report interner delta as regression indicator.
-        // A value > 0 means workers wrote fresh entries to the interner
-        // concurrently — the race is live. Session 6 measured +17673 on
-        // a full self-compile. If this number grows dramatically or swings
-        // wildly between builds, investigate a mutex + pre-reservation fix.
+        // SOUND-04 split observation: report pre-pass writes vs parallel writes.
+        //
+        // - prepass_writes: types interned during the sequential MIR pre-pass
+        //   above. These are single-threaded and always safe.
+        // - parallel_writes: types interned during parallel codegen workers.
+        //   These are the UNSAFE writes (race on GLOBAL_TYPE_INTERNER). The
+        //   fix target is: drive parallel_writes to 0.
+        //
+        // Session 6 measured a combined total of +17673 but did not split
+        // the measurement. Session 8 split the measurement and found that
+        // ~99.99% of session 6's "parallel writes" were actually sequential
+        // pre-pass writes. The true racy write count is O(1) per build.
+        //
+        // When parallel_writes > 0, dump each racy type so we can trace back
+        // to its origin and pre-intern it (or fix the root cause).
         let interner_types_after: usize = type_intern.type_interner().type_count();
-        main_helpers.eprint_label_usize("\n  [sound-04] parallel interner writes: +", interner_types_after - interner_types_before);
+        let prepass_writes: usize = interner_types_after_prepass - interner_types_before;
+        let parallel_writes: usize = interner_types_after - interner_types_after_prepass;
+        main_helpers.eprint_label_usize("\n  [sound-04] prepass (sequential) writes: +", prepass_writes);
+        main_helpers.eprint_label_usize("\n  [sound-04] parallel (racy) writes:      +", parallel_writes);
+        if parallel_writes > 0 {
+            eprint_str("\n  [sound-04] racy type kinds (TyId index : formatted):");
+            let mut racy_idx: usize = interner_types_after_prepass;
+            while racy_idx < interner_types_after {
+                let racy_id = type_intern.TyId.new(racy_idx as u32);
+                let formatted = type_intern.format_ty_id(racy_id);
+                main_helpers.eprint_label_usize("\n    ty_id #", racy_idx);
+                eprint_str(" = ");
+                eprint_str(formatted.as_str());
+                racy_idx += 1;
+            }
+            eprint_str("\n");
+        }
+
+        // SOUND-04 regression cap: the current residual race is 1 fn-pointer
+        // type (fn(u64) -> u64) per build, originating from the `_ as u64`
+        // cast on `codegen_thread_worker` in this very function. The sequential
+        // pre-pass above already interns ~17670 types that workers would
+        // otherwise race to intern; the 1 residual is a codegen-phase fn-ptr
+        // type which MIR lowering does not materialise. Empirically bounded.
+        //
+        // If this number ever exceeds the cap, something has regressed — a
+        // new code path is interning types during parallel codegen, and the
+        // race window has widened. Fail loud so the next session investigates.
+        //
+        // Cap is set generously (50) to allow small drift from incremental
+        // additions; the current value is 1.
+        if parallel_writes > 50 {
+            eprint_str("\n[ERROR] SOUND-04 regression: parallel interner writes exceed the cap (50).\n");
+            eprint_str("         The type interner race window has widened. Investigate which new\n");
+            eprint_str("         code path is interning types during parallel codegen and extend\n");
+            eprint_str("         the sequential pre-pass to cover it. See BUGS_OPEN.md SOUND-04.\n");
+            panic("SOUND-04 regression: parallel_writes > 50");
+        }
 
         // Merge: write all worker outputs to the main output file (in order)
         for w in 0usize..num_workers {
