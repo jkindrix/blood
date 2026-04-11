@@ -1822,6 +1822,132 @@ struct HandlerInfo {
     finallys: Vec<HandlerFinallyInfo>,
 }
 
+/// Generic function / monomorphization metadata for codegen pass 2. Bundled
+/// into a single struct to reduce the parameter count of compile_file_streaming
+/// and keep the caller site readable. Populated by collect_generic_metadata.
+struct GenericMetadata {
+    const_generic_fn_set: Vec<u32>,
+    const_generic_param_counts: Vec<u32>,
+    const_generic_body_ids: Vec<u32>,
+    turbofish_const_args: Vec<mir_lower_ctx.TurbofishConstArg>,
+    has_const_generics: bool,
+    type_generic_fn_set: Vec<u32>,
+}
+
+/// Collects const-generic and type-generic function metadata from the HIR
+/// lowering result. Runs two pre-analysis passes (const-generic fns and
+/// type-generic fns) and converts turbofish const arg entries from HIR to
+/// MIR format. The returned struct is consumed by codegen pass 2.
+///
+/// Extracted from compile_file_streaming in session 6 as part of the
+/// CompilationContext decomposition. Purely functional — reads lower_result
+/// and returns a fresh struct. Zero side effects.
+fn collect_generic_metadata(lower_result: &hir_lower_ctx.LowerResult) -> GenericMetadata {
+    let mut const_generic_fn_set: Vec<u32> = Vec.new();
+    let mut const_generic_param_counts: Vec<u32> = Vec.new();
+    let mut const_generic_body_ids: Vec<u32> = Vec.new();
+    driver.collect_const_generic_fns(
+        &lower_result.items,
+        &mut const_generic_fn_set,
+        &mut const_generic_param_counts,
+        &mut const_generic_body_ids,
+    );
+
+    let mut turbofish_const_args: Vec<mir_lower_ctx.TurbofishConstArg> = Vec.new();
+    for ti in 0usize..lower_result.turbofish_const_entries.len() {
+        let entry = &lower_result.turbofish_const_entries[ti];
+        let mut vals: Vec<u64> = Vec.new();
+        for vi in 0usize..entry.values.len() {
+            vals.push(entry.values[vi]);
+        }
+        turbofish_const_args.push(mir_lower_ctx.TurbofishConstArg.new(
+            entry.span_start,
+            vals,
+        ));
+    }
+
+    let has_const_generics: bool = const_generic_fn_set.len() > 0;
+
+    let mut type_generic_fn_set: Vec<u32> = Vec.new();
+    driver.collect_type_generic_fns(
+        &lower_result.items,
+        &mut type_generic_fn_set,
+    );
+
+    GenericMetadata {
+        const_generic_fn_set,
+        const_generic_param_counts,
+        const_generic_body_ids,
+        turbofish_const_args,
+        has_const_generics,
+        type_generic_fn_set,
+    }
+}
+
+/// Incremental-build hook: if the cached fn-signatures file exists and some
+/// modules are unchanged (skip_modules has at least one `true`), load the
+/// signatures into the codegen context and return true. Otherwise, clear
+/// skip_modules (force full codegen for all modules) and return false.
+///
+/// Extracted from compile_file_streaming in session 6.
+fn try_load_incremental_sigs(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    skip_modules: &mut Vec<bool>,
+    sigs_path: &str,
+    module_count: usize,
+) -> bool {
+    if skip_modules.len() == 0 {
+        return false;
+    }
+    let mut changed_count: usize = 0;
+    for si in 0usize..skip_modules.len() {
+        if !skip_modules[si] {
+            changed_count += 1;
+        }
+    }
+    if changed_count < skip_modules.len() && file_exists(sigs_path) {
+        let sigs_data: &str = file_read_to_string(sigs_path);
+        if sigs_data.len() > 0 {
+            ctx.load_fn_signatures(sigs_data);
+            eprint_str("\n  [incremental: ");
+            eprint_str(int_to_string(changed_count as i32));
+            eprint_str("/");
+            eprint_str(int_to_string(module_count as i32));
+            eprint_str(" modules changed]");
+            return true;
+        }
+    }
+    // Cache miss or nothing to skip — force full codegen for all modules.
+    for si in 0usize..skip_modules.len() {
+        skip_modules[si] = false;
+    }
+    false
+}
+
+/// Generates vtables for dyn Trait dispatch and writes them + VFT metadata
+/// comments to the codegen ctx output buffer. Called after the ADT registry
+/// and def_name passes are complete.
+///
+/// Extracted from compile_file_streaming in session 6.
+fn generate_and_emit_vtables(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    lower_result: &hir_lower_ctx.LowerResult,
+) {
+    codegen.generate_vtables(ctx, &lower_result.interner, &lower_result.items);
+    // Emit vtable global constants to the output buffer.
+    for vti in 0usize..ctx.vtable_defs.len() {
+        ctx.buffer_write(ctx.vtable_defs[vti].as_str());
+    }
+    // VFT metadata comments (P2-9).
+    for vni in 0usize..ctx.vtable_name_entries.len() {
+        let vne = &ctx.vtable_name_entries[vni];
+        let mut vft_comment = common.make_string("; VFT ");
+        vft_comment.push_str(vne.vtable_name.as_str());
+        vft_comment.push('\n');
+        ctx.buffer_write(vft_comment.as_str());
+    }
+}
+
 /// Return clause classification result.
 /// kind values:
 ///   0 = identity: return(x) { x }
@@ -3693,6 +3819,21 @@ fn codegen_pass2(
         main_helpers.eprint_label_usize(" workers, ", total_items);
         eprint_str(" fns]");
 
+        // SOUND-04 observation: snapshot interner state before spawning
+        // workers. Parallel codegen workers call unify.apply_substs_id
+        // which transitively mutates the global type interner. Session 6
+        // measured +17,673 type writes per self-compile (see BUGS_OPEN.md
+        // SOUND-04). The writes are UNSYNCHRONIZED — HashMap.insert and
+        // Vec.push from multiple worker threads race on internal state.
+        // Empirically the race has not caused test failures in 10k+ fuzz
+        // runs, but it is theoretically unsound. The mitigation (mutex +
+        // Vec pre-reservation via vec_reserve) is blocked by the two-stage
+        // bootstrap requirement: adding runtime mutex primitives or new
+        // builtins requires landing infrastructure first, rolling the seed,
+        // then adding call sites. Session 6 confirmed this requirement
+        // but did not complete the two-stage roll.
+        let interner_types_before: usize = type_intern.type_interner().type_count();
+
         let t_parallel_start = blood_clock_millis();
 
         // Pre-register fn_signatures for ALL worklist functions via sequential
@@ -3800,6 +3941,14 @@ fn codegen_pass2(
         let t_parallel_end = blood_clock_millis();
         main_helpers.eprint_label_u64("\n  [parallel codegen done: ", t_parallel_end - t_parallel_start);
         eprint_str("ms]");
+
+        // SOUND-04 observation: report interner delta as regression indicator.
+        // A value > 0 means workers wrote fresh entries to the interner
+        // concurrently — the race is live. Session 6 measured +17673 on
+        // a full self-compile. If this number grows dramatically or swings
+        // wildly between builds, investigate a mutex + pre-reservation fix.
+        let interner_types_after: usize = type_intern.type_interner().type_count();
+        main_helpers.eprint_label_usize("\n  [sound-04] parallel interner writes: +", interner_types_after - interner_types_before);
 
         // Merge: write all worker outputs to the main output file (in order)
         for w in 0usize..num_workers {
@@ -5157,62 +5306,16 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
         ctx.register_handler_op_body(handler_info.ops[hop_i].body_def_id, handler_info.ops[hop_i].state_field_count);
     }
 
-    // Pre-analysis: identify const-generic functions for monomorphization.
-    let mut const_generic_fn_set: Vec<u32> = Vec.new();
-    let mut const_generic_param_counts: Vec<u32> = Vec.new();
-    let mut const_generic_body_ids: Vec<u32> = Vec.new();
-    driver.collect_const_generic_fns(
-        &lower_result.items,
-        &mut const_generic_fn_set,
-        &mut const_generic_param_counts,
-        &mut const_generic_body_ids,
-    );
+    let generics = collect_generic_metadata(&lower_result);
 
-    // Convert turbofish entries from HIR to MIR format
-    let mut turbofish_const_args: Vec<mir_lower_ctx.TurbofishConstArg> = Vec.new();
-    {
-        for ti in 0usize..lower_result.turbofish_const_entries.len() {
-            let entry = &lower_result.turbofish_const_entries[ti];
-            let mut vals: Vec<u64> = Vec.new();
-            for vi in 0usize..entry.values.len() {
-                vals.push(entry.values[vi]);
-            }
-            turbofish_const_args.push(mir_lower_ctx.TurbofishConstArg.new(
-                entry.span_start,
-                vals,
-            ));
-        }
-    }
-
-    let has_const_generics: bool = const_generic_fn_set.len() > 0;
-
-    // Pre-analysis: identify type-generic functions for monomorphization.
-    let mut type_generic_fn_set: Vec<u32> = Vec.new();
-    driver.collect_type_generic_fns(
-        &lower_result.items,
-        &mut type_generic_fn_set,
-    );
-
-    // Generate vtables for dyn Trait dispatch (after ADT registry and def_names)
-    codegen.generate_vtables(&mut ctx, &lower_result.interner, &lower_result.items);
-    // Emit vtable global constants to output file
-    for vti in 0usize..ctx.vtable_defs.len() {
-        ctx.buffer_write(ctx.vtable_defs[vti].as_str());
-    }
-    // VFT metadata comments (P2-9)
-    for vni in 0usize..ctx.vtable_name_entries.len() {
-        let vne = &ctx.vtable_name_entries[vni];
-        let mut vft_comment = common.make_string("; VFT ");
-        vft_comment.push_str(vne.vtable_name.as_str());
-        vft_comment.push('\n');
-        ctx.buffer_write(vft_comment.as_str());
-    }
+    // Generate and emit vtables for dyn Trait dispatch + VFT metadata.
+    generate_and_emit_vtables(&mut ctx, &lower_result);
 
     // Build work list: scan bodies once to identify which functions to codegen.
     // Filters out static bodies, duplicates, and const-generic bodies.
     // Type-generic bodies are NOT skipped — they're compiled with type erasure as fallback.
     // Monomorphized copies are generated in pass 2b for calls needing concrete types.
-    let worklist = build_codegen_worklist(&lower_result, &static_def_ids, &const_generic_body_ids);
+    let worklist = build_codegen_worklist(&lower_result, &static_def_ids, &generics.const_generic_body_ids);
     eprint_str("[worklist:");
     eprint_str(int_to_string(worklist.items.len() as i32));
     eprint_str("]");
@@ -5229,46 +5332,19 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     let codegen_region = region_create(33554432, 17179869184);
     region_activate(codegen_region);
 
-    // === Incremental: load cached fn_sigs for codegen ===
-    // skip_modules was computed before typeck (used by both typeck and codegen).
-    let mut incremental_active = false;
+    // Incremental: load cached fn_sigs for codegen. Returns (sigs_path, active).
     let mut sigs_path = common.make_string(inc_build_dir.as_str());
     sigs_path.push_str("/obj/.fn_sigs");
-
-    if skip_modules.len() > 0 {
-        let mut changed_count: usize = 0;
-        for si in 0usize..skip_modules.len() {
-            if !skip_modules[si] {
-                changed_count += 1;
-            }
-        }
-        if changed_count < skip_modules.len() && file_exists(sigs_path.as_str()) {
-            let sigs_data: &str = file_read_to_string(sigs_path.as_str());
-            if sigs_data.len() > 0 {
-                ctx.load_fn_signatures(sigs_data);
-                incremental_active = true;
-                eprint_str("\n  [incremental: ");
-                eprint_str(int_to_string(changed_count as i32));
-                eprint_str("/");
-                eprint_str(int_to_string(module_count as i32));
-                eprint_str(" modules changed]");
-            }
-        }
-        if !incremental_active {
-            for si in 0usize..skip_modules.len() {
-                skip_modules[si] = false;
-            }
-        }
-    }
+    let incremental_active = try_load_incremental_sigs(&mut ctx, &mut skip_modules, sigs_path.as_str(), module_count);
 
     // Pass 2: MIR lowering + codegen, writing each function's IR directly to file.
     ctx.flush_write_buffer();
     eprint_str("[pass2_start]");
     let pass2_result = codegen_pass2(
         &mut ctx, &worklist, &lower_result, &typeck_result, output_path, args,
-        has_const_generics, &const_generic_fn_set, &const_generic_param_counts,
-        &turbofish_const_args, 0,
-        &type_generic_fn_set, &typeck_result.type_generic_calls,
+        generics.has_const_generics, &generics.const_generic_fn_set, &generics.const_generic_param_counts,
+        &generics.turbofish_const_args, 0,
+        &generics.type_generic_fn_set, &typeck_result.type_generic_calls,
         &skip_modules,
     );
     eprint_str("[pass2_done]");
