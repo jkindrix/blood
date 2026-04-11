@@ -240,18 +240,6 @@ pub fn emit_statement(
             let count_val = codegen_expr.emit_operand(ctx, count);
             emit_memcpy(ctx, &dst_val, &src_val, &count_val);
         }
-        &mir_stmt.StatementKind.IncrementGeneration(_) => {
-            // Dead — gen validation happens inline in codegen_place.blood deref path.
-            // These MIR statements are never emitted by mir_lower. If reached, MIR
-            // lowering was changed to emit them without adding codegen support.
-            panic("IncrementGeneration MIR statement reached codegen — not implemented");
-        }
-        &mir_stmt.StatementKind.CaptureSnapshot(_) => {
-            panic("CaptureSnapshot MIR statement reached codegen — not implemented");
-        }
-        &mir_stmt.StatementKind.ValidateGeneration { ptr: _, expected_gen: _ } => {
-            panic("ValidateGeneration MIR statement reached codegen — not implemented");
-        }
         &mir_stmt.StatementKind.EnterUnchecked(ref checks) => {
             ctx.enter_unchecked(checks);
         }
