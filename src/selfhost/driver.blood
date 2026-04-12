@@ -1040,19 +1040,25 @@ pub fn type_error_message(kind: &typeck.TypeErrorKind) -> String {
 // ============================================================
 
 /// Returns the error code string for a parser ErrorCode.
+///
+/// Spec alignment (session 9, 2026-04-12 — Step E Phase 1):
+/// Remapped from impl-specific E0001-E0010 to spec-defined codes.
+/// Parser errors → E01xx, lexer-routed errors → E000x.
+/// Phase 2 (future): split UnexpectedCharacter into E0004 (escape)
+/// and E0008 (empty char literal) with new enum variants.
 pub fn parser_error_code(code: &parser_base.ErrorCode) -> &str {
     match code {
-        &parser_base.ErrorCode.UnexpectedToken => "E0001",
-        &parser_base.ErrorCode.UnexpectedEof => "E0002",
-        &parser_base.ErrorCode.UnexpectedCharacter => "E0003",
-        &parser_base.ErrorCode.InvalidInteger => "E0004",
-        &parser_base.ErrorCode.InvalidFloat => "E0005",
-        &parser_base.ErrorCode.ExpectedExpression => "E0006",
-        &parser_base.ErrorCode.ExpectedType => "E0007",
-        &parser_base.ErrorCode.ExpectedPattern => "E0008",
-        &parser_base.ErrorCode.ExpectedIdentifier => "E0009",
-        &parser_base.ErrorCode.ExpectedDeclaration => "E0010",
-        &parser_base.ErrorCode.DeprecatedSyntax => "W0001",
+        &parser_base.ErrorCode.UnexpectedToken => "E0100",       // spec: Unexpected Token (parser)
+        &parser_base.ErrorCode.UnexpectedEof => "E0101",         // spec: Unexpected End of File (parser)
+        &parser_base.ErrorCode.UnexpectedCharacter => "E0001",   // spec: Unexpected Character (lexer)
+        &parser_base.ErrorCode.InvalidInteger => "E0005",        // spec: Invalid Integer Literal (lexer)
+        &parser_base.ErrorCode.InvalidFloat => "E0006",          // spec: Invalid Float Literal (lexer)
+        &parser_base.ErrorCode.ExpectedExpression => "E0110",    // spec: Expected Expression (parser)
+        &parser_base.ErrorCode.ExpectedType => "E0109",          // spec: Expected Type (parser)
+        &parser_base.ErrorCode.ExpectedPattern => "E0111",       // spec: Expected Pattern (parser)
+        &parser_base.ErrorCode.ExpectedIdentifier => "E0108",    // spec: Expected Identifier (parser)
+        &parser_base.ErrorCode.ExpectedDeclaration => "E0103",   // spec: Invalid Item in Context (parser)
+        &parser_base.ErrorCode.DeprecatedSyntax => "W0601",      // deprecated syntax warning
     }
 }
 
