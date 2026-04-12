@@ -528,6 +528,42 @@ fn interned_type_kind_eq(a: &InternedTypeKind, b: &InternedTypeKind) -> bool {
     }
 }
 
+/// Structural equality for effect rows. Two rows are equal iff:
+/// (1) they have the same number of effects in the same order
+/// (2) corresponding effect refs have matching def_id.index AND args.index
+/// (3) row_var matches: both None, or both Some(v) with v.index equal
+///
+/// Used by `intern_effect_row` to dedupe (session 9: SOUND-04 close-out).
+fn effect_rows_equal(a: &InternedEffectRow, b: &InternedEffectRow) -> bool {
+    if a.effects.len() != b.effects.len() {
+        return false;
+    }
+    for i in 0usize..a.effects.len() {
+        let ea = &a.effects[i];
+        let eb = &b.effects[i];
+        if ea.def_id.index != eb.def_id.index {
+            return false;
+        }
+        if ea.args.index != eb.args.index {
+            return false;
+        }
+    }
+    match &a.row_var {
+        &Option.None => {
+            match &b.row_var {
+                &Option.None => true,
+                &Option.Some(_) => false,
+            }
+        }
+        &Option.Some(ref va) => {
+            match &b.row_var {
+                &Option.None => false,
+                &Option.Some(ref vb) => va.index == vb.index,
+            }
+        }
+    }
+}
+
 // ============================================================
 // Type Interner
 // ============================================================
@@ -840,8 +876,29 @@ impl TypeInterner {
 
     // ======== Effect Row Operations ========
 
-    /// Interns an effect row (no dedup — sequential allocation).
+    /// Interns an effect row with structural deduplication.
+    ///
+    /// History: this function was originally "no dedup — sequential allocation"
+    /// for performance. SOUND-04 strict close-out (session 9) discovered that
+    /// the lack of dedup was the underlying cause of the residual parallel
+    /// type-interner race: workers were calling `mk_fn` with effect rows that
+    /// were *structurally* equivalent (e.g. two empty rows) but had different
+    /// `EffectRowId`s, so the resulting `Fn` types were also distinct in the
+    /// type interner — multiple `fn(u64) -> u64` entries with empty effect
+    /// rows differing only by their effect-row index. Dedupe collapses these
+    /// to a single canonical `EffectRowId` per structural row, which in turn
+    /// means `mk_fn(p, r, e)` is a true cache hit when the same row is passed.
+    /// Linear scan is used because effect rows are small in count (~few thousand
+    /// per build) and size (~0-5 effects each); the scan cost is dwarfed by
+    /// downstream type-checking work.
     pub fn intern_effect_row(self: &mut TypeInterner, row: InternedEffectRow) -> EffectRowId {
+        // Linear scan for structurally equal existing effect row.
+        for i in 0usize..self.effect_rows.len() {
+            if effect_rows_equal(&self.effect_rows[i], &row) {
+                return EffectRowId.new(i as u32);
+            }
+        }
+        // Not found — push new row.
         let saved_region = region_deactivate_get();
         let index = self.effect_rows.len() as u32;
         self.effect_rows.push(row);

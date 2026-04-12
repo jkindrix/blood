@@ -3886,6 +3886,34 @@ fn codegen_pass2(
             // Don't destroy — MIR cache hash maps allocated inside this region
         }
 
+        // SOUND-04 strict close-out: pre-intern fn(u64) -> u64.
+        //
+        // The `codegen_thread_worker as u64` cast at the parallel spawn site
+        // below requires the type `fn(u64) -> u64` to exist in the interner.
+        // MIR lowering does not materialise this type because the cast is a
+        // codegen-only construct, so the worker that first encounters it
+        // races to add it (1 racy write per build, see [sound-04] counter).
+        //
+        // Pre-interning here moves the write into the sequential pre-pass
+        // and drives parallel_writes from 1 to 0. After session 8's split
+        // measurement reframed SOUND-04 from MEDIUM to LOW, this is the
+        // strict close-out: the residual race window is now empty (modulo
+        // any new code paths that intern types during parallel codegen,
+        // which the regression cap at the bottom of this section catches).
+        {
+            let mut params: Vec<type_intern.TyId> = Vec.new();
+            params.push(type_intern.TyId.new(13));  // index 13 = U64 (pre-interned at startup)
+            let params_id = type_intern.type_interner().intern_ty_list(&params);
+            let pre_intern_fn_u64: type_intern.TyId = type_intern.type_interner().mk_fn(
+                params_id,
+                type_intern.TyId.new(13),  // U64
+                type_intern.EffectRowId.new(0),  // empty effect row (pre-interned at startup)
+            );
+            if pre_intern_fn_u64.index == 0 {
+                panic("ICE: SOUND-04 pre-intern returned Error type");
+            }
+        }
+
         // SOUND-04 split measurement: snapshot after the sequential pre-pass.
         // Any interner writes between here and `interner_types_after` are
         // attributable to the parallel workers (a race on the global interner).
