@@ -1,18 +1,18 @@
 // COMPILE_FAIL: missing associated type in trait impl
-// EXPECT: not all trait items implemented, missing: `type Item` from trait
-// Test: impl missing required associated type should fail (E0233)
-trait Container {
+// Test: impl of trait with associated type that is missing the type definition.
+// EXPECT: E0233
+
+trait MyIterator {
     type Item;
-    fn get(self) -> i32;
+    fn next(self: &mut Self) -> Option<Self.Item>;
 }
 
-struct Box {
-    value: i32,
-}
+struct Empty {}
 
-impl Container for Box {
-    fn get(self) -> i32 { self.value }
-    // Missing: type Item = ...;
+impl MyIterator for Empty {
+    fn next(self: &mut Self) -> Option<i32> {
+        Option.None
+    }
 }
 
 fn main() -> i32 {

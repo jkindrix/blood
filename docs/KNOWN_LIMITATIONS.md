@@ -134,10 +134,12 @@ Known structural gaps (not bugs, but feature omissions):
   Implementing a real generic HashMap requires either runtime routines
   for a type-erased hashmap or monomorphization support for its generic
   methods, and either way is multi-session feature work.
-- **No usable Iterator trait for user code**: the same `T::Item` projection
-  gap blocks a general `Iterator<Item = T>` trait from being useful in
-  user-written code. The compiler uses concrete iterators and `for i in 0..n`
-  ranges instead.
+- **Iterator trait defined but not wired into for-in**: `stdlib/iter/iterator.blood`
+  defines `trait Iterator { type Item; fn next(&mut self) -> Option<Self.Item>; }`.
+  The manual `loop { match iter.next() { ... } }` pattern works for concrete types.
+  `for x in iter { }` syntax currently supports only Array, Vec, Slice, and Range.
+  Custom iterator types require the explicit loop+match pattern. For-in integration
+  needs method dispatch tables threaded into MIR lowering (tracked).
 - **No file I/O abstraction**: the stdlib exposes only raw FFI (`LibcIO.open`,
   `LibcIO.read`, `LibcIO.write`, `LibcIO.close` in `runtime/blood-runtime/libc.blood`).
   There is no `File` struct, no `BufReader`/`BufWriter`, no `Path` type.
@@ -146,9 +148,23 @@ Known structural gaps (not bugs, but feature omissions):
   bridge in `runtime/blood-runtime/libc.blood`. See the "Concurrency primitives"
   entry above for the fiber layer's status.
 
-### Generic associated types projections (`T::Item` for type parameters)
+### Generic associated type projections (`T.Item` for type parameters)
 
-The compiler handles `Self::Item` in trait/impl bodies. It does NOT handle `T::Item` where `T` is a type parameter. This blocks the Iterator trait from being used with generic for-in desugaring in user code.
+`T.Item` resolution works for type parameters with single trait bounds (both inline
+`fn f<T: Trait>` and where-clause `where T: Trait`). Supported since session 12.
+Golden tests: `t05_assoc_type_projection`, `t05_assoc_type_projection_param`,
+`t05_assoc_type_where_clause`.
+
+**Remaining gaps**: `<T as Trait>.Item` qualified projections, `where T.Item: Eq`
+projection bounds, disambiguation when multiple bounds declare the same associated
+type name. Scope cleanup (clearing `current_type_param_bounds` on exit) implemented
+in session 13.
+
+**Generic trait method codegen gap**: calling trait methods on `&T` or `&mut T` in
+generic function bodies type-checks correctly, but the monomorphized codegen can
+produce invalid IR for methods returning Option or other compound types. This blocks
+generic `for x in iter { }` where `iter: &mut T` and T is a type parameter. Concrete
+iterator types work fine.
 
 ### Associated type bounds (`type Item: Display`)
 
