@@ -1896,6 +1896,232 @@ error[E0237]: unreachable pattern
 
 ---
 
+#### E0238: Invalid Cast
+
+Occurs when a cast expression is invalid for the source and target types.
+
+**Example:**
+```blood
+struct Point { x: i32, y: i32 }
+
+fn main() {
+    let p = Point { x: 1, y: 2 };
+    let n = p as i32;  // cannot cast struct to integer
+}
+```
+
+**Error message:**
+```
+error[E0238]: invalid cast: cannot cast `Point` to `i32`
+  --> src/main.blood:5:13
+   |
+ 5 |     let n = p as i32;
+   |             ^^^^^^^^ invalid cast
+   |
+   = note: only numeric types and pointers can be cast
+```
+
+**Fix:** Use explicit conversion methods instead of `as` casts between incompatible types.
+
+**Related:** E0201 (type mismatch)
+
+---
+
+#### E0239: Invalid Use of Never Type
+
+Occurs when the never type `!` is used in a context where it cannot coerce.
+
+**Example:**
+```blood
+fn main() {
+    let x: ! = 42;  // cannot assign integer to never type
+}
+```
+
+**Error message:**
+```
+error[E0239]: invalid use of never type
+  --> src/main.blood:2:16
+   |
+ 2 |     let x: ! = 42;
+   |            -   ^^ expected `!`, found `i32`
+   |            |
+   |            expected due to this
+```
+
+**Fix:** The never type `!` can only be produced by diverging expressions (e.g., `panic()`, infinite loops, `return`).
+
+**Related:** None
+
+---
+
+#### E0240: Unreachable Code
+
+Occurs when code follows a diverging expression and can never be reached.
+
+**Example:**
+```blood
+fn main() -> i32 {
+    return 0;
+    let x = 42;  // unreachable
+    x
+}
+```
+
+**Error message:**
+```
+error[E0240]: unreachable code
+  --> src/main.blood:3:5
+   |
+ 2 |     return 0;
+   |     --------- any code following this expression is unreachable
+ 3 |     let x = 42;
+   |     ^^^^^^^^^^^ unreachable statement
+```
+
+**Fix:** Remove the unreachable code or restructure control flow.
+
+**Related:** E0237 (unreachable pattern)
+
+---
+
+#### E0241: Binding in Or-Pattern
+
+Occurs when a variable binding appears in an or-pattern, which would make the bound value ambiguous.
+
+**Example:**
+```blood
+fn main() {
+    let x = (1, 2);
+    match x {
+        (a, 1) | (a, 2) => println(a),  // `a` bound in both arms
+    }
+}
+```
+
+**Error message:**
+```
+error[E0241]: variable `a` is bound in multiple alternatives of an or-pattern
+  --> src/main.blood:4:10
+   |
+ 4 |         (a, 1) | (a, 2) => println(a),
+   |          ^        ^ bound in both alternatives
+   |
+   = note: or-patterns cannot bind variables
+```
+
+**Fix:** Use separate match arms for each pattern that binds variables.
+
+**Related:** E0226 (pattern mismatch)
+
+---
+
+#### E0242: Invalid L-Value
+
+Occurs when the left side of an assignment is not a valid assignable location.
+
+**Example:**
+```blood
+fn main() {
+    1 + 2 = 3;  // expression is not assignable
+}
+```
+
+**Error message:**
+```
+error[E0242]: invalid l-value: expression is not assignable
+  --> src/main.blood:2:5
+   |
+ 2 |     1 + 2 = 3;
+   |     ^^^^^ cannot assign to this expression
+```
+
+**Fix:** Assign to a mutable variable, field, or index expression.
+
+**Related:** E0401 (cannot borrow as mutable)
+
+---
+
+#### E0243: Ambiguous Dispatch
+
+Occurs when multiple method implementations match a call site with equal specificity.
+
+**Example:**
+```blood
+trait Greet {
+    fn hello(self: &Self) -> String;
+}
+
+impl Greet for i32 {
+    fn hello(self: &Self) -> String { "hi from trait".to_string() }
+}
+
+impl i32 {
+    fn hello(self: &i32) -> String { "hi from inherent".to_string() }
+}
+
+fn main() {
+    let x: i32 = 42;
+    x.hello();  // ambiguous: trait vs inherent impl
+}
+```
+
+**Error message:**
+```
+error[E0243]: ambiguous dispatch: multiple implementations of `hello` for `i32`
+  --> src/main.blood:14:7
+   |
+14 |     x.hello();
+   |       ^^^^^ ambiguous method call
+   |
+   = note: candidates:
+           - `Greet::hello` (trait implementation)
+           - `i32::hello` (inherent implementation)
+```
+
+**Fix:** Use qualified syntax to disambiguate: `Greet.hello(&x)` or remove one implementation.
+
+**Related:** E0234 (overlapping implementations)
+
+---
+
+#### E0244: Diamond Inheritance Conflict
+
+Occurs when a type inherits conflicting implementations through multiple trait paths.
+
+**Example:**
+```blood
+trait A {
+    fn name(self: &Self) -> String;
+}
+
+trait B: A { }
+trait C: A { }
+
+impl A for i32 { fn name(self: &i32) -> String { "from A".to_string() } }
+impl B for i32 { }
+impl C for i32 { }
+
+fn use_both<T: B + C>(x: &T) -> String {
+    x.name()  // which A::name path?
+}
+```
+
+**Error message:**
+```
+error[E0244]: diamond conflict: `name` inherited through both `B` and `C`
+  --> src/main.blood:14:7
+   |
+14 |     x.name()
+   |       ^^^^ ambiguous due to diamond inheritance
+```
+
+**Fix:** Use qualified syntax to specify which trait path to use.
+
+**Related:** E0243 (ambiguous dispatch), E0234 (overlapping implementations)
+
+---
+
 ### 4.4 Effect Errors (E0300-E0399)
 
 #### E0301: Unhandled Effect
@@ -2167,7 +2393,240 @@ error[E0401]: cannot borrow as mutable: `items` is not declared as mutable
 
 ---
 
-### 4.6 Internal Compiler Errors (E9000-E9999)
+#### E0402: Use After Move
+
+Occurs when a value is used after it has been moved to another location.
+
+**Example:**
+```blood
+fn take_ownership(s: String) { }
+
+fn main() {
+    let s = "hello".to_string();
+    take_ownership(s);
+    println(s);  // `s` has been moved
+}
+```
+
+**Error message:**
+```
+error[E0402]: use of moved value: `s`
+  --> src/main.blood:5:13
+   |
+ 4 |     take_ownership(s);
+   |                    - value moved here
+ 5 |     println(s);
+   |             ^ value used after move
+```
+
+**Fix:** Clone the value before moving, or restructure to avoid the second use.
+
+**Related:** E0401 (cannot borrow as mutable)
+
+---
+
+#### E0403: Borrow Conflict
+
+Occurs when a value is borrowed in conflicting ways (e.g., mutable and immutable borrows coexist).
+
+**Example:**
+```blood
+fn main() {
+    let mut v = Vec.new();
+    v.push(1);
+    v.push(2);
+    let first = &v[0];     // immutable borrow
+    v.push(3);             // mutable borrow
+    println(first);        // immutable borrow still in use
+}
+```
+
+**Error message:**
+```
+error[E0403]: borrow conflict: cannot borrow `v` as mutable while also borrowed as immutable
+  --> src/main.blood:6:5
+   |
+ 5 |     let first = &v[0];
+   |                  - immutable borrow occurs here
+ 6 |     v.push(3);
+   |     ^ mutable borrow occurs here
+ 7 |     println(first);
+   |             ----- immutable borrow later used here
+```
+
+**Fix:** Ensure mutable and immutable borrows don't overlap in scope.
+
+**Related:** E0401 (cannot borrow as mutable), E0404 (dangling reference)
+
+---
+
+#### E0404: Dangling Reference
+
+Occurs when a reference outlives the value it points to.
+
+**Example:**
+```blood
+fn get_ref() -> &i32 {
+    let x = 42;
+    &x  // `x` is dropped when function returns
+}
+```
+
+**Error message:**
+```
+error[E0404]: dangling reference: `x` does not live long enough
+  --> src/main.blood:3:5
+   |
+ 2 |     let x = 42;
+   |         - binding `x` declared here
+ 3 |     &x
+   |     ^^ borrowed value does not live long enough
+ 4 | }
+   | - `x` dropped here while still borrowed
+```
+
+**Fix:** Return the value by move instead of by reference, or ensure the referent outlives the reference.
+
+**Related:** E0403 (borrow conflict), E0501 (region reference escape)
+
+---
+
+### 4.6 Lifetime Errors (E0500-E0599)
+
+#### E0501: Region Reference Escape
+
+Occurs when a reference to data allocated in a region escapes the region's scope.
+
+**Example:**
+```blood
+fn escape_ref() -> &i32 {
+    region scratch {
+        let x = 42;  // allocated in scratch region
+        &x            // reference escapes region scope
+    }
+}
+```
+
+**Error message:**
+```
+error[E0501]: reference escapes region scope
+  --> src/main.blood:4:9
+   |
+ 2 |     region scratch {
+   |            ------- region scope
+ 3 |         let x = 42;
+   |             - allocated in `scratch` region
+ 4 |         &x
+   |         ^^ reference escapes region scope
+```
+
+**Fix:** Copy or move the data out of the region instead of returning a reference.
+
+**Related:** E0404 (dangling reference)
+
+---
+
+### 4.7 Linear/Affine Errors (E0800-E0899)
+
+#### E0801: Linear Value Not Used
+
+Occurs when a linear value goes out of scope without being consumed. Linear types must be used exactly once.
+
+**Example:**
+```blood
+fn main() {
+    let handle: linear FileHandle = open("data.txt");
+    // handle goes out of scope without being closed
+}
+```
+
+**Error message:**
+```
+error[E0801]: unused linear value: `handle` must be consumed before going out of scope
+  --> src/main.blood:2:9
+   |
+ 2 |     let handle: linear FileHandle = open("data.txt");
+   |         ^^^^^^ linear value never consumed
+   |
+   = note: linear types must be used exactly once
+   = help: call `close(handle)` or pass it to a consuming function
+```
+
+**Fix:** Consume the linear value before it goes out of scope (e.g., call a destroying function).
+
+**Related:** E0802 (multiple linear use), E0401 (cannot borrow as mutable)
+
+---
+
+#### E0802: Linear Value Used More Than Once
+
+Occurs when a linear value is consumed more than once. Linear types must be used exactly once.
+
+**Example:**
+```blood
+fn consume(h: linear FileHandle) { }
+
+fn main() {
+    let handle: linear FileHandle = open("data.txt");
+    consume(handle);
+    consume(handle);  // second use
+}
+```
+
+**Error message:**
+```
+error[E0802]: linear value used multiple times: `handle` consumed more than once
+  --> src/main.blood:5:13
+   |
+ 4 |     consume(handle);
+   |             ------ first consumption here
+ 5 |     consume(handle);
+   |             ^^^^^^ second consumption here
+   |
+   = note: linear types must be consumed exactly once
+```
+
+**Fix:** Clone or restructure logic so the linear value is consumed only once.
+
+**Related:** E0801 (unused linear value), E0803 (affine used multiple)
+
+---
+
+#### E0803: Affine Value Used More Than Once
+
+Occurs when an affine value is consumed more than once. Affine types may be used at most once.
+
+**Example:**
+```blood
+fn consume(r: affine Resource) { }
+
+fn main() {
+    let r: affine Resource = acquire();
+    consume(r);
+    consume(r);  // second use
+}
+```
+
+**Error message:**
+```
+error[E0803]: affine value used multiple times: `r` consumed more than once
+  --> src/main.blood:5:13
+   |
+ 4 |     consume(r);
+   |             - first consumption here
+ 5 |     consume(r);
+   |             ^ second consumption here
+   |
+   = note: affine types may be consumed at most once (zero or one times)
+```
+
+**Fix:** Clone or restructure logic so the affine value is consumed at most once.
+
+**Related:** E0802 (linear used multiple), E0801 (unused linear value)
+
+---
+
+### 4.8 Internal Compiler Errors (E9000-E9999)
 
 #### E9000: Internal Compiler Error
 
