@@ -182,8 +182,8 @@ pub fn emit_operand_typed(
                 (cgname_to_string(&ins2), common.make_string("{ ptr, ptr }"))
             } else if match &constant.kind { &mir_types.ConstantKind.Float(_) => true, _ => false } {
                 // Use TyId-native type resolution to determine f32 vs f64.
-                // Avoids ty_id_to_type copy path which second_gen miscompiles
-                // for PrimitiveTy enum values (F64 reads as F32).
+                // This is the preferred path: type_to_llvm_fast_id reads the
+                // interned type directly without copying (faster, no allocation).
                 let float_ty = match codegen_size.type_to_llvm_fast_id(constant.ty) {
                     Option.Some(s) => common.make_string(s),
                     Option.None => common.make_string("double"),

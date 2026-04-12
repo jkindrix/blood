@@ -170,10 +170,9 @@ pub fn lower_struct_body(ctx: &mut hir_lower_ctx.LoweringCtx, body: &ast.StructB
                         // Same span start means same source text (can't happen for different fields)
                         j += 1;
                     } else {
-                        // Compare field names by interning and checking symbol index
-                        // NOTE: Avoid chained method calls (a.method1().method2()) to
-                        // work around a first_gen codegen bug where .method2() is called
-                        // on 'a' instead of on the result of method1().
+                        // Compare field names by interning and checking symbol index.
+                        // Split into separate locals for clarity (and because as_str()
+                        // returns a borrow of the String, which must outlive its use).
                         let str_i = ctx.span_to_string(fields[i].name.span);
                         let ref_i = str_i.as_str();
                         let name_i = ctx.intern(ref_i);
@@ -222,8 +221,8 @@ pub fn lower_enum_variants(ctx: &mut hir_lower_ctx.LoweringCtx, parent_def_id: h
     let mut next_disc: u32 = 0;
     let mut seen_discs: Vec<u32> = Vec.new();
     for i in 0usize..variants.len() {
-        // Check for duplicate variant name using interned symbol index
-        // NOTE: Avoid chained method calls to work around first_gen codegen bug
+        // Check for duplicate variant name using interned symbol index.
+        // Split into separate locals for clarity (as_str borrows the String).
         let vi_str = ctx.span_to_string(variants[i].name.span);
         let vi_ref = vi_str.as_str();
         let name_i = ctx.intern(vi_ref);
