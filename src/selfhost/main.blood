@@ -5254,6 +5254,29 @@ fn print_mem_phase(label: &str, parse_region: u64, hir_region: u64, codegen_regi
 // Streaming Compilation
 // ============================================================
 
+/// Collects handler→effect mappings and registers handler op body DefIds
+/// with state field counts for conditional state-by-pointer codegen.
+fn collect_and_register_handlers(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    lower_result: &hir_lower_ctx.LowerResult,
+) -> HandlerInfo {
+    let handler_info = collect_handler_info(ctx, &lower_result.interner, &lower_result.items, &lower_result.bodies);
+    for hop_i in 0usize..handler_info.ops.len() {
+        ctx.register_handler_op_body(handler_info.ops[hop_i].body_def_id, handler_info.ops[hop_i].state_field_count);
+    }
+    handler_info
+}
+
+/// Destroys compilation regions in the correct order after codegen completes.
+fn destroy_compilation_regions(fn_temp_region: u64, codegen_region: u64, hir_region: u64) {
+    if fn_temp_region != 0 {
+        region_destroy(fn_temp_region);
+    }
+    region_deactivate();
+    region_destroy(codegen_region);
+    region_destroy(hir_region);
+}
+
 /// Compiles a source file using streaming codegen, writing IR directly to output_path.
 /// Returns true on success, false on error (errors are printed directly).
 ///
@@ -5466,13 +5489,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     register_codegen_names(&mut ctx, &lower_result, &typeck_result, &static_def_ids);
     eprint_str("[pass1_done]");
 
-    // Collect handler→effect mappings and handler op info for wrapper generation.
-    let handler_info = collect_handler_info(&mut ctx, &lower_result.interner, &lower_result.items, &lower_result.bodies);
-
-    // Register handler op body DefIds with state field counts for conditional state-by-pointer codegen.
-    for hop_i in 0usize..handler_info.ops.len() {
-        ctx.register_handler_op_body(handler_info.ops[hop_i].body_def_id, handler_info.ops[hop_i].state_field_count);
-    }
+    let handler_info = collect_and_register_handlers(&mut ctx, &lower_result);
 
     let generics = collect_generic_metadata(&lower_result);
 
@@ -5518,12 +5535,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     // contains wrong code (e.g. field index defaulted to 0). Do not link.
     if pass2_result.mir_lowering_errors > 0 {
         common.eprint_wrap_usize("\nerror: MIR lowering had ", pass2_result.mir_lowering_errors, " error(s). Build aborted — no binary produced.\n");
-        if pass2_result.fn_temp_region != 0 {
-            region_destroy(pass2_result.fn_temp_region);
-        }
-        region_deactivate();
-        region_destroy(codegen_region);
-        region_destroy(hir_region);
+        destroy_compilation_regions(pass2_result.fn_temp_region, codegen_region, hir_region);
         return false;
     }
 
@@ -5561,18 +5573,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
 
     mem_profile_at(args, "After codegen complete", 0 as u64, hir_region, codegen_region);
 
-    // Free per-function temp region (deferred from codegen_pass2 — ctx held dangling refs)
-    if pass2_result.fn_temp_region != 0 {
-        region_destroy(pass2_result.fn_temp_region);
-    }
-
-    // Free codegen temporaries and ctx growth
-    region_deactivate();
-    region_destroy(codegen_region);
-
-    // HIR/typeck data no longer needed — free hir_region
-    region_destroy(hir_region);
-
+    destroy_compilation_regions(pass2_result.fn_temp_region, codegen_region, hir_region);
     mem_profile_at(args, "After all regions destroyed", 0 as u64, 0 as u64, 0 as u64);
 
     // === Store in cache ===
