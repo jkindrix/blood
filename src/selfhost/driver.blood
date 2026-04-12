@@ -1057,13 +1057,26 @@ pub fn parser_error_code(code: &parser_base.ErrorCode) -> &str {
 }
 
 /// Returns the error code string for an HIR DiagnosticCode.
+///
+/// Spec alignment (session 8, 2026-04-12 — Step C partial):
+/// the hir.DiagnosticCode enum uses internal variant names that happen to
+/// match spec-divergent code numbers. This function emits the spec-aligned
+/// string regardless of the variant name. See .tmp/ERROR_CODE_DISPOSITIONS.md
+/// for the full per-variant disposition rationale.
+///
+/// Name resolution category (session 8):
+///   E0100 (Name not found)                 -> E0229 (spec: Unresolved Name)
+///   E0101 (Duplicate definition)           -> E0214 (spec: Duplicate Definition)
+///   E0102 (Undefined name or unknown type) -> E0229 (merged with E0100)
+///   E0103 (Import not found)               -> E0229 (subset of name resolution)
+///   E0104 (Resolution error)               -> E0229 (generic umbrella)
 pub fn hir_diagnostic_code(code: &hir.DiagnosticCode) -> &str {
     match code {
-        &hir.DiagnosticCode.E0100 => "E0100",
-        &hir.DiagnosticCode.E0101 => "E0101",
-        &hir.DiagnosticCode.E0102 => "E0102",
-        &hir.DiagnosticCode.E0103 => "E0103",
-        &hir.DiagnosticCode.E0104 => "E0104",
+        &hir.DiagnosticCode.E0100 => "E0229",
+        &hir.DiagnosticCode.E0101 => "E0214",
+        &hir.DiagnosticCode.E0102 => "E0229",
+        &hir.DiagnosticCode.E0103 => "E0229",
+        &hir.DiagnosticCode.E0104 => "E0229",
         &hir.DiagnosticCode.E0200 => "E0200",
         &hir.DiagnosticCode.E0201 => "E0201",
         &hir.DiagnosticCode.E0202 => "E0202",
