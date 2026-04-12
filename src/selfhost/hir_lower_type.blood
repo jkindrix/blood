@@ -419,6 +419,38 @@ fn lower_type_path_id(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.TypePath) 
         }
     }
 
+    // Check for T.Item (type parameter associated type projection) — TyId version
+    if path.segments.len() == 2 {
+        let first_seg = &path.segments[0];
+        let second_seg = &path.segments[1];
+        if first_seg.args.is_none() {
+            let tp_name_str = ctx.span_to_string(first_seg.name.span);
+            let tp_symbol = ctx.intern(tp_name_str.as_str());
+            let param_lookup = ctx.resolver.lookup_type_param(tp_symbol);
+            if param_lookup.is_some() {
+                let param_var = param_lookup.unwrap();
+                let assoc_name_str = ctx.span_to_string(second_seg.name.span);
+                let assoc_sym = ctx.intern(assoc_name_str.as_str());
+                for bnd_idx in 0usize..ctx.current_type_param_bounds.len() {
+                    if ctx.current_type_param_bounds[bnd_idx].param_var.index == param_var.index {
+                        for asc_idx in 0usize..ctx.current_type_param_bounds[bnd_idx].assoc_types.len() {
+                            if ctx.current_type_param_bounds[bnd_idx].assoc_types[asc_idx].name.index == assoc_sym.index {
+                                return ctx.current_type_param_bounds[bnd_idx].assoc_types[asc_idx].ty_id;
+                            }
+                        }
+                    }
+                }
+                let mut amsg = common.make_string("type parameter `");
+                amsg.push_str(tp_name_str.as_str());
+                amsg.push_str("` has no associated type `");
+                amsg.push_str(assoc_name_str.as_str());
+                amsg.push_str("`");
+                ctx.error(hir.DiagnosticCode.E0102, amsg, second_seg.name.span);
+                return type_intern.CommonTypes.error();
+            }
+        }
+    }
+
     // Look up the type in the resolver
     if path.segments.len() == 1 {
         let seg = &path.segments[0];
@@ -641,6 +673,46 @@ fn lower_type_path(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.TypePath) -> 
             if type_param2.is_some() {
                 let ty_var_id2 = type_param2.unwrap();
                 return hir_ty.Type.new(hir_ty.TypeKind.Infer(ty_var_id2));
+            }
+        }
+    }
+
+    // Check for T.Item (type parameter associated type projection)
+    // Handles 2-segment paths where the first segment is a type parameter
+    // and the second is an associated type from one of the parameter's trait bounds.
+    if path.segments.len() == 2 {
+        let first_seg = &path.segments[0];
+        let second_seg = &path.segments[1];
+        if first_seg.args.is_none() {
+            // Try to look up first segment as a type parameter
+            let tp_name_str = ctx.span_to_string(first_seg.name.span);
+            let tp_symbol = ctx.intern(tp_name_str.as_str());
+            let param_lookup = ctx.resolver.lookup_type_param(tp_symbol);
+            if param_lookup.is_some() {
+                let param_var = param_lookup.unwrap();
+                // First segment is a type parameter — look up second segment
+                // as an associated type from the parameter's trait bounds.
+                let assoc_name_str = ctx.span_to_string(second_seg.name.span);
+                let assoc_sym = ctx.intern(assoc_name_str.as_str());
+                for bnd_idx in 0usize..ctx.current_type_param_bounds.len() {
+                    if ctx.current_type_param_bounds[bnd_idx].param_var.index == param_var.index {
+                        for asc_idx in 0usize..ctx.current_type_param_bounds[bnd_idx].assoc_types.len() {
+                            if ctx.current_type_param_bounds[bnd_idx].assoc_types[asc_idx].name.index == assoc_sym.index {
+                                // Found it — return the fresh TyId allocated for this projection
+                                let proj_ty_id = ctx.current_type_param_bounds[bnd_idx].assoc_types[asc_idx].ty_id;
+                                return type_intern.ty_id_to_type(proj_ty_id);
+                            }
+                        }
+                    }
+                }
+                // Type param exists but no matching associated type found
+                let mut amsg = common.make_string("type parameter `");
+                amsg.push_str(tp_name_str.as_str());
+                amsg.push_str("` has no associated type `");
+                amsg.push_str(assoc_name_str.as_str());
+                amsg.push_str("`");
+                ctx.error(hir.DiagnosticCode.E0102, amsg, second_seg.name.span);
+                return hir_ty.Type.error();
             }
         }
     }
@@ -1204,6 +1276,39 @@ pub fn lower_generics(ctx: &mut hir_lower_ctx.LoweringCtx, type_params: &Option<
                                 }
                             }
                             if trait_refs.len() > 0 {
+                                // Register type param bounds for T.Item resolution.
+                                // For each trait bound, look up the trait's associated types
+                                // from the persistent registry and create fresh TyVarIds for them.
+                                for tri in 0usize..trait_refs.len() {
+                                    let trait_def_idx = trait_refs[tri].def_id.index as usize;
+                                    if trait_def_idx < ctx.trait_assoc_types.len() {
+                                        match &ctx.trait_assoc_types[trait_def_idx] {
+                                            &Option.Some(ref assoc_entries) => {
+                                                let mut fresh_assocs: Vec<hir_lower_ctx.AssocTypeEntry> = Vec.new();
+                                                for aei in 0usize..assoc_entries.len() {
+                                                    let fresh_var = ctx.alloc_ty_var();
+                                                    let fresh_ty = type_intern.type_interner().mk_infer(fresh_var);
+                                                    fresh_assocs.push(hir_lower_ctx.AssocTypeEntry.new(
+                                                        assoc_entries[aei].name,
+                                                        fresh_ty,
+                                                    ));
+                                                }
+                                                if fresh_assocs.len() > 0 {
+                                                    ctx.current_type_param_bounds.push(
+                                                        hir_lower_ctx.TypeParamBoundEntry.new(
+                                                            param_symbol,
+                                                            var_id,
+                                                            trait_refs[tri].def_id,
+                                                            fresh_assocs,
+                                                        )
+                                                    );
+                                                }
+                                            }
+                                            &Option.None => {}
+                                        }
+                                    }
+                                }
+
                                 let pred = hir_ty.WherePredicate.TypeBound {
                                     ty: param_ty,
                                     bounds: trait_refs,

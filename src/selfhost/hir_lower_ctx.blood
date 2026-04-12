@@ -79,6 +79,31 @@ impl AssocTypeEntry {
     }
 }
 
+/// Tracks a type parameter's trait bounds and associated types.
+/// Used for resolving T.Item in generic function/impl bodies.
+pub struct TypeParamBoundEntry {
+    pub param_name: common.Symbol,
+    pub param_var: hir_def.TyVarId,
+    pub trait_def_id: hir_def.DefId,
+    pub assoc_types: Vec<AssocTypeEntry>,
+}
+
+impl TypeParamBoundEntry {
+    pub fn new(
+        param_name: common.Symbol,
+        param_var: hir_def.TyVarId,
+        trait_def_id: hir_def.DefId,
+        assoc_types: Vec<AssocTypeEntry>,
+    ) -> TypeParamBoundEntry {
+        TypeParamBoundEntry {
+            param_name: param_name,
+            param_var: param_var,
+            trait_def_id: trait_def_id,
+            assoc_types: assoc_types,
+        }
+    }
+}
+
 // ============================================================
 // Lowering Result
 // ============================================================
@@ -345,6 +370,13 @@ pub struct LoweringCtx {
     /// Associated type mappings in the current trait/impl context.
     /// Each entry is (name_symbol, TyId) for resolving Self.AssocType paths.
     pub current_assoc_types: Vec<AssocTypeEntry>,
+    /// Type parameter bounds with associated types for T.Item resolution.
+    /// Populated when entering generic function/impl bodies. Cleared on exit.
+    pub current_type_param_bounds: Vec<TypeParamBoundEntry>,
+    /// Persistent registry of trait DefId → associated types.
+    /// Populated during trait lowering. Used by T.Item resolution to look up
+    /// which associated types a trait bound provides.
+    pub trait_assoc_types: Vec<Option<Vec<AssocTypeEntry>>>,
     /// DefIds for builtin types (set during register_builtin_types).
     pub builtin_string_def: Option<hir_def.DefId>,
     pub builtin_vec_def: Option<hir_def.DefId>,
@@ -495,6 +527,8 @@ impl LoweringCtx {
             body_locals: Vec.new(),
             current_self_type: Option.None,
             current_assoc_types: Vec.new(),
+            current_type_param_bounds: Vec.new(),
+            trait_assoc_types: Vec.new(),
             builtin_string_def: Option.None,
             builtin_vec_def: Option.None,
             builtin_option_def: Option.None,
@@ -542,6 +576,8 @@ impl LoweringCtx {
             body_locals: Vec.new(),
             current_self_type: Option.None,
             current_assoc_types: Vec.new(),
+            current_type_param_bounds: Vec.new(),
+            trait_assoc_types: Vec.new(),
             builtin_string_def: Option.None,
             builtin_vec_def: Option.None,
             builtin_option_def: Option.None,

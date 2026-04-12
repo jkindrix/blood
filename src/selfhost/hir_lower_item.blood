@@ -937,6 +937,23 @@ fn lower_trait_decl(ctx: &mut hir_lower_ctx.LoweringCtx, t: &ast.TraitDecl) {
         }
     }
 
+    // Save associated types to persistent registry before clearing.
+    // This allows T.Item resolution in generic bodies that have T: ThisTrait bounds.
+    if ctx.current_assoc_types.len() > 0 {
+        let def_idx = def_id.index as usize;
+        while ctx.trait_assoc_types.len() <= def_idx {
+            ctx.trait_assoc_types.push(Option.None);
+        }
+        let mut saved: Vec<hir_lower_ctx.AssocTypeEntry> = Vec.new();
+        for sai in 0usize..ctx.current_assoc_types.len() {
+            saved.push(hir_lower_ctx.AssocTypeEntry.new(
+                ctx.current_assoc_types[sai].name,
+                ctx.current_assoc_types[sai].ty_id,
+            ));
+        }
+        ctx.trait_assoc_types[def_idx] = Option.Some(saved);
+    }
+
     // Clear Self type and associated types after trait lowering
     ctx.current_self_type = Option.None;
     ctx.current_assoc_types.clear();

@@ -1,32 +1,29 @@
-// Test: associated type projection in trait method signatures
-// EXPECT: 0
-trait Producer {
-    type Output;
-    fn produce(self) -> Self.Output;
+// Test: T.Item associated type projection in generic function signatures
+// EXPECT: 42
+trait Container {
+    type Item;
+    fn get(self: &Self) -> Self.Item;
 }
 
-struct IntSource {
-    val: i32,
+struct IntBox {
+    value: i32,
 }
 
-impl Producer for IntSource {
-    type Output = i32;
-    fn produce(self) -> i32 { self.val }
+impl Container for IntBox {
+    type Item = i32;
+    fn get(self: &Self) -> i32 {
+        self.value
+    }
 }
 
-struct PairSource {
-    a: i32,
-    b: i32,
-}
-
-impl Producer for PairSource {
-    type Output = i32;
-    fn produce(self) -> i32 { self.a + self.b }
+fn extract<T: Container>(c: &T) -> T.Item {
+    c.get()
 }
 
 fn main() -> i32 {
-    let s: IntSource = IntSource { val: 20 };
-    let p: PairSource = PairSource { a: 11, b: 11 };
-    let total: i32 = s.produce() + p.produce();
-    if total == 42 { println_int(0); 0 } else { 1 }
+    let b = IntBox { value: 42 };
+    let result: i32 = extract(&b);
+    println_int(result);
+    if result != 42 { return 1; }
+    0
 }
