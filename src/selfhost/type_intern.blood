@@ -223,6 +223,9 @@ pub enum InternedTypeKind {
     Error,
     /// An ownership-qualified type: linear T or affine T
     Ownership { qualifier: hir_ty.OwnershipQualifier, inner: TyId },
+    /// A type-parameter associated type projection: T.Item where T: Trait
+    /// Resolved to a concrete type during monomorphization.
+    Projection { base_var: hir_def.TyVarId, trait_def: hir_def.DefId, assoc_name: common.Symbol },
 }
 
 // ============================================================
@@ -383,6 +386,12 @@ fn hash_interned_type_kind(kind: &InternedTypeKind) -> u64 {
             h = hash_mix(h, ownership_to_u64(qualifier));
             h = hash_mix(h, inner.index as u64);
         }
+        &InternedTypeKind.Projection { base_var, trait_def, assoc_name } => {
+            h = hash_mix(h, 18);
+            h = hash_mix(h, base_var.index as u64);
+            h = hash_mix(h, trait_def.index as u64);
+            h = hash_mix(h, assoc_name.index as u64);
+        }
     }
     h
 }
@@ -524,6 +533,14 @@ fn interned_type_kind_eq(a: &InternedTypeKind, b: &InternedTypeKind) -> bool {
         }
         &InternedTypeKind.Ownership { ref qualifier, inner } => {
             ownership_eq(qualifier, inner, b)
+        }
+        &InternedTypeKind.Projection { base_var, trait_def, assoc_name } => {
+            match b {
+                &InternedTypeKind.Projection { base_var: bv, trait_def: td, assoc_name: an } => {
+                    base_var.index == bv.index && trait_def.index == td.index && assoc_name.index == an.index
+                }
+                _ => false,
+            }
         }
     }
 }
@@ -1000,6 +1017,10 @@ impl TypeInterner {
     pub fn mk_closure(self: &mut TypeInterner, def_id: hir_def.DefId, params: TyListId, ret: TyId) -> TyId {
         self.intern(InternedTypeKind.Closure { def_id, params, ret })
     }
+
+    pub fn mk_projection(self: &mut TypeInterner, base_var: hir_def.TyVarId, trait_def: hir_def.DefId, assoc_name: common.Symbol) -> TyId {
+        self.intern(InternedTypeKind.Projection { base_var, trait_def, assoc_name })
+    }
 }
 
 /// Checks whether a TyId is an Ownership type with Linear qualifier.
@@ -1196,6 +1217,9 @@ pub fn type_to_ty_id(ty: &hir_ty.Type) -> TyId {
             let inner_id = type_to_ty_id(inner.as_ref());
             type_interner().intern(InternedTypeKind.Ownership { qualifier, inner: inner_id })
         }
+        &hir_ty.TypeKind.Projection { base_var, trait_def, assoc_name } => {
+            type_interner().mk_projection(base_var, trait_def, assoc_name)
+        }
     }
 }
 
@@ -1266,6 +1290,9 @@ pub fn type_to_ty_id_readonly(ty: &hir_ty.Type) -> TyId {
         &hir_ty.TypeKind.Ownership { qualifier, ref inner } => {
             let inner_id = type_to_ty_id_readonly(inner.as_ref());
             type_interner().find(&InternedTypeKind.Ownership { qualifier, inner: inner_id })
+        }
+        &hir_ty.TypeKind.Projection { base_var, trait_def, assoc_name } => {
+            type_interner().find(&InternedTypeKind.Projection { base_var, trait_def, assoc_name })
         }
     }
 }
@@ -1393,6 +1420,13 @@ pub fn ty_id_to_type(id: TyId) -> hir_ty.Type {
             hir_ty.Type.new(hir_ty.TypeKind.Ownership {
                 qualifier,
                 inner: Box.new(ty_id_to_type(inner)),
+            })
+        }
+        &InternedTypeKind.Projection { base_var, trait_def, assoc_name } => {
+            hir_ty.Type.new(hir_ty.TypeKind.Projection {
+                base_var,
+                trait_def,
+                assoc_name,
             })
         }
     };
@@ -1959,6 +1993,15 @@ pub fn format_ty_id(id: TyId) -> String {
             };
             let formatted = format_ty_id(inner);
             s.push_str(formatted.as_str());
+            s
+        }
+        &InternedTypeKind.Projection { base_var, trait_def, assoc_name } => {
+            let mut s = common.make_string("T");
+            push_u32(&mut s, base_var.index);
+            s.push_str("::Trait(");
+            push_u32(&mut s, trait_def.index);
+            s.push_str(").");
+            push_u32(&mut s, assoc_name.index);
             s
         }
     }

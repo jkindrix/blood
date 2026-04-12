@@ -401,6 +401,11 @@ fn substitute_params_core_id(ty_id: type_intern.TyId, subst: &TypeParamSubst, ca
                 auto_traits: copied_auto,
             })
         }
+        &type_intern.InternedTypeKind.Projection { base_var: _, trait_def: _, assoc_name: _ } => {
+            // Projection types (T.Item) are resolved during monomorphization,
+            // not during param substitution. Return unchanged.
+            ty_id
+        }
     }
 }
 
@@ -1572,6 +1577,12 @@ pub fn apply_substs_id(table: &SubstTable, ty_id: type_intern.TyId) -> type_inte
             // `current` (no need to rebuild — the previous code was pure waste).
             current
         }
+        &type_intern.InternedTypeKind.Projection { base_var: _, trait_def: _, assoc_name: _ } => {
+            // Projection types are resolved during monomorphization after base_var
+            // is bound to a concrete type. During apply_substs (which runs after
+            // type inference), projections pass through unchanged.
+            current
+        }
     }
 }
 
@@ -1721,6 +1732,11 @@ fn occurs_in_id(var_id: hir_def.TyVarId, ty_id: type_intern.TyId) -> bool {
         }
         &type_intern.InternedTypeKind.Range { element, inclusive: _ } => {
             occurs_in_id(var_id, element)
+        }
+        &type_intern.InternedTypeKind.Projection { base_var, trait_def: _, assoc_name: _ } => {
+            // A Projection doesn't directly contain Infer variables.
+            // Check if base_var matches the searched variable.
+            base_var.index == var_id.index
         }
     }
 }
@@ -2819,6 +2835,12 @@ pub fn debug_type_kind_name(ty: &hir_ty.Type) -> String {
         &hir_ty.TypeKind.DynTrait { trait_id: _, auto_traits: _ } => common.make_string("dyn"),
         &hir_ty.TypeKind.Never => common.make_string("!"),
         &hir_ty.TypeKind.Error => common.make_string("ERR"),
+        &hir_ty.TypeKind.Projection { base_var, trait_def, assoc_name } => {
+            let mut s = common.make_string("Proj(T");
+            s.push_str(usize_to_str(base_var.index as usize).as_str());
+            s.push_str(")");
+            s
+        }
     }
 }
 

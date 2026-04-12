@@ -176,6 +176,12 @@ pub enum TypeKind {
         qualifier: OwnershipQualifier,
         inner: Box<Type>,
     },
+    /// A type-parameter associated type projection: T.Item where T: Trait
+    Projection {
+        base_var: hir_def.TyVarId,
+        trait_def: hir_def.DefId,
+        assoc_name: common.Symbol,
+    },
 }
 
 /// Ownership qualifiers for linear types.
@@ -600,6 +606,9 @@ fn copy_type_kind(kind: &TypeKind) -> TypeKind {
                 trait_id: trait_id,
                 auto_traits: copied_auto,
             }
+        }
+        &TypeKind.Projection { base_var, trait_def, assoc_name } => {
+            TypeKind.Projection { base_var, trait_def, assoc_name }
         }
     }
 }

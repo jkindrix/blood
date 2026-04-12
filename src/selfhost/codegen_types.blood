@@ -128,6 +128,8 @@ pub fn type_to_llvm(ty: &hir_ty.Type) -> String {
         }
         // Trait objects are fat pointers (data ptr + vtable ptr)
         &hir_ty.TypeKind.DynTrait { trait_id: _, auto_traits: _ } => common.make_string("{ ptr, ptr }"),
+        // Projection types should be resolved before codegen; treat as ptr-sized if encountered
+        &hir_ty.TypeKind.Projection { base_var: _, trait_def: _, assoc_name: _ } => common.make_string("ptr"),
         &hir_ty.TypeKind.Error => common.make_string("i64"),
     }
 }
@@ -364,6 +366,8 @@ pub fn get_layout(ty: &hir_ty.Type) -> TypeLayout {
         }
         // Trait objects: fat pointer { ptr, ptr }
         &hir_ty.TypeKind.DynTrait { trait_id: _, auto_traits: _ } => TypeLayout.new(16, 8, common.make_string("{ ptr, ptr }")),
+        // Projection types should be resolved before codegen; treat as ptr-sized if encountered
+        &hir_ty.TypeKind.Projection { base_var: _, trait_def: _, assoc_name: _ } => TypeLayout.pointer(),
         &hir_ty.TypeKind.Error => TypeLayout.new(8, 8, common.make_string("i64")),
     }
 }
