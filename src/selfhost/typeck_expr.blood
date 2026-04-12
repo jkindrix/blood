@@ -3115,7 +3115,7 @@ fn infer_return(
             }
         }
         &None => {
-            checker.error(typeck.TypeErrorKind.InvalidControl, span);
+            checker.error(typeck.TypeErrorKind.ReturnOutsideFunction, span);
         }
     }
 
@@ -3131,7 +3131,7 @@ fn infer_break(
     span: common.Span,
 ) -> type_intern.TyId {
     if !checker.in_loop {
-        checker.error(typeck.TypeErrorKind.InvalidControl, span);
+        checker.error(typeck.TypeErrorKind.BreakOutsideLoop, span);
         return type_intern.CommonTypes.never();
     }
 
@@ -3158,7 +3158,7 @@ fn infer_continue(
     span: common.Span,
 ) -> type_intern.TyId {
     if !checker.in_loop {
-        checker.error(typeck.TypeErrorKind.InvalidControl, span);
+        checker.error(typeck.TypeErrorKind.ContinueOutsideLoop, span);
     }
     type_intern.CommonTypes.never()
 }

@@ -1016,7 +1016,10 @@ pub fn type_error_message(kind: &typeck.TypeErrorKind) -> String {
         &typeck.TypeErrorKind.MissingReturn => common.make_string("missing return value"),
         &typeck.TypeErrorKind.TraitNotImplemented => common.make_string("type does not implement trait"),
         &typeck.TypeErrorKind.UnhandledEffect => common.make_string("unhandled effect"),
-        &typeck.TypeErrorKind.InvalidControl => common.make_string("invalid break/continue"),
+        &typeck.TypeErrorKind.InvalidControl => common.make_string("invalid control flow in handler"),
+        &typeck.TypeErrorKind.BreakOutsideLoop => common.make_string("break outside of loop"),
+        &typeck.TypeErrorKind.ContinueOutsideLoop => common.make_string("continue outside of loop"),
+        &typeck.TypeErrorKind.ReturnOutsideFunction => common.make_string("return outside of function"),
         &typeck.TypeErrorKind.PatternMismatch => common.make_string("pattern type mismatch"),
         &typeck.TypeErrorKind.NonExhaustive => common.make_string("non-exhaustive patterns"),
         &typeck.TypeErrorKind.InfiniteType => common.make_string("infinite type (recursive without indirection)"),
@@ -1128,8 +1131,8 @@ pub fn hir_diagnostic_code(code: &hir.DiagnosticCode) -> &str {
 /// Spec alignment (session 8-9, 2026-04-12):
 /// Session 8 renumbered clean-match cases per .tmp/ERROR_CODE_DISPOSITIONS.md.
 /// Session 9 added 14 spec amendments and renumbered the remaining variants.
-/// Only InvalidControl remains at its old code pending per-site split
-/// into E0222 (break), E0223 (continue), E0224 (return).
+/// Session 10 split InvalidControl into E0222 (break), E0223 (continue), E0224 (return).
+/// InvalidControl retained for handler resume violations only.
 pub fn type_error_code(kind: &typeck.TypeErrorKind) -> &str {
     match kind {
         // Already spec-aligned
@@ -1171,8 +1174,12 @@ pub fn type_error_code(kind: &typeck.TypeErrorKind) -> &str {
         &typeck.TypeErrorKind.AmbiguousDispatch => "E0243",  // spec: Ambiguous Dispatch
         &typeck.TypeErrorKind.DiamondConflict => "E0244",    // spec: Diamond Inheritance Conflict
 
-        // Step D: split into E0222/E0223/E0224 per usage site (spec already defines these)
-        &typeck.TypeErrorKind.InvalidControl => "E0215",     // needs per-site split: break→E0222, continue→E0223, return→E0224
+        // InvalidControl retained for handler resume violations (E0215 legacy)
+        &typeck.TypeErrorKind.InvalidControl => "E0215",
+        // Step D: split from InvalidControl into per-construct codes (spec-defined)
+        &typeck.TypeErrorKind.BreakOutsideLoop => "E0222",
+        &typeck.TypeErrorKind.ContinueOutsideLoop => "E0223",
+        &typeck.TypeErrorKind.ReturnOutsideFunction => "E0224",
     }
 }
 
