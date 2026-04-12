@@ -4980,6 +4980,88 @@ fn push_bytes_human(s: &mut String, bytes: u64) {
 /// Prints a memory snapshot for a single phase boundary.
 /// label: phase name (e.g., "After parse")
 /// regions: list of (name, region_id) pairs to report on
+/// Conditional mem-profile print. compile_file_streaming calls this 9 times;
+/// wrapping the `if args.mem_profile` check here halves the per-call boilerplate.
+fn mem_profile_at(args: &Args, label: &str, parse_region: u64, hir_region: u64, codegen_region: u64) {
+    if args.mem_profile {
+        print_mem_phase(label, parse_region, hir_region, codegen_region);
+    }
+}
+
+/// Print " FAILED\n", format errors via ErrorReporter, print them. Used by
+/// each phase (parse / HIR / typeck) at the error-cleanup boundary. Does NOT
+/// handle region cleanup — callers must destroy regions themselves because
+/// cleanup differs per phase.
+fn report_phase_errors(source: &str, path: &str, errors: &Vec<error.CompileError>) {
+    eprint_str(" FAILED\n");
+    let error_reporter = reporter.ErrorReporter.new(source, path);
+    let formatted = error_reporter.format_errors(errors);
+    eprint_str(formatted.as_str());
+}
+
+/// Collect all static def_ids from the LowerResult items list. Used to
+/// filter name-registration and to emit static globals first (before any
+/// function that may reference them).
+fn collect_static_def_ids(lower_result: &hir_lower_ctx.LowerResult) -> Vec<u32> {
+    let mut static_def_ids: Vec<u32> = Vec.new();
+    for si in 0usize..lower_result.items.len() {
+        let item = &lower_result.items[si].item;
+        match &item.kind {
+            &hir_item.ItemKind.Static(ref _static_def) => {
+                static_def_ids.push(item.def_id.index);
+            }
+            _ => {}
+        }
+    }
+    static_def_ids
+}
+
+/// Begin a streaming codegen module: construct CodegenCtx, set compilation
+/// flags, register builtin ADTs, wire frozen_def_id, populate ADT registry,
+/// optionally dump layouts. Returns the initialized CodegenCtx.
+///
+/// This wraps the ~30-line "codegen setup" prelude of compile_file_streaming.
+fn begin_codegen_module_with_adts(
+    path: &str,
+    output_path: &str,
+    args: &Args,
+    lower_result: &hir_lower_ctx.LowerResult,
+) -> codegen_ctx.CodegenCtx {
+    eprint_str("[begin_streaming]");
+    let source_filename = source.file_name(path);
+    let mod_count: u32 = lower_result.module_names.len() as u32;
+    let mut ctx = codegen_streaming.begin_streaming_module(source_filename.as_str(), output_path, &lower_result.items, mod_count);
+    ctx.trace_codegen = args.trace_codegen;
+    ctx.vft_dispatch = args.vft_dispatch;
+    eprint_str("[done]");
+
+    // Register builtin ADT types (Vec, String, HashMap, Box, Option, Result) in the ADT registry
+    eprint_str("[register_adts]");
+    codegen.register_builtin_adts(
+        &mut ctx,
+        &lower_result.builtin_vec_def,
+        &lower_result.builtin_string_def,
+        &lower_result.builtin_hashmap_def,
+        &lower_result.builtin_box_def,
+        &lower_result.builtin_option_def,
+        &lower_result.builtin_result_def,
+    );
+    // Set Frozen DefId for persist/freeze codegen (when stdlib Frozen is used)
+    match &lower_result.builtin_frozen_def {
+        &Option.Some(ref fid) => { ctx.frozen_def_id = fid.index; }
+        &Option.None => {}
+    }
+    eprint_str("[populate_adt]");
+    codegen.populate_adt_registry(&mut ctx, &lower_result.items);
+    eprint_str("[done]");
+
+    if args.dump_layouts {
+        dump_adt_layouts(&ctx);
+    }
+
+    ctx
+}
+
 fn print_mem_phase(label: &str, parse_region: u64, hir_region: u64, codegen_region: u64) {
     let rss_kb = get_rss_kb();
     let sys_live = system_alloc_live_bytes();
@@ -5127,11 +5209,8 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     let parse_result = parser.parse_file(expanded_source.as_str());
     let parse_elapsed = blood_clock_millis() - parse_start;
     if parse_result.errors.len() > 0 {
-        eprint_str(" FAILED\n");
-        let error_reporter = reporter.ErrorReporter.new(expanded_source.as_str(), path);
         let parse_errors = driver.convert_parse_errors(&parse_result.errors);
-        let formatted = error_reporter.format_errors(&parse_errors);
-        eprint_str(formatted.as_str());
+        report_phase_errors(expanded_source.as_str(), path, &parse_errors);
         region_deactivate();
         region_destroy(parse_region);
         return false;
@@ -5149,9 +5228,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     };
     eprint_str(" done\n");
 
-    if args.mem_profile {
-        print_mem_phase("After parse", parse_region, 0 as u64, 0 as u64);
-    }
+    mem_profile_at(args, "After parse", parse_region, 0 as u64, 0 as u64);
 
     // Deactivate parse_region — AST remains readable for HIR lowering.
     region_deactivate();
@@ -5188,11 +5265,8 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
         }
     }
     if has_hir_errors {
-        eprint_str(" FAILED\n");
-        let error_reporter = reporter.ErrorReporter.new(expanded_source.as_str(), path);
         let hir_errors = driver.convert_hir_diagnostics(&lower_result.diagnostics);
-        let formatted = error_reporter.format_errors(&hir_errors);
-        eprint_str(formatted.as_str());
+        report_phase_errors(expanded_source.as_str(), path, &hir_errors);
         region_deactivate();
         region_destroy(hir_region);
         region_destroy(parse_region);
@@ -5200,9 +5274,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     }
     eprint_str(" done\n");
 
-    if args.mem_profile {
-        print_mem_phase("After HIR lowering", parse_region, hir_region, 0 as u64);
-    }
+    mem_profile_at(args, "After HIR lowering", parse_region, hir_region, 0 as u64);
 
     // alloc-profile report is printed from hir_lower.blood (has module name mapping).
     // Tags are reset there too, so nothing to do here.
@@ -5210,9 +5282,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     // Trim hir_region to release pages used during lowering but no longer needed
     region_trim(hir_region);
 
-    if args.mem_profile {
-        print_mem_phase("After HIR trim", parse_region, hir_region, 0 as u64);
-    }
+    mem_profile_at(args, "After HIR trim", parse_region, hir_region, 0 as u64);
 
     // Deactivate hir_region temporarily to destroy parse/ast regions
     region_deactivate();
@@ -5223,9 +5293,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     // External module AST data is also no longer needed
     region_destroy(ast_region);
 
-    if args.mem_profile {
-        print_mem_phase("After parse+ast_region destroy", 0 as u64, hir_region, 0 as u64);
-    }
+    mem_profile_at(args, "After parse+ast_region destroy", 0 as u64, hir_region, 0 as u64);
 
     // === Incremental: compute skip_modules before typeck ===
     // Per-module hash comparison determines which external modules are unchanged.
@@ -5254,11 +5322,8 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     let typeck_result = typeck_driver.check_lower_result(&lower_result, &skip_modules, expanded_source.as_str());
     let typeck_elapsed = blood_clock_millis() - typeck_start;
     if !typeck_result.success {
-        eprint_str(" FAILED\n");
-        let error_reporter = reporter.ErrorReporter.new(expanded_source.as_str(), path);
         let type_errors = driver.convert_type_errors(&typeck_result.errors);
-        let formatted = error_reporter.format_errors(&type_errors);
-        eprint_str(formatted.as_str());
+        report_phase_errors(expanded_source.as_str(), path, &type_errors);
         region_deactivate();
         region_deactivate();
         region_destroy(typeck_region);
@@ -5267,9 +5332,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     }
     eprint_str(" done\n");
 
-    if args.mem_profile {
-        print_mem_phase("After type checking", 0 as u64, hir_region, 0 as u64);
-    }
+    mem_profile_at(args, "After type checking", 0 as u64, hir_region, 0 as u64);
 
     // Dump type resolutions if requested
     if args.dump_types {
@@ -5286,9 +5349,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     let typeck_result = typeck_driver.clone_typeck_result_to_heap(&typeck_result);
     region_destroy(typeck_region);
 
-    if args.mem_profile {
-        print_mem_phase("After typeck_region destroy", 0 as u64, hir_region, 0 as u64);
-    }
+    mem_profile_at(args, "After typeck_region destroy", 0 as u64, hir_region, 0 as u64);
 
     // Deactivate hir_region — data remains readable for codegen.
     // New allocations (codegen ctx, def_names) go to global allocator.
@@ -5305,52 +5366,12 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     // Phase 5: Streaming codegen (global allocator for ctx persistent state)
     eprint_str("  Codegen...");
     let codegen_start = blood_clock_millis();
-
-    eprint_str("[begin_streaming]");
-    let source_filename = source.file_name(path);
     let mod_count: u32 = lower_result.module_names.len() as u32;
-    let mut ctx = codegen_streaming.begin_streaming_module(source_filename.as_str(), output_path, &lower_result.items, mod_count);
-    ctx.trace_codegen = args.trace_codegen;
-    ctx.vft_dispatch = args.vft_dispatch;
-    eprint_str("[done]");
-
-    // Register builtin ADT types (Vec, String, HashMap, Box, Option, Result) in the ADT registry
-    eprint_str("[register_adts]");
-    codegen.register_builtin_adts(
-        &mut ctx,
-        &lower_result.builtin_vec_def,
-        &lower_result.builtin_string_def,
-        &lower_result.builtin_hashmap_def,
-        &lower_result.builtin_box_def,
-        &lower_result.builtin_option_def,
-        &lower_result.builtin_result_def,
-    );
-    // Set Frozen DefId for persist/freeze codegen (when stdlib Frozen is used)
-    match &lower_result.builtin_frozen_def {
-        &Option.Some(ref fid) => { ctx.frozen_def_id = fid.index; }
-        &Option.None => {}
-    }
-    eprint_str("[populate_adt]");
-    codegen.populate_adt_registry(&mut ctx, &lower_result.items);
-    eprint_str("[done]");
-
-    // Dump ADT layouts if requested (after registry is fully populated)
-    if args.dump_layouts {
-        dump_adt_layouts(&ctx);
-    }
+    let mut ctx = begin_codegen_module_with_adts(path, output_path, args, &lower_result);
 
     eprint_str("[statics]");
     // Collect static DefIds first - needed for name registration filtering.
-    let mut static_def_ids: Vec<u32> = Vec.new();
-    for si in 0usize..lower_result.items.len() {
-        let item = &lower_result.items[si].item;
-        match &item.kind {
-            &hir_item.ItemKind.Static(ref _static_def) => {
-                static_def_ids.push(item.def_id.index);
-            }
-            _ => {}
-        }
-    }
+    let static_def_ids = collect_static_def_ids(&lower_result);
 
     // Pass 0: Emit static global variable declarations.
     // This must happen before any functions that reference statics.
@@ -5382,9 +5403,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     let worklist = build_codegen_worklist(&lower_result, &static_def_ids, &generics.const_generic_body_ids);
     common.eprint_wrap_usize("[worklist:", worklist.items.len(), "]");
 
-    if args.mem_profile {
-        print_mem_phase("Before codegen pass2", 0 as u64, hir_region, 0 as u64);
-    }
+    mem_profile_at(args, "Before codegen pass2", 0 as u64, hir_region, 0 as u64);
 
     // Codegen region: holds per-function codegen temporaries, string_table growth, etc.
     // Persists across all function compilations. Per-function mir_regions sit
@@ -5430,9 +5449,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
         compile_monomorphized_bodies(&mut ctx, &pass2_result, &lower_result, &typeck_result, args, output_path, mod_count);
     }
 
-    if args.mem_profile {
-        print_mem_phase("After codegen pass2", 0 as u64, hir_region, codegen_region);
-    }
+    mem_profile_at(args, "After codegen pass2", 0 as u64, hir_region, codegen_region);
 
     // Passes 3-5: stubs, handler wrappers, VFT init, deferred IR, finish, flush
     finalize_codegen_passes(&mut ctx, &worklist, &handler_info, &lower_result);
@@ -5459,9 +5476,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
         );
     }
 
-    if args.mem_profile {
-        print_mem_phase("After codegen complete", 0 as u64, hir_region, codegen_region);
-    }
+    mem_profile_at(args, "After codegen complete", 0 as u64, hir_region, codegen_region);
 
     // Free per-function temp region (deferred from codegen_pass2 — ctx held dangling refs)
     if pass2_result.fn_temp_region != 0 {
@@ -5475,9 +5490,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     // HIR/typeck data no longer needed — free hir_region
     region_destroy(hir_region);
 
-    if args.mem_profile {
-        print_mem_phase("After all regions destroyed", 0 as u64, 0 as u64, 0 as u64);
-    }
+    mem_profile_at(args, "After all regions destroyed", 0 as u64, 0 as u64, 0 as u64);
 
     // === Store in cache ===
     if source_hash != 0 {
