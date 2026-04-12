@@ -1,0 +1,38 @@
+// Test: generic function calling trait method with &mut Self parameter.
+// EXPECT: 15
+
+trait Counter {
+    fn increment(self: &mut Self, amount: i32);
+    fn value(self: &Self) -> i32;
+}
+
+struct MyCounter {
+    val: i32,
+}
+
+impl Counter for MyCounter {
+    fn increment(self: &mut Self, amount: i32) {
+        self.val = self.val + amount;
+    }
+    fn value(self: &Self) -> i32 {
+        self.val
+    }
+}
+
+fn add_three<T: Counter>(c: &mut T) {
+    c.increment(1);
+    c.increment(2);
+    c.increment(3);
+}
+
+fn get_value<T: Counter>(c: &T) -> i32 {
+    c.value()
+}
+
+fn main() -> i32 {
+    let mut c = MyCounter { val: 9 };
+    add_three(&mut c);
+    let result = get_value(&c);
+    println_int(result);
+    0
+}

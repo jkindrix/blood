@@ -1,0 +1,34 @@
+// Test: trait method with &mut Self parameter.
+// Verifies mutable self reference works through trait dispatch.
+// EXPECT: 10_20_30
+fn main() -> i32 {
+    let mut c = Counter { value: 0 };
+    c.advance(10);
+    print_int(c.get());
+    print("_");
+    c.advance(10);
+    print_int(c.get());
+    print("_");
+    c.advance(10);
+    print_int(c.get());
+    println("");
+    0
+}
+
+trait Advanceable {
+    fn advance(self: &mut Self, amount: i32);
+    fn get(self: &Self) -> i32;
+}
+
+struct Counter {
+    value: i32,
+}
+
+impl Advanceable for Counter {
+    fn advance(self: &mut Self, amount: i32) {
+        self.value = self.value + amount;
+    }
+    fn get(self: &Self) -> i32 {
+        self.value
+    }
+}

@@ -1,0 +1,44 @@
+// Test: trait with associated type + next() method pattern.
+// This is the core pattern needed for Iterator: a trait with type Item
+// and a next(&mut self) -> Option<Self.Item> method.
+// EXPECT: 1_2_3_done
+
+trait MyIterator {
+    type Item;
+    fn next(self: &mut Self) -> Option<Self.Item>;
+}
+
+struct RangeIter {
+    current: i32,
+    end_val: i32,
+}
+
+impl MyIterator for RangeIter {
+    type Item = i32;
+    fn next(self: &mut Self) -> Option<i32> {
+        if self.current < self.end_val {
+            let val = self.current;
+            self.current = self.current + 1;
+            Option.Some(val)
+        } else {
+            Option.None
+        }
+    }
+}
+
+fn main() -> i32 {
+    let mut iter = RangeIter { current: 1, end_val: 4 };
+    loop {
+        match iter.next() {
+            Option.Some(val) => {
+                print_int(val);
+                print("_");
+            }
+            Option.None => {
+                println("done");
+                break;
+            }
+        }
+    }
+    0
+}

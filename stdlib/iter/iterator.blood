@@ -1,0 +1,37 @@
+// Blood Standard Library - Iterator Trait
+//
+// The Iterator trait provides a protocol for sequentially visiting elements.
+// This is the core abstraction for iteration in Blood.
+//
+// Design reference: docs/design/ITERATOR_PROTOCOL.md (Stage 1)
+// Spec reference: docs/spec/STDLIB.md lines 1562-1584
+
+/// Trait for types that produce a sequence of values.
+///
+/// The core method `next` returns `Option.Some(item)` for each element
+/// and `Option.None` when the sequence is exhausted.
+///
+/// # Manual iteration pattern
+///
+/// Until for-in integration is complete, use the explicit loop+match:
+///
+///     let mut iter = MyIter.new(data);
+///     loop {
+///         match iter.next() {
+///             Option.Some(item) => {
+///                 // use item
+///             }
+///             Option.None => break,
+///         }
+///     }
+///
+pub trait Iterator {
+    /// The type of elements produced by this iterator.
+    type Item;
+
+    /// Advances the iterator and returns the next value.
+    ///
+    /// Returns `Option.Some(item)` while elements remain,
+    /// `Option.None` when the sequence is exhausted.
+    fn next(self: &mut Self) -> Option<Self.Item>;
+}
