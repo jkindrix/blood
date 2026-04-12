@@ -1080,25 +1080,25 @@ pub fn hir_diagnostic_code(code: &hir.DiagnosticCode) -> &str {
         // Type errors — renumber to spec E02xx category
         &hir.DiagnosticCode.E0200 => "E0201",  // spec: Type Mismatch (was impl E0200)
         &hir.DiagnosticCode.E0201 => "E0202",  // spec: Cannot Infer Type (was impl E0201)
-        &hir.DiagnosticCode.E0202 => "E0202",  // SPEC AMEND pending: Invalid Cast -> proposed E0238; kept at E0202 for now
+        &hir.DiagnosticCode.E0202 => "E0238",  // spec: Invalid Cast (spec amendment session 9)
         &hir.DiagnosticCode.E0203 => "E0206",  // spec: Trait Bound Not Satisfied (was impl E0203 "Missing trait impl")
         &hir.DiagnosticCode.E0204 => "E0206",  // spec: Trait Bound Not Satisfied (was impl E0204, same target as E0203 — future merge)
-        &hir.DiagnosticCode.E0205 => "E0205",  // SPEC AMEND pending: Invalid Use of Never -> proposed E0239; kept at E0205 for now
+        &hir.DiagnosticCode.E0205 => "E0239",  // spec: Invalid Use of Never Type (spec amendment session 9)
         &hir.DiagnosticCode.E0206 => "E0205",  // spec: Recursive Type Has Infinite Size (was impl E0206)
 
         // Expression errors — mixed: several are really in other categories per spec
         &hir.DiagnosticCode.E0300 => "E0219",  // spec: Wrong Main Signature (for "function validation")
         &hir.DiagnosticCode.E0301 => "E0401",  // spec: Cannot Borrow as Mutable (was impl E0301 in effect range — wrong category)
-        &hir.DiagnosticCode.E0302 => "E0302",  // SPEC AMEND pending: split into E0222/E0223/E0224 per usage site
+        &hir.DiagnosticCode.E0302 => "E0302",  // Step D: split into E0222/E0223/E0224 per usage site (spec already defines these)
         &hir.DiagnosticCode.E0303 => "E0220",  // spec: Return Type Mismatch (was impl E0303 "Missing return value")
-        &hir.DiagnosticCode.E0304 => "E0304",  // SPEC AMEND pending: Unreachable Code -> proposed E0240
+        &hir.DiagnosticCode.E0304 => "E0240",  // spec: Unreachable Code (spec amendment session 9)
         &hir.DiagnosticCode.E0305 => "E0305",  // spec E0305 = Invalid Effect Handler — matches actual usage in hir_lower_item.blood:1321
 
         // Pattern errors
         &hir.DiagnosticCode.E0400 => "E0236",  // spec: Non-Exhaustive Patterns (was impl E0400)
         &hir.DiagnosticCode.E0401 => "E0237",  // spec: Unreachable Pattern (was impl E0401)
         &hir.DiagnosticCode.E0402 => "E0226",  // spec: Pattern Mismatch (was impl E0402)
-        &hir.DiagnosticCode.E0403 => "E0403",  // SPEC AMEND pending: Binding in Or-Pattern -> proposed E0241
+        &hir.DiagnosticCode.E0403 => "E0241",  // spec: Binding in Or-Pattern (spec amendment session 9)
 
         // Effect errors — cross-category into spec E03xx
         &hir.DiagnosticCode.E0500 => "E0301",  // spec: Unhandled Effect (was impl E0500 in lifetime range)
@@ -1107,11 +1107,11 @@ pub fn hir_diagnostic_code(code: &hir.DiagnosticCode) -> &str {
         &hir.DiagnosticCode.E0503 => "E0302",  // spec: Effect Signature Mismatch (was impl E0503 "Handler type mismatch")
 
         // Borrow checker errors — spec defines E04xx for ownership
-        &hir.DiagnosticCode.E0600 => "E0600",  // SPEC AMEND pending: Use After Move -> proposed E0402
+        &hir.DiagnosticCode.E0600 => "E0402",  // spec: Use After Move (spec amendment session 9)
         &hir.DiagnosticCode.E0601 => "E0401",  // spec: Cannot Borrow as Mutable (was impl E0601, spec-aligned)
-        &hir.DiagnosticCode.E0602 => "E0602",  // SPEC AMEND pending: Borrow Conflict -> proposed E0403
-        &hir.DiagnosticCode.E0603 => "E0603",  // spec E0603 = Type Instability — already matches
-        &hir.DiagnosticCode.E0604 => "E0604",  // SPEC AMEND pending: Dangling Reference -> proposed E0404
+        &hir.DiagnosticCode.E0602 => "E0403",  // spec: Borrow Conflict (spec amendment session 9)
+        &hir.DiagnosticCode.E0603 => "E0603",  // spec: Type Instability — already matches
+        &hir.DiagnosticCode.E0604 => "E0404",  // spec: Dangling Reference (spec amendment session 9)
         &hir.DiagnosticCode.E0900 => "E9000",  // spec: Internal Compiler Error (was impl E0900)
         &hir.DiagnosticCode.E0901 => "E0228",  // spec: Unsupported Feature (was impl E0901)
     }
@@ -1119,13 +1119,11 @@ pub fn hir_diagnostic_code(code: &hir.DiagnosticCode) -> &str {
 
 /// Returns the error code string for a TypeErrorKind.
 ///
-/// Spec alignment (session 8, 2026-04-12 — Step C continued):
-/// Many TypeErrorKind variants were previously mapped to numerically-sequential
-/// E-codes (E0201-E0224) that did NOT match the spec's semantic category.
-/// Session 8 renumbers the clean-match cases per .tmp/ERROR_CODE_DISPOSITIONS.md.
-/// Variants needing spec amendments (InvalidCast, InvalidLValue, Linear*,
-/// AmbiguousDispatch, DiamondConflict, InvalidControl) keep their current
-/// codes until the spec amendments land.
+/// Spec alignment (session 8-9, 2026-04-12):
+/// Session 8 renumbered clean-match cases per .tmp/ERROR_CODE_DISPOSITIONS.md.
+/// Session 9 added 14 spec amendments and renumbered the remaining variants.
+/// Only InvalidControl remains at its old code pending per-site split
+/// into E0222 (break), E0223 (continue), E0224 (return).
 pub fn type_error_code(kind: &typeck.TypeErrorKind) -> &str {
     match kind {
         // Already spec-aligned
@@ -1152,22 +1150,23 @@ pub fn type_error_code(kind: &typeck.TypeErrorKind) -> &str {
         &typeck.TypeErrorKind.UnhandledEffect => "E0301",    // spec: Unhandled Effect (was E0214)
         &typeck.TypeErrorKind.UndeclaredEffect => "E0308",   // spec: Undeclared Effects (was E0224)
 
-        // Already spec-aligned or kept pending spec amendment
-        &typeck.TypeErrorKind.TypeInstability => "E0603",    // spec: Type Instability (match)
-        &typeck.TypeErrorKind.RegionRefEscape => "E0502",    // spec: Stale Ref Across Effect (close match, keep)
-        &typeck.TypeErrorKind.LinearAtPerformSite => "E0801",// spec: reserved linearity range (keep)
+        // Already spec-aligned
+        &typeck.TypeErrorKind.TypeInstability => "E0603",    // spec: Type Instability
+        &typeck.TypeErrorKind.LinearAtPerformSite => "E0801",// spec: Linear Value Not Used (linearity range)
 
-        // Variants needing spec amendment (see .tmp/ERROR_CODE_DISPOSITIONS.md)
-        // kept at current codes for now
-        &typeck.TypeErrorKind.InvalidLValue => "E0211",      // spec amend E0242 pending
-        &typeck.TypeErrorKind.InvalidControl => "E0215",     // spec amend (split into E0222/E0223/E0224) pending
-        &typeck.TypeErrorKind.InvalidCast => "E0219",        // spec amend E0238 pending
-        &typeck.TypeErrorKind.LinearNotUsed => "E0221",      // spec amend E0801 pending
-        &typeck.TypeErrorKind.LinearUsedMultipleTimes => "E0222", // spec amend E0802 pending
-        &typeck.TypeErrorKind.AffineUsedMultipleTimes => "E0223",// spec amend E0803 pending
-        &typeck.TypeErrorKind.TraitNotObjectSafe => "E0901", // spec amend pending
-        &typeck.TypeErrorKind.AmbiguousDispatch => "E0602",  // spec amend E0243 pending
-        &typeck.TypeErrorKind.DiamondConflict => "E0225",    // spec amend E0244 pending
+        // Spec amendments landed (session 9)
+        &typeck.TypeErrorKind.RegionRefEscape => "E0501",    // spec: Region Reference Escape
+        &typeck.TypeErrorKind.InvalidLValue => "E0242",      // spec: Invalid L-Value
+        &typeck.TypeErrorKind.InvalidCast => "E0238",        // spec: Invalid Cast
+        &typeck.TypeErrorKind.LinearNotUsed => "E0801",      // spec: Linear Value Not Used
+        &typeck.TypeErrorKind.LinearUsedMultipleTimes => "E0802", // spec: Linear Value Used More Than Once
+        &typeck.TypeErrorKind.AffineUsedMultipleTimes => "E0803",// spec: Affine Value Used More Than Once
+        &typeck.TypeErrorKind.TraitNotObjectSafe => "E0232", // spec: Missing Trait Method (closest match)
+        &typeck.TypeErrorKind.AmbiguousDispatch => "E0243",  // spec: Ambiguous Dispatch
+        &typeck.TypeErrorKind.DiamondConflict => "E0244",    // spec: Diamond Inheritance Conflict
+
+        // Step D: split into E0222/E0223/E0224 per usage site (spec already defines these)
+        &typeck.TypeErrorKind.InvalidControl => "E0215",     // needs per-site split: break→E0222, continue→E0223, return→E0224
     }
 }
 
