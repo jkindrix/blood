@@ -1103,44 +1103,62 @@ pub fn hir_diagnostic_code(code: &hir.DiagnosticCode) -> &str {
         &hir.DiagnosticCode.E0602 => "E0602",
         &hir.DiagnosticCode.E0603 => "E0603",
         &hir.DiagnosticCode.E0604 => "E0604",
-        &hir.DiagnosticCode.E0900 => "E0900",
-        &hir.DiagnosticCode.E0901 => "E0901",
+        &hir.DiagnosticCode.E0900 => "E9000",  // spec: Internal Compiler Error (was impl E0900)
+        &hir.DiagnosticCode.E0901 => "E0228",  // spec: Unsupported Feature (was impl E0901)
     }
 }
 
 /// Returns the error code string for a TypeErrorKind.
+///
+/// Spec alignment (session 8, 2026-04-12 — Step C continued):
+/// Many TypeErrorKind variants were previously mapped to numerically-sequential
+/// E-codes (E0201-E0224) that did NOT match the spec's semantic category.
+/// Session 8 renumbers the clean-match cases per .tmp/ERROR_CODE_DISPOSITIONS.md.
+/// Variants needing spec amendments (InvalidCast, InvalidLValue, Linear*,
+/// AmbiguousDispatch, DiamondConflict, InvalidControl) keep their current
+/// codes until the spec amendments land.
 pub fn type_error_code(kind: &typeck.TypeErrorKind) -> &str {
     match kind {
-        &typeck.TypeErrorKind.TypeMismatch => "E0201",
-        &typeck.TypeErrorKind.CannotInfer => "E0202",
-        &typeck.TypeErrorKind.UndefinedVariable => "E0203",
-        &typeck.TypeErrorKind.UndefinedFunction => "E0204",
-        &typeck.TypeErrorKind.ArityMismatch => "E0205",
-        &typeck.TypeErrorKind.NotCallable => "E0206",
-        &typeck.TypeErrorKind.NotIndexable => "E0207",
-        &typeck.TypeErrorKind.NoSuchField => "E0208",
-        &typeck.TypeErrorKind.NoSuchMethod => "E0209",
-        &typeck.TypeErrorKind.CannotMutate => "E0210",
-        &typeck.TypeErrorKind.InvalidLValue => "E0211",
-        &typeck.TypeErrorKind.MissingReturn => "E0212",
-        &typeck.TypeErrorKind.TraitNotImplemented => "E0213",
-        &typeck.TypeErrorKind.UnhandledEffect => "E0214",
-        &typeck.TypeErrorKind.InvalidControl => "E0215",
-        &typeck.TypeErrorKind.PatternMismatch => "E0216",
-        &typeck.TypeErrorKind.NonExhaustive => "E0217",
-        &typeck.TypeErrorKind.InfiniteType => "E0218",
-        &typeck.TypeErrorKind.InvalidCast => "E0219",
-        &typeck.TypeErrorKind.UnreachablePattern => "E0220",
-        &typeck.TypeErrorKind.LinearNotUsed => "E0221",
-        &typeck.TypeErrorKind.LinearUsedMultipleTimes => "E0222",
-        &typeck.TypeErrorKind.AffineUsedMultipleTimes => "E0223",
-        &typeck.TypeErrorKind.UndeclaredEffect => "E0224",
-        &typeck.TypeErrorKind.TraitNotObjectSafe => "E0901",
-        &typeck.TypeErrorKind.AmbiguousDispatch => "E0602",
-        &typeck.TypeErrorKind.DiamondConflict => "E0225",
-        &typeck.TypeErrorKind.TypeInstability => "E0603",
-        &typeck.TypeErrorKind.RegionRefEscape => "E0502",
-        &typeck.TypeErrorKind.LinearAtPerformSite => "E0801",
+        // Already spec-aligned
+        &typeck.TypeErrorKind.TypeMismatch => "E0201",       // spec: Type Mismatch
+        &typeck.TypeErrorKind.CannotInfer => "E0202",        // spec: Cannot Infer Type
+
+        // Type range renumbers (within E0200-E0237)
+        &typeck.TypeErrorKind.UndefinedVariable => "E0208",  // spec: Value Not Found (was E0203)
+        &typeck.TypeErrorKind.UndefinedFunction => "E0210",  // spec: Expected Function (was E0204)
+        &typeck.TypeErrorKind.ArityMismatch => "E0211",      // spec: Wrong Number of Arguments (was E0205)
+        &typeck.TypeErrorKind.NotCallable => "E0210",        // spec: Expected Function (was E0206)
+        &typeck.TypeErrorKind.NotIndexable => "E0218",       // spec: Not Indexable (was E0207)
+        &typeck.TypeErrorKind.NoSuchField => "E0213",        // spec: No Field on Type (was E0208)
+        &typeck.TypeErrorKind.NoSuchMethod => "E0231",       // spec: Method Not Found (was E0209)
+        &typeck.TypeErrorKind.MissingReturn => "E0220",      // spec: Return Type Mismatch (was E0212)
+        &typeck.TypeErrorKind.TraitNotImplemented => "E0206",// spec: Trait Bound Not Satisfied (was E0213)
+        &typeck.TypeErrorKind.PatternMismatch => "E0226",    // spec: Pattern Mismatch (was E0216)
+        &typeck.TypeErrorKind.NonExhaustive => "E0236",      // spec: Non-Exhaustive Patterns (was E0217)
+        &typeck.TypeErrorKind.InfiniteType => "E0205",       // spec: Recursive Type Has Infinite Size (was E0218)
+        &typeck.TypeErrorKind.UnreachablePattern => "E0237", // spec: Unreachable Pattern (was E0220)
+
+        // Cross-category moves (Type -> Effect / Ownership)
+        &typeck.TypeErrorKind.CannotMutate => "E0401",       // spec: Cannot Borrow as Mutable (was E0210)
+        &typeck.TypeErrorKind.UnhandledEffect => "E0301",    // spec: Unhandled Effect (was E0214)
+        &typeck.TypeErrorKind.UndeclaredEffect => "E0308",   // spec: Undeclared Effects (was E0224)
+
+        // Already spec-aligned or kept pending spec amendment
+        &typeck.TypeErrorKind.TypeInstability => "E0603",    // spec: Type Instability (match)
+        &typeck.TypeErrorKind.RegionRefEscape => "E0502",    // spec: Stale Ref Across Effect (close match, keep)
+        &typeck.TypeErrorKind.LinearAtPerformSite => "E0801",// spec: reserved linearity range (keep)
+
+        // Variants needing spec amendment (see .tmp/ERROR_CODE_DISPOSITIONS.md)
+        // kept at current codes for now
+        &typeck.TypeErrorKind.InvalidLValue => "E0211",      // spec amend E0242 pending
+        &typeck.TypeErrorKind.InvalidControl => "E0215",     // spec amend (split into E0222/E0223/E0224) pending
+        &typeck.TypeErrorKind.InvalidCast => "E0219",        // spec amend E0238 pending
+        &typeck.TypeErrorKind.LinearNotUsed => "E0221",      // spec amend E0801 pending
+        &typeck.TypeErrorKind.LinearUsedMultipleTimes => "E0222", // spec amend E0802 pending
+        &typeck.TypeErrorKind.AffineUsedMultipleTimes => "E0223",// spec amend E0803 pending
+        &typeck.TypeErrorKind.TraitNotObjectSafe => "E0901", // spec amend pending
+        &typeck.TypeErrorKind.AmbiguousDispatch => "E0602",  // spec amend E0243 pending
+        &typeck.TypeErrorKind.DiamondConflict => "E0225",    // spec amend E0244 pending
     }
 }
 
