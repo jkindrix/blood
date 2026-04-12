@@ -28,6 +28,7 @@ mod typeck_info;
 mod typeck_linearity;
 mod interner;
 mod type_intern;
+mod mir_lower_ctx;
 mod typeck_types;
 mod typeck_dispatch;
 mod hashmap;
@@ -645,6 +646,9 @@ pub fn check_types(ctx: &hir_lower_ctx.LoweringCtx) -> TypeCheckResult {
     // Build body → item cache for O(1) lookups
     let body_cache = build_body_item_cache(&ctx.items);
 
+    // Build iterator-next table for for-in loop desugaring
+    build_and_cache_iter_next_table(&mut checker, &ctx.interner);
+
     // Phase 2: Type check all function bodies
     for i in 0usize..ctx.bodies.len() {
         let body_entry = &ctx.bodies[i];
@@ -1034,7 +1038,9 @@ fn build_and_cache_iter_next_table(checker: &mut typeck.TypeChecker, hir_interne
             let name_opt = hir_interner.resolve(method.name);
             match name_opt {
                 Option.Some(name_str) => {
-                    if !string_eq(&name_str, "next") { continue; }
+                    // name_str is &String (resolve returns Option<&String>),
+                    // pass it directly — not &name_str which would be &&String.
+                    if !string_eq(name_str, "next") { continue; }
                 }
                 Option.None => { continue; }
             }
@@ -1065,6 +1071,8 @@ fn build_and_cache_iter_next_table(checker: &mut typeck.TypeChecker, hir_interne
         }
     }
     @unsafe { CACHED_ITER_NEXT_ENTRIES = table; }
+    // Forward the table to mir_lower_ctx so MIR lowering can find custom iterators.
+    mir_lower_ctx.set_iter_next_entries(get_iter_next_entries());
 }
 
 /// Collects pending method calls that remained unresolved after resolve_pending_methods.
@@ -1475,7 +1483,15 @@ fn register_impl(
                         // In HIR, self is encoded in the first parameter
                         if j == 0 && assoc_fn.sig.params[j].is_self {
                             takes_self_ref = true;
-                            takes_self_mut = assoc_fn.sig.params[j].mutable;
+                            // Check both binding mutability and reference type mutability.
+                            // `self: &mut T` has mutable=false on the binding but the type
+                            // is Ref { mutable: true }. We need to detect both forms.
+                            let param_ty = assoc_fn.sig.params[j].ty;
+                            let self_kind = type_intern.type_interner().get(param_ty);
+                            takes_self_mut = assoc_fn.sig.params[j].mutable || match self_kind {
+                                &type_intern.InternedTypeKind.Ref { inner: _, mutable } => mutable,
+                                _ => false,
+                            };
                         } else {
                             param_tys.push(assoc_fn.sig.params[j].ty);
                         }
