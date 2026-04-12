@@ -719,15 +719,6 @@ impl TypeChecker {
         self.type_generic_calls.push(info);
     }
 
-    /// Takes the accumulated type_generic_calls, leaving an empty Vec in its place.
-    /// Used at function return sites to avoid a direct field access on field 67
-    /// (which the seed compiler may fail to resolve in large functions).
-    pub fn take_type_generic_calls(self: &mut Self) -> Vec<common.TypeGenericCallInfo> {
-        let result = self.type_generic_calls;
-        self.type_generic_calls = Vec.new();
-        result
-    }
-
     /// Gets the field index for a struct field by name.
     /// Returns Some(index) where index is the positional index of the field.
     pub fn get_struct_field_idx(self: &Self, def_id: hir_def.DefId, field_name: common.Symbol) -> Option<u32> {
