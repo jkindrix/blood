@@ -5036,6 +5036,29 @@ fn read_source_or_error(path: &str) -> Option<String> {
     }
 }
 
+/// Scans a diagnostic list for any Error-level entry. Used by compile_file_streaming
+/// to decide whether to abort after HIR lowering. Returns true if any diagnostic
+/// has DiagnosticLevel.Error.
+fn has_error_level(diagnostics: &Vec<hir.Diagnostic>) -> bool {
+    for di in 0usize..diagnostics.len() {
+        match &diagnostics[di].level {
+            &hir.DiagnosticLevel.Error => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
+/// Stores the compiled .ll file in the build cache, keyed by source_hash.
+/// No-op if source_hash is 0 (caching disabled).
+fn store_cached_ir(output_path: &str, cache_dir: &str, source_hash: u64) {
+    if source_hash != 0 {
+        let cached_path = build_cache.cache_ll_path(cache_dir, source_hash);
+        let compiled_ir: &str = file_read_to_string(output_path);
+        file_write_string(cached_path.as_str(), compiled_ir);
+    }
+}
+
 /// Print " FAILED\n", format errors via ErrorReporter, print them. Used by
 /// each phase (parse / HIR / typeck) at the error-cleanup boundary. Does NOT
 /// handle region cleanup — callers must destroy regions themselves because
@@ -5282,19 +5305,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     let hir_elapsed = blood_clock_millis() - hir_start;
 
     // Check for HIR lowering errors
-    let mut has_hir_errors = false;
-    for di in 0usize..lower_result.diagnostics.len() {
-        let diag = &lower_result.diagnostics[di];
-        match &diag.level {
-            &hir.DiagnosticLevel.Error => {
-                has_hir_errors = true;
-            }
-            &hir.DiagnosticLevel.Warning => {}
-            &hir.DiagnosticLevel.Note => {}
-            &hir.DiagnosticLevel.Help => {}
-        }
-    }
-    if has_hir_errors {
+    if has_error_level(&lower_result.diagnostics) {
         let hir_errors = driver.convert_hir_diagnostics(&lower_result.diagnostics);
         report_phase_errors(expanded_source.as_str(), path, &hir_errors);
         region_deactivate();
@@ -5523,11 +5534,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     mem_profile_at(args, "After all regions destroyed", 0 as u64, 0 as u64, 0 as u64);
 
     // === Store in cache ===
-    if source_hash != 0 {
-        let cached_path = build_cache.cache_ll_path(cache_dir.as_str(), source_hash);
-        let compiled_ir: &str = file_read_to_string(output_path);
-        file_write_string(cached_path.as_str(), compiled_ir);
-    }
+    store_cached_ir(output_path, cache_dir.as_str(), source_hash);
 
     let compile_elapsed = blood_clock_millis() - compile_start;
 
