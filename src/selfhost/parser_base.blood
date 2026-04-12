@@ -526,6 +526,11 @@ impl<'src> Parser<'src> {
     ///      valid for the parser's lifetime.
     ///   3. Exactly one dereference per call, no aliasing window.
     pub fn source_byte_at(self: &Self, pos: usize) -> u8 {
+        // Safety: the `if pos >= self.source.len()` guard ensures `pos` is
+        // in-bounds. `self.source` is the parser's live source &str which
+        // outlives every call through the Parser borrow. The raw-ptr walk
+        // below is equivalent to `self.source.as_bytes()[pos]` without the
+        // bounds re-check — same hot-path rationale as Lexer.byte_at.
         if pos >= self.source.len() {
             0
         } else {

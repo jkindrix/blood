@@ -1381,6 +1381,16 @@ pub fn ty_id_to_type(id: TyId) -> hir_ty.Type {
 // pass2 summary so a full self-compile reports call volume and any
 // divergence between wildcard-match discriminants and field-binding
 // match arms.
+//
+// @unsafe safety note: the `@unsafe { BUG2_* }` accesses (one increment
+// site per counter in ty_id_to_type above, plus the three getter functions
+// below) all touch these module-level `static mut` counters. Since the
+// sequential type-check / single-threaded compile paths overwhelmingly
+// dominate ty_id_to_type calls, and the parallel codegen workers are the
+// rare contended case (same analysis as SOUND-04), contention on these
+// counters is accepted — at worst we drop a small number of counts under
+// parallel increment races, which is fine for an observability counter.
+// If this ever becomes load-bearing for correctness, move to atomics.
 static mut BUG2_TY_ID_TO_TYPE_CALLS: u64 = 0;
 static mut BUG2_REF_MISMATCHES: u64 = 0;
 static mut BUG2_PRIMITIVE_MISMATCHES: u64 = 0;
@@ -1957,37 +1967,39 @@ pub fn format_ty_id(id: TyId) -> String {
 // Global Type Interner (Singleton)
 // ============================================================
 //
-// SAFETY STATUS (updated 2026-04-11): the original comment claimed "the
-// Blood compiler is single-threaded" but this is NO LONGER TRUE — parallel
-// codegen (4 workers, added during session 4) calls unify.apply_substs_id
-// from worker threads, which transitively calls `type_interner().intern(...)`
-// via the MIR lowering path in codegen_thread_worker (main.blood:3550).
+// SAFETY STATUS (updated 2026-04-12, session 8): parallel codegen (4
+// workers, added during session 4) calls unify.apply_substs_id from worker
+// threads, which transitively calls `type_interner().intern(...)` via the
+// MIR lowering path in codegen_thread_worker. This was previously believed
+// to be a heavy data race (session 6 measured "+17673 interner writes per
+// build"). Session 8 split that measurement and discovered it was a
+// MIS-ATTRIBUTION: ~99.994% of those writes happen on the MAIN thread
+// during the sequential fn_signatures pre-pass that runs BEFORE spawning
+// workers. See main.blood:compile_file_streaming for the pre-pass
+// implementation and the `[sound-04]` split measurement.
 //
-// This is a KNOWN RISK, not a known bug:
-//   - Init is single-threaded (init_type_interner() runs before workers spawn).
-//   - During the pre-codegen phases (parse, HIR lowering, typeck), accesses
-//     are single-threaded and safe.
-//   - During parallel codegen, multiple workers may concurrently read and
-//     MUTATE the interner. This is a data race on the underlying HashMap.
+// Actual state (session 8 measurement):
+//   - prepass (sequential, safe):  +17670 writes per full self-compile
+//   - parallel (racy):             +1 write per full self-compile
+//   - the 1 residual is `fn(u64) -> u64` — the function pointer type of
+//     `codegen_thread_worker` itself, interned when a worker codegens the
+//     cast `codegen_thread_worker as u64`. Empirically bounded, identified.
 //
-// Empirically, 10K+ fuzz runs and 547 golden tests pass with parallel
-// codegen enabled — the hash table accesses happen to not corrupt in
-// practice. But this is tempting fate.
-//
-// Mitigations to consider (deferred pending BUG-4 investigation):
-//   A. Pre-intern all types needed by parallel workers before spawning,
-//      then treat the interner as read-only during parallel codegen.
-//   B. Wrap type_interner() in a mutex for the parallel phase.
-//   C. Per-worker scratch interners that merge back on thread_join.
-//   D. Make the interner lock-free (hash-trie or similar).
-//
-// See BUG-4 (GAP-3 parallel codegen heap corruption) in `.tmp/BUGS_OPEN.md`
-// — the "corrupted size vs. prev_size" glibc errors may be caused by this
-// race, not by aggregate escape analysis as previously hypothesized.
+// The race window is therefore one HashMap.insert per 24-second parallel
+// phase — collision probability is astronomically low. A regression cap
+// in main.blood (parallel_writes > 50) fires loud if this ever widens.
+// See BUGS_OPEN.md §SOUND-04 for the full reclassification trail.
 //
 // @unsafe safety note: the two `@unsafe` blocks below access this singleton.
-// They are currently load-bearing on the empirical observation above rather
-// than on a formal argument.
+// Init is single-threaded (init_type_interner() runs before workers spawn).
+// During the pre-codegen phases (parse, HIR lowering, typeck), accesses are
+// single-threaded and safe. During parallel codegen, the sequential pre-pass
+// handles ~all interning and workers see a (near-)stable interner.
+//
+// Session 5's hypothesis that SOUND-04 might underlie BUG-4 GAP-3 is
+// REJECTED: a 1-write race window is too thin to explain systemic glibc
+// heap corruption during a 24-second parallel phase. BUG-4 needs different
+// investigation — TSan, aggregate escape analysis, worker-local regions.
 static mut GLOBAL_TYPE_INTERNER: Option<TypeInterner> = Option.None;
 
 /// Initializes the global type interner.

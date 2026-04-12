@@ -65,6 +65,12 @@ impl<'src> Lexer<'src> {
     /// This is a hot path (called once per source byte) — the `@unsafe`
     /// escape is a deliberate performance choice over bounds-checked indexing.
     fn byte_at(self: &Self, pos: usize) -> u8 {
+        // Safety: the `if pos >= self.source.len()` guard above ensures
+        // `pos` is in-bounds. `self.source` is a `&str` pointing at a
+        // live source buffer that outlives the Lexer (borrow-checked at
+        // Lexer construction). The raw-ptr arithmetic below is equivalent
+        // to `self.source.as_bytes()[pos]` but avoids bounds re-checks on
+        // the hot path (one call per source byte over a ~4MB compile unit).
         if pos >= self.source.len() {
             0
         } else {

@@ -214,6 +214,12 @@ pub fn lower_body_with_const_info(
     let t_setup_start = blood_clock_millis();
 
     let resolved_return_id = unify.apply_substs_id(subst_table, return_ty);
+    // Safety: pack the subst_table reference as a raw address so it can
+    // be stored in MirLowerCtx (which outlives any single borrow). The
+    // SubstTable lives on the caller's stack for the duration of this
+    // lowering call and its descendants — see MirLowerCtx.subst_table_addr
+    // field doc for the lifetime contract. Converted back to &SubstTable
+    // via MirLowerCtx.resolve_subst_table().
     let subst_table_addr = @unsafe { subst_table as *const unify.SubstTable as usize } as u64;
     let cloned_resolutions = clone_method_resolutions(method_resolutions);
     let cloned_field_res = clone_field_resolutions(field_resolutions);
@@ -319,6 +325,9 @@ pub fn lower_closure(
 ) -> mir_body.MirBody {
     // Resolve return type (TyId-native) and create lowering context
     let resolved_return_id = unify.apply_substs_id(subst_table, return_ty);
+    // Safety: same rationale as lower_body above — pack reference as
+    // address so MirLowerCtx can store it across its lifetime. Caller's
+    // SubstTable stays live for the duration of this closure lowering.
     let subst_table_addr = @unsafe { subst_table as *const unify.SubstTable as usize } as u64;
     let mut ctx = mir_lower_ctx.MirLowerCtx.new(def_id, resolved_return_id, span, subst_table_addr, Vec.new(), Vec.new(), Vec.new());
 
@@ -371,6 +380,9 @@ pub fn lower_static(
 ) -> mir_body.MirBody {
     // Resolve type (TyId-native) and create context
     let resolved_id = unify.apply_substs_id(subst_table, ty);
+    // Safety: same rationale as lower_body / lower_closure_body — pack
+    // reference as address so MirLowerCtx can store it; caller's
+    // SubstTable stays live for the duration of static initializer lowering.
     let subst_table_addr = @unsafe { subst_table as *const unify.SubstTable as usize } as u64;
     let mut ctx = mir_lower_ctx.MirLowerCtx.new(def_id, resolved_id, span, subst_table_addr, Vec.new(), Vec.new(), Vec.new());
 

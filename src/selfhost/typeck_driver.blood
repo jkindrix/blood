@@ -36,11 +36,12 @@ mod hashmap;
 // in the entire build. These decompose per-body cost into setup, infer,
 // resolve (numeric defaulting + unresolved-infer check), and linearity.
 //
-// @unsafe safety note: all `@unsafe { CB_T_* }` blocks in this file access
-// these module-level `static mut` counters. Type checking runs sequentially
-// (before codegen's parallel phase), so counter accesses see no contention.
-// The `@unsafe` annotation is purely a Blood language requirement for
-// touching `static mut`; no data-race or memory-safety concerns apply.
+// @unsafe safety note: all `@unsafe { CB_T_* / NUMERIC_DEFAULT_* }` blocks
+// in this file access these module-level `static mut` counters. Type
+// checking runs sequentially (before codegen's parallel phase), so counter
+// accesses see no contention. The `@unsafe` annotation is purely a Blood
+// language requirement for touching `static mut`; no data-race or memory-
+// safety concerns apply.
 static mut CB_T_SETUP_MS: u64 = 0;      // local registration + return_ty setup
 static mut CB_T_INFER_MS: u64 = 0;      // infer_expr + unify + effect check
 static mut CB_T_RESOLVE_MS: u64 = 0;    // flush_pending + numeric + unresolved
