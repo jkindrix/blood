@@ -1077,32 +1077,41 @@ pub fn hir_diagnostic_code(code: &hir.DiagnosticCode) -> &str {
         &hir.DiagnosticCode.E0102 => "E0229",
         &hir.DiagnosticCode.E0103 => "E0229",
         &hir.DiagnosticCode.E0104 => "E0229",
-        &hir.DiagnosticCode.E0200 => "E0200",
-        &hir.DiagnosticCode.E0201 => "E0201",
-        &hir.DiagnosticCode.E0202 => "E0202",
-        &hir.DiagnosticCode.E0203 => "E0203",
-        &hir.DiagnosticCode.E0204 => "E0204",
-        &hir.DiagnosticCode.E0205 => "E0205",
-        &hir.DiagnosticCode.E0206 => "E0206",
-        &hir.DiagnosticCode.E0300 => "E0300",
-        &hir.DiagnosticCode.E0301 => "E0301",
-        &hir.DiagnosticCode.E0302 => "E0302",
-        &hir.DiagnosticCode.E0303 => "E0303",
-        &hir.DiagnosticCode.E0304 => "E0304",
-        &hir.DiagnosticCode.E0305 => "E0305",
-        &hir.DiagnosticCode.E0400 => "E0400",
-        &hir.DiagnosticCode.E0401 => "E0401",
-        &hir.DiagnosticCode.E0402 => "E0402",
-        &hir.DiagnosticCode.E0403 => "E0403",
-        &hir.DiagnosticCode.E0500 => "E0500",
-        &hir.DiagnosticCode.E0501 => "E0501",
-        &hir.DiagnosticCode.E0502 => "E0502",
-        &hir.DiagnosticCode.E0503 => "E0503",
-        &hir.DiagnosticCode.E0600 => "E0600",
-        &hir.DiagnosticCode.E0601 => "E0601",
-        &hir.DiagnosticCode.E0602 => "E0602",
-        &hir.DiagnosticCode.E0603 => "E0603",
-        &hir.DiagnosticCode.E0604 => "E0604",
+        // Type errors — renumber to spec E02xx category
+        &hir.DiagnosticCode.E0200 => "E0201",  // spec: Type Mismatch (was impl E0200)
+        &hir.DiagnosticCode.E0201 => "E0202",  // spec: Cannot Infer Type (was impl E0201)
+        &hir.DiagnosticCode.E0202 => "E0202",  // SPEC AMEND pending: Invalid Cast -> proposed E0238; kept at E0202 for now
+        &hir.DiagnosticCode.E0203 => "E0206",  // spec: Trait Bound Not Satisfied (was impl E0203 "Missing trait impl")
+        &hir.DiagnosticCode.E0204 => "E0206",  // spec: Trait Bound Not Satisfied (was impl E0204, same target as E0203 — future merge)
+        &hir.DiagnosticCode.E0205 => "E0205",  // SPEC AMEND pending: Invalid Use of Never -> proposed E0239; kept at E0205 for now
+        &hir.DiagnosticCode.E0206 => "E0205",  // spec: Recursive Type Has Infinite Size (was impl E0206)
+
+        // Expression errors — mixed: several are really in other categories per spec
+        &hir.DiagnosticCode.E0300 => "E0219",  // spec: Wrong Main Signature (for "function validation")
+        &hir.DiagnosticCode.E0301 => "E0401",  // spec: Cannot Borrow as Mutable (was impl E0301 in effect range — wrong category)
+        &hir.DiagnosticCode.E0302 => "E0302",  // SPEC AMEND pending: split into E0222/E0223/E0224 per usage site
+        &hir.DiagnosticCode.E0303 => "E0220",  // spec: Return Type Mismatch (was impl E0303 "Missing return value")
+        &hir.DiagnosticCode.E0304 => "E0304",  // SPEC AMEND pending: Unreachable Code -> proposed E0240
+        &hir.DiagnosticCode.E0305 => "E0305",  // spec E0305 = Invalid Effect Handler — matches actual usage in hir_lower_item.blood:1321
+
+        // Pattern errors
+        &hir.DiagnosticCode.E0400 => "E0236",  // spec: Non-Exhaustive Patterns (was impl E0400)
+        &hir.DiagnosticCode.E0401 => "E0237",  // spec: Unreachable Pattern (was impl E0401)
+        &hir.DiagnosticCode.E0402 => "E0226",  // spec: Pattern Mismatch (was impl E0402)
+        &hir.DiagnosticCode.E0403 => "E0403",  // SPEC AMEND pending: Binding in Or-Pattern -> proposed E0241
+
+        // Effect errors — cross-category into spec E03xx
+        &hir.DiagnosticCode.E0500 => "E0301",  // spec: Unhandled Effect (was impl E0500 in lifetime range)
+        &hir.DiagnosticCode.E0501 => "E0308",  // spec: Undeclared Effects (was impl E0501 "Effect not in scope")
+        &hir.DiagnosticCode.E0502 => "E0303",  // spec: Resume Type Mismatch (was impl E0502 "Invalid resume")
+        &hir.DiagnosticCode.E0503 => "E0302",  // spec: Effect Signature Mismatch (was impl E0503 "Handler type mismatch")
+
+        // Borrow checker errors — spec defines E04xx for ownership
+        &hir.DiagnosticCode.E0600 => "E0600",  // SPEC AMEND pending: Use After Move -> proposed E0402
+        &hir.DiagnosticCode.E0601 => "E0401",  // spec: Cannot Borrow as Mutable (was impl E0601, spec-aligned)
+        &hir.DiagnosticCode.E0602 => "E0602",  // SPEC AMEND pending: Borrow Conflict -> proposed E0403
+        &hir.DiagnosticCode.E0603 => "E0603",  // spec E0603 = Type Instability — already matches
+        &hir.DiagnosticCode.E0604 => "E0604",  // SPEC AMEND pending: Dangling Reference -> proposed E0404
         &hir.DiagnosticCode.E0900 => "E9000",  // spec: Internal Compiler Error (was impl E0900)
         &hir.DiagnosticCode.E0901 => "E0228",  // spec: Unsupported Feature (was impl E0901)
     }
