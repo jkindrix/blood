@@ -3766,7 +3766,6 @@ fn codegen_thread_worker(arg: u64) -> u64 {
 // Pass 2: MIR Lowering + Codegen
 // ============================================================
 
-/// Runs Pass 2 codegen, writing each function's IR directly to output_path.
 /// Processes functions sequentially with per-function MIR regions for memory efficiency.
 /// Returns collected mono_requests and next_mono_def_id for const-generic monomorphization.
 fn codegen_pass2(
@@ -5651,7 +5650,12 @@ fn split_monolithic_to_modules(
 
     // Phase 2: Collect function blocks with their names and byte ranges.
     // Each function: (name_hash, block_start, block_end)
+    // Inter-function content (global declarations, comments, blank lines) is
+    // captured by extending each block_start backwards to the previous block's
+    // end. This ensures handler registration globals (e.g., @__handler_reg_idx_N)
+    // emitted between function definitions are not lost during module splitting.
     let mut fn_blocks: Vec<(u64, usize, usize)> = Vec.with_capacity(5000);
+    let mut prev_fn_end: usize = preamble_end;
     pos = preamble_end;
     while pos < len {
         let line_start = pos;
@@ -5668,7 +5672,8 @@ fn split_monolithic_to_modules(
             && bytes[line_start + 4] == 110 && bytes[line_start + 5] == 101
             && bytes[line_start + 6] == 32
         {
-            let block_start = line_start;
+            // Include any inter-function content (globals, comments) before this define
+            let block_start = prev_fn_end;
             // Extract function name: find '@' then read until '('
             let mut at_pos = line_start + 7;
             while at_pos < line_end && bytes[at_pos] != 64 { // '@'
@@ -5692,6 +5697,7 @@ fn split_monolithic_to_modules(
                 // Single-line function — the block is just this one line
                 let block_end = line_end + 1;
                 fn_blocks.push((name_hash, block_start, if block_end > len { len } else { block_end }));
+                prev_fn_end = if block_end > len { len } else { block_end };
                 pos = block_end;
                 continue;
             }
@@ -5708,6 +5714,7 @@ fn split_monolithic_to_modules(
                         // Found function end
                         let block_end = eol + 1; // include the newline
                         fn_blocks.push((name_hash, block_start, if block_end > len { len } else { block_end }));
+                        prev_fn_end = if block_end > len { len } else { block_end };
                         pos = block_end;
                         break;
                     }
