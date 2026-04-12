@@ -318,11 +318,11 @@ fn find_def_id_cached(
                     0
                 }
                 &hir_item.ItemKind.Handler(ref handler_def) => {
-                    // Return clause: use body_id.index as DefId
+                    // Return clause: use allocated def_id
                     match &handler_def.return_clause {
                         &Option.Some(ref rc) => {
                             if rc.body_id.index == target_body_id.index {
-                                return rc.body_id.index;
+                                return rc.def_id.index;
                             }
                         }
                         &Option.None => {}
@@ -2412,12 +2412,10 @@ fn find_def_id_for_body(
             &hir_item.ItemKind.Effect(_) => {}
             &hir_item.ItemKind.Handler(ref handler_def) => {
                 // Check return clause body
-                // Use body_id.index as the DefId to match driver.find_fn_for_body
-                // which returns DefId.new(target_body_id.index) for return clause bodies.
                 match &handler_def.return_clause {
                     &Option.Some(ref rc) => {
                         if rc.body_id.index == target_body_id.index {
-                            return rc.body_id.index;
+                            return rc.def_id.index;
                         }
                     }
                     &Option.None => {}

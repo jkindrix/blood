@@ -1339,10 +1339,8 @@ pub fn find_fn_for_body(
                 match &handler_def.return_clause {
                     &Option.Some(ref ret_clause) => {
                         if ret_clause.body_id.index == target_body_id.index {
-                            // Return clause: return type is the computation result type
-                            // We don't have the exact type here, use a placeholder
                             return Option.Some(FnInfo {
-                                def_id: hir_def.DefId.new(target_body_id.index),
+                                def_id: ret_clause.def_id,
                                 name: ret_clause.param_name.symbol,
                                 name_span: ret_clause.param_name.span,
                                 return_ty: type_intern.CommonTypes.unit(),

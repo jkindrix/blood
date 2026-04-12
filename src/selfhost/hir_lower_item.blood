@@ -1389,6 +1389,7 @@ fn lower_handler_return(
     rc: &ast.ReturnClause,
     state: &Vec<hir_item.HandlerState>,
 ) -> hir_item.HandlerReturn {
+    let def_id = ctx.alloc_def_id();
     let body_id = ctx.alloc_body_id();
 
     // Push function scope for handler return body
@@ -1446,7 +1447,7 @@ fn lower_handler_return(
     let body = hir_expr.Body.new(body_id, locals, param_count, body_expr);
     ctx.add_body(body_id, body);
 
-    hir_item.HandlerReturn.new(rc.param, body_id)
+    hir_item.HandlerReturn.new(rc.param, def_id, body_id)
 }
 
 /// Lower handler finally clause.
