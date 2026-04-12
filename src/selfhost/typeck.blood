@@ -770,12 +770,7 @@ impl TypeChecker {
         self.fn_sigs[def_idx] = Some(info);
     }
 
-    /// Unifies two types.
-    ///
-    /// Passes &mut self.subst_table and &mut self.unifier directly to
-    /// unify.unify. This is the correct implementation.
-    ///
-    /// BUG-005 (mutations through &mut field_of_ref) is now fixed in blood-rust.
+    /// Unifies two types. Reports errors via self.error on failure.
     pub fn unify(self: &mut Self, a: type_intern.TyId, b: type_intern.TyId, span: common.Span) -> bool {
         let result = unify.unify_id(&mut self.subst_table, &mut self.unifier, a, b, span);
 
