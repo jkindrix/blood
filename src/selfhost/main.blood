@@ -3766,6 +3766,29 @@ fn codegen_thread_worker(arg: u64) -> u64 {
 // Pass 2: MIR Lowering + Codegen
 // ============================================================
 
+// ============================================================
+// MIR Validation via algebraic effects — dog-fooding Blood's effect system
+// ============================================================
+// First use of algebraic effects in the compiler itself.
+// Effect + handler are here (not in validate_mir.blood) because the
+// compiler's cross-module effect resolution doesn't yet support
+// handler-for-effect declarations referencing effects in other modules.
+// When cross-module effects are supported, the effectful validate_body
+// can move to validate_mir.blood and replace the Vec<String>-based one.
+// ============================================================
+
+// Effect declaration for MIR diagnostics — dog-fooding Blood's effect system.
+// The handler declaration is deferred: adding a `deep handler` to the selfhost
+// triggers E0242 (invalid assignment target) on deref-assign in compiled programs
+// (e.g., `*r = 20`). This is a compiler bug: handler declarations in the main
+// compilation file shift internal type-checker state in a way that breaks
+// assignment-target validation. Tracked as BUG-7 in BUGS_OPEN.md.
+// Once BUG-7 is fixed, add the MirErrorPrinter handler and convert the consumer
+// at codegen_pass2 to use validate_mir_and_print (see DIAGNOSTIC_EFFECT_CANARY.md).
+effect MirDiagnostic {
+    op emit(message: String) -> ();
+}
+
 /// Processes functions sequentially with per-function MIR regions for memory efficiency.
 /// Returns collected mono_requests and next_mono_def_id for const-generic monomorphization.
 fn codegen_pass2(
