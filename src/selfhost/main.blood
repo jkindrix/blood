@@ -3769,23 +3769,15 @@ fn codegen_thread_worker(arg: u64) -> u64 {
 // ============================================================
 // MIR Validation via algebraic effects — dog-fooding Blood's effect system
 // ============================================================
-// First use of algebraic effects in the compiler itself.
-// Effect + handler are here (not in validate_mir.blood) because the
-// compiler's cross-module effect resolution doesn't yet support
-// handler-for-effect declarations referencing effects in other modules.
-// When cross-module effects are supported, the effectful validate_body
-// can move to validate_mir.blood and replace the Vec<String>-based one.
+// validate_mir.blood declares the MirDiagnostic effect and validate_body
+// performs it. The handler here collects/prints errors. This is the first
+// cross-module effect usage in the compiler.
 // ============================================================
 
-// Effect + handler for MIR diagnostics — dog-fooding Blood's effect system.
-effect MirDiagnostic {
-    op emit(message: String) -> ();
-}
-
-deep handler MirErrorPrinter for MirDiagnostic {
+deep handler MirErrorPrinter for validate_mir.MirDiagnostic {
     let mut count: i32
 
-    return(x) { x }
+    return(x) { count }
     op emit(message) {
         eprint_str("  ");
         eprint_str(message.as_str());
@@ -3793,20 +3785,6 @@ deep handler MirErrorPrinter for MirDiagnostic {
         count += 1;
         resume(())
     }
-}
-
-/// Effectful adapter for validate_mir::validate_body.
-/// Emits each MIR validation error via the MirDiagnostic effect.
-/// Returns the number of errors found.
-/// When cross-module effects are supported, validate_body itself can
-/// be made effectful and this adapter becomes unnecessary.
-fn validate_and_emit(body: &mir_body.MirBody, fn_name: &str) -> usize / {MirDiagnostic} {
-    let errors = validate_mir.validate_body(body, fn_name);
-    let count = errors.len();
-    for ei in 0usize..count {
-        perform MirDiagnostic.emit(errors[ei].clone());
-    }
-    count
 }
 
 /// Processes functions sequentially with per-function MIR regions for memory efficiency.
@@ -4518,20 +4496,19 @@ fn codegen_pass2(
         }
         t_bc01_scan_total += blood_clock_millis() - t_bc01_start;
 
-        // Validate MIR structure if requested — uses MirDiagnostic effect
+        // Validate MIR structure if requested — uses MirDiagnostic effect.
+        // validate_body is effectful: it performs MirDiagnostic.emit directly.
+        // The handler prints each error and counts them via its state field.
+        // The return clause yields count, so the with-handle expression returns
+        // the number of errors found.
         if args.validate_mir {
             let fn_name_str = work.fn_name.as_str();
-            let errors = validate_mir.validate_body(&mir_result.body, fn_name_str);
-            if errors.len() > 0 {
-                mir_validation_errors += errors.len();
-                eprint_str("=== MIR VALIDATION ERRORS: ");
-                eprint_str(fn_name_str);
-                eprint_str(" ===\n");
-                with MirErrorPrinter { count: 0 } handle {
-                    for ei in 0usize..errors.len() {
-                        perform MirDiagnostic.emit(errors[ei].clone());
-                    }
-                };
+            let validation_error_count: i32 = with MirErrorPrinter { count: 0 } handle {
+                validate_mir.validate_body(&mir_result.body, fn_name_str);
+                0
+            };
+            if validation_error_count > 0 {
+                mir_validation_errors += validation_error_count as usize;
             }
         }
 

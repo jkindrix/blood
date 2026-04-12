@@ -23,10 +23,14 @@ mod mir_term;
 mod mir_body;
 mod type_intern;
 
-/// Validates a MIR body and returns a list of error messages.
-/// An empty list means the MIR is valid.
-pub fn validate_body(body: &mir_body.MirBody, fn_name: &str) -> Vec<String> {
-    let mut errors: Vec<String> = Vec.new();
+/// Effect for emitting MIR validation diagnostics.
+/// Handlers in the caller decide how to process them (print, collect, etc.).
+pub effect MirDiagnostic {
+    op emit(message: String) -> ();
+}
+
+/// Validates a MIR body, emitting errors via the MirDiagnostic effect.
+pub fn validate_body(body: &mir_body.MirBody, fn_name: &str) / {MirDiagnostic} {
     let num_locals = body.locals.len();
     let num_blocks = body.basic_blocks.len();
 
@@ -34,7 +38,7 @@ pub fn validate_body(body: &mir_body.MirBody, fn_name: &str) -> Vec<String> {
     if num_locals == 0 {
         let mut msg = String.new();
         msg.push_str("no locals (missing return place _0)");
-        errors.push(msg);
+        perform MirDiagnostic.emit(msg);
     }
 
     // Check 2: Parameter count must be consistent
@@ -48,15 +52,15 @@ pub fn validate_body(body: &mir_body.MirBody, fn_name: &str) -> Vec<String> {
         msg.push_str(") exceeds local count (");
         push_usize(&mut msg, num_locals);
         msg.push(')');
-        errors.push(msg);
+        perform MirDiagnostic.emit(msg);
     }
 
     // Check 3: Body must have at least one basic block
     if num_blocks == 0 {
         let mut msg = String.new();
         msg.push_str("no basic blocks");
-        errors.push(msg);
-        return errors;
+        perform MirDiagnostic.emit(msg);
+        return;
     }
 
     // Check 4: Every block must have a terminator
@@ -77,25 +81,25 @@ pub fn validate_body(body: &mir_body.MirBody, fn_name: &str) -> Vec<String> {
                         msg.push_str(" out of range (");
                         push_usize(&mut msg, num_blocks);
                         msg.push_str(" blocks)");
-                        errors.push(msg);
+                        perform MirDiagnostic.emit(msg);
                     }
                 }
 
                 // Check 6: Validate terminator operand local references
-                validate_terminator_locals(&mut errors, term, bb_idx, num_locals);
+                validate_terminator_locals(term, bb_idx, num_locals);
             }
             &Option.None => {
                 let mut msg = String.new();
                 msg.push_str("bb");
                 push_usize(&mut msg, bb_idx);
                 msg.push_str(": missing terminator");
-                errors.push(msg);
+                perform MirDiagnostic.emit(msg);
             }
         }
 
         // Check 7: Validate statement operand local references
         for stmt_idx in 0usize..block.statements.len() {
-            validate_statement_locals(&mut errors, &block.statements[stmt_idx], bb_idx, stmt_idx, num_locals);
+            validate_statement_locals(&block.statements[stmt_idx], bb_idx, stmt_idx, num_locals);
         }
 
     }
@@ -123,61 +127,59 @@ pub fn validate_body(body: &mir_body.MirBody, fn_name: &str) -> Vec<String> {
     if !has_return && num_blocks > 0 {
         let mut msg = String.new();
         msg.push_str("no Return terminator in any block");
-        errors.push(msg);
+        perform MirDiagnostic.emit(msg);
     }
 
     // Check 10: Assignment type consistency
     for bb_idx in 0usize..num_blocks {
-        validate_assign_types(&mut errors, body, bb_idx);
+        validate_assign_types(body, bb_idx);
     }
 
     // Check 11: BinaryOp operand type consistency
     for bb_idx in 0usize..num_blocks {
-        validate_binop_types(&mut errors, body, bb_idx);
+        validate_binop_types(body, bb_idx);
     }
 
     // Check 12: Call destination type vs return local type
     for bb_idx in 0usize..num_blocks {
-        validate_call_destination(&mut errors, body, bb_idx);
+        validate_call_destination(body, bb_idx);
     }
 
-    errors
 }
 
 /// Validates that all local references in a statement are in range.
 fn validate_statement_locals(
-    errors: &mut Vec<String>,
     stmt: &mir_stmt.Statement,
     bb_idx: usize,
     stmt_idx: usize,
     num_locals: usize,
-) {
+) / {MirDiagnostic} {
     match &stmt.kind {
         &mir_stmt.StatementKind.Assign { ref place, ref rvalue } => {
-            validate_place_local(errors, place, bb_idx, stmt_idx, num_locals, "assign dest");
-            validate_rvalue_locals(errors, rvalue, bb_idx, stmt_idx, num_locals);
+            validate_place_local(place, bb_idx, stmt_idx, num_locals, "assign dest");
+            validate_rvalue_locals(rvalue, bb_idx, stmt_idx, num_locals);
         }
         &mir_stmt.StatementKind.StorageLive(ref local_id) => {
-            check_local_range(errors, local_id.as_usize(), bb_idx, stmt_idx, num_locals, "StorageLive");
+            check_local_range(local_id.as_usize(), bb_idx, stmt_idx, num_locals, "StorageLive");
         }
         &mir_stmt.StatementKind.StorageDead(ref local_id) => {
-            check_local_range(errors, local_id.as_usize(), bb_idx, stmt_idx, num_locals, "StorageDead");
+            check_local_range(local_id.as_usize(), bb_idx, stmt_idx, num_locals, "StorageDead");
         }
         &mir_stmt.StatementKind.Drop(ref place) => {
-            validate_place_local(errors, place, bb_idx, stmt_idx, num_locals, "Drop");
+            validate_place_local(place, bb_idx, stmt_idx, num_locals, "Drop");
         }
         &mir_stmt.StatementKind.Deinit(ref place) => {
-            validate_place_local(errors, place, bb_idx, stmt_idx, num_locals, "Deinit");
+            validate_place_local(place, bb_idx, stmt_idx, num_locals, "Deinit");
         }
         &mir_stmt.StatementKind.SetDiscriminant { ref place, variant_idx: _ } => {
-            validate_place_local(errors, place, bb_idx, stmt_idx, num_locals, "SetDiscriminant");
+            validate_place_local(place, bb_idx, stmt_idx, num_locals, "SetDiscriminant");
         }
         &mir_stmt.StatementKind.CopyNonOverlapping { ref src, ref dst, count: _ } => {
-            validate_operand_local(errors, src, bb_idx, stmt_idx, num_locals, "CopyNonOverlapping src");
-            validate_operand_local(errors, dst, bb_idx, stmt_idx, num_locals, "CopyNonOverlapping dst");
+            validate_operand_local(src, bb_idx, stmt_idx, num_locals, "CopyNonOverlapping src");
+            validate_operand_local(dst, bb_idx, stmt_idx, num_locals, "CopyNonOverlapping dst");
         }
         &mir_stmt.StatementKind.PushHandler { handler_id: _, ref state_place, state_kind: _, allocation_tier: _, inline_mode: _ } => {
-            validate_place_local(errors, state_place, bb_idx, stmt_idx, num_locals, "PushHandler state");
+            validate_place_local(state_place, bb_idx, stmt_idx, num_locals, "PushHandler state");
         }
         &mir_stmt.StatementKind.PopHandler { handler_id: _ } => {}
         &mir_stmt.StatementKind.PushInlineHandler { effect_id: _, operations: _ } => {}
@@ -188,15 +190,15 @@ fn validate_statement_locals(
             ref state_place,
             ref destination,
         } => {
-            validate_operand_local(errors, body_result, bb_idx, stmt_idx, num_locals, "CallReturnClause result");
-            validate_place_local(errors, state_place, bb_idx, stmt_idx, num_locals, "CallReturnClause state");
-            validate_place_local(errors, destination, bb_idx, stmt_idx, num_locals, "CallReturnClause dest");
+            validate_operand_local(body_result, bb_idx, stmt_idx, num_locals, "CallReturnClause result");
+            validate_place_local(state_place, bb_idx, stmt_idx, num_locals, "CallReturnClause state");
+            validate_place_local(destination, bb_idx, stmt_idx, num_locals, "CallReturnClause dest");
         }
         &mir_stmt.StatementKind.CallFinallyClause {
             handler_id: _,
             ref state_place,
         } => {
-            validate_place_local(errors, state_place, bb_idx, stmt_idx, num_locals, "CallFinallyClause state");
+            validate_place_local(state_place, bb_idx, stmt_idx, num_locals, "CallFinallyClause state");
         }
         &mir_stmt.StatementKind.EnterUnchecked(_) => {}
         &mir_stmt.StatementKind.ExitUnchecked(_) => {}
@@ -209,99 +211,97 @@ fn validate_statement_locals(
 
 /// Validates that all local references in a terminator are in range.
 fn validate_terminator_locals(
-    errors: &mut Vec<String>,
     term: &mir_term.Terminator,
     bb_idx: usize,
     num_locals: usize,
-) {
+) / {MirDiagnostic} {
     let stmt_idx: usize = 999;
     match &term.kind {
         &mir_term.TerminatorKind.Goto { target: _ } => {}
         &mir_term.TerminatorKind.Return => {}
         &mir_term.TerminatorKind.Unreachable => {}
         &mir_term.TerminatorKind.SwitchInt { ref discr, targets: _ } => {
-            validate_operand_local(errors, discr, bb_idx, stmt_idx, num_locals, "SwitchInt discr");
+            validate_operand_local(discr, bb_idx, stmt_idx, num_locals, "SwitchInt discr");
         }
         &mir_term.TerminatorKind.Call { ref func, ref args, ref destination, target: _, unwind: _ } => {
-            validate_operand_local(errors, func, bb_idx, stmt_idx, num_locals, "Call func");
+            validate_operand_local(func, bb_idx, stmt_idx, num_locals, "Call func");
             for arg in args {
-                validate_operand_local(errors, arg, bb_idx, stmt_idx, num_locals, "Call arg");
+                validate_operand_local(arg, bb_idx, stmt_idx, num_locals, "Call arg");
             }
-            validate_place_local(errors, destination, bb_idx, stmt_idx, num_locals, "Call dest");
+            validate_place_local(destination, bb_idx, stmt_idx, num_locals, "Call dest");
         }
         &mir_term.TerminatorKind.Assert { ref cond, expected: _, msg: _, target: _, unwind: _ } => {
-            validate_operand_local(errors, cond, bb_idx, stmt_idx, num_locals, "Assert cond");
+            validate_operand_local(cond, bb_idx, stmt_idx, num_locals, "Assert cond");
         }
         &mir_term.TerminatorKind.Drop { ref place, target: _, unwind: _ } => {
-            validate_place_local(errors, place, bb_idx, stmt_idx, num_locals, "Drop");
+            validate_place_local(place, bb_idx, stmt_idx, num_locals, "Drop");
         }
         &mir_term.TerminatorKind.Perform { effect_id: _, op_index: _, ref args, ref destination, target: _, is_tail_resumptive: _ } => {
             for ai in 0usize..args.len() {
-                validate_operand_local(errors, &args[ai], bb_idx, stmt_idx, num_locals, "Perform arg");
+                validate_operand_local(&args[ai], bb_idx, stmt_idx, num_locals, "Perform arg");
             }
-            validate_place_local(errors, destination, bb_idx, stmt_idx, num_locals, "Perform dest");
+            validate_place_local(destination, bb_idx, stmt_idx, num_locals, "Perform dest");
         }
         &mir_term.TerminatorKind.Resume { ref value, ref destination, target: _ } => {
             match value {
                 &Option.Some(ref v) => {
-                    validate_operand_local(errors, v, bb_idx, stmt_idx, num_locals, "Resume value");
+                    validate_operand_local(v, bb_idx, stmt_idx, num_locals, "Resume value");
                 }
                 &Option.None => {}
             }
             match destination {
                 &Option.Some(ref dest) => {
-                    validate_place_local(errors, dest, bb_idx, stmt_idx, num_locals, "Resume dest");
+                    validate_place_local(dest, bb_idx, stmt_idx, num_locals, "Resume dest");
                 }
                 &Option.None => {}
             }
         }
         &mir_term.TerminatorKind.StaleReference { ref ptr, expected_gen: _, actual_gen: _ } => {
-            validate_place_local(errors, ptr, bb_idx, stmt_idx, num_locals, "StaleReference ptr");
+            validate_place_local(ptr, bb_idx, stmt_idx, num_locals, "StaleReference ptr");
         }
     }
 }
 
 /// Validates local references in an rvalue.
 fn validate_rvalue_locals(
-    errors: &mut Vec<String>,
     rvalue: &mir_types.Rvalue,
     bb_idx: usize,
     stmt_idx: usize,
     num_locals: usize,
-) {
+) / {MirDiagnostic} {
     match rvalue {
         &mir_types.Rvalue.Use(ref operand) => {
-            validate_operand_local(errors, operand, bb_idx, stmt_idx, num_locals, "Use");
+            validate_operand_local(operand, bb_idx, stmt_idx, num_locals, "Use");
         }
         &mir_types.Rvalue.Ref { ref place, mutable: _ } => {
-            validate_place_local(errors, place, bb_idx, stmt_idx, num_locals, "Ref");
+            validate_place_local(place, bb_idx, stmt_idx, num_locals, "Ref");
         }
         &mir_types.Rvalue.AddressOf { ref place, mutable: _ } => {
-            validate_place_local(errors, place, bb_idx, stmt_idx, num_locals, "AddressOf");
+            validate_place_local(place, bb_idx, stmt_idx, num_locals, "AddressOf");
         }
         &mir_types.Rvalue.BinaryOp { operator: _, ref left, ref right } => {
-            validate_operand_local(errors, left, bb_idx, stmt_idx, num_locals, "BinaryOp left");
-            validate_operand_local(errors, right, bb_idx, stmt_idx, num_locals, "BinaryOp right");
+            validate_operand_local(left, bb_idx, stmt_idx, num_locals, "BinaryOp left");
+            validate_operand_local(right, bb_idx, stmt_idx, num_locals, "BinaryOp right");
         }
         &mir_types.Rvalue.UnaryOp { operator: _, ref operand } => {
-            validate_operand_local(errors, operand, bb_idx, stmt_idx, num_locals, "UnaryOp");
+            validate_operand_local(operand, bb_idx, stmt_idx, num_locals, "UnaryOp");
         }
         &mir_types.Rvalue.Cast { ref operand, target_ty: _ } => {
-            validate_operand_local(errors, operand, bb_idx, stmt_idx, num_locals, "Cast");
+            validate_operand_local(operand, bb_idx, stmt_idx, num_locals, "Cast");
         }
         &mir_types.Rvalue.Aggregate { kind: _, ref operands } => {
             for ai in 0usize..operands.len() {
-                validate_operand_local(errors, &operands[ai], bb_idx, stmt_idx, num_locals, "Aggregate elem");
+                validate_operand_local(&operands[ai], bb_idx, stmt_idx, num_locals, "Aggregate elem");
             }
         }
         &mir_types.Rvalue.Discriminant(ref place) => {
-            validate_place_local(errors, place, bb_idx, stmt_idx, num_locals, "Discriminant");
+            validate_place_local(place, bb_idx, stmt_idx, num_locals, "Discriminant");
         }
         &mir_types.Rvalue.Len(ref place) => {
-            validate_place_local(errors, place, bb_idx, stmt_idx, num_locals, "Len");
+            validate_place_local(place, bb_idx, stmt_idx, num_locals, "Len");
         }
         &mir_types.Rvalue.ArrayToSlice { ref array_ref, array_len: _ } => {
-            validate_operand_local(errors, array_ref, bb_idx, stmt_idx, num_locals, "ArrayToSlice");
+            validate_operand_local(array_ref, bb_idx, stmt_idx, num_locals, "ArrayToSlice");
         }
         &mir_types.Rvalue.ZeroInit(ref _ty) => {}
     }
@@ -309,19 +309,18 @@ fn validate_rvalue_locals(
 
 /// Validates that a place's local is in range.
 fn validate_place_local(
-    errors: &mut Vec<String>,
     place: &mir_types.Place,
     bb_idx: usize,
     stmt_idx: usize,
     num_locals: usize,
     context: &str,
-) {
-    check_local_range(errors, place.local.as_usize(), bb_idx, stmt_idx, num_locals, context);
+) / {MirDiagnostic} {
+    check_local_range(place.local.as_usize(), bb_idx, stmt_idx, num_locals, context);
     // Also check Index projections
     for pi in 0usize..place.projection.len() {
         match &place.projection[pi] {
             &mir_types.PlaceElem.Index(ref idx_local) => {
-                check_local_range(errors, idx_local.as_usize(), bb_idx, stmt_idx, num_locals, "Index projection");
+                check_local_range(idx_local.as_usize(), bb_idx, stmt_idx, num_locals, "Index projection");
             }
             &mir_types.PlaceElem.Deref => {}
             &mir_types.PlaceElem.Field(_) => {}
@@ -334,19 +333,18 @@ fn validate_place_local(
 
 /// Validates that an operand's local is in range.
 fn validate_operand_local(
-    errors: &mut Vec<String>,
     operand: &mir_types.Operand,
     bb_idx: usize,
     stmt_idx: usize,
     num_locals: usize,
     context: &str,
-) {
+) / {MirDiagnostic} {
     match operand {
         &mir_types.Operand.Copy(ref place) => {
-            validate_place_local(errors, place, bb_idx, stmt_idx, num_locals, context);
+            validate_place_local(place, bb_idx, stmt_idx, num_locals, context);
         }
         &mir_types.Operand.Move(ref place) => {
-            validate_place_local(errors, place, bb_idx, stmt_idx, num_locals, context);
+            validate_place_local(place, bb_idx, stmt_idx, num_locals, context);
         }
         &mir_types.Operand.Constant(_) => {}
     }
@@ -354,13 +352,12 @@ fn validate_operand_local(
 
 /// Checks if a local index is in range and adds an error if not.
 fn check_local_range(
-    errors: &mut Vec<String>,
     local_idx: usize,
     bb_idx: usize,
     stmt_idx: usize,
     num_locals: usize,
     context: &str,
-) {
+) / {MirDiagnostic} {
     if local_idx >= num_locals {
         let mut msg = String.new();
         msg.push_str("bb");
@@ -379,7 +376,7 @@ fn check_local_range(
         msg.push_str(" but only ");
         push_usize(&mut msg, num_locals);
         msg.push_str(" locals exist");
-        errors.push(msg);
+        perform MirDiagnostic.emit(msg);
     }
 }
 
@@ -483,10 +480,9 @@ fn rvalue_ty(body: &mir_body.MirBody, rvalue: &mir_types.Rvalue) -> type_intern.
 
 /// Validates assignment type consistency for a basic block.
 fn validate_assign_types(
-    errors: &mut Vec<String>,
     body: &mir_body.MirBody,
     bb_idx: usize,
-) {
+) / {MirDiagnostic} {
     let block = &body.basic_blocks[bb_idx];
     for si in 0usize..block.statements.len() {
         match &block.statements[si].kind {
@@ -520,7 +516,7 @@ fn validate_assign_types(
                     msg.push_str(type_intern.format_ty_id(place_ty).as_str());
                     msg.push_str(" but rvalue has type ");
                     msg.push_str(type_intern.format_ty_id(rv_ty).as_str());
-                    errors.push(msg);
+                    perform MirDiagnostic.emit(msg);
                 }
             }
             _ => {}
@@ -530,10 +526,9 @@ fn validate_assign_types(
 
 /// Validates BinaryOp operand types: both operands should have the same type.
 fn validate_binop_types(
-    errors: &mut Vec<String>,
     body: &mir_body.MirBody,
     bb_idx: usize,
-) {
+) / {MirDiagnostic} {
     let block = &body.basic_blocks[bb_idx];
     for si in 0usize..block.statements.len() {
         match &block.statements[si].kind {
@@ -553,7 +548,7 @@ fn validate_binop_types(
                             msg.push_str(type_intern.format_ty_id(left_ty).as_str());
                             msg.push_str(" right=");
                             msg.push_str(type_intern.format_ty_id(right_ty).as_str());
-                            errors.push(msg);
+                            perform MirDiagnostic.emit(msg);
                         }
                     }
                     _ => {}
@@ -568,10 +563,9 @@ fn validate_binop_types(
 /// when the call has arguments (likely a real return value), and the destination
 /// should have a valid local index.
 fn validate_call_destination(
-    errors: &mut Vec<String>,
     body: &mir_body.MirBody,
     bb_idx: usize,
-) {
+) / {MirDiagnostic} {
     let block = &body.basic_blocks[bb_idx];
     match &block.terminator {
         &Option.Some(ref term) => {
@@ -587,7 +581,7 @@ fn validate_call_destination(
                         msg.push_str(" out of range (");
                         push_usize(&mut msg, body.locals.len());
                         msg.push_str(" locals)");
-                        errors.push(msg);
+                        perform MirDiagnostic.emit(msg);
                     }
                     // Check call arity: extract param count from callee's Fn type
                     match func {
@@ -608,7 +602,7 @@ fn validate_call_destination(
                                                 push_usize(&mut msg, expected);
                                                 msg.push_str(" args, found ");
                                                 push_usize(&mut msg, actual);
-                                                errors.push(msg);
+                                                perform MirDiagnostic.emit(msg);
                                             }
                                         }
                                         _ => {} // Non-Fn callee type — skip (indirect call, closure, etc.)
