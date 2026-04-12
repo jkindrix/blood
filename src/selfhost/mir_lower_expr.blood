@@ -1115,23 +1115,36 @@ fn lower_method_call_expr(
         // Thin refs store { ptr, i32 } — we must Deref to avoid &&T.
         // Fat refs (&str, &[T]) store { ptr, i64 } — no Deref needed.
         //
-        // Uses TyId-level checks instead of ty_id_to_type conversion to avoid
-        // BUG-2 — a miscompilation where ty_id_to_type produces the wrong
-        // Primitive variant (Str instead of I32) in monomorphized bodies.
-        // Session 8 probe: reverting to the HIR-level match still produces
-        // 1 MIR lowering error on a full self-compile, confirming BUG-2 is
-        // still live as of 2026-04-11. Workaround retained. See BUGS_OPEN.md.
-        let local_is_thin_ref = if type_intern.is_ref_id(local_info.ty) {
-            match type_intern.get_ref_inner(local_info.ty) {
-                Option.Some(inner_id) => {
-                    // &str (Str is always TyId 19 in the interner) and &[T] are
-                    // fat refs, not thin refs. Everything else is thin.
-                    inner_id.index != 19 && !type_intern.is_slice_id(inner_id)
+        // Session 8 finding (2026-04-12): the original workaround at this
+        // site (using TyId-level is_ref_id / get_ref_inner helpers) was
+        // introduced in session 1 to avoid an alleged BUG-2 miscompilation
+        // where ty_id_to_type produced Primitive(Str) for Primitive(I32)
+        // in monomorphized bodies. Session 8 cross-checked this by running
+        // BOTH the TyId-level path and the HIR-level path in parallel and
+        // comparing: **0 mismatches across 679,243 calls**. The earlier
+        // "BUG-2 still live" probe had a syntax error (`&inner.kind` instead
+        // of `&inner.as_ref().kind` — `inner` is a Box<Type>) which caused
+        // the seed's MIR lowering to error on the malformed code, NOT because
+        // BUG-2 actually fired. With the correct syntax, the HIR-level path
+        // works cleanly.
+        //
+        // Using the HIR-level match directly (matching the existing
+        // local_is_dyn_trait_ref check pattern at line 1096 above) since
+        // local_ty_resolved is already computed.
+        let local_is_thin_ref: bool = match &local_ty_resolved.kind {
+            &hir_ty.TypeKind.Ref { ref inner, mutable: _ } => {
+                match &inner.as_ref().kind {
+                    &hir_ty.TypeKind.Primitive(ref p) => {
+                        match p {
+                            &hir_ty.PrimitiveTy.Str => false,
+                            _ => true,
+                        }
+                    }
+                    &hir_ty.TypeKind.Slice { element: _ } => false,
+                    _ => true,
                 }
-                Option.None => false,
             }
-        } else {
-            false
+            _ => false,
         };
 
         let borrow_place = if local_is_thin_ref && recv_place.projection.len() == 0 {

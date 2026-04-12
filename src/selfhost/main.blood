@@ -4075,13 +4075,6 @@ fn codegen_pass2(
         main_helpers.eprint_label_u64("  [numeric_default] fires=", typeck_driver.numeric_default_fires());
         main_helpers.eprint_label_u64(" float_fires=", typeck_driver.numeric_default_fires_float());
         eprint_str("\n");
-        // BUG-2 instrumentation: how often is ty_id_to_type called and does
-        // it ever return a different outer-kind discriminant than the
-        // wildcard-match sanity check?
-        main_helpers.eprint_label_u64("  [bug2] ty_id_to_type_calls=", type_intern.bug2_ty_id_to_type_calls());
-        main_helpers.eprint_label_u64(" ref_mismatches=", type_intern.bug2_ref_mismatches());
-        main_helpers.eprint_label_u64(" primitive_mismatches=", type_intern.bug2_primitive_mismatches());
-        eprint_str("\n");
 
         return CodegenPass2Result {
             mono_requests: all_mono_requests,
@@ -4688,11 +4681,6 @@ fn codegen_pass2(
     // BUG-6 investigation: did the numeric-default workaround actually fire?
     main_helpers.eprint_label_u64("  [numeric_default] fires=", typeck_driver.numeric_default_fires());
     main_helpers.eprint_label_u64(" float_fires=", typeck_driver.numeric_default_fires_float());
-    eprint_str("\n");
-    // BUG-2 instrumentation.
-    main_helpers.eprint_label_u64("  [bug2] ty_id_to_type_calls=", type_intern.bug2_ty_id_to_type_calls());
-    main_helpers.eprint_label_u64(" ref_mismatches=", type_intern.bug2_ref_mismatches());
-    main_helpers.eprint_label_u64(" primitive_mismatches=", type_intern.bug2_primitive_mismatches());
     eprint_str("\n");
 
     if skipped_count > 0 {
