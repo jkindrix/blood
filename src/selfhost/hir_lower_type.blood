@@ -1375,6 +1375,56 @@ pub fn lower_generics(ctx: &mut hir_lower_ctx.LoweringCtx, type_params: &Option<
                             }
                         }
                         if trait_refs.len() > 0 {
+                            // Register type param bounds for T.Item resolution
+                            // from where-clause predicates (same logic as inline bounds).
+                            match &lowered_ty.kind {
+                                &hir_ty.TypeKind.Infer(param_var) => {
+                                    // The type is a type parameter (lowered as Infer)
+                                    for tri in 0usize..trait_refs.len() {
+                                        let trait_def_idx = trait_refs[tri].def_id.index as usize;
+                                        if trait_def_idx < ctx.trait_assoc_types.len() {
+                                            match &ctx.trait_assoc_types[trait_def_idx] {
+                                                &Option.Some(ref assoc_entries) => {
+                                                    let mut fresh_assocs: Vec<hir_lower_ctx.AssocTypeEntry> = Vec.new();
+                                                    for aei in 0usize..assoc_entries.len() {
+                                                        let fresh_var = ctx.alloc_ty_var();
+                                                        let fresh_ty = type_intern.type_interner().mk_infer(fresh_var);
+                                                        fresh_assocs.push(hir_lower_ctx.AssocTypeEntry.new(
+                                                            assoc_entries[aei].name,
+                                                            fresh_ty,
+                                                        ));
+                                                    }
+                                                    if fresh_assocs.len() > 0 {
+                                                        // Derive param name from where-clause type path
+                                                        let where_ty_name = match &ty.kind {
+                                                            &ast.TypeKind.Path(ref p) => {
+                                                                if p.segments.len() == 1 {
+                                                                    let seg_str = ctx.span_to_string(p.segments[0].name.span);
+                                                                    ctx.intern(seg_str.as_str())
+                                                                } else {
+                                                                    common.Symbol.new(0)
+                                                                }
+                                                            }
+                                                            _ => common.Symbol.new(0),
+                                                        };
+                                                        ctx.current_type_param_bounds.push(
+                                                            hir_lower_ctx.TypeParamBoundEntry.new(
+                                                                where_ty_name,
+                                                                param_var,
+                                                                trait_refs[tri].def_id,
+                                                                fresh_assocs,
+                                                            )
+                                                        );
+                                                    }
+                                                }
+                                                &Option.None => {}
+                                            }
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+
                             let pred = hir_ty.WherePredicate.TypeBound {
                                 ty: lowered_ty,
                                 bounds: trait_refs,

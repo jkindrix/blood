@@ -1,0 +1,25 @@
+// Test: T.Item with where-clause bounds (not just inline bounds)
+// EXPECT: 7
+trait Numbered {
+    type Id;
+    fn id(self: &Self) -> Self.Id;
+}
+
+struct Widget { n: i32 }
+
+impl Numbered for Widget {
+    type Id = i32;
+    fn id(self: &Self) -> i32 { self.n }
+}
+
+fn get_id<T>(w: &T) -> T.Id where T: Numbered {
+    w.id()
+}
+
+fn main() -> i32 {
+    let w = Widget { n: 7 };
+    let r: i32 = get_id(&w);
+    println_int(r);
+    if r != 7 { return 1; }
+    0
+}

@@ -1,0 +1,30 @@
+// Test: T.Item used as function parameter type (not just return type)
+// EXPECT: 99
+trait Producer {
+    type Output;
+    fn produce(self: &Self) -> Self.Output;
+}
+
+struct ConstProducer {
+    val: i32,
+}
+
+impl Producer for ConstProducer {
+    type Output = i32;
+    fn produce(self: &Self) -> i32 {
+        self.val
+    }
+}
+
+fn consume_production<T: Producer>(p: &T) -> i32 {
+    let out: T.Output = p.produce();
+    out
+}
+
+fn main() -> i32 {
+    let p = ConstProducer { val: 99 };
+    let result: i32 = consume_production(&p);
+    println_int(result);
+    if result != 99 { return 1; }
+    0
+}
