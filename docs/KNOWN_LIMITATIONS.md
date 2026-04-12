@@ -116,9 +116,24 @@ depend on the stdlib: it has its own built-in implementations of `HashMap`,
 
 Known structural gaps (not bugs, but feature omissions):
 
-- **No generic `HashMap<K, V>`**: the stdlib `hashmap.blood` is monomorphic
-  (`HashMapU64U64` etc.); a generic HashMap requires `T::Item` projection on
-  type parameters, which is not implemented.
+- **Generic `HashMap<K, V>` is a phantom type** (session 8 finding,
+  2026-04-12): the compiler's `register_hashmap_methods` in
+  `typeck_driver.blood:3679` registers a full set of method signatures
+  (`new`, `insert`, `get`, `contains_key`, `len`, `is_empty`, `remove`,
+  `clone`) for a built-in `HashMap<K, V>` type, BUT no runtime implementation
+  exists. Grep for `hashmap_insert|hashmap_clone|hashmap_get` in
+  `build/libblood_runtime.a` and `build/first_gen` returns zero symbols,
+  and no tested code calls any of these methods — the compiler's own
+  hashmap usage goes through the monomorphic `HashMapU64U32` /
+  `HashMapU64U64` / `HashMapU32U32` in `src/selfhost/hashmap.blood` and
+  `stdlib/collections/hashmap.blood`. The demos `examples/config_parser.blood`,
+  `examples/order_book.blood`, and `examples/content_addressing.blood`
+  use `HashMap<K, V>` in type signatures to illustrate the intended future
+  API, but they are NOT in the test suite and do not link successfully.
+  The registration is retained for type-system surface consistency only.
+  Implementing a real generic HashMap requires either runtime routines
+  for a type-erased hashmap or monomorphization support for its generic
+  methods, and either way is multi-session feature work.
 - **No usable Iterator trait for user code**: the same `T::Item` projection
   gap blocks a general `Iterator<Item = T>` trait from being useful in
   user-written code. The compiler uses concrete iterators and `for i in 0..n`
