@@ -4988,6 +4988,38 @@ fn mem_profile_at(args: &Args, label: &str, parse_region: u64, hir_region: u64, 
     }
 }
 
+/// Check the build cache for a matching compiled IR and, if found, copy it
+/// to the output path. Returns true on cache hit (caller should return true
+/// immediately), false if no cache hit (caller should proceed with compilation).
+fn try_load_cached_ir(output_path: &str, cache_dir: &str, source_hash: u64) -> bool {
+    if source_hash == 0 { return false; }
+    let cached_path = build_cache.cache_ll_path(cache_dir, source_hash);
+    if !file_exists(cached_path.as_str()) { return false; }
+    let cached_content: &str = file_read_to_string(cached_path.as_str());
+    file_write_string(output_path, cached_content);
+    eprint_str("[CACHE HIT] ");
+    eprint_str(output_path);
+    eprint_str("\n");
+    true
+}
+
+/// Read the source file at `path` and return its content, or print an error
+/// and return None on failure.
+fn read_source_or_error(path: &str) -> Option<String> {
+    let read_result = source.read_file(path);
+    if !read_result.success {
+        main_helpers.print_error("Failed to read source file");
+        return Option.None;
+    }
+    match read_result.content {
+        Option.Some(c) => Option.Some(c),
+        Option.None => {
+            main_helpers.print_error("No content in file");
+            Option.None
+        }
+    }
+}
+
 /// Print " FAILED\n", format errors via ErrorReporter, print them. Used by
 /// each phase (parse / HIR / typeck) at the error-cleanup boundary. Does NOT
 /// handle region cleanup — callers must destroy regions themselves because
@@ -5163,32 +5195,14 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
         build_cache.try_cache(base_dir.as_str(), path, exe_path)
     };
 
-    if source_hash != 0 {
-        let cached_path = build_cache.cache_ll_path(cache_dir.as_str(), source_hash);
-        if file_exists(cached_path.as_str()) {
-            // Cache hit — copy cached IR to output
-            let cached_content: &str = file_read_to_string(cached_path.as_str());
-            file_write_string(output_path, cached_content);
-            eprint_str("[CACHE HIT] ");
-            eprint_str(output_path);
-            eprint_str("\n");
-            return true;
-        }
+    if try_load_cached_ir(output_path, cache_dir.as_str(), source_hash) {
+        return true;
     }
 
-    // Phase 1: Read source file and compute base_dir (global allocator — small)
-    let read_result = source.read_file(path);
-    if !read_result.success {
-        main_helpers.print_error("Failed to read source file");
-        return false;
-    }
-
-    let content = match &read_result.content {
-        &Option.Some(ref c) => c,
-        &Option.None => {
-            main_helpers.print_error("No content in file");
-            return false;
-        }
+    // Phase 1: Read source file (global allocator — small)
+    let content = match read_source_or_error(path) {
+        Option.Some(c) => c,
+        Option.None => return false,
     };
 
     // === Parse Phase (parse_region) ===
@@ -5201,7 +5215,7 @@ fn compile_file_streaming(path: &str, output_path: &str, args: &Args) -> bool {
     // lands on the global heap.  It is used for error reporting after
     // parse_region is destroyed; allocating it inside the region causes
     // use-after-free on type-check error paths.
-    let expanded_source = macro_expand.preprocess_macros(content);
+    let expanded_source = macro_expand.preprocess_macros(&content);
 
     let parse_region = region_create(2097152, 10737418240);
     region_activate(parse_region);
