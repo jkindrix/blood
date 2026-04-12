@@ -1415,7 +1415,8 @@ fn record_field_list_to_vec(id: RecordFieldListId) -> Vec<hir_ty.RecordField> {
 // ============================================================
 
 /// If this TyId is Ownership, returns Some(inner). Otherwise None.
-/// Avoids match-through-reference which has known issues with some enum variants.
+/// TyId-level query that avoids allocating an hir_ty.Type tree for the
+/// common "is this ownership-wrapped?" check on hot paths (unify, codegen).
 pub fn unwrap_ownership_id(id: TyId) -> Option<TyId> {
     let kind = type_interner().get(id);
     match kind {

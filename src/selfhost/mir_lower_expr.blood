@@ -1114,23 +1114,8 @@ fn lower_method_call_expr(
         // Check if the receiver local holds a thin reference (e.g. &i32, &String).
         // Thin refs store { ptr, i32 } — we must Deref to avoid &&T.
         // Fat refs (&str, &[T]) store { ptr, i64 } — no Deref needed.
-        //
-        // Session 8 finding (2026-04-12): the original workaround at this
-        // site (using TyId-level is_ref_id / get_ref_inner helpers) was
-        // introduced in session 1 to avoid an alleged BUG-2 miscompilation
-        // where ty_id_to_type produced Primitive(Str) for Primitive(I32)
-        // in monomorphized bodies. Session 8 cross-checked this by running
-        // BOTH the TyId-level path and the HIR-level path in parallel and
-        // comparing: **0 mismatches across 679,243 calls**. The earlier
-        // "BUG-2 still live" probe had a syntax error (`&inner.kind` instead
-        // of `&inner.as_ref().kind` — `inner` is a Box<Type>) which caused
-        // the seed's MIR lowering to error on the malformed code, NOT because
-        // BUG-2 actually fired. With the correct syntax, the HIR-level path
-        // works cleanly.
-        //
-        // Using the HIR-level match directly (matching the existing
-        // local_is_dyn_trait_ref check pattern at line 1096 above) since
-        // local_ty_resolved is already computed.
+        // Uses the HIR-level match on local_ty_resolved (already computed
+        // for the dyn_trait check above), same as local_is_dyn_trait_ref.
         let local_is_thin_ref: bool = match &local_ty_resolved.kind {
             &hir_ty.TypeKind.Ref { ref inner, mutable: _ } => {
                 match &inner.as_ref().kind {

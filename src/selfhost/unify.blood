@@ -1951,9 +1951,11 @@ fn unify_resolved_id(
     }
 
     // Phase 4: Ownership coercion and unification.
-    // Uses helper functions to detect Ownership without match-through-reference
-    // (the compiler has a known issue where some enum variant matches through
-    // references fail for high-indexed variants in large enums).
+    // Uses TyId-level helper functions (unwrap_ownership_id, ownership_is_linear)
+    // for speed — no hir_ty.Type tree reconstruction, just direct reads against
+    // the interner. (Previous comment cited a BUG-2-style match-through-reference
+    // issue as the motivation; session 8 closed BUG-2 as a false alarm, so the
+    // helpers are kept purely for performance.)
     let a_ownership = type_intern.unwrap_ownership_id(a);
     let b_ownership = type_intern.unwrap_ownership_id(b);
     match a_ownership {
