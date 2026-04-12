@@ -639,8 +639,8 @@ pub fn clone_typeck_result_to_heap(src: &TypeCheckResult) -> TypeCheckResult {
 pub fn check_types(ctx: &hir_lower_ctx.LoweringCtx) -> TypeCheckResult {
     let mut checker = typeck.TypeChecker.new();
 
-    // Phase 1: Collect type information from items
-    // (For now, we skip this since we don't have item signatures stored separately)
+    // Phase 1: Collect type information from items (needed for custom iterator for-in support)
+    collect_item_signatures(&mut checker, &ctx.items, &ctx.interner, "");
 
     // Build body → item cache for O(1) lookups
     let body_cache = build_body_item_cache(&ctx.items);
@@ -781,6 +781,9 @@ pub fn check_lower_result(result: &hir_lower_ctx.LowerResult, skip_modules: &Vec
     let t_body_cache_start = blood_clock_millis();
     let body_cache = build_body_item_cache(&result.items);
     let t_body_cache_ms = blood_clock_millis() - t_body_cache_start;
+
+    // Phase 1f: Build iterator-next table for for-in loop desugaring
+    build_and_cache_iter_next_table(&mut checker, &result.interner);
 
     // Phase 2: Type check main file bodies (determines success/failure).
     //
@@ -1005,6 +1008,63 @@ fn build_impl_method_table(checker: &mut typeck.TypeChecker, hir_interner: &inte
         }
     }
     table
+}
+
+/// Cached iterator-next entries built after impl registration.
+/// Stored as a file-level static to avoid modifying TypeCheckResult's struct layout.
+static mut CACHED_ITER_NEXT_ENTRIES: Vec<common.IterNextEntry> = Vec.new();
+
+/// Returns the cached iterator-next entries for MIR lowering.
+pub fn get_iter_next_entries() -> Vec<common.IterNextEntry> {
+    @unsafe { CACHED_ITER_NEXT_ENTRIES }
+}
+
+/// Builds and caches the iterator-next table.
+/// Scans all registered impls for methods named "next" that take &mut self,
+/// have no extra parameters, and return Option<T>.
+fn build_and_cache_iter_next_table(checker: &mut typeck.TypeChecker, hir_interner: &interner.StringInterner) {
+    let mut table: Vec<common.IterNextEntry> = Vec.new();
+    let interner = type_intern.type_interner();
+    for i in 0usize..checker.impls.len() {
+        let impl_info = &checker.impls[i];
+        for mi in 0usize..impl_info.methods.len() {
+            let method = &impl_info.methods[mi];
+            if !method.takes_self_mut { continue; }
+            if method.param_tys.len() != 0 { continue; }
+            let name_opt = hir_interner.resolve(method.name);
+            match name_opt {
+                Option.Some(name_str) => {
+                    if !string_eq(&name_str, "next") { continue; }
+                }
+                Option.None => { continue; }
+            }
+            let resolved_return = unify.apply_substs_id(&checker.subst_table, method.return_ty);
+            let return_kind = interner.get(resolved_return);
+            match return_kind {
+                &type_intern.InternedTypeKind.Adt { def_id: _, args } => {
+                    let num_args = interner.ty_list_len(args);
+                    if num_args == 1 {
+                        let element_ty = interner.get_ty_list_element(args, 0);
+                        let self_resolved = unify.apply_substs_id(&checker.subst_table, impl_info.self_ty);
+                        let self_kind = interner.get(self_resolved);
+                        match self_kind {
+                            &type_intern.InternedTypeKind.Adt { def_id, args: _ } => {
+                                table.push(common.IterNextEntry.new(
+                                    def_id.index,
+                                    method.def_id.index,
+                                    resolved_return.index,
+                                    element_ty.index,
+                                ));
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    @unsafe { CACHED_ITER_NEXT_ENTRIES = table; }
 }
 
 /// Collects pending method calls that remained unresolved after resolve_pending_methods.

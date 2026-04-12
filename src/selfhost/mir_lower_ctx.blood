@@ -55,6 +55,18 @@ mod type_intern;
 static mut MIR_LOWER_CTX_CACHED_METHOD_HASH: Option<hashmap.HashMapU64U32> = Option.None;
 static mut MIR_LOWER_CTX_CACHED_FIELD_HASH: Option<hashmap.HashMapU64U32> = Option.None;
 
+/// Cached iterator-next entries for for-in loop desugaring.
+/// Set once before MIR lowering begins, read by lower_for_iter_expr.
+static mut CACHED_ITER_NEXT_ENTRIES: Vec<common.IterNextEntry> = Vec.new();
+
+pub fn set_iter_next_entries(entries: Vec<common.IterNextEntry>) {
+    @unsafe { CACHED_ITER_NEXT_ENTRIES = entries; }
+}
+
+pub fn get_iter_next_entries() -> Vec<common.IterNextEntry> {
+    @unsafe { CACHED_ITER_NEXT_ENTRIES }
+}
+
 // ============================================================
 // MIR Lowering Error Types
 // ============================================================

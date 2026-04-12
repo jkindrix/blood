@@ -16,6 +16,7 @@ mod mir_stmt;
 mod mir_term;
 mod mir_body;
 mod mir_lower_ctx;
+mod mir_lower_iter;
 mod mir_lower_util;
 mod mir_lower_pattern;
 mod type_intern;
@@ -2171,11 +2172,15 @@ fn lower_for_iter_expr(
     }
 
     if !found_array && !found_vec {
-        ctx.mir_error(
-            mir_lower_ctx.MirLowerErrorKind.InternalError,
-            common.make_string("for-in loop: type does not support iteration; only Array, Vec, Slice, and Range are currently supported. For custom iterators, use an explicit loop: loop { match iter.next() { Option.Some(x) => { ... } Option.None => break } }"),
-            span,
-        );
+        if mir_lower_iter.is_custom_iter(resolved_iter_id, iter_kind) {
+            let s = mir_lower_iter.setup_iter_loop(ctx, label, dest, span, resolved_iter_id, iter_kind);
+            lower_expr(ctx, iter, mir_lower_ctx.destination_local(s.iter_temp));
+            mir_lower_iter.emit_iter_loop_header(ctx, &s, pattern, span);
+            lower_expr(ctx, body, mir_lower_ctx.destination_ignore());
+            mir_lower_iter.finish_iter_loop(ctx, &s, dest, span);
+            return;
+        }
+        ctx.mir_error(mir_lower_ctx.MirLowerErrorKind.InternalError, common.make_string("for-in loop: type does not support iteration"), span);
         return;
     }
 

@@ -449,6 +449,26 @@ impl ImplMethodEntry {
     }
 }
 
+/// An entry in the iterator-next table for for-in desugaring.
+/// Records types that have a next(&mut self) -> Option<T> method,
+/// enabling for-in loops to call next() instead of index-based iteration.
+pub struct IterNextEntry {
+    /// DefId.index of the implementing ADT (key for lookup).
+    pub self_type_def_idx: u32,
+    /// DefId.index of the next() method.
+    pub next_def_id_index: u32,
+    /// TyId.index of the full Option<T> return type.
+    pub option_return_ty_index: u32,
+    /// TyId.index of the element type T (extracted from Option<T>).
+    pub element_ty_index: u32,
+}
+
+impl IterNextEntry {
+    pub fn new(self_type_def_idx: u32, next_def_id_index: u32, option_return_ty_index: u32, element_ty_index: u32) -> IterNextEntry {
+        IterNextEntry { self_type_def_idx, next_def_id_index, option_return_ty_index, element_ty_index }
+    }
+}
+
 /// A deferred method call whose receiver was an unresolved Infer type
 /// during initial type checking. After all bodies are checked, Infer
 /// variables may be resolved, allowing the method to be looked up.

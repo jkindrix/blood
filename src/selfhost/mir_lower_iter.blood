@@ -1,0 +1,185 @@
+module blood.mir_lower_iter;
+
+// Iterator for-in loop MIR lowering — block setup phase.
+// Does NOT import mir_lower_expr to avoid circular dependency.
+// The caller in mir_lower_expr handles expression lowering.
+
+mod common;
+mod hir_def;
+mod hir_expr;
+mod mir_def;
+mod mir_types;
+mod mir_body;
+mod mir_lower_ctx;
+mod mir_lower_util;
+mod mir_lower_pattern;
+mod type_intern;
+
+/// Holds the MIR structure for an iterator for-in loop.
+/// Returned by setup_iter_loop, consumed by the caller for body/iter lowering.
+pub struct IterLoopSetup {
+    pub iter_temp: mir_def.MirLocalId,
+    pub ref_temp: mir_def.MirLocalId,
+    pub next_result_temp: mir_def.MirLocalId,
+    pub elem_temp: mir_def.MirLocalId,
+    pub loop_header: mir_def.BasicBlockId,
+    pub body_block: mir_def.BasicBlockId,
+    pub break_block: mir_def.BasicBlockId,
+    pub after_call: mir_def.BasicBlockId,
+    pub option_ty: type_intern.TyId,
+    pub element_ty: type_intern.TyId,
+    pub next_def_id_index: u32,
+}
+
+/// Checks if the given type has a custom iterator entry (next(&mut self) -> Option<T>).
+pub fn is_custom_iter(resolved_iter_id: type_intern.TyId, iter_kind: &type_intern.InternedTypeKind) -> bool {
+    match iter_kind {
+        &type_intern.InternedTypeKind.Adt { def_id, args: _ } => {
+            let t = mir_lower_ctx.get_iter_next_entries();
+            for ei in 0usize..t.len() {
+                if t[ei].self_type_def_idx == def_id.index { return true; }
+            }
+            false
+        }
+        _ => false,
+    }
+}
+
+/// Sets up the MIR block structure for an iterator for-in loop.
+/// Returns the setup struct. The caller must:
+///   1. Lower iter_expr into setup.iter_temp (before calling emit_iter_loop_header)
+///   2. Call emit_iter_loop_header to emit the Call+Switch
+///   3. Lower body_expr in the body_block
+///   4. Call finish_iter_loop
+pub fn setup_iter_loop(
+    ctx: &mut mir_lower_ctx.MirLowerCtx,
+    label: &Option<common.Symbol>,
+    dest: mir_lower_ctx.Destination,
+    span: common.Span,
+    iter_ty_id: type_intern.TyId,
+    iter_kind: &type_intern.InternedTypeKind,
+) -> IterLoopSetup {
+    let interner = type_intern.type_interner();
+
+    // Recover the iter_next entry from the cached table
+    let iter_next_table = mir_lower_ctx.get_iter_next_entries();
+    let mut next_def_id_idx: u32 = 0;
+    let mut option_ret_idx: u32 = 0;
+    let mut elem_ty_idx: u32 = 0;
+    match iter_kind {
+        &type_intern.InternedTypeKind.Adt { def_id, args: _ } => {
+            for ei in 0usize..iter_next_table.len() {
+                if iter_next_table[ei].self_type_def_idx == def_id.index {
+                    next_def_id_idx = iter_next_table[ei].next_def_id_index;
+                    option_ret_idx = iter_next_table[ei].option_return_ty_index;
+                    elem_ty_idx = iter_next_table[ei].element_ty_index;
+                }
+            }
+        }
+        _ => {}
+    }
+    let option_ty = type_intern.TyId.new(option_ret_idx);
+    let element_ty = type_intern.TyId.new(elem_ty_idx);
+
+    // Create locals
+    let iter_temp = ctx.new_var(iter_ty_id, common.make_string("_iter"), true, span);
+    let mut_ref_ty = interner.mk_ref(iter_ty_id, true);
+    let ref_temp = ctx.new_temp(mut_ref_ty, span);
+    let next_result_temp = ctx.new_temp(option_ty, span);
+    let elem_temp = ctx.new_temp(element_ty, span);
+
+    // Create blocks
+    let loop_header = ctx.new_block();
+    let body_block = ctx.new_block();
+    let break_block = ctx.new_block();
+    let after_call = ctx.new_block();
+
+    // Push loop context
+    ctx.push_loop(*label, break_block, loop_header, dest);
+
+    IterLoopSetup {
+        iter_temp: iter_temp,
+        ref_temp: ref_temp,
+        next_result_temp: next_result_temp,
+        elem_temp: elem_temp,
+        loop_header: loop_header,
+        body_block: body_block,
+        break_block: break_block,
+        after_call: after_call,
+        option_ty: option_ty,
+        element_ty: element_ty,
+        next_def_id_index: next_def_id_idx,
+    }
+}
+
+/// Emits the loop header MIR: &mut ref, Call next(), Discriminant, SwitchInt, Downcast+bind.
+pub fn emit_iter_loop_header(
+    ctx: &mut mir_lower_ctx.MirLowerCtx,
+    setup: &IterLoopSetup,
+    pattern: &hir_expr.Pattern,
+    span: common.Span,
+) {
+    // Jump to loop header
+    ctx.terminate_goto(setup.loop_header, span);
+    ctx.set_current_block(setup.loop_header);
+
+    // Create &mut iter
+    ctx.emit_assign(
+        mir_types.Place.local(setup.ref_temp),
+        mir_types.Rvalue.Ref { place: mir_types.Place.local(setup.iter_temp), mutable: true },
+        span,
+    );
+
+    // Call next(&mut iter)
+    let func_operand = mir_types.Operand.Constant(
+        mir_types.Constant.new(setup.option_ty, mir_types.ConstantKind.FnDef(hir_def.DefId.new(setup.next_def_id_index))),
+    );
+    let mut call_args: Vec<mir_types.Operand> = Vec.new();
+    call_args.push(mir_types.Operand.Move(mir_types.Place.local(setup.ref_temp)));
+    ctx.terminate_call(func_operand, call_args, mir_types.Place.local(setup.next_result_temp), setup.after_call, span);
+
+    // Discriminant + switch
+    ctx.set_current_block(setup.after_call);
+    let discr_temp = ctx.new_temp(type_intern.CommonTypes.usize_ty(), span);
+    ctx.emit_assign(
+        mir_types.Place.local(discr_temp),
+        mir_types.Rvalue.Discriminant(mir_types.Place.local(setup.next_result_temp)),
+        span,
+    );
+    let mut switch_targets: Vec<mir_types.SwitchTarget> = Vec.new();
+    switch_targets.push(mir_types.SwitchTarget.new(1, setup.body_block));
+    let targets = mir_types.SwitchTargets.new(switch_targets, setup.break_block);
+    ctx.terminate_switch(mir_types.Operand.Copy(mir_types.Place.local(discr_temp)), targets, span);
+
+    // Body block: extract Some payload and bind pattern
+    ctx.set_current_block(setup.body_block);
+    let downcast_place = mir_types.Place.local(setup.next_result_temp).project(mir_types.PlaceElem.Downcast(1));
+    let payload_place = downcast_place.project(mir_types.PlaceElem.Field(0));
+    ctx.emit_assign(
+        mir_types.Place.local(setup.elem_temp),
+        mir_types.Rvalue.Use(mir_lower_util.operand_from_place(payload_place)),
+        span,
+    );
+    mir_lower_pattern.lower_irrefutable_pattern(ctx, pattern, mir_types.Place.local(setup.elem_temp), span);
+    // Caller lowers the body expression here, then calls finish_iter_loop
+}
+
+/// Finishes the iterator loop: goto header, pop loop, set up break block.
+pub fn finish_iter_loop(
+    ctx: &mut mir_lower_ctx.MirLowerCtx,
+    setup: &IterLoopSetup,
+    dest: mir_lower_ctx.Destination,
+    span: common.Span,
+) {
+    if !ctx.is_terminated() {
+        ctx.terminate_goto(setup.loop_header, span);
+    }
+    ctx.pop_loop();
+    ctx.set_current_block(setup.break_block);
+    match dest.as_place() {
+        Option.Some(p) => {
+            ctx.emit_assign(p, mir_types.Rvalue.ZeroInit(type_intern.CommonTypes.unit()), span);
+        }
+        Option.None => {}
+    }
+}

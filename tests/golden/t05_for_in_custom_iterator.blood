@@ -1,0 +1,35 @@
+// Test: for-in loop with a custom type implementing a next() method.
+// Verifies the for-in desugaring calls .next() on user-defined types.
+// EXPECT: 10
+
+struct Counter {
+    current: i32,
+    max: i32,
+}
+
+impl Counter {
+    fn new(max: i32) -> Counter {
+        Counter { current: 0, max: max }
+    }
+
+    fn next(self: &mut Counter) -> Option<i32> {
+        if self.current < self.max {
+            let val = self.current;
+            self.current = self.current + 1;
+            Option.Some(val)
+        } else {
+            Option.None
+        }
+    }
+}
+
+fn main() -> i32 {
+    let mut counter = Counter.new(5);
+    let mut sum: i32 = 0;
+    for x in counter {
+        sum = sum + x;
+    }
+    // 0 + 1 + 2 + 3 + 4 = 10
+    println_int(sum);
+    0
+}

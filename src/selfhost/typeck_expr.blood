@@ -3061,14 +3061,24 @@ fn infer_for_iter(
             let ref_elem = interner.mk_ref(element, false);
             checker.unify(pattern.ty, ref_elem, span);
         }
-        &type_intern.InternedTypeKind.Adt { def_id: _, args } => {
-            // Direct Vec<T> iteration — extract T from type args
+        &type_intern.InternedTypeKind.Adt { def_id, args } => {
+            // Try Vec<T> first (1+ type args, extract T directly)
             let num_args = interner.ty_list_len(args);
             if num_args >= 1 {
                 let elem_ty = interner.get_ty_list_element(args, 0);
                 checker.unify(pattern.ty, elem_ty, span);
             } else {
-                checker.error(typeck.TypeErrorKind.TypeMismatch, span);
+                // No type args — check for custom iterator via impl scan.
+                // Walk impls to find next(&mut self) -> Option<T> for this type.
+                let iter_elem = find_iter_element_type(checker, def_id.index);
+                match iter_elem {
+                    Option.Some(elem_ty) => {
+                        checker.unify(pattern.ty, elem_ty, span);
+                    }
+                    Option.None => {
+                        checker.error(typeck.TypeErrorKind.TypeMismatch, span);
+                    }
+                }
             }
         }
         _ => {
@@ -3090,6 +3100,44 @@ fn infer_for_iter(
 
     // For loops produce unit
     type_intern.CommonTypes.unit()
+}
+
+/// Scans checker.impls for a next(&mut self) -> Option<T> method on the given ADT.
+/// Returns the element type T if found, or None.
+fn find_iter_element_type(checker: &mut typeck.TypeChecker, adt_def_id_index: u32) -> Option<type_intern.TyId> {
+    let interner = type_intern.type_interner();
+    for i in 0usize..checker.impls.len() {
+        let impl_info = &checker.impls[i];
+        // Check if this impl is for our ADT
+        let impl_self_resolved = unify.apply_substs_id(&checker.subst_table, impl_info.self_ty);
+        let impl_self_kind = interner.get(impl_self_resolved);
+        match impl_self_kind {
+            &type_intern.InternedTypeKind.Adt { def_id, args: _ } => {
+                if def_id.index != adt_def_id_index { continue; }
+            }
+            _ => { continue; }
+        }
+        // Check methods for "next" taking &mut self with no extra params
+        for mi in 0usize..impl_info.methods.len() {
+            let method = &impl_info.methods[mi];
+            if !method.takes_self_mut { continue; }
+            if method.param_tys.len() != 0 { continue; }
+            // Check return type resolves to Adt with 1 arg (Option<T>)
+            let resolved_return = unify.apply_substs_id(&checker.subst_table, method.return_ty);
+            let return_kind = interner.get(resolved_return);
+            match return_kind {
+                &type_intern.InternedTypeKind.Adt { def_id: _, args } => {
+                    let num_args = interner.ty_list_len(args);
+                    if num_args == 1 {
+                        let element_ty = interner.get_ty_list_element(args, 0);
+                        return Option.Some(element_ty);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    Option.None
 }
 
 /// Infers the type of a return expression.
