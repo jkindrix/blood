@@ -1116,8 +1116,11 @@ fn lower_method_call_expr(
         // Fat refs (&str, &[T]) store { ptr, i64 } — no Deref needed.
         //
         // Uses TyId-level checks instead of ty_id_to_type conversion to avoid
-        // a known miscompilation where ty_id_to_type produces Primitive(Str)
-        // for Primitive(I32) in monomorphized bodies.
+        // BUG-2 — a miscompilation where ty_id_to_type produces the wrong
+        // Primitive variant (Str instead of I32) in monomorphized bodies.
+        // Session 8 probe: reverting to the HIR-level match still produces
+        // 1 MIR lowering error on a full self-compile, confirming BUG-2 is
+        // still live as of 2026-04-11. Workaround retained. See BUGS_OPEN.md.
         let local_is_thin_ref = if type_intern.is_ref_id(local_info.ty) {
             match type_intern.get_ref_inner(local_info.ty) {
                 Option.Some(inner_id) => {

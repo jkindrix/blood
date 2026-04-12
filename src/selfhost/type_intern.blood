@@ -1223,10 +1223,40 @@ fn find_type_vec(types: &Vec<hir_ty.Type>) -> Vec<TyId> {
 }
 
 /// Converts a TyId back into a hir_ty.Type tree.
+///
+/// BUG-2 instrumentation (session 8): counts total calls and verifies
+/// consistency between a wildcard-match discriminant check (is_ref_id /
+/// is_adt_id / etc.) and the field-binding match below. Session 1 removed
+/// a ty_id_to_type call from lower_method_call_expr because it allegedly
+/// produced Primitive(Str) for Primitive(I32) in mono bodies. Session 8
+/// probe confirmed the workaround is still load-bearing (reverting it
+/// causes 1 MIR lowering error). This counter measures call volume and
+/// catches any divergence between the two match styles.
 pub fn ty_id_to_type(id: TyId) -> hir_ty.Type {
+    @unsafe { BUG2_TY_ID_TO_TYPE_CALLS += 1; }
+
+    // Wildcard-match check (sanity): is the input kind a Ref? Record for
+    // cross-check with the output below. Uses a match arm with all fields
+    // wildcarded, which session 1 empirically found works correctly even
+    // when field-binding matches are buggy.
+    let sanity_is_ref: bool = {
+        let check_kind = type_interner().get(id);
+        match check_kind {
+            &InternedTypeKind.Ref { inner: _, mutable: _ } => true,
+            _ => false,
+        }
+    };
+    let sanity_is_primitive: bool = {
+        let check_kind = type_interner().get(id);
+        match check_kind {
+            &InternedTypeKind.Primitive(_) => true,
+            _ => false,
+        }
+    };
+
     let interner = type_interner();
     let kind = interner.get(id);
-    match kind {
+    let result = match kind {
         &InternedTypeKind.Primitive(prim) => {
             hir_ty.Type.new(hir_ty.TypeKind.Primitive(prim))
         }
@@ -1326,8 +1356,38 @@ pub fn ty_id_to_type(id: TyId) -> hir_ty.Type {
                 inner: Box.new(ty_id_to_type(inner)),
             })
         }
+    };
+
+    // Cross-check: output's outer kind discriminant must agree with the
+    // wildcard-match results above. Any mismatch is BUG-2 firing.
+    let output_is_ref: bool = match &result.kind {
+        &hir_ty.TypeKind.Ref { ref inner, mutable: _ } => { let _ = inner; true }
+        _ => false,
+    };
+    let output_is_primitive: bool = match &result.kind {
+        &hir_ty.TypeKind.Primitive(ref _prim) => true,
+        _ => false,
+    };
+    if sanity_is_ref != output_is_ref {
+        @unsafe { BUG2_REF_MISMATCHES += 1; }
     }
+    if sanity_is_primitive != output_is_primitive {
+        @unsafe { BUG2_PRIMITIVE_MISMATCHES += 1; }
+    }
+    result
 }
+
+// BUG-2 instrumentation counters. Printed by main.blood in the codegen
+// pass2 summary so a full self-compile reports call volume and any
+// divergence between wildcard-match discriminants and field-binding
+// match arms.
+static mut BUG2_TY_ID_TO_TYPE_CALLS: u64 = 0;
+static mut BUG2_REF_MISMATCHES: u64 = 0;
+static mut BUG2_PRIMITIVE_MISMATCHES: u64 = 0;
+
+pub fn bug2_ty_id_to_type_calls() -> u64 { @unsafe { BUG2_TY_ID_TO_TYPE_CALLS } }
+pub fn bug2_ref_mismatches() -> u64 { @unsafe { BUG2_REF_MISMATCHES } }
+pub fn bug2_primitive_mismatches() -> u64 { @unsafe { BUG2_PRIMITIVE_MISMATCHES } }
 
 /// Interns a Vec<Type> into a Vec<TyId>.
 fn intern_type_vec(types: &Vec<hir_ty.Type>) -> Vec<TyId> {
