@@ -20,6 +20,8 @@ pub enum ErrorCode {
     UnexpectedToken,
     UnexpectedEof,
     UnexpectedCharacter,
+    InvalidEscape,
+    EmptyCharLiteral,
     InvalidInteger,
     InvalidFloat,
     ExpectedExpression,
@@ -1044,7 +1046,7 @@ pub fn parse_string_from_span(parser: &mut Parser, span: common.Span) -> String 
                 let mut msg = String.new();
                 msg.push_str("invalid escape sequence: \\");
                 msg.push(esc as char);
-                parser.error_at(span, msg, ErrorCode.UnexpectedCharacter);
+                parser.error_at(span, msg, ErrorCode.InvalidEscape);
                 result.push(92 as char);
                 result.push(esc as char);
             }
@@ -1216,7 +1218,7 @@ pub fn parse_char_from_span(parser: &mut Parser, span: common.Span) -> char {
     let pos = start + 1;
 
     if pos >= end {
-        parser.error_at(span, common.make_string("empty character literal"), ErrorCode.UnexpectedCharacter);
+        parser.error_at(span, common.make_string("empty character literal"), ErrorCode.EmptyCharLiteral);
         return '?';
     }
 
@@ -1224,7 +1226,7 @@ pub fn parse_char_from_span(parser: &mut Parser, span: common.Span) -> char {
 
     // Check for empty char literal ('')
     if b == 39 {
-        parser.error_at(span, common.make_string("empty character literal"), ErrorCode.UnexpectedCharacter);
+        parser.error_at(span, common.make_string("empty character literal"), ErrorCode.EmptyCharLiteral);
         return '?';
     }
     if b == 92 && pos + 1 < end {
@@ -1265,7 +1267,7 @@ pub fn parse_char_from_span(parser: &mut Parser, span: common.Span) -> char {
         let mut msg = String.new();
         msg.push_str("invalid escape sequence: \\");
         msg.push(esc as char);
-        parser.error_at(span, msg, ErrorCode.UnexpectedCharacter);
+        parser.error_at(span, msg, ErrorCode.InvalidEscape);
         return esc as char;
     }
 

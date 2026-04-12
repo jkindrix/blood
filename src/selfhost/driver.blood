@@ -1047,13 +1047,15 @@ pub fn type_error_message(kind: &typeck.TypeErrorKind) -> String {
 /// Spec alignment (session 9, 2026-04-12 — Step E Phase 1):
 /// Remapped from impl-specific E0001-E0010 to spec-defined codes.
 /// Parser errors → E01xx, lexer-routed errors → E000x.
-/// Phase 2 (future): split UnexpectedCharacter into E0004 (escape)
-/// and E0008 (empty char literal) with new enum variants.
+/// Step E Phase 2 (session 10): split UnexpectedCharacter into
+/// InvalidEscape (E0004) and EmptyCharLiteral (E0008).
 pub fn parser_error_code(code: &parser_base.ErrorCode) -> &str {
     match code {
         &parser_base.ErrorCode.UnexpectedToken => "E0100",       // spec: Unexpected Token (parser)
         &parser_base.ErrorCode.UnexpectedEof => "E0101",         // spec: Unexpected End of File (parser)
         &parser_base.ErrorCode.UnexpectedCharacter => "E0001",   // spec: Unexpected Character (lexer)
+        &parser_base.ErrorCode.InvalidEscape => "E0004",         // spec: Invalid Escape Sequence (lexer)
+        &parser_base.ErrorCode.EmptyCharLiteral => "E0008",      // spec: Empty Character Literal (lexer)
         &parser_base.ErrorCode.InvalidInteger => "E0005",        // spec: Invalid Integer Literal (lexer)
         &parser_base.ErrorCode.InvalidFloat => "E0006",          // spec: Invalid Float Literal (lexer)
         &parser_base.ErrorCode.ExpectedExpression => "E0110",    // spec: Expected Expression (parser)
