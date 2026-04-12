@@ -1297,14 +1297,16 @@ fn lower_handler_decl(ctx: &mut hir_lower_ctx.LoweringCtx, h: &ast.HandlerDecl) 
             match &effect_entry.item.kind {
                 &hir_item.ItemKind.Effect(ref effect_def) => {
                     for oi in 0usize..op_impls.len() {
-                        let impl_op_s = ctx.span_to_string(op_impls[oi].name.span);
-                        let impl_op_r = impl_op_s.as_str();
-                        let impl_op_name = ctx.intern(impl_op_r);
+                        // Use pre-interned symbols directly — span_to_string fails
+                        // for cross-module effects because the span references a
+                        // different module's source text while ctx.source is the
+                        // current module's. Both effect ops and handler op impls
+                        // re-intern their names during lowering (lower_effect_op,
+                        // lower_op_impl), so symbol indices are consistent.
+                        let impl_op_name = op_impls[oi].name.symbol;
                         let mut found: bool = false;
                         for ei in 0usize..effect_def.operations.len() {
-                            let eff_op_s = ctx.span_to_string(effect_def.operations[ei].name.span);
-                            let eff_op_r = eff_op_s.as_str();
-                            let effect_op_name = ctx.intern(eff_op_r);
+                            let effect_op_name = effect_def.operations[ei].name.symbol;
                             if impl_op_name.index == effect_op_name.index {
                                 found = true;
                                 // Link op impl to effect operation's DefId

@@ -1,0 +1,14 @@
+// COMPILE_FAIL: no main function (library module for t05_effect_cross_module)
+// EXPECT: main function not found
+
+/// An effect defined in a helper module — tests cross-module effect resolution.
+effect Log {
+    op log(val: i32) -> ();
+}
+
+/// A function that performs the cross-module effect.
+pub fn do_work() / {Log} {
+    perform Log.log(10);
+    perform Log.log(20);
+    perform Log.log(30);
+}

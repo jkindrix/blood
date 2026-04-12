@@ -1,0 +1,25 @@
+// Test: cross-module effect resolution — handler in main handles effect from imported module
+// EXPECT: 60
+mod t05_effect_cross_module_lib;
+
+deep handler LogAccumulator for t05_effect_cross_module_lib.Log {
+    let mut total: i32
+
+    return(x) { total }
+
+    op log(val) {
+        total = total + val;
+        resume(());
+    }
+}
+
+fn main() -> i32 {
+    let result: i32 = with LogAccumulator { total: 0 } handle {
+        t05_effect_cross_module_lib.do_work();
+        0
+    };
+    println_int(result);
+
+    if result != 60 { return 1; }
+    0
+}
