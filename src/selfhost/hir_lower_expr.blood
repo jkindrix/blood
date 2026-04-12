@@ -1529,6 +1529,7 @@ fn lower_local_fn(
     def_id: hir_def.DefId,
 ) {
     // Lower generics
+    let saved_bounds_len = ctx.current_type_param_bounds.len();
     let generics = hir_lower_type.lower_generics(ctx, &f.type_params, &f.where_clause);
 
     // Lower parameters inline (simplified version of hir_lower_item.lower_fn_params)
@@ -1559,6 +1560,9 @@ fn lower_local_fn(
     };
 
     // Pop the TypeParams scope pushed by lower_generics
+    while ctx.current_type_param_bounds.len() > saved_bounds_len {
+        ctx.current_type_param_bounds.pop();
+    }
     ctx.resolver.pop_scope();
 
     // Create function signature

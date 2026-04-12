@@ -457,6 +457,7 @@ fn lower_function_decl(ctx: &mut hir_lower_ctx.LoweringCtx, f: &ast.FnDecl) {
     let def_id = binding.def_id;
 
     // Lower generics (pushes a TypeParams scope internally)
+    let saved_bounds_len = ctx.current_type_param_bounds.len();
     let generics = hir_lower_type.lower_generics(ctx, &f.type_params, &f.where_clause);
 
     // Lower parameters
@@ -475,6 +476,9 @@ fn lower_function_decl(ctx: &mut hir_lower_ctx.LoweringCtx, f: &ast.FnDecl) {
     let effects = lower_effects(ctx, &f.effects);
 
     // Pop the TypeParams scope pushed by lower_generics
+    while ctx.current_type_param_bounds.len() > saved_bounds_len {
+        ctx.current_type_param_bounds.pop();
+    }
     ctx.resolver.pop_scope();
 
     // Create function signature
@@ -664,6 +668,7 @@ fn lower_struct_decl(ctx: &mut hir_lower_ctx.LoweringCtx, s: &ast.StructDecl) {
 
     // Lower generics (structs don't have where_clause in AST)
     let no_where: Option<ast.WhereClause> = Option.None;
+    let saved_bounds_len = ctx.current_type_param_bounds.len();
     let generics = hir_lower_type.lower_generics(ctx, &s.type_params, &no_where);
 
     // Lower struct body (field types may reference generic params)
@@ -673,6 +678,9 @@ fn lower_struct_decl(ctx: &mut hir_lower_ctx.LoweringCtx, s: &ast.StructDecl) {
     check_recursive_struct_fields(ctx, def_id, &struct_body, s.name, s.span);
 
     // Pop type param scope after lowering all types that reference generics
+    while ctx.current_type_param_bounds.len() > saved_bounds_len {
+        ctx.current_type_param_bounds.pop();
+    }
     ctx.resolver.pop_scope();
 
     // Extract layout attributes (#[repr(packed)], #[repr(align(N))])
@@ -703,6 +711,7 @@ fn lower_enum_decl(ctx: &mut hir_lower_ctx.LoweringCtx, e: &ast.EnumDecl) {
 
     // Lower generics (enums don't have where_clause in AST)
     let no_where: Option<ast.WhereClause> = Option.None;
+    let saved_bounds_len = ctx.current_type_param_bounds.len();
     let generics = hir_lower_type.lower_generics(ctx, &e.type_params, &no_where);
 
     // Lower variants, passing the enum's DefId as parent
@@ -712,6 +721,9 @@ fn lower_enum_decl(ctx: &mut hir_lower_ctx.LoweringCtx, e: &ast.EnumDecl) {
     check_recursive_enum_variants(ctx, def_id, &variants, e.name, e.span);
 
     // Pop type param scope after lowering all types that reference generics
+    while ctx.current_type_param_bounds.len() > saved_bounds_len {
+        ctx.current_type_param_bounds.pop();
+    }
     ctx.resolver.pop_scope();
 
     let enum_def = hir_item.EnumDef.new(generics, variants);
@@ -739,6 +751,7 @@ fn lower_type_alias_decl(ctx: &mut hir_lower_ctx.LoweringCtx, ta: &ast.TypeAlias
 
     // Lower generics
     let no_where: Option<ast.WhereClause> = Option.None;
+    let saved_bounds_len = ctx.current_type_param_bounds.len();
     let generics = hir_lower_type.lower_generics(ctx, &ta.type_params, &no_where);
 
     // Lower the aliased type (may reference generic params)
@@ -753,6 +766,9 @@ fn lower_type_alias_decl(ctx: &mut hir_lower_ctx.LoweringCtx, ta: &ast.TypeAlias
     };
 
     // Pop type param scope after lowering all types that reference generics
+    while ctx.current_type_param_bounds.len() > saved_bounds_len {
+        ctx.current_type_param_bounds.pop();
+    }
     ctx.resolver.pop_scope();
 
     let alias_def = hir_item.TypeAliasDef.new(generics, ty);
@@ -882,6 +898,7 @@ fn lower_trait_decl(ctx: &mut hir_lower_ctx.LoweringCtx, t: &ast.TraitDecl) {
     let def_id = binding.def_id;
 
     // Lower generics (pushes type param scope if generics exist)
+    let saved_bounds_len = ctx.current_type_param_bounds.len();
     let generics = hir_lower_type.lower_generics(ctx, &t.type_params, &t.where_clause);
 
     // Lower supertraits
@@ -958,6 +975,11 @@ fn lower_trait_decl(ctx: &mut hir_lower_ctx.LoweringCtx, t: &ast.TraitDecl) {
     ctx.current_self_type = Option.None;
     ctx.current_assoc_types.clear();
 
+    // Restore type param bounds to pre-trait state
+    while ctx.current_type_param_bounds.len() > saved_bounds_len {
+        ctx.current_type_param_bounds.pop();
+    }
+
     // Pop type param scope after lowering all types that reference generics
     ctx.resolver.pop_scope();
 
@@ -1024,6 +1046,7 @@ fn lower_assoc_fn(ctx: &mut hir_lower_ctx.LoweringCtx, f: &ast.FnDecl, is_trait_
         }
         &Option.None => ctx.alloc_def_id(),
     };
+    let saved_bounds_len = ctx.current_type_param_bounds.len();
     let generics = hir_lower_type.lower_generics(ctx, &f.type_params, &f.where_clause);
     let sig = hir_item.FnSig.new(
         generics,
@@ -1054,6 +1077,9 @@ fn lower_assoc_fn(ctx: &mut hir_lower_ctx.LoweringCtx, f: &ast.FnDecl, is_trait_
 
     // Pop type param scope after lowering ALL types that reference generics,
     // including the body parameters and any type annotations within the body
+    while ctx.current_type_param_bounds.len() > saved_bounds_len {
+        ctx.current_type_param_bounds.pop();
+    }
     ctx.resolver.pop_scope();
 
     let has_default = body_id.is_some();
@@ -1070,6 +1096,7 @@ fn lower_assoc_fn(ctx: &mut hir_lower_ctx.LoweringCtx, f: &ast.FnDecl, is_trait_
 fn lower_assoc_type(ctx: &mut hir_lower_ctx.LoweringCtx, ta: &ast.TypeAliasDecl) -> hir_item.AssocType {
     let def_id = ctx.alloc_def_id();
     let no_where: Option<ast.WhereClause> = Option.None;
+    let saved_bounds_len = ctx.current_type_param_bounds.len();
     let generics = hir_lower_type.lower_generics(ctx, &ta.type_params, &no_where);
 
     // For associated type declarations (`type Item;`), ty is None
@@ -1084,6 +1111,9 @@ fn lower_assoc_type(ctx: &mut hir_lower_ctx.LoweringCtx, ta: &ast.TypeAliasDecl)
     };
 
     // Pop type param scope after lowering the aliased type
+    while ctx.current_type_param_bounds.len() > saved_bounds_len {
+        ctx.current_type_param_bounds.pop();
+    }
     ctx.resolver.pop_scope();
 
     let bounds: Vec<hir_ty.TraitRef> = Vec.new();
@@ -1141,6 +1171,7 @@ fn lower_effect_decl(ctx: &mut hir_lower_ctx.LoweringCtx, e: &ast.EffectDecl) {
 
     // Lower generics (effects don't have where clauses in AST)
     let no_where: Option<ast.WhereClause> = Option.None;
+    let saved_bounds_len = ctx.current_type_param_bounds.len();
     let generics = hir_lower_type.lower_generics(ctx, &e.type_params, &no_where);
 
     // Lower parent effects
@@ -1163,6 +1194,9 @@ fn lower_effect_decl(ctx: &mut hir_lower_ctx.LoweringCtx, e: &ast.EffectDecl) {
     }
 
     // Pop type param scope after lowering all types that reference generics
+    while ctx.current_type_param_bounds.len() > saved_bounds_len {
+        ctx.current_type_param_bounds.pop();
+    }
     ctx.resolver.pop_scope();
 
     let effect_def = hir_item.EffectDef.new(generics, parents, operations);
@@ -1188,6 +1222,7 @@ fn lower_effect_decl(ctx: &mut hir_lower_ctx.LoweringCtx, e: &ast.EffectDecl) {
 fn lower_effect_op(ctx: &mut hir_lower_ctx.LoweringCtx, oper: &ast.OperationDecl) -> hir_item.EffectOp {
     let def_id = ctx.alloc_def_id();
     let no_where: Option<ast.WhereClause> = Option.None;
+    let saved_bounds_len = ctx.current_type_param_bounds.len();
     let generics = hir_lower_type.lower_generics(ctx, &oper.type_params, &no_where);
 
     // Lower parameter types
@@ -1200,6 +1235,9 @@ fn lower_effect_op(ctx: &mut hir_lower_ctx.LoweringCtx, oper: &ast.OperationDecl
     let return_ty = hir_lower_type.lower_type_id(ctx, &oper.return_type);
 
     // Pop type param scope after lowering all types that reference generics
+    while ctx.current_type_param_bounds.len() > saved_bounds_len {
+        ctx.current_type_param_bounds.pop();
+    }
     ctx.resolver.pop_scope();
 
     // Re-intern operation name for cross-module consistency
@@ -1239,6 +1277,7 @@ fn lower_handler_decl(ctx: &mut hir_lower_ctx.LoweringCtx, h: &ast.HandlerDecl) 
     let def_id = binding.def_id;
 
     // Lower generics (pushes type param scope if generics exist)
+    let saved_bounds_len = ctx.current_type_param_bounds.len();
     let generics = hir_lower_type.lower_generics(ctx, &h.type_params, &h.where_clause);
 
     // Lower the handled effect
@@ -1246,6 +1285,9 @@ fn lower_handler_decl(ctx: &mut hir_lower_ctx.LoweringCtx, h: &ast.HandlerDecl) 
     let handled_effect = type_to_effect_ref(&effect_ty);
     if handled_effect.is_none() {
         // Pop scope before early return
+        while ctx.current_type_param_bounds.len() > saved_bounds_len {
+            ctx.current_type_param_bounds.pop();
+        }
         ctx.resolver.pop_scope();
         ctx.error(
             hir.DiagnosticCode.E0104,
@@ -1356,6 +1398,9 @@ fn lower_handler_decl(ctx: &mut hir_lower_ctx.LoweringCtx, h: &ast.HandlerDecl) 
     };
 
     // Pop type param scope after lowering all types that reference generics
+    while ctx.current_type_param_bounds.len() > saved_bounds_len {
+        ctx.current_type_param_bounds.pop();
+    }
     ctx.resolver.pop_scope();
 
     let handler_def = hir_item.HandlerDef.new(
@@ -1791,6 +1836,7 @@ fn lower_impl_decl(ctx: &mut hir_lower_ctx.LoweringCtx, imp: &ast.ImplBlock) {
     let def_id = ctx.alloc_def_id();
 
     // Lower generics (pushes type param scope if generics exist)
+    let saved_bounds_len = ctx.current_type_param_bounds.len();
     let generics = hir_lower_type.lower_generics(ctx, &imp.type_params, &imp.where_clause);
 
     // Lower trait ref if this is a trait impl
@@ -2043,6 +2089,11 @@ fn lower_impl_decl(ctx: &mut hir_lower_ctx.LoweringCtx, imp: &ast.ImplBlock) {
     // Clear the Self type and associated types after processing the impl block
     ctx.current_self_type = Option.None;
     ctx.current_assoc_types.clear();
+
+    // Restore type param bounds to pre-impl state
+    while ctx.current_type_param_bounds.len() > saved_bounds_len {
+        ctx.current_type_param_bounds.pop();
+    }
 
     // Pop type param scope after lowering all types that reference generics
     ctx.resolver.pop_scope();

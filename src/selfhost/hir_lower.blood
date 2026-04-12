@@ -2155,6 +2155,7 @@ fn lower_single_fn_body(ctx: &mut hir_lower_ctx.LoweringCtx, f: &ast.FnDecl) {
     // Phase 3 (lower_function_decl) popped the scope after lowering the signature.
     // Phase 4 needs it active for re-lowering parameter types and any type
     // annotations within the body.
+    let saved_bounds_len = ctx.current_type_param_bounds.len();
     let body_generics = hir_lower_type.lower_generics(ctx, &f.type_params, &f.where_clause);
 
     // Lower the function parameters (for creating locals)
@@ -2171,6 +2172,9 @@ fn lower_single_fn_body(ctx: &mut hir_lower_ctx.LoweringCtx, f: &ast.FnDecl) {
     );
 
     // Pop the TypeParams scope pushed by lower_generics
+    while ctx.current_type_param_bounds.len() > saved_bounds_len {
+        ctx.current_type_param_bounds.pop();
+    }
     ctx.resolver.pop_scope();
 
     // Extract const param DefIds before clearing (for monomorphization)
