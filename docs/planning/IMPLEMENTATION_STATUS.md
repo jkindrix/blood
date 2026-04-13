@@ -1,5 +1,12 @@
 # Blood Compiler Implementation Status
 
+> **STALE — January 2026.** This document has not been updated since 2026-01-29 and predates the deep audit completed 2026-04-10. For current status, use these files instead:
+>
+> - **`docs/KNOWN_LIMITATIONS.md`** — outward-facing gap enumeration
+> - **`.tmp/DEEP_AUDIT_2026-04-10.md`** — comprehensive code-verified audit (23 open gaps)
+> - **`.tmp/LEVEL_UP.md`** — active work plan with per-session results (16 sessions)
+> - **`.tmp/LEVEL_UP_PROMPT.md`** — prioritized entry point for picking up work
+
 **Version**: 0.5.3
 **Last Updated**: 2026-01-29
 **Audit Date**: 2026-01-29
