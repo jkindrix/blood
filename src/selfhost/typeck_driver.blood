@@ -3773,17 +3773,17 @@ fn register_hashmap_methods(checker: &mut typeck.TypeChecker, hashmap_def: hir_d
         }
     }
 
-    // get(&self, &K) -> Option<&V>
+    // get(&self, &K) -> Option<V>
     let mut get_params: Vec<type_intern.TyId> = Vec.new();
     get_params.push(make_ref_ty(make_param(0)));
     match option_def {
         Option.Some(opt_def) => {
             let mut opt_args: Vec<type_intern.TyId> = Vec.new();
-            opt_args.push(make_ref_ty(make_param(1)));
+            opt_args.push(make_param(1));
             add_method(checker, &mut methods, "get", "hashmap_get", get_params, make_adt(opt_def, opt_args), false, interner);
         }
         Option.None => {
-            add_method(checker, &mut methods, "get", "hashmap_get", get_params, make_ref_ty(make_param(1)), false, interner);
+            add_method(checker, &mut methods, "get", "hashmap_get", get_params, make_param(1), false, interner);
         }
     }
 

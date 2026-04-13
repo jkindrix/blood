@@ -1,0 +1,79 @@
+// Test: Generic HashMap<K, V> with integer keys
+// EXPECT: inserted 3 entries
+// EXPECT: get 10: 100
+// EXPECT: get 20: 200
+// EXPECT: get 30: 300
+// EXPECT: len: 3
+// EXPECT: contains 20: true
+// EXPECT: contains 99: false
+// EXPECT: removed 20: true
+// EXPECT: len after remove: 2
+// EXPECT: contains 20 after remove: false
+// EXPECT: is_empty: false
+
+fn main() -> i32 {
+    let mut map: HashMap<i32, i32> = HashMap.new();
+    map.insert(10, 100);
+    map.insert(20, 200);
+    map.insert(30, 300);
+    println("inserted 3 entries");
+
+    match map.get(&10) {
+        Option.Some(v) => {
+            print("get 10: ");
+            println_int(v);
+        }
+        Option.None => { println("get 10: NONE"); }
+    }
+    match map.get(&20) {
+        Option.Some(v) => {
+            print("get 20: ");
+            println_int(v);
+        }
+        Option.None => { println("get 20: NONE"); }
+    }
+    match map.get(&30) {
+        Option.Some(v) => {
+            print("get 30: ");
+            println_int(v);
+        }
+        Option.None => { println("get 30: NONE"); }
+    }
+
+    print("len: ");
+    println_int(map.len() as i32);
+
+    if map.contains_key(&20) {
+        println("contains 20: true");
+    } else {
+        println("contains 20: false");
+    }
+
+    if map.contains_key(&99) {
+        println("contains 99: true");
+    } else {
+        println("contains 99: false");
+    }
+
+    match map.remove(&20) {
+        Option.Some(_) => { println("removed 20: true"); }
+        Option.None => { println("removed 20: false"); }
+    }
+
+    print("len after remove: ");
+    println_int(map.len() as i32);
+
+    if map.contains_key(&20) {
+        println("contains 20 after remove: true");
+    } else {
+        println("contains 20 after remove: false");
+    }
+
+    if map.is_empty() {
+        println("is_empty: true");
+    } else {
+        println("is_empty: false");
+    }
+
+    0
+}

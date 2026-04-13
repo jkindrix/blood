@@ -1,0 +1,68 @@
+// Test: Generic HashMap<String, i32> with String keys
+// EXPECT: get alice: 42
+// EXPECT: get bob: 99
+// EXPECT: contains alice: true
+// EXPECT: contains carol: false
+// EXPECT: len: 2
+// EXPECT: removed alice
+// EXPECT: len after: 1
+// EXPECT: get alice after: NONE
+
+fn make_str(s: &str) -> String {
+    let mut r = String.new();
+    r.push_str(s);
+    r
+}
+
+fn main() -> i32 {
+    let mut map: HashMap<String, i32> = HashMap.new();
+
+    map.insert(make_str("alice"), 42);
+    map.insert(make_str("bob"), 99);
+
+    let q1 = make_str("alice");
+    match map.get(&q1) {
+        Option.Some(v) => { print("get alice: "); println_int(v); }
+        Option.None => { println("get alice: NONE"); }
+    }
+
+    let q2 = make_str("bob");
+    match map.get(&q2) {
+        Option.Some(v) => { print("get bob: "); println_int(v); }
+        Option.None => { println("get bob: NONE"); }
+    }
+
+    let q3 = make_str("alice");
+    if map.contains_key(&q3) {
+        println("contains alice: true");
+    } else {
+        println("contains alice: false");
+    }
+
+    let q4 = make_str("carol");
+    if map.contains_key(&q4) {
+        println("contains carol: true");
+    } else {
+        println("contains carol: false");
+    }
+
+    print("len: ");
+    println_int(map.len() as i32);
+
+    let q5 = make_str("alice");
+    match map.remove(&q5) {
+        Option.Some(_) => { println("removed alice"); }
+        Option.None => { println("remove failed"); }
+    }
+
+    print("len after: ");
+    println_int(map.len() as i32);
+
+    let q6 = make_str("alice");
+    match map.get(&q6) {
+        Option.Some(v) => { print("get alice after: "); println_int(v); }
+        Option.None => { println("get alice after: NONE"); }
+    }
+
+    0
+}

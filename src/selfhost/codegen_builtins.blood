@@ -1581,3 +1581,365 @@ pub fn emit_option_as_ref_call(
         }
     }
 }
+
+// ============================================================
+// HashMap<K, V> Builtin Handling
+// ============================================================
+
+pub fn is_hashmap_new(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@hashmap_new")
+}
+pub fn is_hashmap_insert(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@hashmap_insert")
+}
+pub fn is_hashmap_get(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@hashmap_get")
+}
+pub fn is_hashmap_contains_key(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@hashmap_contains_key")
+}
+pub fn is_hashmap_len(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@hashmap_len")
+}
+pub fn is_hashmap_is_empty(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@hashmap_is_empty")
+}
+pub fn is_hashmap_remove(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@hashmap_remove")
+}
+pub fn is_hashmap_clone(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@hashmap_clone")
+}
+
+fn extract_hashmap_sizes(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    ty_id: type_intern.TyId,
+) -> Vec<u64> {
+    let unwrapped = type_intern.unwrap_ref_id(ty_id);
+    let mut result: Vec<u64> = Vec.new();
+    match type_intern.get_adt_args(unwrapped) {
+        Option.Some(args) => {
+            let interner = type_intern.type_interner();
+            if interner.ty_list_len(args) >= 2 {
+                let key_id = interner.get_ty_list_element(args, 0);
+                let val_id = interner.get_ty_list_element(args, 1);
+                result.push(codegen_size.type_size_with_ctx_id(ctx, key_id));
+                result.push(codegen_size.type_size_with_ctx_id(ctx, val_id));
+                let kk: u64 = match type_intern.get_adt_def_id(type_intern.unwrap_ref_id(key_id)) {
+                    Option.Some(_) => 1,
+                    Option.None => 0,
+                };
+                result.push(kk);
+            } else {
+                result.push(8); result.push(8); result.push(0);
+            }
+        }
+        Option.None => {
+            result.push(8); result.push(8); result.push(0);
+        }
+    }
+    result
+}
+
+fn get_hashmap_type_from_arg(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    arg: &mir_types.Operand,
+) -> Option<type_intern.TyId> {
+    match arg {
+        &mir_types.Operand.Copy(ref place) => ctx.get_local_hir_type(place.local),
+        &mir_types.Operand.Move(ref place) => ctx.get_local_hir_type(place.local),
+        &mir_types.Operand.Constant(ref c) => Option.Some(c.ty),
+    }
+}
+
+fn hashmap_emit_cont(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    match target {
+        &Option.Some(t) => {
+            let label = ctx.block_label_cg(t);
+            ctx.emit_br_cg(&label);
+        }
+        &Option.None => {
+            ctx.emit_unreachable();
+        }
+    }
+}
+
+fn hashmap_build_option(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    destination: &mir_types.Place,
+    result: &codegen_ctx.CgName,
+    val_alloca: &codegen_ctx.CgName,
+    val_size: u64,
+) {
+    let dest_ptr = codegen_place.emit_place_data_ptr(ctx, destination);
+    ctx.emit_store_cg("i32", result, dest_ptr.as_str());
+    let val_off = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&val_off);
+    ctx.write(" = getelementptr i8, ptr ");
+    ctx.write_string(&dest_ptr);
+    ctx.write(", i64 8\n");
+    let vs_str = codegen_types.format_u64(val_size);
+    ctx.write_indent();
+    ctx.write("call void @llvm.memcpy.p0.p0.i64(ptr ");
+    ctx.write_cgname(&val_off);
+    ctx.write(", ptr ");
+    ctx.write_cgname(val_alloca);
+    ctx.write(", i64 ");
+    ctx.write_string(&vs_str);
+    ctx.write(", i1 false)\n");
+}
+
+fn hashmap_default_sizes() -> Vec<u64> {
+    let mut d: Vec<u64> = Vec.new();
+    d.push(8); d.push(8); d.push(0);
+    d
+}
+
+pub fn emit_hashmap_new_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    let out_ptr = codegen_place.emit_place_data_ptr(ctx, destination);
+    let sizes = match resolve_place_hir_type(ctx, destination) {
+        Option.Some(ty_id) => extract_hashmap_sizes(ctx, ty_id),
+        Option.None => hashmap_default_sizes(),
+    };
+    let ks_str = codegen_types.format_u64(sizes[0]);
+    let vs_str = codegen_types.format_u64(sizes[1]);
+    let kk_str = codegen_types.format_u64(sizes[2]);
+    ctx.begin_call(Option.None, "void", "@hashmap_new");
+    ctx.call_arg_str(true, "i64", ks_str.as_str());
+    ctx.call_arg_str(false, "i64", vs_str.as_str());
+    ctx.call_arg_str(false, "i32", kk_str.as_str());
+    ctx.call_arg_str(false, "ptr", out_ptr.as_str());
+    ctx.end_call();
+    hashmap_emit_cont(ctx, target);
+}
+
+pub fn emit_hashmap_insert_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    if args.len() < 3 { ctx.emit_unreachable(); return; }
+    let map_ptr = emit_operand_as_ptr(ctx, &args[0]);
+    let sizes = match get_hashmap_type_from_arg(ctx, &args[0]) {
+        Option.Some(ty_id) => extract_hashmap_sizes(ctx, ty_id),
+        Option.None => hashmap_default_sizes(),
+    };
+    let ks = sizes[0];
+    let vs = sizes[1];
+    let ks_str = codegen_types.format_u64(ks);
+    let vs_str = codegen_types.format_u64(vs);
+    let kk_str = codegen_types.format_u64(sizes[2]);
+    let (key_val, key_ty) = codegen_expr.emit_operand_typed(ctx, &args[1]);
+    let (val_val, val_ty) = codegen_expr.emit_operand_typed(ctx, &args[2]);
+
+    let stack_save = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&stack_save);
+    ctx.write(" = call ptr @llvm.stacksave()\n");
+
+    let key_alloca = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&key_alloca);
+    ctx.write(" = alloca ");
+    ctx.write_string(&key_ty);
+    ctx.write(", align 8\n");
+    ctx.emit_store_str_cg(key_ty.as_str(), key_val.as_str(), &key_alloca);
+
+    let val_alloca = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&val_alloca);
+    ctx.write(" = alloca ");
+    ctx.write_string(&val_ty);
+    ctx.write(", align 8\n");
+    ctx.emit_store_str_cg(val_ty.as_str(), val_val.as_str(), &val_alloca);
+
+    let old_alloca = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&old_alloca);
+    ctx.write(" = alloca [");
+    ctx.write_string(&vs_str);
+    ctx.write(" x i8], align 8\n");
+
+    let result = ctx.fresh_temp_cg();
+    ctx.begin_call(Option.Some(&result), "i32", "@hashmap_insert");
+    ctx.call_arg_str(true, "ptr", map_ptr.as_str());
+    ctx.call_arg_cg(false, "ptr", &key_alloca);
+    ctx.call_arg_cg(false, "ptr", &val_alloca);
+    ctx.call_arg_str(false, "i64", ks_str.as_str());
+    ctx.call_arg_str(false, "i64", vs_str.as_str());
+    ctx.call_arg_str(false, "i32", kk_str.as_str());
+    ctx.call_arg_cg(false, "ptr", &old_alloca);
+    ctx.end_call();
+
+    hashmap_build_option(ctx, destination, &result, &old_alloca, vs);
+
+    ctx.write_indent();
+    ctx.write("call void @llvm.stackrestore(ptr ");
+    ctx.write_cgname(&stack_save);
+    ctx.write(")\n");
+    hashmap_emit_cont(ctx, target);
+}
+
+pub fn emit_hashmap_get_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    if args.len() < 2 { ctx.emit_unreachable(); return; }
+    let map_ptr = emit_operand_as_ptr(ctx, &args[0]);
+    let sizes = match get_hashmap_type_from_arg(ctx, &args[0]) {
+        Option.Some(ty_id) => extract_hashmap_sizes(ctx, ty_id),
+        Option.None => hashmap_default_sizes(),
+    };
+    let vs = sizes[1];
+    let ks_str = codegen_types.format_u64(sizes[0]);
+    let vs_str = codegen_types.format_u64(vs);
+    let kk_str = codegen_types.format_u64(sizes[2]);
+    let key_ptr = emit_operand_as_ptr(ctx, &args[1]);
+
+    let val_alloca = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&val_alloca);
+    ctx.write(" = alloca [");
+    ctx.write_string(&vs_str);
+    ctx.write(" x i8], align 8\n");
+
+    let result = ctx.fresh_temp_cg();
+    ctx.begin_call(Option.Some(&result), "i32", "@hashmap_get");
+    ctx.call_arg_str(true, "ptr", map_ptr.as_str());
+    ctx.call_arg_str(false, "ptr", key_ptr.as_str());
+    ctx.call_arg_str(false, "i64", ks_str.as_str());
+    ctx.call_arg_str(false, "i64", vs_str.as_str());
+    ctx.call_arg_str(false, "i32", kk_str.as_str());
+    ctx.call_arg_cg(false, "ptr", &val_alloca);
+    ctx.end_call();
+
+    hashmap_build_option(ctx, destination, &result, &val_alloca, vs);
+    hashmap_emit_cont(ctx, target);
+}
+
+pub fn emit_hashmap_contains_key_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    if args.len() < 2 { ctx.emit_unreachable(); return; }
+    let map_ptr = emit_operand_as_ptr(ctx, &args[0]);
+    let sizes = match get_hashmap_type_from_arg(ctx, &args[0]) {
+        Option.Some(ty_id) => extract_hashmap_sizes(ctx, ty_id),
+        Option.None => hashmap_default_sizes(),
+    };
+    let ks_str = codegen_types.format_u64(sizes[0]);
+    let vs_str = codegen_types.format_u64(sizes[1]);
+    let kk_str = codegen_types.format_u64(sizes[2]);
+    let key_ptr = emit_operand_as_ptr(ctx, &args[1]);
+
+    let result = ctx.fresh_temp_cg();
+    ctx.begin_call(Option.Some(&result), "i32", "@hashmap_contains_key");
+    ctx.call_arg_str(true, "ptr", map_ptr.as_str());
+    ctx.call_arg_str(false, "ptr", key_ptr.as_str());
+    ctx.call_arg_str(false, "i64", ks_str.as_str());
+    ctx.call_arg_str(false, "i64", vs_str.as_str());
+    ctx.call_arg_str(false, "i32", kk_str.as_str());
+    ctx.end_call();
+
+    let dest_ptr = codegen_place.emit_place_data_ptr(ctx, destination);
+    let bool_val = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&bool_val);
+    ctx.write(" = trunc i32 ");
+    ctx.write_cgname(&result);
+    ctx.write(" to i1\n");
+    ctx.emit_store_cg("i1", &bool_val, dest_ptr.as_str());
+    hashmap_emit_cont(ctx, target);
+}
+
+pub fn emit_hashmap_len_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    if args.len() < 1 { ctx.emit_unreachable(); return; }
+    let map_ptr = emit_operand_as_ptr(ctx, &args[0]);
+    let result = ctx.fresh_temp_cg();
+    ctx.begin_call(Option.Some(&result), "i64", "@hashmap_len");
+    ctx.call_arg_str(true, "ptr", map_ptr.as_str());
+    ctx.end_call();
+    let dest_ptr = codegen_place.emit_place_data_ptr(ctx, destination);
+    ctx.emit_store_cg("i64", &result, dest_ptr.as_str());
+    hashmap_emit_cont(ctx, target);
+}
+
+pub fn emit_hashmap_is_empty_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    if args.len() < 1 { ctx.emit_unreachable(); return; }
+    let map_ptr = emit_operand_as_ptr(ctx, &args[0]);
+    let result = ctx.fresh_temp_cg();
+    ctx.begin_call(Option.Some(&result), "i32", "@hashmap_is_empty");
+    ctx.call_arg_str(true, "ptr", map_ptr.as_str());
+    ctx.end_call();
+    let dest_ptr = codegen_place.emit_place_data_ptr(ctx, destination);
+    let bool_val = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&bool_val);
+    ctx.write(" = trunc i32 ");
+    ctx.write_cgname(&result);
+    ctx.write(" to i1\n");
+    ctx.emit_store_cg("i1", &bool_val, dest_ptr.as_str());
+    hashmap_emit_cont(ctx, target);
+}
+
+pub fn emit_hashmap_remove_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    if args.len() < 2 { ctx.emit_unreachable(); return; }
+    let map_ptr = emit_operand_as_ptr(ctx, &args[0]);
+    let sizes = match get_hashmap_type_from_arg(ctx, &args[0]) {
+        Option.Some(ty_id) => extract_hashmap_sizes(ctx, ty_id),
+        Option.None => hashmap_default_sizes(),
+    };
+    let vs = sizes[1];
+    let ks_str = codegen_types.format_u64(sizes[0]);
+    let vs_str = codegen_types.format_u64(vs);
+    let kk_str = codegen_types.format_u64(sizes[2]);
+    let key_ptr = emit_operand_as_ptr(ctx, &args[1]);
+
+    let val_alloca = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&val_alloca);
+    ctx.write(" = alloca [");
+    ctx.write_string(&vs_str);
+    ctx.write(" x i8], align 8\n");
+
+    let result = ctx.fresh_temp_cg();
+    ctx.begin_call(Option.Some(&result), "i32", "@hashmap_remove");
+    ctx.call_arg_str(true, "ptr", map_ptr.as_str());
+    ctx.call_arg_str(false, "ptr", key_ptr.as_str());
+    ctx.call_arg_str(false, "i64", ks_str.as_str());
+    ctx.call_arg_str(false, "i64", vs_str.as_str());
+    ctx.call_arg_str(false, "i32", kk_str.as_str());
+    ctx.call_arg_cg(false, "ptr", &val_alloca);
+    ctx.end_call();
+
+    hashmap_build_option(ctx, destination, &result, &val_alloca, vs);
+    hashmap_emit_cont(ctx, target);
+}

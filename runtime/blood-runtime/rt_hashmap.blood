@@ -1,0 +1,403 @@
+// Phase 8: Generic HashMap runtime functions
+//
+// HashMap layout: { ptr: *mut u8, len: i64, cap: i64 } = 24 bytes
+// Same layout as Vec — data pointer, entry count, bucket capacity.
+//
+// Bucket layout (flat array, each bucket = 1 + key_size + val_size bytes):
+//   [1 byte status][key_size bytes key][val_size bytes value]
+//   Status: 0=Empty, 1=Occupied, 2=Deleted
+//
+// key_kind: 0 = primitive/value type (hash/compare raw bytes)
+//           1 = String (hash/compare string data, key is 24-byte String struct)
+//
+// All functions take a *mut u8 pointer to the HashMap struct.
+// key_size, val_size, and key_kind are passed by the compiler at each call site.
+
+mod libc;
+mod print;
+mod rt_panic;
+mod alloc;
+
+// ============================================================
+// Constants and field accessors
+// ============================================================
+
+fn MAP_DATA_OFF() -> i64 { 0 }
+fn MAP_LEN_OFF() -> i64 { 8 }
+fn MAP_CAP_OFF() -> i64 { 16 }
+
+fn EMPTY() -> u8 { 0 }
+fn OCCUPIED() -> u8 { 1 }
+fn DELETED() -> u8 { 2 }
+
+fn MIN_CAP() -> i64 { 16 }
+
+fn get_data(m: *mut u8) -> i64 {
+    @unsafe { ptr_read_i64((alloc.ptr_to_addr(m) + MAP_DATA_OFF()) as u64) }
+}
+fn set_data(m: *mut u8, val: i64) {
+    @unsafe { ptr_write_i64((alloc.ptr_to_addr(m) + MAP_DATA_OFF()) as u64, val); }
+}
+fn get_len(m: *mut u8) -> i64 {
+    @unsafe { ptr_read_i64((alloc.ptr_to_addr(m) + MAP_LEN_OFF()) as u64) }
+}
+fn set_len(m: *mut u8, val: i64) {
+    @unsafe { ptr_write_i64((alloc.ptr_to_addr(m) + MAP_LEN_OFF()) as u64, val); }
+}
+fn get_cap(m: *mut u8) -> i64 {
+    @unsafe { ptr_read_i64((alloc.ptr_to_addr(m) + MAP_CAP_OFF()) as u64) }
+}
+fn set_cap(m: *mut u8, val: i64) {
+    @unsafe { ptr_write_i64((alloc.ptr_to_addr(m) + MAP_CAP_OFF()) as u64, val); }
+}
+
+// Bucket stride = 1 (status) + key_size + val_size
+fn stride(ks: i64, vs: i64) -> i64 {
+    1 + ks + vs
+}
+
+// Address of bucket at index
+fn baddr(data: i64, idx: i64, st: i64) -> i64 {
+    data + idx * st
+}
+
+fn bstatus(addr: i64) -> u8 {
+    @unsafe { ptr_read_u8(addr as u64) }
+}
+
+fn set_bstatus(addr: i64, s: u8) {
+    @unsafe { ptr_write_u8(addr as u64, s); }
+}
+
+fn bkey(addr: i64) -> i64 {
+    addr + 1
+}
+
+fn bval(addr: i64, ks: i64) -> i64 {
+    addr + 1 + ks
+}
+
+// ============================================================
+// Hash functions (FNV-1a)
+// ============================================================
+
+fn FNV_OFF() -> u64 { 14695981039346656037 }
+fn FNV_PR() -> u64 { 1099511628211 }
+
+fn hash_raw(addr: i64, size: i64) -> u64 {
+    let mut h: u64 = FNV_OFF();
+    let mut i: i64 = 0;
+    while i < size {
+        let byte: u8 = @unsafe { ptr_read_u8((addr + i) as u64) };
+        h = h ^ (byte as u64);
+        h = h * FNV_PR();
+        i += 1;
+    }
+    h
+}
+
+fn hash_string_key(key_addr: i64) -> u64 {
+    let data: i64 = @unsafe { ptr_read_i64(key_addr as u64) };
+    let len: i64 = @unsafe { ptr_read_i64((key_addr + 8) as u64) };
+    hash_raw(data, len)
+}
+
+fn hash_key(key_addr: i64, ks: i64, kk: i32) -> u64 {
+    if kk == 1 {
+        hash_string_key(key_addr)
+    } else {
+        hash_raw(key_addr, ks)
+    }
+}
+
+// ============================================================
+// Equality functions
+// ============================================================
+
+fn bytes_eq(a: i64, b: i64, size: i64) -> bool {
+    let mut i: i64 = 0;
+    while i < size {
+        let ab: u8 = @unsafe { ptr_read_u8((a + i) as u64) };
+        let bb: u8 = @unsafe { ptr_read_u8((b + i) as u64) };
+        if ab != bb { return false; }
+        i += 1;
+    }
+    true
+}
+
+fn strings_eq(a: i64, b: i64) -> bool {
+    let a_data: i64 = @unsafe { ptr_read_i64(a as u64) };
+    let a_len: i64 = @unsafe { ptr_read_i64((a + 8) as u64) };
+    let b_data: i64 = @unsafe { ptr_read_i64(b as u64) };
+    let b_len: i64 = @unsafe { ptr_read_i64((b + 8) as u64) };
+    if a_len != b_len { return false; }
+    bytes_eq(a_data, b_data, a_len)
+}
+
+fn keys_eq(a: i64, b: i64, ks: i64, kk: i32) -> bool {
+    if kk == 1 {
+        strings_eq(a, b)
+    } else {
+        bytes_eq(a, b, ks)
+    }
+}
+
+// ============================================================
+// Internal helpers
+// ============================================================
+
+fn zero_fill(addr: i64, bytes: i64) {
+    let mut i: i64 = 0;
+    while i < bytes {
+        @unsafe { ptr_write_u8((addr + i) as u64, 0); }
+        i += 1;
+    }
+}
+
+fn ensure_cap(m: *mut u8, ks: i64, vs: i64, kk: i32) {
+    let cap: i64 = get_cap(m);
+    if cap == 0 {
+        let st: i64 = stride(ks, vs);
+        let bytes: i64 = MIN_CAP() * st;
+        let data: i64 = alloc.rt_blood_alloc_simple(bytes);
+        zero_fill(data, bytes);
+        set_data(m, data);
+        set_cap(m, MIN_CAP());
+        return;
+    }
+    let len: i64 = get_len(m);
+    if len * 4 >= cap * 3 {
+        do_resize(m, ks, vs, kk);
+    }
+}
+
+fn do_resize(m: *mut u8, ks: i64, vs: i64, kk: i32) {
+    let old_cap: i64 = get_cap(m);
+    let old_data: i64 = get_data(m);
+    let st: i64 = stride(ks, vs);
+    let new_cap: i64 = old_cap * 2;
+    let new_bytes: i64 = new_cap * st;
+    let new_data: i64 = alloc.rt_blood_alloc_simple(new_bytes);
+    zero_fill(new_data, new_bytes);
+
+    let mut i: i64 = 0;
+    while i < old_cap {
+        let ba: i64 = baddr(old_data, i, st);
+        if bstatus(ba) == OCCUPIED() {
+            let ka: i64 = bkey(ba);
+            let va: i64 = bval(ba, ks);
+            let hash: u64 = hash_key(ka, ks, kk);
+            let mut idx: i64 = (hash % (new_cap as u64)) as i64;
+            let mut placed: bool = false;
+            while !placed {
+                let nba: i64 = baddr(new_data, idx, st);
+                if bstatus(nba) == EMPTY() {
+                    set_bstatus(nba, OCCUPIED());
+                    alloc.rt_blood_memcpy(bkey(nba), ka, ks);
+                    alloc.rt_blood_memcpy(bval(nba, ks), va, vs);
+                    placed = true;
+                } else {
+                    idx = (idx + 1) % new_cap;
+                }
+            }
+        }
+        i += 1;
+    }
+
+    if old_data != 0 {
+        alloc.rt_blood_free_simple(old_data);
+    }
+    set_data(m, new_data);
+    set_cap(m, new_cap);
+}
+
+// ============================================================
+// Exported runtime functions
+// ============================================================
+
+// void @hashmap_new(i64 key_size, i64 val_size, i32 key_kind, ptr out)
+#[export_name = "hashmap_new"]
+pub fn rt_hashmap_new(ks: i64, vs: i64, kk: i32, out: *mut u8) {
+    set_data(out, 0);
+    set_len(out, 0);
+    set_cap(out, 0);
+}
+
+// i32 @hashmap_insert(ptr map, ptr key, ptr val, i64 ks, i64 vs, i32 kk, ptr old_val_out)
+// Returns 1 if an old value was replaced (copied to old_val_out), 0 if new insertion.
+#[export_name = "hashmap_insert"]
+pub fn rt_hashmap_insert(m: *mut u8, key: *mut u8, val: *mut u8,
+                         ks: i64, vs: i64, kk: i32,
+                         old_out: *mut u8) -> i32 {
+    ensure_cap(m, ks, vs, kk);
+    let data: i64 = get_data(m);
+    let cap: i64 = get_cap(m);
+    let st: i64 = stride(ks, vs);
+    let key_a: i64 = alloc.ptr_to_addr(key);
+    let val_a: i64 = alloc.ptr_to_addr(val);
+    let hash: u64 = hash_key(key_a, ks, kk);
+    let mut idx: i64 = (hash % (cap as u64)) as i64;
+    let mut first_del: i64 = 0 - 1;
+
+    let mut probes: i64 = 0;
+    while probes < cap {
+        let ba: i64 = baddr(data, idx, st);
+        let s: u8 = bstatus(ba);
+        if s == EMPTY() {
+            let mut ins: i64 = ba;
+            if first_del >= 0 {
+                ins = baddr(data, first_del, st);
+            }
+            set_bstatus(ins, OCCUPIED());
+            alloc.rt_blood_memcpy(bkey(ins), key_a, ks);
+            alloc.rt_blood_memcpy(bval(ins, ks), val_a, vs);
+            set_len(m, get_len(m) + 1);
+            return 0;
+        }
+        if s == DELETED() {
+            if first_del < 0 { first_del = idx; }
+        }
+        if s == OCCUPIED() {
+            if keys_eq(bkey(ba), key_a, ks, kk) {
+                @unsafe {
+                    libc.sys_memmove(old_out, alloc.addr_to_cptr(bval(ba, ks)), vs as u64);
+                }
+                alloc.rt_blood_memcpy(bval(ba, ks), val_a, vs);
+                return 1;
+            }
+        }
+        idx = (idx + 1) % cap;
+        probes += 1;
+    }
+    0
+}
+
+// i32 @hashmap_get(ptr map, ptr key, i64 ks, i64 vs, i32 kk, ptr val_out)
+// Returns 1 if found (value copied to val_out), 0 if not found.
+#[export_name = "hashmap_get"]
+pub fn rt_hashmap_get(m: *mut u8, key: *mut u8,
+                      ks: i64, vs: i64, kk: i32,
+                      val_out: *mut u8) -> i32 {
+    let cap: i64 = get_cap(m);
+    if cap == 0 { return 0; }
+    let data: i64 = get_data(m);
+    let st: i64 = stride(ks, vs);
+    let key_a: i64 = alloc.ptr_to_addr(key);
+    let hash: u64 = hash_key(key_a, ks, kk);
+    let mut idx: i64 = (hash % (cap as u64)) as i64;
+
+    let mut probes: i64 = 0;
+    while probes < cap {
+        let ba: i64 = baddr(data, idx, st);
+        let s: u8 = bstatus(ba);
+        if s == EMPTY() { return 0; }
+        if s == OCCUPIED() {
+            if keys_eq(bkey(ba), key_a, ks, kk) {
+                @unsafe {
+                    libc.sys_memmove(val_out, alloc.addr_to_cptr(bval(ba, ks)), vs as u64);
+                }
+                return 1;
+            }
+        }
+        idx = (idx + 1) % cap;
+        probes += 1;
+    }
+    0
+}
+
+// i32 @hashmap_contains_key(ptr map, ptr key, i64 ks, i64 vs, i32 kk)
+// Returns 1 if key exists, 0 if not.
+#[export_name = "hashmap_contains_key"]
+pub fn rt_hashmap_contains_key(m: *mut u8, key: *mut u8,
+                               ks: i64, vs: i64, kk: i32) -> i32 {
+    let cap: i64 = get_cap(m);
+    if cap == 0 { return 0; }
+    let data: i64 = get_data(m);
+    let st: i64 = stride(ks, vs);
+    let key_a: i64 = alloc.ptr_to_addr(key);
+    let hash: u64 = hash_key(key_a, ks, kk);
+    let mut idx: i64 = (hash % (cap as u64)) as i64;
+
+    let mut probes: i64 = 0;
+    while probes < cap {
+        let ba: i64 = baddr(data, idx, st);
+        let s: u8 = bstatus(ba);
+        if s == EMPTY() { return 0; }
+        if s == OCCUPIED() {
+            if keys_eq(bkey(ba), key_a, ks, kk) {
+                return 1;
+            }
+        }
+        idx = (idx + 1) % cap;
+        probes += 1;
+    }
+    0
+}
+
+// i64 @hashmap_len(ptr map)
+#[export_name = "hashmap_len"]
+pub fn rt_hashmap_len(m: *mut u8) -> i64 {
+    get_len(m)
+}
+
+// i32 @hashmap_is_empty(ptr map)
+#[export_name = "hashmap_is_empty"]
+pub fn rt_hashmap_is_empty(m: *mut u8) -> i32 {
+    if get_len(m) == 0 { 1 } else { 0 }
+}
+
+// i32 @hashmap_remove(ptr map, ptr key, i64 ks, i64 vs, i32 kk, ptr val_out)
+// Returns 1 if removed (value copied to val_out), 0 if not found.
+#[export_name = "hashmap_remove"]
+pub fn rt_hashmap_remove(m: *mut u8, key: *mut u8,
+                         ks: i64, vs: i64, kk: i32,
+                         val_out: *mut u8) -> i32 {
+    let cap: i64 = get_cap(m);
+    if cap == 0 { return 0; }
+    let data: i64 = get_data(m);
+    let st: i64 = stride(ks, vs);
+    let key_a: i64 = alloc.ptr_to_addr(key);
+    let hash: u64 = hash_key(key_a, ks, kk);
+    let mut idx: i64 = (hash % (cap as u64)) as i64;
+
+    let mut probes: i64 = 0;
+    while probes < cap {
+        let ba: i64 = baddr(data, idx, st);
+        let s: u8 = bstatus(ba);
+        if s == EMPTY() { return 0; }
+        if s == OCCUPIED() {
+            if keys_eq(bkey(ba), key_a, ks, kk) {
+                @unsafe {
+                    libc.sys_memmove(val_out, alloc.addr_to_cptr(bval(ba, ks)), vs as u64);
+                }
+                set_bstatus(ba, DELETED());
+                set_len(m, get_len(m) - 1);
+                return 1;
+            }
+        }
+        idx = (idx + 1) % cap;
+        probes += 1;
+    }
+    0
+}
+
+// void @hashmap_clone(ptr src, i64 ks, i64 vs, i32 kk, ptr out)
+#[export_name = "hashmap_clone"]
+pub fn rt_hashmap_clone(src: *mut u8, ks: i64, vs: i64, kk: i32, out: *mut u8) {
+    let cap: i64 = get_cap(src);
+    let len: i64 = get_len(src);
+    if cap == 0 {
+        set_data(out, 0);
+        set_len(out, 0);
+        set_cap(out, 0);
+        return;
+    }
+    let st: i64 = stride(ks, vs);
+    let bytes: i64 = cap * st;
+    let new_data: i64 = alloc.rt_blood_alloc_simple(bytes);
+    let old_data: i64 = get_data(src);
+    alloc.rt_blood_memcpy(new_data, old_data, bytes);
+    set_data(out, new_data);
+    set_len(out, len);
+    set_cap(out, cap);
+}
