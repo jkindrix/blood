@@ -1,0 +1,43 @@
+// Test: generic function consuming an Iterator trait with a loop
+// EXPECT: 10
+
+trait Iterator {
+    type Item;
+    fn next(self: &mut Self) -> Option<Self.Item>;
+}
+
+struct Counter {
+    current: i32,
+    max: i32,
+}
+
+impl Iterator for Counter {
+    type Item = i32;
+    fn next(self: &mut Counter) -> Option<i32> {
+        if self.current < self.max {
+            let val = self.current;
+            self.current = self.current + 1;
+            Option.Some(val)
+        } else {
+            Option.None
+        }
+    }
+}
+
+fn sum_all<T>(iter: &mut T) -> i32 where T: Iterator {
+    let mut total: i32 = 0;
+    let mut done: bool = false;
+    while !done {
+        match iter.next() {
+            Option.Some(val) => { total = total + val; }
+            Option.None => { done = true; }
+        }
+    }
+    total
+}
+
+fn main() -> i32 {
+    let mut c = Counter { current: 0, max: 5 };
+    println_int(sum_all(&mut c));
+    0
+}
