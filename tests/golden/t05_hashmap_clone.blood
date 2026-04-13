@@ -1,0 +1,46 @@
+// Test: HashMap clone — shallow copy of hash table structure
+// EXPECT: clone_len=3
+// EXPECT: clone_get_a=10
+// EXPECT: clone_get_b=20
+// EXPECT: clone_get_c=30
+// EXPECT: original_unchanged=10
+// EXPECT: clone_after_insert=4
+
+fn main() -> i32 {
+    let mut map: HashMap<i32, i32> = HashMap.new();
+    map.insert(1, 10);
+    map.insert(2, 20);
+    map.insert(3, 30);
+
+    let mut cloned: HashMap<i32, i32> = map.clone();
+
+    // Verify cloned map has same contents
+    print("clone_len=");
+    println_int(cloned.len() as i32);
+
+    match cloned.get(&1) {
+        Option.Some(v) => { print("clone_get_a="); println_int(v); }
+        Option.None => { println("clone_get_a=MISSING"); }
+    }
+    match cloned.get(&2) {
+        Option.Some(v) => { print("clone_get_b="); println_int(v); }
+        Option.None => { println("clone_get_b=MISSING"); }
+    }
+    match cloned.get(&3) {
+        Option.Some(v) => { print("clone_get_c="); println_int(v); }
+        Option.None => { println("clone_get_c=MISSING"); }
+    }
+
+    // Verify original is unmodified after clone
+    match map.get(&1) {
+        Option.Some(v) => { print("original_unchanged="); println_int(v); }
+        Option.None => { println("original_unchanged=MISSING"); }
+    }
+
+    // Modify clone independently
+    cloned.insert(4, 40);
+    print("clone_after_insert=");
+    println_int(cloned.len() as i32);
+
+    0
+}

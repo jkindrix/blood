@@ -1937,3 +1937,32 @@ pub fn emit_hashmap_remove_call(
     hashmap_build_option(ctx, destination, &result, &val_alloca, vs);
     hashmap_emit_cont(ctx, target);
 }
+
+/// Emits a call to hashmap_clone(src, key_size, val_size, key_kind, out).
+/// Copies the hash table structure and data array from src to destination.
+pub fn emit_hashmap_clone_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    if args.len() < 1 { ctx.emit_unreachable(); return; }
+    let map_ptr = emit_operand_as_ptr(ctx, &args[0]);
+    let sizes = match get_hashmap_type_from_arg(ctx, &args[0]) {
+        Option.Some(ty_id) => extract_hashmap_sizes(ctx, ty_id),
+        Option.None => hashmap_default_sizes(),
+    };
+    let ks_str = codegen_types.format_u64(sizes[0]);
+    let vs_str = codegen_types.format_u64(sizes[1]);
+    let kk_str = codegen_types.format_u64(sizes[2]);
+    let out_ptr = codegen_place.emit_place_data_ptr(ctx, destination);
+
+    ctx.begin_call(Option.None, "void", "@hashmap_clone");
+    ctx.call_arg_str(true, "ptr", map_ptr.as_str());
+    ctx.call_arg_str(false, "i64", ks_str.as_str());
+    ctx.call_arg_str(false, "i64", vs_str.as_str());
+    ctx.call_arg_str(false, "i32", kk_str.as_str());
+    ctx.call_arg_str(false, "ptr", out_ptr.as_str());
+    ctx.end_call();
+    hashmap_emit_cont(ctx, target);
+}
