@@ -325,7 +325,7 @@ fn resolve_type_path_to_def_id(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.T
         }
         let mut msg = common.make_string("undefined trait: ");
         msg.push_str(name_str.as_str());
-        ctx.error(hir.DiagnosticCode.E0102, msg, seg.name.span);
+        ctx.error(hir.DiagnosticCode.E0209, msg, seg.name.span);
         return Option.None;
     }
 
@@ -351,7 +351,7 @@ fn resolve_type_path_to_def_id(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.T
         let seg_str = ctx.span_to_string(names[j].span);
         msg.push_str(seg_str.as_str());
     }
-    ctx.error(hir.DiagnosticCode.E0102, msg, path.span);
+    ctx.error(hir.DiagnosticCode.E0209, msg, path.span);
     Option.None
 }
 
@@ -384,7 +384,7 @@ fn lower_type_path_id(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.TypePath) 
                     }
                     &Option.None => {
                         ctx.error(
-                            hir.DiagnosticCode.E0102,
+                            hir.DiagnosticCode.E0208,
                             common.make_string("Self used outside of impl block"),
                             seg.name.span,
                         );
@@ -445,7 +445,7 @@ fn lower_type_path_id(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.TypePath) 
                 amsg.push_str("` has no associated type `");
                 amsg.push_str(assoc_name_str.as_str());
                 amsg.push_str("`");
-                ctx.error(hir.DiagnosticCode.E0102, amsg, second_seg.name.span);
+                ctx.error(hir.DiagnosticCode.E0208, amsg, second_seg.name.span);
                 return type_intern.CommonTypes.error();
             }
         }
@@ -496,7 +496,7 @@ fn lower_type_path_id(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.TypePath) 
                             tmsg.push_str(tname_str.as_str());
                             tmsg.push_str("` is not a type");
                             ctx.error(
-                                hir.DiagnosticCode.E0102,
+                                hir.DiagnosticCode.E0208,
                                 tmsg,
                                 seg.name.span,
                             );
@@ -519,7 +519,7 @@ fn lower_type_path_id(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.TypePath) 
             let tname_str = ctx.span_to_string(seg.name.span);
             tmsg.push_str(tname_str.as_str());
             ctx.error(
-                hir.DiagnosticCode.E0102,
+                hir.DiagnosticCode.E0208,
                 tmsg,
                 seg.name.span,
             );
@@ -612,7 +612,7 @@ fn lower_type_path_id(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.TypePath) 
         msg.push_str(seg_str.as_str());
     }
     ctx.error(
-        hir.DiagnosticCode.E0102,
+        hir.DiagnosticCode.E0208,
         msg,
         path.span,
     );
@@ -645,7 +645,7 @@ fn lower_type_path(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.TypePath) -> 
                     }
                     &Option.None => {
                         ctx.error(
-                            hir.DiagnosticCode.E0102,
+                            hir.DiagnosticCode.E0208,
                             common.make_string("Self used outside of impl block"),
                             seg.name.span,
                         );
@@ -711,7 +711,7 @@ fn lower_type_path(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.TypePath) -> 
                 amsg.push_str("` has no associated type `");
                 amsg.push_str(assoc_name_str.as_str());
                 amsg.push_str("`");
-                ctx.error(hir.DiagnosticCode.E0102, amsg, second_seg.name.span);
+                ctx.error(hir.DiagnosticCode.E0208, amsg, second_seg.name.span);
                 return hir_ty.Type.error();
             }
         }
@@ -761,7 +761,7 @@ fn lower_type_path(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.TypePath) -> 
                             tmsg.push_str(tname_str.as_str());
                             tmsg.push_str("` is not a type");
                             ctx.error(
-                                hir.DiagnosticCode.E0102,
+                                hir.DiagnosticCode.E0208,
                                 tmsg,
                                 seg.name.span,
                             );
@@ -787,7 +787,7 @@ fn lower_type_path(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.TypePath) -> 
             let tname_str = ctx.span_to_string(seg.name.span);
             tmsg.push_str(tname_str.as_str());
             ctx.error(
-                hir.DiagnosticCode.E0102,
+                hir.DiagnosticCode.E0208,
                 tmsg,
                 seg.name.span,
             );
@@ -856,7 +856,7 @@ fn lower_type_path(ctx: &mut hir_lower_ctx.LoweringCtx, path: &ast.TypePath) -> 
         msg.push_str(seg_str.as_str());
     }
     ctx.error(
-        hir.DiagnosticCode.E0102,
+        hir.DiagnosticCode.E0208,
         msg,
         path.span,
     );
@@ -1179,7 +1179,7 @@ fn lower_effect_ref(ctx: &mut hir_lower_ctx.LoweringCtx, ty: &ast.Type) -> Optio
                                 _ => {
                                     // Not an effect — report error
                                     ctx.error(
-                                        hir.DiagnosticCode.E0102,
+                                        hir.DiagnosticCode.E0208,
                                         common.make_string("not an effect type"),
                                         ty.span,
                                     );
@@ -1206,7 +1206,7 @@ fn lower_effect_ref(ctx: &mut hir_lower_ctx.LoweringCtx, ty: &ast.Type) -> Optio
                 }
             }
             ctx.error(
-                hir.DiagnosticCode.E0102,
+                hir.DiagnosticCode.E0208,
                 common.make_string("unknown effect"),
                 ty.span,
             );
@@ -1214,7 +1214,7 @@ fn lower_effect_ref(ctx: &mut hir_lower_ctx.LoweringCtx, ty: &ast.Type) -> Optio
         }
         _ => {
             ctx.error(
-                hir.DiagnosticCode.E0102,
+                hir.DiagnosticCode.E0208,
                 common.make_string("invalid effect type"),
                 ty.span,
             );
