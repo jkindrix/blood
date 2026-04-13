@@ -427,18 +427,12 @@ pub fn emit_vec_pop_call(
     ctx.end_call();
 
     // Build Option<T> in destination
-    // Option is typically { i8 tag, T value }
+    // Option layout is { i32 tag, [N x i64] value } — tag is i32, NOT i8.
     // tag = 0 for None, tag = 1 for Some
     let dest_ptr = codegen_place.emit_place_data_ptr(ctx, destination);
 
-    // Store the tag (result from vec_pop: 0=empty/None, 1=success/Some)
-    let tag_i8 = ctx.fresh_temp_cg();
-    ctx.write_indent();
-    ctx.write_cgname(&tag_i8);
-    ctx.write(" = trunc i32 ");
-    ctx.write_cgname(&result);
-    ctx.write(" to i8\n");
-    ctx.emit_store_cg("i8", &tag_i8, dest_ptr.as_str());
+    // Store the tag as i32 (vec_pop returns i32: 0=empty/None, 1=success/Some)
+    ctx.emit_store_cg("i32", &result, dest_ptr.as_str());
 
     // If result was 1 (Some), copy the element data
     // Calculate offset for the value field (after tag, with alignment)

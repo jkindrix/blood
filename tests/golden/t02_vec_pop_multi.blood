@@ -1,0 +1,31 @@
+// Test: Vec.pop() returns correct Option in multi-call scenarios.
+// Regression test for i8/i32 Option discriminant mismatch (S18 fix).
+// EXPECT: pop1: 30
+// EXPECT: pop2: 20
+// EXPECT: pop3: 10
+// EXPECT: pop4: NONE
+
+fn main() -> i32 {
+    let mut v: Vec<i32> = Vec.new();
+    v.push(10);
+    v.push(20);
+    v.push(30);
+
+    match v.pop() {
+        Option.Some(x) => { print("pop1: "); println_int(x); }
+        Option.None => { println("pop1: NONE"); }
+    }
+    match v.pop() {
+        Option.Some(x) => { print("pop2: "); println_int(x); }
+        Option.None => { println("pop2: NONE"); }
+    }
+    match v.pop() {
+        Option.Some(x) => { print("pop3: "); println_int(x); }
+        Option.None => { println("pop3: NONE"); }
+    }
+    match v.pop() {
+        Option.Some(x) => { print("pop4: "); println_int(x); }
+        Option.None => { println("pop4: NONE"); }
+    }
+    0
+}
