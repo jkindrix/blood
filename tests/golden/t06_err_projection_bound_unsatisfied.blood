@@ -1,0 +1,42 @@
+// COMPILE_FAIL: projection bound rejection when T.Item doesn't satisfy the bound
+// EXPECT: type does not implement trait
+
+trait Summable {
+    type Item;
+    fn next(&mut self) -> Option<Self.Item>;
+}
+
+trait Addable {
+    fn zero() -> Self;
+}
+
+impl Addable for i32 {
+    fn zero() -> i32 { 0 }
+}
+
+struct BoolRange {
+    current: i32,
+    end: i32,
+}
+
+impl Summable for BoolRange {
+    type Item = bool;
+    fn next(&mut self) -> Option<bool> {
+        if self.current < self.end {
+            self.current = self.current + 1;
+            Option.Some(true)
+        } else {
+            Option.None
+        }
+    }
+}
+
+fn sum_all<T: Summable>(iter: &mut T) -> i32 where T.Item: Addable {
+    0
+}
+
+fn main() -> i32 {
+    let mut range = BoolRange { current: 0, end: 3 };
+    let result = sum_all(&mut range);
+    0
+}

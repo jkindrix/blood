@@ -1234,6 +1234,7 @@ fn lower_effect_ref(ctx: &mut hir_lower_ctx.LoweringCtx, ty: &ast.Type) -> Optio
 pub fn lower_generics(ctx: &mut hir_lower_ctx.LoweringCtx, type_params: &Option<ast.TypeParams>, where_clause: &Option<ast.WhereClause>) -> hir_ty.Generics {
     let mut params: Vec<hir_ty.GenericParam> = Vec.new();
     let mut where_predicates: Vec<hir_ty.WherePredicate> = Vec.new();
+    let mut assoc_projections: Vec<hir_ty.AssocTypeProjection> = Vec.new();
 
     // Always push a type parameter scope. Even for items without generics,
     // an empty scope is harmless and simplifies the caller contract.
@@ -1291,6 +1292,13 @@ pub fn lower_generics(ctx: &mut hir_lower_ctx.LoweringCtx, type_params: &Option<
                                                     fresh_assocs.push(hir_lower_ctx.AssocTypeEntry.new(
                                                         assoc_entries[aei].name,
                                                         fresh_ty,
+                                                    ));
+                                                    // Record projection metadata for typeck bound checking
+                                                    assoc_projections.push(hir_ty.AssocTypeProjection.new(
+                                                        fresh_var.index,
+                                                        var_id.index,
+                                                        trait_refs[tri].def_id.index,
+                                                        assoc_entries[aei].name,
                                                     ));
                                                 }
                                                 if fresh_assocs.len() > 0 {
@@ -1393,6 +1401,13 @@ pub fn lower_generics(ctx: &mut hir_lower_ctx.LoweringCtx, type_params: &Option<
                                                             assoc_entries[aei].name,
                                                             fresh_ty,
                                                         ));
+                                                        // Record projection metadata for typeck bound checking
+                                                        assoc_projections.push(hir_ty.AssocTypeProjection.new(
+                                                            fresh_var.index,
+                                                            param_var.index,
+                                                            trait_refs[tri].def_id.index,
+                                                            assoc_entries[aei].name,
+                                                        ));
                                                     }
                                                     if fresh_assocs.len() > 0 {
                                                         // Derive param name from where-clause type path
@@ -1446,7 +1461,7 @@ pub fn lower_generics(ctx: &mut hir_lower_ctx.LoweringCtx, type_params: &Option<
         }
     }
 
-    hir_ty.Generics { params, where_predicates }
+    hir_ty.Generics { params, where_predicates, assoc_projections }
 }
 
 /// Convert a type to a TraitRef if it's a path type referring to a trait.

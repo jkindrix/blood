@@ -329,23 +329,41 @@ impl EffectRef {
 // Generics
 // ============================================================
 
+/// Maps a projection TyVarId back to its source:
+/// the base type parameter, the trait that declares the assoc type, and the name.
+/// Used by typeck to resolve `where T.Item: Bound` at call sites.
+pub struct AssocTypeProjection {
+    pub projection_var_index: u32,
+    pub base_param_var_index: u32,
+    pub trait_def_index: u32,
+    pub assoc_name: common.Symbol,
+}
+
+impl AssocTypeProjection {
+    pub fn new(projection_var_index: u32, base_param_var_index: u32, trait_def_index: u32, assoc_name: common.Symbol) -> AssocTypeProjection {
+        AssocTypeProjection { projection_var_index, base_param_var_index, trait_def_index, assoc_name }
+    }
+}
+
 /// Generic parameters for a definition.
 pub struct Generics {
     /// The generic parameters.
     pub params: Vec<GenericParam>,
     /// Where clause predicates.
     pub where_predicates: Vec<WherePredicate>,
+    /// Projection metadata: maps fresh TyVarIds for T.Item back to (T, Trait, "Item").
+    pub assoc_projections: Vec<AssocTypeProjection>,
 }
 
 impl Generics {
     /// Creates empty generics.
     pub fn empty() -> Generics {
-        Generics { params: Vec.new(), where_predicates: Vec.new() }
+        Generics { params: Vec.new(), where_predicates: Vec.new(), assoc_projections: Vec.new() }
     }
 
     /// Creates generics with the given parameters.
     pub fn with_params(params: Vec<GenericParam>) -> Generics {
-        Generics { params, where_predicates: Vec.new() }
+        Generics { params, where_predicates: Vec.new(), assoc_projections: Vec.new() }
     }
 
     /// Returns true if there are no generic parameters.
@@ -696,6 +714,19 @@ pub fn copy_where_predicates(preds: &Vec<WherePredicate>) -> Vec<WherePredicate>
     let mut result: Vec<WherePredicate> = Vec.new();
     for i in 0usize..preds.len() {
         result.push(copy_where_predicate(&preds[i]));
+    }
+    result
+}
+
+pub fn copy_assoc_projections(projs: &Vec<AssocTypeProjection>) -> Vec<AssocTypeProjection> {
+    let mut result: Vec<AssocTypeProjection> = Vec.new();
+    for i in 0usize..projs.len() {
+        result.push(AssocTypeProjection.new(
+            projs[i].projection_var_index,
+            projs[i].base_param_var_index,
+            projs[i].trait_def_index,
+            projs[i].assoc_name,
+        ));
     }
     result
 }

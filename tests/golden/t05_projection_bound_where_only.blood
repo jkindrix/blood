@@ -1,0 +1,50 @@
+// Test: projection bounds work when both trait bound and projection bound are in where clause
+// EXPECT: 6
+trait Sequence {
+    type Element;
+    fn next(&mut self) -> Option<Self.Element>;
+}
+
+trait Describable {
+    fn describe(self: &Self) -> i32;
+}
+
+impl Describable for i32 {
+    fn describe(self: &i32) -> i32 { *self }
+}
+
+struct Counter {
+    current: i32,
+    max: i32,
+}
+
+impl Sequence for Counter {
+    type Element = i32;
+    fn next(&mut self) -> Option<i32> {
+        if self.current < self.max {
+            self.current = self.current + 1;
+            Option.Some(self.current)
+        } else {
+            Option.None
+        }
+    }
+}
+
+fn sum_described<T>(iter: &mut T) -> i32 where T: Sequence, T.Element: Describable {
+    let mut total: i32 = 0;
+    let mut item = iter.next();
+    while item.is_some() {
+        let val = item.unwrap();
+        total = total + val;
+        item = iter.next();
+    }
+    total
+}
+
+fn main() -> i32 {
+    let mut c = Counter { current: 0, max: 3 };
+    let result = sum_described(&mut c);
+    println_int(result);
+    if result != 6 { return 1; }
+    0
+}

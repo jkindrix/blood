@@ -842,8 +842,9 @@ impl TypeChecker {
             effect_def_ids.push(sig.effects.effects[ei].def_id.index);
         }
 
-        // Extract where clause predicates
+        // Extract where clause predicates and projection metadata
         let where_predicates = hir_ty.copy_where_predicates(&sig.generics.where_predicates);
+        let assoc_projections = hir_ty.copy_assoc_projections(&sig.generics.assoc_projections);
 
         // Create the info with actual param IDs, effect row, and where clauses
         let info = typeck_info.FnSigInfo.with_where_clauses(
@@ -853,6 +854,7 @@ impl TypeChecker {
             type_param_ids,
             effect_def_ids,
             where_predicates,
+            assoc_projections,
         );
 
         // Store at def_id.index
@@ -903,6 +905,7 @@ impl TypeChecker {
         }
 
         let where_predicates = hir_ty.copy_where_predicates(&sig.generics.where_predicates);
+        let assoc_projections = hir_ty.copy_assoc_projections(&sig.generics.assoc_projections);
 
         let info = typeck_info.FnSigInfo.with_where_clauses(
             param_tys,
@@ -911,6 +914,7 @@ impl TypeChecker {
             type_param_ids,
             effect_def_ids,
             where_predicates,
+            assoc_projections,
         );
 
         let def_idx = def_id.index as usize;
@@ -1902,7 +1906,34 @@ impl TypeChecker {
                             }
                         }
                         &Option.None => {
-                            // Could not resolve param type — skip check
+                            // Could not resolve via direct param matching.
+                            // Check if this is a projection bound (T.Item: Trait).
+                            let proj_resolved = self.resolve_projection_bound(ty, fn_sig, arg_types);
+                            match &proj_resolved {
+                                &Option.Some(assoc_ty) => {
+                                    let final_ty = self.resolve(assoc_ty);
+                                    let interner = type_intern.type_interner();
+                                    let final_kind = interner.get(final_ty);
+                                    let is_infer = match final_kind {
+                                        &type_intern.InternedTypeKind.Infer(_) => true,
+                                        _ => false,
+                                    };
+                                    if is_infer {
+                                        for bi in 0usize..bounds.len() {
+                                            self.pending_bound_check_tys.push(final_ty);
+                                            self.pending_bound_check_trait_ids.push(bounds[bi].def_id.index);
+                                            self.pending_bound_check_spans.push(span);
+                                        }
+                                    } else {
+                                        for bi in 0usize..bounds.len() {
+                                            if !self.type_implements_trait(final_ty, &bounds[bi]) {
+                                                self.error(typeck_types.TypeErrorKind.TraitNotImplemented, span);
+                                            }
+                                        }
+                                    }
+                                }
+                                &Option.None => {}
+                            }
                         }
                     }
                 }
@@ -1945,6 +1976,79 @@ impl TypeChecker {
             }
             &Option.None => Option.None,
         }
+    }
+
+    /// Resolves a projection bound (where T.Item: Trait) to its concrete type.
+    /// Uses assoc_projections metadata to trace the projection TyVarId back to its
+    /// base type parameter, then looks up the impl's associated type binding.
+    fn resolve_projection_bound(
+        self: &Self,
+        where_ty: &hir_ty.Type,
+        fn_sig: &typeck_info.FnSigInfo,
+        arg_types: &Vec<type_intern.TyId>,
+    ) -> Option<type_intern.TyId> {
+        // Extract the TyVarId from the where_ty
+        let var_index: Option<u32> = match &where_ty.kind {
+            &hir_ty.TypeKind.Infer(ref var_id) => Option.Some(var_id.index),
+            &hir_ty.TypeKind.Param(ref var_id) => Option.Some(var_id.index),
+            _ => Option.None,
+        };
+        if var_index.is_none() {
+            return Option.None;
+        }
+        let target_var = var_index.unwrap();
+
+        // Check if this TyVarId is a known projection
+        let mut proj_idx: usize = 0;
+        while proj_idx < fn_sig.assoc_projections.len() {
+            if fn_sig.assoc_projections[proj_idx].projection_var_index == target_var {
+                // Found a projection. Now resolve the base param to a concrete type.
+                let base_var = fn_sig.assoc_projections[proj_idx].base_param_var_index;
+                let trait_def = fn_sig.assoc_projections[proj_idx].trait_def_index;
+                let assoc_name = fn_sig.assoc_projections[proj_idx].assoc_name;
+
+                // Resolve the base type parameter to a concrete type.
+                // Find which fn parameter uses base_var, get the arg type.
+                let mut pi: usize = 0;
+                let mut base_concrete: Option<type_intern.TyId> = Option.None;
+                while pi < fn_sig.param_tys.len() && pi < arg_types.len() {
+                    if self.param_type_uses_infer_id(fn_sig.param_tys[pi], base_var) {
+                        let resolved = peel_refs_matching(fn_sig.param_tys[pi], arg_types[pi]);
+                        base_concrete = Option.Some(self.resolve(resolved));
+                        pi = fn_sig.param_tys.len();
+                    }
+                    pi += 1;
+                }
+
+                // If base param resolved, look up the impl's associated type
+                match &base_concrete {
+                    &Option.Some(concrete_self_ty) => {
+                        // Search impls for (concrete_self_ty, trait_def) and extract assoc type
+                        let mut ii: usize = 0;
+                        while ii < self.impls.len() {
+                            let impl_info = &self.impls[ii];
+                            if impl_info.trait_def_id_index == trait_def {
+                                if types_match_for_impl_id(impl_info.self_ty, concrete_self_ty) {
+                                    // Found the impl. Look for the assoc type binding.
+                                    let mut bi: usize = 0;
+                                    while bi < impl_info.assoc_type_bindings.len() {
+                                        if impl_info.assoc_type_bindings[bi].name.index == assoc_name.index {
+                                            return Option.Some(impl_info.assoc_type_bindings[bi].ty);
+                                        }
+                                        bi += 1;
+                                    }
+                                }
+                            }
+                            ii += 1;
+                        }
+                    }
+                    &Option.None => {}
+                }
+                return Option.None;
+            }
+            proj_idx += 1;
+        }
+        Option.None
     }
 
     /// Checks if a parameter type uses a specific Infer ID, possibly under references.

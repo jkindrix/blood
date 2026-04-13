@@ -1,0 +1,53 @@
+// Test: where T.Item: Trait projection bounds are enforced
+// EXPECT: 15
+trait Summable {
+    type Item;
+    fn next(&mut self) -> Option<Self.Item>;
+}
+
+trait Addable {
+    fn zero() -> Self;
+    fn add(self: &Self, other: &Self) -> Self;
+}
+
+impl Addable for i32 {
+    fn zero() -> i32 { 0 }
+    fn add(self: &i32, other: &i32) -> i32 { *self + *other }
+}
+
+struct IntRange {
+    current: i32,
+    end: i32,
+}
+
+impl Summable for IntRange {
+    type Item = i32;
+    fn next(&mut self) -> Option<i32> {
+        if self.current < self.end {
+            let val = self.current;
+            self.current = self.current + 1;
+            Option.Some(val)
+        } else {
+            Option.None
+        }
+    }
+}
+
+fn sum_all<T: Summable>(iter: &mut T) -> i32 where T.Item: Addable {
+    let mut total: i32 = 0;
+    let mut item = iter.next();
+    while item.is_some() {
+        let val = item.unwrap();
+        total = total + val;
+        item = iter.next();
+    }
+    total
+}
+
+fn main() -> i32 {
+    let mut range = IntRange { current: 1, end: 6 };
+    let result = sum_all(&mut range);
+    println_int(result);
+    if result != 15 { return 1; }
+    0
+}

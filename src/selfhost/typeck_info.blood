@@ -281,27 +281,29 @@ pub struct FnSigInfo {
     pub effect_def_ids: Vec<u32>,
     /// Where clause predicates for trait bound checking.
     pub where_predicates: Vec<hir_ty.WherePredicate>,
+    /// Projection metadata: maps T.Item TyVarIds to (T, Trait, "Item") for bound checking.
+    pub assoc_projections: Vec<hir_ty.AssocTypeProjection>,
 }
 
 impl FnSigInfo {
     /// Creates a new function signature info.
     pub fn new(param_tys: Vec<type_intern.TyId>, return_ty: type_intern.TyId, num_generics: u32) -> FnSigInfo {
-        FnSigInfo { param_tys, return_ty, num_generics, type_param_ids: Vec.new(), effect_def_ids: Vec.new(), where_predicates: Vec.new() }
+        FnSigInfo { param_tys, return_ty, num_generics, type_param_ids: Vec.new(), effect_def_ids: Vec.new(), where_predicates: Vec.new(), assoc_projections: Vec.new() }
     }
 
     /// Creates a new function signature info with explicit type parameter IDs.
     pub fn with_param_ids(param_tys: Vec<type_intern.TyId>, return_ty: type_intern.TyId, num_generics: u32, type_param_ids: Vec<u32>) -> FnSigInfo {
-        FnSigInfo { param_tys, return_ty, num_generics, type_param_ids, effect_def_ids: Vec.new(), where_predicates: Vec.new() }
+        FnSigInfo { param_tys, return_ty, num_generics, type_param_ids, effect_def_ids: Vec.new(), where_predicates: Vec.new(), assoc_projections: Vec.new() }
     }
 
     /// Creates a new function signature info with effect row.
     pub fn with_effects(param_tys: Vec<type_intern.TyId>, return_ty: type_intern.TyId, num_generics: u32, type_param_ids: Vec<u32>, effect_def_ids: Vec<u32>) -> FnSigInfo {
-        FnSigInfo { param_tys, return_ty, num_generics, type_param_ids, effect_def_ids, where_predicates: Vec.new() }
+        FnSigInfo { param_tys, return_ty, num_generics, type_param_ids, effect_def_ids, where_predicates: Vec.new(), assoc_projections: Vec.new() }
     }
 
     /// Creates a new function signature info with where clause predicates.
-    pub fn with_where_clauses(param_tys: Vec<type_intern.TyId>, return_ty: type_intern.TyId, num_generics: u32, type_param_ids: Vec<u32>, effect_def_ids: Vec<u32>, where_predicates: Vec<hir_ty.WherePredicate>) -> FnSigInfo {
-        FnSigInfo { param_tys, return_ty, num_generics, type_param_ids, effect_def_ids, where_predicates }
+    pub fn with_where_clauses(param_tys: Vec<type_intern.TyId>, return_ty: type_intern.TyId, num_generics: u32, type_param_ids: Vec<u32>, effect_def_ids: Vec<u32>, where_predicates: Vec<hir_ty.WherePredicate>, assoc_projections: Vec<hir_ty.AssocTypeProjection>) -> FnSigInfo {
+        FnSigInfo { param_tys, return_ty, num_generics, type_param_ids, effect_def_ids, where_predicates, assoc_projections }
     }
 }
 
@@ -394,6 +396,18 @@ impl MethodInfo {
 /// Sentinel value indicating an inherent impl (no trait).
 pub fn no_trait_def_id() -> u32 { 4294967295 }
 
+/// A concrete associated type binding from an impl block (e.g., `type Item = i32`).
+pub struct ImplAssocBinding {
+    pub name: common.Symbol,
+    pub ty: type_intern.TyId,
+}
+
+impl ImplAssocBinding {
+    pub fn new(name: common.Symbol, ty: type_intern.TyId) -> ImplAssocBinding {
+        ImplAssocBinding { name, ty }
+    }
+}
+
 /// Stored info about an impl block.
 pub struct ImplInfo {
     /// The DefId of the impl block.
@@ -416,6 +430,8 @@ pub struct ImplInfo {
     ///   type_param_ids = [42, 43]
     /// Used to create fresh inference variables per call site in infer_method_call.
     pub type_param_ids: Vec<u32>,
+    /// Associated type bindings (e.g., `type Item = i32`). Empty for inherent impls.
+    pub assoc_type_bindings: Vec<ImplAssocBinding>,
 }
 
 impl ImplInfo {
@@ -427,7 +443,7 @@ impl ImplInfo {
         type_param_ids: Vec<u32>,
         methods: Vec<MethodInfo>,
     ) -> ImplInfo {
-        ImplInfo { def_id, self_ty, num_generics, trait_def_id_index: no_trait_def_id(), methods, impl_bounds: Vec.new(), type_param_ids }
+        ImplInfo { def_id, self_ty, num_generics, trait_def_id_index: no_trait_def_id(), methods, impl_bounds: Vec.new(), type_param_ids, assoc_type_bindings: Vec.new() }
     }
 
     /// Creates a new impl info for a trait impl.
@@ -439,7 +455,7 @@ impl ImplInfo {
         trait_def_id: hir_def.DefId,
         methods: Vec<MethodInfo>,
     ) -> ImplInfo {
-        ImplInfo { def_id, self_ty, num_generics, trait_def_id_index: trait_def_id.index, methods, impl_bounds: Vec.new(), type_param_ids }
+        ImplInfo { def_id, self_ty, num_generics, trait_def_id_index: trait_def_id.index, methods, impl_bounds: Vec.new(), type_param_ids, assoc_type_bindings: Vec.new() }
     }
 
     /// Returns true if this is a trait impl (not inherent).

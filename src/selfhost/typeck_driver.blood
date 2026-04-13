@@ -1538,8 +1538,8 @@ fn register_impl(
                     checker.register_fn_sig(assoc_fn.def_id, &assoc_fn.sig);
                 }
             }
-            &hir_item.AssocItem.Type(_) => {
-                // Associated types don't need registration for basic method resolution
+            &hir_item.AssocItem.Type(ref assoc_type) => {
+                // Associated type handled below when building impl_info
             }
             &hir_item.AssocItem.Const(_) => {
                 // Associated consts don't need registration for basic method resolution
@@ -1581,6 +1581,24 @@ fn register_impl(
         }
     };
     impl_info.impl_bounds = impl_bounds;
+
+    // Extract associated type bindings (e.g., type Item = i32) for projection bound checking
+    for ati in 0usize..impl_def.items.len() {
+        match &impl_def.items[ati] {
+            &hir_item.AssocItem.Type(ref assoc_type) => {
+                match &assoc_type.default_ty {
+                    &Option.Some(ref concrete_ty_id) => {
+                        impl_info.assoc_type_bindings.push(
+                            typeck_info.ImplAssocBinding.new(assoc_type.name.symbol, *concrete_ty_id)
+                        );
+                    }
+                    &Option.None => {}
+                }
+            }
+            _ => {}
+        }
+    }
+
     checker.register_impl(impl_info);
 }
 
