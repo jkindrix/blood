@@ -578,6 +578,31 @@ do_build_runtime() {
     ok "runtime.o no longer needed (compiler emits main() in IR)"
 }
 
+do_build_libmprompt() {
+    local mp_dir="$REPO_ROOT/vendor/libmprompt"
+    local mp_src="$mp_dir/src/mprompt"
+    local mp_build="$mp_dir/build"
+    [ -d "$mp_src" ] || die "libmprompt source not found at $mp_src"
+    command -v "$CLANG" >/dev/null || die "$CLANG required for libmprompt build"
+
+    mkdir -p "$mp_build"
+
+    step "Building libmprompt"
+
+    # Unity build: main.c includes mprompt.c, gstack.c, util.c
+    "$CLANG" -c -O2 -fPIC \
+        -I"$mp_dir/include" \
+        -I"$mp_src" \
+        "$mp_src/main.c" -o "$mp_build/mprompt.o"
+
+    # Platform-specific assembly (x86-64 Linux)
+    "$CLANG" -c -O2 -fPIC \
+        "$mp_src/asm/longjmp_amd64.S" -o "$mp_build/longjmp_amd64.o"
+
+    ar rcs "$mp_build/libmprompt.a" "$mp_build/mprompt.o" "$mp_build/longjmp_amd64.o"
+    ok "libmprompt.a ($(stat -c%s "$mp_build/libmprompt.a") bytes)"
+}
+
 do_build_blood_runtime() {
     local rt_dir="$REPO_ROOT/runtime/blood-runtime"
     local rt_build="$rt_dir/build/debug"
@@ -1436,6 +1461,9 @@ case "${1:-status}" in
                 ;;
             blood_runtime)
                 do_build_blood_runtime
+                ;;
+            libmprompt)
+                do_build_libmprompt
                 ;;
             all)
                 PIPELINE_START=$(date +%s)

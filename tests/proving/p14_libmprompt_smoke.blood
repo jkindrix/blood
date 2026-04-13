@@ -1,0 +1,29 @@
+// p14_libmprompt_smoke.blood
+//
+// Smoke test: call libmprompt C API via a C shim.
+// Validates: library links, prompt creates, yield captures, resume works.
+//
+// Build (manual — not in golden suite):
+//   clang-18 -c -O2 -fPIC -I vendor/libmprompt/include tests/proving/p14_shim.c -o /tmp/p14_shim.o
+//   src/selfhost/build/first_gen build tests/proving/p14_libmprompt_smoke.blood
+//   clang-18 tests/proving/build/debug/p14_libmprompt_smoke.o /tmp/p14_shim.o \
+//     vendor/libmprompt/build/libmprompt.a build/libblood_runtime.a \
+//     -Wl,-z,muldefs -lm -ldl -lpthread -o /tmp/p14_test
+//   /tmp/p14_test
+//
+// Expected output: 0
+// Expected exit code: 0
+
+bridge "C" Shim {
+    fn mprompt_smoke_test() -> i64;
+}
+
+fn main() -> i32 {
+    let result: i64 = Shim.mprompt_smoke_test();
+    if result != 0 {
+        println_int(result as i32);
+        return 1;
+    }
+    println_int(0);
+    0
+}
