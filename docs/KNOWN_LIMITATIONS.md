@@ -159,17 +159,23 @@ Known structural gaps (not bugs, but feature omissions):
 Golden tests: `t05_assoc_type_projection`, `t05_assoc_type_projection_param`,
 `t05_assoc_type_where_clause`.
 
-**Remaining gaps**: `<T as Trait>.Item` qualified projections, `where T.Item: Eq`
-projection bounds, disambiguation when multiple bounds declare the same associated
-type name. Scope cleanup (clearing `current_type_param_bounds` on exit) implemented
-in session 13.
+**Projection bounds** (`where T.Item: Trait`) are enforced at call sites. If
+`fn f<T: Summable>(x: &mut T) where T.Item: Addable` is called with a type whose
+`Item` doesn't implement `Addable`, the compiler emits E0206. Enforcement resolves
+the projection through the impl's associated type binding. Golden tests:
+`t05_projection_bound`, `t05_projection_bound_where_only`,
+`t06_err_projection_bound_unsatisfied`.
+
+**Remaining gaps**: `<T as Trait>.Item` qualified projections (disambiguation when
+multiple bounds declare the same associated type name). Scope cleanup (clearing
+`current_type_param_bounds` on exit) implemented in session 13.
 
 **Generic trait method return types**: Calling trait methods on `&T` or `&mut T` in
 generic function bodies now type-checks correctly, including methods returning
 `Option<T>` and other compound types (fixed session 16, commit a5f3e81). Golden test:
-`t05_generic_trait_method_return`. Generic iterators work via the manual while-loop
-pattern (`fn sum_all<T: Iterator>(iter: &mut T) -> i32`). The remaining gap is for-in
-syntax desugaring, which only handles concrete ADTs in MIR lowering.
+`t05_generic_trait_method_return`. Generic iterators work via both the manual while-loop
+pattern and for-in syntax (`fn sum_all<T: Iterator>(iter: &mut T) -> i32` with
+`for val in iter { ... }`).
 
 ### Associated type bounds (`type Item: Display`)
 
