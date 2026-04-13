@@ -8,7 +8,7 @@ The goal of this file is to answer honestly: *if you write a Blood program today
 ## At a glance
 
 - **Self-hosting:** verified. 103K lines of Blood compile themselves through a three-generation byte-identical bootstrap. See "Self-hosting feature coverage" below for which features are exercised.
-- **Golden tests:** 564 pass, 0 fail. Golden tests cover program-level correctness, not systematic spec conformance. Traceability matrix at `.tmp/SPEC_TRACEABILITY.md`.
+- **Golden tests:** 565 pass, 0 fail. Golden tests cover program-level correctness, not systematic spec conformance. Traceability matrix at `.tmp/SPEC_TRACEABILITY.md`.
 - **Spec coverage:** 7 of 16 spec files fully implemented and tested. 3 partially implemented (Concurrency, Diagnostics, Stdlib). 1 has no tests (WCET/Real-time). See `.tmp/SPEC_TRACEABILITY.md` for details.
 - **Rust bootstrap:** builds and runs simple programs. Used as an escape hatch; not the primary development target. Diverged from selfhost on type unification in April before being corrected.
 - **Formal proofs:** 264 Coq theorems/lemmas across 22 theory files, 227 proved (Qed), 28 admitted. Three-tier structure (core soundness → feature interaction → composition). The proofs cover a core calculus formalization, not the compiler artifact directly. See `proofs/PROOF_ROADMAP.md`.
@@ -136,12 +136,14 @@ Known structural gaps (not bugs, but feature omissions):
   Implementing a real generic HashMap requires either runtime routines
   for a type-erased hashmap or monomorphization support for its generic
   methods, and either way is multi-session feature work.
-- **Iterator trait defined but not wired into for-in**: `stdlib/iter/iterator.blood`
-  defines `trait Iterator { type Item; fn next(&mut self) -> Option<Self.Item>; }`.
-  The manual `loop { match iter.next() { ... } }` pattern works for concrete types.
-  `for x in iter { }` syntax currently supports only Array, Vec, Slice, and Range.
-  Custom iterator types require the explicit loop+match pattern. For-in integration
-  needs method dispatch tables threaded into MIR lowering (tracked).
+- **Iterator for-in works for concrete types, not generic type parameters**:
+  `for x in iter { }` works for Array, Vec, Slice, Range, and custom concrete
+  iterator types that implement a `next(&mut self) -> Option<T>` method (golden
+  test: `t05_for_in_custom_iterator`). Generic iterators (`fn f<T: Iterator>(iter: &mut T)`)
+  work via the explicit `loop { match iter.next() { ... } }` pattern but not via
+  for-in syntax, because the MIR desugaring only handles concrete ADTs with known
+  field layouts. For-in integration for generic iterator type parameters needs the
+  MIR desugaring to emit method dispatch calls instead of direct field accesses.
 - **No file I/O abstraction**: the stdlib exposes only raw FFI (`LibcIO.open`,
   `LibcIO.read`, `LibcIO.write`, `LibcIO.close` in `runtime/blood-runtime/libc.blood`).
   There is no `File` struct, no `BufReader`/`BufWriter`, no `Path` type.
@@ -162,11 +164,12 @@ projection bounds, disambiguation when multiple bounds declare the same associat
 type name. Scope cleanup (clearing `current_type_param_bounds` on exit) implemented
 in session 13.
 
-**Generic trait method codegen gap**: calling trait methods on `&T` or `&mut T` in
-generic function bodies type-checks correctly, but the monomorphized codegen can
-produce invalid IR for methods returning Option or other compound types. This blocks
-generic `for x in iter { }` where `iter: &mut T` and T is a type parameter. Concrete
-iterator types work fine.
+**Generic trait method return types**: Calling trait methods on `&T` or `&mut T` in
+generic function bodies now type-checks correctly, including methods returning
+`Option<T>` and other compound types (fixed session 16, commit a5f3e81). Golden test:
+`t05_generic_trait_method_return`. Generic iterators work via the manual while-loop
+pattern (`fn sum_all<T: Iterator>(iter: &mut T) -> i32`). The remaining gap is for-in
+syntax desugaring, which only handles concrete ADTs in MIR lowering.
 
 ### Associated type bounds (`type Item: Display`)
 
@@ -269,9 +272,9 @@ This is the honest complement: things that are genuinely working end-to-end and 
 
 The compiler compiles itself using: structs (379), enums (129), functions (1,523), generics (`Vec<T>`, `Option<T>`, `HashMap`, 2,619 uses), closures (237), match expressions (2,304), impl blocks (258), and `@unsafe` blocks (159).
 
-The compiler does **not** use in its own source: traits (0 trait definitions, 0 trait impls), effects (0 effect/handler/perform/resume), linear/affine types (0 uses as a consumer), explicit `region { }` blocks (0 — uses FFI calls instead), content-addressing (`use hash(...)`), dyn Trait, or fibers.
+The compiler uses **traits** in its own source: 2 trait definitions (`Clone`, `Display` in `common.blood`), 6 trait impls (`Clone for String`, `Display for Span/Symbol/SpannedSymbol/SpannedString`, `Display for CompilePhase`). It does **not** use: effects (0 effect/handler/perform/resume), linear/affine types (0 uses as a consumer), explicit `region { }` blocks (0 — uses FFI calls instead), content-addressing (`use hash(...)`), dyn Trait, or fibers.
 
-These unused features are validated through golden tests (541 total), proving ground programs (13 integration tests across all 5 pillars), and the Coq formalization — but not through self-compilation at 103K-line scale.
+These features beyond the self-hosting subset are validated through golden tests (565 total), proving ground programs (13 integration tests across all 5 pillars), and the Coq formalization — but not through self-compilation at 103K-line scale.
 
 ## Effect handler control flow
 
