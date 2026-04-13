@@ -1999,7 +1999,7 @@ fn infer_field(
                         }
                         Option.None => {
                             // Not a struct - might be an enum
-                            checker.error_with_note(typeck.TypeErrorKind.NoSuchField, span, common.make_string("type is not a struct; field access not supported"));
+                            checker.error(typeck.TypeErrorKind.NotAStruct, span);
                             type_intern.CommonTypes.error()
                         }
                     }
@@ -2039,7 +2039,11 @@ fn infer_field(
             let mut note = common.make_string("type ");
             note.push_str(type_intern.format_ty_id(resolved_base).as_str());
             note.push_str(" does not support field access");
-            checker.error_with_note(typeck.TypeErrorKind.NoSuchField, span, note);
+            let err_kind = match field {
+                &hir_expr.FieldAccess.Index(_) => typeck.TypeErrorKind.NotATuple,
+                &hir_expr.FieldAccess.Named { name: _, field_idx: _ } => typeck.TypeErrorKind.NotAStruct,
+            };
+            checker.error_with_note(err_kind, span, note);
             type_intern.CommonTypes.error()
         }
     }
