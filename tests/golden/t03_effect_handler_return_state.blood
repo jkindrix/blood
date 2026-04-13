@@ -1,0 +1,59 @@
+// Test: handler return clause accesses accumulated state
+// Documents BUG-8 workaround: body must return i32 (not unit) for
+// return clause state access to work correctly.
+// EXPECT: accumulator=15
+// EXPECT: counter=3
+
+effect Emit {
+    op emit(val: i32) -> ();
+}
+
+deep handler Accumulator for Emit {
+    let mut total: i32
+
+    return(x) { total }
+    op emit(val) {
+        total = total + val;
+        resume(())
+    }
+}
+
+effect Counter {
+    op tick() -> ();
+}
+
+deep handler CountTicks for Counter {
+    let mut count: i32
+
+    return(x) { count }
+    op tick() {
+        count = count + 1;
+        resume(())
+    }
+}
+
+fn main() -> i32 {
+    // Accumulator: emit 1..5 then return total via return clause
+    let sum: i32 = with Accumulator { total: 0 } handle {
+        perform Emit.emit(1);
+        perform Emit.emit(2);
+        perform Emit.emit(3);
+        perform Emit.emit(4);
+        perform Emit.emit(5);
+        0  // BUG-8 workaround: explicit i32 body return
+    };
+    print("accumulator=");
+    println_int(sum);
+
+    // Counter: tick 3 times then return count via return clause
+    let ticks: i32 = with CountTicks { count: 0 } handle {
+        perform Counter.tick();
+        perform Counter.tick();
+        perform Counter.tick();
+        0  // BUG-8 workaround: explicit i32 body return
+    };
+    print("counter=");
+    println_int(ticks);
+
+    0
+}

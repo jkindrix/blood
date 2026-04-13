@@ -8,7 +8,7 @@ The goal of this file is to answer honestly: *if you write a Blood program today
 ## At a glance
 
 - **Self-hosting:** verified. 103K lines of Blood compile themselves through a three-generation byte-identical bootstrap. See "Self-hosting feature coverage" below for which features are exercised.
-- **Golden tests:** 569 pass, 0 fail. Golden tests cover program-level correctness, not systematic spec conformance. Traceability matrix at `.tmp/SPEC_TRACEABILITY.md`.
+- **Golden tests:** 571 pass, 0 fail. Golden tests cover program-level correctness, not systematic spec conformance. Traceability matrix at `.tmp/SPEC_TRACEABILITY.md`.
 - **Spec coverage:** 7 of 16 spec files fully implemented and tested. 3 partially implemented (Concurrency, Diagnostics, Stdlib). 1 has no tests (WCET/Real-time). See `.tmp/SPEC_TRACEABILITY.md` for details.
 - **Rust bootstrap:** builds and runs simple programs. Used as an escape hatch; not the primary development target. Diverged from selfhost on type unification in April before being corrected.
 - **Formal proofs:** 264 Coq theorems/lemmas across 22 theory files, 227 proved (Qed), 28 admitted. Three-tier structure (core soundness → feature interaction → composition). The proofs cover a core calculus formalization, not the compiler artifact directly. See `proofs/PROOF_ROADMAP.md`.
@@ -34,6 +34,20 @@ Aggregate operands should be marked as escaping so their allocations are promote
 **Still broken in parallel mode:** Enabling aggregate escape with 4-worker parallel codegen causes `corrupted size vs. prev_size` glibc heap corruption during self-compilation. Root cause: latent memory corruption in parallel codegen exposed by increased heap allocation pressure. The gen hash table and tier classification are correct — the glibc heap itself is corrupted by a threading bug.
 
 **Impact:** In default (parallel) mode, aggregate operands may be misclassified to a lower tier. Use `--no-parallel` for correct tier classification at the cost of ~30% slower codegen.
+
+### GAP-9: Handler return clause reads zero state when body returns unit (BUG-8)
+
+Handler `return(x) { state_var }` evaluates `state_var` as `0` instead of the accumulated value when the handler body's last expression returns `()` (unit type). The handler body compiles and runs correctly (state IS mutated), but the return clause doesn't read it back.
+
+**Workaround:** add an explicit `0` at the end of the handler body to make it return `i32` instead of `()`:
+```blood
+let result: i32 = with Accumulator { total: 0 } handle {
+    perform Emit.emit(5);
+    0  // workaround: explicit i32 body return
+};
+```
+
+**Impact:** any handler that accumulates state and whose body's final expression is `perform Effect.op()` (returns `()`) will silently produce `0`. Adding an explicit integer return works around the issue. Golden test: `t03_effect_handler_return_state.blood`.
 
 ### ~~GAP-4: Closure codegen regression — nested closures inside other closures~~ FIXED
 
