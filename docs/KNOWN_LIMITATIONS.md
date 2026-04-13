@@ -35,19 +35,9 @@ Aggregate operands should be marked as escaping so their allocations are promote
 
 **Impact:** In default (parallel) mode, aggregate operands may be misclassified to a lower tier. Use `--no-parallel` for correct tier classification at the cost of ~30% slower codegen.
 
-### GAP-9: Handler return clause reads zero state when body returns unit (BUG-8)
+### ~~GAP-9: Handler return clause reads zero state when body returns unit (BUG-8)~~ FIXED
 
-Handler `return(x) { state_var }` evaluates `state_var` as `0` instead of the accumulated value when the handler body's last expression returns `()` (unit type). The handler body compiles and runs correctly (state IS mutated), but the return clause doesn't read it back.
-
-**Workaround:** add an explicit `0` at the end of the handler body to make it return `i32` instead of `()`:
-```blood
-let result: i32 = with Accumulator { total: 0 } handle {
-    perform Emit.emit(5);
-    0  // workaround: explicit i32 body return
-};
-```
-
-**Impact:** any handler that accumulates state and whose body's final expression is `perform Effect.op()` (returns `()`) will silently produce `0`. Adding an explicit integer return works around the issue. Golden test: `t03_effect_handler_return_state.blood`.
+**Fixed.** Root cause: `infer_with_handle` returned `body_ty` which was `Never` (from `infer_stmt` treating perform as diverging). `Never` unifies with anything (bottom type), so `let sum: i32 = with handler handle { perform ...; }` compiled without error — but the MIR local got type `!` → `alloca {}` (0 bytes) in LLVM. The return clause's i64 result was dropped because the narrowing saw the 0-byte destination as unit. Fix: `infer_with_handle` now returns a fresh inference variable when body_ty is Never, letting the binding context determine the type. Codegen narrowing also switched from body result type to destination type. Test: `t03_effect_handler_return_state.blood` (workaround removed).
 
 ### ~~GAP-4: Closure codegen regression — nested closures inside other closures~~ FIXED
 

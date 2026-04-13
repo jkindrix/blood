@@ -3584,7 +3584,15 @@ fn infer_with_handle(
         checker.available_effect_type_args.pop();
     }
 
-    body_ty
+    // When body_ty is Never (block ends with perform statement), the handler
+    // expression's type is NOT Never — the return clause transforms the result.
+    // Return a fresh inference variable so the binding context (e.g., let x: i32)
+    // determines the type, giving the MIR local the correct allocation size.
+    if is_never_type_id(body_ty) {
+        checker.fresh_infer()
+    } else {
+        body_ty
+    }
 }
 
 /// Infers the type of an effect operation invocation.
