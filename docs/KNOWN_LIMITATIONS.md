@@ -8,7 +8,7 @@ The goal of this file is to answer honestly: *if you write a Blood program today
 ## At a glance
 
 - **Self-hosting:** verified. 103K lines of Blood compile themselves through a three-generation byte-identical bootstrap. See "Self-hosting feature coverage" below for which features are exercised.
-- **Golden tests:** 566 pass, 0 fail. Golden tests cover program-level correctness, not systematic spec conformance. Traceability matrix at `.tmp/SPEC_TRACEABILITY.md`.
+- **Golden tests:** 569 pass, 0 fail. Golden tests cover program-level correctness, not systematic spec conformance. Traceability matrix at `.tmp/SPEC_TRACEABILITY.md`.
 - **Spec coverage:** 7 of 16 spec files fully implemented and tested. 3 partially implemented (Concurrency, Diagnostics, Stdlib). 1 has no tests (WCET/Real-time). See `.tmp/SPEC_TRACEABILITY.md` for details.
 - **Rust bootstrap:** builds and runs simple programs. Used as an escape hatch; not the primary development target. Diverged from selfhost on type unification in April before being corrected.
 - **Formal proofs:** 264 Coq theorems/lemmas across 22 theory files, 227 proved (Qed), 28 admitted. Three-tier structure (core soundness → feature interaction → composition). The proofs cover a core calculus formalization, not the compiler artifact directly. See `proofs/PROOF_ROADMAP.md`.
@@ -118,24 +118,18 @@ depend on the stdlib: it has its own built-in implementations of `HashMap`,
 
 Known structural gaps (not bugs, but feature omissions):
 
-- **Generic `HashMap<K, V>` is a phantom type** (session 8 finding,
-  2026-04-12): the compiler's `register_hashmap_methods` in
-  `typeck_driver.blood:3679` registers a full set of method signatures
-  (`new`, `insert`, `get`, `contains_key`, `len`, `is_empty`, `remove`,
-  `clone`) for a built-in `HashMap<K, V>` type, BUT no runtime implementation
-  exists. Grep for `hashmap_insert|hashmap_clone|hashmap_get` in
-  `build/libblood_runtime.a` and `build/first_gen` returns zero symbols,
-  and no tested code calls any of these methods — the compiler's own
-  hashmap usage goes through the monomorphic `HashMapU64U32` /
-  `HashMapU64U64` / `HashMapU32U32` in `src/selfhost/hashmap.blood` and
-  `stdlib/collections/hashmap.blood`. The demos `examples/config_parser.blood`,
-  `examples/order_book.blood`, and `examples/content_addressing.blood`
-  use `HashMap<K, V>` in type signatures to illustrate the intended future
-  API, but they are NOT in the test suite and do not link successfully.
-  The registration is retained for type-system surface consistency only.
-  Implementing a real generic HashMap requires either runtime routines
-  for a type-erased hashmap or monomorphization support for its generic
-  methods, and either way is multi-session feature work.
+- **Generic `HashMap<K, V>` works for primitive and String keys** (session 18,
+  2026-04-13): `HashMap<K, V>` is backed by a type-erased C runtime
+  (`runtime/blood-runtime/rt_hashmap.c`) using open addressing with linear
+  probing and FNV-1a hashing. Supported key types: all integer types, bool,
+  and String. Methods: `new`, `insert`, `get`, `contains_key`, `len`,
+  `is_empty`, `remove`. `get` returns `Option<V>` (by value, not by reference).
+  Golden tests: `t05_hashmap_generic` (i32 keys), `t05_hashmap_string_keys`
+  (String keys). **Not yet supported**: arbitrary struct keys (needs Hash
+  trait), iterator API (`for (k, v) in map`), and `clone`. The selfhost
+  compiler's own hashmaps remain the monomorphic `HashMapU64U32` /
+  `HashMapU64U64` / `HashMapU32U32` variants — these are performance-critical
+  and won't be converted.
 - **Iterator for-in works for concrete types and generic type parameters**:
   `for x in iter { }` works for Array, Vec, Slice, Range, custom concrete
   iterator types, and generic iterator type parameters (`fn f<T: Iterator>(iter: &mut T)`).
