@@ -2180,6 +2180,28 @@ fn lower_for_iter_expr(
             mir_lower_iter.finish_iter_loop(ctx, &s, dest, span);
             return;
         }
+        // Check if the iterator type is a generic parameter (or &T/&mut T
+        // where T is generic). Type-erased bodies can't resolve the concrete
+        // next() method — the monomorphized copy (which re-lowers from HIR
+        // with concrete types) will produce the real iterator loop.
+        let is_generic_iter = type_intern.is_param_or_infer_id(resolved_iter_id) || match type_intern.get_ref_inner(resolved_iter_id) {
+            Option.Some(inner_id) => type_intern.is_param_or_infer_id(ctx.resolve_type_to_id(inner_id)),
+            Option.None => false,
+        };
+        if is_generic_iter {
+            // Type-erased body: emit degenerate for-in that evaluates the
+            // iterator expression (for side effects) then skips to the
+            // continuation block. The mono re-lowering will see a concrete
+            // Adt type and emit the full iterator loop via is_custom_iter.
+            lower_expr(ctx, iter, mir_lower_ctx.destination_ignore());
+            match dest.as_place() {
+                Option.Some(p) => {
+                    ctx.emit_assign(p, mir_types.Rvalue.ZeroInit(type_intern.CommonTypes.unit()), span);
+                }
+                Option.None => {}
+            }
+            return;
+        }
         ctx.mir_error(mir_lower_ctx.MirLowerErrorKind.InternalError, common.make_string("for-in loop: type does not support iteration"), span);
         return;
     }

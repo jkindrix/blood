@@ -29,19 +29,32 @@ pub struct IterLoopSetup {
     pub option_ty: type_intern.TyId,
     pub element_ty: type_intern.TyId,
     pub next_def_id_index: u32,
+    pub iter_is_ref: bool,
 }
 
 /// Checks if the given type has a custom iterator entry (next(&mut self) -> Option<T>).
+/// Handles both bare Adt types and &Adt / &mut Adt references.
 pub fn is_custom_iter(resolved_iter_id: type_intern.TyId, iter_kind: &type_intern.InternedTypeKind) -> bool {
-    match iter_kind {
-        &type_intern.InternedTypeKind.Adt { def_id, args: _ } => {
+    let check_def_id = match iter_kind {
+        &type_intern.InternedTypeKind.Adt { def_id, args: _ } => Option.Some(def_id.index),
+        &type_intern.InternedTypeKind.Ref { inner, mutable: _ } => {
+            let interner = type_intern.type_interner();
+            match interner.get(inner) {
+                &type_intern.InternedTypeKind.Adt { def_id, args: _ } => Option.Some(def_id.index),
+                _ => Option.None,
+            }
+        }
+        _ => Option.None,
+    };
+    match check_def_id {
+        Option.Some(idx) => {
             let t = mir_lower_ctx.get_iter_next_entries();
             for ei in 0usize..t.len() {
-                if t[ei].self_type_def_idx == def_id.index { return true; }
+                if t[ei].self_type_def_idx == idx { return true; }
             }
             false
         }
-        _ => false,
+        Option.None => false,
     }
 }
 
@@ -61,30 +74,47 @@ pub fn setup_iter_loop(
 ) -> IterLoopSetup {
     let interner = type_intern.type_interner();
 
-    // Recover the iter_next entry from the cached table
+    // Recover the iter_next entry from the cached table.
+    // Unwrap Ref types: &Adt and &mut Adt use the inner Adt's def_id.
     let iter_next_table = mir_lower_ctx.get_iter_next_entries();
     let mut next_def_id_idx: u32 = 0;
     let mut option_ret_idx: u32 = 0;
     let mut elem_ty_idx: u32 = 0;
-    // Recover the iter_next entry from the cached table
-    match iter_kind {
-        &type_intern.InternedTypeKind.Adt { def_id, args: _ } => {
+    let lookup_def_id = match iter_kind {
+        &type_intern.InternedTypeKind.Adt { def_id, args: _ } => Option.Some(def_id.index),
+        &type_intern.InternedTypeKind.Ref { inner, mutable: _ } => {
+            match interner.get(inner) {
+                &type_intern.InternedTypeKind.Adt { def_id, args: _ } => Option.Some(def_id.index),
+                _ => Option.None,
+            }
+        }
+        _ => Option.None,
+    };
+    match lookup_def_id {
+        Option.Some(did_idx) => {
             for ei in 0usize..iter_next_table.len() {
-                if iter_next_table[ei].self_type_def_idx == def_id.index {
+                if iter_next_table[ei].self_type_def_idx == did_idx {
                     next_def_id_idx = iter_next_table[ei].next_def_id_index;
                     option_ret_idx = iter_next_table[ei].option_return_ty_index;
                     elem_ty_idx = iter_next_table[ei].element_ty_index;
                 }
             }
         }
-        _ => {}
+        Option.None => {}
     }
     let option_ty = type_intern.TyId.new(option_ret_idx);
     let element_ty = type_intern.TyId.new(elem_ty_idx);
 
+    // Check if the iterator type is already a reference (e.g. &mut Counter from
+    // a generic fn(iter: &mut T)). If so, skip the extra Ref in emit_iter_loop_header.
+    let iter_is_ref = match iter_kind {
+        &type_intern.InternedTypeKind.Ref { inner: _, mutable: _ } => true,
+        _ => false,
+    };
+
     // Create locals
     let iter_temp = ctx.new_var(iter_ty_id, common.make_string("_iter"), true, span);
-    let mut_ref_ty = interner.mk_ref(iter_ty_id, true);
+    let mut_ref_ty = if iter_is_ref { iter_ty_id } else { interner.mk_ref(iter_ty_id, true) };
     let ref_temp = ctx.new_temp(mut_ref_ty, span);
     let next_result_temp = ctx.new_temp(option_ty, span);
     let elem_temp = ctx.new_temp(element_ty, span);
@@ -110,6 +140,7 @@ pub fn setup_iter_loop(
         option_ty: option_ty,
         element_ty: element_ty,
         next_def_id_index: next_def_id_idx,
+        iter_is_ref: iter_is_ref,
     }
 }
 
@@ -124,12 +155,25 @@ pub fn emit_iter_loop_header(
     ctx.terminate_goto(setup.loop_header, span);
     ctx.set_current_block(setup.loop_header);
 
-    // Create &mut iter
-    ctx.emit_assign(
-        mir_types.Place.local(setup.ref_temp),
-        mir_types.Rvalue.Ref { place: mir_types.Place.local(setup.iter_temp), mutable: true },
-        span,
-    );
+    // Create the argument for next(). If the iterator is already a reference
+    // (e.g. &mut Counter from a generic fn(iter: &mut T)), pass it directly.
+    // Otherwise, create &mut iter.
+    if !setup.iter_is_ref {
+        ctx.emit_assign(
+            mir_types.Place.local(setup.ref_temp),
+            mir_types.Rvalue.Ref { place: mir_types.Place.local(setup.iter_temp), mutable: true },
+            span,
+        );
+    } else {
+        // iter_temp is already &mut T — copy it to ref_temp directly
+        ctx.emit_assign(
+            mir_types.Place.local(setup.ref_temp),
+            mir_types.Rvalue.Use(mir_lower_util.operand_from_place_id(
+                mir_types.Place.local(setup.iter_temp), setup.option_ty,
+            )),
+            span,
+        );
+    }
 
     // Call next(&mut iter)
     let func_operand = mir_types.Operand.Constant(

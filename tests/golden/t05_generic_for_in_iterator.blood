@@ -1,0 +1,41 @@
+// Test: for-in loop with a generic iterator type parameter
+// Exercises the generic for-in MIR desugaring: type-erased body emits
+// degenerate loop, monomorphized copy uses concrete next() via is_custom_iter.
+// EXPECT: 10
+
+trait Iterator {
+    type Item;
+    fn next(self: &mut Self) -> Option<Self.Item>;
+}
+
+struct Counter {
+    current: i32,
+    max: i32,
+}
+
+impl Iterator for Counter {
+    type Item = i32;
+    fn next(self: &mut Counter) -> Option<i32> {
+        if self.current < self.max {
+            let val = self.current;
+            self.current = self.current + 1;
+            Option.Some(val)
+        } else {
+            Option.None
+        }
+    }
+}
+
+fn sum_all<T>(iter: &mut T) -> i32 where T: Iterator {
+    let mut total: i32 = 0;
+    for val in iter {
+        total = total + val;
+    }
+    total
+}
+
+fn main() -> i32 {
+    let mut c = Counter { current: 0, max: 5 };
+    println_int(sum_all(&mut c));
+    0
+}
