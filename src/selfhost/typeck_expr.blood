@@ -3141,7 +3141,20 @@ fn infer_for_iter(
                     checker.unify(pattern.ty, ref_elem, span);
                 }
                 _ => {
-                    checker.error(typeck.TypeErrorKind.TypeMismatch, span);
+                    // Check for generic iterator (&mut T where T: Iterator)
+                    let is_inner_param = match inner_kind {
+                        &type_intern.InternedTypeKind.Infer(_) => true,
+                        &type_intern.InternedTypeKind.Param(_) => true,
+                        _ => false,
+                    };
+                    if is_inner_param {
+                        let found = try_resolve_generic_iter_element(checker, pattern, span);
+                        if !found {
+                            checker.error(typeck.TypeErrorKind.TypeMismatch, span);
+                        }
+                    } else {
+                        checker.error(typeck.TypeErrorKind.TypeMismatch, span);
+                    }
                 }
             }
         }
@@ -3170,7 +3183,20 @@ fn infer_for_iter(
             }
         }
         _ => {
-            checker.error(typeck.TypeErrorKind.TypeMismatch, span);
+            // Check for generic iterator (Infer/Param type with Iterator bound)
+            let is_type_param = match iter_kind {
+                &type_intern.InternedTypeKind.Infer(_) => true,
+                &type_intern.InternedTypeKind.Param(_) => true,
+                _ => false,
+            };
+            if is_type_param {
+                let found_elem = try_resolve_generic_iter_element(checker, pattern, span);
+                if !found_elem {
+                    checker.error(typeck.TypeErrorKind.TypeMismatch, span);
+                }
+            } else {
+                checker.error(typeck.TypeErrorKind.TypeMismatch, span);
+            }
         }
     }
 
@@ -4330,3 +4356,52 @@ fn propagate_tuple_struct_pattern_fields(
     }
 }
 
+/// Searches the current function's where clause for a trait bound with a
+/// `next(&mut self) -> Option<T>` method. If found, unifies the pattern
+/// type with T (the element type). Returns true if found.
+fn try_resolve_generic_iter_element(
+    checker: &mut typeck.TypeChecker,
+    pattern: &hir_expr.Pattern,
+    span: common.Span,
+) -> bool {
+    let body_def_id_fi = hir_def.DefId.new(checker.current_body_def_id);
+    match checker.get_fn_sig(body_def_id_fi) {
+        Option.Some(ref fn_sig_fi) => {
+            for wi in 0usize..fn_sig_fi.where_predicates.len() {
+                match &fn_sig_fi.where_predicates[wi] {
+                    &hir_ty.WherePredicate.TypeBound { ref ty, ref bounds, span: _ } => {
+                        for bi in 0usize..bounds.len() {
+                            match checker.get_trait(bounds[bi].def_id) {
+                                Option.Some(ref trait_info_fi) => {
+                                    let trait_did_fi = trait_info_fi.def_id.index;
+                                    for mi in 0usize..trait_info_fi.methods.len() {
+                                        let m = &trait_info_fi.methods[mi];
+                                        // Skip methods with non-self params
+                                        if m.param_tys.len() != 0 { continue; }
+                                        // Check return type is Option<T> (ADT with 1 arg, not Self)
+                                        let interner = type_intern.type_interner();
+                                        match interner.get(m.return_ty) {
+                                            &type_intern.InternedTypeKind.Adt { def_id: ret_did, args: ret_args } => {
+                                                let n = interner.ty_list_len(ret_args);
+                                                if n == 1 && ret_did.index != trait_did_fi {
+                                                    let elem_ty = interner.get_ty_list_element(ret_args, 0);
+                                                    checker.unify(pattern.ty, elem_ty, span);
+                                                    return true;
+                                                }
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                }
+                                Option.None => {}
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Option.None => {}
+    }
+    false
+}
