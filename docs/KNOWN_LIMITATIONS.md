@@ -8,7 +8,7 @@ The goal of this file is to answer honestly: *if you write a Blood program today
 ## At a glance
 
 - **Self-hosting:** verified. 103K lines of Blood compile themselves through a three-generation byte-identical bootstrap. See "Self-hosting feature coverage" below for which features are exercised.
-- **Golden tests:** 565 pass, 0 fail. Golden tests cover program-level correctness, not systematic spec conformance. Traceability matrix at `.tmp/SPEC_TRACEABILITY.md`.
+- **Golden tests:** 566 pass, 0 fail. Golden tests cover program-level correctness, not systematic spec conformance. Traceability matrix at `.tmp/SPEC_TRACEABILITY.md`.
 - **Spec coverage:** 7 of 16 spec files fully implemented and tested. 3 partially implemented (Concurrency, Diagnostics, Stdlib). 1 has no tests (WCET/Real-time). See `.tmp/SPEC_TRACEABILITY.md` for details.
 - **Rust bootstrap:** builds and runs simple programs. Used as an escape hatch; not the primary development target. Diverged from selfhost on type unification in April before being corrected.
 - **Formal proofs:** 264 Coq theorems/lemmas across 22 theory files, 227 proved (Qed), 28 admitted. Three-tier structure (core soundness → feature interaction → composition). The proofs cover a core calculus formalization, not the compiler artifact directly. See `proofs/PROOF_ROADMAP.md`.
@@ -136,14 +136,13 @@ Known structural gaps (not bugs, but feature omissions):
   Implementing a real generic HashMap requires either runtime routines
   for a type-erased hashmap or monomorphization support for its generic
   methods, and either way is multi-session feature work.
-- **Iterator for-in works for concrete types, not generic type parameters**:
-  `for x in iter { }` works for Array, Vec, Slice, Range, and custom concrete
-  iterator types that implement a `next(&mut self) -> Option<T>` method (golden
-  test: `t05_for_in_custom_iterator`). Generic iterators (`fn f<T: Iterator>(iter: &mut T)`)
-  work via the explicit `loop { match iter.next() { ... } }` pattern but not via
-  for-in syntax, because the MIR desugaring only handles concrete ADTs with known
-  field layouts. For-in integration for generic iterator type parameters needs the
-  MIR desugaring to emit method dispatch calls instead of direct field accesses.
+- **Iterator for-in works for concrete types and generic type parameters**:
+  `for x in iter { }` works for Array, Vec, Slice, Range, custom concrete
+  iterator types, and generic iterator type parameters (`fn f<T: Iterator>(iter: &mut T)`).
+  Golden tests: `t05_for_in_custom_iterator`, `t05_generic_for_in_iterator`.
+  Generic for-in desugars to method dispatch calls (not direct field access),
+  emitting a degenerate placeholder in the type-erased body and resolving through
+  the monomorphization pass.
 - **No file I/O abstraction**: the stdlib exposes only raw FFI (`LibcIO.open`,
   `LibcIO.read`, `LibcIO.write`, `LibcIO.close` in `runtime/blood-runtime/libc.blood`).
   There is no `File` struct, no `BufReader`/`BufWriter`, no `Path` type.
@@ -259,7 +258,7 @@ This is the honest complement: things that are genuinely working end-to-end and 
 - Deep and shallow effect handlers with perform/resume/abort semantics
 - Pattern matching (exhaustive, or-patterns, nested destructuring)
 - Closures (move semantics, capture by value, nested closures)
-- For-in loops over Vec, `&Vec`, arrays, `&arrays`, slices
+- For-in loops over Vec, `&Vec`, arrays, `&arrays`, slices, custom iterators, and generic iterator type parameters
 - Module system with dot-separated paths, grouped imports, glob imports
 - Regions with generational reference invalidation on destroy
 - Linear and affine types with consumption checking
