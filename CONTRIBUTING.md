@@ -59,8 +59,8 @@ blood/
 ├── bootstrap/seed              # Prebuilt compiler binary (bootstrap fixed point)
 ├── stdlib/                     # Standard library (Blood source)
 ├── runtime/blood-runtime/      # Runtime library (Blood source)
-├── tests/golden/               # Golden integration tests (488 files)
-├── proofs/theories/            # Coq formal proofs (22 files, 10K lines)
+├── tests/golden/               # Golden integration tests (565 files)
+├── proofs/theories/            # Coq formal proofs (22 files, 10K lines, 264 theorems)
 ├── docs/spec/                  # Language specifications
 ├── tools/                      # Development & debugging tools
 └── CLAUDE.md                   # Compiler dev reference
@@ -74,8 +74,8 @@ blood/
 | Bootstrap seed | `bootstrap/seed` | — | Prebuilt binary for bootstrapping |
 | Blood runtime | `runtime/blood-runtime/` | Blood | Memory, effects, fibers |
 | Stdlib | `stdlib/` | Blood | Collections, effects, I/O |
-| Golden tests | `tests/golden/` | Blood | 488 integration tests |
-| Formal proofs | `proofs/theories/` | Coq | 43 mechanized safety theorems |
+| Golden tests | `tests/golden/` | Blood | 565 integration tests |
+| Formal proofs | `proofs/theories/` | Coq | 264 mechanized theorems (227 proved, 28 admitted) |
 
 ---
 
