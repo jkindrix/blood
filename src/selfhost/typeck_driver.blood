@@ -1292,6 +1292,17 @@ fn collect_item_signatures(
                 let hea_idx = checker.handler_effect_type_args_store.len() as u32;
                 checker.handler_effect_type_args_store.push(handler_eff_args);
                 checker.handler_effect_type_args_hash.insert(entry.def_id.index as u64, hea_idx);
+                // Register whether handler has a transforming (non-identity) return clause.
+                // Heuristic: if handler has state fields AND a return clause, the return
+                // clause likely references a state field (type independent of body type).
+                match &handler_def.return_clause {
+                    &Option.Some(_) => {
+                        if handler_def.state.len() > 0 {
+                            checker.handler_transforming_return_hash.insert(entry.def_id.index as u64, 1);
+                        }
+                    }
+                    &Option.None => {}
+                }
             }
             &hir_item.ItemKind.Module(_) => {}
             &hir_item.ItemKind.Macro(_) => {}

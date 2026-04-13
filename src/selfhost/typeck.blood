@@ -372,6 +372,9 @@ pub struct TypeChecker {
     /// Map from handler DefId index to handler kind (true = deep).
     /// Populated during item registration. Used by with/handle linearity checking.
     pub handler_kind_hash: hashmap.HashMapU64U32,
+    /// Maps handler DefId → 1 if handler has a non-identity return clause.
+    /// Used by infer_with_handle to return fresh Infer instead of body_ty.
+    pub handler_transforming_return_hash: hashmap.HashMapU64U32,
     /// Maps handler DefId → handled effect DefId for effect-row dispatch.
     pub handler_effect_hash: hashmap.HashMapU64U32,
     /// Maps handler DefId → index in handler_effect_type_args_store.
@@ -496,6 +499,7 @@ impl TypeChecker {
             resume_count: 0,
             handler_state_types: Vec.new(),
             handler_kind_hash: hashmap.HashMapU64U32.new(),
+            handler_transforming_return_hash: hashmap.HashMapU64U32.new(),
             handler_effect_hash: hashmap.HashMapU64U32.new(),
             handler_effect_type_args_hash: hashmap.HashMapU64U32.new(),
             handler_effect_type_args_store: Vec.new(),
@@ -574,6 +578,7 @@ impl TypeChecker {
             resume_count: 0,
             handler_state_types: Vec.new(),
             handler_kind_hash: hashmap.HashMapU64U32.new(),
+            handler_transforming_return_hash: hashmap.HashMapU64U32.new(),
             handler_effect_hash: hashmap.HashMapU64U32.new(),
             handler_effect_type_args_hash: hashmap.HashMapU64U32.new(),
             handler_effect_type_args_store: Vec.new(),

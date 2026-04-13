@@ -3535,6 +3535,7 @@ fn infer_with_handle(
     let resolved_handler = checker.resolve(handler_ty);
     let mut is_deep = false;
     let mut pushed_effect: bool = false;
+    let mut has_transforming_return = false;
     match type_intern.get_adt_def_id(resolved_handler) {
         Option.Some(def_id) => {
             match checker.handler_kind_hash.get(def_id.index as u64) {
@@ -3543,6 +3544,10 @@ fn infer_with_handle(
                         is_deep = true;
                     }
                 }
+                Option.None => {}
+            }
+            match checker.handler_transforming_return_hash.get(def_id.index as u64) {
+                Option.Some(_) => { has_transforming_return = true; }
                 Option.None => {}
             }
             // Push handled effect onto available_effects for effect-row dispatch
@@ -3584,11 +3589,10 @@ fn infer_with_handle(
         checker.available_effect_type_args.pop();
     }
 
-    // When body_ty is Never (block ends with perform statement), the handler
-    // expression's type is NOT Never — the return clause transforms the result.
-    // Return a fresh inference variable so the binding context (e.g., let x: i32)
-    // determines the type, giving the MIR local the correct allocation size.
-    if is_never_type_id(body_ty) {
+    // When the handler has a transforming return clause (state fields + return clause),
+    // the expression type is determined by the return clause, not the body.
+    // Return a fresh inference variable so the binding context determines the type.
+    if has_transforming_return {
         checker.fresh_infer()
     } else {
         body_ty
