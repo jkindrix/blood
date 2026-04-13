@@ -1542,6 +1542,49 @@ fn infer_method_call(
                 &type_intern.InternedTypeKind.Infer(ret_var) => ret_var.index,
                 _ => 0,
             };
+
+            // Bind return type from trait bounds on this type parameter.
+            // Search the current function's where clause for any trait
+            // bound that declares a method matching the called name. Only
+            // unify when the return type is concrete — skip Self references
+            // (Infer/Param, or Adt matching the trait's own def_id).
+            let body_def_id_infer = hir_def.DefId.new(checker.current_body_def_id);
+            match checker.get_fn_sig(body_def_id_infer) {
+                Option.Some(ref fn_sig_infer) => {
+                    for wi in 0usize..fn_sig_infer.where_predicates.len() {
+                        match &fn_sig_infer.where_predicates[wi] {
+                            &hir_ty.WherePredicate.TypeBound { ref ty, ref bounds, span: _ } => {
+                                for bi in 0usize..bounds.len() {
+                                    match checker.get_trait(bounds[bi].def_id) {
+                                        Option.Some(ref trait_info) => {
+                                            let trait_did = trait_info.def_id.index;
+                                            for mi in 0usize..trait_info.methods.len() {
+                                                if trait_info.methods[mi].name.index == method.symbol.index {
+                                                    let ret_ty = trait_info.methods[mi].return_ty;
+                                                    let ret_interner = type_intern.type_interner();
+                                                    let is_self_ref = match ret_interner.get(ret_ty) {
+                                                        &type_intern.InternedTypeKind.Infer(_) => true,
+                                                        &type_intern.InternedTypeKind.Param(_) => true,
+                                                        &type_intern.InternedTypeKind.Adt { def_id: adt_did, args: _ } => adt_did.index == trait_did,
+                                                        _ => false,
+                                                    };
+                                                    if !is_self_ref {
+                                                        checker.unify(return_ty, ret_ty, span);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        Option.None => {}
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                Option.None => {}
+            }
+
             checker.record_pending_method_call(method.span.start, var_id.index, method.symbol, common.make_string(""), return_var);
             return return_ty;
         }
@@ -1555,6 +1598,47 @@ fn infer_method_call(
                 &type_intern.InternedTypeKind.Infer(ret_var) => ret_var.index,
                 _ => 0,
             };
+
+            // Bind return type from trait bounds on this type parameter.
+            // Same approach as the Infer case: search where clause bounds,
+            // skip Self-returning methods (Infer/Param/Adt-of-trait).
+            let body_def_id = hir_def.DefId.new(checker.current_body_def_id);
+            match checker.get_fn_sig(body_def_id) {
+                Option.Some(ref fn_sig) => {
+                    for wi in 0usize..fn_sig.where_predicates.len() {
+                        match &fn_sig.where_predicates[wi] {
+                            &hir_ty.WherePredicate.TypeBound { ref ty, ref bounds, span: _ } => {
+                                for bi in 0usize..bounds.len() {
+                                    match checker.get_trait(bounds[bi].def_id) {
+                                        Option.Some(ref trait_info) => {
+                                            let trait_did = trait_info.def_id.index;
+                                            for mi in 0usize..trait_info.methods.len() {
+                                                if trait_info.methods[mi].name.index == method.symbol.index {
+                                                    let ret_ty = trait_info.methods[mi].return_ty;
+                                                    let ret_interner = type_intern.type_interner();
+                                                    let is_self_ref = match ret_interner.get(ret_ty) {
+                                                        &type_intern.InternedTypeKind.Infer(_) => true,
+                                                        &type_intern.InternedTypeKind.Param(_) => true,
+                                                        &type_intern.InternedTypeKind.Adt { def_id: adt_did, args: _ } => adt_did.index == trait_did,
+                                                        _ => false,
+                                                    };
+                                                    if !is_self_ref {
+                                                        checker.unify(return_ty, ret_ty, span);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        Option.None => {}
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                Option.None => {}
+            }
+
             checker.record_pending_method_call(method.span.start, param_var_id.index, method.symbol, common.make_string(""), return_var);
             return return_ty;
         }

@@ -1,0 +1,36 @@
+// Test: trait method return type resolution in generic functions.
+// When T: Trait and Trait.method() returns a concrete type, the return
+// type is bound during typeck so downstream code can use it (match, etc).
+// EXPECT: 42
+// EXPECT: 0
+
+trait Getter {
+    fn get(self: &Self) -> Option<i32>;
+}
+
+impl Getter for i32 {
+    fn get(self: &i32) -> Option<i32> {
+        Option.Some(*self)
+    }
+}
+
+impl Getter for bool {
+    fn get(self: &bool) -> Option<i32> {
+        Option.None
+    }
+}
+
+fn extract<T>(x: &T) -> i32 where T: Getter {
+    match x.get() {
+        Option.Some(val) => val,
+        Option.None => 0,
+    }
+}
+
+fn main() -> i32 {
+    let val: i32 = 42;
+    println_int(extract(&val));
+    let b: bool = true;
+    println_int(extract(&b));
+    0
+}
