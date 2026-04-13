@@ -125,8 +125,11 @@ Known structural gaps (not bugs, but feature omissions):
   and String. Methods: `new`, `insert`, `get`, `contains_key`, `len`,
   `is_empty`, `remove`. `get` returns `Option<V>` (by value, not by reference).
   Golden tests: `t05_hashmap_generic` (i32 keys), `t05_hashmap_string_keys`
-  (String keys). **Not yet supported**: arbitrary struct keys (needs Hash
-  trait), iterator API (`for (k, v) in map`), and `clone`. The selfhost
+  (String keys), `t05_hashmap_clone` (clone for primitive-key maps).
+  `clone` works via shallow copy (correct for primitive types; String key
+  cloning copies pointers). **Not yet supported**: arbitrary struct keys
+  (needs Hash trait), iterator API (`for (k, v) in map`), and deep clone
+  for non-primitive key types. The selfhost
   compiler's own hashmaps remain the monomorphic `HashMapU64U32` /
   `HashMapU64U64` / `HashMapU32U32` variants — these are performance-critical
   and won't be converted.

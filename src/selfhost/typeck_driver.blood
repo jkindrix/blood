@@ -3814,33 +3814,16 @@ fn register_hashmap_methods(checker: &mut typeck.TypeChecker, hashmap_def: hir_d
 
     // clone(&self) -> HashMap<K, V>
     //
-    // NOTE (session 8, 2026-04-12): generic `HashMap<K, V>` is PHANTOM
-    // in the current selfhost. The type is registered here for type-system
-    // purposes, but NO runtime implementation exists — grep for symbols
-    // matching `hashmap_insert|hashmap_get|hashmap_clone` in
-    // `build/libblood_runtime.a` or `build/first_gen` returns zero.
-    // The `examples/config_parser.blood`, `order_book.blood`, and
-    // `content_addressing.blood` demos reference `HashMap<K, V>` in
-    // type signatures, but those examples are NOT in the test suite
-    // and do not link. No tested code calls `.insert()`, `.clone()`,
-    // etc. on a generic HashMap<K, V>.
+    // S18 (2026-04-13): Generic HashMap<K, V> is now real — type-erased C
+    // runtime (rt_hashmap.c) implements insert/get/remove/contains_key/len/
+    // is_empty. S20: clone codegen wired via emit_hashmap_clone_call in
+    // codegen_builtins.blood. Runtime's hashmap_clone does a shallow memcpy
+    // of the data array (correct for primitive types; String key cloning
+    // copies pointers, not the pointed-to string data).
     //
-    // The selfhost compiler's own hashmap usage goes through the
-    // MONOMORPHIC types in `hashmap.blood` (HashMapU64U32, HashMapU64U64,
-    // HashMapU32U32) which are real, working, and used everywhere.
-    //
-    // Session 6 planned to convert this built-in clone to an `impl<K: Clone,
-    // V: Clone> Clone for HashMap<K, V>` as Stage 3 of the built-in→trait
-    // migration, but Session 8 discovered the premise is wrong — there is
-    // no generic HashMap to convert. Stage 3 is reclassified as "implement
-    // generic `HashMap<K, V>`", which is a multi-session feature blocked
-    // on either (a) runtime routines for a type-erased hashmap or (b) full
-    // monomorphization support for generic methods that currently lack it.
-    // See BUGS_OPEN.md / KNOWN_LIMITATIONS.md for status.
-    //
-    // This registration is retained so the type-system surface stays
-    // consistent (type checking HashMap<K, V> references in the examples
-    // still succeeds syntactically), not because the method is callable.
+    // Future: convert to `impl<K: Clone, V: Clone> Clone for HashMap<K, V>`
+    // trait dispatch (SOUND-08 unblocked this). Needs iterator API for deep
+    // clone of non-primitive key/value types.
     let mut clone_args: Vec<type_intern.TyId> = Vec.new();
     clone_args.push(make_param(0));
     clone_args.push(make_param(1));
