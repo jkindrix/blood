@@ -1350,12 +1350,32 @@ pub fn emit_place_addr(
                     }
                 }
 
-                // Get the element size using tracked HIR type for proper byte-offset calculation
+                // Get the element size using tracked HIR type for proper byte-offset calculation.
+                // For static array writes, current_hir_type may be None if the HIR type
+                // registration used a different def_id than the access site. Fall back to
+                // the static's LLVM type which is always registered correctly.
                 let elem_size = match &current_hir_type {
                     &Option.Some(ty_id) => {
                         get_element_size_from_hir_id(ctx, ty_id)
                     }
-                    &Option.None => get_indexing_element_size(ctx, place.local),
+                    &Option.None => {
+                        if place.is_static() {
+                            match place.get_static_def_id() {
+                                Option.Some(def_id) => {
+                                    match ctx.get_static_type(def_id.index) {
+                                        Option.Some(ref llvm_ty) => {
+                                            // Parse element type from LLVM array type "[N x T]"
+                                            codegen_size.llvm_array_element_size(llvm_ty.as_str())
+                                        }
+                                        Option.None => get_indexing_element_size(ctx, place.local),
+                                    }
+                                }
+                                Option.None => get_indexing_element_size(ctx, place.local),
+                            }
+                        } else {
+                            get_indexing_element_size(ctx, place.local)
+                        }
+                    }
                 };
 
                 // Load the index value with its actual type, then sext to i64 if needed.
@@ -1866,7 +1886,18 @@ fn unwrap_ref_type(ty_id: type_intern.TyId) -> type_intern.TyId {
 /// Applies a Deref projection to an HIR type, returning the inner type (TyId version).
 /// Uses direct interner query — no Type tree reconstruction.
 fn apply_deref_to_type(ty_id: type_intern.TyId) -> Option<type_intern.TyId> {
-    type_intern.deref_id(ty_id)
+    let inner = type_intern.deref_id(ty_id);
+    match &inner {
+        &Option.Some(_) => inner,
+        &Option.None => {
+            // Type is not Ref/Ptr — for static places, the Deref accesses the
+            // value directly (the type is already the value type, not wrapped).
+            // Preserve it so subsequent projections (Index, Field) can compute
+            // correct element sizes. Without this, static [i32; 64] arrays
+            // would default to 8-byte element size instead of 4.
+            Option.Some(ty_id)
+        }
+    }
 }
 
 /// Resolves the ADT def_id for a deref'd local (Ref<Adt>).

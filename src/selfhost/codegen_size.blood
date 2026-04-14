@@ -794,6 +794,61 @@ pub fn build_enum_type_string(payload_size: u64, max_align: u64) -> String {
     s
 }
 
+/// Extracts element size from an LLVM array type like "[64 x i32]".
+/// Returns 8 (default pointer size) if the type isn't a recognizable array.
+pub fn llvm_array_element_size(ty: &str) -> u64 {
+    let bytes = ty.as_bytes();
+    let len = bytes.len();
+    // Must start with '[' and end with ']'
+    if len < 6 || bytes[0] != 91 || bytes[len - 1] != 93 {
+        return 8;
+    }
+    // Find " x " separator
+    let mut i: usize = 1;
+    while i + 2 < len {
+        if bytes[i] == 32 && bytes[i + 1] == 120 && bytes[i + 2] == 32 {
+            // Element type starts at i+3, ends at len-1 (before ']')
+            let elem_start = i + 3;
+            let elem_end = len - 1;
+            // Match known element types by comparing the remaining bytes
+            let elem_len = elem_end - elem_start;
+            if elem_len == 3 {
+                // "i32" or "i64" or "ptr" or "i16"
+                if bytes[elem_start] == 105 && bytes[elem_start + 1] == 51 && bytes[elem_start + 2] == 50 {
+                    return 4; // i32
+                }
+                if bytes[elem_start] == 105 && bytes[elem_start + 1] == 54 && bytes[elem_start + 2] == 52 {
+                    return 8; // i64
+                }
+                if bytes[elem_start] == 112 && bytes[elem_start + 1] == 116 && bytes[elem_start + 2] == 114 {
+                    return 8; // ptr
+                }
+                if bytes[elem_start] == 105 && bytes[elem_start + 1] == 49 && bytes[elem_start + 2] == 54 {
+                    return 2; // i16
+                }
+            }
+            if elem_len == 2 {
+                // "i8" or "i1"
+                if bytes[elem_start] == 105 && bytes[elem_start + 1] == 56 {
+                    return 1; // i8
+                }
+                if bytes[elem_start] == 105 && bytes[elem_start + 1] == 49 {
+                    return 1; // i1
+                }
+            }
+            if elem_len == 4 {
+                // "i128"
+                if bytes[elem_start] == 105 && bytes[elem_start + 1] == 49 && bytes[elem_start + 2] == 50 && bytes[elem_start + 3] == 56 {
+                    return 16; // i128
+                }
+            }
+            return 8; // Unrecognized element type
+        }
+        i += 1;
+    }
+    8 // Not an array type
+}
+
 /// Estimates the size of an LLVM type from its string representation.
 pub fn llvm_type_size(ty: &str) -> u64 {
     let bytes = ty.as_bytes();
