@@ -1,0 +1,257 @@
+// Backward liveness analysis for MIR.
+//
+// Computes which locals are live at the entry of each basic block.
+// Used by codegen to filter snapshot entries at Perform sites —
+// dead locals are excluded from gen-validation snapshots, eliminating
+// false-positive stale ref panics from freed &str temporaries.
+
+module blood.mir_liveness;
+
+mod mir_body;
+mod mir_def;
+mod mir_types;
+mod mir_stmt;
+mod mir_term;
+
+/// Compute live_at_entry for all basic blocks.
+/// Returns a flat Vec<bool> of size num_blocks * num_locals,
+/// indexed as [bb_idx * num_locals + local_idx].
+/// Empty Vec if the body has no Perform terminators (optimization).
+pub fn compute_liveness(body: &mir_body.MirBody) -> Vec<bool> {
+    let num_locals: usize = body.locals.len();
+    let num_blocks: usize = body.basic_blocks.len();
+    if num_blocks == 0 || num_locals == 0 {
+        return Vec.new();
+    }
+
+    // Quick check: skip if no Perform terminators
+    let mut has_perform: bool = false;
+    for bi in 0usize..num_blocks {
+        let block: &mir_body.BasicBlockData = &body.basic_blocks[bi];
+        match &block.terminator {
+            &Option.Some(ref term) => {
+                match &term.kind {
+                    &mir_term.TerminatorKind.Perform { effect_id: _, op_index: _, args: _, destination: _, target: _, is_tail_resumptive: _ } => {
+                        has_perform = true;
+                    }
+                    _ => {}
+                }
+            }
+            &Option.None => {}
+        }
+    }
+    if !has_perform {
+        return Vec.new();
+    }
+
+    let grid_size: usize = num_blocks * num_locals;
+
+    // live_at_entry[bb * num_locals + local] and live_at_exit[...]
+    let mut live_entry: Vec<bool> = Vec.with_capacity(grid_size);
+    let mut live_exit: Vec<bool> = Vec.with_capacity(grid_size);
+    for i in 0usize..grid_size {
+        live_entry.push(false);
+        live_exit.push(false);
+    }
+
+    // Fixed-point iteration — backward analysis.
+    // Process blocks in reverse of RPO (successors before predecessors).
+    let rpo: Vec<mir_def.BasicBlockId> = body.reverse_postorder();
+    let mut changed: bool = true;
+    let mut iteration: u32 = 0;
+    while changed && iteration < 100 {
+        changed = false;
+        iteration += 1;
+
+        // Iterate in reverse RPO (backward-optimal order)
+        let mut ri: usize = rpo.len();
+        while ri > 0 {
+            ri -= 1;
+            let bb_idx: usize = rpo[ri].as_usize();
+            let block: &mir_body.BasicBlockData = &body.basic_blocks[bb_idx];
+            let row: usize = bb_idx * num_locals;
+
+            // 1. Compute live_on_exit = union of live_on_entry for all successors
+            for li in 0usize..num_locals {
+                live_exit[row + li] = false;
+            }
+            match &block.terminator {
+                &Option.Some(ref term) => {
+                    let succs: Vec<mir_def.BasicBlockId> = term.successors();
+                    for si in 0usize..succs.len() {
+                        let s_idx: usize = succs[si].as_usize();
+                        let s_row: usize = s_idx * num_locals;
+                        for li in 0usize..num_locals {
+                            if live_entry[s_row + li] {
+                                live_exit[row + li] = true;
+                            }
+                        }
+                    }
+                }
+                &Option.None => {}
+            }
+
+            // 2. Copy exit to working set
+            let mut live: Vec<bool> = Vec.with_capacity(num_locals);
+            for li in 0usize..num_locals {
+                live.push(live_exit[row + li]);
+            }
+
+            // 3. Apply terminator (gen uses, kill defs)
+            match &block.terminator {
+                &Option.Some(ref term) => {
+                    apply_term_liveness(term, &mut live);
+                }
+                &Option.None => {}
+            }
+
+            // 4. Apply statements in reverse order
+            let mut si: usize = block.statements.len();
+            while si > 0 {
+                si -= 1;
+                apply_stmt_liveness(&block.statements[si], &mut live);
+            }
+
+            // 5. Check for changes and update live_entry
+            for li in 0usize..num_locals {
+                if live[li] != live_entry[row + li] {
+                    live_entry[row + li] = live[li];
+                    changed = true;
+                }
+            }
+        }
+    }
+
+    live_entry
+}
+
+/// Apply statement liveness transfer (backward): kill def, gen uses.
+fn apply_stmt_liveness(stmt: &mir_stmt.Statement, live: &mut Vec<bool>) {
+    match &stmt.kind {
+        &mir_stmt.StatementKind.Assign { ref place, ref rvalue } => {
+            // Kill: assignment to a local (no projections) kills it
+            if place.projection.len() == 0 {
+                let idx: usize = place.local.as_usize();
+                if idx < live.len() {
+                    live[idx] = false;
+                }
+            }
+            // Gen: all uses in the rvalue
+            gen_rvalue(rvalue, live);
+            // Gen: projections on LHS read the base local
+            if place.projection.len() > 0 {
+                gen_place(place, live);
+            }
+        }
+        &mir_stmt.StatementKind.Drop(ref place) => {
+            gen_place(place, live);
+        }
+        &mir_stmt.StatementKind.SetDiscriminant { ref place, variant_idx: _ } => {
+            gen_place(place, live);
+        }
+        _ => {}
+    }
+}
+
+/// Apply terminator liveness transfer (backward): kill defs, gen uses.
+fn apply_term_liveness(term: &mir_term.Terminator, live: &mut Vec<bool>) {
+    match &term.kind {
+        &mir_term.TerminatorKind.Return => {
+            // Return uses the return place (_0)
+            if live.len() > 0 {
+                live[0] = true;
+            }
+        }
+        &mir_term.TerminatorKind.SwitchInt { ref discr, targets: _ } => {
+            gen_operand(discr, live);
+        }
+        &mir_term.TerminatorKind.Call { ref func, ref args, ref destination, target: _, unwind: _ } => {
+            // Kill destination (defined by call)
+            if destination.projection.len() == 0 {
+                let idx: usize = destination.local.as_usize();
+                if idx < live.len() {
+                    live[idx] = false;
+                }
+            }
+            // Gen uses
+            gen_operand(func, live);
+            for arg in args {
+                gen_operand(arg, live);
+            }
+        }
+        &mir_term.TerminatorKind.Perform { effect_id: _, op_index: _, ref args, ref destination, target: _, is_tail_resumptive: _ } => {
+            // Kill destination (defined by perform)
+            if destination.projection.len() == 0 {
+                let idx: usize = destination.local.as_usize();
+                if idx < live.len() {
+                    live[idx] = false;
+                }
+            }
+            // Gen uses
+            for arg in args {
+                gen_operand(arg, live);
+            }
+        }
+        &mir_term.TerminatorKind.Assert { ref cond, expected: _, msg: _, target: _, unwind: _ } => {
+            gen_operand(cond, live);
+        }
+        &mir_term.TerminatorKind.Drop { ref place, target: _, unwind: _ } => {
+            gen_place(place, live);
+        }
+        _ => {}
+    }
+}
+
+/// Mark a local as live (gen).
+fn gen_place(place: &mir_types.Place, live: &mut Vec<bool>) {
+    if place.static_def_id.is_some() { return; }
+    let idx: usize = place.local.as_usize();
+    if idx < live.len() {
+        live[idx] = true;
+    }
+    // Index projections also use the index local
+    for proj in &place.projection {
+        match proj {
+            &mir_types.PlaceElem.Index(ref local_id) => {
+                let pi: usize = local_id.as_usize();
+                if pi < live.len() {
+                    live[pi] = true;
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Mark operand locals as live (gen).
+fn gen_operand(operand: &mir_types.Operand, live: &mut Vec<bool>) {
+    match operand {
+        &mir_types.Operand.Copy(ref place) => gen_place(place, live),
+        &mir_types.Operand.Move(ref place) => gen_place(place, live),
+        &mir_types.Operand.Constant(_) => {}
+    }
+}
+
+/// Mark all locals used by an rvalue as live (gen).
+fn gen_rvalue(rvalue: &mir_types.Rvalue, live: &mut Vec<bool>) {
+    match rvalue {
+        &mir_types.Rvalue.Use(ref op) => gen_operand(op, live),
+        &mir_types.Rvalue.Ref { ref place, mutable: _ } => gen_place(place, live),
+        &mir_types.Rvalue.AddressOf { ref place, mutable: _ } => gen_place(place, live),
+        &mir_types.Rvalue.BinaryOp { operator: _, ref left, ref right } => {
+            gen_operand(left, live);
+            gen_operand(right, live);
+        }
+        &mir_types.Rvalue.UnaryOp { operator: _, ref operand } => gen_operand(operand, live),
+        &mir_types.Rvalue.Cast { ref operand, target_ty: _ } => gen_operand(operand, live),
+        &mir_types.Rvalue.Aggregate { kind: _, ref operands } => {
+            for op in operands {
+                gen_operand(op, live);
+            }
+        }
+        &mir_types.Rvalue.Discriminant(ref place) => gen_place(place, live),
+        &mir_types.Rvalue.Len(ref place) => gen_place(place, live),
+        &mir_types.Rvalue.ArrayToSlice { ref array_ref, array_len: _ } => gen_operand(array_ref, live),
+        &mir_types.Rvalue.ZeroInit(_) => {}
+    }
+}

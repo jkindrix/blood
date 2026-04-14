@@ -815,14 +815,13 @@ pub fn emit_string_as_str_call(
     ctx.call_arg_str(true, "ptr", str_ptr.as_str());
     ctx.end_call();
 
-    // String data buffers use gen=0 (untracked). Lazy registration via
-    // blood_lazy_register_gen caused thousands of false-positive stale ref
-    // detections per compilation — snapshot validation at perform sites
-    // checks ALL gen-tracked allocas including dead references, and String
-    // buffers freed by ensure_cap triggered validation failures on those
-    // dead &str temporaries. Since the runtime's string_as_str already
-    // returns {ptr, len} without gen, we match that by using gen=0.
-    // Real &str stale detection requires snapshot liveness analysis.
+    // String data buffers use gen=0 (untracked). Even with liveness-filtered
+    // snapshots (S27), the compiler code holds &str references across perform
+    // sites while backing String buffers are reallocated — a real stale pattern
+    // that gen tracking correctly detects but cannot yet be fixed without
+    // restructuring the compiler's string handling. The liveness analysis
+    // still filters dead locals from all OTHER snapshot entries (region,
+    // persistent, unsized refs from non-string sources).
     let data_gen_opt: Option<codegen_ctx.CgName> = Option.None;
 
     // Pack result with gen=0 (untracked — no gen bits in upper 32)

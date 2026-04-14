@@ -363,6 +363,12 @@ pub struct CodegenCtx {
     /// Effect-captured local indices for the current function.
     /// Set from escape analysis; used during Perform codegen for snapshot creation.
     pub effect_captured_locals: Vec<u32>,
+    /// Backward liveness at basic block entries. Flat grid:
+    /// live_at_entry[bb_idx * perform_liveness_locals + local_idx].
+    /// Empty if the function has no Perform terminators.
+    pub perform_liveness: Vec<bool>,
+    /// Number of locals (stride) for the perform_liveness grid.
+    pub perform_liveness_locals: u32,
     /// Stack of active region LLVM register names.
     /// Pushed when blood_region_activate is called, popped when blood_region_deactivate is called.
     /// Used during Perform codegen to emit blood_continuation_add_suspended_region calls.
@@ -602,6 +608,8 @@ impl CodegenCtx {
             trait_method_entries: Vec.with_capacity(32),
             vtable_name_entries: Vec.with_capacity(32),
             effect_captured_locals: Vec.new(),
+            perform_liveness: Vec.new(),
+            perform_liveness_locals: 0,
             active_regions: Vec.with_capacity(4),
             non_tail_resumptive_effects: hashmap.HashMapU64U32.with_capacity(8),
             frozen_def_id: 0,
@@ -704,6 +712,8 @@ impl CodegenCtx {
             trait_method_entries: Vec.with_capacity(32),
             vtable_name_entries: Vec.with_capacity(32),
             effect_captured_locals: Vec.new(),
+            perform_liveness: Vec.new(),
+            perform_liveness_locals: 0,
             active_regions: Vec.with_capacity(4),
             non_tail_resumptive_effects: hashmap.HashMapU64U32.with_capacity(8),
             frozen_def_id: 0,
@@ -2607,6 +2617,8 @@ impl CodegenCtx {
             trait_method_entries: Vec.new(),
             vtable_name_entries: Vec.new(),
             effect_captured_locals: Vec.new(),
+            perform_liveness: Vec.new(),
+            perform_liveness_locals: 0,
             active_regions: Vec.with_capacity(4),
             non_tail_resumptive_effects: hashmap.HashMapU64U32.new(),
             frozen_def_id: 0,

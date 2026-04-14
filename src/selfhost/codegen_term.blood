@@ -135,10 +135,32 @@ pub fn emit_terminator(
             ctx.begin_call(Option.Some(&snapshot), "ptr", "@blood_snapshot_create");
             ctx.end_call();
 
-            // Add snapshot entries for all gen-tracked locals (region + persistent).
+            // Compute liveness row offset for snapshot filtering.
+            // Only add snapshot entries for locals that are live at the resume target.
+            // If liveness is not available (empty), include all gen-tracked locals (safe fallback).
+            let live_row: i64 = match target {
+                &Option.Some(ref target_bb) => {
+                    if ctx.perform_liveness.len() > 0 {
+                        (target_bb.as_usize() as i64) * (ctx.perform_liveness_locals as i64)
+                    } else {
+                        -1
+                    }
+                }
+                &Option.None => -1,
+            };
+
+            // Add snapshot entries for gen-tracked locals (region + persistent).
             // If gen == 0 (unallocated deferred local or stack-tier), skip the entry.
+            // If liveness available, also skip dead locals.
             for ri in 0usize..ctx.region_locals.len() {
                 let rl = &ctx.region_locals[ri];
+                // Skip dead locals (liveness-filtered snapshot)
+                if live_row >= 0 {
+                    let li: usize = (live_row as usize) + (rl.local_id as usize);
+                    if li < ctx.perform_liveness.len() && !ctx.perform_liveness[li] {
+                        continue;
+                    }
+                }
                 let local_id = mir_def.MirLocalId.new(rl.local_id);
                 let alloca_name = ctx.local_alloca_name(local_id);
                 // Load ptr from local, convert to i64
@@ -166,6 +188,13 @@ pub fn emit_terminator(
             }
             for pi in 0usize..ctx.persistent_locals.len() {
                 let pl = &ctx.persistent_locals[pi];
+                // Skip dead locals (liveness-filtered snapshot)
+                if live_row >= 0 {
+                    let li: usize = (live_row as usize) + (pl.local_id as usize);
+                    if li < ctx.perform_liveness.len() && !ctx.perform_liveness[li] {
+                        continue;
+                    }
+                }
                 let local_id = mir_def.MirLocalId.new(pl.local_id);
                 let alloca_name = ctx.local_alloca_name(local_id);
                 let snap_ptr = ctx.fresh_temp_cg();
@@ -198,6 +227,13 @@ pub fn emit_terminator(
             for ti in 0usize..ctx.local_types.len() {
                 let lt = &ctx.local_types[ti];
                 if string_eq_str(lt.llvm_type.as_str(), "{ ptr, i64 }") {
+                    // Skip dead locals (liveness-filtered snapshot)
+                    if live_row >= 0 {
+                        let li: usize = (live_row as usize) + (lt.local_id as usize);
+                        if li < ctx.perform_liveness.len() && !ctx.perform_liveness[li] {
+                            continue;
+                        }
+                    }
                     // Skip if already tracked as region or persistent local
                     let mut already_tracked = false;
                     for ri2 in 0usize..ctx.region_locals.len() {

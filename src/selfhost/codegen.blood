@@ -23,6 +23,7 @@ mod codegen_expr;
 mod codegen_stmt;
 mod codegen_term;
 mod mir_escape;
+mod mir_liveness;
 mod hashmap;
 mod type_intern;
 mod codegen_size;
@@ -457,6 +458,10 @@ pub fn generate_function_with_ctx(
     if body.basic_blocks.len() > 0 {
         let saved_output = ctx.output;
         ctx.output = String.new();
+
+        // Compute backward liveness for snapshot filtering at Perform sites.
+        ctx.perform_liveness = mir_liveness.compute_liveness(body);
+        ctx.perform_liveness_locals = body.locals.len() as u32;
 
         for block_idx in 0usize..body.basic_blocks.len() {
             let block_id = mir_def.BasicBlockId.new(block_idx as u32);
