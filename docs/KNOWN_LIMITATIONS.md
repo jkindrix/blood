@@ -17,9 +17,11 @@ The goal of this file is to answer honestly: *if you write a Blood program today
 
 ## Known soundness gaps (compile-time or runtime correctness)
 
-### ~~GAP-1: `&str` stale detection disabled for `String`/`Vec` data buffers~~ FIXED
+### ~~GAP-1: `&str` stale detection disabled for `String`/`Vec` data buffers~~ FIXED (source-level)
 
-**Fixed in commit 6080f21 (2026-04-10).** `rt_blood_alloc_simple` now registers allocations in the generation hash table via `rt_blood_register_allocation_tagged(addr, size, 2)`. When a `String` or `Vec` grows and reallocates, the old buffer's generation increments, invalidating any `&str` or `&[T]` pointing at it. The latent `&str`-lifetime bug that previously blocked re-enablement (reported in AUDIT_2026-04-07.md) was fixed by intervening work — self-compilation completes without stale reference panics. Three-generation byte-identical bootstrap verified. Test: `t03_genref_stale_str_realloc.blood`.
+**Fixed in commit 6080f21 (2026-04-10).** `rt_blood_alloc_simple` now registers allocations in the generation hash table via `rt_blood_register_allocation_tagged(addr, size, 2)`. When a `String` or `Vec` grows and reallocates, the old buffer's generation increments, invalidating any `&str` or `&[T]` pointing at it. Test: `t03_genref_stale_str_realloc.blood`.
+
+**Caveat (session 22, 2026-04-14):** The bootstrap runtime archive (`bootstrap/libblood_runtime_blood.a`) was compiled *before* the GAP-1 fix — its `rt_blood_alloc_simple` does NOT register allocations. Rebuilding the archive with the current compiler activates gen tracking, which correctly detects a real dangling `&str` in the compiler's own code (`build_cache.blood:pop_string` — String data buffer freed and reused while a reference is still held; stored_gen=1453, current_gen=1468). Until this use-after-free is fixed, the bootstrap archive cannot be rebuilt from source. See GAP-10 below.
 
 ### GAP-2: `Frozen<T>` deep traversal is shallow
 
@@ -31,9 +33,19 @@ The goal of this file is to answer honestly: *if you write a Blood program today
 
 Aggregate operands should be marked as escaping so their allocations are promoted to the correct tier (proof assumption in Coq). This is now **enabled when `--no-parallel` is set**, which forces sequential codegen.
 
-**Still broken in parallel mode:** Enabling aggregate escape with 4-worker parallel codegen causes `corrupted size vs. prev_size` glibc heap corruption during self-compilation. Root cause: latent memory corruption in parallel codegen exposed by increased heap allocation pressure. The gen hash table and tier classification are correct — the glibc heap itself is corrupted by a threading bug.
+**Still broken in parallel mode:** Enabling aggregate escape with 4-worker parallel codegen causes `corrupted size vs. prev_size` glibc heap corruption during self-compilation.
+
+**Session 22 architectural analysis (2026-04-14):** Confirmed that the general parallel codegen architecture is safe — per-worker CodegenCtx deep-clones, static chunk distribution, string label partitioning, region allocator bypass. The heap corruption is specific to the aggregate escape analysis code path, not general parallel codegen. SOUND-04 residual (~1 type interner write per build) is too thin to cause systemic corruption.
 
 **Impact:** In default (parallel) mode, aggregate operands may be misclassified to a lower tier. Use `--no-parallel` for correct tier classification at the cost of ~30% slower codegen.
+
+### GAP-10: Dangling `&str` in compiler's `pop_string` (new — S22)
+
+When the runtime archive is rebuilt with gen tracking active in `rt_blood_alloc_simple`, the gen system detects a genuine use-after-free in `build_cache.blood:pop_string`. The function calls `v[last_idx].clone()` where the String data buffer has been freed (generation advanced from 1453 to 1468 — 15 reallocation cycles) while a reference is still held. This causes `panic: stale reference detected` during source file collection.
+
+**Blocked by this bug:** runtime archive rebuild from source, HashMap iterator API (Blood-compiled hashmap), runtime-side documentation edits.
+
+**Also fixed in S22 (2027326):** A prerequisite codegen bug in `codegen_place.blood` that wrote i32 array elements at stride 8 instead of 4. This caused `register_region_validation` to store generation numbers at wrong offsets in `RV_GEN[i32; 64]`, making all region gen validation fail. Fixed by falling back to the static's LLVM type string for element size when HIR type tracking fails.
 
 ### ~~GAP-9: Handler return clause reads zero state when body returns unit (BUG-8)~~ FIXED
 
