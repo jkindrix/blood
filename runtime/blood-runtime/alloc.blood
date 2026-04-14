@@ -439,7 +439,31 @@ pub fn rt_blood_validate_generation(addr: i64, expected: i32) -> i32 {
             if rg == expected { return 1; }
             return 0;
         }
-        // Not in any registry — stack allocation or field ref within allocation
+        // Not in any registry — gen=0 address. Three categories:
+        //
+        // 1. Stack allocations: locals with EscapeState.NoEscape or
+        //    EscapeState.EffectLocal are alloca'd on the stack (codegen_stmt
+        //    emit_stack_local). Their gen is 0 and their lifetime is bounded
+        //    by the function scope. Soundness: stack addresses cannot outlive
+        //    their frame, so gen validation is unnecessary.
+        //
+        // 2. Field refs within allocations: &obj.field returns a pointer into
+        //    the parent object's allocation. The field's gen is 0 (derived
+        //    pointer, not independently tracked). Soundness: the parent object's
+        //    gen is validated separately; the field pointer is valid as long as
+        //    the parent is.
+        //
+        // 3. FFI pointers: addresses returned by C functions (getenv, mmap, etc.)
+        //    are not registered in the gen table. Soundness: these are owned by
+        //    the C runtime; Blood cannot track their lifetime and treats them
+        //    as always-valid (gen=0 = trusted).
+        //
+        // 4. Unregistered String data buffers: string_as_str returns data pointers
+        //    with gen=0 because &str gen tracking is disabled (compiler holds &str
+        //    across perform sites — real stale pattern). See codegen_builtins.blood
+        //    emit_string_as_str_call.
+        //
+        // All gen=0 addresses are treated as valid (return 1).
         1
     }
 }
