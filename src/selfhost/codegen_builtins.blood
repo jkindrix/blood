@@ -810,47 +810,22 @@ pub fn emit_string_as_str_call(
     let str_ptr = emit_operand_as_ptr(ctx, &args[0]);
 
     // Emit: %result = call { ptr, i64 } @string_as_str(ptr self)
-    // The runtime lazily registers the data buffer in the gen hash table.
     let result = ctx.fresh_temp_cg();
     ctx.begin_call(Option.Some(&result), "{ ptr, i64 }", "@string_as_str");
     ctx.call_arg_str(true, "ptr", str_ptr.as_str());
     ctx.end_call();
 
-    // Get gen from the RETURNED data pointer (not the struct's gen).
-    // The data buffer is a separate heap allocation; its gen was registered
-    // by string_as_str at runtime. Look it up via blood_get_generation.
-    let data_ptr = ctx.fresh_temp_cg();
-    ctx.write("  ");
-    ctx.write_cgname(&data_ptr);
-    ctx.write(" = extractvalue { ptr, i64 } ");
-    ctx.write_cgname(&result);
-    ctx.write(", 0\n");
-    let data_addr = ctx.fresh_temp_cg();
-    ctx.write("  ");
-    ctx.write_cgname(&data_addr);
-    ctx.write(" = ptrtoint ptr ");
-    ctx.write_cgname(&data_ptr);
-    ctx.write(" to i64\n");
-    // Lazily register the data buffer so blood_get_generation returns a
-    // non-zero gen. When the String reallocates, free_simple increments the
-    // old gen → stale &str references are detected by validation.
-    let reg_gen = ctx.fresh_temp_cg();
-    ctx.begin_call(Option.Some(&reg_gen), "i32", "@blood_lazy_register_gen");
-    ctx.call_arg_cg(true, "i64", &data_addr);
-    ctx.end_call();
+    // String data buffers use gen=0 (untracked). Lazy registration via
+    // blood_lazy_register_gen caused thousands of false-positive stale ref
+    // detections per compilation — snapshot validation at perform sites
+    // checks ALL gen-tracked allocas including dead references, and String
+    // buffers freed by ensure_cap triggered validation failures on those
+    // dead &str temporaries. Since the runtime's string_as_str already
+    // returns {ptr, len} without gen, we match that by using gen=0.
+    // Real &str stale detection requires snapshot liveness analysis.
+    let data_gen_opt: Option<codegen_ctx.CgName> = Option.None;
 
-    let reg_gen = ctx.fresh_temp_cg();
-    ctx.begin_call(Option.Some(&reg_gen), "i32", "@blood_lazy_register_gen");
-    ctx.call_arg_cg(true, "i64", &data_addr);
-    ctx.end_call();
-
-    let data_gen = ctx.fresh_temp_cg();
-    ctx.begin_call(Option.Some(&data_gen), "i32", "@blood_get_generation");
-    ctx.call_arg_cg(true, "i64", &data_addr);
-    ctx.end_call();
-    let data_gen_opt = Option.Some(data_gen);
-
-    // Pack data buffer gen into the returned &str (upper 32 bits of i64)
+    // Pack result with gen=0 (untracked — no gen bits in upper 32)
     let packed_result = pack_gen_into_str_result(ctx, &result, &data_gen_opt);
 
     // Store result to destination

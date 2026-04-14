@@ -575,8 +575,21 @@ pub fn rt_blood_alloc_simple(size: i64) -> i64 {
         // references are held past String reallocation, causing stale
         // reference panics throughout self-compilation.
         //
-        // GAP-1: Enable gen tracking for stale &str detection.
-        rt_blood_register_allocation_tagged(addr, size, 2);
+        // GAP-1 gen tracking for heap allocations is DISABLED. While the
+        // source-level fix (registering with source=2) correctly detects stale
+        // &str references after String reallocation, it causes thousands of
+        // false-positive stale ref panics during self-compilation. Root cause:
+        // effect handler snapshot validation checks ALL gen-tracked allocas at
+        // every perform site, including dead &str temporaries. Until snapshot
+        // liveness analysis excludes dead references, heap gen tracking
+        // produces too much noise to be practical. Region and explicit-alloc
+        // gen tracking remain active.
+        //
+        // Also: blood_realloc's new buffer (sys_calloc) bypasses registration,
+        // creating an asymmetry where old Vec buffers are tracked but new ones
+        // aren't, causing validation failures in for-in loops.
+        //
+        // See GAP-10 in KNOWN_LIMITATIONS.md for the full analysis.
         addr
     }
 }

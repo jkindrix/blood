@@ -416,11 +416,14 @@ fn make_string(s: &str) -> String {
 
 
 /// Pops and returns the last element from a Vec<String>.
+/// Uses v.pop() directly to avoid holding an intermediate reference
+/// into the Vec's data buffer during clone (which could become stale
+/// if gen tracking is active and the allocator reuses freed addresses).
 fn pop_string(v: &mut Vec<String>) -> String {
-    let last_idx = v.len() - 1;
-    let result = v[last_idx].clone();
-    v.pop();
-    result
+    match v.pop() {
+        Option.Some(s) => s,
+        Option.None => String.new(),
+    }
 }
 
 /// Compares a String with a &str for equality.

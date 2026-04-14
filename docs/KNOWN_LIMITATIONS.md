@@ -1,6 +1,6 @@
 # Blood — Known Limitations
 
-**Last updated:** 2026-04-13
+**Last updated:** 2026-04-14
 **Scope:** honest enumeration of gaps between the spec and the current compiler artifact. This document exists because the older `docs/planning/IMPLEMENTATION_STATUS.md` has drifted from reality since January; a comprehensive working audit lives at `.tmp/DEEP_AUDIT_2026-04-10.md` (not committed — it's a live session document).
 
 The goal of this file is to answer honestly: *if you write a Blood program today, what won't work?*
@@ -8,7 +8,7 @@ The goal of this file is to answer honestly: *if you write a Blood program today
 ## At a glance
 
 - **Self-hosting:** verified. 103K lines of Blood compile themselves through a three-generation byte-identical bootstrap. See "Self-hosting feature coverage" below for which features are exercised.
-- **Golden tests:** 571 pass, 0 fail. Golden tests cover program-level correctness, not systematic spec conformance. Traceability matrix at `.tmp/SPEC_TRACEABILITY.md`.
+- **Golden tests:** 574 pass, 0 fail. Golden tests cover program-level correctness, not systematic spec conformance. Traceability matrix at `.tmp/SPEC_TRACEABILITY.md`.
 - **Spec coverage:** 7 of 16 spec files fully implemented and tested. 3 partially implemented (Concurrency, Diagnostics, Stdlib). 1 has no tests (WCET/Real-time). See `.tmp/SPEC_TRACEABILITY.md` for details.
 - **Rust bootstrap:** builds and runs simple programs. Used as an escape hatch; not the primary development target. Diverged from selfhost on type unification in April before being corrected.
 - **Formal proofs:** 264 Coq theorems/lemmas across 22 theory files, 227 proved (Qed), 28 admitted. Three-tier structure (core soundness → feature interaction → composition). The proofs cover a core calculus formalization, not the compiler artifact directly. See `proofs/PROOF_ROADMAP.md`.
@@ -17,11 +17,17 @@ The goal of this file is to answer honestly: *if you write a Blood program today
 
 ## Known soundness gaps (compile-time or runtime correctness)
 
-### ~~GAP-1: `&str` stale detection disabled for `String`/`Vec` data buffers~~ FIXED (source-level)
+### GAP-1: `&str` stale detection disabled for `String`/`Vec` data buffers
 
-**Fixed in commit 6080f21 (2026-04-10).** `rt_blood_alloc_simple` now registers allocations in the generation hash table via `rt_blood_register_allocation_tagged(addr, size, 2)`. When a `String` or `Vec` grows and reallocates, the old buffer's generation increments, invalidating any `&str` or `&[T]` pointing at it. Test: `t03_genref_stale_str_realloc.blood`.
+**Status:** intentionally disabled (session 23, 2026-04-14). Registration in `rt_blood_alloc_simple` and `blood_lazy_register_gen` in `string_as_str` codegen both removed.
 
-**Caveat (session 22, 2026-04-14):** The bootstrap runtime archive (`bootstrap/libblood_runtime_blood.a`) was compiled *before* the GAP-1 fix — its `rt_blood_alloc_simple` does NOT register allocations. Rebuilding the archive with the current compiler activates gen tracking, which correctly detects a real dangling `&str` in the compiler's own code (`build_cache.blood:pop_string` — String data buffer freed and reused while a reference is still held; stored_gen=1453, current_gen=1468). Until this use-after-free is fixed, the bootstrap archive cannot be rebuilt from source. See GAP-10 below.
+**History:** commit 6080f21 (2026-04-10) added registration in `rt_blood_alloc_simple`. Session 23 investigation revealed two blocking issues:
+
+1. **Snapshot false positives (thousands per compilation):** Effect handler snapshot validation checks ALL gen-tracked allocas at every `perform` site, including dead `&str` temporaries whose backing String buffers were freed by `ensure_cap` during normal growth. A minimal `fn main() -> i32 { 0 }` triggered 12 false stale detections; self-compilation triggered thousands.
+
+2. **`blood_realloc` registration asymmetry:** `blood_realloc` allocates new buffers via `libc.sys_calloc` (bypasses registration) but old buffers were registered via `alloc_simple`. This caused Vec data buffers to be tracked on initial allocation but not after reallocation, breaking gen validation in for-in loops.
+
+**What's needed:** snapshot liveness analysis to exclude dead references from perform-site validation. Until then, `&str` from `String.as_str()` uses gen=0 (untracked). Region and explicit-alloc gen tracking remain active.
 
 ### GAP-2: `Frozen<T>` deep traversal is shallow
 
@@ -39,13 +45,18 @@ Aggregate operands should be marked as escaping so their allocations are promote
 
 **Impact:** In default (parallel) mode, aggregate operands may be misclassified to a lower tier. Use `--no-parallel` for correct tier classification at the cost of ~30% slower codegen.
 
-### GAP-10: Dangling `&str` in compiler's `pop_string` (new — S22)
+### ~~GAP-10: Dangling `&str` in compiler's `pop_string`~~ RESOLVED (S23)
 
-When the runtime archive is rebuilt with gen tracking active in `rt_blood_alloc_simple`, the gen system detects a genuine use-after-free in `build_cache.blood:pop_string`. The function calls `v[last_idx].clone()` where the String data buffer has been freed (generation advanced from 1453 to 1468 — 15 reallocation cycles) while a reference is still held. This causes `panic: stale reference detected` during source file collection.
+**Resolved in session 23 (2026-04-14).** The original bug report (S22) identified `build_cache.blood:pop_string` as the source of a dangling `&str`. Investigation in S23 revealed the issue was much broader:
 
-**Blocked by this bug:** runtime archive rebuild from source, HashMap iterator API (Blood-compiled hashmap), runtime-side documentation edits.
+1. **`pop_string` fixed** to use `v.pop()` directly instead of `v[last_idx].clone()` (eliminates intermediate reference + memory leak).
+2. **Root cause was not `pop_string`** — it was the `string_as_str` codegen calling `blood_lazy_register_gen`, which caused thousands of false-positive stale ref panics from snapshot validation of dead `&str` temporaries.
+3. **Codegen fixed:** removed `blood_lazy_register_gen` and `blood_get_generation` from `emit_string_as_str_call`. `&str` from `String.as_str()` now uses gen=0 (untracked).
+4. **`alloc_simple` registration disabled:** caused `blood_realloc` asymmetry (new buffer unregistered, old buffer tracked) breaking for-in loops.
 
-**Also fixed in S22 (2027326):** A prerequisite codegen bug in `codegen_place.blood` that wrote i32 array elements at stride 8 instead of 4. This caused `register_region_validation` to store generation numbers at wrong offsets in `RV_GEN[i32; 64]`, making all region gen validation fail. Fixed by falling back to the static's LLVM type string for element size when HIR type tracking fails.
+**No longer blocked:** runtime archive rebuilds from source now succeed. Blood-compiled runtime (573/574 golden tests with bootstrap first_gen) has one remaining failure from a pre-existing region gen tracking codegen bug in the runtime compilation path.
+
+**Also fixed in S22 (2027326):** i32 array stride codegen bug — prerequisite for this investigation.
 
 ### ~~GAP-9: Handler return clause reads zero state when body returns unit (BUG-8)~~ FIXED
 

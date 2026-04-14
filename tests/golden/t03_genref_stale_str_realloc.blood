@@ -1,27 +1,30 @@
-// Canary: &str stale detection after String buffer reallocation.
+// Canary: &str from String.as_str() uses gen=0 (untracked).
 //
-// When string_as_str is called inside a region scope, the data buffer is
-// registered in the gen hash table. If the String grows (ensure_cap frees
-// the old buffer and allocates a new one), the old &str's gen no longer
-// matches the freed buffer's gen → stale reference → panic.
+// String data buffer gen tracking via blood_lazy_register_gen was removed
+// from the string_as_str codegen path because it caused thousands of false
+// positive stale ref panics per compilation. Root cause: effect handler
+// snapshot validation checks ALL gen-tracked allocas at every perform site,
+// including dead &str temporaries whose backing String buffers were freed
+// by ensure_cap during normal growth. Until snapshot liveness analysis can
+// exclude dead references, &str from as_str() is intentionally untracked.
 //
-// Before fix: buffer gen=0, validation skipped, no detection.
-// After fix:  buffer registered (gen=N), freed buffer gen=N+1 → stale.
+// This test verifies the compiler does NOT panic on stale &str references.
+// The &str points to freed memory after the String grows, but gen=0 means
+// validation is skipped. We do NOT read through the stale reference (that
+// would be reading freed memory).
 //
-// EXPECT_EXIT: nonzero
+// EXPECT: ok
 
 fn main() -> i32 {
-    let mut stale: &str = "";
+    let mut _stale: &str = "";
     region {
         let mut s: String = String.new();
-        s.push_str("hi");           // initial alloc, cap=16
-        stale = s.as_str();         // registers buf addr → gen=N; stale packs gen=N
-        // Push enough to exceed cap=16 → ensure_cap allocates new buf,
-        // frees old buf (unregister → gen=N+1), sets s.data = new_buf.
-        s.push_str("abcdefghijklmnopqrstuvwxyz");
+        s.push_str("hi");
+        _stale = s.as_str();         // gen=0 (untracked)
+        s.push_str("abcdefghijklmnopqrstuvwxyz"); // triggers realloc
     }
-    // stale = { old_buf_ptr, (N << 32) | 2 }
-    // blood_validate_generation(old_buf_ptr, N): actual gen=N+1 → stale → panic
-    print(stale);
+    // _stale now points to freed memory, but we don't read it.
+    // The important thing is that no stale ref panic was triggered.
+    println("ok");
     0
 }
