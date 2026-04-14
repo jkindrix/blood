@@ -8,7 +8,7 @@ The goal of this file is to answer honestly: *if you write a Blood program today
 ## At a glance
 
 - **Self-hosting:** verified. 103K lines of Blood compile themselves through a three-generation byte-identical bootstrap. See "Self-hosting feature coverage" below for which features are exercised.
-- **Golden tests:** 574 pass, 0 fail. Golden tests cover program-level correctness, not systematic spec conformance. Traceability matrix at `.tmp/SPEC_TRACEABILITY.md`.
+- **Golden tests:** 576 pass, 0 fail. Golden tests cover program-level correctness, not systematic spec conformance. Traceability matrix at `.tmp/SPEC_TRACEABILITY.md`.
 - **Spec coverage:** 7 of 16 spec files fully implemented and tested. 3 partially implemented (Concurrency, Diagnostics, Stdlib). 1 has no tests (WCET/Real-time). See `.tmp/SPEC_TRACEABILITY.md` for details.
 - **Rust bootstrap:** builds and runs simple programs. Used as an escape hatch; not the primary development target. Diverged from selfhost on type unification in April before being corrected.
 - **Formal proofs:** 264 Coq theorems/lemmas across 22 theory files, 227 proved (Qed), 28 admitted. Three-tier structure (core soundness → feature interaction → composition). The proofs cover a core calculus formalization, not the compiler artifact directly. See `proofs/PROOF_ROADMAP.md`.
@@ -54,7 +54,7 @@ Aggregate operands should be marked as escaping so their allocations are promote
 3. **Codegen fixed:** removed `blood_lazy_register_gen` and `blood_get_generation` from `emit_string_as_str_call`. `&str` from `String.as_str()` now uses gen=0 (untracked).
 4. **`alloc_simple` registration disabled:** caused `blood_realloc` asymmetry (new buffer unregistered, old buffer tracked) breaking for-in loops.
 
-**No longer blocked:** runtime archive rebuilds from source now succeed. Blood-compiled runtime (573/574 golden tests with bootstrap first_gen) has one remaining failure from a pre-existing region gen tracking codegen bug in the runtime compilation path.
+**No longer blocked:** runtime archive rebuilds from source now succeed. Blood-compiled runtime (575/576 golden tests with bootstrap first_gen) has one remaining failure from a pre-existing region gen tracking codegen bug in the runtime compilation path.
 
 **Also fixed in S22 (2027326):** i32 array stride codegen bug — prerequisite for this investigation.
 
@@ -145,18 +145,21 @@ depend on the stdlib: it has its own built-in implementations of `HashMap`,
 
 Known structural gaps (not bugs, but feature omissions):
 
-- **Generic `HashMap<K, V>` works for primitive and String keys** (session 18,
-  2026-04-13): `HashMap<K, V>` is backed by a type-erased C runtime
+- **Generic `HashMap<K, V>` works for primitive and String keys** (sessions
+  18-24, 2026-04-13/14): `HashMap<K, V>` is backed by a type-erased C runtime
   (`runtime/blood-runtime/rt_hashmap.c`) using open addressing with linear
   probing and FNV-1a hashing. Supported key types: all integer types, bool,
   and String. Methods: `new`, `insert`, `get`, `contains_key`, `len`,
-  `is_empty`, `remove`. `get` returns `Option<V>` (by value, not by reference).
+  `is_empty`, `remove`, `clone`, `keys`, `values`. `get` returns `Option<V>`
+  (by value, not by reference). `keys()` and `values()` return iterator types
+  (`HashMapKeys<K,V>` / `HashMapValues<K,V>`) compatible with for-in loops.
   Golden tests: `t05_hashmap_generic` (i32 keys), `t05_hashmap_string_keys`
-  (String keys), `t05_hashmap_clone` (clone for primitive-key maps).
+  (String keys), `t05_hashmap_clone` (clone for primitive-key maps),
+  `t05_hashmap_keys` (key iteration), `t05_hashmap_values` (value iteration).
   `clone` works via shallow copy (correct for primitive types; String key
   cloning copies pointers). **Not yet supported**: arbitrary struct keys
-  (needs Hash trait), iterator API (`for (k, v) in map`), and deep clone
-  for non-primitive key types. The selfhost
+  (needs Hash trait), `iter()` for `(K, V)` entries (needs tuple support or
+  Entry struct), and deep clone for non-primitive key types. The selfhost
   compiler's own hashmaps remain the monomorphic `HashMapU64U32` /
   `HashMapU64U64` / `HashMapU32U32` variants — these are performance-critical
   and won't be converted.
@@ -303,7 +306,7 @@ The compiler compiles itself using: structs (379), enums (129), functions (1,523
 
 The compiler uses **traits** in its own source: 2 trait definitions (`Clone`, `Display` in `common.blood`), 6 trait impls (`Clone for String`, `Display for Span/Symbol/SpannedSymbol/SpannedString`, `Display for CompilePhase`). It does **not** use: effects (0 effect/handler/perform/resume), linear/affine types (0 uses as a consumer), explicit `region { }` blocks (0 — uses FFI calls instead), content-addressing (`use hash(...)`), dyn Trait, or fibers.
 
-These features beyond the self-hosting subset are validated through golden tests (565 total), proving ground programs (13 integration tests across all 5 pillars), and the Coq formalization — but not through self-compilation at 103K-line scale.
+These features beyond the self-hosting subset are validated through golden tests (576 total), proving ground programs (13 integration tests across all 5 pillars), and the Coq formalization — but not through self-compilation at 103K-line scale.
 
 ## Effect handler control flow
 
