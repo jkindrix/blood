@@ -3163,22 +3163,25 @@ fn infer_for_iter(
             checker.unify(pattern.ty, ref_elem, span);
         }
         &type_intern.InternedTypeKind.Adt { def_id, args } => {
-            // Try Vec<T> first (1+ type args, extract T directly)
             let num_args = interner.ty_list_len(args);
-            if num_args >= 1 {
-                let elem_ty = interner.get_ty_list_element(args, 0);
-                checker.unify(pattern.ty, elem_ty, span);
-            } else {
-                // No type args — check for custom iterator via impl scan.
-                // Walk impls to find next(&mut self) -> Option<T> for this type.
-                let iter_elem = find_iter_element_type(checker, def_id.index);
-                match iter_elem {
-                    Option.Some(elem_ty) => {
-                        checker.unify(pattern.ty, elem_ty, span);
-                    }
-                    Option.None => {
-                        checker.error(typeck.TypeErrorKind.TypeMismatch, span);
-                    }
+            // Check for a custom iterator via its next(&mut self) -> Option<T> method.
+            // find_iter_element_type_concrete resolves Param(n) in the element type
+            // through the iterator type's concrete Adt args.
+            let iter_elem = find_iter_element_type_concrete(checker, def_id.index, args);
+            let found_iter = match iter_elem {
+                Option.Some(elem_ty) => {
+                    checker.unify(pattern.ty, elem_ty, span);
+                    true
+                }
+                Option.None => false,
+            };
+            if !found_iter {
+                // Fall back: Vec<T> or similar — use first type arg
+                if num_args >= 1 {
+                    let elem_ty = interner.get_ty_list_element(args, 0);
+                    checker.unify(pattern.ty, elem_ty, span);
+                } else {
+                    checker.error(typeck.TypeErrorKind.TypeMismatch, span);
                 }
             }
         }
@@ -3216,15 +3219,56 @@ fn infer_for_iter(
     type_intern.CommonTypes.unit()
 }
 
+fn str_equals(s: &String, other: &str) -> bool {
+    let a = s.as_str();
+    let a_len = a.len();
+    let b_len = other.len();
+    if a_len != b_len { return false; }
+    let a_bytes = a.as_bytes();
+    let b_bytes = other.as_bytes();
+    for i in 0usize..a_len {
+        if a_bytes[i] != b_bytes[i] { return false; }
+    }
+    true
+}
+
+/// Substitutes a Param(n) type with the n-th type arg from an Adt's args list.
+/// Returns the input type unchanged if it's not a Param or the index is out of range.
+fn subst_param_with_adt_args(
+    interner: &mut type_intern.TypeInterner,
+    ty: type_intern.TyId,
+    args: type_intern.TyListId,
+) -> type_intern.TyId {
+    let kind = interner.get(ty);
+    match kind {
+        &type_intern.InternedTypeKind.Param(var_id) => {
+            let idx = var_id.index as usize;
+            let arg_len = interner.ty_list_len(args);
+            if idx < arg_len {
+                interner.get_ty_list_element(args, idx)
+            } else {
+                ty
+            }
+        }
+        _ => ty,
+    }
+}
+
 /// Scans checker.impls for a next(&mut self) -> Option<T> method on the given ADT.
-/// Returns the element type T if found, or None.
-fn find_iter_element_type(checker: &mut typeck.TypeChecker, adt_def_id_index: u32) -> Option<type_intern.TyId> {
-    let interner = type_intern.type_interner();
+/// Substitutes generic Param(n) in the element type with concrete types from
+/// the iterator's Adt args. Only matches methods whose runtime name ends with
+/// "_next" (verified via checker.builtin_def_names).
+fn find_iter_element_type_concrete(
+    checker: &mut typeck.TypeChecker,
+    adt_def_id_index: u32,
+    concrete_args: type_intern.TyListId,
+) -> Option<type_intern.TyId> {
+    let ty_interner = type_intern.type_interner();
     for i in 0usize..checker.impls.len() {
         let impl_info = &checker.impls[i];
         // Check if this impl is for our ADT
         let impl_self_resolved = unify.apply_substs_id(&checker.subst_table, impl_info.self_ty);
-        let impl_self_kind = interner.get(impl_self_resolved);
+        let impl_self_kind = ty_interner.get(impl_self_resolved);
         match impl_self_kind {
             &type_intern.InternedTypeKind.Adt { def_id, args: _ } => {
                 if def_id.index != adt_def_id_index { continue; }
@@ -3236,14 +3280,22 @@ fn find_iter_element_type(checker: &mut typeck.TypeChecker, adt_def_id_index: u3
             let method = &impl_info.methods[mi];
             if !method.takes_self_mut { continue; }
             if method.param_tys.len() != 0 { continue; }
-            // Check return type resolves to Adt with 1 arg (Option<T>)
-            let resolved_return = unify.apply_substs_id(&checker.subst_table, method.return_ty);
-            let return_kind = interner.get(resolved_return);
+            // Verify this is a "next" method by checking if its runtime name
+            // ends with "_next" in builtin_def_names.
+            if !is_iter_next_candidate(checker, method.def_id.index) { continue; }
+            // Check return type is Adt with 1 arg (Option<T>).
+            // Do NOT apply_substs_id here — Param types share TyVarId space
+            // with Infer types, so the subst table may contain unrelated bindings
+            // that would corrupt the return type. Use the raw method return type
+            // and substitute Params explicitly via concrete_args below.
+            let return_kind = ty_interner.get(method.return_ty);
             match return_kind {
                 &type_intern.InternedTypeKind.Adt { def_id: _, args } => {
-                    let num_args = interner.ty_list_len(args);
+                    let num_args = ty_interner.ty_list_len(args);
                     if num_args == 1 {
-                        let element_ty = interner.get_ty_list_element(args, 0);
+                        let raw_element_ty = ty_interner.get_ty_list_element(args, 0);
+                        // Substitute Param(n) with concrete type from the iterator's args
+                        let element_ty = subst_param_with_adt_args(ty_interner, raw_element_ty, concrete_args);
                         return Option.Some(element_ty);
                     }
                 }
@@ -3252,6 +3304,38 @@ fn find_iter_element_type(checker: &mut typeck.TypeChecker, adt_def_id_index: u3
         }
     }
     Option.None
+}
+
+/// Checks if a method could be a "next" method for iteration purposes.
+/// For builtin methods (in builtin_def_names), checks that the runtime name
+/// ends with "_next" — this filters out Vec.pop() and similar methods that
+/// share the signature. For user-defined methods (not in builtin_def_names),
+/// returns true — user-defined &mut self -> Option<T> methods are assumed
+/// to be iterator next() methods (they match the iterator protocol signature).
+fn is_iter_next_candidate(checker: &mut typeck.TypeChecker, def_id_index: u32) -> bool {
+    for bi in 0usize..checker.builtin_def_names.len() {
+        let entry = &checker.builtin_def_names[bi];
+        if entry.def_id_index == def_id_index {
+            let name = entry.runtime_name.as_str();
+            let name_len = name.len();
+            // Builtin method: check if name ends with "_next"
+            if name_len >= 5 {
+                let name_bytes = name.as_bytes();
+                let end = name_len - 1;
+                if name_bytes[end] == 116       // 't'
+                    && name_bytes[end - 1] == 120  // 'x'
+                    && name_bytes[end - 2] == 101  // 'e'
+                    && name_bytes[end - 3] == 110  // 'n'
+                    && name_bytes[end - 4] == 95   // '_'
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+    }
+    // Not in builtin_def_names → user-defined method, accept it
+    true
 }
 
 /// Infers the type of a return expression.

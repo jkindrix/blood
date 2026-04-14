@@ -217,6 +217,62 @@ int32_t hashmap_remove(void* m, void* key,
     return 0;
 }
 
+// Iterator support
+// Iterator layout: { ptr map, i64 index } = 16 bytes
+// map: pointer to the HashMap struct (not the bucket array)
+// index: current scan position in the bucket array
+
+static void** iter_map_ptr(void* it) { return (void**)it; }
+static int64_t* iter_idx_ptr(void* it) { return (int64_t*)((char*)it + 8); }
+
+void hashmap_keys_new(void* map, int64_t ks, int64_t vs, int32_t kk, void* out) {
+    *iter_map_ptr(out) = map;
+    *iter_idx_ptr(out) = 0;
+}
+
+int32_t hashmap_keys_next(void* it, int64_t ks, int64_t vs, int32_t kk, void* key_out) {
+    void* map = *iter_map_ptr(it);
+    int64_t* idx = iter_idx_ptr(it);
+    int64_t cap = *map_cap_ptr(map);
+    if (cap == 0) return 0;
+    void* data = (void*)*map_data_ptr(map);
+    int64_t st = stride(ks, vs);
+
+    while (*idx < cap) {
+        uint8_t* b = bucket_at(data, *idx, st);
+        (*idx)++;
+        if (b[0] == OCCUPIED) {
+            memcpy(key_out, b + 1, ks);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+void hashmap_values_new(void* map, int64_t ks, int64_t vs, int32_t kk, void* out) {
+    *iter_map_ptr(out) = map;
+    *iter_idx_ptr(out) = 0;
+}
+
+int32_t hashmap_values_next(void* it, int64_t ks, int64_t vs, int32_t kk, void* val_out) {
+    void* map = *iter_map_ptr(it);
+    int64_t* idx = iter_idx_ptr(it);
+    int64_t cap = *map_cap_ptr(map);
+    if (cap == 0) return 0;
+    void* data = (void*)*map_data_ptr(map);
+    int64_t st = stride(ks, vs);
+
+    while (*idx < cap) {
+        uint8_t* b = bucket_at(data, *idx, st);
+        (*idx)++;
+        if (b[0] == OCCUPIED) {
+            memcpy(val_out, b + 1 + ks, vs);
+            return 1;
+        }
+    }
+    return 0;
+}
+
 void hashmap_clone(void* src, int64_t ks, int64_t vs, int32_t kk, void* out) {
     int64_t cap = *map_cap_ptr(src);
     int64_t len = *map_len_ptr(src);

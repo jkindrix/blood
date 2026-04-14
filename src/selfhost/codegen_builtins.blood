@@ -1579,6 +1579,18 @@ pub fn is_hashmap_remove(func_val: &String) -> bool {
 pub fn is_hashmap_clone(func_val: &String) -> bool {
     string_eq_str(func_val.as_str(), "@hashmap_clone")
 }
+pub fn is_hashmap_keys(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@hashmap_keys")
+}
+pub fn is_hashmap_values(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@hashmap_values")
+}
+pub fn is_hashmap_keys_next(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@hashmap_keys_next")
+}
+pub fn is_hashmap_values_next(func_val: &String) -> bool {
+    string_eq_str(func_val.as_str(), "@hashmap_values_next")
+}
 
 fn extract_hashmap_sizes(
     ctx: &mut codegen_ctx.CodegenCtx,
@@ -1939,5 +1951,139 @@ pub fn emit_hashmap_clone_call(
     ctx.call_arg_str(false, "i32", kk_str.as_str());
     ctx.call_arg_str(false, "ptr", out_ptr.as_str());
     ctx.end_call();
+    hashmap_emit_cont(ctx, target);
+}
+
+/// Emits a call to hashmap_keys_new(map, key_size, val_size, key_kind, out).
+/// Creates a HashMapKeys<K,V> iterator: { ptr map, i64 0 }.
+pub fn emit_hashmap_keys_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    if args.len() < 1 { ctx.emit_unreachable(); return; }
+    let map_ptr = emit_operand_as_ptr(ctx, &args[0]);
+    let sizes = match get_hashmap_type_from_arg(ctx, &args[0]) {
+        Option.Some(ty_id) => extract_hashmap_sizes(ctx, ty_id),
+        Option.None => hashmap_default_sizes(),
+    };
+    let ks_str = codegen_types.format_u64(sizes[0]);
+    let vs_str = codegen_types.format_u64(sizes[1]);
+    let kk_str = codegen_types.format_u64(sizes[2]);
+    let out_ptr = codegen_place.emit_place_data_ptr(ctx, destination);
+
+    ctx.begin_call(Option.None, "void", "@hashmap_keys_new");
+    ctx.call_arg_str(true, "ptr", map_ptr.as_str());
+    ctx.call_arg_str(false, "i64", ks_str.as_str());
+    ctx.call_arg_str(false, "i64", vs_str.as_str());
+    ctx.call_arg_str(false, "i32", kk_str.as_str());
+    ctx.call_arg_str(false, "ptr", out_ptr.as_str());
+    ctx.end_call();
+    hashmap_emit_cont(ctx, target);
+}
+
+/// Emits a call to hashmap_values_new(map, key_size, val_size, key_kind, out).
+/// Creates a HashMapValues<K,V> iterator: { ptr map, i64 0 }.
+pub fn emit_hashmap_values_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    if args.len() < 1 { ctx.emit_unreachable(); return; }
+    let map_ptr = emit_operand_as_ptr(ctx, &args[0]);
+    let sizes = match get_hashmap_type_from_arg(ctx, &args[0]) {
+        Option.Some(ty_id) => extract_hashmap_sizes(ctx, ty_id),
+        Option.None => hashmap_default_sizes(),
+    };
+    let ks_str = codegen_types.format_u64(sizes[0]);
+    let vs_str = codegen_types.format_u64(sizes[1]);
+    let kk_str = codegen_types.format_u64(sizes[2]);
+    let out_ptr = codegen_place.emit_place_data_ptr(ctx, destination);
+
+    ctx.begin_call(Option.None, "void", "@hashmap_values_new");
+    ctx.call_arg_str(true, "ptr", map_ptr.as_str());
+    ctx.call_arg_str(false, "i64", ks_str.as_str());
+    ctx.call_arg_str(false, "i64", vs_str.as_str());
+    ctx.call_arg_str(false, "i32", kk_str.as_str());
+    ctx.call_arg_str(false, "ptr", out_ptr.as_str());
+    ctx.end_call();
+    hashmap_emit_cont(ctx, target);
+}
+
+/// Emits a call to hashmap_keys_next(iter, ks, vs, kk, key_out) and builds Option<K>.
+pub fn emit_hashmap_keys_next_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    if args.len() < 1 { ctx.emit_unreachable(); return; }
+    let iter_ptr = emit_operand_as_ptr(ctx, &args[0]);
+    let sizes = match get_hashmap_type_from_arg(ctx, &args[0]) {
+        Option.Some(ty_id) => extract_hashmap_sizes(ctx, ty_id),
+        Option.None => hashmap_default_sizes(),
+    };
+    let ks = sizes[0];
+    let ks_str = codegen_types.format_u64(ks);
+    let vs_str = codegen_types.format_u64(sizes[1]);
+    let kk_str = codegen_types.format_u64(sizes[2]);
+
+    let key_alloca = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&key_alloca);
+    ctx.write(" = alloca [");
+    ctx.write_string(&ks_str);
+    ctx.write(" x i8], align 8\n");
+
+    let result = ctx.fresh_temp_cg();
+    ctx.begin_call(Option.Some(&result), "i32", "@hashmap_keys_next");
+    ctx.call_arg_str(true, "ptr", iter_ptr.as_str());
+    ctx.call_arg_str(false, "i64", ks_str.as_str());
+    ctx.call_arg_str(false, "i64", vs_str.as_str());
+    ctx.call_arg_str(false, "i32", kk_str.as_str());
+    ctx.call_arg_cg(false, "ptr", &key_alloca);
+    ctx.end_call();
+
+    hashmap_build_option(ctx, destination, &result, &key_alloca, ks);
+    hashmap_emit_cont(ctx, target);
+}
+
+/// Emits a call to hashmap_values_next(iter, ks, vs, kk, val_out) and builds Option<V>.
+pub fn emit_hashmap_values_next_call(
+    ctx: &mut codegen_ctx.CodegenCtx,
+    args: &Vec<mir_types.Operand>,
+    destination: &mir_types.Place,
+    target: &Option<mir_def.BasicBlockId>,
+) {
+    if args.len() < 1 { ctx.emit_unreachable(); return; }
+    let iter_ptr = emit_operand_as_ptr(ctx, &args[0]);
+    let sizes = match get_hashmap_type_from_arg(ctx, &args[0]) {
+        Option.Some(ty_id) => extract_hashmap_sizes(ctx, ty_id),
+        Option.None => hashmap_default_sizes(),
+    };
+    let vs = sizes[1];
+    let ks_str = codegen_types.format_u64(sizes[0]);
+    let vs_str = codegen_types.format_u64(vs);
+    let kk_str = codegen_types.format_u64(sizes[2]);
+
+    let val_alloca = ctx.fresh_temp_cg();
+    ctx.write_indent();
+    ctx.write_cgname(&val_alloca);
+    ctx.write(" = alloca [");
+    ctx.write_string(&vs_str);
+    ctx.write(" x i8], align 8\n");
+
+    let result = ctx.fresh_temp_cg();
+    ctx.begin_call(Option.Some(&result), "i32", "@hashmap_values_next");
+    ctx.call_arg_str(true, "ptr", iter_ptr.as_str());
+    ctx.call_arg_str(false, "i64", ks_str.as_str());
+    ctx.call_arg_str(false, "i64", vs_str.as_str());
+    ctx.call_arg_str(false, "i32", kk_str.as_str());
+    ctx.call_arg_cg(false, "ptr", &val_alloca);
+    ctx.end_call();
+
+    hashmap_build_option(ctx, destination, &result, &val_alloca, vs);
     hashmap_emit_cont(ctx, target);
 }

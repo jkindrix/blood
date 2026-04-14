@@ -1549,7 +1549,7 @@ fn is_adt_registered(ctx: &mut codegen_ctx.CodegenCtx, def_id: u32) -> bool {
         Option.Some(_) => { return true; }
         Option.None => {}
     }
-    // Check builtin names (Vec, String, HashMap, Box)
+    // Check builtin names (Vec, String, HashMap, HashMapKeys, HashMapValues, Box)
     match ctx.lookup_def_name(def_id) {
         Option.Some(name) => {
             let nb = name.as_bytes();
@@ -1563,6 +1563,14 @@ fn is_adt_registered(ctx: &mut codegen_ctx.CodegenCtx, def_id: u32) -> bool {
             }
             // HashMap
             if nb.len() == 7 && nb[0] == 72 && nb[1] == 97 && nb[2] == 115 && nb[3] == 104 {
+                return true;
+            }
+            // HashMapKeys
+            if nb.len() == 11 && nb[0] == 72 && nb[7] == 75 && nb[8] == 101 {
+                return true;
+            }
+            // HashMapValues
+            if nb.len() == 13 && nb[0] == 72 && nb[7] == 86 && nb[8] == 97 {
                 return true;
             }
             // Box

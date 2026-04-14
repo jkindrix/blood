@@ -58,6 +58,40 @@ pub fn is_custom_iter(resolved_iter_id: type_intern.TyId, iter_kind: &type_inter
     }
 }
 
+/// Substitutes a Param type with the concrete type arg from the iterator type.
+/// For generic iterators (e.g. HashMapKeys<K,V>), the iter_next table stores
+/// Param(0) as the element type. This resolves it to the concrete type (e.g. i32).
+fn subst_param_from_iter_type(
+    interner: &mut type_intern.TypeInterner,
+    param_ty: type_intern.TyId,
+    iter_ty_id: type_intern.TyId,
+    iter_kind: &type_intern.InternedTypeKind,
+) -> type_intern.TyId {
+    let param_kind = interner.get(param_ty);
+    match param_kind {
+        &type_intern.InternedTypeKind.Param(var_id) => {
+            let iter_args = match iter_kind {
+                &type_intern.InternedTypeKind.Adt { def_id: _, args } => args,
+                &type_intern.InternedTypeKind.Ref { inner, mutable: _ } => {
+                    match interner.get(inner) {
+                        &type_intern.InternedTypeKind.Adt { def_id: _, args } => args,
+                        _ => { return param_ty; }
+                    }
+                }
+                _ => { return param_ty; }
+            };
+            let idx = var_id.index as usize;
+            let arg_len = interner.ty_list_len(iter_args);
+            if idx < arg_len {
+                interner.get_ty_list_element(iter_args, idx)
+            } else {
+                param_ty
+            }
+        }
+        _ => param_ty,
+    }
+}
+
 /// Sets up the MIR block structure for an iterator for-in loop.
 /// Returns the setup struct. The caller must:
 ///   1. Lower iter_expr into setup.iter_temp (before calling emit_iter_loop_header)
@@ -102,8 +136,28 @@ pub fn setup_iter_loop(
         }
         Option.None => {}
     }
-    let option_ty = type_intern.TyId.new(option_ret_idx);
-    let element_ty = type_intern.TyId.new(elem_ty_idx);
+    let raw_option_ty = type_intern.TyId.new(option_ret_idx);
+    let raw_element_ty = type_intern.TyId.new(elem_ty_idx);
+
+    // Resolve generic type parameters. The iter_next table stores types with
+    // Param(n) for generic iterators (e.g. HashMapKeys<K,V> has element Param(0)).
+    // Substitute with the concrete type args from the actual iterator type.
+    let element_ty = subst_param_from_iter_type(interner, raw_element_ty, iter_ty_id, iter_kind);
+    let option_ty = if element_ty.index != raw_element_ty.index {
+        // Element type was substituted — rebuild Option<concrete_elem>
+        let raw_opt_kind = interner.get(raw_option_ty);
+        match raw_opt_kind {
+            &type_intern.InternedTypeKind.Adt { def_id, args: _ } => {
+                let mut new_args: Vec<type_intern.TyId> = Vec.new();
+                new_args.push(element_ty);
+                let new_list = interner.intern_ty_list(&new_args);
+                interner.mk_adt(def_id, new_list)
+            }
+            _ => raw_option_ty,
+        }
+    } else {
+        raw_option_ty
+    };
 
     // Check if the iterator type is already a reference (e.g. &mut Counter from
     // a generic fn(iter: &mut T)). If so, skip the extra Ref in emit_iter_loop_header.

@@ -1,0 +1,54 @@
+// Test: HashMap<K, V>.keys() iteration via for-in
+// EXPECT: count: 3
+// EXPECT: sum: 60
+// EXPECT: manual count: 3
+// EXPECT: manual sum: 60
+// EXPECT: empty count: 0
+
+fn main() -> i32 {
+    let mut map: HashMap<i32, i32> = HashMap.new();
+    map.insert(10, 100);
+    map.insert(20, 200);
+    map.insert(30, 300);
+
+    // for-in iteration over keys
+    let mut count: i32 = 0;
+    let mut sum: i32 = 0;
+    for key in map.keys() {
+        count += 1;
+        sum += key;
+    }
+    print("count: ");
+    println_int(count);
+    print("sum: ");
+    println_int(sum);
+
+    // Manual while-loop iteration (verifies next() directly)
+    let mut iter = map.keys();
+    let mut manual_count: i32 = 0;
+    let mut manual_sum: i32 = 0;
+    loop {
+        match iter.next() {
+            Option.Some(k) => {
+                manual_count += 1;
+                manual_sum += k;
+            }
+            Option.None => { break; }
+        }
+    }
+    print("manual count: ");
+    println_int(manual_count);
+    print("manual sum: ");
+    println_int(manual_sum);
+
+    // Empty map iteration
+    let empty: HashMap<i32, i32> = HashMap.new();
+    let mut empty_count: i32 = 0;
+    for k in empty.keys() {
+        empty_count += 1;
+    }
+    print("empty count: ");
+    println_int(empty_count);
+
+    0
+}

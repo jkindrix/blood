@@ -150,6 +150,18 @@ fn register_builtin_children(ctx: &mut hir_lower_ctx.LoweringCtx) {
         Option.Some(parent) => {
             let d = register_builtin_child(ctx, parent, "new", hir_def.DefKind.Fn, dummy_span);
             ctx.builtin_fn_defs.push(hir_lower_ctx.BuiltinFnDef.new(d.index, common.make_string("hashmap_new")));
+            // Pre-intern method names that the type checker registers via add_method.
+            // Without this, interner.find() panics for programs that don't use these methods.
+            ctx.intern("insert");
+            ctx.intern("get");
+            ctx.intern("contains_key");
+            ctx.intern("len");
+            ctx.intern("is_empty");
+            ctx.intern("remove");
+            ctx.intern("clone");
+            ctx.intern("keys");
+            ctx.intern("values");
+            ctx.intern("next");
         }
         Option.None => {}
     }

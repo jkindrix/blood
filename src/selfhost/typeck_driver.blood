@@ -3842,23 +3842,77 @@ fn register_hashmap_methods(checker: &mut typeck.TypeChecker, hashmap_def: hir_d
     }
 
     // clone(&self) -> HashMap<K, V>
-    //
-    // S18 (2026-04-13): Generic HashMap<K, V> is now real — type-erased C
-    // runtime (rt_hashmap.c) implements insert/get/remove/contains_key/len/
-    // is_empty. S20: clone codegen wired via emit_hashmap_clone_call in
-    // codegen_builtins.blood. Runtime's hashmap_clone does a shallow memcpy
-    // of the data array (correct for primitive types; String key cloning
-    // copies pointers, not the pointed-to string data).
-    //
-    // Future: convert to `impl<K: Clone, V: Clone> Clone for HashMap<K, V>`
-    // trait dispatch (SOUND-08 unblocked this). Needs iterator API for deep
-    // clone of non-primitive key/value types.
     let mut clone_args: Vec<type_intern.TyId> = Vec.new();
     clone_args.push(make_param(0));
     clone_args.push(make_param(1));
     add_method(checker, &mut methods, "clone", "hashmap_clone", Vec.new(), make_adt(hashmap_def, clone_args), false, interner);
 
-    // Register the impl
+    // keys(&self) -> HashMapKeys<K, V>
+    let keys_def = checker.alloc_def_id();
+    let mut keys_args: Vec<type_intern.TyId> = Vec.new();
+    keys_args.push(make_param(0));
+    keys_args.push(make_param(1));
+    let keys_ret_ty = make_adt(keys_def, keys_args);
+    add_method(checker, &mut methods, "keys", "hashmap_keys", Vec.new(), keys_ret_ty, false, interner);
+
+    // values(&self) -> HashMapValues<K, V>
+    let values_def = checker.alloc_def_id();
+    let mut values_args: Vec<type_intern.TyId> = Vec.new();
+    values_args.push(make_param(0));
+    values_args.push(make_param(1));
+    let values_ret_ty = make_adt(values_def, values_args);
+    add_method(checker, &mut methods, "values", "hashmap_values", Vec.new(), values_ret_ty, false, interner);
+
+    // Register the HashMap impl
+    let impl_def = checker.alloc_def_id();
+    let impl_info = typeck.ImplInfo.new(impl_def, self_ty, 2, make_sequential_param_ids(2), methods);
+    checker.register_impl(impl_info);
+
+    // Register type names for HashMapKeys and HashMapValues so codegen can
+    // resolve their LLVM types via lookup_def_name → adt_llvm_type.
+    checker.builtin_def_names.push(
+        typeck.BuiltinDefName.new(keys_def.index, common.make_string("HashMapKeys")),
+    );
+    checker.builtin_def_names.push(
+        typeck.BuiltinDefName.new(values_def.index, common.make_string("HashMapValues")),
+    );
+
+    // Register HashMapKeys<K, V> impl with next(&mut self) -> Option<K>
+    register_hashmap_iter_impl(checker, keys_def, 0, "hashmap_keys_next", interner);
+
+    // Register HashMapValues<K, V> impl with next(&mut self) -> Option<V>
+    register_hashmap_iter_impl(checker, values_def, 1, "hashmap_values_next", interner);
+}
+
+/// Registers an iterator impl for a HashMap iterator type (HashMapKeys or HashMapValues).
+/// `elem_param_idx` selects which type parameter is the element type: 0 for K, 1 for V.
+fn register_hashmap_iter_impl(
+    checker: &mut typeck.TypeChecker,
+    iter_def: hir_def.DefId,
+    elem_param_idx: u32,
+    runtime_name: &str,
+    interner: &interner.StringInterner,
+) {
+    let mut self_args: Vec<type_intern.TyId> = Vec.new();
+    self_args.push(make_param(0));
+    self_args.push(make_param(1));
+    let self_ty = make_adt(iter_def, self_args);
+    let mut methods: Vec<typeck.MethodInfo> = Vec.new();
+
+    // next(&mut self) -> Option<elem_type>
+    let option_def = checker.builtin_option_def;
+    let elem_ty = make_param(elem_param_idx);
+    match option_def {
+        Option.Some(opt_def) => {
+            let mut opt_args: Vec<type_intern.TyId> = Vec.new();
+            opt_args.push(elem_ty);
+            add_method(checker, &mut methods, "next", runtime_name, Vec.new(), make_adt(opt_def, opt_args), true, interner);
+        }
+        Option.None => {
+            add_method(checker, &mut methods, "next", runtime_name, Vec.new(), elem_ty, true, interner);
+        }
+    }
+
     let impl_def = checker.alloc_def_id();
     let impl_info = typeck.ImplInfo.new(impl_def, self_ty, 2, make_sequential_param_ids(2), methods);
     checker.register_impl(impl_info);
