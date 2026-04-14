@@ -16,7 +16,7 @@ Blood synthesizes five cutting-edge programming language innovations:
 
 > **Pre-release — research compiler.** No version tag yet. See [KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) for the honest status of each component.
 
-The self-hosted compiler passes **543/543 golden tests**. It compiles itself through a three-generation byte-identical bootstrap, and the resulting binary has no Rust runtime dependency — the seed is self-sufficient and requires only LLVM 18 on the host.
+The self-hosted compiler passes **576/576 golden tests**. It compiles itself through a three-generation byte-identical bootstrap, and the resulting binary has no Rust runtime dependency — the seed is self-sufficient and requires only LLVM 18 on the host.
 
 | Component | Status | Details |
 |-----------|--------|---------|
@@ -25,17 +25,17 @@ The self-hosted compiler passes **543/543 golden tests**. It compiles itself thr
 | Type Checking | ✅ Working | Linearity, effects, exhaustiveness, generic impls |
 | Code Generation | ⚠️ Mostly working | LLVM IR emission. Known gap: aggregate escape analysis disabled |
 | Effects System | ✅ Working | Deep/shallow handlers, perform/resume, snapshots, per-op resume |
-| Memory Model | ⚠️ Mostly working | Generational refs for heap/region. Stale &str detection for String buffers currently disabled pending a latent bug fix |
-| Runtime | ✅ Working | 181KB Blood-native runtime (no Rust). Memory, effects, VFT |
+| Memory Model | ⚠️ Mostly working | Generational refs for heap/region. `&str` stale detection disabled pending snapshot liveness analysis (GAP-1) |
+| Runtime | ✅ Working | 197KB Blood-native runtime (no Rust). Memory, effects, VFT |
 | Multiple Dispatch | ⚠️ Partial | Compile-time dispatch works. Runtime dispatch (fingerprint-based) is deferred |
 | Fibers / Concurrency | ❌ Not integrated | pthread-based spawn; no M:N scheduler, no mutex/channel primitives wired |
 | Safety Checks | ✅ Default | Definite init, linearity, bounds, dangling ref rejection all enabled |
 | Content Addressing | 🔶 Partial | BLAKE3 hashing, codebase storage. VFT dispatch wiring not hooked up |
-| Formal Proofs | ✅ Complete | 264 Coq theorems/lemmas, 0 Admitted, 0 Axioms (covers a simplified model of the language, not the compiler artifact) |
+| Formal Proofs | ⚠️ Mostly complete | 273 Coq theorems/lemmas (219 proved, 14 Admitted, 0 Axioms). Covers a core calculus formalization, not the compiler artifact |
 
 **Legend**: ✅ Working | ⚠️ Mostly working with known gaps | 🔶 Partial | ❌ Not integrated
 
-**Spec coverage (approx):** 39 of 78 surveyed normative claims across `docs/spec/*.md` have verifiable code evidence today (~50%). See [KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) for the full breakdown by spec file and the known soundness gaps that remain open.
+**Spec coverage:** 7 of 16 spec files fully implemented and tested, 3 partially implemented (Concurrency, Diagnostics, Stdlib), 1 untested (WCET/Real-time). See [KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) for the full breakdown and known soundness gaps.
 
 [Tutorial](docs/TUTORIAL.md) | [Specification](docs/spec/SPECIFICATION.md) | [Known Limitations](docs/KNOWN_LIMITATIONS.md) | [Contributing](CONTRIBUTING.md)
 
@@ -44,6 +44,16 @@ The self-hosted compiler passes **543/543 golden tests**. It compiles itself thr
 In engineering, regulations "written in blood" are those born from catastrophic failures — rules that exist because someone died or systems failed in ways that can never be allowed again.
 
 Blood is for avionics, medical devices, financial infrastructure, autonomous vehicles, nuclear control systems. Systems where failure is not an option.
+
+## Why Blood for Safety-Critical Systems?
+
+If you're an avionics, medical, or financial engineer evaluating alternatives to C and Rust:
+
+- **Algebraic effects** — every function's I/O, state mutations, and failure modes appear in its type signature. Auditors can mechanically verify which subsystems touch hardware or network — no grep, no manual review.
+- **Content-addressed code** — builds are reproducible by construction. The same source hash always produces the same binary, satisfying DO-178C and IEC 62443 traceability requirements without a separate build-provenance toolchain.
+- **No borrow checker** — domain experts write correct systems code without a PL PhD. Generational references enforce memory safety at runtime with deterministic, bounded overhead.
+- **Generational memory safety** — no GC pauses, no use-after-free, no dangling pointers. Safety without the Rust learning curve or lifetime annotation burden.
+- **Multiple dispatch** — extend a safety-critical codebase by adding implementations, not by modifying certified modules. Open/closed principle enforced at the language level.
 
 ## Design Principles
 
@@ -161,7 +171,7 @@ See the [Specification](docs/spec/SPECIFICATION.md) for language details.
 |----------|-------------|
 | [ROADMAP.md](docs/planning/ROADMAP.md) | Implementation plan and milestones |
 | [DECISIONS.md](docs/planning/DECISIONS.md) | Architecture decision records |
-| [IMPLEMENTATION_STATUS.md](docs/planning/IMPLEMENTATION_STATUS.md) | Detailed implementation audit |
+| [KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) | Honest gap enumeration (current) |
 
 ## License
 
@@ -174,7 +184,7 @@ at your option.
 
 ## Contributing
 
-We welcome contributions! See the [implementation status](docs/planning/IMPLEMENTATION_STATUS.md) for areas that need work.
+We welcome contributions! See [KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) for the current state and [CONTRIBUTING.md](CONTRIBUTING.md) for areas that need help.
 
 - **Bug reports**: Open an issue with reproduction steps
 - **Feature requests**: Open a discussion first

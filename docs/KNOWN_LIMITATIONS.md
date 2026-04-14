@@ -11,7 +11,7 @@ The goal of this file is to answer honestly: *if you write a Blood program today
 - **Golden tests:** 576 pass, 0 fail. Golden tests cover program-level correctness, not systematic spec conformance. Traceability matrix at `.tmp/SPEC_TRACEABILITY.md`.
 - **Spec coverage:** 7 of 16 spec files fully implemented and tested. 3 partially implemented (Concurrency, Diagnostics, Stdlib). 1 has no tests (WCET/Real-time). See `.tmp/SPEC_TRACEABILITY.md` for details.
 - **Rust bootstrap:** builds and runs simple programs. Used as an escape hatch; not the primary development target. Diverged from selfhost on type unification in April before being corrected.
-- **Formal proofs:** 264 Coq theorems/lemmas across 22 theory files, 227 proved (Qed), 28 admitted. Three-tier structure (core soundness → feature interaction → composition). The proofs cover a core calculus formalization, not the compiler artifact directly. See `proofs/PROOF_ROADMAP.md`.
+- **Formal proofs:** 273 Coq theorems/lemmas across 22 theory files, 219 proved (Qed/Defined), 14 admitted. Three-tier structure (core soundness → feature interaction → composition). The proofs cover a core calculus formalization, not the compiler artifact directly. See `proofs/PROOF_ROADMAP.md`.
 - **CI:** GitHub Actions at `.github/workflows/ci.yml` covering both bootstrap and selfhost (build, golden tests, gate). Fuzz testing at `fuzz.yml`.
 - **Ecosystem:** No package manager, formatter, or documentation generator. Stdlib has 81 .blood files across 26 directories.
 
@@ -298,7 +298,7 @@ This is the honest complement: things that are genuinely working end-to-end and 
 - Array / Vec / slice bounds checking (default on)
 - Definite initialization analysis (default on)
 - Compile-time dangling reference rejection via E0503
-- Runtime stale reference detection on deref for all reference types including String/Vec data buffers
+- Runtime stale reference detection on deref for heap and region references (`&str` from String buffers excluded per GAP-1)
 
 ## Self-hosting feature coverage
 

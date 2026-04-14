@@ -59,7 +59,7 @@ blood/
 ├── bootstrap/seed              # Prebuilt compiler binary (bootstrap fixed point)
 ├── stdlib/                     # Standard library (Blood source)
 ├── runtime/blood-runtime/      # Runtime library (Blood source)
-├── tests/golden/               # Golden integration tests (565 files)
+├── tests/golden/               # Golden integration tests (576 pass)
 ├── proofs/theories/            # Coq formal proofs (22 files, 10K lines, 264 theorems)
 ├── docs/spec/                  # Language specifications
 ├── tools/                      # Development & debugging tools
@@ -74,8 +74,8 @@ blood/
 | Bootstrap seed | `bootstrap/seed` | — | Prebuilt binary for bootstrapping |
 | Blood runtime | `runtime/blood-runtime/` | Blood | Memory, effects, fibers |
 | Stdlib | `stdlib/` | Blood | Collections, effects, I/O |
-| Golden tests | `tests/golden/` | Blood | 565 integration tests |
-| Formal proofs | `proofs/theories/` | Coq | 264 mechanized theorems (227 proved, 28 admitted) |
+| Golden tests | `tests/golden/` | Blood | 576 integration tests |
+| Formal proofs | `proofs/theories/` | Coq | 273 mechanized theorems (219 proved, 14 admitted) |
 
 ---
 
@@ -107,7 +107,7 @@ build/first_gen check file.blood
 ./build_selfhost.sh build first_gen      # Seed → first_gen
 ./build_selfhost.sh build second_gen     # first_gen → second_gen (self-compile)
 ./build_selfhost.sh build third_gen      # second_gen → third_gen (verify)
-./build_selfhost.sh test golden          # Run 488 golden tests
+./build_selfhost.sh test golden          # Run 576 golden tests
 ./build_selfhost.sh test golden second_gen  # Test with second_gen
 ./build_selfhost.sh gate                 # Full bootstrap + update seed
 ./build_selfhost.sh status               # Show compiler state
@@ -236,7 +236,7 @@ Place new test files in `tests/golden/` with the naming convention:
 - Match existing patterns — read the surrounding code first
 - Exhaustive pattern matching — no catch-all `_ =>` unless justified
 - No shortcuts — see CLAUDE.md for the full policy
-- Use `common.make_string(s.as_str())` to copy strings (no `.clone()`)
+- Use `.clone()` to copy Strings (Clone trait implemented for String)
 
 ### Pull Request Checklist
 
@@ -259,7 +259,7 @@ For changes touching codegen, type layouts, or runtime FFI:
 4. **Testing** — more golden tests, edge cases, fuzzing
 5. **Specs** — reviewing and improving language specifications
 
-See `.tmp/WORK.md` for the current prioritized work items.
+See [KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) for the current gap enumeration.
 
 ---
 
