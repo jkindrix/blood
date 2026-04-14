@@ -132,13 +132,19 @@ pub fn rt_perform(effect_id: i64, op_index: i32, args: *mut u8, arg_count: i64, 
         }
         rt_evidence.ev_insert(ev, pos, saved_effect_id, reg_idx, saved_state_addr);
 
-        // ABORT IF NOT RESUMED
+        // ABORT: NTR (continuation=0) always aborts; resumptive aborts if not resumed
+        let mut should_abort: i32 = 0;
+        if continuation == 0 {
+            should_abort = 1;
+        }
         if continuation != 0 {
             if this_was_resumed == 0 {
-                if rt_evidence.get_abort_depth() > 0 {
-                    rt_evidence.handler_abort(result);
-                    // handler_abort calls longjmp — never returns
-                }
+                should_abort = 1;
+            }
+        }
+        if should_abort != 0 {
+            if rt_evidence.get_abort_depth() > 0 {
+                rt_evidence.handler_abort(result);
             }
         }
 
